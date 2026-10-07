@@ -13,25 +13,29 @@ import { IInterfold } from "../interfaces/IInterfold.sol";
 // currently supports the minimum committee because its V2 verifier route is available only for it.
 library ActiveCryptoConfig {
     bytes32 internal constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
-    bytes32 internal constant CIRCUIT_VERSION = keccak256("interfold-bfv-v2");
+    bytes32 internal constant CIRCUIT_VERSION = keccak256("interfold-bfv-v4");
 
     bytes32 internal constant INSECURE_CONFIG_ID =
-        0x7317c190ccb1dccfa505bf5b9b923e341905f6675c16f958e0a7d853795517a5;
+        0x353ab90c0ebe9c13e1b9c2048539b7c2872f3eb12a9f1957f31410aa4bf44718;
     uint8 internal constant INSECURE_PARAM_SET = 0;
     bytes32 internal constant INSECURE_PARAM_SET_HASH =
         0x0619925361a4d022377f93ccd0022c0164257ffb889b979eb382aa06d401e258;
 
     bytes32 internal constant SECURE_CONFIG_ID =
-        0xac5490c59e158cbb104642bba0ab7b3fd11ca49dd4bb05ce7bec8089ce3c8c31;
+        0x5ebb3432396f21cd97fca47e006b9dd38c021bf2902d3e555cf74cb91b28e44e;
     uint8 internal constant SECURE_PARAM_SET = 2;
     bytes32 internal constant SECURE_PARAM_SET_HASH =
         0x80775a19b6126a12943f9c1c53f92299f0c92ece819b625026ab1406bbbe0721;
 
     bytes32 internal constant SECURE_16384_CONFIG_ID =
-        0xde3c303973a0bf2b841cd0e7266ae68a7e48f8b271ffd629b245485e52dc8cd8;
+        0x9c5c09ac7421582c4407c7e6ad923b8f9126aa708957c2575760fb0a38153655;
     uint8 internal constant SECURE_16384_PARAM_SET = 3;
     bytes32 internal constant SECURE_16384_PARAM_SET_HASH =
         0x8afd5dddf1bc0cfb00c70e9a7d0a0fb11bd0617df27574fa7d2ccf9ae3a6bdb8;
+
+    // The insecure parameters on the l-BFV path. They equal the insecure set's, so the config ID and
+    // parameter hash do too; only the index selects the protocol path.
+    uint8 internal constant INSECURE_LBFV_PARAM_SET = 4;
 
     uint8 internal constant MINIMUM_COMMITTEE_SIZE = 0;
     uint32 internal constant MINIMUM_T = 1;
@@ -77,6 +81,7 @@ library ActiveCryptoConfig {
         if (paramSet == INSECURE_PARAM_SET) return INSECURE_CONFIG_ID;
         if (paramSet == SECURE_PARAM_SET) return SECURE_CONFIG_ID;
         if (paramSet == SECURE_16384_PARAM_SET) return SECURE_16384_CONFIG_ID;
+        if (paramSet == INSECURE_LBFV_PARAM_SET) return INSECURE_CONFIG_ID;
         revert IInterfold.UnsupportedCryptoConfig();
     }
 
@@ -93,7 +98,8 @@ library ActiveCryptoConfig {
             return
                 paramSet == INSECURE_PARAM_SET ||
                 paramSet == SECURE_PARAM_SET ||
-                paramSet == SECURE_16384_PARAM_SET;
+                paramSet == SECURE_16384_PARAM_SET ||
+                paramSet == INSECURE_LBFV_PARAM_SET;
         }
         return paramSet == SECURE_PARAM_SET;
     }
@@ -156,7 +162,8 @@ library ActiveCryptoConfig {
     ) internal view {
         if (!isParamSetSupported(paramSet))
             revert IInterfold.UnsupportedCryptoConfig();
-        bytes32 expectedHash = paramSet == INSECURE_PARAM_SET
+        bytes32 expectedHash = paramSet == INSECURE_PARAM_SET ||
+            paramSet == INSECURE_LBFV_PARAM_SET
             ? INSECURE_PARAM_SET_HASH
             : paramSet == SECURE_PARAM_SET
                 ? SECURE_PARAM_SET_HASH

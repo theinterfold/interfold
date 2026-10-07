@@ -40,6 +40,8 @@ import {
 } from './circuit-constants'
 
 const CIRCUIT_VERSION = 'interfold-bfv-v4'
+// On-chain index of the insecure parameters on the l-BFV path (`BfvPreset::InsecureThresholdLbfv`).
+const INSECURE_LBFV_PARAM_SET = 4
 
 const LBFV_THRESHOLD_CIRCUITS = new Set([
   'lbfv_pk_generation',
@@ -792,6 +794,10 @@ library ActiveCryptoConfig {
     bytes32 internal constant SECURE_16384_PARAM_SET_HASH =
         ${secure16384.paramSetHash};
 
+    // The insecure parameters on the l-BFV path. They equal the insecure set's, so the config ID and
+    // parameter hash do too; only the index selects the protocol path.
+    uint8 internal constant INSECURE_LBFV_PARAM_SET = ${INSECURE_LBFV_PARAM_SET};
+
     uint8 internal constant MINIMUM_COMMITTEE_SIZE = ${secureMinimum.committeeSize};
     uint32 internal constant MINIMUM_T = ${secureMinimum.t};
     uint32 internal constant MINIMUM_H = ${secureMinimum.h};
@@ -836,6 +842,7 @@ library ActiveCryptoConfig {
         if (paramSet == INSECURE_PARAM_SET) return INSECURE_CONFIG_ID;
         if (paramSet == SECURE_PARAM_SET) return SECURE_CONFIG_ID;
         if (paramSet == SECURE_16384_PARAM_SET) return SECURE_16384_CONFIG_ID;
+        if (paramSet == INSECURE_LBFV_PARAM_SET) return INSECURE_CONFIG_ID;
         revert IInterfold.UnsupportedCryptoConfig();
     }
 
@@ -852,7 +859,8 @@ library ActiveCryptoConfig {
             return
                 paramSet == INSECURE_PARAM_SET ||
                 paramSet == SECURE_PARAM_SET ||
-                paramSet == SECURE_16384_PARAM_SET;
+                paramSet == SECURE_16384_PARAM_SET ||
+                paramSet == INSECURE_LBFV_PARAM_SET;
         }
         return paramSet == SECURE_PARAM_SET;
     }
@@ -915,7 +923,8 @@ library ActiveCryptoConfig {
     ) internal view {
         if (!isParamSetSupported(paramSet))
             revert IInterfold.UnsupportedCryptoConfig();
-        bytes32 expectedHash = paramSet == INSECURE_PARAM_SET
+        bytes32 expectedHash = paramSet == INSECURE_PARAM_SET ||
+            paramSet == INSECURE_LBFV_PARAM_SET
             ? INSECURE_PARAM_SET_HASH
             : paramSet == SECURE_PARAM_SET
                 ? SECURE_PARAM_SET_HASH
