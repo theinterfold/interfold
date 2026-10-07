@@ -46,8 +46,10 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
   if (chain === 'mainnet' && useMocks) {
     throw new Error('USE_MOCKS cannot be enabled for a mainnet CRISP deployment')
   }
-  // USE_MOCKS selects the mock data-availability verifier unless MOCK_DATA_AVAILABILITY=false keeps
-  // Avail. Ciphernodes read every input of a chain through one data-availability source.
+  // USE_MOCKS deploys a mock voting token and selects the mock data-availability verifier, unless
+  // MOCK_DATA_AVAILABILITY=false keeps Avail. It never mocks the compute verifier: only
+  // CRISP_UNPROVED_TEST=1 does, on the local chain. Ciphernodes read every input of a chain through
+  // one data-availability source.
   const rawMockDataAvailability = process.env.MOCK_DATA_AVAILABILITY?.trim().toLowerCase()
   if (rawMockDataAvailability && rawMockDataAvailability !== 'true' && rawMockDataAvailability !== 'false') {
     throw new Error("MOCK_DATA_AVAILABILITY must be 'true', 'false', or unset")
@@ -77,7 +79,7 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
           throw new Error('INPUT_AVAILABILITY_SIGNER is required for an Avail-backed CRISP deployment')
         })()
 
-  const verifier = await deployVerifier(useMocks, ethers)
+  const verifier = await deployVerifier(ethers)
   const receiptVerifier = await ethers.getContractAt('OpenVmReceiptVerifier', verifier)
   const IMAGE_ID = await receiptVerifier.imageId()
 
@@ -323,7 +325,7 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
  * development and the CRISP end-to-end test, which run the unproved development runner, and it is
  * refused on every chain except the isolated local one. `USE_MOCKS` never selects it.
  */
-export const deployVerifier = async (_useMockVerifier: boolean, connectedEthers?: any): Promise<string> => {
+export const deployVerifier = async (connectedEthers?: any): Promise<string> => {
   const ethers = connectedEthers ?? (await hre.network.connect()).ethers
   const chain = getDeploymentChain(hre)
   if (process.env.CRISP_UNPROVED_TEST === '1') {

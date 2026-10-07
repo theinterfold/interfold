@@ -14,6 +14,11 @@ every section.
   `configs/committee/active.nr`, the generated C1/C2 bounds, the generated constants in `utils.ts`,
   `ActiveCryptoConfig.sol`, verifier contracts (`generate-verifiers.ts` output), the ignored local
   file `.active-preset.json`, and prepared OpenVM identity artifacts.
+- **`crates/support/contracts/ImageID.sol` is frozen.** It records the RISC Zero image ID that the
+  existing CRISP deployments verify. The guest build that generated it is gone, so it cannot be
+  regenerated, and the secure CRISP upgrade scripts (`scripts/upgrade/secureCrisp.ts` and
+  `validateSecureCrisp.ts`) still read it to check those deployments. Never edit it; delete it
+  together with those scripts.
 - **Generated verifiers must match the built VKs.** When a pushed branch changes a path in
   `.github/filters/circuits.yml`, pre-push checks `insecure-512` with the committee in the local
   `.active-preset.json` (default `minimum`). The check reads the checked-out tree, so the hook stops
