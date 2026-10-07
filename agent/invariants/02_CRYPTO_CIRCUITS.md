@@ -498,8 +498,13 @@ every section.
 - **The Secure Process holds one ciphertext at a time and checks its second pass.** It reads every
   ciphertext once for its leaf, selects over records without bytes, then reads the selected
   ciphertexts again and refuses one whose Keccak hash differs from the first read. The host and the
-  guest run the same `SecureProcess`, so the journal the host predicts is the one the guest proves.
-  — `flow-trace/04`
+  guest run the same `SecureProcess`, but the guest build swaps in accelerated code the host does
+  not run: OpenVM's Poseidon2 (`e3-safe/openvm`), Keccak and SHA-256 (`openvm-hashes`), and the
+  power-basis commitment and RNS packing (`crisp_fhe_optimized`). The host's predicted journal is
+  the guest's only while each accelerated path matches its reference. Unit tests compare them, and
+  CI runs the real guest against the host's journal on an insecure and a secure fixture
+  (`pnpm openvm guest-parity`). A mismatch cannot make a false proof, because contracts rebuild the
+  journal from chain state, but no proof can then be made and every round fails. — `flow-trace/04`
 - **CRISP binds bytes, commitment, slot and parent into its leaf, and selects the end of each slot's
   chain.** `CRISPProgram.inputLeaf` is
   `sha256(keccak256(bytes) || commitment || slot || parentIndexPlusOne) mod SNARK_SCALAR_FIELD` and

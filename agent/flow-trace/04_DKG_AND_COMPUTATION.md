@@ -1128,9 +1128,10 @@ The OpenVM host streams the round to the guest one item at a time: a bincode hea
 parameters, on-chain indices, published commitments and metadata), every ciphertext in index order,
 then the selected ciphertexts again. The guest keeps a hash of each ciphertext from the first pass
 and refuses a second-pass ciphertext that differs. The native host and guest run the same
-`SecureProcess` with the project's policy. The guest commits nine 32-byte ABI words in this order:
-chain ID, Interfold address, full uint256 E3 ID, encryption scheme ID, committee public-key hash,
-output hash, SAFE commitment, parameter hash, and input root. It reveals SHA-256 of these 288 bytes.
+`SecureProcess` with the project's policy; the guest build swaps in accelerated hashing, packing and
+commitment code (see `invariants/02`). The guest commits nine 32-byte ABI words in this order: chain
+ID, Interfold address, full uint256 E3 ID, encryption scheme ID, committee public-key hash, output
+hash, SAFE commitment, parameter hash, and input root. It reveals SHA-256 of these 288 bytes.
 
 The OpenVM worker generates an application proof, recursive aggregate, and Halo2 EVM proof. It
 checks the configured executable and VM commitments and verifies the EVM proof against the native
@@ -1960,8 +1961,9 @@ runs over those records. The second pass reads the selected ciphertexts again, a
 hash differs from its first read (`InputChanged`), a first pass that is short or long
 (`InputCount`), and a processor that stops before the last selected input (`Unread`). The guest
 therefore holds one ciphertext at a time, and its memory does not bound a round. `ComputeInput::run`
-runs the same code over a round held in memory, so the host's predicted journal and the guest's
-agree.
+runs the same code over a round held in memory. The host's predicted journal and the guest's agree
+while the guest's accelerated hashing, packing and commitments match the reference code the host
+runs; unit tests and the CI guest-parity check (an insecure and a secure fixture) cover that.
 
 The leaf layout and which inputs are computed over come from the program, as an `InputPolicy`:
 

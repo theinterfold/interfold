@@ -1704,10 +1704,14 @@ jobs:
           OPENVM_BUILD_LOCKED: '1'
           RUSTFLAGS: --cfg crisp_openvm --cfg crisp_fhe_optimized
         run: cargo openvm build --target-dir ../../../target/openvm/template-guest
+      # The guest replaces hashing, packing and commitments with accelerated versions that the host
+      # does not run. The secure fixture covers their secure-8192 widths.
       - name: Run the CRISP guest against the native journal
         run: |
           bash scripts/run-openvm.sh fixture 3 "$RUNNER_TEMP/crisp-fixture" --insecure
           bash scripts/run-openvm.sh guest-parity "$RUNNER_TEMP/crisp-fixture"
+          bash scripts/run-openvm.sh fixture 2 "$RUNNER_TEMP/crisp-fixture-secure"
+          bash scripts/run-openvm.sh guest-parity "$RUNNER_TEMP/crisp-fixture-secure"
 
   build_sdk:
     needs: [detect_changes]

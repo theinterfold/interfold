@@ -68,7 +68,10 @@ reproduces. It reads a round in two passes, one ciphertext at a time:
 
 Only one ciphertext is held at a time, so the guest's 512 MiB of memory does not limit the number of
 inputs. `ComputeInput::run` runs the same code over a round that is already in memory. The OpenVM
-host uses that to predict the journal the guest must reveal.
+host uses that to predict the journal the guest must reveal. The guest build swaps in OpenVM's
+accelerated hashing, so the prediction holds only while that code matches the host's. Check it by
+running the guest without proving: the worker's `execute` compares the digest it reveals with the
+host's journal.
 
 The processor takes the selected ciphertexts as an iterator:
 

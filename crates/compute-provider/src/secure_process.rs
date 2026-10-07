@@ -14,8 +14,9 @@
 //!
 //! Only one ciphertext is held at a time, so a round can be larger than the zkVM guest's memory.
 //! A host runs the same code over ciphertexts it already holds (see
-//! [`crate::ComputeInput::run_selected`]), which keeps the journal it predicts equal to the one the
-//! guest proves.
+//! [`crate::ComputeInput::run_selected`]) to predict the journal the guest proves. The guest build
+//! swaps in accelerated hashing and packing, so the two agree only while those match the reference
+//! code the host runs; unit tests and the CI guest-parity check compare them.
 
 use crate::ciphertext_output::ComputeResult;
 use crate::compute_input::{ComputeError, FHEProcessor, FHEProcessorInput, PublishedData};
