@@ -332,7 +332,6 @@ if (enabled) {
       const treasury = await system.treasury.getAddress()
       const feeToken = await usdcToken.getAddress()
       const treasuryBefore = await interfold.pendingTreasuryClaim(treasury, feeToken)
-      const ownerAddress = await owner.getAddress()
       const protocolAmount = (escrow * pricing.protocolShareBps) / 10_000n
       const plaintext = readFileSync(path.join(fixtureDirectory, 'plaintext.bin'))
       const completed = await (await interfold.publishPlaintextOutput(e3Id, plaintext, '0x01')).wait()
@@ -340,11 +339,31 @@ if (enabled) {
       expect(await interfold.getE3Stage(e3Id)).to.equal(5n)
       expect((await interfold.getE3(e3Id)).plaintextOutput).to.equal(ethers.hexlify(plaintext))
       expect(await interfold.e3Payments(e3Id)).to.equal(0n)
-      expect(await interfold.pendingReward(e3Id, ownerAddress)).to.equal(escrow - protocolAmount)
       expect(await interfold.pendingTreasuryClaim(treasury, feeToken)).to.equal(treasuryBefore + protocolAmount)
-      const beforeClaim = await usdcToken.balanceOf(ownerAddress)
-      await (await interfold.claimReward(e3Id)).wait()
-      expect((await usdcToken.balanceOf(ownerAddress)) - beforeClaim).to.equal(escrow - protocolAmount)
+      // The committee shares the escrow less the protocol share. Each operator's reward is held for
+      // it and claimed by it.
+      const distributed = completed!.logs
+        .map((entry) => {
+          try {
+            return interfold.interface.parseLog(entry)
+          } catch {
+            return null
+          }
+        })
+        .find((event) => event?.name === 'RewardsDistributed')
+      expect(distributed, 'RewardsDistributed').to.not.equal(undefined)
+      const nodes: string[] = [...distributed!.args[1]]
+      const amounts: bigint[] = [...distributed!.args[2]]
+      expect(amounts.reduce((sum, amount) => sum + amount, 0n)).to.equal(escrow - protocolAmount)
+      for (const [index, node] of nodes.entries()) {
+        expect(await interfold.pendingReward(e3Id, node)).to.equal(amounts[index])
+      }
+      const operatorAddresses = await Promise.all(operators.map((operator) => operator.getAddress()))
+      const claimant = operators[operatorAddresses.indexOf(nodes[0])]
+      expect(claimant, 'the first rewarded node is an operator').to.not.equal(undefined)
+      const beforeClaim = await usdcToken.balanceOf(nodes[0])
+      await (await interfold.connect(claimant).claimReward(e3Id)).wait()
+      expect((await usdcToken.balanceOf(nodes[0])) - beforeClaim).to.equal(amounts[0])
       await waitFor('CRISP result indexing', async () => {
         const response = await post('/state/result', { round_id: e3Id.toString() })
         if (!response.ok) return false

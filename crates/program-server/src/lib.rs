@@ -727,6 +727,65 @@ mod server_tests {
         assert_eq!(server.jobs.available_permits(), 2);
     }
 
+    fn app_config(server: &E3ProgramServer) -> AppConfig {
+        AppConfig {
+            runner: Arc::clone(&server.runner),
+            localhost_rewrite: None,
+            webhook_client: server.webhook_client.clone(),
+            jobs: Arc::clone(&server.jobs),
+            max_request_bytes: server.max_request_bytes,
+        }
+    }
+
+    /// A caller over capacity is refused before its body is read, so it cannot make the server
+    /// buffer a round it will not compute.
+    #[actix_web::test]
+    async fn a_full_server_refuses_before_reading_the_body() {
+        let server = E3ProgramServer::builder(|_| async { Ok((vec![], vec![])) })
+            .with_max_request_bytes(16)
+            .build()
+            .unwrap();
+        let _busy = Arc::clone(&server.jobs).try_acquire_owned().unwrap();
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(web::Data::new(app_config(&server)))
+                .route("/run_compute", web::post().to(handle_compute)),
+        )
+        .await;
+
+        let request = actix_web::test::TestRequest::post()
+            .uri("/run_compute")
+            .set_payload(vec![b'x'; 1024])
+            .to_request();
+        let response = actix_web::test::call_service(&app, request).await;
+
+        assert_eq!(response.status(), 429);
+    }
+
+    /// With capacity free, a body over the limit is refused and the slot is released.
+    #[actix_web::test]
+    async fn an_oversized_body_is_refused_and_frees_its_slot() {
+        let server = E3ProgramServer::builder(|_| async { Ok((vec![], vec![])) })
+            .with_max_request_bytes(16)
+            .build()
+            .unwrap();
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(web::Data::new(app_config(&server)))
+                .route("/run_compute", web::post().to(handle_compute)),
+        )
+        .await;
+
+        let request = actix_web::test::TestRequest::post()
+            .uri("/run_compute")
+            .set_payload(vec![b'x'; 1024])
+            .to_request();
+        let response = actix_web::test::call_service(&app, request).await;
+
+        assert_eq!(response.status(), 413);
+        assert_eq!(server.jobs.available_permits(), 1);
+    }
+
     #[test]
     fn localhost_rewrite_changes_only_an_exact_local_host() {
         let rewritten =

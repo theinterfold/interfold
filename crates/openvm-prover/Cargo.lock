@@ -2404,6 +2404,7 @@ dependencies = [
  "eyre",
  "hex",
  "openvm-circuit",
+ "openvm-cuda-common",
  "openvm-sdk",
  "openvm-sdk-config",
  "serde",

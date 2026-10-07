@@ -3119,6 +3119,7 @@ dependencies = [
  "e3-bfv-client",
  "e3-compute-provider",
  "e3-fhe-params",
+ "e3-openvm-types",
  "fhe",
  "fhe-traits",
  "hex",

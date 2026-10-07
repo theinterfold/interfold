@@ -66,6 +66,7 @@ jobs:
       build_sdk: ${{ steps.jobs.outputs.build_sdk }}
       sdk_tests: ${{ steps.jobs.outputs.sdk_tests }}
       build_e3_support_dev: ${{ steps.jobs.outputs.build_e3_support_dev }}
+      openvm_worker: ${{ steps.jobs.outputs.openvm_worker }}
       build_circuits: ${{ steps.jobs.outputs.build_circuits }}
       noir_checks: ${{ steps.jobs.outputs.noir_checks }}
       integration_prebuild: ${{ steps.jobs.outputs.integration_prebuild }}
@@ -90,6 +91,11 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
+              - '!**/*.md'
+              - '!**/*.mdx'
+            # The OpenVM worker is a cargo workspace of its own, built against the OpenVM SDK.
+            openvm_worker:
+              - 'crates/openvm-prover/**'
               - '!**/*.md'
               - '!**/*.mdx'
             contracts:
@@ -117,8 +123,9 @@ jobs:
               - 'examples/CRISP/Cargo.toml'
               - 'examples/CRISP/Cargo.lock'
               - 'examples/CRISP/rust-toolchain.toml'
-              # A symlink to a member of the CRISP cargo workspace.
+              # Symlinks to members of the CRISP cargo workspace.
               - 'examples/CRISP/.interfold/support/dev'
+              - 'examples/CRISP/.interfold/support/openvm'
               - 'examples/CRISP/crates/**'
               - 'examples/CRISP/program/**'
               - 'examples/CRISP/server/**'
@@ -253,6 +260,7 @@ jobs:
           DOCKER="${{ steps.filter.outputs.docker }}"
           CI="${{ steps.filter.outputs.ci }}"
           TOOLING="${{ steps.filter.outputs.tooling }}"
+          OPENVM_WORKER="${{ steps.filter.outputs.openvm_worker }}"
           FORCE="${{ github.event_name == 'workflow_dispatch' || inputs.release_candidate }}"
 
           any() { for v in "$@"; do [ "$v" = "true" ] && echo "true" && return; done; echo "false"; }
@@ -299,6 +307,7 @@ jobs:
           # Both feed template_integration, so each must cover every path that
           # triggers it — a skipped dependency silently skips the e2e job.
           echo "build_e3_support_dev=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CIRCUITS $SDK $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "openvm_worker=$(any $FORCE $OPENVM_WORKER $CI)" >> $GITHUB_OUTPUT
           # build_circuits runs check:verifiers, so every input of the generated verifiers runs it.
           # CIRCUIT_BUILD adds the other files that the job runs or hashes.
           echo "build_circuits=$(any $FORCE $RUST $CIRCUITS $VERIFIERS $CIRCUIT_BUILD $CI $TOOLING)" >> $GITHUB_OUTPUT
@@ -1587,6 +1596,10 @@ jobs:
         run: cargo test --locked -p e3-support-scripts
       - name: Build support scripts
         run: cd templates/default && cargo build --locked --bin e3-support-scripts-dev
+      # The OpenVM proving service links the template program. Its guest needs cargo-openvm and a GPU
+      # host for proofs, so CI builds only the service.
+      - name: Build the OpenVM proving service
+        run: cd templates/default && cargo build --locked --bin e3-support-scripts-openvm
       - name: Verify build artifacts
         run: |
           echo "Checking for support scripts binary:"
@@ -1600,6 +1613,29 @@ jobs:
           path: templates/default/target/debug/e3-support-scripts-dev
           retention-days: 1
           if-no-files-found: error
+
+  # The CPU build of the OpenVM worker and its tests. Proofs and the CUDA build need a GPU host.
+  openvm_worker:
+    needs: [detect_changes]
+    if: needs.detect_changes.outputs.openvm_worker == 'true'
+    timeout-minutes: 45
+    runs-on:
+      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
+      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
+      'openvm_worker') || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Cache Rust dependencies
+        uses: ./.github/actions/cache-dependencies
+        with:
+          cargo-lock-path: crates/openvm-prover/Cargo.lock
+          rust-target-path: crates/openvm-prover/target/
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - name: Test the CPU worker
+        run: cargo test --locked --manifest-path crates/openvm-prover/Cargo.toml
 
   build_sdk:
     needs: [detect_changes]

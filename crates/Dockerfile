@@ -70,6 +70,8 @@ COPY crates/layout-lock/Cargo.toml ./layout-lock/Cargo.toml
 COPY crates/logger/Cargo.toml ./logger/Cargo.toml
 COPY crates/multithread/Cargo.toml ./multithread/Cargo.toml
 COPY crates/net/Cargo.toml ./net/Cargo.toml
+COPY crates/openvm-host/Cargo.toml ./openvm-host/Cargo.toml
+COPY crates/openvm-types/Cargo.toml ./openvm-types/Cargo.toml
 COPY crates/parity-matrix/Cargo.toml ./parity-matrix/Cargo.toml
 COPY crates/zk-prover/Cargo.toml ./zk-prover/Cargo.toml
 COPY crates/polynomial/Cargo.toml ./polynomial/Cargo.toml
