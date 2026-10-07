@@ -19,7 +19,7 @@ describe("Local slashing policies", function () {
         policy: { failureReason: number },
       ) => {
         policies.set(reason, policy);
-        return { wait: async () => undefined };
+        return { hash: "0x00", wait: async () => ({ status: 1 }) };
       },
     } as unknown as SlashingManager;
     const hre = {

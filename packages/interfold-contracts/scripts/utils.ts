@@ -132,24 +132,56 @@ const SECURE_16384_PARAM_SET_HASH =
 const SECURE_16384_CONFIG_ID =
   "0x9c5c09ac7421582c4407c7e6ad923b8f9126aa708957c2575760fb0a38153655";
 
+/** On-chain index of the insecure parameters on the l-BFV path. */
+export const INSECURE_LBFV_PARAM_SET = 4;
+
+/** Parameter sets on the l-BFV path: secure-16384 (3) and insecure l-BFV (4). */
+export function isLbfvParamSet(paramSet: number): boolean {
+  return paramSet === 3 || paramSet === INSECURE_LBFV_PARAM_SET;
+}
+
+/**
+ * The parameter set a local deployment registers. `BFV_PARAM_SET=4` selects the l-BFV path on the
+ * insecure artifacts; otherwise the generated active parameter set applies.
+ */
+export function localBfvParamSet(): number {
+  const override = process.env.BFV_PARAM_SET;
+  if (override === undefined || override === "") return ACTIVE_BFV_PARAM_SET;
+  const paramSet = Number(override);
+  const insecureArtifacts = ACTIVE_BFV_PARAM_SET === 0;
+  if (paramSet === ACTIVE_BFV_PARAM_SET) return paramSet;
+  if (paramSet === INSECURE_LBFV_PARAM_SET && insecureArtifacts)
+    return paramSet;
+  throw new Error(
+    `BFV_PARAM_SET=${override} does not match the active circuit artifacts (parameter set ${ACTIVE_BFV_PARAM_SET})`,
+  );
+}
+
 function bfvConfig(
   preset: BfvArtifactPreset,
   committee: BfvCommittee,
   params: Pick<ActiveBfvConfig, "committeeSize" | "h" | "t" | "n">,
+  lbfv = false,
 ): ActiveBfvConfig {
-  const paramSet = preset === "insecure" ? 0 : preset === "secure-8192" ? 2 : 3;
-  const paramSetHash =
-    paramSet === 0
-      ? INSECURE_PARAM_SET_HASH
-      : paramSet === 2
-        ? SECURE_PARAM_SET_HASH
-        : SECURE_16384_PARAM_SET_HASH;
-  const configId =
-    paramSet === 0
-      ? INSECURE_CONFIG_ID
-      : paramSet === 2
-        ? SECURE_CONFIG_ID
-        : SECURE_16384_CONFIG_ID;
+  // The insecure artifacts serve both paths; `lbfv` selects parameter set 4 instead of 0.
+  const insecure = preset === "insecure";
+  const paramSet = insecure
+    ? lbfv
+      ? INSECURE_LBFV_PARAM_SET
+      : 0
+    : preset === "secure-8192"
+      ? 2
+      : 3;
+  const paramSetHash = insecure
+    ? INSECURE_PARAM_SET_HASH
+    : paramSet === 2
+      ? SECURE_PARAM_SET_HASH
+      : SECURE_16384_PARAM_SET_HASH;
+  const configId = insecure
+    ? INSECURE_CONFIG_ID
+    : paramSet === 2
+      ? SECURE_CONFIG_ID
+      : SECURE_16384_CONFIG_ID;
   return {
     preset,
     committee,
@@ -176,6 +208,27 @@ export const INSECURE_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "insecure",
   "small",
   { committeeSize: 2, h: 14, t: 9, n: 19 },
+);
+
+export const INSECURE_LBFV_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "insecure",
+  "minimum",
+  { committeeSize: 0, h: 2, t: 1, n: 3 },
+  true,
+);
+
+export const INSECURE_LBFV_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "insecure",
+  "micro",
+  { committeeSize: 1, h: 5, t: 4, n: 9 },
+  true,
+);
+
+export const INSECURE_LBFV_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "insecure",
+  "small",
+  { committeeSize: 2, h: 14, t: 9, n: 19 },
+  true,
 );
 
 export const SECURE_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
@@ -216,6 +269,9 @@ export const TESTNET_BFV_CONFIGS: readonly ActiveBfvConfig[] = [
   INSECURE_MINIMUM_BFV_CONFIG,
   INSECURE_MICRO_BFV_CONFIG,
   INSECURE_SMALL_BFV_CONFIG,
+  INSECURE_LBFV_MINIMUM_BFV_CONFIG,
+  INSECURE_LBFV_MICRO_BFV_CONFIG,
+  INSECURE_LBFV_SMALL_BFV_CONFIG,
   SECURE_MINIMUM_BFV_CONFIG,
   SECURE_MICRO_BFV_CONFIG,
   SECURE_SMALL_BFV_CONFIG,
@@ -277,11 +333,10 @@ export function committeeThresholdsForChain(
 
 /** `dkg_aggregator` EVM public-input count for honest-set size `h`. */
 export function bfvPkExpectedPublicInputsLen(h: number): number {
-  // dkg_aggregator public inputs: nodes_fold + c5 key hashes (2), party_ids (h),
-  // committee hash limbs (2), vk_binding (16), returned key hash (1),
-  // C2A/C2B chunk hashes (2), sk/esm agg commits (2h), aggregated pk commit (1).
-  // The generated Honk VK includes eight pairing-point slots outside the public-input array.
-  return 3 * h + 24;
+  // trBFV dkg_aggregator public inputs: nodes_fold + c5 key hashes (2), party_ids (h),
+  // committee hash limbs (2), sk/esm agg commits (2h), aggregated pk commit (1), plus the
+  // returned key hash (1).
+  return 3 * h + 6;
 }
 
 /** `publicInputs` indices for `committee_hash_hi` / `committee_hash_lo` (matches `BfvPkVerifier`). */
@@ -401,7 +456,10 @@ export function getBfvPkSubCircuitVkHashPaths(config?: ActiveBfvConfig) {
   } as const;
 }
 
-/** Recursive VK hashes used to build the DKG pipeline binding manifest. */
+/**
+ * Recursive VK hashes of the l-BFV path's legacy DKG pipeline, in the order `dkg_aggregator_v2`
+ * binds them (`legacy_vk_binding` in `crates/zk-prover/src/circuits/aggregation/v2.rs`).
+ */
 export function getBfvPkVkBindingHashPaths(config?: ActiveBfvConfig) {
   const root = config ? distCircuitRoot(config) : getRepoRoot();
   const recursive = config ? "recursive" : "target";
@@ -412,18 +470,18 @@ export function getBfvPkVkBindingHashPaths(config?: ActiveBfvConfig) {
     config
       ? path.join(
           root,
-          "default/recursive_aggregation/node_fold/node_fold.vk_hash",
+          "default/recursive_aggregation/node_fold_chunked/node_fold_chunked.vk_hash",
         )
-      : local("recursive_aggregation", "node_fold"),
+      : local("recursive_aggregation", "node_fold_chunked"),
     config
       ? path.join(root, `${recursive}/dkg/pk/pk.vk_hash`)
       : local("dkg", "pk"),
     config
       ? path.join(
           root,
-          `${recursive}/threshold/pk_generation/pk_generation.vk_hash`,
+          `${recursive}/threshold/pk_generation_chunked/pk_generation_chunked.vk_hash`,
         )
-      : local("threshold", "pk_generation"),
+      : local("threshold", "pk_generation_chunked"),
     config
       ? path.join(
           root,
@@ -433,9 +491,9 @@ export function getBfvPkVkBindingHashPaths(config?: ActiveBfvConfig) {
     config
       ? path.join(
           root,
-          `${defaultVariant}/recursive_aggregation/c3ab_fold/c3ab_fold.vk_hash`,
+          `${defaultVariant}/recursive_aggregation/c3ab_fold_chunked/c3ab_fold_chunked.vk_hash`,
         )
-      : local("recursive_aggregation", "c3ab_fold"),
+      : local("recursive_aggregation", "c3ab_fold_chunked"),
     config
       ? path.join(
           root,
@@ -475,27 +533,27 @@ export function getBfvPkVkBindingHashPaths(config?: ActiveBfvConfig) {
     config
       ? path.join(
           root,
-          `${defaultVariant}/recursive_aggregation/c3_fold/c3_fold.vk_hash`,
+          `${defaultVariant}/recursive_aggregation/c3_fold_chunked/c3_fold_chunked.vk_hash`,
         )
-      : local("recursive_aggregation", "c3_fold"),
+      : local("recursive_aggregation", "c3_fold_chunked"),
     config
       ? path.join(
           root,
-          `${recursive}/dkg/share_encryption/share_encryption.vk_hash`,
+          `${recursive}/dkg/share_encryption_chunked/share_encryption_chunked.vk_hash`,
         )
-      : local("dkg", "share_encryption"),
+      : local("dkg", "share_encryption_chunked"),
     config
       ? path.join(
           root,
-          `${recursive}/dkg/share_decryption/share_decryption.vk_hash`,
+          `${recursive}/dkg/share_decryption_chunked/share_decryption_chunked.vk_hash`,
         )
-      : local("dkg", "share_decryption"),
+      : local("dkg", "share_decryption_chunked"),
     config
       ? path.join(
           root,
-          `${defaultVariant}/recursive_aggregation/c3_fold_kernel/c3_fold_kernel.vk_hash`,
+          `${defaultVariant}/recursive_aggregation/c3_fold_kernel_chunked/c3_fold_kernel_chunked.vk_hash`,
         )
-      : local("recursive_aggregation", "c3_fold_kernel"),
+      : local("recursive_aggregation", "c3_fold_kernel_chunked"),
     config
       ? path.join(
           root,
@@ -608,9 +666,6 @@ export function readVkRecursiveHash(
 export interface BfvPkVerifierVkReader {
   expectedNodesFoldKeyHash(): Promise<string>;
   expectedC5KeyHash(): Promise<string>;
-  expectedSkC2ChunkKeyHash(): Promise<string>;
-  expectedESmC2ChunkKeyHash(): Promise<string>;
-  expectedVkBinding(index: bigint): Promise<string>;
 }
 
 /** On-chain `BfvPkVerifierV2` sub-circuit VK immutables (for deploy-time staleness checks). */
@@ -646,47 +701,19 @@ export async function assertBfvPkVerifierSubCircuitVkHashes(
     getBfvPkSubCircuitVkHashPaths(config).c5,
     config,
   );
-  const expectedSkC2Chunk = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths(config).skC2Chunk,
-    config,
-  );
-  const expectedESmC2Chunk = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths(config).esmC2Chunk,
-    config,
-  );
-  const expectedVkBinding = getBfvPkVkBindingHashPaths(config).map((filePath) =>
-    readVkRecursiveHash(filePath, config),
-  );
-  const [onChainNodesFold, onChainC5, onChainSkC2Chunk, onChainESmC2Chunk] =
-    await Promise.all([
-      verifier.expectedNodesFoldKeyHash(),
-      verifier.expectedC5KeyHash(),
-      verifier.expectedSkC2ChunkKeyHash(),
-      verifier.expectedESmC2ChunkKeyHash(),
-    ]);
-  const onChainVkBinding = await Promise.all(
-    expectedVkBinding.map((_, index) =>
-      verifier.expectedVkBinding(BigInt(index)),
-    ),
-  );
+  const [onChainNodesFold, onChainC5] = await Promise.all([
+    verifier.expectedNodesFoldKeyHash(),
+    verifier.expectedC5KeyHash(),
+  ]);
 
-  if (
-    onChainNodesFold === expectedNodesFold &&
-    onChainC5 === expectedC5 &&
-    onChainSkC2Chunk === expectedSkC2Chunk &&
-    onChainESmC2Chunk === expectedESmC2Chunk &&
-    onChainVkBinding.every((value, index) => value === expectedVkBinding[index])
-  ) {
+  if (onChainNodesFold === expectedNodesFold && onChainC5 === expectedC5) {
     return;
   }
 
   throw new Error(
     `BfvPkVerifier at ${address} has stale sub-circuit VK immutables. ` +
       `On-chain nodes_fold=${onChainNodesFold} expected=${expectedNodesFold}; ` +
-      `on-chain c5=${onChainC5} expected=${expectedC5}; ` +
-      `on-chain sk_c2_chunk=${onChainSkC2Chunk} expected=${expectedSkC2Chunk}; ` +
-      `on-chain esm_c2_chunk=${onChainESmC2Chunk} expected=${expectedESmC2Chunk}; ` +
-      `recursive VK binding mismatch at one or more indices. ` +
+      `on-chain c5=${onChainC5} expected=${expectedC5}. ` +
       `Redeploy after pnpm compile:circuits or remove the stale entry from deployed_contracts.json.`,
   );
 }

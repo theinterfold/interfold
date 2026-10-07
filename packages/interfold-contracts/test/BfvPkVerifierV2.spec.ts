@@ -7,6 +7,11 @@ import { expect } from "chai";
 
 import dkgAggregatorV2VerifierModule from "../ignition/modules/dkgAggregatorV2Verifier";
 import { currentNodeRelease } from "../scripts/protocol/nodeRelease";
+import {
+  INSECURE_LBFV_MINIMUM_BFV_CONFIG,
+  INSECURE_LBFV_PARAM_SET,
+  SECURE_16384_MINIMUM_BFV_CONFIG,
+} from "../scripts/utils";
 import { ethers, ignition } from "./fixtures/connection";
 
 const abiCoder = ethers.AbiCoder.defaultAbiCoder();
@@ -20,10 +25,8 @@ const LEGACY_VK_BINDING = Array.from({ length: 16 }, (_, index) =>
 const V2_VK_BINDING = Array.from({ length: 13 }, (_, index) =>
   ethers.id(`v2-vk-${index}`),
 );
-const SECURE_16384_CONFIG_ID =
-  "0xde3c303973a0bf2b841cd0e7266ae68a7e48f8b271ffd629b245485e52dc8cd8";
-const INSECURE_CONFIG_ID =
-  "0x7317c190ccb1dccfa505bf5b9b923e341905f6675c16f958e0a7d853795517a5";
+const SECURE_16384_CONFIG_ID = SECURE_16384_MINIMUM_BFV_CONFIG.configId;
+const INSECURE_CONFIG_ID = INSECURE_LBFV_MINIMUM_BFV_CONFIG.configId;
 const LBFV_PROTOCOL_VERSION = currentNodeRelease().protocolVersion;
 
 function limbs(hash: string): [string, string] {
@@ -198,7 +201,9 @@ describe("BfvPkVerifierV2", function () {
   });
 
   it("accepts the insecure three-row V2 layout and context", async function () {
-    const { interfold, verifier } = await deployFixture(0);
+    const { interfold, verifier } = await deployFixture(
+      INSECURE_LBFV_PARAM_SET,
+    );
     const [signer, second, third] = await ethers.getSigners();
     const nodes = [signer.address, second.address, third.address];
     const e3Id = 7n;

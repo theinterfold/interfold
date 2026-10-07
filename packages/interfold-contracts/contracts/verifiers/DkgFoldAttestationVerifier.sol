@@ -26,6 +26,10 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         DkgFoldAttestationLib.Attestation[] attestations;
         DkgFoldAttestationLib.PartySlotBinding[] bindings;
         uint256 h;
+        /// @dev Offset of the SK aggregate commitments after the `h` party IDs: 5 for the trBFV
+        ///      `dkg_aggregator`, 23 for `dkg_aggregator_v2`, whose prefix also carries the
+        ///      legacy VK binding and the C2 chunk hashes.
+        uint256 commitmentOffset;
     }
 
     /// @inheritdoc IDkgFoldAttestationVerifier
@@ -66,7 +70,11 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         } catch {
             revert ICiphernodeRegistry.InvalidFoldAttestation();
         }
-        data.h = _honestPartyCount(registry, e3Id, data.publicInputs);
+        (data.h, data.commitmentOffset) = _honestPartyCount(
+            registry,
+            e3Id,
+            data.publicInputs
+        );
         // Defense in depth: require the public-inputs `partyId` slots
         // (`publicInputs[2..2+h]`) to be strictly ascending. The zk circuit
         // already enforces this, but rejecting duplicates here prevents two
@@ -194,16 +202,18 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         address registry,
         uint256 e3Id,
         bytes32[] memory publicInputs
-    ) private view returns (uint256 h) {
+    ) private view returns (uint256 h, uint256 commitmentOffset) {
         (uint256 v2H, ) = _v2CommitteeParams(publicInputs.length);
         if (v2H > 0 && _isV2Statement(registry, e3Id, publicInputs, v2H)) {
-            return v2H;
+            return (v2H, 23);
         }
+        // trBFV `dkg_aggregator`: 3*h + 6 public inputs.
         require(
-            publicInputs.length >= 27 && (publicInputs.length - 24) % 3 == 0,
+            publicInputs.length >= 6 && (publicInputs.length - 6) % 3 == 0,
             ICiphernodeRegistry.InvalidFoldAttestation()
         );
-        h = (publicInputs.length - 24) / 3;
+        h = (publicInputs.length - 6) / 3;
+        commitmentOffset = 5;
         // Defense in depth: the BFV pk-verifier already rejects `h == 0`, but
         // a zero-honest-party proof would otherwise pass this verifier with no
         // attestations to check and write empty anchors to the registry.
@@ -321,8 +331,8 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         );
 
         uint256 partyIdOffset = 2;
-        uint256 skOffset = 23 + data.h;
-        uint256 esmOffset = 23 + (2 * data.h);
+        uint256 skOffset = data.commitmentOffset + data.h;
+        uint256 esmOffset = data.commitmentOffset + (2 * data.h);
 
         slot = _partySlot(
             data.publicInputs,

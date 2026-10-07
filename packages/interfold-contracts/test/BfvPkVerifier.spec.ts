@@ -19,13 +19,11 @@ const [testSigner] = await ethers.getSigners();
 
 const EXPECTED_NODES_FOLD_KEY_HASH = ethers.id("nodes_fold");
 const EXPECTED_C5_KEY_HASH = ethers.id("c5");
-const EXPECTED_SK_C2_CHUNK_KEY_HASH = ethers.id("sk_c2_chunk");
-const EXPECTED_ESM_C2_CHUNK_KEY_HASH = ethers.id("esm_c2_chunk");
-const EXPECTED_VK_BINDING = Array.from({ length: 16 }, (_, index) =>
-  ethers.id(`vk-binding-${index}`),
-);
 /** Must match `BfvPkVerifier.h` / default circuit `H`. */
 const H = BFV_DKG_H;
+/** Aggregator return slots after committee hash: `2*H + 1` padding + `pkCommitment`. */
+const DKG_RETURN_FIELD_COUNT = 2 * H + 2;
+
 /** Exact `publicInputs.length` for the configured H. */
 const EXPECTED_PUBLIC_INPUTS_LEN = bfvPkExpectedPublicInputsLen(H);
 
@@ -47,11 +45,7 @@ function minimalDkgPublicInputs(
     ...Array(H).fill(ethers.ZeroHash),
     hi,
     lo,
-    ...EXPECTED_VK_BINDING,
-    ethers.ZeroHash,
-    EXPECTED_SK_C2_CHUNK_KEY_HASH,
-    EXPECTED_ESM_C2_CHUNK_KEY_HASH,
-    ...Array(2 * H).fill(ethers.ZeroHash),
+    ...Array(DKG_RETURN_FIELD_COUNT - 1).fill(ethers.ZeroHash),
     pkCommitment,
   ];
 }
@@ -71,15 +65,7 @@ describe("BfvPkVerifier", function () {
 
     const bfvPkVerifier = await (
       await ethers.getContractFactory("BfvPkVerifier")
-    ).deploy(
-      mockAddr,
-      EXPECTED_NODES_FOLD_KEY_HASH,
-      EXPECTED_C5_KEY_HASH,
-      EXPECTED_SK_C2_CHUNK_KEY_HASH,
-      EXPECTED_ESM_C2_CHUNK_KEY_HASH,
-      EXPECTED_VK_BINDING,
-      H,
-    );
+    ).deploy(mockAddr, EXPECTED_NODES_FOLD_KEY_HASH, EXPECTED_C5_KEY_HASH, H);
 
     await bfvPkVerifier.waitForDeployment();
     const pk = BfvPkVerifierFactory.connect(
@@ -106,9 +92,6 @@ describe("BfvPkVerifier", function () {
           ethers.ZeroAddress,
           EXPECTED_NODES_FOLD_KEY_HASH,
           EXPECTED_C5_KEY_HASH,
-          EXPECTED_SK_C2_CHUNK_KEY_HASH,
-          EXPECTED_ESM_C2_CHUNK_KEY_HASH,
-          EXPECTED_VK_BINDING,
           H,
         ),
       )
@@ -119,9 +102,6 @@ describe("BfvPkVerifier", function () {
           testSigner.address,
           EXPECTED_NODES_FOLD_KEY_HASH,
           EXPECTED_C5_KEY_HASH,
-          EXPECTED_SK_C2_CHUNK_KEY_HASH,
-          EXPECTED_ESM_C2_CHUNK_KEY_HASH,
-          EXPECTED_VK_BINDING,
           H,
         ),
       )
@@ -134,9 +114,6 @@ describe("BfvPkVerifier", function () {
           await mockCircuit.getAddress(),
           ethers.ZeroHash,
           EXPECTED_C5_KEY_HASH,
-          EXPECTED_SK_C2_CHUNK_KEY_HASH,
-          EXPECTED_ESM_C2_CHUNK_KEY_HASH,
-          EXPECTED_VK_BINDING,
           H,
         ),
       ).to.be.revertedWithCustomError(factory, "InvalidVerificationKeyHash");
@@ -145,9 +122,6 @@ describe("BfvPkVerifier", function () {
           await mockCircuit.getAddress(),
           EXPECTED_NODES_FOLD_KEY_HASH,
           ethers.ZeroHash,
-          EXPECTED_SK_C2_CHUNK_KEY_HASH,
-          EXPECTED_ESM_C2_CHUNK_KEY_HASH,
-          EXPECTED_VK_BINDING,
           H,
         ),
       ).to.be.revertedWithCustomError(factory, "InvalidVerificationKeyHash");
@@ -285,47 +259,6 @@ describe("BfvPkVerifier", function () {
       ).to.be.revertedWithCustomError(bfvPkVerifier, "VkHashMismatch");
     });
 
-    it("reverts VkHashMismatch when the SK C2 chunk key hash does not match", async function () {
-      const { bfvPkVerifier } = await loadFixture(deployWithMockCircuit);
-      const { e3Id, root, nodes } = ctx();
-      const pkCommitment = ethers.keccak256("0xabcd");
-      const publicInputs = minimalDkgPublicInputs(pkCommitment).map((v, i) =>
-        i === 21 + H ? ethers.id("wrong-sk-c2-chunk") : v,
-      );
-      const proof = encodeProof("0x01", publicInputs);
-
-      await expect(
-        bfvPkVerifier.verify.staticCall(
-          e3Id,
-          root,
-          nodes,
-          pkCommitment,
-          ethers.ZeroHash,
-          proof,
-        ),
-      ).to.be.revertedWithCustomError(bfvPkVerifier, "VkHashMismatch");
-    });
-
-    it("reverts VkHashMismatch when a recursive VK manifest field does not match", async function () {
-      const { bfvPkVerifier } = await loadFixture(deployWithMockCircuit);
-      const { e3Id, root, nodes } = ctx();
-      const pkCommitment = ethers.keccak256("0x1234");
-      const publicInputs = minimalDkgPublicInputs(pkCommitment);
-      publicInputs[4 + H + 3] = ethers.id("wrong-c2ab-vk");
-      const proof = encodeProof("0x01", publicInputs);
-
-      await expect(
-        bfvPkVerifier.verify.staticCall(
-          e3Id,
-          root,
-          nodes,
-          pkCommitment,
-          ethers.ZeroHash,
-          proof,
-        ),
-      ).to.be.revertedWithCustomError(bfvPkVerifier, "VkHashMismatch");
-    });
-
     it("rejects an independent mismatch in either committee-hash limb (C-08)", async function () {
       const { bfvPkVerifier, mockCircuit } = await loadFixture(
         deployWithMockCircuit,
@@ -420,9 +353,6 @@ describe("BfvPkVerifier", function () {
         mockAddr,
         ethers.id("wrong-nodes-fold"),
         ethers.id("wrong-c5"),
-        EXPECTED_SK_C2_CHUNK_KEY_HASH,
-        EXPECTED_ESM_C2_CHUNK_KEY_HASH,
-        EXPECTED_VK_BINDING,
         H,
       );
       await bfvPkVerifier.waitForDeployment();

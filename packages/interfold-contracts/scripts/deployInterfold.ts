@@ -35,10 +35,12 @@ import { encodeBfvParams } from "./protocol/values";
 import {
   ACTIVE_BFV_COMMITTEE_N,
   ACTIVE_BFV_COMMITTEE_SIZE,
-  ACTIVE_BFV_PARAM_SET,
   BFV_DKG_H,
+  INSECURE_LBFV_PARAM_SET,
   committeeThresholdsForChain,
+  isLbfvParamSet,
   isLocalDeploymentChain,
+  localBfvParamSet,
   send,
 } from "./utils";
 
@@ -576,9 +578,10 @@ export const deployInterfold = async (
 
   // Register BFV param sets
   console.log("Registering BFV param sets...");
-  const activeParamSet = Number(ACTIVE_BFV_PARAM_SET);
+  const activeParamSet = localBfvParamSet();
+  // Parameter sets 0 and 4 share the insecure parameters; 4 runs the l-BFV path.
   const activeParams =
-    activeParamSet === 0
+    activeParamSet === 0 || activeParamSet === INSECURE_LBFV_PARAM_SET
       ? encodedInsecure
       : activeParamSet === 2
         ? encodedSecure
@@ -759,8 +762,8 @@ export const deployInterfold = async (
   if (shouldHaveZKVerification) {
     console.log("Deploying BfvPkVerifier and registering for prod...");
     let bfvPkVerifierAddress: string;
-    // Param set 3 (Secure16384) uses the V2 (l-BFV) DKG aggregation wrapper.
-    if (Number(ACTIVE_BFV_PARAM_SET) === 3) {
+    // The l-BFV parameter sets (3 and 4) use the V2 DKG aggregation wrapper.
+    if (isLbfvParamSet(localBfvParamSet())) {
       const { bfvPkVerifierV2 } = await deployAndSaveBfvPkVerifierV2(
         hre,
         ciphernodeRegistryAddress,
