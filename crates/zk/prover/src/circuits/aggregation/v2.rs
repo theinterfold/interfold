@@ -34,7 +34,7 @@ fn generation_fold_public_fields(row_count: usize) -> usize {
 
 fn node_fold_public_fields(committee: CiphernodesCommitteeSize, row_count: usize) -> usize {
     let values = committee.values();
-    14 + values.n + (2 * (values.n + values.h) * row_count)
+    15 + values.n + (2 * (values.n + values.h) * row_count)
 }
 
 fn node_fold_v2_public_fields(committee: CiphernodesCommitteeSize, row_count: usize) -> usize {
@@ -1100,9 +1100,9 @@ mod tests {
     #[test]
     fn secure_v2_public_shapes_are_fixed() {
         let committee = CiphernodesCommitteeSize::Minimum;
-        assert_eq!(node_fold_public_fields(committee, 5), 67);
-        assert_eq!(node_fold_v2_public_fields(committee, 5), 89);
-        assert_eq!(nodes_fold_v2_public_fields(committee, 5), 184);
+        assert_eq!(node_fold_public_fields(committee, 5), 68);
+        assert_eq!(node_fold_v2_public_fields(committee, 5), 90);
+        assert_eq!(nodes_fold_v2_public_fields(committee, 5), 186);
         assert_eq!(generation_fold_public_fields(5), 29);
         assert_eq!(aggregation_fold_public_fields(2, 5), 57);
         assert_eq!(c5_public_fields(2), 3);
@@ -1114,7 +1114,7 @@ mod tests {
         let proof = proof_with_public_fields(CircuitName::NodeFoldV2, fields - 1);
         let error = checked_public_fields(&proof, CircuitName::NodeFoldV2, fields, "V2 node proof")
             .expect_err("an invalid shape must fail");
-        assert!(error.to_string().contains("must contain 89 public fields"));
+        assert!(error.to_string().contains("must contain 90 public fields"));
     }
 
     #[test]
