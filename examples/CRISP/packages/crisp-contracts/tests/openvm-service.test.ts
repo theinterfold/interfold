@@ -311,7 +311,9 @@ if (enabled) {
       const changed = ethers.getBytes(seal[1])
       changed[changed.length - 1] ^= 1
       const invalidSeal = abi.encode(['uint8', 'bytes'], [1, changed])
+      // The seal and its journal feed the real-proof test (OPENVM_TEST_SEAL, OPENVM_TEST_JOURNAL).
       writeFileSync(path.join(directory, 'seal.bin'), ethers.getBytes(envelope[0]))
+      writeFileSync(path.join(directory, 'journal.bin'), ethers.getBytes(abi.encode(['bytes32[9]'], [journal])))
       save('ciphertext published and verified', {
         real_compute_proof_verified: true,
         callback_http_delivery_tested: true,
