@@ -7,7 +7,8 @@ pragma solidity 0.8.28;
 
 /**
  * @title Risc0ComputeProof
- * @notice Decodes the compute proof and rebuilds the journal emitted by the current guest.
+ * @notice Decodes the compute proof and rebuilds the journal of the legacy RISC Zero guest. Kept for
+ * the RISC Zero deployments and the rounds that snapshot them; new programs use OpenVmComputeProof.
  */
 library Risc0ComputeProof {
     uint256 internal constant FIELD_SIZE = 132;

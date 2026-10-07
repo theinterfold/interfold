@@ -40,9 +40,6 @@ test-results/
 **/example.secrets.json
 **/*.secrets.json
 
-# submodules
-examples/CRISP/packages/crisp-contracts/lib/risc0-ethereum
-templates/default/lib/risc0-ethereum
 
 .claude/
 .claude/settings.local.json

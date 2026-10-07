@@ -34,8 +34,8 @@ openvm-prover.local.json
 # agent working files
 .hermes/
 
-# Local secrets. `crates/support/.env` holds the Boundless RPC URL, wallet key and Pinata JWT that
-# `boundless_prove_inner` reads from the environment. Committing one publishes a funded key.
+# Local secrets. `crates/support/.env` can hold deployment keys and machine-specific paths.
+# Committing one publishes them.
 # The agent permission files deny reads of these paths, but a denied read does not stop `git add`,
 # so the per-environment variants are ignored here too.
 .env

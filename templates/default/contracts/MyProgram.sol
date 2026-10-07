@@ -48,7 +48,8 @@ contract MyProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownable {
   /// @notice Bind the program to its OpenVM receipt verifier.
   /// @param _interfold The Interfold contract address
   /// @param _verifier The OpenVM receipt verifier address
-  /// @param _imageId The image ID for the guest program
+  /// @param _imageId The receipt identity: `imageId()` of the OpenVM receipt verifier, which derives it
+  /// from the Halo2 verifier and the guest's executable and VM commitments
   constructor(IInterfold _interfold, IOpenVmReceiptVerifier _verifier, bytes32 _imageId) Ownable(msg.sender) {
     require(address(_verifier) != address(0), VerifierAddressZero());
 

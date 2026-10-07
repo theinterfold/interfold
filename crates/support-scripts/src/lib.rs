@@ -18,10 +18,12 @@ use tokio::fs;
 use traits::ProgramSupportApi;
 
 pub async fn program_compile(program_config: ProgramConfig, is_dev: Option<bool>) -> Result<()> {
+    program_config.ensure_supported()?;
     ProgramSupport::new(program_config, is_dev).compile().await
 }
 
 pub async fn program_start(program_config: ProgramConfig, is_dev: Option<bool>) -> Result<()> {
+    program_config.ensure_supported()?;
     ProgramSupport::new(program_config, is_dev).start().await
 }
 

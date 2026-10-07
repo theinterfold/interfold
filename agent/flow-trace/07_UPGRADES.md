@@ -25,9 +25,9 @@ change the DKG and proof inputs. Its non-centered plaintext scale also changes t
 check and its circuit artifacts. Drain active E3s and install matching circuit artifacts and
 verifier routes before requests resume. Both parameter sets use the circuit ID domain
 `interfold-bfv-v4`. Old clients must update their expected configuration IDs before they submit new
-requests. The RISC Zero guest in `crates/support` uses a separate, content-addressed Interfold
-revision. Rebuild its image and provenance record before changing that guest revision or its fhe.rs
-pin.
+requests. The OpenVM guest builds from the same tree. A change to its sources or its fhe.rs pin
+changes its application commitments, so rebuild the guest, regenerate its keys and provenance
+record, and deploy matching receipt verifiers before such a change serves a live program.
 
 The mainnet `paramSetRegistry(1)` contains the previous secure parameters and cannot be changed.
 Version 7 uses parameter-set index 2 for the new secure tuple. Keep index 1 intact for old E3

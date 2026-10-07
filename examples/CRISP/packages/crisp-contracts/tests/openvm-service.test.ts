@@ -38,6 +38,8 @@ if (enabled) {
       '../../../../../packages/interfold-contracts/test/fixtures/constants'
     )
     const { time } = networkHelpers
+    // `ActiveCryptoConfig.SECURE_PARAM_SET`: index 1 is historical and not accepted for new rounds.
+    const SECURE_PARAM_SET = 2
     const abi = ethers.AbiCoder.defaultAbiCoder()
     const directory = path.resolve(process.env.OPENVM_E2E_OUTPUT!)
     if (existsSync(directory)) throw new Error('The service-test output directory must not already exist')
@@ -141,7 +143,7 @@ if (enabled) {
       )
       await (await interfold.registerE3Program(await program.getAddress())).wait()
       await (await program.connect(relay).bindInterfold(await interfold.getAddress())).wait()
-      await (await interfold.setParamSet(1, BFV_PARAMS_SECURE)).wait()
+      await (await interfold.setParamSet(SECURE_PARAM_SET, BFV_PARAMS_SECURE)).wait()
       await (await interfold.setCiphertextVerifier(ENCRYPTION_SCHEME_ID, await protocol.getAddress())).wait()
       const rpc = process.env.LOCAL_RPC_URL!
       server = spawn(path.resolve(process.env.OPENVM_E2E_SERVER!), [], {
@@ -162,7 +164,7 @@ if (enabled) {
           CIPHERNODE_REGISTRY_ADDRESS: await registry.getAddress(),
           FEE_TOKEN_ADDRESS: await usdcToken.getAddress(),
           DATA_AVAILABILITY_MODE: 'mock',
-          E3_PARAM_SET: '1',
+          E3_PARAM_SET: String(SECURE_PARAM_SET),
           E3_COMMITTEE_SIZE: '0',
           E3_DURATION: '3600',
           E3_COMPUTE_PROVIDER_NAME: 'OpenVM',
@@ -185,7 +187,7 @@ if (enabled) {
         ...system.request,
         e3Program: await program.getAddress(),
         inputWindow: [start, end],
-        paramSet: 1,
+        paramSet: SECURE_PARAM_SET,
         expectedCryptoConfigId: PRODUCTION_CRYPTO_CONFIG_ID,
         customParams: abi.encode(
           ['address', 'uint256', 'uint256', 'uint256', 'uint256', 'uint256', 'uint256'],

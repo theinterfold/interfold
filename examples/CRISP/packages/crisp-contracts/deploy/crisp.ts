@@ -313,10 +313,26 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
   return { governanceComplete }
 }
 
-/** Deploy the receipt binding for an explicitly configured OpenVM Halo2 verifier. */
+/**
+ * Deploy the receipt binding for an explicitly configured OpenVM Halo2 verifier.
+ *
+ * `CRISP_UNPROVED_TEST=1` deploys a verifier that accepts every receipt instead. It exists for local
+ * development and the CRISP end-to-end test, which run the unproved development runner, and it is
+ * refused on every chain except the isolated local one. `USE_MOCKS` never selects it.
+ */
 export const deployVerifier = async (_useMockVerifier: boolean, connectedEthers?: any): Promise<string> => {
   const ethers = connectedEthers ?? (await hre.network.connect()).ethers
   const chain = getDeploymentChain(hre)
+  if (process.env.CRISP_UNPROVED_TEST === '1') {
+    if ((await ethers.provider.getNetwork()).chainId !== 31337n) {
+      throw new Error('CRISP_UNPROVED_TEST requires the isolated local chain (chain ID 31337)')
+    }
+    const mock = await ethers.deployContract('MockOpenVmReceiptVerifier')
+    await mock.waitForDeployment()
+    const address = await mock.getAddress()
+    storeDeploymentArgs({ address, blockNumber: await ethers.provider.getBlockNumber() }, 'MockOpenVmReceiptVerifier', chain)
+    return address
+  }
   const { receipt: verifier, halo2Verifier, halo2RuntimeCodeHash, appExeCommit, appVmCommit } = await deployOpenVmReceiptVerifier(ethers)
   storeDeploymentArgs(
     { address: halo2Verifier, blockNumber: await ethers.provider.getBlockNumber(), bytecodeHash: halo2RuntimeCodeHash },

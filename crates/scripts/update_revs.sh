@@ -31,6 +31,7 @@ done
 echo "Press any key to continue with the update, or Ctrl+C to cancel..."
 read -n 1 -s
 echo "Updating dependencies..."
-# Perform the substitution
-find . -name "Cargo.toml" "${EXCLUDE_ARGS[@]}" -exec sed -i "s|rev = \"[^\"]*\"|rev = \"$CURRENT_HASH\"|g" {} \;
+# Perform the substitution only on dependency lines that name this repository. Other git dependencies
+# (fhe.rs, OpenVM) keep their own revisions.
+find . -name "Cargo.toml" "${EXCLUDE_ARGS[@]}" -exec sed -i "\|git = \"$GITHUB_REPO_URL\"| s|rev = \"[^\"]*\"|rev = \"$CURRENT_HASH\"|g" {} \;
 echo "Done!"

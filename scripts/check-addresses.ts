@@ -178,6 +178,9 @@ const LABELS: Record<string, string> = {
   BfvDecryptionVerifierRouter: 'BfvDecryptionVerifierRouter',
   BfvPkVerifierRouter: 'BfvPkVerifierRouter',
   Risc0BfvCiphertextVerifier: 'Risc0BfvCiphertextVerifier',
+  OpenVmBfvCiphertextVerifier: 'OpenVmBfvCiphertextVerifier',
+  OpenVmReceiptVerifier: 'OpenVmReceiptVerifier',
+  OpenVmHalo2Verifier: 'OpenVmHalo2Verifier',
 }
 
 /** Files this check never reads, whatever they contain. */

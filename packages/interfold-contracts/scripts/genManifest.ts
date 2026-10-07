@@ -87,6 +87,9 @@ const REFERENCE_KEYS = [
   "BfvDecryptionVerifierRouter",
   "BfvPkVerifierRouter",
   "Risc0BfvCiphertextVerifier",
+  "OpenVmBfvCiphertextVerifier",
+  "OpenVmReceiptVerifier",
+  "OpenVmHalo2Verifier",
 ];
 
 /**

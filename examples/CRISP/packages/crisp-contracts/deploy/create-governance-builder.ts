@@ -100,7 +100,7 @@ async function main() {
 
   if (chainId === 1) {
     throw new Error(
-      'This partial builder cannot activate CRISP on mainnet. Run pnpm --dir packages/interfold-contracts upgrade:secure-crisp so the same DAO batch installs the secure BFV implementation and all verifier routes.',
+      'This partial builder cannot activate CRISP on mainnet. Mainnet installs the OpenVM receipt verifier, the protocol ciphertext verifier route and CRISPProgram in the v0.19 cutover governance batch. Do not use upgrade:secure-crisp: it activates only the historical RISC Zero deployment.',
     )
   }
 
