@@ -100,7 +100,7 @@ pub mod policy {
         metadata_of(input)?;
 
         let mut outer = Sha256::new();
-        outer.update(&keccak256(input.ciphertext));
+        outer.update(keccak256(input.ciphertext));
         outer.update(commitment);
         outer.update(input.metadata);
         Ok(leaf_from_digest(&outer.finalize()))

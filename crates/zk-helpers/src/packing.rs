@@ -177,7 +177,7 @@ pub fn pack_centered_rns_row(coefficients: &[u64], modulus: u64, bit: u32) -> Op
         let mut accumulator = FieldInteger::<4>::from(0u64);
         for _ in 0..group {
             let value = values.next().copied().unwrap_or(0);
-            let negative = if modulus % 2 == 0 {
+            let negative = if modulus.is_multiple_of(2) {
                 value >= modulus / 2
             } else {
                 value > modulus / 2
@@ -236,7 +236,7 @@ mod tests {
         for bit in [0, 1, 4, 5, 8, 31, 32, 51, 53, 60, 64, 100, 120] {
             let (nibble_bits, group) = packing_layout(bit);
             let base = BigInt::from(1) << nibble_bits;
-            let edge = vec![
+            let edge = [
                 -&base,
                 -&base + 1,
                 BigInt::from(-1),
