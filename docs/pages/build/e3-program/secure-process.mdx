@@ -25,9 +25,9 @@ An E3 program crate exports two functions from `program/src/lib.rs`:
 | `policy`        | `fn() -> InputPolicy`                  | How each input becomes a tree leaf, and which inputs to compute over. |
 
 The crate is named `e3-user-program` in the template (`program/Cargo.toml`). It depends on `fhe` and
-`fhe-traits` (fhe.rs, revision `873dc69`), `e3-compute-provider`, and `e3-fhe-params`. The dev
-runner, the OpenVM service, and the OpenVM guest in `guest/` link a crate with this name and call
-these two functions. See
+`fhe-traits` (fhe.rs, tag `v0.4.2`), `e3-compute-provider`, and `e3-fhe-params`. The dev runner, the
+OpenVM service, and the OpenVM guest in `guest/` link a crate with this name and call these two
+functions. See
 [The guest must match your E3 program](/build/e3-program/compute-provider#the-guest-must-match-your-e3-program).
 
 This is the policy and the processor of the default template
@@ -224,7 +224,7 @@ The processor has no secret key. It cannot read the value of a ciphertext, so it
 encrypted data. Control flow can use only public data, for example the number of inputs, their
 indices, and the parameters.
 
-| Operation (fhe.rs `873dc69`)                  | Result                                              |
+| Operation (fhe.rs `v0.4.2`)                   | Result                                              |
 | --------------------------------------------- | --------------------------------------------------- |
 | Ciphertext plus or minus ciphertext, negation | Two components. The output can be published.        |
 | Ciphertext plus, minus, or times plaintext    | Two components. The output can be published.        |
