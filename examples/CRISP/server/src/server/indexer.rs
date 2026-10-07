@@ -254,15 +254,74 @@ fn order_token_holders(holders: &mut [TokenHolder]) {
     });
 }
 
+/// Post the census root of a Merkle round to `CRISPProgram`, unless that root is already set.
+async fn ensure_merkle_root(e3_id: &str, token_holder_hashes: Vec<String>) -> eyre::Result<()> {
+    let tree = build_tree(token_holder_hashes).with_context(|| "Failed to build tree")?;
+    let merkle_root = tree
+        .root()
+        .ok_or_else(|| eyre::eyre!("Failed to get merkle root from tree"))?;
+    info!("[e3_id={}] Merkle root: {}", e3_id, merkle_root);
+    let merkle_root_bytes = hex::decode(&merkle_root)
+        .with_context(|| format!("[e3_id={}] Merkle root is not valid hex", e3_id))?;
+    let merkle_root_u256 = U256::from_be_slice(&merkle_root_bytes);
+    let e3_id_u256 = U256::from_str_radix(e3_id, 10)
+        .with_context(|| format!("[e3_id={}] Invalid E3 ID", e3_id))?;
+    info!(
+        "[e3_id={}] Ensuring CRISPProgram Merkle root: {}",
+        e3_id, merkle_root_u256
+    );
+    let contract = CRISPContractFactory::create_write(
+        &CONFIG.http_rpc_url,
+        &CONFIG.e3_program_address,
+        &CONFIG.private_key,
+    )
+    .await
+    .with_context(|| format!("[e3_id={}] Failed to create CRISP contract", e3_id))?;
+    let stored_root = contract.get_merkle_root(e3_id_u256).await?;
+    if stored_root == merkle_root_u256 {
+        info!(
+            "[e3_id={}] Merkle root is already set to the expected value",
+            e3_id
+        );
+    } else if stored_root.is_zero() {
+        match contract.set_merkle_root(e3_id_u256, merkle_root_u256).await {
+            Ok(receipt) => info!(
+                "[e3_id={}] setMerkleRoot successful. TxHash: {:?}",
+                e3_id, receipt.transaction_hash
+            ),
+            Err(error) => {
+                // A live subscription and its overlap replay can race here. Accept
+                // the losing transaction only when the desired root landed.
+                let root_after_error = contract.get_merkle_root(e3_id_u256).await?;
+                if root_after_error != merkle_root_u256 {
+                    return Err(error).with_context(|| {
+                        format!("[e3_id={}] Failed to call setMerkleRoot", e3_id)
+                    });
+                }
+                info!(
+                    "[e3_id={}] Merkle root was set by a concurrent handler",
+                    e3_id
+                );
+            }
+        }
+    } else {
+        return Err(eyre::eyre!(
+            "[e3_id={}] CRISPProgram has a different Merkle root: expected {}, got {}",
+            e3_id,
+            merkle_root_u256,
+            stored_root
+        ));
+    }
+    Ok(())
+}
+
 /// What `E3Requested` does with a round once the divisor sources have answered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RegistrationPlan {
-    /// Register the round and run holder discovery with this divisor. Off a local chain, a
-    /// CUSTOM-credit TOKEN round with `None` fails in discovery: a Merkle round must not be built
-    /// in unknown units.
+    /// Register the round and run holder discovery with this divisor.
     Discover(Option<U256>),
-    /// Register the round but skip holder discovery: an on-chain round with no known divisor
-    /// is fully votable, and building the census in unknown units would serve wrong balances.
+    /// Register the round but defer holder discovery to the retry pass: building the census in
+    /// unknown units would serve wrong balances.
     RegisterWithoutDiscovery,
 }
 
@@ -272,9 +331,7 @@ enum RegistrationPlan {
 /// Registration itself never depends on the divisor. The live listener logs a handler error
 /// and moves on, so an `Err` from this handler does not defer anything: it drops the round
 /// from coordinator metadata until the next backfill replays the event. Only discovery is
-/// divisor-dependent. An on-chain round is still votable without a census, so only its discovery
-/// is skipped. A Merkle round has no votes without a census, so off a local chain its discovery
-/// fails.
+/// divisor-dependent, so only discovery is deferred.
 ///
 /// The divisor is chosen by three rules, in order:
 ///
@@ -288,7 +345,6 @@ fn plan_registration(
     stored_divisor: Option<U256>,
     requested_divisor: &str,
     credit_mode: CreditMode,
-    census_mode: CensusMode,
 ) -> RegistrationPlan {
     if credit_mode != CreditMode::Custom {
         return RegistrationPlan::Discover(None);
@@ -300,7 +356,7 @@ fn plan_registration(
             .filter(nonzero)
     });
     match divisor {
-        None if census_mode == CensusMode::Onchain => RegistrationPlan::RegisterWithoutDiscovery,
+        None => RegistrationPlan::RegisterWithoutDiscovery,
         divisor => RegistrationPlan::Discover(divisor),
     }
 }
@@ -460,7 +516,6 @@ pub async fn register_e3_requested(
                     stored_divisor,
                     &custom_params.voting_power_divisor,
                     custom_params.credit_mode,
-                    custom_params.census_mode,
                 );
                 let (divisor, divisor_unavailable) = match plan {
                     RegistrationPlan::Discover(divisor) => (divisor, false),
@@ -480,12 +535,7 @@ pub async fn register_e3_requested(
                 // `discover_holders` so the retry pass for a round registered without a census
                 // runs the same code with the same refusals.
                 let discovery: eyre::Result<Vec<TokenHolder>> = if divisor_unavailable {
-                    Err(eyre::eyre!(
-                        "[e3_id={}] Holder discovery skipped: no voting-power divisor is known \
-                         for this on-chain round, and any other value would scale the census in \
-                         units the contract does not read back.",
-                        e3_id
-                    ))
+                    Ok(Vec::new())
                 } else {
                     discover_holders(
                         &e3_id,
@@ -525,7 +575,7 @@ pub async fn register_e3_requested(
                     Err(e) => return Err(e),
                 };
 
-                if token_holders.is_empty() {
+                if token_holders.is_empty() && !divisor_unavailable {
                     if !is_onchain_census {
                         return Err(eyre::eyre!(
                             "[e3_id={}] No eligible token holders found for token address {}.",
@@ -557,8 +607,7 @@ pub async fn register_e3_requested(
                 .await?;
 
                 // Store eligible addresses in the repository.
-                repo.set_eligible_addresses(token_holders.clone())
-                    .await?;
+                repo.set_eligible_addresses(token_holders.clone()).await?;
 
                 // Record the debt so `retry_pending_discovery` settles it later. Two causes:
                 //
@@ -573,12 +622,8 @@ pub async fn register_e3_requested(
                 // the round index and exits when nothing is owed, so starting it here could let
                 // it run before this round is listed, find nothing, and leave the debt to a
                 // restart.
-                let retry_discovery = record_discovery_debt(
-                    &mut repo,
-                    divisor_unavailable,
-                    discovery_failed,
-                )
-                .await?;
+                let retry_discovery =
+                    record_discovery_debt(&mut repo, divisor_unavailable, discovery_failed).await?;
 
                 // Poseidon hashes exist to build the census tree, and an on-chain census has no
                 // tree: `_eligibility` reads power from the token per input. The addresses are
@@ -609,80 +654,8 @@ pub async fn register_e3_requested(
                 // Skipped for an on-chain census: `_eligibility` never reads `merkleRoot` in
                 // that mode, so posting one would spend gas to publish a value nothing consults —
                 // and would imply the list gates eligibility when it does not.
-                if !is_onchain_census {
-                    let tree =
-                        build_tree(token_holder_hashes).with_context(|| "Failed to build tree")?;
-                    let merkle_root = tree
-                        .root()
-                        .ok_or_else(|| eyre::eyre!("Failed to get merkle root from tree"))?;
-
-                    info!("[e3_id={}] Merkle root: {}", e3_id, merkle_root);
-
-                    // Convert merkle root from hex string to U256.
-                    let merkle_root_bytes = hex::decode(&merkle_root)
-                        .with_context(|| format!("[e3_id={}] Merkle root is not valid hex", e3_id))?;
-                    let merkle_root_u256 = U256::from_be_slice(&merkle_root_bytes);
-
-                    let e3_id_u256 = U256::from_str_radix(&e3_id, 10)
-                        .with_context(|| format!("[e3_id={}] Invalid E3 ID", e3_id))?;
-
-                    info!(
-                        "[e3_id={}] Ensuring CRISPProgram Merkle root: {}",
-                        e3_id, merkle_root_u256
-                    );
-
-                    let contract = CRISPContractFactory::create_write(
-                        &CONFIG.http_rpc_url,
-                        &CONFIG.e3_program_address,
-                        &CONFIG.private_key,
-                    )
-                    .await
-                    .with_context(|| {
-                        format!("[e3_id={}] Failed to create CRISP contract", e3_id)
-                    })?;
-
-                    let stored_root = contract.get_merkle_root(e3_id_u256).await?;
-                    if stored_root == merkle_root_u256 {
-                        info!(
-                            "[e3_id={}] Merkle root is already set to the expected value",
-                            e3_id
-                        );
-                    } else if stored_root.is_zero() {
-                        match contract
-                            .set_merkle_root(e3_id_u256, merkle_root_u256)
-                            .await
-                        {
-                            Ok(receipt) => info!(
-                                "[e3_id={}] setMerkleRoot successful. TxHash: {:?}",
-                                e3_id, receipt.transaction_hash
-                            ),
-                            Err(error) => {
-                                // A live subscription and its overlap replay can race here. Accept
-                                // the losing transaction only when the desired root landed.
-                                let root_after_error =
-                                    contract.get_merkle_root(e3_id_u256).await?;
-                                if root_after_error != merkle_root_u256 {
-                                    return Err(error).with_context(|| {
-                                        format!(
-                                            "[e3_id={}] Failed to call setMerkleRoot",
-                                            e3_id
-                                        )
-                                    });
-                                }
-                                info!(
-                                    "[e3_id={}] Merkle root was set by a concurrent handler",
-                                    e3_id
-                                );
-                            }
-                        }
-                    } else {
-                        return Err(eyre::eyre!(
-                            "[e3_id={}] CRISPProgram has a different Merkle root: expected {}, got {}",
-                            e3_id,
-                            merkle_root_u256,
-                            stored_root
-                        ));
-                    }
+                if !is_onchain_census && !divisor_unavailable {
+                    ensure_merkle_root(&e3_id, token_holder_hashes).await?;
                 }
 
                 // Committee and request handlers run concurrently for live logs. If the key was
@@ -1504,11 +1477,11 @@ async fn record_discovery_debt<S: DataStore>(
 ///
 /// A round carries `discovery_pending` when its census could not be built at `E3Requested`:
 /// either the stored voting-power divisor could not be read, or discovery itself failed and was
-/// swallowed to keep an on-chain-census round votable. Such a round is registered and votable but
-/// serves no mask targets. The event is not replayed once the cursor passes it, so this pass is
-/// the only retry. It reads the divisor again for each such CUSTOM-credit round and, when it
-/// answers, runs the same discovery the handler would have run. A round that has ended is
-/// dropped from the pass: there is nobody left to mask.
+/// swallowed to keep an on-chain-census round votable. Such a round serves no mask targets, and a
+/// Merkle one takes no ballot until this pass posts its root. The event is not replayed once the
+/// cursor passes it, so this pass is the only retry. It reads the divisor again for each such
+/// CUSTOM-credit round and, when it answers, runs the same discovery the handler would have run.
+/// A round that has ended is dropped from the pass: there is nobody left to mask.
 ///
 /// One task for the process, started at registration. It sleeps on `DISCOVERY_OWED` while nothing
 /// is owed. `notify_one` keeps a permit when the task is mid-pass, so debt recorded after the pass
@@ -1598,7 +1571,8 @@ async fn retry_pending_discovery<S: DataStore>(store: SharedStore<S>) {
 /// Run the discovery a round was owed, store the holders, and clear the debt.
 ///
 /// Returns the holder count. The debt is cleared only after the holders are stored, so a
-/// failure between the two leaves the round owed rather than served an empty census.
+/// failure between the two leaves the round owed rather than served an empty census. A Merkle
+/// round also gets its root posted and its leaf hashes stored first.
 async fn settle_pending_discovery<S: DataStore>(
     repo: &mut CrispE3Repository<S>,
     e3_id: &str,
@@ -1626,7 +1600,7 @@ async fn settle_pending_discovery<S: DataStore>(
         .with_context(|| "Invalid stored token address")?;
     let balance_threshold = BigUint::parse_bytes(round.balance_threshold.as_bytes(), 10)
         .ok_or_else(|| eyre::eyre!("Invalid stored balance threshold"))?;
-    let holders = discover_holders(
+    let mut holders = discover_holders(
         e3_id,
         &custom_params,
         requester,
@@ -1637,6 +1611,12 @@ async fn settle_pending_discovery<S: DataStore>(
     )
     .await?;
     let count = holders.len();
+    order_token_holders(&mut holders);
+    if round.census_mode != CensusMode::Onchain {
+        let hashes = compute_token_holder_hashes(&holders)?;
+        ensure_merkle_root(e3_id, hashes.clone()).await?;
+        repo.set_token_holder_hashes(hashes).await?;
+    }
     repo.set_eligible_addresses(holders).await?;
     repo.set_discovery_pending(false).await?;
     Ok(count)
@@ -2203,36 +2183,31 @@ mod voting_power_divisor_tests {
         plan_registration,
         RegistrationPlan::{Discover, RegisterWithoutDiscovery},
     };
-    use crate::server::models::{
-        CensusMode::{Onchain, Token},
-        CreditMode::{Constant, Custom},
-    };
+    use crate::server::models::CreditMode::{Constant, Custom};
     use alloy::primitives::U256;
 
     #[test]
     fn the_stored_divisor_wins_and_a_nonzero_request_is_the_fallback() {
         let stored = Some(U256::from(100_000_000_000_000_000u128));
         let requested = Some(U256::from(5000));
-        for (s, field, credit, census, plan) in [
+        for (s, field, credit, plan) in [
             // The stored value is what `CRISPProgram` scales every voter by.
-            (stored, "0", Custom, Token, Discover(stored)),
-            (stored, "5000", Custom, Onchain, Discover(stored)),
+            (stored, "0", Custom, Discover(stored)),
+            (stored, "5000", Custom, Discover(stored)),
             // After a failed read, a non-zero request is the value the contract stored.
-            (None, "5000", Custom, Token, Discover(requested)),
-            (None, "5000", Custom, Onchain, Discover(requested)),
-            // A zero or unparseable request asked for the minimum: TOKEN still runs discovery,
-            // which fails; ONCHAIN registers without it.
-            (None, "0", Custom, Token, Discover(None)),
-            (None, "", Custom, Onchain, RegisterWithoutDiscovery),
-            (None, "0", Custom, Onchain, RegisterWithoutDiscovery),
+            (None, "5000", Custom, Discover(requested)),
+            // A zero or unparseable request asked for the minimum, which only the contract
+            // computes. The round registers and owes discovery, whatever its census mode.
+            (None, "0", Custom, RegisterWithoutDiscovery),
+            (None, "", Custom, RegisterWithoutDiscovery),
             // A CONSTANT-credit round stores no divisor and takes none.
-            (stored, "5000", Constant, Onchain, Discover(None)),
-            (None, "0", Constant, Token, Discover(None)),
+            (stored, "5000", Constant, Discover(None)),
+            (None, "0", Constant, Discover(None)),
         ] {
             assert_eq!(
-                plan_registration(s, field, credit, census),
+                plan_registration(s, field, credit),
                 plan,
-                "{s:?} {field:?} {credit:?} {census:?}"
+                "{s:?} {field:?} {credit:?}"
             );
         }
     }
