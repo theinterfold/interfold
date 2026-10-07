@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use alloy::{
+    eips::BlockId,
     network::{Ethereum, EthereumWallet},
     primitives::{Address, Bytes, B256, I256, U256},
     providers::{
@@ -12,7 +13,7 @@ use alloy::{
             BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
             WalletFiller,
         },
-        Identity, ProviderBuilder, RootProvider, WalletProvider,
+        Identity, Provider, ProviderBuilder, RootProvider, WalletProvider,
     },
     rpc::types::TransactionReceipt,
     signers::local::PrivateKeySigner,
@@ -655,13 +656,23 @@ impl CRISPContract<CRISPReadProvider> {
 
     /// The voting-power divisor and snapshot `CRISPProgram` stored for a CUSTOM-credit round at
     /// request time. A census must scale every voter by exactly this divisor and read every voter at
-    /// exactly this snapshot. `Ok(None)` when the contract holds zero for either: a CONSTANT-credit
-    /// round, a round it never initialized, or a node that lacks the request block.
+    /// exactly this snapshot. `validate` writes both in one transaction and both are read at one
+    /// block, so a non-zero divisor vouches for the snapshot beside it. `Ok(None)` when the divisor
+    /// is zero: a CONSTANT-credit round, a round it never initialized, or a node that lacks the
+    /// request block.
     pub async fn stored_voting_power_scale(&self, e3_id: U256) -> Result<Option<(U256, u64)>> {
         let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
-        let divisor = contract.votingPowerDivisorOf(e3_id).call().await?;
-        let snapshot = contract.snapshotOf(e3_id).call().await?.to::<u64>();
-        Ok((!divisor.is_zero() && snapshot != 0).then_some((divisor, snapshot)))
+        let block = BlockId::number(self.provider.get_block_number().await?);
+        let divisor = contract
+            .votingPowerDivisorOf(e3_id)
+            .block(block)
+            .call()
+            .await?;
+        if divisor.is_zero() {
+            return Ok(None);
+        }
+        let snapshot = contract.snapshotOf(e3_id).block(block).call().await?;
+        Ok(Some((divisor, snapshot.to::<u64>())))
     }
 }
 

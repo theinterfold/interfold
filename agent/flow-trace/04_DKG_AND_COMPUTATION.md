@@ -2168,12 +2168,14 @@ coordinator. A census-tree round takes it from the census leaf, so it also relie
 writing `credits` (CONSTANT) or the scaled voting power (CUSTOM) into each leaf, the same trust the
 census already carries. The server reads CUSTOM leaf balances at `snapshotOf(e3Id)`, in the clock
 units of the token, which is the snapshot that sized the divisor. It retries a failed `getPastVotes`
-read. If the read keeps failing, the server builds no census: `setMerkleRoot` accepts one root, so a
-census without that voter would bar the voter for the whole round. A CUSTOM round also relies on the
-token: at the snapshot, `getPastVotes` over all accounts must not sum above `getPastTotalSupply`.
-ERC20Votes meets this. `BondedVotes` with an escrow votes source does not guarantee it (see the
-`BondedVotes` gap in `invariants/01_PROTOCOL_ONCHAIN.md`). The bound still holds while the FOLD that
-two accounts both count is at most the FOLD that carries no vote at the snapshot.
+read. If the read keeps failing, the server posts no root: `setMerkleRoot` accepts one root, so a
+census without that voter would bar the voter for the whole round. The round stays registered with
+`discovery_pending` set, and a retry pass posts the root after it reads every voter. A CUSTOM round
+also relies on the token: at the snapshot, `getPastVotes` over all accounts must not sum above
+`getPastTotalSupply`. ERC20Votes meets this. `BondedVotes` with an escrow votes source does not
+guarantee it (see the `BondedVotes` gap in `invariants/01_PROTOCOL_ONCHAIN.md`). The bound still
+holds while the FOLD that two accounts both count is at most the FOLD that carries no vote at the
+snapshot.
 
 A round where _every_ entry is unusable fails at the output commitment, because the processor's
 empty ciphertext does not deserialize. That is only reachable when no honest input exists, and is

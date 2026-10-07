@@ -226,10 +226,10 @@ impl EtherscanClient {
 
     /// Resolve an EIP-6372 timestamp timepoint to the highest block mined at or before it.
     ///
-    /// The E3 census snapshot is a timepoint, not a block height: `Interfold.request`
-    /// assigns `block.timestamp` to `E3.requestBlock` regardless of the census token.
-    /// Log queries address blocks, so the timepoint must be converted before it can
-    /// bound a `getLogs` range.
+    /// A census timepoint can be a timestamp rather than a block height: `Interfold.request`
+    /// assigns `block.timestamp` to `E3.requestBlock`, and a timestamp-clock token records
+    /// `snapshotOf` in seconds. Log queries address blocks, so such a timepoint must be converted
+    /// before it can bound a `getLogs` range.
     ///
     /// Resolved over RPC by binary search rather than through Etherscan's
     /// `getblocknobytime`, which is a Pro-tier endpoint and fails on free API keys.
@@ -1756,14 +1756,15 @@ mod tests {
         let api_key = &CONFIG.etherscan_api_key;
         let rpc_url = &CONFIG.http_rpc_url;
         let threshold = U256::ZERO;
-        // A timepoint, matching what `E3.requestBlock` carries — not a block height.
-        let snapshot_timepoint = 1761201108;
+        // `snapshotOf` is in the clock units of the token. This token runs a block-number clock,
+        // and Sepolia block 9471180 was mined at timestamp 1761201108.
+        let snapshot = 9471180;
 
         let client = EtherscanClient::new(api_key.to_string(), chain_id);
         let res = client
             .get_token_holders_with_voting_power(
                 token_address,
-                snapshot_timepoint,
+                snapshot,
                 rpc_url,
                 threshold,
                 // The divisor `CRISPProgram` stored for the round.

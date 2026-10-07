@@ -584,9 +584,9 @@ every section.
   including updates and masks, on both `publishInput` and `validateInputProof`. A census-tree round
   also relies on the coordinator writing `credits` or the scaled voting power at the snapshot into
   each leaf. For a CUSTOM-credit round, the server reads that power at `snapshotOf(e3Id)`, in the
-  clock units of the token. If the server cannot read the power of a voter, it builds no census. A
-  change to the tally format, the credit modes, or the parameter sets needs a new bound. —
-  `flow-trace/04`
+  clock units of the token. If the server cannot read the power of a voter, it posts no root until a
+  retry pass reads every voter. A change to the tally format, the credit modes, or the parameter
+  sets needs a new bound. — `flow-trace/04`
 - **CRISP constrains every coefficient of the ballot plaintext, at the real BFV degree.** The
   witness generator reverses the message over the full degree, so option `o` is `k1[D - 1 - o]`.
   `check_coefficient_values_with_balance` must decode each option weight from that coefficient,

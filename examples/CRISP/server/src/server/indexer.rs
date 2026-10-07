@@ -72,8 +72,8 @@ fn stage_ends_input_retrieval(stage: &E3Stage) -> bool {
 }
 
 /// Read the divisor and snapshot `CRISPProgram` stored for a CUSTOM-credit round, or `None` after
-/// `E3_VISIBLE_ATTEMPTS`. The contract never stores zero for such a round, so a zero read is a
-/// node that lacks the request block, and it is retried like a failed read.
+/// `E3_VISIBLE_ATTEMPTS`. The contract never stores a zero divisor for such a round, so a zero read
+/// is a node that lacks the request block, and it is retried like a failed read.
 async fn read_stored_scale(
     crisp: &CRISPContract<CRISPReadProvider>,
     e3_id: U256,
@@ -113,11 +113,12 @@ async fn read_stored_scale(
 /// round: the contract reads power per input, so the only cost is mask cover.
 ///
 /// One function for both callers: the `E3Requested` handler and the retry pass for a round that
-/// was registered without a census because its divisor could not be read. `stored` is the divisor
-/// and snapshot of a CUSTOM-credit round, or `None` for a CONSTANT-credit round. A CUSTOM-credit
-/// census is read at that snapshot, not at `snapshot_timepoint`: the divisor bounds the census sum
-/// only at the timepoint whose supply sized it. Off a local chain, a CUSTOM-credit round without
-/// them fails discovery.
+/// was registered without a census, because its divisor and snapshot could not be read or its
+/// discovery failed. Both callers therefore refuse the same lists. `stored` is the divisor and
+/// snapshot of a CUSTOM-credit round, or `None` for a CONSTANT-credit round. A CUSTOM-credit census
+/// is read at that snapshot, not at `snapshot_timepoint`: the divisor bounds the census sum only at
+/// the timepoint whose supply sized it. Off a local chain, a CUSTOM-credit round without them fails
+/// discovery.
 async fn discover_holders(
     e3_id: &str,
     custom_params: &CustomParams,
@@ -127,7 +128,7 @@ async fn discover_holders(
     balance_threshold: &BigUint,
     stored: Option<(U256, u64)>,
 ) -> eyre::Result<Vec<TokenHolder>> {
-    Ok(if custom_params.census_mode == CensusMode::ByRequester {
+    let holders = if custom_params.census_mode == CensusMode::ByRequester {
         let credits_str = match custom_params.credit_mode {
             CreditMode::Constant => custom_params
                 .credits
@@ -242,7 +243,51 @@ async fn discover_holders(
                     .context("Etherscan token-holder discovery failed")?
             }
         }
-    })
+    };
+
+    // A census-tree list is the electorate, so an empty one admits no ballot and fails discovery.
+    // An on-chain list only indexes mask targets, so the handler warns about an empty one instead.
+    if holders.is_empty() && custom_params.census_mode != CensusMode::Onchain {
+        return Err(eyre::eyre!(
+            "[e3_id={}] No eligible token holders found for token address {}.",
+            e3_id,
+            token_address
+        ));
+    }
+    Ok(holders)
+}
+
+/// The holders to register a round with, and whether its discovery is still owed.
+///
+/// A failed discovery never drops the round. The `E3Requested` log is not replayed once the cursor
+/// passes it, so the round registers with an empty list and the retry pass builds the census. The
+/// cause is usually transient: a rate limit, a rejected API key, or a voter whose votes could not
+/// be read. An on-chain round stays votable meanwhile. A census-tree round takes no ballot until
+/// the retry pass posts its root.
+fn holders_or_owed(
+    e3_id: &str,
+    is_onchain_census: bool,
+    discovery: eyre::Result<Vec<TokenHolder>>,
+) -> (Vec<TokenHolder>, bool) {
+    let error = match discovery {
+        Ok(holders) => return (holders, false),
+        Err(error) => error,
+    };
+    if is_onchain_census {
+        warn!(
+            "[e3_id={}] CensusMode::Onchain holder discovery failed: {:#}. The round is still \
+             recorded and votable — eligibility is read from the token at publish time — but \
+             clients have no mask targets until a retry succeeds.",
+            e3_id, error
+        );
+    } else {
+        warn!(
+            "[e3_id={}] Census discovery failed: {:#}. The round is recorded without a census and \
+             takes no ballot until a retry posts its root.",
+            e3_id, error
+        );
+    }
+    (Vec::new(), true)
 }
 
 fn order_token_holders(holders: &mut [TokenHolder]) {
@@ -498,41 +543,16 @@ pub async fn register_e3_requested(
                     .await
                 };
 
-                // Fatal only where the list decides who may vote. For a Merkle round an empty
-                // census means nobody can ever cast a ballot, so failing loudly is right. For an
-                // on-chain census the list is an index over what the contract already decides:
-                // failing here would skip `initialize_round`, leaving a perfectly votable round
-                // unrecorded and invisible to every client, because discovery happened to come
-                // back empty — a missing API key or a rate limit would be enough.
+                let (mut token_holders, discovery_failed) =
+                    holders_or_owed(&e3_id, is_onchain_census, discovery);
 
-                let mut discovery_failed = false;
-                let mut token_holders = match discovery {
-                    Ok(holders) => holders,
-                    Err(e) if is_onchain_census => {
-                        warn!(
-                            "[e3_id={}] CensusMode::Onchain holder discovery failed: {:#}. The \
-                             round is still recorded and votable — eligibility is read from the \
-                             token at publish time — but clients have no mask targets.",
-                            e3_id, e
-                        );
-                        // Recorded as a debt below: the cause is usually transient (a rate limit
-                        // or a momentarily rejected API key), and without a retry one blip leaves
-                        // the round permanently unmaskable.
-                        discovery_failed = true;
-                        Vec::new()
-                    }
-                    Err(e) => return Err(e),
-                };
-
-                if token_holders.is_empty() && !divisor_unavailable {
-                    if !is_onchain_census {
-                        return Err(eyre::eyre!(
-                            "[e3_id={}] No eligible token holders found for token address {}.",
-                            e3_id,
-                            token_address
-                        ));
-                    }
-
+                // `discover_holders` refuses an empty census-tree list. An empty on-chain list
+                // costs mask cover and nothing else, so the round goes ahead.
+                if is_onchain_census
+                    && token_holders.is_empty()
+                    && !divisor_unavailable
+                    && !discovery_failed
+                {
                     warn!(
                         "[e3_id={}] CensusMode::Onchain discovery found no holders for {}. The \
                          round is still recorded and votable — eligibility is read from the token \
@@ -560,11 +580,8 @@ pub async fn register_e3_requested(
 
                 // Record the debt so `retry_pending_discovery` settles it later. Two causes:
                 //
-                //   - discovery was SKIPPED for want of a divisor, not refused; or
-                //   - discovery RAN and failed, which for an on-chain census is swallowed above to
-                //     keep the round votable. That path previously left no debt, so a transient
-                //     Etherscan rate limit or key rejection permanently denied every client its
-                //     mask targets — the exact failure the comment above anticipates.
+                //   - discovery was SKIPPED for want of a divisor and snapshot, not refused; or
+                //   - discovery RAN and failed, which `holders_or_owed` absorbs to keep the round.
                 //
                 // The event is not replayed once the cursor passes it, so nothing else would
                 // retry. The retry pass itself is started below, after `record_round`: it scans
@@ -602,8 +619,9 @@ pub async fn register_e3_requested(
 
                 // Skipped for an on-chain census: `_eligibility` never reads `merkleRoot` in
                 // that mode, so posting one would spend gas to publish a value nothing consults —
-                // and would imply the list gates eligibility when it does not.
-                if !is_onchain_census && !divisor_unavailable {
+                // and would imply the list gates eligibility when it does not. Skipped for an owed
+                // census too: the retry pass posts its root.
+                if !is_onchain_census && !retry_discovery {
                     ensure_merkle_root(&e3_id, token_holder_hashes).await?;
                 }
 
@@ -1425,12 +1443,12 @@ async fn record_discovery_debt<S: DataStore>(
 /// Settle holder discovery for rounds that were registered without a census.
 ///
 /// A round carries `discovery_pending` when its census could not be built at `E3Requested`:
-/// either the stored voting-power divisor could not be read, or discovery itself failed and was
-/// swallowed to keep an on-chain-census round votable. Such a round serves no mask targets, and a
-/// Merkle one takes no ballot until this pass posts its root. The event is not replayed once the
-/// cursor passes it, so this pass is the only retry. It reads the divisor again for each such
-/// CUSTOM-credit round and, when it answers, runs the same discovery the handler would have run.
-/// A round that has ended is dropped from the pass: there is nobody left to mask.
+/// either the stored voting-power divisor and snapshot could not be read, or discovery itself
+/// failed. Such a round serves no mask targets, and a Merkle one takes no ballot until this pass
+/// posts its root. The event is not replayed once the cursor passes it, so this pass is the only
+/// retry. It reads the divisor and snapshot again for each such CUSTOM-credit round and, when they
+/// answer, runs the same discovery the handler would have run. A round that has ended is dropped
+/// from the pass: it takes no more ballots.
 ///
 /// One task for the process, started at registration. It sleeps on `DISCOVERY_OWED` while nothing
 /// is owed. `notify_one` keeps a permit when the task is mid-pass, so debt recorded after the pass
@@ -1968,8 +1986,8 @@ mod stored_divisor_tests {
     use evm_helpers::CRISPContractFactory;
     use std::time::Duration;
 
-    /// `CRISPProgram` never stores a zero divisor or snapshot for a CUSTOM-credit round. A zero read
-    /// is a node that does not have the request block yet, and taking it as final drops the round.
+    /// `CRISPProgram` never stores a zero divisor for a CUSTOM-credit round. A zero read is a node
+    /// that does not have the request block yet, and taking it as final drops the round.
     #[tokio::test]
     async fn a_zero_read_from_a_lagging_node_is_retried() {
         let anvil = alloy::node_bindings::Anvil::new().try_spawn().unwrap();
@@ -1996,7 +2014,9 @@ mod stored_divisor_tests {
 
 #[cfg(test)]
 mod pending_discovery_tests {
-    use super::{pending_discovery_step, record_discovery_debt, PendingDiscoveryStep};
+    use super::{
+        holders_or_owed, pending_discovery_step, record_discovery_debt, PendingDiscoveryStep,
+    };
     use crate::server::models::{CensusMode, CreditMode, CustomParams, E3Crisp, TokenHolder};
     use crate::server::repo::CrispE3Repository;
     use e3_sdk::indexer::{InMemoryStore, SharedStore};
@@ -2121,5 +2141,14 @@ mod pending_discovery_tests {
         encoded.as_object_mut().unwrap().remove("discovery_pending");
         let decoded: E3Crisp = serde_json::from_value(encoded).unwrap();
         assert!(!decoded.discovery_pending);
+    }
+
+    /// The `E3Requested` log is not replayed, so a census-tree round whose discovery failed and
+    /// was not recorded as owed would never get a root, and nobody could vote in it.
+    #[test]
+    fn a_failed_census_tree_discovery_is_owed_rather_than_fatal() {
+        let (holders, owed) = holders_or_owed("1", false, Err(eyre::eyre!("rate limited")));
+        assert!(holders.is_empty());
+        assert!(owed);
     }
 }
