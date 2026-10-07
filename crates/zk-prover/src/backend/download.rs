@@ -27,6 +27,27 @@ const CIRCUIT_VARIANT_DIRS: &[&str] = &["default", "evm", "recursive"];
 
 // Release validation and installation use the same per-configuration inventory.
 const REQUIRED_ARTIFACTS: &str = include_str!("../../required-artifacts.json");
+// Preset directories that serve the l-BFV path also need its circuits.
+const REQUIRED_LBFV_ARTIFACTS: &str = include_str!("../../required-artifacts-lbfv.json");
+
+/// Whether the preset artifact directory `preset_dir` serves an l-BFV preset.
+fn is_lbfv_preset_dir(preset_dir: &str) -> bool {
+    e3_fhe_params::BfvPreset::PAIR_PRESETS
+        .iter()
+        .any(|preset| e3_fhe_params::supports_lbfv(*preset) && preset.artifacts_dir() == preset_dir)
+}
+
+/// The artifacts every pair of `preset_dir` must contain.
+fn required_artifacts(preset_dir: &str) -> Vec<&'static str> {
+    let mut required: Vec<&'static str> = serde_json::from_str(REQUIRED_ARTIFACTS)
+        .expect("invalid required circuit artifact inventory");
+    if is_lbfv_preset_dir(preset_dir) {
+        let lbfv: Vec<&'static str> = serde_json::from_str(REQUIRED_LBFV_ARTIFACTS)
+            .expect("invalid required l-BFV circuit artifact inventory");
+        required.extend(lbfv);
+    }
+    required
+}
 
 fn supported_configurations() -> Vec<(&'static str, &'static str)> {
     serde_json::from_str(include_str!("../../supported-configurations.json"))
@@ -434,8 +455,6 @@ async fn verify_circuits_dir(
         );
     }
 
-    let required: Vec<&str> = serde_json::from_str(REQUIRED_ARTIFACTS)
-        .expect("invalid required circuit artifact inventory");
     let mut configurations: HashSet<PathBuf> = required_configurations
         .iter()
         .map(|(preset, committee)| circuits_dir.join(preset).join(committee))
@@ -455,7 +474,13 @@ async fn verify_circuits_dir(
         }
     }
     for configuration in configurations {
-        for artifact in &required {
+        let preset_dir = configuration
+            .strip_prefix(circuits_dir)
+            .ok()
+            .and_then(|relative| relative.components().next())
+            .and_then(|component| component.as_os_str().to_str())
+            .unwrap_or_default();
+        for artifact in required_artifacts(preset_dir) {
             let path = configuration.join(artifact);
             if !path.is_file() {
                 return Err(ZkError::CircuitNotFound(
@@ -606,12 +631,11 @@ mod tests {
     }
 
     fn fixture_artifacts() -> Vec<String> {
-        let artifacts: Vec<&str> = serde_json::from_str(REQUIRED_ARTIFACTS).unwrap();
         supported_configurations()
             .into_iter()
             .flat_map(|(preset, committee)| {
-                artifacts
-                    .iter()
+                required_artifacts(preset)
+                    .into_iter()
                     .map(move |artifact| format!("{preset}/{committee}/{artifact}"))
             })
             .collect()
@@ -1078,6 +1102,15 @@ mod tests {
             fs::read(recovery_dir.join("previous-circuits/installed.txt")).unwrap(),
             b"installed"
         );
+    }
+
+    #[test]
+    fn only_lbfv_preset_dirs_require_the_lbfv_artifacts() {
+        let trbfv = required_artifacts("secure-8192").len();
+        let lbfv: Vec<&str> = serde_json::from_str(REQUIRED_LBFV_ARTIFACTS).unwrap();
+        assert!(!lbfv.is_empty());
+        assert_eq!(required_artifacts("insecure").len(), trbfv + lbfv.len());
+        assert_eq!(required_artifacts("secure-16384").len(), trbfv + lbfv.len());
     }
 
     #[test]

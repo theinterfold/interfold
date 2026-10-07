@@ -154,9 +154,11 @@ controlled resync before starting the protocol-4 process. Start protocol-4 nodes
 matching circuit archive before requests resume.
 
 The insecure BFV preset has degree 128. Its Rust and Serde names are `InsecureThreshold` and
-`InsecureDkg`. Serde accepts the legacy JSON names `InsecureThreshold512` and `InsecureDkg512`.
-The enum positions stay fixed, so existing JSON and bincode data remain readable. Older binaries
-cannot read JSON written with the suffix-free names. The preset's public names are
+`InsecureDkg`. The enum positions stay fixed, so existing bincode data remains readable. JSON that
+uses the legacy names `InsecureThreshold512` and `InsecureDkg512` no longer decodes, and older
+binaries cannot read JSON written with the suffix-free names. The layout lock reads the enum's
+Serde names as its variants, so the enum has no aliases. The l-BFV path adds the labels
+`InsecureThresholdLbfv` and `InsecureDkgLbfv` at the end of the enum, with the same parameters. The preset's public names are
 `INSECURE_THRESHOLD`, `INSECURE_DKG`, and `insecure`. The node event log and P2P payloads use
 bincode, so this change requires no protocol-version, node-generation, wire-major, or storage-schema
 increase.

@@ -11,6 +11,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statS
 import { join, relative, resolve } from 'path'
 import type { CircuitCommittee, CircuitPreset } from './circuit-constants'
 import requiredArtifacts from '../crates/zk-prover/required-artifacts.json'
+import requiredLbfvArtifacts from '../crates/zk-prover/required-artifacts-lbfv.json'
 import supportedConfigurations from '../crates/zk-prover/supported-configurations.json'
 
 const BRANCH = 'circuit-artifacts'
@@ -140,8 +141,12 @@ function stampFiles(dir: string): string[] {
   return stamps
 }
 
+// Preset directories that also serve the l-BFV path; the Rust installer applies the same rule.
+const LBFV_PRESET_DIRS = new Set(['insecure', 'secure-16384'])
+
 export function requiredArtifactMarkers(preset: string, committee: string): string[] {
-  return requiredArtifacts.map((artifact) => join(preset, committee, artifact))
+  const artifacts = LBFV_PRESET_DIRS.has(preset) ? [...requiredArtifacts, ...requiredLbfvArtifacts] : requiredArtifacts
+  return artifacts.map((artifact) => join(preset, committee, artifact))
 }
 
 type BuildStamp = {

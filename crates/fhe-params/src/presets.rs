@@ -51,14 +51,12 @@ pub enum BfvPreset {
     ///
     /// Used for threshold encryption (GRECO) and threshold decryption operations.
     /// These parameters define the threshold public key that data providers use to encrypt inputs.
-    #[serde(alias = "InsecureThreshold512")]
     InsecureThreshold,
     /// Insecure DKG parameters (degree 128) - DO NOT USE IN PRODUCTION
     ///
     /// Used during Phase 0-1 (BFV Key Setup and DKG) where each ciphernode generates
     /// a standard BFV key-pair to encrypt secret shares. These are temporary keys used
     /// only during the key generation process.
-    #[serde(alias = "InsecureDkg512")]
     InsecureDkg,
     /// Secure threshold BFV parameters (degree 8192) - PRODUCTION READY
     ///
@@ -95,6 +93,12 @@ pub enum BfvPreset {
     ///
     /// Declared last so the serialized indices of the earlier variants do not change.
     InsecureThresholdLbfv,
+    /// The DKG counterpart of [`BfvPreset::InsecureThresholdLbfv`], with the same parameters as
+    /// [`BfvPreset::InsecureDkg`] - DO NOT USE IN PRODUCTION
+    ///
+    /// Nodes keep the DKG preset and recover the threshold preset from it, so each insecure
+    /// threshold label needs its own DKG label for that round trip to keep the protocol path.
+    InsecureDkgLbfv,
 }
 
 impl BfvPreset {
@@ -322,10 +326,11 @@ impl BfvParamSet {
 }
 
 impl BfvPreset {
-    pub const ALL: [BfvPreset; 7] = [
+    pub const ALL: [BfvPreset; 8] = [
         BfvPreset::InsecureThreshold,
         BfvPreset::InsecureThresholdLbfv,
         BfvPreset::InsecureDkg,
+        BfvPreset::InsecureDkgLbfv,
         BfvPreset::SecureThreshold8192,
         BfvPreset::SecureDkg8192,
         BfvPreset::SecureThreshold16384,
@@ -347,6 +352,7 @@ impl BfvPreset {
             "INSECURE_THRESHOLD" => Ok(Self::InsecureThreshold),
             "INSECURE_THRESHOLD_LBFV" => Ok(Self::InsecureThresholdLbfv),
             "INSECURE_DKG" => Ok(Self::InsecureDkg),
+            "INSECURE_DKG_LBFV" => Ok(Self::InsecureDkgLbfv),
             "SECURE_THRESHOLD_8192" => Ok(Self::SecureThreshold8192),
             "SECURE_DKG_8192" => Ok(Self::SecureDkg8192),
             "SECURE_THRESHOLD_16384" => Ok(Self::SecureThreshold16384),
@@ -360,6 +366,7 @@ impl BfvPreset {
             BfvPreset::InsecureThreshold => "INSECURE_THRESHOLD",
             BfvPreset::InsecureThresholdLbfv => "INSECURE_THRESHOLD_LBFV",
             BfvPreset::InsecureDkg => "INSECURE_DKG",
+            BfvPreset::InsecureDkgLbfv => "INSECURE_DKG_LBFV",
             BfvPreset::SecureThreshold8192 => "SECURE_THRESHOLD_8192",
             BfvPreset::SecureDkg8192 => "SECURE_DKG_8192",
             BfvPreset::SecureThreshold16384 => "SECURE_THRESHOLD_16384",
@@ -419,12 +426,14 @@ impl BfvPreset {
     /// Returns `None` when called on a DKG preset.
     pub fn dkg_counterpart(self) -> Option<BfvPreset> {
         match self {
-            BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => {
-                Some(BfvPreset::InsecureDkg)
-            }
+            BfvPreset::InsecureThreshold => Some(BfvPreset::InsecureDkg),
+            BfvPreset::InsecureThresholdLbfv => Some(BfvPreset::InsecureDkgLbfv),
             BfvPreset::SecureThreshold8192 => Some(BfvPreset::SecureDkg8192),
             BfvPreset::SecureThreshold16384 => Some(BfvPreset::SecureDkg16384),
-            BfvPreset::InsecureDkg | BfvPreset::SecureDkg8192 | BfvPreset::SecureDkg16384 => None,
+            BfvPreset::InsecureDkg
+            | BfvPreset::InsecureDkgLbfv
+            | BfvPreset::SecureDkg8192
+            | BfvPreset::SecureDkg16384 => None,
         }
     }
 
@@ -436,6 +445,7 @@ impl BfvPreset {
     pub fn threshold_counterpart(self) -> Option<BfvPreset> {
         match self {
             BfvPreset::InsecureDkg => Some(BfvPreset::InsecureThreshold),
+            BfvPreset::InsecureDkgLbfv => Some(BfvPreset::InsecureThresholdLbfv),
             BfvPreset::SecureDkg8192 => Some(BfvPreset::SecureThreshold8192),
             BfvPreset::SecureDkg16384 => Some(BfvPreset::SecureThreshold16384),
             BfvPreset::InsecureThreshold
@@ -456,7 +466,7 @@ impl BfvPreset {
                 parameter_type: ParameterType::THRESHOLD,
                 security: SecurityTier::INSECURE,
             },
-            BfvPreset::InsecureDkg => PresetMetadata {
+            BfvPreset::InsecureDkg | BfvPreset::InsecureDkgLbfv => PresetMetadata {
                 name: self.name(),
                 degree: insecure::DEGREE,
                 num_moduli: insecure::dkg::MODULI.len(),
@@ -538,7 +548,8 @@ impl BfvPreset {
         match self {
             BfvPreset::InsecureThreshold
             | BfvPreset::InsecureThresholdLbfv
-            | BfvPreset::InsecureDkg => "insecure".to_string(),
+            | BfvPreset::InsecureDkg
+            | BfvPreset::InsecureDkgLbfv => "insecure".to_string(),
             _ => format!("{}-{}", meta.security.as_config_str(), meta.degree),
         }
     }
@@ -559,7 +570,8 @@ impl BfvPreset {
         match self {
             BfvPreset::InsecureThreshold
             | BfvPreset::InsecureThresholdLbfv
-            | BfvPreset::InsecureDkg => "insecure",
+            | BfvPreset::InsecureDkg
+            | BfvPreset::InsecureDkgLbfv => "insecure",
             BfvPreset::SecureThreshold8192 | BfvPreset::SecureDkg8192 => "secure_8192",
             BfvPreset::SecureThreshold16384 | BfvPreset::SecureDkg16384 => "secure_16384",
         }
@@ -622,7 +634,7 @@ impl From<BfvPreset> for BfvParamSet {
                 plaintext_modulus: insecure::threshold::PLAINTEXT_MODULUS,
                 error1_variance: Some(insecure::threshold::ERROR1_VARIANCE),
             },
-            BfvPreset::InsecureDkg => BfvParamSet {
+            BfvPreset::InsecureDkg | BfvPreset::InsecureDkgLbfv => BfvParamSet {
                 degree: insecure::DEGREE,
                 moduli: insecure::dkg::MODULI,
                 plaintext_modulus: insecure::dkg::PLAINTEXT_MODULUS,
@@ -661,40 +673,37 @@ mod tests {
     use super::*;
     use crate::constants::{insecure, secure_16384, secure_16384_search_defaults, secure_8192};
 
+    /// The insecure presets keep the bincode indices of `InsecureThreshold512` and
+    /// `InsecureDkg512`, so stored values still decode to them.
     #[test]
-    fn insecure_preset_rename_keeps_legacy_json_readable_and_bincode_stable() {
-        for (preset, name, legacy_name, index) in [
-            (
-                BfvPreset::InsecureThreshold,
-                "InsecureThreshold",
-                "InsecureThreshold512",
-                0u32,
-            ),
-            (
-                BfvPreset::InsecureDkg,
-                "InsecureDkg",
-                "InsecureDkg512",
-                1u32,
-            ),
+    fn insecure_preset_rename_keeps_bincode_stable() {
+        for (preset, index) in [
+            (BfvPreset::InsecureThreshold, 0u32),
+            (BfvPreset::InsecureDkg, 1u32),
         ] {
-            assert_eq!(
-                serde_json::to_string(&preset).unwrap(),
-                format!("\"{name}\"")
-            );
-            assert_eq!(
-                serde_json::from_str::<BfvPreset>(&format!("\"{name}\"")).unwrap(),
-                preset
-            );
-            assert_eq!(
-                serde_json::from_str::<BfvPreset>(&format!("\"{legacy_name}\"")).unwrap(),
-                preset
-            );
             assert_eq!(bincode::serialize(&preset).unwrap(), index.to_le_bytes());
             assert_eq!(
                 bincode::deserialize::<BfvPreset>(&index.to_le_bytes()).unwrap(),
                 preset
             );
         }
+    }
+
+    /// Nodes keep only the DKG preset and recover the threshold preset from it, so the round
+    /// trip must return the same threshold preset, and with it the same protocol path.
+    #[test]
+    fn dkg_counterpart_round_trips_to_the_same_threshold_preset() {
+        for preset in BfvPreset::PAIR_PRESETS {
+            let dkg = preset.dkg_counterpart().unwrap();
+            assert_eq!(dkg.threshold_counterpart(), Some(preset), "{preset:?}");
+        }
+        let (lbfv, trbfv) = (
+            BfvParamSet::from(BfvPreset::InsecureDkgLbfv),
+            BfvParamSet::from(BfvPreset::InsecureDkg),
+        );
+        assert_eq!(lbfv.degree, trbfv.degree);
+        assert_eq!(lbfv.moduli, trbfv.moduli);
+        assert_eq!(lbfv.plaintext_modulus, trbfv.plaintext_modulus);
     }
 
     #[test]

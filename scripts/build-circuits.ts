@@ -61,7 +61,35 @@ const SECURE_16384_ONLY_RECURSIVE_CIRCUITS = new Set([
   'dkg_aggregator_v2',
 ])
 
-const ALL_LBFV_CIRCUITS = new Set([...LBFV_THRESHOLD_CIRCUITS, ...SECURE_16384_ONLY_RECURSIVE_CIRCUITS])
+// The l-BFV path's own versions of shared steps: chunked C2, chunk-root C1/C3/C4 and their folds,
+// and the wide C7. Leaf circuits get every variant; folds get the non-ZK default only.
+const LBFV_PATH_LEAF_CIRCUITS: { name: string; group: CircuitGroup }[] = [
+  { name: 'sk_share_computation_chunk', group: CIRCUIT_GROUPS.DKG },
+  { name: 'esm_share_computation_chunk', group: CIRCUIT_GROUPS.DKG },
+  { name: 'share_encryption_chunked', group: CIRCUIT_GROUPS.DKG },
+  { name: 'share_decryption_chunked', group: CIRCUIT_GROUPS.DKG },
+  { name: 'pk_generation_chunked', group: CIRCUIT_GROUPS.THRESHOLD },
+  { name: 'decrypted_shares_aggregation_wide', group: CIRCUIT_GROUPS.THRESHOLD },
+  // C2 terminal projections are ZK leaves for `c2ab_chunk_fold`, not non-ZK accumulators.
+  { name: 'sk_c2_chunk_finalize', group: CIRCUIT_GROUPS.AGGREGATION },
+  { name: 'esm_c2_chunk_finalize', group: CIRCUIT_GROUPS.AGGREGATION },
+]
+
+const LBFV_PATH_FOLD_CIRCUITS = [
+  'c2_chunk_batch',
+  'c2ab_chunk_fold',
+  'c3_fold_chunked',
+  'c3_fold_kernel_chunked',
+  'c3ab_fold_chunked',
+  'node_fold_chunked',
+]
+
+const ALL_LBFV_CIRCUITS = new Set([
+  ...LBFV_THRESHOLD_CIRCUITS,
+  ...SECURE_16384_ONLY_RECURSIVE_CIRCUITS,
+  ...LBFV_PATH_LEAF_CIRCUITS.map(({ name }) => name),
+  ...LBFV_PATH_FOLD_CIRCUITS,
+])
 
 const LBFV_THRESHOLD_ARTIFACT_CIRCUITS = [...LBFV_THRESHOLD_CIRCUITS].map((name) => ({
   name,
@@ -70,8 +98,23 @@ const LBFV_THRESHOLD_ARTIFACT_CIRCUITS = [...LBFV_THRESHOLD_CIRCUITS].map((name)
   binExtensions: ['json', 'vk', 'vk_hash', 'vk_recursive', 'vk_recursive_hash', 'vk_noir', 'vk_noir_hash'],
 }))
 
+const LEAF_BIN_EXTENSIONS = ['json', 'vk', 'vk_hash', 'vk_recursive', 'vk_recursive_hash', 'vk_noir', 'vk_noir_hash']
+const FOLD_BIN_EXTENSIONS = ['json', 'vk_recursive', 'vk_recursive_hash']
+
 const SECURE_16384_ARTIFACT_CIRCUITS = [
   ...LBFV_THRESHOLD_ARTIFACT_CIRCUITS,
+  ...LBFV_PATH_LEAF_CIRCUITS.map(({ name, group }) => ({
+    name,
+    group,
+    variants: [CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_VARIANTS.EVM, CIRCUIT_VARIANTS.RECURSIVE],
+    binExtensions: LEAF_BIN_EXTENSIONS,
+  })),
+  ...LBFV_PATH_FOLD_CIRCUITS.map((name) => ({
+    name,
+    group: CIRCUIT_GROUPS.AGGREGATION,
+    variants: [CIRCUIT_VARIANTS.DEFAULT],
+    binExtensions: FOLD_BIN_EXTENSIONS,
+  })),
   ...[...SECURE_16384_ONLY_RECURSIVE_CIRCUITS].map((name) => ({
     name,
     group: CIRCUIT_GROUPS.AGGREGATION,

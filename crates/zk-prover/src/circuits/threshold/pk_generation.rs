@@ -20,4 +20,17 @@ impl Provable for PkGenerationCircuit {
     fn circuit(&self) -> CircuitName {
         CircuitName::PkGeneration
     }
+
+    /// The l-BFV path proves C1 with its chunk-root variant.
+    fn resolve_circuit_name(&self, params: &Self::Params, _input: &Self::Input) -> CircuitName {
+        if e3_fhe_params::is_lbfv_path(*params) {
+            CircuitName::PkGenerationChunked
+        } else {
+            CircuitName::PkGeneration
+        }
+    }
+
+    fn valid_circuits(&self) -> Vec<CircuitName> {
+        vec![CircuitName::PkGeneration, CircuitName::PkGenerationChunked]
+    }
 }

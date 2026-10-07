@@ -78,7 +78,7 @@ use e3_zk_helpers::circuits::threshold::pk_generation::{
     LbfvPkGenerationAdapter, LbfvPkGenerationCircuitData,
 };
 use e3_zk_helpers::computation::DkgInputType;
-use e3_zk_helpers::dkg::share_computation::ShareComputationCircuitData;
+use e3_zk_helpers::dkg::share_computation::{ShareComputationCircuit, ShareComputationCircuitData};
 use e3_zk_helpers::dkg::share_decryption::{ShareDecryptionCircuit, ShareDecryptionCircuitData};
 use e3_zk_helpers::dkg::share_encryption::{ShareEncryptionCircuit, ShareEncryptionCircuitData};
 use e3_zk_helpers::threshold::lbfv_pk_aggregation::{
@@ -119,7 +119,8 @@ fn c2_chunk_size_for_preset(preset: BfvPreset) -> usize {
     match preset {
         BfvPreset::InsecureThreshold
         | BfvPreset::InsecureThresholdLbfv
-        | BfvPreset::InsecureDkg => 128,
+        | BfvPreset::InsecureDkg
+        | BfvPreset::InsecureDkgLbfv => 128,
         _ => DEFAULT_C2_CHUNK_SIZE,
     }
 }
@@ -1838,12 +1839,14 @@ fn handle_node_dkg_fold_proof(
     let NodeDkgFoldProveResult {
         proof,
         step_timings,
-    } = prove_node_dkg_fold(prover, &input, &job_id, &artifacts_dir).map_err(|e| {
-        ComputeRequestError::new(
-            ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
-            request.clone(),
-        )
-    })?;
+    } = prove_node_dkg_fold(prover, &input, &job_id, &artifacts_dir, req.params_preset).map_err(
+        |e| {
+            ComputeRequestError::new(
+                ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
+                request.clone(),
+            )
+        },
+    )?;
     if let Some(report) = report {
         for step in step_timings {
             report.do_send(TrackDuration::new(
@@ -2227,16 +2230,27 @@ fn handle_share_computation_proof(
     let artifacts_dir =
         prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
 
-    // 7. Chunk proofs and terminal C2 projection. The production path uses the compiled default
-    // chunk size; the `zk_cli --chunk-size` option does not reach this handler.
-    let proof = prove_chunked_share_computation(
-        prover,
-        req.params_preset,
-        &circuit_data,
-        &inner_job_id,
-        &artifacts_dir,
-    )
-    .map(|result| result.proof)
+    // 7. The trBFV path proves C2 in one proof (sk_share_computation or e_sm_share_computation).
+    // The l-BFV path proves chunks and a terminal C2 projection; it uses the compiled default
+    // chunk size, and the `zk_cli --chunk-size` option does not reach this handler.
+    let proof = if e3_fhe_params::is_lbfv_path(req.params_preset) {
+        prove_chunked_share_computation(
+            prover,
+            req.params_preset,
+            &circuit_data,
+            &inner_job_id,
+            &artifacts_dir,
+        )
+        .map(|result| result.proof)
+    } else {
+        ShareComputationCircuit.prove(
+            prover,
+            &req.params_preset,
+            &circuit_data,
+            &inner_job_id,
+            &artifacts_dir,
+        )
+    }
     .map_err(|e| {
         ComputeRequestError::new(
             ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),

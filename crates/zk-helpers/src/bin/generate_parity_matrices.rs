@@ -76,7 +76,7 @@ fn file_for(root: &Path, committee: &str, preset: BfvPreset) -> PathBuf {
         BfvPreset::SecureThreshold8192 => "secure_8192",
         // Codegen runs against the threshold side of each preset family.
         // DKG-only variants don't need their own file.
-        BfvPreset::InsecureDkg => "insecure",
+        BfvPreset::InsecureDkg | BfvPreset::InsecureDkgLbfv => "insecure",
         BfvPreset::SecureDkg8192 => "secure_8192",
         BfvPreset::SecureThreshold16384 => "secure_16384",
         BfvPreset::SecureDkg16384 => "secure_16384",

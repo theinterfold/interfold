@@ -794,7 +794,7 @@ impl Computation for Inputs {
         let pk_commitment = compute_dkg_pk_commitment(&pk0is, &pk1is, pk_bit);
         // The trBFV C3 binds the share to C2's single commitment; the l-BFV path's chunked C2
         // commits each share as a chunk root keyed by (party, modulus) (`share_encryption_chunked`).
-        let chunked = e3_fhe_params::supports_lbfv(preset);
+        let chunked = e3_fhe_params::is_lbfv_path(preset);
         if chunked && data.chunk_size == 0 {
             return Err(CircuitsErrors::Sample(
                 "C3 chunk size must be greater than zero".to_string(),

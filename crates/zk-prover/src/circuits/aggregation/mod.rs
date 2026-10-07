@@ -11,6 +11,7 @@ pub(crate) mod c2_chunk_config;
 pub mod c2_chunk_layout;
 pub mod c2_terminal_validation;
 pub mod c3_accumulator;
+pub mod c3_accumulator_chunked;
 pub mod c6_accumulator;
 pub mod helpers;
 pub mod node_dkg_fold;

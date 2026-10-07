@@ -19,4 +19,20 @@ impl Provable for ShareDecryptionCircuit {
     fn circuit(&self) -> CircuitName {
         CircuitName::DkgShareDecryption
     }
+
+    /// The l-BFV path proves C4 with its chunk-root variant.
+    fn resolve_circuit_name(&self, params: &Self::Params, _input: &Self::Input) -> CircuitName {
+        if e3_fhe_params::is_lbfv_path(*params) {
+            CircuitName::DkgShareDecryptionChunked
+        } else {
+            CircuitName::DkgShareDecryption
+        }
+    }
+
+    fn valid_circuits(&self) -> Vec<CircuitName> {
+        vec![
+            CircuitName::DkgShareDecryption,
+            CircuitName::DkgShareDecryptionChunked,
+        ]
+    }
 }

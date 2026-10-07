@@ -13,6 +13,7 @@
 use crate::bigint_3d_to_json_values;
 use crate::circuits::commitments::{
     compute_sc_esm_secret_root_commitment, compute_sc_sk_secret_root_commitment,
+    compute_share_computation_e_sm_commitment, compute_share_computation_sk_commitment,
 };
 use crate::computation::DkgInputType;
 use crate::dkg::share_computation::ShareComputationCircuit;
@@ -246,12 +247,15 @@ impl Computation for Inputs {
         let (_, dkg_params) =
             build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
         let dkg_degree = dkg_params.degree();
-        if chunk_size == 0 {
+        // The trBFV path's single C2 proof commits the secret whole; the l-BFV path's chunked C2
+        // commits it as a root over `chunk_size`-coefficient chunks.
+        let lbfv = e3_fhe_params::is_lbfv_path(preset);
+        if lbfv && chunk_size == 0 {
             return Err(CircuitsErrors::Sample(
                 "C2 chunk size must be greater than zero".to_string(),
             ));
         }
-        if !dkg_degree.is_multiple_of(chunk_size) {
+        if lbfv && !dkg_degree.is_multiple_of(chunk_size) {
             return Err(CircuitsErrors::Sample(format!(
                 "C2 chunk size {chunk_size} must divide polynomial degree {dkg_degree}"
             )));
@@ -264,7 +268,11 @@ impl Computation for Inputs {
             DkgInputType::SecretKey => {
                 let mut reversed = secret_crt.limb(0).clone();
                 reversed.reverse();
-                compute_sc_sk_secret_root_commitment(&reversed, bits.bit_sk_secret, chunk_size)
+                if lbfv {
+                    compute_sc_sk_secret_root_commitment(&reversed, bits.bit_sk_secret, chunk_size)
+                } else {
+                    compute_share_computation_sk_commitment(&reversed, bits.bit_sk_secret)
+                }
             }
             DkgInputType::SmudgingNoise => {
                 let centered_reversed_crt = e3_polynomial::CrtPolynomial::new(
@@ -281,11 +289,18 @@ impl Computation for Inputs {
                         })
                         .collect(),
                 );
-                compute_sc_esm_secret_root_commitment(
-                    &centered_reversed_crt,
-                    bits.bit_e_sm_secret,
-                    chunk_size,
-                )
+                if lbfv {
+                    compute_sc_esm_secret_root_commitment(
+                        &centered_reversed_crt,
+                        bits.bit_e_sm_secret,
+                        chunk_size,
+                    )
+                } else {
+                    compute_share_computation_e_sm_commitment(
+                        &centered_reversed_crt,
+                        bits.bit_e_sm_secret,
+                    )
+                }
             }
         };
 

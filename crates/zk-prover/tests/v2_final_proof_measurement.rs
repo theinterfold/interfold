@@ -632,6 +632,7 @@ async fn secure_dkg_aggregator_v2_proves_and_verifies_evm() {
             },
             &format!("v2-final-legacy-node-{index}"),
             artifacts_dir.as_str(),
+            preset,
         )
         .expect("legacy NodeFold proof");
         assert!(prover

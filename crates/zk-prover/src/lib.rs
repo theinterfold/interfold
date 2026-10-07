@@ -36,6 +36,7 @@ pub use circuits::aggregation::c2_terminal_validation::{
     validate_c2_terminal_proof, C2TerminalAnchors,
 };
 pub use circuits::aggregation::c3_accumulator::generate_sequential_c3_fold;
+pub use circuits::aggregation::c3_accumulator_chunked::generate_sequential_c3_fold_chunked;
 pub use circuits::aggregation::c6_accumulator::generate_sequential_c6_fold;
 pub use circuits::aggregation::node_dkg_fold::{
     prove_decryption_aggregation_jobs, prove_dkg_aggregation, prove_node_dkg_fold,

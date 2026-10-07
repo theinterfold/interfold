@@ -8,8 +8,8 @@ use e3_zk_helpers::{
     LBFV_PK_GENERATION_LIMB_INPUTS, LBFV_PK_GENERATION_LIMB_OUTPUTS, LBFV_PK_GENERATION_OUTPUTS,
     PK_AGGREGATION_OUTPUTS, PK_BFV_OUTPUTS, PK_GENERATION_OUTPUTS, RLK_AGGREGATION_INPUTS,
     RLK_AGGREGATION_OUTPUTS, RLK_GENERATION_INPUTS, RLK_GENERATION_LIMB_INPUTS,
-    RLK_GENERATION_LIMB_OUTPUTS, RLK_GENERATION_OUTPUTS, SHARE_ENCRYPTION_INPUTS,
-    SHARE_ENCRYPTION_OUTPUTS, THRESHOLD_SHARE_DECRYPTION_INPUTS,
+    RLK_GENERATION_LIMB_OUTPUTS, RLK_GENERATION_OUTPUTS, SHARE_ENCRYPTION_CHUNKED_INPUTS,
+    SHARE_ENCRYPTION_INPUTS, SHARE_ENCRYPTION_OUTPUTS, THRESHOLD_SHARE_DECRYPTION_INPUTS,
     THRESHOLD_SHARE_DECRYPTION_OUTPUTS,
 };
 use serde::{Deserialize, Serialize};
@@ -119,9 +119,9 @@ pub enum CircuitName {
     PkBfv = 0,
     /// TrBFV public key share proof (C1).
     PkGeneration = 1,
-    /// Legacy SK share computation (C2a). Retain for bincode compatibility. Do not produce.
+    /// Single-proof SK share computation (C2a) on the trBFV path.
     SkShareComputation = 2,
-    /// Legacy ESM share computation (C2b). Retain for bincode compatibility. Do not produce.
+    /// Single-proof ESM share computation (C2b) on the trBFV path.
     ESmShareComputation = 3,
     /// Share encryption proof (C3).
     ShareEncryption = 4,
@@ -141,7 +141,7 @@ pub enum CircuitName {
     C6Fold = 11,
     /// Bootstrap circuit for [`CircuitName::C6Fold`] genesis accumulator proof (same ABI, no acc verify).
     C6FoldKernel = 12,
-    /// Legacy ad-hoc aggregation C2a + C2b. Retain for bincode compatibility. Do not produce.
+    /// Ad-hoc: C2a + C2b single proofs on the trBFV path.
     C2abFold = 13,
     /// Ad-hoc: final sk `c3_fold` + final e_sm `c3_fold`.
     C3abFold = 14,
@@ -197,6 +197,22 @@ pub enum CircuitName {
     DkgAggregatorV2 = 39,
     /// One CRT limb of one l-BFV public-key row.
     LbfvPkGenerationLimb = 40,
+    /// C1 on the l-BFV path: commits `sk` and `e_sm` as the chunk roots the chunked C2 outputs.
+    PkGenerationChunked = 41,
+    /// C3 on the l-BFV path: commits the share as a chunk root keyed by party and modulus.
+    ShareEncryptionChunked = 42,
+    /// C4 on the l-BFV path: opens the decrypted shares against chunk-root commitments.
+    DkgShareDecryptionChunked = 43,
+    /// [`CircuitName::C3Fold`] over [`CircuitName::ShareEncryptionChunked`] proofs.
+    C3FoldChunked = 44,
+    /// Genesis accumulator for [`CircuitName::C3FoldChunked`].
+    C3FoldKernelChunked = 45,
+    /// [`CircuitName::C3abFold`] over chunked C3 folds.
+    C3abFoldChunked = 46,
+    /// Per-node DKG fold of the l-BFV path's C0..C4 proofs.
+    NodeFoldChunked = 47,
+    /// C7 with wide (U384) reconstruction for secure-16384. KNOWN UNSOUND, see the circuit header.
+    DecryptedSharesAggregationWide = 48,
 }
 
 impl CircuitName {
@@ -243,6 +259,14 @@ impl CircuitName {
             CircuitName::LbfvAggregationFoldKernel => "lbfv_aggregation_fold_kernel",
             CircuitName::DkgAggregatorV2 => "dkg_aggregator_v2",
             CircuitName::LbfvPkGenerationLimb => "lbfv_pk_generation_limb",
+            CircuitName::PkGenerationChunked => "pk_generation_chunked",
+            CircuitName::ShareEncryptionChunked => "share_encryption_chunked",
+            CircuitName::DkgShareDecryptionChunked => "share_decryption_chunked",
+            CircuitName::C3FoldChunked => "c3_fold_chunked",
+            CircuitName::C3FoldKernelChunked => "c3_fold_kernel_chunked",
+            CircuitName::C3abFoldChunked => "c3ab_fold_chunked",
+            CircuitName::NodeFoldChunked => "node_fold_chunked",
+            CircuitName::DecryptedSharesAggregationWide => "decrypted_shares_aggregation_wide",
         }
     }
 
@@ -254,11 +278,14 @@ impl CircuitName {
             | CircuitName::SkShareComputationChunk
             | CircuitName::ESmShareComputationChunk
             | CircuitName::ShareEncryption
-            | CircuitName::DkgShareDecryption => "dkg",
-            CircuitName::PkGeneration => "threshold",
+            | CircuitName::ShareEncryptionChunked
+            | CircuitName::DkgShareDecryption
+            | CircuitName::DkgShareDecryptionChunked => "dkg",
+            CircuitName::PkGeneration | CircuitName::PkGenerationChunked => "threshold",
             CircuitName::ThresholdShareDecryption => "threshold",
             CircuitName::PkAggregation => "threshold",
-            CircuitName::DecryptedSharesAggregation => "threshold",
+            CircuitName::DecryptedSharesAggregation
+            | CircuitName::DecryptedSharesAggregationWide => "threshold",
             CircuitName::RlkGeneration
             | CircuitName::RlkAggregation
             | CircuitName::LbfvPkGeneration
@@ -288,7 +315,11 @@ impl CircuitName {
             | CircuitName::NodesFoldV2Kernel
             | CircuitName::LbfvAggregationFold
             | CircuitName::LbfvAggregationFoldKernel
-            | CircuitName::DkgAggregatorV2 => "recursive_aggregation",
+            | CircuitName::DkgAggregatorV2
+            | CircuitName::C3FoldChunked
+            | CircuitName::C3FoldKernelChunked
+            | CircuitName::C3abFoldChunked
+            | CircuitName::NodeFoldChunked => "recursive_aggregation",
         }
     }
 
@@ -304,9 +335,11 @@ impl CircuitName {
             CircuitName::PkBfv => CircuitOutputLayout::Fixed {
                 fields: PK_BFV_OUTPUTS,
             },
-            CircuitName::PkGeneration => CircuitOutputLayout::Fixed {
-                fields: PK_GENERATION_OUTPUTS,
-            },
+            CircuitName::PkGeneration | CircuitName::PkGenerationChunked => {
+                CircuitOutputLayout::Fixed {
+                    fields: PK_GENERATION_OUTPUTS,
+                }
+            }
             CircuitName::LbfvPkGeneration => CircuitOutputLayout::Fixed {
                 fields: LBFV_PK_GENERATION_OUTPUTS,
             },
@@ -325,25 +358,30 @@ impl CircuitName {
             CircuitName::RlkAggregation => CircuitOutputLayout::Fixed {
                 fields: RLK_AGGREGATION_OUTPUTS,
             },
-            // Legacy circuits no longer produce proofs. Map to None so old
-            // proofs fail closed on extraction but still decode.
-            CircuitName::SkShareComputation
-            | CircuitName::ESmShareComputation
-            | CircuitName::SkShareComputationChunk
-            | CircuitName::ESmShareComputationChunk => CircuitOutputLayout::None,
-            CircuitName::DkgShareDecryption => CircuitOutputLayout::Fixed {
-                fields: DKG_SHARE_DECRYPTION_OUTPUTS,
-            },
+            CircuitName::SkShareComputation | CircuitName::ESmShareComputation => {
+                CircuitOutputLayout::Dynamic
+            }
+            CircuitName::SkShareComputationChunk | CircuitName::ESmShareComputationChunk => {
+                CircuitOutputLayout::None
+            }
+            CircuitName::DkgShareDecryption | CircuitName::DkgShareDecryptionChunked => {
+                CircuitOutputLayout::Fixed {
+                    fields: DKG_SHARE_DECRYPTION_OUTPUTS,
+                }
+            }
             CircuitName::PkAggregation => CircuitOutputLayout::Fixed {
                 fields: PK_AGGREGATION_OUTPUTS,
             },
             CircuitName::ThresholdShareDecryption => CircuitOutputLayout::Fixed {
                 fields: THRESHOLD_SHARE_DECRYPTION_OUTPUTS,
             },
-            CircuitName::ShareEncryption => CircuitOutputLayout::Fixed {
-                fields: SHARE_ENCRYPTION_OUTPUTS,
-            },
-            CircuitName::DecryptedSharesAggregation => CircuitOutputLayout::None,
+            CircuitName::ShareEncryption | CircuitName::ShareEncryptionChunked => {
+                CircuitOutputLayout::Fixed {
+                    fields: SHARE_ENCRYPTION_OUTPUTS,
+                }
+            }
+            CircuitName::DecryptedSharesAggregation
+            | CircuitName::DecryptedSharesAggregationWide => CircuitOutputLayout::None,
             CircuitName::C3Fold
             | CircuitName::C3FoldKernel
             | CircuitName::C2ChunkBatch
@@ -367,7 +405,11 @@ impl CircuitName {
             | CircuitName::NodesFoldV2Kernel
             | CircuitName::LbfvAggregationFold
             | CircuitName::LbfvAggregationFoldKernel
-            | CircuitName::DkgAggregatorV2 => CircuitOutputLayout::None,
+            | CircuitName::DkgAggregatorV2
+            | CircuitName::C3FoldChunked
+            | CircuitName::C3FoldKernelChunked
+            | CircuitName::C3abFoldChunked
+            | CircuitName::NodeFoldChunked => CircuitOutputLayout::None,
         }
     }
 
@@ -394,6 +436,9 @@ impl CircuitName {
             },
             CircuitName::ShareEncryption => CircuitInputLayout::Fixed {
                 fields: SHARE_ENCRYPTION_INPUTS,
+            },
+            CircuitName::ShareEncryptionChunked => CircuitInputLayout::Fixed {
+                fields: SHARE_ENCRYPTION_CHUNKED_INPUTS,
             },
             CircuitName::ThresholdShareDecryption => CircuitInputLayout::Fixed {
                 fields: THRESHOLD_SHARE_DECRYPTION_INPUTS,
@@ -458,6 +503,18 @@ mod tests {
         (CircuitName::LbfvAggregationFoldKernel, 38, [38, 0, 0, 0]),
         (CircuitName::DkgAggregatorV2, 39, [39, 0, 0, 0]),
         (CircuitName::LbfvPkGenerationLimb, 40, [40, 0, 0, 0]),
+        (CircuitName::PkGenerationChunked, 41, [41, 0, 0, 0]),
+        (CircuitName::ShareEncryptionChunked, 42, [42, 0, 0, 0]),
+        (CircuitName::DkgShareDecryptionChunked, 43, [43, 0, 0, 0]),
+        (CircuitName::C3FoldChunked, 44, [44, 0, 0, 0]),
+        (CircuitName::C3FoldKernelChunked, 45, [45, 0, 0, 0]),
+        (CircuitName::C3abFoldChunked, 46, [46, 0, 0, 0]),
+        (CircuitName::NodeFoldChunked, 47, [47, 0, 0, 0]),
+        (
+            CircuitName::DecryptedSharesAggregationWide,
+            48,
+            [48, 0, 0, 0],
+        ),
     ];
 
     fn make_proof(circuit: CircuitName, signals: &[u8]) -> Proof {
@@ -603,10 +660,18 @@ mod tests {
 
     #[test]
     fn input_layout_share_encryption() {
-        let layout = CircuitName::ShareEncryption.input_layout();
-        // C3 has 4 public inputs: expected_pk_commitment, expected_message_commitment,
-        // party_idx, mod_idx (matches the Noir main and SHARE_ENCRYPTION_INPUTS).
-        assert_eq!(layout.field_count(), Some(4));
+        // C3 has 2 public inputs: expected_pk_commitment, expected_message_commitment.
+        assert_eq!(
+            CircuitName::ShareEncryption.input_layout().field_count(),
+            Some(2)
+        );
+        // The chunked C3 also exposes party_idx and mod_idx.
+        assert_eq!(
+            CircuitName::ShareEncryptionChunked
+                .input_layout()
+                .field_count(),
+            Some(4)
+        );
     }
 
     #[test]
