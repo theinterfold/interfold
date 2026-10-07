@@ -1418,12 +1418,9 @@ jobs:
       # The generated verifier contracts must match the freshly built verification keys. A drift
       # means the deployed verifier accepts a different circuit from the one in this tree.
       #
-      # `--no-compile` is load-bearing, not an optimisation. Without it the checker deletes every
-      # nargo target directory first — its guard against comparing stale artifacts — and recompiles
-      # only what it needs, which is the `.json` and the evm `.vk`. That silently discards the
-      # `.vk_recursive` files `build:circuits` had just written, and the upload below then ships an
-      # artifact `zk_prover_e2e` cannot use. Nothing here fails; the damage surfaces two jobs later.
-      # The step above has just built these circuits, so there is nothing stale to guard against.
+      # `--no-compile`: without it the checker deletes every nargo target directory first, its guard
+      # against comparing stale artifacts, and recompiles them. The step above has just built these
+      # circuits, so there is nothing stale to guard against.
       - name: Check generated verifiers are in sync
         run: pnpm check:verifiers --no-compile
 
@@ -1458,54 +1455,29 @@ jobs:
           insecure-512 minimum
           EOF
 
-      # Asserted before the upload, so a step that consumes or clears a build output fails in the
-      # job that did it rather than in the job that needed it. Same list `zk_prover_e2e` checks.
-      - name: Verify recursive aggregation artifacts survived
-        run: |
-          for artifact in \
-            circuits/bin/recursive_aggregation/dkg_aggregator/target/dkg_aggregator.json \
-            circuits/bin/recursive_aggregation/dkg_aggregator/target/dkg_aggregator.vk_recursive \
-            circuits/bin/recursive_aggregation/decryption_aggregator/target/decryption_aggregator.json \
-            circuits/bin/recursive_aggregation/decryption_aggregator/target/decryption_aggregator.vk_recursive
-          do
-            test -f "$artifact" || {
-              echo "Missing before upload: $artifact"
-              echo "A step between 'Build circuits' and here removed it."
-              exit 1
-            }
-            echo "  ok $artifact"
-          done
-
-      - name: Upload compiled circuit artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: compiled-circuits
-          # `.active-preset.json` is a hidden file, and upload-artifact v4 drops hidden files
-          # unless told otherwise. Without it zk_prover_e2e cannot tell which committee the
-          # circuits were built for, and the minimum-committee proof tests fail.
-          include-hidden-files: true
-          path: |
-            circuits/bin/.active-preset.json
-            circuits/bin/dkg/target/
-            circuits/bin/threshold/target/
-            circuits/bin/recursive_aggregation/*/target/
-          retention-days: 1
-          if-no-files-found: error
-
       - name: Cancel workflow on failure
         if: failure()
         run: gh run cancel ${{ github.run_id }}
         env:
           GH_TOKEN: ${{ github.token }}
 
+  # Proves with the published circuit set for this tree's SOURCE_HASH, which is also what
+  # `build_circuits` used to hand over: it pulled and hydrated the published set before uploading.
+  # Pulling here removes the wait for `build_circuits`, which still compiles from source and checks
+  # every published pair's verifiers. The proof suites run in two legs; the correlated node test
+  # alone sets the floor.
   zk_prover_e2e:
-    needs: [detect_changes, build_circuits]
+    needs: [detect_changes]
     if: needs.detect_changes.outputs.zk == 'true'
     timeout-minutes: 60
     runs-on:
       ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'zk_prover_e2e') || 'ubuntu-latest' }}
+      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}-{3}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
+      'zk_prover_e2e', matrix.leg) || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [suites, node-fold]
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
@@ -1544,11 +1516,26 @@ jobs:
       - name: Verify bb
         run: bb --version
 
-      - name: Download compiled circuit artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - name: pnpm-setup
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+
+      - name: Setup node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          name: compiled-circuits
-          path: circuits/bin/
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Fails when no published set matches the tree, as `build_circuits` does.
+      - name: Pull the published circuits
+        timeout-minutes: 10
+        run: pnpm store:circuits pull
+
+      - name: Hydrate the insecure-512/minimum circuits
+        run: pnpm build:circuits --preset insecure-512 --committee minimum --hydrate-bin-only --no-clean-targets
 
       - name: Verify circuit artifacts
         run: |
@@ -1585,16 +1572,22 @@ jobs:
           done
 
       - name: Run ZK prover e2e tests
+        if: matrix.leg == 'suites'
         run: cargo test -p e3-zk-prover --test local_e2e_tests -- --nocapture --test-threads=1
 
       - name: Verify C0 recovery after local verifier errors
+        if: matrix.leg == 'suites'
         run: cargo test -p e3-zk-prover --lib c0_local_verifier_failures_retry_without_peer_blame -- --nocapture
 
-      - name: Verify fold accumulators and the correlated node proof
+      - name: Verify fold accumulators
+        if: matrix.leg == 'suites'
         timeout-minutes: 30
-        run:
-          cargo test --locked -p e3-zk-prover --test fold_accumulators_e2e_tests --test node_fold_correlated_e2e_tests -- --include-ignored
-          --nocapture --test-threads=1
+        run: cargo test --locked -p e3-zk-prover --test fold_accumulators_e2e_tests -- --include-ignored --nocapture --test-threads=1
+
+      - name: Verify the correlated node proof
+        if: matrix.leg == 'node-fold'
+        timeout-minutes: 30
+        run: cargo test --locked -p e3-zk-prover --test node_fold_correlated_e2e_tests -- --include-ignored --nocapture --test-threads=1
 
   build_e3_support_dev:
     needs: [detect_changes]
