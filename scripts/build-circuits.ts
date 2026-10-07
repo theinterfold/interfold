@@ -678,7 +678,7 @@ class NoirCircuitBuilder {
 
   private configModuleName(preset: CircuitPreset): string {
     return preset === CIRCUIT_PRESETS.INSECURE
-      ? 'INSECURE_THRESHOLD'
+      ? 'INSECURE_THRESHOLD_LBFV'
       : preset === CIRCUIT_PRESETS.SECURE_8192
         ? 'SECURE_THRESHOLD_8192'
         : 'SECURE_THRESHOLD_16384'

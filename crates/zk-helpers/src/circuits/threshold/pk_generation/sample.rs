@@ -19,7 +19,6 @@ use e3_fhe_params::{
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use fhe::bfv::SecretKey;
 use fhe::mbfv::PublicKeyShare;
-use fhe::trbfv::{ShareManager, TRBFV};
 use fhe_math::rq::{Poly, PowerBasis};
 use std::ops::Deref;
 

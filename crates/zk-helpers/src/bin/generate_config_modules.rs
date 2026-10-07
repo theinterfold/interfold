@@ -40,7 +40,7 @@ use e3_zk_helpers::circuits::threshold::rlk_generation::RlkGenerationConfigs;
 use e3_zk_helpers::circuits::threshold::share_decryption::Configs as ThresholdShareDecryptionConfigs;
 use e3_zk_helpers::circuits::threshold::user_data_encryption::Configs as UserDataEncryptionConfigs;
 use e3_zk_helpers::computation::DkgInputType;
-use e3_zk_helpers::utils::{bigint_to_field, compute_msg_bit, error_sampler_bound, join_display};
+use e3_zk_helpers::utils::{bigint_to_field, error_sampler_bound, join_display};
 use e3_zk_helpers::Computation;
 use num_bigint::{BigInt, BigUint};
 
@@ -72,6 +72,98 @@ fn banner(title: &str) -> String {
 /// Prepend the section banner to a body, separating them with a blank line.
 fn section(title: &str, body: &str) -> String {
     format!("{}\n\n{}", banner(title), body.trim_end())
+}
+
+/// The `use` lines and `pub global {prefix}_*` declarations of one circuit's generated configs.
+///
+/// Each trBFV circuit's own codegen writes a standalone `configs.nr`: the shared preset globals
+/// (`N`, `L`, `QIS`, the CRP) followed by that circuit's constants. The module generator renders
+/// the shared globals once and takes only each circuit's prefixed declarations, so a circuit's
+/// constants have one definition, in its codegen. Declarations may span lines and contain `;`
+/// inside array types (`[Field; L]`), so a declaration ends at the first `;` outside brackets.
+struct CircuitGlobals {
+    uses: Vec<String>,
+    declarations: Vec<(String, String)>,
+}
+
+fn circuit_globals(src: &str, prefix: &str, skip: &[&str]) -> CircuitGlobals {
+    let mut uses = Vec::new();
+    let mut declarations = Vec::new();
+    let mut lines = src.lines().peekable();
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("use ") {
+            uses.push(trimmed.trim_end().to_string());
+            continue;
+        }
+        if !trimmed.starts_with("pub global ") {
+            continue;
+        }
+        let mut declaration = String::from(line);
+        let mut done = false;
+        loop {
+            let mut depth = 0i32;
+            for c in declaration.chars() {
+                match c {
+                    '[' | '(' | '{' => depth += 1,
+                    ']' | ')' | '}' => depth -= 1,
+                    ';' if depth == 0 => {
+                        done = true;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            if done {
+                break;
+            }
+            match lines.next() {
+                Some(next) => {
+                    declaration.push('\n');
+                    declaration.push_str(next);
+                }
+                None => break,
+            }
+        }
+        let name = trimmed["pub global ".len()..]
+            .split(|c: char| c == ':' || c.is_whitespace())
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        if name.starts_with(&format!("{prefix}_")) && !skip.contains(&name.as_str()) {
+            declarations.push((name, declaration.trim_end().to_string()));
+        }
+    }
+    CircuitGlobals { uses, declarations }
+}
+
+/// Joins circuits' declarations in order, keeping the first definition of a repeated name.
+fn render_globals(sources: &[&CircuitGlobals]) -> String {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for source in sources {
+        for (name, declaration) in &source.declarations {
+            if seen.insert(name.clone()) {
+                out.push(declaration.clone());
+            }
+        }
+    }
+    out.join("\n")
+}
+
+fn render_uses(base: &[&str], sources: &[&CircuitGlobals]) -> String {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for line in base
+        .iter()
+        .map(|l| l.to_string())
+        .chain(sources.iter().flat_map(|s| s.uses.clone()))
+    {
+        if seen.insert(line.clone()) {
+            out.push(line);
+        }
+    }
+    out.join("\n")
 }
 
 fn join_biguint(vals: &[BigUint]) -> String {
@@ -253,43 +345,92 @@ fn render_threshold(preset: BfvPreset) -> Result<String> {
     let (threshold_params, _) = build_pair_for_preset(preset)
         .with_context(|| format!("build_pair_for_preset({preset:?}) failed"))?;
     let crp = crp_block(&threshold_params)?;
-    let b_enc = b_enc_value(preset)?;
+    let _ = b_enc_value(preset)?;
 
-    let slug = preset.noir_config_module();
-    let esm_prefix = match preset {
-        BfvPreset::InsecureThreshold => "INSECURE",
-        BfvPreset::SecureThreshold8192 => "SECURE_8192",
-        BfvPreset::SecureThreshold16384 => "SECURE_16384",
-        _ => unreachable!("config generation requires a threshold preset"),
+    // trBFV circuits: each circuit's constants come from its own codegen.
+    use e3_zk_helpers::circuits::threshold as th;
+    let pkgen_globals = circuit_globals(
+        &th::pk_generation::generate_configs(preset, &pkgen)
+            .context("pk_generation codegen failed")?,
+        "PK_GENERATION",
+        &[],
+    );
+    let pkagg_globals = circuit_globals(
+        &th::pk_aggregation::generate_configs(preset, &pkagg),
+        "PK_AGGREGATION",
+        &[],
+    );
+    let udec_globals = circuit_globals(
+        &th::user_data_encryption::generate_configs(preset, &udec),
+        "USER_DATA_ENCRYPTION",
+        &[],
+    );
+    let tsd_globals = circuit_globals(
+        &th::share_decryption::generate_configs(preset, &tsd),
+        "THRESHOLD_SHARE_DECRYPTION",
+        &[],
+    );
+    let dsa_globals = circuit_globals(
+        &th::decrypted_shares_aggregation::generate_configs(preset, &dsa),
+        "DECRYPTED_SHARES_AGGREGATION",
+        &[],
+    );
+    // l-BFV path variants with their own prefixes: the chunked ct0/ct1 pipeline and the wide C7.
+    let udec_chunked = th::user_data_encryption_chunked::Configs::compute(preset, &())
+        .context("chunked user_data_encryption Configs::compute failed")?;
+    let udec_chunked_globals = circuit_globals(
+        &th::user_data_encryption_chunked::generate_configs(preset, &udec_chunked),
+        "USER_DATA_ENCRYPTION_CHUNKED",
+        // The pre-merge whole-witness ct0/ct1 config types; only the chunk configs are used.
+        &[
+            "USER_DATA_ENCRYPTION_CHUNKED_CT0_CONFIGS",
+            "USER_DATA_ENCRYPTION_CHUNKED_CT1_CONFIGS",
+        ],
+    );
+    let dsa_wide = th::decrypted_shares_aggregation_wide::Configs::compute(preset, &())
+        .context("wide decrypted_shares_aggregation Configs::compute failed")?;
+    let dsa_wide_globals = circuit_globals(
+        &th::decrypted_shares_aggregation_wide::generate_configs(preset, &dsa_wide)
+            .replace(
+                "decrypted_shares_aggregation::Configs as DecryptedSharesAggregationConfigs",
+                "decrypted_shares_aggregation_wide::Configs as DecryptedSharesAggregationWideConfigs",
+            )
+            .replace("DecryptedSharesAggregationConfigs", "DecryptedSharesAggregationWideConfigs"),
+        "DECRYPTED_SHARES_AGGREGATION_WIDE",
+        &[],
+    );
+    let (lbfv_r1_bounds, lbfv_r2_bounds) =
+        th::pk_generation::lbfv_limb_quotient_bounds(preset, &pkgen.bounds.eek_bound)
+            .context("lbfv_limb_quotient_bounds failed")?;
+    let bit_of = |bounds: &[BigUint]| {
+        bounds
+            .iter()
+            .map(|b| b.bits() as u32 + 1)
+            .max()
+            .unwrap_or(1)
     };
 
-    // user_data_encryption chunking grid: not a cryptographic parameter, just how ct0/ct1's
-    // range-check + evaluation work is split across browser-sized circuits. N_CHUNKS=2 is the
-    // minimum that's still genuinely "chunking" (one fewer and it degenerates to the
-    // witness-group-split design) - it also means every grid's leaves combine directly into a
-    // root with no intermediate pair/quad level, minimizing total proving instances while every
-    // circuit still measures well under the 2M gate ceiling. r1is/p1is live in the same merged
-    // leaf, sliced at the same `chunk_idx`, so they share this count: their chunk width is simply
-    // twice the main one (`2 * CHUNK_SIZE`), derived in each circuit rather than configured.
-    let udec_n_chunks = 2u32;
+    let slug = preset.noir_config_module();
 
+    let uses = render_uses(
+        &[
+            "use crate::core::threshold::rlk_aggregation::Configs as RlkAggregationConfigs;",
+            "use crate::core::threshold::rlk_generation::Configs as RlkGenerationConfigs;",
+            "use crate::math::polynomial::Polynomial;",
+        ],
+        &[
+            &pkgen_globals,
+            &pkagg_globals,
+            &udec_globals,
+            &udec_chunked_globals,
+            &tsd_globals,
+            &dsa_globals,
+            &dsa_wide_globals,
+        ],
+    );
     let header = format!(
         "{LICENSE}
-use crate::core::threshold::decrypted_shares_aggregation::Configs as DecryptedSharesAggregationConfigs;
-use crate::core::threshold::pk_aggregation::Configs as PkAggregationConfigs;
-use crate::core::threshold::pk_generation::Configs as PkGenerationConfigs;
-use crate::core::threshold::rlk_aggregation::Configs as RlkAggregationConfigs;
-use crate::core::threshold::rlk_generation::Configs as RlkGenerationConfigs;
-use crate::core::threshold::share_decryption::Configs as ShareDecryptionConfigs;
-use crate::core::threshold::user_data_encryption_chunk::Ct0ChunkConfigs as UserDataEncryptionCt0ChunkConfigs;
-use crate::core::threshold::user_data_encryption_chunk::Ct1ChunkConfigs as UserDataEncryptionCt1ChunkConfigs;
-use crate::core::threshold::user_data_encryption_ct0::Configs as UserDataEncryptionCt0Configs;
-use crate::core::threshold::user_data_encryption_ct1::Configs as UserDataEncryptionCt1Configs;
-use crate::math::polynomial::Polynomial;
-
-pub use crate::configs::committee::active::{{
-    {esm_prefix}_E_SM_BIT as PK_GENERATION_BIT_E_SM, {esm_prefix}_E_SM_BOUND as PK_GENERATION_E_SM_BOUND,
-}};
+{uses}
 
 // Global configs for threshold {slug} preset
 pub global N: u32 = {};
@@ -299,6 +440,7 @@ pub global PLAINTEXT_MODULUS: Field = {};
 pub global Q_MOD_T: Field = {};
 pub global Q_MOD_T_CENTERED: Field = {};
 pub global Q_INVERSE_MOD_T: Field = {};
+pub global PARAMS_SEARCH_N: Field = {};
 pub global PARAMS_SEARCH_Z: Field = {};
 pub global PARAMS_LAMBDA: u32 = {};
 pub global PARAMS_TWO_POW_LAMBDA_PLUS_ONE: Field = {};
@@ -317,14 +459,19 @@ pub global PARAMS_SMUDGING_B_ENC: Field = {};
         preset
             .search_defaults()
             .context("search_defaults() missing for threshold preset")?
+            .n,
+        preset
+            .search_defaults()
+            .context("search_defaults() missing for threshold preset")?
             .z,
         preset
             .lambda()
             .map_err(|e| anyhow::anyhow!(e.to_string()))?,
-        1u128 << (preset
-            .lambda()
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?
-            + 1),
+        1u128
+            << (preset
+                .lambda()
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?
+                + 1),
         preset
             .search_defaults()
             .context("search_defaults() missing for threshold preset")?
@@ -334,38 +481,21 @@ pub global PARAMS_SMUDGING_B_ENC: Field = {};
 
     let pkgen_section = section(
         "pk_generation (CIRCUIT 1 - PUBLIC KEY THRESHOLD BFV)",
+        &render_globals(&[&pkgen_globals]),
+    );
+    // The l-BFV public-key limb still checks the unreduced relation (`r1` of length 2N - 1, the
+    // cyclotomic quotient `r2`), so it carries its own quotient bounds rather than C1's.
+    let lbfv_pk_section = section(
+        "lbfv_pk_generation_limb (l-BFV PUBLIC KEY LIMB)",
         &format!(
-            "pub global PK_GENERATION_BIT_EEK: u32 = {};
-pub global PK_GENERATION_BIT_SK: u32 = {};
-pub global PK_GENERATION_BIT_R1: u32 = {};
-pub global PK_GENERATION_BIT_R2: u32 = {};
-pub global PK_GENERATION_BIT_PK: u32 = {};
-
-pub global PK_GENERATION_EEK_BOUND: Field = {};
-pub global PK_GENERATION_SK_BOUND: Field = {};
-pub global PK_GENERATION_R1_BOUNDS: [Field; L] = [{}];
-pub global PK_GENERATION_R2_BOUNDS: [Field; L] = [{}];
-
-pub global PK_GENERATION_B_ENC: Field = {};
-
-pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfigs::new(
-    QIS,
-    PK_GENERATION_EEK_BOUND,
-    PK_GENERATION_SK_BOUND,
-    PK_GENERATION_E_SM_BOUND,
-    PK_GENERATION_R1_BOUNDS,
-    PK_GENERATION_R2_BOUNDS,
-);",
-            pkgen.bits.eek_bit,
-            pkgen.bits.sk_bit,
-            pkgen.bits.r1_bit,
-            pkgen.bits.r2_bit,
-            pkgen.bits.pk_bit,
-            pkgen.bounds.eek_bound,
-            pkgen.bounds.sk_bound,
-            join_biguint(&pkgen.bounds.r1_bounds),
-            join_biguint(&pkgen.bounds.r2_bounds),
-            b_enc,
+            "pub global LBFV_PK_GENERATION_BIT_R1: u32 = {};
+pub global LBFV_PK_GENERATION_BIT_R2: u32 = {};
+pub global LBFV_PK_GENERATION_R1_BOUNDS: [Field; L] = [{}];
+pub global LBFV_PK_GENERATION_R2_BOUNDS: [Field; L] = [{}];",
+            bit_of(&lbfv_r1_bounds),
+            bit_of(&lbfv_r2_bounds),
+            join_biguint(&lbfv_r1_bounds),
+            join_biguint(&lbfv_r2_bounds),
         ),
     );
 
@@ -437,20 +567,20 @@ pub global RLK_GENERATION_R2_D2_BOUNDS: [Field; L] = [{}];",
 pub global RLK_GENERATION_BIT_SK: u32 = PK_GENERATION_BIT_SK;
 pub global RLK_GENERATION_BIT_E0: u32 = PK_GENERATION_BIT_EEK;
 pub global RLK_GENERATION_BIT_E2: u32 = PK_GENERATION_BIT_EEK;
-pub global RLK_GENERATION_BIT_R1_D0: u32 = PK_GENERATION_BIT_R1;
-pub global RLK_GENERATION_BIT_R2_D0: u32 = PK_GENERATION_BIT_R2;
-pub global RLK_GENERATION_BIT_R1_D2: u32 = PK_GENERATION_BIT_R1;
-pub global RLK_GENERATION_BIT_R2_D2: u32 = PK_GENERATION_BIT_R2;
+pub global RLK_GENERATION_BIT_R1_D0: u32 = LBFV_PK_GENERATION_BIT_R1;
+pub global RLK_GENERATION_BIT_R2_D0: u32 = LBFV_PK_GENERATION_BIT_R2;
+pub global RLK_GENERATION_BIT_R1_D2: u32 = LBFV_PK_GENERATION_BIT_R1;
+pub global RLK_GENERATION_BIT_R2_D2: u32 = LBFV_PK_GENERATION_BIT_R2;
 pub global RLK_GENERATION_BIT_D: u32 = PK_GENERATION_BIT_PK;
 
 pub global RLK_GENERATION_R_BOUND: Field = PK_GENERATION_SK_BOUND;
 pub global RLK_GENERATION_SK_BOUND: Field = PK_GENERATION_SK_BOUND;
 pub global RLK_GENERATION_E0_BOUND: Field = PK_GENERATION_EEK_BOUND;
 pub global RLK_GENERATION_E2_BOUND: Field = PK_GENERATION_EEK_BOUND;
-pub global RLK_GENERATION_R1_D0_BOUNDS: [Field; L] = PK_GENERATION_R1_BOUNDS;
-pub global RLK_GENERATION_R2_D0_BOUNDS: [Field; L] = PK_GENERATION_R2_BOUNDS;
-pub global RLK_GENERATION_R1_D2_BOUNDS: [Field; L] = PK_GENERATION_R1_BOUNDS;
-pub global RLK_GENERATION_R2_D2_BOUNDS: [Field; L] = PK_GENERATION_R2_BOUNDS;"
+pub global RLK_GENERATION_R1_D0_BOUNDS: [Field; L] = LBFV_PK_GENERATION_R1_BOUNDS;
+pub global RLK_GENERATION_R2_D0_BOUNDS: [Field; L] = LBFV_PK_GENERATION_R2_BOUNDS;
+pub global RLK_GENERATION_R1_D2_BOUNDS: [Field; L] = LBFV_PK_GENERATION_R1_BOUNDS;
+pub global RLK_GENERATION_R2_D2_BOUNDS: [Field; L] = LBFV_PK_GENERATION_R2_BOUNDS;"
             .to_string()
     };
     let rlk_section = section(
@@ -485,184 +615,33 @@ pub global RLK_AGGREGATION_CONFIGS: RlkAggregationConfigs<L> = RlkAggregationCon
 
     let pkagg_section = section(
         "pk_aggregation (CIRCUIT 5)",
-        &format!(
-            "pub global PK_AGGREGATION_BIT_PK: u32 = {};
-\npub global PK_AGGREGATION_CONFIGS: PkAggregationConfigs<L> = PkAggregationConfigs::new(QIS);",
-            pkagg.bits.pk_bit,
-        ),
+        &render_globals(&[&pkagg_globals]),
     );
-
     let udec_section = section(
-        "user_data_encryption (USED FOR DATA ENCRYPTION)",
-        &format!(
-            "pub global USER_DATA_ENCRYPTION_BIT_PK: u32 = {};
-pub global USER_DATA_ENCRYPTION_BIT_CT: u32 = {};
-pub global USER_DATA_ENCRYPTION_BIT_U: u32 = {};
-pub global USER_DATA_ENCRYPTION_BIT_E0: u32 = {};
-pub global USER_DATA_ENCRYPTION_BIT_E1: u32 = {};
-pub global USER_DATA_ENCRYPTION_BIT_K: u32 = {};
-pub global USER_DATA_ENCRYPTION_BIT_R1: u32 = {};
-pub global USER_DATA_ENCRYPTION_BIT_R2: u32 = {};
-pub global USER_DATA_ENCRYPTION_BIT_P1: u32 = {};
-pub global USER_DATA_ENCRYPTION_BIT_P2: u32 = {};
-// Bit width for `e0_quotients` (the CRT quotient in `e0 == e0is[i] + e0_quotients[i] * qis[i]`).
-// MUST be range-checked with USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS: the equation holds in
-// F_p, not Z, so an unconstrained quotient lets a prover pick any e0is (soundness gap, not a
-// tuning knob - see check_e0_crt_consistency's callers).
-pub global USER_DATA_ENCRYPTION_BIT_E0_QUOTIENT: u32 = {};
-
-pub global USER_DATA_ENCRYPTION_K0IS: [Field; L] = [{}];
-pub global USER_DATA_ENCRYPTION_PK_BOUNDS: [Field; L] = [{}];
-pub global USER_DATA_ENCRYPTION_E0_BOUND: Field = {};
-pub global USER_DATA_ENCRYPTION_E1_BOUND: Field = {};
-pub global USER_DATA_ENCRYPTION_U_BOUND: Field = {};
-pub global USER_DATA_ENCRYPTION_K1_LOW_BOUND: Field = {};
-pub global USER_DATA_ENCRYPTION_K1_UP_BOUND: Field = {};
-pub global USER_DATA_ENCRYPTION_R1_LOW_BOUNDS: [Field; L] = [{}];
-pub global USER_DATA_ENCRYPTION_R1_UP_BOUNDS: [Field; L] = [{}];
-pub global USER_DATA_ENCRYPTION_R2_BOUNDS: [Field; L] = [{}];
-pub global USER_DATA_ENCRYPTION_P1_BOUNDS: [Field; L] = [{}];
-pub global USER_DATA_ENCRYPTION_P2_BOUNDS: [Field; L] = [{}];
-// Per-limb bound on the honest e0_quotients[i] magnitude: (e0_bound + qi_bound) / qi + 1.
-pub global USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS: [Field; L] = [{}];",
-            udec.bits.pk_bit,
-            udec.bits.ct_bit,
-            udec.bits.u_bit,
-            udec.bits.e0_bit,
-            udec.bits.e1_bit,
-            udec.bits.k_bit,
-            udec.bits.r1_bit,
-            udec.bits.r2_bit,
-            udec.bits.p1_bit,
-            udec.bits.p2_bit,
-            udec.bits.e0_quotient_bit,
-            join_display(&udec.k0is, ", "),
-            join_biguint(&udec.bounds.pk_bounds),
-            udec.bounds.e0_bound,
-            udec.bounds.e1_bound,
-            udec.bounds.u_bound,
-            udec.bounds.k1_low_bound,
-            udec.bounds.k1_up_bound,
-            join_biguint(&udec.bounds.r1_low_bounds),
-            join_biguint(&udec.bounds.r1_up_bounds),
-            join_biguint(&udec.bounds.r2_bounds),
-            join_biguint(&udec.bounds.p1_bounds),
-            join_biguint(&udec.bounds.p2_bounds),
-            join_biguint(&udec.bounds.e0_quotient_bounds),
-        ),
+        "user_data_encryption, user_data_encryption_ct0, user_data_encryption_ct1 (trBFV)",
+        &render_globals(&[&udec_globals]),
     );
-
-    let udec_ct0_section = section(
-        "user_data_encryption_ct0 (CIRCUIT A - CT0 ENCRYPTION)",
-        "pub global USER_DATA_ENCRYPTION_CT0_CONFIGS: UserDataEncryptionCt0Configs<N, L> = UserDataEncryptionCt0Configs::new(
-    QIS,
-    USER_DATA_ENCRYPTION_K0IS,
-    USER_DATA_ENCRYPTION_E0_BOUND,
-    USER_DATA_ENCRYPTION_U_BOUND,
-    USER_DATA_ENCRYPTION_R1_LOW_BOUNDS,
-    USER_DATA_ENCRYPTION_R1_UP_BOUNDS,
-    USER_DATA_ENCRYPTION_R2_BOUNDS,
-    USER_DATA_ENCRYPTION_K1_LOW_BOUND,
-    USER_DATA_ENCRYPTION_K1_UP_BOUND,
-    USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS,
-);",
+    // Chunk grid of the l-BFV ct0/ct1 pipeline: not a cryptographic parameter, just how the
+    // range-check and evaluation work is split across browser-sized circuits.
+    let udec_chunked_section = section(
+        "user_data_encryption chunked pipeline (l-BFV)",
+        &render_globals(&[&udec_chunked_globals]),
     );
-
-    let udec_ct1_section = section(
-        "user_data_encryption_ct1 (CIRCUIT B - CT1 ENCRYPTION)",
-        "pub global USER_DATA_ENCRYPTION_CT1_CONFIGS: UserDataEncryptionCt1Configs<N, L> = UserDataEncryptionCt1Configs::new(
-    QIS,
-    USER_DATA_ENCRYPTION_E1_BOUND,
-    USER_DATA_ENCRYPTION_U_BOUND,
-    USER_DATA_ENCRYPTION_P1_BOUNDS,
-    USER_DATA_ENCRYPTION_P2_BOUNDS,
-);",
-    );
-
-    let udec_chunking_section = section(
-        "user_data_encryption chunking (ct0/ct1 coefficient-level chunk grid)",
-        &format!(
-            "// Not a cryptographic parameter - see the comment at this constant's call site in
-// generate_config_modules.rs for the sizing rationale (N_CHUNKS=2 is the minimum that's
-// still genuinely \"chunking\").
-//
-// One count covers the whole merged grid: u, e0, k1, r2is (ct0) / u, e1, p2is (ct1) - everything
-// of length N - plus r1is/p1is, which the same chunk leaf slices at the same `chunk_idx`. r2is/p2is
-// (degree N-1) are padded to N and r1is/p1is (degree 2N-1) to 2N by one always-zero top
-// coefficient, so a circuit's r1/p1 chunk width is always exactly twice its main chunk width
-// (`2 * CHUNK_SIZE`) and is derived that way rather than from a second count.
-pub global USER_DATA_ENCRYPTION_N_CHUNKS: u32 = {};
-
-// Bounds the chunk leaves check against. Same values as the CT0/CT1 configs above - the chunk
-// structs are sized for one `CHUNK_SIZE` slice rather than a whole `Polynomial<N>`, and drop the
-// fields only the whole-witness circuits use (k0is, and qis on the ct1 side).
-pub global USER_DATA_ENCRYPTION_CT0_CHUNK_CONFIGS: UserDataEncryptionCt0ChunkConfigs<L> = UserDataEncryptionCt0ChunkConfigs::new(
-    QIS,
-    USER_DATA_ENCRYPTION_U_BOUND,
-    USER_DATA_ENCRYPTION_E0_BOUND,
-    USER_DATA_ENCRYPTION_K1_LOW_BOUND,
-    USER_DATA_ENCRYPTION_K1_UP_BOUND,
-    USER_DATA_ENCRYPTION_R1_LOW_BOUNDS,
-    USER_DATA_ENCRYPTION_R1_UP_BOUNDS,
-    USER_DATA_ENCRYPTION_R2_BOUNDS,
-    USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS,
-);
-
-pub global USER_DATA_ENCRYPTION_CT1_CHUNK_CONFIGS: UserDataEncryptionCt1ChunkConfigs<L> = UserDataEncryptionCt1ChunkConfigs::new(
-    USER_DATA_ENCRYPTION_U_BOUND,
-    USER_DATA_ENCRYPTION_E1_BOUND,
-    USER_DATA_ENCRYPTION_P1_BOUNDS,
-    USER_DATA_ENCRYPTION_P2_BOUNDS,
-);",
-            udec_n_chunks,
-        ),
-    );
-
     let tsd_section = section(
         "share_decryption (CIRCUIT 6 - THRESHOLD BFV SHARE DECRYPTION)",
-        &format!(
-            "pub global THRESHOLD_SHARE_DECRYPTION_BIT_CT: u32 = {};
-pub global THRESHOLD_SHARE_DECRYPTION_BIT_SK: u32 = {};
-pub global THRESHOLD_SHARE_DECRYPTION_BIT_E_SM: u32 = {};
-pub global THRESHOLD_SHARE_DECRYPTION_BIT_R1: u32 = {};
-pub global THRESHOLD_SHARE_DECRYPTION_BIT_R2: u32 = {};
-pub global THRESHOLD_SHARE_DECRYPTION_BIT_D: u32 = {};
-pub global THRESHOLD_SHARE_DECRYPTION_BIT_D_NATIVE: u32 = {};
-
-pub global THRESHOLD_SHARE_DECRYPTION_R1_BOUNDS: [Field; L] = [{}];
-pub global THRESHOLD_SHARE_DECRYPTION_R2_BOUNDS: [Field; L] = [{}];
-
-pub global THRESHOLD_SHARE_DECRYPTION_CONFIGS: ShareDecryptionConfigs<L> = ShareDecryptionConfigs::new(
-    QIS,
-    THRESHOLD_SHARE_DECRYPTION_R1_BOUNDS,
-    THRESHOLD_SHARE_DECRYPTION_R2_BOUNDS,
-);",
-            tsd.bits.ct_bit,
-            tsd.bits.sk_bit,
-            tsd.bits.e_sm_bit,
-            tsd.bits.r1_bit,
-            tsd.bits.r2_bit,
-            tsd.bits.d_bit,
-            tsd.bits.d_native_bit,
-            join_biguint(&tsd.bounds.r1_bounds),
-            join_biguint(&tsd.bounds.r2_bounds),
-        ),
+        &render_globals(&[&tsd_globals]),
     );
-
     let dsa_section = section(
         "decrypted_shares_aggregation (CIRCUIT 7)",
-        &format!(
-            "pub global DECRYPTED_SHARES_AGGREGATION_BIT_NOISE: u32 = {};
-pub global DECRYPTED_SHARES_AGGREGATION_BIT_D_NATIVE: u32 = {};
-
-pub global DECRYPTED_SHARES_AGGREGATION_CONFIGS: DecryptedSharesAggregationConfigs<L> =
-    DecryptedSharesAggregationConfigs::new(QIS, PLAINTEXT_MODULUS, Q_INVERSE_MOD_T);",
-            dsa.bits.noise_bit, dsa.bits.d_native_bit,
-        ),
+        &render_globals(&[&dsa_globals]),
+    );
+    let dsa_wide_section = section(
+        "decrypted_shares_aggregation_wide (CIRCUIT 7, l-BFV wide moduli - KNOWN UNSOUND, see the circuit)",
+        &render_globals(&[&dsa_wide_globals]),
     );
 
     Ok(format!(
-        "{header}{pkgen_section}\n\n{rlk_section}\n\n{pkagg_section}\n\n{udec_section}\n\n{udec_ct0_section}\n\n{udec_ct1_section}\n\n{udec_chunking_section}\n\n{tsd_section}\n\n{dsa_section}\n"
+        "{header}{pkgen_section}\n\n{lbfv_pk_section}\n\n{rlk_section}\n\n{pkagg_section}\n\n{udec_section}\n\n{udec_chunked_section}\n\n{tsd_section}\n\n{dsa_section}\n\n{dsa_wide_section}\n"
     ))
 }
 
@@ -689,18 +668,62 @@ fn render_dkg(preset: BfvPreset) -> Result<String> {
     let cfg_dir = preset.config_dir();
     let slug = preset.noir_config_module();
     let dkg_plaintext = dkg_params.plaintext();
-    let msg_bit = compute_msg_bit(&dkg_params);
     let (chunk_size, n_chunks, chunks_per_batch, n_batches) = c2_chunking(dkg_pk.n as u32);
     let parity_flag = slug.to_uppercase();
 
+    // trBFV DKG circuits: each circuit's constants come from its own codegen.
+    use e3_zk_helpers::circuits::dkg as dk;
+    let pk_globals = circuit_globals(&dk::pk::generate_configs(&dkg_pk, &dkg_pk_bits), "PK", &[]);
+    let sc_sample = dk::share_computation::ShareComputationCircuitData::generate_sample(
+        preset,
+        committee.clone(),
+        DkgInputType::SecretKey,
+    )
+    .context("ShareComputationCircuitData::generate_sample failed")?;
+    let sc_bounds = dk::share_computation::Bounds::compute(preset, &sc_sample)
+        .context("share_computation Bounds::compute failed")?;
+    let sc_bits = dk::share_computation::Bits::compute(preset, &sc_bounds)
+        .context("share_computation Bits::compute failed")?;
+    let sc_globals = circuit_globals(
+        &dk::share_computation::codegen::generate_configs(
+            preset,
+            &sc_bits,
+            committee.n,
+            committee.threshold,
+            chunk_size as usize,
+        )
+        .context("share_computation codegen failed")?,
+        "SHARE_COMPUTATION",
+        // Owned by the chunk-grid section below.
+        &["SHARE_COMPUTATION_CHUNK_SIZE", "SHARE_COMPUTATION_N_CHUNKS"],
+    );
+    let sh_enc_globals = circuit_globals(
+        &dk::share_encryption::codegen::generate_configs(preset, &sh_enc),
+        "SHARE_ENCRYPTION",
+        &[],
+    );
+    let sd_sample = dk::share_decryption::ShareDecryptionCircuitData::generate_sample(
+        preset,
+        committee.clone(),
+        DkgInputType::SecretKey,
+    )
+    .context("ShareDecryptionCircuitData::generate_sample failed")?;
+    let sh_dec = dk::share_decryption::Configs::compute(preset, &sd_sample)
+        .context("share_decryption Configs::compute failed")?;
+    let sh_dec_globals = circuit_globals(
+        &dk::share_decryption::codegen::generate_configs(preset, &sh_dec),
+        "SHARE_DECRYPTION",
+        &[],
+    );
+    let uses = render_uses(
+        &["use crate::core::dkg::share_computation::Configs as ShareComputationConfigs;"],
+        &[&pk_globals, &sc_globals, &sh_enc_globals, &sh_dec_globals],
+    );
+
     let header = format!(
         "{LICENSE}
-pub use crate::configs::{slug}::threshold::{{
-    L as L_THRESHOLD, PK_GENERATION_BIT_E_SM as SHARE_COMPUTATION_E_SM_BIT_SECRET,
-    QIS as QIS_THRESHOLD, THRESHOLD_SHARE_DECRYPTION_BIT_SK as SHARE_DECRYPTION_BIT_AGG,
-}};
-use crate::core::dkg::share_computation::Configs as ShareComputationConfigs;
-use crate::core::dkg::share_encryption::Configs as ShareEncryptionConfigs;
+pub use crate::configs::{slug}::threshold::{{L as L_THRESHOLD, QIS as QIS_THRESHOLD}};
+{uses}
 
 // Global configs for DKG {slug} preset
 pub global N: u32 = {};
@@ -724,114 +747,32 @@ pub use crate::configs::committee::active::PARITY_MATRIX_{parity_flag} as PARITY
         dkg_params.variance() * 2,
     );
 
-    let pk_section = section(
-        "pk (CIRCUIT 0)",
+    let pk_section = section("pk (CIRCUIT 0)", &render_globals(&[&pk_globals]));
+    // C2 chunk grid for the l-BFV path's chunked C2; the trBFV C2 is one proof.
+    let chunking_section = section(
+        "share_computation chunk grid (l-BFV)",
         &format!(
-            "// pk - bit parameters
-pub global PK_BIT_PK: u32 = {};",
-            dkg_pk_bits.pk_bit,
+            "pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = {chunk_size};
+pub global SHARE_COMPUTATION_N_CHUNKS: u32 = {n_chunks};
+pub global SHARE_COMPUTATION_CHUNKS_PER_BATCH: u32 = {chunks_per_batch};
+pub global SHARE_COMPUTATION_N_BATCHES: u32 = {n_batches};"
         ),
     );
-
-    let sc_sk_section = section(
-        "share_computation_sk (CIRCUIT 2a)",
-        &format!(
-            "pub global SHARE_COMPUTATION_BIT_SHARE: u32 = {};
-pub global SHARE_COMPUTATION_SK_BIT_SECRET: u32 = {};
-pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = {};
-pub global SHARE_COMPUTATION_N_CHUNKS: u32 = {};
-pub global SHARE_COMPUTATION_CHUNKS_PER_BATCH: u32 = {};
-pub global SHARE_COMPUTATION_N_BATCHES: u32 = {};
-
-pub global SHARE_COMPUTATION_SK_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
-    ShareComputationConfigs::new(QIS_THRESHOLD);",
-            msg_bit, 1u32, chunk_size, n_chunks, chunks_per_batch, n_batches,
-        ),
+    let sc_section = section(
+        "share_computation_sk (CIRCUIT 2a)\nshare_computation_e_sm (CIRCUIT 2b)",
+        &render_globals(&[&sc_globals]),
     );
-
-    let sc_esm_section = section(
-        "share_computation_e_sm (CIRCUIT 2b)",
-        "pub global SHARE_COMPUTATION_E_SM_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
-    ShareComputationConfigs::new(QIS_THRESHOLD);",
-    );
-
     let sh_enc_section = section(
         "share_encryption_sk (CIRCUIT 3a)\nshare_encryption_e_sm (CIRCUIT 3b)",
-        &format!(
-            "pub global SHARE_ENCRYPTION_BIT_PK: u32 = {};
-pub global SHARE_ENCRYPTION_BIT_CT: u32 = {};
-pub global SHARE_ENCRYPTION_BIT_U: u32 = {};
-pub global SHARE_ENCRYPTION_BIT_E0: u32 = {};
-pub global SHARE_ENCRYPTION_BIT_E1: u32 = {};
-pub global SHARE_ENCRYPTION_BIT_MSG: u32 = {};
-pub global SHARE_ENCRYPTION_BIT_R1: u32 = {};
-pub global SHARE_ENCRYPTION_BIT_R2: u32 = {};
-pub global SHARE_ENCRYPTION_BIT_P1: u32 = {};
-pub global SHARE_ENCRYPTION_BIT_P2: u32 = {};
-
-pub global SHARE_ENCRYPTION_K0IS: [Field; L] = [{}];
-pub global SHARE_ENCRYPTION_PK_BOUNDS: [Field; L] = [{}];
-pub global SHARE_ENCRYPTION_E0_BOUND: Field = {};
-pub global SHARE_ENCRYPTION_E1_BOUND: Field = {};
-pub global SHARE_ENCRYPTION_U_BOUND: Field = {};
-pub global SHARE_ENCRYPTION_R1_LOW_BOUNDS: [Field; L] = [{}];
-pub global SHARE_ENCRYPTION_R1_UP_BOUNDS: [Field; L] = [{}];
-pub global SHARE_ENCRYPTION_R2_BOUNDS: [Field; L] = [{}];
-pub global SHARE_ENCRYPTION_P1_BOUNDS: [Field; L] = [{}];
-pub global SHARE_ENCRYPTION_P2_BOUNDS: [Field; L] = [{}];
-pub global SHARE_ENCRYPTION_MSG_BOUND: Field = {};
-
-pub global SHARE_ENCRYPTION_CONFIGS: ShareEncryptionConfigs<L> = ShareEncryptionConfigs::new(
-    PLAINTEXT_MODULUS,
-    Q_MOD_T,
-    QIS,
-    SHARE_ENCRYPTION_K0IS,
-    SHARE_ENCRYPTION_PK_BOUNDS,
-    SHARE_ENCRYPTION_E0_BOUND,
-    SHARE_ENCRYPTION_E1_BOUND,
-    SHARE_ENCRYPTION_U_BOUND,
-    SHARE_ENCRYPTION_R1_LOW_BOUNDS,
-    SHARE_ENCRYPTION_R1_UP_BOUNDS,
-    SHARE_ENCRYPTION_R2_BOUNDS,
-    SHARE_ENCRYPTION_P1_BOUNDS,
-    SHARE_ENCRYPTION_P2_BOUNDS,
-    SHARE_ENCRYPTION_MSG_BOUND,
-);",
-            sh_enc.bits.pk_bit,
-            sh_enc.bits.ct_bit,
-            sh_enc.bits.u_bit,
-            sh_enc.bits.e0_bit,
-            sh_enc.bits.e1_bit,
-            sh_enc.bits.msg_bit,
-            sh_enc.bits.r1_bit,
-            sh_enc.bits.r2_bit,
-            sh_enc.bits.p1_bit,
-            sh_enc.bits.p2_bit,
-            join_display(&sh_enc.k0is, ", "),
-            join_biguint(&sh_enc.bounds.pk_bounds),
-            sh_enc.bounds.e0_bound,
-            sh_enc.bounds.e1_bound,
-            sh_enc.bounds.u_bound,
-            join_biguint(&sh_enc.bounds.r1_low_bounds),
-            join_biguint(&sh_enc.bounds.r1_up_bounds),
-            join_biguint(&sh_enc.bounds.r2_bounds),
-            join_biguint(&sh_enc.bounds.p1_bounds),
-            join_biguint(&sh_enc.bounds.p2_bounds),
-            sh_enc.bounds.msg_bound,
-        ),
+        &render_globals(&[&sh_enc_globals]),
     );
-
     let sh_dec_section = section(
         "share_decryption_sk (CIRCUIT 4a - BFV DECRYPTION SK)\nshare_decryption_e_sm (CIRCUIT 4b - BFV DECRYPTION E_SM)",
-        &format!(
-            "pub global SHARE_DECRYPTION_BIT_MSG: u32 = {};
-// SHARE_DECRYPTION_BIT_AGG: see `pub use` of `THRESHOLD_SHARE_DECRYPTION_BIT_SK` (C6 `BIT_SK`).",
-            msg_bit,
-        ),
+        &render_globals(&[&sh_dec_globals]),
     );
 
     Ok(format!(
-        "{header}{pk_section}\n\n{sc_sk_section}\n\n{sc_esm_section}\n\n{sh_enc_section}\n\n{sh_dec_section}\n"
+        "{header}{pk_section}\n\n{chunking_section}\n\n{sc_section}\n\n{sh_enc_section}\n\n{sh_dec_section}\n"
     ))
 }
 

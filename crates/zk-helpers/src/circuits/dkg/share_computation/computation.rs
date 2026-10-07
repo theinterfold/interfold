@@ -416,5 +416,4 @@ mod tests {
         let error = Inputs::compute(preset, &sample).unwrap_err().to_string();
         assert!(error.contains("CRT limb 1 has 127 coefficients; expected 128"));
     }
-
 }

@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 pub mod decrypted_shares_aggregation;
+pub mod decrypted_shares_aggregation_wide;
 pub mod lbfv_pk_aggregation;
 pub mod lbfv_proof_domain;
 pub mod pk_aggregation;

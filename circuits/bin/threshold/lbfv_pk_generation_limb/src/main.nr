@@ -7,8 +7,9 @@
 use lib::configs::default::dkg::{SHARE_COMPUTATION_CHUNK_SIZE, SHARE_COMPUTATION_N_CHUNKS};
 use lib::configs::default::N_PARTIES;
 use lib::configs::default::threshold::{
-    GADGET_DIM, L, LBFV_CRS_GADGET_ROWS, N, PK_GENERATION_BIT_EEK, PK_GENERATION_BIT_PK,
-    PK_GENERATION_BIT_R1, PK_GENERATION_BIT_R2, PK_GENERATION_BIT_SK, PK_GENERATION_CONFIGS,
+    GADGET_DIM, L, LBFV_CRS_GADGET_ROWS, LBFV_PK_GENERATION_BIT_R1, LBFV_PK_GENERATION_BIT_R2,
+    LBFV_PK_GENERATION_R1_BOUNDS, LBFV_PK_GENERATION_R2_BOUNDS, N, PK_GENERATION_BIT_EEK,
+    PK_GENERATION_BIT_PK, PK_GENERATION_BIT_SK, PK_GENERATION_CONFIGS,
 };
 use lib::core::threshold::lbfv_pk_generation::LbfvPkGenerationLimb;
 use lib::core::threshold::lbfv_proof_domain::{LbfvProofSession, validate_generation_statement};
@@ -34,11 +35,11 @@ fn main(
     );
     assert(limb_index < L, "limb_index out of range");
 
-    let circuit: LbfvPkGenerationLimb<N, PK_GENERATION_BIT_EEK, PK_GENERATION_BIT_SK, PK_GENERATION_BIT_R1, PK_GENERATION_BIT_R2, PK_GENERATION_BIT_PK, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE> = LbfvPkGenerationLimb::new(
+    let circuit: LbfvPkGenerationLimb<N, PK_GENERATION_BIT_EEK, PK_GENERATION_BIT_SK, LBFV_PK_GENERATION_BIT_R1, LBFV_PK_GENERATION_BIT_R2, PK_GENERATION_BIT_PK, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE> = LbfvPkGenerationLimb::new(
         PK_GENERATION_CONFIGS.eek_bound,
         PK_GENERATION_CONFIGS.sk_bound,
-        PK_GENERATION_CONFIGS.r1_bounds[limb_index],
-        PK_GENERATION_CONFIGS.r2_bounds[limb_index],
+        LBFV_PK_GENERATION_R1_BOUNDS[limb_index],
+        LBFV_PK_GENERATION_R2_BOUNDS[limb_index],
         PK_GENERATION_CONFIGS.qis[limb_index],
         LBFV_CRS_GADGET_ROWS[row_index][limb_index],
         row_index,
