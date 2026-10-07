@@ -31,7 +31,7 @@ use e3_sdk::{
             CommitteePublicKeyChunkPublished, CommitteePublished, E3Requested,
             PlaintextOutputPublished,
         },
-        retry::call_with_retry,
+        retry::{call_with_retry, call_with_retry_attempts},
     },
     indexer::{DataStore, IndexerContext, InterfoldIndexer, SharedStore},
 };
@@ -49,6 +49,16 @@ use tokio::{sync::Notify, time::sleep};
 static DISCOVERY_OWED: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
+
+/// Attempts of the `getE3` read that confirms the provider has the block of an `E3Requested`
+/// event.
+///
+/// The subscription delivers the event when one node has the block. The HTTP provider spreads
+/// reads over nodes that can trail that node by most of a block, and until they have it every read
+/// of the round reverts with `E3DoesNotExist`. Five attempts wait 2 + 4 + 8 + 16 = 30 s in total,
+/// which covers more than two Sepolia blocks. A live handler error is not retried later, so a
+/// shorter wait loses the round.
+const E3_VISIBLE_ATTEMPTS: u32 = 5;
 
 fn is_configured_e3_program(event_program: Address, configured_program: Address) -> bool {
     event_program == configured_program
@@ -321,16 +331,21 @@ pub async fn register_e3_requested(
                 info!("[e3_id={}] E3Requested: {:?}", e3_id, event);
 
                 // 0xcd6f4a4f = E3DoesNotExist()
-                let e3 = call_with_retry("get_e3", &["0xcd6f4a4f"], || {
-                    let contract = contract.clone();
-                    let event_e3_id = event.e3Id;
-                    async move {
-                        contract
-                            .get_e3(event_e3_id)
-                            .await
-                            .map_err(|e| anyhow::anyhow!("{}", e))
-                    }
-                })
+                let e3 = call_with_retry_attempts(
+                    "get_e3",
+                    &["0xcd6f4a4f"],
+                    E3_VISIBLE_ATTEMPTS,
+                    || {
+                        let contract = contract.clone();
+                        let event_e3_id = event.e3Id;
+                        async move {
+                            contract
+                                .get_e3(event_e3_id)
+                                .await
+                                .map_err(|e| anyhow::anyhow!("{}", e))
+                        }
+                    },
+                )
                 .await
                 .map_err(|e| eyre::eyre!("{}", e))?;
 

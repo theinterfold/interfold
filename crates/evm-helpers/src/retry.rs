@@ -20,7 +20,35 @@ where
     F: Fn() -> Fut,
     Fut: Future<Output = anyhow::Result<T>>,
 {
-    call_with_retry_and_decoder(operation_name, retry_on_errors, operation_fn, |_| None).await
+    call_with_retry_attempts(
+        operation_name,
+        retry_on_errors,
+        RETRY_MAX_ATTEMPTS,
+        operation_fn,
+    )
+    .await
+}
+
+/// Like `call_with_retry`, with `max_attempts` attempts. The first retry waits 2 s and each later
+/// retry waits twice as long as the one before, so `max_attempts` also sets the longest total wait.
+pub async fn call_with_retry_attempts<F, Fut, T>(
+    operation_name: &str,
+    retry_on_errors: &[&str],
+    max_attempts: u32,
+    operation_fn: F,
+) -> anyhow::Result<T>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = anyhow::Result<T>>,
+{
+    retry_decoded(
+        operation_name,
+        retry_on_errors,
+        max_attempts,
+        operation_fn,
+        |_| None,
+    )
+    .await
 }
 
 /// Like `call_with_retry`, but accepts an error decoder function that can
@@ -30,6 +58,28 @@ where
 pub async fn call_with_retry_and_decoder<F, Fut, T, D>(
     operation_name: &str,
     retry_on_errors: &[&str],
+    operation_fn: F,
+    decode_error: D,
+) -> anyhow::Result<T>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = anyhow::Result<T>>,
+    D: Fn(&str) -> Option<String>,
+{
+    retry_decoded(
+        operation_name,
+        retry_on_errors,
+        RETRY_MAX_ATTEMPTS,
+        operation_fn,
+        decode_error,
+    )
+    .await
+}
+
+async fn retry_decoded<F, Fut, T, D>(
+    operation_name: &str,
+    retry_on_errors: &[&str],
+    max_attempts: u32,
     operation_fn: F,
     decode_error: D,
 ) -> anyhow::Result<T>
@@ -71,7 +121,7 @@ where
                 }
             }
         },
-        RETRY_MAX_ATTEMPTS,
+        max_attempts,
         RETRY_INITIAL_DELAY_MS,
     )
     .await

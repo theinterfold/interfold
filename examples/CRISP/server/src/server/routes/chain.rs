@@ -30,6 +30,8 @@ use crate::server::models::JsonResponse;
 use crate::server::rate_limit::ChainRateLimiter;
 use crate::server::read_cache;
 
+use super::scan::upstream_window;
+
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use alloy::eips::BlockNumberOrTag;
 use alloy::network::TransactionBuilder;
@@ -983,21 +985,26 @@ async fn forward_windowed_logs(
         windowed["fromBlock"] = serde_json::json!(format!("0x{start:x}"));
         windowed["toBlock"] = serde_json::json!(format!("0x{end:x}"));
 
-        let body = serde_json::json!({
+        let body = &serde_json::json!({
             "jsonrpc": "2.0", "id": 1, "method": "eth_getLogs", "params": [windowed],
         });
 
-        let response: serde_json::Value = client
-            .post(&CONFIG.http_rpc_url)
-            .json(&body)
-            .send()
-            .await?
-            .json()
-            .await?;
+        let response = upstream_window(|| async move {
+            let response: serde_json::Value = client
+                .post(&CONFIG.http_rpc_url)
+                .json(body)
+                .send()
+                .await?
+                .json()
+                .await?;
 
-        if let Some(err) = response.get("error") {
-            return Err(eyre::eyre!("upstream error: {err}"));
-        }
+            if let Some(err) = response.get("error") {
+                anyhow::bail!("upstream error: {err}");
+            }
+
+            anyhow::Ok(response)
+        })
+        .await?;
 
         if let Some(serde_json::Value::Array(logs)) = response.get("result") {
             all.extend(logs.clone());
@@ -1475,12 +1482,17 @@ async fn logs(
     while start <= to {
         let end = start.saturating_add(LOG_WINDOW - 1).min(to);
 
-        let filter = base
+        let filter = &base
             .clone()
             .from_block(BlockNumberOrTag::Number(start))
             .to_block(BlockNumberOrTag::Number(end));
 
-        match provider.get_logs(&filter).await {
+        let window = upstream_window(|| async move {
+            provider.get_logs(filter).await.map_err(anyhow::Error::from)
+        })
+        .await;
+
+        match window {
             Ok(found) => entries.extend(found.into_iter().map(|log| LogEntry {
                 address: log.address().to_string(),
                 topics: log.topics().iter().map(|t| t.to_string()).collect(),

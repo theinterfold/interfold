@@ -20,6 +20,8 @@ use alloy::eips::BlockNumberOrTag;
 use alloy::primitives::{Address, Bytes, B256};
 use alloy::providers::{DynProvider, Provider};
 use alloy::rpc::types::Filter;
+use e3_sdk::evm_helpers::retry::call_with_retry;
+use std::future::Future;
 use std::str::FromStr;
 
 /// Blocks per upstream `eth_getLogs` window.
@@ -33,6 +35,27 @@ pub const LOG_WINDOW: u64 = 2_000;
 /// A scan reaching further than this is a misconfigured `from_block`, not a real request, and
 /// answering it would tie up a connection for minutes.
 pub const MAX_LOG_WINDOWS: u64 = 600;
+
+/// The go-ethereum `eth_getLogs` error (`errBlockRangeIntoFuture`, code -32602) for a range that
+/// ends past the head of the node that serves the request.
+const BEHIND_HEAD: &str = "block range extends beyond current head block";
+
+/// Run one upstream `eth_getLogs` window, and run it again while the serving node is behind it.
+///
+/// The provider spreads requests over nodes, and one node can trail another by most of a block.
+/// A head that one node reports, to this server or to a client, can therefore be a block that the
+/// next node has not imported yet. That node refuses the range with [`BEHIND_HEAD`] until it
+/// imports the block, so only that error is retried: 3 attempts, 6 s of waits in total, which
+/// keeps a retried request inside the 10 s default timeout of a viem client.
+pub(super) async fn upstream_window<T, F, Fut>(query: F) -> eyre::Result<T>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = anyhow::Result<T>>,
+{
+    call_with_retry("eth_getLogs window", &[BEHIND_HEAD], query)
+        .await
+        .map_err(|e| eyre::eyre!("{e:#}"))
+}
 
 /// One event, in the shape both sources can produce.
 #[derive(Debug, Clone)]
@@ -180,12 +203,17 @@ async fn from_upstream(
     while start <= to {
         let end = (start + LOG_WINDOW - 1).min(to);
 
-        let filter = base
+        let filter = &base
             .clone()
             .from_block(BlockNumberOrTag::Number(start))
             .to_block(BlockNumberOrTag::Number(end));
 
-        for log in provider.get_logs(&filter).await? {
+        let found = upstream_window(|| async move {
+            provider.get_logs(filter).await.map_err(anyhow::Error::from)
+        })
+        .await?;
+
+        for log in found {
             logs.push(ScannedLog {
                 topics: log.topics().to_vec(),
                 data: log.data().data.clone(),
@@ -210,5 +238,56 @@ pub async fn coverage_for(store: &web::Data<AppData>, address_key: &str) -> Cove
     match (repo.coverage(address_key).await, repo.indexed_head().await) {
         (Ok(Some(from)), Ok(Some(head))) => Some((from, head)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::address;
+    use alloy::providers::ProviderBuilder;
+    use alloy::transports::mock::Asserter;
+
+    #[tokio::test]
+    async fn a_window_past_the_serving_node_head_is_retried() {
+        let plugin = address!("0xb102de5f689C9af91e61702Ac24B6b9eA3E6b560");
+        let topic0 = B256::repeat_byte(0xa6);
+        let asserter = Asserter::new();
+        let provider = ProviderBuilder::new()
+            .connect_mocked_client(asserter.clone())
+            .erased();
+
+        // The node that answers first has not imported the last block of the window. The node
+        // that answers the retry has it.
+        asserter.push_failure(
+            serde_json::from_str(
+                r#"{"code":-32602,"message":"block range extends beyond current head block: requested 11863378, head 11863377"}"#,
+            )
+            .unwrap(),
+        );
+        asserter.push_success(&serde_json::json!([{
+            "address": plugin,
+            "topics": [topic0],
+            "data": "0x",
+            "blockNumber": "0xb50552",
+            "blockHash": B256::repeat_byte(1),
+            "transactionHash": B256::repeat_byte(2),
+            "transactionIndex": "0x0",
+            "logIndex": "0x0",
+            "removed": false,
+        }]));
+
+        let target = Target::any(
+            plugin,
+            "0xb102de5f689c9af91e61702ac24b6b9ea3e6b560",
+            topic0,
+            None,
+        );
+        let logs = from_upstream(&provider, &target, 11_863_092, 11_863_378)
+            .await
+            .unwrap();
+
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].block_number, 11_863_378);
     }
 }
