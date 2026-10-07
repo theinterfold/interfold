@@ -21,8 +21,9 @@ register it, and your server and client use the testnet.
 <Callout type='warning'>
   Do not submit real private data on Sepolia. The `insecure-512` preset is not secure. The public
   key, decryption, and DKG verifiers of the Sepolia deployment check the proofs. The ciphertext
-  verifier wraps `MockRISC0Verifier`, which accepts every seal. The other test contracts are
-  `MockUSDC` and the `Faucet`. The manifest marks Sepolia with `mocks: false`.
+  verifier is still the RISC Zero verifier from before OpenVM, and it wraps `MockRISC0Verifier`,
+  which accepts every seal. The other test contracts are `MockUSDC` and the `Faucet`. The manifest
+  marks Sepolia with `mocks: false`.
 </Callout>
 
 <Callout type='warning'>
@@ -65,12 +66,12 @@ as the ticket collateral.
 Locally, `pnpm dev:all` deploys its own Interfold contracts, and the deployer owns them. On Sepolia,
 the Interfold team owns the protocol contracts. This changes four steps of the local flow.
 
-| Step                         | Local (`pnpm dev:all`)                                             | Sepolia                                                                                             |
-| ---------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
-| Program registration         | `deployTemplate` calls `registerE3Program`.                        | `registerE3Program` is `onlyOwner`. The owner of the Interfold contract must call it.               |
-| Protocol ciphertext verifier | `deployTemplate` calls `setCiphertextVerifier` with your image ID. | `setCiphertextVerifier` is `onlyOwner`. One verifier accepts dev-mode proofs for every BFV program. |
-| Data availability            | The coordination server stores the output (`mode: mock_http`).     | Ciphernodes read the output from Avail (`mode: avail`).                                             |
-| Ciphernodes                  | Five local nodes from `scripts/dev_ciphernodes.sh`.                | The nodes of registered operators. Sortition needs enough of them for the committee size.           |
+| Step                         | Local (`pnpm dev:all`)                                                     | Sepolia                                                                                              |
+| ---------------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Program registration         | `deployTemplate` calls `registerE3Program`.                                | `registerE3Program` is `onlyOwner`. The owner of the Interfold contract must call it.                |
+| Protocol ciphertext verifier | `deployTemplate` calls `setCiphertextVerifier` with your receipt identity. | `setCiphertextVerifier` is `onlyOwner`. One mock-backed verifier accepts every BFV program's proofs. |
+| Data availability            | The coordination server stores the output (`mode: mock_http`).             | Ciphernodes read the output from Avail (`mode: avail`).                                              |
+| Ciphernodes                  | Five local nodes from `scripts/dev_ciphernodes.sh`.                        | The nodes of registered operators. Sortition needs enough of them for the committee size.            |
 
 The first two rows mean that you cannot run `deployTemplate` on Sepolia unchanged. The owner-only
 calls revert for any other signer. The last two rows decide if an E3 of your program can complete.
@@ -168,10 +169,14 @@ chains:
 ### Write a Sepolia deploy script
 
 Create `scripts/deploy-sepolia.ts`. It is `deploy/default.ts` without the two owner-only calls. Like
-the CRISP deploy script, it deploys `PoseidonT3` when the network has no record for it.
+the CRISP deploy script, it deploys `PoseidonT3` when the network has no record for it. It deploys
+an `OpenVmReceiptVerifier` for the guest that `interfold program compile` built (see
+[Compute Provider](/build/e3-program/compute-provider#run-a-compute-provider)), so run that first.
 
 ```ts filename="scripts/deploy-sepolia.ts"
 import {
+  compiledOpenVmEnvironment,
+  deployOpenVmReceiptVerifier,
   getDeploymentChain,
   readDeploymentArgs,
   storeDeploymentArgs,
@@ -181,7 +186,9 @@ import hre from 'hardhat'
 
 async function main() {
   const { MyProgram__factory: MyProgramFactory } = await import('../types/factories/contracts')
-  const { ensureTemplateCwd, INTERFOLD_CONFIG_FILE } = await import('./template-paths')
+  const { ensureTemplateCwd, INTERFOLD_CONFIG_FILE, TEMPLATE_ROOT } = await import(
+    './template-paths'
+  )
   ensureTemplateCwd()
   const { ethers } = await hre.network.connect()
   const [owner] = await ethers.getSigners()
@@ -203,15 +210,13 @@ async function main() {
     )
   }
 
-  // MockRISC0Verifier accepts every seal, so it weakens only the check in MyProgram.verify. It does
-  // not change the protocol check. On Sepolia, Risc0BfvCiphertextVerifier wraps a mock verifier too,
-  // so it accepts dev-mode proofs. The mainnet verifier does not. Use a real RISC Zero verifier for
-  // real proofs.
-  const verifier = await ethers.deployContract('MockRISC0Verifier')
-  await verifier.waitForDeployment()
-  const imageId = await ethers.deployContract('ImageID')
-  await imageId.waitForDeployment()
-  const programId = await imageId.PROGRAM_ID()
+  // The receipt verifier for the guest in .interfold/caches/openvm/prover.json, unless OPENVM_*
+  // settings name another. It deploys the Halo2 verifier from the checked artifact first.
+  const { receipt: verifier } = await deployOpenVmReceiptVerifier(
+    ethers,
+    compiledOpenVmEnvironment(TEMPLATE_ROOT),
+  )
+  const programId = await verifier.imageId()
 
   const factory = await ethers.getContractFactory(
     MyProgramFactory.abi,
@@ -276,9 +281,9 @@ with `E3ProgramNotAllowed`.
 ### Check the protocol ciphertext verifier
 
 Every output proof must pass the ciphertext verifier that the owner set for BFV. On Sepolia, this is
-`Risc0BfvCiphertextVerifier` at `0x52569C1D143bA4B423f19904b58A1271756fc991`. It wraps
-`MockRISC0Verifier` at `0x254Cef2769D589E36208e9bD2da031A568fa49cD`. The mock verifier accepts every
-seal. Read the verifier address:
+still `Risc0BfvCiphertextVerifier` at `0x52569C1D143bA4B423f19904b58A1271756fc991`, from before
+OpenVM. It wraps `MockRISC0Verifier` at `0x254Cef2769D589E36208e9bD2da031A568fa49cD`, which accepts
+every seal. Read the verifier address:
 
 ```bash
 cast call $INTERFOLD_ADDRESS "getCiphertextVerifier(bytes32)(address)" $(cast keccak "fhe.rs:BFV") --rpc-url $RPC_URL
@@ -291,15 +296,16 @@ cast call <verifier address> "imageId()(bytes32)" --rpc-url $RPC_URL
 cast call <verifier address> "risc0Verifier()(address)" --rpc-url $RPC_URL
 ```
 
-The verifier records an image ID, but the mock verifier does not check the seal against it. A proof
-from any guest passes the protocol check on Sepolia. The program server in dev mode
-(`program.dev: true`) makes dev-mode proofs, and the protocol verifier accepts them. Your program
-must still pass `MyProgram.verify`.
+The verifier records an image ID, but the mock verifier does not check the seal against it. Its
+envelope has the same `abi.encode(bytes seal, bytes32 paramsHash, bytes32 inputRoot)` layout as an
+OpenVM proof, so an OpenVM proof passes the protocol check on Sepolia when its parameter hash
+matches, and so does a development-runner proof. Your program must still pass `MyProgram.verify`,
+which checks the OpenVM receipt for real.
 
-Do not rely on this behavior on mainnet. The mainnet ciphertext verifier checks the seal against a
-pinned guest image ID.
+Do not rely on this behavior on mainnet. A non-mock ciphertext verifier checks every proof against
+its pinned identity, and an OpenVM migration replaces it with `OpenVmBfvCiphertextVerifier`.
 
-A mock RISC Zero verifier in your program affects only `MyProgram.verify`. It does not affect the
+The receipt verifier in your program affects only `MyProgram.verify`. It does not affect the
 protocol verifier. The Interfold contract copies the current verifier into each E3 at request time,
 so a later change applies only to new requests. See
 [Verify the Compute Provider](/build/e3-program/verify-compute-provider).
@@ -442,7 +448,7 @@ chains it refuses mocks unless `ALLOW_MOCKS_ON_PRODUCTION=true` is set.
 | `FeeExceedsMaximum` on request               | The fee changed after the quote.                                        | Get a new quote and request again.                                                    |
 | `InvalidInputDeadlineStart` on request       | `inputWindow[0]` is earlier than the block time.                        | Compute the window with `calculateInputWindow(publicClient, duration)`.               |
 | No committee key                             | Sortition did not select a full committee, or the DKG did not finish.   | Read the stage with `getE3Stage`. If it is `Failed`, request a new E3.                |
-| `InvalidOutput` on output publication        | The protocol verifier or `MyProgram.verify` rejected the compute proof. | On Sepolia, dev-mode proofs pass the protocol verifier. Check `MyProgram.verify`.     |
+| `InvalidOutput` on output publication        | The protocol verifier or `MyProgram.verify` rejected the compute proof. | Check that the service's guest has the identity your `MyProgram` names.               |
 | `RequestsPaused` on request                  | Sepolia requests are paused.                                            | Wait until the owner unpauses requests. `requestsPaused()` returns `false` then.      |
 | The E3 does not finish after the output      | The committee cannot read the output from Avail.                        | Replace the local data-availability check, and publish the output to Avail.           |
 
@@ -458,7 +464,7 @@ chains it refuses mocks unless `ALLOW_MOCKS_ON_PRODUCTION=true` is set.
     icon='chip'
     tag='Build'
   >
-    Run the program server with real RISC Zero proofs.
+    Run the program server with real OpenVM proofs.
   </LinkCard>
   <LinkCard title='Request an E3' href='/build/requesting-an-e3' icon='rocket' tag='Build'>
     Request parameters, quotes, and fees in detail.

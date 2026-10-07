@@ -57,7 +57,7 @@ The table shows each guarantee, the mechanism that backs it, and where the proto
 | Inputs stay encrypted during the computation | Fully homomorphic encryption (FHE) with the threshold BFV scheme         | The compute provider receives only ciphertexts                                             |
 | No single party can decrypt                  | Threshold cryptography: DKG and Shamir secret sharing                    | The decryption proof combines T + 1 verified shares                                        |
 | Key generation and decryption are correct    | Zero-knowledge (ZK) proofs from circuits C0 to C7                        | `BfvPkVerifier` at `publishCommittee`, `BfvDecryptionVerifier` at `publishPlaintextOutput` |
-| The computation is correct                   | A compute proof (a RISC Zero zkVM receipt in the current code)           | The ciphertext verifier and the E3 program `verify` function at `publishCiphertextOutput`  |
+| The computation is correct                   | A compute proof (an OpenVM zkVM receipt in the current code)             | The ciphertext verifier and the E3 program `verify` function at `publishCiphertextOutput`  |
 | Committee selection is random                | Ticket-weighted sortition with a Chainlink VRF v2.5 seed                 | `CiphernodeRegistry` functions `submitTicket` and `finalizeCommittee`                      |
 | Operators have a reason to act correctly     | Economic security: FOLD bonds, tFOLD tickets, slashing, rewards, refunds | `BondingRegistry`, `SlashingManager`, and `E3RefundManager`                                |
 

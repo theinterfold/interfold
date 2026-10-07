@@ -201,8 +201,8 @@ must check the arguments of the call. It must not read the pending output from I
 
 1. Compare `paramsHash` in the proof with the hash that `validate` stored.
 2. Compare `inputRoot` in the proof with the root of the on-chain input tree.
-3. Rebuild the nine-field journal with `Risc0ComputeProof.journal`.
-4. Call the RISC Zero verifier with the seal, the image ID, and `sha256(journal)`.
+3. Rebuild the nine-word journal with `OpenVmComputeProof.journal`.
+4. Call the OpenVM receipt verifier with the seal, the receipt identity, and `sha256(journal)`.
 
 ```solidity filename="contracts/MyProgram.sol"
 function verify(
@@ -215,10 +215,10 @@ function verify(
   E3 memory e3 = interfold.getE3(e3Id);
   bytes32 paramsHash = paramsHashes[e3Id];
   bytes32 inputRoot = bytes32(inputs[e3Id]._root());
-  Risc0ComputeProof.Proof memory computeProof = Risc0ComputeProof.decode(proof);
+  OpenVmComputeProof.Proof memory computeProof = OpenVmComputeProof.decode(proof);
   if (computeProof.paramsHash != paramsHash || computeProof.inputRoot != inputRoot)
     revert InvalidComputeContext();
-  bytes memory journal = Risc0ComputeProof.journal(
+  bytes memory journal = OpenVmComputeProof.journal(
     bytes32(block.chainid),
     bytes32(uint256(uint160(address(interfold)))),
     bytes32(e3Id),

@@ -7,13 +7,13 @@ of an existing receipt. Existing deployment records and legacy RISC Zero contrac
 
 ## Pieces
 
-| Piece                                    | What it is                                                                 |
-| ---------------------------------------- | -------------------------------------------------------------------------- |
-| `guest/` in the project                  | The OpenVM guest. Its own workspace, built with `cargo openvm`             |
-| `.interfold/support/openvm/service`      | The proving service: `e3-program-server` with `e3-openvm-host` as runner   |
-| `.interfold/support/openvm/compile`      | Builds the guest, keys, receipt identity, worker configuration and service |
-| `.interfold/support/openvm/start`        | Starts the service                                                         |
-| `interfold-openvm-prover` (this crate)   | The worker. A separate process, in a CPU build and a CUDA build            |
+| Piece                                  | What it is                                                                 |
+| -------------------------------------- | -------------------------------------------------------------------------- |
+| `guest/` in the project                | The OpenVM guest. Its own workspace, built with `cargo openvm`             |
+| `.interfold/support/openvm/service`    | The proving service: `e3-program-server` with `e3-openvm-host` as runner   |
+| `.interfold/support/openvm/compile`    | Builds the guest, keys, receipt identity, worker configuration and service |
+| `.interfold/support/openvm/start`      | Starts the service                                                         |
+| `interfold-openvm-prover` (this crate) | The worker. A separate process, in a CPU build and a CUDA build            |
 
 `interfold init` copies the service folder and pins the guest's Interfold crates to the template's
 commit. In this repository, `templates/default` and `examples/CRISP` link the folder from
@@ -63,8 +63,8 @@ program:
 ```
 
 With `backend: auto` the service runs the CUDA worker's `probe` at startup. When that opens a GPU,
-the CUDA worker proves; when there is no CUDA worker, no GPU, or no driver, the CPU worker proves and
-the service logs why. `backend: cuda` refuses to start without a working GPU, and `backend: cpu`
+the CUDA worker proves; when there is no CUDA worker, no GPU, or no driver, the CPU worker proves
+and the service logs why. `backend: cuda` refuses to start without a working GPU, and `backend: cpu`
 never tries one.
 
 ## Compile, deploy and start
@@ -89,45 +89,45 @@ interfold program start
 ```
 
 The service picks its worker, then runs the worker's `check`. That loads the application,
-aggregation and Halo2 keys and both KZG parameter files, verifies the verifier artifact's digest, and
-recomputes the identity from the executable, before any request is accepted.
+aggregation and Halo2 keys and both KZG parameter files, verifies the verifier artifact's digest,
+and recomputes the identity from the executable, before any request is accepted.
 
 ## Worker commands
 
-| Command                                                                        | Purpose                                    |
-| ------------------------------------------------------------------------------ | ------------------------------------------ |
-| `prepare <app.pk> <guest.vmexe> <new-dir>`                                     | Aggregation key and `identity.json`        |
-| `write-config <out.json> <app.pk> <guest.vmexe> <prepared> <setup> <segment>`  | The configuration below                    |
-| `probe`                                                                        | Succeeds only for a CUDA build with a GPU  |
-| `check <config.json>`                                                          | Loads and checks every artifact            |
-| `prove <config.json> <input> <journal> <new-seal>`                             | Proves and verifies one round              |
-| `verify <config.json> <proof.json> <journal> <new-seal>`                       | Verifies an existing proof                 |
+| Command                                                                       | Purpose                                   |
+| ----------------------------------------------------------------------------- | ----------------------------------------- |
+| `prepare <app.pk> <guest.vmexe> <new-dir>`                                    | Aggregation key and `identity.json`       |
+| `write-config <out.json> <app.pk> <guest.vmexe> <prepared> <setup> <segment>` | The configuration below                   |
+| `probe`                                                                       | Succeeds only for a CUDA build with a GPU |
+| `check <config.json>`                                                         | Loads and checks every artifact           |
+| `prove <config.json> <input> <journal> <new-seal>`                            | Proves and verifies one round             |
+| `verify <config.json> <proof.json> <journal> <new-seal>`                      | Verifies an existing proof                |
 
 `prove` reads the guest input items the host wrote, proves the application, aggregates it, generates
 the Halo2 EVM proof, and verifies it with the configured EVM verifier against the expected journal
 and both application commitments before it writes a seal. There is no fake-proof mode.
 
-| Configuration field    | Value                                                         |
-| ---------------------- | ------------------------------------------------------------- |
-| `app_pk`               | The guest application proving key                             |
-| `executable`           | The guest VM executable                                       |
-| `aggregation_pk`       | The aggregation key from `prepare`                            |
-| `halo2_pk`             | The Halo2 proving key                                         |
-| `halo2_params_dir`     | The KZG parameter directory                                   |
-| `verifier_artifact`    | The EVM verifier bytecode JSON                                |
-| `verifier_sha256`      | Its SHA-256 digest, lowercase hexadecimal                     |
-| `app_commit`           | The `app_commit` object from `identity.json`                  |
+| Configuration field    | Value                                                          |
+| ---------------------- | -------------------------------------------------------------- |
+| `app_pk`               | The guest application proving key                              |
+| `executable`           | The guest VM executable                                        |
+| `aggregation_pk`       | The aggregation key from `prepare`                             |
+| `halo2_pk`             | The Halo2 proving key                                          |
+| `halo2_params_dir`     | The KZG parameter directory                                    |
+| `verifier_artifact`    | The EVM verifier bytecode JSON                                 |
+| `verifier_sha256`      | Its SHA-256 digest, lowercase hexadecimal                      |
+| `app_commit`           | The `app_commit` object from `identity.json`                   |
 | `segment_memory_bytes` | The proving segment memory limit (`compile` defaults to 8 GiB) |
 
 ## Service settings
 
-| Variable                      | Default             | Meaning                                       |
-| ----------------------------- | ------------------- | --------------------------------------------- |
-| `OPENVM_BIND_ADDR`            | `127.0.0.1:13151`   | Listener                                      |
-| `OPENVM_MAX_REQUEST_BYTES`    | 128 MiB             | Largest `/run_compute` body                   |
-| `MAX_CONCURRENT_COMPUTATIONS` | 1                   | Rounds proved at once                         |
-| `OPENVM_CHECK_TIMEOUT_SECS`   | 1800                | Deadline for the startup `check`              |
-| `OPENVM_PROVE_TIMEOUT_SECS`   | 86400               | Deadline for one proof; the worker is stopped |
+| Variable                      | Default           | Meaning                                       |
+| ----------------------------- | ----------------- | --------------------------------------------- |
+| `OPENVM_BIND_ADDR`            | `127.0.0.1:13151` | Listener                                      |
+| `OPENVM_MAX_REQUEST_BYTES`    | 128 MiB           | Largest `/run_compute` body                   |
+| `MAX_CONCURRENT_COMPUTATIONS` | 1                 | Rounds proved at once                         |
+| `OPENVM_CHECK_TIMEOUT_SECS`   | 1800              | Deadline for the startup `check`              |
+| `OPENVM_PROVE_TIMEOUT_SECS`   | 86400             | Deadline for one proof; the worker is stopped |
 
 A request is admitted before its body is read, and a request beyond capacity gets 429. Jobs are in
 memory: a restart loses accepted jobs, and operators must reconcile them. Callbacks are retried with
@@ -169,15 +169,15 @@ pnpm openvm contract-test  # receipt and journal contracts
 ```
 
 `pnpm openvm proof-test` verifies an externally supplied proof on an in-memory chain. It needs
-`OPENVM_TEST_IDENTITY`, `OPENVM_TEST_JOURNAL`, `OPENVM_TEST_VERIFIER`, `OPENVM_TEST_VERIFIER_SHA256`,
-and `OPENVM_TEST_PROOF` (proof JSON) or `OPENVM_TEST_SEAL` (worker seal).
+`OPENVM_TEST_IDENTITY`, `OPENVM_TEST_JOURNAL`, `OPENVM_TEST_VERIFIER`,
+`OPENVM_TEST_VERIFIER_SHA256`, and `OPENVM_TEST_PROOF` (proof JSON) or `OPENVM_TEST_SEAL` (worker
+seal).
 
-`pnpm openvm service-e2e` runs a live round: CRISP input submission and indexing, the running
-OpenVM service, the callback, and ciphertext publication. It needs an isolated loopback RPC with
-chain ID 31337 (use Anvil for long rounds) and a running service started with
-`pnpm openvm service-start` after `pnpm openvm compile`. Build the CRISP server with
-`pnpm openvm crisp-server-build --release` and generate secure-8192 ballots with
-`pnpm openvm fixture <count> <new-directory>`. Set:
+`pnpm openvm service-e2e` runs a live round: CRISP input submission and indexing, the running OpenVM
+service, the callback, and ciphertext publication. It needs an isolated loopback RPC with chain ID
+31337 (use Anvil for long rounds) and a running service started with `pnpm openvm service-start`
+after `pnpm openvm compile`. Build the CRISP server with `pnpm openvm crisp-server-build --release`
+and generate secure-8192 ballots with `pnpm openvm fixture <count> <new-directory>`. Set:
 
 | Variable                      | Meaning                                                    |
 | ----------------------------- | ---------------------------------------------------------- |

@@ -73,10 +73,10 @@ bytes from Avail, and verify their hash.
 hash without an accepted VectorX receipt can therefore never enter the final computation.
 
 The aggregate callback uses the same two-proof order. Before the server spends Avail funds, it calls
-`CRISPProgram.verify` as an Ethereum read with the output hash, SAFE commitment, and OpenVM
-proof. Only an output that passes that exact on-chain verifier becomes a durable Avail job. The job
-ID excludes the proof seal, so another valid seal for the same output is an idempotent retry instead
-of a second paid publication. The job ID also uses the canonical decimal E3 identifier, so an alias
+`CRISPProgram.verify` as an Ethereum read with the output hash, SAFE commitment, and OpenVM proof.
+Only an output that passes that exact on-chain verifier becomes a durable Avail job. The job ID
+excludes the proof seal, so another valid seal for the same output is an idempotent retry instead of
+a second paid publication. The job ID also uses the canonical decimal E3 identifier, so an alias
 such as `042` selects the same job as `42` rather than a second paid publication. The server also
 refuses the job while the input window is open: a proof over the current root could otherwise become
 stale after another vote, after the Avail fee was already paid. The compute server retries a
@@ -211,10 +211,10 @@ The boundaries are intentional:
 
 Late input finalization is best-effort recovery, not a new seven-day availability promise. The
 contract can accept a receipt through `computeDeadline`, but the E3 can complete only if enough of
-the compute window remains to produce the OpenVM proof, publish the aggregate ciphertext to
-Avail, wait for its VectorX proof, and submit the output on Ethereum. The server therefore refuses
-to start an aggregate Avail job unless more than three hours remain. Operators must alert well
-before that cutoff instead of treating `computeDeadline` as a useful finalization target.
+the compute window remains to produce the OpenVM proof, publish the aggregate ciphertext to Avail,
+wait for its VectorX proof, and submit the output on Ethereum. The server therefore refuses to start
+an aggregate Avail job unless more than three hours remain. Operators must alert well before that
+cutoff instead of treating `computeDeadline` as a useful finalization target.
 
 The boundary tests use the contract timestamp directly. They cover these cases:
 
@@ -337,8 +337,8 @@ run in the request transaction, before the requester pays the fee.
   replacement costs one bridge request and no second publication. A job record written before the
   coordinates were kept decodes with no coordinates, keeps its candidate proof, and needs operator
   recovery.
-- The server verifies an aggregate OpenVM proof before it creates an Avail output job. An
-  arbitrary caller of the output webhook cannot spend the Avail account on an invalid output.
+- The server verifies an aggregate OpenVM proof before it creates an Avail output job. An arbitrary
+  caller of the output webhook cannot spend the Avail account on an invalid output.
 - The compute server retries a transient callback five times, but this callback is not a durable
   outbox. If that process exits after it receives a proof but before CRISP accepts the callback,
   operators must recover the result or resubmit the computation. The durable Avail worker starts
@@ -544,8 +544,8 @@ provider, or on a later adapter, keeps working.
 The normal unit and contract suites do not reproduce the deployed OpenVM guest. Before deployment,
 build the guest and worker from the pinned source and validate their application commitments with
 the worker's `check` command. Deploy a checked Halo2 artifact and bind both verification gates to
-the same receipt identity. Follow `crates/openvm-prover/README.md` and the provenance procedure.
-A native computation does not replace this proof check.
+the same receipt identity. Follow `crates/openvm-prover/README.md` and the provenance procedure. A
+native computation does not replace this proof check.
 
 After the guest is rebuilt, run the full local CRISP Playwright flow and one Sepolia round with real
 Avail Turing and VectorX. Observe this complete event order:

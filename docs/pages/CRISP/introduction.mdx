@@ -34,7 +34,7 @@ conditions in [Privacy limits](#privacy-limits):
 | Secret ballot      | The client encrypts each ballot with BFV under the committee public key. Only the encrypted sum is decrypted. Decryption needs T + 1 key shares, so no single ciphernode can decrypt. |
 | Receipt resistance | A voter can replace their ballot in the same slot. Anyone can add a mask (an encrypted zero ballot) to any eligible slot. On-chain, a vote, an update, and a mask look the same.      |
 | Eligibility        | A Noir proof shows that the slot is in the round census, or that the slot has on-chain voting power.                                                                                  |
-| Verifiable result  | `CRISPProgram.verify` checks a RISC Zero proof of the sum. The Interfold contract checks the decryption proof when the committee publishes the result.                                |
+| Verifiable result  | `CRISPProgram.verify` checks an OpenVM proof of the sum. The Interfold contract checks the decryption proof when the committee publishes the result.                                  |
 | Sender privacy     | The CRISP server can relay inputs, so the chain shows the relay address instead of the voter address. Relaying is configurable, and it is off on Ethereum mainnet by default.         |
 
 A mask adds an encryption of zero to the ciphertext that is already in a slot. The result is a new
@@ -108,7 +108,7 @@ requested and when the encrypted output is published. The
 | `setMerkleRoot` | Owner (the CRISP server key)       | Stores the census Merkle root for a round that uses a census tree.                                                                                                         |
 | `publishInput`  | Voter wallet or server relay       | Verifies the Noir proof and the availability signature of the server. Reserves the input leaf and emits `InputCommitted`.                                                  |
 | `finalizeInput` | Any account (usually the server)   | Verifies the data-availability receipt for the committed ciphertext hash. Emits `InputPublished`.                                                                          |
-| `verify`        | Interfold contract, at the output  | Reverts with `InputAvailabilityPending` while an input waits for finalization. Checks the RISC Zero proof against the parameters hash and the input root.                  |
+| `verify`        | Interfold contract, at the output  | Reverts with `InputAvailabilityPending` while an input waits for finalization. Checks the OpenVM receipt against the parameters hash and the input root.                   |
 | `decodeTally`   | Anyone (view)                      | Decodes the plaintext output into one count per option.                                                                                                                    |
 
 The round parameters include a census mode. The census mode selects who can vote and which Noir
@@ -192,6 +192,7 @@ The tree shows the top-level content of `examples/CRISP` that is tracked in Git.
 | `docs/`                 | `PROOF_AGGREGATION_AND_ZK.md`: local modes for DKG proof aggregation.                                                                                    |
 | `packages/`             | `crisp-contracts` (Hardhat project with `CRISPProgram.sol`), `crisp-sdk` (`@crisp-e3/sdk`), and `crisp-zk-inputs` (WASM bindings).                       |
 | `program/`              | The E3 program crate `e3-user-program`: `fhe_processor` and the input `policy`.                                                                          |
+| `guest/`                | The OpenVM guest that proves `program/`. Its own Cargo workspace, built by `interfold program compile`.                                                  |
 | `scripts/`              | Shell and Node scripts for setup, local services, circuits, tests, and publication.                                                                      |
 | `server/`               | The coordination server, the CLI, and the cron client.                                                                                                   |
 | `test/`                 | The Playwright and Synpress end-to-end test.                                                                                                             |
@@ -200,9 +201,10 @@ The tree shows the top-level content of `examples/CRISP` that is tracked in Git.
 | `.env.example`          | Template for the keys that `scripts/setup_testnet.sh` reads.                                                                                             |
 | `docker-compose.yaml`   | An optional development container that mounts the repository and publishes ports 8545, 3000, and 4000.                                                   |
 
-The production RISC Zero guest is in `crates/support` at the repository root. It includes the same
-`fhe_processor` and `policy` code as `program/`. The CRISP deploy script reads the image ID from
-`crates/support/contracts/ImageID.sol`.
+The OpenVM guest is in `guest/`, and the proving service is in `.interfold/support/openvm`. Both
+link `program/`, so they run the same `fhe_processor` and `policy` as the native host and agree with
+`CRISPProgram`. `interfold program compile` builds the guest and writes its receipt identity, which
+the CRISP deploy script reads unless `OPENVM_*` settings name another.
 
 ## Further reading
 

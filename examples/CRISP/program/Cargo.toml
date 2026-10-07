@@ -17,6 +17,7 @@ openvm-sha2 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2"
 
 [dev-dependencies]
 anyhow.workspace = true
+e3-openvm-types = { workspace = true }
 hex = "=0.4.3"
 num-bigint = "0.5.1"
 serde_json = "=1.0.145"

@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 //! Generate fresh encrypted test ballots. This tool does not produce ballot or committee proofs.
+//!
+//! `openvm_fixture <count> <new-directory> [--insecure]`. Besides the ballots and `fixture.json`,
+//! it writes `execute/input.bin` and `execute/journal.bin`: the guest input and the expected
+//! journal for a test domain, for `interfold-openvm-prover execute`.
 
 use anyhow::{ensure, Context, Result};
 use e3_bfv_client::client::{compute_ct_commitment_with_params, compute_pk_commitment};
-use e3_compute_provider::{ComputeInput, FHEInputs, PublishedData};
+use e3_compute_provider::{Batching, ComputeInput, FHEInputs, PublishedData};
 use e3_fhe_params::{build_pair_for_preset, encode_bfv_params, BfvPreset};
+use e3_openvm_types::{write_items, ComputeDomain, ComputeJournal, GuestHeader};
 use fhe::bfv::{Ciphertext, Encoding, Plaintext, PublicKey, SecretKey};
 use fhe_traits::{
     DeserializeParametrized, FheDecoder, FheDecrypter, FheEncoder, FheEncrypter, Serialize,
@@ -18,12 +23,19 @@ fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let count: usize = args.next().context("Expected a vote count")?.parse()?;
     let output = PathBuf::from(args.next().context("Expected a new output directory")?);
+    let insecure = match args.next().as_deref() {
+        None => false,
+        Some("--insecure") => true,
+        Some(other) => anyhow::bail!("Unexpected argument {other}"),
+    };
     ensure!(args.next().is_none(), "Unexpected arguments");
-    ensure!(
-        (1..=1024).contains(&count),
-        "Vote count must be between 1 and 1024"
-    );
-    let (params, _) = build_pair_for_preset(BfvPreset::SecureThreshold8192)?;
+    ensure!(count >= 1, "Vote count must be at least 1");
+    let preset = if insecure {
+        BfvPreset::InsecureThreshold512
+    } else {
+        BfvPreset::SecureThreshold8192
+    };
+    let (params, _) = build_pair_for_preset(preset)?;
     let mut rng = rand::rng();
     let key = SecretKey::random(&params, &mut rng);
     let public_key = PublicKey::new(&key, &mut rng);
@@ -79,9 +91,14 @@ fn main() -> Result<()> {
         },
         published,
     };
-    let (result, ciphertext) = input
-        .run(e3_user_program::fhe_processor, e3_user_program::policy())
+    let (result, ciphertext, selected) = input
+        .run_selected(
+            e3_user_program::fhe_processor,
+            e3_user_program::policy(),
+            Batching::Sequential,
+        )
         .map_err(|error| anyhow::anyhow!("{error}"))?;
+    write_execute_input(&output, &input, &result, &selected)?;
     let decrypted = key.try_decrypt(&Ciphertext::from_bytes(&ciphertext, &params)?)?;
     let coefficients: Vec<u64> = Vec::try_decode(&decrypted, Encoding::poly())?;
     let decode = |offset: usize| {
@@ -89,16 +106,21 @@ fn main() -> Result<()> {
             .iter()
             .fold(0u64, |value, bit| value * 2 + bit)
     };
-    ensure!(
-        [decode(0), decode(50)] == expected_tally,
-        "Native tally differs from the ballots"
-    );
-    ensure!(
-        coefficients[100..]
-            .iter()
-            .all(|coefficient| *coefficient == 0),
-        "Unexpected coefficients outside the tally"
-    );
+    // The insecure preset's plaintext modulus is 100, so its per-bit sums wrap past 99 ballots and
+    // its tally cannot be decoded this way.
+    let tally_checked = !insecure;
+    if tally_checked {
+        ensure!(
+            [decode(0), decode(50)] == expected_tally,
+            "Native tally differs from the ballots"
+        );
+        ensure!(
+            coefficients[100..]
+                .iter()
+                .all(|coefficient| *coefficient == 0),
+            "Unexpected coefficients outside the tally"
+        );
+    }
     fs::write(output.join("public-key.bin"), &public_key_bytes)?;
     fs::write(output.join("ciphertext.bin"), &ciphertext)?;
     fs::write(
@@ -109,13 +131,14 @@ fn main() -> Result<()> {
             .collect::<Vec<_>>(),
     )?;
     let context = json!({
-        "preset": "secure-8192", "param_set": 1, "inputs": entries,
+        "preset": if insecure { "insecure-512" } else { "secure-8192" },
+        "param_set": if insecure { 0 } else { 1 }, "inputs": entries,
         "params": format!("0x{}", hex::encode(params_bytes)),
         "public_key_commitment": format!("0x{}", hex::encode(public_key_commitment)),
         "input_root": format!("0x{}", hex::encode(result.merkle_root)),
         "ciphertext_hash": format!("0x{}", hex::encode(result.ciphertext_hash)),
         "ciphertext_commitment": format!("0x{}", hex::encode(result.ciphertext_commitment)),
-        "expected_tally": expected_tally, "native_tally_checked": true,
+        "expected_tally": expected_tally, "native_tally_checked": tally_checked,
         "ballot_proofs_generated": false, "threshold_decryption_proof_generated": false,
     });
     fs::write(
@@ -123,8 +146,54 @@ fn main() -> Result<()> {
         serde_json::to_vec_pretty(&context)?,
     )?;
     println!(
-        "Generated {count} fresh secure-8192 test ballots in {}",
+        "Generated {count} fresh {} test ballots in {}",
+        if insecure {
+            "insecure-512"
+        } else {
+            "secure-8192"
+        },
         output.display()
     );
+    Ok(())
+}
+
+/// The guest's input items for a test domain, and the journal it must reveal.
+fn write_execute_input(
+    output: &std::path::Path,
+    input: &ComputeInput,
+    result: &e3_compute_provider::ComputeResult,
+    selected: &[usize],
+) -> Result<()> {
+    let domain = ComputeDomain {
+        chain_id: 31337,
+        verifying_contract: [0x11; 20],
+        e3_id: [0x22; 32],
+        encryption_scheme_id: [0x33; 32],
+        committee_public_key_hash: [0x44; 32],
+    };
+    let journal = ComputeJournal::new(&domain, result).map_err(anyhow::Error::msg)?;
+    let ciphertexts = &input.fhe_inputs.ciphertexts;
+    let header = GuestHeader {
+        domain,
+        params: input.fhe_inputs.params.clone(),
+        indices: ciphertexts.iter().map(|(_, index)| *index).collect(),
+        published: input.published.clone(),
+    }
+    .encode()
+    .map_err(anyhow::Error::msg)?;
+    let items: Vec<&[u8]> = std::iter::once(header.as_slice())
+        .chain(ciphertexts.iter().map(|(bytes, _)| bytes.as_slice()))
+        .chain(
+            selected
+                .iter()
+                .map(|&index| ciphertexts[index].0.as_slice()),
+        )
+        .collect();
+    fs::create_dir(output.join("execute"))?;
+    write_items(
+        std::io::BufWriter::new(fs::File::create(output.join("execute/input.bin"))?),
+        items.into_iter(),
+    )?;
+    fs::write(output.join("execute/journal.bin"), journal.abi_bytes())?;
     Ok(())
 }

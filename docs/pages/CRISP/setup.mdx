@@ -20,23 +20,23 @@ repository. Run all `pnpm` commands on this page from `examples/CRISP`.
 
 ## Prerequisites
 
-| Tool                                                            | Version                                     | Used by                                                                    |
-| --------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------- |
-| Git                                                             | Any                                         | Clone and submodules                                                       |
-| [Rust](https://rust-lang.org/tools/install/)                    | 1.91.1 (`rust-toolchain.toml`)              | Server, CLI, program, and the `interfold` CLI                              |
-| [Node.js](https://nodejs.org/en/download)                       | 22.x (CI uses `NODE_VERSION: 22`)           | Client, SDK, contracts, and scripts                                        |
-| [pnpm](https://pnpm.io)                                         | 10.7.1 (`packageManager` in `package.json`) | All JavaScript packages                                                    |
-| [Foundry](https://getfoundry.sh)                                | Any                                         | `anvil`, the local chain that `scripts/dev.sh` starts                      |
-| [`yq`](https://github.com/mikefarah/yq)                         | Any                                         | `scripts/dev_cipher.sh` reads node addresses from the config               |
-| [`nargo`](https://noir-lang.org/docs/installation)              | `v1.0.0-beta.26` (`NOIR_TOOLCHAIN` in CI)   | Circuit builds in `pnpm dev:setup` and `pnpm compile:circuits`             |
-| [`bb`](https://barretenberg.aztec.network/docs/getting_started) | 5.1.0 (`crates/zk-prover/versions.json`)    | Verification keys and generated verifiers                                  |
-| Python 3                                                        | Any                                         | `scripts/compile_circuits.sh` patches the generated verifiers              |
-| A browser wallet, for example [MetaMask](https://metamask.io)   | Any                                         | The client                                                                 |
-| Docker                                                          | Any                                         | Only for real RISC Zero proofs and `interfold program compile` or `upload` |
+| Tool                                                            | Version                                     | Used by                                                        |
+| --------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------- |
+| Git                                                             | Any                                         | Clone                                                          |
+| [Rust](https://rust-lang.org/tools/install/)                    | 1.91.1 (`rust-toolchain.toml`)              | Server, CLI, program, and the `interfold` CLI                  |
+| [Node.js](https://nodejs.org/en/download)                       | 22.x (CI uses `NODE_VERSION: 22`)           | Client, SDK, contracts, and scripts                            |
+| [pnpm](https://pnpm.io)                                         | 10.7.1 (`packageManager` in `package.json`) | All JavaScript packages                                        |
+| [Foundry](https://getfoundry.sh)                                | Any                                         | `anvil`, the local chain that `scripts/dev.sh` starts          |
+| [`yq`](https://github.com/mikefarah/yq)                         | Any                                         | `scripts/dev_cipher.sh` reads node addresses from the config   |
+| [`nargo`](https://noir-lang.org/docs/installation)              | `v1.0.0-beta.26` (`NOIR_TOOLCHAIN` in CI)   | Circuit builds in `pnpm dev:setup` and `pnpm compile:circuits` |
+| [`bb`](https://barretenberg.aztec.network/docs/getting_started) | 5.1.0 (`crates/zk-prover/versions.json`)    | Verification keys and generated verifiers                      |
+| Python 3                                                        | Any                                         | `scripts/compile_circuits.sh` patches the generated verifiers  |
+| A browser wallet, for example [MetaMask](https://metamask.io)   | Any                                         | The client                                                     |
+| `cargo-openvm` v2.0.2                                           | v2.0.2                                      | Only for real OpenVM proofs (`CRISP_REAL_PROOFS=1`)            |
 
 Install `nargo` with `noirup -v v1.0.0-beta.26`. Other `nargo` versions can fail to compile the
-circuits. A RISC Zero installation is not necessary for local development, because
-`scripts/dev_program.sh` starts the program server in dev mode.
+circuits. OpenVM is not necessary for local development, because the local scripts start the program
+server in dev mode unless `CRISP_REAL_PROOFS=1`.
 
 ## Build and start CRISP
 
@@ -47,12 +47,8 @@ circuits. A RISC Zero installation is not necessary for local development, becau
 ```bash
 git clone https://github.com/theinterfold/interfold.git
 cd interfold
-git submodule update --init --recursive
 cd examples/CRISP
 ```
-
-The CRISP contracts import the `risc0-ethereum` submodule at
-`examples/CRISP/packages/crisp-contracts/lib/risc0-ethereum`.
 
 ### Choose a local profile
 
@@ -143,7 +139,10 @@ includes these contracts:
   `CRISP_SKIP_PROOF_AGGREGATION=false`, the script sets `ENABLE_ZK_VERIFICATION=true`, and the
   deployment uses the real BFV verifiers.
 - `CRISPProgram`, the two generated Noir ballot verifiers, and `SelfRegistry`.
-- `MockRISC0Verifier`, `MockVotingToken`, and `MockCrispDataAvailabilityVerifier`.
+- `MockOpenVmReceiptVerifier` (with `CRISP_UNPROVED_TEST=1`, which the local scripts set unless
+  `CRISP_REAL_PROOFS=1`), `MockVotingToken`, and `MockCrispDataAvailabilityVerifier`. With
+  `CRISP_REAL_PROOFS=1`, the deployment instead deploys the OpenVM receipt verifier for the guest
+  that `interfold program compile` built.
 
 After the deployment, the script writes the new contract addresses into three files. You do not copy
 addresses by hand:
@@ -206,7 +205,7 @@ chains:
       # e3_program, interfold, ciphernode_registry, bonding_registry,
       # slashing_manager, and fee_token: updated by the deployment
 program:
-  dev: true
+  dev: false
 nodes:
   cn1:
     quic_port: 9201
@@ -227,8 +226,8 @@ nodes:
   mode is `avail`.
 - Nodes `cn3` to `cn5` use QUIC ports 9203 to 9205 and control ports 50503 to 50505. Each node peers
   with `cn1`.
-- `scripts/dev_program.sh` always passes `--dev true`. For this reason, `program.dev` has no effect
-  on `pnpm dev:up`.
+- `scripts/lib/dev_config.sh` sets `E3_PROGRAM__DEV=true` unless `CRISP_REAL_PROOFS=1`, so
+  `pnpm dev:up` runs the development runner by default although the file sets `program.dev: false`.
 
 For all node configuration keys, see [Configuration](/reference/configuration).
 
@@ -248,7 +247,7 @@ environment (`server/src/config.rs`).
 | `VOTING_START_BUFFER_SECONDS`                                                                                       | `20` in the example file. Default `120`.                | Time for the request transaction to be mined before the input window starts                                                                                                      |
 | `E3_PARAM_SET`                                                                                                      | `0`                                                     | `0` is `insecure-512`, `2` is `secure-8192`. Ethereum mainnet requires `2`.                                                                                                      |
 | `E3_COMMITTEE_SIZE`                                                                                                 | `0`                                                     | `0` is `minimum` (N = 3, T = 1), `1` is `micro` (N = 9, T = 4), `2` is `small` (N = 19, T = 9)                                                                                   |
-| `E3_COMPUTE_PROVIDER_NAME`, `E3_COMPUTE_PROVIDER_PARALLEL`, `E3_COMPUTE_PROVIDER_BATCH_SIZE`                        | `RISC0`, `false`, `4`                                   | Compute provider parameters sent with the request. The batch size must be a power of 2.                                                                                          |
+| `E3_COMPUTE_PROVIDER_NAME`, `E3_COMPUTE_PROVIDER_PARALLEL`, `E3_COMPUTE_PROVIDER_BATCH_SIZE`                        | `OpenVM`, `false`, `4`                                  | Compute provider parameters sent with the request. The batch size must be a power of 2.                                                                                          |
 | `DATA_AVAILABILITY_MODE`                                                                                            | `mock`                                                  | `mock` or `avail`. Without a value, the mode is `mock` for chain IDs 31337 and 1337 and `avail` for other chains. `mock` is allowed only on those two chains.                    |
 | `AVAIL_RPC_URL`, `AVAIL_BRIDGE_API_URL`, `AVAIL_APP_ID`, `AVAIL_SEED`                                               | Empty                                                   | Avail access and the funded Avail account that pays for `submit_data`                                                                                                            |
 | `AVAIL_PROOF_LEAD_SECONDS`                                                                                          | `10800`                                                 | Minimum time before the input deadline when an Avail publication starts. In Avail mode, it must equal `CRISPProgram.availabilityFinalizationWindow()`.                           |
@@ -293,47 +292,25 @@ Vite reads `client/.env` when the client starts or builds.
 | `VITE_E3_REQUESTERS`            | First two Anvil accounts  | Comma-separated requester addresses. The client shows rounds from these requesters.  |
 | `VITE_ENABLE_TEST_TOKEN_MINT`   | `true`                    | Shows the `+ Mint test tokens` button on test networks. It is always off on mainnet. |
 
-### Real proofs with Boundless
+### Real proofs with OpenVM
 
-By default, the program server runs without a proving backend. To make real RISC Zero proofs with
-[Boundless](https://docs.boundless.network/), set the `program` section of `interfold.config.yaml`:
+By default, the local scripts run the development runner, which makes no proof. To prove rounds with
+OpenVM on your machine, build the workers and set the `program` section of `interfold.config.yaml`
+(see [Compute Provider](/build/e3-program/compute-provider#run-a-compute-provider)):
 
 ```yaml filename="interfold.config.yaml"
 program:
   dev: false
-  risc0:
-    risc0_dev_mode: 0 # 0 = Boundless, 1 = dev mode (the default)
-    boundless:
-      rpc_url: 'https://sepolia.infura.io/v3/YOUR_KEY'
-      private_key: 'YOUR_PRIVATE_KEY' # wallet that pays for proofs
-      pinata_jwt: 'YOUR_PINATA_JWT' # uploads programs to IPFS
-      ipfs_gateway_url: 'https://your-gateway.mypinata.cloud'
-      program_url: 'https://your-gateway.mypinata.cloud/ipfs/YOUR_CID'
-      onchain: true # the default. false sends off-chain requests.
+  openvm:
+    prover_bin: /opt/openvm/interfold-openvm-prover
+    prover_bin_cuda: /opt/openvm/interfold-openvm-prover-cuda # optional
+    backend: auto # a working GPU when there is one, the CPU otherwise
 ```
 
-The gateway must allow full, unauthenticated downloads by Boundless provers. These offer settings
-are optional (`crates/config/src/program_config.rs`):
-
-| Key                   | Default       |
-| --------------------- | ------------- |
-| `min_price_eth`       | `0.00005`     |
-| `max_price_eth`       | `0.004`       |
-| `timeout_secs`        | `28800` (8 h) |
-| `lock_timeout_secs`   | `14400` (4 h) |
-| `ramp_up_secs`        | `7200` (2 h)  |
-| `lock_collateral_zkc` | `100.0`       |
-
-`pnpm dev:up` always starts the program server in dev mode. To use Boundless, start the program
-server with `interfold program start` from `examples/CRISP`. This command runs the program server in
-a Docker container.
-
-When you change the guest program, upload it again and update `program_url`:
-
-1. Run `interfold program compile`. The command builds the guest in a Docker container.
-2. Run `interfold program upload`. The command reads `pinata_jwt` and `ipfs_gateway_url` from the
-   configuration and uploads the guest to Pinata.
-3. Copy the `Program URL` from the output into `program_url`.
+Then set `CRISP_REAL_PROOFS=1` in `crisp.dev.env` and run `pnpm dev:setup` again. With it,
+`interfold program compile` builds `examples/CRISP/guest` and its keys, the deployment deploys the
+receipt verifier for that guest, and `interfold program start` serves real proofs. A changed program
+or policy has a new receipt identity, so compile and deploy again after you change either.
 
 ## Run single components
 
@@ -474,7 +451,6 @@ ballots are lost.
 
 | Symptom                                                                                                    | Cause                                                                     | Fix                                                                                            |
 | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `pnpm dev:setup` fails with `HHE902` and `RiscZeroGroth16Verifier.sol doesn't exist`                       | The `risc0-ethereum` submodule is missing.                                | Run `git submodule update --init --recursive` from the repository root.                        |
 | `dev_cipher.sh` prints `ERROR: only <n>/<m> ciphernodes stayed up`                                         | The `interfold` binary does not match the profile, or another node error. | Read the node output above the table. For a missing Cargo feature, run `pnpm dev:setup` again. |
 | `Invalid CRISP_BFV_PRESET` or `Invalid CRISP_SKIP_PROOF_AGGREGATION`                                       | A value in `crisp.dev.env` is not allowed.                                | Use `insecure-512` or `secure-8192`, and `true` or `false`.                                    |
 | The server stops at startup with `DATA_AVAILABILITY_MODE=mock is allowed only on local development chains` | `CHAIN_ID` is not 31337 or 1337 and the mode is `mock`.                   | Set `DATA_AVAILABILITY_MODE=avail` and the Avail settings.                                     |

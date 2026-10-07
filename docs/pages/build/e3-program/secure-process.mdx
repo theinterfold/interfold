@@ -19,14 +19,15 @@ At the end, you can change the computation in `program/src/lib.rs` and test it.
 
 An E3 program crate exports two functions from `program/src/lib.rs`:
 
-| Function        | Type                                    | Purpose                                                               |
-| --------------- | --------------------------------------- | --------------------------------------------------------------------- |
-| `fhe_processor` | `fn(&FHEProcessorInput<'_>) -> Vec<u8>` | The computation. It returns the serialized output ciphertext.         |
-| `policy`        | `fn() -> InputPolicy`                   | How each input becomes a tree leaf, and which inputs to compute over. |
+| Function        | Type                                   | Purpose                                                               |
+| --------------- | -------------------------------------- | --------------------------------------------------------------------- |
+| `fhe_processor` | `fn(FHEProcessorInput<'_>) -> Vec<u8>` | The computation. It returns the serialized output ciphertext.         |
+| `policy`        | `fn() -> InputPolicy`                  | How each input becomes a tree leaf, and which inputs to compute over. |
 
 The crate is named `e3-user-program` in the template (`program/Cargo.toml`). It depends on `fhe` and
-`fhe-traits` (fhe.rs, tag `v0.4.1`), `e3-compute-provider`, and `e3-fhe-params`. The dev runner and
-the RISC Zero guest link a crate with this name and call these two functions. See
+`fhe-traits` (fhe.rs, revision `873dc69`), `e3-compute-provider`, and `e3-fhe-params`. The dev
+runner, the OpenVM service, and the OpenVM guest in `guest/` link a crate with this name and call
+these two functions. See
 [The guest must match your E3 program](/build/e3-program/compute-provider#the-guest-must-match-your-e3-program).
 
 This is the policy and the processor of the default template
@@ -42,10 +43,10 @@ pub fn policy() -> InputPolicy {
     InputPolicy::default()
 }
 
-pub fn fhe_processor(fhe_inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
+pub fn fhe_processor(fhe_inputs: FHEProcessorInput<'_>) -> Vec<u8> {
     let mut sum = Ciphertext::zero(fhe_inputs.params);
-    for ciphertext_bytes in fhe_inputs.ciphertexts {
-        let ciphertext = Ciphertext::from_bytes(&ciphertext_bytes.0, fhe_inputs.params).unwrap();
+    for (bytes, _) in fhe_inputs.ciphertexts {
+        let ciphertext = Ciphertext::from_bytes(&bytes, fhe_inputs.params).unwrap();
         sum += &ciphertext;
     }
 
@@ -62,21 +63,24 @@ The crate defines the processor type and its input in
 `crates/compute-provider/src/compute_input.rs`:
 
 ```rust filename="crates/compute-provider/src/compute_input.rs"
-pub type FHEProcessor = for<'a> fn(&FHEProcessorInput<'a>) -> Vec<u8>;
+pub type FHEProcessor = for<'a> fn(FHEProcessorInput<'a>) -> Vec<u8>;
 
 pub struct FHEProcessorInput<'a> {
-    pub ciphertexts: &'a [(Vec<u8>, u64)],
+    pub ciphertexts: &'a mut dyn Iterator<Item = (Vec<u8>, u64)>,
     pub params: &'a Arc<BfvParameters>,
 }
 ```
 
-| Field         | Content                                                                                                                |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `ciphertexts` | The serialized fhe.rs BFV ciphertexts that the policy selected, in index order. Each one has its on-chain input index. |
-| `params`      | The BFV parameters of the E3, decoded one time and shared with the processor.                                          |
+| Field         | Content                                                                                                                           |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `ciphertexts` | The serialized fhe.rs BFV ciphertexts that the policy selected, one at a time, in index order. Each has its on-chain input index. |
+| `params`      | The BFV parameters of the E3, decoded one time and shared with the processor.                                                     |
 
-The processor receives only the inputs that the policy selected. The crate builds the input tree
-from all inputs first. See [Rules the crate enforces](#rules-the-crate-enforces).
+The processor receives only the inputs that the policy selected, and it must read every one. The
+crate builds the input tree from all inputs first. Inside the OpenVM guest, each ciphertext is read
+from the input stream and checked against the hash of its first read only when the processor asks
+for it, so keep the state that the processor carries between inputs small. See
+[Rules the crate enforces](#rules-the-crate-enforces).
 
 ## BFV parameters
 
@@ -107,7 +111,7 @@ constants in `crates/fhe-params/src/constants.rs`.
 ## Processor output
 
 The processor returns the serialized output ciphertext (`Ciphertext::to_bytes`). The crate then
-computes four values from the run (`ComputeInput::run_batched`):
+computes four values from the run (`SecureProcess`, which `ComputeInput::run` also uses):
 
 | Value                   | How the crate computes it                                    |
 | ----------------------- | ------------------------------------------------------------ |
@@ -126,7 +130,7 @@ An `InputPolicy` holds two function pointers (`crates/compute-provider/src/polic
 
 ```rust filename="crates/compute-provider/src/policy.rs"
 pub type LeafFn = fn(&PublishedInput) -> Result<String, ComputeError>;
-pub type SelectFn = fn(&[PublishedInput]) -> Vec<usize>;
+pub type SelectFn = fn(&[InputRecord]) -> Vec<usize>;
 
 pub struct InputPolicy {
     pub leaf: LeafFn,
@@ -140,9 +144,14 @@ pub struct InputPolicy {
 - `select` returns the indices of the inputs to compute over. It must be a function of data that the
   input root binds. Then every prover that uses the same inputs selects the same set.
 
-`PublishedInput` gives the policy the input `index`, the `ciphertext` bytes, the `commitment` that
-the contract stored (if any), opaque `metadata`, and `recomputed`. The `recomputed` field is the
-commitment that the crate computes from the bytes. It is `None` when the bytes do not deserialize.
+`PublishedInput` gives the leaf function the input `index`, the `ciphertext` bytes and their
+Keccak-256 `ciphertext_hash`, the `commitment` that the contract stored (if any), opaque `metadata`,
+and `recomputed`. The `recomputed` field is the commitment that the crate computes from the bytes.
+It is `None` when the bytes do not deserialize.
+
+`select` receives an `InputRecord` for each input: the same fields without the ciphertext bytes. The
+secure process reads each ciphertext once for its leaf and does not keep it, so selection works on
+what remains. Both types have `matches_commitment()`.
 
 ### Default policy
 
@@ -164,10 +173,10 @@ pub fn leaf(input: &PublishedInput) -> Result<String, ComputeError> {
             index: input.index,
             reason: "CRISP publishes a commitment with every input".to_string(),
         })?;
-    metadata_of(input)?;
+    metadata_of(input.index, input.metadata)?;
 
     let mut outer = Sha256::new();
-    outer.update(Keccak256::digest(input.ciphertext));
+    outer.update(input.ciphertext_hash.as_slice());
     outer.update(commitment);
     outer.update(input.metadata);
     Ok(leaf_from_digest(&outer.finalize()))
@@ -196,6 +205,9 @@ The crate applies these rules for every E3 program. A policy cannot change them.
   has no field for a root or for leaves.
 - Every published input gets a leaf, also when `select` does not choose it.
 - A selected index outside the input list stops the run with `ComputeError::MerkleTree`.
+- A selected ciphertext that differs from its first read stops the run with
+  `ComputeError::InputChanged`, and a processor that returns before it reads every selected input
+  stops it with `ComputeError::Unread`.
 - When the program publishes per-input data, the list must have one entry for each ciphertext.
   Otherwise the run stops with `ComputeError::MerkleTree`.
 
@@ -212,7 +224,7 @@ The processor has no secret key. It cannot read the value of a ciphertext, so it
 encrypted data. Control flow can use only public data, for example the number of inputs, their
 indices, and the parameters.
 
-| Operation (fhe.rs `v0.4.1`)                   | Result                                              |
+| Operation (fhe.rs `873dc69`)                  | Result                                              |
 | --------------------------------------------- | --------------------------------------------------- |
 | Ciphertext plus or minus ciphertext, negation | Two components. The output can be published.        |
 | Ciphertext plus, minus, or times plaintext    | Two components. The output can be published.        |
@@ -231,8 +243,9 @@ Other limits:
   panic stops the guest, and the E3 gets no output.
 - When `select` returns no inputs, `Ciphertext::zero` has no components. The output commitment then
   rejects the output.
-- The zkVM guest is single threaded. Each input adds cycles to the proof, so large rounds take more
-  time and cost more on Boundless.
+- The zkVM guest is single threaded. Each input adds cycles to the proof, so large rounds take
+  longer to prove. The guest holds one ciphertext at a time, so its memory does not limit the number
+  of inputs.
 
 ## Test the processor
 
@@ -252,7 +265,7 @@ the computation.
     Insert the same leaf on-chain that your policy builds off-chain.
   </LinkCard>
   <LinkCard title='Compute provider' href='/build/e3-program/compute-provider' icon='layers'>
-    Run the secure process in dev mode or in the RISC Zero zkVM.
+    Run the secure process in dev mode or in the OpenVM zkVM.
   </LinkCard>
   <LinkCard title='Complete example' href='/build/e3-program/complete-example' icon='flow'>
     Follow one E3 through the template from request to result.

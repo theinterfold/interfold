@@ -16,7 +16,7 @@
 #   OPENVM_SETUP_DIR             what `cargo openvm setup` wrote (default ~/.openvm)
 #   OPENVM_SEGMENT_MEMORY_BYTES  the proving segment memory limit (default 8 GiB, fits a 16 GB GPU)
 #   CARGO_OPENVM                 the cargo-openvm command (default `cargo openvm`)
-#   OPENVM_BUILD_LOCKED=1        build the guest with --locked
+#   OPENVM_BUILD_LOCKED=1        build the guest with --locked (read by cargo-openvm)
 set -euo pipefail
 
 PROJECT="$(pwd)"
@@ -42,11 +42,10 @@ sha256() {
 mkdir -p "$OUT"
 
 echo "Building the OpenVM guest"
-locked=()
-if [ "${OPENVM_BUILD_LOCKED:-0}" = 1 ]; then locked=(--locked); fi
+# cargo-openvm reads OPENVM_BUILD_LOCKED itself and passes --locked to the guest build.
 RUSTFLAGS="${RUSTFLAGS:-} --cfg crisp_openvm --cfg crisp_fhe_optimized" \
   "${CARGO_OPENVM[@]}" build --manifest-path "$GUEST/Cargo.toml" --target-dir "$OUT/guest-target" \
-  --output-dir "$OUT/guest" ${locked[@]+"${locked[@]}"}
+  --output-dir "$OUT/guest"
 
 EXE="$OUT/guest/e3-openvm-guest.vmexe"
 KEYS="$OUT/keys"

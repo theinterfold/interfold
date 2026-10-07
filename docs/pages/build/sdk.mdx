@@ -461,7 +461,7 @@ The main entry point exports these utilities.
 | `encodeCustomParams(params)`                                                                       | The JSON of an object as hex bytes.                                                                        |
 | `encodeBfvParams(params)`                                                                          | ABI-encoded BFV parameters. It throws `MISSING_ERROR1_VARIANCE` without `error1Variance`.                  |
 | `decodePlaintextOutput(hex)`                                                                       | The first 8 bytes as a little-endian unsigned integer, as a `number`. `null` when the input is too short.  |
-| `DEFAULT_COMPUTE_PROVIDER_PARAMS`                                                                  | `{ name: 'risc0', parallel: false, batch_size: 2 }`                                                        |
+| `DEFAULT_COMPUTE_PROVIDER_PARAMS`                                                                  | `{ name: 'openvm', parallel: false, batch_size: 2 }`                                                       |
 | `DEFAULT_E3_CONFIG`                                                                                | `{ committeeSize: 0, duration: 1800, payment_amount: '0' }`                                                |
 | `isValidAddress(value)`, `isValidHash(value)`                                                      | Format checks for a 20-byte address and a 32-byte hash.                                                    |
 | `sleep(ms)`, `formatBigInt`, `parseBigInt`, `formatEventName`, `parseEventData`, `generateEventId` | Small helpers.                                                                                             |

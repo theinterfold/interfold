@@ -1128,15 +1128,15 @@ The OpenVM host streams the round to the guest one item at a time: a bincode hea
 parameters, on-chain indices, published commitments and metadata), every ciphertext in index order,
 then the selected ciphertexts again. The guest keeps a hash of each ciphertext from the first pass
 and refuses a second-pass ciphertext that differs. The native host and guest run the same
-`SecureProcess` with the project's policy. The guest commits nine 32-byte ABI words in this order: chain ID,
-Interfold address, full uint256 E3 ID, encryption scheme ID, committee public-key hash, output hash,
-SAFE commitment, parameter hash, and input root. It reveals SHA-256 of these 288 bytes.
+`SecureProcess` with the project's policy. The guest commits nine 32-byte ABI words in this order:
+chain ID, Interfold address, full uint256 E3 ID, encryption scheme ID, committee public-key hash,
+output hash, SAFE commitment, parameter hash, and input root. It reveals SHA-256 of these 288 bytes.
 
-The OpenVM worker generates an application proof, recursive aggregate, and Halo2 EVM proof.
-It checks the configured executable and VM commitments and verifies the EVM proof against the
-native journal before it returns a seal. The app returns the seal, parameter hash, and input root
-in one ABI-encoded proof. Missing configuration or a failed proof cannot select a fake-proof mode.
-See `crates/openvm-prover/README.md` for the build and deployment boundary. Existing RISC Zero
+The OpenVM worker generates an application proof, recursive aggregate, and Halo2 EVM proof. It
+checks the configured executable and VM commitments and verifies the EVM proof against the native
+journal before it returns a seal. The app returns the seal, parameter hash, and input root in one
+ABI-encoded proof. Missing configuration or a failed proof cannot select a fake-proof mode. See
+`crates/openvm-prover/README.md` for the build and deployment boundary. Existing RISC Zero
 deployment records are not migrated by this source change.
 
 The request-time scheme verifier reconstructs the protocol fields from on-chain state. The E3
@@ -1971,8 +1971,8 @@ commitment and every input is computed over — and matches the starter template
 `MyProgram.publishInput` inserts the commitment directly. Every E3 program exports `policy()` beside
 `fhe_processor`, so the guest and the dev runner need not know which program they are running.
 
-The support program manifest points to the canonical CRISP source in `examples/CRISP/program`.
-A policy change requires a new OpenVM executable, derived application commitments, and matching
+The support program manifest points to the canonical CRISP source in `examples/CRISP/program`. A
+policy change requires a new OpenVM executable, derived application commitments, and matching
 receipt-verifier deployment. Do not reuse a legacy RISC Zero image ID or an aggregation key for
 another VM configuration.
 
@@ -1982,9 +1982,9 @@ round grows. The allocator is part of the guest executable, so changing it chang
 commitments that the receipt verifiers bind.
 
 `interfold program start` uses `program.openvm` to locate the repository, worker executable, and
-worker configuration. The HTTP service validates this configuration before it accepts work.
-Proving artifacts and machine-specific paths stay outside Git. Explicit development mode remains
-separate from the real-proof service.
+worker configuration. The HTTP service validates this configuration before it accepts work. Proving
+artifacts and machine-specific paths stay outside Git. Explicit development mode remains separate
+from the real-proof service.
 
 File: `examples/CRISP/packages/crisp-contracts/tests/openvm-service.test.ts`
 

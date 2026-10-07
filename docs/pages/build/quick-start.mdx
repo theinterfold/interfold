@@ -40,9 +40,8 @@ interfold init my-first-e3
 ```
 
 `interfold init` downloads the template that matches your CLI version (tag `v0.18.0` for CLI
-0.18.0). It copies the template to `my-first-e3`, adds the `lib/risc0-ethereum` Git submodule, runs
-`pnpm install`, and makes the first Git commit. The command prints
-`You can now start building on Interfold` when it completes.
+0.18.0). It copies the template to `my-first-e3`, runs `pnpm install`, and makes the first Git
+commit. The command prints `You can now start building on Interfold` when it completes.
 
 ### Go to the project folder
 
@@ -159,20 +158,20 @@ the chain with `pnpm dev:evm` (a Hardhat node) instead of Anvil.
 pnpm runs the `predev:all` script before `dev:all`:
 
 ```bash
-[ ! -f './.interfold/generated/contracts/ImageID.sol' ] && interfold program compile || true
+./scripts/compile_program.sh
 ```
 
-The template includes `.interfold/generated/contracts/ImageID.sol`, so this script usually does
-nothing. When the file is missing, it runs `interfold program compile`. The result of that command
-depends on the `program.dev` setting in `interfold.config.yaml`:
+The script loads `scripts/lib/dev_config.sh` and runs `interfold program compile`. The local
+settings set `E3_PROGRAM__DEV=true` and `TEMPLATE_UNPROVED_TEST=1` unless `TEMPLATE_REAL_PROOFS=1`,
+which selects what the command builds:
 
-| `program.dev`         | `interfold program compile` runs                                                                                          |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `true` (the template) | `.interfold/support/dev/compile`, which runs `cargo build --locked --bin e3-support-scripts-dev`. No zkVM image is built. |
-| `false`               | `.interfold/support/ctl/compile` in the `e3-support` Docker container. The RISC Zero build writes `ImageID.sol`.          |
+| Mode                         | `interfold program compile` runs                                                                                           |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Dev mode (the local default) | `.interfold/support/dev/compile`, which runs `cargo build --locked --bin e3-support-scripts-dev`. No guest is built.       |
+| `TEMPLATE_REAL_PROOFS=1`     | `.interfold/support/openvm/compile`: the OpenVM guest in `guest/`, its keys and receipt identity, and the proving service. |
 
-In dev mode, the program server runs the computation without a proof. The template also deploys
-`MockRISC0Verifier`, which accepts any RISC Zero seal. See
+In dev mode, the program server runs the computation without a proof, and the template deploys
+`MockOpenVmReceiptVerifier`, which accepts every receipt on the local chain only. See
 [Compute provider](/build/e3-program/compute-provider) for proofs.
 
 ## What just happened

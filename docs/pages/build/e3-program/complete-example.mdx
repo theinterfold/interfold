@@ -21,8 +21,9 @@ Make a project with `interfold init` and complete its setup. See [Quick Start](/
 Template paths on this page are relative to the project root. Paths that start with `crates/` or
 `packages/` are in the Interfold repository.
 
-The template runs in dev mode (`program.dev: true` in `interfold.config.yaml`). The compute proof is
-a mock, and a mock RISC Zero verifier accepts it. The rest of the flow is the same as in production.
+The local scripts run in dev mode (`E3_PROGRAM__DEV=true`, unless `TEMPLATE_REAL_PROOFS=1`). The
+compute proof is a mock, and `MockOpenVmReceiptVerifier` accepts it. The rest of the flow is the
+same as in production.
 
 ## The E3 at a glance
 
@@ -88,10 +89,11 @@ Run `pnpm dev:all` in the project root. `scripts/dev_all.sh` calls
 contracts with mocks, and then calls `deployTemplate` in `deploy/default.ts`. `deployTemplate` does
 these actions in order:
 
-1. Deploys `MockRISC0Verifier` and the `ImageID` library.
-2. Deploys `Risc0BfvCiphertextVerifier` with the mock verifier and `ImageID.PROGRAM_ID`.
+1. Deploys `MockOpenVmReceiptVerifier` (with `TEMPLATE_UNPROVED_TEST=1` on the local chain) or an
+   `OpenVmReceiptVerifier` for the guest that `interfold program compile` built.
+2. Deploys `OpenVmBfvCiphertextVerifier` with that receipt verifier and its `imageId`.
 3. Calls `setCiphertextVerifier` for `keccak256("fhe.rs:BFV")`.
-4. Deploys `MyProgram` with the Interfold address, the mock verifier, and the image ID.
+4. Deploys `MyProgram` with the Interfold address, the receipt verifier, and the `imageId`.
 5. Calls `registerE3Program`. The Interfold contract probes `supportsInterface` and emits
    `E3ProgramRegistered`.
 
@@ -148,7 +150,9 @@ body has the E3 ID, the proof domain, the parameters, the inputs, and the callba
 The dev runner (`crates/support-scripts/dev/src/main.rs`) builds a `ComputeManager` with your
 `fhe_processor` from `program/src/lib.rs`. `start(policy())` builds the input tree, runs the
 processor, and computes the output hash, commitment, parameter hash, and input root. The runner
-encodes a mock proof with the parameter hash and the input root.
+encodes a mock proof with the parameter hash and the input root. With real proofs, the OpenVM
+service runs the same secure process natively, proves it in `guest/`, and returns the verified
+OpenVM envelope instead.
 
 ### Publish the output
 
@@ -162,9 +166,9 @@ stores the ciphertext under its Keccak-256 hash in `.interfold/data-availability
    The output is not published yet, and the committee still meets its threshold.
 2. `MyProgram.verifyDataAvailability` checks that the Keccak-256 hash of the raw ciphertext equals
    the content hash.
-3. `Risc0BfvCiphertextVerifier.verify` rebuilds the journal and calls the mock verifier.
+3. `OpenVmBfvCiphertextVerifier.verify` rebuilds the journal and calls the receipt verifier.
 4. `MyProgram.verify` compares the parameter hash and the input root, rebuilds the journal, and
-   calls the mock verifier.
+   calls the receipt verifier.
 
 The E3 moves to `CiphertextReady`. The Interfold contract emits `CiphertextOutputReferencePublished`
 and `E3StageChanged`.
@@ -207,7 +211,7 @@ CRISP uses the same parts with production choices:
 | Input submission  | One `publishInput` call with ciphertext and commitment | `publishInput` with a Noir proof, then `finalizeInput` with a DA receipt         |
 | Input leaf        | The SAFE commitment                                    | `sha256(keccak256(ciphertext) ‖ commitment ‖ slot ‖ parent)` mod the BN254 field |
 | Input policy      | `InputPolicy::default()`                               | `policy::crisp()`, one input for each slot                                       |
-| Compute provider  | Dev runner with a mock proof                           | `e3-support` container with Boundless proofs                                     |
+| Compute provider  | Dev runner with a mock proof                           | CRISP's OpenVM service and guest, proved on the operator's GPU or CPU            |
 | Data availability | Local file store and a hash check                      | `AvailVectorXDataAvailabilityVerifier` (a mock on a local chain)                 |
 | Output publisher  | `server/index.ts`                                      | `examples/CRISP/server` (`/state/add-result` webhook)                            |
 

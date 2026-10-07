@@ -103,7 +103,7 @@ pub mod policy {
 
         // `ciphertext_hash` is `keccak256(input.ciphertext)`, computed once by the Secure Process.
         let mut outer = Sha256::new();
-        outer.update(input.ciphertext_hash);
+        outer.update(input.ciphertext_hash.as_slice());
         outer.update(commitment);
         outer.update(input.metadata);
         Ok(leaf_from_digest(&outer.finalize()))

@@ -164,7 +164,7 @@ form four phases:
 | P4: Threshold decryption   | Members make decryption shares, and the aggregator combines T + 1  | C6, C7                                                                     |
 
 The FHE computation runs between P3 and P4. The compute provider proves it with its own proof system
-(the RISC Zero zkVM in the current code), not with these circuits.
+(the OpenVM zkVM in the current code), not with these circuits.
 
 A failed proof is attributable to one member. Other members then start an accusation, which can lead
 to a slash. See [Commitment consistency](/internals/commitment-consistency) and

@@ -34,29 +34,30 @@ Intel. On these platforms, [build the CLI from source](#install-the-cli).
 `interfold init` needs Git and pnpm. The default project template also starts a local chain,
 compiles Rust code, and runs a web client, so it needs more tools.
 
-| Tool                                                          | Version            | The template uses it to                                                                      |
-| ------------------------------------------------------------- | ------------------ | -------------------------------------------------------------------------------------------- |
-| [Git](https://git-scm.com/downloads)                          | Any recent version | Clone the template, make the project repository, and add the `lib/risc0-ethereum` submodule. |
-| [Node.js](https://nodejs.org/en/download)                     | 22                 | Run the client, the coordination server, and Hardhat. The repository CI uses Node.js 22.     |
-| [pnpm](https://pnpm.io)                                       | 10.7.1             | Install packages and run scripts. The `packageManager` field in `package.json` pins 10.7.1.  |
-| [Rust](https://rust-lang.org/tools/install/) (with `rustup`)  | 1.91.1             | Build and run the program server. `rust-toolchain.toml` in the template pins this version.   |
-| [Foundry](https://github.com/foundry-rs/foundry)              | Current release    | Run `anvil`, the local chain that `pnpm dev:all` starts on port 8545.                        |
-| A browser wallet, for example [MetaMask](https://metamask.io) | Any                | Sign the transactions that the client sends to the local chain.                              |
+| Tool                                                          | Version            | The template uses it to                                                                     |
+| ------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------- |
+| [Git](https://git-scm.com/downloads)                          | Any recent version | Clone the template and make the project repository.                                         |
+| [Node.js](https://nodejs.org/en/download)                     | 22                 | Run the client, the coordination server, and Hardhat. The repository CI uses Node.js 22.    |
+| [pnpm](https://pnpm.io)                                       | 10.7.1             | Install packages and run scripts. The `packageManager` field in `package.json` pins 10.7.1. |
+| [Rust](https://rust-lang.org/tools/install/) (with `rustup`)  | 1.91.1             | Build and run the program server. `rust-toolchain.toml` in the template pins this version.  |
+| [Foundry](https://github.com/foundry-rs/foundry)              | Current release    | Run `anvil`, the local chain that `pnpm dev:all` starts on port 8545.                       |
+| A browser wallet, for example [MetaMask](https://metamask.io) | Any                | Sign the transactions that the client sends to the local chain.                             |
 
 Some tools are necessary only for specific tasks.
 
-| Tool                                                 | When you need it                                                                                                     |
-| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| [Docker](https://docs.docker.com/get-docker/)        | RISC Zero mode (`program.dev: false`) and `interfold program shell`. Both run the `e3-support` image.                |
-| [tmux](https://github.com/tmux/tmux/wiki/Installing) | `pnpm dev:all --tmux`, which opens each process in its own tmux pane.                                                |
-| [Noir](https://noir-lang.org/docs) (`nargo`)         | Only to write your own circuits. The repository CI uses `v1.0.0-beta.26`. See [Noir circuits](/build/noir-circuits). |
+| Tool                                                 | When you need it                                                                                                                                                             |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`cargo-openvm`](https://docs.openvm.dev) v2.0.2     | Real proofs (`program.dev: false`). `interfold program compile` builds the guest with it. See [Compute provider](/build/e3-program/compute-provider#run-a-compute-provider). |
+| The CUDA toolkit and an NVIDIA GPU                   | Optional. The CUDA build of the OpenVM worker proves on the GPU; without it, the CPU worker proves.                                                                          |
+| [tmux](https://github.com/tmux/tmux/wiki/Installing) | `pnpm dev:all --tmux`, which opens each process in its own tmux pane.                                                                                                        |
+| [Noir](https://noir-lang.org/docs) (`nargo`)         | Only to write your own circuits. The repository CI uses `v1.0.0-beta.26`. See [Noir circuits](/build/noir-circuits).                                                         |
 
 You do not install these components yourself:
 
 - **Barretenberg (`bb`) and the protocol circuits.** `interfold noir setup` downloads `bb` 5.1.0 and
   the circuits for release 0.18.0. The template scripts run this command for you.
-- **The RISC Zero toolchain.** The `e3-support` Docker image contains it. The template runs in dev
-  mode by default, so it does not use RISC Zero.
+- **The OpenVM guest toolchain.** `cargo-openvm` installs the toolchain it needs. The local scripts
+  run in dev mode by default, so they do not use OpenVM.
 
 <Callout type='info'>
   When you run `cargo` in a folder that has a `rust-toolchain.toml` file, `rustup` uses the Rust

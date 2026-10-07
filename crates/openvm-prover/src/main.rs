@@ -9,6 +9,8 @@
 //!   the configuration every other action reads.
 //! - `probe`: succeeds when this build can use a GPU on this machine.
 //! - `check <config.json>`: loads every key and the verifier, before a service accepts work.
+//! - `execute <config.json> <input> <journal>`: runs the guest without proving and checks that it
+//!   reveals the journal's digest. A cheap check of a round, and of the guest against the host.
 //! - `prove <config.json> <input> <journal> <new-seal>`: proves and verifies a round.
 //! - `verify <config.json> <proof.json> <journal> <new-seal>`: verifies an existing proof.
 
@@ -233,6 +235,32 @@ fn probe() -> Result<()> {
     eyre::bail!("This worker was built without CUDA")
 }
 
+/// Runs the guest over `input` without proving it and checks that it reveals the digest of the
+/// journal the host expects.
+fn execute(config: &Config, input: &Path, journal: &Path) -> Result<()> {
+    let journal = read_limited(journal, 288)?;
+    ensure!(journal.len() == 288, "Expected nine journal words");
+    let app_pk: AppProvingKey<SdkVmConfig> = read_object_from_file(&config.app_pk)?;
+    let exe: VmExe<F> = read_object_from_file(&config.executable)?;
+    let sdk = Sdk::builder()
+        .app_pk(app_pk)
+        .agg_params(AggregationSystemParams::default())
+        .build()?;
+    let (public_values, segments) =
+        sdk.execute_metered(exe, read_items(fs::File::open(input)?)?)?;
+    let instructions: u64 = segments.iter().map(|segment| segment.num_insns).sum();
+    eprintln!(
+        "OpenVM: executed {instructions} instructions in {} segments",
+        segments.len()
+    );
+    ensure!(
+        public_values == Sha256::digest(&journal).to_vec(),
+        "The guest revealed a digest that differs from the host's journal"
+    );
+    eprintln!("OpenVM: the guest revealed the digest of the host's journal");
+    Ok(())
+}
+
 fn absolute(path: &Path) -> Result<PathBuf> {
     fs::canonicalize(path)
         .map_err(|error| eyre::eyre!("Cannot resolve {}: {error}", path.display()))
@@ -284,7 +312,7 @@ fn write_config(paths: &[PathBuf]) -> Result<()> {
 fn main() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
     let action = args.next().ok_or_else(|| {
-        eyre::eyre!("Expected prepare, write-config, probe, check, prove, or verify")
+        eyre::eyre!("Expected prepare, write-config, probe, check, execute, prove, or verify")
     })?;
     if action == "probe" {
         ensure!(args.next().is_none(), "Unexpected arguments");
@@ -339,9 +367,14 @@ fn main() -> Result<()> {
         eprintln!("OpenVM: the keys, parameters, verifier, and identity are consistent");
         return Ok(());
     }
+    if action == "execute" {
+        let paths: Vec<PathBuf> = args.map(PathBuf::from).collect();
+        ensure!(paths.len() == 2, "Expected the input and the journal");
+        return execute(&config, &paths[0], &paths[1]);
+    }
     ensure!(
         action == "prove" || action == "verify",
-        "Expected prepare, write-config, probe, check, prove, or verify"
+        "Expected prepare, write-config, probe, check, execute, prove, or verify"
     );
     let paths: Vec<PathBuf> = args.map(PathBuf::from).collect();
     ensure!(

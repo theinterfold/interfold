@@ -338,29 +338,20 @@ The node treats `localhost`, `::1`, and every `127.x.x.x` address as local.
 The `program` key configures `interfold program` and `interfold compile`. The ciphernode does not
 read it.
 
-| Key                    | Type    | Default | Meaning                                                                                    |
-| ---------------------- | ------- | ------- | ------------------------------------------------------------------------------------------ |
-| `program.dev`          | Boolean | `false` | Uses the Dev Mode scripts. The `--dev` flag overrides it.                                  |
-| `program.risc0`        | Object  | None    | RISC Zero settings. `interfold program start` needs them outside Dev Mode.                 |
-| `risc0.risc0_dev_mode` | Integer | `1`     | Value of `RISC0_DEV_MODE`. `0` makes real proofs through Boundless. `1` makes fake proofs. |
-| `risc0.boundless`      | Object  | None    | Boundless prover market settings.                                                          |
+| Key                      | Type    | Default     | Meaning                                                                                                                                   |
+| ------------------------ | ------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `program.dev`            | Boolean | `false`     | Uses the development runner, which makes no proof. The `--dev` flag overrides it.                                                         |
+| `program.openvm`         | Object  | None        | The OpenVM workers. `interfold program compile` and `start` need it outside Dev Mode.                                                     |
+| `openvm.prover_bin`      | Path    | None        | The CPU build of `interfold-openvm-prover`. Absolute.                                                                                     |
+| `openvm.prover_bin_cuda` | Path    | None        | The CUDA build of `interfold-openvm-prover`. Absolute. At least one worker is required.                                                   |
+| `openvm.backend`         | String  | `auto`      | `auto` uses the CUDA worker when it can open a GPU, and the CPU worker otherwise. `cpu` or `cuda` forces one; `cuda` fails without a GPU. |
+| `openvm.prover_config`   | Path    | Compiled    | The worker configuration. Defaults to `.interfold/caches/openvm/prover.json`, which `compile` writes.                                     |
+| `openvm.setup_dir`       | Path    | `~/.openvm` | The Halo2 key, KZG parameters, and EVM verifier that `cargo openvm setup` wrote.                                                          |
 
-| `boundless` key       | Type    | Default           | Meaning                                                                                |
-| --------------------- | ------- | ----------------- | -------------------------------------------------------------------------------------- |
-| `rpc_url`             | URL     | Required          | RPC endpoint of the chain where Boundless requests go.                                 |
-| `private_key`         | String  | Required          | Key that pays for proof requests. Use variable substitution for it.                    |
-| `pinata_jwt`          | String  | None              | Pinata token for `interfold program upload`.                                           |
-| `ipfs_gateway_url`    | URL     | None              | Public gateway for program and input downloads. Use a dedicated gateway in production. |
-| `program_url`         | URL     | None              | URL of a program that you uploaded before.                                             |
-| `onchain`             | Boolean | `true`            | `true` sends on-chain requests. `false` sends off-chain requests.                      |
-| `min_price_eth`       | Number  | `0.00005`         | Minimum offer price in ETH.                                                            |
-| `max_price_eth`       | Number  | `0.004`           | Maximum offer price in ETH. It must not be below `min_price_eth`.                      |
-| `timeout_secs`        | Integer | `28800` (8 hours) | Total request timeout.                                                                 |
-| `lock_timeout_secs`   | Integer | `14400` (4 hours) | Lock timeout. It must be above `0` and below `timeout_secs`.                           |
-| `ramp_up_secs`        | Integer | `7200` (2 hours)  | Price ramp-up period. It must not be above `lock_timeout_secs`.                        |
-| `lock_collateral_zkc` | Number  | `100.0`           | Lock collateral in ZKC.                                                                |
-
-The support container applies the defaults of the offer parameters when a key is absent.
+The removed `program.risc0` section still loads, so a ciphernode that shares the file keeps
+starting. `interfold program` refuses it. The service's deadlines, listener, and request limit come
+from environment variables; see
+[Compute Provider](/build/e3-program/compute-provider#deadlines-and-memory).
 
 ## Complete example
 
@@ -447,8 +438,6 @@ chains:
 
 program:
   dev: true
-  risc0:
-    risc0_dev_mode: 1
 ```
 
 ## Public network chain entry

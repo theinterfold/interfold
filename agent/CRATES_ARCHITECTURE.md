@@ -1417,9 +1417,9 @@ commit. The normal `e3-support-scripts` backend uses `program.openvm`; it no lon
 Zero or Boundless. `program.dev` is an explicit, unproved runner.
 
 CRISP's encrypted-input and result-callback routes accept at most 4 MiB of JSON, to contain the
-largest supported DA object after hexadecimal encoding. This limit is scoped to those routes;
-read routes retain their smaller default limit. `CRISP_BIND_ADDR` selects the HTTP listener and
-defaults to `0.0.0.0:4000`.
-The server starts a multithread Tokio runtime. Input validation and large round-record updates must
-not prevent the RPC transports from receiving WebSocket heartbeats. Actix HTTP workers retain their
-own runtimes; the server does not use Actix actors or `actix_web::rt::spawn`.
+largest supported DA object after hexadecimal encoding. This limit is scoped to those routes; read
+routes retain their smaller default limit. `CRISP_BIND_ADDR` selects the HTTP listener and defaults
+to `0.0.0.0:4000`. The server starts a multithread Tokio runtime. Input validation and large
+round-record updates must not prevent the RPC transports from receiving WebSocket heartbeats. Actix
+HTTP workers retain their own runtimes; the server does not use Actix actors or
+`actix_web::rt::spawn`.

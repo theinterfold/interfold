@@ -69,12 +69,6 @@ bond owner. See [Registration](/operate/registration).
 The first peer that a ciphernode dials to join a P2P network. The `mainnet` and `sepolia` network
 profiles each have one. See [network profiles](/reference/configuration#network-profiles).
 
-### Boundless
-
-The RISC Zero proving network that an E3 program can use to prove its computation. The
-`program.risc0.boundless` settings configure it. See
-[program settings](/reference/configuration#program-settings).
-
 ## C
 
 ### C0 to C7
@@ -306,6 +300,12 @@ One set of node settings in `interfold.config.yaml`: the `node` key or an entry 
 [node profile keys](/reference/configuration#node-profile-keys).
 
 ## O
+
+### OpenVM
+
+The zkVM that proves an E3 program's secure process. Each project's guest runs the program, and the
+operator's machine proves it on a GPU or a CPU. The `program.openvm` settings configure it. See
+[Compute Provider](/build/e3-program/compute-provider).
 
 ### Operator
 

@@ -34,7 +34,7 @@ CRISP (Coercion-Resistant Impartial Selection Protocol) is the reference applica
 | Inputs            | Each voter encrypts a ballot in the browser under the committee key.                        |
 | Input proof       | The client generates a Noir proof that the ballot is valid. `CRISPProgram.sol` verifies it. |
 | Data availability | The ciphertext bytes go to Avail. The program checks the VectorX receipt.                   |
-| Secure process    | A RISC Zero program adds the encrypted ballots into an encrypted tally.                     |
+| Secure process    | An OpenVM program adds the encrypted ballots into an encrypted tally.                       |
 | Output            | The committee decrypts only the tally. Individual ballots stay encrypted.                   |
 
 CRISP has its own contracts, Noir circuits, a Rust coordination server, and a React client. Start

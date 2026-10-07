@@ -23,8 +23,8 @@ As system requirements:
 
 ### Configure OpenVM
 
-Real proofs use OpenVM. `guest/` proves your `program/`, with your processor and your input
-policy, and `.interfold/support/openvm` is the proving service. Build the OpenVM workers, set
+Real proofs use OpenVM. `guest/` proves your `program/`, with your processor and your input policy,
+and `.interfold/support/openvm` is the proving service. Build the OpenVM workers, set
 `program.openvm` in `interfold.config.yaml`, then run:
 
 ```sh
@@ -85,6 +85,7 @@ cd my-first-e3
 This creates a complete E3 project with:
 
 - **FHE computation logic** (`./program/`)
+- **OpenVM guest** that proves it (`./guest/`)
 - **Smart contracts** (`./contracts/`)
 - **Client application** (`./client/`)
 - **Coordination server** (`./server/`)
@@ -92,24 +93,20 @@ This creates a complete E3 project with:
 
 ### Compile your E3 Program
 
-Build the configured native program service:
+The local scripts (`pnpm dev:setup`, `pnpm dev:all`) run the unproved development runner and deploy
+a verifier that accepts every receipt. They set `E3_PROGRAM__DEV=true` and
+`TEMPLATE_UNPROVED_TEST=1`, which only chain ID 31337 accepts. Nothing they produce is evidence of a
+valid OpenVM proof.
+
+For real proofs, set `TEMPLATE_REAL_PROOFS=1` and configure `program.openvm` (see above). Then:
 
 ```bash
 interfold program compile
 ```
 
-This command does not rebuild the guest or its keys. Rebuild and deploy those artifacts separately
-when the proved program changes.
-
-For an explicitly unproved local test, start the development runner:
-
-```bash
-interfold program start --dev true
-```
-
-The template's integration-test script also sets `TEMPLATE_UNPROVED_TEST=1`. Only chain ID 31337
-accepts that deployment setting. This test uses a mock receipt verifier and is not evidence of a
-valid OpenVM proof. Normal startup does not set either flag.
+builds `./guest` against `./program`, its proving keys and receipt identity, and the proving
+service. A changed program has a new identity, so redeploy the verifier after you rebuild it.
+Without the scripts, `interfold program start --dev true` starts the development runner.
 
 ### Start the Development Environment
 

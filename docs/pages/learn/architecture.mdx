@@ -29,7 +29,7 @@ network. Each application brings its own program contract, servers, and client.
     {
       name: 'Compute',
       note: 'Off-chain',
-      items: ['Compute provider (RISC Zero zkVM)', 'Data-availability layer'],
+      items: ['Compute provider (OpenVM zkVM)', 'Data-availability layer'],
     },
     {
       name: 'Ciphernode network',
@@ -83,7 +83,7 @@ time. Governance can replace these contracts only after it pauses requests and a
 | `BfvPkVerifier`                        | The recursive DKG proof. It calls the generated Honk verifier `DkgAggregatorVerifier`.     | `publishCommittee`        |
 | `DkgFoldAttestationVerifier`           | One signed fold attestation from each accepted DKG party                                   | `publishCommittee`        |
 | `BfvDecryptionVerifier`                | The recursive decryption proof. It calls the Honk verifier `DecryptionAggregatorVerifier`. | `publishPlaintextOutput`  |
-| `Risc0BfvCiphertextVerifier`           | The protocol fields in the RISC Zero compute receipt                                       | `publishCiphertextOutput` |
+| `OpenVmBfvCiphertextVerifier`          | The protocol fields in the OpenVM compute receipt                                          | `publishCiphertextOutput` |
 | `AvailVectorXDataAvailabilityVerifier` | Avail blob inclusion through the VectorX bridge, for E3 programs that use Avail            | The E3 program            |
 
 `BfvPkVerifierRouter` and `BfvDecryptionVerifierRouter` can sit in front of the BFV verifiers. A
@@ -126,8 +126,9 @@ role.
 ### Compute provider
 
 The compute provider runs the secure process over the ciphertexts. In the current code, it is the
-RISC Zero zkVM. The zkVM receipt binds the E3, the committee public key, the input Merkle root, and
-the output hash. See [Compute Provider](/build/e3-program/compute-provider).
+OpenVM zkVM, run on the operator's GPU or CPU. The receipt binds the E3, the committee public key,
+the input Merkle root, and the output hash. Deployed networks keep their RISC Zero verifiers until
+an OpenVM migration. See [Compute Provider](/build/e3-program/compute-provider).
 
 ### Program server
 

@@ -20,7 +20,18 @@ load_template_dev_config() {
       ;;
   esac
 
-  export TEMPLATE_ROOT INTERFOLD_REPO_ROOT BFV_PRESET COMMITTEE
+  # Local development runs the unproved development runner against a verifier that accepts every
+  # receipt, on the isolated local chain only. TEMPLATE_REAL_PROOFS=1 uses the OpenVM workers
+  # configured under program.openvm and deploys the real receipt verifier instead.
+  TEMPLATE_REAL_PROOFS="${TEMPLATE_REAL_PROOFS:-0}"
+  if [[ "$TEMPLATE_REAL_PROOFS" == "1" ]]; then
+    unset TEMPLATE_UNPROVED_TEST E3_PROGRAM__DEV
+  else
+    export TEMPLATE_UNPROVED_TEST=1
+    export E3_PROGRAM__DEV=true
+  fi
+
+  export TEMPLATE_ROOT INTERFOLD_REPO_ROOT BFV_PRESET COMMITTEE TEMPLATE_REAL_PROOFS
 }
 
 template_monorepo_build_available() {

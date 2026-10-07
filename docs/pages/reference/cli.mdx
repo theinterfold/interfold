@@ -171,9 +171,10 @@ These commands make and run an E3 project from the template. For a walkthrough, 
 
 ### `interfold init`
 
-Makes a new Interfold project from a template. The command clones the template, copies the support
-scripts to `.interfold/support`, adds the `lib/risc0-ethereum` submodule, runs `pnpm install`, and
-makes the first Git commit. It needs `git` and `pnpm`.
+Makes a new Interfold project from a template. The command clones the template, pins its Interfold
+crates to the cloned commit, copies the development runner and the OpenVM proving service to
+`.interfold/support`, runs `pnpm install`, and makes the first Git commit. It needs `git` and
+`pnpm`.
 
 ```bash
 interfold init [PATH] [--template <TEMPLATE>] [--skip-cleanup] [--skip-install]
@@ -208,15 +209,14 @@ current directory. `interfold init` puts these scripts in the project.
 The `--dev` flag selects the script set. When the flag is absent, the CLI uses `program.dev` from
 the configuration, which defaults to `false`.
 
-| Subcommand                      | Purpose                                                                                                      | Script                                                    |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
-| `program start [--dev <DEV>]`   | Starts the program. In Dev Mode, the program runs without a proving backend, so nothing verifies the result. | `dev/start`, or `ctl/start` with `program.risc0` settings |
-| `program compile [--dev <DEV>]` | Compiles the program code.                                                                                   | `dev/compile` or `ctl/compile`                            |
-| `program shell`                 | Opens a shell in the Docker environment that runs the program.                                               | `ctl/shell`                                               |
-| `program upload`                | Uploads the compiled program to Pinata IPFS. It passes `pinata_jwt` and `ipfs_gateway_url` from the config.  | `ctl/upload`                                              |
-| `program cache purge`           | Deletes `.interfold/caches`. The next compilation takes longer.                                              | None                                                      |
+| Subcommand                      | Purpose                                                                                                                                                                                              | Script                            |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| `program start [--dev <DEV>]`   | Starts the program server. In Dev Mode, the program runs without a proving backend, so nothing verifies the result. Otherwise the OpenVM service checks its worker and keys, then proves each round. | `dev/start` or `openvm/start`     |
+| `program compile [--dev <DEV>]` | Compiles the program. Outside Dev Mode, it also builds the OpenVM guest, its keys, the receipt identity, and the worker configuration.                                                               | `dev/compile` or `openvm/compile` |
+| `program cache purge`           | Deletes `.interfold/caches`, including the OpenVM guest build and keys. The next compilation takes longer.                                                                                           | None                              |
 
-`program start` without Dev Mode needs a `program.risc0` section in the configuration. See
+Outside Dev Mode, `program compile` and `program start` need a `program.openvm` section with at
+least one worker. The CLI refuses the removed `program.risc0` section. See
 [program settings](/reference/configuration#program-settings).
 
 ### `interfold print-env`

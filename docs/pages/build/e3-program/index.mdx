@@ -19,13 +19,13 @@ the end, you know which file to edit for each change and which page explains it.
 An E3 program has five parts. You write the secure process, the program contract, and the client and
 server. The compute provider and the protocol verifiers come from the Interfold repository.
 
-| Part                | What it does                                                                                     | Default template                                                        | CRISP example                                                        |
-| ------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| Secure process      | The FHE computation. It combines encrypted inputs into one encrypted output.                     | `program/src/lib.rs` (`fhe_processor`, `policy`)                        | `examples/CRISP/program/src/lib.rs`                                  |
-| E3 program contract | Implements `IE3Program`. It accepts inputs, keeps the input tree, and verifies the output proof. | `contracts/MyProgram.sol`                                               | `examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol` |
-| Compute provider    | Runs the secure process off-chain and proves the run.                                            | `crates/support-scripts/dev` (dev mode) or `crates/support` (RISC Zero) | `crates/support` (RISC Zero with Boundless)                          |
-| Verifiers           | Check the compute proof on-chain before the Interfold contract accepts the output.               | `Risc0BfvCiphertextVerifier` and the check in `MyProgram.verify`        | `Risc0BfvCiphertextVerifier` and `CRISPProgram.verify`               |
-| Client and server   | The client encrypts and submits inputs. The server starts the compute and publishes the output.  | `client/src/`, `server/index.ts`                                        | `examples/CRISP/client`, `examples/CRISP/server`                     |
+| Part                | What it does                                                                                     | Default template                                                                         | CRISP example                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Secure process      | The FHE computation. It combines encrypted inputs into one encrypted output.                     | `program/src/lib.rs` (`fhe_processor`, `policy`)                                         | `examples/CRISP/program/src/lib.rs`                                   |
+| E3 program contract | Implements `IE3Program`. It accepts inputs, keeps the input tree, and verifies the output proof. | `contracts/MyProgram.sol`                                                                | `examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol`  |
+| Compute provider    | Runs the secure process off-chain and proves the run.                                            | `.interfold/support/dev` (dev mode) or `.interfold/support/openvm` and `guest/` (OpenVM) | `examples/CRISP/.interfold/support/openvm` and `examples/CRISP/guest` |
+| Verifiers           | Check the compute proof on-chain before the Interfold contract accepts the output.               | `OpenVmBfvCiphertextVerifier` and the check in `MyProgram.verify`                        | `OpenVmBfvCiphertextVerifier` and `CRISPProgram.verify`               |
+| Client and server   | The client encrypts and submits inputs. The server starts the compute and publishes the output.  | `client/src/`, `server/index.ts`                                                         | `examples/CRISP/client`, `examples/CRISP/server`                      |
 
 Template paths are relative to the project root. CRISP paths and `crates/` paths are relative to the
 root of the Interfold repository.
@@ -85,17 +85,17 @@ committee key and decrypt the output. See [The Interfold Contract](/build/interf
 
 ## Calls between the parts
 
-| Caller                 | Called contract or service   | Function or endpoint              | When                                     |
-| ---------------------- | ---------------------------- | --------------------------------- | ---------------------------------------- |
-| Requester              | Interfold contract           | `request`                         | Once, to start the E3                    |
-| Interfold contract     | Program contract             | `validate`                        | Inside `request`                         |
-| Client (data provider) | Program contract             | `publishInput`                    | During the input window                  |
-| Server                 | Compute provider             | `POST /run_compute`               | After the input window closes            |
-| Compute provider       | Server                       | Webhook callback (`callback_url`) | When the proof is ready                  |
-| Server                 | Interfold contract           | `publishCiphertextOutput`         | Before the compute deadline              |
-| Interfold contract     | Program contract             | `verifyDataAvailability`          | Inside `publishCiphertextOutput`, first  |
-| Interfold contract     | `Risc0BfvCiphertextVerifier` | `verify`                          | Inside `publishCiphertextOutput`, second |
-| Interfold contract     | Program contract             | `verify`                          | Inside `publishCiphertextOutput`, third  |
+| Caller                 | Called contract or service    | Function or endpoint              | When                                     |
+| ---------------------- | ----------------------------- | --------------------------------- | ---------------------------------------- |
+| Requester              | Interfold contract            | `request`                         | Once, to start the E3                    |
+| Interfold contract     | Program contract              | `validate`                        | Inside `request`                         |
+| Client (data provider) | Program contract              | `publishInput`                    | During the input window                  |
+| Server                 | Compute provider              | `POST /run_compute`               | After the input window closes            |
+| Compute provider       | Server                        | Webhook callback (`callback_url`) | When the proof is ready                  |
+| Server                 | Interfold contract            | `publishCiphertextOutput`         | Before the compute deadline              |
+| Interfold contract     | Program contract              | `verifyDataAvailability`          | Inside `publishCiphertextOutput`, first  |
+| Interfold contract     | `OpenVmBfvCiphertextVerifier` | `verify`                          | Inside `publishCiphertextOutput`, second |
+| Interfold contract     | Program contract              | `verify`                          | Inside `publishCiphertextOutput`, third  |
 
 Two values connect the secure process to the program contract. The first is the input root: the
 compute provider and the program contract must build the same input tree from the same inputs. The
@@ -127,7 +127,7 @@ guest program that the image ID names.
     icon='layers'
     tag='Off-chain'
   >
-    How the program server runs the secure process and returns a RISC Zero proof.
+    How the program server runs the secure process and returns an OpenVM proof.
   </LinkCard>
   <LinkCard
     title='4. Verify the compute provider'

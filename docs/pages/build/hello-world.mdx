@@ -63,10 +63,10 @@ pub fn policy() -> InputPolicy {
 }
 
 /// Implementation of the CiphertextProcessor function
-pub fn fhe_processor(fhe_inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
+pub fn fhe_processor(fhe_inputs: FHEProcessorInput<'_>) -> Vec<u8> {
     let mut sum = Ciphertext::zero(fhe_inputs.params);
-    for ciphertext_bytes in fhe_inputs.ciphertexts {
-        let ciphertext = Ciphertext::from_bytes(&ciphertext_bytes.0, fhe_inputs.params).unwrap();
+    for (bytes, _) in fhe_inputs.ciphertexts {
+        let ciphertext = Ciphertext::from_bytes(&bytes, fhe_inputs.params).unwrap();
         sum += &ciphertext;
     }
 
@@ -74,7 +74,7 @@ pub fn fhe_processor(fhe_inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
 }
 ```
 
-- `FHEProcessorInput` has two fields. `ciphertexts` is a slice of `(Vec<u8>, u64)` pairs: the
+- `FHEProcessorInput` has two fields. `ciphertexts` yields `(Vec<u8>, u64)` pairs one at a time: the
   serialized ciphertext and its input index. `params` holds the BFV parameters of the E3.
 - `Ciphertext::zero` makes the zero ciphertext, the start value. The `+=` operator adds each input
   ciphertext to it. This addition is homomorphic: the function adds the hidden values, but it cannot
@@ -101,10 +101,10 @@ In `program/src/lib.rs`, replace the `fhe_processor` function with this version:
 
 ```rust filename="program/src/lib.rs" {9-11}
 /// Implementation of the CiphertextProcessor function
-pub fn fhe_processor(fhe_inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
+pub fn fhe_processor(fhe_inputs: FHEProcessorInput<'_>) -> Vec<u8> {
     let mut sum = Ciphertext::zero(fhe_inputs.params);
-    for ciphertext_bytes in fhe_inputs.ciphertexts {
-        let ciphertext = Ciphertext::from_bytes(&ciphertext_bytes.0, fhe_inputs.params).unwrap();
+    for (bytes, _) in fhe_inputs.ciphertexts {
+        let ciphertext = Ciphertext::from_bytes(&bytes, fhe_inputs.params).unwrap();
         sum += &ciphertext;
     }
 
@@ -201,9 +201,10 @@ The input step shows `Ready to compute: 2 × (5 + 3) = ?`. The results step show
 
 <Callout type='info'>
   In dev mode, the program server runs `fhe_processor` without a proof, and the template deploys
-  `MockRISC0Verifier`, which accepts any RISC Zero seal. With a real verifier, `MyProgram.verify`
-  checks the proof against the `imageId` that `MyProgram` receives when it is deployed. A change to
-  the program changes that image ID. See [Compute provider](/build/e3-program/compute-provider).
+  `MockOpenVmReceiptVerifier`, which accepts every receipt on the local chain. With real proofs,
+  `MyProgram.verify` checks the OpenVM receipt against the `imageId` that `MyProgram` receives when
+  it is deployed. A change to the program changes that identity, so compile and deploy again. See
+  [Compute provider](/build/e3-program/compute-provider).
 </Callout>
 
 ## Update the integration test
@@ -221,8 +222,8 @@ Run the test with `pnpm test:integration`. This test needs a CLI that is built w
 
 ## Operations on ciphertexts
 
-The template uses the `fhe` crate from `gnosisguild/fhe.rs` at tag `v0.4.1`. For a `Ciphertext`,
-that crate implements these operators:
+The template uses the `fhe` crate from `gnosisguild/fhe.rs` at revision `873dc69`. For a
+`Ciphertext`, that crate implements these operators:
 
 | Operation                   | Operator             | Example           |
 | --------------------------- | -------------------- | ----------------- |

@@ -121,10 +121,10 @@ pub fn policy() -> InputPolicy {
     InputPolicy::default()
 }
 
-pub fn fhe_processor(fhe_inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
+pub fn fhe_processor(fhe_inputs: FHEProcessorInput<'_>) -> Vec<u8> {
     let mut sum = Ciphertext::zero(fhe_inputs.params);
-    for ciphertext_bytes in fhe_inputs.ciphertexts {
-        let ciphertext = Ciphertext::from_bytes(&ciphertext_bytes.0, fhe_inputs.params).unwrap();
+    for (bytes, _) in fhe_inputs.ciphertexts {
+        let ciphertext = Ciphertext::from_bytes(&bytes, fhe_inputs.params).unwrap();
         sum += &ciphertext;
     }
 
@@ -133,7 +133,8 @@ pub fn fhe_processor(fhe_inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
 ```
 
 - `fhe_processor` adds the ciphertexts homomorphically and returns the encrypted sum. It never sees
-  a plaintext.
+  a plaintext. The ciphertexts arrive one at a time, which is how the OpenVM guest proves rounds
+  larger than its memory.
 - `policy` returns `InputPolicy::default()`. The input tree leaf is the SAFE commitment of each
   ciphertext, and the processor uses every input. This matches `MyProgram.publishInput`, which
   inserts the commitment.
@@ -158,13 +159,13 @@ When you change the computation, keep these rules:
 
 `contracts/MyProgram.sol` implements `IE3Program` and `IE3ProgramDataAvailability`:
 
-| Function                 | Called by                                 | What the template does                                                                                         |
-| ------------------------ | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `supportsInterface`      | Interfold contract, at registration       | Reports `IE3Program`, `IE3ProgramDataAvailability`, and `IERC165`. Registration fails without them.            |
-| `validate`               | Interfold contract, at request            | Stores `keccak256(e3ProgramParams)`, starts an input tree of depth 20, returns `keccak256("fhe.rs:BFV")`.      |
-| `publishInput`           | The data provider, directly               | Decodes `(bytes ciphertext, bytes32 commitment)`, inserts the commitment, emits `InputPublished`.              |
-| `verify`                 | Interfold contract, at output publication | Checks the parameter hash and the input root in the proof, rebuilds the journal, calls the RISC Zero verifier. |
-| `verifyDataAvailability` | Interfold contract, at output publication | Local only. It accepts the output bytes as their own receipt.                                                  |
+| Function                 | Called by                                 | What the template does                                                                                       |
+| ------------------------ | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `supportsInterface`      | Interfold contract, at registration       | Reports `IE3Program`, `IE3ProgramDataAvailability`, and `IERC165`. Registration fails without them.          |
+| `validate`               | Interfold contract, at request            | Stores `keccak256(e3ProgramParams)`, starts an input tree of depth 20, returns `keccak256("fhe.rs:BFV")`.    |
+| `publishInput`           | The data provider, directly               | Decodes `(bytes ciphertext, bytes32 commitment)`, inserts the commitment, emits `InputPublished`.            |
+| `verify`                 | Interfold contract, at output publication | Checks the parameter hash and the input root in the proof, rebuilds the journal, calls the receipt verifier. |
+| `verifyDataAvailability` | Interfold contract, at output publication | Local only. It accepts the output bytes as their own receipt.                                                |
 
 The template `publishInput` checks only the end of the input window. Add the stage check and the
 start-of-window check that `CRISPProgram` makes. Add two errors next to the other errors:
@@ -218,11 +219,13 @@ comparison is the only check that the output covers your inputs.
 `deployInterfold(true, false)`, which deploys the protocol with mocks. `deployTemplate` does these
 steps:
 
-1. It deploys `MockRISC0Verifier`, which accepts every proof, and the `ImageID` library.
-2. It deploys `Risc0BfvCiphertextVerifier` for the image ID and calls `setCiphertextVerifier` on the
-   Interfold contract.
-3. It deploys `MyProgram` with the Interfold address, the verifier, and the image ID. It links
-   `PoseidonT3` for the input tree.
+1. With `TEMPLATE_UNPROVED_TEST=1` (the local default), it deploys `MockOpenVmReceiptVerifier`,
+   which accepts every proof on the local chain only. Otherwise it deploys an
+   `OpenVmReceiptVerifier` for the guest that `interfold program compile` built.
+2. It deploys `OpenVmBfvCiphertextVerifier` for that receipt identity and calls
+   `setCiphertextVerifier` on the Interfold contract.
+3. It deploys `MyProgram` with the Interfold address, the receipt verifier, and its identity. It
+   links `PoseidonT3` for the input tree.
 4. It calls `registerE3Program` and checks `e3Programs(program)`.
 5. It records the addresses in `deployed_contracts.json` and `interfold.config.yaml`.
 
@@ -336,13 +339,13 @@ committee key is published or before `inputWindow[0]`.
 
 A change in one part often needs a change in another part. Check this table after each change.
 
-| Value             | Where it is set                                        | Where it must match                                                              |
-| ----------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------- |
-| Input encoding    | `abi.decode(data, (bytes, bytes32))` in `publishInput` | `encodeAbiParameters` in `client/src/utils/input.ts` and `server/input.ts`       |
-| Input tree leaf   | `inputs[e3Id]._insert(uint256(ciphertextCommitment))`  | `policy()` in `program/src/lib.rs`                                               |
-| Input event       | `InputPublished(e3Id, data, index)`                    | `getContractEvents` in `server/index.ts`                                         |
-| BFV parameter set | `paramSet: 0` in the request                           | `thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512'` in the SDK config       |
-| Guest image ID    | `.interfold/generated/contracts/ImageID.sol`           | The `imageId` in the `MyProgram` constructor and in `Risc0BfvCiphertextVerifier` |
+| Value             | Where it is set                                               | Where it must match                                                               |
+| ----------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Input encoding    | `abi.decode(data, (bytes, bytes32))` in `publishInput`        | `encodeAbiParameters` in `client/src/utils/input.ts` and `server/input.ts`        |
+| Input tree leaf   | `inputs[e3Id]._insert(uint256(ciphertextCommitment))`         | `policy()` in `program/src/lib.rs`                                                |
+| Input event       | `InputPublished(e3Id, data, index)`                           | `getContractEvents` in `server/index.ts`                                          |
+| BFV parameter set | `paramSet: 0` in the request                                  | `thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512'` in the SDK config        |
+| Receipt identity  | `guest/` and `program/`, built by `interfold program compile` | The `imageId` in the `MyProgram` constructor and in `OpenVmBfvCiphertextVerifier` |
 
 ## The E3 flow
 

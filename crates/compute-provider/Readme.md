@@ -104,8 +104,8 @@ published, and `recomputed`, the commitment derived from the bytes. `matches_com
 
 `select` receives an `InputRecord` per input: the same fields without the ciphertext bytes. The
 Secure Process reads each ciphertext once to build its leaf and does not keep it, so selection works
-on what remains. The selected ciphertexts are read again, and each is refused unless it hashes to the
-`ciphertext_hash` of its first read.
+on what remains. The selected ciphertexts are read again, and each is refused unless it hashes to
+the `ciphertext_hash` of its first read.
 
 `InputPolicy::default()` is the behaviour every E3 program had before policies existed. The leaf is
 the ciphertext's own SAFE commitment, and every input is computed over. A program whose contract

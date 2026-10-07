@@ -17,7 +17,7 @@
     "dev:frontend": "./scripts/dev_frontend.sh",
     "dev:program": "./scripts/dev_program.sh",
     "dev:server": "./scripts/dev_server.sh",
-    "predev:all": "interfold program compile",
+    "predev:all": "./scripts/compile_program.sh",
     "test": "hardhat test",
     "test:server": "vitest run ./server/runner.test.ts",
     "test:integration": "pnpm test:server && ./scripts/test_integration.sh"
