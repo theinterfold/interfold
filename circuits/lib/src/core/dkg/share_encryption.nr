@@ -196,20 +196,6 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         );
     }
 
-    /// Verifies that the message (share) polynomial hashes to the expected commitment
-    /// produced in C2a (for C3a) or C2b (for C3b).
-    ///
-    /// This is the binding check: the plaintext being encrypted must be exactly the share
-    /// that was verified in C2. Any deviation, encrypting a different value, substituting
-    /// a forged share, will cause this assertion to fail.
-    fn verify_message_commitment(self) {
-        assert(
-            compute_share_encryption_commitment_from_message::<N, BIT_MSG>(self.message)
-                == self.expected_message_commitment,
-            "Message commitment mismatch",
-        );
-    }
-
     /// Checks the carries `z` of the scaled message: `k1 == q_mod_t * m - t * z`, so the scaled
     /// message need never be materialised.
     ///
@@ -407,11 +393,25 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
 
     /// Executes the share encryption circuit and returns the ciphertext commitment (C3 public output).
     pub fn execute(self) -> Field {
+        self.execute_with(|message| {
+            compute_share_encryption_commitment_from_message::<N, BIT_MSG>(message)
+        })
+    }
+
+    /// [`Self::execute`] with the message commitment supplied by the caller.
+    ///
+    /// The l-BFV path's C2 commits each share as a chunk root keyed by `(party, modulus)`
+    /// (`share_encryption_chunked`); everything else is shared. `message` is range-checked below
+    /// whichever form is used, so creating the commitment needs no checked packing.
+    pub fn execute_with<Env>(self, commit_message: fn[Env](Polynomial<N>) -> Field) -> Field {
         // Step 1: Verify public key commitment matches expected
         self.verify_pk_commitment();
 
         // Step 2: Verify message commitment matches expected
-        self.verify_message_commitment();
+        assert(
+            commit_message(self.message) == self.expected_message_commitment,
+            "Message commitment mismatch",
+        );
 
         // Step 3: Range-check everything the identity reads except the quotients, whose form
         // depends on which path runs.

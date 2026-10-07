@@ -147,6 +147,21 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
     ///
     /// Returns `(commit(sk), commit(pk_trbfv), commit(e_sm))` as documented on the struct.
     pub fn execute(self) -> (Field, Field, Field) {
+        self.execute_with(|sk| compute_share_computation_sk_commitment::<N, BIT_SK>(sk), |e_sm| {
+            compute_share_computation_e_sm_commitment::<N, L, BIT_E_SM>(e_sm)
+        })
+    }
+
+    /// [`Self::execute`] with the `sk` and `e_sm` commitments supplied by the caller.
+    ///
+    /// The l-BFV path commits both as chunk roots, because its C2 opens them chunk by chunk
+    /// (`pk_generation_chunked`); everything else, including the soundness checks, is shared. The
+    /// commitments must be created from the range-checked witnesses passed in, which both forms do.
+    pub fn execute_with<Env1, Env2>(
+        self,
+        commit_sk: fn[Env1](Polynomial<N>) -> Field,
+        commit_e_sm: fn[Env2]([Polynomial<N>; L]) -> Field,
+    ) -> (Field, Field, Field) {
         // Step 1: Range-check secret witnesses (sk, eek, e_sm, quotients).
         self.perform_range_checks();
 
@@ -154,9 +169,8 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
         self.verify_e_sm_crt_consistency();
 
         // Step 3: Derive commitments for the FS transcript.
-        let sk_commitment = compute_share_computation_sk_commitment::<N, BIT_SK>(self.sk);
-        let e_sm_commitment =
-            compute_share_computation_e_sm_commitment::<N, L, BIT_E_SM>(self.e_sm);
+        let sk_commitment = commit_sk(self.sk);
+        let e_sm_commitment = commit_e_sm(self.e_sm);
         let pk_commitment = compute_threshold_pk_commitment::<N, L, BIT_PK>(self.pk0);
 
         // Step 4: Fiat-Shamir challenge and per-modulus evaluation checks.

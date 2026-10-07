@@ -9,7 +9,7 @@ use crate::math::commitments::{
     compute_rlk_limb_e0_commitment, compute_rlk_limb_e2_commitment, compute_rlk_r_commitment,
     compute_sc_sk_secret_root_from_polynomial,
 };
-use crate::math::helpers::flatten;
+use crate::math::helpers::flatten_checked;
 use crate::math::polynomial::Polynomial;
 
 /// Prove the two RLK equations for one row and one CRT limb.
@@ -147,22 +147,22 @@ impl<let N: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, let BIT_E2: u
         d2_limb_commitment: Field,
     ) -> Field {
         let mut payload = [self.row_index as Field, self.limb_index as Field].as_vector();
-        payload = flatten::<_, _, BIT_D>(payload, [self.d1]);
-        payload = flatten::<_, _, BIT_D>(payload, [self.a]);
+        payload = flatten_checked::<_, _, BIT_D>(payload, [self.d1]);
+        payload = flatten_checked::<_, _, BIT_D>(payload, [self.a]);
         payload = payload.push_back(self.g);
         payload = payload.push_back(self.qi);
-        payload = flatten::<_, _, BIT_E0>(payload, [self.e0]);
-        payload = flatten::<_, _, BIT_E2>(payload, [self.e2]);
+        payload = flatten_checked::<_, _, BIT_E0>(payload, [self.e0]);
+        payload = flatten_checked::<_, _, BIT_E2>(payload, [self.e2]);
         payload = payload.push_back(sk_commitment);
         payload = payload.push_back(r_commitment);
         payload = payload.push_back(e0_commitment);
         payload = payload.push_back(e2_commitment);
         payload = payload.push_back(d0_limb_commitment);
         payload = payload.push_back(d2_limb_commitment);
-        payload = flatten::<_, _, BIT_R1_D0>(payload, [self.r1_d0]);
-        payload = flatten::<_, _, BIT_R2_D0>(payload, [self.r2_d0]);
-        payload = flatten::<_, _, BIT_R1_D2>(payload, [self.r1_d2]);
-        payload = flatten::<_, _, BIT_R2_D2>(payload, [self.r2_d2]);
+        payload = flatten_checked::<_, _, BIT_R1_D0>(payload, [self.r1_d0]);
+        payload = flatten_checked::<_, _, BIT_R2_D0>(payload, [self.r2_d0]);
+        payload = flatten_checked::<_, _, BIT_R1_D2>(payload, [self.r1_d2]);
+        payload = flatten_checked::<_, _, BIT_R2_D2>(payload, [self.r2_d2]);
         compute_rlk_limb_challenge(payload)
     }
 

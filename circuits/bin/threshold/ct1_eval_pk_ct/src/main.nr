@@ -13,7 +13,7 @@ use lib::configs::default::threshold::{
     L, N, USER_DATA_ENCRYPTION_CHUNKED_BIT_CT, USER_DATA_ENCRYPTION_CHUNKED_BIT_PK,
 };
 use lib::math::commitments::{
-    compute_multiple_polynomial_commitment, DS_CIPHERTEXT, DS_PK_AGGREGATION,
+    compute_multiple_polynomial_commitment_checked, DS_CIPHERTEXT, DS_PK_AGGREGATION,
 };
 use lib::math::polynomial::Polynomial;
 
@@ -22,7 +22,7 @@ fn main(
     ct1is: [Polynomial<N>; L],
     gamma: pub Field,
 ) -> pub (Field, [Field; L], Field, [Field; L]) {
-    let pk1_commitment = compute_multiple_polynomial_commitment::<N, L, USER_DATA_ENCRYPTION_CHUNKED_BIT_PK>(
+    let pk1_commitment = compute_multiple_polynomial_commitment_checked::<N, L, USER_DATA_ENCRYPTION_CHUNKED_BIT_PK>(
         pk1is,
         DS_PK_AGGREGATION,
     );
@@ -31,7 +31,7 @@ fn main(
         pk1is_at_gamma[i] = pk1is[i].eval(gamma);
     }
 
-    let ct1_commitment = compute_multiple_polynomial_commitment::<N, L, USER_DATA_ENCRYPTION_CHUNKED_BIT_CT>(
+    let ct1_commitment = compute_multiple_polynomial_commitment_checked::<N, L, USER_DATA_ENCRYPTION_CHUNKED_BIT_CT>(
         ct1is,
         DS_CIPHERTEXT,
     );

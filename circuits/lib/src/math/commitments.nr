@@ -289,12 +289,19 @@ pub fn compute_threshold_pk_commitment<let N: u32, let L: u32, let BIT_PK: u32>(
     compute_commitment(payload, DS_PK_GENERATION)
 }
 
+/// L-BFV COMMITMENT HELPERS
+///
+/// The `compute_sc_*`, `compute_ude_*`, `compute_lbfv_*` and `compute_rlk_*` helpers below serve
+/// only the l-BFV path. They pack with checked digits, the semantics `lbfv/chunking` built its
+/// circuits on, so a circuit that opens one of these commitments without its own range check still
+/// opens it injectively. Where a circuit does range-check the values, the digit check is
+/// redundant and can be dropped deliberately as an optimisation.
 pub fn compute_lbfv_pk_limb_eek_commitment<let N: u32, let BIT_EEK: u32>(
     row_index: u32,
     eek: Polynomial<N>,
 ) -> Field {
     let mut payload = [1, 0, row_index as Field, N as Field].as_vector();
-    payload = single_polynomial_payload::<N, BIT_EEK>(payload, eek);
+    payload = single_polynomial_payload_checked::<N, BIT_EEK>(payload, eek);
     compute_commitment(payload, DS_PK_GENERATION_LIMB_V1)
 }
 
@@ -304,7 +311,7 @@ pub fn compute_lbfv_pk_limb_commitment<let N: u32, let BIT_PK: u32>(
     pk0: Polynomial<N>,
 ) -> Field {
     let mut payload = [1, 1, row_index as Field, limb_index as Field, N as Field].as_vector();
-    payload = single_polynomial_payload::<N, BIT_PK>(payload, pk0);
+    payload = single_polynomial_payload_checked::<N, BIT_PK>(payload, pk0);
     compute_commitment(payload, DS_PK_GENERATION_LIMB_V1)
 }
 
@@ -368,7 +375,7 @@ pub fn compute_sc_secret_chunk_commitment<let CHUNK_SIZE: u32, let BIT: u32>(
 ) -> Field {
     let mut payload =
         [0, kind_tag, chunk_idx as Field, n as Field, CHUNK_SIZE as Field].as_vector();
-    payload = single_polynomial_payload::<CHUNK_SIZE, BIT>(payload, chunk_poly);
+    payload = single_polynomial_payload_checked::<CHUNK_SIZE, BIT>(payload, chunk_poly);
     compute_commitment(payload, DS_SHARE_COMPUTATION_CHUNK)
 }
 
@@ -379,7 +386,7 @@ pub fn compute_sc_esm_secret_chunk_commitment<let CHUNK_SIZE: u32, let L: u32, l
     polynomials: [Polynomial<CHUNK_SIZE>; L],
 ) -> Field {
     let mut payload = [0, 1, chunk_idx as Field, n as Field, CHUNK_SIZE as Field].as_vector();
-    payload = multiple_polynomial_payload::<CHUNK_SIZE, L, BIT>(payload, polynomials);
+    payload = multiple_polynomial_payload_checked::<CHUNK_SIZE, L, BIT>(payload, polynomials);
     compute_commitment(payload, DS_SHARE_COMPUTATION_CHUNK)
 }
 
@@ -401,7 +408,7 @@ pub fn compute_sc_party_share_chunk_commitment<let CHUNK_SIZE: u32, let BIT: u32
         CHUNK_SIZE as Field,
     ]
         .as_vector();
-    payload = single_polynomial_payload::<CHUNK_SIZE, BIT>(payload, chunk_poly);
+    payload = single_polynomial_payload_checked::<CHUNK_SIZE, BIT>(payload, chunk_poly);
     compute_commitment(payload, DS_SHARE_COMPUTATION_CHUNK)
 }
 
@@ -448,7 +455,7 @@ pub fn compute_ude_chunk_commitment<let CHUNK_SIZE: u32, let BIT: u32>(
 ) -> Field {
     let mut payload =
         [0, kind_tag, chunk_idx as Field, n as Field, CHUNK_SIZE as Field].as_vector();
-    payload = single_polynomial_payload::<CHUNK_SIZE, BIT>(payload, chunk_poly);
+    payload = single_polynomial_payload_checked::<CHUNK_SIZE, BIT>(payload, chunk_poly);
     compute_commitment(payload, DS_USER_DATA_ENCRYPTION_CHUNK)
 }
 
@@ -462,7 +469,7 @@ pub fn compute_ude_multi_chunk_commitment<let CHUNK_SIZE: u32, let L: u32, let B
 ) -> Field {
     let mut payload =
         [0, kind_tag, chunk_idx as Field, n as Field, CHUNK_SIZE as Field].as_vector();
-    payload = multiple_polynomial_payload::<CHUNK_SIZE, L, BIT>(payload, polynomials);
+    payload = multiple_polynomial_payload_checked::<CHUNK_SIZE, L, BIT>(payload, polynomials);
     compute_commitment(payload, DS_USER_DATA_ENCRYPTION_CHUNK)
 }
 
@@ -535,7 +542,7 @@ pub fn compute_sc_esm_secret_root_from_polynomial<let N: u32, let L: u32, let N_
             polynomials[mod_idx] = Polynomial::new(coefficients);
         }
         let mut payload = [0, 1, chunk_idx as Field, N as Field, CHUNK_SIZE as Field].as_vector();
-        payload = multiple_polynomial_payload::<CHUNK_SIZE, L, BIT>(payload, polynomials);
+        payload = multiple_polynomial_payload_checked::<CHUNK_SIZE, L, BIT>(payload, polynomials);
         chunks[chunk_idx] = compute_commitment(payload, DS_SHARE_COMPUTATION_CHUNK);
     }
     compute_sc_secret_chunk_root_commitment(1, N, CHUNK_SIZE, chunks)
@@ -683,7 +690,7 @@ fn test_lbfv_key_envelope_commitment_matches_rust_vector() {
 
 /// l-BFV RLK generation: commitment to the ephemeral polynomial shared by all rows.
 pub fn compute_rlk_r_commitment<let N: u32, let BIT_R: u32>(r: Polynomial<N>) -> Field {
-    let payload = single_polynomial_payload::<N, BIT_R>([0].as_vector(), r);
+    let payload = single_polynomial_payload_checked::<N, BIT_R>([0].as_vector(), r);
     compute_commitment(payload, DS_RLK_GENERATION)
 }
 
@@ -691,7 +698,7 @@ pub fn compute_rlk_r_commitment<let N: u32, let BIT_R: u32>(r: Polynomial<N>) ->
 pub fn compute_rlk_d0_commitment<let N: u32, let L: u32, let BIT_D: u32>(
     d0: [Polynomial<N>; L],
 ) -> Field {
-    let payload = multiple_polynomial_payload::<N, L, BIT_D>([1].as_vector(), d0);
+    let payload = multiple_polynomial_payload_checked::<N, L, BIT_D>([1].as_vector(), d0);
     compute_commitment(payload, DS_RLK_GENERATION)
 }
 
@@ -699,7 +706,7 @@ pub fn compute_rlk_d0_commitment<let N: u32, let L: u32, let BIT_D: u32>(
 pub fn compute_rlk_d2_commitment<let N: u32, let L: u32, let BIT_D: u32>(
     d2: [Polynomial<N>; L],
 ) -> Field {
-    let payload = multiple_polynomial_payload::<N, L, BIT_D>([2].as_vector(), d2);
+    let payload = multiple_polynomial_payload_checked::<N, L, BIT_D>([2].as_vector(), d2);
     compute_commitment(payload, DS_RLK_GENERATION)
 }
 

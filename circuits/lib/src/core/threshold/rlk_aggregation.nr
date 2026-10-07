@@ -5,8 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::math::commitments::{
-    compute_multiple_polynomial_commitment, compute_rlk_d0_commitment, compute_rlk_d2_commitment,
-    DS_RLK_AGGREGATION,
+    compute_multiple_polynomial_commitment_checked, compute_rlk_d0_commitment,
+    compute_rlk_d2_commitment, DS_RLK_AGGREGATION,
 };
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
@@ -148,10 +148,14 @@ impl<let N: u32, let H: u32, let L: u32, let BIT_D: u32> RlkAggregation<N, H, L,
         }
 
         // Step 3: Commit to d0_agg and d2_agg separately.
-        let d0_agg_commitment =
-            compute_multiple_polynomial_commitment::<N, L, BIT_D>(self.d0_agg, DS_RLK_AGGREGATION);
-        let d2_agg_commitment =
-            compute_multiple_polynomial_commitment::<N, L, BIT_D>(self.d2_agg, DS_RLK_AGGREGATION);
+        let d0_agg_commitment = compute_multiple_polynomial_commitment_checked::<N, L, BIT_D>(
+            self.d0_agg,
+            DS_RLK_AGGREGATION,
+        );
+        let d2_agg_commitment = compute_multiple_polynomial_commitment_checked::<N, L, BIT_D>(
+            self.d2_agg,
+            DS_RLK_AGGREGATION,
+        );
 
         (d0_agg_commitment, d2_agg_commitment)
     }

@@ -64,7 +64,12 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> Sha
     /// aggregate itself needs no bound of its own.
     /// Since commitments are binding, any substitution or tampering, claiming a different
     /// decrypted value or using the wrong secret key, will cause this assertion to fail.
-    fn verify_commitments(self) {
+    ///
+    /// The opening is supplied by the caller: given the reversed
+    /// share of one sender for one limb, return its commitment. It must open **injectively**
+    /// (checked packing): nothing else in C4 bounds the decrypted shares. The l-BFV path opens
+    /// chunk roots (`share_decryption_chunked`).
+    fn verify_commitments_with<Env>(self, open: fn[Env](u32, Polynomial<N>) -> Field) {
         for party_idx in 0..H {
             for mod_idx in 0..L {
                 // Reverse the share polynomial to match the commitment format used by C2's
@@ -75,9 +80,7 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> Sha
                     reversed_coeffs[N - 1 - i] = share.coefficients[i];
                 }
                 assert(
-                    compute_share_encryption_commitment_from_message_checked::<N, BIT_MSG>(
-                        Polynomial::new(reversed_coeffs),
-                    )
+                    open(mod_idx, Polynomial::new(reversed_coeffs))
                         == self.expected_commitments[party_idx][mod_idx],
                     "Commitment mismatch",
                 );
@@ -128,8 +131,20 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> Sha
     /// Rust witness (which operates on sk coefficients already reduced to `[0, q_l)`
     /// and then applies `.reverse()` and `.center(&qi)` before hashing).
     pub fn execute(self, moduli: [Field; L]) -> Field {
+        self.execute_with(moduli, |_mod_idx, share| {
+            compute_share_encryption_commitment_from_message_checked::<N, BIT_MSG>(share)
+        })
+    }
+
+    /// [`Self::execute`] with the share opening supplied by the caller; see
+    /// [`Self::verify_commitments_with`] for what it must guarantee.
+    pub fn execute_with<Env>(
+        self,
+        moduli: [Field; L],
+        open: fn[Env](u32, Polynomial<N>) -> Field,
+    ) -> Field {
         // Step 1: Verify decrypted shares match expected C2 commitments, opened injectively.
-        self.verify_commitments();
+        self.verify_commitments_with(open);
 
         // Step 2: Sum shares coefficient-wise per CRT limb.
         let aggregated = self.compute_aggregated_shares();

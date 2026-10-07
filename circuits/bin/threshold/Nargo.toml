@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "pk_generation",
+    "pk_generation_chunked",
     "pk_aggregation",
     "lbfv_pk_generation",
     "lbfv_pk_generation_limb",

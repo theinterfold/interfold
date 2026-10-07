@@ -8,7 +8,7 @@ use crate::math::commitments::{
     compute_lbfv_pk_limb_challenge, compute_lbfv_pk_limb_commitment,
     compute_lbfv_pk_limb_eek_commitment, compute_sc_sk_secret_root_from_polynomial,
 };
-use crate::math::helpers::flatten;
+use crate::math::helpers::flatten_checked;
 use crate::math::polynomial::Polynomial;
 
 /// Prove one CRT limb of one l-BFV public-key row.
@@ -90,13 +90,13 @@ impl<let N: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_R1: u32, let BIT_R2:
         pk_limb_commitment: Field,
     ) -> Field {
         let mut payload = [self.row_index as Field, self.limb_index as Field].as_vector();
-        payload = flatten::<_, _, BIT_PK>(payload, [self.a]);
-        payload = flatten::<_, _, BIT_EEK>(payload, [self.eek]);
+        payload = flatten_checked::<_, _, BIT_PK>(payload, [self.a]);
+        payload = flatten_checked::<_, _, BIT_EEK>(payload, [self.eek]);
         payload = payload.push_back(sk_commitment);
         payload = payload.push_back(eek_commitment);
         payload = payload.push_back(pk_limb_commitment);
-        payload = flatten::<_, _, BIT_R1>(payload, [self.r1]);
-        payload = flatten::<_, _, BIT_R2>(payload, [self.r2]);
+        payload = flatten_checked::<_, _, BIT_R1>(payload, [self.r1]);
+        payload = flatten_checked::<_, _, BIT_R2>(payload, [self.r2]);
         payload = payload.push_back(self.qi);
         compute_lbfv_pk_limb_challenge(payload)
     }
