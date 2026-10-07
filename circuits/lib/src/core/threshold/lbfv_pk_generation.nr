@@ -81,6 +81,11 @@ impl<let N: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_R1: u32, let BIT_R2:
         self.sk.range_check_2bounds::<BIT_SK>(self.sk_bound, self.sk_bound);
         self.r1.range_check_2bounds::<BIT_R1>(self.r1_bound, self.r1_bound);
         self.r2.range_check_2bounds::<BIT_R2>(self.r2_bound, self.r2_bound);
+        // pk0 is committed here and re-opened downstream. `r1` absorbs any multiple of `qi`, so
+        // without this bound `pk0 + k*qi` satisfies the same equation and the key limb gets a
+        // second opening. Pin it to the centered residue, as main's C1 does.
+        let pk_bound: Field = (self.qi - 1) / 2;
+        self.pk0.range_check_2bounds::<BIT_PK>(pk_bound, pk_bound);
     }
 
     fn generate_challenge(
@@ -114,7 +119,7 @@ impl<let N: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_R1: u32, let BIT_R2:
 #[test]
 fn test_lbfv_pk_generation_limb_accepts_valid_equation() {
     let zero: Polynomial<4> = Polynomial::new([0, 0, 0, 0]);
-    let circuit: LbfvPkGenerationLimb<4, 2, 2, 2, 2, 2, 1, 4> = LbfvPkGenerationLimb::new(
+    let circuit: LbfvPkGenerationLimb<4, 2, 2, 2, 2, 4, 1, 4> = LbfvPkGenerationLimb::new(
         1,
         1,
         1,
@@ -135,7 +140,7 @@ fn test_lbfv_pk_generation_limb_accepts_valid_equation() {
 #[test(should_fail)]
 fn test_lbfv_pk_generation_limb_rejects_invalid_equation() {
     let zero: Polynomial<4> = Polynomial::new([0, 0, 0, 0]);
-    let circuit: LbfvPkGenerationLimb<4, 2, 2, 2, 2, 2, 1, 4> = LbfvPkGenerationLimb::new(
+    let circuit: LbfvPkGenerationLimb<4, 2, 2, 2, 2, 4, 1, 4> = LbfvPkGenerationLimb::new(
         1,
         1,
         1,
@@ -149,6 +154,50 @@ fn test_lbfv_pk_generation_limb_rejects_invalid_equation() {
         Polynomial::new([0, 0, 0, 0, 0, 0, 0]),
         Polynomial::new([0, 0, 0]),
         Polynomial::new([1, 0, 0, 0]),
+    );
+    let _ = circuit.execute();
+}
+
+/// `pk0 = 9 = eek + qi` satisfies the limb equation with `r1 = 1`, but 9 is not the centered
+/// residue of `-8` mod 17. Without the canonical `pk0` bound, the same key limb has two openings.
+#[test(should_fail)]
+fn test_lbfv_pk_generation_limb_rejects_non_canonical_pk0() {
+    let zero: Polynomial<4> = Polynomial::new([0, 0, 0, 0]);
+    let circuit: LbfvPkGenerationLimb<4, 4, 2, 2, 2, 4, 1, 4> = LbfvPkGenerationLimb::new(
+        8,
+        1,
+        1,
+        1,
+        17,
+        zero,
+        0,
+        0,
+        Polynomial::new([-8, 0, 0, 0]),
+        zero,
+        Polynomial::new([0, 0, 0, 1, 0, 0, 0]),
+        Polynomial::new([0, 0, 0]),
+        Polynomial::new([9, 0, 0, 0]),
+    );
+    let _ = circuit.execute();
+}
+
+#[test]
+fn test_lbfv_pk_generation_limb_accepts_canonical_pk0() {
+    let zero: Polynomial<4> = Polynomial::new([0, 0, 0, 0]);
+    let circuit: LbfvPkGenerationLimb<4, 4, 2, 2, 2, 4, 1, 4> = LbfvPkGenerationLimb::new(
+        8,
+        1,
+        1,
+        1,
+        17,
+        zero,
+        0,
+        0,
+        Polynomial::new([-8, 0, 0, 0]),
+        zero,
+        Polynomial::new([0, 0, 0, 0, 0, 0, 0]),
+        Polynomial::new([0, 0, 0]),
+        Polynomial::new([-8, 0, 0, 0]),
     );
     let _ = circuit.execute();
 }
