@@ -79,11 +79,7 @@ fn rust_reproduces_the_root_the_contract_produced() {
         |inputs| {
             // Membership of the tree is what this test asserts, so the processor only has to be
             // deterministic over the selected set.
-            inputs
-                .ciphertexts
-                .iter()
-                .flat_map(|(bytes, _)| bytes.clone())
-                .collect()
+            inputs.ciphertexts.flat_map(|(bytes, _)| bytes).collect()
         },
         crisp(),
     )
@@ -162,13 +158,7 @@ fn rust_selects_the_honest_mask_that_follows_a_poisoned_one() {
         published,
     }
     .process(
-        |inputs| {
-            inputs
-                .ciphertexts
-                .iter()
-                .flat_map(|(bytes, _)| bytes.clone())
-                .collect()
-        },
+        |inputs| inputs.ciphertexts.flat_map(|(bytes, _)| bytes).collect(),
         crisp(),
     )
     .expect("a poisoned append must not stop the round");
@@ -230,13 +220,7 @@ fn rust_tallies_the_re_vote() {
         published,
     }
     .process(
-        |inputs| {
-            inputs
-                .ciphertexts
-                .iter()
-                .flat_map(|(bytes, _)| bytes.clone())
-                .collect()
-        },
+        |inputs| inputs.ciphertexts.flat_map(|(bytes, _)| bytes).collect(),
         crisp(),
     )
     .expect("a round with a re-vote must process");

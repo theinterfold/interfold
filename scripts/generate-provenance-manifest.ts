@@ -64,11 +64,11 @@ async function main() {
   const unresolved: string[] = []
   const files = [
     'Cargo.lock',
-    'crates/support/Cargo.lock',
-    'crates/support/openvm/guest/Cargo.lock',
-    'crates/support/openvm/prover/Cargo.lock',
+    'examples/CRISP/Cargo.lock',
+    'examples/CRISP/guest/Cargo.lock',
+    'crates/openvm-prover/Cargo.lock',
     'rust-toolchain.toml',
-    'crates/support/openvm/guest/openvm.toml',
+    'examples/CRISP/guest/openvm.toml',
   ]
   const sourceDigests = Object.fromEntries(await Promise.all(files.map(async (file) => [file, await digest(path.join(root, file))])))
   const sourceCommit = command('git', ['rev-parse', 'HEAD'])

@@ -10,7 +10,7 @@
 //! problem — an append-only tree that anyone may write to. A program where every input counts wants
 //! the crate's default instead.
 
-use e3_compute_provider::policy::PublishedInput;
+use e3_compute_provider::policy::InputRecord;
 use e3_user_program::policy::chain_head_per_slot;
 
 /// One published entry, as a test states it.
@@ -60,14 +60,13 @@ fn metadata(entry: &Entry) -> Vec<u8> {
 fn select(entries: &[Entry]) -> Vec<usize> {
     let stored: Vec<[u8; 32]> = (0..entries.len()).map(|i| [i as u8; 32]).collect();
     let metadatas: Vec<Vec<u8>> = entries.iter().map(metadata).collect();
-    let bytes = vec![0u8];
 
-    let inputs: Vec<PublishedInput> = entries
+    let inputs: Vec<InputRecord> = entries
         .iter()
         .enumerate()
-        .map(|(index, entry)| PublishedInput {
+        .map(|(index, entry)| InputRecord {
             index,
-            ciphertext: &bytes,
+            ciphertext_hash: [0; 32],
             commitment: Some(&stored[index]),
             metadata: &metadatas[index],
             recomputed: Some(if entry.usable {
@@ -207,12 +206,11 @@ fn interleaved_slots_resolve_independently() {
 #[test]
 fn an_entry_without_valid_metadata_is_not_selected() {
     let stored = [7u8; 32];
-    let bytes = vec![0u8];
     let malformed = [0u8; 4];
 
-    let inputs = vec![PublishedInput {
+    let inputs = vec![InputRecord {
         index: 0,
-        ciphertext: &bytes,
+        ciphertext_hash: [0; 32],
         commitment: Some(&stored),
         metadata: &malformed,
         recomputed: Some(stored),

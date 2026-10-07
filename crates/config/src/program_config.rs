@@ -10,13 +10,49 @@
 //! execution, not the ciphernode itself.
 
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+/// Which OpenVM worker proves.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum OpenVmBackend {
+    /// The CUDA worker when one is configured and can open a GPU, otherwise the CPU worker.
+    #[default]
+    Auto,
+    Cpu,
+    /// The CUDA worker. The service refuses to start when it cannot open a GPU.
+    Cuda,
+}
+
+impl OpenVmBackend {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Cpu => "cpu",
+            Self::Cuda => "cuda",
+        }
+    }
+}
+
+/// The OpenVM proving service. Every path is absolute and local to the deployment.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct OpenVmConfig {
-    pub repository: std::path::PathBuf,
-    pub prover_bin: std::path::PathBuf,
-    pub prover_config: std::path::PathBuf,
+    /// The CPU build of `interfold-openvm-prover`.
+    #[serde(default)]
+    pub prover_bin: Option<PathBuf>,
+    /// The CUDA build of `interfold-openvm-prover`.
+    #[serde(default)]
+    pub prover_bin_cuda: Option<PathBuf>,
+    #[serde(default)]
+    pub backend: OpenVmBackend,
+    /// The worker configuration. Defaults to the one `interfold program compile` writes.
+    #[serde(default)]
+    pub prover_config: Option<PathBuf>,
+    /// The directory `cargo openvm setup` wrote the Halo2 key, parameters and verifier to.
+    /// Defaults to `~/.openvm`.
+    #[serde(default)]
+    pub setup_dir: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -54,16 +90,17 @@ impl ProgramConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::ProgramConfig;
+    use super::{OpenVmBackend, ProgramConfig};
+    use std::path::PathBuf;
 
     #[test]
     fn deserializes_openvm_worker_configuration() {
         let config: ProgramConfig = serde_yaml::from_str(
             r#"
 openvm:
-  repository: "/deployment/source"
   prover_bin: "/deployment/bin/interfold-openvm-prover"
-  prover_config: "/deployment/prover.json"
+  prover_bin_cuda: "/deployment/bin/interfold-openvm-prover-cuda"
+  backend: cuda
 "#,
         )
         .expect("program config must deserialize");
@@ -71,9 +108,20 @@ openvm:
         let openvm = config.openvm().expect("OpenVM config must be present");
         assert_eq!(
             openvm.prover_bin,
-            std::path::PathBuf::from("/deployment/bin/interfold-openvm-prover")
+            Some(PathBuf::from("/deployment/bin/interfold-openvm-prover"))
         );
+        assert_eq!(openvm.backend, OpenVmBackend::Cuda);
+        assert_eq!(openvm.prover_config, None);
         assert!(!config.dev());
+    }
+
+    /// Without a backend, a GPU is used when there is one.
+    #[test]
+    fn the_backend_defaults_to_auto() {
+        let config: ProgramConfig =
+            serde_yaml::from_str("openvm:\n  prover_bin: /deployment/bin/worker\n").unwrap();
+        assert_eq!(config.openvm().unwrap().backend, OpenVmBackend::Auto);
+        assert!(serde_yaml::from_str::<ProgramConfig>("openvm:\n  backend: gpu\n").is_err());
     }
 
     #[test]

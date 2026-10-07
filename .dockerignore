@@ -7,6 +7,12 @@
 !Cargo.lock
 !crates/**/*
 !examples/CRISP/program/**/*
+# CRISP's OpenVM proving service (crates/support/Dockerfile) builds in the CRISP workspace.
+!examples/CRISP/Cargo.toml
+!examples/CRISP/Cargo.lock
+!examples/CRISP/.interfold/support/**
+!examples/CRISP/server/**/*
+!examples/CRISP/crates/**/*
 !packages/**/*
 !package.json
 !pnpm-workspace.yaml

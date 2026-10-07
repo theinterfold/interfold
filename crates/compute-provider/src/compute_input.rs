@@ -5,17 +5,13 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::ciphertext_output::ComputeResult;
-use crate::hashing::keccak256;
-use crate::merkle_tree_builder::{Batching, MerkleTreeBuilder};
+use crate::merkle_tree_builder::Batching;
 use crate::policy::InputPolicy;
-#[cfg(test)]
-use e3_bfv_client::client::compute_ct_commitment;
-use e3_bfv_client::client::compute_ct_commitment_with_params;
-use e3_fhe_params::decode_bfv_params_arc;
+use crate::secure_process::{absorb_all, SecureProcess};
 use fhe::bfv::BfvParameters;
 use std::sync::Arc;
 
-pub type FHEProcessor = for<'a> fn(&FHEProcessorInput<'a>) -> Vec<u8>;
+pub type FHEProcessor = for<'a> fn(FHEProcessorInput<'a>) -> Vec<u8>;
 
 /// Inputs passed to an E3 program's homomorphic processor.
 ///
@@ -23,7 +19,12 @@ pub type FHEProcessor = for<'a> fn(&FHEProcessorInput<'a>) -> Vec<u8>;
 /// secure parameter tables is expensive inside a zkVM, and decoding the same immutable bytes twice
 /// adds no verification.
 pub struct FHEProcessorInput<'a> {
-    pub ciphertexts: &'a [(Vec<u8>, u64)],
+    /// The selected ciphertexts in index order, each paired with its on-chain index.
+    ///
+    /// Read one at a time: inside the zkVM each is read from the input stream and checked only when
+    /// the processor asks for it, so a round never has to fit in memory at once. The processor must
+    /// read every item.
+    pub ciphertexts: &'a mut dyn Iterator<Item = (Vec<u8>, u64)>,
     pub params: &'a Arc<BfvParameters>,
 }
 
@@ -85,6 +86,15 @@ pub enum ComputeError {
 
     #[error("failed to build the input Merkle tree: {0}")]
     MerkleTree(String),
+
+    #[error("the round has {expected} inputs, but {actual} were read")]
+    InputCount { expected: usize, actual: usize },
+
+    #[error("input {index} differs from the ciphertext read in the first pass")]
+    InputChanged { index: usize },
+
+    #[error("the processor returned before reading {remaining} selected inputs")]
+    Unread { remaining: usize },
 }
 
 impl ComputeInput {
@@ -126,100 +136,61 @@ impl ComputeInput {
         policy: InputPolicy,
         batching: Batching,
     ) -> Result<(ComputeResult, Vec<u8>), ComputeError> {
-        self.run_observed(fhe_processor, policy, batching, |_, _| {})
+        self.run_selected(fhe_processor, policy, batching)
+            .map(|(result, ciphertext, _)| (result, ciphertext))
     }
 
-    /// As [`Self::run_batched`], and reports phase boundaries without exposing or changing the
-    /// computed values. The observer receives `true` at the start and `false` at the end of each
-    /// phase. A failed phase does not emit an end event.
-    pub fn run_observed(
+    /// As [`Self::run_batched`], and also returns the indices the policy selected.
+    ///
+    /// Runs the same [`SecureProcess`] a zkVM guest runs over a streamed round, so the result is
+    /// the journal the guest proves. The selection names the ciphertexts the guest reads in its
+    /// second pass.
+    pub fn run_selected(
         &self,
         fhe_processor: FHEProcessor,
         policy: InputPolicy,
         batching: Batching,
-        mut observe: impl FnMut(&'static str, bool),
-    ) -> Result<(ComputeResult, Vec<u8>), ComputeError> {
-        observe("params", true);
-        let params = decode_bfv_params_arc(&self.fhe_inputs.params)
-            .map_err(|e| ComputeError::DecodeParams(e.to_string()))?;
-        observe("params", false);
-
-        if !self.published.is_empty() && self.published.len() != self.fhe_inputs.ciphertexts.len() {
-            return Err(ComputeError::MerkleTree(format!(
-                "{} ciphertexts but {} published entries",
-                self.fhe_inputs.ciphertexts.len(),
-                self.published.len()
-            )));
-        }
-
-        observe("input_commitments_and_selection", true);
-        let mut tree_builder = MerkleTreeBuilder::new(self.fhe_inputs.ciphertexts.len());
-        let selected = tree_builder.compute_leaf_hashes_batched(
-            &self.fhe_inputs,
-            &self.published,
-            &params,
+    ) -> Result<(ComputeResult, Vec<u8>, Vec<usize>), ComputeError> {
+        let ciphertexts = &self.fhe_inputs.ciphertexts;
+        let mut process = SecureProcess::new(
+            &self.fhe_inputs.params,
+            ciphertexts.iter().map(|(_, index)| *index).collect(),
+            self.published.clone(),
             policy,
-            batching,
         )?;
-        observe("input_commitments_and_selection", false);
-        observe("input_tree", true);
-        let merkle_root = tree_builder
-            .build_tree()
-            .map_err(|e| ComputeError::MerkleTree(e.to_string()))?
-            .root()
-            .ok_or_else(|| ComputeError::MerkleTree("the tree has no root".into()))?;
-        observe("input_tree", false);
+        absorb_all(&mut process, ciphertexts, batching)?;
 
-        // The processor sees only what the policy selected. Both the root above and this set are
+        let selected = process.select()?;
+        let indices = selected.indices().to_vec();
+        // The processor sees only what the policy selected. Both the root and this set are
         // functions of values the root binds, so any prover over the same published inputs reaches
         // the same result.
-        observe("fhe_processor", true);
-        let processed_ciphertext = (fhe_processor)(&FHEProcessorInput {
-            ciphertexts: &selected,
-            params: &params,
-        });
-        observe("fhe_processor", false);
-        observe("output_hash", true);
-        let processed_hash = keccak256(&processed_ciphertext).to_vec();
-        observe("output_hash", false);
-        observe("output_commitment", true);
-        let ciphertext_commitment =
-            compute_ct_commitment_with_params(&processed_ciphertext, &params)
-                .map_err(|e| ComputeError::OutputCommitment(e.to_string()))?
-                .to_vec();
-        observe("output_commitment", false);
-        observe("params_hash", true);
-        let params_hash = keccak256(&self.fhe_inputs.params).to_vec();
-        observe("params_hash", false);
-
-        Ok((
-            ComputeResult {
-                ciphertext_hash: processed_hash,
-                ciphertext_commitment,
-                params_hash,
-                merkle_root: hex::decode(merkle_root)
-                    .map_err(|e| ComputeError::MerkleTree(e.to_string()))?,
-            },
-            processed_ciphertext,
-        ))
+        let (result, ciphertext) =
+            selected.finish(fhe_processor, |index| Ok(ciphertexts[index].0.clone()))?;
+        Ok((result, ciphertext, indices))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::policy::{all_inputs, commitment_leaf, PublishedInput};
-    use e3_fhe_params::{build_pair_for_preset, encode_bfv_params, BfvPreset};
+    use crate::merkle_tree_builder::MerkleTreeBuilder;
+    use crate::policy::{all_inputs, commitment_leaf, InputRecord, PublishedInput};
+    use e3_bfv_client::client::compute_ct_commitment;
+    use e3_fhe_params::{
+        build_pair_for_preset, decode_bfv_params_arc, encode_bfv_params, BfvPreset,
+    };
     use fhe::bfv::{Ciphertext, Encoding, Plaintext, PublicKey, SecretKey};
     use fhe_traits::{FheEncoder, FheEncrypter, Serialize as FheSerialize};
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
     use sha3::{Digest, Keccak256};
-    fn sum_processor(inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
+
+    fn sum_processor(inputs: FHEProcessorInput<'_>) -> Vec<u8> {
+        use fhe_traits::DeserializeParametrized;
         let mut sum = Ciphertext::zero(inputs.params);
         for (bytes, _) in inputs.ciphertexts {
-            use fhe_traits::DeserializeParametrized;
-            sum += &Ciphertext::from_bytes(bytes, inputs.params).unwrap();
+            sum += &Ciphertext::from_bytes(&bytes, inputs.params).unwrap();
         }
         sum.to_bytes()
     }
@@ -247,12 +218,43 @@ mod tests {
         }
     }
 
-    fn process(inputs: FHEInputs, policy: InputPolicy) -> Result<ComputeResult, ComputeError> {
+    fn input(inputs: FHEInputs) -> ComputeInput {
         ComputeInput {
             fhe_inputs: inputs,
             published: Vec::new(),
         }
-        .process(sum_processor, policy)
+    }
+
+    fn process(inputs: FHEInputs, policy: InputPolicy) -> Result<ComputeResult, ComputeError> {
+        input(inputs).process(sum_processor, policy)
+    }
+
+    /// The root of a tree whose leaves are each input's own commitment, built independently of the
+    /// Secure Process.
+    fn commitment_root(inputs: &FHEInputs) -> Vec<u8> {
+        let params = decode_bfv_params_arc(&inputs.params).unwrap();
+        let leaves = inputs
+            .ciphertexts
+            .iter()
+            .map(|(bytes, _)| {
+                hex::encode(
+                    compute_ct_commitment(
+                        bytes.clone(),
+                        params.degree(),
+                        params.plaintext(),
+                        params.moduli().to_vec(),
+                    )
+                    .unwrap(),
+                )
+            })
+            .collect();
+        let root = MerkleTreeBuilder::new(inputs.ciphertexts.len())
+            .with_leaf_hashes(leaves)
+            .build_tree()
+            .unwrap()
+            .root()
+            .unwrap();
+        hex::decode(root).unwrap()
     }
 
     /// The journal's input root must be a function of the ciphertexts consumed. Before this, the
@@ -261,17 +263,10 @@ mod tests {
     #[test]
     fn the_root_is_derived_from_the_processed_ciphertexts() {
         let inputs = encrypted_inputs(&[1, 1, 1]);
-        let params = decode_bfv_params_arc(&inputs.params).unwrap();
 
         let result = process(inputs.clone(), InputPolicy::default()).unwrap();
 
-        let mut builder = MerkleTreeBuilder::new(3);
-        builder
-            .compute_leaf_hashes(&inputs, &[], &params, InputPolicy::default())
-            .unwrap();
-        let expected = hex::decode(builder.build_tree().unwrap().root().unwrap()).unwrap();
-
-        assert_eq!(result.merkle_root, expected);
+        assert_eq!(result.merkle_root, commitment_root(&inputs));
     }
 
     /// Changing the consumed ciphertexts must change the published root, so an E3 program's
@@ -292,22 +287,13 @@ mod tests {
     #[test]
     fn the_default_policy_uses_the_ciphertext_commitment_and_keeps_every_input() {
         let inputs = encrypted_inputs(&[4, 5]);
-        let params = decode_bfv_params_arc(&inputs.params).unwrap();
 
-        let mut builder = MerkleTreeBuilder::new(2);
-        let selected = builder
-            .compute_leaf_hashes(&inputs, &[], &params, InputPolicy::default())
+        let (result, _, selected) = input(inputs.clone())
+            .run_selected(sum_processor, InputPolicy::default(), Batching::Sequential)
             .unwrap();
 
-        assert_eq!(selected.len(), 2, "every input is computed over");
-        let commitment = compute_ct_commitment(
-            inputs.ciphertexts[0].0.clone(),
-            params.degree(),
-            params.plaintext(),
-            params.moduli().to_vec(),
-        )
-        .unwrap();
-        assert_eq!(builder.leaf_hashes[0], hex::encode(commitment));
+        assert_eq!(selected, vec![0, 1], "every input is computed over");
+        assert_eq!(result.merkle_root, commitment_root(&inputs));
     }
 
     /// A policy chooses what is computed over; it cannot shrink the tree. Dropping a leaf would
@@ -315,29 +301,26 @@ mod tests {
     /// trusting each program to.
     #[test]
     fn a_policy_cannot_drop_an_input_from_the_tree() {
-        fn select_nothing(_: &[PublishedInput]) -> Vec<usize> {
-            Vec::new()
+        fn select_the_first(_: &[InputRecord]) -> Vec<usize> {
+            vec![0]
         }
         let inputs = encrypted_inputs(&[1, 2, 3]);
-        let params = decode_bfv_params_arc(&inputs.params).unwrap();
 
-        let mut builder = MerkleTreeBuilder::new(3);
-        let selected = builder
-            .compute_leaf_hashes(
-                &inputs,
-                &[],
-                &params,
+        let (result, _, selected) = input(inputs.clone())
+            .run_selected(
+                sum_processor,
                 InputPolicy {
                     leaf: commitment_leaf,
-                    select: select_nothing,
+                    select: select_the_first,
                 },
+                Batching::Sequential,
             )
             .unwrap();
 
-        assert!(selected.is_empty(), "the policy selected nothing");
+        assert_eq!(selected, vec![0], "the policy selected one input");
         assert_eq!(
-            builder.leaf_hashes.len(),
-            3,
+            result.merkle_root,
+            commitment_root(&inputs),
             "every leaf is still in the tree"
         );
     }
@@ -345,23 +328,18 @@ mod tests {
     /// A policy returning an index that does not exist is a bug in the program, not a silent skip.
     #[test]
     fn an_out_of_range_selection_is_rejected() {
-        fn select_beyond_the_end(_: &[PublishedInput]) -> Vec<usize> {
+        fn select_beyond_the_end(_: &[InputRecord]) -> Vec<usize> {
             vec![99]
         }
-        let inputs = encrypted_inputs(&[1]);
-        let params = decode_bfv_params_arc(&inputs.params).unwrap();
 
-        let error = MerkleTreeBuilder::new(1)
-            .compute_leaf_hashes(
-                &inputs,
-                &[],
-                &params,
-                InputPolicy {
-                    leaf: commitment_leaf,
-                    select: select_beyond_the_end,
-                },
-            )
-            .unwrap_err();
+        let error = process(
+            encrypted_inputs(&[1]),
+            InputPolicy {
+                leaf: commitment_leaf,
+                select: select_beyond_the_end,
+            },
+        )
+        .unwrap_err();
 
         assert!(
             matches!(error, ComputeError::MerkleTree(_)),
@@ -391,11 +369,8 @@ mod tests {
     fn the_default_policy_reports_the_index_of_an_undecodable_input() {
         let mut inputs = encrypted_inputs(&[1, 1]);
         inputs.ciphertexts[1].0 = vec![0xff; 8];
-        let params = decode_bfv_params_arc(&inputs.params).unwrap();
 
-        let error = MerkleTreeBuilder::new(2)
-            .compute_leaf_hashes(&inputs, &[], &params, InputPolicy::default())
-            .unwrap_err();
+        let error = process(inputs, InputPolicy::default()).unwrap_err();
 
         assert!(
             matches!(error, ComputeError::LeafCommitment { index: 1, .. }),
@@ -414,10 +389,7 @@ mod tests {
     fn batching_does_not_change_the_root() {
         let inputs = encrypted_inputs(&[3, 1, 4, 1, 5, 9, 2, 6]);
         let policy = InputPolicy::default();
-        let input = ComputeInput {
-            fhe_inputs: inputs,
-            published: Vec::new(),
-        };
+        let input = input(inputs);
 
         let (sequential, sequential_ciphertext) = input.run(sum_processor, policy).unwrap();
 
@@ -449,13 +421,10 @@ mod tests {
     fn batching_preserves_the_index_of_an_undecodable_input() {
         let mut inputs = encrypted_inputs(&[1, 1, 1, 1, 1]);
         inputs.ciphertexts[3].0 = vec![0xff; 8];
-        let params = decode_bfv_params_arc(&inputs.params).unwrap();
 
-        let error = MerkleTreeBuilder::new(5)
-            .compute_leaf_hashes_batched(
-                &inputs,
-                &[],
-                &params,
+        let error = input(inputs)
+            .run_batched(
+                sum_processor,
                 InputPolicy::default(),
                 Batching::Parallel { batch_size: 2 },
             )
@@ -477,6 +446,7 @@ mod tests {
         let agreeing = PublishedInput {
             index: 0,
             ciphertext: &bytes,
+            ciphertext_hash: [0; 32],
             commitment: Some(&commitment),
             metadata: &[],
             recomputed: Some(commitment),
@@ -509,11 +479,10 @@ mod tests {
 
     #[test]
     fn all_inputs_selects_everything() {
-        let bytes = vec![0u8];
-        let entries: Vec<PublishedInput> = (0..3)
-            .map(|index| PublishedInput {
+        let entries: Vec<InputRecord> = (0..3)
+            .map(|index| InputRecord {
                 index,
-                ciphertext: &bytes,
+                ciphertext_hash: [0; 32],
                 commitment: None,
                 metadata: &[],
                 recomputed: None,
@@ -529,7 +498,7 @@ mod tests {
     /// when a policy excludes anything and the caller runs the processor itself.
     #[test]
     fn the_returned_ciphertext_is_the_one_the_journal_describes() {
-        fn drop_the_first(inputs: &[PublishedInput]) -> Vec<usize> {
+        fn drop_the_first(inputs: &[InputRecord]) -> Vec<usize> {
             (1..inputs.len()).collect()
         }
 
@@ -539,12 +508,7 @@ mod tests {
             select: drop_the_first,
         };
 
-        let (result, ciphertext) = ComputeInput {
-            fhe_inputs: inputs.clone(),
-            published: Vec::new(),
-        }
-        .run(sum_processor, policy)
-        .unwrap();
+        let (result, ciphertext) = input(inputs.clone()).run(sum_processor, policy).unwrap();
 
         assert_eq!(
             result.ciphertext_hash,
@@ -554,8 +518,8 @@ mod tests {
 
         // And it is genuinely the selected subset, not the whole set.
         let params = decode_bfv_params_arc(&inputs.params).unwrap();
-        let over_everything = sum_processor(&FHEProcessorInput {
-            ciphertexts: &inputs.ciphertexts,
+        let over_everything = sum_processor(FHEProcessorInput {
+            ciphertexts: &mut inputs.ciphertexts.iter().cloned(),
             params: &params,
         });
         assert_ne!(

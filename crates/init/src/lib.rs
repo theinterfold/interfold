@@ -144,6 +144,13 @@ async fn install_interfold(
                        r"(?m)^e3-compute-provider =.*\n?",
                        &format!("e3-compute-provider = {{ git = \"https://github.com/theinterfold/interfold\", rev = \"{}\" }}\n",commit_hash),
                     ),
+                    // Any other dependency on an Interfold crate, such as the OpenVM guest's. Only
+                    // the source changes, so features on the same line are kept.
+                    Filter::new(
+                       "**/Cargo.toml",
+                       r#"path = "(?:\.\./)+crates/[A-Za-z0-9_-]+""#,
+                       &format!(r#"git = "https://github.com/theinterfold/interfold", rev = "{}""#, commit_hash),
+                    ),
                 ],
             )
             .await
@@ -167,6 +174,17 @@ async fn install_interfold(
             copy::copy_with_filters(
                 &PathBuf::from(TEMP_DIR).join("crates/support-scripts/dev"),
                 &cwd.join(".interfold/support/dev"),
+                &[],
+            )
+            .await
+        })
+        .await?;
+
+    spinner
+        .run("Setting up the OpenVM proving service", || async {
+            copy::copy_with_filters(
+                &PathBuf::from(TEMP_DIR).join("crates/support-scripts/openvm"),
+                &cwd.join(".interfold/support/openvm"),
                 &[],
             )
             .await

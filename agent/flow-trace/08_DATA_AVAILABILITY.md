@@ -544,7 +544,7 @@ provider, or on a later adapter, keeps working.
 The normal unit and contract suites do not reproduce the deployed OpenVM guest. Before deployment,
 build the guest and worker from the pinned source and validate their application commitments with
 the worker's `check` command. Deploy a checked Halo2 artifact and bind both verification gates to
-the same receipt identity. Follow `crates/support/openvm/README.md` and the provenance procedure.
+the same receipt identity. Follow `crates/openvm-prover/README.md` and the provenance procedure.
 A native computation does not replace this proof check.
 
 After the guest is rebuilt, run the full local CRISP Playwright flow and one Sepolia round with real

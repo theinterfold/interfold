@@ -17,10 +17,13 @@ pub fn policy() -> e3_compute_provider::InputPolicy {
 }
 
 /// CRISP Implementation of the CiphertextProcessor function
-pub fn fhe_processor(fhe_inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
+///
+/// Adds the selected ballots one at a time, so only the running sum and the ballot being added are
+/// held in memory.
+pub fn fhe_processor(fhe_inputs: FHEProcessorInput<'_>) -> Vec<u8> {
     let mut sum = Ciphertext::zero(fhe_inputs.params);
-    for ciphertext_bytes in fhe_inputs.ciphertexts {
-        let ciphertext = Ciphertext::from_bytes(&ciphertext_bytes.0, fhe_inputs.params).unwrap();
+    for (bytes, _) in fhe_inputs.ciphertexts {
+        let ciphertext = Ciphertext::from_bytes(&bytes, fhe_inputs.params).unwrap();
 
         sum += &ciphertext;
     }
@@ -33,8 +36,7 @@ pub fn fhe_processor(fhe_inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
 /// Both are specific to this program and its contract. They live here, beside the `CRISPProgram`
 /// they must agree with, rather than in `e3-compute-provider`, which every E3 program shares.
 pub mod policy {
-    use e3_compute_provider::hashing::keccak256;
-    use e3_compute_provider::policy::{PublishedInput, leaf_from_digest};
+    use e3_compute_provider::policy::{leaf_from_digest, InputRecord, PublishedInput};
     use e3_compute_provider::{ComputeError, InputPolicy};
     #[cfg(feature = "openvm-hashes")]
     use openvm_sha2::Sha256;
@@ -54,24 +56,24 @@ pub mod policy {
         parent: Option<u64>,
     }
 
-    /// Splits the published metadata, which is `slot || parentIndexPlusOne` as
+    /// Splits the published metadata of input `index`, which is `slot || parentIndexPlusOne` as
     /// `abi.encodePacked(address, uint40)` lays it out.
-    fn metadata_of(input: &PublishedInput) -> Result<Metadata, ComputeError> {
-        if input.metadata.len() != METADATA_LEN {
+    fn metadata_of(index: usize, metadata: &[u8]) -> Result<Metadata, ComputeError> {
+        if metadata.len() != METADATA_LEN {
             return Err(ComputeError::LeafCommitment {
-                index: input.index,
+                index,
                 reason: format!(
                     "expected {METADATA_LEN} bytes of slot and parent, got {}",
-                    input.metadata.len()
+                    metadata.len()
                 ),
             });
         }
 
         let mut slot = [0u8; 20];
-        slot.copy_from_slice(&input.metadata[..20]);
+        slot.copy_from_slice(&metadata[..20]);
 
         let mut parent_plus_one: u64 = 0;
-        for byte in &input.metadata[20..] {
+        for byte in &metadata[20..] {
             parent_plus_one = (parent_plus_one << 8) | u64::from(*byte);
         }
 
@@ -97,10 +99,11 @@ pub mod policy {
             })?;
         // Hashed as published rather than as parsed, so the leaf cannot drift from the contract's
         // `abi.encodePacked` layout. Parsed first only to refuse the wrong length.
-        metadata_of(input)?;
+        metadata_of(input.index, input.metadata)?;
 
+        // `ciphertext_hash` is `keccak256(input.ciphertext)`, computed once by the Secure Process.
         let mut outer = Sha256::new();
-        outer.update(keccak256(input.ciphertext));
+        outer.update(input.ciphertext_hash);
         outer.update(commitment);
         outer.update(input.metadata);
         Ok(leaf_from_digest(&outer.finalize()))
@@ -130,7 +133,7 @@ pub mod policy {
     /// its owner voting again — a receipt, which is what masks exist to prevent.
     ///
     /// A slot whose entries are all unusable contributes nothing — it never held a good vote.
-    pub fn chain_head_per_slot(inputs: &[PublishedInput]) -> Vec<usize> {
+    pub fn chain_head_per_slot(inputs: &[InputRecord]) -> Vec<usize> {
         let mut head: BTreeMap<[u8; 20], u64> = BTreeMap::new();
         let mut selected_for_slot: BTreeMap<[u8; 20], usize> = BTreeMap::new();
 
@@ -141,7 +144,7 @@ pub mod policy {
                 continue;
             }
 
-            let Ok(metadata) = metadata_of(input) else {
+            let Ok(metadata) = metadata_of(input.index, input.metadata) else {
                 continue;
             };
 

@@ -1,0 +1,24 @@
+[package]
+name = "e3-openvm-guest"
+version = "0.1.0"
+edition = "2021"
+license = "LGPL-3.0-only"
+
+# Proves this project's E3 program. Built for the OpenVM target with `cargo openvm build`
+# (see `.interfold/support/openvm/compile`), so it is a workspace of its own.
+[workspace]
+resolver = "3"
+
+[dependencies]
+openvm = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2", features = ["std", "heap-embedded-alloc"] }
+openvm-algebra-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2" }
+openvm-sha2 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2" }
+e3-user-program = { path = "../program", features = ["openvm-hashes"] }
+e3-compute-provider = { path = "../../../crates/compute-provider" }
+e3-openvm-types = { path = "../../../crates/openvm-types" }
+e3-safe = { path = "../../../crates/safe", features = ["openvm"] }
+sha2 = "=0.10.9"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1

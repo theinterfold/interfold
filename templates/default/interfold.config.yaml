@@ -27,9 +27,13 @@ chains:
         deploy_block: 16
 program:
   dev: false
-  # Configure program.openvm.repository, prover_bin, and prover_config with absolute paths.
-  # The worker must prove this program's policy, not the CRISP reference policy.
-  # See crates/support/openvm/README.md for the build and deployment requirements.
+  # Real proofs use program.openvm, with absolute paths local to the deployment:
+  # openvm:
+  #   prover_bin: /path/to/interfold-openvm-prover            # the CPU worker
+  #   prover_bin_cuda: /path/to/interfold-openvm-prover-cuda  # optional; used when a GPU works
+  #   backend: auto                                           # auto, cpu or cuda
+  # `interfold program compile` builds ./guest against ./program, and `interfold program start`
+  # serves real proofs. See the OpenVM worker README in the Interfold repository.
   # The scheduler defaults to 2 concurrent jobs and reserves 2 logical CPUs for Actix / libp2p.
   # It reduces concurrency when the host or cgroup memory limit is too small.
   # Example override on a dedicated 64 GB host:

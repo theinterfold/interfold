@@ -22,8 +22,10 @@ reference. Both the protocol and application verifier must pass before the E3 re
 
 ## Build and run
 
-Follow [the OpenVM instructions](../../../crates/support/openvm/README.md). Configure
-`program.openvm` with the repository, worker, and worker-configuration paths.
+Follow [the OpenVM instructions](../../../crates/openvm-prover/README.md). Configure
+`program.openvm` with the worker paths, then run `interfold program compile` in `examples/CRISP`.
+The guest in `examples/CRISP/guest` and the service in `.interfold/support/openvm` both link this
+crate.
 
 From `examples/CRISP`, run:
 

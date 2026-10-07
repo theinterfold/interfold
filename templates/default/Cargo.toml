@@ -2,7 +2,8 @@
 resolver = "3"
 members = [
   "program",
-  ".interfold/support/dev"
+  ".interfold/support/dev",
+  ".interfold/support/openvm/service"
 ]
 
 [workspace.dependencies]
@@ -13,5 +14,6 @@ e3-program-server = { path = "../../crates/program-server" }
 e3-bfv-client = { path = "../../crates/bfv-client" }
 e3-fhe-params = { path = "../../crates/fhe-params" }
 e3-compute-provider = { path = "../../crates/compute-provider" }
+e3-openvm-host = { path = "../../crates/openvm-host" }
 rand = "0.9"
 anyhow = "1.0.86"

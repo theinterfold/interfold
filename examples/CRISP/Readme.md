@@ -54,15 +54,16 @@ Before getting started, ensure you have installed:
   - `nargo`: `noirup -v v1.0.0-beta.26` (`NOIR_TOOLCHAIN` in `.github/workflows/ci.yml`)
   - `bb`: version and per-platform checksums live in `crates/zk-prover/versions.json`
 
-The program server uses OpenVM by default. Before startup, build the guest and worker, prepare the
-keys, and configure `program.openvm` in `interfold.config.yaml`. Follow
-[`crates/support/openvm/README.md`](../../crates/support/openvm/README.md). The CUDA worker needs a
-compatible Linux GPU environment; the native HTTP service has no CUDA dependency.
+Local development runs the unproved development runner unless `CRISP_REAL_PROOFS=1` (see
+`crisp.dev.env.example`). Real proofs use OpenVM: build the workers, configure `program.openvm` in
+`interfold.config.yaml`, and run `interfold program compile`. Follow
+[`crates/openvm-prover/README.md`](../../crates/openvm-prover/README.md). A machine with a working
+CUDA GPU proves on it when the CUDA worker is configured; any other machine proves on the CPU.
 
-Deployment also requires `OPENVM_APP_EXE_COMMIT`, `OPENVM_APP_VM_COMMIT`, and either
-`OPENVM_VERIFIER_ARTIFACT` with `OPENVM_VERIFIER_SHA256`, or `OPENVM_HALO2_VERIFIER` with
-`OPENVM_HALO2_RUNTIME_CODE_HASH`. These values must describe the worker's actual artifacts. The
-CRISP deployment never selects a mock compute verifier.
+The CRISP deployment reads the receipt identity `interfold program compile` wrote, unless
+`OPENVM_APP_EXE_COMMIT`, `OPENVM_APP_VM_COMMIT`, and either `OPENVM_VERIFIER_ARTIFACT` with
+`OPENVM_VERIFIER_SHA256` or `OPENVM_HALO2_VERIFIER` with `OPENVM_HALO2_RUNTIME_CODE_HASH` are set.
+Outside `CRISP_UNPROVED_TEST=1` on the local chain, it never selects a mock compute verifier.
 
 ## Quick Start
 
@@ -139,23 +140,20 @@ pnpm test:e2e
 
 ### Ciphernode Configuration
 
-The `interfold.config.yaml` file in the CRISP root directory configures the ciphernode network. By
-default, it runs in development mode with fake proofs for fast local development:
-
-```yaml
-program:
-  dev: true # Uses fake zkVM proofs (fast for development)
-```
+The `interfold.config.yaml` file in the CRISP root directory configures the ciphernode network. It
+sets `program.dev: false`. The local scripts override that with `E3_PROGRAM__DEV=true` unless
+`CRISP_REAL_PROOFS=1`, so a local round uses the unproved development runner by default.
 
 ### OpenVM configuration
 
-The real-proof compute service now uses OpenVM. Follow the
-[OpenVM build and migration guide](../../crates/support/openvm/README.md) to build the guest and
-worker, derive the application identity, and configure proving artifacts.
+The real-proof compute service uses OpenVM. CRISP's guest is `examples/CRISP/guest`, and its
+service is `.interfold/support/openvm`; both link `program/`, the processor and policy the contract
+agrees with. Follow the [OpenVM guide](../../crates/openvm-prover/README.md) to build the workers,
+then run `interfold program compile` for the guest, keys, identity and service.
 
-Set `program.dev: false` and supply deployment-local `program.openvm.repository`,
-`program.openvm.prover_bin`, and `program.openvm.prover_config` paths. Do not put account keys,
-proving artifacts, or machine-specific values in the shared configuration.
+Set `program.dev: false` and supply deployment-local `program.openvm.prover_bin` and, on a GPU
+machine, `program.openvm.prover_bin_cuda` paths. Do not put account keys, proving artifacts, or
+machine-specific values in the shared configuration.
 
 A new OpenVM deployment requires matching receipt and ciphertext-duty verifiers. Existing RISC Zero
 deployments do not become compatible by changing the service configuration. Drain active rounds and

@@ -4,48 +4,64 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{traits::ProgramSupportApi, utils::run_bash_script_with_env};
+use crate::{
+    traits::ProgramSupportApi,
+    utils::{ensure_script_exists, run_bash_script_with_env},
+};
 use anyhow::{ensure, Context, Result};
 use async_trait::async_trait;
 use e3_config::ProgramConfig;
+use std::env;
 
+/// Proves the project's E3 program with OpenVM, through the project's
+/// `.interfold/support/openvm` scripts.
 pub struct ProgramSupportOpenVm(pub ProgramConfig);
 
 impl ProgramSupportOpenVm {
-    async fn run(&self, action: &str) -> Result<()> {
+    async fn run(&self, script: &str) -> Result<()> {
         let config = self.0.openvm().context(
-            "Set program.openvm with the repository, prover_bin, and prover_config paths",
+            "Set program.openvm.prover_bin to the CPU worker, program.openvm.prover_bin_cuda to \
+             the CUDA worker, or both",
         )?;
         ensure!(
-            config.repository.is_absolute(),
-            "program.openvm.repository must be an absolute path"
+            config.prover_bin.is_some() || config.prover_bin_cuda.is_some(),
+            "Set program.openvm.prover_bin to the CPU worker, program.openvm.prover_bin_cuda to \
+             the CUDA worker, or both"
         );
-        let script = config.repository.join("scripts/run-openvm.sh");
-        ensure!(
-            script.is_file(),
-            "The OpenVM build script is missing from the configured repository"
-        );
-        let environment = vec![
-            (
-                "OPENVM_PROVER_BIN".to_owned(),
-                config.prover_bin.to_string_lossy().into_owned(),
-            ),
-            (
-                "OPENVM_PROVER_CONFIG".to_owned(),
-                config.prover_config.to_string_lossy().into_owned(),
-            ),
-        ];
-        run_bash_script_with_env(&config.repository, &script, &[action], &environment).await?;
-        Ok(())
+
+        let mut environment = vec![(
+            "OPENVM_BACKEND".to_owned(),
+            config.backend.as_str().to_owned(),
+        )];
+        for (name, path) in [
+            ("OPENVM_PROVER_BIN", &config.prover_bin),
+            ("OPENVM_PROVER_BIN_CUDA", &config.prover_bin_cuda),
+            ("OPENVM_PROVER_CONFIG", &config.prover_config),
+            ("OPENVM_SETUP_DIR", &config.setup_dir),
+        ] {
+            if let Some(path) = path {
+                ensure!(
+                    path.is_absolute(),
+                    "program.openvm paths must be absolute: {}",
+                    path.display()
+                );
+                environment.push((name.to_owned(), path.to_string_lossy().into_owned()));
+            }
+        }
+
+        let cwd = env::current_dir()?;
+        let script = cwd.join(".interfold/support/openvm").join(script);
+        ensure_script_exists(&script).await?;
+        run_bash_script_with_env(&cwd, &script, &[], &environment).await
     }
 }
 
 #[async_trait]
 impl ProgramSupportApi for ProgramSupportOpenVm {
     async fn compile(&self) -> Result<()> {
-        self.run("service-build").await
+        self.run("compile").await
     }
     async fn start(&self) -> Result<()> {
-        self.run("service-start").await
+        self.run("start").await
     }
 }

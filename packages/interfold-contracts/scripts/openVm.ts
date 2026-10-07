@@ -5,7 +5,49 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import type { HardhatEthers } from "@nomicfoundation/hardhat-ethers/types";
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
+
+const OPENVM_IDENTITY_SETTINGS = [
+  "OPENVM_APP_EXE_COMMIT",
+  "OPENVM_APP_VM_COMMIT",
+  "OPENVM_VERIFIER_ARTIFACT",
+  "OPENVM_VERIFIER_SHA256",
+  "OPENVM_HALO2_VERIFIER",
+  "OPENVM_HALO2_RUNTIME_CODE_HASH",
+];
+
+/**
+ * The environment `deployOpenVmReceiptVerifier` reads, filled from the worker configuration that
+ * `interfold program compile` wrote for the project in `projectDir`. That binds the deployed
+ * verifier to the guest the project's service proves. Nothing is read when any OpenVM identity
+ * setting is already in `environment`, so an explicit identity is never mixed with a compiled one.
+ */
+export function compiledOpenVmEnvironment(
+  projectDir: string,
+  environment: Record<string, string | undefined> = process.env,
+): Record<string, string | undefined> {
+  if (OPENVM_IDENTITY_SETTINGS.some((name) => environment[name])) {
+    return environment;
+  }
+  const configPath = path.join(
+    projectDir,
+    ".interfold",
+    "caches",
+    "openvm",
+    "prover.json",
+  );
+  if (!existsSync(configPath)) return environment;
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  console.log(`Using the OpenVM receipt identity in ${configPath}`);
+  return {
+    ...environment,
+    OPENVM_APP_EXE_COMMIT: config.app_commit?.app_exe_commit,
+    OPENVM_APP_VM_COMMIT: config.app_commit?.app_vm_commit,
+    OPENVM_VERIFIER_ARTIFACT: config.verifier_artifact,
+    OPENVM_VERIFIER_SHA256: config.verifier_sha256,
+  };
+}
 
 /** Deploy a receipt binding from explicit application commitments and a checked Halo2 verifier. */
 export async function deployOpenVmReceiptVerifier(

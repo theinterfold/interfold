@@ -42,7 +42,25 @@ where
 ```
 
 `fhe_processor` is your own function. It must match the exported `FHEProcessor` alias,
-`fn(&FHEInputs) -> Vec<u8>`.
+`fn(FHEProcessorInput) -> Vec<u8>`. The selected ciphertexts arrive one at a time through an
+iterator, each with its on-chain index, so a zkVM guest never holds the whole round:
+
+```rust
+use e3_compute_provider::FHEProcessorInput;
+use fhe::bfv::Ciphertext;
+use fhe_traits::{DeserializeParametrized, Serialize};
+
+pub fn fhe_processor(input: FHEProcessorInput<'_>) -> Vec<u8> {
+    let mut sum = Ciphertext::zero(input.params);
+    for (bytes, _index) in input.ciphertexts {
+        sum += &Ciphertext::from_bytes(&bytes, input.params).unwrap();
+    }
+    sum.to_bytes()
+}
+```
+
+The processor must read every item. Keep per-input state small: the OpenVM guest has 512 MiB of
+memory for the whole computation.
 
 ## Input policies
 
@@ -55,7 +73,7 @@ Both are plain function pointers, so a policy is a value rather than a trait imp
 
 ```rust
 pub type LeafFn = fn(&PublishedInput) -> Result<String, ComputeError>;
-pub type SelectFn = fn(&[PublishedInput]) -> Vec<usize>;
+pub type SelectFn = fn(&[InputRecord]) -> Vec<usize>;
 ```
 
 A leaf is returned as hex, already reduced into the BN254 scalar field. `leaf_from_digest` does that
@@ -67,7 +85,7 @@ use e3_compute_provider::ComputeError;
 use sha2::{Digest, Sha256};
 
 fn my_leaf(input: &PublishedInput) -> Result<String, ComputeError> {
-    let digest = Sha256::digest([input.ciphertext, input.metadata].concat());
+    let digest = Sha256::digest([&input.ciphertext_hash[..], input.metadata].concat());
     Ok(leaf_from_digest(&digest))
 }
 
@@ -79,9 +97,15 @@ pub fn policy() -> InputPolicy {
 }
 ```
 
-`PublishedInput` carries the input's `index`, its `ciphertext` bytes, the `commitment` the program
-stored when it stores one, whatever `metadata` it published, and `recomputed`, the commitment
-derived from the bytes. `matches_commitment()` compares `commitment` against `recomputed`.
+`PublishedInput` carries the input's `index`, its `ciphertext` bytes and their Keccak-256
+`ciphertext_hash`, the `commitment` the program stored when it stores one, whatever `metadata` it
+published, and `recomputed`, the commitment derived from the bytes. `matches_commitment()` compares
+`commitment` against `recomputed`.
+
+`select` receives an `InputRecord` per input: the same fields without the ciphertext bytes. The
+Secure Process reads each ciphertext once to build its leaf and does not keep it, so selection works
+on what remains. The selected ciphertexts are read again, and each is refused unless it hashes to the
+`ciphertext_hash` of its first read.
 
 `InputPolicy::default()` is the behaviour every E3 program had before policies existed. The leaf is
 the ciphertext's own SAFE commitment, and every input is computed over. A program whose contract
@@ -125,10 +149,17 @@ impl ComputeProvider for MyProvider {
 `prove` receives the policy rather than choosing one. A prover that picked its own would select a
 different input set from the one `start` returned the ciphertext for.
 
-The OpenVM host lives in `e3-support-host`, in a separate workspace. Its `run_compute` function
-derives the native ciphertext and journal, then calls a separate OpenVM worker. The worker must
-return a verified EVM receipt. Read `crates/support/host/src/lib.rs` and
-`crates/support/openvm/README.md` for the implementation and configuration.
+## The Secure Process
+
+`SecureProcess` is the computation every provider must reproduce. It reads a round in two passes:
+every ciphertext in index order (`absorb`), then the selected ones again (`select`, then `finish`).
+Only one ciphertext is held at a time, which is how the OpenVM guest proves rounds larger than its
+memory. `ComputeInput::run` runs the same code over a round held in memory, and
+`ComputeInput::run_selected` also returns the indices of the second pass.
+
+The OpenVM provider is `e3-openvm-host`. It runs the program natively, writes the guest's input
+stream, and calls the separate `interfold-openvm-prover` worker, which returns a verified EVM
+receipt. See `crates/openvm-prover/README.md`.
 
 ## Configuration
 

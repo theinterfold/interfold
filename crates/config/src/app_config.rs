@@ -648,7 +648,6 @@ node:
 
 program:
   openvm:
-    repository: "/deployment/source"
     prover_bin: "/deployment/bin/interfold-openvm-prover"
     prover_config: "/deployment/prover.json"
 
@@ -683,9 +682,9 @@ nodes:
             assert_eq!(
                 config.program().openvm(),
                 Some(&OpenVmConfig {
-                    repository: PathBuf::from("/deployment/source"),
-                    prover_bin: PathBuf::from("/deployment/bin/interfold-openvm-prover"),
-                    prover_config: PathBuf::from("/deployment/prover.json"),
+                    prover_bin: Some(PathBuf::from("/deployment/bin/interfold-openvm-prover")),
+                    prover_config: Some(PathBuf::from("/deployment/prover.json")),
+                    ..OpenVmConfig::default()
                 })
             );
             assert!(config.peers().is_empty());

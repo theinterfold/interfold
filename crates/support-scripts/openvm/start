@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-3.0-only
+#
+# Starts the OpenVM proving service. `interfold program start` sets the worker paths and the backend
+# from `program.openvm`; the worker configuration defaults to the one `compile` wrote.
+set -euo pipefail
+
+export OPENVM_PROVER_CONFIG="${OPENVM_PROVER_CONFIG:-$(pwd)/.interfold/caches/openvm/prover.json}"
+exec cargo run --locked --release --bin e3-support-scripts-openvm

@@ -1,0 +1,15 @@
+[package]
+name = "e3-support-scripts-openvm"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "e3-support-scripts-openvm"
+path = "src/main.rs"
+
+[dependencies]
+e3-openvm-host = { workspace = true }
+e3-program-server = { workspace = true }
+tokio = { version = "1.38", features = ["full"] }
+anyhow = "1.0.86"
+e3-user-program = { path = "../../../../program" }

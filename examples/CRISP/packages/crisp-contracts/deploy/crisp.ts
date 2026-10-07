@@ -7,6 +7,7 @@
 import {
   AVAIL_FINALIZATION_WINDOW_SECONDS,
   AVAIL_VECTORX,
+  compiledOpenVmEnvironment,
   deployOpenVmReceiptVerifier,
   getDeploymentChain,
   readDeploymentArgs,
@@ -15,6 +16,8 @@ import {
 import { Interfold__factory as InterfoldFactory } from '@interfold/contracts/types'
 
 import hre from 'hardhat'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { CRISPProgram__factory as CRISPProgramFactory } from '../types'
 import { verifierNames } from '../scripts/verifiers'
@@ -333,7 +336,13 @@ export const deployVerifier = async (_useMockVerifier: boolean, connectedEthers?
     storeDeploymentArgs({ address, blockNumber: await ethers.provider.getBlockNumber() }, 'MockOpenVmReceiptVerifier', chain)
     return address
   }
-  const { receipt: verifier, halo2Verifier, halo2RuntimeCodeHash, appExeCommit, appVmCommit } = await deployOpenVmReceiptVerifier(ethers)
+  // The identity `interfold program compile` wrote for examples/CRISP, unless OPENVM_* settings name
+  // one.
+  const crispRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
+  const { receipt: verifier, halo2Verifier, halo2RuntimeCodeHash, appExeCommit, appVmCommit } = await deployOpenVmReceiptVerifier(
+    ethers,
+    compiledOpenVmEnvironment(crispRoot),
+  )
   storeDeploymentArgs(
     { address: halo2Verifier, blockNumber: await ethers.provider.getBlockNumber(), bytecodeHash: halo2RuntimeCodeHash },
     'OpenVmHalo2Verifier',

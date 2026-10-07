@@ -1400,16 +1400,21 @@ are not introduced solely to create layers.
 
 ### OpenVM compute support
 
-The isolated `crates/support` workspace serves CRISP compute requests. Its native host calls the
-separate `crates/support/openvm/prover` worker and accepts only a verified OpenVM EVM receipt.
-The guest and host share the canonical CRISP policy source. The normal `e3-support-scripts`
-backend uses `program.openvm`; it no longer selects RISC Zero or Boundless.
-The worker validates the executable, VM identity, aggregation key, verifier artifact, and journal.
+Each project proves its own E3 program. Its `guest/` crate (its own workspace, built with
+`cargo openvm`) and the `.interfold/support/openvm` service both link the project's `program/`, so
+the guest, the native host, and the contract share one policy source. The service is an
+`e3-program-server` whose runner is `e3-openvm-host`: it runs the shared `SecureProcess` natively,
+writes the guest's input stream (a header, every ciphertext, then the selected ones), and runs the
+separate `interfold-openvm-prover` worker (`crates/openvm-prover`, its own workspace). It accepts
+only a verified OpenVM EVM receipt. The guest reads one ciphertext at a time, so a round is not
+bounded by guest memory. The worker validates the executable, VM identity, aggregation key, Halo2
+key and parameters, verifier artifact, and journal. At startup the host picks the CUDA worker when
+it is configured and can open a GPU, and otherwise the CPU worker; every worker run has a deadline.
 Jobs remain in memory; this service does not provide durable admission or restart recovery.
-`interfold program compile` builds the native service. Guest compilation and key preparation are
-separate steps. The CLI has no program-upload or container-shell command. `e3-init` does not install
-an external verifier submodule or copy the old container controls. `program.dev` is an explicit,
-unproved runner; normal startup requires the OpenVM configuration.
+`interfold program compile` builds the guest, keys, receipt identity, worker configuration, and
+service; `e3-init` copies the service folder and pins the guest's Interfold crates to the template
+commit. The normal `e3-support-scripts` backend uses `program.openvm`; it no longer selects RISC
+Zero or Boundless. `program.dev` is an explicit, unproved runner.
 
 CRISP's encrypted-input and result-callback routes accept at most 4 MiB of JSON, to contain the
 largest supported DA object after hexadecimal encoding. This limit is scoped to those routes;

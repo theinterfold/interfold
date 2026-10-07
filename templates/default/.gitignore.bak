@@ -14,6 +14,7 @@ node_modules
 /typechain-types
 
 /target
+/guest/target
 
 # solidity-coverage files
 /coverage

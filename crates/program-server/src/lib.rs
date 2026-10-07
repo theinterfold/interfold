@@ -87,6 +87,10 @@ pub struct ComputeJob {
     pub domain: ComputeDomain,
 }
 
+/// The default request body limit. Enough for development rounds; a service proving secure-parameter
+/// rounds raises it with [`E3ProgramServerBuilder::with_max_request_bytes`].
+const DEFAULT_MAX_REQUEST_BYTES: usize = 10 * 1024 * 1024;
+
 #[derive(Clone)]
 pub struct E3ProgramServerBuilder {
     runner: Arc<Runner>,
@@ -94,6 +98,7 @@ pub struct E3ProgramServerBuilder {
     host: Option<String>,
     localhost_rewrite: Option<String>,
     max_concurrent_jobs: usize,
+    max_request_bytes: usize,
 }
 
 impl E3ProgramServerBuilder {
@@ -109,6 +114,7 @@ impl E3ProgramServerBuilder {
             host: None,
             localhost_rewrite: None,
             max_concurrent_jobs: 1,
+            max_request_bytes: DEFAULT_MAX_REQUEST_BYTES,
         }
     }
 
@@ -136,11 +142,22 @@ impl E3ProgramServerBuilder {
         self
     }
 
+    /// Bound the size of a `/run_compute` request body (default 10 MiB). The ciphertexts arrive
+    /// hex-encoded, so a round needs about twice its binary size.
+    pub fn with_max_request_bytes(mut self, max_request_bytes: usize) -> Self {
+        self.max_request_bytes = max_request_bytes;
+        self
+    }
+
     /// Build the E3ProgramServer
     pub fn build(self) -> Result<E3ProgramServer> {
         anyhow::ensure!(
             self.max_concurrent_jobs > 0,
             "max concurrent jobs must be greater than zero"
+        );
+        anyhow::ensure!(
+            self.max_request_bytes > 0,
+            "the request size limit must be greater than zero"
         );
         let webhook_client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(5))
@@ -155,6 +172,7 @@ impl E3ProgramServerBuilder {
             localhost_rewrite: self.localhost_rewrite,
             webhook_client,
             jobs: Arc::new(Semaphore::new(self.max_concurrent_jobs)),
+            max_request_bytes: self.max_request_bytes,
         })
     }
 }
@@ -167,6 +185,7 @@ pub struct E3ProgramServer {
     localhost_rewrite: Option<String>,
     webhook_client: reqwest::Client,
     jobs: Arc<Semaphore>,
+    max_request_bytes: usize,
 }
 
 impl E3ProgramServer {
@@ -202,11 +221,11 @@ impl E3ProgramServer {
             localhost_rewrite: self.localhost_rewrite.clone(),
             webhook_client: self.webhook_client.clone(),
             jobs: Arc::clone(&self.jobs),
+            max_request_bytes: self.max_request_bytes,
         };
         let server = HttpServer::new(move || {
             App::new()
                 .app_data(web::Data::new(config.clone()))
-                .app_data(web::JsonConfig::default().limit(10 * 1024 * 1024)) // 10MB for prod params
                 .wrap(Logger::default())
                 .route("/run_compute", web::post().to(handle_compute))
                 .route("/health", web::get().to(handle_health_check))
@@ -225,6 +244,7 @@ pub struct AppConfig {
     pub localhost_rewrite: Option<String>,
     webhook_client: reqwest::Client,
     jobs: Arc<Semaphore>,
+    max_request_bytes: usize,
 }
 
 /// Whether callbacks to addresses only reachable from inside the deployment are permitted.
@@ -391,24 +411,49 @@ async fn call_webhook(
         }
     }
 
-    let response = client
-        .post(callback_url.clone())
-        .json(&payload)
-        .send()
-        .await?;
-
-    println!("Webhook response status: {}", response.status());
-    if !response.status().is_success() {
-        return Err(anyhow::anyhow!(
-            "Webhook failed with status {}",
-            response.status()
-        ));
+    // A proof can take hours, so one dropped connection must not lose its result. Server errors,
+    // timeouts and rate limits are retried with backoff; any other refusal is final.
+    let mut last_error = None;
+    for attempt in 1_u32..=WEBHOOK_ATTEMPTS {
+        match client
+            .post(callback_url.clone())
+            .json(&payload)
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => {
+                println!("Webhook response status: {}", response.status());
+                println!("✓ Webhook called successfully for E3 {}", e3_id);
+                return Ok(());
+            }
+            Ok(response) => {
+                let status = response.status();
+                let error = anyhow::anyhow!("Webhook failed with status {status}");
+                if !(status.is_server_error()
+                    || status == reqwest::StatusCode::REQUEST_TIMEOUT
+                    || status == reqwest::StatusCode::TOO_MANY_REQUESTS)
+                {
+                    return Err(error);
+                }
+                last_error = Some(error);
+            }
+            Err(error) => last_error = Some(error.into()),
+        }
+        if attempt < WEBHOOK_ATTEMPTS {
+            let delay = Duration::from_secs(1 << (attempt - 1));
+            println!(
+                "Webhook attempt {attempt} failed; retrying in {} seconds",
+                delay.as_secs()
+            );
+            tokio::time::sleep(delay).await;
+        }
     }
 
-    response.error_for_status()?;
-    println!("✓ Webhook called successfully for E3 {}", e3_id);
-    Ok(())
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("webhook delivery failed")))
 }
+
+/// How many times a callback is attempted before the result is given up.
+const WEBHOOK_ATTEMPTS: u32 = 5;
 
 async fn handle_webhook_delivery(
     client: &reqwest::Client,
@@ -472,9 +517,23 @@ async fn process_computation_background(
 
 async fn handle_compute(
     config: web::Data<AppConfig>,
-    req: web::Json<ComputeRequest>,
+    body: web::Payload,
 ) -> ActixResult<HttpResponse> {
     println!("Processing computation...");
+    // Admission first. A request body can be hundreds of megabytes, and buffering it only to
+    // refuse it would let a caller exhaust memory while a computation runs. The permit is released
+    // when this handler returns early.
+    let permit = Arc::clone(&config.jobs)
+        .try_acquire_owned()
+        .map_err(|_| actix_web::error::ErrorTooManyRequests("compute capacity exhausted"))?;
+    let body = body
+        .to_bytes_limited(config.max_request_bytes)
+        .await
+        .map_err(actix_web::error::ErrorPayloadTooLarge)??;
+    let mut req: ComputeRequest = serde_json::from_slice(&body)
+        .map_err(|e| actix_web::error::ErrorBadRequest(format!("invalid request: {e}")))?;
+    drop(body);
+
     let e3_id = req
         .e3_id
         .clone()
@@ -558,8 +617,8 @@ async fn handle_compute(
     }
 
     let fhe_inputs = FHEInputs {
-        params: req.params.clone(),
-        ciphertexts: req.ciphertext_inputs.clone(),
+        params: std::mem::take(&mut req.params),
+        ciphertexts: std::mem::take(&mut req.ciphertext_inputs),
     };
     let domain = ComputeDomain::new(
         req.chain_id,
@@ -577,9 +636,6 @@ async fn handle_compute(
 
     let callback_url = validated_callback_url(&callback_url, config.localhost_rewrite.as_deref())
         .map_err(actix_web::error::ErrorBadRequest)?;
-    let permit = Arc::clone(&config.jobs)
-        .try_acquire_owned()
-        .map_err(|_| actix_web::error::ErrorTooManyRequests("compute capacity exhausted"))?;
     let runner = config.runner.clone();
     let webhook_client = config.webhook_client.clone();
     let background_e3_id = e3_id.clone();

@@ -13,7 +13,7 @@ use super::{
     models::{CurrentRound, E3Crisp, E3StateLite, WebResultRequest},
 };
 use alloy::primitives::keccak256;
-use e3_compute_provider::policy::PublishedInput;
+use e3_compute_provider::policy::InputRecord;
 use e3_sdk::indexer::{models::E3 as InterfoldE3, DataStore, E3Repository, SharedStore};
 use e3_user_program::policy::chain_head_per_slot;
 use eyre::Result;
@@ -159,12 +159,12 @@ impl InputSnapshot {
                 bytes
             })
             .collect();
-        let inputs: Vec<PublishedInput> = entries
+        let inputs: Vec<InputRecord> = entries
             .iter()
             .zip(&metadata)
-            .map(|(&position, metadata)| PublishedInput {
+            .map(|(&position, metadata)| InputRecord {
                 index: self.ciphertexts[position].1 as usize,
-                ciphertext: &[],
+                ciphertext_hash: [0; 32],
                 commitment: Some(&commitment),
                 metadata,
                 recomputed: self.usable[position].then_some(commitment),

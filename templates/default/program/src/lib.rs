@@ -21,10 +21,13 @@ pub fn policy() -> InputPolicy {
 }
 
 /// Implementation of the CiphertextProcessor function
-pub fn fhe_processor(fhe_inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
+///
+/// The selected ciphertexts arrive one at a time, in index order. Inside the zkVM each is read and
+/// checked only when the loop asks for it, so keep per-input state small.
+pub fn fhe_processor(fhe_inputs: FHEProcessorInput<'_>) -> Vec<u8> {
     let mut sum = Ciphertext::zero(fhe_inputs.params);
-    for ciphertext_bytes in fhe_inputs.ciphertexts {
-        let ciphertext = Ciphertext::from_bytes(&ciphertext_bytes.0, fhe_inputs.params).unwrap();
+    for (bytes, _) in fhe_inputs.ciphertexts {
+        let ciphertext = Ciphertext::from_bytes(&bytes, fhe_inputs.params).unwrap();
         sum += &ciphertext;
     }
 
@@ -37,7 +40,7 @@ mod tests {
     use anyhow::Result;
     use e3_compute_provider::FHEInputs;
     use e3_fhe_params::DEFAULT_BFV_PRESET;
-    use e3_fhe_params::{build_bfv_params_arc, encode_bfv_params, BfvParamSet};
+    use e3_fhe_params::{BfvParamSet, build_bfv_params_arc, encode_bfv_params};
     use fhe::bfv::{Encoding, Plaintext, PublicKey, SecretKey};
     use fhe_traits::FheEncrypter;
     use fhe_traits::{DeserializeParametrized, FheDecrypter, Serialize};
@@ -78,8 +81,8 @@ mod tests {
         };
 
         // Run the processor
-        let result = fhe_processor(&FHEProcessorInput {
-            ciphertexts: &fhe_inputs.ciphertexts,
+        let result = fhe_processor(FHEProcessorInput {
+            ciphertexts: &mut fhe_inputs.ciphertexts.into_iter(),
             params: &params,
         });
 

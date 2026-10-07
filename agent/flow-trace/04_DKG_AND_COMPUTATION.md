@@ -1124,16 +1124,19 @@ deadlines, recovery flow, and remaining trust.
 
 ### Ciphertext Output Publication
 
-The support host sends raw bincode input to the OpenVM guest. The native host and guest use the
-same CRISP policy source. The guest commits nine 32-byte ABI words in this order: chain ID,
+The OpenVM host streams the round to the guest one item at a time: a bincode header (domain,
+parameters, on-chain indices, published commitments and metadata), every ciphertext in index order,
+then the selected ciphertexts again. The guest keeps a hash of each ciphertext from the first pass
+and refuses a second-pass ciphertext that differs. The native host and guest run the same
+`SecureProcess` with the project's policy. The guest commits nine 32-byte ABI words in this order: chain ID,
 Interfold address, full uint256 E3 ID, encryption scheme ID, committee public-key hash, output hash,
 SAFE commitment, parameter hash, and input root. It reveals SHA-256 of these 288 bytes.
 
-The support worker generates an application proof, recursive aggregate, and Halo2 EVM proof.
+The OpenVM worker generates an application proof, recursive aggregate, and Halo2 EVM proof.
 It checks the configured executable and VM commitments and verifies the EVM proof against the
 native journal before it returns a seal. The app returns the seal, parameter hash, and input root
 in one ABI-encoded proof. Missing configuration or a failed proof cannot select a fake-proof mode.
-See `crates/support/openvm/README.md` for the build and deployment boundary. Existing RISC Zero
+See `crates/openvm-prover/README.md` for the build and deployment boundary. Existing RISC Zero
 deployment records are not migrated by this source change.
 
 The request-time scheme verifier reconstructs the protocol fields from on-chain state. The E3

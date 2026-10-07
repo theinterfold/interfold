@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-3.0-only
+#
+# Builds what `interfold program start` needs to prove this project's E3 program with OpenVM:
+#
+#   1. the guest in ./guest, transpiled to an OpenVM executable;
+#   2. its application proving key, then the aggregation key and receipt identity (`prepare`);
+#   3. the worker configuration, .interfold/caches/openvm/prover.json;
+#   4. the proving service.
+#
+# Step 2 runs only when the executable or ./guest/openvm.toml changed since the last run.
+#
+# Environment, set by `interfold program compile` from `program.openvm`:
+#   OPENVM_PROVER_BIN            the CPU worker
+#   OPENVM_PROVER_BIN_CUDA       the CUDA worker; runs `prepare` when there is no CPU worker
+#   OPENVM_SETUP_DIR             what `cargo openvm setup` wrote (default ~/.openvm)
+#   OPENVM_SEGMENT_MEMORY_BYTES  the proving segment memory limit (default 8 GiB, fits a 16 GB GPU)
+#   CARGO_OPENVM                 the cargo-openvm command (default `cargo openvm`)
+#   OPENVM_BUILD_LOCKED=1        build the guest with --locked
+set -euo pipefail
+
+PROJECT="$(pwd)"
+GUEST="$PROJECT/guest"
+OUT="$PROJECT/.interfold/caches/openvm"
+SETUP="${OPENVM_SETUP_DIR:-$HOME/.openvm}"
+WORKER="${OPENVM_PROVER_BIN:-${OPENVM_PROVER_BIN_CUDA:-}}"
+read -r -a CARGO_OPENVM <<< "${CARGO_OPENVM:-cargo openvm}"
+
+if [ ! -f "$GUEST/Cargo.toml" ]; then
+  echo "No OpenVM guest at $GUEST" >&2
+  exit 1
+fi
+if [ -z "$WORKER" ]; then
+  echo "Set program.openvm.prover_bin or program.openvm.prover_bin_cuda to the OpenVM worker" >&2
+  exit 1
+fi
+
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1
+}
+
+mkdir -p "$OUT"
+
+echo "Building the OpenVM guest"
+locked=()
+if [ "${OPENVM_BUILD_LOCKED:-0}" = 1 ]; then locked=(--locked); fi
+RUSTFLAGS="${RUSTFLAGS:-} --cfg crisp_openvm --cfg crisp_fhe_optimized" \
+  "${CARGO_OPENVM[@]}" build --manifest-path "$GUEST/Cargo.toml" --target-dir "$OUT/guest-target" \
+  --output-dir "$OUT/guest" ${locked[@]+"${locked[@]}"}
+
+EXE="$OUT/guest/e3-openvm-guest.vmexe"
+KEYS="$OUT/keys"
+PREPARED="$OUT/prepared"
+INPUTS="$(sha256 "$EXE") $(sha256 "$GUEST/openvm.toml")"
+
+if [ "$(cat "$PREPARED/inputs" 2>/dev/null || true)" != "$INPUTS" ]; then
+  echo "Generating the application proving key"
+  "${CARGO_OPENVM[@]}" keygen --manifest-path "$GUEST/Cargo.toml" --target-dir "$OUT/guest-target" \
+    --app-only --output-dir "$KEYS"
+  echo "Generating the aggregation key and the receipt identity"
+  rm -rf "$PREPARED"
+  "$WORKER" prepare "$KEYS/app.pk" "$EXE" "$PREPARED"
+  echo "$INPUTS" > "$PREPARED/inputs"
+fi
+
+"$WORKER" write-config "$OUT/prover.json" "$KEYS/app.pk" "$EXE" "$PREPARED" "$SETUP" \
+  "${OPENVM_SEGMENT_MEMORY_BYTES:-8589934592}"
+echo "Receipt identity: $PREPARED/identity.json"
+
+echo "Building the OpenVM proving service"
+cargo build --locked --release --bin e3-support-scripts-openvm

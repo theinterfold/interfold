@@ -23,14 +23,21 @@ As system requirements:
 
 ### Configure OpenVM
 
-The program server uses OpenVM. Build a guest for your program policy, prepare its proving keys,
-and configure `program.openvm` in `interfold.config.yaml`. See the repository's
-[`crates/support/openvm/README.md`](../../crates/support/openvm/README.md) for worker setup and
-verifier deployment. The reference CRISP guest cannot prove an unrelated template policy.
+Real proofs use OpenVM. `guest/` proves your `program/`, with your processor and your input
+policy, and `.interfold/support/openvm` is the proving service. Build the OpenVM workers, set
+`program.openvm` in `interfold.config.yaml`, then run:
 
-Contract deployment requires both application commitments and either a checksummed Halo2 verifier
-artifact or an existing verifier address with its expected runtime code hash. Missing settings stop
-deployment; they do not select a mock verifier.
+```sh
+interfold program compile   # the guest, its keys and receipt identity, and the service
+```
+
+A machine with a working CUDA GPU proves on it when `prover_bin_cuda` is set; any other machine
+proves on the CPU. See the OpenVM guide in the Interfold repository
+(`crates/openvm-prover/README.md`) for the workers and the Halo2 artifacts.
+
+Contract deployment reads the receipt identity and verifier artifact that `compile` wrote, unless
+`OPENVM_*` settings name another. Without either, deployment stops; it does not select a mock
+verifier.
 
 ### Install Metamask
 

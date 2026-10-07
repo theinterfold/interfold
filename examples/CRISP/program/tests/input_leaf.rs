@@ -11,6 +11,7 @@
 //! failure has no other symptom. Neither language can catch a divergence alone, so both check the
 //! same vector and one of them fails when either side moves.
 
+use e3_compute_provider::hashing::keccak256;
 use e3_compute_provider::policy::PublishedInput;
 use e3_user_program::policy::leaf;
 use num_bigint::BigUint;
@@ -37,6 +38,7 @@ fn leaf_of(ciphertext: &[u8], commitment: &[u8; 32], metadata: &[u8]) -> String 
     leaf(&PublishedInput {
         index: 0,
         ciphertext,
+        ciphertext_hash: keccak256(ciphertext),
         commitment: Some(commitment),
         metadata,
         recomputed: None,
@@ -96,6 +98,7 @@ fn metadata_of_the_wrong_length_is_refused() {
     let result = leaf(&PublishedInput {
         index: 0,
         ciphertext: &bytes,
+        ciphertext_hash: keccak256(&bytes),
         commitment: Some(&COMMITMENT),
         metadata: &SLOT,
         recomputed: None,

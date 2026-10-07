@@ -6,13 +6,15 @@
 
 //! Runs the CRISP Secure Process natively, outside the OpenVM guest.
 //!
-//! The guest is one line — `input.input.process(fhe_processor, crisp())` — so calling that here
-//! exercises the same code the zkVM runs, with the real CRISP processor and the real CRISP policy.
+//! The guest feeds a streamed round through `SecureProcess` with `fhe_processor` and `crisp()`, and
+//! `ComputeInput::process` runs the same `SecureProcess` over a round held in memory. Calling it
+//! here exercises the code the zkVM runs, with the real CRISP processor and the real CRISP policy.
 //! Everything except proof generation is covered, which matters because a guest failure inside the
-//! zkVM surfaces only as a missing proof and a requester-billed compute timeout.
+//! zkVM surfaces only as a missing proof.
 
 use e3_compute_provider::{
-    ComputeError, ComputeInput, ComputeResult, FHEInputs, FHEProcessorInput, PublishedData,
+    Batching, ComputeError, ComputeInput, ComputeResult, FHEInputs, FHEProcessorInput,
+    PublishedData, SecureProcess,
 };
 use e3_fhe_params::{build_pair_for_preset, encode_bfv_params, BfvPreset};
 use e3_user_program::fhe_processor;
@@ -118,8 +120,8 @@ impl Round {
     }
 
     fn aggregate(&self, inputs: &FHEInputs) -> Vec<u8> {
-        fhe_processor(&FHEProcessorInput {
-            ciphertexts: &inputs.ciphertexts,
+        fhe_processor(FHEProcessorInput {
+            ciphertexts: &mut inputs.ciphertexts.iter().cloned(),
             params: &self.params,
         })
     }
@@ -331,4 +333,85 @@ fn an_honest_re_vote_replaces_the_earlier_ballot() {
         result.ciphertext_hash,
         round.run(reference_input).unwrap().ciphertext_hash
     );
+}
+
+/// The guest reads a round one ciphertext at a time, twice; the host holds the whole round. On a
+/// round with a re-vote, a poisoned append, a contradicting input and garbage bytes, both must reach
+/// the same selection, root, tally and journal values, or the host predicts a journal the guest
+/// never proves.
+#[test]
+fn a_streamed_round_matches_the_held_round() {
+    let round = Round::new();
+    let voter = Round::slot(2);
+    let victim = Round::slot(7);
+    let first = round.ballot(&[1, 0], 1);
+    let second = round.ballot(&[0, 7], 2);
+
+    let mut input = round.round_input_at(
+        vec![
+            first,
+            round.ballot(&[6, 0], 3),
+            round.ballot(&[2, 0], 4),
+            round.ballot(&[0, 1], 5),
+        ],
+        vec![voter, victim, Round::slot(3), Round::slot(4)],
+    );
+    // A contradicting input: a proven commitment beside bytes that are not its ciphertext.
+    input.fhe_inputs.ciphertexts[2].0 = round.ballot(&[0, 99], 9);
+    // Garbage bytes.
+    input.fhe_inputs.ciphertexts[3].0 = vec![0xff; 32];
+    // An honest re-vote of slot 2, and a poisoned append to slot 7.
+    input.fhe_inputs.ciphertexts.push((second.clone(), 4));
+    input.published.push(PublishedData {
+        commitment: Some(round.commitment(&second)),
+        metadata: Round::metadata(voter, Some(0)),
+    });
+    let reused = input.published[1].commitment;
+    input
+        .fhe_inputs
+        .ciphertexts
+        .push((round.ballot(&[0, 9], 6), 5));
+    input.published.push(PublishedData {
+        commitment: reused,
+        metadata: Round::metadata(victim, Some(1)),
+    });
+
+    let (held, held_tally, held_selection) = input
+        .run_selected(fhe_processor, crisp(), Batching::Parallel { batch_size: 2 })
+        .unwrap();
+    assert_eq!(
+        held_selection,
+        vec![1, 4],
+        "the victim's vote and the re-vote"
+    );
+
+    let mut process = SecureProcess::new(
+        &input.fhe_inputs.params,
+        input
+            .fhe_inputs
+            .ciphertexts
+            .iter()
+            .map(|(_, index)| *index)
+            .collect(),
+        input.published.clone(),
+        crisp(),
+    )
+    .unwrap();
+    for (bytes, _) in &input.fhe_inputs.ciphertexts {
+        process.absorb(bytes).unwrap();
+    }
+    let selected = process.select().unwrap();
+    assert_eq!(selected.indices(), held_selection.as_slice());
+    let (streamed, streamed_tally) = selected
+        .finish(fhe_processor, |index| {
+            Ok(input.fhe_inputs.ciphertexts[index].0.clone())
+        })
+        .unwrap();
+
+    assert_eq!(streamed.merkle_root, held.merkle_root);
+    assert_eq!(streamed.ciphertext_hash, held.ciphertext_hash);
+    assert_eq!(streamed.ciphertext_commitment, held.ciphertext_commitment);
+    assert_eq!(streamed.params_hash, held.params_hash);
+    assert_eq!(streamed_tally, held_tally);
+    assert_eq!(round.decrypt_tally(&streamed_tally, 2), vec![6, 7]);
 }

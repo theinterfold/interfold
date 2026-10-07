@@ -2935,6 +2935,7 @@ dependencies = [
  "num-bigint 0.4.6",
  "num-traits",
  "openvm-keccak256",
+ "rayon",
  "serde",
  "sha2 0.10.9",
  "sha3",
@@ -3009,6 +3010,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "e3-openvm-host"
+version = "0.19.0-test.2"
+dependencies = [
+ "anyhow",
+ "e3-compute-provider",
+ "e3-openvm-types",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "e3-openvm-types"
+version = "0.19.0-test.2"
+dependencies = [
+ "bincode",
+ "e3-compute-provider",
+ "serde",
+]
+
+[[package]]
 name = "e3-parity-matrix"
 version = "0.19.0-test.2"
 dependencies = [
@@ -3074,6 +3095,17 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "e3-compute-provider",
+ "e3-program-server",
+ "e3-user-program",
+ "tokio",
+]
+
+[[package]]
+name = "e3-support-scripts-openvm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "e3-openvm-host",
  "e3-program-server",
  "e3-user-program",
  "tokio",
@@ -7421,15 +7453,15 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
 name = "tempfile"
-version = "3.27.0"
+version = "3.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
+checksum = "e8a64e3985349f2441a1a9ef0b853f869006c3855f2cda6862a94d26ebb9d6a1"
 dependencies = [
  "fastrand",
- "getrandom 0.4.2",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

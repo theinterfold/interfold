@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import {
+  compiledOpenVmEnvironment,
   deployOpenVmReceiptVerifier,
   getDeploymentChain,
   readDeploymentArgs,
@@ -12,7 +13,7 @@ import {
   updateE3Config,
 } from '@interfold/contracts/scripts'
 import { Interfold__factory as InterfoldFactory } from '@interfold/contracts/types'
-import { ensureTemplateCwd, INTERFOLD_CONFIG_FILE } from '../scripts/template-paths'
+import { ensureTemplateCwd, INTERFOLD_CONFIG_FILE, TEMPLATE_ROOT } from '../scripts/template-paths'
 import { MyProgram__factory as MyProgramFactory } from '../types/factories/contracts'
 import hre from 'hardhat'
 
@@ -53,7 +54,8 @@ export const deployTemplate = async () => {
   if (unprovedTest) {
     verifier = await ethers.deployContract('MockOpenVmReceiptVerifier')
   } else {
-    const deployed = await deployOpenVmReceiptVerifier(ethers)
+    // The identity `interfold program compile` wrote, unless OPENVM_* settings name one.
+    const deployed = await deployOpenVmReceiptVerifier(ethers, compiledOpenVmEnvironment(TEMPLATE_ROOT))
     verifier = deployed.receipt
     verifierConstructorArgs = { verifier: deployed.halo2Verifier, appExeCommit: deployed.appExeCommit, appVmCommit: deployed.appVmCommit }
   }

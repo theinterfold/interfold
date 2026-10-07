@@ -19,6 +19,7 @@ node_modules
 .interfold/noir/
 
 /target
+/guest/target
 
 .interfold/generated/
 

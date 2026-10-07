@@ -28,6 +28,8 @@ members = [
   "crates/logger",
   "crates/multithread",
   "crates/net",
+  "crates/openvm-host",
+  "crates/openvm-types",
   "crates/parity-matrix",
   "crates/polynomial",
   "crates/program-server",
@@ -52,9 +54,10 @@ exclude = [
   "examples/CRISP",
   "examples/CRISP/server",
   "examples/CRISP/program",
-  # client needs to be able to build crates/support independently
-  "crates/support",
+  # Built with the OpenVM SDK as a workspace of its own.
+  "crates/openvm-prover",
   "crates/support-scripts/dev",
+  "crates/support-scripts/openvm",
   "templates/default"
 ]
 resolver = "3"
@@ -107,6 +110,8 @@ e3-keyshare = { version = "0.19.0-test.2", path = "./crates/keyshare" }
 e3-logger = { version = "0.19.0-test.2", path = "./crates/logger" }
 e3-net = { version = "0.19.0-test.2", path = "./crates/net" }
 e3-compute-provider = { version = "0.19.0-test.2", path = "./crates/compute-provider" }
+e3-openvm-host = { version = "0.19.0-test.2", path = "./crates/openvm-host" }
+e3-openvm-types = { version = "0.19.0-test.2", path = "./crates/openvm-types" }
 e3-sortition = { version = "0.19.0-test.2", path = "./crates/sortition" }
 e3-daemon-server = { version = "0.19.0-test.2", path = "./crates/daemon-server" }
 e3-program-server = { version = "0.19.0-test.2", path = "./crates/program-server" }
