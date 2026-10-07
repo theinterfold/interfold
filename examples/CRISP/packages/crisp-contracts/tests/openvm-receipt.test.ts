@@ -104,6 +104,23 @@ describe('OpenVM receipt verifier (call oracle, not proof verification)', () => 
     )
   })
 
+  it('refuses a receipt identity that the receipt verifier does not accept', async () => {
+    const { adapter, imageId } = await deployAdapter()
+    const [owner] = await ethers.getSigners()
+    const honk = await ethers.deployContract('MockHonkVerifier')
+    const availability = await ethers.deployContract('MockCrispDataAvailabilityVerifier')
+    const protocolFactory = await ethers.getContractFactory('OpenVmBfvCiphertextVerifier')
+    const program = await programFactory()
+    const deployProgram = (id: string) =>
+      program.deploy(owner.address, adapter.target, honk.target, honk.target, availability.target, 0, owner.address, id)
+    for (const id of [word(0), word(999)]) {
+      await expect(protocolFactory.deploy(adapter.target, id)).to.be.revertedWithCustomError(protocolFactory, 'InvalidImageId')
+      await expect(deployProgram(id)).to.be.revertedWithCustomError(program, 'InvalidImageId')
+    }
+    await expect(protocolFactory.deploy(adapter.target, imageId)).not.to.revert(ethers)
+    await expect(deployProgram(imageId)).not.to.revert(ethers)
+  })
+
   it('preserves the protocol and CRISP application verification calls', async () => {
     const { verifier, adapter, imageId } = await deployAdapter()
     const [owner] = await ethers.getSigners()
@@ -175,7 +192,10 @@ describe('OpenVM receipt verifier (call oracle, not proof verification)', () => 
     )
     await expect(protocolCall(words, envelope(words[7], word(999)))).to.be.revertedWithCustomError(verifier, 'UnexpectedOpenVmCall')
 
-    await program.setImageId(word(999))
-    await expect(program.verify(0, words[5], words[6], envelope())).to.be.revertedWithCustomError(adapter, 'WrongImageId')
+    // Moving the program to another receipt verifier moves its identity with it.
+    const other = await ethers.deployContract('OpenVmReceiptVerifier', [await verifier.getAddress(), word(3), vmCommit])
+    await program.setOpenVmVerifier(await other.getAddress())
+    expect(await program.imageId()).to.equal(await other.imageId())
+    await expect(program.verify(0, words[5], words[6], envelope())).to.be.revertedWithCustomError(verifier, 'UnexpectedOpenVmCall')
   })
 })

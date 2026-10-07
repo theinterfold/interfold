@@ -6,12 +6,8 @@
 
 import { network } from 'hardhat'
 import type { HardhatEthers } from '@nomicfoundation/hardhat-ethers/types'
-import { zeroHash } from 'viem'
 import { CRISPProgram, HonkVerifier, MockInterfold, MockComputeReceiptVerifier, PoseidonT3 } from '../types'
 import { verifierNames } from '../scripts/verifiers'
-
-// Non-zero address used in the tests.
-export const nonZeroAddress = '0xc6e7DF5E7b4f2A278906862b61205850344D4e7d'
 
 const connection = await network.connect()
 export const ethers: HardhatEthers = connection.ethers
@@ -213,7 +209,9 @@ export async function deployCRISPProgram(
   // must pass the real one.
   const onchainHonkVerifier = contracts.onchainHonkVerifier || honkVerifier
   const mockInterfold = contracts.mockInterfold || (await deployMockInterfold())
-  const computeVerifier = contracts.computeVerifier ? await contracts.computeVerifier.getAddress() : nonZeroAddress
+  // CRISPProgram refuses a receipt identity that its verifier does not accept, so every program
+  // gets a verifier that reports one. Without `computeVerifier`, it accepts every journal.
+  const computeVerifier = contracts.computeVerifier || (await deployMockComputeReceiptVerifier())
   const dataAvailabilityVerifier = await deployContract('MockCrispDataAvailabilityVerifier')
 
   const programFactory = await ethers.getContractFactory('CRISPProgram', {
@@ -225,13 +223,13 @@ export async function deployCRISPProgram(
 
   const program = await programFactory.deploy(
     await owner.getAddress(),
-    computeVerifier,
+    await computeVerifier.getAddress(),
     await honkVerifier.getAddress(),
     await onchainHonkVerifier.getAddress(),
     await dataAvailabilityVerifier.getAddress(),
     contracts.availabilityFinalizationWindow ?? 0,
     contracts.inputAvailabilitySigner ?? (await owner.getAddress()),
-    zeroHash,
+    await computeVerifier.imageId(),
   )
 
   await program.waitForDeployment()

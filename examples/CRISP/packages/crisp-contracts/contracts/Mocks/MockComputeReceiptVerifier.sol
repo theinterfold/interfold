@@ -8,6 +8,7 @@ pragma solidity ^0.8.27;
 import { IOpenVmReceiptVerifier } from "@interfold/contracts/contracts/interfaces/IOpenVmReceiptVerifier.sol";
 
 contract MockComputeReceiptVerifier is IOpenVmReceiptVerifier {
+  bytes32 public constant imageId = keccak256("INTERFOLD_TEST_COMPUTE_RECEIPT");
   bytes32 public expectedJournalDigest;
 
   error UnexpectedJournalDigest(bytes32 actual, bytes32 expected);

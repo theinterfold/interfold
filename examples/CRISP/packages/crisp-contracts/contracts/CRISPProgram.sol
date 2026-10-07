@@ -192,6 +192,8 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   error InterfoldNotContract();
   error ProgramNotRegistered();
   error OpenVmVerifierAddressZero();
+  /// @notice The receipt identity differs from the one the OpenVM receipt verifier accepts.
+  error InvalidImageId();
   error InvalidHonkVerifier();
   error EmptyInputData();
   error InvalidNoirProof();
@@ -290,7 +292,8 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   /// @param _openVmVerifier The OpenVM receipt verifier address
   /// @param _honkVerifier The honk verifier address
   /// @param _imageId The receipt identity: `imageId()` of the OpenVM receipt verifier, which derives it
-  /// from the Halo2 verifier and the guest's executable and VM commitments
+  /// from the Halo2 verifier and the guest's executable and VM commitments. The constructor refuses
+  /// any other value, because `verify` would then reject every proof.
   constructor(
     address _initialOwner,
     IOpenVmReceiptVerifier _openVmVerifier,
@@ -302,6 +305,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     bytes32 _imageId
   ) Ownable(_initialOwner) EIP712("CRISP", "1") {
     if (address(_openVmVerifier) == address(0)) revert OpenVmVerifierAddressZero();
+    if (_imageId != _openVmVerifier.imageId()) revert InvalidImageId();
     if (address(_honkVerifier) == address(0)) revert InvalidHonkVerifier();
     if (address(_onchainHonkVerifier) == address(0)) revert InvalidHonkVerifier();
     if (address(_dataAvailabilityVerifier).code.length == 0) revert InvalidDataAvailabilityVerifier();
@@ -354,24 +358,18 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     e3Data[_e3Id].merkleRoot = _root;
   }
 
-  /// @notice Set the OpenVM receipt identity that `verify` requires.
-  /// @dev This value is application state, not protocol state. Interfold snapshots the protocol
+  /// @notice Set the OpenVM receipt verifier and take the receipt identity it accepts.
+  /// @dev Both values are application state, not protocol state. Interfold snapshots the protocol
   /// ciphertext verifier for each E3 at request time, and that verifier's own `imageId` is
-  /// immutable, so changing this value cannot replace a computation the protocol already accepted.
-  /// It can still break an E3 that is in flight: `verify` would then require an identity that the
-  /// receipt does not have, the round would fail as a compute timeout, and `FailurePayerLib` bills
-  /// that to the requester. Change it only between rounds.
-  /// @param _imageId The new receipt identity.
-  function setImageId(bytes32 _imageId) external onlyOwner {
-    imageId = _imageId;
-  }
-
-  /// @notice Set the OpenVM receipt verifier.
-  /// @dev Carries the same in-flight risk as `setImageId`. Change it only between rounds.
+  /// immutable, so this change cannot replace a computation the protocol already accepted. It can
+  /// still break an E3 that is in flight: `verify` would then require an identity that the receipt
+  /// does not have, the round would fail as a compute timeout, and `FailurePayerLib` bills that to
+  /// the requester. Change it only between rounds.
   /// @param _openVmVerifier The new OpenVM receipt verifier address
   function setOpenVmVerifier(IOpenVmReceiptVerifier _openVmVerifier) external onlyOwner {
     if (address(_openVmVerifier) == address(0)) revert OpenVmVerifierAddressZero();
     openVmVerifier = _openVmVerifier;
+    imageId = _openVmVerifier.imageId();
   }
 
   /// @notice Get the params hash for an E3 program

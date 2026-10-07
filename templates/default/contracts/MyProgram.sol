@@ -37,6 +37,7 @@ contract MyProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownable {
   error E3AlreadyInitialized();
   error E3DoesNotExist();
   error VerifierAddressZero();
+  error InvalidImageId();
   error AlreadyRegistered();
   error EmptyInputData();
   error InputDeadlineReached();
@@ -49,9 +50,11 @@ contract MyProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownable {
   /// @param _interfold The Interfold contract address
   /// @param _verifier The OpenVM receipt verifier address
   /// @param _imageId The receipt identity: `imageId()` of the OpenVM receipt verifier, which derives it
-  /// from the Halo2 verifier and the guest's executable and VM commitments
+  /// from the Halo2 verifier and the guest's executable and VM commitments. The constructor refuses
+  /// any other value, because `verify` would then reject every proof.
   constructor(IInterfold _interfold, IOpenVmReceiptVerifier _verifier, bytes32 _imageId) Ownable(msg.sender) {
     require(address(_verifier) != address(0), VerifierAddressZero());
+    require(_imageId == _verifier.imageId(), InvalidImageId());
 
     interfold = _interfold;
     verifier = _verifier;

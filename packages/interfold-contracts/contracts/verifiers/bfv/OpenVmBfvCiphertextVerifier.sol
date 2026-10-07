@@ -23,9 +23,13 @@ contract OpenVmBfvCiphertextVerifier is ICiphertextVerifier {
     IOpenVmReceiptVerifier public immutable openVmVerifier;
     bytes32 public immutable imageId;
 
+    /// @param verifier The OpenVM receipt verifier.
+    /// @param guestImageId The receipt identity that `verifier` accepts. A deployment with any other
+    /// value would reject every proof, so the constructor refuses it.
     constructor(IOpenVmReceiptVerifier verifier, bytes32 guestImageId) {
         if (address(verifier).code.length == 0) revert InvalidVerifier();
-        if (guestImageId == bytes32(0)) revert InvalidImageId();
+        if (guestImageId == bytes32(0) || guestImageId != verifier.imageId())
+            revert InvalidImageId();
         openVmVerifier = verifier;
         imageId = guestImageId;
     }

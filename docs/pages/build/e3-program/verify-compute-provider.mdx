@@ -97,10 +97,11 @@ These properties hold without any action from you:
   each encryption scheme. Every BFV E3 program on a deployment must use the identity that it names.
 
 An E3 program can keep its own identity and receipt verifier. The template sets them in the
-constructor and has no setter. `CRISPProgram` has `setImageId` and `setOpenVmVerifier`, which only
-its owner can call. A change to these values cannot replace an output that the Interfold contract
-already accepted. It can make an E3 in progress fail, because `verify` then checks the proof against
-a different identity.
+constructor and has no setter. `CRISPProgram` has `setOpenVmVerifier`, which only its owner can call
+and which takes the new verifier's identity with it. Every constructor here refuses an identity that
+its receipt verifier does not report. A change of verifier cannot replace an output that the
+Interfold contract already accepted. It can make an E3 in progress fail, because `verify` then
+checks the proof against a different identity.
 
 ## Check a deployment
 
