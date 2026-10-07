@@ -54,8 +54,11 @@ pub global C3AB_PK_B_START: u32 = C3AB_PREFIX_LEN + (3 * C3_SLOTS);
 pub global C3AB_MSG_B_START: u32 = C3AB_PREFIX_LEN + (4 * C3_SLOTS);
 
 /// Total public parameters + outputs for `node_fold`.
-pub global NODE_FOLD_PUBLIC_LEN: u32 = 14 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
+pub global NODE_FOLD_PUBLIC_LEN: u32 = 15 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
 pub global NODE_VK_MANIFEST_IDX: u32 = NODE_FOLD_PUBLIC_LEN - 1;
+/// C1's sk secret root (`c1_public[0]`), exported so `node_fold_v2` can bind its l-BFV generation
+/// fold to the same secret that this fold's C2a shares commit to.
+pub global NODE_SK_ROOT_IDX: u32 = NODE_FOLD_PUBLIC_LEN - 2;
 
 /// Constrains the C3 recipient keys that the fold later reduces to one key per recipient.
 ///
@@ -111,7 +114,7 @@ fn main(
     c2ab_key_hash: pub Field,
     c3ab_key_hash: pub Field,
     c4ab_key_hash: pub Field,
-    ) -> pub (Field, Field, Field, Field, Field, [Field; N_PARTIES], [[Field; L_THRESHOLD]; N_PARTIES], [[Field; L_THRESHOLD]; N_PARTIES], [[Field; L_THRESHOLD]; H], [[Field; L_THRESHOLD]; H], Field, Field, Field) {
+    ) -> pub (Field, Field, Field, Field, Field, [Field; N_PARTIES], [[Field; L_THRESHOLD]; N_PARTIES], [[Field; L_THRESHOLD]; N_PARTIES], [[Field; L_THRESHOLD]; H], [[Field; L_THRESHOLD]; H], Field, Field, Field, Field) {
     verify_honk_proof(c0_vk, c0_proof, c0_public, c0_key_hash);
     verify_honk_proof(c1_vk, c1_proof, c1_public, c1_key_hash);
     verify_honk_proof_non_zk(c2ab_vk, c2ab_proof, c2ab_public, c2ab_key_hash);
@@ -198,6 +201,6 @@ fn main(
 
     (
         key_hash, c2ab_public[3], c2ab_public[4], c0_pk, c1_pk, c3_pk, c2a, c2b, c4a_exp, c4b_exp,
-        sk_agg, esm_agg, vk_manifest,
+        sk_agg, esm_agg, c1_public[0], vk_manifest,
     )
 }
