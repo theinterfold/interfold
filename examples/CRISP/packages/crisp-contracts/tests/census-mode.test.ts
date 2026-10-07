@@ -171,8 +171,10 @@ describe('CRISPProgram census mode', function () {
         [14, 0n, minimum],
         [15, 2n * minimum, 2n * minimum],
       ] as const) {
-        await validate(e3Id, encode(CUSTOM, TOKEN, 2, { token, divisor }))
+        const receipt = await (await validate(e3Id, encode(CUSTOM, TOKEN, 2, { token, divisor }))).wait()
         expect(await crispProgram.votingPowerDivisorOf(e3Id)).to.equal(recorded)
+        // The coordinator reads the census here: the timepoint before the request, whose supply sized the divisor.
+        expect(await crispProgram.snapshotOf(e3Id)).to.equal((await votes.clock({ blockTag: receipt!.blockNumber })) - 1n)
       }
     })
   })

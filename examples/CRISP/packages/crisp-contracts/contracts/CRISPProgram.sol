@@ -448,6 +448,16 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     return e3Data[e3Id].votingPowerDivisor;
   }
 
+  /// @notice The timepoint at which a round reads voting power, in the ERC-6372 clock units of its token.
+  /// @dev A coordinator must read a CUSTOM-credit census at exactly this timepoint: the divisor is
+  /// sized against the total supply here, so balances read at another timepoint can sum past it.
+  /// Zero for a round that reads no voting power.
+  /// @param e3Id The E3 to look up.
+  /// @return The snapshot recorded at validation.
+  function snapshotOf(uint256 e3Id) external view returns (uint48) {
+    return e3Data[e3Id].snapshot;
+  }
+
   /// @notice The voting power a slot may spend in an ONCHAIN round, in ballot units.
   /// @dev The value `publishInput` will hand the circuit as public input 4, computed by the same
   /// contract that will check the proof. A client must prove against exactly this: recomputing it

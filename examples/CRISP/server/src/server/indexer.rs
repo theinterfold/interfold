@@ -71,32 +71,32 @@ fn stage_ends_input_retrieval(stage: &E3Stage) -> bool {
     )
 }
 
-/// Read the divisor `CRISPProgram` stored for a CUSTOM-credit round, or `None` after
+/// Read the divisor and snapshot `CRISPProgram` stored for a CUSTOM-credit round, or `None` after
 /// `E3_VISIBLE_ATTEMPTS`. The contract never stores zero for such a round, so a zero read is a
 /// node that lacks the request block, and it is retried like a failed read.
-async fn read_stored_divisor(
+async fn read_stored_scale(
     crisp: &CRISPContract<CRISPReadProvider>,
     e3_id: U256,
     label: &str,
-) -> Option<U256> {
+) -> Option<(U256, u64)> {
     call_with_retry_attempts(
-        "stored_voting_power_divisor",
+        "stored_voting_power_scale",
         &[],
         E3_VISIBLE_ATTEMPTS,
         || async {
             crisp
-                .stored_voting_power_divisor(e3_id)
+                .stored_voting_power_scale(e3_id)
                 .await
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?
                 .ok_or_else(|| {
-                    anyhow::anyhow!("the provider holds no stored divisor for the round")
+                    anyhow::anyhow!("the provider holds no stored divisor and snapshot for the round")
                 })
         },
     )
     .await
     .inspect_err(|error| {
         warn!(
-            "[e3_id={}] Failed to read the stored voting-power divisor after retries: {:#}",
+            "[e3_id={}] Failed to read the stored voting-power divisor and snapshot after retries: {:#}",
             label, error
         )
     })
@@ -113,10 +113,11 @@ async fn read_stored_divisor(
 /// round: the contract reads power per input, so the only cost is mask cover.
 ///
 /// One function for both callers: the `E3Requested` handler and the retry pass for a round that
-/// was registered without a census because its divisor could not be read. `divisor` is the
-/// divisor of a CUSTOM-credit round, or `None` for a CONSTANT-credit round. Off a local chain, a
-/// CUSTOM-credit round without one fails discovery: a census in any other unit would not match
-/// what the contract enforces.
+/// was registered without a census because its divisor could not be read. `stored` is the divisor
+/// and snapshot of a CUSTOM-credit round, or `None` for a CONSTANT-credit round. A CUSTOM-credit
+/// census is read at that snapshot, not at `snapshot_timepoint`: the divisor bounds the census sum
+/// only at the timepoint whose supply sized it. Off a local chain, a CUSTOM-credit round without
+/// them fails discovery.
 async fn discover_holders(
     e3_id: &str,
     custom_params: &CustomParams,
@@ -124,7 +125,7 @@ async fn discover_holders(
     token_address: Address,
     snapshot_timepoint: u64,
     balance_threshold: &BigUint,
-    divisor: Option<U256>,
+    stored: Option<(U256, u64)>,
 ) -> eyre::Result<Vec<TokenHolder>> {
     Ok(if custom_params.census_mode == CensusMode::ByRequester {
         let credits_str = match custom_params.credit_mode {
@@ -214,11 +215,11 @@ async fn discover_holders(
                     .context("Etherscan token-holder discovery failed")?
             }
             CreditMode::Custom => {
-                let divisor = divisor.ok_or_else(|| {
+                let (divisor, snapshot) = stored.ok_or_else(|| {
                     eyre::eyre!(
-                        "[e3_id={}] No voting-power divisor is known for this CUSTOM-credit \
-                         round, so the census cannot be built in the units the contract \
-                         reads back.",
+                        "[e3_id={}] No voting-power divisor and snapshot are known for this \
+                         CUSTOM-credit round, so the census cannot be built in the units the \
+                         contract reads back.",
                         e3_id
                     )
                 })?;
@@ -226,7 +227,7 @@ async fn discover_holders(
                 etherscan_client
                     .get_token_holders_with_voting_power(
                         token_address,
-                        snapshot_timepoint,
+                        snapshot,
                         &CONFIG.http_rpc_url,
                         U256::from_str_radix(&balance_threshold.to_string(), 10).map_err(|e| {
                             eyre::eyre!(
@@ -313,52 +314,6 @@ async fn ensure_merkle_root(e3_id: &str, token_holder_hashes: Vec<String>) -> ey
         ));
     }
     Ok(())
-}
-
-/// What `E3Requested` does with a round once the divisor sources have answered.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RegistrationPlan {
-    /// Register the round and run holder discovery with this divisor.
-    Discover(Option<U256>),
-    /// Register the round but defer holder discovery to the retry pass: building the census in
-    /// unknown units would serve wrong balances.
-    RegisterWithoutDiscovery,
-}
-
-/// Decides registration from the divisor sources alone, so the choice can be tested without
-/// a chain or an Etherscan client.
-///
-/// Registration itself never depends on the divisor. The live listener logs a handler error
-/// and moves on, so an `Err` from this handler does not defer anything: it drops the round
-/// from coordinator metadata until the next backfill replays the event. Only discovery is
-/// divisor-dependent, so only discovery is deferred.
-///
-/// The divisor is chosen by three rules, in order:
-///
-/// - A CONSTANT-credit round gets `None`: the contract stores no divisor, and the census carries
-///   the constant credits.
-/// - For a CUSTOM-credit round the stored value wins: `CRISPProgram` resolved it once at request
-///   time and scales every voter by exactly it.
-/// - Otherwise a non-zero requested value, which the contract stores verbatim. A zero or
-///   unparseable one asked for the minimum, which only the contract can compute.
-fn plan_registration(
-    stored_divisor: Option<U256>,
-    requested_divisor: &str,
-    credit_mode: CreditMode,
-) -> RegistrationPlan {
-    if credit_mode != CreditMode::Custom {
-        return RegistrationPlan::Discover(None);
-    }
-    let nonzero = |divisor: &U256| !divisor.is_zero();
-    let divisor = stored_divisor.filter(nonzero).or_else(|| {
-        U256::from_str_radix(requested_divisor, 10)
-            .ok()
-            .filter(nonzero)
-    });
-    match divisor {
-        None => RegistrationPlan::RegisterWithoutDiscovery,
-        divisor => RegistrationPlan::Discover(divisor),
-    }
 }
 
 pub async fn register_e3_requested(
@@ -505,31 +460,25 @@ pub async fn register_e3_requested(
                     );
                 }
 
-                // Only a CUSTOM-credit round stores a divisor. `plan_registration` decides what
-                // a missing one means.
-                let stored_divisor = if custom_params.credit_mode == CreditMode::Custom {
-                    read_stored_divisor(&crisp, event.e3Id, &e3_id).await
+                // Only a CUSTOM-credit round stores a divisor and a snapshot. Without them the
+                // census cannot be built in the units the contract reads back, so the round
+                // registers and its discovery is deferred to the retry pass. An `Err` here would
+                // not defer anything: the live listener logs it and moves on, which drops the round.
+                let stored = if custom_params.credit_mode == CreditMode::Custom {
+                    read_stored_scale(&crisp, event.e3Id, &e3_id).await
                 } else {
                     None
                 };
-                let plan = plan_registration(
-                    stored_divisor,
-                    &custom_params.voting_power_divisor,
-                    custom_params.credit_mode,
-                );
-                let (divisor, divisor_unavailable) = match plan {
-                    RegistrationPlan::Discover(divisor) => (divisor, false),
-                    RegistrationPlan::RegisterWithoutDiscovery => {
-                        warn!(
-                            "[e3_id={}] The stored voting-power divisor is unavailable and the \
-                             round requested none. Registering the round without holder \
-                             discovery rather than building a census in units the contract may \
-                             not use.",
-                            e3_id
-                        );
-                        (None, true)
-                    }
-                };
+                let divisor_unavailable =
+                    custom_params.credit_mode == CreditMode::Custom && stored.is_none();
+                if divisor_unavailable {
+                    warn!(
+                        "[e3_id={}] The stored voting-power divisor and snapshot are unavailable. \
+                         Registering the round without holder discovery rather than building a \
+                         census in units the contract may not use.",
+                        e3_id
+                    );
+                }
 
                 // Get token holders from Etherscan API or mocked data. Lifted into
                 // `discover_holders` so the retry pass for a round registered without a census
@@ -544,7 +493,7 @@ pub async fn register_e3_requested(
                         token_address,
                         snapshot_timepoint,
                         &balance_threshold,
-                        divisor,
+                        stored,
                     )
                     .await
                 };
@@ -1533,18 +1482,16 @@ async fn retry_pending_discovery<S: DataStore>(store: SharedStore<S>) {
             let Ok(e3_id_value) = e3_id_to_u256(&e3_id) else {
                 continue;
             };
-            // Only a CUSTOM-credit round has a divisor. Still unreadable: keep the debt for the
-            // next pass.
-            let divisor = match round.credit_mode {
+            // Only a CUSTOM-credit round has a divisor and a snapshot. Still unreadable: keep the
+            // debt for the next pass.
+            let stored = match round.credit_mode {
                 CreditMode::Constant => None,
-                CreditMode::Custom => {
-                    match read_stored_divisor(&crisp, e3_id_value, &e3_id).await {
-                        None => continue,
-                        divisor => divisor,
-                    }
-                }
+                CreditMode::Custom => match read_stored_scale(&crisp, e3_id_value, &e3_id).await {
+                    None => continue,
+                    stored => stored,
+                },
             };
-            match settle_pending_discovery(&mut repo, &e3_id, &round, divisor).await {
+            match settle_pending_discovery(&mut repo, &e3_id, &round, stored).await {
                 Ok(count) => {
                     info!(
                         "[e3_id={}] Pending holder discovery settled with {} holders",
@@ -1577,7 +1524,7 @@ async fn settle_pending_discovery<S: DataStore>(
     repo: &mut CrispE3Repository<S>,
     e3_id: &str,
     round: &E3Crisp,
-    divisor: Option<U256>,
+    stored: Option<(U256, u64)>,
 ) -> eyre::Result<usize> {
     let custom_params = CustomParams {
         token_address: round.token_address.clone(),
@@ -1607,7 +1554,7 @@ async fn settle_pending_discovery<S: DataStore>(
         token_address,
         round.snapshot_block,
         &balance_threshold,
-        divisor,
+        stored,
     )
     .await?;
     let count = holders.len();
@@ -2015,14 +1962,14 @@ mod e3_request_tests {
 
 #[cfg(test)]
 mod stored_divisor_tests {
-    use super::read_stored_divisor;
+    use super::read_stored_scale;
     use alloy::primitives::{bytes, Address, B256, U256};
     use alloy::providers::{ext::AnvilApi, ProviderBuilder};
     use evm_helpers::CRISPContractFactory;
     use std::time::Duration;
 
-    /// `CRISPProgram` never stores a zero divisor for a CUSTOM-credit round. A zero read is a node
-    /// that does not have the request block yet, and taking it as final drops the round.
+    /// `CRISPProgram` never stores a zero divisor or snapshot for a CUSTOM-credit round. A zero read
+    /// is a node that does not have the request block yet, and taking it as final drops the round.
     #[tokio::test]
     async fn a_zero_read_from_a_lagging_node_is_retried() {
         let anvil = alloy::node_bindings::Anvil::new().try_spawn().unwrap();
@@ -2037,13 +1984,13 @@ mod stored_divisor_tests {
             .unwrap();
 
         // The first read sees zero; the slot is set before the retry 2 s later.
-        let (divisor, _) = tokio::join!(read_stored_divisor(&crisp, U256::from(1), "1"), async {
+        let (stored, _) = tokio::join!(read_stored_scale(&crisp, U256::from(1), "1"), async {
             tokio::time::sleep(Duration::from_secs(1)).await;
             node.anvil_set_storage_at(program, U256::ZERO, B256::with_last_byte(5))
                 .await
                 .unwrap()
         });
-        assert_eq!(divisor, Some(U256::from(5)));
+        assert_eq!(stored, Some((U256::from(5), 5)));
     }
 }
 
@@ -2174,41 +2121,5 @@ mod pending_discovery_tests {
         encoded.as_object_mut().unwrap().remove("discovery_pending");
         let decoded: E3Crisp = serde_json::from_value(encoded).unwrap();
         assert!(!decoded.discovery_pending);
-    }
-}
-
-#[cfg(test)]
-mod voting_power_divisor_tests {
-    use super::{
-        plan_registration,
-        RegistrationPlan::{Discover, RegisterWithoutDiscovery},
-    };
-    use crate::server::models::CreditMode::{Constant, Custom};
-    use alloy::primitives::U256;
-
-    #[test]
-    fn the_stored_divisor_wins_and_a_nonzero_request_is_the_fallback() {
-        let stored = Some(U256::from(100_000_000_000_000_000u128));
-        let requested = Some(U256::from(5000));
-        for (s, field, credit, plan) in [
-            // The stored value is what `CRISPProgram` scales every voter by.
-            (stored, "0", Custom, Discover(stored)),
-            (stored, "5000", Custom, Discover(stored)),
-            // After a failed read, a non-zero request is the value the contract stored.
-            (None, "5000", Custom, Discover(requested)),
-            // A zero or unparseable request asked for the minimum, which only the contract
-            // computes. The round registers and owes discovery, whatever its census mode.
-            (None, "0", Custom, RegisterWithoutDiscovery),
-            (None, "", Custom, RegisterWithoutDiscovery),
-            // A CONSTANT-credit round stores no divisor and takes none.
-            (stored, "5000", Constant, Discover(None)),
-            (None, "0", Constant, Discover(None)),
-        ] {
-            assert_eq!(
-                plan_registration(s, field, credit),
-                plan,
-                "{s:?} {field:?} {credit:?}"
-            );
-        }
     }
 }

@@ -88,3 +88,4 @@ dotenvy = "=0.15.7"
 
 [dev-dependencies]
 alloy = { version = "=1.0.41", features = ["node-bindings"] }
+tokio = { workspace = true, features = ["test-util"] }

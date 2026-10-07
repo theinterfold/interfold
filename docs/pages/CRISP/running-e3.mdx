@@ -282,7 +282,20 @@ mask does not need a signature from the voter, so any account can fill the limit
 1, so an `insecure-512` round accepts 99 inputs and a `secure-8192` round accepts 100,000.
 
 In a census tree round, the CRISP server writes the voting power of each voter into the census leaf.
-The limits hold only when the census leaf holds that voting power.
+For a `CUSTOM` round, the server reads this voting power at `CRISPProgram.snapshotOf(e3Id)`, the
+timepoint that also sets the divisor. The server retries a failed read. If the read continues to
+fail, the server builds no census, so that the census does not exclude an eligible voter. The limits
+hold only when the census leaf holds that voting power.
+
+In a `CUSTOM` round, the weight of a voter is an integer, and the division discards the remainder.
+In a census tree round, a voter with less voting power than the divisor has a weight of 0. This
+voter can cast only an empty ballot. For example, a total supply of 1,000,000,000,000 and a `t` of
+1,000,000 give a minimum divisor of 1,000,001. A holder with 1,000,000 votes then has a weight of 0.
+
+In an `ONCHAIN` round, `minVotingPower` must be at least the divisor, or `validate` reverts with
+`MinVotingPowerBelowScale`. Thus each voter that can publish an input has a weight of at least 1.
+The default divisor increases with the total supply. A request with a fixed `minVotingPower` can
+thus revert after the supply increases.
 
 The `CUSTOM` limit also relies on the token. At the snapshot, the sum of the voting power of all
 accounts must not be more than `getPastTotalSupply(snapshot)`. An ERC20Votes token satisfies this

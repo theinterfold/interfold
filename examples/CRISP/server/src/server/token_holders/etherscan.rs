@@ -11,6 +11,7 @@ use alloy::providers::{Provider, ProviderBuilder};
 use alloy::sol;
 use alloy::sol_types::SolEvent;
 use alloy::transports::RpcError;
+use e3_sdk::evm_helpers::retry::call_with_retry;
 use eyre::{eyre, Context, Result};
 use reqwest;
 use serde::Deserialize;
@@ -889,14 +890,14 @@ impl EtherscanClient {
     /// `divisor` is the value `CRISPProgram` stored for the round. The contract chose it so that
     /// the census sums to less than the plaintext modulus, using the total supply at the same
     /// snapshot. Every balance is therefore read with `getPastVotes` at that snapshot and divided
-    /// by it. A voter whose balance cannot be read is left out of the census with a warning, which
-    /// can only lower the sum.
-    pub async fn verify_voting_power(
+    /// by it, never replaced by a current balance, which can exceed that supply. A failed read is
+    /// retried, and a voter whose read keeps failing fails the census: `setMerkleRoot` takes one
+    /// root, so a voter left out of it could never vote.
+    pub async fn verify_voting_power<P: Provider>(
         &self,
-        token_address: Address,
+        token: &ERC20Votes::ERC20VotesInstance<P>,
         potential_voters: &[PotentialVoter],
         timepoint: u64,
-        rpc_url: &str,
         threshold: U256,
         divisor: U256,
     ) -> Result<Vec<TokenHolder>> {
@@ -906,7 +907,7 @@ impl EtherscanClient {
         log::info!(
             "Verifying {} candidates against {} at timepoint {} (divisor={}, threshold={})",
             potential_voters.len(),
-            token_address,
+            token.address(),
             timepoint,
             divisor,
             threshold
@@ -916,54 +917,55 @@ impl EtherscanClient {
         let mut rounds_to_zero = 0usize;
 
         for voter in potential_voters {
-            match Self::get_past_votes(token_address, voter.address, timepoint, rpc_url).await {
-                Ok(votes) => {
-                    if votes >= threshold {
-                        let scaled_votes = votes / divisor;
+            let votes = call_with_retry("getPastVotes", &[], || async {
+                Ok(token
+                    .getPastVotes(voter.address, U256::from(timepoint))
+                    .call()
+                    .await?)
+            })
+            .await
+            .map_err(|e| eyre!("Failed to read the votes of {}: {e:#}", voter.address))?;
+            if votes >= threshold {
+                let scaled_votes = votes / divisor;
 
-                        // Both values, because they answer different questions. The raw one is
-                        // what the chain reports and what a holder recognises as their balance;
-                        // the scaled one is what the ballot is bounded by, and a mismatch between
-                        // a census and a tally is almost always a scaling mismatch.
-                        log::info!(
-                            "  eligible {} raw={} scaled={}",
-                            voter.address,
-                            votes,
-                            scaled_votes
-                        );
+                // Both values, because they answer different questions. The raw one is what the
+                // chain reports and what a holder recognises as their balance; the scaled one is
+                // what the ballot is bounded by, and a mismatch between a census and a tally is
+                // almost always a scaling mismatch.
+                log::info!(
+                    "  eligible {} raw={} scaled={}",
+                    voter.address,
+                    votes,
+                    scaled_votes
+                );
 
-                        // Above the threshold but worth nothing once scaled: the leaf bounds every
-                        // ballot to zero, so this address is in the census and can still only cast
-                        // an empty vote. Worth saying out loud — it looks like eligibility from
-                        // every angle except the one that counts.
-                        if scaled_votes.is_zero() {
-                            rounds_to_zero += 1;
-                            log::warn!(
-                                "  {} clears the threshold but scales to zero (raw={}, \
-                                 divisor={}): it can vote, but carries no weight",
-                                voter.address,
-                                votes,
-                                divisor
-                            );
-                        }
-
-                        token_holders.push(TokenHolder {
-                            address: voter.address.to_string(),
-                            balance: scaled_votes.to_string(),
-                        });
-                    } else {
-                        below_threshold += 1;
-                        log::debug!(
-                            "  skipped {} raw={} below threshold {}",
-                            voter.address,
-                            votes,
-                            threshold
-                        );
-                    }
+                // Above the threshold but worth nothing once scaled: the leaf bounds every ballot
+                // to zero, so this address is in the census and can still only cast an empty vote.
+                // Worth saying out loud — it looks like eligibility from every angle except the
+                // one that counts.
+                if scaled_votes.is_zero() {
+                    rounds_to_zero += 1;
+                    log::warn!(
+                        "  {} clears the threshold but scales to zero (raw={}, divisor={}): it \
+                         can vote, but carries no weight",
+                        voter.address,
+                        votes,
+                        divisor
+                    );
                 }
-                Err(e) => {
-                    log::warn!("Failed to get votes for {}: {}", voter.address, e);
-                }
+
+                token_holders.push(TokenHolder {
+                    address: voter.address.to_string(),
+                    balance: scaled_votes.to_string(),
+                });
+            } else {
+                below_threshold += 1;
+                log::debug!(
+                    "  skipped {} raw={} below threshold {}",
+                    voter.address,
+                    votes,
+                    threshold
+                );
             }
 
             // Rate limiting - small delay between RPC calls
@@ -1060,28 +1062,6 @@ impl EtherscanClient {
         }
     }
 
-    /// Read an address's voting power at an EIP-6372 timepoint.
-    ///
-    /// A failed read is returned, never replaced by a current balance: the census must sum to at
-    /// most the supply at the snapshot the contract used to choose the divisor, and a current
-    /// balance can exceed it.
-    async fn get_past_votes(
-        token_address: Address,
-        voter_address: Address,
-        timepoint: u64,
-        rpc_url: &str,
-    ) -> Result<U256> {
-        let url = rpc_url.parse().context("Failed to parse RPC URL")?;
-        let provider = ProviderBuilder::new().connect_http(url);
-        let token = ERC20Votes::new(token_address, provider);
-
-        token
-            .getPastVotes(voter_address, U256::from(timepoint))
-            .call()
-            .await
-            .context("Failed to call getPastVotes")
-    }
-
     /// Parse address from 32-byte topic (last 20 bytes)
     fn parse_address_from_topic(topic: &str) -> Result<Address, String> {
         let hex = topic.strip_prefix("0x").unwrap_or(topic);
@@ -1111,17 +1091,16 @@ impl EtherscanClient {
         U256::from_str_radix(hex_data, 16).unwrap_or(U256::ZERO)
     }
 
-    /// Get all token holders with voting power at a census timepoint.
+    /// Get all token holders with voting power at a round's snapshot.
     ///
-    /// `snapshot_timepoint` is an EIP-6372 timestamp, not a block height — `E3.requestBlock`
-    /// carries `block.timestamp` regardless of which token forms the census. Log discovery
-    /// needs the equivalent block, so both units are derived here: the block always bounds
-    /// the log ranges, while `getPastVotes` receives whichever unit the census token's own
-    /// `CLOCK_MODE()` reports.
+    /// `snapshot` is the timepoint `CRISPProgram` recorded for the round (`snapshotOf`), in the
+    /// census token's EIP-6372 clock units. The divisor was sized against the total supply at
+    /// exactly this timepoint, so every balance is read there. Log discovery needs a block: a
+    /// block-number clock names it, and a timestamp clock resolves to the last block at or before it.
     pub async fn get_token_holders_with_voting_power(
         &self,
         token_address: Address,
-        snapshot_timepoint: u64,
+        snapshot: u64,
         rpc_url: &str,
         threshold: U256,
         // The divisor `CRISPProgram` stored for the round.
@@ -1133,9 +1112,16 @@ impl EtherscanClient {
         let sources = Self::resolve_voting_power_sources(token_address, rpc_url)
             .await
             .context("Failed to resolve voting-power sources")?;
+        let snapshot_block = match Self::get_clock_mode(token_address, rpc_url).await {
+            ClockMode::BlockNumber => snapshot,
+            ClockMode::Timestamp => Self::get_block_by_timestamp(snapshot, rpc_url)
+                .await
+                .context("Failed to resolve snapshot timepoint to a block")?,
+        };
         self.get_token_holders_with_voting_power_from_sources(
             token_address,
-            snapshot_timepoint,
+            snapshot_block,
+            snapshot,
             rpc_url,
             threshold,
             divisor,
@@ -1144,10 +1130,14 @@ impl EtherscanClient {
         .await
     }
 
+    /// Scan logs up to `snapshot_block` for candidates, then read each candidate's votes at
+    /// `timepoint`, in the census token's clock units.
+    #[allow(clippy::too_many_arguments)]
     async fn get_token_holders_with_voting_power_from_sources(
         &self,
         token_address: Address,
-        snapshot_timepoint: u64,
+        snapshot_block: u64,
+        timepoint: u64,
         rpc_url: &str,
         threshold: U256,
         divisor: U256,
@@ -1172,13 +1162,9 @@ impl EtherscanClient {
             .await
             .context("Failed to get deployment block")?;
         log::info!("Token deployed at block: {}", start_block);
-
-        let snapshot_block = Self::get_block_by_timestamp(snapshot_timepoint, rpc_url)
-            .await
-            .context("Failed to resolve snapshot timepoint to a block")?;
         log::info!(
             "Snapshot timepoint {} resolves to block {}",
-            snapshot_timepoint,
+            timepoint,
             snapshot_block
         );
 
@@ -1271,28 +1257,11 @@ impl EtherscanClient {
 
         log::info!("Found {} potential voters", potential_voters.len());
 
-        // Step 5: Verify actual voting power. The unit of the `getPastVotes` timepoint is
-        // the census token's to decide, so ask it rather than assuming. Passing the wrong
-        // unit reverts every call, which leaves every voter out of the census.
-        let clock_mode = Self::get_clock_mode(token_address, rpc_url).await;
-        let vote_timepoint = match clock_mode {
-            ClockMode::Timestamp => snapshot_timepoint,
-            ClockMode::BlockNumber => snapshot_block,
-        };
-        log::info!(
-            "Census token clock is {:?}; verifying voting power at timepoint {}...",
-            clock_mode,
-            vote_timepoint
-        );
+        // Step 5: Verify actual voting power.
+        let url = rpc_url.parse().context("Failed to parse RPC URL")?;
+        let token = ERC20Votes::new(token_address, ProviderBuilder::new().connect_http(url));
         let token_holders = self
-            .verify_voting_power(
-                token_address,
-                &potential_voters,
-                vote_timepoint,
-                rpc_url,
-                threshold,
-                divisor,
-            )
+            .verify_voting_power(&token, &potential_voters, timepoint, threshold, divisor)
             .await
             .context("Failed to verify voting power")?;
 
@@ -1324,11 +1293,29 @@ impl EtherscanClient {
         let sources = Self::resolve_voting_power_sources(token_address, rpc_url)
             .await
             .context("Failed to resolve voting-power sources")?;
+
+        // Eligibility here rests on the logs alone — no `getPastVotes` pass narrows the
+        // set afterwards — so the range must not reach past the census timepoint.
+        let snapshot_block = Self::get_block_by_timestamp(snapshot_timepoint, rpc_url)
+            .await
+            .context("Failed to resolve snapshot timepoint to a block")?;
+        log::info!(
+            "Snapshot timepoint {} resolves to block {}",
+            snapshot_timepoint,
+            snapshot_block
+        );
+
         if sources.registry.is_some() {
+            // `getPastVotes` takes the adapter's own clock units.
+            let timepoint = match Self::get_clock_mode(token_address, rpc_url).await {
+                ClockMode::Timestamp => snapshot_timepoint,
+                ClockMode::BlockNumber => snapshot_block,
+            };
             let holders = self
                 .get_token_holders_with_voting_power_from_sources(
                     token_address,
-                    snapshot_timepoint,
+                    snapshot_block,
+                    timepoint,
                     rpc_url,
                     U256::from(1),
                     U256::from(1),
@@ -1344,17 +1331,6 @@ impl EtherscanClient {
             .await
             .context("Failed to get deployment block")?;
         log::info!("Token deployed at block: {}", start_block);
-
-        // Eligibility here rests on the logs alone — no `getPastVotes` pass narrows the
-        // set afterwards — so the range must not reach past the census timepoint.
-        let snapshot_block = Self::get_block_by_timestamp(snapshot_timepoint, rpc_url)
-            .await
-            .context("Failed to resolve snapshot timepoint to a block")?;
-        log::info!(
-            "Snapshot timepoint {} resolves to block {}",
-            snapshot_timepoint,
-            snapshot_block
-        );
 
         // Step 2: Fetch transfer logs
         log::info!(
@@ -1898,21 +1874,66 @@ mod bond_owner_discovery_tests {
     }
 }
 
-/// Every census balance is divided by the divisor, so a zero divisor is refused before any read.
+/// `verify_voting_power` refuses what would mis-scale a census or leave a voter out of it.
 #[cfg(test)]
-mod voting_power_divisor_tests {
-    use super::EtherscanClient;
-    use alloy::primitives::{Address, U256};
+mod verify_voting_power_tests {
+    use super::{ERC20Votes, EtherscanClient, PotentialVoter};
+    use alloy::primitives::{Address, Bytes, U256};
+    use alloy::providers::ProviderBuilder;
+    use alloy::transports::mock::Asserter;
+
+    /// The addresses `verify_voting_power` keeps, with `responses` answering each `getPastVotes`.
+    async fn verify(
+        responses: Asserter,
+        voters: &[Address],
+        divisor: U256,
+    ) -> eyre::Result<Vec<String>> {
+        let token = ERC20Votes::new(
+            Address::repeat_byte(1),
+            ProviderBuilder::default().connect_mocked_client(responses),
+        );
+        let voters: Vec<PotentialVoter> = voters
+            .iter()
+            .map(|&address| PotentialVoter {
+                address,
+                token_balance: U256::ZERO,
+                has_delegation: true,
+            })
+            .collect();
+        let holders = EtherscanClient::new("test_key".to_string(), 1)
+            .verify_voting_power(&token, &voters, 1, U256::from(1), divisor)
+            .await?;
+        Ok(holders.into_iter().map(|holder| holder.address).collect())
+    }
 
     /// A zero divisor would divide by zero, and the contract never stores one for a CUSTOM round.
     #[tokio::test]
     async fn a_zero_divisor_is_refused() {
-        let verify = |divisor| async move {
-            EtherscanClient::new("test_key".to_string(), 1)
-                .verify_voting_power(Address::repeat_byte(1), &[], 1, "", U256::ZERO, divisor)
-                .await
-        };
-        assert!(verify(U256::ZERO).await.is_err());
-        assert!(verify(U256::from(1)).await.unwrap().is_empty());
+        assert!(verify(Asserter::new(), &[], U256::ZERO).await.is_err());
+        assert!(verify(Asserter::new(), &[], U256::from(1))
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    /// `setMerkleRoot` takes one root, so a voter left out of a census can never vote. A read that
+    /// fails once is retried, and a read that keeps failing fails the whole census.
+    #[tokio::test(start_paused = true)]
+    async fn a_census_never_leaves_out_a_voter_it_cannot_read() {
+        let (alice, bob) = (Address::repeat_byte(0xa), Address::repeat_byte(0xb));
+        let votes = Bytes::from(U256::from(7).to_be_bytes::<32>());
+
+        let flaky = Asserter::new();
+        flaky.push_failure_msg("the node lags");
+        flaky.push_success(&votes);
+        assert_eq!(
+            verify(flaky, &[alice], U256::from(1)).await.unwrap(),
+            [alice.to_string()]
+        );
+
+        // Alice reads. Every read of Bob fails, because no response is left.
+        let failing = Asserter::new();
+        failing.push_success(&votes);
+        assert!(verify(failing, &[alice, bob], U256::from(1)).await.is_err());
     }
 }

@@ -86,6 +86,8 @@ sol! {
         /// Non-zero for every CUSTOM-credit round, zero for a CONSTANT-credit round and for a
         /// round it never initialized.
         function votingPowerDivisorOf(uint256 e3Id) external view returns (uint256);
+        /// The timepoint, in the token's clock units, the divisor was sized at.
+        function snapshotOf(uint256 e3Id) external view returns (uint48);
         function verify(
             uint256 e3Id,
             bytes32 ciphertextOutputHash,
@@ -651,13 +653,15 @@ impl CRISPContract<CRISPReadProvider> {
         Ok(contract.pendingInputCount(e3_id).call().await?.to::<u64>())
     }
 
-    /// The voting-power divisor `CRISPProgram` stored for a CUSTOM-credit round at request time;
-    /// every voter's power is scaled by exactly it. `Ok(None)` when the contract holds zero: a
-    /// CONSTANT-credit round, a round it never initialized, or a node that lacks the request block.
-    pub async fn stored_voting_power_divisor(&self, e3_id: U256) -> Result<Option<U256>> {
+    /// The voting-power divisor and snapshot `CRISPProgram` stored for a CUSTOM-credit round at
+    /// request time. A census must scale every voter by exactly this divisor and read every voter at
+    /// exactly this snapshot. `Ok(None)` when the contract holds zero for either: a CONSTANT-credit
+    /// round, a round it never initialized, or a node that lacks the request block.
+    pub async fn stored_voting_power_scale(&self, e3_id: U256) -> Result<Option<(U256, u64)>> {
         let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
-        Ok(Some(contract.votingPowerDivisorOf(e3_id).call().await?)
-            .filter(|divisor| !divisor.is_zero()))
+        let divisor = contract.votingPowerDivisorOf(e3_id).call().await?;
+        let snapshot = contract.snapshotOf(e3_id).call().await?.to::<u64>();
+        Ok((!divisor.is_zero() && snapshot != 0).then_some((divisor, snapshot)))
     }
 }
 
