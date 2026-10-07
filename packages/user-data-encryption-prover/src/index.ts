@@ -23,8 +23,6 @@ export type UserDataEncryptionInputs = {
   u: NoirPolynomial
   e0: NoirPolynomial
   e1: NoirPolynomial
-  e0is: NoirCrtPolynomial
-  e0_quotients: NoirCrtPolynomial
   k1: NoirPolynomial
   r1is: NoirCrtPolynomial
   r2is: NoirCrtPolynomial
@@ -118,8 +116,6 @@ const assertShape = (inputs: UserDataEncryptionInputs): { n: number; l: number; 
   checkRows('pk1is', inputs.pk1is, n)
   checkRows('ct0is', inputs.ct0is, n)
   checkRows('ct1is', inputs.ct1is, n)
-  checkRows('e0is', inputs.e0is, n)
-  checkRows('e0_quotients', inputs.e0_quotients, n)
   checkRows('r1is', inputs.r1is, 2 * n - 1)
   checkRows('r2is', inputs.r2is, n - 1)
   checkRows('p1is', inputs.p1is, 2 * n - 1)
@@ -228,8 +224,6 @@ const buildCt0TopLevelInputs = async (
           u_chunk: chunk(inputs.u, chunkIndex, chunkSize),
           e0_chunk: chunk(inputs.e0, chunkIndex, chunkSize),
           k1_chunk: chunk(inputs.k1, chunkIndex, chunkSize),
-          e0is_chunk: chunkRows(inputs.e0is, chunkIndex, chunkSize),
-          e0_quotients_chunk: chunkRows(inputs.e0_quotients, chunkIndex, chunkSize),
           r2is_chunk: chunkRows(r2is, chunkIndex, chunkSize),
           r1is_chunk: chunkRows(r1is, chunkIndex, 2 * chunkSize),
           gamma,
@@ -251,9 +245,9 @@ const buildCt0TopLevelInputs = async (
       [`${prefix}_r1`]: leaf.publicInputs[6],
       [`${prefix}_u_partial`]: leaf.publicInputs[7],
       [`${prefix}_k1_partial`]: leaf.publicInputs[8],
-      [`${prefix}_e0is_partial`]: leaf.publicInputs.slice(9, 9 + l),
-      [`${prefix}_r2i_partial`]: leaf.publicInputs.slice(9 + l, 9 + 2 * l),
-      [`${prefix}_r1i_partial`]: leaf.publicInputs.slice(9 + 2 * l, 9 + 3 * l),
+      [`${prefix}_e0_partial`]: leaf.publicInputs[9],
+      [`${prefix}_r2i_partial`]: leaf.publicInputs.slice(10, 10 + l),
+      [`${prefix}_r1i_partial`]: leaf.publicInputs.slice(10 + l, 10 + 2 * l),
     }
     return values
   }

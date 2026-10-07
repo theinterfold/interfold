@@ -9,10 +9,8 @@
 //! genuinely "chunking"). Range-checks its slice and commits to it; the per-slice logic lives in
 //! `lib::core::threshold::user_data_encryption_chunk`.
 //!
-//! `e0is`/`e0_quotients` and the CRT-consistency check deliberately live in Round B only
-//! (`ct0_eval_chunk_main`) - see `check_e0_chunk_crt_consistency` for why a copy here would
-//! constrain nothing observable. Keeping it Round-B-only also keeps this leaf, the tightest
-//! circuit in the tree, well clear of the 2M gate ceiling.
+//! The identity reads the committed `e0` directly in every CRT limb, so neither round takes a
+//! per-limb split of `e0` as a witness (IF-006).
 
 use lib::configs::default::threshold::{
     L, N, USER_DATA_ENCRYPTION_CHUNKED_BIT_E0, USER_DATA_ENCRYPTION_CHUNKED_BIT_K,

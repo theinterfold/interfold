@@ -21,7 +21,7 @@
 //! re-supplies them, re-derives the identical commitments for cross-round binding, and evaluates
 //! at the Fiat-Shamir challenge. Both rounds build the same `Ct0ChunkLeaf`/`Ct1ChunkLeaf` - Round
 //! A additionally calls `check_range_bounds` and `check_padding`, Round B additionally calls
-//! `check_e0_chunk_crt_consistency` (ct0 only) and `chunk_gamma_pow`.
+//! and `chunk_gamma_pow`.
 
 use crate::math::commitments::{
     compute_ude_chunk_commitment, compute_ude_chunk_root_commitment,
@@ -31,8 +31,7 @@ use crate::math::commitments::{
 use crate::math::polynomial::Polynomial;
 
 /// Bounds a ct0 chunk leaf checks against. `k0is` is absent because no leaf needs it - only the
-/// identity check in `ct0_eval_chunk_identity` does - while `qis` is present because Round B's
-/// CRT-consistency check needs it.
+/// identity check in `ct0_eval_chunk_identity` does.
 pub struct Ct0ChunkConfigs<let L: u32> {
     pub qis: [Field; L],
     pub u_bound: Field,
@@ -42,9 +41,6 @@ pub struct Ct0ChunkConfigs<let L: u32> {
     pub r1_low_bounds: [Field; L],
     pub r1_up_bounds: [Field; L],
     pub r2_bounds: [Field; L],
-    /// Per-limb bound on the honest `e0_quotients[i]` magnitude - see
-    /// `check_e0_chunk_crt_consistency`.
-    pub e0_quotient_bounds: [Field; L],
 }
 
 impl<let L: u32> Ct0ChunkConfigs<L> {
@@ -57,7 +53,6 @@ impl<let L: u32> Ct0ChunkConfigs<L> {
         r1_low_bounds: [Field; L],
         r1_up_bounds: [Field; L],
         r2_bounds: [Field; L],
-        e0_quotient_bounds: [Field; L],
     ) -> Self {
         Ct0ChunkConfigs {
             qis,
@@ -68,7 +63,6 @@ impl<let L: u32> Ct0ChunkConfigs<L> {
             r1_low_bounds,
             r1_up_bounds,
             r2_bounds,
-            e0_quotient_bounds,
         }
     }
 }
@@ -295,45 +289,6 @@ impl<let CHUNK_SIZE: u32, let R1_CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, le
     }
 }
 
-/// Ties each CRT residue `e0is[i]` to the integer `e0` through a bounded quotient, for one chunk.
-///
-/// **Round B only.** Round A never commits to `e0is`, so a copy of this check there would
-/// constrain nothing observable: the binding runs entirely through Round B, where `e0is` is tied
-/// to `e0_chunk` here and `e0_chunk` is in turn tied to Round A's `e0` by the top-level circuit's
-/// `e0_root` equality assert.
-///
-/// The quotient range check is not optional. The equation below holds in `F_p`, not in `Z`: with
-/// an unbounded `e0_quotients[i]` a prover satisfies it for an *arbitrary* `e0is[i]` by solving
-/// `e0_quotients[i] := (e0 - e0is[i]) / qis[i]` through the modular inverse, and that forged
-/// residue then reaches the identity check unmediated. Bounding the quotient to the honest range
-/// closes the gap.
-///
-/// `e0is` itself is deliberately *not* bounded here - that would be redundant, since any multiple
-/// of `qis[i]` absorbed into `e0is` is absorbed one-for-one by `r1is` and leaves the identity
-/// unchanged mod `qis[i]`. Per-limb bounds could not substitute for the integer bound anyway: L
-/// residues each under `q_i/2` CRT-reconstruct to anything up to `q/2`, which would destroy the
-/// smudging bound decryption correctness depends on.
-pub fn check_e0_chunk_crt_consistency<let CHUNK_SIZE: u32, let L: u32, let BIT_E0_QUOTIENT: u32>(
-    configs: Ct0ChunkConfigs<L>,
-    e0_chunk: Polynomial<CHUNK_SIZE>,
-    e0is_chunk: [Polynomial<CHUNK_SIZE>; L],
-    e0_quotients_chunk: [Polynomial<CHUNK_SIZE>; L],
-) {
-    for i in 0..L {
-        e0_quotients_chunk[i].range_check_2bounds::<BIT_E0_QUOTIENT>(
-            configs.e0_quotient_bounds[i],
-            configs.e0_quotient_bounds[i],
-        );
-        for j in 0..CHUNK_SIZE {
-            assert(
-                e0_chunk.coefficients[j]
-                    == e0is_chunk[i].coefficients[j]
-                        + e0_quotients_chunk[i].coefficients[j] * configs.qis[i],
-            );
-        }
-    }
-}
-
 /// The `gamma` power that lifts a chunk's *local* Horner evaluation into its contribution to the
 /// full-length one.
 ///
@@ -472,80 +427,22 @@ pub fn compute_ude_vk_chain(top_level_key_hash: Field, vk_manifest: Field) -> Fi
 // Tests
 //
 // These cover the logic the deployed leaf circuits actually run: the soundness-critical checks
-// (`check_e0_chunk_crt_consistency`, `check_range_bounds`, `check_padding`) and the two places a
+// (`check_range_bounds`, `check_padding`) and the two places a
 // silent wrong answer is possible rather than a failed assert - the gamma offset convention and
 // the per-polynomial chunk width used to root a commitment.
 // ---------------------------------------------------------------------------------------------
 
 // e0_bound=100 and BIT_E0=8 (9-bit capacity) comfortably cover the small honest coefficients used
-// below; e0_quotient_bound=32 with BIT_E0_QUOTIENT=6 (7-bit capacity, range_size=2*bound) mirrors
-// the real fix's margin over the ~25.5 honest maximum at the real secure_16384 preset.
+// below.
 #[test]
 fn test_chunk_configs_new_roundtrip() {
-    let configs = test_ct0_configs(7, 100, 32);
+    let configs = test_ct0_configs(7, 100);
     assert(configs.qis[0] == 7);
     assert(configs.e0_bound == 100);
-    assert(configs.e0_quotient_bounds[0] == 32);
 }
 
-fn test_ct0_configs(qis0: Field, e0_bound: Field, e0_quotient_bound: Field) -> Ct0ChunkConfigs<1> {
-    Ct0ChunkConfigs::new(
-        [qis0],
-        1,
-        e0_bound,
-        0,
-        1,
-        [0],
-        [0],
-        [0],
-        [e0_quotient_bound],
-    )
-}
-
-/// The gap the `e0_quotients` range check closes. `check_e0_chunk_crt_consistency`'s equation
-/// holds in F_p, so a prover can back-solve `e0_quotients[i] := (e0 - e0is[i]) / qis[i]` through
-/// the modular inverse and satisfy it for an arbitrary forged `e0is[i]`. Without the bound this
-/// witness would be accepted; with it, the wildly out-of-range quotient is rejected.
-#[test(should_fail)]
-fn test_e0_chunk_crt_consistency_rejects_out_of_range_quotient() {
-    let honest_e0_coeff: Field = 5;
-    let qis0: Field = 1125899917262849;
-    let forged_e0is_coeff: Field = 999999999999;
-    let forged_quotient: Field = (honest_e0_coeff - forged_e0is_coeff) / qis0;
-
-    check_e0_chunk_crt_consistency::<2, 1, 6>(
-        test_ct0_configs(qis0, 100, 32),
-        Polynomial::new([honest_e0_coeff, 0]),
-        [Polynomial::new([forged_e0is_coeff, 0])],
-        [Polynomial::new([forged_quotient, 0])],
-    );
-}
-
-/// Sanity check: an honest witness (quotient within the configured bound) still passes, so the
-/// bound does not reject legitimate provers.
-#[test]
-fn test_e0_chunk_crt_consistency_accepts_honest_witness() {
-    let honest_e0_coeff: Field = 5;
-    let qis0: Field = 1125899917262849;
-
-    check_e0_chunk_crt_consistency::<2, 1, 6>(
-        test_ct0_configs(qis0, 100, 32),
-        Polynomial::new([honest_e0_coeff, 0]),
-        [Polynomial::new([honest_e0_coeff, 0])], // e0is == e0, so the honest quotient is 0
-        [Polynomial::new([0, 0])],
-    );
-}
-
-/// A residue that does not reconcile with `e0` under *any* in-range quotient must be rejected on
-/// the equation itself, not just the bound.
-#[test(should_fail)]
-fn test_e0_chunk_crt_consistency_rejects_mismatched_residue() {
-    check_e0_chunk_crt_consistency::<2, 1, 6>(
-        test_ct0_configs(1125899917262849, 100, 32),
-        Polynomial::new([5, 0]),
-        [Polynomial::new([6, 0])], // off by one, and no in-range quotient can absorb it
-        [Polynomial::new([0, 0])],
-    );
+fn test_ct0_configs(qis0: Field, e0_bound: Field) -> Ct0ChunkConfigs<1> {
+    Ct0ChunkConfigs::new([qis0], 1, e0_bound, 0, 1, [0], [0], [0])
 }
 
 fn test_ct0_leaf(
@@ -555,7 +452,7 @@ fn test_ct0_leaf(
     r1_coeffs: [Field; 4],
 ) -> Ct0ChunkLeaf<2, 4, 1, 1, 8, 1, 1, 1> {
     Ct0ChunkLeaf::new(
-        test_ct0_configs(1125899917262849, 100, 32),
+        test_ct0_configs(1125899917262849, 100),
         chunk_idx,
         4,
         Polynomial::new(u_coeffs),
