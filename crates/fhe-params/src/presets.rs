@@ -85,6 +85,16 @@ pub enum BfvPreset {
     /// a standard BFV key-pair to encrypt secret shares. These are temporary keys used
     /// only during the key generation process.
     SecureDkg16384,
+    /// The same insecure threshold parameters as [`BfvPreset::InsecureThreshold`], selecting the
+    /// l-BFV protocol path instead of trBFV - DO NOT USE IN PRODUCTION
+    ///
+    /// The two presets share every parameter and so every circuit config (`configs/insecure`);
+    /// they differ only in which DKG protocol an E3 runs (on-chain parameter sets 0 and 4), so the
+    /// one insecure set can test both paths. Only this one carries the l-BFV CRS/URS seeds, which
+    /// is what [`crate::supports_lbfv`] keys off.
+    ///
+    /// Declared last so the serialized indices of the earlier variants do not change.
+    InsecureThresholdLbfv,
 }
 
 impl BfvPreset {
@@ -95,6 +105,7 @@ impl BfvPreset {
             0 => Some(BfvPreset::InsecureThreshold),
             2 => Some(BfvPreset::SecureThreshold8192),
             3 => Some(BfvPreset::SecureThreshold16384),
+            4 => Some(BfvPreset::InsecureThresholdLbfv),
             _ => None,
         }
     }
@@ -311,8 +322,9 @@ impl BfvParamSet {
 }
 
 impl BfvPreset {
-    pub const ALL: [BfvPreset; 6] = [
+    pub const ALL: [BfvPreset; 7] = [
         BfvPreset::InsecureThreshold,
+        BfvPreset::InsecureThresholdLbfv,
         BfvPreset::InsecureDkg,
         BfvPreset::SecureThreshold8192,
         BfvPreset::SecureDkg8192,
@@ -320,8 +332,11 @@ impl BfvPreset {
         BfvPreset::SecureDkg16384,
     ];
 
-    pub const PAIR_PRESETS: [BfvPreset; 3] = [
+    // `InsecureThreshold` stays ahead of `InsecureThresholdLbfv`: lookups by parameters
+    // (`from_threshold_parameters`) cannot tell them apart and resolve to the trBFV one.
+    pub const PAIR_PRESETS: [BfvPreset; 4] = [
         BfvPreset::InsecureThreshold,
+        BfvPreset::InsecureThresholdLbfv,
         BfvPreset::SecureThreshold8192,
         BfvPreset::SecureThreshold16384,
     ];
@@ -330,6 +345,7 @@ impl BfvPreset {
         let normalized = name.trim().to_ascii_uppercase();
         match normalized.as_str() {
             "INSECURE_THRESHOLD" => Ok(Self::InsecureThreshold),
+            "INSECURE_THRESHOLD_LBFV" => Ok(Self::InsecureThresholdLbfv),
             "INSECURE_DKG" => Ok(Self::InsecureDkg),
             "SECURE_THRESHOLD_8192" => Ok(Self::SecureThreshold8192),
             "SECURE_DKG_8192" => Ok(Self::SecureDkg8192),
@@ -342,6 +358,7 @@ impl BfvPreset {
     pub fn name(&self) -> &'static str {
         match self {
             BfvPreset::InsecureThreshold => "INSECURE_THRESHOLD",
+            BfvPreset::InsecureThresholdLbfv => "INSECURE_THRESHOLD_LBFV",
             BfvPreset::InsecureDkg => "INSECURE_DKG",
             BfvPreset::SecureThreshold8192 => "SECURE_THRESHOLD_8192",
             BfvPreset::SecureDkg8192 => "SECURE_DKG_8192",
@@ -362,6 +379,7 @@ impl BfvPreset {
         }
         match s.to_ascii_lowercase().as_str() {
             "insecure" => Ok(Self::InsecureThreshold),
+            "insecure-lbfv" => Ok(Self::InsecureThresholdLbfv),
             "secure-8192" => Ok(Self::SecureThreshold8192),
             "secure-16384" => Ok(Self::SecureThreshold16384),
             _ => Err(PresetError::UnknownPreset(name.to_string())),
@@ -401,7 +419,9 @@ impl BfvPreset {
     /// Returns `None` when called on a DKG preset.
     pub fn dkg_counterpart(self) -> Option<BfvPreset> {
         match self {
-            BfvPreset::InsecureThreshold => Some(BfvPreset::InsecureDkg),
+            BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => {
+                Some(BfvPreset::InsecureDkg)
+            }
             BfvPreset::SecureThreshold8192 => Some(BfvPreset::SecureDkg8192),
             BfvPreset::SecureThreshold16384 => Some(BfvPreset::SecureDkg16384),
             BfvPreset::InsecureDkg | BfvPreset::SecureDkg8192 | BfvPreset::SecureDkg16384 => None,
@@ -419,6 +439,7 @@ impl BfvPreset {
             BfvPreset::SecureDkg8192 => Some(BfvPreset::SecureThreshold8192),
             BfvPreset::SecureDkg16384 => Some(BfvPreset::SecureThreshold16384),
             BfvPreset::InsecureThreshold
+            | BfvPreset::InsecureThresholdLbfv
             | BfvPreset::SecureThreshold8192
             | BfvPreset::SecureThreshold16384 => None,
         }
@@ -426,7 +447,7 @@ impl BfvPreset {
 
     pub fn metadata(&self) -> PresetMetadata {
         match self {
-            BfvPreset::InsecureThreshold => PresetMetadata {
+            BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => PresetMetadata {
                 name: self.name(),
                 degree: insecure::DEGREE,
                 num_moduli: insecure::threshold::MODULI.len(),
@@ -515,7 +536,9 @@ impl BfvPreset {
     pub fn artifacts_dir(&self) -> String {
         let meta = self.metadata();
         match self {
-            BfvPreset::InsecureThreshold | BfvPreset::InsecureDkg => "insecure".to_string(),
+            BfvPreset::InsecureThreshold
+            | BfvPreset::InsecureThresholdLbfv
+            | BfvPreset::InsecureDkg => "insecure".to_string(),
             _ => format!("{}-{}", meta.security.as_config_str(), meta.degree),
         }
     }
@@ -534,7 +557,9 @@ impl BfvPreset {
     /// Returns the valid Noir module name for this preset's generated configs.
     pub fn noir_config_module(&self) -> &'static str {
         match self {
-            BfvPreset::InsecureThreshold | BfvPreset::InsecureDkg => "insecure",
+            BfvPreset::InsecureThreshold
+            | BfvPreset::InsecureThresholdLbfv
+            | BfvPreset::InsecureDkg => "insecure",
             BfvPreset::SecureThreshold8192 | BfvPreset::SecureDkg8192 => "secure_8192",
             BfvPreset::SecureThreshold16384 | BfvPreset::SecureDkg16384 => "secure_16384",
         }
@@ -550,15 +575,17 @@ impl BfvPreset {
 
     pub fn search_defaults(&self) -> Option<PresetSearchDefaults> {
         match self {
-            BfvPreset::InsecureThreshold => Some(PresetSearchDefaults {
-                n: INSECURE_SEARCH_N,
-                k: INSECURE_SEARCH_K,
-                z: INSECURE_SEARCH_Z,
-                lambda: DEFAULT_INSECURE_LAMBDA as u32,
-                b: INSECURE_B,
-                b_chi: INSECURE_B_CHI,
-                mult_depth: INSECURE_MULT_DEPTH,
-            }),
+            BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => {
+                Some(PresetSearchDefaults {
+                    n: INSECURE_SEARCH_N,
+                    k: INSECURE_SEARCH_K,
+                    z: INSECURE_SEARCH_Z,
+                    lambda: DEFAULT_INSECURE_LAMBDA as u32,
+                    b: INSECURE_B,
+                    b_chi: INSECURE_B_CHI,
+                    mult_depth: INSECURE_MULT_DEPTH,
+                })
+            }
             BfvPreset::SecureThreshold8192 => Some(PresetSearchDefaults {
                 n: SEARCH_N,
                 k: SEARCH_K,
@@ -589,7 +616,7 @@ impl BfvPreset {
 impl From<BfvPreset> for BfvParamSet {
     fn from(value: BfvPreset) -> Self {
         match value {
-            BfvPreset::InsecureThreshold => BfvParamSet {
+            BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => BfvParamSet {
                 degree: insecure::DEGREE,
                 moduli: insecure::threshold::MODULI,
                 plaintext_modulus: insecure::threshold::PLAINTEXT_MODULUS,
@@ -696,13 +723,20 @@ mod tests {
     fn threshold_parameter_tuple_resolves_only_exact_supported_presets() {
         for preset in BfvPreset::PAIR_PRESETS {
             let parameters = BfvParamSet::from(preset);
+            // The two insecure presets share their parameters, so a lookup by parameters alone
+            // resolves to the trBFV one. Callers that must tell the paths apart use the
+            // on-chain parameter-set index instead.
+            let expected = match preset {
+                BfvPreset::InsecureThresholdLbfv => BfvPreset::InsecureThreshold,
+                other => other,
+            };
             assert_eq!(
                 BfvPreset::from_threshold_parameters(
                     parameters.degree,
                     parameters.plaintext_modulus,
                     parameters.moduli,
                 ),
-                Some(preset)
+                Some(expected)
             );
         }
 
@@ -808,7 +842,11 @@ mod tests {
             BfvPreset::from_on_chain_param_set(3),
             Some(BfvPreset::SecureThreshold16384)
         );
-        assert_eq!(BfvPreset::from_on_chain_param_set(4), None);
+        assert_eq!(
+            BfvPreset::from_on_chain_param_set(4),
+            Some(BfvPreset::InsecureThresholdLbfv)
+        );
+        assert_eq!(BfvPreset::from_on_chain_param_set(5), None);
     }
 
     #[test]

@@ -164,7 +164,7 @@ mod tests {
     use super::*;
     use crate::constants::{defaults, insecure, secure_16384, secure_8192};
     use crate::presets::BfvPreset;
-    use fhe::trbfv::{SmudgingBoundCalculator, SmudgingBoundCalculatorConfig};
+    use crate::smudging::calculate_smudging_bound;
     use num_bigint::BigUint;
     use std::str::FromStr;
 
@@ -241,16 +241,14 @@ mod tests {
         assert_eq!(BfvPreset::SecureDkg8192.metadata().lambda, 45);
 
         let defaults = BfvPreset::SecureThreshold8192.search_defaults().unwrap();
-        let config = SmudgingBoundCalculatorConfig::new(
+        let smudging_bound = calculate_smudging_bound(
             threshold.clone(),
             defaults.n as usize,
             defaults.z as usize,
+            defaults.mult_depth,
             BfvPreset::SecureThreshold8192.lambda().unwrap(),
         )
         .unwrap();
-        let smudging_bound = SmudgingBoundCalculator::new(config)
-            .calculate_sm_bound()
-            .unwrap();
         assert_eq!(
             smudging_bound.to_string(),
             "132922799578495921427264261134328266752000000"
