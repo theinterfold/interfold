@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::core::threshold::pk_aggregation::SUM_BIT_CARRY;
 use crate::math::commitments::{
     compute_multiple_polynomial_commitment_checked, compute_rlk_d0_commitment,
     compute_rlk_d2_commitment, DS_RLK_AGGREGATION,
@@ -112,6 +113,9 @@ impl<let N: u32, let H: u32, let L: u32, let BIT_D: u32> RlkAggregation<N, H, L,
         agg: [Polynomial<N>; L],
         basis_idx: u32,
     ) {
+        // The quotient divided out below is at most (3H + 1) / 2; see SUM_BIT_CARRY.
+        assert(H <= 128, "committee exceeds the sum carry bound");
+
         let q_l = self.configs.qis[basis_idx];
         let mod_q_l = ModU64::new(q_l as u64);
 
@@ -130,7 +134,8 @@ impl<let N: u32, let H: u32, let L: u32, let BIT_D: u32> RlkAggregation<N, H, L,
                 sum_shifted =
                     sum_shifted + values[party_idx][basis_idx].coefficients[coeff_idx] + half_qi;
             }
-            mod_q_l.assert_zero_mod(
+            // The quotient is range-checked to SUM_BIT_CARRY bits instead of cast to u64.
+            mod_q_l.assert_zero_mod_bounded::<SUM_BIT_CARRY>(
                 sum_shifted + offset - agg[basis_idx].coefficients[coeff_idx] - h_half_qi,
             );
         }

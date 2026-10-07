@@ -6,7 +6,7 @@
 
 use lib::configs::default::{H, N_PARTIES};
 use lib::configs::default::threshold::{
-    GADGET_DIM, L, N, RLK_AGGREGATION_BIT_D, RLK_AGGREGATION_CONFIGS,
+    GADGET_DIM, L, N, RLK_AGGREGATION_BIT_D, RLK_AGGREGATION_CONFIGS, RLK_GENERATION_BIT_D,
 };
 use lib::core::threshold::lbfv_proof_domain::{
     LbfvAcceptedPartySet, LbfvProofSession, validate_aggregation_statement,
@@ -40,6 +40,8 @@ fn main(
     d0_agg: [Polynomial<N>; L],
     d2_agg: [Polynomial<N>; L],
 ) -> pub (Field, Field) {
+    // Opens the d0/d2 commitments rlk_generation made, so the digit widths must agree.
+    assert(RLK_AGGREGATION_BIT_D == RLK_GENERATION_BIT_D);
     validate_aggregation_statement::<N_PARTIES, GADGET_DIM>(
         LbfvProofSession { session_id_hi, session_id_lo },
         aggregator_party_id,

@@ -133,8 +133,11 @@ impl<let N: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, let BIT_E2: u
         self.r2_d0.range_check_2bounds::<BIT_R2_D0>(self.r2_d0_bound, self.r2_d0_bound);
         self.r1_d2.range_check_2bounds::<BIT_R1_D2>(self.r1_d2_bound, self.r1_d2_bound);
         self.r2_d2.range_check_2bounds::<BIT_R2_D2>(self.r2_d2_bound, self.r2_d2_bound);
-        self.d0.range_check_2bounds::<BIT_D>(self.r2_d0_bound, self.r2_d0_bound);
-        self.d2.range_check_2bounds::<BIT_D>(self.r2_d2_bound, self.r2_d2_bound);
+        // d0/d2 are the RLK key limbs: pin them to the centered residue mod q_i, derived here
+        // rather than borrowed from a quotient bound that happens to equal it.
+        let d_bound = (self.qi - 1) / 2;
+        self.d0.range_check_2bounds::<BIT_D>(d_bound, d_bound);
+        self.d2.range_check_2bounds::<BIT_D>(d_bound, d_bound);
     }
 
     fn generate_challenge(
