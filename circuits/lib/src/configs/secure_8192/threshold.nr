@@ -5,7 +5,6 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::core::threshold::decrypted_shares_aggregation::Configs as DecryptedSharesAggregationConfigs;
-use crate::core::threshold::decrypted_shares_aggregation_wide::Configs as DecryptedSharesAggregationWideConfigs;
 use crate::core::threshold::pk_aggregation::Configs as PkAggregationConfigs;
 use crate::core::threshold::pk_generation::Configs as PkGenerationConfigs;
 use crate::core::threshold::rlk_aggregation::Configs as RlkAggregationConfigs;
@@ -24843,14 +24842,3 @@ pub global DECRYPTED_SHARES_AGGREGATION_BIT_T: u32 = 20;
 pub global DECRYPTED_SHARES_AGGREGATION_BIT_Q_TOTAL: u32 = 175;
 pub global DECRYPTED_SHARES_AGGREGATION_CONFIGS: DecryptedSharesAggregationConfigs<L> =
     DecryptedSharesAggregationConfigs::new(QIS, PLAINTEXT_MODULUS, Q_INVERSE_MOD_T);
-
-/************************************
--------------------------------------
-decrypted_shares_aggregation_wide (CIRCUIT 7, l-BFV wide moduli - KNOWN UNSOUND, see the circuit)
--------------------------------------
-************************************/
-
-pub global DECRYPTED_SHARES_AGGREGATION_WIDE_BIT_NOISE: u32 = 154;
-pub global DECRYPTED_SHARES_AGGREGATION_WIDE_BIT_D_NATIVE: u32 = 59;
-pub global DECRYPTED_SHARES_AGGREGATION_WIDE_CONFIGS: DecryptedSharesAggregationWideConfigs<L> =
-    DecryptedSharesAggregationWideConfigs::new(QIS, PLAINTEXT_MODULUS, Q_INVERSE_MOD_T);

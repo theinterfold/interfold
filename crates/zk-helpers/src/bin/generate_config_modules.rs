@@ -387,18 +387,6 @@ fn render_threshold(preset: BfvPreset) -> Result<String> {
             "USER_DATA_ENCRYPTION_CHUNKED_CT1_CONFIGS",
         ],
     );
-    let dsa_wide = th::decrypted_shares_aggregation_wide::Configs::compute(preset, &())
-        .context("wide decrypted_shares_aggregation Configs::compute failed")?;
-    let dsa_wide_globals = circuit_globals(
-        &th::decrypted_shares_aggregation_wide::generate_configs(preset, &dsa_wide)
-            .replace(
-                "decrypted_shares_aggregation::Configs as DecryptedSharesAggregationConfigs",
-                "decrypted_shares_aggregation_wide::Configs as DecryptedSharesAggregationWideConfigs",
-            )
-            .replace("DecryptedSharesAggregationConfigs", "DecryptedSharesAggregationWideConfigs"),
-        "DECRYPTED_SHARES_AGGREGATION_WIDE",
-        &[],
-    );
     let (lbfv_r1_bounds, lbfv_r2_bounds) =
         th::pk_generation::lbfv_limb_quotient_bounds(preset, &pkgen.bounds.eek_bound)
             .context("lbfv_limb_quotient_bounds failed")?;
@@ -425,7 +413,6 @@ fn render_threshold(preset: BfvPreset) -> Result<String> {
             &udec_chunked_globals,
             &tsd_globals,
             &dsa_globals,
-            &dsa_wide_globals,
         ],
     );
     let header = format!(
@@ -635,13 +622,9 @@ pub global RLK_AGGREGATION_CONFIGS: RlkAggregationConfigs<L> = RlkAggregationCon
         "decrypted_shares_aggregation (CIRCUIT 7)",
         &render_globals(&[&dsa_globals]),
     );
-    let dsa_wide_section = section(
-        "decrypted_shares_aggregation_wide (CIRCUIT 7, l-BFV wide moduli - KNOWN UNSOUND, see the circuit)",
-        &render_globals(&[&dsa_wide_globals]),
-    );
 
     Ok(format!(
-        "{header}{pkgen_section}\n\n{lbfv_pk_section}\n\n{rlk_section}\n\n{pkagg_section}\n\n{udec_section}\n\n{udec_chunked_section}\n\n{tsd_section}\n\n{dsa_section}\n\n{dsa_wide_section}\n"
+        "{header}{pkgen_section}\n\n{lbfv_pk_section}\n\n{rlk_section}\n\n{pkagg_section}\n\n{udec_section}\n\n{udec_chunked_section}\n\n{tsd_section}\n\n{dsa_section}\n"
     ))
 }
 
