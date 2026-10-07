@@ -3061,6 +3061,7 @@ dependencies = [
  "e3-bfv-client",
  "e3-compute-provider",
  "e3-fhe-params",
+ "futures-util",
  "hex",
  "reqwest",
  "serde",

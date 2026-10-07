@@ -5,23 +5,27 @@
 #
 #   1. the guest in ./guest, transpiled to an OpenVM executable;
 #   2. its application proving key, then the aggregation key and receipt identity (`prepare`);
-#   3. the worker configuration, .interfold/caches/openvm/prover.json;
+#   3. the worker configuration: OPENVM_PROVER_CONFIG, or .interfold/caches/openvm/prover.json;
 #   4. the proving service.
 #
 # Step 2 runs only when the executable or ./guest/openvm.toml changed since the last run.
 #
 # Environment, set by `interfold program compile` from `program.openvm`:
 #   OPENVM_PROVER_BIN            the CPU worker
-#   OPENVM_PROVER_BIN_CUDA       the CUDA worker; runs `prepare` when there is no CPU worker
+#   OPENVM_PROVER_BIN_CUDA       the CUDA worker; runs `prepare` when there is no CPU worker, which
+#                                works only where it can open a GPU
 #   OPENVM_SETUP_DIR             what `cargo openvm setup` wrote (default ~/.openvm)
 #   OPENVM_SEGMENT_MEMORY_BYTES  the proving segment memory limit (default 8 GiB, fits a 16 GB GPU)
 #   CARGO_OPENVM                 the cargo-openvm command (default `cargo openvm`)
+#   OPENVM_PROVER_CONFIG         where to write the worker configuration; `start` and the template
+#                                and CRISP deploys read the same path
 #   OPENVM_BUILD_LOCKED=1        build the guest with --locked (read by cargo-openvm)
 set -euo pipefail
 
 PROJECT="$(pwd)"
 GUEST="$PROJECT/guest"
 OUT="$PROJECT/.interfold/caches/openvm"
+CONFIG="${OPENVM_PROVER_CONFIG:-$OUT/prover.json}"
 SETUP="${OPENVM_SETUP_DIR:-$HOME/.openvm}"
 WORKER="${OPENVM_PROVER_BIN:-${OPENVM_PROVER_BIN_CUDA:-}}"
 read -r -a CARGO_OPENVM <<< "${CARGO_OPENVM:-cargo openvm}"
@@ -32,6 +36,16 @@ if [ ! -f "$GUEST/Cargo.toml" ]; then
 fi
 if [ -z "$WORKER" ]; then
   echo "Set program.openvm.prover_bin or program.openvm.prover_bin_cuda to the OpenVM worker" >&2
+  exit 1
+fi
+if ! "${CARGO_OPENVM[@]}" --version >/dev/null 2>&1; then
+  echo "cargo-openvm is missing. Install it with: cargo install --locked --git" \
+    "https://github.com/openvm-org/openvm.git --tag v2.0.2 cargo-openvm" >&2
+  exit 1
+fi
+if [ ! -f "$SETUP/halo2.pk" ] || [ ! -d "$SETUP/params" ]; then
+  echo "No Halo2 proving key and parameters in $SETUP. Run \`cargo openvm setup\`, or set" \
+    "program.openvm.setup_dir to where they are." >&2
   exit 1
 fi
 
@@ -62,9 +76,12 @@ if [ "$(cat "$PREPARED/inputs" 2>/dev/null || true)" != "$INPUTS" ]; then
   echo "$INPUTS" > "$PREPARED/inputs"
 fi
 
-"$WORKER" write-config "$OUT/prover.json" "$KEYS/app.pk" "$EXE" "$PREPARED" "$SETUP" \
+"$WORKER" write-config "$CONFIG" "$KEYS/app.pk" "$EXE" "$PREPARED" "$SETUP" \
   "${OPENVM_SEGMENT_MEMORY_BYTES:-8589934592}"
+echo "Worker configuration: $CONFIG"
 echo "Receipt identity: $PREPARED/identity.json"
 
+# Not --locked: after `interfold init`, the project's lockfile still names the template's path
+# sources until a build updates it.
 echo "Building the OpenVM proving service"
-cargo build --locked --release --bin e3-support-scripts-openvm
+cargo build --release --bin e3-support-scripts-openvm

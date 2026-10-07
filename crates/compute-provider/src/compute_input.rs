@@ -24,6 +24,9 @@ pub struct FHEProcessorInput<'a> {
     /// Read one at a time: inside the zkVM each is read from the input stream and checked only when
     /// the processor asks for it, so a round never has to fit in memory at once. The processor must
     /// read every item.
+    ///
+    /// The on-chain index is what the caller supplied. No leaf, root or journal word binds it, so the
+    /// output must not depend on it; the ciphertext's position in the round is what the root binds.
     pub ciphertexts: &'a mut dyn Iterator<Item = (Vec<u8>, u64)>,
     pub params: &'a Arc<BfvParameters>,
 }

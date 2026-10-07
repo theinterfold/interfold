@@ -345,8 +345,11 @@ read it.
 | `openvm.prover_bin`      | Path    | None        | The CPU build of `interfold-openvm-prover`. Absolute.                                                                                     |
 | `openvm.prover_bin_cuda` | Path    | None        | The CUDA build of `interfold-openvm-prover`. Absolute. At least one worker is required.                                                   |
 | `openvm.backend`         | String  | `auto`      | `auto` uses the CUDA worker when it can open a GPU, and the CPU worker otherwise. `cpu` or `cuda` forces one; `cuda` fails without a GPU. |
-| `openvm.prover_config`   | Path    | Compiled    | The worker configuration. Defaults to `.interfold/caches/openvm/prover.json`, which `compile` writes.                                     |
 | `openvm.setup_dir`       | Path    | `~/.openvm` | The Halo2 key, KZG parameters, and EVM verifier that `cargo openvm setup` wrote.                                                          |
+
+The worker configuration is `.interfold/caches/openvm/prover.json`, which `compile` writes, or the
+path in the `OPENVM_PROVER_CONFIG` environment variable, which `compile`, `start`, and the template
+and CRISP deploys all read.
 
 The removed `program.risc0` section still loads, so a ciphernode that shares the file keeps
 starting. `interfold program` refuses it. The service's deadlines, listener, and request limit come

@@ -344,7 +344,7 @@ contract MyProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownable {
 
   constructor(
     IInterfold _interfold,
-    IRiscZeroVerifier _verifier,
+    IOpenVmReceiptVerifier _verifier,
     ICircuitVerifier _inputVerifier,
     bytes32 _imageId
   ) Ownable(msg.sender) {

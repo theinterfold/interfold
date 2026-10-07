@@ -45,6 +45,24 @@ case "$command" in
     export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target/openvm/prover}"
     exec cargo run --locked --release --manifest-path "$ROOT/crates/openvm-prover/Cargo.toml" -- "$@"
     ;;
+  # Builds CRISP's guest and runs it, without proving, on a fixture made by `fixture`, then checks
+  # that it reveals the SHA-256 digest of the journal the native host computed.
+  guest-parity)
+    fixture="${1:?Usage: pnpm openvm guest-parity <fixture-directory>}"
+    out="$ROOT/target/openvm/guest-parity"
+    export OPENVM_BUILD_LOCKED=1
+    RUSTFLAGS="${RUSTFLAGS:-} --cfg crisp_openvm --cfg crisp_fhe_optimized" \
+      cargo openvm build --manifest-path "$CRISP/guest/Cargo.toml" --target-dir "$out/target" --output-dir "$out"
+    revealed="$(cargo openvm run --manifest-path "$CRISP/guest/Cargo.toml" --exe "$out/e3-openvm-guest.vmexe" \
+      --input "$fixture/execute/input.json" | sed -n 's/^Execution output: //p')"
+    expected="$(python3 -c 'import hashlib, sys; print(list(hashlib.sha256(open(sys.argv[1], "rb").read()).digest()))' \
+      "$fixture/execute/journal.bin")"
+    if [ "$revealed" != "$expected" ]; then
+      echo "The guest revealed ${revealed:-nothing}; the host journal hashes to $expected" >&2
+      exit 1
+    fi
+    echo "The guest revealed the digest of the host's journal"
+    ;;
   # `cargo openvm <arguments>` in CRISP's guest, with the guest's configuration flags.
   guest)
     export RUSTFLAGS="${RUSTFLAGS:-} --cfg crisp_openvm --cfg crisp_fhe_optimized"
@@ -61,5 +79,5 @@ case "$command" in
   service-e2e)
     OPENVM_E2E_ENABLED=1 exec pnpm --filter @crisp-e3/contracts test --network localhost tests/openvm-service.test.ts "$@"
     ;;
-  *) echo 'Usage: pnpm openvm cli-build|fixture|crisp-server-build|crisp-server-test|service-build|service-check|service-test|compile|service-start|prover-build|prover-test|prover-check|prover|guest|contract-test|proof-test|service-e2e [arguments]' >&2; exit 2 ;;
+  *) echo 'Usage: pnpm openvm cli-build|fixture|crisp-server-build|crisp-server-test|service-build|service-check|service-test|compile|service-start|prover-build|prover-test|prover-check|prover|guest-parity|guest|contract-test|proof-test|service-e2e [arguments]' >&2; exit 2 ;;
 esac

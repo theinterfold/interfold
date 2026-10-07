@@ -649,7 +649,7 @@ node:
 program:
   openvm:
     prover_bin: "/deployment/bin/interfold-openvm-prover"
-    prover_config: "/deployment/prover.json"
+    setup_dir: "/deployment/openvm"
 
 nodes:
   ag:
@@ -683,7 +683,7 @@ nodes:
                 config.program().openvm(),
                 Some(&OpenVmConfig {
                     prover_bin: Some(PathBuf::from("/deployment/bin/interfold-openvm-prover")),
-                    prover_config: Some(PathBuf::from("/deployment/prover.json")),
+                    setup_dir: Some(PathBuf::from("/deployment/openvm")),
                     ..OpenVmConfig::default()
                 })
             );

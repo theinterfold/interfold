@@ -41,4 +41,10 @@ echo "Building and installing interfold CLI (${INTERFOLD_FEATURES:-no extra feat
 # shellcheck disable=SC2086
 (cd "${REPO_ROOT}" && cargo install --locked --path crates/cli --bin interfold -f $INTERFOLD_FEATURES)
 
+# Real proofs need the OpenVM guest, its keys and receipt identity before the deployment reads them.
+if [[ "$CRISP_REAL_PROOFS" == "1" ]]; then
+  echo "Compiling the OpenVM guest, keys, and proving service..."
+  (cd "${CRISP_ROOT}" && interfold program compile)
+fi
+
 print_crisp_dev_config_summary

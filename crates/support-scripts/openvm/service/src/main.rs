@@ -14,6 +14,7 @@ use anyhow::{Context, Result};
 use e3_openvm_host::{ComputeDomain, Prover, WorkerConfig};
 use e3_program_server::E3ProgramServer;
 use std::sync::Arc;
+use std::time::Duration;
 
 fn env_or<T: std::str::FromStr>(name: &str, default: T) -> Result<T> {
     match std::env::var(name) {
@@ -61,6 +62,10 @@ async fn main() -> Result<()> {
     .with_port(port)
     .with_max_concurrent_jobs(env_or("MAX_CONCURRENT_COMPUTATIONS", 1)?)
     .with_max_request_bytes(env_or("OPENVM_MAX_REQUEST_BYTES", 128 * 1024 * 1024)?)
+    .with_body_timeout(Duration::from_secs(env_or(
+        "OPENVM_BODY_TIMEOUT_SECS",
+        120,
+    )?))
     .build()?;
 
     server.run().await

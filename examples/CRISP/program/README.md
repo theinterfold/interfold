@@ -27,14 +27,16 @@ Follow [the OpenVM instructions](../../../crates/openvm-prover/README.md). Confi
 The guest in `examples/CRISP/guest` and the service in `.interfold/support/openvm` both link this
 crate.
 
-From `examples/CRISP`, run:
+For a local round with real proofs, set `CRISP_REAL_PROOFS=1` in `crisp.dev.env`, then from
+`examples/CRISP` run:
 
 ```sh
-pnpm dev:program
+pnpm dev:setup   # also runs `interfold program compile`
+pnpm dev:up      # deploys the receipt verifier for the compiled guest and starts the services
 ```
 
-The program server defaults to port 13151. The script uses the configured OpenVM backend. It does
-not force unproved execution.
+Without `CRISP_REAL_PROOFS=1`, these scripts run the unproved development runner. The OpenVM service
+listens on `127.0.0.1:13151`.
 
 ## Fresh test inputs
 

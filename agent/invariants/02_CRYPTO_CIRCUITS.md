@@ -440,15 +440,15 @@ every section.
   (no BFV decoding/Poseidon2 in Solidity); C3/C6 commitments are checked against their ciphertext
   witnesses. — INDEX IF-004
 - **Ciphertext-duty proof (Zenith #15):** each E3 snapshots the protocol verifier for its encryption
-  scheme at request time. Before `CiphertextReady`, this verifier checks a zkVM receipt that
-  binds the chain, Interfold address, E3 ID, scheme ID, BFV parameter hash, committee public key,
-  output hash, and SAFE commitment. The E3 program verifies application rules separately and cannot
-  create a decryption duty by itself. — `flow-trace/04`; INDEX Z-15
+  scheme at request time. Before `CiphertextReady`, this verifier checks a zkVM receipt that binds
+  the chain, Interfold address, E3 ID, scheme ID, BFV parameter hash, committee public key, output
+  hash, and SAFE commitment. The E3 program verifies application rules separately and cannot create
+  a decryption duty by itself. — `flow-trace/04`; INDEX Z-15
 - **The compute path carries no external audit.** Neither Zenith protocol audit (2026-08-17, six
-  Solidity files; 2026-09-08, a scoped review of 14 Solidity files) covered Rust, the OpenVM
-  guest and prover, `crates/compute-provider`, `crates/zk-helpers`, or the OpenVM receipt
-  verifiers (`OpenVmBfvCiphertextVerifier.sol`, `OpenVmReceiptVerifier.sol`). Treat
-  changes there as unaudited. — `packages/interfold-contracts/audits/README.md`
+  Solidity files; 2026-09-08, a scoped review of 14 Solidity files) covered Rust, the OpenVM guest
+  and prover, `crates/compute-provider`, `crates/zk-helpers`, or the OpenVM receipt verifiers
+  (`OpenVmBfvCiphertextVerifier.sol`, `OpenVmReceiptVerifier.sol`). Treat changes there as
+  unaudited. — `packages/interfold-contracts/audits/README.md`
 - **A Secure Process derives its input root; it never receives it.** `ComputeInput` holds
   `fhe_inputs` and per-input `published` data, never a root, and `ComputeInput::process` derives one
   leaf from each supplied input through the E3 program's `InputPolicy`. The protocol verifier
@@ -459,16 +459,16 @@ every section.
   publish a tally over ciphertexts that were never submitted. `MerkleTreeBuilder::with_leaf_hashes`
   is `#[cfg(test)]` to keep it out of that path. — `flow-trace/04`
 - **Every E3 program must compare the proof's input root against its own root.**
-  `OpenVmBfvCiphertextVerifier` authenticates the receipt's `inputRoot` but compares it with nothing.
-  A program that skips the comparison accepts a result computed over any input set. —
+  `OpenVmBfvCiphertextVerifier` authenticates the receipt's `inputRoot` but compares it with
+  nothing. A program that skips the comparison accepts a result computed over any input set. —
   `flow-trace/04`
 - **A Secure Process derives its leaves; it never receives them, and never drops one.**
-  `MerkleTreeBuilder::compute_leaf_hashes_batched` computes one leaf per supplied input, in the
-  supplied order whatever the batching schedule, through the program's `InputPolicy::leaf`,
-  including inputs that the policy does not select for computation. The caller must supply the
-  complete input set in on-chain order: a received root can disagree with the data it claims to
-  describe, and a missing leaf changes the root and makes the result unpublishable. —
-  `crates/compute-provider/src/merkle_tree_builder.rs`; `flow-trace/04`
+  `SecureProcess` computes one leaf per supplied input, in the supplied order whatever the batching
+  schedule, through the program's `InputPolicy::leaf`, including inputs that the policy does not
+  select for computation. The caller must supply the complete input set in on-chain order: a
+  received root can disagree with the data it claims to describe, and a missing leaf changes the
+  root and makes the result unpublishable. — `crates/compute-provider/src/secure_process.rs`;
+  `flow-trace/04`
 - **A CRISP input is committed before it is finalized, but computation requires both.**
   `publishInput` verifies the Noir proof and the configured service's EIP-712 storage attestation,
   then reserves the leaf and index so a later input can name it as its parent. `finalizeInput` must
@@ -495,6 +495,11 @@ every section.
   universal answer. `InputPolicy::default` is the historical behaviour — leaf is the ciphertext's
   own commitment, every input counts — which matches the starter template. Every E3 program exports
   `policy()` beside `fhe_processor`. — `flow-trace/04`
+- **The Secure Process holds one ciphertext at a time and checks its second pass.** It reads every
+  ciphertext once for its leaf, selects over records without bytes, then reads the selected
+  ciphertexts again and refuses one whose Keccak hash differs from the first read. The host and the
+  guest run the same `SecureProcess`, so the journal the host predicts is the one the guest proves.
+  — `flow-trace/04`
 - **CRISP binds bytes, commitment, slot and parent into its leaf, and selects the end of each slot's
   chain.** `CRISPProgram.inputLeaf` is
   `sha256(keccak256(bytes) || commitment || slot || parentIndexPlusOne) mod SNARK_SCALAR_FIELD` and

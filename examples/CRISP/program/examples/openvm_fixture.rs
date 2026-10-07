@@ -4,7 +4,8 @@
 //!
 //! `openvm_fixture <count> <new-directory> [--insecure]`. Besides the ballots and `fixture.json`,
 //! it writes `execute/input.bin` and `execute/journal.bin`: the guest input and the expected
-//! journal for a test domain, for `interfold-openvm-prover execute`.
+//! journal for a test domain, for `interfold-openvm-prover execute`. `execute/input.json` holds the
+//! same input for `cargo openvm run`.
 
 use anyhow::{ensure, Context, Result};
 use e3_bfv_client::client::{compute_ct_commitment_with_params, compute_pk_commitment};
@@ -195,5 +196,19 @@ fn write_execute_input(
         items.into_iter(),
     )?;
     fs::write(output.join("execute/journal.bin"), journal.abi_bytes())?;
+    // `cargo openvm run` reads each input item as hex prefixed with 0x01, which marks bytes.
+    let items: Vec<String> = std::iter::once(header.as_slice())
+        .chain(ciphertexts.iter().map(|(bytes, _)| bytes.as_slice()))
+        .chain(
+            selected
+                .iter()
+                .map(|&index| ciphertexts[index].0.as_slice()),
+        )
+        .map(|item| format!("0x01{}", hex::encode(item)))
+        .collect();
+    fs::write(
+        output.join("execute/input.json"),
+        serde_json::to_vec(&json!({ "input": items }))?,
+    )?;
     Ok(())
 }

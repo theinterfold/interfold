@@ -36,7 +36,6 @@ impl ProgramSupportOpenVm {
         for (name, path) in [
             ("OPENVM_PROVER_BIN", &config.prover_bin),
             ("OPENVM_PROVER_BIN_CUDA", &config.prover_bin_cuda),
-            ("OPENVM_PROVER_CONFIG", &config.prover_config),
             ("OPENVM_SETUP_DIR", &config.setup_dir),
         ] {
             if let Some(path) = path {

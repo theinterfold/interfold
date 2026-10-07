@@ -45,7 +45,9 @@ CARGO_TARGET_DIR=target/openvm/prover-cuda \
 ```
 
 The CUDA build links the CUDA runtime dynamically, so it starts only where the CUDA libraries are
-installed. Keep the two builds apart; a project may configure both.
+installed, and it stops at startup when it cannot open a GPU. Keep the two builds apart; a project
+may configure both. On a machine without a GPU, configure the CPU worker: `compile` runs `prepare`
+with it.
 
 ## Configure the project
 
@@ -59,7 +61,6 @@ program:
     prover_bin_cuda: /opt/openvm/interfold-openvm-prover-cuda # optional
     backend: auto # auto, cpu or cuda
     # setup_dir: /home/me/.openvm         # what `cargo openvm setup` wrote
-    # prover_config: /path/to/prover.json # defaults to the one `compile` writes
 ```
 
 With `backend: auto` the service runs the CUDA worker's `probe` at startup. When that opens a GPU,
@@ -74,9 +75,10 @@ interfold program compile
 ```
 
 This builds `guest/`, generates its application key, runs the worker's `prepare` for the aggregation
-key and receipt identity, writes `.interfold/caches/openvm/prover.json`, and builds the service. The
-keys are regenerated only when the guest executable or `guest/openvm.toml` changes. The receipt
-identity is in `.interfold/caches/openvm/prepared/identity.json`.
+key and receipt identity, writes the worker configuration (`OPENVM_PROVER_CONFIG`, or
+`.interfold/caches/openvm/prover.json`), and builds the service. `start` and the deploys read the
+same path. The keys are regenerated only when the guest executable or `guest/openvm.toml` changes.
+The receipt identity is in `.interfold/caches/openvm/prepared/identity.json`.
 
 Deploy the contracts next. The template and CRISP deploys read the identity and verifier artifact
 from that `prover.json` unless `OPENVM_APP_EXE_COMMIT`, `OPENVM_APP_VM_COMMIT`, and either
@@ -94,14 +96,15 @@ and recomputes the identity from the executable, before any request is accepted.
 
 ## Worker commands
 
-| Command                                                                       | Purpose                                   |
-| ----------------------------------------------------------------------------- | ----------------------------------------- |
-| `prepare <app.pk> <guest.vmexe> <new-dir>`                                    | Aggregation key and `identity.json`       |
-| `write-config <out.json> <app.pk> <guest.vmexe> <prepared> <setup> <segment>` | The configuration below                   |
-| `probe`                                                                       | Succeeds only for a CUDA build with a GPU |
-| `check <config.json>`                                                         | Loads and checks every artifact           |
-| `prove <config.json> <input> <journal> <new-seal>`                            | Proves and verifies one round             |
-| `verify <config.json> <proof.json> <journal> <new-seal>`                      | Verifies an existing proof                |
+| Command                                                                       | Purpose                                            |
+| ----------------------------------------------------------------------------- | -------------------------------------------------- |
+| `prepare <app.pk> <guest.vmexe> <new-dir>`                                    | Aggregation key and `identity.json`                |
+| `write-config <out.json> <app.pk> <guest.vmexe> <prepared> <setup> <segment>` | The configuration below                            |
+| `probe`                                                                       | Succeeds only for a CUDA build with a GPU          |
+| `check <config.json>`                                                         | Loads and checks every artifact                    |
+| `execute <config.json> <input> <journal>`                                     | Runs the guest without proving; checks the journal |
+| `prove <config.json> <input> <journal> <new-seal>`                            | Proves and verifies one round                      |
+| `verify <config.json> <proof.json> <journal> <new-seal>`                      | Verifies an existing proof                         |
 
 `prove` reads the guest input items the host wrote, proves the application, aggregates it, generates
 the Halo2 EVM proof, and verifies it with the configured EVM verifier against the expected journal
@@ -125,6 +128,7 @@ and both application commitments before it writes a seal. There is no fake-proof
 | ----------------------------- | ----------------- | --------------------------------------------- |
 | `OPENVM_BIND_ADDR`            | `127.0.0.1:13151` | Listener                                      |
 | `OPENVM_MAX_REQUEST_BYTES`    | 128 MiB           | Largest `/run_compute` body                   |
+| `OPENVM_BODY_TIMEOUT_SECS`    | 120               | Time an admitted request has to send its body |
 | `MAX_CONCURRENT_COMPUTATIONS` | 1                 | Rounds proved at once                         |
 | `OPENVM_CHECK_TIMEOUT_SECS`   | 1800              | Deadline for the startup `check`              |
 | `OPENVM_PROVE_TIMEOUT_SECS`   | 86400             | Deadline for one proof; the worker is stopped |

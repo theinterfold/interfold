@@ -1148,10 +1148,10 @@ smallest binary Poseidon tree that can hold the submitted SAFE ciphertext commit
 minimum depth of one. The compute provider and E3 program must use this same leaf value, order, zero
 value, and depth rule.
 
-The guest derives the input root from the ciphertexts it processed. `ComputeInput` holds only
-`fhe_inputs`, and `ComputeInput::run_batched` calls `MerkleTreeBuilder::compute_leaf_hashes_batched`
-over those ciphertexts before it builds the tree (`crates/compute-provider/src/compute_input.rs`).
-The leaves are therefore a function of the processed set, not a separate prover-supplied value.
+The guest derives the input root from the ciphertexts it processed. Its input carries no root or
+leaf, and `SecureProcess::absorb` builds each leaf from the ciphertext it reads, before the tree is
+built (`crates/compute-provider/src/secure_process.rs`). The leaves are therefore a function of the
+processed set, not a separate prover-supplied value.
 
 This binding matters because nothing else supplies it. `OpenVmBfvCiphertextVerifier` takes the input
 root from the proof envelope and never constrains it, so the only check on the root is the
@@ -1951,14 +1951,24 @@ after the complete key publication arrives and passes that commitment check.
 
 - leaves are **derived** from the ciphertexts the Secure Process consumed, never received alongside
   them;
-- **every** published input contributes a leaf, whatever is computed over.
+- **every** published input contributes a leaf, whatever is computed over;
+- the selected ciphertexts the processor reads are the ones the leaves were built from.
+
+`SecureProcess` reads a round in two passes, one ciphertext at a time. The first pass reads every
+ciphertext in index order and keeps its leaf, recomputed commitment and Keccak hash. Selection then
+runs over those records. The second pass reads the selected ciphertexts again, and refuses one whose
+hash differs from its first read (`InputChanged`), a first pass that is short or long
+(`InputCount`), and a processor that stops before the last selected input (`Unread`). The guest
+therefore holds one ciphertext at a time, and its memory does not bound a round. `ComputeInput::run`
+runs the same code over a round held in memory, so the host's predicted journal and the guest's
+agree.
 
 The leaf layout and which inputs are computed over come from the program, as an `InputPolicy`:
 
 ```rust
 pub struct InputPolicy {
     pub leaf: fn(&PublishedInput) -> Result<String, ComputeError>,
-    pub select: fn(&[PublishedInput]) -> Vec<usize>,
+    pub select: fn(&[InputRecord]) -> Vec<usize>,
 }
 ```
 
@@ -1970,21 +1980,26 @@ answers differently from a program where every input counts.
 commitment and every input is computed over — and matches the starter template, whose
 `MyProgram.publishInput` inserts the commitment directly. Every E3 program exports `policy()` beside
 `fhe_processor`, so the guest and the dev runner need not know which program they are running.
+`select` sees an `InputRecord`: the published input without its ciphertext bytes, which the Secure
+Process no longer holds at selection time. The processor receives the selected ciphertexts as an
+iterator.
 
-The support program manifest points to the canonical CRISP source in `examples/CRISP/program`. A
-policy change requires a new OpenVM executable, derived application commitments, and matching
-receipt-verifier deployment. Do not reuse a legacy RISC Zero image ID or an aggregation key for
-another VM configuration.
+Each project's guest (`guest/`) and proving service (`.interfold/support/openvm`) link the project's
+own `program/`. A policy or processor change requires a new OpenVM executable, derived application
+commitments, and matching receipt-verifier deployment. Do not reuse a legacy RISC Zero image ID or
+an aggregation key for another VM configuration.
 
 The OpenVM guest enables `heap-embedded-alloc`. A bump allocator never frees, so each input's
 temporary Greco form would stay allocated and a secure-preset round would run out of memory as the
 round grows. The allocator is part of the guest executable, so changing it changes the application
 commitments that the receipt verifiers bind.
 
-`interfold program start` uses `program.openvm` to locate the repository, worker executable, and
-worker configuration. The HTTP service validates this configuration before it accepts work. Proving
-artifacts and machine-specific paths stay outside Git. Explicit development mode remains separate
-from the real-proof service.
+`interfold program compile` builds the project's guest, its keys, the receipt identity and the
+worker configuration, and `interfold program start` runs the project's service with the
+`program.openvm` workers. The service picks the CUDA worker when it is configured and its probe
+opens a GPU, and the CPU worker otherwise, and runs the worker's `check` before it accepts work.
+Every worker run has a deadline. Proving artifacts and machine-specific paths stay outside Git.
+Explicit development mode remains separate from the real-proof service.
 
 File: `examples/CRISP/packages/crisp-contracts/tests/openvm-service.test.ts`
 
@@ -2013,9 +2028,9 @@ leaf = sha256(keccak256(encryptedVote) || encryptedVoteCommitment || slotAddress
 - the **parent**, because the guest walks each slot's chain by it — an unbound parent would let a
   prover re-point entries and change which one holds the slot.
 
-`MerkleTreeBuilder::compute_leaf_hashes_batched` rebuilds exactly that layout. Both sides pin the
-same test vector (`program/tests/input_leaf.rs` and `tests/input-leaf.test.ts`), and
-`examples/CRISP/program/tests/onchain_root_agreement.rs` asserts Rust reproduces a root a real
+The CRISP `policy::leaf`, which `SecureProcess` applies to each input, rebuilds exactly that layout.
+Both sides pin the same test vector (`program/tests/input_leaf.rs` and `tests/input-leaf.test.ts`),
+and `examples/CRISP/program/tests/onchain_root_agreement.rs` asserts Rust reproduces a root a real
 contract produced, from a fixture generated by `tests/input-tree-e2e.test.ts`. A one-byte divergence
 would make every root mismatch and nothing else would detect it.
 

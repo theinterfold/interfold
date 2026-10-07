@@ -15,14 +15,14 @@ import path from 'node:path'
 const root = path.resolve(__dirname, '..')
 const requireContracts = createRequire(path.join(root, 'packages/interfold-contracts/package.json'))
 const { AbiCoder, Contract, FetchRequest, JsonRpcProvider, getAddress, id, keccak256 } = requireContracts('ethers')
-type Args = Partial<Record<'config' | 'prover' | 'rpc' | 'verifier' | 'out', string>>
+type Args = Partial<Record<'config' | 'prover' | 'rpc' | 'verifier' | 'out' | 'project', string>>
 
 function parseArgs(): Args {
   const args: Args = {}
   const values = process.argv.slice(2)
   for (let i = 0; i < values.length; i += 2) {
     const name = values[i].slice(2) as keyof Args
-    if (!['config', 'prover', 'rpc', 'verifier', 'out'].includes(name) || !values[i].startsWith('--')) {
+    if (!['config', 'prover', 'rpc', 'verifier', 'out', 'project'].includes(name) || !values[i].startsWith('--')) {
       throw new Error('Unknown argument: ' + values[i])
     }
     if (!values[i + 1] || values[i + 1].startsWith('--')) throw new Error('Missing value: ' + values[i])
@@ -62,18 +62,23 @@ async function parameterDigests(directory: string, relative = ''): Promise<Recor
 async function main() {
   const args = parseArgs()
   const unresolved: string[] = []
-  const files = [
-    'Cargo.lock',
-    'examples/CRISP/Cargo.lock',
-    'examples/CRISP/guest/Cargo.lock',
-    'crates/openvm-prover/Cargo.lock',
-    'rust-toolchain.toml',
-    'examples/CRISP/guest/openvm.toml',
-  ]
-  const sourceDigests = Object.fromEntries(await Promise.all(files.map(async (file) => [file, await digest(path.join(root, file))])))
+  // The project whose guest the worker configuration describes: CRISP by default, or --project.
+  const project = path.resolve(root, args.project ?? 'examples/CRISP')
+  const files: Record<string, string> = {
+    'Cargo.lock': path.join(root, 'Cargo.lock'),
+    'crates/openvm-prover/Cargo.lock': path.join(root, 'crates/openvm-prover/Cargo.lock'),
+    'rust-toolchain.toml': path.join(root, 'rust-toolchain.toml'),
+    'project/Cargo.lock': path.join(project, 'Cargo.lock'),
+    'project/guest/Cargo.lock': path.join(project, 'guest/Cargo.lock'),
+    'project/guest/openvm.toml': path.join(project, 'guest/openvm.toml'),
+  }
+  const sourceDigests = Object.fromEntries(await Promise.all(Object.entries(files).map(async ([name, file]) => [name, await digest(file)])))
   const sourceCommit = command('git', ['rev-parse', 'HEAD'])
   const sourceStatus = command('git', ['status', '--porcelain'])
   if (!sourceCommit || sourceStatus !== '') unresolved.push('source must be a clean Git checkout')
+  const projectCommit = command('git', ['-C', project, 'rev-parse', 'HEAD'])
+  const projectStatus = command('git', ['-C', project, 'status', '--porcelain'])
+  if (!projectCommit || projectStatus !== '') unresolved.push('project must be a clean Git checkout')
   for (const [file, hash] of Object.entries(sourceDigests)) if (!hash) unresolved.push('source artifact: ' + file)
 
   let artifacts: Record<string, string | null> | null = null
@@ -183,6 +188,7 @@ async function main() {
     schema: 'interfold.openvm-provenance/1',
     backend: 'openvm',
     source: { commit: sourceCommit, clean: sourceStatus === '', sha256: sourceDigests },
+    project: { path: project, commit: projectCommit, clean: projectStatus === '' },
     artifactsSha256: artifacts,
     halo2ParametersSha256: parameters,
     appCommit: commitments,

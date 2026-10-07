@@ -19,9 +19,11 @@ const OPENVM_IDENTITY_SETTINGS = [
 
 /**
  * The environment `deployOpenVmReceiptVerifier` reads, filled from the worker configuration that
- * `interfold program compile` wrote for the project in `projectDir`. That binds the deployed
- * verifier to the guest the project's service proves. Nothing is read when any OpenVM identity
- * setting is already in `environment`, so an explicit identity is never mixed with a compiled one.
+ * `interfold program compile` wrote: `OPENVM_PROVER_CONFIG`, or
+ * `<projectDir>/.interfold/caches/openvm/prover.json`, which is also what the project's service
+ * starts with. That binds the deployed verifier to the guest the service proves. Nothing is read
+ * when any OpenVM identity setting is already in `environment`, so an explicit identity is never
+ * mixed with a compiled one.
  */
 export function compiledOpenVmEnvironment(
   projectDir: string,
@@ -30,13 +32,9 @@ export function compiledOpenVmEnvironment(
   if (OPENVM_IDENTITY_SETTINGS.some((name) => environment[name])) {
     return environment;
   }
-  const configPath = path.join(
-    projectDir,
-    ".interfold",
-    "caches",
-    "openvm",
-    "prover.json",
-  );
+  const configPath =
+    environment.OPENVM_PROVER_CONFIG ||
+    path.join(projectDir, ".interfold", "caches", "openvm", "prover.json");
   if (!existsSync(configPath)) return environment;
   const config = JSON.parse(readFileSync(configPath, "utf8"));
   console.log(`Using the OpenVM receipt identity in ${configPath}`);

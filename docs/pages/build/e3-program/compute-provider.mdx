@@ -144,13 +144,14 @@ The program server does not send transactions. It computes, then posts the resul
 | Bind address  | `0.0.0.0:13151`                                  | `127.0.0.1:13151`; set `OPENVM_BIND_ADDR` to change it |
 | Endpoints     | `POST /run_compute`, `GET /health`               | The same                                               |
 | Body limit    | 10 MiB                                           | 128 MiB; set `OPENVM_MAX_REQUEST_BYTES` to change it   |
+| Body deadline | 120 s                                            | 120 s; set `OPENVM_BODY_TIMEOUT_SECS` to change it     |
 | Parallel jobs | 1                                                | 1; set `MAX_CONCURRENT_COMPUTATIONS` to change it      |
 | Webhook       | Up to five attempts                              | Up to five attempts                                    |
 | Response      | `{"status":"processing","e3_id":"<id>"}` at once |
 
-A request is admitted before its body is read. A request over the job limit gets HTTP 429, and a
-body over the limit gets HTTP 413. The webhook is retried with backoff after a network error or HTTP
-5xx, 408, or 429.
+A request is admitted before its body is read. A request over the job limit gets HTTP 429, a body
+over the limit gets HTTP 413, and a body that does not arrive by the deadline gets HTTP 408. The
+webhook is retried with backoff after a network error or HTTP 5xx, 408, or 429.
 
 ### Request fields
 
@@ -305,13 +306,12 @@ program:
     backend: auto
 ```
 
-| Key               | Default            | Meaning                                       |
-| ----------------- | ------------------ | --------------------------------------------- |
-| `prover_bin`      | None               | The CPU worker                                |
-| `prover_bin_cuda` | None               | The CUDA worker                               |
-| `backend`         | `auto`             | `auto`, `cpu`, or `cuda`                      |
-| `prover_config`   | Written by compile | The worker configuration                      |
-| `setup_dir`       | `~/.openvm`        | The directory that `cargo openvm setup` wrote |
+| Key               | Default     | Meaning                                       |
+| ----------------- | ----------- | --------------------------------------------- |
+| `prover_bin`      | None        | The CPU worker                                |
+| `prover_bin_cuda` | None        | The CUDA worker                               |
+| `backend`         | `auto`      | `auto`, `cpu`, or `cuda`                      |
+| `setup_dir`       | `~/.openvm` | The directory that `cargo openvm setup` wrote |
 
 Set at least one worker. Every path is absolute. With `backend: auto` the service uses the CUDA
 worker when it is set and can open a GPU, and the CPU worker otherwise. `cuda` refuses to start
@@ -320,9 +320,10 @@ without a working GPU, and `cpu` never tries one.
 ### Compile
 
 Run `interfold program compile`. It builds `guest/`, generates the application proving key, runs the
-worker's `prepare` for the aggregation key and the receipt identity, writes
-`.interfold/caches/openvm/prover.json`, and builds the service. The keys are regenerated only when
-the guest executable or `guest/openvm.toml` changes. The identity is in
+worker's `prepare` for the aggregation key and the receipt identity, writes the worker configuration
+to `.interfold/caches/openvm/prover.json` (or to `OPENVM_PROVER_CONFIG` when it is set; `start` and
+the deploys read the same path), and builds the service. The keys are regenerated only when the
+guest executable or `guest/openvm.toml` changes. The identity is in
 `.interfold/caches/openvm/prepared/identity.json`.
 
 ### Deploy the verifiers

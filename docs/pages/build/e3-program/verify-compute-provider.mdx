@@ -145,9 +145,12 @@ Read `imageId()` on the program contract. Read `verifier()` on a template progra
 From the repository root, run:
 
 ```bash
-pnpm provenance:manifest --config <PROVER_JSON> --prover <WORKER> \
+pnpm provenance:manifest --project <PROJECT_DIR> --config <PROVER_JSON> --prover <WORKER> \
   --rpc <RPC_URL> --verifier <VERIFIER_ADDRESS> --out manifest.json
 ```
+
+`--project` is the project whose guest the worker configuration describes. It defaults to
+`examples/CRISP`.
 
 Make sure that the manifest shows `"complete": true`. The `unresolved` list names each field that
 the script did not resolve.
@@ -156,8 +159,8 @@ the script did not resolve.
 
 The manifest (`scripts/generate-provenance-manifest.ts`) records these values:
 
-- The source commit, whether the working tree is clean, and the digests of CRISP's lockfiles, the
-  guest lockfile, the worker lockfile, and the guest's `openvm.toml`
+- The source commit and the project's commit, whether both are clean, and the digests of the root
+  and worker lockfiles, the project's lockfile, the guest lockfile, and the guest's `openvm.toml`
 - The SHA-256 of the application key, the executable, the aggregation key, the Halo2 key, the
   verifier artifact, the Halo2 parameter files, and the worker
 - The two application commitments, and whether the worker's `check` passed

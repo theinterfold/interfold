@@ -46,9 +46,6 @@ pub struct OpenVmConfig {
     pub prover_bin_cuda: Option<PathBuf>,
     #[serde(default)]
     pub backend: OpenVmBackend,
-    /// The worker configuration. Defaults to the one `interfold program compile` writes.
-    #[serde(default)]
-    pub prover_config: Option<PathBuf>,
     /// The directory `cargo openvm setup` wrote the Halo2 key, parameters and verifier to.
     /// Defaults to `~/.openvm`.
     #[serde(default)]
@@ -111,7 +108,6 @@ openvm:
             Some(PathBuf::from("/deployment/bin/interfold-openvm-prover"))
         );
         assert_eq!(openvm.backend, OpenVmBackend::Cuda);
-        assert_eq!(openvm.prover_config, None);
         assert!(!config.dev());
     }
 

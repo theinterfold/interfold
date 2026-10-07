@@ -144,13 +144,7 @@ async fn install_interfold(
                        r"(?m)^e3-compute-provider =.*\n?",
                        &format!("e3-compute-provider = {{ git = \"https://github.com/theinterfold/interfold\", rev = \"{}\" }}\n",commit_hash),
                     ),
-                    // Any other dependency on an Interfold crate, such as the OpenVM guest's. Only
-                    // the source changes, so features on the same line are kept.
-                    Filter::new(
-                       "**/Cargo.toml",
-                       r#"path = "(?:\.\./)+crates/[A-Za-z0-9_-]+""#,
-                       &format!(r#"git = "https://github.com/theinterfold/interfold", rev = "{}""#, commit_hash),
-                    ),
+                    interfold_path_filter(&commit_hash),
                 ],
             )
             .await
@@ -275,6 +269,21 @@ async fn install_interfold(
 }
 
 // Updated execute function to include workspace dependency substitution
+/// The Interfold crates that the template's manifests depend on by path.
+const INTERFOLD_TEMPLATE_CRATES: &str =
+    "program-server|bfv-client|fhe-params|compute-provider|openvm-host|openvm-types|safe";
+
+/// Pins an inline path dependency on an Interfold crate, such as the OpenVM guest's, to the
+/// template's commit. Only the source changes, so features in the same table are kept. Other path
+/// dependencies, and dependencies written as a table of their own, are left as they are.
+fn interfold_path_filter(commit_hash: &str) -> Filter {
+    Filter::new(
+        "**/Cargo.toml",
+        &format!(r#"\{{ path = "(?:\.\./)+crates/(?:{INTERFOLD_TEMPLATE_CRATES})""#),
+        &format!(r#"{{ git = "https://github.com/theinterfold/interfold", rev = "{commit_hash}""#),
+    )
+}
+
 pub async fn execute(
     location: Option<PathBuf>,
     template: Option<String>,
@@ -350,5 +359,39 @@ pub async fn execute(
             eprintln!("Interfold is currently under active development please share this with our team:\n\n  https://github.com/theinterfold/interfold/issues/new\n");
             exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod path_filter_tests {
+    use super::interfold_path_filter;
+    use regex::Regex;
+
+    #[test]
+    fn pins_interfold_crates_and_keeps_their_features() {
+        let filter = interfold_path_filter("abc123");
+        let manifest = r#"e3-safe = { path = "../../../crates/safe", features = ["openvm"] }
+e3-openvm-types = { path = "../../../crates/openvm-types" }
+local-helper = { path = "../crates/local-helper" }
+[dependencies.e3-openvm-host]
+path = "../../crates/openvm-host"
+"#;
+        let rewritten = Regex::new(&filter.search_pattern)
+            .unwrap()
+            .replace_all(manifest, filter.replacement.as_str())
+            .to_string();
+
+        assert!(rewritten.contains(
+            r#"e3-safe = { git = "https://github.com/theinterfold/interfold", rev = "abc123", features = ["openvm"] }"#
+        ));
+        assert!(rewritten.contains(
+            r#"e3-openvm-types = { git = "https://github.com/theinterfold/interfold", rev = "abc123" }"#
+        ));
+        assert!(rewritten.contains(r#"local-helper = { path = "../crates/local-helper" }"#));
+        assert!(
+            rewritten
+                .contains("[dependencies.e3-openvm-host]\npath = \"../../crates/openvm-host\""),
+            "a dependency written as its own table is left alone"
+        );
     }
 }

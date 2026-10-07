@@ -91,6 +91,10 @@ pub struct ComputeJob {
 /// rounds raises it with [`E3ProgramServerBuilder::with_max_request_bytes`].
 const DEFAULT_MAX_REQUEST_BYTES: usize = 10 * 1024 * 1024;
 
+/// How long an admitted request may take to deliver its body. The request holds a compute slot
+/// while it uploads, so a stalled upload must not keep it.
+const DEFAULT_BODY_TIMEOUT: Duration = Duration::from_secs(120);
+
 #[derive(Clone)]
 pub struct E3ProgramServerBuilder {
     runner: Arc<Runner>,
@@ -99,6 +103,7 @@ pub struct E3ProgramServerBuilder {
     localhost_rewrite: Option<String>,
     max_concurrent_jobs: usize,
     max_request_bytes: usize,
+    body_timeout: Duration,
 }
 
 impl E3ProgramServerBuilder {
@@ -115,6 +120,7 @@ impl E3ProgramServerBuilder {
             localhost_rewrite: None,
             max_concurrent_jobs: 1,
             max_request_bytes: DEFAULT_MAX_REQUEST_BYTES,
+            body_timeout: DEFAULT_BODY_TIMEOUT,
         }
     }
 
@@ -149,6 +155,13 @@ impl E3ProgramServerBuilder {
         self
     }
 
+    /// Bound how long an admitted request may take to deliver its body (default 120 seconds). A
+    /// request that is still uploading holds a compute slot.
+    pub fn with_body_timeout(mut self, body_timeout: Duration) -> Self {
+        self.body_timeout = body_timeout;
+        self
+    }
+
     /// Build the E3ProgramServer
     pub fn build(self) -> Result<E3ProgramServer> {
         anyhow::ensure!(
@@ -158,6 +171,10 @@ impl E3ProgramServerBuilder {
         anyhow::ensure!(
             self.max_request_bytes > 0,
             "the request size limit must be greater than zero"
+        );
+        anyhow::ensure!(
+            !self.body_timeout.is_zero(),
+            "the request body timeout must be greater than zero"
         );
         let webhook_client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(5))
@@ -173,6 +190,7 @@ impl E3ProgramServerBuilder {
             webhook_client,
             jobs: Arc::new(Semaphore::new(self.max_concurrent_jobs)),
             max_request_bytes: self.max_request_bytes,
+            body_timeout: self.body_timeout,
         })
     }
 }
@@ -186,6 +204,7 @@ pub struct E3ProgramServer {
     webhook_client: reqwest::Client,
     jobs: Arc<Semaphore>,
     max_request_bytes: usize,
+    body_timeout: Duration,
 }
 
 impl E3ProgramServer {
@@ -222,6 +241,7 @@ impl E3ProgramServer {
             webhook_client: self.webhook_client.clone(),
             jobs: Arc::clone(&self.jobs),
             max_request_bytes: self.max_request_bytes,
+            body_timeout: self.body_timeout,
         };
         let server = HttpServer::new(move || {
             App::new()
@@ -245,6 +265,28 @@ pub struct AppConfig {
     webhook_client: reqwest::Client,
     jobs: Arc<Semaphore>,
     max_request_bytes: usize,
+    body_timeout: Duration,
+}
+
+/// Reads an admitted request's body, refusing one over `limit` bytes (413) or one that does not
+/// arrive within `timeout` (408).
+async fn read_body<S, E>(body: S, limit: usize, timeout: Duration) -> ActixResult<web::Bytes>
+where
+    S: futures_util::Stream<Item = Result<web::Bytes, E>> + 'static,
+    E: Into<Box<dyn std::error::Error>> + 'static,
+{
+    let read = actix_web::body::to_bytes_limited(actix_web::body::BodyStream::new(body), limit);
+    match tokio::time::timeout(timeout, read).await {
+        Err(_) => Err(actix_web::error::ErrorRequestTimeout(
+            "the request body did not arrive in time",
+        )),
+        Ok(Err(exceeded)) => Err(actix_web::error::ErrorPayloadTooLarge(exceeded)),
+        Ok(Ok(Err(error))) => Err(actix_web::error::ErrorBadRequest(format!(
+            "cannot read the request body: {}",
+            error.into()
+        ))),
+        Ok(Ok(Ok(bytes))) => Ok(bytes),
+    }
 }
 
 /// Whether callbacks to addresses only reachable from inside the deployment are permitted.
@@ -526,10 +568,7 @@ async fn handle_compute(
     let permit = Arc::clone(&config.jobs)
         .try_acquire_owned()
         .map_err(|_| actix_web::error::ErrorTooManyRequests("compute capacity exhausted"))?;
-    let body = body
-        .to_bytes_limited(config.max_request_bytes)
-        .await
-        .map_err(actix_web::error::ErrorPayloadTooLarge)??;
+    let body = read_body(body, config.max_request_bytes, config.body_timeout).await?;
     let mut req: ComputeRequest = serde_json::from_slice(&body)
         .map_err(|e| actix_web::error::ErrorBadRequest(format!("invalid request: {e}")))?;
     drop(body);
@@ -734,7 +773,18 @@ mod server_tests {
             webhook_client: server.webhook_client.clone(),
             jobs: Arc::clone(&server.jobs),
             max_request_bytes: server.max_request_bytes,
+            body_timeout: server.body_timeout,
         }
+    }
+
+    /// A body that stops arriving is refused at the deadline, so the slot it holds is released.
+    #[actix_web::test]
+    async fn a_stalled_body_is_refused_at_the_deadline() {
+        let stalled = futures_util::stream::pending::<Result<web::Bytes, std::io::Error>>();
+        let error = read_body(stalled, 1024, Duration::from_millis(50))
+            .await
+            .unwrap_err();
+        assert_eq!(error.as_response_error().status_code(), 408);
     }
 
     /// A caller over capacity is refused before its body is read, so it cannot make the server
