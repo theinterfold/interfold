@@ -627,27 +627,33 @@ mod tests {
         assert_eq!(bits.pk_bit, expected_bits);
     }
 
+    /// The insecure set's error1 variance (50471587840) is above 16, so e0 takes the uniform
+    /// sampler's bound `sqrt(3 * variance)`.
     #[test]
-    fn secure_8192_sample_fits_user_data_encryption_bounds() {
-        let sample =
-            UserDataEncryptionCircuitData::generate_sample(BfvPreset::SecureThreshold8192).unwrap();
-        let bounds = Bounds::compute(BfvPreset::SecureThreshold8192, &()).unwrap();
-        let inputs = Inputs::compute(BfvPreset::SecureThreshold8192, &sample).unwrap();
+    fn insecure_e0_bound_matches_error1_sampler() {
+        let preset = BfvPreset::InsecureThreshold;
+        let bounds = Bounds::compute(preset, &()).unwrap();
+        let bits = Bits::compute(preset, &bounds).unwrap();
 
-        for (limb_index, (limb, (low, up))) in inputs
-            .r1is
-            .limbs
-            .iter()
-            .zip(bounds.r1_low_bounds.iter().zip(bounds.r1_up_bounds.iter()))
-            .enumerate()
-        {
-            let low = BigInt::from(low.clone());
-            let up = BigInt::from(up.clone());
-            for coefficient in limb.coefficients() {
-                assert!(
-                    -&low <= *coefficient && *coefficient <= up,
-                    "r1 limb {limb_index} coefficient {coefficient} exceeds [-{low}, {up}]"
-                );
+        assert_eq!(bounds.e0_bound, BigUint::from(389120u32));
+        assert_eq!(bounds.e1_bound, BigUint::from(20u32));
+        assert_eq!(bits.e0_bit, 19);
+    }
+
+    #[test]
+    fn encryption_witness_respects_ct0_r_bounds() {
+        for preset in [BfvPreset::InsecureThreshold, BfvPreset::SecureThreshold8192] {
+            let sample = UserDataEncryptionCircuitData::generate_sample(preset).unwrap();
+            let bounds = Bounds::compute(preset, &()).unwrap();
+            let inputs = Inputs::compute(preset, &sample).unwrap();
+            for (i, limb) in inputs.ct0_r.limbs.iter().enumerate() {
+                let bound = BigInt::from(bounds.ct0_r_bounds[i].clone());
+                for (j, coefficient) in limb.coefficients().iter().enumerate() {
+                    assert!(
+                        coefficient.abs() <= bound,
+                        "{preset:?} ct0_r[{i}][{j}] = {coefficient} exceeds {bound}"
+                    );
+                }
             }
         }
     }

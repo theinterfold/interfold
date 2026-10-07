@@ -26,7 +26,7 @@ use std::{
 use tracing::{info, warn};
 
 const OUTPUT_RETRY_DELAY: Duration = Duration::from_secs(30);
-const MAX_PUBLIC_KEY_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_PUBLIC_KEY_BYTES: usize = 16 * 1024 * 1024;
 const PUBLIC_KEY_CHUNK_BYTES: usize = 90 * 1024;
 pub const DATA_AVAILABILITY_RECOVERY_SCHEMA_VERSION: u32 = 2;
 
@@ -37,7 +37,7 @@ fn validate_committee_public_key(
     expected_commitment: [u8; 32],
     preset: BfvPreset,
 ) -> anyhow::Result<()> {
-    if preset == BfvPreset::SecureThreshold16384 {
+    if e3_fhe_params::supports_lbfv(preset) {
         e3_bfv_client::validate_lbfv_key_envelope(public_key, expected_commitment, preset)?;
         return Ok(());
     }
@@ -781,7 +781,7 @@ mod tests {
 
     #[test]
     fn threshold_public_key_is_validated_with_threshold_parameters() {
-        let preset = BfvPreset::InsecureThreshold;
+        let preset = BfvPreset::InsecureThreshold64;
         let params = BfvParamSet::from(preset);
         let public_key = generate_public_key(
             params.degree,

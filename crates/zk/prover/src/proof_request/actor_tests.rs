@@ -55,8 +55,8 @@ async fn c0_compute_error_preserves_pending_work_without_failing_the_round() -> 
             ComputeRequest::zk(
                 ZkRequest::PkBfv(PkBfvProofRequest::new(
                     ArcBytes::from_bytes(&[1]),
-                    e3_fhe_params::BfvPreset::InsecureThreshold,
-                    e3_zk_helpers::CiphernodesCommitteeSize::Minimum,
+                    e3_fhe_params::BfvPreset::InsecureThreshold64,
+                    e3_committee::CiphernodesCommitteeSize::Minimum,
                 )),
                 correlation_id,
                 e3_id.clone(),
@@ -134,8 +134,8 @@ async fn c0_trbfv_compute_error_preserves_pending_work() -> Result<()> {
             ComputeRequest::zk(
                 ZkRequest::PkBfv(PkBfvProofRequest::new(
                     ArcBytes::from_bytes(&[1]),
-                    e3_fhe_params::BfvPreset::InsecureThreshold,
-                    e3_zk_helpers::CiphernodesCommitteeSize::Minimum,
+                    e3_fhe_params::BfvPreset::InsecureThreshold64,
+                    e3_committee::CiphernodesCommitteeSize::Minimum,
                 )),
                 correlation_id,
                 e3_id.clone(),
@@ -204,7 +204,7 @@ fn threshold_share_pending(e3_id: E3id, marker: u8) -> ThresholdSharePending {
         secret_raw: sensitive(),
         secret_sss_raw: sensitive(),
         dkg_input_type: DkgInputType::SecretKey,
-        params_preset: BfvPreset::InsecureThreshold,
+        params_preset: BfvPreset::InsecureThreshold64,
         committee_size: CiphernodesCommitteeSize::Minimum,
     };
 
@@ -221,7 +221,7 @@ fn threshold_share_pending(e3_id: E3id, marker: u8) -> ThresholdSharePending {
             sk: sensitive(),
             eek: sensitive(),
             e_sm: sensitive(),
-            params_preset: BfvPreset::InsecureThreshold,
+            params_preset: BfvPreset::InsecureThreshold64,
             committee_size: CiphernodesCommitteeSize::Minimum,
         },
         sk_share_computation_request: share_request(),
@@ -357,6 +357,7 @@ async fn c4_dispatch_before_the_seq_layout_is_held_until_threshold_share_pending
         num_honest_parties: 0,
         num_moduli: 0,
         own_plaintext_idx: None,
+        recipient_party_id: 0,
         own_share_raw: None,
         dkg_input_type,
         params_preset: BfvPreset::InsecureThreshold64,

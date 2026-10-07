@@ -2702,6 +2702,53 @@ async fn test_trbfv_actor() -> Result<()> {
         "{publication_event_name} must carry a non-empty DKG attestation payload"
     );
 
+    // The synthetic registry records the same confirmed observation as chain ingestion.
+    {
+        use alloy::sol_types::SolEvent;
+        let proof = e3_evm::encode_zk_proof(dkg_aggregator_proof.as_ref().unwrap())?;
+        let observation = e3_evm::ICiphernodeRegistry::CommitteeProofPublished {
+            e3Id: U256::ZERO,
+            nodes: publication_committee_addresses.clone(),
+            pkCommitment: publication_pk_commitment.into(),
+            proof,
+        }
+        .encode_log_data();
+        bus.publish_from_remote(
+            e3_events::EvmLogObserved {
+                contract: "CiphernodeRegistry".into(),
+                chain_id: 1,
+                e3_id: Some(e3_id.clone()),
+                event_name: "CommitteeProofPublished".into(),
+                known: true,
+                signature: Some(
+                    e3_evm::ICiphernodeRegistry::CommitteeProofPublished::SIGNATURE.into(),
+                ),
+                topics: observation
+                    .topics()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                data: ArcBytes::from_bytes(&observation.data),
+            },
+            0,
+            Some(request_block + 1),
+            e3_events::EventSource::Evm,
+        )?;
+        bus.publish_without_context(e3_events::CommitteePublished {
+            e3_id: e3_id.clone(),
+            nodes: publication_committee_addresses
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            public_key: pubkey_bytes.clone(),
+            proof: ArcBytes::from_bytes(&[]),
+        })?;
+        bus.flush_event_pipeline().await?;
+        for node in nodes.iter() {
+            node.bus().flush_event_pipeline().await?;
+        }
+    }
+
     e3_bfv_client::validate_pk_commitment(
         &pubkey_bytes,
         publication_pk_commitment,

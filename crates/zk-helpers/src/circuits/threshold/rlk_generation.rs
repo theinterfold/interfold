@@ -1013,12 +1013,16 @@ mod tests {
         let committee = CiphernodesCommitteeSize::Minimum.values();
         let bounds = RlkGenerationBounds::compute(preset, &committee)?;
         let pk_bounds = crate::threshold::pk_generation::Bounds::compute(preset, &committee)?;
+        let (pk_r1_bounds, _) = crate::threshold::pk_generation::lbfv_limb_quotient_bounds(
+            preset,
+            &pk_bounds.eek_bound,
+        )?;
         let bits = RlkGenerationBits::compute(preset, &bounds)?;
 
         assert!(bounds
             .r1_d0_bounds
             .iter()
-            .zip(pk_bounds.r1_bounds.iter())
+            .zip(pk_r1_bounds.iter())
             .all(|(rlk, pk)| rlk > pk));
         assert_eq!(bounds.r1_d0_bounds, bounds.r1_d2_bounds);
         assert_eq!(bounds.r2_d0_bounds, bounds.r2_d2_bounds);

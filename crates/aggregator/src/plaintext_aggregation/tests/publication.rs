@@ -170,6 +170,11 @@ async fn published_key_keeps_decryption(active: bool, restart: bool) -> Result<(
                         .publickey_recovery(&e3_id)
                         .load()
                         .await?,
+                    lbfv_collection: None,
+                    repositories: e3_data::Repositories::in_mem(),
+                    local_party_id: 0,
+                    lbfv_aggregation: None,
+                    lbfv_publication: None,
                     initial_is_aggregator: active,
                     initial_stage: E3Stage::CommitteeFinalized,
                     effects_enabled: true,
@@ -211,9 +216,13 @@ async fn published_key_keeps_decryption(active: bool, restart: bool) -> Result<(
                 AggregatorRoleExtension::create(HashMap::from([(e3_id.clone(), active)]))
                     .hydrate(&mut ctx, &snapshot)
                     .await?;
-                PublicKeyAggregatorExtension::create(&bus)
-                    .hydrate(&mut ctx, &snapshot)
-                    .await?;
+                PublicKeyAggregatorExtension::create(
+                    &bus,
+                    std::collections::HashMap::new(),
+                    alloy::primitives::Address::ZERO,
+                )
+                .hydrate(&mut ctx, &snapshot)
+                .await?;
                 bus.subscribe_all(
                     &[EventType::All],
                     ctx.get_event_recipient("publickey").unwrap().clone(),
@@ -353,6 +362,7 @@ async fn published_key_keeps_decryption(active: bool, restart: bool) -> Result<(
                     e3_id: e3_id.clone(),
                     kind: VerificationKind::ThresholdDecryptionProofs,
                     dishonest_parties: BTreeSet::new(),
+                    verification_id: None,
                 };
                 bus.publish(result, dispatched.get_ctx().clone())?;
                 actix::clock::timeout(Duration::from_secs(30), async {

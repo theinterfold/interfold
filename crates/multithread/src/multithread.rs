@@ -117,7 +117,9 @@ use zeroize::{Zeroize, Zeroizing};
 
 fn c2_chunk_size_for_preset(preset: BfvPreset) -> usize {
     match preset {
-        BfvPreset::InsecureThreshold | BfvPreset::InsecureDkg => 128,
+        BfvPreset::InsecureThreshold
+        | BfvPreset::InsecureThresholdLbfv
+        | BfvPreset::InsecureDkg => 128,
         _ => DEFAULT_C2_CHUNK_SIZE,
     }
 }

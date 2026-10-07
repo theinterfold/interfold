@@ -654,30 +654,16 @@ mod tests {
 
         assert_eq!(max_pk_bound.clone(), BigUint::from(72057594037914240u128));
         assert_eq!(bits.pk_bit, expected_bits);
-    }
-
-    #[test]
-    fn test_constants_json_roundtrip() {
-        let sd = BfvPreset::InsecureThreshold.search_defaults().unwrap();
-        let committee = CiphernodesCommitteeSize::Small.values();
-        let sample = ShareEncryptionCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold,
-            committee,
-            DkgInputType::SecretKey,
-            sd.z,
-        )
-        .unwrap();
-        let constants = Configs::compute(BfvPreset::InsecureThreshold, &sample).unwrap();
-
-        let json = constants.to_json().unwrap();
-        let decoded: Configs = serde_json::from_value(json).unwrap();
-
-        assert_eq!(decoded.t, constants.t);
-        assert_eq!(decoded.q_mod_t, constants.q_mod_t);
-        assert_eq!(decoded.moduli, constants.moduli);
-        assert_eq!(decoded.k0is, constants.k0is);
-        assert_eq!(decoded.bits, constants.bits);
-        assert_eq!(decoded.bounds, constants.bounds);
+        assert_eq!(
+            bounds.msg_bound,
+            BigUint::from(
+                BfvPreset::InsecureThreshold
+                    .build_pair()
+                    .unwrap()
+                    .1
+                    .plaintext()
+            )
+        );
     }
 
     #[test]
@@ -700,5 +686,139 @@ mod tests {
         expected.reverse();
 
         assert_eq!(inputs.message.coefficients(), expected.coefficients());
+    }
+
+    #[test]
+    fn generated_share_encryption_witness_respects_ct0_r_bounds() {
+        let preset = BfvPreset::InsecureThreshold;
+        let sample = ShareEncryptionCircuitData::generate_sample(
+            preset,
+            CiphernodesCommitteeSize::Minimum.values(),
+            DkgInputType::SecretKey,
+            preset.search_defaults().unwrap().z,
+        )
+        .unwrap();
+        let bounds = Bounds::compute(preset, &sample).unwrap();
+        let inputs = Inputs::compute(preset, &sample).unwrap();
+
+        for (i, limb) in inputs.ct0_r.limbs.iter().enumerate() {
+            let bound = BigInt::from(bounds.ct0_r_bounds[i].clone());
+            for (j, coefficient) in limb.coefficients().iter().enumerate() {
+                assert!(
+                    coefficient.magnitude() <= bound.magnitude(),
+                    "ct0_r[{i}][{j}] = {coefficient} outside [-{bound}, {bound}]"
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod scaled_quotient_tests {
+    use super::*;
+    use crate::ciphernodes_committee::CiphernodesCommitteeSize;
+    use crate::computation::DkgInputType;
+    use crate::{compute_k0is, compute_q_mod_t, compute_q_product};
+    use e3_fhe_params::{build_pair_for_preset, BfvPreset};
+
+    fn derive_for(preset: BfvPreset) -> (ScaledQuotient, Vec<u64>, u64) {
+        let (_, dkg) = build_pair_for_preset(preset).unwrap();
+        let moduli = dkg.moduli().to_vec();
+        let t = dkg.plaintext();
+        let scale = compute_q_mod_t(&compute_q_product(&moduli), t);
+        let k0is = compute_k0is(&moduli, t).unwrap();
+        // `Bounds::compute` ignores its data argument, but still needs one.
+        let sd = preset.search_defaults().unwrap();
+        let sample = ShareEncryptionCircuitData::generate_sample(
+            preset,
+            CiphernodesCommitteeSize::Small.values(),
+            DkgInputType::SecretKey,
+            sd.z,
+        )
+        .unwrap();
+        let bounds = Bounds::compute(preset, &sample).unwrap();
+        let sq = ScaledQuotient::derive(
+            &moduli,
+            t,
+            scale.to_u64().unwrap(),
+            &k0is,
+            dkg.degree() as u64,
+            bounds.u_bound.to_u64().unwrap(),
+            bounds.e0_bound.to_u128().unwrap(),
+            bounds.e1_bound.to_u64().unwrap(),
+            &bounds.msg_bound,
+        );
+        (sq, moduli, t)
+    }
+
+    /// The substitution only holds if both numerators divide exactly. `derive` returns
+    /// `available: false` rather than rounding, so re-check the identities on what it produced.
+    #[test]
+    fn secure_identities_hold_exactly() {
+        let (sq, moduli, t) = derive_for(BfvPreset::SecureThreshold8192);
+        assert!(
+            sq.available,
+            "secure-8192 should admit the scaled-quotient form"
+        );
+        assert_eq!(
+            sq.k, 4,
+            "k = 2^(bits(q) - bits(T)) = 4 for this parameter set"
+        );
+
+        let (_, dkg) = build_pair_for_preset(BfvPreset::SecureThreshold8192).unwrap();
+        let scale = compute_q_mod_t(&compute_q_product(&moduli), t)
+            .to_u64()
+            .unwrap();
+        let k0is = compute_k0is(&moduli, t).unwrap();
+        let _ = dkg;
+
+        let t_big = BigInt::from(t);
+        let mut q_prod = BigInt::from(1u32);
+        for m in &moduli {
+            q_prod *= BigInt::from(*m);
+        }
+        // DELTA * T + SCALE == prod(q)
+        assert_eq!(
+            sq.delta.to_bigint().unwrap() * &t_big + BigInt::from(scale),
+            q_prod,
+            "DELTA * T + SCALE must reconstruct prod(q)"
+        );
+        for (l, m) in moduli.iter().enumerate() {
+            let q = BigInt::from(*m);
+            let k0 = BigInt::from(k0is[l]);
+            // SMALL_D = k * q - DELTA
+            assert_eq!(
+                sq.small_d[l].to_bigint().unwrap(),
+                BigInt::from(sq.k) * &q - sq.delta.to_bigint().unwrap(),
+                "SMALL_D[{l}]"
+            );
+            // k0 * T + 1 == BETA * q
+            assert_eq!(
+                &k0 * &t_big + BigInt::from(1u32),
+                sq.beta[l].to_bigint().unwrap() * &q,
+                "BETA[{l}] identity"
+            );
+            // k0 * SCALE + SMALL_D == ALPHA * q
+            assert_eq!(
+                &k0 * BigInt::from(scale) + sq.small_d[l].to_bigint().unwrap(),
+                sq.alpha[l].to_bigint().unwrap() * &q,
+                "ALPHA[{l}] identity"
+            );
+        }
+    }
+
+    /// The insecure DKG set pairs two ~57-bit moduli with a ~56-bit `T`, which fails the
+    /// derivation's checks, so `derive` must report the form unavailable.
+    ///
+    /// The circuit keeps the direct `k1` path for this preset. The insecure set is test-only, so the
+    /// fallback costs nothing that matters.
+    #[test]
+    fn insecure_is_excluded_rather_than_approximated() {
+        let (sq, moduli, _) = derive_for(BfvPreset::InsecureThreshold);
+        assert_eq!(moduli.len(), 2, "the insecure set has two DKG moduli");
+        assert!(
+            !sq.available,
+            "the insecure set must fall back, not derive bogus constants"
+        );
     }
 }

@@ -9,8 +9,9 @@ use actix::{Actor, Context, Handler};
 use alloy::signers::local::PrivateKeySigner;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{
-    hlc_factory::HlcFactory, Event, EventBus, EventBusBarrier, EventBusConfig, EventPublisher,
-    Proof, ProofPayload, ProofType, Sequencer, StoreEventRequested, StoreEventResponse,
+    hlc_factory::HlcFactory, ComputeRequestErrorKind, EffectsEnabled, Event, EventBus,
+    EventBusBarrier, EventBusConfig, EventPublisher, GetEvents, Proof, ProofPayload, ProofType,
+    Sequencer, StoreEventRequested, StoreEventResponse, Unsequenced, ZkError,
 };
 use e3_fhe_params::BfvPreset;
 use e3_utils::utility_types::ArcBytes;
@@ -75,6 +76,7 @@ async fn local_verifier_error_preserves_pending_work_without_accusing_parties() 
         PendingVerification {
             e3_id: e3_id.clone(),
             kind: VerificationKind::ShareProofs,
+            verification_id: None,
             ec: context.clone(),
             ecdsa_dishonest: HashSet::new(),
             pre_dishonest: BTreeSet::new(),
@@ -83,14 +85,14 @@ async fn local_verifier_error_preserves_pending_work_without_accusing_parties() 
             party_proof_hashes: HashMap::new(),
             party_public_signals: HashMap::new(),
             party_proof_data: HashMap::new(),
-            params_preset: BfvPreset::InsecureThreshold,
+            params_preset: BfvPreset::InsecureThreshold64,
             committee_size: CiphernodesCommitteeSize::Minimum,
         },
     );
     let request = ComputeRequest::zk(
         ZkRequest::VerifyShareProofs(VerifyShareProofsRequest {
             party_proofs: Vec::new(),
-            params_preset: BfvPreset::InsecureThreshold,
+            params_preset: BfvPreset::InsecureThreshold64,
             committee_size: CiphernodesCommitteeSize::Minimum,
         }),
         correlation_id,
@@ -153,7 +155,7 @@ async fn restored_committee_authorizes_c6_without_replayed_finalization_event() 
             .collect(),
         decryption_proofs: Vec::new(),
         pre_dishonest: BTreeSet::new(),
-        params_preset: BfvPreset::InsecureThreshold,
+        params_preset: BfvPreset::InsecureThreshold64,
         committee_size: CiphernodesCommitteeSize::Minimum,
         lbfv_context: None,
         verification_id: None,
@@ -241,6 +243,8 @@ async fn unauthenticated_share_proofs_do_not_emit_accusations() {
             pre_dishonest: BTreeSet::new(),
             params_preset: BfvPreset::InsecureDkg64,
             committee_size: CiphernodesCommitteeSize::Minimum,
+            lbfv_context: None,
+            verification_id: None,
         };
         let ec = EventContext::<Unsequenced>::from(InterfoldEventData::from(dispatch(bad.clone())))
             .sequence(0);
@@ -295,6 +299,8 @@ async fn failed_worker_payload_cannot_borrow_a_verified_signer() {
         pre_dishonest: BTreeSet::new(),
         params_preset: BfvPreset::InsecureDkg64,
         committee_size: CiphernodesCommitteeSize::Minimum,
+        lbfv_context: None,
+        verification_id: None,
     };
     let ec =
         EventContext::<Unsequenced>::from(InterfoldEventData::from(dispatch.clone())).sequence(0);

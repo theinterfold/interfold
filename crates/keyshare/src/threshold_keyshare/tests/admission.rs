@@ -183,6 +183,7 @@ impl AdmissionHarness {
             effects_enabled: true,
             recovery,
             recovery_payloads,
+            lbfv_generation: super::test_lbfv_generation(),
             bfv_key: self.bfv_keys.clone(),
             dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
         })

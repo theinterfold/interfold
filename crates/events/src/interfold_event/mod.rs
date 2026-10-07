@@ -380,6 +380,18 @@ pub enum InterfoldEventData {
     LbfvKeyShareDocumentFetchRequested(LbfvKeyShareDocumentFetchRequested),
     LbfvKeyShareDocumentFetchFailed(LbfvKeyShareDocumentFetchFailed),
     LbfvPublicKeyAggregated(LbfvPublicKeyAggregated),
+    DkgCoordination(DkgCoordination),
+    CommitmentRosterSelected(CommitmentRosterSelected),
+    BondOwnerSetAt(BondOwnerSetAt),
+    AdmissionUpdated(AdmissionUpdated),
+    TicketBalanceUpdatedAt(TicketBalanceUpdatedAt),
+    OperatorActivationChangedAt(OperatorActivationChangedAt),
+    ConfigurationUpdatedAt(ConfigurationUpdatedAt),
+    PlaintextVerificationResumed(PlaintextVerificationResumed),
+    EligibilityConfigurationVersionUpdated(EligibilityConfigurationVersionUpdated),
+    EligibilityConfigurationVersionUpdatedAt(EligibilityConfigurationVersionUpdatedAt),
+    BondingAssetConfigUpdated(BondingAssetConfigUpdated),
+    BondingAssetConfigUpdatedAt(BondingAssetConfigUpdatedAt),
 }
 
 impl InterfoldEventData {
@@ -641,6 +653,7 @@ mod serialization_tests {
                 e3_id: E3id::new("1", 1),
                 kind: kind.clone(),
                 dishonest_parties: Default::default(),
+                verification_id: None,
             }
             .into();
             let make_result = |batch: &str, ts| {
@@ -1013,7 +1026,19 @@ impl_event_types!(
     LbfvKeyShareManifestPublished,
     LbfvKeyShareDocumentFetchRequested,
     LbfvKeyShareDocumentFetchFailed,
-    LbfvPublicKeyAggregated
+    LbfvPublicKeyAggregated,
+    DkgCoordination,
+    CommitmentRosterSelected,
+    BondOwnerSetAt,
+    AdmissionUpdated,
+    TicketBalanceUpdatedAt,
+    OperatorActivationChangedAt,
+    ConfigurationUpdatedAt,
+    PlaintextVerificationResumed,
+    EligibilityConfigurationVersionUpdated,
+    EligibilityConfigurationVersionUpdatedAt,
+    BondingAssetConfigUpdated,
+    BondingAssetConfigUpdatedAt
 );
 
 impl TryFrom<&InterfoldEvent<Sequenced>> for InterfoldError {

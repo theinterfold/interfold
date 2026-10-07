@@ -12,7 +12,12 @@
 /// marker is the guardrail: bump it whenever a persisted format changes in a
 /// non-additive way. On boot the persisted value is compared against this
 /// constant (see `decide_schema_version`).
-pub const SCHEMA_VERSION: u32 = 4;
+// Schema 6 can contain sortition checkpoints derived from the merged event clock. A schema-6 node
+// clears its state with `interfold node reset-data`, and the resync from chain history rebuilds
+// those checkpoints from source timestamps.
+// Schema 7 also adds durable decryption backup shares and batch-bound C6 results.
+// Schema 8 authenticates complete DKG share and C4 bundles before slot admission.
+pub const SCHEMA_VERSION: u32 = 8;
 
 /// The action a node should take after reading the persisted schema version.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,10 +84,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn current_schema_is_v4() {
-        assert_eq!(SCHEMA_VERSION, 4);
+    fn current_schema_is_v8() {
+        assert_eq!(SCHEMA_VERSION, 8);
         assert!(matches!(
-            decide_schema_version(Some(3), SCHEMA_VERSION, true),
+            decide_schema_version(Some(7), SCHEMA_VERSION, true),
             SchemaVersionDecision::Halt(_)
         ));
     }
