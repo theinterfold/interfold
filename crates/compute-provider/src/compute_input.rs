@@ -178,17 +178,20 @@ impl ComputeInput {
             params.plaintext(),
             params.moduli(),
         );
-        let relinearization_key = if preset == Some(e3_fhe_params::BfvPreset::SecureThreshold16384)
-        {
+        // An l-BFV committee publishes its key as an envelope that carries the relinearization key.
+        let lbfv_preset = preset
+            .and_then(e3_fhe_params::BfvPreset::lbfv_label)
+            .filter(|_| e3_bfv_client::is_lbfv_key_envelope(&self.fhe_inputs.committee_key));
+        let relinearization_key = if let Some(lbfv_preset) = lbfv_preset {
             let expected_commitment = expected_commitment.ok_or_else(|| {
                 ComputeError::CommitteeKey(
-                    "secure-16384 computation requires a committee-key commitment".to_string(),
+                    "l-BFV computation requires a committee-key commitment".to_string(),
                 )
             })?;
             let (_, _) = e3_bfv_client::validate_lbfv_key_envelope(
                 &self.fhe_inputs.committee_key,
                 expected_commitment,
-                e3_fhe_params::BfvPreset::SecureThreshold16384,
+                lbfv_preset,
             )
             .map_err(|error| ComputeError::CommitteeKey(error.to_string()))?;
             let envelope = e3_bfv_client::decode_lbfv_key_envelope(&self.fhe_inputs.committee_key)

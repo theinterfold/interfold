@@ -11,8 +11,8 @@
 use crate::ciphertext_addition::CiphertextAdditionWitness;
 use e3_fhe_params::build_bfv_params_arc;
 use e3_fhe_params::{default_param_set, BfvParamSet, BfvPreset};
-use e3_zk_helpers::circuits::threshold::user_data_encryption::circuit::UserDataEncryptionCircuit;
-use e3_zk_helpers::circuits::threshold::user_data_encryption::circuit::UserDataEncryptionCircuitData;
+use e3_zk_helpers::circuits::threshold::user_data_encryption_chunked::circuit::UserDataEncryptionCircuit;
+use e3_zk_helpers::circuits::threshold::user_data_encryption_chunked::circuit::UserDataEncryptionCircuitData;
 use e3_zk_helpers::CircuitComputation;
 use e3_zk_helpers::Computation;
 use eyre::{Context, Result};

@@ -16,10 +16,22 @@ export interface PolynomialInput {
   coefficients: Field[]
 }
 
-/**
- * Describes the inputs to Greco circuit
- */
-export interface CircuitInputs {
+/** Inputs of the trBFV path's user-data encryption circuits (`user_data_encryption_ct0` / `_ct1`). */
+export interface TrbfvCircuitInputs {
+  pk0is: PolynomialInput[]
+  pk1is: PolynomialInput[]
+  ct0is: PolynomialInput[]
+  ct1is: PolynomialInput[]
+  u: PolynomialInput
+  e0: PolynomialInput
+  e1: PolynomialInput
+  k1: PolynomialInput
+  r: PolynomialInput[]
+  r_ct1: PolynomialInput[]
+}
+
+/** Inputs of the l-BFV path's chunked user-data encryption proof tree. */
+export interface ChunkedCircuitInputs {
   pk0is: PolynomialInput[]
   pk1is: PolynomialInput[]
   ct0is: PolynomialInput[]
@@ -35,19 +47,33 @@ export interface CircuitInputs {
   pk_commitment: string
 }
 
-const PRESET_DEGREES: Record<ThresholdBfvParamsPresetName, number> = {
-  INSECURE_THRESHOLD: 128,
-  SECURE_THRESHOLD_8192: 8192,
-  SECURE_THRESHOLD_16384: 16384,
-}
+/**
+ * Describes the inputs to the user-data encryption proof. The encryption client builds the trBFV
+ * form for a plain committee key and the chunked form for an l-BFV key envelope.
+ */
+export type CircuitInputs = TrbfvCircuitInputs | ChunkedCircuitInputs
 
-const loadProofBundle = async (presetName: ThresholdBfvParamsPresetName): Promise<UserDataEncryptionProofBundle> => {
-  switch (presetName) {
-    case 'INSECURE_THRESHOLD':
+const isChunkedInputs = (inputs: CircuitInputs): inputs is ChunkedCircuitInputs => 'r1is' in inputs
+
+/** Presets on the l-BFV path. Their user-data encryption proofs use the chunked proof tree. */
+const LBFV_PRESETS: ReadonlySet<ThresholdBfvParamsPresetName> = new Set(['INSECURE_THRESHOLD_LBFV', 'SECURE_THRESHOLD_16384'])
+
+/** Chunked proof bundles by polynomial degree. */
+const CHUNKED_BUNDLE_DEGREES = {
+  insecure: 128,
+  'secure-8192': 8192,
+  'secure-16384': 16384,
+} as const
+
+type ChunkedBundleName = keyof typeof CHUNKED_BUNDLE_DEGREES
+
+const loadProofBundle = async (bundle: ChunkedBundleName): Promise<UserDataEncryptionProofBundle> => {
+  switch (bundle) {
+    case 'insecure':
       return (await import('@interfold/sdk/internal/presets/insecure')).insecureProofBundle
-    case 'SECURE_THRESHOLD_8192':
+    case 'secure-8192':
       return (await import('@interfold/sdk/internal/presets/secure-8192')).secure8192ProofBundle
-    case 'SECURE_THRESHOLD_16384':
+    case 'secure-16384':
       return (await import('@interfold/sdk/internal/presets/secure-16384')).secure16384ProofBundle
   }
 }
@@ -55,22 +81,31 @@ const loadProofBundle = async (presetName: ThresholdBfvParamsPresetName): Promis
 /** Load the circuit artifacts only when a caller requests a proof. */
 export const generateProof = async (circuitInputs: CircuitInputs, presetName?: ThresholdBfvParamsPresetName): Promise<ProofData> => {
   await assertSdkMinimumCircuits()
-  const degree = circuitInputs.u.coefficients.length
-  const inferredPreset = (Object.entries(PRESET_DEGREES) as [ThresholdBfvParamsPresetName, number][]).find(
-    ([, presetDegree]) => presetDegree === degree,
-  )?.[0]
-  if (inferredPreset === undefined) {
-    throw new Error(`No user-data encryption circuit bundle supports polynomial degree ${degree}.`)
+  const chunked = isChunkedInputs(circuitInputs)
+  if (presetName !== undefined && LBFV_PRESETS.has(presetName) !== chunked) {
+    throw new Error(
+      `The ${presetName} preset needs the ${LBFV_PRESETS.has(presetName) ? 'l-BFV' : 'trBFV'} witness, but the witness is for the other path. ` +
+        'Encrypt to the committee key the E3 published.',
+    )
   }
-  if (presetName !== undefined && presetName !== inferredPreset) {
-    throw new Error(`The ${presetName} proof bundle requires degree ${PRESET_DEGREES[presetName]}, but the witness has degree ${degree}.`)
+  if (!chunked) {
+    const { proveUserDataEncryption } = await import('./user-data-encryption-prover')
+    return proveUserDataEncryption(circuitInputs)
+  }
+
+  const degree = circuitInputs.u.coefficients.length
+  const bundleName = (Object.entries(CHUNKED_BUNDLE_DEGREES) as [ChunkedBundleName, number][]).find(
+    ([, bundleDegree]) => bundleDegree === degree,
+  )?.[0]
+  if (bundleName === undefined) {
+    throw new Error(`No user-data encryption circuit bundle supports polynomial degree ${degree}.`)
   }
 
   const { Barretenberg, UltraHonkBackend } = await import('@aztec/bb.js')
   const { Noir } = await import('@noir-lang/noir_js')
   const { proveUserDataEncryptionTree } = await import('@interfold/user-data-encryption-prover')
   const { proofToFields } = await import('../utils')
-  const { userDataEncryption, ...proofTreeCircuits } = await loadProofBundle(presetName ?? inferredPreset)
+  const { userDataEncryption, ...proofTreeCircuits } = await loadProofBundle(bundleName)
   const api = await Barretenberg.new()
   try {
     await api.initSRSChonk(2 ** 21)

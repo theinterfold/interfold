@@ -23,7 +23,7 @@ import ct0EvalChunkMain from '../../../../circuits/dist/secure-8192/ct0_eval_chu
 import ct0EvalChunkMainRoot from '../../../../circuits/dist/secure-8192/ct0_eval_chunk_main_root.json'
 import ct0EvalPkCt from '../../../../circuits/dist/secure-8192/ct0_eval_pk_ct.json'
 import ct0EvalChunkIdentity from '../../../../circuits/dist/secure-8192/ct0_eval_chunk_identity.json'
-import userDataEncryptionCt0 from '../../../../circuits/dist/secure-8192/user_data_encryption_ct0.json'
+import userDataEncryptionCt0 from '../../../../circuits/dist/secure-8192/user_data_encryption_ct0_chunked.json'
 import ct1ChunkMain from '../../../../circuits/dist/secure-8192/ct1_chunk_main.json'
 import ct1ChunkMainRoot from '../../../../circuits/dist/secure-8192/ct1_chunk_main_root.json'
 import ct1PkCtCommit from '../../../../circuits/dist/secure-8192/ct1_pk_ct_commit.json'
@@ -32,7 +32,7 @@ import ct1EvalChunkMain from '../../../../circuits/dist/secure-8192/ct1_eval_chu
 import ct1EvalChunkMainRoot from '../../../../circuits/dist/secure-8192/ct1_eval_chunk_main_root.json'
 import ct1EvalPkCt from '../../../../circuits/dist/secure-8192/ct1_eval_pk_ct.json'
 import ct1EvalChunkIdentity from '../../../../circuits/dist/secure-8192/ct1_eval_chunk_identity.json'
-import userDataEncryptionCt1 from '../../../../circuits/dist/secure-8192/user_data_encryption_ct1.json'
+import userDataEncryptionCt1 from '../../../../circuits/dist/secure-8192/user_data_encryption_ct1_chunked.json'
 
 export const preset: CircuitPreset = 'secure-8192'
 

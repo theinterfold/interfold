@@ -14,10 +14,19 @@ export interface BfvParams {
   error1Variance: string | undefined
 }
 
-export type ThresholdBfvParamsPresetName = 'INSECURE_THRESHOLD' | 'SECURE_THRESHOLD_8192' | 'SECURE_THRESHOLD_16384'
+/**
+ * `INSECURE_THRESHOLD` and `INSECURE_THRESHOLD_LBFV` share their parameters; they name the trBFV and
+ * l-BFV paths (on-chain parameter sets 0 and 4).
+ */
+export type ThresholdBfvParamsPresetName =
+  | 'INSECURE_THRESHOLD'
+  | 'INSECURE_THRESHOLD_LBFV'
+  | 'SECURE_THRESHOLD_8192'
+  | 'SECURE_THRESHOLD_16384'
 
 export const ThresholdBfvParamsPresetNames = [
   'INSECURE_THRESHOLD',
+  'INSECURE_THRESHOLD_LBFV',
   'SECURE_THRESHOLD_8192',
   'SECURE_THRESHOLD_16384',
 ] as const satisfies ReadonlyArray<ThresholdBfvParamsPresetName>

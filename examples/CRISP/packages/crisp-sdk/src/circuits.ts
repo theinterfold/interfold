@@ -12,7 +12,7 @@ export type CircuitPreset = 'insecure' | 'secure-8192' | 'secure-16384'
 /**
  * The circuits whose bytecode depends on the BFV preset.
  *
- * The aggregation circuits — `crisp_fold`, `crisp_onchain_fold`, and `user_data_encryption` — are
+ * The aggregation circuits — `crisp_fold`, `crisp_onchain_fold`, and `user_data_encryption_chunked` — are
  * deliberately absent. Their parameters are proof and verification-key shaped (410/115 fields), not
  * polynomial shaped, so one compiled artifact serves all presets; the fold circuits assert
  * `chain_key_hash` against the insecure *or* the secure constant for exactly that reason. They ship

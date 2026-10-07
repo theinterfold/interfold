@@ -27,6 +27,6 @@ export const PRESET_ARTIFACTS = [
   'crisp',
   'crisp_onchain',
   ...USER_DATA_ENCRYPTION_CHILD_ARTIFACTS,
-  'user_data_encryption_ct0',
-  'user_data_encryption_ct1',
+  'user_data_encryption_ct0_chunked',
+  'user_data_encryption_ct1_chunked',
 ]

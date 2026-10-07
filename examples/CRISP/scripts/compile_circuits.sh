@@ -32,13 +32,13 @@ echo "Compiling the Interfold user-data encryption proof tree..."
 # circuits receive only proofs and public inputs, so they can use the smaller non-ZK target.
 UDE_ZK_CIRCUITS=(
     ct0_chunk_main ct0_pk_ct_commit ct0_eval_chunk_main ct0_eval_pk_ct
-    user_data_encryption_ct0
+    user_data_encryption_ct0_chunked
     ct1_chunk_main ct1_pk_ct_commit ct1_eval_chunk_main ct1_eval_pk_ct
 )
 UDE_NON_ZK_CIRCUITS=(
     ct0_chunk_main_root ct0_chunk_gamma ct0_eval_chunk_main_root ct0_eval_chunk_identity
     ct1_chunk_main_root ct1_chunk_gamma ct1_eval_chunk_main_root ct1_eval_chunk_identity
-    user_data_encryption_ct1 user_data_encryption
+    user_data_encryption_ct1_chunked user_data_encryption_chunked
 )
 
 for name in "${UDE_ZK_CIRCUITS[@]}" "${UDE_NON_ZK_CIRCUITS[@]}"; do
@@ -156,7 +156,7 @@ for stack in "${STACKS[@]}"; do
     mv "${crisp_target}/vk" "${crisp_target}/${crisp_dir}.vk_recursive"
     mv "${crisp_target}/vk_hash" "${crisp_target}/${crisp_dir}.vk_recursive_hash"
 
-    echo "Compiling ${fold_dir} circuit (verifies user_data_encryption + ${crisp_dir})..."
+    echo "Compiling ${fold_dir} circuit (verifies user_data_encryption_chunked + ${crisp_dir})..."
     if ! (cd "$CRISP_CIRCUITS/bin/${fold_dir}" && nargo compile); then
         echo "Error: ${fold_dir} circuit compilation failed"
         exit 1
