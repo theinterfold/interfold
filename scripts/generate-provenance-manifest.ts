@@ -41,6 +41,26 @@ function command(binary: string, args: string[]): string | null {
   }
 }
 
+/**
+ * Run the worker's `check`, which loads every proving key and both KZG parameter files.
+ *
+ * That can take minutes on a slow disk, so the check gets the deadline the service allows it
+ * (`OPENVM_CHECK_TIMEOUT_SECS`, default 30 minutes), and a failure prints its reason.
+ */
+function workerCheck(prover: string, config: string): boolean {
+  const seconds = Number(process.env.OPENVM_CHECK_TIMEOUT_SECS ?? 1800)
+  if (!Number.isInteger(seconds) || seconds <= 0) throw new Error('OPENVM_CHECK_TIMEOUT_SECS must be a positive integer')
+  try {
+    execFileSync(prover, ['check', config], { cwd: root, stdio: ['ignore', 'ignore', 'pipe'], timeout: seconds * 1000 })
+    return true
+  } catch (error: any) {
+    const reason =
+      error.code === 'ETIMEDOUT' ? `it did not finish within ${seconds} seconds` : String(error.stderr ?? '').trim() || error.message
+    console.error(`The worker check failed: ${reason}`)
+    return false
+  }
+}
+
 async function digest(file: string): Promise<string | null> {
   if (!existsSync(file)) return null
   const hash = createHash('sha256')
@@ -108,7 +128,7 @@ async function main() {
     if (args.prover) {
       const prover = path.resolve(args.prover)
       artifacts.worker = await digest(prover)
-      workerChecked = command(prover, ['check', configPath]) !== null
+      workerChecked = workerCheck(prover, configPath)
     }
     if (!workerChecked) unresolved.push('worker identity check (supply a working --prover)')
   } else unresolved.push('worker configuration (supply --config)')
