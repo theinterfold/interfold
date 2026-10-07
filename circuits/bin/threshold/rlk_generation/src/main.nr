@@ -38,14 +38,9 @@ fn main(
     );
 
     for limb_index in 0..L {
-        d0[limb_index].range_check_2bounds::<RLK_GENERATION_BIT_D>(
-            RLK_GENERATION_CONFIGS.r2_d0_bounds[limb_index],
-            RLK_GENERATION_CONFIGS.r2_d0_bounds[limb_index],
-        );
-        d2[limb_index].range_check_2bounds::<RLK_GENERATION_BIT_D>(
-            RLK_GENERATION_CONFIGS.r2_d2_bounds[limb_index],
-            RLK_GENERATION_CONFIGS.r2_d2_bounds[limb_index],
-        );
+        let d_bound = (RLK_GENERATION_CONFIGS.qis[limb_index] - 1) / 2;
+        d0[limb_index].range_check_2bounds::<RLK_GENERATION_BIT_D>(d_bound, d_bound);
+        d2[limb_index].range_check_2bounds::<RLK_GENERATION_BIT_D>(d_bound, d_bound);
         verify_honk_proof(
             limb_vk,
             limb_proofs[limb_index],

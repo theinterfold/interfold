@@ -509,6 +509,8 @@ pub fn compute_sc_party_share_chunk_root_commitment(
 pub fn compute_sc_sk_secret_root_from_polynomial<let N: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32, let BIT: u32>(
     sk: Polynomial<N>,
 ) -> Field {
+    // Every coefficient must land in exactly one chunk, or the uncovered ones are never committed.
+    assert(N_CHUNKS * CHUNK_SIZE == N);
     let mut chunks: [Field; N_CHUNKS] = [0; N_CHUNKS];
     for chunk_idx in 0..N_CHUNKS {
         let start = N - ((chunk_idx + 1) * CHUNK_SIZE);
@@ -530,6 +532,8 @@ pub fn compute_sc_sk_secret_root_from_polynomial<let N: u32, let N_CHUNKS: u32, 
 pub fn compute_sc_esm_secret_root_from_polynomial<let N: u32, let L: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32, let BIT: u32>(
     e_sm: [Polynomial<N>; L],
 ) -> Field {
+    // Every coefficient must land in exactly one chunk, or the uncovered ones are never committed.
+    assert(N_CHUNKS * CHUNK_SIZE == N);
     let mut chunks: [Field; N_CHUNKS] = [0; N_CHUNKS];
     for chunk_idx in 0..N_CHUNKS {
         let start = N - ((chunk_idx + 1) * CHUNK_SIZE);
@@ -554,6 +558,8 @@ pub fn compute_sc_party_share_root_from_polynomial<let N: u32, let N_CHUNKS: u32
     mod_idx: u32,
     message: Polynomial<N>,
 ) -> Field {
+    // Every coefficient must land in exactly one chunk, or the uncovered ones are never committed.
+    assert(N_CHUNKS * CHUNK_SIZE == N);
     let mut chunks: [Field; N_CHUNKS] = [0; N_CHUNKS];
     for chunk_idx in 0..N_CHUNKS {
         let start = N - ((chunk_idx + 1) * CHUNK_SIZE);
@@ -716,7 +722,7 @@ fn compute_rlk_shared_limb_commitment<let N: u32, let BIT: u32>(
     polynomial: Polynomial<N>,
 ) -> Field {
     let mut payload = [1, kind_tag, row_index as Field, N as Field].as_vector();
-    payload = single_polynomial_payload::<N, BIT>(payload, polynomial);
+    payload = single_polynomial_payload_checked::<N, BIT>(payload, polynomial);
     compute_commitment(payload, DS_RLK_GENERATION_LIMB_V1)
 }
 
@@ -728,7 +734,7 @@ fn compute_rlk_indexed_limb_commitment<let N: u32, let BIT: u32>(
 ) -> Field {
     let mut payload =
         [1, kind_tag, row_index as Field, limb_index as Field, N as Field].as_vector();
-    payload = single_polynomial_payload::<N, BIT>(payload, polynomial);
+    payload = single_polynomial_payload_checked::<N, BIT>(payload, polynomial);
     compute_commitment(payload, DS_RLK_GENERATION_LIMB_V1)
 }
 

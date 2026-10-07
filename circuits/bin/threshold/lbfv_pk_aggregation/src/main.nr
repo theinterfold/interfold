@@ -7,6 +7,7 @@
 use lib::configs::default::{H, N_PARTIES};
 use lib::configs::default::threshold::{
     GADGET_DIM, L, LBFV_CRS_GADGET_ROWS, N, PK_AGGREGATION_BIT_PK, PK_AGGREGATION_CONFIGS,
+    PK_GENERATION_BIT_PK,
 };
 use lib::core::threshold::lbfv_pk_aggregation::LbfvPkAggregation;
 use lib::core::threshold::lbfv_proof_domain::{
@@ -26,6 +27,8 @@ fn main(
     pk0: [[Polynomial<N>; L]; H],
     pk0_agg: [Polynomial<N>; L],
 ) -> pub Field {
+    // Opens the pk0 commitments lbfv_pk_generation made, so the digit widths must agree.
+    assert(PK_AGGREGATION_BIT_PK == PK_GENERATION_BIT_PK);
     validate_aggregation_statement::<N_PARTIES, GADGET_DIM>(
         LbfvProofSession { session_id_hi, session_id_lo },
         aggregator_party_id,

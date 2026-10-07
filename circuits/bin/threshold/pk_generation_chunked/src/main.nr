@@ -4,7 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use lib::configs::default::dkg::{SHARE_COMPUTATION_CHUNK_SIZE, SHARE_COMPUTATION_N_CHUNKS};
+use lib::configs::default::dkg::{
+    SHARE_COMPUTATION_CHUNK_SIZE, SHARE_COMPUTATION_E_SM_BIT_SECRET, SHARE_COMPUTATION_N_CHUNKS,
+    SHARE_COMPUTATION_SK_BIT_SECRET,
+};
 use lib::configs::default::threshold::{
     CRP, L, N, PK_GENERATION_BIT_E_SM, PK_GENERATION_BIT_E_SM_LIFTED,
     PK_GENERATION_BIT_E_SM_QUOTIENT, PK_GENERATION_BIT_EEK, PK_GENERATION_BIT_PK,
@@ -28,6 +31,9 @@ fn main(
     ris: [Polynomial<N>; L],
     pk0is: [Polynomial<N>; L],
 ) -> pub (Field, Field, Field) {
+    // C2 re-opens the sk/e_sm roots built here, so both sides must pack at the same widths.
+    assert(PK_GENERATION_BIT_SK == SHARE_COMPUTATION_SK_BIT_SECRET);
+    assert(PK_GENERATION_BIT_E_SM == SHARE_COMPUTATION_E_SM_BIT_SECRET);
     let pk_generation: PkGeneration<N, L, PK_GENERATION_BIT_EEK, PK_GENERATION_BIT_SK, PK_GENERATION_BIT_E_SM, PK_GENERATION_BIT_E_SM_LIFTED, PK_GENERATION_BIT_E_SM_QUOTIENT, PK_GENERATION_BIT_R, PK_GENERATION_BIT_PK> = PkGeneration::new(
         PK_GENERATION_CONFIGS,
         CRP,

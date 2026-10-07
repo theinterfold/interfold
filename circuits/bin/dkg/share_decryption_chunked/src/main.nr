@@ -5,8 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use lib::configs::default::dkg::{
-    L_THRESHOLD, N, QIS_THRESHOLD, SHARE_COMPUTATION_CHUNK_SIZE, SHARE_COMPUTATION_N_CHUNKS,
-    SHARE_DECRYPTION_BIT_AGG, SHARE_DECRYPTION_BIT_MSG,
+    L_THRESHOLD, N, QIS_THRESHOLD, SHARE_COMPUTATION_BIT_SHARE, SHARE_COMPUTATION_CHUNK_SIZE,
+    SHARE_COMPUTATION_N_CHUNKS, SHARE_DECRYPTION_BIT_AGG, SHARE_DECRYPTION_BIT_MSG,
 };
 use lib::configs::default::H;
 use lib::core::dkg::share_decryption::ShareDecryption;
@@ -22,6 +22,8 @@ fn main(
     decrypted_shares: [[Polynomial<N>; L_THRESHOLD]; H],
     recipient_party_idx: u32,
 ) -> pub Field {
+    // C4 re-opens the chunk roots C2 committed; its bound comes from C2 only at the same width.
+    assert(SHARE_DECRYPTION_BIT_MSG == SHARE_COMPUTATION_BIT_SHARE);
     let share_decryption: ShareDecryption<N, L_THRESHOLD, H, SHARE_DECRYPTION_BIT_MSG, SHARE_DECRYPTION_BIT_AGG> =
         ShareDecryption::new(expected_commitments, decrypted_shares);
     share_decryption.execute_with(QIS_THRESHOLD, |mod_idx, share| {
