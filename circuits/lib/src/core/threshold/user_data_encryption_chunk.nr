@@ -306,6 +306,22 @@ pub fn chunk_gamma_pow(total_len: u32, chunk_size: u32, chunk_idx: u32, gamma: F
     gamma.pow_32(offset as Field)
 }
 
+/// Pin every ciphertext limb to its centered residue `[-(q_i-1)/2, (q_i-1)/2]`.
+///
+/// The commit circuits create the ciphertext commitment, and the chunk identities only check the
+/// ciphertext modulo `q_i` (`r1` absorbs any multiple of it), so without this bound `ct + k*q_i`
+/// is a second opening of the same ciphertext. Main's monolithic ct0/ct1 circuits apply the same
+/// bound.
+pub fn assert_centered_ciphertext<let N: u32, let L: u32, let BIT_CT: u32>(
+    cts: [Polynomial<N>; L],
+    qis: [Field; L],
+) {
+    for i in 0..L {
+        let half = (qis[i] - 1) / 2;
+        cts[i].range_check_2bounds::<BIT_CT>(half, half);
+    }
+}
+
 /// Compute a single-polynomial chunk root from the complete polynomial.
 ///
 /// The top-level ct0 circuit uses this function to bind the complete `k1` witness to the `k1`
@@ -630,4 +646,30 @@ fn test_ude_vk_manifest_matches_flat_vk_hash() {
             == compute_vk_hash([1, 2, 3, 4, 5, 6, 7, 8].as_vector()),
     );
     assert(compute_ude_vk_chain(10, 11) == compute_vk_hash([10, 11].as_vector()));
+}
+
+#[test]
+fn test_centered_ciphertext_accepts_both_edges() {
+    assert_centered_ciphertext::<2, 2, 4>(
+        [Polynomial::new([8, -8]), Polynomial::new([0, 6])],
+        [17, 13],
+    );
+}
+
+#[test(should_fail)]
+fn test_centered_ciphertext_rejects_a_shifted_residue() {
+    // 9 == -8 mod 17, but it is not the centered representative.
+    assert_centered_ciphertext::<2, 2, 4>(
+        [Polynomial::new([9, 0]), Polynomial::new([0, 0])],
+        [17, 13],
+    );
+}
+
+#[test(should_fail)]
+fn test_centered_ciphertext_checks_every_limb() {
+    // 7 is centered mod 17 but not mod 13.
+    assert_centered_ciphertext::<2, 2, 4>(
+        [Polynomial::new([0, 0]), Polynomial::new([7, 0])],
+        [17, 13],
+    );
 }
