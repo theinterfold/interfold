@@ -12,6 +12,7 @@
 
 use crate::circuits::commitments::{
     compute_dkg_pk_commitment, compute_sc_party_share_root_commitment,
+    compute_share_encryption_commitment_from_message,
 };
 use crate::dkg::share_encryption::ShareEncryptionCircuit;
 use crate::dkg::share_encryption::ShareEncryptionCircuitData;
@@ -127,6 +128,9 @@ pub struct Bounds {
 /// that the ciphertext and commitments match the public inputs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Inputs {
+    /// Whether these inputs are for `share_encryption_chunked` (the l-BFV path), which also takes
+    /// `party_idx` and `mod_idx`.
+    pub chunked: bool,
     pub party_idx: u32,
     pub mod_idx: u32,
     /// Public key and ciphertext polynomials in CRT form (per modulus).
@@ -340,9 +344,9 @@ impl Computation for Inputs {
     type Data = ShareEncryptionCircuitData;
     type Error = CircuitsErrors;
 
-    fn compute(_preset: Self::Preset, data: &Self::Data) -> Result<Self, Self::Error> {
+    fn compute(preset: Self::Preset, data: &Self::Data) -> Result<Self, Self::Error> {
         let (threshold_params, dkg_params) =
-            build_pair_for_preset(_preset).map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
+            build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
         // row_index (mod_idx) indexes the threshold secret's modulus domain (one C3 proof per
         // threshold Shamir row); it is not bounded by the DKG moduli count.
         let threshold_l = threshold_params.moduli().len();
@@ -443,7 +447,19 @@ impl Computation for Inputs {
         .map(|(i, (qi, ct0i, ct1i, pk0i, pk1i))| {
             let qi_bigint = BigInt::from(**qi);
 
-            let k0qi = BigInt::from(qi.inv(qi.neg(t)).unwrap());
+            // The circuit uses the lifted `e0` directly, with no CRT decomposition. That is only
+            // correct while `e0_bound < q_i / 2`, which makes the centered residue equal to `e0`.
+            // DKG keeps `error1_variance <= 16`, so the bound is `2 * variance`. If a parameter
+            // change breaks that, fail here instead of emitting a witness the circuit misreads.
+            assert!(
+                e0_mod_q
+                    .coefficients()
+                    .iter()
+                    .all(|c| c.abs() * 2 < qi_bigint),
+                "DKG e0 must fit in every modulus: |e0| >= q_{i} / 2, so e0_bound >= q_i / 2"
+            );
+
+            let k0qi = BigInt::from(k0is[i]);
             let ki = k1.scalar_mul(&k0qi);
 
             // e0 is used directly here, not a per-modulus CRT limb: e0_bound is identical to
@@ -514,15 +530,19 @@ impl Computation for Inputs {
         let pk_bit = compute_modulus_bit(&dkg_params);
         let msg_bit = compute_msg_bit(&dkg_params);
         let pk_commitment = compute_dkg_pk_commitment(&pk0is, &pk1is, pk_bit);
-        if data.chunk_size == 0 {
+        // The trBFV C3 binds the share to C2's single commitment; the l-BFV path's chunked C2
+        // commits each share as a chunk root keyed by (party, modulus) (`share_encryption_chunked`).
+        let chunked = e3_fhe_params::supports_lbfv(preset);
+        if chunked && data.chunk_size == 0 {
             return Err(CircuitsErrors::Sample(
                 "C3 chunk size must be greater than zero".to_string(),
             ));
         }
-        if !message
-            .coefficients()
-            .len()
-            .is_multiple_of(data.chunk_size as usize)
+        if chunked
+            && !message
+                .coefficients()
+                .len()
+                .is_multiple_of(data.chunk_size as usize)
         {
             return Err(CircuitsErrors::Sample(format!(
                 "C3 chunk size {} must divide message degree {}",
@@ -530,15 +550,20 @@ impl Computation for Inputs {
                 message.coefficients().len()
             )));
         }
-        let msg_commitment = compute_sc_party_share_root_commitment(
-            data.party_idx as usize,
-            data.mod_idx as usize,
-            &message,
-            msg_bit,
-            data.chunk_size as usize,
-        );
+        let msg_commitment = if chunked {
+            compute_sc_party_share_root_commitment(
+                data.party_idx as usize,
+                data.mod_idx as usize,
+                &message,
+                msg_bit,
+                data.chunk_size as usize,
+            )
+        } else {
+            compute_share_encryption_commitment_from_message(&message, msg_bit)
+        };
 
         Ok(Inputs {
+            chunked,
             party_idx: data.party_idx,
             mod_idx: data.mod_idx,
             pk0is,
@@ -590,9 +615,12 @@ impl Computation for Inputs {
             "p2is": p2is,
             "expected_pk_commitment": pk_commitment,
             "expected_message_commitment": msg_commitment,
-            "party_idx": self.party_idx,
-            "mod_idx": self.mod_idx,
         });
+        let mut json = json;
+        if self.chunked {
+            json["party_idx"] = serde_json::json!(self.party_idx);
+            json["mod_idx"] = serde_json::json!(self.mod_idx);
+        }
 
         Ok(json)
     }

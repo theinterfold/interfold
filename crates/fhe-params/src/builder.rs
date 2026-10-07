@@ -13,7 +13,7 @@ pub fn build_pair_for_preset(
     preset: BfvPreset,
 ) -> Result<(Arc<BfvParameters>, Arc<BfvParameters>), PresetError> {
     match preset {
-        BfvPreset::InsecureThreshold => {
+        BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => {
             let params_threshold = BfvParametersBuilder::new()
                 .set_degree(insecure::DEGREE)
                 .set_plaintext_modulus(insecure::threshold::PLAINTEXT_MODULUS)

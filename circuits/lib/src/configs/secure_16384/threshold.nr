@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::core::threshold::decrypted_shares_aggregation::Configs as DecryptedSharesAggregationConfigs;
+use crate::core::threshold::decrypted_shares_aggregation_wide::Configs as DecryptedSharesAggregationWideConfigs;
 use crate::core::threshold::pk_aggregation::Configs as PkAggregationConfigs;
 use crate::core::threshold::pk_generation::Configs as PkGenerationConfigs;
 use crate::core::threshold::rlk_aggregation::Configs as RlkAggregationConfigs;
@@ -16,11 +17,6 @@ use crate::core::threshold::user_data_encryption_ct0::Configs as UserDataEncrypt
 use crate::core::threshold::user_data_encryption_ct1::Configs as UserDataEncryptionCt1Configs;
 use crate::math::polynomial::Polynomial;
 
-pub use crate::configs::committee::active::{
-    SECURE_16384_E_SM_BIT as PK_GENERATION_BIT_E_SM,
-    SECURE_16384_E_SM_BOUND as PK_GENERATION_E_SM_BOUND,
-};
-
 // Global configs for threshold secure_16384 preset
 pub global N: u32 = 16384;
 pub global L: u32 = 5;
@@ -30,6 +26,7 @@ pub global PLAINTEXT_MODULUS: Field = 1000;
 pub global Q_MOD_T: Field = 617;
 pub global Q_MOD_T_CENTERED: Field = -383;
 pub global Q_INVERSE_MOD_T: Field = 953;
+pub global PARAMS_SEARCH_N: Field = 20;
 pub global PARAMS_SEARCH_Z: Field = 3;
 pub global PARAMS_LAMBDA: u32 = 31;
 pub global PARAMS_TWO_POW_LAMBDA_PLUS_ONE: Field = 4294967296;
@@ -81977,26 +81974,47 @@ pk_generation (CIRCUIT 1 - PUBLIC KEY THRESHOLD BFV)
 
 pub global PK_GENERATION_BIT_EEK: u32 = 5;
 pub global PK_GENERATION_BIT_SK: u32 = 1;
-pub global PK_GENERATION_BIT_R1: u32 = 14;
-pub global PK_GENERATION_BIT_R2: u32 = 50;
+pub global PK_GENERATION_BIT_E_SM: u32 = 50;
+pub global PK_GENERATION_BIT_E_SM_LIFTED: u32 = 224;
+pub global PK_GENERATION_BIT_E_SM_QUOTIENT: u32 = 174;
+pub global PK_GENERATION_BIT_R: u32 = 14;
 pub global PK_GENERATION_BIT_PK: u32 = 50;
-
 pub global PK_GENERATION_EEK_BOUND: Field = 20;
 pub global PK_GENERATION_SK_BOUND: Field = 1;
-pub global PK_GENERATION_R1_BOUNDS: [Field; L] = [8192, 8192, 8192, 8192, 8192];
-pub global PK_GENERATION_R2_BOUNDS: [Field; L] =
+pub global PK_GENERATION_E_SM_BOUND: Field =
+    26316016473840585298230718169791889331038808153628958858174634393600;
+pub global PK_GENERATION_E_SM_LIMB_BOUNDS: [Field; L] =
     [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
-
+pub global PK_GENERATION_E_SM_QUOTIENT_BOUNDS: [Field; L] = [
+    23373317708217694194877008298387380178495904144463570,
+    23373317736788323148615166548344328612408292806530724,
+    23373317750393384579706629317289349217256171536415084,
+    23373317753114396867825526983109876798315185753995648,
+    23373317765358952172200562576015589630538634350005611,
+];
+pub global PK_GENERATION_R_BOUNDS: [Field; L] = [8192, 8192, 8192, 8192, 8192];
 pub global PK_GENERATION_B_ENC: Field = 28147497671065600;
-
 pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfigs::new(
     QIS,
     PK_GENERATION_EEK_BOUND,
     PK_GENERATION_SK_BOUND,
     PK_GENERATION_E_SM_BOUND,
-    PK_GENERATION_R1_BOUNDS,
-    PK_GENERATION_R2_BOUNDS,
+    PK_GENERATION_E_SM_LIMB_BOUNDS,
+    PK_GENERATION_E_SM_QUOTIENT_BOUNDS,
+    PK_GENERATION_R_BOUNDS,
 );
+
+/************************************
+-------------------------------------
+lbfv_pk_generation_limb (l-BFV PUBLIC KEY LIMB)
+-------------------------------------
+************************************/
+
+pub global LBFV_PK_GENERATION_BIT_R1: u32 = 15;
+pub global LBFV_PK_GENERATION_BIT_R2: u32 = 51;
+pub global LBFV_PK_GENERATION_R1_BOUNDS: [Field; L] = [8192, 8192, 8192, 8192, 8192];
+pub global LBFV_PK_GENERATION_R2_BOUNDS: [Field; L] =
+    [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
 
 /************************************
 -------------------------------------
@@ -82066,12 +82084,11 @@ pk_aggregation (CIRCUIT 5)
 ************************************/
 
 pub global PK_AGGREGATION_BIT_PK: u32 = 50;
-
 pub global PK_AGGREGATION_CONFIGS: PkAggregationConfigs<L> = PkAggregationConfigs::new(QIS);
 
 /************************************
 -------------------------------------
-user_data_encryption (USED FOR DATA ENCRYPTION)
+user_data_encryption, user_data_encryption_ct0, user_data_encryption_ct1 (trBFV)
 -------------------------------------
 ************************************/
 
@@ -82081,105 +82098,86 @@ pub global USER_DATA_ENCRYPTION_BIT_U: u32 = 1;
 pub global USER_DATA_ENCRYPTION_BIT_E0: u32 = 55;
 pub global USER_DATA_ENCRYPTION_BIT_E1: u32 = 5;
 pub global USER_DATA_ENCRYPTION_BIT_K: u32 = 10;
-pub global USER_DATA_ENCRYPTION_BIT_R1: u32 = 14;
-pub global USER_DATA_ENCRYPTION_BIT_R2: u32 = 50;
-pub global USER_DATA_ENCRYPTION_BIT_P1: u32 = 14;
-pub global USER_DATA_ENCRYPTION_BIT_P2: u32 = 50;
-// Bit width for `e0_quotients` (the CRT quotient in `e0 == e0is[i] + e0_quotients[i] * qis[i]`).
-// MUST be range-checked with USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS: the equation holds in
-// F_p, not Z, so an unconstrained quotient lets a prover pick any e0is (soundness gap, not a
-// tuning knob - see check_e0_crt_consistency's callers).
-pub global USER_DATA_ENCRYPTION_BIT_E0_QUOTIENT: u32 = 5;
-
+pub global USER_DATA_ENCRYPTION_CT0_BIT_R: u32 = 14;
+pub global USER_DATA_ENCRYPTION_CT1_BIT_R: u32 = 14;
 pub global USER_DATA_ENCRYPTION_K0IS: [Field; L] =
     [730709046303589, 514536261560173, 1009932223962416, 496521862559171, 307370676661322];
 pub global USER_DATA_ENCRYPTION_PK_BOUNDS: [Field; L] =
     [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
-pub global USER_DATA_ENCRYPTION_E0_BOUND: Field = 28147497671065600;
+pub global USER_DATA_ENCRYPTION_E0_BOUND: Field = 28147497671065599;
 pub global USER_DATA_ENCRYPTION_E1_BOUND: Field = 20;
 pub global USER_DATA_ENCRYPTION_U_BOUND: Field = 1;
 pub global USER_DATA_ENCRYPTION_K1_LOW_BOUND: Field = 0;
 pub global USER_DATA_ENCRYPTION_K1_UP_BOUND: Field = 999;
-pub global USER_DATA_ENCRYPTION_R1_LOW_BOUNDS: [Field; L] = [8843, 8651, 9091, 8635, 8467];
-pub global USER_DATA_ENCRYPTION_R1_UP_BOUNDS: [Field; L] = [8194, 8194, 8194, 8194, 8194];
-pub global USER_DATA_ENCRYPTION_R2_BOUNDS: [Field; L] =
-    [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
-pub global USER_DATA_ENCRYPTION_P1_BOUNDS: [Field; L] = [8192, 8192, 8192, 8192, 8192];
-pub global USER_DATA_ENCRYPTION_P2_BOUNDS: [Field; L] =
-    [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
-// Per-limb bound on the honest e0_quotients[i] magnitude: (e0_bound + qi_bound) / qi + 1.
-pub global USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS: [Field; L] = [26, 26, 26, 26, 26];
-
-/************************************
--------------------------------------
-user_data_encryption_ct0 (CIRCUIT A - CT0 ENCRYPTION)
--------------------------------------
-************************************/
-
+pub global USER_DATA_ENCRYPTION_CT0_R_BOUNDS: [Field; L] = [8866, 8674, 9114, 8658, 8490];
+pub global USER_DATA_ENCRYPTION_CT1_R_BOUNDS: [Field; L] = [8192, 8192, 8192, 8192, 8192];
 pub global USER_DATA_ENCRYPTION_CT0_CONFIGS: UserDataEncryptionCt0Configs<N, L> = UserDataEncryptionCt0Configs::new(
     QIS,
     USER_DATA_ENCRYPTION_K0IS,
     USER_DATA_ENCRYPTION_E0_BOUND,
     USER_DATA_ENCRYPTION_U_BOUND,
-    USER_DATA_ENCRYPTION_R1_LOW_BOUNDS,
-    USER_DATA_ENCRYPTION_R1_UP_BOUNDS,
-    USER_DATA_ENCRYPTION_R2_BOUNDS,
+    USER_DATA_ENCRYPTION_CT0_R_BOUNDS,
     USER_DATA_ENCRYPTION_K1_LOW_BOUND,
     USER_DATA_ENCRYPTION_K1_UP_BOUND,
-    USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS,
 );
-
-/************************************
--------------------------------------
-user_data_encryption_ct1 (CIRCUIT B - CT1 ENCRYPTION)
--------------------------------------
-************************************/
-
 pub global USER_DATA_ENCRYPTION_CT1_CONFIGS: UserDataEncryptionCt1Configs<N, L> = UserDataEncryptionCt1Configs::new(
     QIS,
     USER_DATA_ENCRYPTION_E1_BOUND,
     USER_DATA_ENCRYPTION_U_BOUND,
-    USER_DATA_ENCRYPTION_P1_BOUNDS,
-    USER_DATA_ENCRYPTION_P2_BOUNDS,
+    USER_DATA_ENCRYPTION_CT1_R_BOUNDS,
 );
 
 /************************************
 -------------------------------------
-user_data_encryption chunking (ct0/ct1 coefficient-level chunk grid)
+user_data_encryption chunked pipeline (l-BFV)
 -------------------------------------
 ************************************/
 
-// Not a cryptographic parameter - see the comment at this constant's call site in
-// generate_config_modules.rs for the sizing rationale (N_CHUNKS=2 is the minimum that's
-// still genuinely "chunking").
-//
-// One count covers the whole merged grid: u, e0, k1, r2is (ct0) / u, e1, p2is (ct1) - everything
-// of length N - plus r1is/p1is, which the same chunk leaf slices at the same `chunk_idx`. r2is/p2is
-// (degree N-1) are padded to N and r1is/p1is (degree 2N-1) to 2N by one always-zero top
-// coefficient, so a circuit's r1/p1 chunk width is always exactly twice its main chunk width
-// (`2 * CHUNK_SIZE`) and is derived that way rather than from a second count.
-pub global USER_DATA_ENCRYPTION_N_CHUNKS: u32 = 2;
-
-// Bounds the chunk leaves check against. Same values as the CT0/CT1 configs above - the chunk
-// structs are sized for one `CHUNK_SIZE` slice rather than a whole `Polynomial<N>`, and drop the
-// fields only the whole-witness circuits use (k0is, and qis on the ct1 side).
-pub global USER_DATA_ENCRYPTION_CT0_CHUNK_CONFIGS: UserDataEncryptionCt0ChunkConfigs<L> = UserDataEncryptionCt0ChunkConfigs::new(
+pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_PK: u32 = 50;
+pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_CT: u32 = 50;
+pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_U: u32 = 1;
+pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_E0: u32 = 55;
+pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_E1: u32 = 5;
+pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_K: u32 = 10;
+pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_R1: u32 = 14;
+pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_R2: u32 = 50;
+pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_P1: u32 = 14;
+pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_P2: u32 = 50;
+pub global USER_DATA_ENCRYPTION_CHUNKED_BIT_E0_QUOTIENT: u32 = 5;
+pub global USER_DATA_ENCRYPTION_CHUNKED_K0IS: [Field; L] =
+    [730709046303589, 514536261560173, 1009932223962416, 496521862559171, 307370676661322];
+pub global USER_DATA_ENCRYPTION_CHUNKED_PK_BOUNDS: [Field; L] =
+    [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
+pub global USER_DATA_ENCRYPTION_CHUNKED_E0_BOUND: Field = 28147497671065600;
+pub global USER_DATA_ENCRYPTION_CHUNKED_E1_BOUND: Field = 20;
+pub global USER_DATA_ENCRYPTION_CHUNKED_U_BOUND: Field = 1;
+pub global USER_DATA_ENCRYPTION_CHUNKED_K1_LOW_BOUND: Field = 0;
+pub global USER_DATA_ENCRYPTION_CHUNKED_K1_UP_BOUND: Field = 999;
+pub global USER_DATA_ENCRYPTION_CHUNKED_R1_LOW_BOUNDS: [Field; L] = [8843, 8651, 9091, 8635, 8467];
+pub global USER_DATA_ENCRYPTION_CHUNKED_R1_UP_BOUNDS: [Field; L] = [8194, 8194, 8194, 8194, 8194];
+pub global USER_DATA_ENCRYPTION_CHUNKED_R2_BOUNDS: [Field; L] =
+    [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
+pub global USER_DATA_ENCRYPTION_CHUNKED_P1_BOUNDS: [Field; L] = [8192, 8192, 8192, 8192, 8192];
+pub global USER_DATA_ENCRYPTION_CHUNKED_P2_BOUNDS: [Field; L] =
+    [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
+pub global USER_DATA_ENCRYPTION_CHUNKED_E0_QUOTIENT_BOUNDS: [Field; L] = [26, 26, 26, 26, 26];
+pub global USER_DATA_ENCRYPTION_CHUNKED_N_CHUNKS: u32 = 2;
+pub global USER_DATA_ENCRYPTION_CHUNKED_CT0_CHUNK_CONFIGS: UserDataEncryptionCt0ChunkConfigs<L> = UserDataEncryptionCt0ChunkConfigs::new(
     QIS,
-    USER_DATA_ENCRYPTION_U_BOUND,
-    USER_DATA_ENCRYPTION_E0_BOUND,
-    USER_DATA_ENCRYPTION_K1_LOW_BOUND,
-    USER_DATA_ENCRYPTION_K1_UP_BOUND,
-    USER_DATA_ENCRYPTION_R1_LOW_BOUNDS,
-    USER_DATA_ENCRYPTION_R1_UP_BOUNDS,
-    USER_DATA_ENCRYPTION_R2_BOUNDS,
-    USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS,
+    USER_DATA_ENCRYPTION_CHUNKED_U_BOUND,
+    USER_DATA_ENCRYPTION_CHUNKED_E0_BOUND,
+    USER_DATA_ENCRYPTION_CHUNKED_K1_LOW_BOUND,
+    USER_DATA_ENCRYPTION_CHUNKED_K1_UP_BOUND,
+    USER_DATA_ENCRYPTION_CHUNKED_R1_LOW_BOUNDS,
+    USER_DATA_ENCRYPTION_CHUNKED_R1_UP_BOUNDS,
+    USER_DATA_ENCRYPTION_CHUNKED_R2_BOUNDS,
+    USER_DATA_ENCRYPTION_CHUNKED_E0_QUOTIENT_BOUNDS,
 );
-
-pub global USER_DATA_ENCRYPTION_CT1_CHUNK_CONFIGS: UserDataEncryptionCt1ChunkConfigs<L> = UserDataEncryptionCt1ChunkConfigs::new(
-    USER_DATA_ENCRYPTION_U_BOUND,
-    USER_DATA_ENCRYPTION_E1_BOUND,
-    USER_DATA_ENCRYPTION_P1_BOUNDS,
-    USER_DATA_ENCRYPTION_P2_BOUNDS,
+pub global USER_DATA_ENCRYPTION_CHUNKED_CT1_CHUNK_CONFIGS: UserDataEncryptionCt1ChunkConfigs<L> = UserDataEncryptionCt1ChunkConfigs::new(
+    USER_DATA_ENCRYPTION_CHUNKED_U_BOUND,
+    USER_DATA_ENCRYPTION_CHUNKED_E1_BOUND,
+    USER_DATA_ENCRYPTION_CHUNKED_P1_BOUNDS,
+    USER_DATA_ENCRYPTION_CHUNKED_P2_BOUNDS,
 );
 
 /************************************
@@ -82191,26 +82189,18 @@ share_decryption (CIRCUIT 6 - THRESHOLD BFV SHARE DECRYPTION)
 pub global THRESHOLD_SHARE_DECRYPTION_BIT_CT: u32 = 50;
 pub global THRESHOLD_SHARE_DECRYPTION_BIT_SK: u32 = 50;
 pub global THRESHOLD_SHARE_DECRYPTION_BIT_E_SM: u32 = 50;
-pub global THRESHOLD_SHARE_DECRYPTION_BIT_R1: u32 = 63;
-pub global THRESHOLD_SHARE_DECRYPTION_BIT_R2: u32 = 50;
+pub global THRESHOLD_SHARE_DECRYPTION_BIT_R: u32 = 63;
 pub global THRESHOLD_SHARE_DECRYPTION_BIT_D: u32 = 50;
 pub global THRESHOLD_SHARE_DECRYPTION_BIT_D_NATIVE: u32 = 51;
-
-pub global THRESHOLD_SHARE_DECRYPTION_R1_BOUNDS: [Field; L] = [
+pub global THRESHOLD_SHARE_DECRYPTION_R_BOUNDS: [Field; L] = [
     4611686061108621314,
     4611686055471476738,
     4611686052787122178,
     4611686052250251266,
     4611686049834332162,
 ];
-pub global THRESHOLD_SHARE_DECRYPTION_R2_BOUNDS: [Field; L] =
-    [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
-
-pub global THRESHOLD_SHARE_DECRYPTION_CONFIGS: ShareDecryptionConfigs<L> = ShareDecryptionConfigs::new(
-    QIS,
-    THRESHOLD_SHARE_DECRYPTION_R1_BOUNDS,
-    THRESHOLD_SHARE_DECRYPTION_R2_BOUNDS,
-);
+pub global THRESHOLD_SHARE_DECRYPTION_CONFIGS: ShareDecryptionConfigs<L> =
+    ShareDecryptionConfigs::new(QIS, THRESHOLD_SHARE_DECRYPTION_R_BOUNDS);
 
 /************************************
 -------------------------------------
@@ -82218,8 +82208,21 @@ decrypted_shares_aggregation (CIRCUIT 7)
 -------------------------------------
 ************************************/
 
-pub global DECRYPTED_SHARES_AGGREGATION_BIT_NOISE: u32 = 240;
 pub global DECRYPTED_SHARES_AGGREGATION_BIT_D_NATIVE: u32 = 51;
-
+pub global DECRYPTED_SHARES_AGGREGATION_BIT_Q: u32 = 51;
+pub global DECRYPTED_SHARES_AGGREGATION_BIT_K: u32 = 57;
+pub global DECRYPTED_SHARES_AGGREGATION_BIT_T: u32 = 10;
+pub global DECRYPTED_SHARES_AGGREGATION_BIT_Q_TOTAL: u32 = 251;
 pub global DECRYPTED_SHARES_AGGREGATION_CONFIGS: DecryptedSharesAggregationConfigs<L> =
     DecryptedSharesAggregationConfigs::new(QIS, PLAINTEXT_MODULUS, Q_INVERSE_MOD_T);
+
+/************************************
+-------------------------------------
+decrypted_shares_aggregation_wide (CIRCUIT 7, l-BFV wide moduli - KNOWN UNSOUND, see the circuit)
+-------------------------------------
+************************************/
+
+pub global DECRYPTED_SHARES_AGGREGATION_WIDE_BIT_NOISE: u32 = 240;
+pub global DECRYPTED_SHARES_AGGREGATION_WIDE_BIT_D_NATIVE: u32 = 51;
+pub global DECRYPTED_SHARES_AGGREGATION_WIDE_CONFIGS: DecryptedSharesAggregationWideConfigs<L> =
+    DecryptedSharesAggregationWideConfigs::new(QIS, PLAINTEXT_MODULUS, Q_INVERSE_MOD_T);

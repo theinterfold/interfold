@@ -72,7 +72,7 @@ fn output_root(args: &Args) -> Result<PathBuf> {
 /// `PARITY_MATRIX` literal. The suffix matches the corresponding preset's Noir module.
 fn file_for(root: &Path, committee: &str, preset: BfvPreset) -> PathBuf {
     let suffix = match preset {
-        BfvPreset::InsecureThreshold => "insecure",
+        BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => "insecure",
         BfvPreset::SecureThreshold8192 => "secure_8192",
         // Codegen runs against the threshold side of each preset family.
         // DKG-only variants don't need their own file.

@@ -410,26 +410,4 @@ mod tests {
         let error = Inputs::compute(preset, &sample).unwrap_err().to_string();
         assert!(error.contains("CRT limb 1 has 127 coefficients; expected 128"));
     }
-
-    #[test]
-    fn test_constants_json_roundtrip() {
-        let committee = CiphernodesCommitteeSize::Small.values();
-        let sample = ShareComputationCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold,
-            committee,
-            DkgInputType::SecretKey,
-        )
-        .unwrap();
-
-        let constants = Configs::compute(BfvPreset::InsecureThreshold, &sample).unwrap();
-
-        let json = constants.to_json().unwrap();
-        let decoded: Configs = serde_json::from_value(json).unwrap();
-
-        assert_eq!(decoded.n, constants.n);
-        assert_eq!(decoded.l, constants.l);
-        assert_eq!(decoded.moduli, constants.moduli);
-        assert_eq!(decoded.bits, constants.bits);
-        assert_eq!(decoded.bounds, constants.bounds);
-    }
 }

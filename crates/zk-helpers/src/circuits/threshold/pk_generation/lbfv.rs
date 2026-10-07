@@ -557,6 +557,31 @@ impl LbfvPkGenerationLimbCircuitData {
     }
 }
 
+/// Quotient bounds `(r1, r2)` per CRT limb for the l-BFV public-key limb relation
+/// `pk0 = -a * sk + eek + r2 * (X^N + 1) + r1 * q_i`.
+///
+/// The limb still checks the unreduced relation, so `r1` (length `2N - 1`) and the cyclotomic
+/// quotient `r2` need their own bounds; C1 moved to the reduced form and no longer has them.
+/// `r2` is a centred residue, `|r2| <= (q_i - 1) / 2`; `r1` absorbs the product's lift,
+/// `|r1| <= ((N + 2) * (q_i - 1) / 2 + eek_bound) / q_i`.
+pub fn lbfv_limb_quotient_bounds(
+    preset: BfvPreset,
+    eek_bound: &num_bigint::BigUint,
+) -> Result<(Vec<num_bigint::BigUint>, Vec<num_bigint::BigUint>), CircuitsErrors> {
+    let (threshold_params, _) = e3_fhe_params::build_pair_for_preset(preset)
+        .map_err(|error| CircuitsErrors::Other(error.to_string()))?;
+    let n = num_bigint::BigUint::from(threshold_params.degree());
+    let mut r1_bounds = Vec::new();
+    let mut r2_bounds = Vec::new();
+    for qi in threshold_params.moduli() {
+        let qi = num_bigint::BigUint::from(*qi);
+        let qi_bound = (&qi - 1u32) / 2u32;
+        r1_bounds.push(((&n + 2u32) * &qi_bound + eek_bound) / &qi);
+        r2_bounds.push(qi_bound);
+    }
+    Ok((r1_bounds, r2_bounds))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
