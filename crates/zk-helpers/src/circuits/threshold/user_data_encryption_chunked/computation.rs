@@ -564,7 +564,10 @@ mod tests {
     /// r2_i * (X^N + 1)` at a point, and every `r1` coefficient stays within its bound.
     #[test]
     fn ct0_identity_holds_with_the_lifted_e0_on_lbfv_presets() {
-        for preset in [BfvPreset::InsecureThresholdLbfv, BfvPreset::SecureThreshold16384] {
+        for preset in [
+            BfvPreset::InsecureThresholdLbfv,
+            BfvPreset::SecureThreshold16384,
+        ] {
             let sample = UserDataEncryptionCircuitData::generate_sample(preset).unwrap();
             let bounds = Bounds::compute(preset, &()).unwrap();
             let inputs = Inputs::compute(preset, &sample).unwrap();
@@ -599,6 +602,18 @@ mod tests {
                         -&low <= *coefficient && *coefficient <= up,
                         "{preset:?} r1 limb {limb} coefficient {coefficient} exceeds [-{low}, {up}]"
                     );
+                }
+
+                // The ct commit circuits pin both legs to the centered residue.
+                let half: BigInt = (BigInt::from(*qi) - 1) / 2;
+                let neg_half: BigInt = -half.clone();
+                for ct in [inputs.ct0is.limb(limb), inputs.ct1is.limb(limb)] {
+                    for coefficient in ct.coefficients() {
+                        assert!(
+                            neg_half <= *coefficient && *coefficient <= half,
+                            "{preset:?} ct limb {limb} coefficient {coefficient} is not centered"
+                        );
+                    }
                 }
             }
         }

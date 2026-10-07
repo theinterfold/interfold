@@ -15,14 +15,16 @@
 //! an internal choice.
 
 use lib::configs::default::threshold::{
-    L, N, USER_DATA_ENCRYPTION_CHUNKED_BIT_CT, USER_DATA_ENCRYPTION_CHUNKED_BIT_PK,
+    L, N, QIS, USER_DATA_ENCRYPTION_CHUNKED_BIT_CT, USER_DATA_ENCRYPTION_CHUNKED_BIT_PK,
 };
+use lib::core::threshold::user_data_encryption_chunk::assert_centered_ciphertext;
 use lib::math::commitments::{
     compute_multiple_polynomial_commitment_checked, DS_CIPHERTEXT, DS_PK_AGGREGATION,
 };
 use lib::math::polynomial::Polynomial;
 
 fn main(pk0is: [Polynomial<N>; L], ct0is: [Polynomial<N>; L]) -> pub (Field, Field) {
+    assert_centered_ciphertext::<N, L, USER_DATA_ENCRYPTION_CHUNKED_BIT_CT>(ct0is, QIS);
     let pk0_commitment = compute_multiple_polynomial_commitment_checked::<N, L, USER_DATA_ENCRYPTION_CHUNKED_BIT_PK>(
         pk0is,
         DS_PK_AGGREGATION,
