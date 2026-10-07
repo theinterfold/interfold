@@ -222,15 +222,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aligned-vec"
-version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc890384c8602f339876ded803c97ad529f3842aba97f6392b3dba0dd171769b"
-dependencies = [
- "equator",
-]
-
-[[package]]
 name = "alloc-no-stdlib"
 version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1246,8 +1237,8 @@ dependencies = [
  "e3-fhe-params",
  "e3-polynomial",
  "e3-zk-helpers",
- "fhe 0.4.1",
- "fhe-traits 0.4.1",
+ "fhe",
+ "fhe-traits",
  "rand 0.9.5",
  "thiserror 1.0.69",
 ]
@@ -1260,7 +1251,7 @@ dependencies = [
  "ark-ff 0.4.2",
  "e3-bfv-client",
  "e3-fhe-params",
- "fhe 0.4.1",
+ "fhe",
  "hex",
  "lean-imt",
  "light-poseidon",
@@ -1282,7 +1273,7 @@ dependencies = [
  "alloy-primitives",
  "anyhow",
  "clap",
- "fhe 0.4.1",
+ "fhe",
  "num-bigint 0.5.1",
  "num-traits",
  "rand 0.9.5",
@@ -1305,7 +1296,7 @@ dependencies = [
 name = "e3-polynomial"
 version = "0.19.0-test.2"
 dependencies = [
- "fhe-math 0.4.1",
+ "fhe-math",
  "num-bigint 0.5.1",
  "num-traits",
  "serde",
@@ -1378,8 +1369,8 @@ version = "0.1.0"
 dependencies = [
  "e3-compute-provider",
  "e3-fhe-params",
- "fhe 0.2.1",
- "fhe-traits 0.2.1",
+ "fhe",
+ "fhe-traits",
  "openvm-keccak256",
  "openvm-sha2",
  "sha2",
@@ -1398,9 +1389,9 @@ dependencies = [
  "e3-parity-matrix",
  "e3-polynomial",
  "e3-safe",
- "fhe 0.4.1",
- "fhe-math 0.4.1",
- "fhe-traits 0.4.1",
+ "fhe",
+ "fhe-math",
+ "fhe-traits",
  "hex",
  "itertools 0.14.0",
  "ndarray",
@@ -1519,26 +1510,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "equator"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4711b213838dfee0117e3be6ac926007d7f433d7bbe33595975d4190cb07e6fc"
-dependencies = [
- "equator-macro",
-]
-
-[[package]]
-name = "equator-macro"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44f23cf4b44bfce11a86ace86f8a73ffdec849c9fd00a386a53d278bd9e81fb3"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1600,40 +1571,14 @@ dependencies = [
 
 [[package]]
 name = "fhe"
-version = "0.2.1"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.2.2#f2c1d2258fbeef6dbdf5ade68438203fd80a648e"
-dependencies = [
- "bincode",
- "doc-comment",
- "fhe-math 0.2.1",
- "fhe-traits 0.2.1",
- "fhe-util 0.2.1",
- "itertools 0.14.0",
- "ndarray",
- "num-bigint 0.4.6",
- "num-traits",
- "prost",
- "prost-build",
- "rand 0.9.5",
- "rand_chacha 0.9.0",
- "rand_distr",
- "rayon",
- "serde",
- "thiserror 2.0.21",
- "zeroize",
- "zeroize_derive",
-]
-
-[[package]]
-name = "fhe"
 version = "0.4.1"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.4.1#7a357b60e33820c27ddf4e43a3ebf2615f330836"
+source = "git+https://github.com/gnosisguild/fhe.rs?rev=873dc69c07eae251f88c4b5cacf6c4453e2c365a#873dc69c07eae251f88c4b5cacf6c4453e2c365a"
 dependencies = [
  "bincode",
  "doc-comment",
- "fhe-math 0.4.1",
- "fhe-traits 0.4.1",
- "fhe-util 0.4.1",
+ "fhe-math",
+ "fhe-traits",
+ "fhe-util",
  "itertools 0.15.0",
  "ndarray",
  "num-bigint 0.5.1",
@@ -1652,37 +1597,12 @@ dependencies = [
 
 [[package]]
 name = "fhe-math"
-version = "0.2.1"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.2.2#f2c1d2258fbeef6dbdf5ade68438203fd80a648e"
-dependencies = [
- "ethnum",
- "fhe-traits 0.2.1",
- "fhe-util 0.2.1",
- "itertools 0.14.0",
- "ndarray",
- "num-bigint 0.4.6",
- "num-bigint-dig",
- "num-traits",
- "prost",
- "prost-build",
- "pulp",
- "rand 0.9.5",
- "rand_chacha 0.9.0",
- "serde",
- "sha2",
- "tfhe-ntt",
- "thiserror 2.0.21",
- "zeroize",
-]
-
-[[package]]
-name = "fhe-math"
 version = "0.4.1"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.4.1#7a357b60e33820c27ddf4e43a3ebf2615f330836"
+source = "git+https://github.com/gnosisguild/fhe.rs?rev=873dc69c07eae251f88c4b5cacf6c4453e2c365a#873dc69c07eae251f88c4b5cacf6c4453e2c365a"
 dependencies = [
  "ethnum",
- "fhe-traits 0.4.1",
- "fhe-util 0.4.1",
+ "fhe-traits",
+ "fhe-util",
  "itertools 0.15.0",
  "ndarray",
  "num-bigint 0.5.1",
@@ -1701,38 +1621,16 @@ dependencies = [
 
 [[package]]
 name = "fhe-traits"
-version = "0.2.1"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.2.2#f2c1d2258fbeef6dbdf5ade68438203fd80a648e"
-dependencies = [
- "rand 0.9.5",
-]
-
-[[package]]
-name = "fhe-traits"
 version = "0.4.1"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.4.1#7a357b60e33820c27ddf4e43a3ebf2615f330836"
+source = "git+https://github.com/gnosisguild/fhe.rs?rev=873dc69c07eae251f88c4b5cacf6c4453e2c365a#873dc69c07eae251f88c4b5cacf6c4453e2c365a"
 dependencies = [
  "rand 0.9.5",
 ]
 
 [[package]]
 name = "fhe-util"
-version = "0.2.1"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.2.2#f2c1d2258fbeef6dbdf5ade68438203fd80a648e"
-dependencies = [
- "num-bigint-dig",
- "num-traits",
- "prime_factorization",
- "rand 0.8.6",
- "rand 0.9.5",
- "rand_distr",
- "rayon",
-]
-
-[[package]]
-name = "fhe-util"
 version = "0.4.1"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.4.1#7a357b60e33820c27ddf4e43a3ebf2615f330836"
+source = "git+https://github.com/gnosisguild/fhe.rs?rev=873dc69c07eae251f88c4b5cacf6c4453e2c365a#873dc69c07eae251f88c4b5cacf6c4453e2c365a"
 dependencies = [
  "num-bigint-dig",
  "num-traits",
@@ -2630,7 +2528,6 @@ checksum = "a5e44f723f1133c9deac646763579fdb3ac745e418f2a7af9cd0c431da1f20b9"
 dependencies = [
  "num-integer",
  "num-traits",
- "rand 0.8.6",
 ]
 
 [[package]]
@@ -3983,17 +3880,6 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "tfhe-ntt"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10650c743ade46b166c698c8349902ed5986784a7db418c51f810bea25f09e3d"
-dependencies = [
- "aligned-vec",
- "bytemuck",
- "pulp",
 ]
 
 [[package]]

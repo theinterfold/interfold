@@ -69,7 +69,6 @@ async function main() {
     'crates/support/openvm/prover/Cargo.lock',
     'rust-toolchain.toml',
     'crates/support/openvm/guest/openvm.toml',
-    'crates/support/openvm/fhe-optimizations.patch',
   ]
   const sourceDigests = Object.fromEntries(await Promise.all(files.map(async (file) => [file, await digest(path.join(root, file))])))
   const sourceCommit = command('git', ['rev-parse', 'HEAD'])

@@ -5,7 +5,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 command="${1:-}"
 shift || true
 case "$command" in
-  setup-fhe) exec node "$ROOT/scripts/setup-openvm-fhe.mjs" "$@" ;;
   cli-build)
     exec cargo build --locked --release --manifest-path "$ROOT/Cargo.toml" -p e3-cli --bin interfold "$@"
     ;;
@@ -51,5 +50,5 @@ case "$command" in
   service-e2e)
     OPENVM_E2E_ENABLED=1 exec pnpm --filter @crisp-e3/contracts test --network localhost tests/openvm-service.test.ts "$@"
     ;;
-  *) echo 'Usage: pnpm openvm setup-fhe|cli-build|fixture|crisp-server-build|crisp-server-test|service-build|service-test|service-check|service-start|prover-build|prover-test|prover-check|prover|guest|contract-test|proof-test|service-e2e [arguments]' >&2; exit 2 ;;
+  *) echo 'Usage: pnpm openvm cli-build|fixture|crisp-server-build|crisp-server-test|service-build|service-test|service-check|service-start|prover-build|prover-test|prover-check|prover|guest|contract-test|proof-test|service-e2e [arguments]' >&2; exit 2 ;;
 esac

@@ -35,9 +35,9 @@ serde_json = "=1.0.145"
 sha2 = "=0.10.9"
 sha3 = "=0.10.8"
 # Build this workspace from the repository root to include the guest source dependencies.
-fhe = { package = "fhe", git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
-fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
-fhe-util = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
+fhe = { package = "fhe", git = "https://github.com/gnosisguild/fhe.rs", rev = "873dc69c07eae251f88c4b5cacf6c4453e2c365a" }
+fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", rev = "873dc69c07eae251f88c4b5cacf6c4453e2c365a" }
+fhe-util = { git = "https://github.com/gnosisguild/fhe.rs", rev = "873dc69c07eae251f88c4b5cacf6c4453e2c365a" }
 e3-compute-provider = { path = "../compute-provider" }
 tokio = { version = "=1.46.1", features = ["full"] }
 rand = { version = "=0.9.2" }

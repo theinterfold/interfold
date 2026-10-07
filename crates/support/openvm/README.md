@@ -14,7 +14,6 @@ and the correct GPU architecture in the build environment.
 From the repository root:
 
 ```sh
-pnpm openvm setup-fhe
 pnpm openvm guest build
 pnpm openvm guest keygen --app-only
 pnpm openvm prover-build --features cuda
@@ -24,9 +23,10 @@ pnpm openvm service-build --release
 Omit `--features cuda` for a CPU worker. The native HTTP service has no SDK or CUDA dependency. The
 worker is a separate executable so a proof failure does not abort the service process.
 
-The FHE setup checks out a fixed revision and applies the checked-in optimization patch under
-`target/openvm/fhe`. It refuses unrelated changes. The optimized guest enables direct coefficient
-packing, canonical power-basis decoding, lazy BFV products, modular Poseidon2, SHA-256, and Keccak.
+The guest uses fhe.rs at the revision that the workspace pins. That revision includes lazy BFV
+multiplication tables and canonical power-basis decoding (gnosisguild/fhe.rs#210), so no local FHE
+patch is needed. The optimized guest enables direct coefficient packing, canonical power-basis
+decoding, lazy BFV products, modular Poseidon2, SHA-256, and Keccak.
 The native service uses the same CRISP policy source and compares its journal with the proved
 output.
 

@@ -18,12 +18,6 @@ e3-safe = { path = "../../../safe", features = ["openvm"] }
 bincode = "=1.3.3"
 sha2 = "=0.10.9"
 
-[patch."https://github.com/gnosisguild/fhe.rs"]
-fhe = { path = "../../../../target/openvm/fhe/crates/fhe" }
-fhe-math = { path = "../../../../target/openvm/fhe/crates/fhe-math" }
-fhe-traits = { path = "../../../../target/openvm/fhe/crates/fhe-traits" }
-fhe-util = { path = "../../../../target/openvm/fhe/crates/fhe-util" }
-
 [profile.release]
 lto = "fat"
 codegen-units = 1
