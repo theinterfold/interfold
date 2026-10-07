@@ -10,7 +10,7 @@
 //! (polynomials, public keys, secret keys, shares, etc.) using the SAFE sponge hash function.
 //! All functions match the corresponding Noir circuit implementations exactly.
 
-use crate::packing::flatten;
+use crate::packing::{flatten, pack_centered_rns_row};
 use crate::utils::compute_safe;
 use ark_bn254::Fr as Field;
 use ark_ff::BigInteger;
@@ -18,6 +18,7 @@ use ark_ff::PrimeField;
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use fhe::bfv::PublicKey;
+use fhe_math::rq::{Poly, PowerBasis};
 use fhe_traits::DeserializeParametrized;
 use num_bigint::BigInt;
 use std::slice::from_ref;
@@ -440,10 +441,35 @@ pub fn compute_ciphertext_commitment(
     bit_ct: u32,
 ) -> BigInt {
     let payload0 = flatten(Vec::new(), &ct0.limbs, bit_ct);
+    let payload1 = flatten(Vec::new(), &ct1.limbs, bit_ct);
+    ciphertext_commitment_from_packed(payload0, payload1)
+}
+
+/// Computes the same SAFE commitment directly from canonical power-basis rows.
+/// Returns `None` when the caller must use the general polynomial path.
+pub fn compute_ciphertext_commitment_from_power_basis(
+    ct0: &Poly<PowerBasis>,
+    ct1: &Poly<PowerBasis>,
+    moduli: &[u64],
+    bit_ct: u32,
+) -> Option<BigInt> {
+    let pack = |component: &Poly<PowerBasis>| {
+        if component.coefficients().nrows() != moduli.len() {
+            return None;
+        }
+        let mut payload = Vec::new();
+        for (row, modulus) in component.coefficients().outer_iter().zip(moduli.iter()) {
+            payload.extend(pack_centered_rns_row(row.as_slice()?, *modulus, bit_ct)?);
+        }
+        Some(payload)
+    };
+    Some(ciphertext_commitment_from_packed(pack(ct0)?, pack(ct1)?))
+}
+
+fn ciphertext_commitment_from_packed(payload0: Vec<Field>, payload1: Vec<Field>) -> BigInt {
     let io = [0x80000000 | payload0.len() as u32, 1];
     let commit_ct0 = compute_commitments(payload0, DS_CIPHERTEXT, io)[0];
 
-    let payload1 = flatten(Vec::new(), &ct1.limbs, bit_ct);
     let commit_ct1 = compute_commitments(payload1, DS_CIPHERTEXT, io)[0];
 
     let inputs = vec![commit_ct0, commit_ct1];

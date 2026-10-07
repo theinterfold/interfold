@@ -22,7 +22,7 @@ root structure.
 CRISP/
 ├── client/                  # React frontend application (Vite + @crisp-e3/sdk)
 ├── server/                  # Rust coordination server & CLI
-├── program/                 # FHE program for encrypted computation + RISC Zero verification
+├── program/                 # FHE policy proved with OpenVM
 ├── packages/
 │   ├── crisp-contracts/     # CRISP program contract + Hardhat deployment scripts
 │   └── crisp-sdk/           # TypeScript helpers to generate a ZK proof
@@ -54,20 +54,22 @@ Before getting started, ensure you have installed:
   - `nargo`: `noirup -v v1.0.0-beta.26` (`NOIR_TOOLCHAIN` in `.github/workflows/ci.yml`)
   - `bb`: version and per-platform checksums live in `crates/zk-prover/versions.json`
 
-[RiscZero](https://dev.risczero.com/api/zkvm/install) is **not** required for local development.
-`scripts/dev_program.sh` starts the program server with `--dev true`, so `pnpm dev:up` runs without
-a proving backend no matter what `program.dev` says in `interfold.config.yaml`. Real proving runs
-inside a container image that already ships RiscZero, so what that path needs locally is **Docker**,
-not a RiscZero install.
+The program server uses OpenVM by default. Before startup, build the guest and worker, prepare the
+keys, and configure `program.openvm` in `interfold.config.yaml`. Follow
+[`crates/support/openvm/README.md`](../../crates/support/openvm/README.md). The CUDA worker needs a
+compatible Linux GPU environment; the native HTTP service has no CUDA dependency.
+
+Deployment also requires `OPENVM_APP_EXE_COMMIT`, `OPENVM_APP_VM_COMMIT`, and either
+`OPENVM_VERIFIER_ARTIFACT` with `OPENVM_VERIFIER_SHA256`, or `OPENVM_HALO2_VERIFIER` with
+`OPENVM_HALO2_RUNTIME_CODE_HASH`. These values must describe the worker's actual artifacts. The
+CRISP deployment never selects a mock compute verifier.
 
 ## Quick Start
 
 The simplest way to run CRISP is:
 
 ```bash
-# From the repository root — the CRISP contracts depend on the risc0-ethereum submodule
-git submodule update --init --recursive
-
+# From the repository root
 cd examples/CRISP
 
 # Optional: choose local profile (copied to crisp.dev.env on first setup)
@@ -80,10 +82,6 @@ pnpm dev:setup
 # Start all services (Hardhat, contracts, ciphernodes, program server, coordination server, and UI)
 pnpm dev:up
 ```
-
-> **_Note:_** Without the submodule step, `pnpm dev:setup` fails while compiling contracts with
-> `HHE902 ... lib/risc0-ethereum/contracts/src/groth16/RiscZeroGroth16Verifier.sol doesn't exist`.
-> CI does not hit this because its checkout uses `submodules: recursive`.
 
 The program server accepts caller-supplied HTTP(S) callback URLs. It is a development-only test
 service, does not authenticate callers or allowlist callback destinations, and must stay isolated
@@ -149,58 +147,20 @@ program:
   dev: true # Uses fake zkVM proofs (fast for development)
 ```
 
-### Boundless Configuration
+### OpenVM configuration
 
-For production-grade zero-knowledge proofs with [Boundless](https://docs.boundless.network/), update
-`interfold.config.yaml`:
+The real-proof compute service now uses OpenVM. Follow the
+[OpenVM build and migration guide](../../crates/support/openvm/README.md) to build the guest and
+worker, derive the application identity, and configure proving artifacts.
 
-```yaml
-program:
-  dev: false # Disable dev mode to use real proofs
-  risc0:
-    risc0_dev_mode: 0 # 0 = production (Boundless), 1 = dev mode
-    boundless:
-      rpc_url: 'https://sepolia.infura.io/v3/YOUR_KEY' # RPC endpoint
-      private_key: 'YOUR_PRIVATE_KEY' # Wallet with funds for proving
-      pinata_jwt: 'YOUR_PINATA_JWT' # Required for uploading programs to IPFS
-      # The gateway must allow full, unauthenticated downloads by Boundless provers.
-      ipfs_gateway_url: 'https://your-gateway.mypinata.cloud'
-      program_url: 'https://your-gateway.mypinata.cloud/ipfs/YOUR_CID' # Pre-uploaded program URL
-      onchain: true # true = onchain requests, false = offchain
-```
+Set `program.dev: false` and supply deployment-local `program.openvm.repository`,
+`program.openvm.prover_bin`, and `program.openvm.prover_config` paths. Do not put account keys,
+proving artifacts, or machine-specific values in the shared configuration.
 
-> **_Note:_** For production proving with Boundless, you need:
->
-> - An RPC endpoint (e.g., Infura, Alchemy) with funds
-> - A private key with sufficient ETH/tokens for proof generation
-> - A Pinata JWT for uploading programs to IPFS (get one at [pinata.cloud](https://pinata.cloud))
-> - Pre-uploaded program URL to avoid uploading the ~40MB program at runtime
-
-#### Uploading Your Program to IPFS
-
-When you make changes to the guest program in `program/`, you need to upload it to IPFS to get a
-program URL:
-
-1. First, configure your Pinata JWT in `interfold.config.yaml` (as shown above)
-
-2. Build and upload your program:
-
-   ```bash
-   # This compiles the guest program and uploads it to IPFS via Pinata
-   interfold program upload
-   ```
-
-3. The command will output an IPFS hash like `QmXxx...`. Update your `interfold.config.yaml` with
-   the full URL:
-
-   ```yaml
-   ipfs_gateway_url: 'https://your-gateway.mypinata.cloud'
-   program_url: 'https://your-gateway.mypinata.cloud/ipfs/QmXxx...'
-   ```
-
-> **_Important:_** Every time you modify the guest program code in `program/`, you must rebuild and
-> re-upload it to IPFS, then update the `program_url` in your configuration. This ensures Boundless
-> uses your latest program version.
+A new OpenVM deployment requires matching receipt and ciphertext-duty verifiers. Existing RISC Zero
+deployments do not become compatible by changing the service configuration. Drain active rounds and
+use a separate reviewed migration before changing a live verifier route. The old Boundless upload
+and auction settings are not used by this backend.
 
 ### Encrypted-object data availability
 
@@ -297,7 +257,7 @@ service limits the total bytes held by unfinished jobs, which bounds abandoned s
 deleting data that Ethereum already accepted. After Avail and Ethereum accept an object, the service
 removes its staging copy because Avail is then the recovery source.
 
-The aggregate ciphertext follows the Avail and VectorX path after its RISC Zero proof is ready.
+The aggregate ciphertext follows the Avail and VectorX path after its OpenVM proof is ready.
 
 Each accepted Ethereum reference contains `keccak256(exact bytes)`. The CRISP server and ciphernodes
 re-hash retrieved bytes before they use them. An App ID helps indexing, but it is not a security

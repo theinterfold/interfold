@@ -33,10 +33,15 @@ pub fn fhe_processor(fhe_inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
 /// Both are specific to this program and its contract. They live here, beside the `CRISPProgram`
 /// they must agree with, rather than in `e3-compute-provider`, which every E3 program shares.
 pub mod policy {
-    use e3_compute_provider::policy::{leaf_from_digest, PublishedInput};
+    use e3_compute_provider::hashing::keccak256;
+    use e3_compute_provider::policy::{PublishedInput, leaf_from_digest};
     use e3_compute_provider::{ComputeError, InputPolicy};
-    use sha2::{Digest, Sha256};
-    use sha3::Keccak256;
+    #[cfg(feature = "openvm-hashes")]
+    use openvm_sha2::Sha256;
+    #[cfg(not(all(feature = "openvm-hashes", target_os = "zkvm")))]
+    use sha2::Digest;
+    #[cfg(not(feature = "openvm-hashes"))]
+    use sha2::Sha256;
     use std::collections::BTreeMap;
 
     /// The metadata `CRISPProgram` publishes with each input: 20-byte slot, then a 5-byte parent.
@@ -95,7 +100,7 @@ pub mod policy {
         metadata_of(input)?;
 
         let mut outer = Sha256::new();
-        outer.update(Keccak256::digest(input.ciphertext));
+        outer.update(&keccak256(input.ciphertext));
         outer.update(commitment);
         outer.update(input.metadata);
         Ok(leaf_from_digest(&outer.finalize()))

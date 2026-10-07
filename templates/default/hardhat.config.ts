@@ -76,7 +76,7 @@ const config: HardhatUserConfig = {
     tsNocheck: false,
   },
   paths: {
-    sources: ['./contracts', './.interfold/generated/contracts'],
+    sources: ['./contracts'],
   },
   networks: {
     hardhat: {
@@ -136,7 +136,8 @@ const config: HardhatUserConfig = {
       '@interfold/contracts/contracts/token/InterfoldToken.sol',
       '@interfold/contracts/contracts/token/InterfoldTicketToken.sol',
       '@interfold/contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol',
-      '@interfold/contracts/contracts/verifiers/bfv/Risc0BfvCiphertextVerifier.sol',
+      '@interfold/contracts/contracts/verifiers/bfv/OpenVmBfvCiphertextVerifier.sol',
+      '@interfold/contracts/contracts/verifiers/OpenVmReceiptVerifier.sol',
       '@interfold/contracts/contracts/verifiers/bfv/BfvPkVerifier.sol',
       '@interfold/contracts/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol',
       '@interfold/contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol',
@@ -158,8 +159,10 @@ const config: HardhatUserConfig = {
           optimizer: {
             enabled: true,
             // Low runs shrinks deployment bytecode (EIP-170); higher runs favor runtime gas.
-            runs: 100,
+            runs: 1,
           },
+          evmVersion: 'paris',
+          debug: { revertStrings: 'strip' },
           metadata: {
             bytecodeHash: 'none',
           },

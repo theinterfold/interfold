@@ -6,6 +6,7 @@
 !Cargo.toml
 !Cargo.lock
 !crates/**/*
+!examples/CRISP/program/**/*
 !packages/**/*
 !package.json
 !pnpm-workspace.yaml

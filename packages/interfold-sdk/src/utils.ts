@@ -71,7 +71,7 @@ export interface ComputeProviderParams {
 
 // Default compute provider configuration
 export const DEFAULT_COMPUTE_PROVIDER_PARAMS: ComputeProviderParams = {
-  name: 'risc0',
+  name: 'openvm',
   parallel: false,
   batch_size: 2,
 }

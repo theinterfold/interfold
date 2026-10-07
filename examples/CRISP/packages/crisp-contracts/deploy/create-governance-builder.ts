@@ -119,7 +119,7 @@ async function main() {
 
   const interfold = requireAddress(protocolDeployment.interfold, 'Interfold')
   const crispProgram = requireAddress(chainDeployments.CRISPProgram?.address, 'CRISPProgram')
-  const ciphertextVerifier = requireAddress(chainDeployments.Risc0BfvCiphertextVerifier?.address, 'Risc0BfvCiphertextVerifier')
+  const ciphertextVerifier = requireAddress(chainDeployments.OpenVmBfvCiphertextVerifier?.address, 'OpenVmBfvCiphertextVerifier')
   const adminPlugin = requireAddress(protocolConfig.governance.adminPlugin, 'Aragon Admin plugin')
   const proposerSafe = requireAddress(protocolConfig.governance.proposerSafe, 'Governance proposer Safe')
   const encryptionSchemeId = ethers.keccak256(ethers.toUtf8Bytes('fhe.rs:BFV'))
@@ -188,7 +188,7 @@ async function main() {
   chain:                  ${chain}
   Interfold:              ${interfold}
   CRISPProgram:           ${crispProgram}
-  Risc0Bfv verifier:      ${ciphertextVerifier}
+  OpenVM BFV verifier:      ${ciphertextVerifier}
   encryptionSchemeId:     ${encryptionSchemeId}
   raw DAO actions:        ${rawActionsPath}
   Safe Builder wrapper:   ${safeBuilderPath}`)

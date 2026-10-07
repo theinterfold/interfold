@@ -3,9 +3,9 @@ import config from '@interfold/config/eslint.config.js'
 
 export default defineConfig([
   globalIgnores([
-    // Github submodules.
-    'examples/CRISP/packages/crisp-contracts/lib/risc0-ethereum',
-    'templates/default/lib/risc0-ethereum',
+    // External Solidity libraries, including copies retained by older checkouts.
+    'examples/CRISP/packages/crisp-contracts/lib/**',
+    'templates/default/lib/**',
     // Build and cache directories.
     '**/node_modules/**',
     '**/dist/**',

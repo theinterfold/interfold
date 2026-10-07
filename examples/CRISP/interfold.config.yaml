@@ -84,23 +84,9 @@ chains:
         address: "0xA7f0A637Af62fA4E0b46E397D1b85E9b4807f019"
         deploy_block: 11856142
 program:
-  dev: true
-  # risc0:
-  #   risc0_dev_mode: 0 # 0 = production (Boundless), 1 = dev mode (fake proofs)
-  #   boundless:
-  #     rpc_url: "https://sepolia.infura.io/v3/YOUR_KEY"
-  #     private_key: "PRIVATE_KEY" # Use env vars for secrets
-  #     pinata_jwt: "PINATA_JWT" # For uploading programs
-  #     ipfs_gateway_url: "https://gateway.pinata.cloud" # Public full-download gateway for programs and inputs
-  #     program_url: "https://gateway.pinata.cloud/ipfs/QmdSmZPD9ArQYY754pbvji9bfiqAmG1rmoLci1fN9vMPdF" # Guest for ImageID.sol
-  #     onchain: true # true = onchain requests, false = offchain
-  #     Optional — custom auction parameters (defaults shown):
-  #     min_price_eth: 0.00005
-  #     max_price_eth: 0.004
-  #     timeout_secs: 28800
-  #     lock_timeout_secs: 14400
-  #     ramp_up_secs: 7200
-  #     lock_collateral_zkc: 100.0
+  dev: false
+  # Real proofs use program.openvm. Configure repository, prover_bin,
+  # and prover_config as deployment-local absolute paths. See crates/support/openvm/README.md.
   # The scheduler defaults to 2 concurrent jobs and reserves 2 logical CPUs for Actix / libp2p.
   # It reduces concurrency when the host or cgroup memory limit is too small.
   # Example override on a dedicated 64 GB host:

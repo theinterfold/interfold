@@ -100,34 +100,9 @@ async fn run_computation_async(
     })
     .await?;
 
-    match result {
-        Ok((boundless_output, ciphertext)) => match boundless_output {
-            e3_support_host::BoundlessOutput::Success { result, seal, .. } => {
-                anyhow::ensure!(
-                    result.ciphertext_commitment.len() == 32,
-                    "Boundless journal ciphertext commitment must be 32 bytes"
-                );
-                println!(
-                    "have result from computation! seal len: {}, ciphertext len: {}, commitment len: {}",
-                    seal.len(),
-                    ciphertext.len(),
-                    result.ciphertext_commitment.len()
-                );
-                let proof = e3_support_host::encode_compute_proof(&seal, &result)
-                    .map_err(|error| anyhow::anyhow!("invalid compute proof: {error:?}"))?;
-                Ok((proof, ciphertext, result.ciphertext_commitment))
-            }
-            e3_support_host::BoundlessOutput::Error { error } => {
-                Err(anyhow::anyhow!("Boundless request failed: {}", error))
-            }
-        },
-        Err(e3_support_host::ComputeError::BoundlessFailed(msg)) => {
-            Err(anyhow::anyhow!("Boundless request failed: {}", msg))
-        }
-        Err(e3_support_host::ComputeError::Other(msg)) => {
-            Err(anyhow::anyhow!("Computation error: {}", msg))
-        }
-    }
+    let (output, ciphertext) = result?;
+    let proof = e3_support_host::encode_compute_proof(&output.seal, &output.result)?;
+    Ok((proof, ciphertext, output.result.ciphertext_commitment))
 }
 
 async fn process_computation_background(
@@ -172,8 +147,8 @@ async fn process_computation_background(
 
 /// Whether callbacks to addresses only reachable from inside the deployment are permitted.
 ///
-/// Off by default. Local development legitimately posts to a host on the same machine, so there has
-/// to be a way in, but it must be a deliberate one rather than the default.
+/// Off by default for private networks and internal hostnames. Loopback callbacks are permitted
+/// separately so an isolated local CRISP server can receive results.
 fn allow_private_callbacks() -> bool {
     matches!(
         std::env::var("ALLOW_PRIVATE_CALLBACKS")
@@ -213,11 +188,8 @@ fn validate_callback_url(raw: &str) -> ActixResult<()> {
         return Ok(());
     }
 
-    // Loopback is deliberately NOT treated as internal. The escalation worth guarding is reaching
-    // hosts the caller cannot reach itself — cloud metadata, RFC1918 services, .internal names.
-    // Loopback is the machine this server already runs on, and it is how every local deployment
-    // posts its webhook. Note this runs BEFORE the localhost -> host.local rewrite below, so that
-    // rewrite is unaffected by `.local` remaining blocked.
+    // Allow loopback callbacks for local deployments. Block private networks, cloud metadata,
+    // and internal hostnames unless the operator explicitly enables private callbacks.
     fn v4_is_internal(ip: Ipv4Addr) -> bool {
         if ip.is_loopback() {
             return false;
@@ -261,7 +233,7 @@ fn validate_callback_url(raw: &str) -> ActixResult<()> {
 
     if internal {
         return Err(actix_web::error::ErrorBadRequest(
-            "callback_url must not point at a private, loopback or link-local address; \
+            "callback_url must not point at a private or link-local address; \
              set ALLOW_PRIVATE_CALLBACKS=1 to permit it for local development",
         ));
     }
@@ -273,7 +245,7 @@ fn validate_callback_url(raw: &str) -> ActixResult<()> {
 ///
 /// Proving is the most expensive thing this process does, and the handler previously spawned one
 /// detached task per request with nothing bounding them: a caller could open as many as they liked
-/// and exhaust CPU, memory, blocking workers and Boundless submissions together. One at a time by
+/// and exhaust CPU, memory, and GPU workers together. One at a time by
 /// default, because a single proof already saturates the machine.
 fn max_concurrent_computations() -> usize {
     std::env::var("MAX_CONCURRENT_COMPUTATIONS")
@@ -406,11 +378,6 @@ async fn handle_compute(req: web::Json<ComputeRequest>) -> ActixResult<HttpRespo
     )
     .map_err(actix_web::error::ErrorBadRequest)?;
 
-    println!("fhe_inputs.params = {:?}", fhe_inputs.params);
-    let callback_url = callback_url
-        .replace("localhost", "host.local")
-        .replace("127.0.0.1", "host.local");
-
     // Process computation in background
     let background_e3_id = e3_id.clone();
     tokio::spawn(async move {
@@ -446,15 +413,24 @@ async fn handle_health_check() -> ActixResult<HttpResponse> {
 #[actix_web::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
-    let bind_addr = "0.0.0.0:13151";
+    e3_support_host::check_configuration()?;
+    let bind_addr = std::env::var("OPENVM_BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:13151".into());
+    let request_limit: usize = std::env::var("OPENVM_MAX_REQUEST_BYTES")
+        .unwrap_or_else(|_| (128 * 1024 * 1024).to_string())
+        .parse()?;
+    anyhow::ensure!(
+        request_limit > 0 && request_limit <= 1024 * 1024 * 1024,
+        "OPENVM_MAX_REQUEST_BYTES must be between 1 byte and 1 GiB"
+    );
     let server = HttpServer::new(move || {
         App::new()
+            .app_data(web::JsonConfig::default().limit(request_limit))
             .wrap(Logger::default())
             .route("/run_compute", web::post().to(handle_compute))
             .route("/health", web::get().to(handle_health_check))
             .route("/health", web::head().to(handle_health_check))
     })
-    .bind(bind_addr)?;
+    .bind(&bind_addr)?;
     println!("🚀 FHE Compute Service listening on http://{}", bind_addr);
     server.run().await.map_err(Into::into)
 }

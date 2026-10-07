@@ -44,22 +44,6 @@ pub async fn delete_path<P: AsRef<Path>>(path: P) -> Result<()> {
     Ok(())
 }
 
-pub async fn chmod_recursive<P: AsRef<Path>>(path: P, mode: &str) -> Result<()> {
-    let path = path.as_ref();
-    let status = Command::new("chmod")
-        .arg("-R")
-        .arg(mode)
-        .arg(path)
-        .status()
-        .await?;
-
-    if !status.success() {
-        bail!("❌ Failed to set permissions on '{}'", path.display());
-    }
-
-    Ok(())
-}
-
 pub async fn move_file<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> Result<()> {
     Command::new("mv")
         .arg(src.as_ref())
@@ -106,21 +90,4 @@ pub async fn remove_dir_except(dir: &Path, keep: &[&str]) -> Result<()> {
         }
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn chmod_recursive_reports_a_failed_run() -> Result<()> {
-        let root = tempfile::tempdir()?;
-
-        // A caller acts on the result. A `chmod` that runs and then fails must
-        // not look like a success.
-        let result = chmod_recursive(root.path().join("does-not-exist"), "a+rwX").await;
-
-        assert!(result.is_err());
-        Ok(())
-    }
 }

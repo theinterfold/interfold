@@ -22,3 +22,4 @@ export * from "./deployAndSave/mockProgram";
 export * from "./deployAndSave/verifiers";
 export * from "./verify";
 export * from "./dataAvailability";
+export * from "./openVm";

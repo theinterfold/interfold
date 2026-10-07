@@ -301,7 +301,7 @@ sequenceDiagram
     CRISPServer->>E3Program: finalizeInput(e3Id, VectorX receipt)
     E3Program-->>CRISPServer: InputPublished
 
-    ComputeProvider-->>CRISPServer: aggregateCiphertext + RISC Zero proof
+    ComputeProvider-->>CRISPServer: aggregateCiphertext + OpenVM proof
     CRISPServer->>E3Program: verify output proof (read only)
     CRISPServer->>Avail: submit_data(aggregateCiphertext)
     CRISPServer->>Interfold: publishCiphertextOutput(e3Id, reference + VectorX receipt)

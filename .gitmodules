@@ -1,6 +1,0 @@
-[submodule "examples/CRISP/packages/crisp-contracts/lib/risc0-ethereum"]
-	path = examples/CRISP/packages/crisp-contracts/lib/risc0-ethereum
-	url = https://github.com/risc0/risc0-ethereum
-[submodule "templates/default/lib/risc0-ethereum"]
-	path = templates/default/lib/risc0-ethereum
-  	url = https://github.com/gnosisguild/risc0-ethereum

@@ -4,7 +4,6 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-mod container_permissions;
 mod copy;
 mod file_utils;
 mod git;
@@ -13,15 +12,9 @@ mod package_json;
 mod pkgman;
 
 use anyhow::Result;
-use container_permissions::{
-    container_writable_paths, needs_permission_widening, CONTAINER_WRITABLE_MODE,
-};
 use copy::Filter;
-use file_utils::{
-    chmod_recursive, delete_path, move_file, remove_all_files_in_dir, remove_dir_except,
-};
+use file_utils::{delete_path, move_file, remove_all_files_in_dir, remove_dir_except};
 use git::parse_git_url;
-use package_json::DependencyType;
 use pkgman::PkgMan;
 use std::path::PathBuf;
 use std::process::exit;
@@ -170,14 +163,7 @@ async fn install_interfold(
         .await?;
 
     spinner
-        .run("Setting up support folders ctl and dev", || async {
-            copy::copy_with_filters(
-                &PathBuf::from(TEMP_DIR).join("crates/support-scripts/ctl"),
-                &cwd.join(".interfold/support/ctl"),
-                &[],
-            )
-            .await?;
-
+        .run("Setting up the development runner", || async {
             copy::copy_with_filters(
                 &PathBuf::from(TEMP_DIR).join("crates/support-scripts/dev"),
                 &cwd.join(".interfold/support/dev"),
@@ -217,58 +203,13 @@ async fn install_interfold(
 
     spinner.complete_task("Support folders set up\n");
 
-    // The support container runs as a fixed user. The directories that it
-    // mounts read-write need permissions that let this user write to them.
-    if needs_permission_widening(cwd).await? {
-        spinner.update("Restoring permissions...".to_string()).await;
-
-        for path in container_writable_paths(cwd) {
-            let message = format!(
-                "Setting {} permissions to {}",
-                path.display(),
-                CONTAINER_WRITABLE_MODE
-            );
-            spinner
-                .run(message, || async {
-                    chmod_recursive(&path, CONTAINER_WRITABLE_MODE).await
-                })
-                .await?;
-        }
-
-        spinner.complete_task("Permissions restored\n");
-    }
-
-    spinner.update("Setting up submodules...").await;
+    spinner.update("Setting up the project repository...").await;
 
     spinner
         .run("Init git repo", || async { git::init(&cwd, verbose).await })
         .await?;
 
-    spinner
-        .run("Adding @risc0/ethereum submodule", || async {
-            git::add_submodule(
-                &cwd,
-                "https://github.com/gnosisguild/risc0-ethereum",
-                "lib/risc0-ethereum",
-                verbose,
-            )
-            .await
-        })
-        .await?;
-
-    spinner
-        .run("Ensuring @risc0/ethereum is in package.json", || async {
-            package_json::add_package_to_json(
-                &cwd.join("package.json"),
-                "@risc0/ethereum",
-                "file:lib/risc0-ethereum",
-                DependencyType::DevDependencies,
-            )
-            .await
-        })
-        .await?;
-
-    spinner.complete_task("Submodules set up\n");
+    spinner.complete_task("Project repository set up\n");
 
     if skip_install {
         spinner.complete_task("Package installation skipped\n");

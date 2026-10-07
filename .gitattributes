@@ -1,0 +1,2 @@
+# Unified diff context lines can contain a single space.
+crates/support/openvm/fhe-optimizations.patch -whitespace

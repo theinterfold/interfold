@@ -12,9 +12,8 @@ every section.
   `scripts/check-committee.sh` runs in pre-push and in the Agent Harness CI workflow.
 - **Never hand-edit generated files:** parity matrices, `configs/default/mod.nr`,
   `configs/committee/active.nr`, the generated C1/C2 bounds, the generated constants in `utils.ts`,
-  `ActiveCryptoConfig.sol`, verifier contracts (`generate-verifiers.ts` output),
-  `crates/support/contracts/ImageID.sol`, and the ignored local files `.active-preset.json` and
-  `crates/support/tests/Elf.sol`.
+  `ActiveCryptoConfig.sol`, verifier contracts (`generate-verifiers.ts` output), the ignored local
+  file `.active-preset.json`, and prepared OpenVM identity artifacts.
 - **Generated verifiers must match the built VKs.** When a pushed branch changes a path in
   `.github/filters/circuits.yml`, pre-push checks `insecure-512` with the committee in the local
   `.active-preset.json` (default `minimum`). The check reads the checked-out tree, so the hook stops
@@ -51,15 +50,15 @@ every section.
   ciphernode, and DAppNode copies the checked ciphernode image. CI generates a manifest for exactly
   the staged fixture before packaging and hashing it. — `02_CRYPTO_CIRCUITS.md` §Noir / Barretenberg
   compatibility
-- **`Elf.sol` is never committed.** `crates/support/methods/build.rs` writes it with a machine-local
-  guest ELF path, so it is generated per checkout and `.gitignore`d.
+- **Deployment-local OpenVM artifacts are never committed.** Keep executable files, proving keys,
+  proofs, inputs, worker configurations, and benchmark reports under `target/` or outside source.
 - **A release publishes a complete provenance manifest** — `pnpm provenance:manifest`. It ties
-  source commit, lockfile digests, pinned revisions, RISC Zero version, builder image tag **and
-  digest** (the builder tag is mutable and `RISC0_DOCKER_CONTAINER_TAG` overrides it), guest ELF
-  SHA-256, image ID, and the deployed verifier to one record. The generator reports
-  `complete: false` with the unresolved fields rather than emitting a partial record that reads as
-  verified. The ELF SHA-256 is **not** the image ID: SHA-256 checks binary integrity, the image ID
-  is computed from the loaded memory image. Procedure:
+  source commit, lockfile and artifact digests, OpenVM application commitments, worker identity
+  validation, and the deployed protocol, receipt, and Halo2 verifiers to one record. The generator
+  reports `complete: false` with the unresolved fields rather than emitting a partial record that
+  reads as verified. An artifact SHA-256 is **not** an application commitment or receipt identity.
+  A complete record does not establish source reproducibility; retain independent rebuild evidence.
+  Procedure:
   `docs/pages/build/e3-program/verify-compute-provider.mdx`. **Gap:** the release workflow does not
   generate or attach this manifest (`.github/workflows/releases.yml`); a maintainer runs
   `pnpm provenance:manifest` by hand.
@@ -75,7 +74,7 @@ every section.
   `BondingRegistry`, `CiphernodeRegistryOwnable`, and the canonical `insecure-512/minimum`
   aggregator verifiers. Every deployed verifier variant must fit, but CI does not measure the other
   variants. — `scripts/checkContractSize.ts`; INDEX concern #22
-- BFV circuit-verifier and RISC Zero receipt-verifier constructors require deployed verifier
+- BFV circuit-verifier and OpenVM receipt-verifier constructors require deployed verifier
   contracts. BFV circuit wrappers also require nonzero recursive VK hashes. — INDEX concerns #21,
   Z-15
 - CLI secrets enter through **stdin or hidden prompts**, never argv or the environment. Wallet keys

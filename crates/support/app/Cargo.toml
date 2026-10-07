@@ -17,8 +17,3 @@ hex.workspace = true
 
 [dependencies.e3-support-host]
 workspace = true
-optional = true
-
-[features]
-default = ["risc0"]
-risc0 = ["e3-support-host"]

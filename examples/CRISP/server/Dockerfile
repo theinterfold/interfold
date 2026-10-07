@@ -16,8 +16,6 @@ RUN wget https://github.com/argotorg/solidity/releases/download/v0.8.27/solc-sta
     && mv solc-static-linux /usr/local/bin/solc \
     && solc --version
 
-RUN curl -sSfL https://risczero.com/install | bash
-
 RUN cargo install --locked cargo-chef
 
 #################################################

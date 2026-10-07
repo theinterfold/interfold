@@ -19,9 +19,5 @@ node_modules
 /coverage
 /coverage.json
 
-# Ignore risc0 files
-contracts/ImageID.sol
-tests/Elf.sol
-
 # Hardhat Ignition default folder for deployments against a local node
 ignition/deployments/chain-31337

@@ -1,0 +1,29 @@
+[package]
+name = "interfold-openvm-guest"
+version = "0.1.0"
+edition = "2021"
+license = "LGPL-3.0-only"
+
+[workspace]
+resolver = "3"
+
+[dependencies]
+openvm = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2", features = ["std", "heap-embedded-alloc"] }
+openvm-sha2 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2" }
+openvm-algebra-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2" }
+e3-support-types = { path = "../../types" }
+e3-user-program = { path = "../../program", features = ["openvm-hashes"] }
+e3-compute-provider = { path = "../../../compute-provider", features = ["openvm-hashes"] }
+e3-safe = { path = "../../../safe", features = ["openvm"] }
+bincode = "=1.3.3"
+sha2 = "=0.10.9"
+
+[patch."https://github.com/gnosisguild/fhe.rs"]
+fhe = { path = "../../../../target/openvm/fhe/crates/fhe" }
+fhe-math = { path = "../../../../target/openvm/fhe/crates/fhe-math" }
+fhe-traits = { path = "../../../../target/openvm/fhe/crates/fhe-traits" }
+fhe-util = { path = "../../../../target/openvm/fhe/crates/fhe-util" }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1

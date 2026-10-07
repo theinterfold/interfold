@@ -7,6 +7,7 @@
 mod ciphertext_output;
 mod compute_input;
 mod compute_manager;
+pub mod hashing;
 mod merkle_tree_builder;
 pub mod policy;
 

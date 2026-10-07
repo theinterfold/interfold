@@ -26,11 +26,6 @@ trap cleanup INT TERM
 echo "Waiting for local evm node..."
 pnpm wait-on tcp:localhost:8545
 
-if [ ! -f './.interfold/generated/contracts/ImageID.sol' ]; then
-  echo "Compiling guest program (ImageID)..."
-  interfold program compile
-fi
-
 # Fresh node state for this deploy
 rm -rf .interfold/data
 rm -rf .interfold/config

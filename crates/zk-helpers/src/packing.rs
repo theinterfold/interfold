@@ -10,10 +10,10 @@
 //! using a nibble-aligned layout, matching the Noir implementation exactly.
 
 use ark_bn254::Fr as Field;
-use ark_ff::PrimeField;
+use ark_ff::{BigInt as FieldInteger, BigInteger, PrimeField};
 use e3_polynomial::Polynomial;
 use num_bigint::BigInt;
-use num_traits::Zero;
+use num_traits::{ToPrimitive, Zero};
 
 /// Compute hex-aligned packing parameters for a given `BIT`.
 /// Matches the Noir `packing_layout` function exactly.
@@ -53,6 +53,48 @@ fn packing_layout(bit: u32) -> (u32, u32) {
 /// The number of field elements is `ceil(poly.coefficients().len() / group)` where `group` is
 /// determined by the packing layout.
 fn packer(polynomial: &Polynomial, bit: u32) -> Vec<Field> {
+    packer_fixed_width(polynomial, bit).unwrap_or_else(|| packer_bigint(polynomial, bit))
+}
+
+/// Uses four machine words when each shifted coefficient fits its allocated digit.
+/// Other values use the original arbitrary-precision path.
+fn packer_fixed_width(polynomial: &Polynomial, bit: u32) -> Option<Vec<Field>> {
+    let (nibble_bits, group) = packing_layout(bit);
+    if nibble_bits > 120 {
+        return None;
+    }
+    let digit_bits = nibble_bits + 4;
+    let base = 1i128 << nibble_bits;
+    let radix = 1u128 << digit_bits;
+    let values = polynomial.coefficients();
+    let mut output = Vec::with_capacity(values.len().div_ceil(group as usize));
+    for chunk in values.chunks(group as usize) {
+        let mut accumulator = FieldInteger::<4>::from(0u64);
+        for index in 0..group as usize {
+            let value = match chunk.get(index) {
+                Some(value) => value.to_i128()?,
+                None => 0,
+            };
+            let digit = u128::try_from(value.checked_add(base)?).ok()?;
+            if digit >= radix {
+                return None;
+            }
+            accumulator <<= digit_bits;
+            let carry = accumulator.add_with_carry(&FieldInteger([
+                digit as u64,
+                (digit >> 64) as u64,
+                0,
+                0,
+            ]));
+            debug_assert!(!carry);
+        }
+        // The nibble-aligned layout uses at most 252 bits, below the field modulus.
+        output.push(Field::from_bigint(accumulator)?);
+    }
+    Some(output)
+}
+
+fn packer_bigint(polynomial: &Polynomial, bit: u32) -> Vec<Field> {
     let values = polynomial.coefficients();
     let (nibble_bits, group) = packing_layout(bit);
 
@@ -118,9 +160,142 @@ pub fn flatten(mut inputs: Vec<Field>, polynomials: &[Polynomial], bit: u32) -> 
     inputs
 }
 
+/// Reverses, centers, and packs one canonical RNS row without per-coefficient allocations.
+/// Returns `None` if the row cannot use the fixed-width path.
+pub fn pack_centered_rns_row(coefficients: &[u64], modulus: u64, bit: u32) -> Option<Vec<Field>> {
+    let (nibble_bits, group) = packing_layout(bit);
+    if modulus == 0 || nibble_bits > 120 || coefficients.iter().any(|value| *value >= modulus) {
+        return None;
+    }
+    let base = 1i128 << nibble_bits;
+    let digit_bits = nibble_bits + 4;
+    let radix = 1u128 << digit_bits;
+    let group = group as usize;
+    let mut values = coefficients.iter().rev();
+    let mut output = Vec::with_capacity(coefficients.len().div_ceil(group));
+    for _ in 0..coefficients.len().div_ceil(group) {
+        let mut accumulator = FieldInteger::<4>::from(0u64);
+        for _ in 0..group {
+            let value = values.next().copied().unwrap_or(0);
+            let negative = if modulus % 2 == 0 {
+                value >= modulus / 2
+            } else {
+                value > modulus / 2
+            };
+            let centered = i128::from(value) - if negative { i128::from(modulus) } else { 0 };
+            let digit = u128::try_from(centered.checked_add(base)?).ok()?;
+            if digit >= radix {
+                return None;
+            }
+            accumulator <<= digit_bits;
+            if accumulator.add_with_carry(&FieldInteger([digit as u64, (digit >> 64) as u64, 0, 0]))
+            {
+                return None;
+            }
+        }
+        output.push(Field::from_bigint(accumulator)?);
+    }
+    Some(output)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn direct_rns_packing_matches_reverse_center_and_bigint_packing() {
+        for modulus in [
+            2u64,
+            3,
+            16,
+            17,
+            65537,
+            (1 << 51) - 1,
+            (1 << 62) - 57,
+            u64::MAX,
+        ] {
+            let bit = 64 - (modulus / 2).leading_zeros();
+            for length in [0, 1, 3, 4, 7, 16, 31, 512] {
+                let edges = [0, 1, modulus / 2, modulus - 1];
+                let coefficients: Vec<_> = edges.into_iter().cycle().take(length).collect();
+                let mut reference = Polynomial::from_u64_vector(coefficients.clone());
+                reference.reverse();
+                reference.center(&BigInt::from(modulus));
+                assert_eq!(
+                    pack_centered_rns_row(&coefficients, modulus, bit).unwrap(),
+                    packer_bigint(&reference, bit)
+                );
+            }
+        }
+        assert!(pack_centered_rns_row(&[17], 17, 5).is_none());
+        assert!(pack_centered_rns_row(&[0], 0, 5).is_none());
+    }
+
+    #[test]
+    fn fixed_width_packing_matches_bigint_at_boundaries() {
+        for bit in [0, 1, 4, 5, 8, 31, 32, 51, 53, 60, 64, 100, 120] {
+            let (nibble_bits, group) = packing_layout(bit);
+            let base = BigInt::from(1) << nibble_bits;
+            let edge = vec![
+                -&base,
+                -&base + 1,
+                BigInt::from(-1),
+                BigInt::zero(),
+                &base - 1,
+                base,
+            ];
+            for length in [
+                0,
+                1,
+                group as usize - 1,
+                group as usize,
+                group as usize + 1,
+                100,
+            ] {
+                let polynomial =
+                    Polynomial::new(edge.iter().cycle().take(length).cloned().collect());
+                assert_eq!(
+                    packer_fixed_width(&polynomial, bit).unwrap(),
+                    packer_bigint(&polynomial, bit)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fixed_width_packing_matches_bigint_for_deterministic_samples() {
+        let mut state = 7u64;
+        for bit in 1..=64 {
+            let values = (0..131)
+                .map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    let magnitude = u128::from(state) & ((1u128 << bit) - 1);
+                    let value = BigInt::from(magnitude);
+                    if state & 1 == 0 {
+                        value
+                    } else {
+                        -value
+                    }
+                })
+                .collect();
+            let polynomial = Polynomial::new(values);
+            assert_eq!(
+                packer_fixed_width(&polynomial, bit).unwrap(),
+                packer_bigint(&polynomial, bit)
+            );
+        }
+    }
+
+    #[test]
+    fn packing_retains_bigint_fallback() {
+        for (bit, value) in [(8, BigInt::from(1) << 40), (200, BigInt::from(1) << 199)] {
+            let polynomial = Polynomial::new(vec![value]);
+            assert!(packer_fixed_width(&polynomial, bit).is_none());
+            assert_eq!(packer(&polynomial, bit), packer_bigint(&polynomial, bit));
+        }
+    }
 
     #[test]
     fn test_packing_layout() {
