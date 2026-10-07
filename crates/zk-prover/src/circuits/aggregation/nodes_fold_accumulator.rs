@@ -21,8 +21,8 @@ use crate::witness::{CompiledCircuit, WitnessGenerator};
 use e3_events::{CircuitName, CircuitVariant, Proof};
 use serde::Serialize;
 
-/// Public-signal layout of `nodes_fold`: 6-field prefix, then `node_fold_fields`-wide tail.
-const NODES_FOLD_PREFIX_LEN: usize = 6;
+/// Public-signal layout of `nodes_fold`: five prefix fields, then complete node statements.
+const NODES_FOLD_PREFIX_LEN: usize = 5;
 
 fn node_fold_statement_field_count(proof: &Proof) -> Result<usize, ZkError> {
     if proof.circuit != CircuitName::NodeFold {
@@ -41,7 +41,7 @@ fn node_fold_statement_field_count(proof: &Proof) -> Result<usize, ZkError> {
 }
 
 fn nodes_fold_acc_public_len(node_fold_fields: usize, total_slots: usize) -> usize {
-    6 + total_slots * node_fold_fields
+    NODES_FOLD_PREFIX_LEN + total_slots * node_fold_fields
 }
 
 #[derive(Serialize)]
@@ -53,11 +53,10 @@ struct NodesFoldStepInput {
     acc_proof: Vec<String>,
     acc_public_inputs: Vec<String>,
     inner_key_hash: String,
-    acc_key_hash: String,
+    fold_key_hash: String,
+    kernel_key_hash: String,
     is_first_step: bool,
     slot_index: u32,
-    expected_kernel_key_hash: String,
-    expected_fold_key_hash: String,
 }
 
 struct NodesFoldVks {
@@ -103,6 +102,10 @@ fn generate_nodes_fold_kernel_genesis_proof(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
         CircuitName::NodesFoldKernel,
     )?;
+    let fold_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::NodesFold,
+    )?;
     let nf_fields = node_fold_statement_field_count(inner)?;
     let node_fold_public_inputs = bytes_to_field_strings(inner.public_signals.as_ref())?;
     if node_fold_public_inputs.len() != nf_fields {
@@ -122,15 +125,10 @@ fn generate_nodes_fold_kernel_genesis_proof(
         acc_proof: acc_pf,
         acc_public_inputs: acc_pi,
         inner_key_hash: inner_vk.key_hash,
-        acc_key_hash: kernel_vk.key_hash.clone(),
+        fold_key_hash: fold_vk.key_hash,
+        kernel_key_hash: kernel_vk.key_hash,
         is_first_step: true,
         slot_index,
-        expected_kernel_key_hash: kernel_vk.key_hash,
-        expected_fold_key_hash: vk::load_vk_artifacts(
-            &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-            CircuitName::NodesFold,
-        )?
-        .key_hash,
     };
 
     let circuit_path = prover
@@ -184,7 +182,7 @@ fn generate_nodes_fold_step_with_vks(
 
     let expected_acc_pub = nodes_fold_acc_public_len(nf_fields, total_slots);
 
-    let (acc_vk_fields, acc_vk_hash, acc_proof, acc_public_inputs) = if is_first_step {
+    let (acc_vk_fields, acc_proof, acc_public_inputs) = if is_first_step {
         let kernel_job_id = format!("{e3_id}-nodesfold-kernel");
         let kernel_proof = generate_nodes_fold_kernel_genesis_proof(
             prover,
@@ -205,7 +203,6 @@ fn generate_nodes_fold_step_with_vks(
         }
         (
             vks.kernel_vk.verification_key.clone(),
-            vks.kernel_vk.key_hash.clone(),
             bytes_to_field_strings(&kernel_proof.data)?,
             acc_pi,
         )
@@ -222,7 +219,6 @@ fn generate_nodes_fold_step_with_vks(
         }
         (
             vks.fold_vk.verification_key.clone(),
-            vks.fold_vk.key_hash.clone(),
             bytes_to_field_strings(&p.data)?,
             acc_pi,
         )
@@ -236,11 +232,10 @@ fn generate_nodes_fold_step_with_vks(
         acc_proof,
         acc_public_inputs,
         inner_key_hash: vks.inner_vk.key_hash.clone(),
-        acc_key_hash: acc_vk_hash,
+        fold_key_hash: vks.fold_vk.key_hash.clone(),
+        kernel_key_hash: vks.kernel_vk.key_hash.clone(),
         is_first_step,
         slot_index,
-        expected_kernel_key_hash: vks.kernel_vk.key_hash.clone(),
-        expected_fold_key_hash: vks.fold_vk.key_hash.clone(),
     };
 
     let circuit_path = prover
@@ -334,14 +329,13 @@ mod tests {
             acc_proof: Vec::new(),
             acc_public_inputs: Vec::new(),
             inner_key_hash: "0".to_string(),
-            acc_key_hash: "0".to_string(),
+            fold_key_hash: "0".to_string(),
+            kernel_key_hash: "0".to_string(),
             is_first_step: true,
             slot_index: 0,
-            expected_kernel_key_hash: "0".to_string(),
-            expected_fold_key_hash: "0".to_string(),
         })
         .unwrap();
-        assert!(value.get("expected_kernel_key_hash").is_some());
-        assert!(value.get("expected_fold_key_hash").is_some());
+        assert!(value.get("kernel_key_hash").is_some());
+        assert!(value.get("fold_key_hash").is_some());
     }
 }

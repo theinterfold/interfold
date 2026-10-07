@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { generateBFVKeys, prepareBallot, finishBallotProof, encodeSolidityProof, destroyBBApi } from '@crisp-e3/sdk'
+import { generateBFVKeys, prepareBallot, finishBallotProof, encodeSolidityProof, destroyBBApi, verifyProof } from '@crisp-e3/sdk'
 import type { ProofData } from '@crisp-e3/sdk'
 import { setCircuits } from '@crisp-e3/sdk'
 import { loadCircuits } from '@crisp-e3/sdk/insecure'
@@ -67,8 +67,6 @@ describe('CRISP on-chain census', function () {
   let slotAddress: string
   let e3Id: bigint
   let votingPower: bigint
-  let divisor: bigint
-  let rawPower: bigint
   let voteProof: ProofData
 
   const numOptions = 2
@@ -129,13 +127,13 @@ describe('CRISP on-chain census', function () {
     const requestBlock = await ethers.provider.getBlock(receipt!.blockNumber)
     const snapshot = BigInt(requestBlock!.timestamp) - 1n
 
-    rawPower = await token.getPastVotes(slotAddress, snapshot)
+    const rawPower: bigint = await token.getPastVotes(slotAddress, snapshot)
     expect(rawPower, 'voter must hold power at the snapshot').to.be.greaterThan(0n)
 
     // The contract scales raw power into ballot units before handing it to the circuit, so the
     // prover has to use the same value. Read the divisor from the round rather than recomputing
     // it, which also pins the getter clients depend on.
-    divisor = await crispProgram.votingPowerDivisorOf(e3Id)
+    const divisor = await crispProgram.votingPowerDivisorOf(e3Id)
     expect(divisor, 'derived from the token decimals: 10 ** (18 - 1)').to.equal(10n ** 17n)
 
     votingPower = rawPower / divisor
@@ -149,7 +147,7 @@ describe('CRISP on-chain census', function () {
 
   /// Builds a ballot for the ONCHAIN circuit at a caller-chosen voting power, so a test can prove
   /// a power the token does not agree with.
-  async function buildOnchainProof(power: bigint, roundId: bigint = e3Id): Promise<ProofData> {
+  async function buildOnchainProof(power: bigint): Promise<ProofData> {
     const prepared = await prepareBallot({
       censusMode: 'onchain',
       vote,
@@ -160,7 +158,7 @@ describe('CRISP on-chain census', function () {
       numOptions,
     })
 
-    const digest = (await crispProgram.ballotDigest(roundId, slotAddress, prepared.ctCommitment)) as `0x${string}`
+    const digest = (await crispProgram.ballotDigest(e3Id, slotAddress, prepared.ctCommitment)) as `0x${string}`
     const domain = {
       name: 'CRISP',
       version: '1',
@@ -175,7 +173,7 @@ describe('CRISP on-chain census', function () {
       ],
     }
     const signature = (await voter.signTypedData(domain, types, {
-      e3Id: roundId,
+      e3Id,
       slot: slotAddress,
       ciphertextCommitment: prepared.ctCommitment,
     })) as `0x${string}`
@@ -183,31 +181,15 @@ describe('CRISP on-chain census', function () {
     return finishBallotProof(prepared, digest, signature)
   }
 
-  /// Opens another ONCHAIN round over the same token, so a test can publish a first vote for a
-  /// slot that has already voted in `e3Id`.
-  async function openRound(): Promise<bigint> {
-    const id = await mockInterfold.nextE3Id()
-    await (
-      await mockInterfold.requestWithParams(
-        await crispProgram.getAddress(),
-        numOptions,
-        encodeParams({
-          token: await token.getAddress(),
-          minVotingPower: 10n ** 17n,
-          numOptions,
-          creditMode: CUSTOM,
-          credits: 1n,
-          censusMode: ONCHAIN,
-        }),
-      )
-    ).wait()
-    return id
-  }
-
   it('verifies an ONCHAIN ballot against the onchain verifier', async function () {
     const isValid = await onchainHonkVerifier.verify(voteProof.proof, voteProof.publicInputs)
 
     expect(isValid).to.be.true
+  })
+
+  /// The SDK checks the same proof off chain against the `crisp_onchain` fold key.
+  it('verifies an ONCHAIN ballot with the SDK', async function () {
+    expect(await verifyProof(voteProof, 'onchain')).to.be.true
   })
 
   /// The two circuits agree on every public input except index 4, so this is the one position that
@@ -232,47 +214,21 @@ describe('CRISP on-chain census', function () {
     expect(exposed).to.equal(BigInt(voteProof.publicInputs[4]))
   })
 
-  it('publishes an ONCHAIN ballot end to end', async function () {
-    await (await mockInterfold.setCommitteePublicKey(voteProof.publicInputs[8])).wait()
-
-    await publishAvailableInput(crispProgram, e3Id, encodeSolidityProof(voteProof))
-  })
-
   /// The contract reads the power from the token rather than trusting the ballot. A proof built
   /// for a different power therefore fails, which is what stops a voter inflating their own weight.
   ///
-  /// Runs in a fresh round on purpose. Reusing `e3Id` would leave the slot already voted, so the
-  /// inflated ballot would mismatch on `prev_ct_commitment` and `is_first_vote` too — it would
-  /// still revert, but not for the reason under test.
-  it('rejects a ballot proving a voting power the token does not report', async function () {
-    const round = await openRound()
-
-    const inflated = await buildOnchainProof(votingPower * 2n, round)
+  /// The inflated ballot goes first, while the slot is empty. After the honest ballot the slot would
+  /// already hold a vote, so the inflated ballot would also mismatch on `prev_ct_commitment` and
+  /// `is_first_vote`: it would still revert, but not for the reason under test.
+  it('publishes an ONCHAIN ballot and rejects one that proves a power the token does not report', async function () {
+    const inflated = await buildOnchainProof(votingPower * 2n)
     await (await mockInterfold.setCommitteePublicKey(inflated.publicInputs[8])).wait()
-    await expect(publishAvailableInput(crispProgram, round, encodeSolidityProof(inflated))).to.be.revert(ethers)
+    await expect(publishAvailableInput(crispProgram, e3Id, encodeSolidityProof(inflated))).to.be.revert(ethers)
 
     // Positive control in the same round and the same slot: the honest power publishes. The only
     // difference between the two ballots is the power, so the revert above is attributable to it.
-    const honest = await buildOnchainProof(votingPower, round)
-    await (await mockInterfold.setCommitteePublicKey(honest.publicInputs[8])).wait()
-    await publishAvailableInput(crispProgram, round, encodeSolidityProof(honest))
-  })
-
-  /// The divisor is what keeps token weighting meaningful. The circuit enforces
-  /// `vote <= voting_power`, and the BFV encoding caps each choice at `2**(100/numOptions) - 1`
-  /// (about 8.6e9 for three options). Raw power from an 18-decimal token is ~1e18 per token, so
-  /// unscaled every holder would sit above that cap and weighting would flatten silently.
-  it('scales raw power into ballot units', async function () {
-    const perChoiceCap = 2n ** 33n - 1n
-
-    expect(divisor, 'derived as 10 ** (18 - 1)').to.equal(10n ** 17n)
-    expect(votingPower).to.equal(rawPower / divisor)
-
-    // The point of the divisor: the raw value is orders of magnitude past the cap, the scaled one
-    // is comfortably inside it. Without scaling every holder would be pinned at the cap and the
-    // weighting would carry no information.
-    expect(rawPower, 'raw power breaches the cap').to.be.greaterThan(perChoiceCap)
-    expect(votingPower, 'scaled power fits under it').to.be.lessThan(perChoiceCap)
+    await (await mockInterfold.setCommitteePublicKey(voteProof.publicInputs[8])).wait()
+    await publishAvailableInput(crispProgram, e3Id, encodeSolidityProof(voteProof))
   })
 
   /// A requester that needs different precision names its own divisor; 0 means "derive it".

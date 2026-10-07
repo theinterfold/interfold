@@ -14,7 +14,10 @@
 //! writes the result back.
 
 use alloy::primitives::U256;
-use e3_events::{ChainPosition, ConfigurationUpdatedAt, E3id};
+use e3_events::{
+    BondingAssetConfigUpdatedAt, ChainPosition, ConfigurationUpdatedAt, E3id,
+    EligibilityConfigurationVersionUpdatedAt,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{hash_map::Entry, HashMap};
 use tracing::{info, warn};
@@ -135,39 +138,6 @@ pub struct NodeStateStore {
 }
 
 impl NodeStateStore {
-    /// Get the tickets this node chooses to use after local load balancing.
-    ///
-    /// The available ticket count is `floor(balance / price) - active_jobs`,
-    /// saturating at zero. Inactive nodes and a zero ticket price both yield `0`.
-    ///
-    /// The contract validates the full ticket range from the snapshotted balance.
-    /// Other nodes can ignore this local participation policy.
-    pub fn available_tickets(&self, address: &str) -> u64 {
-        if self.ticket_price.is_zero() {
-            warn!("Ticket price is zero, returning 0 tickets, Please make sure this is the correct behavior");
-            return 0;
-        }
-
-        let Some(node) = self.nodes.get(address) else {
-            return 0;
-        };
-
-        let total_tickets = (node.ticket_balance / self.ticket_price)
-            .try_into()
-            .unwrap_or(0u64);
-        total_tickets.saturating_sub(node.active_jobs)
-    }
-
-    /// Get all active nodes that currently have at least one available ticket.
-    pub fn get_nodes_with_tickets(&self) -> Vec<(String, u64)> {
-        self.nodes
-            .iter()
-            .filter(|(_, node_state)| node_state.active)
-            .map(|(addr, _)| (addr.clone(), self.available_tickets(addr)))
-            .filter(|(_, tickets)| *tickets > 0)
-            .collect()
-    }
-
     pub fn sortition_snapshot(&self, e3_id: &E3id) -> Option<SortitionSnapshot> {
         self.sortition_snapshots.get(&committee_key(e3_id)).copied()
     }
@@ -316,6 +286,31 @@ impl NodeRegistry {
             );
         }
         Self::invalidate_operator_activity(store, configuration.chain_id, event.position);
+    }
+
+    /// A new eligibility configuration version makes every operator on the chain inactive until
+    /// it refreshes; its `OperatorActivationChanged` then marks it active again. Applied the same
+    /// way during live delivery and offline repair.
+    pub fn update_eligibility_version(
+        store: &mut HashMap<u64, NodeStateStore>,
+        event: &EligibilityConfigurationVersionUpdatedAt,
+    ) {
+        Self::invalidate_operator_activity(store, event.update.chain_id, event.position);
+    }
+
+    /// A bonding-asset update sets the ticket price. It does not invalidate activity itself: the
+    /// same transaction emits `EligibilityConfigurationVersionUpdated` after it. Applied the same
+    /// way during live delivery and offline repair.
+    pub fn update_bonding_asset_config(
+        store: &mut HashMap<u64, NodeStateStore>,
+        event: &BondingAssetConfigUpdatedAt,
+    ) {
+        Self::set_ticket_price(
+            store,
+            event.config.chain_id,
+            event.config.ticket_price,
+            event.position,
+        );
     }
 
     pub fn record_sortition_snapshot(

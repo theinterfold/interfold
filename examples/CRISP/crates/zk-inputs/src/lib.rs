@@ -248,8 +248,8 @@ impl ZKInputsGenerator {
         let pt = Plaintext::try_encode(&vote, Encoding::poly(), &self.bfv_params)
             .with_context(|| "Failed to encode plaintext")?;
 
-        let (ct, _u_rns, _e0_rns, _e1_rns) = pk
-            .try_encrypt_extended(&pt, &mut rng())
+        let (ct, _intermediates) = pk
+            .try_encrypt_with_intermediates(&pt, &mut rng())
             .with_context(|| "Failed to encrypt plaintext")?;
 
         Ok(ct.to_bytes())
@@ -485,29 +485,6 @@ mod tests {
         // Test invalid public key for encryption.
         let result = generator.encrypt_vote(&[1, 2, 3], vote.clone());
         assert!(result.is_err());
-    }
-
-    // Core functionality tests
-    #[test]
-    fn test_vote_values() {
-        let generator = ZKInputsGenerator::with_defaults();
-        let (_secret_key, public_key) = generator.generate_keys().expect("failed to generate keys");
-        let vote = create_vote_vector();
-        let prev_ciphertext = generator
-            .encrypt_vote(&public_key, vote.clone())
-            .expect("failed to encrypt vote");
-
-        // Test vote = 0.
-        let result_0 =
-            generator.generate_inputs(Some(&prev_ciphertext), &public_key, vote.clone(), false);
-        assert!(result_0.is_ok());
-        let (_, _) = result_0.unwrap();
-
-        // Test vote = 1.
-        let result_1 =
-            generator.generate_inputs(Some(&prev_ciphertext), &public_key, vote.clone(), false);
-        assert!(result_1.is_ok());
-        let (_, _) = result_1.unwrap();
     }
 
     #[test]

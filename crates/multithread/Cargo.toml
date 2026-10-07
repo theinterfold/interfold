@@ -7,6 +7,7 @@ description.workspace = true
 repository.workspace = true
 
 [dependencies]
+e3-request.workspace = true
 actix = { workspace = true }
 alloy = { workspace = true }
 anyhow = { workspace = true }
@@ -34,3 +35,6 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 zeroize = { workspace = true }
+
+[dev-dependencies]
+rand_chacha = { workspace = true }

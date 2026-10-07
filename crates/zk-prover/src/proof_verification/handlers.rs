@@ -6,14 +6,62 @@ use super::*;
 
 impl Actor for ProofVerificationActor {
     type Context = Context<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        for input in std::mem::take(&mut self.recovered) {
+            self.handle_encryption_key_received(input, ctx);
+        }
+    }
 }
 
 impl Handler<InterfoldEvent> for ProofVerificationActor {
     type Result = ();
 
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
+        let source = msg.source();
         let (msg, ec) = msg.into_components();
         match msg {
+            InterfoldEventData::EffectsEnabled(_) => {
+                if !self.effects_enabled {
+                    self.effects_enabled = true;
+                    for key in self.pending.keys().cloned().collect::<Vec<_>>() {
+                        self.dispatch_verification(key, ctx);
+                    }
+                }
+            }
+            InterfoldEventData::EncryptionKeyCreated(data)
+                if source == e3_events::EventSource::Local && data.external =>
+            {
+                let key = (data.e3_id, data.key.party_id);
+                if self
+                    .pending
+                    .get(&key)
+                    .is_some_and(|pending| pending.request.key == data.key)
+                {
+                    if let Some(pending) = self.pending.remove(&key) {
+                        if let Some(retry) = pending.retry {
+                            ctx.cancel_future(retry);
+                        }
+                    }
+                }
+            }
+            InterfoldEventData::ProofVerificationFailed(data)
+                if source == e3_events::EventSource::Local
+                    && data.proof_type == ProofType::C0PkBfv =>
+            {
+                let key = (data.e3_id, data.accused_party_id);
+                if self
+                    .pending
+                    .get(&key)
+                    .is_some_and(|pending| pending.signed_payload == data.signed_payload)
+                {
+                    if let Some(pending) = self.pending.remove(&key) {
+                        if let Some(retry) = pending.retry {
+                            ctx.cancel_future(retry);
+                        }
+                    }
+                }
+            }
             InterfoldEventData::CiphernodeSelected(data) => {
                 self.store_preset(
                     data.e3_id,
@@ -32,11 +80,12 @@ impl Handler<InterfoldEvent> for ProofVerificationActor {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::E3RequestComplete(data) => {
-                let e3_id = data.e3_id;
-                self.presets.remove(&e3_id);
-                self.committees.remove(&e3_id);
-                self.pending
-                    .retain(|(pending_e3, _), _| pending_e3 != &e3_id);
+                self.clear_e3(&data.e3_id, ctx);
+            }
+            InterfoldEventData::E3StageChanged(data)
+                if source == e3_events::EventSource::Evm && dkg_has_ended(&data.new_stage) =>
+            {
+                self.clear_e3(&data.e3_id, ctx);
             }
             _ => (),
         }
@@ -61,25 +110,28 @@ impl Handler<TypedEvent<ZkVerificationResponse>> for ProofVerificationActor {
     fn handle(
         &mut self,
         msg: TypedEvent<ZkVerificationResponse>,
-        _ctx: &mut Self::Context,
+        ctx: &mut Self::Context,
     ) -> Self::Result {
         let (msg, ec) = msg.into_components();
         let pending_key = (msg.e3_id.clone(), msg.key.party_id);
-        let pending = self.pending.remove(&pending_key);
+        if let ZkVerificationOutcome::InfrastructureError(error) = &msg.outcome {
+            self.retry_verification(pending_key, error.clone(), ctx);
+            return;
+        }
+        let Some(PendingVerification {
+            signed_payload,
+            recovered_signer,
+            retry,
+            ..
+        }) = self.pending.remove(&pending_key)
+        else {
+            return;
+        };
+        if let Some(retry) = retry {
+            ctx.cancel_future(retry);
+        }
 
-        if msg.verified {
-            let Some(PendingVerification {
-                signed_payload,
-                recovered_signer,
-            }) = pending
-            else {
-                warn!(
-                    "No pending verification for verified party {} — ignoring duplicate response",
-                    msg.key.party_id
-                );
-                return;
-            };
-
+        if matches!(msg.outcome, ZkVerificationOutcome::Valid) {
             info!(
                 "C0 proof verified for party {} - accepting key",
                 msg.key.party_id
@@ -114,16 +166,11 @@ impl Handler<TypedEvent<ZkVerificationResponse>> for ProofVerificationActor {
                 }
             }
         } else {
-            let error_msg = msg.error.unwrap_or_else(|| "unknown error".to_string());
             error!(
-                "C0 proof verification FAILED for party {} - rejecting key and stopping E3: {}",
-                msg.key.party_id, error_msg
+                "C0 proof verification failed for party {} - rejecting key",
+                msg.key.party_id
             );
 
-            if let Some(PendingVerification {
-                signed_payload,
-                recovered_signer,
-            }) = pending
             {
                 warn!(
                     "Emitting SignedProofFailed for party {} (address: {recovered_signer})",

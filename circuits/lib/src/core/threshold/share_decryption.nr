@@ -5,25 +5,25 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::math::commitments::{
-    compute_aggregated_shares_commitment, compute_ciphertext_commitment,
+    compute_aggregated_shares_commitment_checked, compute_ciphertext_commitment_checked,
     compute_threshold_decryption_share_commitment, compute_threshold_share_decryption_challenge,
 };
-use crate::math::helpers::flatten;
-use crate::math::polynomial::Polynomial;
+use crate::math::helpers::{flatten, flatten_checked};
+use crate::math::polynomial::{negacyclic_kernel, Polynomial};
 
 /// Parameters for threshold share decryption (C6).
 pub struct Configs<let L: u32> {
     /// CRT moduli: [q_0, q_1, ..., q_{L-1}]
     pub qis: [Field; L],
-    /// Bounds for r1 polynomials (modulus switching quotients) for each CRT basis
-    pub r1_bounds: [Field; L],
-    /// Bounds for r2 polynomials (cyclotomic reduction quotients) for each CRT basis
-    pub r2_bounds: [Field; L],
+    /// Bounds for the `r` polynomials: the mod-q quotients of the identity reduced modulo
+    /// `X^N + 1`. Reducing the identity makes the cyclotomic quotient's term identically zero, so
+    /// the separate `r2` bound is gone and this one covers what `r1` and `r2` carried between them.
+    pub r_bounds: [Field; L],
 }
 
 impl<let L: u32> Configs<L> {
-    pub fn new(qis: [Field; L], r1_bounds: [Field; L], r2_bounds: [Field; L]) -> Self {
-        Configs { qis, r1_bounds, r2_bounds }
+    pub fn new(qis: [Field; L], r_bounds: [Field; L]) -> Self {
+        Configs { qis, r_bounds }
     }
 }
 
@@ -36,7 +36,7 @@ impl<let L: u32> Configs<L> {
 /// user data encryption); ciphertext limbs `ct0`, `ct1` as witness.
 ///
 /// **Produces:** Truncated-`d` commitment for C7 (`decrypted_shares_aggregation`).
-pub struct ShareDecryption<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_D: u32, let BIT_D_NATIVE: u32> {
+pub struct ShareDecryption<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R: u32, let BIT_D: u32, let BIT_D_NATIVE: u32> {
     /// Circuit parameters including bounds and cryptographic constants
     configs: Configs<L>,
 
@@ -64,9 +64,13 @@ pub struct ShareDecryption<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: 
     /// e_sm[basis] - sum of e_sm shares for each CRT basis (degree N-1 with N coefficients)
     e_sm: [Polynomial<N>; L],
 
-    /// Quotient polynomials for lifting to Z (secret witnesses)
-    r1: [Polynomial<2 * N - 1>; L],
-    r2: [Polynomial<N - 1>; L],
+    /// Mod-q quotients of the identity reduced modulo `X^N + 1` (secret witnesses).
+    ///
+    /// The unreduced identity needed two: `r1` of degree `2N-1` for the modulus switch and `r2` of
+    /// degree `N-1` for the cyclotomic reduction. Checking the identity in the reduced ring makes
+    /// the `r2` term identically zero and shortens `r1` to `N` coefficients, so one witness of
+    /// degree `N-1` replaces both. `r[l]` is `r1[l] mod X^N + 1`.
+    r: [Polynomial<N>; L],
 
     /// Party's computed decryption share (secret witness)
     d: [Polynomial<N>; L],
@@ -78,7 +82,7 @@ pub struct ShareDecryption<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: 
     d_native_trunc: [Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L],
 }
 
-impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_D: u32, let BIT_D_NATIVE: u32> ShareDecryption<N, MAX_MSG_NON_ZERO_COEFFS, L, BIT_CT, BIT_SK, BIT_E_SM, BIT_R1, BIT_R2, BIT_D, BIT_D_NATIVE> {
+impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R: u32, let BIT_D: u32, let BIT_D_NATIVE: u32> ShareDecryption<N, MAX_MSG_NON_ZERO_COEFFS, L, BIT_CT, BIT_SK, BIT_E_SM, BIT_R, BIT_D, BIT_D_NATIVE> {
     pub fn new(
         configs: Configs<L>,
         expected_sk_commitment: Field,
@@ -88,8 +92,7 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
         ct1: [Polynomial<N>; L],
         sk: [Polynomial<N>; L],
         e_sm: [Polynomial<N>; L],
-        r1: [Polynomial<2 * N - 1>; L],
-        r2: [Polynomial<N - 1>; L],
+        r: [Polynomial<N>; L],
         d: [Polynomial<N>; L],
         d_native_trunc: [Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L],
     ) -> Self {
@@ -103,8 +106,7 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
             ct1,
             sk,
             e_sm,
-            r1,
-            r2,
+            r,
             d,
             d_native_trunc,
         }
@@ -141,7 +143,7 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
     /// Verifies that aggregated secret shares hash to expected_sk_commitment
     fn verify_agg_sk_commitment(self) {
         assert(
-            compute_aggregated_shares_commitment::<N, L, BIT_SK>(self.sk)
+            compute_aggregated_shares_commitment_checked::<N, L, BIT_SK>(self.sk)
                 == self.expected_sk_commitment,
             "S commitment mismatch",
         );
@@ -150,35 +152,30 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
     /// Verifies that aggregated noise shares hash to expected_e_sm_commitment
     fn verify_agg_e_sm_commitment(self) {
         assert(
-            compute_aggregated_shares_commitment::<N, L, BIT_E_SM>(self.e_sm)
+            compute_aggregated_shares_commitment_checked::<N, L, BIT_E_SM>(self.e_sm)
                 == self.expected_e_sm_commitment,
             "E commitment mismatch",
         );
     }
 
     fn verify_ct_commitment(self) {
-        let computed = compute_ciphertext_commitment::<N, L, BIT_CT>(self.ct0, self.ct1);
+        let computed = compute_ciphertext_commitment_checked::<N, L, BIT_CT>(self.ct0, self.ct1);
         assert(computed == self.ct_commitment, "Ciphertext commitment mismatch");
     }
 
     /// Flattens all witness data into a single array for Fiat-Shamir challenge generation.
     ///
-    /// This function serializes all polynomial coefficients (both public inputs and
-    /// secret witnesses) into a 1D array in a deterministic order. The flattened data
-    /// is used to generate the Fiat-Shamir challenge via the SAFE sponge API.
+    /// This function serializes all polynomial data (both public inputs and secret
+    /// witnesses) into a 1D array in a deterministic order. The flattened data is
+    /// used to generate the Fiat-Shamir challenge via the SAFE sponge API.
     ///
     /// The order of serialization is:
     /// 1. Commitment to aggregated secret shares `sk` (expected_sk_commitment)
     /// 2. Commitment to aggregated noise shares `e_sm` (expected_e_sm_commitment)
-    /// 3. Ciphertext components `c_0` for each CRT basis (serialized coefficients)
-    /// 4. Ciphertext components `c_1` for each CRT basis (serialized coefficients)
-    /// 5. Quotient polynomials `r_1` for each CRT basis (serialized coefficients)
-    /// 6. Quotient polynomials `r_2` for each CRT basis (serialized coefficients)
-    /// 7. Full decryption share polynomials `d` for each CRT basis (all N coefficients per limb)
-    ///
-    /// Note: Aggregated secret shares `sk` and noise shares `e_sm` are represented by their
-    /// commitments rather than serialized coefficients. This saves constraints while
-    /// still binding them to the transcript.
+    /// 3. Ciphertext commitment `ct_commitment` (bound in transcript shape; the ct limbs
+    ///    themselves are checked against it by verify_ct_commitment)
+    /// 4. Reduced quotient polynomials `r` for each CRT basis (plain packing)
+    /// 5. Full decryption share polynomials `d` for each CRT basis (checked packing)
     ///
     /// # Returns
     /// A vector containing commitments and polynomial coefficients in flattened form,
@@ -187,16 +184,23 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
         // Use commitments instead of full polynomials (saves constraints)
         let mut inputs = [self.expected_sk_commitment, self.expected_e_sm_commitment].as_vector();
 
-        // Flatten ciphertext components (witness)
-        inputs = flatten::<_, _, BIT_CT>(inputs, self.ct0);
-        inputs = flatten::<_, _, BIT_CT>(inputs, self.ct1);
+        // The ciphertext enters through its commitment, as sk and e_sm do above.
+        // verify_ct_commitment opens ct_commitment to ct0/ct1 with checked packing, so it has
+        // one opening and fixes the ciphertext before gamma is drawn. Absorbing the limbs as
+        // well would bind them a second time at the cost of 2*N*L packed carriers. This must
+        // stay the struct's own ct_commitment, the value verify_ct_commitment checks.
+        inputs = inputs.push_back(self.ct_commitment);
 
-        // Flatten quotient polynomials (secret witnesses)
-        inputs = flatten::<_, _, BIT_R1>(inputs, self.r1);
-        inputs = flatten::<_, _, BIT_R2>(inputs, self.r2);
+        // Flatten the reduced quotient polynomials. The unreduced form absorbed `r1` at degree
+        // 2N-1 and `r2` on top of it; the reduced one absorbs neither.
+        inputs = flatten::<_, _, BIT_R>(inputs, self.r);
 
+        // `d` carries no range bound of its own, so absorb it through the checked packing: the
+        // digit asserts make the transcript injective, which is what lets Schwartz-Zippel pin
+        // `d` to the evaluated identity. `ct0`/`ct1` are bounded by `verify_ct_commitment` and
+        // `r` by `check_range_bounds`, so plain `flatten` is already injective for them.
         // Full `d` fixes the C7 prefix commitment (computed separately as the public output)
-        inputs = flatten::<N, L, BIT_D>(inputs, self.d);
+        inputs = flatten_checked::<N, L, BIT_D>(inputs, self.d);
 
         inputs
     }
@@ -212,7 +216,7 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
         // Step 3: Bind witness ciphertext to the public ct_commitment
         self.verify_ct_commitment();
 
-        // Step 4: Range-check quotient polynomials (r1, r2).
+        // Step 4: Range-check the reduced quotient polynomial `r`.
         // sk and e_sm are enforced only via `verify_agg_*_commitment` against C4 outputs; C4
         // aggregated per-party shares that passed verification against C2 (see `dkg/share_decryption`).
         self.check_range_bounds();
@@ -222,14 +226,13 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
             self.d_native_trunc,
         );
 
-        // Step 5: Generate Fiat-Shamir challenge from the transcript
+        // Step 5: Generate Fiat-Shamir challenge from the transcript. The ciphertext is in it
+        // through ct_commitment, which step 3 has already opened to ct0/ct1.
         let gamma = self.generate_challenge();
 
-        // Step 6: Verify decryption share computation for each CRT basis.
-        // cyclo_at_gamma is identical across all bases (same gamma, same N); compute once.
-        let cyclo_at_gamma = gamma.pow_32(N as Field) + 1;
+        // Step 6: Verify the reduced decryption-share identity for each CRT basis.
         for i in 0..L {
-            self.verify_decryption_share_computation(i, gamma, cyclo_at_gamma);
+            self.verify_decryption_share_computation(i, gamma);
         }
 
         d_commitment
@@ -242,26 +245,25 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
     /// attacks where malicious provers provide out-of-range values that could break the
     /// security properties of the Threshold scheme.
     ///
-    /// Note: `sk` / `e_sm` coefficients are not range-checked again here:
-    /// - `verify_agg_sk_commitment` / `verify_agg_e_sm_commitment` bind to the C4 aggregate commitments.
-    /// - C4 formed those aggregates from per-party shares verified against C2 in `dkg/share_decryption`.
-    /// - This step only range-checks fresh quotient witnesses `r1`, `r2`.
+    /// Note: `sk` / `e_sm` coefficients carry no bound of their own here, and do not need one:
+    /// - `verify_agg_sk_commitment` / `verify_agg_e_sm_commitment` open the C4 aggregate commitments
+    ///   with the checked packing helper, which makes the opening unique and so forces the witness to
+    ///   equal the value C4 committed after `normalize_aggregated` reduced and centered it.
+    /// - Binding to the commitment alone was not enough: without the digit assert the same
+    ///   commitment opened to other coefficient vectors, so a prover could decrypt under a key share
+    ///   C4 never anchored.
+    /// - This step only range-checks the fresh quotient witness `r`.
     ///
     /// # Panics
     /// This function will cause the circuit to fail if any quotient coefficient is
     /// outside its expected bounds.
     fn check_range_bounds(self) {
-        // Check quotient polynomials are within bounds
         for basis_idx in 0..L {
-            // r_1 quotients can be negative (modulus quotients)
-            self.r1[basis_idx].range_check_2bounds::<BIT_R1>(
-                self.configs.r1_bounds[basis_idx],
-                self.configs.r1_bounds[basis_idx],
-            );
-            // r_2 quotients (cyclotomic quotients)
-            self.r2[basis_idx].range_check_2bounds::<BIT_R2>(
-                self.configs.r2_bounds[basis_idx],
-                self.configs.r2_bounds[basis_idx],
+            // `r` is the only fresh quotient the reduced identity leaves to bound. It can be
+            // negative, so the check is two-sided.
+            self.r[basis_idx].range_check_2bounds::<BIT_R>(
+                self.configs.r_bounds[basis_idx],
+                self.configs.r_bounds[basis_idx],
             );
         }
     }
@@ -269,7 +271,8 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
     /// Generates Fiat-Shamir challenge value using the SAFE cryptographic sponge.
     ///
     /// This function implements the Fiat-Shamir transform for the decryption share circuit:
-    /// 1. Flattens all witness data (commitments for sk/e_sm, ciphertexts c_0/c_1, quotients r_1/r_2, full d) into a single array
+    /// 1. Flattens the public commitments to sk and e_sm, the ciphertext commitment ct_commitment,
+    ///    the reduced quotient r, and the full decryption share d into a single array
     /// 2. Absorbs the flattened data into the SAFE sponge
     /// 3. Squeezes a single challenge value
     ///
@@ -308,39 +311,254 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
     ///
     /// # Panics
     /// The circuit will fail if the decryption share computation formula doesn't hold for the specified basis.
-    fn verify_decryption_share_computation(
-        self,
-        basis_idx: u32,
-        gamma: Field,
-        cyclo_at_gamma: Field,
-    ) {
-        // Evaluate ciphertext components at gamma
-        let c_0_at_gamma = self.ct0[basis_idx].eval(gamma);
-        let c_1_at_gamma = self.ct1[basis_idx].eval(gamma);
+    fn verify_decryption_share_computation(self, basis_idx: u32, gamma: Field) {
+        // `negacyclic_kernel(sk, gamma)[j]` is `(X^(N-1-j) * sk mod X^N + 1)(gamma)`, so
+        // `ct1.dot(kernel)` evaluates `ct1 * sk mod X^N + 1` at gamma without the product entering
+        // the witness. `sk` differs per limb here, so each limb needs its own kernel -- unlike C1,
+        // where one kernel served every modulus because `sk` was shared.
+        let kernel = negacyclic_kernel(self.sk[basis_idx], gamma);
 
-        // Evaluate aggregated sums at gamma
-        let sk_at_gamma = self.sk[basis_idx].eval(gamma);
-        let e_sm_at_gamma = self.e_sm[basis_idx].eval(gamma);
+        // Every term except the product moves to one side:
+        //   d - ct0 - e_sm - q * r  ==  ct1 * sk   (mod X^N + 1)
+        // The unreduced form carried an extra `r2 * (gamma^N + 1)`; reducing makes that term
+        // identically zero, so the witness and its range check disappear rather than being checked.
+        let mut residual: [Field; N] = [0; N];
+        for j in 0..N {
+            residual[j] = self.d[basis_idx].coefficients[j]
+                - self.ct0[basis_idx].coefficients[j]
+                - self.e_sm[basis_idx].coefficients[j]
+                - self.configs.qis[basis_idx] * self.r[basis_idx].coefficients[j];
+        }
 
-        // Evaluate quotient polynomials at gamma
-        let r_1_at_gamma = self.r1[basis_idx].eval(gamma);
-        let r_2_at_gamma = self.r2[basis_idx].eval(gamma);
-
-        // Compute expected decryption share using the lifted formula:
-        // d_i = c_0i + c_1i * sk_i + e_sm_i + r_2i * (X^N + 1) + r_1i * q_i
-        let expected_decryption_share = c_0_at_gamma
-            + c_1_at_gamma * sk_at_gamma
-            + e_sm_at_gamma
-            + r_2_at_gamma * cyclo_at_gamma
-            + r_1_at_gamma * self.configs.qis[basis_idx];
-
-        // Evaluate the party's claimed decryption share at gamma
-        let computed_decryption_share = self.d[basis_idx].eval(gamma);
-
-        // Enforce equality: computed decryption share must match expected value
         assert(
-            computed_decryption_share == expected_decryption_share,
+            Polynomial::new(residual).eval(gamma) == self.ct1[basis_idx].dot(kernel),
             "Decryption share computation failed",
         );
     }
+}
+
+/// IF-013: before `payload` absorbed `d` through the checked packing, a prover could swap `d`
+/// *after* the challenge was fixed.
+///
+/// `pack` lays `group` coefficients into one field element as base-`radix` digits, so adding `delta`
+/// to one coefficient and `-radix * delta` to the next leaves the carrier unchanged. With `d`
+/// carrying no range bound, both digits stayed satisfiable and `gamma` did not move. The shift below
+/// is solved so `d(gamma)` is preserved too, so the evaluation check also still passed — the circuit
+/// accepted a decryption share the committed `sk` / `e_sm` / `ct` never produced.
+///
+/// `flatten_checked` asserts each digit fits its slot, so the second challenge computation now
+/// fails and the swap is unreachable.
+#[test(should_fail)]
+fn forged_d_with_same_transcript_is_rejected() {
+    let z = Polynomial::new([0; 8]);
+    let anchor = compute_aggregated_shares_commitment_checked::<8, 1, 35>([z]);
+    let ct = compute_ciphertext_commitment_checked::<8, 1, 35>([z], [z]);
+    let mut d = z;
+    d.coefficients[7] = 1;
+    let mut c: ShareDecryption<8, 1, 1, 35, 35, 35, 43, 35, 36> = ShareDecryption::new(
+        Configs::new([68719403009], [1]),
+        anchor,
+        anchor,
+        ct,
+        [z],
+        [z],
+        [z],
+        [z],
+        [z],
+        [d],
+        [Polynomial::new([1])],
+    );
+    let gamma = c.generate_challenge();
+
+    // Carry `shift` from slot 0 into slot 1: the packed carrier, and so `gamma`, is unchanged.
+    let radix: Field = 1099511627776;
+    let shift = -1 / (gamma.pow_32(6) * (gamma - radix));
+    c.d[0].coefficients[0] += shift;
+    c.d[0].coefficients[1] -= radix * shift;
+
+    // Rejected here: the shifted coefficients no longer fit their digit slots.
+    assert(c.generate_challenge() == gamma);
+    let _ = c.execute();
+}
+
+/// The FS challenge changes when `ct_commitment` changes.
+///
+/// `payload` absorbs `self.ct_commitment` into the transcript before squeezing
+/// `gamma`. This test perturbs only that field and asserts `gamma` moves, so a
+/// future change that stops absorbing the commitment (or feeds it a value not
+/// bound to the witness via `verify_ct_commitment`) fails here at the next
+/// `nargo test` instead of silently changing the transcript shape.
+#[test]
+fn challenge_depends_on_the_ct_commitment() {
+    let z = Polynomial::new([0; 8]);
+    let anchor = compute_aggregated_shares_commitment_checked::<8, 1, 35>([z]);
+    let mut d = z;
+    d.coefficients[7] = 1;
+
+    let ct_commitment: Field = compute_ciphertext_commitment_checked::<8, 1, 35>([z], [z]);
+    let c: ShareDecryption<8, 1, 1, 35, 35, 35, 43, 35, 36> = ShareDecryption::new(
+        Configs::new([68719403009], [1]),
+        anchor,
+        anchor,
+        ct_commitment,
+        [z],
+        [z],
+        [z],
+        [z],
+        [z],
+        [d],
+        [Polynomial::new([1])],
+    );
+    let gamma = c.generate_challenge();
+
+    // Same witness, one different field: only ct_commitment changes (+1), so the
+    // payloads differ in exactly the absorbed field. If the sponge had not
+    // absorbed it, gamma would not have moved and this assert would fail.
+    let c_alt: ShareDecryption<8, 1, 1, 35, 35, 35, 43, 35, 36> = ShareDecryption::new(
+        Configs::new([68719403009], [1]),
+        anchor,
+        anchor,
+        ct_commitment + 1,
+        [z],
+        [z],
+        [z],
+        [z],
+        [z],
+        [d],
+        [Polynomial::new([1])],
+    );
+    assert(gamma != c_alt.generate_challenge());
+}
+
+/// With the ciphertext limbs out of the transcript, `ct_commitment` is the only thing fixing them
+/// before `gamma`, so its opening must be unique.
+///
+/// The all-zero witness is honest: `d = ct0 + ct1 * sk + e_sm = 0`. `carry_into_ct0` moves one unit
+/// from slot 0 into slot 1 of the first carrier, which leaves the plain packing, and so an unchecked
+/// commitment, unchanged. The first two tests pin both facts, so the third fails for the right
+/// reason: `verify_ct_commitment` opens with the checked packing, whose digit asserts reject it.
+fn zero_witness() -> ShareDecryption<8, 1, 1, 35, 35, 35, 43, 35, 36> {
+    let z = Polynomial::new([0; 8]);
+    let anchor = compute_aggregated_shares_commitment_checked::<8, 1, 35>([z]);
+    let ct = compute_ciphertext_commitment_checked::<8, 1, 35>([z], [z]);
+    ShareDecryption::new(
+        Configs::new([68719403009], [1]),
+        anchor,
+        anchor,
+        ct,
+        [z],
+        [z],
+        [z],
+        [z],
+        [z],
+        [z],
+        [Polynomial::new([0])],
+    )
+}
+
+fn carry_into_ct0(
+    mut c: ShareDecryption<8, 1, 1, 35, 35, 35, 43, 35, 36>,
+) -> ShareDecryption<8, 1, 1, 35, 35, 35, 43, 35, 36> {
+    let radix: Field = 1099511627776;
+    c.ct0[0].coefficients[0] += 1;
+    c.ct0[0].coefficients[1] -= radix;
+    c
+}
+
+#[test]
+fn zero_witness_is_accepted() {
+    let _ = zero_witness().execute();
+}
+
+#[test]
+fn carried_ciphertext_keeps_the_unchecked_commitment() {
+    let c = carry_into_ct0(zero_witness());
+    assert(
+        crate::math::commitments::compute_ciphertext_commitment::<8, 1, 35>(c.ct0, c.ct1)
+            == c.ct_commitment,
+    );
+}
+
+#[test(should_fail)]
+fn ciphertext_second_opening_is_rejected() {
+    // Only the opening: the carried limbs would also break the decryption identity, which must
+    // not be what rejects them here.
+    carry_into_ct0(zero_witness()).verify_ct_commitment();
+}
+
+/// The reduced identity accepts an honest witness.
+///
+/// Worked at `N = 4`, `L = 1`, `q = 97`, so the negacyclic product is checkable by hand:
+/// `ct1 * sk mod X^4 + 1` is `[57, -26, -1, 38]`, and `ct0 + that + e_sm` is `[100, -67, 41, 89]`,
+/// which `r = [-1, 1, 0, -1]` brings into the centered window as `d = [3, 30, 41, -8]`.
+///
+/// This pins the coefficient-order convention. `eval` is Horner from index 0, so `Polynomial::new`
+/// takes coefficients **highest degree first**, and `negacyclic_kernel` is built to match; reverse
+/// either and the identity silently stops holding. `r` is deliberately nonzero in three positions,
+/// so a fold that dropped the quotient term would fail rather than pass by coincidence.
+#[test]
+fn honest_reduced_identity_holds() {
+    let ct0 = Polynomial::new([40, -45, 44, 46]);
+    let ct1 = Polynomial::new([30, 11, -20, 7]);
+    let sk = Polynomial::new([1, -1, 0, 1]);
+    let e_sm = Polynomial::new([3, 4, -2, 5]);
+    let r = Polynomial::new([-1, 1, 0, -1]);
+    let d = Polynomial::new([3, 30, 41, -8]);
+
+    let sk_anchor = compute_aggregated_shares_commitment_checked::<4, 1, 7>([sk]);
+    let e_sm_anchor = compute_aggregated_shares_commitment_checked::<4, 1, 7>([e_sm]);
+    let ct_anchor = compute_ciphertext_commitment_checked::<4, 1, 7>([ct0], [ct1]);
+
+    // qis, r_bounds. The generated bound at this modulus would be 96; 1 is the tight honest value.
+    let c: ShareDecryption<4, 1, 1, 7, 7, 7, 7, 7, 7> = ShareDecryption::new(
+        Configs::new([97], [1]),
+        sk_anchor,
+        e_sm_anchor,
+        ct_anchor,
+        [ct0],
+        [ct1],
+        [sk],
+        [e_sm],
+        [r],
+        [d],
+        // d's tail coefficient is d[N-1] = -8; its native form mod 97 is 89.
+        [Polynomial::new([89])],
+    );
+    let _ = c.execute();
+}
+
+/// A tampered quotient must break the evaluation check.
+///
+/// `r` is the only witness the reduction left to carry the mod-q slack, so this is what stops a
+/// prover choosing `d` freely: shifting one coefficient of `r` moves `d` off the identity by a
+/// multiple of `q`, and Schwartz-Zippel rejects it.
+#[test(should_fail)]
+fn tampered_quotient_is_rejected() {
+    let ct0 = Polynomial::new([40, -45, 44, 46]);
+    let ct1 = Polynomial::new([30, 11, -20, 7]);
+    let sk = Polynomial::new([1, -1, 0, 1]);
+    let e_sm = Polynomial::new([3, 4, -2, 5]);
+    // Honest r is [-1, 1, 0, -1]; flip the sign of the last coefficient.
+    let r = Polynomial::new([-1, 1, 0, 1]);
+    let d = Polynomial::new([3, 30, 41, -8]);
+
+    let sk_anchor = compute_aggregated_shares_commitment_checked::<4, 1, 7>([sk]);
+    let e_sm_anchor = compute_aggregated_shares_commitment_checked::<4, 1, 7>([e_sm]);
+    let ct_anchor = compute_ciphertext_commitment_checked::<4, 1, 7>([ct0], [ct1]);
+
+    let c: ShareDecryption<4, 1, 1, 7, 7, 7, 7, 7, 7> = ShareDecryption::new(
+        Configs::new([97], [1]),
+        sk_anchor,
+        e_sm_anchor,
+        ct_anchor,
+        [ct0],
+        [ct1],
+        [sk],
+        [e_sm],
+        [r],
+        [d],
+        // d's tail coefficient is d[N-1] = -8; its native form mod 97 is 89.
+        [Polynomial::new([89])],
+    );
+    let _ = c.execute();
 }

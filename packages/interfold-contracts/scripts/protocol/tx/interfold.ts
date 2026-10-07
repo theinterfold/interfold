@@ -75,7 +75,7 @@ function appendCommitteeAndPricingTxs(
       const activeParams =
         bfvConfig.paramSet === 0
           ? BFV_PARAMS.insecure
-          : bfvConfig.paramSet === 1
+          : bfvConfig.paramSet === 2
             ? BFV_PARAMS.secure8192
             : BFV_PARAMS.secure16384;
       txs.push(

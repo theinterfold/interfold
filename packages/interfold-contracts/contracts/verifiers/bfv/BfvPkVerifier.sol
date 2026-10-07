@@ -19,7 +19,7 @@ import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
  *      DkgAggregator honest-set size (`lib::configs::default::H`).
  *
  *      Expected `publicInputs` layout for DkgAggregator EVM outputs:
- *        [0]                = expectedNodesFoldKeyHash  (VK anchor)
+ *        [0]                = expectedNodesFoldKeyHash  (complete VK-tree anchor)
  *        [1]                = expectedC5KeyHash         (VK anchor)
  *        [2 .. 2+H)         = party_ids                 (H slots)
  *        [2+H]              = committee_hash_hi
@@ -76,15 +76,13 @@ contract BfvPkVerifier is IPkVerifier {
     /// @notice Underlying Honk verifier for the DkgAggregator circuit.
     ICircuitVerifier public immutable circuitVerifier;
 
-    /// @notice keccak256 commitment to the node-fold recursive VK; expected at
-    ///         `publicInputs[0]`. Provenance: `bb verify_key -b
-    ///         circuits/bin/recursive_aggregation/node_fold/target/...` --
-    ///         pinned at deployment time, must match the circuit version the
-    ///         aggregator was built against.
+    /// @notice SAFE commitment to every VK in the nodes-fold proof tree.
+    ///         Expected at `publicInputs[0]`. The builder writes
+    ///         `nodes_fold.vk_tree_hash` from the complete artifact pair.
     bytes32 public immutable expectedNodesFoldKeyHash;
 
-    /// @notice keccak256 commitment to the C5 (pk_aggregation) recursive VK;
-    ///         expected at `publicInputs[1]`. Same provenance as above.
+    /// @notice Barretenberg hash of the C5 non-ZK recursive VK.
+    ///         Expected at `publicInputs[1]` from `pk_aggregation.vk_hash`.
     bytes32 public immutable expectedC5KeyHash;
 
     constructor(

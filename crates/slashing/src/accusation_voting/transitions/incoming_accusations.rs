@@ -22,76 +22,25 @@ impl AccusationVoting {
         ec: &EventContext<Sequenced>,
         actions: &mut Vec<VoteAction>,
     ) {
-        // Ignore accusations for other E3s
-        if accusation.e3_id != self.e3_id {
-            return;
-        }
+        let accusation = match self.admit_accusation(accusation) {
+            Ok(accusation) => accusation.into_inner(),
+            Err(rejection) => {
+                rejection.log();
+                return;
+            }
+        };
 
+        // Only multirow proof types (l-BFV row proofs) carry a non-zero proof instance.
         if !accusation.proof_type.is_multirow() && accusation.proof_instance != 0 {
             warn!("Ignoring accusation with an invalid proof instance");
             return;
         }
 
-        let now = self.clock.unix_now_secs();
-        if !Self::is_peer_deadline_acceptable(
-            accusation.issued_at,
-            accusation.deadline,
-            now,
-            self.vote_validity_secs,
-            self.accusation_deadline_skew_secs,
-        ) {
-            let max_deadline = now
-                .saturating_add(self.vote_validity_secs)
-                .saturating_add(self.accusation_deadline_skew_secs);
-            warn!(
-                "Ignoring accusation from {} — deadline {} outside local validity window \
-                 (now={}, vote_validity_secs={}, skew_secs={}, max_accepted_deadline={})",
-                accusation.accuser,
-                accusation.deadline,
-                now,
-                self.vote_validity_secs,
-                self.accusation_deadline_skew_secs,
-                max_deadline
-            );
-            return;
-        }
-
-        // Verify accuser is in committee
-        if !self.committee.contains(&accusation.accuser) {
-            warn!(
-                "Ignoring accusation from non-committee member {}",
-                accusation.accuser
-            );
-            return;
-        }
-
-        // Verify accused is a committee member (defense-in-depth)
-        if !self.committee.contains(&accusation.accused) {
-            warn!(
-                "Ignoring accusation against non-committee member {}",
-                accusation.accused
-            );
-            return;
-        }
-
-        // Ignore our own accusations (we already voted)
-        if accusation.accuser == self.my_address {
-            return;
-        }
-
-        // Verify accuser's ECDSA signature
-        if !self.verify_accusation_signature(&accusation) {
-            warn!(
-                "Invalid signature on accusation from {} — ignoring",
-                accusation.accuser
-            );
-            return;
-        }
-
         let accusation_id = Self::accusation_id(&accusation);
 
-        // Don't process duplicate accusations
+        // Peers that detect the same fault accuse with their own windows; converge on the latest.
         if self.pending.contains_key(&accusation_id) {
+            self.adopt_later_vote_window(accusation_id, accusation, ec, actions);
             return;
         }
 
@@ -216,7 +165,7 @@ impl AccusationVoting {
                 signed_proofs: vec![forwarded_clone],
             };
             let request = ComputeRequest::zk(
-                ZkRequest::VerifyShareProofs(VerifyShareProofsRequest {
+                ZkRequest::ReverifyAccusedProof(VerifyShareProofsRequest {
                     party_proofs: vec![party_proof],
                     params_preset: self.params_preset,
                     committee_size,
@@ -290,6 +239,63 @@ impl AccusationVoting {
         }
 
         // Check quorum
+        self.check_quorum(accusation_id, ec, actions);
+    }
+
+    /// Moves a pending accusation to a peer's later vote window, re-signing our vote,
+    /// so every vote in the quorum shares the one window the contract verifies.
+    fn adopt_later_vote_window(
+        &mut self,
+        accusation_id: [u8; 32],
+        incoming: ProofFailureAccusation,
+        ec: &EventContext<Sequenced>,
+        actions: &mut Vec<VoteAction>,
+    ) {
+        let Some(pending) = self.pending.get(&accusation_id) else {
+            return;
+        };
+        let held = &pending.accusation;
+        // Only a later start and end from a peer other than the accused moves the window, and
+        // each accuser moves it at most once: no one can shorten it or keep resetting the votes.
+        if incoming.issued_at <= held.issued_at
+            || incoming.deadline <= held.deadline
+            || !self.window_movers.insert((accusation_id, incoming.accuser))
+        {
+            return;
+        }
+        let mut own_vote = pending
+            .votes_for
+            .iter()
+            .find(|v| v.voter == self.my_address)
+            .cloned();
+        if let Some(vote) = own_vote.as_mut() {
+            vote.issued_at = incoming.issued_at;
+            vote.deadline = incoming.deadline;
+            match self.sign_vote_digest(vote) {
+                Ok(sig) => vote.signature = ArcBytes::from_bytes(&sig),
+                Err(err) => {
+                    error!("Failed to re-sign AccusationVote: {err}");
+                    return;
+                }
+            }
+            actions.push(VoteAction::PublishVote {
+                vote: vote.clone(),
+                ec: ec.clone(),
+            });
+        }
+        let pending = self.pending.get_mut(&accusation_id).expect("checked above");
+        pending.accusation = incoming;
+        pending.votes_for = own_vote.into_iter().collect();
+        // The adopted window starts a new vote collection with a full timeout.
+        actions.push(VoteAction::CancelTimeout(accusation_id));
+        actions.push(VoteAction::StartTimeout(accusation_id));
+
+        // Replay peer votes that were signed for this window before we adopted it
+        if let Some(buffered) = self.buffered_votes.remove(&accusation_id) {
+            for vote in buffered {
+                self.on_vote_received_inner(vote, ec, actions);
+            }
+        }
         self.check_quorum(accusation_id, ec, actions);
     }
 }

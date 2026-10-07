@@ -13,14 +13,22 @@ use std::path::PathBuf;
 
 #[derive(Subcommand, Clone, Debug)]
 pub enum NoirCommands {
+    /// Print the path, version, and install state of `bb` and the circuits, and what to do next
     Status,
+    /// Install or update `bb` and the circuits. Does nothing when both are current
     Setup {
+        /// Install `bb` and the circuits again, also when they are current
         #[arg(long, short)]
         force: bool,
 
         /// Install circuits from a local release archive instead of downloading them.
         #[arg(long, value_name = "PATH")]
         circuits_archive: Option<PathBuf>,
+
+        /// Require a preset/committee pair from the local archive. Repeat to select more pairs.
+        /// Without this option, require the full supported matrix.
+        #[arg(long, value_name = "PRESET/COMMITTEE", requires = "circuits_archive")]
+        circuits_configuration: Vec<String>,
     },
 }
 
@@ -34,8 +42,16 @@ pub async fn execute(out: Console, command: NoirCommands, config: &AppConfig) ->
         NoirCommands::Setup {
             force,
             circuits_archive,
+            circuits_configuration,
         } => {
-            execute_setup(out, &backend, force, circuits_archive).await?;
+            execute_setup(
+                out,
+                &backend,
+                force,
+                circuits_archive,
+                circuits_configuration,
+            )
+            .await?;
         }
     }
 
@@ -53,8 +69,16 @@ pub async fn execute_without_config(out: Console, command: NoirCommands) -> Resu
         NoirCommands::Setup {
             force,
             circuits_archive,
+            circuits_configuration,
         } => {
-            execute_setup(out, &backend, force, circuits_archive).await?;
+            execute_setup(
+                out,
+                &backend,
+                force,
+                circuits_archive,
+                circuits_configuration,
+            )
+            .await?;
         }
     }
 
@@ -82,6 +106,21 @@ async fn execute_status(out: Console, backend: &ZkBackend) -> Result<()> {
 
     log!(out, "Circuits:");
     log!(out, "  Path: {}", backend.circuits_dir.display());
+    log!(
+        out,
+        "  Required version: {}",
+        backend.config.required_circuits_version
+    );
+    log!(
+        out,
+        "  Archive SHA-256: {}",
+        backend
+            .config
+            .circuits_checksums
+            .get(&backend.config.required_circuits_version)
+            .map(String::as_str)
+            .unwrap_or("not pinned")
+    );
     if let Some(ref v) = version_info.circuits_version {
         log!(out, "  Version: {}", v);
     }
@@ -137,6 +176,7 @@ async fn execute_setup(
     backend: &ZkBackend,
     force: bool,
     circuits_archive: Option<PathBuf>,
+    circuits_configuration: Vec<String>,
 ) -> Result<()> {
     log!(out, "Setting up ZK prover...\n");
     log!(
@@ -152,10 +192,25 @@ async fn execute_setup(
 
     if let Some(archive) = circuits_archive.as_deref() {
         log!(out, "  circuits archive:      {}\n", archive.display());
-        backend
-            .install_circuits_archive(archive)
-            .await
-            .map_err(|e| anyhow!("Failed to install circuits archive: {}", e))?;
+        let result = if circuits_configuration.is_empty() {
+            backend.install_circuits_archive(archive).await
+        } else {
+            let configurations = circuits_configuration
+                .iter()
+                .map(|configuration| {
+                    configuration.split_once('/').ok_or_else(|| {
+                        anyhow!(
+                            "Circuit configuration must have the form PRESET/COMMITTEE: {}",
+                            configuration
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            backend
+                .install_circuits_archive_for_configurations(archive, &configurations)
+                .await
+        };
+        result.map_err(|e| anyhow!("Failed to install circuits archive: {}", e))?;
     }
 
     if force {
@@ -228,4 +283,154 @@ async fn execute_setup(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use e3_config::BBPath;
+    use e3_zk_prover::ZkConfig;
+
+    #[cfg(unix)]
+    #[actix::test]
+    async fn setup_requires_explicit_archive_subset() {
+        use crate::cli::Cli;
+        use clap::Parser;
+        use e3_zk_prover::VersionInfo;
+        use std::{collections::BTreeMap, fs, os::unix::fs::PermissionsExt, process::Command};
+
+        assert!(Cli::try_parse_from([
+            "interfold",
+            "noir",
+            "setup",
+            "--circuits-configuration",
+            "insecure-512/minimum",
+        ])
+        .is_err());
+        let temp = tempfile::tempdir().unwrap();
+        let payload = temp.path().join("payload");
+        let artifacts: Vec<&str> =
+            serde_json::from_str(include_str!("../../zk-prover/required-artifacts.json")).unwrap();
+        let mut files = BTreeMap::new();
+        for artifact in &artifacts {
+            let relative = format!("insecure-512/minimum/{artifact}");
+            let path = payload.join("circuits").join(&relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, b"{}").unwrap();
+            files.insert(
+                relative,
+                "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            );
+        }
+        fs::write(
+            payload.join("circuits/checksums.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "algorithm": "sha256", "generated": "test", "files": files,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let archive = temp.path().join("circuits.tar.gz");
+        assert!(Command::new("tar")
+            .arg("-czf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(&payload)
+            .arg("circuits")
+            .status()
+            .unwrap()
+            .success());
+
+        let bb = temp.path().join("bb");
+        let versions = ZkConfig::default();
+        fs::write(
+            &bb,
+            format!("#!/bin/sh\necho '{}'\n", versions.required_bb_version),
+        )
+        .unwrap();
+        fs::set_permissions(&bb, fs::Permissions::from_mode(0o755)).unwrap();
+        let config_file = temp.path().join("config.yaml");
+        fs::write(
+            &config_file,
+            format!(
+                "custom_bb: {}\nnode:\n  network: local\n  config_dir: {}\n  data_dir: {}\n",
+                bb.display(),
+                temp.path().join("config").display(),
+                temp.path().join("data").display(),
+            ),
+        )
+        .unwrap();
+        let args = [
+            "interfold",
+            "noir",
+            "setup",
+            "--circuits-archive",
+            archive.to_str().unwrap(),
+            "--config",
+            config_file.to_str().unwrap(),
+        ];
+        let cli = Cli::try_parse_from(args).unwrap();
+        let config = cli.load_config().unwrap();
+        let circuits = config.circuits_dir();
+        assert!(circuits.starts_with(temp.path()));
+        fs::create_dir_all(&circuits).unwrap();
+        fs::write(circuits.join("retained"), b"previous").unwrap();
+        let version_file = circuits.parent().unwrap().join("version.json");
+        VersionInfo {
+            circuits_version: Some("previous".into()),
+            ..Default::default()
+        }
+        .save(&version_file)
+        .await
+        .unwrap();
+        let previous_version = fs::read(&version_file).unwrap();
+        let (out, _messages) = Console::channel();
+        assert!(cli.execute(out, Ok(config)).await.is_err());
+        assert_eq!(fs::read(&version_file).unwrap(), previous_version);
+        assert_eq!(fs::read(circuits.join("retained")).unwrap(), b"previous");
+
+        let args = [
+            args.as_slice(),
+            &["--circuits-configuration", "insecure-512/minimum"],
+        ]
+        .concat();
+        let cli = Cli::try_parse_from(args).unwrap();
+        let config = cli.load_config().unwrap();
+        let (out, _messages) = Console::channel();
+        cli.execute(out, Ok(config)).await.unwrap();
+        assert!(!circuits.join("retained").exists());
+        let version = VersionInfo::load(&version_file).await.unwrap();
+        assert_eq!(
+            version.circuits_version,
+            Some(versions.required_circuits_version)
+        );
+        assert_eq!(version.circuits.len(), artifacts.len());
+    }
+
+    #[tokio::test]
+    async fn status_reports_required_archive_pin() {
+        let temp = tempfile::tempdir().unwrap();
+        let digest = "a1".repeat(32);
+        let mut config = ZkConfig {
+            required_circuits_version: "candidate".into(),
+            ..Default::default()
+        };
+        config
+            .circuits_checksums
+            .insert("candidate".into(), digest.clone());
+        let backend = ZkBackend::with_config(
+            BBPath::Default(temp.path().join("bb")),
+            temp.path().join("circuits"),
+            temp.path().join("work"),
+            config,
+        );
+        let (out, mut messages) = Console::channel();
+        execute_status(out, &backend).await.unwrap();
+        let mut output = Vec::new();
+        while let Some(message) = messages.recv().await {
+            output.push(message);
+        }
+        assert!(output.contains(&"  Required version: candidate".to_string()));
+        assert!(output.contains(&format!("  Archive SHA-256: {digest}")));
+    }
 }

@@ -5,6 +5,10 @@
 use super::*;
 use e3_events::CircuitName;
 
+/// Bound on C2/C3 results that wait for their share batch. A node sends at most one dispatch per
+/// batch, and a batch grows at most once per dealer.
+const MAX_PARKED_SHARE_VERDICTS: usize = 64;
+
 impl ThresholdKeyshare {
     /// Verify the collected C2/C3 proofs before decryption-key aggregation.
     pub fn handle_all_threshold_shares_collected(
@@ -14,6 +18,13 @@ impl ThresholdKeyshare {
         let (msg, ec) = msg.into_components();
         info!("AllThresholdSharesCollected");
         let state = self.state.try_get()?;
+        // Verification needs own shares; the recorded batch is verified after the transition.
+        if matches!(
+            state.state,
+            KeyshareState::CollectingEncryptionKeys(_) | KeyshareState::GeneratingThresholdShare(_)
+        ) {
+            return Ok(());
+        }
         let e3_id = state.get_e3_id();
         let own_party_id = state.party_id;
         let recovery = self.recovery.try_get()?;
@@ -153,12 +164,10 @@ impl ThresholdKeyshare {
         }
 
         if party_proofs_to_verify.is_empty() {
-            self.pending.shares.clear();
             warn!(
                 e3_id = %e3_id,
-                "No external DKG share proof passed local prechecks; this node cannot join the C4 roster"
+                "No external DKG share proof passed local prechecks; dispatching the batch outcome"
             );
-            return Ok(());
         }
 
         info!(
@@ -169,21 +178,144 @@ impl ThresholdKeyshare {
         );
 
         let committee_size = state.committee_size()?;
-        self.bus.publish(
-            ShareVerificationDispatched {
-                e3_id: e3_id.clone(),
-                kind: VerificationKind::ShareProofs,
-                share_proofs: party_proofs_to_verify,
-                decryption_proofs: Vec::new(),
-                pre_dishonest,
-                params_preset: self.share_enc_preset,
-                committee_size,
-                lbfv_context: None,
-                verification_id: None,
-            },
-            ec,
-        )?;
-        Ok(())
+        let dispatch = InterfoldEventData::from(ShareVerificationDispatched {
+            e3_id: e3_id.clone(),
+            kind: VerificationKind::ShareProofs,
+            share_proofs: party_proofs_to_verify,
+            decryption_proofs: Vec::new(),
+            pre_dishonest,
+            params_preset: self.share_enc_preset,
+            committee_size,
+            lbfv_context: None,
+            verification_id: None,
+        });
+        let dispatch_id = EventId::hash(&dispatch);
+        self.bus.publish(dispatch, ec.clone())?;
+        self.recovery.try_mutate(&ec, |mut recovery| {
+            if !recovery.share_dispatch_ids.contains(&dispatch_id) {
+                recovery.share_dispatch_ids.push(dispatch_id);
+            }
+            recovery.last_ec = Some(ec.clone());
+            Ok(recovery)
+        })?;
+        match self.pending.parked_share_verdicts.remove(&dispatch_id) {
+            Some(verdict) => self.apply_share_verification(verdict),
+            None => Ok(()),
+        }
+    }
+
+    /// Whether a delivered verification result belongs to the current batch. A C2/C3 result
+    /// applies only while the batch exists and only if its dispatch is one that this node sent for
+    /// that batch. The recovery state keeps those dispatch IDs, so after a restart replay applies
+    /// such a result where it applied before.
+    ///
+    /// A result after the C2/C3 phase ended (decryption-key calculation done, the DKG failed, or
+    /// the key is on chain) changes nothing and is dropped. Any other result is kept and applies
+    /// when this actor sends a dispatch with its ID. After a restart the batch can be missing until
+    /// a collector rebuilds it, and a batch can be sent again with another payload when an
+    /// expulsion came between. A result of an earlier batch would count the dealers that only the
+    /// grown batch holds as verified.
+    pub(in crate::actors::threshold_keyshare) fn share_verification_applies(
+        &mut self,
+        msg: &TypedEvent<ShareVerificationComplete>,
+    ) -> Result<bool> {
+        if msg.kind != VerificationKind::ShareProofs {
+            return Ok(true);
+        }
+        let state = self.state.try_get()?;
+        if self.canonical_key_published || !state.state.share_collection_is_open() {
+            info!(
+                e3_id = %msg.e3_id,
+                state = state.variant_name(),
+                "Dropping a C2/C3 result after the C2/C3 phase ended"
+            );
+            return Ok(false);
+        }
+        let dispatch_id = msg.get_ctx().causation_id();
+        let recovery = self.recovery.try_get()?;
+        if recovery.collected_threshold_share_ids.is_some()
+            && recovery.share_dispatch_ids.contains(&dispatch_id)
+        {
+            return Ok(true);
+        }
+        if self.pending.parked_share_verdicts.len() >= MAX_PARKED_SHARE_VERDICTS
+            && !self
+                .pending
+                .parked_share_verdicts
+                .contains_key(&dispatch_id)
+        {
+            warn!(
+                e3_id = %msg.e3_id,
+                "Dropping a C2/C3 result: too many results wait for their share batch"
+            );
+            return Ok(false);
+        }
+        info!(
+            e3_id = %msg.e3_id,
+            "Keeping a C2/C3 result until this node sends its dispatch for the current share batch"
+        );
+        self.pending
+            .parked_share_verdicts
+            .entry(dispatch_id)
+            .or_insert_with(|| msg.clone());
+        Ok(false)
+    }
+
+    /// Save the ID of a logged C2/C3 dispatch that verifies the current batch, at the dispatch's
+    /// own position in the log. The actor records a dispatch ID when it sends the dispatch, but
+    /// that write can be lost: a batch that `EffectsEnabled` sends again has no logged cause that
+    /// replay would run again, and its write uses the last saved context, which the store can
+    /// refuse as stale. So the ID is saved here again, also when the actor already holds it:
+    /// a later snapshot cut then keeps it, and replay from an earlier cut delivers the dispatch
+    /// before its result, so the result applies where it applied before the restart. Only the ID
+    /// is saved: nothing is published and no roster is accepted.
+    pub(in crate::actors::threshold_keyshare) fn record_logged_share_dispatch(
+        &mut self,
+        dispatch: &ShareVerificationDispatched,
+        ec: &EventContext<Sequenced>,
+    ) -> Result<()> {
+        let state = self.state.try_get()?;
+        if dispatch.kind != VerificationKind::ShareProofs || dispatch.e3_id != state.e3_id {
+            return Ok(());
+        }
+        let recovery = self.recovery.try_get()?;
+        let dispatch_id = ec.id();
+        let Some(batch) = recovery.collected_threshold_share_ids.as_ref() else {
+            return Ok(());
+        };
+        let recorded = recovery.share_dispatch_ids.contains(&dispatch_id);
+        let verified: BTreeSet<u64> = dispatch
+            .share_proofs
+            .iter()
+            .map(|proofs| proofs.sender_party_id)
+            .chain(dispatch.pre_dishonest.iter().copied())
+            .collect();
+        let batch: BTreeSet<u64> = batch
+            .iter()
+            .copied()
+            .filter(|party_id| *party_id != state.party_id)
+            .collect();
+        if !recorded && !dispatch_verifies_batch(&verified, &batch, &state.expelled_parties) {
+            return Ok(());
+        }
+        self.recovery.try_mutate(ec, |mut recovery| {
+            if !recovery.share_dispatch_ids.contains(&dispatch_id) {
+                recovery.share_dispatch_ids.push(dispatch_id);
+            }
+            recovery.last_ec = Some(ec.clone());
+            Ok(recovery)
+        })
+    }
+
+    /// Record a verification result, act on it, and grow the C2/C3 batch when possible.
+    pub(in crate::actors::threshold_keyshare) fn apply_share_verification(
+        &mut self,
+        msg: TypedEvent<ShareVerificationComplete>,
+    ) -> Result<()> {
+        self.record_share_verification(&msg)?;
+        let ec = msg.get_ctx().clone();
+        self.handle_share_verification_complete(msg)?;
+        self.dispatch_expanded_threshold_share_batch(ec)
     }
 
     /// Handle ShareVerificationComplete from ShareVerificationActor.

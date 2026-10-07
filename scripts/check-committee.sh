@@ -185,6 +185,7 @@ check_bfv_preset() {
   local ts_degree ts_plaintext ts_moduli ts_error
   local rust_degree rust_plaintext rust_moduli rust_error
   local noir_degree noir_plaintext noir_moduli noir_error_bound expected_error_bound
+  local noir_q_mod_t noir_q_inverse_mod_t expected_q_mod_t expected_q_inverse_mod_t
 
   ts_block=$(awk -v marker="  ${ts_name}: {" '
     $0 == marker { found = 1 }
@@ -225,12 +226,32 @@ check_bfv_preset() {
   noir_plaintext=$(grep -E '^pub global PLAINTEXT_MODULUS: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
   noir_moduli=$(awk '/^pub global QIS:/,/];/ { gsub(/[^0-9,]/, ""); if ($0 != "") { printf "%s%s", sep, $0; sep = "," } }' "$noir_file")
   noir_error_bound=$(grep -E '^pub global PK_GENERATION_B_ENC: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
+  noir_q_mod_t=$(grep -E '^pub global Q_MOD_T: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
+  noir_q_inverse_mod_t=$(grep -E '^pub global Q_INVERSE_MOD_T: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
   expected_error_bound=$(error_bound_for_variance "$ts_error")
 
   if [[ "$ts_degree" != "$noir_degree" || "$ts_plaintext" != "$noir_plaintext" || \
         "$(hex_csv_to_decimal "$ts_moduli")" != "$noir_moduli" || \
         "$expected_error_bound" != "$noir_error_bound" ]]; then
     fail "drift: ${label} BFV parameters differ between $PROTOCOL_CONSTANTS_TS and $noir_file"
+  fi
+
+  # C7 decoding uses the inverse of the product of the threshold CRT primes modulo t.
+  IFS=, read -r expected_q_mod_t expected_q_inverse_mod_t < <(node -e '
+const moduli = process.argv[1].split(",").map(BigInt);
+const t = BigInt(process.argv[2]);
+const qModT = moduli.reduce((product, modulus) => product * modulus, 1n) % t;
+let [a, b, x, y] = [qModT, t, 1n, 0n];
+while (b !== 0n) {
+  const quotient = a / b;
+  [a, b] = [b, a - quotient * b];
+  [x, y] = [y, x - quotient * y];
+}
+if (a !== 1n) process.exit(1);
+process.stdout.write(`${qModT},${(x % t + t) % t}\n`);
+' "$noir_moduli" "$noir_plaintext")
+  if [[ "$noir_q_mod_t" != "$expected_q_mod_t" || "$noir_q_inverse_mod_t" != "$expected_q_inverse_mod_t" ]]; then
+    fail "drift: ${label} C7 Q_MOD_T/Q_INVERSE_MOD_T in $noir_file must be $expected_q_mod_t/$expected_q_inverse_mod_t"
   fi
 }
 
@@ -244,14 +265,14 @@ check_bfv_preset secure-16384 secure16384 secure_16384 secure_16384
 CIRCUIT_VERSION_LABEL=$(grep -E 'bytes32 internal constant CIRCUIT_VERSION = keccak256\("[^\"]+"\);' "$ACTIVE_SOL" \
   | sed -E 's/.*keccak256\("([^\"]+)"\).*/\1/' \
   | head -n1)
-[[ "$CIRCUIT_VERSION_LABEL" == "interfold-bfv-v2" ]] \
-  || fail "$ACTIVE_SOL must use circuit identity interfold-bfv-v2; got ${CIRCUIT_VERSION_LABEL:-missing}"
-grep -Fq 'export const CIRCUIT_VERSION = ethers.id("interfold-bfv-v2");' "$FIXTURE_CONSTANTS_TS" \
-  || fail "$FIXTURE_CONSTANTS_TS must derive configuration IDs from interfold-bfv-v2"
-grep -Fq 'b"interfold-bfv-v2"' "$EVM_EVENTS_RS" \
-  || fail "$EVM_EVENTS_RS must derive configuration IDs from interfold-bfv-v2"
-grep -Fq 'b"interfold-bfv-v2"' "$INDEXER_RS" \
-  || fail "$INDEXER_RS must derive configuration IDs from interfold-bfv-v2"
+[[ "$CIRCUIT_VERSION_LABEL" == "interfold-bfv-v4" ]] \
+  || fail "$ACTIVE_SOL must use circuit identity interfold-bfv-v4; got ${CIRCUIT_VERSION_LABEL:-missing}"
+grep -Fq 'export const CIRCUIT_VERSION = ethers.id("interfold-bfv-v4");' "$FIXTURE_CONSTANTS_TS" \
+  || fail "$FIXTURE_CONSTANTS_TS must derive configuration IDs from interfold-bfv-v4"
+grep -Fq 'b"interfold-bfv-v4"' "$EVM_EVENTS_RS" \
+  || fail "$EVM_EVENTS_RS must derive configuration IDs from interfold-bfv-v4"
+grep -Fq 'b"interfold-bfv-v4"' "$INDEXER_RS" \
+  || fail "$INDEXER_RS must derive configuration IDs from interfold-bfv-v4"
 
 sol_bytes32() {
   local name="$1"
@@ -295,7 +316,7 @@ extract_rust_config_id() {
     | head -n1
 }
 
-for prefix_and_param_set in INSECURE:0 SECURE:1 SECURE_16384:2; do
+for prefix_and_param_set in INSECURE:0 SECURE:2 SECURE_16384:3; do
   prefix="${prefix_and_param_set%%:*}"
   param_set="${prefix_and_param_set##*:}"
   expected_id=$(sol_bytes32 "${prefix}_CONFIG_ID")
@@ -521,4 +542,4 @@ else
   echo "  (skipping parity-matrix drift check: $GEN_BIN not built. Run \`cargo build -p e3-zk-helpers --bin generate_parity_matrices --release\` to enable.)" >&2
 fi
 
-echo "✓ check:committee: BFV tuples, interfold-bfv-v2 configuration IDs, all supported testnet routes, and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) are consistent across TypeScript, Rust, Noir, and Solidity$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"
+echo "✓ check:committee: BFV tuples, interfold-bfv-v4 configuration IDs, all supported testnet routes, and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) are consistent across TypeScript, Rust, Noir, and Solidity$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"

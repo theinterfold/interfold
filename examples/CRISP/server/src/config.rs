@@ -4,6 +4,13 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use alloy::{
+    primitives::{
+        utils::{ParseUnits, Unit},
+        U256,
+    },
+    providers::{Provider, ProviderBuilder},
+};
 use config::{Config as ConfigManager, ConfigError, Environment};
 use dotenvy::dotenv;
 use once_cell::sync::Lazy;
@@ -12,6 +19,7 @@ use serde::Deserialize;
 const AVAIL_FINALIZATION_WINDOW_SECONDS: u64 = 10_800;
 const DEFAULT_DA_PENDING_BYTES: u64 = 1024 * 1024 * 1024;
 const DEFAULT_VOTING_START_BUFFER_SECONDS: u64 = 120;
+const DEFAULT_RELAY_MAX_INPUTS_PER_SLOT: u32 = 3;
 
 // Do not derive `Debug`: this structure owns private keys and other secrets.
 #[derive(Deserialize)]
@@ -56,7 +64,7 @@ pub struct Config {
     #[serde(default)]
     pub cron_api_key: Option<String>,
     // E3 parameters
-    pub e3_param_set: u8,      // 0=InsecureThreshold, 1=SecureThreshold8192, 2=SecureThreshold16384
+    pub e3_param_set: u8, // 0=InsecureThreshold, 2=SecureThreshold8192, 3=SecureThreshold16384
     pub e3_committee_size: u8, // 0=Minimum, 1=Micro, 2=Small
     pub e3_duration: u64,
     /// Time allowed for the E3 request transaction to be mined before voting can start.
@@ -108,6 +116,20 @@ pub struct Config {
     /// latency.
     #[serde(default)]
     pub index_log_contracts: Option<String>,
+
+    /// Relay input commitments on Ethereum mainnet. Off by default; other chains always relay.
+    #[serde(default)]
+    pub mainnet_relay: bool,
+    /// Relayed input commitments per voting slot per round. Zero turns the relay off.
+    #[serde(default = "default_relay_max_inputs_per_slot")]
+    pub relay_max_inputs_per_slot: u32,
+    /// Relayed input commitments per round. Absent means no limit; zero turns the relay off.
+    #[serde(default)]
+    pub relay_max_inputs_per_round: Option<u32>,
+    /// Stop relaying while the server key holds less than this ETH amount, so that the key keeps
+    /// funds for `finalizeInput`. Absent or zero means no floor; `validate_relay` limits both.
+    #[serde(default)]
+    pub relay_min_balance_eth: Option<String>,
 }
 
 impl Config {
@@ -154,7 +176,84 @@ impl Config {
                 .unwrap_or(AVAIL_FINALIZATION_WINDOW_SECONDS),
             config.data_availability_max_pending_bytes,
         )?;
+        Self::validate_relay(
+            config.chain_id,
+            config.mainnet_relay,
+            config.relay_max_inputs_per_round,
+            config.relay_min_balance()?,
+        )?;
         Ok(config)
+    }
+
+    /// Refuse an `HTTP_RPC_URL` that serves a chain other than `CHAIN_ID`.
+    ///
+    /// The chain rules of this server use `CHAIN_ID`: the mainnet relay flag, the secure parameter
+    /// set, and the local-only mock data availability. All transactions go to the chain of the
+    /// RPC. If the two chains are different, the server applies the rules of one chain on another
+    /// chain. For example, `CHAIN_ID=11155111` with a mainnet RPC relays on mainnet without
+    /// `MAINNET_RELAY`.
+    pub async fn validate_rpc_chain(&self) -> anyhow::Result<()> {
+        let provider = ProviderBuilder::new().connect(&self.http_rpc_url).await?;
+        let rpc_chain_id = provider.get_chain_id().await?;
+        anyhow::ensure!(
+            rpc_chain_id == self.chain_id,
+            "CHAIN_ID ({}) does not match the chain of HTTP_RPC_URL ({rpc_chain_id})",
+            self.chain_id
+        );
+        Ok(())
+    }
+
+    /// The relay balance floor in wei, from `RELAY_MIN_BALANCE_ETH`.
+    pub fn relay_min_balance(&self) -> Result<Option<U256>, ConfigError> {
+        Self::parse_relay_min_balance(self.relay_min_balance_eth.as_deref())
+    }
+
+    /// Parse a non-negative ETH amount into wei. `parse_ether` alone is not enough: it returns the
+    /// absolute value of a negative amount.
+    fn parse_relay_min_balance(value: Option<&str>) -> Result<Option<U256>, ConfigError> {
+        let Some(value) = value else {
+            return Ok(None);
+        };
+        match ParseUnits::parse_units(value.trim(), Unit::ETHER) {
+            Ok(ParseUnits::U256(wei)) => Ok(Some(wei)),
+            _ => Err(ConfigError::Message(format!(
+                "RELAY_MIN_BALANCE_ETH must be a non-negative ETH amount, got '{value}'"
+            ))),
+        }
+    }
+
+    /// Refuse a relay without an explicit balance floor outside local chains, and a mainnet relay
+    /// that has no round limit or no floor above zero.
+    ///
+    /// The relay key also pays for `finalizeInput`, so the operator chooses its floor; zero relays
+    /// without one. Mainnet relay spends real funds, and the slot limit alone does not bound the
+    /// spend of one round, so it also needs a round limit and a floor above zero.
+    fn validate_relay(
+        chain_id: u64,
+        mainnet_relay: bool,
+        max_inputs_per_round: Option<u32>,
+        min_balance: Option<U256>,
+    ) -> Result<(), ConfigError> {
+        if min_balance.is_none() && !matches!(chain_id, 1 | 1_337 | 31_337) {
+            return Err(ConfigError::Message(
+                "RELAY_MIN_BALANCE_ETH is required outside local chains; set 0 to relay without a floor"
+                    .to_owned(),
+            ));
+        }
+        if chain_id != 1 || !mainnet_relay {
+            return Ok(());
+        }
+        if max_inputs_per_round.is_none() {
+            return Err(ConfigError::Message(
+                "MAINNET_RELAY=true requires RELAY_MAX_INPUTS_PER_ROUND".to_owned(),
+            ));
+        }
+        if min_balance.is_none_or(|floor| floor.is_zero()) {
+            return Err(ConfigError::Message(
+                "MAINNET_RELAY=true requires RELAY_MIN_BALANCE_ETH greater than zero".to_owned(),
+            ));
+        }
+        Ok(())
     }
 
     fn validate_data_availability(
@@ -192,14 +291,14 @@ impl Config {
     }
 
     fn validate_e3_param_set(chain_id: u64, param_set: u8) -> Result<(), ConfigError> {
-        if param_set > 2 {
+        if !matches!(param_set, 0 | 2 | 3) {
             return Err(ConfigError::Message(format!(
-                "E3_PARAM_SET must be 0 (insecure), 1 (secure-8192), or 2 (secure-16384), got {param_set}"
+                "E3_PARAM_SET must be 0 (insecure), 2 (secure-8192), or 3 (secure-16384), got {param_set}"
             )));
         }
-        if chain_id == 1 && param_set != 1 {
+        if chain_id == 1 && param_set != 2 {
             return Err(ConfigError::Message(
-                "Ethereum mainnet requires E3_PARAM_SET=1 (secure-8192)".to_owned(),
+                "Ethereum mainnet requires E3_PARAM_SET=2 (secure-8192)".to_owned(),
             ));
         }
         Ok(())
@@ -212,6 +311,10 @@ const fn default_da_pending_bytes() -> u64 {
 
 const fn default_voting_start_buffer_seconds() -> u64 {
     DEFAULT_VOTING_START_BUFFER_SECONDS
+}
+
+const fn default_relay_max_inputs_per_slot() -> u32 {
+    DEFAULT_RELAY_MAX_INPUTS_PER_SLOT
 }
 
 pub static CONFIG: Lazy<Config> =
@@ -232,19 +335,20 @@ mod tests {
     #[test]
     fn accepts_all_testnet_parameter_sets() {
         assert!(Config::validate_e3_param_set(11_155_111, 0).is_ok());
-        assert!(Config::validate_e3_param_set(11_155_111, 1).is_ok());
+        assert!(Config::validate_e3_param_set(11_155_111, 3).is_ok());
         assert!(Config::validate_e3_param_set(11_155_111, 2).is_ok());
     }
 
     #[test]
     fn requires_secure_parameters_on_mainnet() {
-        assert!(Config::validate_e3_param_set(1, 1).is_ok());
+        assert!(Config::validate_e3_param_set(1, 2).is_ok());
         assert!(Config::validate_e3_param_set(1, 0).is_err());
     }
 
     #[test]
     fn rejects_unknown_parameter_sets() {
-        assert!(Config::validate_e3_param_set(31_337, 3).is_err());
+        assert!(Config::validate_e3_param_set(31_337, 1).is_err());
+        assert!(Config::validate_e3_param_set(31_337, 4).is_err());
     }
 
     #[test]
@@ -261,6 +365,39 @@ mod tests {
         assert!(Config::validate_data_availability(11_155_111, "mock", 0, 0).is_err());
         assert!(Config::validate_data_availability(1_337, "mock", 0, 0).is_ok());
         assert!(Config::validate_data_availability(31_337, "mock", 0, 0).is_ok());
+    }
+
+    #[test]
+    fn relay_needs_a_round_limit_on_mainnet_and_a_chosen_floor_off_local_chains() {
+        let floor = Some(alloy::primitives::U256::from(1));
+        assert!(Config::validate_relay(1, true, None, floor).is_err());
+        assert!(Config::validate_relay(1, true, Some(500), None).is_err());
+        // A zero floor never stops the relay, so it is not a floor.
+        assert!(
+            Config::validate_relay(1, true, Some(500), Some(alloy::primitives::U256::ZERO))
+                .is_err()
+        );
+        assert!(Config::validate_relay(1, true, Some(500), floor).is_ok());
+        // Without the flag, mainnet does not relay, so it needs no round limit and no floor.
+        assert!(Config::validate_relay(1, false, None, None).is_ok());
+        // Other chains relay without the flag and can leave the round unlimited, but the operator
+        // must choose the floor: zero relays without one. Local chains need no floor.
+        assert!(Config::validate_relay(11_155_111, false, None, None).is_err());
+        let no_floor = Some(alloy::primitives::U256::ZERO);
+        assert!(Config::validate_relay(11_155_111, false, None, no_floor).is_ok());
+        assert!(Config::validate_relay(31_337, false, None, None).is_ok());
+    }
+
+    #[test]
+    fn relay_balance_floor_is_a_non_negative_eth_amount() {
+        assert_eq!(Config::parse_relay_min_balance(None).unwrap(), None);
+        assert_eq!(
+            Config::parse_relay_min_balance(Some("0.5")).unwrap(),
+            Some(alloy::primitives::U256::from(500_000_000_000_000_000_u128))
+        );
+        // `parse_ether` alone would read this as a floor of 1 ETH.
+        assert!(Config::parse_relay_min_balance(Some("-1")).is_err());
+        assert!(Config::parse_relay_min_balance(Some("half")).is_err());
     }
 
     #[test]

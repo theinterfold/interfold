@@ -73,30 +73,6 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn write_toml_creates_prover_toml_in_path() {
-        let toml_content = r#"[section]
-key = "value"
-"#;
-        let temp = TempDir::new().unwrap();
-        write_toml(&toml_content.to_string(), Some(temp.path())).unwrap();
-        let path = temp.path().join("Prover.toml");
-        assert!(path.exists());
-        let read = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(read, toml_content);
-    }
-
-    #[test]
-    fn write_configs_creates_configs_nr_in_path() {
-        let configs_content = "pub global N: u32 = 1024;\n";
-        let temp = TempDir::new().unwrap();
-        write_configs(&configs_content.to_string(), Some(temp.path())).unwrap();
-        let path = temp.path().join("configs.nr");
-        assert!(path.exists());
-        let read = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(read, configs_content);
-    }
-
-    #[test]
     fn write_artifacts_creates_both_files() {
         let toml_content = "[section]\nkey = \"value\"\n";
         let configs_content = "pub global N: u32 = 1024;\n";

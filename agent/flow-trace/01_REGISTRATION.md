@@ -7,9 +7,12 @@ initial bond owner. A separate wallet or Safe is recommended, but the operator m
 itself. The configured owner then funds and registers the operator on-chain.
 
 For non-interactive provisioning, `password set`, `wallet set`, and `ciphernode setup` expose
-`--password-stdin` / `--private-key-stdin` alternatives. Container entrypoints use these stdin or
-hidden-prompt paths so encryption passwords and private keys do not appear in process arguments or
-environment metadata.
+`--password-stdin` / `--private-key-stdin` flags. Without the corresponding flag, each command uses
+a hidden prompt. The CLI rejects secret-value options, including short options, before it loads the
+configuration. The error names the stdin flag and the interactive prompt. Repository scripts and
+container entrypoints pass secrets through stdin.
+
+**Files:** `crates/cli/src/{main,password,wallet}.rs`, `crates/cli/src/ciphernode/{mod,setup}.rs`.
 
 ## Identity model: bond owner vs operator key
 
@@ -57,7 +60,12 @@ User runs: interfold ciphernode setup
 │     └─ Stored encrypted via Cipher → written to local keystore
 │        File: ~/.config/interfold/<name>/password (encrypted blob)
 │
-├─ 3. Prompts for WEBSOCKET RPC URL
+├─ 0. Refuses a network other than sepolia (the binary carries only the Sepolia
+│     deployment; `local` names the project template). Without a terminal on stdin, it
+│     refuses unless --rpc-url, --config-dir, --password-stdin and --private-key-stdin
+│     are all given, before it reads stdin.
+│
+├─ 3. Prompts for WEBSOCKET RPC URL, unless --rpc-url gives it
 │     └─ Default: wss://ethereum-sepolia-rpc.publicnode.com
 │     └─ Validates it's a valid URL
 │
@@ -66,13 +74,14 @@ User runs: interfold ciphernode setup
 │     └─ Stored in local keystore
 │     └─ NEVER stored in plaintext
 │
-├─ 5. Prompts for CONFIG DIRECTORY
+├─ 5. Prompts for CONFIG DIRECTORY, unless --config-dir gives it
 │     └─ Default: ~/.config/interfold
 │
 ├─ 6. Creates config file (YAML):
 │     chains:
-│       - name: "default"
+│       - name: "sepolia"
 │         rpc_url: <user's URL>
+│         data_availability: { mode: avail, rpc_url: https://turing-rpc.avail.so/rpc }
 │         contracts:
 │           interfold: <address>
 │           bonding_registry: <address>
@@ -192,19 +201,39 @@ User runs: interfold ciphernode status
 │   ├─ pendingExits.ticketAmount, pendingExits.ciphernodeBondAmount
 │   ├─ bondingRegistry.minTicketBalance → required minimum
 │   ├─ bondingRegistry.ticketPrice → price per ticket
-│   └─ bondingRegistry.requiredCiphernodeBond → required bond
+│   ├─ bondingRegistry.requiredCiphernodeBond → required bond
+│   └─ bondingRegistry.eligibilityAt(operator, latest block timestamp) → eligible for new
+│       committees (admission cooldown and policy applied; `active` alone does not include them)
+│
+├─ Lists the committees that hold the collateral:
+│   e3_evm::fetch_operator_committees()  (crates/evm/src/operator_status.rs)
+│   ├─ eth_getLogs BondingRegistry.CommitteeObligationUpdated with topic3 = operator,
+│   │   from bonding_registry.deploy_block (block 0 when unset) to head (adaptive window)
+│   ├─ The last update of each E3 in chain order decides whether its obligation is open
+│   └─ For each open E3:
+│       ├─ registry (from the event).isCommitteeMemberActive / isCommitteeMember
+│       │   → member, expelled, or sortition candidate
+│       └─ interfold.getE3Stage(e3Id)
 │
 └─ OUTPUT:
    Operator Key:     0x1234...
    Bond Owner:       0xabcd...
    Registered:       true
    Active:           true
+   Eligible for new committees: true
    Exit Pending:     false
    Ticket Balance:   100 (available: 95)
    Ciphernode Bond:     50000 FOLD
    Pending Exits:    tickets=0, ciphernode bond=0
    Requirements:     minTickets=10, ticketPrice=1000000, ciphernodeBond=50000
+   Committees:       1
+     E3 <e3Id>: member, stage KeyPublished
 ```
+
+The committee list holds the obligations that make `claimExitsFor` revert with
+`OperatorInActiveCommittee`. A committee stays in the list until `releaseCommittee(e3Id)` releases
+it, also after its E3 is complete or failed. If the log scan fails, the command prints
+`Committees: unavailable (<error>)` and keeps the other lines.
 
 ---
 

@@ -23,6 +23,8 @@ pub struct LaunchCommand {
     pub ip: String, // maybe this should be an actual socket addr?
     pub quic_port: u16,
     pub peers: Vec<String>,
+    /// Start the profile as a bootstrap peer (`interfold start --bootstrap`).
+    pub bootstrap: bool,
 }
 
 impl LaunchCommand {
@@ -32,6 +34,7 @@ impl LaunchCommand {
             ip: ip.to_owned(),
             quic_port: definition.quic_port,
             peers: vec![],
+            bootstrap: definition.bootstrap,
         }
     }
 
@@ -60,6 +63,10 @@ impl LaunchCommand {
 
         args.push("--name".to_string());
         args.push(self.name.clone());
+
+        if self.bootstrap {
+            args.push("--bootstrap".to_string());
+        }
 
         if let Some(config_string) = maybe_config_string {
             args.push("--config".to_string());
@@ -152,4 +159,29 @@ pub async fn execute(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_bootstrap_profile_starts_with_the_bootstrap_flag() {
+        let bootstrap = NodeDefinition {
+            bootstrap: true,
+            ..NodeDefinition::default()
+        };
+        let full = NodeDefinition::default();
+
+        let (_, args) = LaunchCommand::from_definition("boot", "127.0.0.1", &bootstrap)
+            .to_params(0, &None, &None)
+            .unwrap();
+        assert_eq!(args[0], "start", "{args:?}");
+        assert!(args[1..].contains(&"--bootstrap".to_string()), "{args:?}");
+
+        let (_, args) = LaunchCommand::from_definition("cn1", "127.0.0.1", &full)
+            .to_params(0, &None, &None)
+            .unwrap();
+        assert!(!args.contains(&"--bootstrap".to_string()), "{args:?}");
+    }
 }

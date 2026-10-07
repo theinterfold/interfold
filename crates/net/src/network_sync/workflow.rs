@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use e3_events::{prelude::*, InterfoldEvent, Unsequenced};
+use e3_events::{prelude::*, HistoryProgress, InterfoldEvent, Unsequenced};
 
 use crate::domain::{
     event_translation::EventTranslationService,
@@ -104,62 +104,131 @@ impl NetReadiness {
 pub enum SyncBatchOutcome {
     /// The request was malformed and should be rejected.
     BadRequest(String),
+    /// This node cannot serve the request; the peer receives an error.
+    Failed(String),
     /// The batch to return to the requesting peer.
     Batch(EventBatch<InterfoldEvent<Unsequenced>>),
 }
 
-/// Build a sync response batch from the events returned by the event store.
+/// Encoded bytes of the events in one sync response: the envelope limit, which leaves room for the
+/// transport frame header, less the encoded size of a reply without events whose fields take their
+/// largest size. The events of a reply encode one after the other, so a reply of events up to this
+/// budget encodes within the envelope limit.
+pub(crate) fn sync_reply_event_budget() -> usize {
+    static BUDGET: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+        let empty = EventBatch::<InterfoldEvent<Unsequenced>> {
+            events: Vec::new(),
+            next: BatchCursor::Next(u128::MAX),
+            aggregate_id: e3_events::AggregateId::new(0),
+            observed_from: Some(u128::MAX),
+        };
+        let encoded = crate::domain::wire::encode_sync(
+            crate::domain::wire::SyncMessageKind::EventBatch,
+            &empty,
+        )
+        .expect("a reply without events encodes")
+        .len();
+        crate::domain::wire::MAX_SYNC_ENVELOPE_BYTES - encoded
+    });
+    *BUDGET
+}
+
+/// Build a sync response batch from one timestamp-ordered storage page.
 ///
 /// Only includes events that are safe to forward over the network: events received via gossip
-/// (`Net`) and locally-produced events that are themselves gossip-forwardable. The cursor is an
-/// inclusive storage cursor, so it advances to one timestamp after the last returned or scanned
-/// event. Both response work and storage scanning are capped independently of the peer's input.
+/// (`Net`) and locally-produced events that are themselves gossip-forwardable. Storage reads in
+/// timestamp order and reports how far it scanned, so the cursor moves one timestamp past the last
+/// record that this response consumed: returned, filtered, or skipped by storage. The response
+/// stops at the forwardable-event limit or at the encoded-size limit, and the cursor then names the
+/// first record it did not consume. `Done` means that storage holds nothing after the consumed
+/// records. Both response work and storage scanning are capped independently of the peer's input.
 pub fn build_sync_batch(
-    all_events: Vec<InterfoldEvent>,
+    page: Vec<InterfoldEvent>,
+    progress: HistoryProgress,
+    observed_from: Option<u128>,
     fetch: &FetchEventsSince,
 ) -> SyncBatchOutcome {
     if fetch.limit() == 0 {
         return SyncBatchOutcome::BadRequest("limit must be greater than 0".to_string());
     }
     let limit = effective_sync_limit(fetch.limit());
-    let scan_limit = sync_scan_limit(fetch.limit());
     let aggregate_id = fetch.aggregate_id();
 
     // A remote-origin event is not trusted merely because it was persisted after gossip. Apply
     // the same protocol allowlist to both local and relayed events so a peer cannot use historical
     // sync to amplify an internal control event that an older or malicious node accepted.
-    let scan_was_full = all_events.len() >= scan_limit;
-    let mut events = Vec::with_capacity(limit);
-    let mut last_scanned_ts = None;
-    for event in all_events.into_iter().take(scan_limit) {
-        last_scanned_ts = Some(event.ts());
+    let total = page.len();
+    let mut events = Vec::with_capacity(limit.min(total));
+    let mut event_bytes = 0usize;
+    let mut consumed = 0usize;
+    let mut consumed_ts = None;
+    for event in page {
         if EventTranslationService::is_forwardable_event(&event) {
-            events.push(event.clone_unsequenced());
+            let event = event.clone_unsequenced();
+            let size = bincode::serialized_size(&event)
+                .ok()
+                .and_then(|size| usize::try_from(size).ok())
+                .unwrap_or(usize::MAX);
+            if event_bytes.saturating_add(size) > sync_reply_event_budget() {
+                if events.is_empty() {
+                    return SyncBatchOutcome::Failed(format!(
+                        "historical event at timestamp {} exceeds the sync message limit",
+                        event.ts()
+                    ));
+                }
+                break;
+            }
+            event_bytes = event_bytes.saturating_add(size);
+            consumed += 1;
+            consumed_ts = Some(event.ts());
+            events.push(event);
             if events.len() == limit {
                 break;
             }
+        } else {
+            consumed += 1;
+            consumed_ts = Some(event.ts());
         }
     }
 
-    // Timestamp queries are inclusive. Advancing to exactly the last timestamp would repeat that
-    // event and, for limit=1, loop forever. When a bounded scan contains only filtered events,
-    // advance past the last scanned event so a later forwardable event remains reachable.
-    let cursor_base = if events.len() == limit {
-        events.last().map(|event| event.ts())
-    } else if scan_was_full {
-        last_scanned_ts
+    // A reply that consumed the whole page ends where storage stopped: storage can have skipped
+    // records that the reply never saw, such as quarantined ones.
+    let next = if consumed == total {
+        if progress.exhausted {
+            BatchCursor::Done
+        } else {
+            match consumed_ts.max(progress.last_scanned_ts) {
+                Some(timestamp) => match timestamp.checked_add(1) {
+                    Some(next) => BatchCursor::Next(next),
+                    None => {
+                        return SyncBatchOutcome::Failed(
+                            "historical-sync cursor overflowed".to_string(),
+                        )
+                    }
+                },
+                None => {
+                    return SyncBatchOutcome::Failed(
+                        "historical-sync storage page made no progress".to_string(),
+                    )
+                }
+            }
+        }
     } else {
-        None
+        // The reply stopped at its limit before the end of the page. The next request starts at
+        // the first record that it did not consume.
+        match consumed_ts.and_then(|timestamp| timestamp.checked_add(1)) {
+            Some(next) => BatchCursor::Next(next),
+            None => {
+                return SyncBatchOutcome::Failed("historical-sync cursor overflowed".to_string())
+            }
+        }
     };
-    let next = cursor_base
-        .and_then(|timestamp| timestamp.checked_add(1))
-        .map(BatchCursor::Next)
-        .unwrap_or(BatchCursor::Done);
 
     SyncBatchOutcome::Batch(EventBatch {
         events,
         next,
         aggregate_id,
+        observed_from,
     })
 }
 

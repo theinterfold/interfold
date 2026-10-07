@@ -50,7 +50,12 @@ jobs:
       rust_unit_tests: ${{ steps.jobs.outputs.rust_unit_tests }}
       rust_integration_tests: ${{ steps.jobs.outputs.rust_integration_tests }}
       ciphernode_e2e: ${{ steps.jobs.outputs.ciphernode_e2e }}
-      crisp: ${{ steps.jobs.outputs.crisp }}
+      crisp_e2e: ${{ steps.jobs.outputs.crisp_e2e }}
+      build_crisp_sdk: ${{ steps.jobs.outputs.build_crisp_sdk }}
+      crisp_unit_circuits: ${{ steps.jobs.outputs.crisp_unit_circuits }}
+      crisp_unit_rust: ${{ steps.jobs.outputs.crisp_unit_rust }}
+      crisp_unit_sdk: ${{ steps.jobs.outputs.crisp_unit_sdk }}
+      crisp_unit_contracts: ${{ steps.jobs.outputs.crisp_unit_contracts }}
       templates: ${{ steps.jobs.outputs.templates }}
       zk: ${{ steps.jobs.outputs.zk }}
       contracts: ${{ steps.jobs.outputs.contracts }}
@@ -59,8 +64,10 @@ jobs:
       net: ${{ steps.jobs.outputs.net }}
       init: ${{ steps.jobs.outputs.init }}
       build_sdk: ${{ steps.jobs.outputs.build_sdk }}
+      sdk_tests: ${{ steps.jobs.outputs.sdk_tests }}
       build_e3_support_dev: ${{ steps.jobs.outputs.build_e3_support_dev }}
       build_circuits: ${{ steps.jobs.outputs.build_circuits }}
+      noir_checks: ${{ steps.jobs.outputs.noir_checks }}
       integration_prebuild: ${{ steps.jobs.outputs.integration_prebuild }}
       zk_prover_integration: ${{ steps.jobs.outputs.zk_prover_integration }}
       build_interfold_cli: ${{ steps.jobs.outputs.build_interfold_cli }}
@@ -94,23 +101,69 @@ jobs:
               - 'deployments/**'
               - '!**/*.md'
               - '!**/*.mdx'
-            circuits:
-              - 'circuits/**'
-              - 'scripts/*-circuits.sh'
-              - 'scripts/build-circuits.ts'
-              - 'scripts/build-circuits.test.ts'
-              - 'scripts/circuit-artifacts.ts'
-              - 'scripts/circuit-artifacts.test.ts'
-              - 'scripts/circuit-constants.ts'
-              - 'scripts/generate-verifiers.ts'
-              - 'scripts/generate-verifiers.test.ts'
-              - 'packages/user-data-encryption-prover/**'
-              - 'packages/interfold-contracts/contracts/verifiers/bfv/honk/**'
-              - 'package.json'
+            # The `circuits` and `verifiers` filters are in .github/filters/circuits.yml, because
+            # .husky/pre-push reads them too. The next step evaluates that file.
+            # What the e2e reads: everything in CRISP except the unit test directories
+            # (`test/`, singular, holds the Playwright spec and stays in).
+            crisp_e2e:
+              - 'examples/CRISP/**'
+              - '!examples/CRISP/**/tests/**'
               - '!**/*.md'
               - '!**/*.mdx'
-            crisp:
-              - 'examples/CRISP/**'
+            # Each filter below lists the paths that one CRISP layer reads. The CRISP
+            # unit jobs use them, so a change runs only the unit tests that it can
+            # affect. For example, a server change does not run the SDK or contract tests.
+            crisp_rust:
+              - 'examples/CRISP/Cargo.toml'
+              - 'examples/CRISP/Cargo.lock'
+              - 'examples/CRISP/rust-toolchain.toml'
+              # A symlink to a member of the CRISP cargo workspace.
+              - 'examples/CRISP/.interfold/support/dev'
+              - 'examples/CRISP/crates/**'
+              - 'examples/CRISP/program/**'
+              - 'examples/CRISP/server/**'
+              # The server and the program tests embed these files with include_str!.
+              - 'examples/CRISP/packages/crisp-contracts/deployed_contracts.json'
+              - 'examples/CRISP/packages/crisp-contracts/tests/fixtures/**'
+              - '!**/*.md'
+              - '!**/*.mdx'
+            crisp_circuits:
+              - 'examples/CRISP/circuits/**'
+              - '!**/*.md'
+              - '!**/*.mdx'
+            # `pnpm build:sdk` reads these paths: the SDK, the zk-inputs WASM crate and
+            # its cargo workspace, and the scripts that compile and stage the circuits.
+            # The SDK and contract jobs run the pnpm scripts in package.json.
+            crisp_sdk:
+              - 'examples/CRISP/package.json'
+              - 'examples/CRISP/Cargo.toml'
+              - 'examples/CRISP/Cargo.lock'
+              - 'examples/CRISP/rust-toolchain.toml'
+              - 'examples/CRISP/crates/zk-inputs/**'
+              - 'examples/CRISP/crates/zk-inputs-wasm/**'
+              - 'examples/CRISP/packages/crisp-sdk/**'
+              - 'examples/CRISP/packages/crisp-zk-inputs/**'
+              # The CRISP SDK proves user-data encryption with this package.
+              - 'packages/user-data-encryption-prover/**'
+              - 'examples/CRISP/scripts/build-presets.mjs'
+              - 'examples/CRISP/scripts/check-staged-preset.mjs'
+              - 'examples/CRISP/scripts/circuit-sources.mjs'
+              - 'examples/CRISP/scripts/compile_circuits.sh'
+              - 'examples/CRISP/scripts/stage-preset-artifacts.mjs'
+              - '!examples/CRISP/packages/crisp-sdk/tests/**'
+              - '!**/*.md'
+              - '!**/*.mdx'
+            # The contract tests use the built SDK, not the SDK tests, so a change to
+            # the SDK tests does not run the contract tests.
+            crisp_sdk_tests:
+              - 'examples/CRISP/packages/crisp-sdk/tests/**'
+              # tests/client-*.test.ts import these client modules.
+              - 'examples/CRISP/client/src/utils/circuits.ts'
+              - 'examples/CRISP/client/src/utils/directVote.ts'
+              - '!**/*.md'
+              - '!**/*.mdx'
+            crisp_contracts:
+              - 'examples/CRISP/packages/crisp-contracts/**'
               - '!**/*.md'
               - '!**/*.mdx'
             templates:
@@ -119,13 +172,30 @@ jobs:
               - '!**/*.mdx'
             sdk:
               - 'packages/interfold-sdk/**'
-              - 'packages/interfold-react/**'
               - 'packages/interfold-config/**'
+              - 'packages/user-data-encryption-prover/**'
               - 'crates/wasm/**'
+              - '!**/*.md'
+              - '!**/*.mdx'
+            # build_sdk builds the React package after the SDK. No other job reads it.
+            react:
+              - 'packages/interfold-react/**'
               - '!**/*.md'
               - '!**/*.mdx'
             integration_tests:
               - 'tests/integration/**'
+              # Run by hand only; no CI job reads them.
+              - '!tests/integration/upgrade.sh'
+              - '!tests/integration/lib/state_inventory.py'
+              - '!**/*.md'
+              - '!**/*.mdx'
+            # test_net builds crates/net into containers through the net scenario. The crates it
+            # links do not trigger it, which keeps it off most Rust PRs.
+            net:
+              - 'crates/net/**'
+              - 'Cargo.lock'
+              - 'tests/integration/net.sh'
+              - 'tests/integration/test.sh'
               - '!**/*.md'
               - '!**/*.mdx'
             docker:
@@ -134,8 +204,13 @@ jobs:
               - 'crates/support/**'
               - '!**/*.md'
               - '!**/*.mdx'
+            # Only the workflow, its path filters, and the local actions that it runs. Other
+            # workflows, the PR template, and `.github/scripts` do not change what these jobs
+            # produce.
             ci:
-              - '.github/**'
+              - '.github/workflows/ci.yml'
+              - '.github/filters/**'
+              - '.github/actions/**'
             # Root manifests define the workspace and every `pnpm <script>` a job
             # runs. A change here can retarget or remove a test command, so it
             # must reach every job that installs from the lockfile.
@@ -143,16 +218,42 @@ jobs:
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
+            # Inputs of build_circuits that the `circuits` and `verifiers` filters do not list: the
+            # circuit artifact store and its test (`store:circuits`, `test:circuit-tooling`), and
+            # the BFV parameters. build-circuits.ts derives the generated constants in
+            # ActiveCryptoConfig.sol and utils.ts from them, and hashes their file into SOURCE_HASH.
+            # check:verifiers reads none of these files, so they stay out of
+            # .github/filters/circuits.yml, which also starts check:verifiers in pre-push.
+            circuit_build:
+              - 'scripts/circuit-artifacts.ts'
+              - 'scripts/circuit-artifacts.test.ts'
+              - 'scripts/build-circuits.test.ts'
+              - 'packages/interfold-contracts/scripts/protocol/constants.ts'
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        if: ${{ !inputs.release_candidate }}
+        id: circuit_filter
+        with:
+          predicate-quantifier: 'some-with-excludes'
+          filters: .github/filters/circuits.yml
       - name: Compute job filters
         id: jobs
         run: |
           RUST="${{ steps.filter.outputs.rust }}"
           CONTRACTS="${{ steps.filter.outputs.contracts }}"
-          CIRCUITS="${{ steps.filter.outputs.circuits }}"
-          CRISP="${{ steps.filter.outputs.crisp }}"
+          CIRCUITS="${{ steps.circuit_filter.outputs.circuits }}"
+          VERIFIERS="${{ steps.circuit_filter.outputs.verifiers }}"
+          CIRCUIT_BUILD="${{ steps.filter.outputs.circuit_build }}"
+          CRISP_E2E="${{ steps.filter.outputs.crisp_e2e }}"
+          CRISP_RUST="${{ steps.filter.outputs.crisp_rust }}"
+          CRISP_CIRCUITS="${{ steps.filter.outputs.crisp_circuits }}"
+          CRISP_SDK="${{ steps.filter.outputs.crisp_sdk }}"
+          CRISP_SDK_TESTS="${{ steps.filter.outputs.crisp_sdk_tests }}"
+          CRISP_CONTRACTS="${{ steps.filter.outputs.crisp_contracts }}"
           TEMPLATES="${{ steps.filter.outputs.templates }}"
           SDK="${{ steps.filter.outputs.sdk }}"
+          REACT="${{ steps.filter.outputs.react }}"
           INTEGRATION="${{ steps.filter.outputs.integration_tests }}"
+          NET="${{ steps.filter.outputs.net }}"
           DOCKER="${{ steps.filter.outputs.docker }}"
           CI="${{ steps.filter.outputs.ci }}"
           TOOLING="${{ steps.filter.outputs.tooling }}"
@@ -163,9 +264,29 @@ jobs:
           echo "rust_unit_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
           echo "rust_integration_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
           echo "ciphernode_e2e=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI $TOOLING)" >> $GITHUB_OUTPUT
-          echo "build_sdk=$(any $FORCE $RUST $CONTRACTS $SDK $INTEGRATION $CIRCUITS $CI $TEMPLATES $TOOLING)" >> $GITHUB_OUTPUT
-          # CRISP consumes circuit layouts; run its jobs when circuits change.
-          echo "crisp=$(any $FORCE $CRISP $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "build_sdk=$(any $FORCE $RUST $CONTRACTS $SDK $REACT $INTEGRATION $CIRCUITS $CI $TEMPLATES $TOOLING)" >> $GITHUB_OUTPUT
+          # build_sdk also runs for React, integration, and template changes: it builds React, and
+          # the integration and template jobs need its artifacts. Those changes cannot alter the SDK
+          # test results, so the tests skip them.
+          echo "sdk_tests=$(any $FORCE $RUST $CONTRACTS $SDK $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
+          # CRISP jobs guard CRISP's own layers. Cross-cutting ciphernode coverage comes from
+          # template_integration, which drives the same full E3 lifecycle with the same interfold
+          # binary and circuit preset, minus the CRISP-specific app layers. CRISP also consumes the
+          # interfold circuit layouts, so a circuit change runs the e2e, SDK, and contract jobs.
+          CRISP_E2E_JOB=$(any $FORCE $CRISP_E2E $CIRCUITS $CI $TOOLING)
+          # cargo and nargo do not read the pnpm workspace, so a tooling change
+          # does not run the rust and circuit jobs.
+          echo "crisp_unit_rust=$(any $FORCE $CRISP_RUST $CI)" >> $GITHUB_OUTPUT
+          echo "crisp_unit_circuits=$(any $FORCE $CRISP_CIRCUITS $CI)" >> $GITHUB_OUTPUT
+          # The SDK proves with the circuits, and the contract tests use the built SDK.
+          CRISP_UNIT_SDK=$(any $FORCE $CRISP_SDK $CRISP_SDK_TESTS $CRISP_CIRCUITS $CIRCUITS $CI $TOOLING)
+          CRISP_UNIT_CONTRACTS=$(any $FORCE $CRISP_CONTRACTS $CRISP_SDK $CRISP_CIRCUITS $CIRCUITS $CI $TOOLING)
+          echo "crisp_e2e=$CRISP_E2E_JOB" >> $GITHUB_OUTPUT
+          echo "crisp_unit_sdk=$CRISP_UNIT_SDK" >> $GITHUB_OUTPUT
+          echo "crisp_unit_contracts=$CRISP_UNIT_CONTRACTS" >> $GITHUB_OUTPUT
+          # build_crisp_sdk feeds crisp_e2e and the SDK and contract jobs, so it runs when any of
+          # them runs.
+          echo "build_crisp_sdk=$(any $CRISP_E2E_JOB $CRISP_UNIT_SDK $CRISP_UNIT_CONTRACTS)" >> $GITHUB_OUTPUT
           # template_integration is the repo's cross-cutting end-to-end test: it
           # runs a full E3 round against real ciphernodes, so it must run on any
           # change to the stack it drives, not just template changes.
@@ -176,15 +297,19 @@ jobs:
           # The rust jobs already compile the workspace, so the image build only
           # needs to run when the Dockerfiles or their build context change.
           echo "docker_ciphernode=$(any $FORCE $DOCKER $CI)" >> $GITHUB_OUTPUT
-          echo "net=$(any $FORCE $INTEGRATION $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "net=$(any $FORCE $NET $CI)" >> $GITHUB_OUTPUT
           echo "init=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CI $TOOLING)" >> $GITHUB_OUTPUT
           # Both feed template_integration, so each must cover every path that
           # triggers it — a skipped dependency silently skips the e2e job.
           echo "build_e3_support_dev=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CIRCUITS $SDK $CI $TOOLING)" >> $GITHUB_OUTPUT
-          echo "build_circuits=$(any $FORCE $RUST $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
+          # build_circuits runs check:verifiers, so every input of the generated verifiers runs it.
+          # CIRCUIT_BUILD adds the other files that the job runs or hashes.
+          echo "build_circuits=$(any $FORCE $RUST $CIRCUITS $VERIFIERS $CIRCUIT_BUILD $CI $TOOLING)" >> $GITHUB_OUTPUT
+          # nargo reads only the circuit paths, so Rust and tooling changes skip the Noir checks.
+          echo "noir_checks=$(any $FORCE $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           echo "integration_prebuild=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI $TOOLING)" >> $GITHUB_OUTPUT
           echo "zk_prover_integration=$(any $FORCE $RUST $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
-          echo "build_interfold_cli=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $TEMPLATES $CRISP $SDK $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "build_interfold_cli=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $TEMPLATES $CRISP_E2E $SDK $CI $TOOLING)" >> $GITHUB_OUTPUT
 
       - name: Check release promotion safeguards
         run: node --test scripts/release.test.mjs
@@ -199,17 +324,22 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Test DAppNode credentials and health checks
         run: sudo apt-get update && sudo apt-get install -y gettext-base && bash dappnode/tests/test-hardening.sh
+      - name: Test the ciphernode image state location
+        run: bash crates/tests/docker/test-ciphernode-entrypoint.sh
 
   rust_unit_tests:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.rust_unit_tests == 'true'
-    timeout-minutes: 20
+    # Without a Rust cache, a leg can need close to 20 minutes before the cache save. The doc leg
+    # also runs the guard tests and the CLI tests.
+    timeout-minutes: 30
     runs-on:
       ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
       github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}-{3}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
       'rust_unit_tests', matrix.suite) || 'ubuntu-latest' }}
-    # Library tests link cfg(test) builds and doc-tests link the plain libraries, so the two share
-    # no compiled crates. Run in one job they cost two sequential workspace builds.
+    # Library tests link cfg(test) builds. Doc-tests and the separate test targets link the plain
+    # libraries, so they run together in the `doc` leg. The legs share no compiled crates, and each
+    # leg builds its kind once.
     strategy:
       matrix:
         suite: [lib, doc]
@@ -258,8 +388,11 @@ jobs:
       - name: Compile contracts for ABI catalog tests
         run: pnpm evm:build
 
-      - name: Install cargo-nextest
+      - name: Check the committed contract artifacts against the build
         if: matrix.suite == 'lib'
+        run: pnpm check:bindings
+
+      - name: Install cargo-nextest
         uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
           tool: cargo-nextest
@@ -274,18 +407,26 @@ jobs:
         if: matrix.suite == 'doc'
         run: cargo test --doc
 
-      # `parallel` is off by default, so the step above compiles the sequential fallback of
+      # The library run skips the entrypoint integration tests, the CLI binary tests, and the CLI
+      # secret-input integration tests.
+      - name: Run the entrypoint guard and older-schema tests and the CLI tests
+        if: matrix.suite == 'doc'
+        run:
+          cargo nextest run -p e3-entrypoint --test reset_data_guard --test purge_guard --test validate_older_schema --test
+          validate_snapshot_errors -p e3-cli --bins --test cli_secrets
+
+      # `parallel` is off by default, so the library tests compile the sequential fallback of
       # `recompute_commitments` and the rayon body of that function ships untested. This step is
       # what exercises it. Scoped with `-p` rather than `--all-features`: the feature is the one
       # thing this crate needs enabled, and the zkVM guest is unaffected either way because it
       # builds from `crates/support/methods/guest`, which takes this crate by git revision with
       # default features.
       - name: Run compute-provider Unit Tests with parallel batching
-        if: matrix.suite == 'lib'
+        if: matrix.suite == 'doc'
         run: 'cargo test -p e3-compute-provider --features parallel'
 
       - name: Run Rust-to-Solidity slashing assertions
-        if: matrix.suite == 'lib'
+        if: matrix.suite == 'doc'
         run: pnpm rust:test:slashing
 
       - name: Cancel workflow on failure
@@ -301,8 +442,9 @@ jobs:
     runs-on:
       group: enclave-ci
       labels: [enclave-ci-runner]
-    # Each full-proof `test_trbfv_actor` run takes about nine minutes. The three runs are
-    # independent, so they run as parallel legs rather than one after another.
+    # Each full-proof `test_trbfv_actor` run takes about nine minutes, so the runs are parallel
+    # legs. The `integration` leg runs the other integration targets in skip-aggregation mode;
+    # the CLI e2e jobs already drive a full E3 in that mode.
     strategy:
       matrix:
         leg: [integration, offline-party, standby-node]
@@ -348,12 +490,19 @@ jobs:
           mkdir -p dist/circuits/insecure
           cp -R .ci-noir/circuits/insecure/minimum dist/circuits/insecure/
 
+      # A separate test target, so no other step runs it. It fails when a persisted or gossiped
+      # layout differs from its fixture. The in-crate locks run with the library tests. Without
+      # `-p`, cargo resolves features as in the next step, so both steps share one build.
+      - name: Run the persisted layout lock
+        if: matrix.leg == 'integration'
+        run: 'cargo test --test layout_lock'
+
       - name: Run Integration Tests
         if: matrix.leg == 'integration'
         env:
           CIPHERNODE_SKIP_PROOF_AGGREGATION: 'true'
           E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
-        run: 'cargo test --test integration -- --nocapture'
+        run: 'cargo test --test integration -- --nocapture --skip test_trbfv_actor'
 
       - name: Run offline DKG integration test with full proofs
         if: matrix.leg == 'offline-party'
@@ -422,6 +571,7 @@ jobs:
         run: |
           test -f .ci-noir/circuits/insecure/minimum/default/dkg/pk/pk.json
           test -f .ci-noir/circuits/secure-8192/minimum/default/dkg/pk/pk.json
+          pnpm tsx scripts/circuit-artifacts.ts checksums --dir .ci-noir/circuits
           mkdir -p "$RUNNER_TEMP/circuit-release"
           tar -czf "$RUNNER_TEMP/circuit-release/circuits-candidate.tar.gz" \
             -C .ci-noir circuits
@@ -436,6 +586,7 @@ jobs:
         env:
           E3_TEST_CIRCUITS_DOWNLOAD_URL: http://127.0.0.1:8123/circuits-candidate.tar.gz
         run: |
+          export E3_TEST_CIRCUITS_SHA256=$(sha256sum "$RUNNER_TEMP/circuit-release/circuits-candidate.tar.gz" | cut -d ' ' -f1)
           python3 -m http.server 8123 --bind 127.0.0.1 --directory "$RUNNER_TEMP/circuit-release" >"$RUNNER_TEMP/circuit-server.log" 2>&1 &
           SERVER_PID=$!
           trap 'kill "$SERVER_PID"' EXIT
@@ -717,7 +868,9 @@ jobs:
       labels: [enclave-ci-runner]
     strategy:
       matrix:
-        test-suite: [base, persist]
+        # persist runs base.sh and restarts the active aggregator after the committee publishes
+        # its key.
+        test-suite: [persist]
       fail-fast: true
     steps:
       - name: 'Check out the repo'
@@ -824,89 +977,113 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-  # CRISP legs that need neither the built SDK nor the Interfold contracts. They run in their own
-  # job so they do not wait for build_crisp_sdk.
-  crisp_unit_standalone:
+  crisp_unit_circuits:
     needs: [detect_changes]
-    if: needs.detect_changes.outputs.crisp == 'true'
-    timeout-minutes: ${{ matrix.timeout }}
+    if: needs.detect_changes.outputs.crisp_unit_circuits == 'true'
+    timeout-minutes: 15
     runs-on:
       ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}-{3}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'crisp_unit_standalone', matrix['test-suite']) || 'ubuntu-latest' }}
-    strategy:
-      matrix:
-        include:
-          - test-suite: test:circuits
-            timeout: 15
-          - test-suite: cargo test
-            timeout: 20
-      fail-fast: false
+      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
+      'crisp_unit_circuits') || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          submodules: recursive
+
+      - name: Install Nargo
+        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
+        with:
+          toolchain: ${{ env.NOIR_TOOLCHAIN }}
+
+      - name: Run circuit tests
+        working-directory: ./examples/CRISP/circuits/lib
+        run: nargo test
+
+  crisp_unit_rust:
+    needs: [detect_changes]
+    if: needs.detect_changes.outputs.crisp_unit_rust == 'true'
+    timeout-minutes: 20
+    runs-on:
+      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
+      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
+      'crisp_unit_rust') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           submodules: recursive
 
       - name: Cache Rust dependencies
-        if: matrix.test-suite == 'cargo test'
         uses: ./.github/actions/cache-dependencies
         with:
           cargo-lock-path: examples/CRISP/Cargo.lock
           rust-target-path: examples/CRISP/target/
 
       - name: Install Rust
-        if: matrix.test-suite == 'cargo test'
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install Foundry
-        if: matrix.test-suite == 'cargo test'
         uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
 
       - name: Install solc
-        if: matrix.test-suite == 'cargo test'
         uses: ./.github/actions/install-solc
 
       - name: Run cargo test
-        if: matrix.test-suite == 'cargo test'
         working-directory: ./examples/CRISP
         run: cargo test
 
-      - name: Install Nargo
-        if: matrix.test-suite == 'test:circuits'
-        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
-        with:
-          toolchain: ${{ env.NOIR_TOOLCHAIN }}
-
-      - name: Run circuit tests
-        if: matrix.test-suite == 'test:circuits'
-        working-directory: ./examples/CRISP/circuits/lib
-        run: nargo test
-
-  crisp_unit:
+  crisp_unit_sdk:
     needs: [detect_changes, build_crisp_sdk]
-    if: needs.detect_changes.outputs.crisp == 'true'
+    if: needs.detect_changes.outputs.crisp_unit_sdk == 'true'
+    timeout-minutes: 20
+    runs-on:
+      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
+      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
+      'crisp_unit_sdk') || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          submodules: recursive
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: .
+        run: pnpm install --frozen-lockfile
+
+      - name: Download Crisp SDK artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: crisp-sdk-artifacts
+          path: .
+
+      # One test proves a ballot. The contract suite proves every other ballot kind through this SDK.
+      - name: Run SDK tests
+        working-directory: ./examples/CRISP
+        run: pnpm test:sdk
+
+  crisp_unit_contracts:
+    needs: [detect_changes, build_crisp_sdk]
+    if: needs.detect_changes.outputs.crisp_unit_contracts == 'true'
     # Use a timeout for each leg because the workloads differ. Tests that generate a ballot prove
     # five Noir circuits and can take several minutes. Other tests complete in seconds.
     timeout-minutes: ${{ matrix.timeout }}
     runs-on:
       ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
       github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}-{3}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'crisp_unit', matrix['test-suite']) || 'ubuntu-latest' }}
+      'crisp_unit_contracts', matrix['test-suite']) || 'ubuntu-latest' }}
     strategy:
       matrix:
         include:
-          # The SDK's six proof tests took 19m35s in one process. The mask group and its
-          # complement run in parallel. The negative match keeps new tests in the core group.
-          - test-suite: test:sdk:core-and-ballot-proofs
-            command: pnpm test:sdk:core-and-ballot-proofs
-            timeout: 30
-            needs-sdk: true
-          - test-suite: test:sdk:mask-proofs
-            command: pnpm test:sdk:mask-proofs
-            timeout: 30
-            needs-sdk: true
           # The contract suite is split by proving cost, not by subject. Run whole it took 27m54s
           # against a 30m cap and started dying to ordinary runner variance, and it grows by minutes
           # with every ballot a new test needs. Split, the critical path is the largest single leg
@@ -916,43 +1093,19 @@ jobs:
           # `pnpm test:contracts` still runs all of it in one go for local use, and
           # `check:test-legs` fails if a test file ever belongs to no leg.
           #
-          # Every contract leg needs both capabilities: `hardhat.config.ts` imports
-          # `@interfold/contracts/tasks/*`, which only resolves once `evm:build` has emitted `dist/`,
-          # and each leg contains at least one test that imports `@crisp-e3/sdk`.
-          #
-          # input-tree: the two poisoning cases took 230s and 617s, the rest 633s. Each poisoning
-          # case runs alone. The canonical group's negative match keeps every new test in it.
-          - test-suite: test:contracts:input-tree:forged-input
-            command: pnpm test:contracts:input-tree:forged-input
-            timeout: 30
-            needs-evm: true
-            needs-sdk: true
+          # input-tree: the poisoned-parent case proves three ballots and runs alone. The canonical
+          # group's negative match keeps every new test in it.
           - test-suite: test:contracts:input-tree:poisoned-parent
-            command: pnpm test:contracts:input-tree:poisoned-parent
             timeout: 30
-            needs-evm: true
-            needs-sdk: true
           - test-suite: test:contracts:input-tree:canonical
-            command: pnpm test:contracts:input-tree:canonical
             timeout: 30
-            needs-evm: true
-            needs-sdk: true
-          # ballots: crisp.contracts.test.ts took about 7 minutes, onchain-census.test.ts about 10.
+          # ballots: crisp.contracts.test.ts and onchain-census.test.ts each prove two ballots.
           - test-suite: test:contracts:ballots:program
-            command: pnpm test:contracts:ballots:program
             timeout: 30
-            needs-evm: true
-            needs-sdk: true
           - test-suite: test:contracts:ballots:census
-            command: pnpm test:contracts:ballots:census
             timeout: 30
-            needs-evm: true
-            needs-sdk: true
           - test-suite: test:contracts:unit
-            command: pnpm test:contracts:unit
             timeout: 15
-            needs-evm: true
-            needs-sdk: true
       fail-fast: false
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -973,16 +1126,14 @@ jobs:
         working-directory: .
         run: pnpm install --frozen-lockfile
 
-      # Gated on a declared capability rather than on the leg's name. Matching the name made the
-      # label load-bearing: splitting `test:contracts` into three renamed legs silently skipped this
-      # step, and the suite failed on a missing `@interfold/contracts/dist` two steps later.
+      # `hardhat.config.ts` imports `@interfold/contracts/tasks/*`, which resolves only after
+      # `evm:build` writes `dist/`.
       - name: Compile Interfold contracts
-        if: matrix.needs-evm
         working-directory: .
         run: pnpm evm:build
 
+      # Each leg has at least one test that imports `@crisp-e3/sdk`.
       - name: Download Crisp SDK artifacts
-        if: matrix.needs-sdk
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: crisp-sdk-artifacts
@@ -990,11 +1141,11 @@ jobs:
 
       - name: Run ${{ matrix.test-suite }}
         working-directory: ./examples/CRISP
-        run: ${{ matrix.command }}
+        run: pnpm ${{ matrix.test-suite }}
 
   crisp_e2e:
     needs: [detect_changes, build_interfold_cli, build_crisp_sdk]
-    if: needs.detect_changes.outputs.crisp == 'true'
+    if: needs.detect_changes.outputs.crisp_e2e == 'true'
     timeout-minutes: 45
     runs-on:
       group: enclave-ci
@@ -1113,7 +1264,8 @@ jobs:
         working-directory: ./examples/CRISP
         run: |
           tar -C "$GITHUB_WORKSPACE/dist" -czf "$RUNNER_TEMP/circuits-candidate.tar.gz" circuits/
-          interfold noir setup --circuits-archive "$RUNNER_TEMP/circuits-candidate.tar.gz"
+          interfold noir setup --circuits-archive "$RUNNER_TEMP/circuits-candidate.tar.gz" \
+            --circuits-configuration insecure/minimum
           interfold noir setup
 
       - name: Run Playwright tests
@@ -1130,6 +1282,37 @@ jobs:
           name: playwright-report
           path: ./examples/CRISP/playwright-report/
           retention-days: 30
+
+  noir_checks:
+    needs: [detect_changes]
+    if: needs.detect_changes.outputs.noir_checks == 'true'
+    timeout-minutes: 15
+    runs-on:
+      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
+      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
+      'noir_checks') || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Install Nargo
+        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
+        with:
+          toolchain: ${{ env.NOIR_TOOLCHAIN }}
+
+      - name: Check formatting
+        run: ./scripts/lint-circuits.sh
+
+      - name: Test Noir circuits
+        run: ./scripts/test-circuits.sh
+
+      - name: Cancel workflow on failure
+        if: failure()
+        run: gh run cancel ${{ github.run_id }}
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   build_circuits:
     needs: [detect_changes]
@@ -1173,12 +1356,6 @@ jobs:
 
       - name: Verify bb
         run: bb --version
-
-      - name: Check formatting
-        run: ./scripts/lint-circuits.sh
-
-      - name: Test Noir circuits
-        run: ./scripts/test-circuits.sh
 
       - name: pnpm-setup
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
@@ -1287,6 +1464,11 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
+      - name: Install Nargo
+        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
+        with:
+          toolchain: ${{ env.NOIR_TOOLCHAIN }}
+
       - name: Cache Barretenberg binary
         id: cache-bb
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -1351,6 +1533,9 @@ jobs:
 
       - name: Run ZK prover e2e tests
         run: cargo test -p e3-zk-prover --test local_e2e_tests -- --nocapture --test-threads=1
+
+      - name: Verify C0 recovery after local verifier errors
+        run: cargo test -p e3-zk-prover --lib c0_local_verifier_failures_retry_without_peer_blame -- --nocapture
 
       - name: Verify fold accumulators and the correlated node proof
         timeout-minutes: 30
@@ -1445,21 +1630,12 @@ jobs:
       - name: Build the sdk
         run: pnpm sdk:build
 
-      - name: Install Chrome for WASM browser smoke tests
-        uses: browser-actions/setup-chrome@19ae4b339ee18925ab85cf12c1041150ea4a44c8 # v1
+      - name: Build the React package
+        run: pnpm react:build
 
-      - name: WASM browser smoke test (e3-wasm)
-        run: |
-          cd crates/wasm
-          pnpm build
-          pnpm test:browser
-
-      - name: Run the tests
-        run: pnpm sdk:test
-
-      - name: Verify SDK encryption proofs and reject altered bindings
-        timeout-minutes: 15
-        run: pnpm sdk:test:proofs:prepared
+      - name: Test the SDK
+        if: needs.detect_changes.outputs.sdk_tests == 'true'
+        uses: ./.github/actions/sdk-tests
 
       - name: Upload SDK artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -1481,7 +1657,7 @@ jobs:
 
   build_crisp_sdk:
     needs: [detect_changes]
-    if: needs.detect_changes.outputs.crisp == 'true'
+    if: needs.detect_changes.outputs.build_crisp_sdk == 'true'
     timeout-minutes: 20
     runs-on:
       ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
@@ -1530,11 +1706,10 @@ jobs:
       - name: Install Chrome for WASM browser smoke tests
         uses: browser-actions/setup-chrome@19ae4b339ee18925ab85cf12c1041150ea4a44c8 # v1
 
+      # `pnpm build:sdk` already built crisp-zk-inputs through `build:wasm`.
       - name: WASM browser smoke test (crisp-zk-inputs)
         working-directory: ./examples/CRISP
-        run: |
-          pnpm -C packages/crisp-zk-inputs build
-          pnpm -C packages/crisp-zk-inputs test:browser
+        run: pnpm -C packages/crisp-zk-inputs test:browser
 
       - name: Upload SDK artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -1637,7 +1812,8 @@ jobs:
         working-directory: ./templates/default
         run: |
           tar -C "$GITHUB_WORKSPACE/dist" -czf "$RUNNER_TEMP/circuits-candidate.tar.gz" circuits/
-          interfold noir setup --circuits-archive "$RUNNER_TEMP/circuits-candidate.tar.gz"
+          interfold noir setup --circuits-archive "$RUNNER_TEMP/circuits-candidate.tar.gz" \
+            --circuits-configuration insecure/minimum
           interfold noir setup
 
       - name: Verify downloaded artifacts

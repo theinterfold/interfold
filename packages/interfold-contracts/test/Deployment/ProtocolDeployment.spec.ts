@@ -38,7 +38,7 @@ import type {
   ProtocolDeployment,
   VrfSortitionUpgradePlan,
 } from "../../scripts/protocol/types";
-import { loadConfig } from "../../scripts/protocol/values";
+import { hasBondedDelegation, loadConfig } from "../../scripts/protocol/values";
 import { requiredActiveOperatorsForSecureCrisp } from "../../scripts/upgrade/resumeSecureCrisp";
 import { requiresTimeoutConfigUpdate } from "../../scripts/upgrade/secureCrisp";
 import { BondingRegistry__factory as BondingRegistryFactory } from "../../types";
@@ -570,6 +570,48 @@ describe("Protocol deployment", function () {
     expect(calls).to.equal(2);
   });
 
+  /// `activate-voting` and the deploy scripts reuse a recorded `BondedVotes` only when this probe
+  /// passes. An adapter from before bonded delegation takes the same constructor arguments, so its
+  /// code is the only thing that tells the two apart.
+  it("tells a BondedVotes with bonded delegation from older code", async function () {
+    const token = await ethers.deployContract("MockVotesToken");
+    const history = await ethers.deployContract("MockBondedCheckpointsStub", [
+      await token.getAddress(),
+    ]);
+    const adapter = await ethers.deployContract("BondedVotes", [
+      await token.getAddress(),
+      await token.getAddress(),
+      await history.getAddress(),
+    ]);
+
+    expect(
+      await hasBondedDelegation(ethers.provider, await adapter.getAddress()),
+    ).to.equal(true);
+    // Like an adapter from before bonded delegation, the stub has no `bondedDelegate` and no
+    // fallback, so the call reverts with no data.
+    expect(
+      await hasBondedDelegation(ethers.provider, await history.getAddress()),
+    ).to.equal(false);
+    expect(
+      await hasBondedDelegation(
+        ethers.provider,
+        ethersLib.Wallet.createRandom().address,
+      ),
+    ).to.equal(false);
+  });
+
+  it("rejects a bonded-delegation probe that the RPC cannot answer", async function () {
+    const provider = {
+      call: async () => {
+        throw new Error("RPC unavailable");
+      },
+    } as unknown as ethersLib.Provider;
+
+    await expect(
+      hasBondedDelegation(provider, ethersLib.ZeroAddress),
+    ).to.be.rejectedWith("RPC unavailable");
+  });
+
   it("rejects VRF timing that cannot satisfy protocol reservations", function () {
     const source = new URL(
       "../../deploy/protocol/mainnet-protocol.config.json",
@@ -798,6 +840,62 @@ describe("Protocol deployment", function () {
       expect(() => loadConfig(configFile)).to.throw(
         "ciphertextVerifier must be omitted when deployMockCiphertextVerifier is true",
       );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses each mock contract in a mainnet deployment before it sends a transaction", async function () {
+    const [operator] = await ethers.getSigners();
+    if (!operator) throw new Error("operator signer missing");
+    const record = JSON.parse(
+      fs.readFileSync(
+        new URL(
+          "../../deploy/protocol/mainnet-protocol.config.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ) as ProtocolConfigFile;
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "interfold-mainnet-mocks-"),
+    );
+    const configFile = path.join(tempDir, "protocol.json");
+    const cases = [
+      {
+        flag: "deployMockE3Program",
+        overrides: {
+          deployMockE3Program: true,
+          deployMockCiphertextVerifier: false,
+          ciphertextVerifier: "0x0000000000000000000000000000000000000003",
+        },
+      },
+      {
+        flag: "deployMockCiphertextVerifier",
+        overrides: {
+          deployMockE3Program: false,
+          e3Programs: ["0x0000000000000000000000000000000000000002"],
+          deployMockCiphertextVerifier: true,
+        },
+      },
+    ];
+
+    try {
+      for (const { flag, overrides } of cases) {
+        fs.writeFileSync(
+          configFile,
+          JSON.stringify({ ...record, ...overrides }),
+        );
+        // The upgrade scripts load the mainnet record, so loading must accept the flags.
+        const config = loadConfig(configFile);
+        expect(config.chainId).to.equal(1);
+        const nonce = await operator.getNonce();
+
+        await expect(
+          deployProtocolContracts(ethers, operator, config),
+        ).to.be.rejectedWith(`${flag} must be false on chainId 1`);
+        expect(await operator.getNonce()).to.equal(nonce);
+      }
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }

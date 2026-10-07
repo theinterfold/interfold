@@ -56,6 +56,9 @@ const FILES: Record<string, Role> = {
   'packages/interfold-contracts/deploy/protocol/mainnet-protocol.vrf-sortition.upgrade.governance.safe-builder.json': 'record',
   'packages/interfold-contracts/deploy/protocol/mainnet-protocol.vrf-sortition.upgrade.json': 'record',
   'packages/interfold-contracts/deploy/protocol/mainnet-protocol.vrf-sortition.upgrade.safe.json': 'record',
+  'packages/interfold-contracts/deploy/protocol/sepolia-protocol.config.json': 'record',
+  'packages/interfold-contracts/deploy/protocol/sepolia-protocol.deployment.json': 'record',
+  'packages/interfold-contracts/deploy/protocol/sepolia-protocol.safe-transactions.json': 'record',
   'examples/CRISP/packages/crisp-contracts/deployed_contracts.json': 'record',
   'dappnode/tests/test-hardening.sh': 'record',
 
@@ -76,28 +79,34 @@ const FILES: Record<string, Role> = {
  * exists to find.
  */
 const ALLOWED: Record<string, string> = {
-  '0x0000000000000000000000000000000000000000': 'zero address',
-
   // Third-party tokens. Interfold does not deploy them, so no deployment record
   // can carry them.
   '0xa3931d71877c0e7a3148cb7eb4463524fec27fbd': 'sUSDS, mainnet ticket collateral',
 
   // An E3 program belongs to its application, not to the protocol. See the
   // comment on `CONTRACT_KEYS` in packages/interfold-contracts/scripts/genManifest.ts.
-  '0x8654f380760c46857188097fa0ad0bf995603124': 'CRISPProgram, sepolia',
+  '0xc6b6f740c85878d046a50f203a3aa379150bf8c7': 'CRISPProgram, sepolia',
   '0x53fcdb21e73a461cfe6c64b19855204384b91ba3': 'CRISPProgram, mainnet',
 
-  // TODO: record these in deployed_contracts.json so the manifest can publish
-  // them. Until then no check can tell a correct value here from a stale one.
+  // Sepolia contracts that the docs list but the manifest does not publish (it publishes only
+  // the CONTRACT_KEYS set). Source: packages/interfold-contracts/deploy/protocol/sepolia-protocol.deployment.json
+  // and examples/CRISP/packages/crisp-contracts/deployed_contracts.json.
+  '0x09b1727bcfd2d9edae16bb2838fe5bf2f48cd360': 'RiscZeroGroth16Verifier, sepolia',
+  '0x2dff6c2f010336fb2f553aaf20525579f9617cea': 'AvailVectorXDataAvailabilityVerifier (CRISP), sepolia',
+  '0x3d95cfa8018db4b5474bfe536702b5dc05ee1444': 'BondedCheckpoints, sepolia',
+  '0x44f8cbc2ea686e60e59e571f61322cfc7ab4b3c7': 'SelfRegistry (CRISP), sepolia',
+  '0x46cd950499b312e53cb73a1d1e12d3541966f823': 'ChainlinkVrfRandomnessProvider, sepolia',
+  '0x85e5176a8d387be3b53506ddcbbc8aa9c2156e9f': 'BondedVotes, sepolia',
+  '0x8837e47c4bb520ade83aab761c3b60679443af1b': 'Sepolia deployer and owner account, not a contract',
+
+  // TODO: record this in deployed_contracts.json so the manifest can publish
+  // it. Until then no check can tell a correct value here from a stale one.
   '0xe172e9b6cfbeeb5593bdce3f077356fdb33af904': 'InterfoldToken (FOLD), mainnet — no top-level deployment record',
-  '0xb568e5ad762f7a75f1ec65a985ec4038f6409297': 'DeployableMockCiphertextVerifier, mainnet (replaced 2026-08-22) — no deployment record',
-  // Mainnet verifiers that governance set after the deployment. No deployment record carries them.
-  '0x80d217d3b2e16ff2ecc178cc75655c773895c549': 'Risc0BfvCiphertextVerifier, mainnet (set at block 26004622) — no deployment record',
-  '0xa66cab7ae230698b2a9ee1e0e967bad4651feea7': 'BfvDecryptionVerifierRouter, mainnet — no deployment record',
-  '0x7cd10057c25674bd5666a9deee3193f1b29563d1': 'BfvPkVerifierRouter, mainnet — no deployment record',
+
   // Not an address: the first 20 bytes of the 32-byte RISC Zero guest image ID that the mainnet
   // Risc0BfvCiphertextVerifier checks. The address pattern matches the start of the hash.
   '0x9d3e21fd7cc08e629cb467e5ca6bfc8e1a645b48': 'prefix of the mainnet ciphertext guest image ID (a hash, not an address)',
+  '0xa38bb986e6c064ba05001b83fd40dccbaceec63a': 'prefix of the sepolia ciphertext guest image ID (a hash, not an address)',
 
   // Deterministic Anvil accounts used by the local CRISP stack.
   '0x70997970c51812dc3a010c7d01b50e0d17dc79c8': 'Anvil account 1',
@@ -165,6 +174,9 @@ const LABELS: Record<string, string> = {
   MockDecryptionVerifier: 'MockDecryptionVerifier',
   MockCiphertextVerifier: 'MockCiphertextVerifier',
   MockPkVerifier: 'MockPkVerifier',
+  BfvDecryptionVerifierRouter: 'BfvDecryptionVerifierRouter',
+  BfvPkVerifierRouter: 'BfvPkVerifierRouter',
+  Risc0BfvCiphertextVerifier: 'Risc0BfvCiphertextVerifier',
 }
 
 /** Files this check never reads, whatever they contain. */

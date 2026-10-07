@@ -5,12 +5,13 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 mod actors;
+pub mod canonical_key;
 mod domain;
 pub mod ext;
 mod repo;
 
 pub use actors::{
-    AllEncryptionKeysCollected, AllThresholdSharesCollected, DkgTimingReader,
+    AllEncryptionKeysCollected, AllThresholdSharesCollected, BfvKeyIntent, DkgTimingReader,
     EncryptionKeyCollector, ExpelPartyFromKeyCollection, GenEsiSss, GenPkShareAndSkSss,
     RecoveryPayloadRef, ThresholdKeyshare, ThresholdKeyshareParams,
     ThresholdKeyshareRecoveryPayloads, ThresholdKeyshareRecoveryState,

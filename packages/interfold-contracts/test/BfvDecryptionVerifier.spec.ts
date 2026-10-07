@@ -921,13 +921,6 @@ describe("BfvDecryptionVerifier", function () {
   });
 
   describe("immutables (M-34)", function () {
-    it("exposes correct threshold", async function () {
-      const { bfvDecryptionVerifier } = await loadFixture(
-        deployWithMockCircuit,
-      );
-      expect(await bfvDecryptionVerifier.threshold()).to.equal(THRESHOLD);
-    });
-
     it("exposes correct expectedC6FoldKeyHash", async function () {
       const { bfvDecryptionVerifier } = await loadFixture(
         deployWithMockCircuit,

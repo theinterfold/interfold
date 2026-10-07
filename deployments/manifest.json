@@ -1,73 +1,9 @@
 {
   "schema_version": 1,
   "networks": {
-    "sepolia": {
-      "chain_id": 11155111,
-      "mocks": true,
-      "contracts": {
-        "interfold": {
-          "address": "0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C",
-          "deploy_block": 11534993
-        },
-        "ciphernode_registry": {
-          "address": "0x374F4542eC634d5437Dd65020781A9D9Df9c2AB8",
-          "deploy_block": 11534965
-        },
-        "bonding_registry": {
-          "address": "0x90250Dc48CBe109fFaA02AeAFbFBdbF12D7BD4d4",
-          "deploy_block": 11534966
-        },
-        "slashing_manager": {
-          "address": "0x489FB674B143E48eaCAaC999B3DF9EA6E95eA79f",
-          "deploy_block": 11534963
-        },
-        "fee_token": {
-          "address": "0xC35B783cA97710be47Fc81D10dADc895EfcD865c",
-          "deploy_block": 11534960
-        },
-        "faucet": {
-          "address": "0x6e281411C055BEEbD74bDFcB9aB095aa98907F85",
-          "deploy_block": 11534982
-        }
-      },
-      "reference": {
-        "InterfoldToken": {
-          "address": "0x9752444A6a955D420402EaFf5f818afCddb9c340",
-          "deploy_block": 11534976
-        },
-        "InterfoldTicketToken": {
-          "address": "0xfFFFc3BB04aEe950c0ed5DEe3214408f09fff488",
-          "deploy_block": 11534961
-        },
-        "E3RefundManager": {
-          "address": "0x79f9EA83Db0fbe3a2cEB765b18285915331A9dc2",
-          "deploy_block": 11534995
-        },
-        "MockE3Program": {
-          "address": "0x5874CD49929ffcf380C82cDE1e74188dEaff9791",
-          "deploy_block": 11534990
-        },
-        "MockComputeProvider": {
-          "address": "0x3c3434840a1EAA214E0c8abb34A0386e4E22B3A5",
-          "deploy_block": 11534986
-        },
-        "MockDecryptionVerifier": {
-          "address": "0x12845e690fD56216C89428d91D5E931142b9779F",
-          "deploy_block": 11534987
-        },
-        "MockCiphertextVerifier": {
-          "address": "0xc2905bDcD4449F143d46593AeAf5383A590D2e32",
-          "deploy_block": 11534988
-        },
-        "MockPkVerifier": {
-          "address": "0x22b5Fda887D1c84Df3d4D916452388F99a6A7b61",
-          "deploy_block": 11534989
-        }
-      }
-    },
     "mainnet": {
       "chain_id": 1,
-      "mocks": true,
+      "mocks": false,
       "contracts": {
         "interfold": {
           "address": "0x28cF63B459e6218C69EA97ea7D90541cf648c715",
@@ -82,8 +18,8 @@
           "deploy_block": 25473398
         },
         "slashing_manager": {
-          "address": "0x974E865B1BB24AF2a9ef8204AdEA9251Cc7C5FD9",
-          "deploy_block": 25786375
+          "address": "0x753109Ee36Dc65cC178875AddA30C6433e5bEEe4",
+          "deploy_block": 25998899
         },
         "fee_token": {
           "address": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
@@ -99,9 +35,77 @@
           "address": "0x1940eF168f4E0B3dA24BEca539856684793B0F6e",
           "deploy_block": 25786384
         },
-        "MockE3Program": {
-          "address": "0x4976E5E47852eFCe6851d35B95A1A2E19456F3D7",
-          "deploy_block": 25786371
+        "BfvDecryptionVerifierRouter": {
+          "address": "0xA66CAb7AE230698b2a9ee1E0E967BaD4651FeEa7",
+          "deploy_block": 25998927
+        },
+        "BfvPkVerifierRouter": {
+          "address": "0x7CD10057c25674bd5666A9deEE3193f1b29563d1",
+          "deploy_block": 25998926
+        },
+        "Risc0BfvCiphertextVerifier": {
+          "address": "0x80D217d3b2e16fF2ecc178cC75655C773895c549",
+          "deploy_block": 25998859
+        }
+      }
+    },
+    "sepolia": {
+      "chain_id": 11155111,
+      "mocks": false,
+      "contracts": {
+        "interfold": {
+          "address": "0xc5DD9418A0aBF15678F974D2348B4be4D3832B54",
+          "deploy_block": 11855915
+        },
+        "ciphernode_registry": {
+          "address": "0xfa0fCE6afd9b59E2Ac69DC53A128ee5835346B5e",
+          "deploy_block": 11855915
+        },
+        "bonding_registry": {
+          "address": "0x55Cf62396e1CAE6Fcc380CfE0b4C48103C4a3711",
+          "deploy_block": 11855915
+        },
+        "slashing_manager": {
+          "address": "0xd467290E57fa84FAE42A737a83B42a6786175d79",
+          "deploy_block": 11855915
+        },
+        "fee_token": {
+          "address": "0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B",
+          "deploy_block": 11856062
+        },
+        "faucet": {
+          "address": "0xA7f0A637Af62fA4E0b46E397D1b85E9b4807f019",
+          "deploy_block": 11856142
+        }
+      },
+      "reference": {
+        "InterfoldToken": {
+          "address": "0x278d7c3bC100505bfC38163e23Fe2524E3993e83",
+          "deploy_block": 11855821
+        },
+        "InterfoldTicketToken": {
+          "address": "0x277514D155D61eb51839F33Bd43ad32F4e3F5770",
+          "deploy_block": 11856063
+        },
+        "E3RefundManager": {
+          "address": "0x083F6Ca7e5be9Efd8fE8ACE503abF2F2ff647Cb9",
+          "deploy_block": 11855915
+        },
+        "NodeReleaseRegistry": {
+          "address": "0x772caB77BFc39690e13dA2995E926Fb090aD034B",
+          "deploy_block": 11855915
+        },
+        "BfvDecryptionVerifierRouter": {
+          "address": "0xe52e7d820f3A1c56f952B8D7Ba2FA4100c6999D2",
+          "deploy_block": 11855913
+        },
+        "BfvPkVerifierRouter": {
+          "address": "0x3Cd2472722cad8D17AEd31869b4353eCd10a0425",
+          "deploy_block": 11855912
+        },
+        "Risc0BfvCiphertextVerifier": {
+          "address": "0xBBcE489cf767904Ca808944806110d8c8A9332Da",
+          "deploy_block": 11855803
         }
       }
     }

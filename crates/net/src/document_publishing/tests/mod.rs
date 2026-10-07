@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::net_interface_handle::NetEventSubscriber;
+use crate::net_interface_handle::{NetEventChannel, NetEventSubscriber};
 use std::{collections::HashMap, num::NonZero, sync::Arc, time::Duration};
 
 use super::*;
@@ -36,7 +36,7 @@ use fhe_traits::Serialize as FheSerialize;
 use libp2p::kad::{GetRecordError, PutRecordError, RecordKey};
 use std::time::Instant;
 use tokio::{
-    sync::{broadcast, mpsc},
+    sync::mpsc,
     time::{sleep, timeout},
 };
 use tracing::subscriber::DefaultGuard;
@@ -51,18 +51,51 @@ impl actix::Handler<PublisherBarrier> for DocumentPublisher {
     fn handle(&mut self, _message: PublisherBarrier, _context: &mut Self::Context) {}
 }
 
-#[allow(clippy::type_complexity)]
-fn setup_test() -> Result<(
+/// Reports the documents being fetched and the documents waiting to be fetched.
+#[derive(actix::Message)]
+#[rtype(result = "(usize, usize)")]
+struct FetchBacklog;
+
+impl actix::Handler<FetchBacklog> for DocumentPublisher {
+    type Result = actix::MessageResult<FetchBacklog>;
+
+    fn handle(&mut self, _message: FetchBacklog, _context: &mut Self::Context) -> Self::Result {
+        actix::MessageResult((self.fetching.len(), self.fetch_queue.len()))
+    }
+}
+
+type TestSetup = (
     DefaultGuard,
     BusHandle,
     mpsc::Sender<NetCommand>,
     mpsc::Receiver<NetCommand>,
-    broadcast::Sender<NetEvent>,
+    NetEventChannel,
     NetEventSubscriber,
     Addr<HistoryCollector<InterfoldEvent>>,
     Addr<HistoryCollector<InterfoldEvent>>,
     Addr<DocumentPublisher>,
-)> {
+);
+
+/// A publisher that runs its effects at once.
+fn setup_test() -> Result<TestSetup> {
+    setup_test_with(|bus, tx, rx| DocumentPublisher::setup(bus, tx, rx, "topic"))
+}
+
+/// A publisher as a node starts it: before `EffectsEnabled`, with the state recovered from the
+/// event log.
+fn setup_startup_test(recovered: RecoveredDocumentState) -> Result<TestSetup> {
+    setup_test_with(|bus, tx, rx| {
+        DocumentPublisher::setup_before_effects(bus, tx, rx, "topic", HashMap::new(), recovered)
+    })
+}
+
+fn setup_test_with(
+    start: impl FnOnce(
+        &BusHandle,
+        &mpsc::Sender<NetCommand>,
+        &NetEventSubscriber,
+    ) -> Addr<DocumentPublisher>,
+) -> Result<TestSetup> {
     use tracing_subscriber::{fmt, EnvFilter};
 
     let subscriber = fmt()
@@ -79,13 +112,13 @@ fn setup_test() -> Result<(
         .with_aggregate_config(aggregate_config);
     let bus = system.handle()?.enable("test");
     let (net_cmd_tx, net_cmd_rx) = mpsc::channel(100);
-    let (net_evt_tx, _net_evt_rx) = broadcast::channel(100);
+    let net_evt_tx = NetEventChannel::new(100);
     let net_evt_rx = NetEventSubscriber::from(&net_evt_tx);
     let history = HistoryCollector::<InterfoldEvent>::new().start();
     let error = HistoryCollector::<InterfoldEvent>::new().start();
     bus.subscribe(EventType::All, history.clone().recipient());
     bus.subscribe(EventType::InterfoldError, error.clone().recipient());
-    let publisher = DocumentPublisher::setup(&bus, &net_cmd_tx, &net_evt_rx, "topic");
+    let publisher = start(&bus, &net_cmd_tx, &net_evt_rx);
 
     Ok((
         guard, bus, net_cmd_tx, net_cmd_rx, net_evt_tx, net_evt_rx, history, error, publisher,

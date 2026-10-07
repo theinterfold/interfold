@@ -22,6 +22,7 @@ hex = { workspace = true }
 libp2p = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
+serde_bytes = { workspace = true }
 sha2 = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
@@ -38,4 +39,7 @@ e3-committee-hash = { workspace = true }
 e3-fhe-params = { workspace = true }
 fhe = { workspace = true }
 fhe-traits = { workspace = true }
+e3-request = { workspace = true }
+e3-sync = { workspace = true }
+e3-layout-lock = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }

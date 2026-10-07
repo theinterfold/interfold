@@ -1,157 +1,313 @@
 ---
-title: 'Computation Flow'
+title: 'E3 Lifecycle'
+description:
+  'The stages of an E3, the call that enters each stage, the events, the deadlines, the failure
+  reasons, and how refunds work.'
 ---
 
-## Computation Flow
+import { LinkCards, LinkCard, Lifecycle, Stage } from '@/components/ui'
 
-The computation process within the Interfold protocol is decentralized and open, allowing any
-participant to contribute to each phase of execution. This design ensures transparency and
-flexibility, enabling different roles to be fulfilled by various actors, including the application
-server, Compute Providers, or other network participants.
+# E3 Lifecycle
 
-### Phase 1: Request
+The Interfold contract (`Interfold.sol`) moves each E3 through a fixed set of stages. This page
+gives the call that enters each stage, who makes the call, the events, and what happens next. It
+also covers the deadlines, the failure reasons, and refunds. It is for developers who request or
+watch E3s and for operators who serve on committees.
 
-1. **Define the E3 Program**: Author your Secure Process using the tooling described in
-   [Writing the Secure Process](/write-secure-program). The Interfold currently ships first-party
-   support for the BFV scheme via [fhe.rs](https://github.com/gnosisguild/fhe.rs) and the SAFE
-   library.
-2. **Choose a Compute Provider**: Your program must align with the execution backend (e.g.,
-   [RISC Zero](https://www.risczero.com/) for [CRISP](/CRISP/introduction) or a custom FHE
-   coprocessor).
-3. **Assemble request parameters**:
-   - `committeeSize`: the committee size enum (`Minimum`, `Micro`, or `Small`)
-   - `inputWindow`: a two-element array `[start, end]` defining when inputs open and close
-   - `e3Program`, `paramSet`, `computeProviderParams`, and optional `customParams`
-   - `expectedFeeToken`, `expectedCryptoConfigId`, and `maxFee` as request-time safety bounds
-4. **Submit the Request**: Call `request` to publish the new computation.
+The stages are the values of `E3Stage` in `interfaces/IInterfold.sol`: `None`, `Requested`,
+`CommitteeFinalized`, `KeyPublished`, `CiphertextReady`, `Complete`, and `Failed`. `None` means that
+the E3 does not exist. Every stage change emits `E3StageChanged(e3Id, previousStage, newStage)`.
 
-   ```solidity
-   function request(
-     E3RequestParams calldata requestParams
-   ) external returns (uint256 e3Id, E3 memory e3);
-   ```
+<Lifecycle label='E3 lifecycle'>
+  <Stage title='Requested' actor='Requester' event='E3Requested'>
 
-   The contract validates the parameters, transfers the required fee from the requester, creates an
-   `E3` record with its computation seed, and delegates committee selection to the
-   `CiphernodeRegistry`. The registry freezes one randomness provider request. Chainlink later
-   verifies the VRF proof, and the registry derives a request-bound ticket-scoring seed from the
-   accepted result.
+The requester calls `Interfold.request(params)` and pays the fee. The contract stores the E3 and
+asks the `CiphernodeRegistry` for a committee. Next, ciphernodes submit tickets after the VRF result
+arrives.
 
-   You can estimate the fee before submitting by calling `getE3Quote`:
+  </Stage>
+  <Stage title='CommitteeFinalized' actor='Ciphernodes' event='CommitteeFinalized'>
 
-   ```solidity
-   function getE3Quote(E3RequestParams calldata requestParams) external view returns (uint256 fee);
-   ```
+After the ticket window closes, a ciphernode calls `CiphernodeRegistry.finalizeCommittee(e3Id)`. The
+registry locks the committee and calls the Interfold contract. Next, the committee runs DKG.
 
-   E3 pricing is cost-plus. The quote models ciphernode work (key generation, proof verification,
-   availability time, decryption, publication, and coordination), then applies the configured
-   margin. The quote also includes a flat randomness fee. The Ethereum launch value is 5 USDS per
-   accepted request. Protocol revenue comes from that flat fee and the treasury share of completed
-   service fees. Ticket purchases are ciphernode sortition deposits, not normal protocol revenue.
-   The launch configuration uses a 10% service margin (`marginBps = 1000`) and a 1.82% service fee
-   treasury share (`protocolShareBps = 182`).
+  </Stage>
+  <Stage title='KeyPublished' actor='Aggregator' event='CommitteeFormed'>
 
-### Phase 2: Node Selection
+The active aggregator calls `CiphernodeRegistry.publishCommittee` with the DKG proof. The registry
+verifies the proof and calls the Interfold contract. Next, data providers encrypt and submit inputs.
 
-Each new request to the Interfold contracts initiates a verifiable sortition process to select a
-Ciphernode Committee (CiCo). Ticket submission starts after a timely, verified VRF response. The
-selected Ciphernodes use the E3 Program parameters to determine the appropriate Fully Homomorphic
-Encryption (FHE) scheme, then generate and publish a shared public encryption key.
+  </Stage>
+  <Stage title='CiphertextReady' actor='Application server' event='CiphertextOutputReferencePublished'>
 
-![Node Selection](/node-selection.png)
+After the input window closes, the compute output goes to `Interfold.publishCiphertextOutput`. The
+contract checks the availability receipt and the compute proof. Next, the committee computes
+decryption shares.
 
-### Phase 3: Input Window
+  </Stage>
+  <Stage title='Complete' actor='Aggregator' event='PlaintextOutputPublished'>
 
-During this phase, Data Providers — who may include individual users, applications, or institutions
-— encrypt their data to the CiCo's public key and publish commitments to those inputs onchain.
+The active aggregator calls `Interfold.publishPlaintextOutput` with the decryption proof. The
+contract verifies the proof, stores the plaintext, and credits rewards. The E3 ends.
 
-Committee setup happens before the input window. CRISP names three fixed times: voting starts at
-`S`, new ballot commitments close at `V`, and Avail finalization ends at `A`. Interfold stores the
-input window as `[S, A]`. CRISP derives `V = A - availabilityFinalizationWindow` and accepts ballots
-only during `[S, V)`. An early key does not open voting before `S`.
+  </Stage>
+  <Stage title='Failed' actor='Anyone' event='E3Failed' tone='fail'>
 
-The mainnet launch settings allow up to one hour for VRF, 10 minutes for ticket submission, and six
-hours for DKG. Therefore, the earliest valid `S` is 7 hours 10 minutes after the request, plus a
-mining buffer. CRISP requires at least one hour from `S` to `V` and reserves three hours from `V` to
-`A`. A one-hour vote uses a four-hour input window; the committee setup budget is separate.
-Interfold also reserves seven days for computation and six hours for decryption. The contracts
-reject a schedule that starts too early or does not leave the required voting and availability
-windows.
+A deadline passes, committee formation fails, or the committee loses too many members. After a
+deadline, anyone can call `Interfold.markE3Failed(e3Id)`. Next, anyone calls
+`processE3Failure(e3Id)` to start refunds.
 
-1. **Data Encryption**: Data Providers encrypt their inputs using the CiCo's public key.
-2. **Input Validation**: Data Providers generate several Zero-Knowledge Proofs about their inputs to
-   ensure they are valid for the requested E3. Some of these proofs are generic (e.g., proof of
-   valid encryption) while others will be specific to your application.
-3. **Commit Input**: The CRISP service stores the encrypted bytes, then signs a compact input
-   commitment that expires after 10 minutes. `publishInput` verifies the ZK proof, expiry, and
-   signature and reserves the input's tree index. If the wallet does not commit in time, the voter
-   can stage the same vote again. The voter can leave after the commitment transaction succeeds.
-4. **Finalize Availability**: The service publishes the bytes to Avail. After VectorX anchors the
-   Avail block, any account calls `finalizeInput`. The E3 Program accepts only a receipt for the
-   exact content hash committed by the ZK proof. Computation waits until every committed input is
-   finalized.
+  </Stage>
+</Lifecycle>
 
-   ```solidity
-   function publishInput(uint256 e3Id, bytes memory data) external;
-   ```
+## Stage reference
 
-### Phase 4: Execution
+| Stage                | Call that enters it                                                         | Usual caller             | Interfold events                                       |
+| -------------------- | --------------------------------------------------------------------------- | ------------------------ | ------------------------------------------------------ |
+| `Requested`          | `Interfold.request`                                                         | Requester                | `E3Requested`, `E3StageChanged`                        |
+| `CommitteeFinalized` | `CiphernodeRegistry.finalizeCommittee`, then `onCommitteeFinalized`         | A committee candidate    | `CommitteeFinalized`, `E3StageChanged`                 |
+| `KeyPublished`       | `CiphernodeRegistry.publishCommittee`, then `onCommitteePublished`          | Active aggregator        | `CommitteeFormed`, `E3StageChanged`                    |
+| `CiphertextReady`    | `Interfold.publishCiphertextOutput`                                         | Application server       | `CiphertextOutputReferencePublished`, `E3StageChanged` |
+| `Complete`           | `Interfold.publishPlaintextOutput`                                          | Active aggregator        | `PlaintextOutputPublished`, `E3StageChanged`           |
+| `Failed`             | `markE3Failed`, `cancelE3`, or a call from the registry or slashing manager | Anyone, after a deadline | `E3Failed`, `E3StageChanged`                           |
 
-In this phase, the Compute Provider (CP) executes the Secure Process defined in your E3 Program and
-publishes the encrypted output back to Interfold contract. This must happen before the compute
-deadline expires.
+`finalizeCommittee`, `publishCommittee`, `publishCiphertextOutput`, and `publishPlaintextOutput`
+have no caller restriction. Stage checks, deadline checks, and proof verification protect them. The
+"Usual caller" column shows who sends the transaction in the current software.
 
-1. **Execution**: The CP retrieves encrypted inputs and executes the Secure Process defined in your
-   E3 program.
-2. **Publish Output**: The ciphertext bytes are published to Avail. A content hash, VectorX receipt,
-   and compute proof are submitted to Interfold through `publishCiphertextOutput`. Interfold accepts
-   the reference only when the availability and compute proofs bind the same output hash.
+## Requested
 
-   ```solidity
-   function publishCiphertextOutput(uint256 e3Id, bytes calldata encodedOutputReference) external;
-   ```
+The requester calls `request(E3RequestParams)`. The parameters are `committeeSize`, `inputWindow`,
+`e3Program`, `paramSet`, `computeProviderParams`, `customParams`, `expectedFeeToken`,
+`expectedCryptoConfigId`, and `maxFee`. The contract rejects the request in these conditions:
 
-### Phase 5: Decryption
+- Requests are paused, or the E3 program is not registered.
+- The fee token is not allowed, or it is different from `expectedFeeToken`.
+- The circuit configuration for `paramSet` is different from `expectedCryptoConfigId`.
+- The quote from `getE3Quote` is more than `maxFee`.
+- `inputWindow[0]` is before the current time, or `inputWindow[1]` is before `inputWindow[0]`.
+- The worst-case lifecycle duration is more than `maxDuration`.
 
-After the ciphertext output is published, the CiCo for the given E3 coordinates to decrypt the
-ciphertext output and publish the resulting plaintext. The decryption must complete before the
-decryption deadline. The Decryption Verifier contract validates the submitted plaintext proof before
-accepting the output. The plaintext output can be queried from the Interfold contract's `getE3()`
-function.
+When the checks pass, the contract takes the fee. It keeps the service fee in escrow and credits the
+flat randomness fee to the treasury. It calls the program `validate` function, which returns the
+encryption scheme. It also records the timeout configuration and the dependent contracts for this
+E3.
 
-```solidity
-function getE3(uint256 e3Id) external view returns (E3 memory e3);
-```
+The contract then calls `CiphernodeRegistry.requestCommittee`. The registry checks that at least N
+operators were active just before the request. It records the ticket price and the IMT root, and it
+requests one random word from the randomness provider. The registry emits
+`CommitteeRandomnessRequested` and `DkgFoldAttestationContextEstablished`.
 
-or by listening to the `PlaintextOutputPublished` event.
+After the Chainlink VRF v2.5 result arrives, ciphernodes call `submitTicket(e3Id, ticketNumber)`.
+Each accepted ticket emits `TicketSubmitted`. The ticket window is `sortitionSubmissionWindow`
+seconds from the VRF fulfillment time. See [Sortition](/internals/sortition).
 
-```solidity
-event PlaintextOutputPublished(uint256 indexed e3Id, bytes plaintextOutput, bytes proof);
-```
+## CommitteeFinalized
 
-Upon successful decryption, rewards are distributed to the active committee members.
+After the committee deadline, anyone can call `finalizeCommittee(e3Id)`. In the current software,
+committee candidates schedule this call 30 seconds apart by party index, so one member acts first.
 
-**See also:** [Cryptography](/cryptography) (threshold BFV, phases P1–P4, circuit IDs) and
-[Noir Circuits](/noir-circuits) (build, lint, `interfold noir`, Rust prover integration).
+The registry then checks the result of sortition:
 
-### Failure Handling
+- If no usable VRF result exists, the E3 fails with `CommitteeFormationTimeout`.
+- If fewer than N tickets were submitted, the E3 fails with `InsufficientCommitteeMembers`.
+- Otherwise, the registry sorts the committee by address and calls `onCommitteeFinalized`.
 
-If any phase exceeds its deadline or a fault is detected, the E3 transitions to the `Failed` stage.
-Anyone can call `markE3Failed(e3Id)` to check timeout conditions, or the `SlashingManager` /
-`CiphernodeRegistry` can trigger failure directly.
+In both failure cases, the registry also emits `CommitteeFormationFailed`.
 
-Once failed, `processE3Failure(e3Id)` transfers the escrowed payment to `E3RefundManager`, which
-determines how funds are split among the requester, honest committee members, and the protocol
-treasury using its configurable `WorkValueAllocation` (basis-point weights per stage) plus any
-slashed funds — not a simple proportion of work remaining. The failure cause is recorded as one of
-the 13 `FailureReason` entries (`None` plus 12 concrete states such as `DKGTimeout`,
-`ComputeProviderFailed`, `DecryptionInvalidShares`, etc.; `_MAX_FAILURE_REASON` is a separate
-sentinel used for bounds-checking in `IInterfold`):
+`onCommitteeFinalized` sets the DKG deadline and records the reward recipient for each member. The
+Interfold contract emits `CommitteeFinalized`. The registry emits
+`SortitionCommitteeFinalized(e3Id, committee, scores)` and `CommitteeActivationChanged(e3Id, true)`.
 
-- The requester can claim their share via `claimRequesterRefund(e3Id)`
-- An honest committee member's bond owner can claim its compensation via
-  `claimHonestNodeReward(e3Id, operator)`
-- The protocol treasury receives the configured failure-path protocol share
+Next, the committee runs DKG off-chain. The members exchange encrypted key shares and proofs (C0 to
+C4). The active aggregator selects a roster of H ready members and proves the key aggregation (C5).
+See [Cryptography](/learn/cryptography).
 
-For the complete `FailureReason` → allocation map, see the `markE3Failed` / `claimRequesterRefund`
-flow in `IE3RefundManager` and `IInterfold`.
+## KeyPublished
+
+The active aggregator calls `publishCommittee(e3Id, pkCommitment, proof, dkgAttestationBundle)`. The
+registry verifies the DKG proof with `BfvPkVerifier` and the fold attestations with
+`DkgFoldAttestationVerifier`. It stores the DKG anchors that the decryption proof uses later.
+
+The registry then calls `onCommitteePublished`. The Interfold contract accepts the key only before
+the DKG deadline and before `inputWindow[1]`. It sets the compute deadline and emits
+`CommitteeFormed`. The registry emits `CommitteeProofPublished`.
+
+The committee members also publish the serialized public key in chunks with
+`publishCommitteePublicKey`. Each chunk emits `CommitteePublicKeyChunkPublished`. A client rebuilds
+the key and checks it against `pkCommitment` before it encrypts.
+
+Next, data providers encrypt their inputs and call `publishInput` on the E3 program. The E3 program
+decides which inputs to accept during the input window.
+
+## CiphertextReady
+
+The compute provider runs the secure process after `inputWindow[1]`. An application server then
+calls `publishCiphertextOutput(e3Id, encodedOutputReference)`. The reference contains the
+`contentHash` of the ciphertext bytes, the `ciphertextCommitment`, the `computeProof`, and the
+`availabilityProof`.
+
+The contract accepts the output only in these conditions:
+
+- The E3 is in `KeyPublished`, and the compute deadline has not passed.
+- The input window has closed.
+- The committee still has enough active members.
+- The E3 program accepts the availability receipt for `contentHash`.
+- The ciphertext verifier and the E3 program `verify` function accept the compute proof.
+
+The contract stores the hash and the commitment, and it sets the decryption deadline. It emits
+`CiphertextOutputReferencePublished`. Next, each committee member computes a decryption share with a
+C6 proof.
+
+## Complete
+
+The active aggregator combines T + 1 decryption shares and proves the result (C7). It calls
+`publishPlaintextOutput(e3Id, plaintextOutput, proof)`. The contract accepts the output only before
+the decryption deadline, with a viable committee and a valid decryption proof.
+
+The contract stores the plaintext and pays for the work:
+
+1. It credits the protocol share (`protocolShareBps`, recorded at request time) to the treasury.
+2. It splits the rest of the service fee among the active committee members.
+3. Each reward recipient claims with `claimReward(e3Id)` or `claimRewards(e3Ids)`.
+
+The contract emits `PlaintextOutputPublished`, `RewardsDistributed`, and `RewardCredited` for each
+member. Applications read the result from `getE3(e3Id).plaintextOutput` or from the
+`PlaintextOutputPublished` event.
+
+## Failed
+
+An E3 enters `Failed` in one of these ways:
+
+- **Timeout.** After a deadline, anyone calls `markE3Failed(e3Id)`. The contract selects the reason
+  from the current stage.
+- **Committee formation.** `finalizeCommittee` records `CommitteeFormationTimeout` or
+  `InsufficientCommitteeMembers`.
+- **Committee viability.** A slash expels a member, and the active members drop below H. The
+  `SlashingManager` records `InsufficientCommitteeMembers`.
+- **Cancellation.** The requester calls `cancelE3(e3Id)`. This is possible only in `Requested`, when
+  no usable VRF result exists and the committee deadline has passed. The reason is
+  `CommitteeFormationTimeout`.
+
+The contract emits `E3Failed(e3Id, failedAtStage, reason)`. If a later expulsion shows that the
+committee caused a requester-side failure, the `SlashingManager` changes the reason to
+`InsufficientCommitteeMembers`. The contract then emits `E3FailureReclassified`. This change is
+possible only before refund settlement.
+
+## Deadlines and timeouts
+
+Each E3 records the timeout configuration at request time. A later governance change does not affect
+an existing E3.
+
+| Deadline            | Set when                 | Value                                                                                                                | Reason when it passes       |
+| ------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| Committee deadline  | Request, then VRF result | Request time + `randomnessRequestTimeout`. After a usable VRF result: fulfillment time + `sortitionSubmissionWindow` | `CommitteeFormationTimeout` |
+| DKG deadline        | `CommitteeFinalized`     | Committee deadline + `dkgWindow`                                                                                     | `DKGTimeout`                |
+| Compute deadline    | `KeyPublished`           | The later of key publication time and `inputWindow[1]`, + `computeWindow`                                            | `ComputeTimeout`            |
+| Decryption deadline | `CiphertextReady`        | Ciphertext publication time + `decryptionWindow`                                                                     | `DecryptionTimeout`         |
+
+A late finalization does not move the DKG deadline. It leaves less time for DKG. In `Requested`, a
+committee with enough tickets can still finalize until the DKG deadline. For that case,
+`markE3Failed` accepts the failure only after the committee deadline + `dkgWindow`.
+
+The committee key must arrive before `inputWindow[1]`. The contract rejects a later key, and the E3
+then fails with `DKGTimeout`. A safe `inputWindow[1]` is later than the request time plus the
+randomness timeout, the ticket window, and the DKG window.
+
+The contract also limits the total duration. At request time, it computes the later of
+`inputWindow[1]` and the committee setup time (`randomnessRequestTimeout` +
+`sortitionSubmissionWindow` + `dkgWindow`). It adds `computeWindow` and `decryptionWindow`. The
+result must not be more than `maxDuration`.
+
+`markFailedGracePeriod` protects against short chain or RPC delays. During this period after a
+deadline, only the requester, the contract owner, or an active committee member can call
+`markE3Failed`. After the period, anyone can call it. A value of `0` removes the restriction.
+
+### Configured values
+
+The mainnet values come from
+`packages/interfold-contracts/deploy/protocol/mainnet-protocol.config.json`. The local values are
+the defaults for local development deployments (`scripts/deployInterfold.ts` and
+`CiphernodeRegistryOwnable.sol`). Read the live values from the contracts: `getTimeoutConfig`,
+`markFailedGracePeriod`, `maxDuration`, `sortitionSubmissionWindow`, and `randomnessRequestTimeout`.
+
+| Parameter                   | Contract           | Mainnet               | Local development     |
+| --------------------------- | ------------------ | --------------------- | --------------------- |
+| `randomnessRequestTimeout`  | CiphernodeRegistry | 3,600 s (1 hour)      | 3,600 s (1 hour)      |
+| `sortitionSubmissionWindow` | CiphernodeRegistry | 600 s (10 minutes)    | 60 s                  |
+| `dkgWindow`                 | Interfold          | 21,600 s (6 hours)    | 7,200 s (2 hours)     |
+| `computeWindow`             | Interfold          | 604,800 s (7 days)    | 86,400 s (1 day)      |
+| `decryptionWindow`          | Interfold          | 21,600 s (6 hours)    | 3,600 s (1 hour)      |
+| `markFailedGracePeriod`     | Interfold          | 3,600 s (1 hour)      | 0                     |
+| `maxDuration`               | Interfold          | 2,592,000 s (30 days) | 2,592,000 s (30 days) |
+
+## Failure reasons
+
+`FailureReason` in `interfaces/IInterfold.sol` lists the reasons. `FailurePayerLib.sol` assigns the
+cost of each reason to the requester side or to the ciphernode side.
+
+| Value | Reason                         | Recorded by                                                    | Cost falls on |
+| ----: | ------------------------------ | -------------------------------------------------------------- | ------------- |
+|     0 | `None`                         | Not a failure                                                  | None          |
+|     1 | `CommitteeFormationTimeout`    | `markE3Failed` in `Requested`, `finalizeCommittee`, `cancelE3` | Ciphernodes   |
+|     2 | `InsufficientCommitteeMembers` | `finalizeCommittee`, `SlashingManager`                         | Ciphernodes   |
+|     3 | `DKGTimeout`                   | `markE3Failed` in `CommitteeFinalized`                         | Ciphernodes   |
+|     4 | `DKGInvalidShares`             | No contract path in this release                               | Ciphernodes   |
+|     5 | `NoInputsReceived`             | No contract path in this release                               | Requester     |
+|     6 | `ComputeTimeout`               | `markE3Failed` in `KeyPublished`                               | Requester     |
+|     7 | `ComputeProviderExpired`       | No contract path in this release                               | Requester     |
+|     8 | `ComputeProviderFailed`        | No contract path in this release                               | Requester     |
+|     9 | `RequesterCancelled`           | Reserved for ABI compatibility. `cancelE3` records reason 1.   | Requester     |
+|    10 | `DecryptionTimeout`            | `markE3Failed` in `CiphertextReady`                            | Ciphernodes   |
+|    11 | `DecryptionInvalidShares`      | No contract path in this release                               | Ciphernodes   |
+|    12 | `VerificationFailed`           | No contract path in this release                               | Ciphernodes   |
+
+`onE3Failed` rejects `None`, `RequesterCancelled`, and any value from `_MAX_FAILURE_REASON` up.
+Requester-side reasons cover failures of the requester, the data providers, and the compute
+provider.
+
+## Refunds
+
+Interfold keeps only the service fee in escrow. The flat randomness fee goes to the treasury at
+request time. No success, failure, or cancellation path returns the randomness fee.
+
+After an E3 fails, the funds move in this sequence:
+
+1. Anyone calls `processE3Failure(e3Id)`. The Interfold contract sends the service fee escrow to
+   `E3RefundManager` and emits `E3FailureProcessed`.
+2. `E3RefundManager` calculates the split from the failure reason and the policy recorded at request
+   time.
+3. The requester calls `claimRequesterRefund(e3Id)`.
+4. The reward recipient of each honest committee member calls
+   `claimHonestNodeReward(e3Id, operator)`.
+
+The split depends on the side that caused the failure:
+
+- **Ciphernode side.** The requester gets 100% of the service fee escrow. The treasury gets nothing,
+  and the fee does not pay honest nodes. Honest nodes get compensation only from collateral slashed
+  from faulty nodes.
+- **Requester side.** Honest committee members get a share for the work that they completed. The
+  treasury gets the protocol share. The requester gets the rest. If no honest node exists, the node
+  share also goes to the requester.
+
+The [Requesting an E3](/build/requesting-an-e3) page explains fees, quotes, and refund claims in
+detail.
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='Requesting an E3' href='/build/requesting-an-e3' icon='coin' tag='Build'>
+    Get a quote, choose the input window, submit the request, and claim refunds.
+  </LinkCard>
+  <LinkCard title='Cryptography' href='/learn/cryptography' icon='lock' tag='Learn'>
+    What the DKG and decryption proofs show, circuit by circuit.
+  </LinkCard>
+  <LinkCard
+    title='Exits and slashing'
+    href='/operate/exits-and-slashing'
+    icon='gavel'
+    tag='Operate'
+  >
+    How faults lead to slashes, bans, and committee expulsion.
+  </LinkCard>
+</LinkCards>

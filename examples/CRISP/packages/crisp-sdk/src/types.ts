@@ -337,6 +337,91 @@ export type VoteStatusResponse = {
 }
 
 /**
+ * The identity of one input, read from its envelope with `decodeInputIdentity`.
+ *
+ * The four values are unique per round, so the CRISP server matches an entry of the input tree by
+ * them (`voting/selection`).
+ */
+export type InputIdentity = {
+  slotAddress: `0x${string}`
+  encryptedVoteCommitment: `0x${string}`
+  encryptedVoteHash: `0x${string}`
+  /** The tree index of the entry the input extends, plus one; zero when it extends nothing. */
+  parentIndexPlusOne: number
+}
+
+/**
+ * Whether the Secure Process selects an input for its slot (`voting/selection`).
+ *
+ * - `not_indexed`: the server has no entry with this identity yet.
+ * - `selection_pending`: the server has not indexed every earlier entry, so one of them can still
+ *   take the slot.
+ * - `selected`: the input took the slot at its turn. A later entry does not change this answer, but
+ *   a reorganization of the chain before the input's block is final can.
+ * - `excluded`: the input did not take the slot. Only a reorganization of the chain can change this
+ *   answer.
+ */
+export type InputSelectionStatus = 'not_indexed' | 'selection_pending' | 'selected' | 'excluded'
+
+/**
+ * Why the Secure Process did not select an input.
+ *
+ * - `unusable`: its bytes do not reproduce its commitment.
+ * - `earlier_sibling`: an earlier entry that named the same parent took the slot.
+ * - `stale_parent`: its parent was not the slot head at its turn for another reason.
+ */
+export type InputExclusionReason = 'earlier_sibling' | 'stale_parent' | 'unusable'
+
+/**
+ * Type representing the selection state of one input (`voting/selection`)
+ */
+export type InputSelectionResponse = {
+  status: InputSelectionStatus
+  /** The tree index of the matched entry; null when the server has not indexed it. */
+  index: number | null
+  /** The tree index of the slot's current head, the same answer as `state/previous-ciphertext`. */
+  head_index: number | null
+  /** Set only for `excluded`. */
+  reason: InputExclusionReason | null
+}
+
+/**
+ * Where one submitted ballot is, as shown to the voter.
+ *
+ * - `awaiting_commitment`: the ballot has no on-chain commitment yet.
+ * - `selection_pending`: the ballot is committed, and the server cannot say yet whether it takes
+ *   the slot.
+ * - `availability_pending`: the ballot takes the slot, and its ciphertext is not published yet.
+ * - `counted`: the ballot takes the slot, and its ciphertext is published.
+ * - `excluded`: another entry took the slot, or the ballot is unusable. It does not count.
+ * - `failed`: the server could not commit the ballot.
+ */
+export type SubmissionStage = 'awaiting_commitment' | 'selection_pending' | 'availability_pending' | 'counted' | 'excluded' | 'failed'
+
+/**
+ * The facts that `getSubmissionStage` reads.
+ */
+export type SubmissionStageInputs = {
+  /** The status of the ballot's availability job, or null when it is unknown. */
+  availability: VoteResponseStatus | null
+  /** The server's selection answer for the ballot, or null when it is unknown. */
+  selection: InputSelectionResponse | null
+  /** The current time, in Unix seconds. */
+  now: number
+  /** The round's input commitment deadline, in Unix seconds. */
+  commitmentDeadline: number
+}
+
+/**
+ * The stage of one submitted ballot, and whether the voter can replace an excluded ballot.
+ */
+export type SubmissionStatus = {
+  stage: SubmissionStage
+  /** True only for `excluded` before the commitment deadline. */
+  retryOffered: boolean
+}
+
+/**
  * Type representing the result of a round (`state/result` and `state/all`)
  */
 export type WebResultResponse = {

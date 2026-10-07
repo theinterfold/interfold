@@ -46,8 +46,7 @@ pub fn generate_configs(_preset: BfvPreset, configs: &Configs) -> CodegenConfigs
     let prefix = <ShareDecryptionCircuit as Circuit>::PREFIX;
 
     let qis_str = join_display(&configs.moduli, ", ");
-    let r1_bounds_str = join_display(&configs.bounds.r1_bounds, ", ");
-    let r2_bounds_str = join_display(&configs.bounds.r2_bounds, ", ");
+    let r_bounds_str = join_display(&configs.bounds.r_bounds, ", ");
 
     format!(
         r#"use crate::core::threshold::share_decryption::Configs as ShareDecryptionConfigs;
@@ -66,18 +65,15 @@ share_decryption (CIRCUIT 6 - THRESHOLD BFV SHARE DECRYPTION)
 pub global {}_BIT_CT: u32 = {};
 pub global {}_BIT_SK: u32 = {};
 pub global {}_BIT_E_SM: u32 = {};
-pub global {}_BIT_R1: u32 = {};
-pub global {}_BIT_R2: u32 = {};
+pub global {}_BIT_R: u32 = {};
 pub global {}_BIT_D: u32 = {};
 pub global {}_BIT_D_NATIVE: u32 = {};
 
-pub global {}_R1_BOUNDS: [Field; L] = [{}];
-pub global {}_R2_BOUNDS: [Field; L] = [{}];
+pub global {}_R_BOUNDS: [Field; L] = [{}];
 
 pub global {}_CONFIGS: ShareDecryptionConfigs<L> = ShareDecryptionConfigs::new(
     QIS,
-    {}_R1_BOUNDS,
-    {}_R2_BOUNDS,
+    {}_R_BOUNDS,
 );
 "#,
         configs.n,
@@ -90,18 +86,13 @@ pub global {}_CONFIGS: ShareDecryptionConfigs<L> = ShareDecryptionConfigs::new(
         prefix,
         configs.bits.e_sm_bit,
         prefix,
-        configs.bits.r1_bit,
-        prefix,
-        configs.bits.r2_bit,
+        configs.bits.r_bit,
         prefix,
         configs.bits.d_bit,
         prefix,
         configs.bits.d_native_bit,
         prefix,
-        r1_bounds_str,
-        prefix,
-        r2_bounds_str,
-        prefix,
+        r_bounds_str,
         prefix,
         prefix,
     )

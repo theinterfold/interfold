@@ -1,12 +1,17 @@
 # CRISP - Coercion-Resistant Impartial Selection Protocol
 
-CRISP (Coercion-Resistant Impartial Selection Protocol) is a secure protocol for digital
-decision-making, leveraging fully homomorphic encryption (FHE) and distributed threshold
-cryptography (DTC) to enable verifiable secret ballots. Built with Interfold, CRISP safeguards
-democratic systems and decision-making applications against coercion, manipulation, and other
-vulnerabilities. To learn more about CRISP, you can read our
-[blog post](https://blog.theinterfold.com/crisp-private-voting-secret-ballot-fhe-zkp-mpc/) or visit
-the [documentation](https://docs.theinterfold.com/CRISP/introduction).
+CRISP (Coercion-Resistant Impartial Selection Protocol) is a secret-ballot voting protocol built
+with the Interfold. It uses fully homomorphic encryption (FHE) and distributed threshold
+cryptography (DTC). Each voter encrypts a ballot in the browser. The Secure Process adds the
+encrypted ballots, and a threshold committee of ciphernodes decrypts only the combined result, which
+is public. On-chain contracts verify the proofs of the tally and of its decryption.
+
+Vote masking makes receipts weaker, which makes coercion and vote buying more difficult. These
+protections depend on the conditions in
+[Privacy limits](https://docs.theinterfold.com/CRISP/introduction#privacy-limits). To learn more
+about CRISP, read our
+[blog post](https://blog.theinterfold.com/crisp-private-voting-secret-ballot-fhe-zkp-mpc/) or the
+[documentation](https://docs.theinterfold.com/CRISP/introduction).
 
 ## Project Structure
 
@@ -203,14 +208,19 @@ Local development uses `DATA_AVAILABILITY_MODE=mock`. The mock keeps the full in
 ciphertext in the CRISP server database and produces a deterministic local receipt. It does not
 model VectorX latency or Avail fees.
 
-Sepolia and Ethereum mainnet use Avail. Before starting the CRISP server:
+Sepolia and Ethereum mainnet use Avail. The Sepolia verifiers are real. CRISPProgram on Sepolia is
+`0xc6b6f740C85878D046A50f203A3Aa379150bF8C7`, and its Avail data availability verifier is
+`AvailVectorXDataAvailabilityVerifier` (`0x2Dff6C2f010336Fb2f553aAF20525579F9617cEA`). Before
+starting the CRISP server:
 
 1. Register an Avail App ID for CRISP.
 2. Fund a dedicated Avail account that can pay for every `submit_data` transaction.
 3. Keep the server database durable. It stores each pending publication until its VectorX proof is
    available and resumes the job after a restart.
 4. Deploy CRISP with `INPUT_AVAILABILITY_SIGNER` set to the Ethereum address derived from the
-   server's `PRIVATE_KEY`.
+   server's `PRIVATE_KEY`. On Sepolia, CRISPProgram uses the deployer address
+   (`0x8837e47c4Bb520ADE83AAB761C3B60679443af1B`) as the signer. The server `PRIVATE_KEY` must be
+   the key of that address.
 5. Schedule voting after the current on-chain committee setup budget. The server reads that bound
    from `CRISPProgram.earliestVotingStart()` and adds `VOTING_START_BUFFER_SECONDS` for transaction
    mining. `E3_DURATION` starts at that fixed voting time; it covers voting plus the VectorX
@@ -261,16 +271,23 @@ as an explicit acknowledgement that CRISP is unusable until the DAO batch is exe
 Keep E3 requests paused throughout that interval.
 
 The server first validates the Noir proof and durably stores the exact encrypted bytes. It signs a
-compact proof commitment only after storage succeeds. On mainnet, the voter submits that commitment
-from their wallet and can then leave. The server publishes the ciphertext to Avail, waits for the
-official VectorX proof, and finalizes the input without the voter. The proof transaction reserves
-the input's tree index immediately, so masks and revotes can still extend it during the VectorX
-wait. CRISP refuses the aggregate computation while any input is not finalized.
+compact proof commitment only after storage succeeds. The server relays that commitment, or the
+voter submits it from their wallet, and the voter can then leave. Relaying is configurable in
+`server/.env.example`, and it is off on Ethereum mainnet by default. The server publishes the
+ciphertext to Avail, waits for the official VectorX proof, and finalizes the input without the
+voter. The proof transaction reserves the input's tree index immediately, so masks and revotes can
+still extend it during the VectorX wait. CRISP refuses the aggregate computation while any input is
+not finalized.
 
-The service accepts only one not-yet-committed input per round and voting slot. It also limits the
-total bytes held by unfinished jobs. These controls bound abandoned signed inputs without deleting
-data that Ethereum already accepted. After Avail and Ethereum accept an object, the service removes
-its staging copy because Avail is then the recovery source.
+The relay has per-slot and per-round limits, and anyone can use up the relayed inputs of a slot with
+masks. Past a limit, the voter's wallet sends the commitment, which shows the voter's address. The
+voter must confirm it before the commitment cutoff of the round: stay on the page, or come back and
+repeat the action. Otherwise the input is lost.
+
+Each distinct input gets its own job, so a pending mask cannot block a vote for the same slot. The
+service limits the total bytes held by unfinished jobs, which bounds abandoned signed inputs without
+deleting data that Ethereum already accepted. After Avail and Ethereum accept an object, the service
+removes its staging copy because Avail is then the recovery source.
 
 The aggregate ciphertext follows the Avail and VectorX path after its RISC Zero proof is ready.
 

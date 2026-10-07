@@ -13,17 +13,17 @@ const PRINCIPLES = [
   {
     icon: Keyhole,
     label: 'Private',
-    body: 'Voter privacy through fully homomorphic encryption — ballots are encrypted before they ever leave your device.',
+    body: 'Ballots are encrypted with fully homomorphic encryption before they leave your device. No single committee member can decrypt them.',
   },
   {
     icon: ListMagnifyingGlass,
     label: 'Reliable',
-    body: 'Verifiable results while preserving confidentiality. The tally is computed on ciphertext and proven correct.',
+    body: 'Verifiable results. The tally is computed on ciphertext and proven correct, and only the combined result is decrypted.',
   },
   {
     icon: ShieldCheck,
     label: 'Equitable',
-    body: 'Robust safeguards against coercion and tampering, with a threshold committee that no single party controls.',
+    body: 'A threshold committee that no single party controls holds the key. Masks make votes, updates, and masks look the same on-chain, which weakens vote receipts.',
   },
 ]
 
@@ -40,8 +40,8 @@ const HeroSection: React.FC = () => {
                 <MarkerUnderline>Crisp</MarkerUnderline>
               </h1>
               <p className='lede' style={{ maxWidth: 'none' }}>
-                Secret-ballot voting you can actually verify. Cast an encrypted vote, let a threshold committee open only the final tally —
-                and nobody, not even the people running the election, learns how you voted.
+                Encrypted voting you can verify. Cast an encrypted vote, and a threshold committee decrypts only the final tally. The tally
+                is public, so in a small or one-sided poll it can show how people voted.
               </p>
             </div>
 
@@ -84,7 +84,8 @@ const HeroSection: React.FC = () => {
               <Cipher seed={7} length={320} blockSize={4} highlight />
               <div className='hr-soft' />
               <span className='mono-sm muted'>
-                This is what a vote looks like on-chain — opaque to everyone, tallied without ever being decrypted.
+                This is what a vote looks like on-chain: ciphertext that no single committee member can decrypt. Only the combined tally is
+                decrypted.
               </span>
             </div>
           </div>

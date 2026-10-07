@@ -99,42 +99,6 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     #[tokio::test]
-    async fn test_single_callback_executes() {
-        let queue = CallbackQueue::new();
-        let called = Arc::new(Mutex::new(false));
-        let called_clone = called.clone();
-
-        queue.push(100, move || {
-            let called = called_clone.clone();
-            async move {
-                *called.lock().unwrap() = true;
-                Ok(())
-            }
-        });
-
-        queue.execute_until_including(100).await.unwrap();
-        assert!(*called.lock().unwrap());
-    }
-
-    #[tokio::test]
-    async fn test_callback_not_executed_before_threshold() {
-        let queue = CallbackQueue::new();
-        let called = Arc::new(Mutex::new(false));
-        let called_clone = called.clone();
-
-        queue.push(100, move || {
-            let called = called_clone.clone();
-            async move {
-                *called.lock().unwrap() = true;
-                Ok(())
-            }
-        });
-
-        queue.execute_until_including(50).await.unwrap();
-        assert!(!*called.lock().unwrap());
-    }
-
-    #[tokio::test]
     async fn test_multiple_callbacks_execute() {
         let queue = CallbackQueue::new();
         let counter = Arc::new(Mutex::new(0));

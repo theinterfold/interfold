@@ -34,3 +34,80 @@ async fn historical_evm_collection_returns_only_after_every_chain_reports() {
 
     assert_eq!(events.len(), 5);
 }
+
+/// Answers a peer-history request with a failure, as the network does when no peer serves the
+/// history that startup requires.
+struct FailingPeerHistory;
+
+impl actix::Actor for FailingPeerHistory {
+    type Context = actix::Context<Self>;
+}
+
+impl actix::Handler<InterfoldEvent> for FailingPeerHistory {
+    type Result = ();
+
+    fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
+        if let InterfoldEventData::HistoricalNetSyncStart(start) = msg.into_data() {
+            if let Some(failure) = start.failure {
+                failure
+                    .try_send(HistoricalNetSyncFailed {
+                        reason: "no peer served aggregate 1".to_string(),
+                    })
+                    .unwrap();
+            }
+        }
+    }
+}
+
+#[actix::test]
+async fn failed_peer_history_fetch_stops_startup_at_once() -> anyhow::Result<()> {
+    use actix::Actor;
+
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle()?.enable("test-failed-peer-history");
+    bus.subscribe(
+        EventType::HistoricalNetSyncStart,
+        FailingPeerHistory.start().recipient(),
+    );
+
+    let error = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        fetch_peer_history(
+            &bus,
+            BTreeMap::from([(AggregateId::new(1), 0)]),
+            Default::default(),
+        ),
+    )
+    .await?
+    .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "startup peer history fetch failed: no peer served aggregate 1"
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn peer_history_wait_ignores_a_closed_failure_channel() -> anyhow::Result<()> {
+    // A successful fetch drops the failure recipient, which can close the channel before the
+    // history arrives.
+    let (failure, failed) = tokio::sync::oneshot::channel::<HistoricalNetSyncFailed>();
+    drop(failure);
+    let historical = InterfoldEvent::<Unsequenced>::test_event("historical")
+        .id(1)
+        .build();
+    let received = InterfoldEvent::<Unsequenced>::test_event("net-history")
+        .data(HistoricalNetSyncEventsReceived::new(vec![historical]))
+        .seq(1)
+        .build();
+    let history = async move {
+        tokio::task::yield_now().await;
+        Ok(received)
+    };
+
+    let events = await_peer_history(history, failed).await?;
+
+    assert_eq!(events.len(), 1);
+    Ok(())
+}

@@ -4,16 +4,22 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::prelude::*;
 use crate::AggregateId;
+use crate::EventId;
 use crate::{EvmEventConfig, EvmEventConfigChain};
 use actix::{Message, Recipient};
 use anyhow::Context;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::{self, Display};
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 use super::InterfoldEvent;
+use super::InterfoldEventData;
 use super::Unsequenced;
 
 /// Dispatched by the Sync actor when initial data is read and the sync process needs to be started
@@ -59,16 +65,120 @@ impl Display for HistoricalEvmSyncStart {
 }
 
 /// Dispatched by the Sync actor when initial data is read and the sync process needs to be started
-#[derive(Message, Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Message, Debug, Clone, Serialize, Deserialize)]
 #[rtype(result = "()")]
 pub struct HistoricalNetSyncStart {
     pub since: BTreeMap<AggregateId, u128>,
+
+    #[serde(skip)]
+    /// Receives the failure of a required history fetch, so startup can stop before its deadline.
+    /// Must be Option for serde. The event is local to this process, so the field is never
+    /// shared.
+    pub failure: Option<Recipient<HistoricalNetSyncFailed>>,
+
+    #[serde(skip)]
+    /// The timestamps of the events that startup publishes with the peer history, such as its
+    /// historical EVM events, per aggregate. The event store holds one event at a timestamp, so a
+    /// peer's event must not take one of them unless it is the same event. Local to this process,
+    /// like `failure`.
+    pub reserved: Arc<ReservedTimestamps>,
+}
+
+/// Timestamps that events already hold, per aggregate.
+pub type ReservedTimestamps = BTreeMap<AggregateId, HashMap<u128, TimestampClaim>>;
+
+/// The event that holds a timestamp: its ID, and the SHA-256 digest of its payload's encoding.
+/// The event store takes another copy at that timestamp only when the copy's ID and payload equal
+/// the stored event's, so an event at that timestamp is the same event only when its ID and its
+/// payload digest equal these. The ID alone cannot stand for the payload: it hashes a 64-bit
+/// digest of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TimestampClaim {
+    pub id: EventId,
+    pub payload: [u8; 32],
+}
+
+impl TimestampClaim {
+    /// The claim of `event` on its timestamp.
+    pub fn of<S: crate::SeqState>(event: &InterfoldEvent<S>) -> Result<Self> {
+        Ok(Self {
+            id: event.id(),
+            payload: payload_digest(event.get_data())?,
+        })
+    }
+
+    /// Whether `event` is the event that holds the timestamp.
+    pub fn admits<S: crate::SeqState>(&self, event: &InterfoldEvent<S>) -> Result<bool> {
+        Ok(self.id == event.id() && self.payload == payload_digest(event.get_data())?)
+    }
+}
+
+/// The SHA-256 digest of a payload's bincode encoding. Equal payloads encode alike: no payload
+/// holds a hash map, and a field that the encoding skips is outside payload equality or, in a
+/// decoded payload such as a peer's, at its default.
+fn payload_digest(data: &InterfoldEventData) -> Result<[u8; 32]> {
+    let encoded = bincode::serialize(data).context("failed to encode an event payload")?;
+    Ok(Sha256::digest(encoded).into())
 }
 
 impl HistoricalNetSyncStart {
     pub fn new(since: BTreeMap<AggregateId, u128>) -> Self {
-        Self { since }
+        Self {
+            since,
+            failure: None,
+            reserved: Arc::default(),
+        }
     }
+
+    /// Reserve the timestamps of the events that startup publishes with the peer history.
+    pub fn with_reserved(mut self, reserved: ReservedTimestamps) -> Self {
+        self.reserved = Arc::new(reserved);
+        self
+    }
+
+    pub fn with_failure_recipient(
+        mut self,
+        failure: impl Into<Recipient<HistoricalNetSyncFailed>>,
+    ) -> Self {
+        self.failure = Some(failure.into());
+        self
+    }
+}
+
+// The failure recipient is local to this process and is not stored, so the event ID and payload
+// equality depend only on `since`. A stored copy then equals its redelivered original, which the
+// EventStore duplicate rule requires. Both impls name every field, so a new field does not compile
+// until it is placed in or out of the identity here.
+impl Hash for HistoricalNetSyncStart {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let Self {
+            since,
+            failure: _,
+            reserved: _,
+        } = self;
+        since.hash(state);
+    }
+}
+
+impl PartialEq for HistoricalNetSyncStart {
+    fn eq(&self, other: &Self) -> bool {
+        let Self {
+            since,
+            failure: _,
+            reserved: _,
+        } = self;
+        *since == other.since
+    }
+}
+
+impl Eq for HistoricalNetSyncStart {}
+
+/// Sent to the `HistoricalNetSyncStart` failure recipient when no peer served the history that
+/// startup requires.
+#[derive(Message, Debug, Clone)]
+#[rtype(result = "()")]
+pub struct HistoricalNetSyncFailed {
+    pub reason: String,
 }
 
 impl Display for HistoricalNetSyncStart {
@@ -111,5 +221,34 @@ impl HistoricalNetSyncEventsReceived {
 impl Display for HistoricalNetSyncEventsReceived {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{EventContext, EventSource, TestEvent};
+
+    /// `label`'s test event under the ID `id`.
+    fn labeled(label: &str, id: EventId) -> InterfoldEvent<Unsequenced> {
+        InterfoldEvent {
+            payload: TestEvent::new(label, 1).into(),
+            ctx: EventContext::new_origin(id, 70, AggregateId::new(1), None, EventSource::Net),
+        }
+    }
+
+    /// A claim admits its own event only: another payload under the claimed ID, as an ID
+    /// collision gives, is another event to the event store.
+    #[test]
+    fn a_claim_admits_only_its_own_payload_under_its_own_id() {
+        let id = EventId::hash("stored");
+        let stored = labeled("stored", id);
+        let claim = TimestampClaim::of(&stored).unwrap();
+
+        assert!(claim.admits(&stored).unwrap());
+        assert!(!claim.admits(&labeled("other", id)).unwrap());
+        assert!(!claim
+            .admits(&labeled("stored", EventId::hash("other")))
+            .unwrap());
     }
 }

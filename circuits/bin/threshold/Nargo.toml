@@ -29,4 +29,5 @@ members = [
     "ct1_eval_chunk_identity",
     "share_decryption",
     "decrypted_shares_aggregation",
+    "decrypted_shares_aggregation_wide",
 ]

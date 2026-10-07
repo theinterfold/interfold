@@ -1,0 +1,9 @@
+[
+  ["insecure", "minimum"],
+  ["insecure", "micro"],
+  ["insecure", "small"],
+  ["secure-8192", "minimum"],
+  ["secure-8192", "micro"],
+  ["secure-8192", "small"],
+  ["secure-16384", "minimum"]
+]

@@ -123,19 +123,29 @@ impl ShareVerificationActor {
         party_id: u64,
         ec: &EventContext<Sequenced>,
     ) {
-        let faulting_node = match recovered_addr {
-            Some(addr) => addr,
-            None => match signed_payload.recover_address() {
-                Ok(addr) => addr,
-                Err(err) => {
-                    warn!(
-                        "Signature recovery failed for party {} — using zero address for fault attribution: {err}",
-                        party_id
-                    );
-                    Address::ZERO
-                }
-            },
+        // Recover this payload itself; another proof's cached signer is not evidence.
+        let Ok(faulting_node) = signed_payload.recover_address() else {
+            warn!(
+                party_id,
+                "Dropping proof failure without a recoverable signature"
+            );
+            return;
         };
+        let expected = self.committees.get(e3_id).and_then(|committee| {
+            usize::try_from(party_id)
+                .ok()
+                .and_then(|party| committee.get(party))
+        });
+        if signed_payload.payload.e3_id != *e3_id
+            || expected != Some(&faulting_node)
+            || recovered_addr.is_some_and(|address| address != faulting_node)
+        {
+            warn!(
+                party_id,
+                "Dropping proof failure without authenticated party ownership"
+            );
+            return;
+        }
 
         if let Err(err) = self.bus.publish(
             SignedProofFailed {

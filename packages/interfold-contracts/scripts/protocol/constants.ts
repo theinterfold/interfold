@@ -3,6 +3,8 @@ import { ethers as ethersLib } from "ethers";
 
 export const ZERO = ethersLib.ZeroAddress;
 export const ADDRESS_ONE = "0x0000000000000000000000000000000000000001";
+export const LEGACY_MAINNET_SECURE_PARAM_SET_HASH =
+  "0xd7068fdcc1910f5e49c8b05530cf74f876cadee2a1caf797a40b1ae53ae143ec";
 
 export const abi = ethersLib.AbiCoder.defaultAbiCoder();
 

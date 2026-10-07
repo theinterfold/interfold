@@ -24,7 +24,7 @@ use bb_proof_verification::{
     UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
     verify_honk_proof_non_zk,
 };
-use lib::configs::default::threshold::{L, N, QIS, USER_DATA_ENCRYPTION_K0IS};
+use lib::configs::default::threshold::{L, N, QIS, USER_DATA_ENCRYPTION_CHUNKED_K0IS};
 
 // `ct0_eval_chunk_main_root` public inputs: leaf key hash, gamma, 5 roots, u_at_gamma,
 // k1_at_gamma, then e0is/r2i/r1i evaluations (L each).
@@ -83,7 +83,7 @@ fn main(
     let mut sum = (0, 0);
     for i in 0..L {
         let mut ct0_rhs = pk0is_at_gamma[i] * u_at_gamma + e0is_at_gamma[i];
-        ct0_rhs += k1_at_gamma * USER_DATA_ENCRYPTION_K0IS[i];
+        ct0_rhs += k1_at_gamma * USER_DATA_ENCRYPTION_CHUNKED_K0IS[i];
         ct0_rhs += r1i_at_gamma[i] * QIS[i];
         ct0_rhs += r2i_at_gamma[i] * cyclo_at_gamma;
 

@@ -39,6 +39,15 @@ impl SequenceIndex for InMemSequenceIndex {
     fn get(&self, key: u128) -> Result<Option<u64>> {
         Ok(self.index.get(&key).copied())
     }
+
+    fn range_from(&self, key: u128, limit: usize) -> Result<Vec<(u128, u64)>> {
+        Ok(self
+            .index
+            .range(key..)
+            .take(limit)
+            .map(|(&ts, &seq)| (ts, seq))
+            .collect())
+    }
 }
 
 #[cfg(test)]

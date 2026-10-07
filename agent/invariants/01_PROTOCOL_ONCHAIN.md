@@ -43,13 +43,35 @@ every section.
   owner's history by a checkpoint per block. — `BondingRegistry.sol`; `BondedCheckpoints.sol`;
   `flow-trace/02`
 - **The numerator comes from the votes source; the denominator is always the token.**
-  `BondedVotes.getPastVotes` sums whatever `votesSource` attributes to the account and that
-  account's bonded FOLD, while `getPastTotalSupply` passes the **token's** supply through unchanged.
-  `votesSource` is either the token itself (wallet-held FOLD votes, the original behaviour) or an
-  escrow adapter (only locked FOLD votes, so holders must lock to participate while operators keep
-  weight by bonding). Reading the denominator off the escrow instead would omit the bonded half and
-  let participation exceed 100%. Summed voting power must never exceed total supply. —
-  `BondedVotes.sol`; `flow-trace/02`
+  `BondedVotes.getPastVotes` sums whatever `votesSource` attributes to the account and the bonded
+  weight that the account holds or represents, while `getPastTotalSupply` passes the **token's**
+  supply through unchanged. `votesSource` is either the token itself (wallet-held FOLD votes, the
+  original behaviour) or an escrow adapter (only locked FOLD votes, so holders must lock to
+  participate while operators keep weight by bonding). Reading the denominator off the escrow
+  instead would omit the bonded half and let participation exceed 100%. Summed voting power must
+  never exceed total supply. — `BondedVotes.sol`; `flow-trace/02`
+- **Bonded delegation moves weight; it never copies it.** An owner's bonded weight is its bonded
+  FOLD, plus its vesting-locked FOLD under an escrow source. At every timepoint it counts at the
+  owner or at exactly one delegate. Two functions write the links, each at the token's clock in one
+  call, so the owner-to-delegate link and the delegate's slot never disagree: `acceptBonded` sets
+  both, and `_unlink` clears both. `acceptBonded` does not clear an earlier delegate. It relies on
+  the rule that an owner with a pending request has no delegate: `delegateBonded` unlinks the
+  current delegate before it records a request. Any new way to record a request must unlink first,
+  or the owner's weight counts at two delegates. A change never moves weight for a timepoint that
+  has settled, and `getPastVotes` rejects an unsettled timepoint for the same reason. The weight
+  moves only when the delegate calls `acceptBonded` for an owner that asked it with
+  `delegateBonded`. A request alone moves nothing, so nobody can push weight onto an account or take
+  its place. A delegate represents at most `MAX_BONDED_OWNERS` (three) owners, one per slot: bonded
+  weight is read again from its sources on every call, and each represented owner costs a full read,
+  so the cap bounds the cost of every vote. Only the owner or its current delegate can end a
+  delegation; `dropBonded(owner)` checks the caller, because without that check any account could
+  give an owner's weight back and end its delegation. Escrowed FOLD keeps the escrow's delegation
+  and wallet FOLD the token's; moving either one here too would count it twice. Every change emits
+  `BondedDelegateChanged`, not the IVotes `DelegateChanged`, whose readers expect `delegates()` to
+  agree. The CRISP census finds bonded delegates only through that event: without it, a token-census
+  round silently drops the delegated weight. Delegations live in the adapter, so a replacement
+  adapter starts with none. — `BondedVotes.sol`;
+  `examples/CRISP/server/src/server/token_holders/etherscan.rs`; `flow-trace/02`
 - **Escrowed and bonded FOLD cannot overlap; vesting-locked and bonded do, and must be netted.**
   Escrowing custodies the token in the escrow and bonding custodies it in the registry, so no token
   can be in both. Both were transferred rather than burned, so both are still inside the token's
@@ -170,13 +192,13 @@ every section.
   statuses in O(1). New committee requests wait for a check of every registration captured at that
   change, including inactive results. Duplicates and later registrations cannot settle another
   member's check. Deregistration settles the departing member. Rust uses source block seconds from
-  `ConfigurationUpdatedAt` and `OperatorActivationChangedAt`, never the merged event clock, and must
-  invalidate its activity view on every version bump. **Gap:** of these parameters only
-  `ciphernodeBondActiveBps` and `minTicketBalance` emit `ConfigurationUpdated`. Asset-configuration
-  and node-release changes bump the version through `BondingAssetConfigUpdated` and
-  `EligibilityConfigurationVersionUpdated`, which Rust does not consume
-  (`crates/evm/src/bonding_registry/events.rs`, `crates/sortition/src/sortition/node_registry.rs`).
-  — `BondingRegistry.sol`; INDEX concern #24
+  the `...At` events (configuration, eligibility version, bonding asset, activation), never the
+  merged event clock, and must invalidate its activity view on every version bump. Every bump emits
+  `EligibilityConfigurationVersionUpdated` (`BondingEligibilityLib.invalidateConfiguration`),
+  including asset-configuration and node-release changes, and Rust invalidates on it.
+  `BondingAssetConfigUpdated` sets the local ticket price. — `BondingRegistry.sol`;
+  `crates/evm/src/bonding_registry/events.rs`; `crates/sortition/src/sortition/node_registry.rs`;
+  INDEX concern #24
 - **Mandatory release policy changes are paused, drained, and monotonic:** governance may raise the
   required protocol version or node generation only while requests are paused, `activeE3Count == 0`,
   and `unreleasedCommitteeCount == 0`. The change invalidates every cached operator status in O(1).
@@ -194,17 +216,19 @@ every section.
   must preserve the complete `uint256`. Public-key chunk publication resolves the controller from
   `e3Id >> 96`. — `Interfold.initialize`; `RegistrySortitionLib.sol`; `flow-trace/03`
 - A request can select only the parameter set and committee shape in `ActiveCryptoConfig.sol`.
-  Mainnet supports `secure-8192` with `minimum`, `micro`, and `small` committees. Sepolia and local
-  chains support `insecure` and `secure-8192` with `minimum`, `micro`, and `small` committees;
-  `secure-16384` currently supports the `minimum` committee only because its V2 verifier route is
-  available only for that pair. Governance cannot enable a different parameter hash, `[H, N]`, or
-  verifier threshold without rebuilding the circuits and contracts for that pair. The request
-  supplies the expected configuration ID, which binds the scheme, parameter hash, and circuit
-  version; committee size is snapshotted separately. Solidity snapshots the ID, and Rust rejects an
-  event or stored E3 when `cryptoConfigId != expectedCryptoConfigId`. BFV verifier mappings may
-  point at routers, which dispatch by the E3 parameter set, public-input length, and VK hash anchors
-  to the concrete verifier for the generated pair. `committeeThresholds[size]` stores `[H, N]`;
-  pricing charges decryption by H, not circuit threshold T. The current circuit identity label is
+  Parameter-set indices are 0 (`insecure`), 2 (`secure-8192`), and 3 (`secure-16384`). Index 1 is
+  retired and stays only for older E3s. Mainnet supports `secure-8192` with `minimum`, `micro`, and
+  `small` committees. Sepolia and local chains support `insecure` and `secure-8192` with `minimum`,
+  `micro`, and `small` committees; `secure-16384` currently supports the `minimum` committee only
+  because its V2 verifier route is available only for that pair. Governance cannot enable a
+  different parameter hash, `[H, N]`, or verifier threshold without rebuilding the circuits and
+  contracts for that pair. The request supplies the expected configuration ID, which binds the
+  scheme, parameter hash, and circuit version; committee size is snapshotted separately. Solidity
+  snapshots the ID, and Rust rejects an event or stored E3 when
+  `cryptoConfigId != expectedCryptoConfigId`. BFV verifier mappings may point at routers, which
+  dispatch by the E3 parameter set, public-input length, and VK hash anchors to the concrete
+  verifier for the generated pair. `committeeThresholds[size]` stores `[H, N]`; pricing charges
+  decryption by H, not circuit threshold T. The current circuit identity label is
   `interfold-bfv-v2`. It changes each configuration ID without changing the parameter hash or
   committee matrix. At request time `t_req`, N cannot exceed the active-operator checkpoint at
   `t_req − 1`, and `committeeOwnerCapacity(t_req − 1)` must be at least N. — `flow-trace/03`
@@ -216,36 +240,38 @@ every section.
   that pair. — `BfvPkVerifierRouter.sol`; `protocol/deployContracts.ts`; `flow-trace/04`
 - Mainnet CRISP activation is one paused and drained governance batch. It upgrades Interfold to the
   secure crypto configuration, applies the complete timeout configuration, installs every secure BFV
-  verifier route, registers secure BFV parameters, wires the receipt verifier, registers CRISP,
-  binds CRISP, and raises the required node protocol version. The partial CRISP-only builder must
-  not run on mainnet. Old nodes become ineligible in the activation transaction. The CRISP program
-  and ciphertext verifier image IDs must both equal the RISC Zero image generated by the same
-  release source. Requests remain paused until the activation validator confirms the live timeout
-  configuration and all other activation state, and enough matching release-ready nodes are online.
-  — `scripts/upgrade/secureCrisp.ts`; `scripts/upgrade/validateSecureCrisp.ts`; `flow-trace/07`
-- Sortition score must be identical on- and off-chain:
-  `score = keccak256(abi.encodePacked(operator, ticketNumber, e3Id, seed))`, where
-  `seed = keccak256(abi.encode(randomWord, chainid, registry, e3Id, requestId))`.
-  **Gap:** Rust reverses the VRF seed bytes before scoring (`crates/evm/src/randomness_provider/events.rs`,
-  `crates/sortition/src/sortition/ticket.rs`). A request keeps the best submission per request-time
-  bond owner, then selects the lowest N owner scores. Ties use ascending operator addresses. Each E3
-  freezes one `IRandomnessProvider` request, response deadline, and submission window after the paid
-  request is stored. The production provider uses Chainlink VRF v2.5 subscription funding. It never
-  re-requests an E3, checks the configured subscription balance floor before requesting, and the
-  Registry rejects responses from the Ethereum request block, future-dated responses, and late
-  responses. This release supports Ethereum mainnet, Sepolia, and local development chains only. The
-  provider reserves the subscription balance floor for each unfulfilled draw, thus a burst of
-  requests in one block cannot all pass the same balance check. A request that expires without a
-  usable response sets an advisory `degraded` flag and emits `RandomnessCircuitBreakerTripped`. It
-  does not clear the active provider, because that path is permissionless and registry-global.
-  Governance reads the flag and re-points the provider, which clears it. A timely accepted response
-  remains readable after terminal cleanup so fresh historical replay derives the same committee
-  request; late responses remain unusable. Rust reads the accepted seed and request context at the
-  fulfillment block. If historical block state is unavailable, it accepts retained current state
-  only when the Registry still reports the seed as ready. Unverifiable state rejects the log and
-  fails closed for replay. Governance can change the provider or response timeout only while
-  requests are paused and all committee obligations are released. The E3 computation seed remains
-  separate. — `flow-trace/03`
+  verifier route, registers secure BFV parameters at index 2 without changing historical index 1,
+  wires the receipt verifier, registers CRISP, binds CRISP, and raises the required node protocol
+  version. The partial CRISP-only builder must not run on mainnet. Old nodes become ineligible in
+  the activation transaction. The CRISP program and ciphertext verifier image IDs must both equal
+  the RISC Zero image generated by the same release source. Requests remain paused until the
+  activation validator confirms the live timeout configuration and all other activation state, and
+  enough matching release-ready nodes are online. — `scripts/upgrade/secureCrisp.ts`;
+  `scripts/upgrade/validateSecureCrisp.ts`; `flow-trace/07`
+- Sortition score must be byte-identical on- and off-chain:
+  `score = keccak256(abi.encodePacked(operator, ticketNumber, e3Id, seed))` with `seed` as a
+  `uint256`, where `seed = keccak256(abi.encode(randomWord, chainid, registry, e3Id, requestId))`.
+  Rust stores the VRF-path seed with `Seed::from(U256)`, the little-endian order that
+  `hash_to_score` decodes (`crates/evm/src/randomness_provider/events.rs`,
+  `crates/sortition/src/sortition/ticket.rs`). New requests keep the best submission per
+  request-time bond owner, then the lowest N owner scores. Owner-capped requests break ties by
+  ascending operator address. Each E3 freezes one `IRandomnessProvider` request, response deadline,
+  and submission window after the paid request is stored. The production provider uses Chainlink VRF
+  v2.5 subscription funding. It never re-requests an E3, checks the configured subscription balance
+  floor before requesting, and the Registry rejects responses from the Ethereum request block,
+  future-dated responses, and late responses. This release supports Ethereum mainnet, Sepolia, and
+  local development chains only. The provider reserves the subscription balance floor for each
+  unfulfilled draw, thus a burst of requests in one block cannot all pass the same balance check. A
+  request that expires without a usable response sets an advisory `degraded` flag and emits
+  `RandomnessCircuitBreakerTripped`. It does not clear the active provider, because that path is
+  permissionless and registry-global. Governance reads the flag and re-points the provider, which
+  clears it. A timely accepted response remains readable after terminal cleanup so fresh historical
+  replay derives the same committee request; late responses remain unusable. Rust reads the accepted
+  seed and request context at the fulfillment block. If historical block state is unavailable, it
+  accepts retained current state only when the Registry still reports the seed as ready.
+  Unverifiable state rejects the log and fails closed for replay. Governance can change the provider
+  or response timeout only while requests are paused and all committee obligations are released. The
+  E3 computation seed remains separate. — `flow-trace/03`
 - **Per-E3 sortition state is immutable:** for request timestamp `T`, the request-time eligible
   count, each operator's eligibility, and each ticket balance come from `T-1`. The request also
   freezes `ticketPrice`, and Rust consumes the same timepoint and price. Current registration and
@@ -315,10 +341,13 @@ every section.
   its own rounds after the requester paid. `MockE3Program` is the stateless bootstrap option. It has
   no administrative controls and applies no application rules. Its deterministic test receipt is not
   production data availability, so keep requests paused until a production program is registered and
-  wired; no contract enforces this. The request-time BFV ciphertext verifier and decryption verifier
+  wired; no contract enforces this. The protocol deploy scripts create `MockE3Program` and
+  `DeployableMockCiphertextVerifier` only on Sepolia and local chains
+  (`assertMockDeploymentAllowed`). The request-time BFV ciphertext verifier and decryption verifier
   remain mandatory. Its mutable failure controls live only in `MockE3ProgramHarness`. A protocol
   upgrade that makes the program interface incompatible must retire every incompatible bootstrap
-  program before requests resume. — `Interfold.sol`; `MockE3Program.sol`; `flow-trace/03`
+  program before requests resume. — `Interfold.sol`; `MockE3Program.sol`;
+  `scripts/protocol/values.ts`; `flow-trace/03`
 - **Data availability binds per program and per round:** Interfold holds no protocol-level
   data-availability verifier; it delegates to `IE3ProgramDataAvailability(e3Program)`. A production
   program must freeze each round's data-availability binding; CRISP holds its verifier as an
@@ -463,12 +492,22 @@ every section.
   `flow-trace/04`, `05`; INDEX concerns Z-32, ZEN2-04, ZEN2-26
 - Accusation quorum: `agree_count >= H`; the implementation derives `H` from the committee enum
   because the legacy E3 field `threshold_m` carries circuit threshold `T`. Voters must be active
-  committee members, and all votes must agree. Lane A is **attestation-based** (ECDSA per voter),
-  not on-chain ZK re-verification. Vote digest / EIP-712 type hashes must match the Solidity
-  constants exactly (Rust ↔ Solidity). — `flow-trace/05`; `SlashingManager.sol`
+  committee members, and all votes must agree. Local accusations reject the accuser's own address or
+  finalized party ID. Received accusations reject equal signed accuser and accused addresses.
+  `accused_party_id` is not in the accusation digest and cannot decide received self-accusation
+  admission. Forwarded payloads are admitted only for C3a/C3b; other proof types require local
+  evidence without a forwarded payload. These checks precede evidence caching, vote creation, and
+  pending-window changes in `AccusationVoting`; each input passes its typed admission check
+  (`crates/slashing/src/accusation_voting/transitions/admission.rs`) before a transition uses it.
+  Lane A is **attestation-based** (ECDSA per voter), not on-chain ZK re-verification. Vote digest /
+  EIP-712 type hashes must match the Solidity constants exactly (Rust ↔ Solidity). —
+  `flow-trace/05`; `SlashingManager.sol`
 - Staggered slash submission: agreeing voters rank by ascending address. Ranks 0–2 submit, and rank
-  N waits N × 30 s. Restarts must not reset the fallback delay. **Gap:** the slashing writer
-  persists the intent but not its due time, so a restart waits the full delay again
+  N waits N × 30 s. Every node reads the policy first: a disabled policy excludes the member locally
+  on every node, and a failed read never invents an exclusion. These decisions are one pure workflow
+  (`SlashSubmission` in `crates/evm/src/slashing_writing/workflow.rs`); the writer only runs its
+  effects. Restarts must not reset the fallback delay. **Gap:** the slashing writer persists the
+  intent but not its due time, so a restart waits the full delay again
   (`crates/evm/src/slashing_writing/handlers.rs`). — `flow-trace/05`
 - **Deferred-slash collateral gate:** every manager atomically records proposal locks in
   `BondingRegistry`. Ticket withdrawal, ciphernode bond unbonding, deregistration, and exit claims

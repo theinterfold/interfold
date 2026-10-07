@@ -5,6 +5,133 @@
 use super::*;
 
 impl ThresholdKeyshare {
+    /// Route a C4 share. A peer's share passes `validation::admit_peer_decryption_key_share`, is
+    /// saved for recovery, and goes to early buffering or to the C4 collector. This node's own share
+    /// can complete C4 directly when it is the only honest party.
+    pub(in crate::actors::threshold_keyshare) fn handle_decryption_key_shared(
+        &mut self,
+        data: DecryptionKeyShared,
+        ec: EventContext<Sequenced>,
+        self_addr: Addr<Self>,
+    ) {
+        if !data.external {
+            return self.handle_own_decryption_key_share(data, ec);
+        }
+        let dealer = self
+            .dkg_dealer_address(&data.e3_id, data.party_id)
+            .ok()
+            .flatten();
+        let Some(state) = self.state.get() else {
+            warn!(
+                party_id = data.party_id,
+                e3_id = %data.e3_id,
+                "Dropping decryption key share without its dealer's signature"
+            );
+            return;
+        };
+        let recovery = match self.recovery.try_get() {
+            Ok(recovery) => recovery,
+            Err(err) => {
+                error!("Failed to inspect DecryptionKeyShared recovery state: {err}");
+                return;
+            }
+        };
+        let admission = validation::admit_peer_decryption_key_share(
+            &data,
+            dealer,
+            &state,
+            &recovery,
+            self.decryption_key_shared_collector.is_some(),
+        );
+        if let Err(rejection) = admission {
+            use validation::DecryptionKeyShareRejection as Rejection;
+            match rejection {
+                Rejection::UnsignedDealer => warn!(
+                    party_id = data.party_id,
+                    e3_id = %data.e3_id,
+                    "Dropping decryption key share without its dealer's signature"
+                ),
+                Rejection::ExpelledDealer => info!(
+                    "Dropping DecryptionKeyShared from expelled party {}",
+                    data.party_id
+                ),
+                Rejection::InvalidSender => warn!(
+                    party_id = data.party_id,
+                    e3_id = %data.e3_id,
+                    "Dropping DecryptionKeyShared with an invalid sender party"
+                ),
+                Rejection::OutsideHonestCommittee => warn!(
+                    party_id = data.party_id,
+                    e3_id = %data.e3_id,
+                    "Dropping DecryptionKeyShared from outside the honest committee"
+                ),
+                Rejection::CollectionComplete => trace!(
+                    party_id = data.party_id,
+                    e3_id = %data.e3_id,
+                    "Ignoring DecryptionKeyShared after C4 collection completed"
+                ),
+            }
+            return;
+        }
+        let recovered_event = TypedEvent::new(data.clone(), ec.clone());
+        if let Err(err) = self.record_decryption_key_share(&recovered_event) {
+            error!("Failed to persist DecryptionKeyShared recovery input: {err}");
+            return;
+        }
+        let result = match &state.state {
+            KeyshareState::AggregatingDecryptionKey(_) => {
+                self.handle_early_decryption_key_share(data, ec)
+            }
+            KeyshareState::ReadyForDecryption(_) => self
+                .ensure_decryption_key_shared_collector(self_addr)
+                .map(|collector| {
+                    collector.do_send(TypedEvent::new(data, ec));
+                }),
+            other => {
+                trace!(
+                    "DecryptionKeyShared from party {} in unexpected state {:?}, ignoring",
+                    data.party_id,
+                    other.variant_name()
+                );
+                Ok(())
+            }
+        };
+        if let Err(err) = result {
+            error!("Failed to handle DecryptionKeyShared: {err}");
+        }
+    }
+
+    /// This node's own C4 share, published by ProofRequestActor. With no other honest party, it
+    /// completes C4 and publishes `KeyshareCreated` directly.
+    fn handle_own_decryption_key_share(
+        &mut self,
+        data: DecryptionKeyShared,
+        ec: EventContext<Sequenced>,
+    ) {
+        let Some(state) = self.state.get() else {
+            return;
+        };
+        if data.party_id != state.party_id
+            || !matches!(state.state, KeyshareState::ReadyForDecryption(_))
+        {
+            return;
+        }
+        let others = state
+            .honest_parties
+            .as_ref()
+            .map(|h| h.iter().filter(|&&pid| pid != state.party_id).count())
+            .unwrap_or(0);
+        if others == 0 {
+            info!(
+                "No other honest parties for E3 {} — publishing KeyshareCreated directly",
+                data.e3_id
+            );
+            if let Err(err) = self.publish_keyshare_created(ec) {
+                error!("Failed to publish KeyshareCreated: {err}");
+            }
+        }
+    }
+
     /// Dispatch C4 verification for all collected DecryptionKeyShared events.
     /// Shares are provided by the DecryptionKeySharedCollector.
     pub(in crate::actors::threshold_keyshare) fn dispatch_c4_verification(

@@ -8,7 +8,7 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::{Context, Result};
 use e3_crypto::{Cipher, SensitiveBytes};
 use e3_events::ThresholdShare;
-use e3_fhe_params::{BfvParamSet, BfvPreset, LambdaConfig};
+use e3_fhe_params::{BfvParamSet, BfvPreset};
 use e3_trbfv::{
     calculate_decryption_key::{
         calculate_decryption_key, CalculateDecryptionKeyRequest, CalculateDecryptionKeyResponse,
@@ -59,6 +59,7 @@ pub fn generate_shares_hash_map(
         bfv_secret_keys.push(sk);
         bfv_public_keys.push(pk);
     }
+    let recipient_share_indices: Vec<usize> = (0..threshold_n).collect();
 
     let mut shares_hash_map = HashMap::new();
     for party_id in 0u64..threshold_n as u64 {
@@ -75,7 +76,7 @@ pub fn generate_shares_hash_map(
                 GenPkShareAndSkSssRequest {
                     trbfv_config: trbfv_config.clone(),
                     crp: ArcBytes::from_bytes(&crp.to_bytes()),
-                    lambda: LambdaConfig::Insecure(2),
+                    lambda: BfvPreset::InsecureThreshold.lambda_config(),
                     num_ciphertexts: 1,
                     mult_depth: 0,
                 },
@@ -102,17 +103,27 @@ pub fn generate_shares_hash_map(
             .collect::<Result<_>>()?;
 
         // Encrypt shares for all recipients using BFV
-        let encrypted_sk_sss = BfvEncryptedShares::encrypt_all(
+        let (encrypted_sk_sss, _) = BfvEncryptedShares::encrypt_all_extended_for_share_indices(
             &decrypted_sk_sss,
             &bfv_public_keys,
+            &recipient_share_indices,
             &bfv_params,
             &mut bfv_rng,
+            None,
         )?;
 
         let encrypted_esi_sss: Vec<BfvEncryptedShares> = decrypted_esi_sss
             .iter()
             .map(|esi| {
-                BfvEncryptedShares::encrypt_all(esi, &bfv_public_keys, &bfv_params, &mut bfv_rng)
+                BfvEncryptedShares::encrypt_all_extended_for_share_indices(
+                    esi,
+                    &bfv_public_keys,
+                    &recipient_share_indices,
+                    &bfv_params,
+                    &mut bfv_rng,
+                    None,
+                )
+                .map(|(shares, _)| shares)
             })
             .collect::<Result<_>>()?;
 

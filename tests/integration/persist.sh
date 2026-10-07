@@ -2,154 +2,34 @@
 
 set -eu  # Exit immediately if a command exits with a non-zero status
 
-# Get the directory of the currently executing script
 THIS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-# Source the file from the same directory
-source "$THIS_DIR/fns.sh"
-source "$THIS_DIR/lib/utils.sh"
+# The base scenario, with the active aggregator stopped and started again after the committee
+# publishes its key. The round must still decrypt.
 
-heading "Start the EVM node"
+restart_active_aggregator() {
+  local active_agg_address active_agg
+  active_agg_address=$(wait_for_active_aggregator_address "$E3_ID")
+  if ! active_agg=$(node_name_for_address "$active_agg_address"); then
+    echo "Failed to resolve active aggregator node name for address: $active_agg_address" >&2
+    exit 1
+  fi
 
-launch_evm
-launch_mock_data_availability
+  if [[ -z "$active_agg" ]]; then
+    echo "Resolved empty active aggregator node name for address: $active_agg_address" >&2
+    exit 1
+  fi
 
-until curl -sf -X POST http://localhost:8545 -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' > /dev/null; do
-  sleep 1
-done
+  # kill active aggregator
+  interfold_nodes_stop "$active_agg"
 
-pnpm evm:clean
+  sleep 15
 
-if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
-  ENABLE_ZK_VERIFICATION=true pnpm evm:deploy
-else
-  pnpm evm:deploy
-fi
+  # relaunch the active aggregator
+  interfold_nodes_start "$active_agg"
 
-(cd "$ROOT_DIR/packages/interfold-contracts" && pnpm utils:sync-integration-config)
+  sleep 5
+}
 
-interfold_wallet_set cn1 "$PRIVATE_KEY_CN1"
-interfold_wallet_set cn2 "$PRIVATE_KEY_CN2"
-interfold_wallet_set cn3 "$PRIVATE_KEY_CN3"
-interfold_wallet_set cn4 "$PRIVATE_KEY_CN4"
-interfold_wallet_set cn5 "$PRIVATE_KEY_CN5"
-
-heading "Setup ZK prover"
-$INTERFOLD_BIN noir setup
-
-# start swarm
-interfold_nodes_up
-
-waiton-files "$ROOT_DIR/target/debug/fake_encrypt"
-
-heading "Add ciphernode $CIPHERNODE_ADDRESS_1"
-pnpm ciphernode:add --ciphernode-address $CIPHERNODE_ADDRESS_1 --network localhost
-
-heading "Add ciphernode $CIPHERNODE_ADDRESS_2"
-pnpm ciphernode:add --ciphernode-address $CIPHERNODE_ADDRESS_2 --network localhost
-
-heading "Add ciphernode $CIPHERNODE_ADDRESS_3"
-pnpm ciphernode:add --ciphernode-address $CIPHERNODE_ADDRESS_3 --network localhost
-
-heading "Add ciphernode $CIPHERNODE_ADDRESS_4"
-pnpm ciphernode:add --ciphernode-address $CIPHERNODE_ADDRESS_4 --network localhost
-
-heading "Add ciphernode $CIPHERNODE_ADDRESS_5"
-pnpm ciphernode:add --ciphernode-address $CIPHERNODE_ADDRESS_5 --network localhost
-
-heading "Request Committee"
-
-ENCODED_PARAMS=0x$($SCRIPT_DIR/lib/pack_e3_params.sh \
-  --moduli 0xffffee001 \
-  --moduli 0xffffc4001 \
-  --degree 512 \
-  --plaintext-modulus 100)
-
-set_integration_input_window
-
-REQUEST_OUTPUT=$(pnpm committee:new \
-  --network localhost \
-  --input-window-start "$INPUT_WINDOW_START" \
-  --input-window-end "$INPUT_WINDOW_END" \
-  --e3-params "$ENCODED_PARAMS" \
-  --committee-size 0)
-printf '%s\n' "$REQUEST_OUTPUT"
-
-E3_ID=$(extract_e3_id "$REQUEST_OUTPUT")
-
-wait_for_committee_pubkey "$E3_ID" "$SCRIPT_DIR/output/pubkey.bin" "${INTEGRATION_DKG_TIMEOUT:-1300}"
-advance_evm_time_past "$INPUT_WINDOW_START"
-
-ACTIVE_AGG_ADDRESS=$(wait_for_active_aggregator_address "$E3_ID")
-if ! ACTIVE_AGG=$(node_name_for_address "$ACTIVE_AGG_ADDRESS"); then
-  echo "Failed to resolve active aggregator node name for address: $ACTIVE_AGG_ADDRESS" >&2
-  exit 1
-fi
-
-if [[ -z "$ACTIVE_AGG" ]]; then
-  echo "Resolved empty active aggregator node name for address: $ACTIVE_AGG_ADDRESS" >&2
-  exit 1
-fi
-
-# kill active aggregator
-interfold_nodes_stop "$ACTIVE_AGG"
-
-sleep 15
-
-# relaunch the active aggregator
-interfold_nodes_start "$ACTIVE_AGG"
-
-sleep 5
-
-heading "Mock encrypted plaintext"
-$SCRIPT_DIR/lib/fake_encrypt.sh --input "$SCRIPT_DIR/output/pubkey.bin" --output "$SCRIPT_DIR/output/output.bin" --commitment-output "$SCRIPT_DIR/output/ciphertext_commitment.bin" --plaintext "$PLAINTEXT" --params "$ENCODED_PARAMS"
-
-heading "Mock publish input e3-id"
-pnpm e3-program:publishInput --network localhost --e3-id "$E3_ID" --data 0x12345678
-
-# The input is in; close the window so the round can move to decryption.
-advance_evm_time_past "$INPUT_WINDOW_END"
-
-waiton "$SCRIPT_DIR/output/output.bin"
-
-heading "Publish ciphertext to EVM"
-pnpm e3:publishCiphertext \
-  --e3-id "$E3_ID" \
-  --network localhost \
-  --data-file "$SCRIPT_DIR/output/output.bin" \
-  --ciphertext-commitment-file "$SCRIPT_DIR/output/ciphertext_commitment.bin" \
-  --proof 0x12345678 \
-  --mock-data-availability-directory "$MOCK_DATA_AVAILABILITY_DIRECTORY"
-
-wait_for_plaintext_output "$E3_ID" "$SCRIPT_DIR/output/plaintext.txt"
-
-ACTUAL=$(cut -d',' -f1,2 $SCRIPT_DIR/output/plaintext.txt)
-
-# Assume plaintext is shorter
-
-if [[ "$ACTUAL" != "$PLAINTEXT"* ]]; then
-  echo "Invalid plaintext decrypted: actual='$ACTUAL' expected='$PLAINTEXT'"
-  echo "Test FAILED"
-  exit 1
-fi
-
-heading "Test PASSED !"
-echo -e "\033[32m                                                              
-                                               ██████         
-                                             ██████           
-                                           ██████             
-                                         ██████               
-                                       ██████                 
-                                     ██████                   
-                       ██          ██████                     
-                       ████      ██████                       
-                       ██████  ██████                         
-                        ██████████                            
-                         ████████                             
-                          ██████                              
-                           ████                               
-                            ██                                
-                                                              \033[0m"
-
-
-gracefull_shutdown
+AFTER_KEY_PUBLISHED=restart_active_aggregator
+source "$THIS_DIR/base.sh"

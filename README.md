@@ -117,17 +117,17 @@ pnpm test:integration --no-prebuild
 	<tbody>
 		<tr>
 			<td align="center">
-				<a href="https://github.com/ryardley">
-					<img src="https://avatars.githubusercontent.com/u/1256409?v=4" width="100;" alt="ryardley"/>
-					<br />
-					<sub><b>гλ</b></sub>
-				</a>
-			</td>
-			<td align="center">
 				<a href="https://github.com/hmzakhalid">
 					<img src="https://avatars.githubusercontent.com/u/36852564?v=4" width="100;" alt="hmzakhalid"/>
 					<br />
 					<sub><b>Hamza Khalid</b></sub>
+				</a>
+			</td>
+			<td align="center">
+				<a href="https://github.com/ryardley">
+					<img src="https://avatars.githubusercontent.com/u/1256409?v=4" width="100;" alt="ryardley"/>
+					<br />
+					<sub><b>гλ</b></sub>
 				</a>
 			</td>
 			<td align="center">
@@ -352,11 +352,14 @@ commit and starts the release workflow.
 6. Run `pnpm release:tag X.Y.Z`.
 7. Wait for the Release workflow.
 
-For a pre-release, use a semantic pre-release version:
+For a dev release, use a pre-release version. Every pre-release publishes to the `dev` channel: the
+npm tag `dev` and the `ciphernode:dev` and `e3-support:dev` images. It does not change `latest`. A
+stable release moves the `dev` images and `interfoldup --version dev` to itself too, so they are
+never older than `latest`. The npm tag `dev` changes only with a pre-release.
 
 ```bash
-pnpm bump:versions 1.0.0-beta.1
-pnpm release:tag 1.0.0-beta.1
+pnpm bump:versions 1.0.0-dev.1
+pnpm release:tag 1.0.0-dev.1
 ```
 
 ### What the Release Workflow Requires
@@ -369,9 +372,10 @@ Publication cannot start until these release checks succeed:
 - The `circuit-artifacts` branch contains the complete source-matched release matrix.
 
 After qualification, the workflow publishes versioned container images and npm packages. A stable
-release also builds the DAppNode package. It then promotes the `latest` container aliases and the
-`stable` Git tag. The GitHub release is the final step. Rust workspace crates are not published to
-crates.io because the workspace uses unreleased git dependencies.
+release also builds the DAppNode package. It then promotes the `dev` container aliases, the `latest`
+aliases for a stable release, and, for a stable release, the `stable` Git tag. The GitHub release is
+the final step. Rust workspace crates are not published to crates.io because the workspace uses
+unreleased git dependencies.
 
 ## 🏷️ Version Strategy
 
@@ -398,11 +402,11 @@ interfoldup install --version v1.0.0    # Specific stable version
 
 #### For Testing (Testnet)
 
-You can use pre-release versions. Name the tag, because `install` without `--version` always selects
-the latest release:
+You can use pre-release versions. `install` without `--version` always selects the latest release:
 
 ```bash
-interfoldup install --version v1.0.0-beta.1 # Specific pre-release
+interfoldup install --version dev           # Most recently published release, stable or pre-release
+interfoldup install --version v1.0.0-dev.1  # Specific pre-release
 ```
 
 #### For Development

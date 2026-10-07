@@ -6,12 +6,14 @@
 
 use anyhow::{anyhow, Context, Result};
 use commitlog::message::{MessageBuf, MessageSet};
-use commitlog::{CommitLog, LogOptions, ReadLimit};
-use e3_events::{EventContextAccessors, EventLog, EventSource, InterfoldEvent, Unsequenced};
+use commitlog::{CommitLog, LogOptions, ReadError, ReadLimit};
+use e3_events::{
+    EventContextAccessors, EventLog, EventSource, InterfoldEvent, LogRecord, Unsequenced,
+};
 use std::{
     collections::{BTreeSet, HashSet},
     fs::{self, File, OpenOptions},
-    io::{Read, Seek, SeekFrom, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
 use tracing::{info, warn};
@@ -24,6 +26,9 @@ const COMMITLOG_HEADER_BYTES: usize = 20;
 const MAX_INLINE_EVENT_BYTES: usize = MAX_MESSAGE_BYTES - COMMITLOG_HEADER_BYTES;
 const COMMITLOG_INDEX_ENTRY_BYTES: usize = 8;
 const COMMITLOG_SEGMENT_MAGIC: [u8; 2] = [0xff, 0xff];
+/// Read window for one record. It holds an ordinary record without reading far past it; a larger
+/// record is read again with the full message window.
+const SINGLE_RECORD_READ_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EventLogOpenMode {
@@ -67,6 +72,30 @@ pub struct CommitLogEventLog {
 }
 
 impl CommitLogEventLog {
+    /// Check for log data without opening, repairing, or decoding any records.
+    pub fn has_records(path: &Path) -> Result<bool> {
+        let entries = match fs::read_dir(path) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
+        for entry in entries {
+            let entry = entry?;
+            if entry.path().extension().is_some_and(|ext| ext == "log") {
+                // An empty segment contains only the magic bytes. Anything else needs a schema.
+                if entry.metadata()?.len() != COMMITLOG_SEGMENT_MAGIC.len() as u64 {
+                    return Ok(true);
+                }
+                let mut magic = [0; COMMITLOG_SEGMENT_MAGIC.len()];
+                File::open(entry.path())?.read_exact(&mut magic)?;
+                if magic != COMMITLOG_SEGMENT_MAGIC {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
     pub fn new(path: &Path) -> Result<Self> {
         Self::open(path, EventLogOpenMode::RecoverTail)
     }
@@ -189,7 +218,7 @@ impl CommitLogEventLog {
     /// the same record into mid-log corruption. The [`EventLog`] adapter carries
     /// this error to startup and query callers instead of panicking an actor.
     pub fn read_from_checked(&self, from: u64) -> Result<Vec<(u64, InterfoldEvent<Unsequenced>)>> {
-        self.read_from_checked_with_limits(from, None, None)
+        self.read_from_checked_with_limits(from, None, None, MAX_MESSAGE_BYTES)
     }
 
     fn read_from_checked_with_limits(
@@ -197,6 +226,7 @@ impl CommitLogEventLog {
         from: u64,
         limit: Option<usize>,
         max_bytes: Option<usize>,
+        window: usize,
     ) -> Result<Vec<(u64, InterfoldEvent<Unsequenced>)>> {
         // Convert 1-indexed sequence to 0-indexed offset.
         let mut current_offset = from.saturating_sub(1);
@@ -210,7 +240,7 @@ impl CommitLogEventLog {
         'pages: loop {
             let message_buf = self
                 .log
-                .read(current_offset, ReadLimit::max_bytes(MAX_MESSAGE_BYTES))
+                .read(current_offset, ReadLimit::max_bytes(window))
                 .map_err(|error| {
                     anyhow!(
                         "commit log read failed at sequence {}: {error:?}",
@@ -768,7 +798,7 @@ impl EventLog for CommitLogEventLog {
         limit: usize,
     ) -> Result<Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>>> {
         Ok(Box::new(
-            self.read_from_checked_with_limits(from, Some(limit), None)?
+            self.read_from_checked_with_limits(from, Some(limit), None, MAX_MESSAGE_BYTES)?
                 .into_iter(),
         ))
     }
@@ -780,14 +810,67 @@ impl EventLog for CommitLogEventLog {
         max_bytes: usize,
     ) -> Result<Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>>> {
         Ok(Box::new(
-            self.read_from_checked_with_limits(from, Some(limit), Some(max_bytes))?
-                .into_iter(),
+            self.read_from_checked_with_limits(
+                from,
+                Some(limit),
+                Some(max_bytes),
+                MAX_MESSAGE_BYTES,
+            )?
+            .into_iter(),
         ))
     }
 
     fn head(&self) -> u64 {
         // `last_offset` is 0-indexed; convert to a 1-indexed sequence number.
         self.log.last_offset().map(|o| o + 1).unwrap_or(0)
+    }
+
+    fn read_one_within(&self, seq: u64, max_bytes: Option<usize>) -> Result<Option<LogRecord>> {
+        let Some(offset) = seq.checked_sub(1) else {
+            return Ok(None);
+        };
+        // The commit log reads whole records up to a byte window and refuses a window that the
+        // first record does not fit in. The window grows from a small one, so a read covers the
+        // requested record and fewer bytes than it of the records after it.
+        let mut window = SINGLE_RECORD_READ_BYTES;
+        let buf = loop {
+            match self.log.read(offset, ReadLimit::max_bytes(window)) {
+                Ok(buf) => break buf,
+                Err(ReadError::Io(error))
+                    if error.kind() == io::ErrorKind::InvalidInput
+                        && window < MAX_MESSAGE_BYTES =>
+                {
+                    window = window.saturating_mul(2).min(MAX_MESSAGE_BYTES);
+                }
+                Err(error) => {
+                    anyhow::bail!("commit log read failed at sequence {seq}: {error:?}")
+                }
+            }
+        };
+        let Some(msg) = buf.iter().next() else {
+            return Ok(None);
+        };
+        if msg.offset() != offset {
+            anyhow::bail!(
+                "commit log returned sequence {} for sequence {seq}",
+                msg.offset() + 1
+            );
+        }
+        if usize::from(msg.metadata_size()) > msg.size() as usize {
+            anyhow::bail!(
+                "commit log event at sequence {seq} has invalid frame metadata length; log is corrupt"
+            );
+        }
+        let bytes = EventBlobs::record_len(msg.payload()).with_context(|| {
+            format!("commit log event at sequence {seq} has an invalid blob reference")
+        })?;
+        if max_bytes.is_some_and(|max_bytes| bytes > max_bytes) {
+            return Ok(Some(LogRecord::TooLarge(bytes)));
+        }
+        let event = decode_record(&self.blobs, msg.payload()).with_context(|| {
+            format!("commit log event at sequence {seq} failed to decode; log is corrupt")
+        })?;
+        Ok(Some(LogRecord::Event(event, bytes)))
     }
 }
 
@@ -970,6 +1053,7 @@ mod tests {
             (
                 "DecryptionKeyShared",
                 DecryptionKeyShared {
+                    signature: Default::default(),
                     e3_id: e3_id.clone(),
                     party_id: 0,
                     node: node.clone(),
@@ -1175,6 +1259,83 @@ mod tests {
             .collect();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].1, first);
+    }
+
+    #[test]
+    fn read_one_returns_a_record_larger_than_its_first_window() {
+        let dir = tempdir().unwrap();
+        let mut log = CommitLogEventLog::new(dir.path()).unwrap();
+        let small = event_from(TestEvent::new("small", 1));
+        let large = event_from(TestEvent::new(&"x".repeat(2 * SINGLE_RECORD_READ_BYTES), 2));
+        let after = event_from(TestEvent::new("after", 3));
+        log.append(&small).unwrap();
+        log.append(&large).unwrap();
+        log.append(&after).unwrap();
+
+        assert_eq!(log.read_one(1).unwrap(), Some(small));
+        assert_eq!(log.read_one(2).unwrap(), Some(large));
+        assert_eq!(log.read_one(3).unwrap(), Some(after));
+        assert_eq!(log.read_one(4).unwrap(), None);
+    }
+
+    /// A single-record read covers the requested record and fewer bytes than it of the records
+    /// after it, so a damaged record further on does not fail the read.
+    #[test]
+    fn read_one_does_not_read_records_far_after_it() {
+        let dir = tempdir().unwrap();
+        let mut log = CommitLogEventLog::new(dir.path()).unwrap();
+        let record = |label: &str, seq: u64| {
+            event_from(TestEvent::new(
+                &format!("{label}{}", "x".repeat(2 * SINGLE_RECORD_READ_BYTES)),
+                seq,
+            ))
+        };
+        let first = record("first", 1);
+        log.append(&first).unwrap();
+        for seq in 2..=4 {
+            log.append(&record("filler", seq)).unwrap();
+        }
+        log.append(&record("damaged", 5)).unwrap();
+        log.log.flush().unwrap();
+        // Damage the payload of the last record; its CRC no longer matches.
+        let segment = dir.path().join(format!("{:020}.log", 0));
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&segment)
+            .unwrap();
+        let length = file.metadata().unwrap().len();
+        file.seek(SeekFrom::Start(length - 16)).unwrap();
+        file.write_all(b"corrupt").unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+
+        assert_eq!(log.read_one(1).unwrap(), Some(first));
+        assert!(log.read_one(5).is_err());
+    }
+
+    /// A record larger than the byte budget is reported by its size without being decoded.
+    #[test]
+    fn read_one_within_sizes_a_record_before_it_decodes_it() {
+        let dir = tempdir().unwrap();
+        let mut log = CommitLogEventLog::new(dir.path()).unwrap();
+        log.append(&event_from(TestEvent::new("valid", 1))).unwrap();
+        // A frame whose CRC is valid but whose payload does not decode.
+        log.log.append_msg(vec![0xff; 64]).unwrap();
+
+        assert!(matches!(
+            log.read_one_within(2, Some(8)).unwrap(),
+            Some(LogRecord::TooLarge(64))
+        ));
+        assert!(log.read_one_within(2, None).is_err());
+        assert!(matches!(
+            log.read_one_within(1, Some(8)).unwrap(),
+            Some(LogRecord::TooLarge(_))
+        ));
+        assert!(matches!(
+            log.read_one_within(1, None).unwrap(),
+            Some(LogRecord::Event(_, _))
+        ));
     }
 
     #[test]
@@ -1570,5 +1731,39 @@ mod tests {
         // Read from offset beyond what exists
         let events: Vec<_> = log.read_from(100).unwrap().collect();
         assert!(events.is_empty());
+    }
+
+    /// The failure recipient of `HistoricalNetSyncStart` is local to the process and is not
+    /// written to the log. Redelivering the original event must still be an idempotent duplicate
+    /// of the stored copy, not a timestamp collision that stops the EventStore.
+    #[actix::test]
+    async fn redelivered_event_with_a_local_recipient_is_a_duplicate_of_the_stored_copy() {
+        use crate::SledSequenceIndex;
+        use actix::{Actor, Context, Handler};
+        use e3_events::{AggregateId, EventStore, HistoricalNetSyncFailed, HistoricalNetSyncStart};
+        use std::collections::BTreeMap;
+
+        struct FailureSink;
+        impl Actor for FailureSink {
+            type Context = Context<Self>;
+        }
+        impl Handler<HistoricalNetSyncFailed> for FailureSink {
+            type Result = ();
+            fn handle(&mut self, _: HistoricalNetSyncFailed, _: &mut Self::Context) {}
+        }
+
+        let index_dir = tempdir().unwrap();
+        let log_dir = tempdir().unwrap();
+        let index =
+            SledSequenceIndex::new(&index_dir.path().to_path_buf(), "sequence_index.0").unwrap();
+        let log = CommitLogEventLog::new(log_dir.path()).unwrap();
+        let mut store = EventStore::new(index, log).unwrap();
+        let event = event_from(InterfoldEventData::HistoricalNetSyncStart(
+            HistoricalNetSyncStart::new(BTreeMap::from([(AggregateId::new(0), 10)]))
+                .with_failure_recipient(FailureSink.start()),
+        ));
+
+        assert!(store.store_event(event.clone()).unwrap().is_some());
+        assert!(store.store_event(event).unwrap().is_none());
     }
 }

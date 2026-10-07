@@ -284,7 +284,7 @@ assert_contains "$ROOT_DIR/docker-compose.yml" "UPSTREAM_VERSION: $DAPPNODE_UPST
 assert_contains "$ROOT_DIR/docker-compose.yml" "ciphernode.interfold-ciphernode.public.dappnode.eth:$DAPPNODE_VERSION"
 assert_contains "$ROOT_DIR/Dockerfile" "ARG UPSTREAM_VERSION=$DAPPNODE_UPSTREAM_VERSION"
 assert_contains "$ROOT_DIR/docker-compose.yml" "INTERFOLD_CONTRACT: '0x28cF63B459e6218C69EA97ea7D90541cf648c715'"
-assert_contains "$ROOT_DIR/docker-compose.yml" "SLASHING_MANAGER_CONTRACT: '0x974E865B1BB24AF2a9ef8204AdEA9251Cc7C5FD9'"
+assert_contains "$ROOT_DIR/docker-compose.yml" "SLASHING_MANAGER_CONTRACT: '0x753109Ee36Dc65cC178875AddA30C6433e5bEEe4'"
 assert_contains "$ROOT_DIR/healthcheck.sh" '/data/.interfold/data/_default/db'
 
 # Health probe regression: require the exact process/config, protected files,
@@ -362,5 +362,87 @@ if PROC_ROOT="$health_dir/proc" \
     sh "$ROOT_DIR/healthcheck.sh"; then
     fail "uninitialized event persistence was considered healthy"
 fi
+
+# Chain ingestion heartbeat: the node writes one file per chain after each successful head read.
+# A stale poll, or a head and cursor that stopped moving, is unhealthy; no heartbeat yet is a node
+# that is still starting.
+mkdir -p "$health_dir/data/log.0" "$health_dir/data/ingestion"
+ln -sfn "$health_dir/bin/interfold" "$health_dir/proc/1/exe"
+write_heartbeat() {
+    printf 'chain_id=1\nhead=%s\ncursor=%s\npolled_at=%s\nprogressed_at=%s\n' \
+        "$1" "$2" "$3" "$4" > "$health_dir/data/ingestion/chain-1.heartbeat"
+}
+run_healthcheck() {
+    PROC_ROOT="$health_dir/proc" \
+    CONFIG_FILE="$health_dir/data/config.yaml" \
+    PASSWORD_FILE="$health_dir/data/password" \
+    DB_PATH="$health_dir/data/db" \
+    EVENT_LOG_PATH="$health_dir/data/log.0" \
+    INGESTION_DIR="$health_dir/data/ingestion" \
+    HEALTHCHECK_NOW=1000000 \
+    SS_BIN="$health_dir/bin/ss" \
+    STAT_BIN="$health_dir/bin/stat" \
+    sh "$ROOT_DIR/healthcheck.sh"
+}
+
+run_healthcheck || fail "a node without a heartbeat yet was considered unhealthy"
+
+write_heartbeat 500 499 999990 999900
+if run_healthcheck; then
+    fail "a heartbeat without the ingestion expectation was considered healthy"
+fi
+
+# The node writes its expectation before it starts any reader.
+printf 'chains=1\nstarted_at=999500\n' > "$health_dir/data/ingestion/expected"
+run_healthcheck || fail "a fresh ingestion heartbeat was rejected"
+
+write_heartbeat 500 499 999990 999900
+run_healthcheck || fail "a fresh ingestion heartbeat was rejected"
+
+write_heartbeat 500 499 999800 999800
+if run_healthcheck; then
+    fail "a reader that stopped polling two hundred seconds ago was considered healthy"
+fi
+
+write_heartbeat 500 500 999995 999000
+if run_healthcheck; then
+    fail "a reader that did not progress for a thousand seconds was considered healthy"
+fi
+
+printf 'chain_id=1\nhead=500\n' > "$health_dir/data/ingestion/chain-1.heartbeat"
+if run_healthcheck; then
+    fail "a heartbeat without timestamps was considered healthy"
+fi
+
+rm "$health_dir/data/ingestion/chain-1.heartbeat"
+run_healthcheck || fail "a removed heartbeat was not treated as a starting node"
+
+# Startup grace: at startup the node records how many chain readers it starts, and when. Within the
+# grace (INGESTION_START_GRACE_SECS, 900) a missing heartbeat is a starting node; after it, every
+# enabled chain needs one.
+write_expected() {
+    printf 'chains=%s\nstarted_at=%s\n' "$1" "$2" > "$health_dir/data/ingestion/expected"
+}
+write_expected 1 999500
+run_healthcheck || fail "a node within its startup grace without a heartbeat was considered unhealthy"
+
+write_expected 1 990000
+if run_healthcheck; then
+    fail "a reader that never reached its first read was considered healthy after the startup grace"
+fi
+
+write_heartbeat 500 499 999990 999900
+run_healthcheck || fail "a heartbeat for every enabled chain was rejected after the startup grace"
+
+write_expected 2 990000
+if run_healthcheck; then
+    fail "a second enabled chain without a heartbeat was considered healthy after the startup grace"
+fi
+
+printf 'chains=x\nstarted_at=990000\n' > "$health_dir/data/ingestion/expected"
+if run_healthcheck; then
+    fail "a malformed ingestion expectation was considered healthy"
+fi
+rm "$health_dir/data/ingestion/expected" "$health_dir/data/ingestion/chain-1.heartbeat"
 
 printf 'PASS: DAppNode credential and health hardening regressions\n'

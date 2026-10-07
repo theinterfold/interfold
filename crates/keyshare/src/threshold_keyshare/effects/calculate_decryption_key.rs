@@ -84,6 +84,7 @@ impl ThresholdKeyshare {
                 );
                 self.state.try_mutate(&ec, |mut s| {
                     s.honest_parties = Some(honest_party_ids.clone());
+                    s.dkg_roster_fixed = true;
                     Ok(s)
                 })?;
                 self.pending.share_decryption_data = Some((sk_request, esm_requests));
@@ -92,6 +93,39 @@ impl ThresholdKeyshare {
         }
 
         Ok(())
+    }
+
+    /// Save that C4 started at the logged decryption-key calculation's own position. The write at
+    /// dispatch can be lost: after a restart its context can trail the saved snapshot cursor, and
+    /// the store refuses it as stale while memory already holds the change. So the state is saved
+    /// again here even when memory says C4 started, before a later event can checkpoint past the
+    /// request. Replay delivers the logged request before effects resume, so the roster that the
+    /// calculation used stays fixed.
+    pub(in crate::actors::threshold_keyshare) fn record_logged_key_calculation(
+        &mut self,
+        request: &ComputeRequest,
+        ec: &EventContext<Sequenced>,
+    ) -> Result<()> {
+        if !matches!(
+            request.request,
+            e3_events::ComputeRequestKind::TrBFV(TrBFVRequest::CalculateDecryptionKey(_))
+        ) || ec.source() != e3_events::EventSource::Local
+        {
+            return Ok(());
+        }
+        let state = self.state.try_get()?;
+        if request.e3_id != state.e3_id
+            || !matches!(state.state, KeyshareState::AggregatingDecryptionKey(_))
+        {
+            return Ok(());
+        }
+        // The roster that the calculation used is in memory, and its own write can have been
+        // refused as stale too. Save it with the flag, at the same position.
+        self.recovery.try_mutate(ec, Ok)?;
+        self.state.try_mutate(ec, |mut state| {
+            state.dkg_roster_fixed = true;
+            Ok(state)
+        })
     }
 
     /// 5a. CalculateDecryptionKeyResponse — transition to ReadyForDecryption,
@@ -172,13 +206,16 @@ impl ThresholdKeyshare {
             s.new_state(next)
         })?;
 
+        self.stop_threshold_share_collector()?;
         let party_count = self.state.try_get()?.threshold_n;
         self.recovery.try_mutate(&ec, |mut recovery| {
             recovery.threshold_share_refs.clear();
             recovery.collected_threshold_share_ids = None;
+            recovery.share_dispatch_ids.clear();
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
         })?;
+        self.pending.parked_share_verdicts.clear();
         if let Err(error) = self
             .recovery_payloads
             .write_all_share_tombstones(party_count, &ec)

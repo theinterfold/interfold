@@ -9,7 +9,7 @@
 use alloy::primitives::U256;
 use e3_events::{
     hlc::HlcTimestamp, E3Stage, Event, EventContextAccessors, EventContextSeq, EventSource,
-    InterfoldEvent, InterfoldEventData,
+    InterfoldEvent, InterfoldEventData, RewardsDistributed,
 };
 use serde::Serialize;
 use serde_json::{json, Map, Value};
@@ -212,9 +212,11 @@ struct ChainState {
     rewards: Vec<ChainReward>,
 }
 
+/// The credit that paid the local operator's committee seat in one E3.
 struct ChainReward {
     e3_id: String,
-    view: RewardView,
+    /// Position in the `rewards` of that E3, which also records the claim.
+    credit: usize,
 }
 
 #[derive(Default)]
@@ -235,8 +237,35 @@ struct E3State {
     chain_failure: Option<Value>,
     canonical_stage: Option<E3Stage>,
     failed_phase: Option<E3Phase>,
+    /// When the E3 failed. Its slash reports are due until one day after its lifecycle deadline,
+    /// which the projection does not know, so it counts one day from the failure.
+    failed_at_us: Option<u64>,
     first_seen_us: u64,
     last_seen_us: u64,
+}
+
+/// How long after its failure an E3 still needs this node for its slash reports.
+const REPORT_WINDOW_US: u64 = 24 * 60 * 60 * 1_000_000;
+
+impl E3State {
+    /// Whether the E3 still needs this node at `now_us`: the node is in it, and the E3 runs, or
+    /// failed less than a day ago, so its slash reports can still be due.
+    fn needs(&self, local_address: &str, now_us: u64) -> bool {
+        let member = if self.committee.is_empty() {
+            self.tickets
+                .iter()
+                .any(|ticket| normalize_address(&ticket.node) == local_address)
+        } else {
+            self.committee
+                .iter()
+                .any(|node| normalize_address(node) == local_address)
+        };
+        let reports_due = self.status == "failed"
+            && self
+                .failed_at_us
+                .is_some_and(|failed| now_us < failed.saturating_add(REPORT_WINDOW_US));
+        member && (self.status == "active" || self.status == "degraded" || reports_due)
+    }
 }
 
 #[derive(Default)]
@@ -279,6 +308,16 @@ impl TelemetryProjection {
     }
 
     pub fn overview(&self) -> ProtocolOverview {
+        let now_us = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| {
+                u64::try_from(since.as_micros()).unwrap_or(u64::MAX)
+            });
+        self.overview_at(now_us)
+    }
+
+    /// The overview at `now_us`, in microseconds since the Unix epoch.
+    pub fn overview_at(&self, now_us: u64) -> ProtocolOverview {
         let summaries = self.summaries();
         ProtocolOverview {
             chains: self
@@ -297,14 +336,23 @@ impl TelemetryProjection {
                     rewards_credited: state
                         .rewards
                         .iter()
-                        .map(|reward| reward.view.clone())
+                        .filter_map(|reward| {
+                            self.e3s
+                                .get(&reward.e3_id)?
+                                .rewards
+                                .get(reward.credit)
+                                .cloned()
+                        })
                         .collect(),
                 })
                 .collect(),
             e3_total: summaries.len(),
-            e3_active: summaries
-                .iter()
-                .filter(|summary| summary.status == "active")
+            // E3s that still need this node, also a failed E3 whose slash reports can still be
+            // due: a node that stops then cannot send them.
+            e3_active: self
+                .e3s
+                .values()
+                .filter(|state| state.needs(&self.local_address, now_us))
                 .count(),
             e3_completed: summaries
                 .iter()
@@ -384,38 +432,19 @@ impl TelemetryProjection {
                     .or_default()
                     .exit_unlock_at = Some(event.unlock_at);
             }
-            InterfoldEventData::RewardCredited(event)
-                if normalize_address(&event.account) == self.local_address =>
-            {
-                self.chains
-                    .entry(event.e3_id.chain_id())
-                    .or_default()
-                    .rewards
-                    .push(ChainReward {
-                        e3_id: event.e3_id.to_string(),
-                        view: RewardView {
-                            account: event.account.clone(),
-                            token: Some(event.token.clone()),
-                            amount: event.amount.clone(),
-                            claimed: false,
-                        },
-                    });
-            }
-            InterfoldEventData::RewardClaimed(event)
-                if normalize_address(&event.account) == self.local_address =>
-            {
-                let state = self.chains.entry(event.e3_id.chain_id()).or_default();
+            InterfoldEventData::RewardsDistributed(event) => {
                 let e3_id = event.e3_id.to_string();
-                mark_claimed_rewards(
-                    state
+                let credit = self
+                    .e3s
+                    .get(&e3_id)
+                    .and_then(|state| seat_credit(&state.rewards, event, &self.local_address));
+                if let Some(credit) = credit {
+                    self.chains
+                        .entry(event.e3_id.chain_id())
+                        .or_default()
                         .rewards
-                        .iter_mut()
-                        .filter(|reward| reward.e3_id == e3_id)
-                        .map(|reward| &mut reward.view),
-                    &event.account,
-                    &event.token,
-                    &event.amount,
-                );
+                        .push(ChainReward { e3_id, credit });
+                }
             }
             _ => {}
         }
@@ -465,7 +494,18 @@ impl TelemetryProjection {
             }
             InterfoldEventData::E3Failed(event) => {
                 let chain_failure = view.source == "evm";
-                state.status = if chain_failure { "failed" } else { "degraded" }.to_owned();
+                // A local failure that the log records after the chain ended the E3 keeps the
+                // chain's terminal status.
+                let ended_on_chain = state
+                    .canonical_stage
+                    .as_ref()
+                    .is_some_and(E3Stage::is_terminal);
+                if chain_failure || !ended_on_chain {
+                    state.status = if chain_failure { "failed" } else { "degraded" }.to_owned();
+                }
+                if chain_failure {
+                    state.failed_at_us.get_or_insert(view.timestamp_us);
+                }
                 state.failed_phase = view.phase;
                 let failure = json!({
                     "failed_at_stage": event.failed_at_stage,
@@ -479,7 +519,15 @@ impl TelemetryProjection {
                 state.failure = Some(failure);
             }
             InterfoldEventData::CommitteeFormationFailed(event) => {
-                state.status = "failed".to_owned();
+                // After the chain ended the E3, its terminal status stays.
+                if !state
+                    .canonical_stage
+                    .as_ref()
+                    .is_some_and(E3Stage::is_terminal)
+                {
+                    state.status = "failed".to_owned();
+                    state.failed_at_us.get_or_insert(view.timestamp_us);
+                }
                 state.failed_phase = Some(E3Phase::Committee);
                 state.failure = Some(json!({
                     "reason": "CommitteeFormationFailed",
@@ -494,6 +542,7 @@ impl TelemetryProjection {
                     E3Stage::Failed => {
                         let failed_phase = stage_phase(&event.previous_stage);
                         state.status = "failed".to_owned();
+                        state.failed_at_us.get_or_insert(view.timestamp_us);
                         state.failed_phase = Some(failed_phase);
                         state.current_phase = Some(failed_phase);
                         state.chain_failure.get_or_insert_with(|| {
@@ -878,6 +927,31 @@ fn normalize_address(value: &str) -> String {
     value.to_ascii_lowercase()
 }
 
+/// Return the position in `credits` of the credit that paid `operator`'s committee seat.
+///
+/// A credit names the recipient that committee finalization froze, not the operator, and members
+/// can share a recipient. Settlement credits each non-zero allocation in `RewardsDistributed`
+/// order and then emits `RewardsDistributed`, so the n-th credit pays the n-th non-zero
+/// allocation.
+fn seat_credit(
+    credits: &[RewardView],
+    distribution: &RewardsDistributed,
+    operator: &str,
+) -> Option<usize> {
+    let paid = || {
+        distribution
+            .nodes
+            .iter()
+            .zip(&distribution.amounts)
+            .filter(|(_, amount)| amount.parse::<U256>().is_ok_and(|amount| !amount.is_zero()))
+            .map(|(node, _)| node)
+    };
+    if paid().count() != credits.len() {
+        return None;
+    }
+    paid().position(|node| normalize_address(node) == operator)
+}
+
 fn mark_claimed_rewards<'a>(
     rewards: impl IntoIterator<Item = &'a mut RewardView>,
     account: &str,
@@ -926,7 +1000,7 @@ mod tests {
     use super::*;
     use e3_events::{
         E3Failed, E3RequestComplete, E3StageChanged, EventConstructorWithTimestamp, FailureReason,
-        RewardClaimed, RewardCredited, RewardsDistributed, Unsequenced,
+        RewardClaimed, RewardCredited, Unsequenced,
     };
 
     #[test]
@@ -1140,76 +1214,87 @@ mod tests {
         assert_eq!(trace.reward_allocations.len(), 2);
         assert_eq!(trace.reward_allocations[0].operator, operator_one);
         assert_eq!(trace.reward_allocations[1].operator, operator_two);
-
-        let overview = live.overview();
-        let chain = overview
-            .chains
-            .iter()
-            .find(|chain| chain.chain_id == 31337)
-            .unwrap();
-        assert_eq!(chain.rewards_credited.len(), 2);
-        assert!(chain.rewards_credited.iter().all(|reward| reward.claimed));
     }
 
     #[test]
-    fn chain_reward_claims_are_scoped_to_one_e3() {
+    fn operator_rewards_follow_committee_seats() {
         let claimed_e3 = e3_events::E3id::new("9", 31337);
         let pending_e3 = e3_events::E3id::new("10", 31337);
-        let account = "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65";
+        let operator = "0x1111111111111111111111111111111111111111";
+        let peer = "0x2222222222222222222222222222222222222222";
+        // Bond owner of both operators when their committees finalized.
+        let owner = "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65";
         let token = "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512";
+        let bond_owner = |bond_owner: &str| -> InterfoldEventData {
+            e3_events::BondOwnerSet {
+                operator: operator.into(),
+                bond_owner: bond_owner.into(),
+                chain_id: 31337,
+            }
+            .into()
+        };
+        let credit = |e3_id: &e3_events::E3id, amount: &str| -> InterfoldEventData {
+            RewardCredited {
+                e3_id: e3_id.clone(),
+                account: owner.into(),
+                token: token.into(),
+                amount: amount.into(),
+            }
+            .into()
+        };
+        let distribution =
+            |e3_id: &e3_events::E3id, nodes: [&str; 2], amounts: [&str; 2]| -> InterfoldEventData {
+                RewardsDistributed {
+                    e3_id: e3_id.clone(),
+                    nodes: nodes.map(String::from).into(),
+                    amounts: amounts.map(String::from).into(),
+                }
+                .into()
+            };
         let events = [
-            RewardCredited {
-                e3_id: claimed_e3.clone(),
-                account: account.into(),
-                token: token.into(),
-                amount: "20".into(),
-            }
-            .into(),
-            RewardCredited {
-                e3_id: pending_e3,
-                account: account.into(),
-                token: token.into(),
-                amount: "22".into(),
-            }
-            .into(),
+            bond_owner(owner),
+            credit(&claimed_e3, "20"),
+            credit(&claimed_e3, "22"),
+            distribution(&claimed_e3, [operator, peer], ["20", "22"]),
+            // The zero allocation of `peer` gets no credit.
+            credit(&pending_e3, "21"),
+            distribution(&pending_e3, [peer, operator], ["0", "21"]),
+            // Committee finalization froze the recipient, so a later transfer keeps these credits.
+            bond_owner("0x3333333333333333333333333333333333333333"),
             RewardClaimed {
                 e3_id: claimed_e3,
-                account: account.into(),
+                account: owner.into(),
                 token: token.into(),
-                amount: "20".into(),
+                amount: "42".into(),
             }
             .into(),
         ];
 
-        let mut projection = TelemetryProjection::new(account);
+        let mut projection = TelemetryProjection::new(operator);
         for (index, event) in events.into_iter().enumerate() {
             projection.apply(replay_event(event, index as u64 + 1, index as u128 + 1));
         }
 
         let overview = projection.overview();
-        let rewards = &overview.chains[0].rewards_credited;
-        assert_eq!(rewards.len(), 2);
-        assert!(
-            rewards
-                .iter()
-                .find(|reward| reward.amount == "20")
-                .unwrap()
-                .claimed
-        );
-        assert!(
-            !rewards
-                .iter()
-                .find(|reward| reward.amount == "22")
-                .unwrap()
-                .claimed
-        );
+        let rewards: Vec<_> = overview.chains[0]
+            .rewards_credited
+            .iter()
+            .map(|reward| {
+                (
+                    reward.account.as_str(),
+                    reward.amount.as_str(),
+                    reward.claimed,
+                )
+            })
+            .collect();
+        assert_eq!(rewards, [(owner, "20", true), (owner, "21", false)]);
     }
 
     #[test]
     fn reward_claim_matching_rejects_aggregate_overflow() {
         let account = "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65";
         let token = "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512";
-        let mut rewards = vec![
+        let mut rewards = [
             RewardView {
                 account: account.into(),
                 token: Some(token.into()),
@@ -1227,6 +1312,78 @@ mod tests {
         mark_claimed_rewards(rewards.iter_mut(), account, token, "1");
 
         assert!(rewards.iter().all(|reward| !reward.claimed));
+    }
+
+    /// The active count is the E3s that still need this node: the ones that it is in while they
+    /// run, and the failed ones for a day after the failure, while their slash reports can still
+    /// be due. Other nodes' E3s and completed ones do not count.
+    #[test]
+    fn the_active_count_is_the_e3s_that_still_need_this_node() {
+        use alloy::primitives::Address;
+        use e3_events::{CommitteeFinalized, E3id};
+        let local = Address::repeat_byte(1);
+        let other = Address::repeat_byte(2);
+        let mut projection = TelemetryProjection::new(local.to_string());
+        let mut seq = 0;
+        let mut apply = |projection: &mut TelemetryProjection, data: InterfoldEventData| {
+            seq += 1;
+            projection.apply(replay_event(data, seq, 10 * seq as u128));
+        };
+        let committee = |e3: &str, members: Vec<Address>| CommitteeFinalized {
+            e3_id: E3id::new(e3, 31337),
+            committee: members.iter().map(ToString::to_string).collect(),
+            scores: Vec::new(),
+            chain_id: 31337,
+        };
+        let stage = |e3: &str, new_stage| E3StageChanged {
+            e3_id: E3id::new(e3, 31337),
+            previous_stage: E3Stage::CommitteeFinalized,
+            new_stage,
+        };
+
+        // Running: one with this node, one without.
+        apply(&mut projection, committee("1", vec![local, other]).into());
+        apply(&mut projection, committee("2", vec![other]).into());
+        let now = projection.events.last().unwrap().timestamp_us;
+        assert_eq!(projection.overview_at(now).e3_active, 1);
+
+        // Ended: a completed E3 does not count; a failed one counts for a day after the failure.
+        apply(&mut projection, stage("1", E3Stage::Complete).into());
+        apply(&mut projection, committee("3", vec![local, other]).into());
+        apply(&mut projection, stage("3", E3Stage::Failed).into());
+        let failed = projection.events.last().unwrap().timestamp_us;
+        assert_eq!(projection.overview_at(failed).e3_active, 1);
+        assert_eq!(
+            projection
+                .overview_at(failed + REPORT_WINDOW_US - 1)
+                .e3_active,
+            1
+        );
+        assert_eq!(
+            projection.overview_at(failed + REPORT_WINDOW_US).e3_active,
+            0
+        );
+
+        // A local failure that the log records after the chain's failure keeps the E3 failed, so
+        // it still stops counting a day after the chain's failure.
+        let local = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            E3Failed {
+                e3_id: E3id::new("3", 31337),
+                failed_at_stage: E3Stage::CommitteeFinalized,
+                reason: FailureReason::DKGTimeout,
+            }
+            .into(),
+            None,
+            (failed + 10) as u128,
+            Some(1_000),
+            EventSource::Local,
+        )
+        .into_sequenced(1_000);
+        projection.apply(local);
+        assert_eq!(
+            projection.overview_at(failed + REPORT_WINDOW_US).e3_active,
+            0
+        );
     }
 
     fn replay_event(data: InterfoldEventData, seq: u64, timestamp: u128) -> InterfoldEvent {

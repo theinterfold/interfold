@@ -84,7 +84,7 @@ fn check_prefix_zero<let D: u32>(k1: Polynomial<D>, base: u32) -> bool {
 ///
 /// # Arguments
 /// * `k1` - The plaintext polynomial encoding the vote
-/// * `q_mod_t` - The field representation of 1 modulo t
+/// * `q_mod_t` - The non-centered plaintext scale modulo the plaintext modulus
 /// * `balance` - The voter's balance/voting power
 /// * `num_options` - Number of voting options
 pub fn check_coefficient_values_with_balance<let D: u32>(
@@ -198,7 +198,7 @@ global TEST_DEGREE: u32 = 512;
 /// # Arguments
 /// * `values` - One value per option, in option order; entries past `num_options` are ignored
 /// * `num_options` - Number of voting options
-/// * `one` - The coefficient a set bit encodes to, which is `q_mod_t` in centered form
+/// * `one` - The coefficient a set bit encodes to, which is `q_mod_t`
 fn encode_ballot<let D: u32>(
     values: [u64; MAX_OPTIONS],
     num_options: u32,
@@ -230,6 +230,13 @@ fn encode_ballot<let D: u32>(
 fn test_2_options_vote_first() {
     let pol = encode_ballot::<TEST_DEGREE>([5, 0, 0, 0, 0, 0, 0, 0, 0, 0], 2, 1);
     assert(check_coefficient_values_with_balance(pol, 1, 100, 2));
+}
+
+#[test]
+fn test_non_centered_plaintext_scale() {
+    let pol = encode_ballot::<TEST_DEGREE>([5, 0, 0, 0, 0, 0, 0, 0, 0, 0], 2, 93);
+    assert(check_coefficient_values_with_balance(pol, 93, 100, 2));
+    assert(!check_coefficient_values_with_balance(pol, -7, 100, 2));
 }
 
 #[test]

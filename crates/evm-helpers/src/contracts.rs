@@ -19,35 +19,20 @@ use alloy::{
 };
 use async_trait::async_trait;
 use eyre::Result;
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 use crate::events::E3Requested;
-
-static NONCE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+use crate::nonce::send_with_next_nonce;
 
 fn crypto_config_id_for_param_set(param_set: u8) -> Result<B256> {
     match param_set {
-        0 => Ok("0x7317c190ccb1dccfa505bf5b9b923e341905f6675c16f958e0a7d853795517a5".parse()?),
-        1 => Ok("0xac5490c59e158cbb104642bba0ab7b3fd11ca49dd4bb05ce7bec8089ce3c8c31".parse()?),
-        2 => Ok("0xde3c303973a0bf2b841cd0e7266ae68a7e48f8b271ffd629b245485e52dc8cd8".parse()?),
+        0 => Ok("0x353ab90c0ebe9c13e1b9c2048539b7c2872f3eb12a9f1957f31410aa4bf44718".parse()?),
+        2 => Ok("0x5ebb3432396f21cd97fca47e006b9dd38c021bf2902d3e555cf74cb91b28e44e".parse()?),
+        3 => Ok("0x9c5c09ac7421582c4407c7e6ad923b8f9126aa708957c2575760fb0a38153655".parse()?),
         _ => Err(eyre::eyre!("unsupported BFV parameter set: {}", param_set)),
     }
-}
-
-/// Get the next pending nonce for a given address from the provider
-async fn get_next_nonce<P>(provider: &P, address: Address) -> eyre::Result<u64>
-where
-    P: Provider<Ethereum> + Send + Sync,
-{
-    provider
-        .get_transaction_count(address)
-        .pending()
-        .await
-        .map_err(Into::into)
 }
 
 sol! {
@@ -480,11 +465,9 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
         compute_provider_params: Bytes,
         custom_params: Bytes,
     ) -> Result<(TransactionReceipt, U256)> {
-        let _guard = NONCE_LOCK.lock().await;
         let wallet_addr = self
             .wallet_address
             .ok_or_else(|| eyre::eyre!("No wallet address configured"))?;
-        let nonce = get_next_nonce(&*self.provider, wallet_addr).await?;
 
         let contract = Interfold::new(self.contract_address, &self.provider);
         let fee_token = contract.feeToken().call().await?;
@@ -514,8 +497,10 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
             maxFee: max_fee,
         };
 
-        let builder = contract.request(e3_request).nonce(nonce);
-        let receipt = builder.send().await?.get_receipt().await?;
+        let receipt = send_with_next_nonce(contract.request(e3_request), wallet_addr)
+            .await?
+            .get_receipt()
+            .await?;
         e3_utils::require_successful_receipt("request E3", &receipt)?;
         let e3_id = receipt
             .logs()
@@ -529,15 +514,15 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
     }
 
     async fn register_e3_program(&self, e3_program: Address) -> Result<TransactionReceipt> {
-        let _guard = NONCE_LOCK.lock().await;
         let wallet_addr = self
             .wallet_address
             .ok_or_else(|| eyre::eyre!("No wallet address configured"))?;
-        let nonce = get_next_nonce(&*self.provider, wallet_addr).await?;
 
         let contract = Interfold::new(self.contract_address, &self.provider);
-        let builder = contract.registerE3Program(e3_program).nonce(nonce);
-        let receipt = builder.send().await?.get_receipt().await?;
+        let receipt = send_with_next_nonce(contract.registerE3Program(e3_program), wallet_addr)
+            .await?
+            .get_receipt()
+            .await?;
         e3_utils::require_successful_receipt("register E3 program", &receipt)?;
 
         Ok(receipt)
@@ -551,11 +536,9 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
         compute_proof: Bytes,
         availability_proof: Bytes,
     ) -> Result<TransactionReceipt> {
-        let _guard = NONCE_LOCK.lock().await;
         let wallet_addr = self
             .wallet_address
             .ok_or_else(|| eyre::eyre!("No wallet address configured"))?;
-        let nonce = get_next_nonce(&*self.provider, wallet_addr).await?;
 
         let contract = Interfold::new(self.contract_address, &self.provider);
         let output_reference = CiphertextOutputReference {
@@ -564,13 +547,13 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
             computeProof: compute_proof,
             availabilityProof: availability_proof,
         };
-        let receipt = contract
-            .publishCiphertextOutput(e3_id, output_reference.abi_encode().into())
-            .nonce(nonce)
-            .send()
-            .await?
-            .get_receipt()
-            .await?;
+        let receipt = send_with_next_nonce(
+            contract.publishCiphertextOutput(e3_id, output_reference.abi_encode().into()),
+            wallet_addr,
+        )
+        .await?
+        .get_receipt()
+        .await?;
         e3_utils::require_successful_receipt("publish ciphertext output", &receipt)?;
         Ok(receipt)
     }
@@ -581,17 +564,18 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
         data: Bytes,
         proof: Bytes,
     ) -> Result<TransactionReceipt> {
-        let _guard = NONCE_LOCK.lock().await;
         let wallet_addr = self
             .wallet_address
             .ok_or_else(|| eyre::eyre!("No wallet address configured"))?;
-        let nonce = get_next_nonce(&*self.provider, wallet_addr).await?;
 
         let contract = Interfold::new(self.contract_address, &self.provider);
-        let builder = contract
-            .publishPlaintextOutput(e3_id, data, proof)
-            .nonce(nonce);
-        let receipt = builder.send().await?.get_receipt().await?;
+        let receipt = send_with_next_nonce(
+            contract.publishPlaintextOutput(e3_id, data, proof),
+            wallet_addr,
+        )
+        .await?
+        .get_receipt()
+        .await?;
         e3_utils::require_successful_receipt("publish plaintext output", &receipt)?;
 
         Ok(receipt)

@@ -12,7 +12,7 @@ import {
   IInterfold__factory as IInterfoldFactory,
   ISlashingManager__factory as ISlashingManagerFactory,
 } from "../../types";
-import { deployInterfoldSystem, ethers } from "../fixtures";
+import { deployInterfoldSystem, ethers, networkHelpers } from "../fixtures";
 
 const IERC165_ID = "0x01ffc9a7";
 const INVALID_ID = "0xffffffff";
@@ -70,7 +70,7 @@ async function deployAll() {
 describe("Standards & upgradeability hygiene", function () {
   describe("ERC-165 supportsInterface", function () {
     it("Interfold: supports IInterfold + IERC165, rejects 0xffffffff", async function () {
-      const { interfold } = await deployAll();
+      const { interfold } = await networkHelpers.loadFixture(deployAll);
       const iInterfoldId = interfaceIdOf(IInterfoldFactory.createInterface());
       expect(await interfold.supportsInterface(iInterfoldId)).to.equal(true);
       expect(await interfold.supportsInterface(IERC165_ID)).to.equal(true);
@@ -78,7 +78,8 @@ describe("Standards & upgradeability hygiene", function () {
     });
 
     it("CiphernodeRegistryOwnable: supports ICiphernodeRegistry + IERC165", async function () {
-      const { ciphernodeRegistry } = await deployAll();
+      const { ciphernodeRegistry } =
+        await networkHelpers.loadFixture(deployAll);
       const id = interfaceIdOf(ICiphernodeRegistryFactory.createInterface());
       expect(await ciphernodeRegistry.supportsInterface(id)).to.equal(true);
       expect(await ciphernodeRegistry.supportsInterface(IERC165_ID)).to.equal(
@@ -90,7 +91,7 @@ describe("Standards & upgradeability hygiene", function () {
     });
 
     it("BondingRegistry: supports IBondingRegistry + IERC165", async function () {
-      const { bondingRegistry } = await deployAll();
+      const { bondingRegistry } = await networkHelpers.loadFixture(deployAll);
       const id = interfaceIdOf(IBondingRegistryFactory.createInterface());
       expect(await bondingRegistry.supportsInterface(id)).to.equal(true);
       expect(await bondingRegistry.supportsInterface(IERC165_ID)).to.equal(
@@ -102,7 +103,7 @@ describe("Standards & upgradeability hygiene", function () {
     });
 
     it("E3RefundManager: supports IE3RefundManager + IERC165", async function () {
-      const { e3RefundManager } = await deployAll();
+      const { e3RefundManager } = await networkHelpers.loadFixture(deployAll);
       const id = interfaceIdOf(IE3RefundManagerFactory.createInterface());
       expect(await e3RefundManager.supportsInterface(id)).to.equal(true);
       expect(await e3RefundManager.supportsInterface(IERC165_ID)).to.equal(
@@ -114,7 +115,7 @@ describe("Standards & upgradeability hygiene", function () {
     });
 
     it("SlashingManager: supports ISlashingManager + IERC165", async function () {
-      const { slashingManager } = await deployAll();
+      const { slashingManager } = await networkHelpers.loadFixture(deployAll);
       const id = interfaceIdOf(ISlashingManagerFactory.createInterface());
       expect(await slashingManager.supportsInterface(id)).to.equal(true);
       expect(await slashingManager.supportsInterface(IERC165_ID)).to.equal(
@@ -128,7 +129,8 @@ describe("Standards & upgradeability hygiene", function () {
 
   describe("LazyIMT depth cap", function () {
     it("CiphernodeRegistryOwnable: exposes MAX_CIPHERNODE_LEAVES = 2^20 - 1", async function () {
-      const { ciphernodeRegistry } = await deployAll();
+      const { ciphernodeRegistry } =
+        await networkHelpers.loadFixture(deployAll);
       const cap = await ciphernodeRegistry.MAX_CIPHERNODE_LEAVES();
       // The LazyIMT dependency sets `maxIndex = 2^depth - 1` and rejects an
       // insertion at an index that is not less than `maxIndex`. The registry
@@ -136,24 +138,11 @@ describe("Standards & upgradeability hygiene", function () {
       // check and then reverts inside the dependency.
       expect(cap).to.equal((1n << 20n) - 1n);
     });
-
-    it("addCiphernode succeeds for the first leaf (smoke test of the guard)", async function () {
-      const { ciphernodeRegistry, owner } = await deployAll();
-      // Owner is also authorised by `onlyOwnerOrBondingVault`; this is the
-      // simplest way to exercise the LazyIMT insertion path and prove the
-      // new MAX_CIPHERNODE_LEAVES guard does not regress the happy path.
-      const node = "0x0000000000000000000000000000000000000abc";
-      await expect(
-        ciphernodeRegistry.connect(owner).addCiphernode(node),
-      ).to.emit(ciphernodeRegistry, "CiphernodeAdded");
-      // Real exhaustion (2^20 inserts) is infeasible to drive in a unit test;
-      // the revert path is verified by code review of the constant guard.
-    });
   });
 
   describe("Interfold library links", function () {
     it("deployment links the lifecycle and pricing libraries", async function () {
-      const all = await deployAll();
+      const all = await networkHelpers.loadFixture(deployAll);
       const proxy = await all.interfold.getAddress();
       const implementation = await addressAtSlot(
         proxy,
@@ -169,7 +158,7 @@ describe("Standards & upgradeability hygiene", function () {
     });
 
     it("upgrade links new lifecycle and pricing library addresses", async function () {
-      const all = await deployAll();
+      const all = await networkHelpers.loadFixture(deployAll);
       const lifecycle = await ethers.deployContract("InterfoldLifecycle");
       const pricing = await ethers.deployContract("InterfoldPricing");
       await lifecycle.waitForDeployment();

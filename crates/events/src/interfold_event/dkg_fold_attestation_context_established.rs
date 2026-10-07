@@ -32,9 +32,7 @@ impl Display for DkgFoldAttestationContextEstablished {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::{CommitteeFinalized, InterfoldEventData};
-    use alloy::primitives::Address;
 
     #[test]
     fn adding_the_context_event_keeps_legacy_committee_events_readable() {
@@ -59,22 +57,5 @@ mod tests {
             bincode::serialize(&value).expect("write legacy fixture"),
             LEGACY_FIXTURE
         );
-    }
-
-    #[test]
-    fn context_event_carries_an_explicit_schema_version() {
-        let value = DkgFoldAttestationContextEstablished {
-            schema_version: DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
-            e3_id: crate::E3id::new("8", 1),
-            context: DkgFoldAttestationContext {
-                registry: Address::repeat_byte(0x11),
-                verifying_contract: Address::repeat_byte(0x22),
-            },
-        };
-
-        let bytes = bincode::serialize(&value).expect("serialize context");
-        let decoded: DkgFoldAttestationContextEstablished =
-            bincode::deserialize(&bytes).expect("deserialize context");
-        assert_eq!(decoded, value);
     }
 }

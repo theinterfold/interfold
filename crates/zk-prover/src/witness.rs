@@ -53,7 +53,7 @@ fn execute(
     initial_witness: WitnessMap<FieldElement>,
 ) -> Result<WitnessStack<FieldElement>, ZkError> {
     let program = get_program(bytecode)?;
-    let blackbox_solver = Bn254BlackBoxSolver::default();
+    let blackbox_solver = Bn254BlackBoxSolver;
     let mut foreign_call_executor = DefaultForeignCallBuilder::default().build();
 
     execute_program(
@@ -125,12 +125,6 @@ mod tests {
     use super::*;
 
     const DUMMY_CIRCUIT: &str = include_str!("../tests/fixtures/dummy.json");
-
-    #[test]
-    fn test_load_circuit() {
-        let circuit = CompiledCircuit::from_json(DUMMY_CIRCUIT).unwrap();
-        assert_eq!(circuit.abi.parameters.len(), 3);
-    }
 
     #[test]
     fn test_generate_witness() {

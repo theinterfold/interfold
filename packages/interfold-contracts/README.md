@@ -172,6 +172,15 @@ and committee decryption proof. Its deterministic receipt is for tests, not
 production data availability. Keep requests paused until a production program is
 registered and wired. Do not set `bindInitialE3Program` for this option.
 
+`deployMockE3Program` and `deployMockCiphertextVerifier` are for Sepolia and
+local chains only. On every other chain, the `check-config` and `deploy` actions
+stop before they send a transaction when either flag is `true`. On mainnet, set
+`e3Programs[0]` to the deployed application program and set
+`ciphertextVerifier`. Also set `bindInitialE3Program` when the program binds to
+Interfold after deployment, as `CRISPProgram` does.
+`mainnet-protocol.config.json` keeps both flags, because it records the first
+mainnet deployment. The upgrade scripts still load that file.
+
 `Interfold.initialize` registers the selected program before the governance
 transaction executes. Later registrations require an owner transaction.
 
@@ -306,6 +315,11 @@ To request a new committee, run
 ```sh
 pnpm run hardhat committee:new --network [network]
 ```
+
+The task requests the BFV parameter set of the active circuit build
+(`ACTIVE_BFV_PARAM_SET` in `scripts/utils.ts`). To request another set, add
+`--param-set 0` (insecure-512) or `--param-set 2` (secure-8192). The task stops
+before it sends a transaction when the deployment has not registered that set.
 
 To publish the public key of a committee, run
 

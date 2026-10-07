@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::{
+    finalized_lifecycle::reconcile_restored_contexts,
     recovery::{
         backfill_restart_state, reconcile_committee_snapshots, recovered_ciphernode_selections,
     },
@@ -13,7 +14,7 @@ use crate::{
 };
 use actix::{Actor, Addr};
 use alloy::primitives::Address;
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context as _, Result};
 use derivative::Derivative;
 use e3_aggregator::ext::{
     AggregatorRoleExtension, PublicKeyAggregatorExtension, ThresholdPlaintextAggregatorExtension,
@@ -31,9 +32,10 @@ use e3_events::{
 };
 use e3_evm::{
     ensure_node_release, fetch_accusation_vote_validity, fetch_randomness_providers,
-    read_canonical_dkg_timing, BondingRegistrySolReader, CiphernodeRegistrySol,
-    CiphernodeRegistrySolReader, DataAvailabilityCoordinator, DataAvailabilityRepositoryFactory,
-    EvmChainGatewayHandle, GatewayFailureReceiver, InterfoldSolReader, InterfoldSolWriter,
+    fetch_slashing_manager, ingestion_heartbeat_files, read_canonical_dkg_timing,
+    BondingRegistrySolReader, CiphernodeRegistrySol, CiphernodeRegistrySolReader,
+    DataAvailabilityCoordinator, DataAvailabilityRepositoryFactory, EvmChainGatewayHandle,
+    GatewayFailureReceiver, IngestionProgressSink, InterfoldSolReader, InterfoldSolWriter,
     ProviderConfig, RandomnessProviderSolReader, SlashingManagerSolReader,
     SlashingManagerSolWriter, SlashingWriterRepositoryFactory,
 };
@@ -58,7 +60,10 @@ use e3_sortition::{
     NodeStateRepositoryFactory, Sortition, SortitionAttachParams, SortitionBackend,
     SortitionRecoveryRepositoryFactory, SortitionRepositoryFactory,
 };
-use e3_sync::{preflight_schema_version, reconcile_request_router_checkpoint, sync_with_net_ready};
+use e3_sync::{
+    preflight_node_role, preflight_schema_version, reconcile_request_router_checkpoint,
+    sync_with_net_ready, NodeRole,
+};
 use e3_utils::SharedRng;
 use e3_zk_prover::{setup_zk_actors, ZkActorRecovery, ZkBackend};
 use libp2p::PeerId;
@@ -77,10 +82,14 @@ enum EventSystemType {
 }
 
 struct EvmStartupRecovery<'a> {
+    canonical_keys: &'a e3_request::canonical_key::CanonicalPublicKeys,
+    terminal_plaintext_e3s: &'a HashSet<E3id>,
+    eventstore: &'a actix::Recipient<e3_events::EventStoreQueryBy<e3_events::SeqAgg>>,
     dkg_fold_contexts_by_e3: &'a HashMap<E3id, DkgFoldAttestationContext>,
-    active_aggregators: &'a HashMap<E3id, bool>,
     selected_party_ids: &'a HashMap<E3id, u64>,
     lifecycle_stages: &'a HashMap<E3id, E3Stage>,
+    /// Failed E3s that keep their contexts only for accusation or slashing work.
+    kept_failures: &'a HashSet<E3id>,
     committee_finalizer: &'a CommitteeFinalizerRecoveryState,
 }
 
@@ -103,6 +112,8 @@ pub struct CiphernodeBuilder {
     cipher: Arc<Cipher>,
     contract_components: ContractComponents,
     event_system: EventSystemType,
+    /// Directory of the ingestion heartbeat files, one per chain, for a local health check.
+    ingestion_heartbeat_dir: Option<PathBuf>,
     in_mem_store: Option<Addr<InMemStore>>,
     keyshare: Option<KeyshareKind>,
     logging: bool,
@@ -116,6 +127,7 @@ pub struct CiphernodeBuilder {
     proof_aggregation_enabled: bool,
     pubkey_agg: bool,
     rng: SharedRng,
+    role: NodeRole,
     sortition_backend: SortitionBackend,
     source_bus: Option<BusMode<Addr<EventBus<InterfoldEvent>>>>,
     task_pool: Option<TaskPool>,
@@ -185,6 +197,7 @@ impl CiphernodeBuilder {
             keyshare: None,
             logging: false,
             max_buffered_evm_events: 100_000,
+            ingestion_heartbeat_dir: None,
             max_buffered_net_bytes: 256 * 1024 * 1024,
             max_buffered_net_events: 1_024,
             name: None,
@@ -194,6 +207,7 @@ impl CiphernodeBuilder {
             proof_aggregation_enabled: true,
             pubkey_agg: false,
             rng,
+            role: NodeRole::Full,
             sortition_backend: SortitionBackend::score(),
             source_bus: None,
             task_pool: None,
@@ -227,6 +241,14 @@ impl CiphernodeBuilder {
     /// Set the node name for dashboard display and log attribution.
     pub fn with_name(mut self, name: &str) -> Self {
         self.name = Some(name.to_string());
+        self
+    }
+
+    /// Build a bootstrap node. It installs no accusation or commitment-check extensions, so it
+    /// signs no protocol messages. It starts without peer history when no peer can serve it. Its
+    /// data directory is stamped as a bootstrap node's, and a full node refuses to start on it.
+    pub fn with_bootstrap_role(mut self) -> Self {
+        self.role = NodeRole::Bootstrap;
         self
     }
 
@@ -287,20 +309,69 @@ impl CiphernodeBuilder {
         self
     }
 
-    /// Resolve the slashing manager address from ChainConfig. All chains are
-    /// checked (enabled or not) since this is just config, not RPC-dependent.
-    fn resolve_slashing_manager(&self) -> Result<Address> {
-        self.chains
-            .iter()
-            .find_map(|c| c.contracts.slashing_manager.as_ref())
-            .map(|c| c.address())
-            .transpose()?
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "`slashing_manager` contract address is required in chain config — \
-                     it is the EIP-712 `verifyingContract` for accusation vote signatures"
-                )
-            })
+    /// Resolve the SlashingManager address of each configured chain, in `self.chains` order.
+    ///
+    /// An enabled chain reads `Interfold.slashingManager()`. A disabled chain has no provider, so
+    /// only its configured address applies. `choose_slashing_manager` decides the address.
+    async fn resolve_slashing_managers(
+        &self,
+        provider_cache: &mut ProviderCache<WriteEnabled>,
+    ) -> Result<Vec<Option<Address>>> {
+        let mut slashing_managers = Vec::with_capacity(self.chains.len());
+        for chain in &self.chains {
+            let configured = chain
+                .contracts
+                .slashing_manager
+                .as_ref()
+                .map(|contract| contract.address())
+                .transpose()?;
+            let mut on_chain = None;
+            if chain.enabled.unwrap_or(true) {
+                let provider = provider_cache.ensure_read_provider(chain).await?;
+                let interfold = chain.contracts.interfold.address()?;
+                // A configured address can be a retired manager, so a transient read failure should
+                // not decide the signing domain for the whole run.
+                let mut read = fetch_slashing_manager(provider.provider(), interfold).await;
+                for delay_secs in SLASHING_MANAGER_READ_RETRY_DELAYS {
+                    if read.is_ok() {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
+                    read = fetch_slashing_manager(provider.provider(), interfold).await;
+                }
+                match read {
+                    Ok(Some(address)) => on_chain = Some(address),
+                    Ok(None) => warn!(
+                        chain = %chain.name,
+                        configured = ?configured,
+                        "Interfold.slashingManager() is not set; the configured SlashingManager applies"
+                    ),
+                    Err(error) => error!(
+                        chain = %chain.name,
+                        configured = ?configured,
+                        error = %error,
+                        "Could not read Interfold.slashingManager(); the configured SlashingManager \
+                         applies until the next restart. Check that it is the live manager"
+                    ),
+                }
+            }
+            let choice = choose_slashing_manager(configured, on_chain);
+            if let Some(SlashingManagerChoice::ChainOverridesConfig {
+                chain: on_chain,
+                configured,
+            }) = choice
+            {
+                warn!(
+                    chain = %chain.name,
+                    configured = %configured,
+                    interfold = %on_chain,
+                    "Configured SlashingManager differs from Interfold.slashingManager(); \
+                     using the Interfold value"
+                );
+            }
+            slashing_managers.push(choice.map(SlashingManagerChoice::address));
+        }
+        Ok(slashing_managers)
     }
 
     /// Fetch `CiphernodeRegistry.accusationVoteValidity()` for one chain (off-chain
@@ -454,6 +525,12 @@ impl CiphernodeBuilder {
         self
     }
 
+    /// Write an ingestion heartbeat file per chain under `dir`, for a local health check.
+    pub fn with_ingestion_heartbeat(mut self, dir: PathBuf) -> Self {
+        self.ingestion_heartbeat_dir = Some(dir);
+        self
+    }
+
     /// Bound count and estimated bytes retained from the network while initial synchronization is
     /// in progress. Exhaustion fails startup rather than dropping protocol input.
     pub fn with_network_buffer_limits(mut self, max_events: usize, max_bytes: usize) -> Self {
@@ -562,12 +639,23 @@ impl CiphernodeBuilder {
             chain_providers.push((chain.clone(), provider.chain_id()));
             chain_ids.push(provider.chain_id());
         }
+        ensure_one_entry_per_chain(
+            chain_providers
+                .iter()
+                .map(|(chain, chain_id)| (chain.name.as_str(), *chain_id)),
+        )?;
 
         let delays = create_aggregate_delays(&chain_providers)?;
         Ok((AggregateConfig::new(delays), chain_ids))
     }
 
-    pub async fn build(mut self) -> anyhow::Result<CiphernodeHandle> {
+    pub async fn build(self) -> anyhow::Result<CiphernodeHandle> {
+        // Keep the startup state out of the caller's future.
+        Box::pin(self.build_inner()).await
+    }
+
+    async fn build_inner(mut self) -> anyhow::Result<CiphernodeHandle> {
+        self.ensure_role_components()?;
         ensure!(
             self.multithread_concurrent_jobs != Some(0),
             "the detected memory limit cannot safely run one prover job in addition to the node; increase the host or cgroup memory limit"
@@ -626,13 +714,25 @@ impl CiphernodeBuilder {
         // Establish storage compatibility before signers, actors, or forked runtime events can
         // create durable state. Running this only inside `sync` is too late: actor startup can
         // make a fresh store non-empty and cause it to look like unversioned legacy data.
-        preflight_schema_version(&repositories, &eventstore_aggregate_config, &seq_eventstore)
-            .await?;
+        let new_directory =
+            preflight_schema_version(&repositories, &eventstore_aggregate_config, &seq_eventstore)
+                .await?;
+        preflight_node_role(&repositories, new_directory, self.role).await?;
         ensure_request_router_checkpoint(&repositories, aggregate_config.aggregates()).await?;
         reconcile_request_router_checkpoint(
             &repositories,
             aggregate_config.aggregates(),
             &seq_eventstore,
+        )
+        .await?;
+        // Reconcile the lifecycle with finalized chain state before any restart decision reads
+        // it, so the work of an E3 that is finished on chain does not resume.
+        let kept_failures = reconcile_restored_contexts(
+            &repositories,
+            aggregate_config.aggregates(),
+            &seq_eventstore,
+            &self.chains,
+            &mut provider_cache,
         )
         .await?;
         let committee_finalizer_recovery = backfill_restart_state(
@@ -680,6 +780,49 @@ impl CiphernodeBuilder {
             attach_protocol_logger(logger_name, &bus);
         }
 
+        let canonical_keys = e3_request::canonical_key::CanonicalPublicKeys::default();
+        let mut terminal_plaintext_e3s = HashSet::new();
+        let mut key_chains = HashMap::new();
+        if self.keyshare.is_some()
+            || self.threshold_plaintext_agg
+            || self.pubkey_agg
+            || self.contract_components.interfold
+        {
+            for chain in &self.chains {
+                let chain_id = if chain.enabled.unwrap_or(true) {
+                    Some(provider_cache.ensure_read_provider(chain).await?.chain_id())
+                } else {
+                    chain.chain_id
+                };
+                if let Some(chain_id) = chain_id {
+                    key_chains.insert(chain_id, chain.contracts.interfold.address()?);
+                }
+            }
+            let mut projection = e3_evm::canonical_key::CanonicalKeyProjection::new(
+                canonical_keys.clone(),
+                key_chains.clone(),
+            );
+            let aggregates = eventstore_aggregate_config
+                .indexed_ids()
+                .into_iter()
+                .filter(|id| key_chains.contains_key(&(*id as u64)))
+                .map(AggregateId::new)
+                .collect::<Vec<_>>();
+            let hydrating_contexts =
+                e3_request::RouterRepositoryFactory::request_router_checkpoint(
+                    repositories.as_ref(),
+                )
+                .read()
+                .await?
+                .map(|checkpoint| checkpoint.contexts.into_iter().collect())
+                .unwrap_or_default();
+            projection
+                .recover(&seq_eventstore, &aggregates, hydrating_contexts)
+                .await?;
+            terminal_plaintext_e3s = projection.confirmed_terminal_e3s();
+            projection.attach(&bus).await?;
+        }
+
         // Setup sortition
         let (sortition, _ciphernode_selector, selector_state) =
             self.setup_sortition(&bus, &repositories, &addr).await?;
@@ -705,7 +848,8 @@ impl CiphernodeBuilder {
                 .filter(|chain| chain.enabled.unwrap_or(true))
             {
                 let provider = provider_cache.ensure_read_provider(chain).await?;
-                finalizer_providers.insert(provider.chain_id(), provider);
+                let factory = ProviderConfig::for_chain(chain)?.into_read_provider_factory();
+                finalizer_providers.insert(provider.chain_id(), factory);
             }
             CommitteeFinalizer::attach_with_recovery(
                 &bus,
@@ -715,17 +859,23 @@ impl CiphernodeBuilder {
             .await?;
         }
 
+        let slashing_managers = self.resolve_slashing_managers(&mut provider_cache).await?;
+
         // Setup EVM contract event listeners
         let (evm_config, evm_gateways) = self
             .setup_evm_system(
                 &mut provider_cache,
                 &bus,
                 &repositories,
+                &slashing_managers,
                 EvmStartupRecovery {
+                    canonical_keys: &canonical_keys,
+                    terminal_plaintext_e3s: &terminal_plaintext_e3s,
+                    eventstore: &seq_eventstore,
                     dkg_fold_contexts_by_e3: &dkg_fold_contexts_by_e3,
-                    active_aggregators: &selector_state.is_aggregator,
                     selected_party_ids: &selected_party_ids,
                     lifecycle_stages: &lifecycle_stages,
+                    kept_failures: &kept_failures,
                     committee_finalizer: &committee_finalizer_recovery,
                 },
             )
@@ -736,20 +886,25 @@ impl CiphernodeBuilder {
             self.fetch_chain_configuration(&mut provider_cache).await?;
 
         // Setup protocol extensions (keyshare, aggregation, ZK, accusation, commitment)
-        let e3_builder = self
-            .setup_extensions(
-                &bus,
-                store.clone(),
-                &mut provider_cache,
-                &sortition,
-                &addr,
-                &dkg_fold_context_by_chain,
-                &dkg_fold_contexts_by_e3,
-                &accusation_vote_validity_by_chain,
-                &selector_state,
-                &lifecycle_stages,
-            )
-            .await?;
+        // Keep the startup future within the default thread stack.
+        let e3_builder = Box::pin(self.setup_extensions(
+            &bus,
+            store.clone(),
+            &mut provider_cache,
+            &sortition,
+            &addr,
+            &dkg_fold_context_by_chain,
+            &dkg_fold_contexts_by_e3,
+            &accusation_vote_validity_by_chain,
+            &slashing_managers,
+            &selector_state,
+            &lifecycle_stages,
+            &kept_failures,
+            &event_system,
+            &canonical_keys,
+            &seq_eventstore,
+        ))
+        .await?;
 
         // Arm the one-shot before the network can publish the no-peer fast-path signal.
         let net_ready = bus.wait_for(EventType::NetReady);
@@ -777,6 +932,9 @@ impl CiphernodeBuilder {
             self.max_buffered_net_bytes,
             selected_party_ids,
             recovered_documents,
+            // A bootstrap node uses no E3 history, so it starts without it when no peer can serve
+            // it. A lone seed would otherwise wait for its startup deadline while an E3 is open.
+            self.role == NodeRole::Bootstrap,
         )?;
 
         // Attach the request router after network startup is registered. Recovered local
@@ -831,6 +989,27 @@ impl CiphernodeBuilder {
     }
 
     // ── build() sub-functions ──────────────────────────────────────────
+
+    /// A bootstrap node must not run anything that joins a committee, signs, or sends a
+    /// transaction. It reads only the Interfold contract.
+    fn ensure_role_components(&self) -> Result<()> {
+        if self.role == NodeRole::Full {
+            return Ok(());
+        }
+        let components = &self.contract_components;
+        ensure!(
+            self.keyshare.is_none()
+                && !self.pubkey_agg
+                && !self.threshold_plaintext_agg
+                && !components.interfold
+                && !components.ciphernode_registry
+                && !components.bonding_registry
+                && !components.slashing_manager,
+            "a bootstrap node cannot run keyshare, aggregation, registry, or contract-writer \
+             components"
+        );
+        Ok(())
+    }
 
     fn resolve_bus(&self) -> Addr<EventBus<InterfoldEvent>> {
         match self.source_bus {
@@ -938,15 +1117,22 @@ impl CiphernodeBuilder {
         provider_cache: &mut ProviderCache<WriteEnabled>,
         bus: &BusHandle,
         repositories: &e3_data::Repositories,
+        slashing_managers: &[Option<Address>],
         recovery: EvmStartupRecovery<'_>,
     ) -> Result<(EvmEventConfig, Vec<EvmChainGatewayHandle>)> {
         setup_evm_system(
             &self.chains,
+            slashing_managers,
             provider_cache,
             bus,
             repositories,
             &self.contract_components,
             self.max_buffered_evm_events,
+            self.ingestion_heartbeat_dir
+                .clone()
+                .map(ingestion_heartbeat_files)
+                .transpose()
+                .context("ingestion heartbeat directory")?,
             recovery,
         )
         .await
@@ -993,6 +1179,10 @@ impl CiphernodeBuilder {
                 let provider = provider_cache.ensure_read_provider(chain).await?;
                 let chain_id = provider.chain_id();
                 validate_chain_id(chain, chain_id)?;
+                // Only the accusation manager uses the vote validity, and a bootstrap node has none.
+                if self.role == NodeRole::Bootstrap {
+                    continue;
+                }
                 let validity =
                     Self::fetch_accusation_vote_validity_from_registry(provider_cache, chain)
                         .await?;
@@ -1014,12 +1204,25 @@ impl CiphernodeBuilder {
         dkg_fold_context_by_chain: &HashMap<u64, Option<DkgFoldAttestationContext>>,
         dkg_fold_contexts_by_e3: &HashMap<e3_events::E3id, DkgFoldAttestationContext>,
         accusation_vote_validity_by_chain: &HashMap<u64, u64>,
+        slashing_managers: &[Option<Address>],
         selector_state: &CiphernodeSelectorState,
         lifecycle_stages: &HashMap<E3id, E3Stage>,
+        kept_failures: &HashSet<E3id>,
+        event_system: &EventSystem,
+        canonical_keys: &e3_request::canonical_key::CanonicalPublicKeys,
+        eventstore: &actix::Recipient<e3_events::EventStoreQueryBy<e3_events::SeqAgg>>,
     ) -> Result<e3_request::E3RouterBuilder> {
         let recovered_selections = recovered_ciphernode_selections(selector_state, addr)?;
-        let mut e3_builder =
-            E3Router::builder(bus, store.clone()).with_recovered_selections(recovered_selections);
+        // A slashably-failed context also outlives the longest accusation vote.
+        let max_vote_validity = accusation_vote_validity_by_chain.values().max().copied();
+        let teardown_grace = e3_request::SLASHABLE_FAILURE_GRACE
+            .saturating_add(Duration::from_secs(max_vote_validity.unwrap_or_default()));
+        let mut e3_builder = E3Router::builder(bus, store.clone())
+            .with_recovered_selections(recovered_selections)
+            .with_teardown_grace(teardown_grace)
+            .with_complete_on_restart(terminal_e3s(lifecycle_stages))
+            .with_fail_on_restart(fail_on_restart(lifecycle_stages, kept_failures));
+        let effect_stages = compute_gate_stages(lifecycle_stages, kept_failures);
         e3_builder = e3_builder.with(AggregatorRoleExtension::create(
             selector_state.is_aggregator.clone(),
         ));
@@ -1040,9 +1243,22 @@ impl CiphernodeBuilder {
             persisted_e3_metadata,
             dkg_fold_contexts_by_e3.clone(),
         );
-        zk_recovery
-            .hydrate_node_proofs(&repositories, lifecycle_stages)
-            .await?;
+        Box::pin(
+            zk_recovery.hydrate(
+                &repositories,
+                // A failed E3 kept for accusation work is Failed here, so its C0 inputs do not
+                // resume.
+                &effect_stages,
+                &event_system.eventstore_reader()?.seq(),
+                &event_system
+                    .aggregate_config()
+                    .indexed_ids()
+                    .into_iter()
+                    .map(AggregateId::new)
+                    .collect::<Vec<_>>(),
+            ),
+        )
+        .await?;
 
         let mut interfold_addresses = HashMap::new();
         let mut dkg_chain_readers = HashMap::new();
@@ -1067,7 +1283,7 @@ impl CiphernodeBuilder {
 
         // ── Threshold keyshare + ZK actors ──
         if let Some(KeyshareKind::Threshold) = self.keyshare {
-            let _ = self.ensure_multithread(bus, addr, lifecycle_stages);
+            let _ = self.ensure_multithread(bus, addr, &effect_stages, canonical_keys);
             let backend = self
                 .zk_backend
                 .as_ref()
@@ -1101,14 +1317,18 @@ impl CiphernodeBuilder {
             };
 
             info!("Setting up ThresholdKeyshareExtension");
-            e3_builder = e3_builder.with(ThresholdKeyshareExtension::create(
-                bus,
-                &self.cipher,
-                addr,
-                interfold_addresses.clone(),
-                dkg_timing_reader,
-                signer.clone(),
-            ));
+            e3_builder = e3_builder.with_recipient(
+                "threshold_keyshare",
+                ThresholdKeyshareExtension::create(
+                    bus,
+                    &self.cipher,
+                    addr,
+                    interfold_addresses.clone(),
+                    dkg_timing_reader,
+                    signer.clone(),
+                    canonical_keys.clone(),
+                ),
+            );
 
             info!("Setting up ZK actors");
             setup_zk_actors(
@@ -1116,7 +1336,9 @@ impl CiphernodeBuilder {
                 backend,
                 signer,
                 dkg_fold_context_by_chain.clone(),
-                zk_recovery.clone(),
+                zk_recovery
+                    .clone()
+                    .with_canonical_keys(canonical_keys.clone()),
                 self.proof_aggregation_enabled,
                 repositories.clone(),
             );
@@ -1128,12 +1350,15 @@ impl CiphernodeBuilder {
             e3_builder = e3_builder.with(FheExtension::create(bus, &self.rng));
 
             info!("Setting up PublicKeyAggregationExtension");
-            let _ = self.ensure_multithread(bus, addr, lifecycle_stages);
-            e3_builder = e3_builder.with(PublicKeyAggregatorExtension::create(
-                bus,
-                interfold_addresses,
-                local_signer_address,
-            ));
+            let _ = self.ensure_multithread(bus, addr, &effect_stages, canonical_keys);
+            e3_builder = e3_builder.with_recipient(
+                "publickey",
+                PublicKeyAggregatorExtension::create(
+                    bus,
+                    interfold_addresses,
+                    local_signer_address,
+                ),
+            );
 
             if self.keyshare.is_none() {
                 let backend = self
@@ -1147,7 +1372,7 @@ impl CiphernodeBuilder {
                     backend,
                     signer,
                     dkg_fold_context_by_chain.clone(),
-                    zk_recovery,
+                    zk_recovery.with_canonical_keys(canonical_keys.clone()),
                     self.proof_aggregation_enabled,
                     repositories.clone(),
                 );
@@ -1157,41 +1382,96 @@ impl CiphernodeBuilder {
         // ── Threshold plaintext aggregation ──
         if self.threshold_plaintext_agg {
             info!("Setting up ThresholdPlaintextAggregatorExtension");
-            let _ = self.ensure_multithread(bus, addr, lifecycle_stages);
-            e3_builder = e3_builder.with(ThresholdPlaintextAggregatorExtension::create(
-                bus,
-                sortition,
-                self.proof_aggregation_enabled,
-            ));
+            let _ = self.ensure_multithread(bus, addr, &effect_stages, canonical_keys);
+            e3_builder = e3_builder.with_recipient(
+                "plaintext",
+                ThresholdPlaintextAggregatorExtension::create(
+                    bus,
+                    sortition,
+                    self.proof_aggregation_enabled,
+                    canonical_keys.clone(),
+                    eventstore.clone(),
+                ),
+            );
+        }
+
+        // A bootstrap node verifies no proofs and must not sign accusation votes, so it gets
+        // neither slashing extension.
+        if self.role == NodeRole::Bootstrap {
+            return Ok(e3_builder);
         }
 
         // ── Accusation manager ──
         {
             let accusation_deadline_skew_secs = parse_env_u64("ACCUSATION_DEADLINE_SKEW_SECS", 30);
             let signer = provider_cache.ensure_signer().await?;
-            let slashing_manager_addr = self.resolve_slashing_manager()?;
+            // Each E3 signs and checks accusation votes with the SlashingManager of its own chain,
+            // because that address is the EIP-712 `verifyingContract` of the vote domain.
+            let mut slashing_managers_by_chain = HashMap::new();
+            for (chain, slashing_manager) in self.chains.iter().zip(slashing_managers) {
+                let Some(slashing_manager) = *slashing_manager else {
+                    continue;
+                };
+                let enabled = chain.enabled.unwrap_or(true);
+                let chain_id = if enabled {
+                    Some(provider_cache.ensure_read_provider(chain).await?.chain_id())
+                } else {
+                    chain.chain_id
+                };
+                match chain_id {
+                    // The enabled chain's reader and writer use its resolved address, so a
+                    // disabled entry with the same chain_id must not replace it.
+                    Some(chain_id) if enabled => {
+                        slashing_managers_by_chain.insert(chain_id, slashing_manager);
+                    }
+                    Some(chain_id) => {
+                        slashing_managers_by_chain
+                            .entry(chain_id)
+                            .or_insert(slashing_manager);
+                    }
+                    None => warn!(
+                        chain = %chain.name,
+                        "Disabled chain has no chain_id; accusation votes do not use its \
+                         SlashingManager"
+                    ),
+                }
+            }
+            if slashing_managers_by_chain.is_empty() {
+                anyhow::bail!(
+                    "`slashing_manager` contract address is required in chain config — \
+                     it is the EIP-712 `verifyingContract` for accusation vote signatures"
+                );
+            }
             info!(
                 chains = accusation_vote_validity_by_chain.len(),
-                accusation_deadline_skew_secs, "Setting up AccusationManagerExtension"
-            );
-            e3_builder = e3_builder.with(AccusationManagerExtension::create(
-                bus,
-                signer,
-                slashing_manager_addr,
-                accusation_vote_validity_by_chain.clone(),
+                slashing_manager_chains = slashing_managers_by_chain.len(),
                 accusation_deadline_skew_secs,
-                persisted_committees,
-            ));
+                "Setting up AccusationManagerExtension"
+            );
+            e3_builder = e3_builder.with_recipient(
+                "accusation_manager",
+                AccusationManagerExtension::create(
+                    bus,
+                    signer,
+                    slashing_managers_by_chain,
+                    accusation_vote_validity_by_chain.clone(),
+                    accusation_deadline_skew_secs,
+                    persisted_committees,
+                ),
+            );
         }
 
         // ── Commitment consistency checker ──
         {
             info!("Setting up CommitmentConsistencyCheckerExtension");
-            e3_builder = e3_builder.with(CommitmentConsistencyCheckerExtension::create(
-                bus,
-                &repositories.store,
-                e3_zk_prover::default_links,
-            ));
+            e3_builder = e3_builder.with_recipient(
+                "commitment_consistency_checker",
+                CommitmentConsistencyCheckerExtension::create(
+                    bus,
+                    &repositories.store,
+                    e3_zk_prover::default_links,
+                ),
+            );
         }
 
         Ok(e3_builder)
@@ -1256,6 +1536,7 @@ impl CiphernodeBuilder {
         bus: &BusHandle,
         task_scope: &str,
         lifecycle_stages: &HashMap<E3id, E3Stage>,
+        canonical_keys: &e3_request::canonical_key::CanonicalPublicKeys,
     ) -> Addr<Multithread> {
         if let Some(cached) = self.multithread_cache.clone() {
             return cached;
@@ -1280,6 +1561,7 @@ impl CiphernodeBuilder {
                 self.multithread_report.clone(),
                 backend,
                 lifecycle_stages.clone(),
+                canonical_keys.clone(),
             )
         } else {
             Multithread::attach(
@@ -1290,6 +1572,7 @@ impl CiphernodeBuilder {
                 task_scope.to_owned(),
                 self.multithread_report.clone(),
                 lifecycle_stages.clone(),
+                canonical_keys.clone(),
             )
         };
 
@@ -1317,14 +1600,122 @@ fn parse_env_u64(name: &str, default_val: u64) -> u64 {
     }
 }
 
+/// The E3s whose local lifecycle stage is terminal at startup. Their restored work does not
+/// resume.
+fn terminal_e3s(lifecycle_stages: &HashMap<E3id, E3Stage>) -> HashSet<E3id> {
+    lifecycle_stages
+        .iter()
+        .filter(|(_, stage)| stage.is_terminal())
+        .map(|(e3_id, _)| e3_id.clone())
+        .collect()
+}
+
+/// The failed E3s that keep their contexts only for accusation or slashing work, with their local
+/// lifecycle stage. Their protocol actors learn of the failure at `EffectsEnabled`.
+fn fail_on_restart(
+    lifecycle_stages: &HashMap<E3id, E3Stage>,
+    kept_failures: &HashSet<E3id>,
+) -> HashMap<E3id, E3Stage> {
+    kept_failures
+        .iter()
+        .map(|e3_id| {
+            let stage = lifecycle_stages.get(e3_id).cloned();
+            (e3_id.clone(), stage.unwrap_or(E3Stage::None))
+        })
+        .collect()
+}
+
+/// The stages that the compute gate starts from: a failed E3 that keeps its context only for
+/// accusation or slashing work runs no compute.
+fn compute_gate_stages(
+    lifecycle_stages: &HashMap<E3id, E3Stage>,
+    kept_failures: &HashSet<E3id>,
+) -> HashMap<E3id, E3Stage> {
+    let mut stages = lifecycle_stages.clone();
+    stages.extend(
+        kept_failures
+            .iter()
+            .map(|e3_id| (e3_id.clone(), E3Stage::Failed)),
+    );
+    stages
+}
+
+/// The E3s whose data-availability work ends at startup: finished E3s, and failed E3s that keep
+/// their contexts only for accusation or slashing work.
+fn work_ended_on_restart(
+    lifecycle_stages: &HashMap<E3id, E3Stage>,
+    kept_failures: &HashSet<E3id>,
+) -> HashSet<E3id> {
+    let mut ended = terminal_e3s(lifecycle_stages);
+    ended.extend(kept_failures.iter().cloned());
+    ended
+}
+
 /// Validate chain ID matches expected configuration
-fn validate_chain_id(chain: &ChainConfig, actual_chain_id: u64) -> Result<()> {
+pub(crate) fn validate_chain_id(chain: &ChainConfig, actual_chain_id: u64) -> Result<()> {
     if let Some(expected_chain_id) = chain.chain_id {
         if actual_chain_id != expected_chain_id {
             return Err(anyhow::anyhow!(
                 "Chain '{}' validation failed: expected chain_id {}, but provider returned chain_id {}",
                 chain.name, expected_chain_id, actual_chain_id
             ));
+        }
+    }
+    Ok(())
+}
+
+/// Delays before the startup retries of `Interfold.slashingManager()`.
+const SLASHING_MANAGER_READ_RETRY_DELAYS: [u64; 2] = [1, 3];
+
+/// The SlashingManager address that startup chose for one chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SlashingManagerChoice {
+    /// `Interfold.slashingManager()`. The configured address is absent or equal.
+    Chain(Address),
+    /// `Interfold.slashingManager()`, which replaces a different configured address.
+    ChainOverridesConfig { chain: Address, configured: Address },
+    /// The configured address, because the chain gave no address.
+    Configured(Address),
+}
+
+impl SlashingManagerChoice {
+    fn address(self) -> Address {
+        match self {
+            Self::Chain(address)
+            | Self::ChainOverridesConfig { chain: address, .. }
+            | Self::Configured(address) => address,
+        }
+    }
+}
+
+/// Decide the SlashingManager for one chain.
+///
+/// `Interfold.slashingManager()` is authoritative: the contracts call that manager, and accusation
+/// votes sign its address as the EIP-712 `verifyingContract`. The configured address applies only
+/// when the chain gives no address. `None` means that neither source gives an address.
+fn choose_slashing_manager(
+    configured: Option<Address>,
+    on_chain: Option<Address>,
+) -> Option<SlashingManagerChoice> {
+    match (on_chain, configured) {
+        (Some(chain), Some(configured)) if chain != configured => {
+            Some(SlashingManagerChoice::ChainOverridesConfig { chain, configured })
+        }
+        (Some(chain), _) => Some(SlashingManagerChoice::Chain(chain)),
+        (None, configured) => configured.map(SlashingManagerChoice::Configured),
+    }
+}
+
+/// Each enabled chain entry must be another chain. Two entries of one chain would run two readers
+/// into that chain's one event log, and the health check expects one heartbeat per entry, while
+/// the readers of one chain write one heartbeat file.
+fn ensure_one_entry_per_chain<'a>(chains: impl IntoIterator<Item = (&'a str, u64)>) -> Result<()> {
+    let mut names = HashMap::new();
+    for (name, chain_id) in chains {
+        if let Some(other) = names.insert(chain_id, name) {
+            anyhow::bail!(
+                "the enabled chains `{other}` and `{name}` are both chain {chain_id}; enable one entry per chain"
+            );
         }
     }
     Ok(())
@@ -1376,25 +1767,45 @@ fn create_aggregate_delays(
     Ok(delays)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn setup_evm_system(
     chains: &[ChainConfig],
+    slashing_managers: &[Option<Address>],
     provider_cache: &mut ProviderCache<WriteEnabled>,
     bus: &BusHandle,
     repositories: &e3_data::Repositories,
     contract_components: &ContractComponents,
     max_buffered_evm_events: usize,
+    progress: Option<IngestionProgressSink>,
     recovery: EvmStartupRecovery<'_>,
 ) -> Result<(EvmEventConfig, Vec<EvmChainGatewayHandle>)> {
     let EvmStartupRecovery {
+        canonical_keys,
+        terminal_plaintext_e3s,
+        eventstore,
         dkg_fold_contexts_by_e3,
-        active_aggregators,
         selected_party_ids,
         lifecycle_stages,
+        kept_failures,
         committee_finalizer,
     } = recovery;
+    // One reader per chain: the ingestion heartbeats and the health check's expectation count
+    // chains by their resolved ID. A full node checks this when it builds its aggregate
+    // configuration; a bootstrap node reaches this point without that step.
+    let mut resolved = Vec::new();
+    for chain in chains.iter().filter(|chain| chain.enabled.unwrap_or(true)) {
+        let provider = provider_cache.ensure_read_provider(chain).await?;
+        resolved.push((chain.name.as_str(), provider.chain_id()));
+    }
+    ensure_one_entry_per_chain(resolved)?;
     let mut evm_config = EvmEventConfig::new();
     let mut gateways = Vec::new();
-    for chain in chains.iter().filter(|chain| chain.enabled.unwrap_or(true)) {
+    let finished = work_ended_on_restart(lifecycle_stages, kept_failures);
+    for (chain, slashing_manager) in chains
+        .iter()
+        .zip(slashing_managers.iter().copied())
+        .filter(|(chain, _)| chain.enabled.unwrap_or(true))
+    {
         let provider = provider_cache.ensure_read_provider(chain).await?;
         let chain_id = provider.chain_id();
         if contract_components.interfold && chain.data_availability.is_none() {
@@ -1408,6 +1819,7 @@ async fn setup_evm_system(
             chain_id,
             chain.data_availability.as_ref(),
             repositories.data_availability_recovery(chain_id),
+            &finished,
         )
         .await?;
         if contract_components.ciphernode_registry {
@@ -1417,23 +1829,21 @@ async fn setup_evm_system(
         let ingestion_confirmations = chain.ingestion_confirmations()?;
         evm_config.insert(chain_id, chain.try_into()?);
 
-        let rpc_url = chain.rpc_url()?;
-        let provider_factory =
-            ProviderConfig::new(rpc_url, chain.rpc_auth.clone()).into_read_provider_factory();
+        let provider_factory = ProviderConfig::for_chain(chain)?.into_read_provider_factory();
 
+        let max_log_window = chain.rpc_log_range_blocks()?;
         let mut system = EvmSystemChainBuilder::new(bus, &provider);
         system
             .with_provider_factory(provider_factory.clone())
-            .with_buffer_limit(max_buffered_evm_events);
+            .with_buffer_limit(max_buffered_evm_events)
+            .with_max_log_window(max_log_window);
+        if let Some(progress) = &progress {
+            system.with_progress_sink(progress.clone());
+        }
 
         if contract_components.interfold {
             let write_provider = provider_cache.ensure_write_provider(chain).await?;
             let contract = &chain.contracts.interfold;
-            let chain_active_aggregators = active_aggregators
-                .iter()
-                .filter(|(e3_id, _)| e3_id.chain_id() == chain_id)
-                .map(|(e3_id, active)| (e3_id.clone(), *active))
-                .collect();
             let chain_party_ids = selected_party_ids
                 .iter()
                 .filter(|(e3_id, _)| e3_id.chain_id() == chain_id)
@@ -1467,11 +1877,17 @@ async fn setup_evm_system(
                 bus,
                 write_provider.clone(),
                 contract.address()?,
-                chain_active_aggregators,
                 chain_party_ids,
                 chain_request_registries,
                 chain_failure_stages,
                 chain_failure_settlements,
+                terminal_plaintext_e3s
+                    .iter()
+                    .filter(|id| id.chain_id() == chain_id)
+                    .cloned()
+                    .collect(),
+                canonical_keys.clone(),
+                eventstore.clone(),
             );
             system.with_contract(contract.address()?, move |next| {
                 InterfoldSolReader::setup(&next).recipient()
@@ -1513,6 +1929,7 @@ async fn setup_evm_system(
                 provider.provider(),
                 contract_address,
                 contract.deploy_block().unwrap_or(0),
+                max_log_window,
             )
             .await?;
             if randomness_addresses.is_empty() {
@@ -1547,11 +1964,6 @@ async fn setup_evm_system(
                             .filter(|(e3_id, _)| e3_id.chain_id() == chain_id)
                             .map(|(e3_id, context)| (e3_id.clone(), context.registry))
                             .collect();
-                        let chain_active_aggregators = active_aggregators
-                            .iter()
-                            .filter(|(e3_id, _)| e3_id.chain_id() == chain_id)
-                            .map(|(e3_id, active)| (e3_id.clone(), *active))
-                            .collect();
                         let chain_recovered_tickets = committee_finalizer
                             .tickets
                             .iter()
@@ -1563,7 +1975,6 @@ async fn setup_evm_system(
                             write_provider.clone(),
                             contract.address()?,
                             request_registries,
-                            chain_active_aggregators,
                             chain_recovered_tickets,
                         );
                         info!("CiphernodeRegistrySolWriter attached for publishing committees");
@@ -1576,7 +1987,7 @@ async fn setup_evm_system(
         }
 
         if contract_components.slashing_manager {
-            let contract = chain.contracts.slashing_manager.as_ref().ok_or_else(|| {
+            let contract_addr = slashing_manager.ok_or_else(|| {
                 anyhow::anyhow!(
                     "Slashing manager is enabled but no contract address configured for chain {}",
                     chain.name
@@ -1584,7 +1995,6 @@ async fn setup_evm_system(
             })?;
 
             // Reader: read SlashExecuted events from chain
-            let contract_addr = contract.address()?;
             system.with_contract(contract_addr, move |next| {
                 SlashingManagerSolReader::setup(&next).recipient()
             });
@@ -1615,7 +2025,7 @@ async fn setup_evm_system(
             }
         }
 
-        gateways.push(system.build_with_readiness());
+        gateways.push(system.build_with_readiness()?);
     }
 
     Ok((evm_config, gateways))
@@ -1634,8 +2044,10 @@ async fn wait_for_evm_gateways(gateways: Vec<EvmChainGatewayHandle>) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::{
-        create_aggregate_delay, event_clock, reconcile_committee_snapshots,
-        recovered_ciphernode_selections, validate_vrf_chain_id,
+        choose_slashing_manager, compute_gate_stages, create_aggregate_delay,
+        ensure_one_entry_per_chain, event_clock, fail_on_restart, reconcile_committee_snapshots,
+        recovered_ciphernode_selections, validate_vrf_chain_id, work_ended_on_restart,
+        SlashingManagerChoice,
     };
     use e3_config::{
         chain_config::ChainConfig,
@@ -1652,6 +2064,32 @@ mod tests {
     use e3_utils::ArcBytes;
     use std::collections::HashMap;
     use std::time::Duration;
+
+    /// A failed E3 that keeps its context only for accusation or slashing work learns of the
+    /// failure at `EffectsEnabled`, runs no compute, and ends its data-availability work. Other
+    /// E3s keep their decisions.
+    #[test]
+    fn a_kept_failure_ends_its_work_on_restart() {
+        let (kept, active, complete) = (E3id::new("1", 1), E3id::new("2", 1), E3id::new("3", 1));
+        let lifecycle = HashMap::from([
+            (kept.clone(), E3Stage::CommitteeFinalized),
+            (active.clone(), E3Stage::KeyPublished),
+            (complete.clone(), E3Stage::Complete),
+        ]);
+        let kept_failures = std::collections::HashSet::from([kept.clone()]);
+
+        assert_eq!(
+            fail_on_restart(&lifecycle, &kept_failures),
+            HashMap::from([(kept.clone(), E3Stage::CommitteeFinalized)])
+        );
+        let gate = compute_gate_stages(&lifecycle, &kept_failures);
+        assert_eq!(gate.get(&kept), Some(&E3Stage::Failed));
+        assert_eq!(gate.get(&active), Some(&E3Stage::KeyPublished));
+        assert_eq!(
+            work_ended_on_restart(&lifecycle, &kept_failures),
+            std::collections::HashSet::from([kept, complete])
+        );
+    }
 
     fn chain_with_finalization_ms(finalization_ms: Option<u64>) -> ChainConfig {
         let contract = || Contract::AddressOnly(Address::ZERO.to_string());
@@ -1673,6 +2111,8 @@ mod tests {
             finalization_ms,
             chain_id: Some(1),
             ingestion_confirmations: Some(0),
+            rpc_poll_interval_ms: Some(250),
+            rpc_log_range_blocks: None,
             data_availability: None,
         }
     }
@@ -1958,8 +2398,10 @@ mod tests {
             // The old decoder could persist an empty chain projection. Keep its bytes intact.
             let legacy_store =
                 e3_data::Repository::new(repos.store.scope("//sortition/admission/v1"));
-            let mut legacy = AdmissionState::default();
-            legacy.schema_version = 1;
+            let mut legacy = AdmissionState {
+                schema_version: 1,
+                ..Default::default()
+            };
             legacy.chains.entry(1).or_default();
             legacy_store.write_sync(&legacy).await?;
             let legacy_bytes = bincode::serialize(&legacy)?;
@@ -2045,10 +2487,98 @@ mod tests {
     }
 
     #[test]
+    fn two_enabled_entries_of_one_chain_are_refused() {
+        assert!(ensure_one_entry_per_chain([("hardhat", 31_337), ("sepolia", 11_155_111)]).is_ok());
+
+        let error = ensure_one_entry_per_chain([
+            ("hardhat", 31_337),
+            ("sepolia", 11_155_111),
+            ("local", 31_337),
+        ])
+        .expect_err("two entries of one chain");
+        assert!(
+            error
+                .to_string()
+                .contains("`hardhat` and `local` are both chain 31337"),
+            "{error:#}"
+        );
+    }
+
+    /// The build resolves each enabled entry's chain ID and refuses two entries of one chain.
+    #[actix::test]
+    async fn the_build_refuses_two_enabled_entries_of_one_chain() -> anyhow::Result<()> {
+        let anvil = alloy::node_bindings::Anvil::new().try_spawn()?;
+        let entry = |name: &str| ChainConfig {
+            name: name.to_owned(),
+            rpc_url: anvil.endpoint(),
+            chain_id: None,
+            ..chain_with_finalization_ms(None)
+        };
+        let cipher =
+            std::sync::Arc::new(e3_crypto::Cipher::from_password("test-only-chains").await?);
+        let builder = |chains: &[ChainConfig]| {
+            super::CiphernodeBuilder::new(e3_test_helpers::derive_shared_rng(1, 1), cipher.clone())
+                .with_chains(chains)
+        };
+
+        builder(&[entry("first")])
+            .create_aggregate_config(&mut super::ProviderCache::new())
+            .await?;
+        let Err(error) = builder(&[entry("first"), entry("second")])
+            .create_aggregate_config(&mut super::ProviderCache::new())
+            .await
+        else {
+            panic!("two enabled entries of one chain must stop the build");
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("`first` and `second` are both chain 31337"),
+            "{error:#}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn rejects_arbitrum_vrf_chains() {
         let error = validate_vrf_chain_id(42_161).expect_err("Arbitrum must be rejected");
 
         assert!(error.to_string().contains("Ethereum mainnet"));
+    }
+
+    #[test]
+    fn slashing_manager_uses_the_interfold_dependency() {
+        let live = Address::repeat_byte(0x75);
+        let retired = Address::repeat_byte(0x97);
+
+        let choice = choose_slashing_manager(Some(retired), Some(live));
+        assert_eq!(
+            choice,
+            Some(SlashingManagerChoice::ChainOverridesConfig {
+                chain: live,
+                configured: retired,
+            })
+        );
+        assert_eq!(choice.map(SlashingManagerChoice::address), Some(live));
+        assert_eq!(
+            choose_slashing_manager(Some(live), Some(live)),
+            Some(SlashingManagerChoice::Chain(live))
+        );
+        assert_eq!(
+            choose_slashing_manager(None, Some(live)),
+            Some(SlashingManagerChoice::Chain(live))
+        );
+    }
+
+    #[test]
+    fn slashing_manager_uses_the_configured_address_without_a_chain_value() {
+        let configured = Address::repeat_byte(0x97);
+
+        assert_eq!(
+            choose_slashing_manager(Some(configured), None),
+            Some(SlashingManagerChoice::Configured(configured))
+        );
+        assert_eq!(choose_slashing_manager(None, None), None);
     }
 
     #[test]
@@ -2179,5 +2709,142 @@ mod tests {
             .unwrap_err();
 
         assert!(error.to_string().contains("snapshots disagree"));
+    }
+
+    #[actix::test]
+    async fn bootstrap_router_keeps_no_protocol_backlog() -> anyhow::Result<()> {
+        use e3_data::RepositoriesFactory;
+        use e3_events::{
+            E3Requested, EventConstructorWithTimestamp, EventSource, InterfoldEvent, TestEvent,
+            Unsequenced,
+        };
+        use e3_request::{E3Context, E3ContextSnapshot, E3Extension};
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+
+        struct ObserveRecipients(Arc<AtomicUsize>, Arc<AtomicUsize>);
+        #[async_trait::async_trait]
+        impl E3Extension for ObserveRecipients {
+            fn on_event(&self, context: &mut E3Context, _: &InterfoldEvent) {
+                self.0.fetch_max(context.recipients.len(), Ordering::SeqCst);
+                self.1.fetch_add(1, Ordering::SeqCst);
+            }
+            async fn hydrate(
+                &self,
+                _: &mut E3Context,
+                _: &E3ContextSnapshot,
+            ) -> anyhow::Result<()> {
+                Ok(())
+            }
+        }
+        let system = crate::EventSystem::new().with_fresh_bus();
+        let bus = system.handle()?.enable("bootstrap-routing");
+        let store = system.store()?;
+        let cipher =
+            Arc::new(e3_crypto::Cipher::from_password("test-only-bootstrap-router").await?);
+        let mut builder =
+            super::CiphernodeBuilder::new(e3_test_helpers::derive_shared_rng(1, 1), cipher.clone())
+                .with_bootstrap_role();
+        let local = Address::from([0xab; 20]).to_string();
+        let repos = store.repositories();
+        let (sortition, _, selector) = builder.setup_sortition(&bus, &repos, &local).await?;
+        let mut providers = super::ProviderCache::new().with_write_support(cipher, Arc::new(repos));
+        let observed = Arc::new(AtomicUsize::new(0));
+        let routed = Arc::new(AtomicUsize::new(0));
+        let router = builder
+            .setup_extensions(
+                &bus,
+                store,
+                &mut providers,
+                &sortition,
+                &local,
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+                &[],
+                &selector,
+                &HashMap::new(),
+                &std::collections::HashSet::new(),
+                &system,
+                &e3_request::canonical_key::CanonicalPublicKeys::default(),
+                &system.eventstore_reader()?.seq(),
+            )
+            .await?
+            .with(Box::new(ObserveRecipients(
+                observed.clone(),
+                routed.clone(),
+            )))
+            .build()
+            .await?;
+        let e3_id = E3id::new("701", 1);
+        let admission = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            E3Requested {
+                e3_id: e3_id.clone(),
+                ..Default::default()
+            }
+            .into(),
+            None,
+            1,
+            None,
+            EventSource::Evm,
+        )
+        .into_sequenced(1);
+        router.send(admission).await?;
+        for sequence in 2..2_050 {
+            let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                TestEvent::new("history", sequence)
+                    .with_e3_id(e3_id.clone())
+                    .into(),
+                None,
+                sequence.into(),
+                None,
+                EventSource::Evm,
+            )
+            .into_sequenced(sequence);
+            router.send(event).await?;
+        }
+        assert_eq!(routed.load(Ordering::SeqCst), 2_049);
+        assert_eq!(
+            observed.load(Ordering::SeqCst),
+            0,
+            "a bootstrap context must have no deferred protocol recipients"
+        );
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn a_bootstrap_node_rejects_committee_components() -> anyhow::Result<()> {
+        let cipher =
+            std::sync::Arc::new(e3_crypto::Cipher::from_password("test-only-bootstrap").await?);
+        let node = || {
+            super::CiphernodeBuilder::new(e3_test_helpers::derive_shared_rng(1, 1), cipher.clone())
+        };
+        let bootstrap = || node().with_bootstrap_role();
+
+        assert!(bootstrap()
+            .with_contract_interfold_reader()
+            .ensure_role_components()
+            .is_ok());
+        for builder in [
+            bootstrap().with_trbfv(),
+            bootstrap().with_pubkey_aggregation(),
+            bootstrap().with_threshold_plaintext_aggregation(),
+            bootstrap().with_contract_interfold_full(),
+            bootstrap().with_contract_ciphernode_registry(),
+            bootstrap().with_contract_bonding_registry(),
+            bootstrap().with_contract_slashing_manager(),
+        ] {
+            let error = builder.ensure_role_components().unwrap_err();
+            assert!(error.to_string().contains("a bootstrap node cannot run"));
+        }
+        assert!(node()
+            .with_trbfv()
+            .with_pubkey_aggregation()
+            .with_contract_interfold_full()
+            .ensure_role_components()
+            .is_ok());
+        Ok(())
     }
 }

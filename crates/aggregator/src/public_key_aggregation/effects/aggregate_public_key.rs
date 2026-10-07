@@ -242,7 +242,7 @@ impl PublicKeyAggregator {
             })
         })?;
 
-        if self.can_run_aggregation_effects() {
+        if self.can_continue_aggregation_effects() {
             self.try_dispatch_nodes_fold_step(&ec)?;
         }
         Ok(())

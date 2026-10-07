@@ -121,9 +121,8 @@ impl Cli {
                         command: CiphernodeCommands::Setup {
                             network,
                             rpc_url,
-                            password,
+                            config_dir,
                             password_stdin,
-                            private_key,
                             private_key_stdin,
                         }
                     } => {
@@ -131,9 +130,8 @@ impl Cli {
                             out,
                             network,
                             rpc_url,
-                            password,
+                            config_dir,
                             password_stdin,
-                            private_key,
                             private_key_stdin,
                         )
                         .await?;
@@ -146,7 +144,6 @@ impl Cli {
                             None,
                             None,
                             false,
-                            None,
                             false,
                         )
                         .await?;
@@ -165,19 +162,37 @@ impl Cli {
             Err(e) => return Err(e),
         };
 
-        setup_tracing(&config, log_level)?;
+        // The purge commands delete the node folders. They write no log file, password, or wallet
+        // there, because a later purge would treat such files as node state.
+        let purges = matches!(
+            self.command,
+            Commands::PurgeAll { .. }
+                | Commands::Nodes {
+                    command: NodeCommands::Purge { .. }
+                }
+        );
+        if purges {
+            setup_simple_tracing(log_level);
+        } else {
+            setup_tracing(&config, log_level)?;
+        }
         info!("Config loaded from: {:?}", config.config_file());
 
-        if config.autopassword() {
+        // Config commands only read configuration, so they do not create a password or a wallet.
+        let creates_secrets = !purges && !matches!(self.command, Commands::Config { .. });
+
+        if creates_secrets && config.autopassword() {
             e3_entrypoint::password::set::autopassword(&config).await?;
         }
 
-        if config.autowallet() {
+        if creates_secrets && config.autowallet() {
             e3_entrypoint::wallet::set::autowallet(&config).await?;
         }
 
         match self.command {
-            Commands::Start { peers } => start::execute(config, peers).await?,
+            Commands::Start { peers, bootstrap } => {
+                start::execute(config, peers, bootstrap).await?
+            }
             Commands::Init { .. } => {
                 bail!("Cannot run `interfold init` when a configuration exists.");
             }
@@ -188,8 +203,11 @@ impl Cli {
                 print_env::execute(out, &config, &chain, vite).await?
             }
             Commands::Program { command } => program::execute(command, &config).await?,
-            Commands::PurgeAll => {
-                purge_all::execute().await?;
+            Commands::PurgeAll {
+                yes,
+                allow_active_e3s,
+            } => {
+                purge_all::execute(&config, self.config.clone(), yes, allow_active_e3s).await?;
             }
             Commands::Nodes { command } => {
                 nodes::execute(
@@ -246,6 +264,12 @@ pub enum Commands {
             help = "Sets a peer URL",
         )]
         peers: Vec<String>,
+        #[arg(
+            long,
+            help = "Run as a bootstrap peer: networking and chain reads only, without committee \
+                    work, proofs, transactions, or the prover's memory requirement"
+        )]
+        bootstrap: bool,
     },
 
     /// Print the config env
@@ -300,8 +324,21 @@ pub enum Commands {
         command: ProgramCommands,
     },
 
-    /// Purge both the local program cache and all ciphernode databases
-    PurgeAll,
+    /// Run `nodes purge`, then delete the local program cache. Deletes each node's operator key
+    /// and libp2p key.
+    PurgeAll {
+        /// Confirm the deletion.
+        #[arg(long)]
+        yes: bool,
+
+        /// Override the refusal for an active key share and for a node that the command cannot
+        /// check. The node permanently loses its key share. Check first that each listed E3 is
+        /// complete or failed on chain, and that one day has passed after its lifecycle deadline.
+        /// The command checks the store that each node recorded at its last start; for a node that
+        /// has not started with this release, it checks the store at the configured path.
+        #[arg(long)]
+        allow_active_e3s: bool,
+    },
 
     /// Password management commands
     Password {
@@ -398,6 +435,8 @@ pub enum RemoteCommand {
         vite: bool,
         chain: String,
     },
+    /// The client runs `config get` locally with its own environment. The daemon accepts this
+    /// command only from older clients.
     ConfigGet {
         param: Option<String>,
     },
@@ -428,9 +467,6 @@ impl TryFrom<Commands> for RemoteCommand {
             Commands::Wallet {
                 command: WalletCommands::Get,
             } => Ok(RemoteCommand::WalletGet),
-            Commands::Config {
-                command: ConfigCommands::Get { param },
-            } => Ok(RemoteCommand::ConfigGet { param }),
             _ => bail!("Command not allowed while node is running."),
         }
     }
@@ -491,5 +527,127 @@ impl TryFrom<RemoteCommand> for Commands {
         };
         // We might have to hold this stuff on RemoteCommand
         Ok(command)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn config_get_does_not_create_secrets() -> Result<()> {
+        let dir = std::env::temp_dir().join(format!("e3-cli-config-get-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        let config_file = dir.join("config.yaml");
+        std::fs::write(
+            &config_file,
+            format!(
+                "node:\n  network: local\n  autopassword: true\n  autowallet: true\n  config_dir: {}\n  data_dir: {}\n",
+                dir.join("config").display(),
+                dir.join("data").display()
+            ),
+        )?;
+        let config_arg = config_file.to_string_lossy().into_owned();
+        let cli = Cli::parse_from(["interfold", "config", "get", "key_file", "-c", &config_arg]);
+        let config = cli.load_config()?;
+        let key_file = config.key_file();
+        let db_file = config.db_file();
+        assert!(key_file.starts_with(&dir) && db_file.starts_with(&dir));
+
+        let (out, _rx) = Console::channel();
+        let result = cli.execute(out, Ok(config)).await;
+        let created = (key_file.exists(), db_file.exists());
+        std::fs::remove_dir_all(&dir)?;
+
+        result?;
+        assert_eq!(
+            created,
+            (false, false),
+            "config get created the key file or the database"
+        );
+        Ok(())
+    }
+
+    /// Without `--yes`, the purge commands refuse before they touch any node state, and they
+    /// create no password or wallet.
+    #[actix::test]
+    async fn purge_without_confirmation_changes_nothing() -> Result<()> {
+        // The purge works on the current directory. It must hold no state, so a regression of the
+        // confirmation cannot delete real state.
+        assert!(!std::path::Path::new(".interfold").exists());
+        let dir = tempfile::tempdir()?;
+        let config_file = dir.path().join("config.yaml");
+        std::fs::write(
+            &config_file,
+            format!(
+                "node:\n  network: local\n  autopassword: true\n  autowallet: true\n  config_dir: {}\n  data_dir: {}\n",
+                dir.path().join("config").display(),
+                dir.path().join("data").display()
+            ),
+        )?;
+        let config_arg = config_file.to_string_lossy().into_owned();
+        for command in [&["nodes", "purge"][..], &["purge-all"][..]] {
+            let args = [&["interfold"][..], command, &["-c", &config_arg][..]].concat();
+            let cli = Cli::parse_from(args);
+            let config = cli.load_config()?;
+            let (key_file, db_file) = (config.key_file(), config.db_file());
+
+            let (out, _rx) = Console::channel();
+            let error = cli
+                .execute(out, Ok(config))
+                .await
+                .expect_err("the purge must require --yes");
+            assert!(error.to_string().contains("--yes"), "{command:?}: {error}");
+            assert_eq!(
+                (key_file.exists(), db_file.exists()),
+                (false, false),
+                "{command:?} created the key file or the database"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn config_get_runs_locally_and_the_daemon_accepts_older_clients() -> Result<()> {
+        let cli = Cli::parse_from(["interfold", "config", "get", "key_file"]);
+        assert!(RemoteCli::try_from(cli).is_err());
+
+        let remote: RemoteCli =
+            serde_json::from_str(r#"{"command":{"ConfigGet":{"param":"key_file"}}}"#)?;
+        let cli = Cli::try_from(remote)?;
+        assert!(matches!(
+            cli.command,
+            Commands::Config {
+                command: ConfigCommands::Get { param: Some(param) },
+            } if param == "key_file"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn start_runs_a_full_node_unless_bootstrap_is_set() {
+        let cli = Cli::parse_from(["interfold", "start"]);
+        assert!(matches!(
+            cli.command,
+            Commands::Start {
+                bootstrap: false,
+                ..
+            }
+        ));
+
+        let cli = Cli::parse_from([
+            "interfold",
+            "start",
+            "--bootstrap",
+            "--peer",
+            "/ip4/127.0.0.1/udp/9091/quic-v1",
+        ]);
+        assert!(matches!(
+            cli.command,
+            Commands::Start {
+                bootstrap: true,
+                ref peers,
+            } if peers.len() == 1
+        ));
     }
 }

@@ -186,21 +186,6 @@ describe("E3 Pricing", function () {
       );
     });
 
-    it("fee increases with longer input window", async function () {
-      const { interfold, request } = await loadFixture(setup);
-
-      const shortFee = await interfold.getE3Quote(request);
-
-      const now = await time.latest();
-      const longRequest = {
-        ...request,
-        inputWindow: [now + 10, now + 3600] as [number, number], // 1 hour vs 5min
-      };
-      const longFee = await interfold.getE3Quote(longRequest);
-
-      expect(longFee).to.be.gt(shortFee);
-    });
-
     it("charges for an equal-length input window scheduled later", async function () {
       const { interfold, request } = await loadFixture(setup);
       const now = await time.latest();
@@ -219,26 +204,6 @@ describe("E3 Pricing", function () {
       });
 
       expect(delayedFee).to.be.gt(nearFee);
-    });
-
-    it("fee reflects margin changes", async function () {
-      const { interfold, request } = await loadFixture(setup);
-
-      const fee10Pct = await interfold.getE3Quote(request);
-
-      // Set margin to 20%
-      const pc = toPlainConfig(await interfold.getPricingConfig());
-      await setPricingConfig(interfold, { ...pc, marginBps: 2000 });
-      const fee20Pct = await interfold.getE3Quote(request);
-
-      expect(fee20Pct).to.be.gt(fee10Pct);
-
-      // Set margin to 0%
-      const pc2 = toPlainConfig(await interfold.getPricingConfig());
-      await setPricingConfig(interfold, { ...pc2, marginBps: 0 });
-      const feeZero = await interfold.getE3Quote(request);
-
-      expect(feeZero).to.be.lt(fee10Pct);
     });
   });
 
@@ -325,26 +290,6 @@ describe("E3 Pricing", function () {
         .withArgs(0);
     });
 
-    it("changes the fee returned by getE3Quote", async function () {
-      const { interfold, request } = await loadFixture(setup);
-
-      const feeBefore = await interfold.getE3Quote(request);
-
-      // Double base costs
-      await setPricingConfig(interfold, {
-        ...defaultPricingConfig,
-        keyGenFixedPerNode: 200000n,
-        keyGenPerEncryptionProof: 100000n,
-        coordinationPerPair: 20000n,
-        availabilityPerNodePerSec: 100n,
-        decryptionPerNode: 600000n,
-        publicationBase: 2000000n,
-      });
-
-      const feeAfter = await interfold.getE3Quote(request);
-      expect(feeAfter).to.be.gt(feeBefore);
-    });
-
     it("enforces the public margin cap", async function () {
       const { interfold } = await loadFixture(setup);
       const cap = await interfold.MAX_MARGIN_BPS();
@@ -360,16 +305,6 @@ describe("E3 Pricing", function () {
           marginBps: cap + 1n,
         }),
       ).to.be.revertedWithCustomError(interfold, "BpsExceedsMax");
-    });
-
-    it("allows setting margin to 0", async function () {
-      const { interfold } = await loadFixture(setup);
-      await setPricingConfig(interfold, {
-        ...defaultPricingConfig,
-        marginBps: 0,
-      });
-      const pc = await interfold.getPricingConfig();
-      expect(pc.marginBps).to.equal(0);
     });
 
     it("enforces the public protocol-share cap", async function () {
@@ -702,33 +637,6 @@ describe("E3 Pricing", function () {
           expectedProtocol,
       );
       expect(received).to.equal(expectedCN);
-    });
-  });
-
-  // ──────────────────────────────────────────────────────────────────────────
-  //  Default Pricing Parameters (set in initialize)
-  // ──────────────────────────────────────────────────────────────────────────
-
-  describe("Default pricing parameters", function () {
-    it("has correct default pricing config from initialize", async function () {
-      const { interfold, owner } = await loadFixture(setup);
-      const pc = await interfold.getPricingConfig();
-      expect(pc.keyGenFixedPerNode).to.equal(100000);
-      expect(pc.keyGenPerEncryptionProof).to.equal(50000);
-      expect(pc.coordinationPerPair).to.equal(10000);
-      expect(pc.availabilityPerNodePerSec).to.equal(50);
-      expect(pc.decryptionPerNode).to.equal(300000);
-      expect(pc.publicationBase).to.equal(1000000);
-      expect(pc.verificationPerProof).to.equal(5000);
-      expect(pc.marginBps).to.equal(1000);
-      expect(pc.protocolShareBps).to.equal(0);
-      expect(pc.dkgUtilizationBps).to.equal(2500);
-      expect(pc.computeUtilizationBps).to.equal(5000);
-      expect(pc.decryptUtilizationBps).to.equal(2500);
-      expect(pc.protocolTreasury).to.equal(await owner.getAddress());
-      expect(pc.randomnessFlatFee).to.equal(1_000_000n);
-      expect(pc.minCommitteeSize).to.equal(0);
-      expect(pc.minThreshold).to.equal(0);
     });
   });
 

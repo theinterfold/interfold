@@ -16,7 +16,7 @@
 //! reaches the deployment anchor.
 
 use bb_proof_verification::{UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof};
-use lib::configs::default::threshold::{L, N, USER_DATA_ENCRYPTION_N_CHUNKS as N_CHUNKS};
+use lib::configs::default::threshold::{L, N, USER_DATA_ENCRYPTION_CHUNKED_N_CHUNKS as N_CHUNKS};
 use lib::core::threshold::user_data_encryption_chunk::ct0_chunk_roots;
 
 global CHUNK_SIZE: u32 = N / N_CHUNKS;

@@ -6,6 +6,7 @@
 
 use crate::events::{IncomingResponse, NetCommand, ProtocolResponse};
 use anyhow::{anyhow, Context, Result};
+use derivative::Derivative;
 use e3_utils::OnceTake;
 use libp2p::request_response::{InboundRequestId, ResponseChannel};
 use tokio::sync::mpsc;
@@ -38,7 +39,8 @@ pub enum ChannelType {
     Channel(ResponseChannel<ProtocolResponse>), // actual libp2p response channel
 }
 
-#[derive(Debug, Clone)]
+#[derive(Derivative, Clone)]
+#[derivative(Debug)]
 /// DirectResponder is used to respond to incoming libp2p requests.
 ///
 /// # Example
@@ -73,6 +75,7 @@ pub enum ChannelType {
 /// ```
 pub struct DirectResponder {
     id: u64,
+    #[derivative(Debug(format_with = "e3_utils::formatters::hexf"))]
     request: Vec<u8>,
     response: Option<ProtocolResponse>,
     channel: OnceTake<ChannelType>,

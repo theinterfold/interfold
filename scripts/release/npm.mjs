@@ -5,6 +5,7 @@ import { existsSync, unlinkSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 import { ROOT_DIR, fail, readJson } from './core.mjs'
+import { releaseChannel } from './version.mjs'
 
 function defaultExecute(command, args, cwd) {
   return spawnSync(command, args, { cwd, encoding: 'utf8', stdio: 'pipe' })
@@ -40,15 +41,16 @@ function packedArchive(packed, packageName) {
 }
 
 export function publishNpmPackage(packageDirectory, distTag, options = {}) {
-  if (!['latest', 'next'].includes(distTag)) {
-    fail(`refusing unsupported npm distribution tag: ${distTag}`)
-  }
-
   const execute = options.execute ?? defaultExecute
   const rootDir = options.rootDir ?? ROOT_DIR
   const packageDir = resolve(rootDir, packageDirectory)
   const packageJson = readJson(packageDir, 'package.json')
   const packageSpec = `${packageJson.name}@${packageJson.version}`
+  const channel = releaseChannel(packageJson.version)
+  if (distTag !== channel) {
+    fail(`refusing npm distribution tag ${distTag} for ${packageSpec}, which belongs to the ${channel} channel`)
+  }
+
   const packed = JSON.parse(runChecked(execute, 'npm', ['pack', '--json'], packageDir))
   const { filename, integrity: localIntegrity } = packedArchive(packed, packageJson.name) ?? {}
 

@@ -16,12 +16,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { erc20Abi, formatUnits, isAddress, parseUnits, type Address, type Hash } from 'viem'
 import Loader from './Loader'
-import { CONTRACTS, NETWORK_NAME, bondingRegistryAbi, faucetAbi } from './lib/chain'
+import { CONTRACTS, IS_TESTNET, NETWORK_NAME, bondingRegistryAbi, faucetAbi } from './lib/chain'
 import { LINKS, explorerAddress, explorerTx } from './lib/links'
 import { ZERO_ADDRESS, simulateAndWrite, useBonding, type BondingConfig, type OperatorStatus } from './lib/bonding'
 import { confirmTx, useWallet, walletErrorMessage } from './lib/wallet'
 
-const FAUCET_ENABLED = CONTRACTS.Faucet !== ZERO_ADDRESS && CONTRACTS.Faucet.trim() !== ''
+const FAUCET_ENABLED = IS_TESTNET && CONTRACTS.Faucet !== ZERO_ADDRESS && CONTRACTS.Faucet.trim() !== ''
 
 const shortAddr = (a: string): string => (a.length > 14 ? `${a.slice(0, 8)}…${a.slice(-6)}` : a)
 
@@ -734,7 +734,12 @@ function PositionPanel({ config, status, operator }: { config: BondingConfig; st
         <dd className='mono'>
           {status.availableTickets.toString()} <span className='insp-stat__of'>/ {config.minTicketBalance.toString()} required</span>
         </dd>
+        <dt>Eligible for new committees</dt>
+        <dd>{status.eligible === null ? <span className='dl__muted'>Unknown</span> : status.eligible ? 'Yes' : 'No'}</dd>
       </dl>
+      {status.active && status.eligible === false && (
+        <Note>Active, but not eligible for new committees yet. The admission cooldown or admission policy still applies.</Note>
+      )}
     </section>
   )
 }

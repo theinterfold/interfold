@@ -39,6 +39,7 @@ impl NetSyncManager {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn setup(
         bus: &BusHandle,
         tx: &mpsc::Sender<NetCommand>,
@@ -46,12 +47,18 @@ impl NetSyncManager {
         eventstore: Recipient<EventStoreQueryBy<TsAgg>>,
         topic: &str,
         network: NetworkPolicy,
+        peer_history_optional: bool,
+        live_history: LiveHistory,
     ) -> Addr<Self> {
         let mut events = rx.subscribe();
-        let addr = Self::new(bus, tx, rx, eventstore, topic, network).start();
+        let mut manager =
+            Self::new(bus, tx, rx, eventstore, topic, network).with_live_history(live_history);
+        manager.peer_history_optional = peer_history_optional;
+        let addr = manager.start();
 
         bus.subscribe(EventType::HistoricalNetSyncStart, addr.clone().recipient());
         bus.subscribe(EventType::DkgCoordination, addr.clone().recipient());
+        bus.subscribe(EventType::DecryptionshareCreated, addr.clone().recipient());
         bus.subscribe(EventType::E3StageChanged, addr.clone().recipient());
         bus.subscribe(EventType::E3Failed, addr.clone().recipient());
         bus.subscribe(EventType::E3RequestComplete, addr.clone().recipient());

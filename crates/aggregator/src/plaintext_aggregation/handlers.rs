@@ -20,6 +20,13 @@ impl Handler<InterfoldEvent> for ThresholdPlaintextAggregator {
                 ctx.notify(TypedEvent::new(data, ec))
             }
             InterfoldEventData::E3RequestComplete(_) => self.notify_sync(ctx, Die),
+            // The aggregation of an ended E3 does not resume, also when the context stays for
+            // accusation work.
+            InterfoldEventData::E3StageChanged(data)
+                if data.e3_id == self.e3_id && data.new_stage.is_terminal() =>
+            {
+                self.notify_sync(ctx, Die)
+            }
             InterfoldEventData::ComputeResponse(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
@@ -183,7 +190,7 @@ impl Handler<TypedEvent<ComputeResponse>> for ThresholdPlaintextAggregator {
         msg: TypedEvent<ComputeResponse>,
         ctx: &mut Self::Context,
     ) -> Self::Result {
-        if !self.can_run_aggregation_effects() {
+        if !self.can_continue_aggregation_effects() {
             return;
         }
         trap(
@@ -202,7 +209,7 @@ impl Handler<TypedEvent<ComputeRequestError>> for ThresholdPlaintextAggregator {
         msg: TypedEvent<ComputeRequestError>,
         _: &mut Self::Context,
     ) -> Self::Result {
-        if !self.can_run_aggregation_effects() {
+        if !self.can_continue_aggregation_effects() {
             return;
         }
         trap(
@@ -309,7 +316,7 @@ impl Handler<TypedEvent<AggregationProofSigned>> for ThresholdPlaintextAggregato
         msg: TypedEvent<AggregationProofSigned>,
         ctx: &mut Self::Context,
     ) -> Self::Result {
-        if !self.can_run_aggregation_effects() {
+        if !self.can_continue_aggregation_effects() {
             return;
         }
         trap(

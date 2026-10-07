@@ -23,7 +23,7 @@ mod workflow;
 pub use actor_system::{setup_zk_actors, ZkActorRecovery, ZkActors};
 pub use actors::{
     CommitmentConsistencyCheckerExtension, ProofRequestActor, ProofVerificationActor,
-    ShareVerificationActor, ZkVerificationRequest, ZkVerificationResponse,
+    ShareVerificationActor, ZkVerificationOutcome, ZkVerificationRequest, ZkVerificationResponse,
 };
 pub use domain::commitment_links::default_links;
 pub use domain::commitment_links::lbfv_share_transport::{

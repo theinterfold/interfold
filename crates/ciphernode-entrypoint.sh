@@ -6,6 +6,60 @@ umask 077
 # Paths to config and secrets
 CONFIG_FILE="$CONFIG_DIR/config.yaml"
 SECRETS_FILE="/run/secrets/secrets.json"
+SECRETS_USED=false
+
+# Read the global options of the command line: the command is the first word that is not an option
+# or the value of one (`interfold --name cn1 start` and `interfold start --name cn1` are the same
+# command). An explicit `--config` replaces the container's config file for the whole boot, so the
+# setup and the node read the same file. `--help` and `--version` never provision anything.
+COMMAND=""
+CONFIG_ARG=""
+HELP=false
+OPTIONS_ENDED=false
+expect_value=""
+for arg in "$@"; do
+    if [ -n "$expect_value" ]; then
+        case "$expect_value" in config) CONFIG_ARG="$arg" ;; esac
+        expect_value=""
+        continue
+    fi
+    if [ "$OPTIONS_ENDED" = true ]; then
+        [ -n "$COMMAND" ] || COMMAND="$arg"
+        continue
+    fi
+    case "$arg" in
+        --) OPTIONS_ENDED=true ;;
+        --help|--version) HELP=true ;;
+        --config) expect_value=config ;;
+        --config=*) CONFIG_ARG="${arg#--config=}" ;;
+        --name|--otel) expect_value=other ;;
+        --*) ;;
+        -?*)
+            # A cluster of short options, as clap reads it: `-vh`, `-vc file`, `-cfile`, `-c=file`.
+            # `c` takes the rest of the cluster as its value, or the next word when nothing follows.
+            cluster="${arg#-}"
+            while [ -n "$cluster" ]; do
+                flag="${cluster%"${cluster#?}"}"
+                cluster="${cluster#?}"
+                case "$flag" in
+                    h|V) HELP=true ;;
+                    c)
+                        if [ -n "$cluster" ]; then
+                            CONFIG_ARG="${cluster#=}"
+                            cluster=""
+                        else
+                            expect_value=config
+                        fi
+                        ;;
+                esac
+            done
+            ;;
+        *) [ -n "$COMMAND" ] || COMMAND="$arg" ;;
+    esac
+done
+if [ -n "$CONFIG_ARG" ]; then
+    CONFIG_FILE="$CONFIG_ARG"
+fi
 
 # Ensure required files exist
 if [ ! -f "$CONFIG_FILE" ]; then
@@ -13,31 +67,171 @@ if [ ! -f "$CONFIG_FILE" ]; then
     exit 1
 fi
 
-if [ ! -f "$SECRETS_FILE" ]; then
-    echo "Error: Secrets file $SECRETS_FILE not found!"
+# Validate the secrets file. Only a boot that must set the password or the wallet key reads it.
+require_secrets() {
+    if [ ! -f "$SECRETS_FILE" ]; then
+        echo "Error: Secrets file $SECRETS_FILE not found!"
+        exit 1
+    fi
+
+    jq -e '
+        type == "object" and
+        (.password | type == "string" and length > 0) and
+        (.private_key | type == "string" and test("^0x[0-9a-fA-F]{64}$"))
+    ' "$SECRETS_FILE" >/dev/null || {
+        echo "Error: Invalid 'password' or 'private_key' in secrets file!"
+        exit 1
+    }
+    SECRETS_USED=true
+}
+
+# `--name` selects the node profile, and the profile name is part of every state path. Probe the
+# same profile that the command below runs.
+NAME_ARGS=()
+previous_arg=""
+for arg in "$@"; do
+    case "$arg" in
+        --name=*) NAME_ARGS=("--name=${arg#--name=}") ;;
+    esac
+    if [ "$previous_arg" = "--name" ]; then
+        NAME_ARGS=("--name=$arg")
+    fi
+    previous_arg="$arg"
+done
+
+# Print the path that the node resolves for a setting. A log line can come before the path, so keep
+# only the last line that is an absolute path.
+resolve_path() {
+    interfold config get "$1" ${NAME_ARGS[@]+"${NAME_ARGS[@]}"} --config="$CONFIG_FILE" |
+        grep '^/' | tail -n 1
+}
+
+# Print the path that the node resolves without E3_CONFIG_DIR and E3_DATA_DIR.
+resolve_own_path() {
+    env -u E3_CONFIG_DIR -u E3_DATA_DIR \
+        interfold config get "$1" ${NAME_ARGS[@]+"${NAME_ARGS[@]}"} --config="$CONFIG_FILE" |
+        grep '^/' | tail -n 1
+}
+
+# Whether $1 names a path that exists. `interfold config get` creates the log directory, so the
+# checks below look only at the key file and the database.
+exists() {
+    [ -n "$1" ] && [ -e "$1" ]
+}
+
+# The entrypoint sets E3_CONFIG_DIR and E3_DATA_DIR to the volume unless the container sets them.
+# They override config.yaml, so they decide only the paths that config.yaml leaves to the directories. Never move state that exists:
+# for each of the key file and the database, compare where it resolves with and without the
+# variables, and use the location that already holds state. Only a path that the variables change
+# can exist at two locations. A new node keeps its state on the volume, unless config.yaml sets its
+# own location.
+LEGACY_STATE_DIR="$CONFIG_DIR/.interfold"
+VOLUME_CONFIG_DIR="$DATA_DIR/config"
+VOLUME_DATA_DIR="$DATA_DIR/data"
+# Only this entrypoint uses the volume defaults. The image does not set them, because they would also
+# apply to a container that runs the binary directly, and move its state off its volume.
+if [ -z "${E3_CONFIG_DIR:-}" ] && [ -z "${E3_DATA_DIR:-}" ]; then
+    export E3_CONFIG_DIR="$VOLUME_CONFIG_DIR" E3_DATA_DIR="$VOLUME_DATA_DIR"
+fi
+if [ "${E3_CONFIG_DIR:-}" = "$VOLUME_CONFIG_DIR" ] && [ "${E3_DATA_DIR:-}" = "$VOLUME_DATA_DIR" ]; then
+    OWN_KEY_FILE="$(resolve_own_path key_file)" || OWN_KEY_FILE=""
+    OWN_DB_FILE="$(resolve_own_path db_file)" || OWN_DB_FILE=""
+    VOLUME_KEY_FILE="$(resolve_path key_file)" || VOLUME_KEY_FILE=""
+    VOLUME_DB_FILE="$(resolve_path db_file)" || VOLUME_DB_FILE=""
+    OWN_STATE=false
+    VOLUME_STATE=false
+    OWN_AT_LEGACY=true
+    for pair in "$OWN_KEY_FILE|$VOLUME_KEY_FILE" "$OWN_DB_FILE|$VOLUME_DB_FILE"; do
+        own="${pair%%|*}"
+        volume="${pair#*|}"
+        [ "$own" != "$volume" ] || continue
+        if exists "$own"; then OWN_STATE=true; fi
+        if exists "$volume"; then VOLUME_STATE=true; fi
+        case "$own" in "$LEGACY_STATE_DIR"/*) ;; *) OWN_AT_LEGACY=false ;; esac
+    done
+    if [ "$OWN_KEY_FILE" = "$VOLUME_KEY_FILE" ] && [ "$OWN_DB_FILE" = "$VOLUME_DB_FILE" ]; then
+        # config.yaml sets both paths, so the variables change nothing.
+        unset E3_CONFIG_DIR E3_DATA_DIR
+        echo "Using the node state location that $CONFIG_FILE sets"
+    elif [ "$OWN_STATE" = true ] && [ "$VOLUME_STATE" = true ]; then
+        echo "Error: Node state exists at two locations: key $OWN_KEY_FILE, database $OWN_DB_FILE"
+        echo "and key $VOLUME_KEY_FILE, database $VOLUME_DB_FILE on the volume at $DATA_DIR!"
+        echo "Keep only the state that the node last used, then start the container again."
+        exit 1
+    elif [ "$OWN_STATE" = true ]; then
+        unset E3_CONFIG_DIR E3_DATA_DIR
+        echo "Using the existing node state: key $OWN_KEY_FILE, database $OWN_DB_FILE"
+    elif [ "$VOLUME_STATE" = true ] || [ "$OWN_AT_LEGACY" = true ]; then
+        echo "Keeping node state on the volume at $DATA_DIR"
+    else
+        # A new node, and config.yaml sets its own location.
+        unset E3_CONFIG_DIR E3_DATA_DIR
+        echo "Using the node state location that $CONFIG_FILE sets"
+    fi
+    if [ -z "${E3_DATA_DIR:-}" ]; then
+        echo "Run other interfold commands in this container as: ciphernode-entrypoint.sh <command>"
+    fi
+fi
+
+# With arguments, run that interfold command with the same state location, for example
+# `ciphernode-entrypoint.sh node validate --config ...`. A `start` with arguments, for example
+# `start --bootstrap`, gets the same password and wallet setup as the default start below, for the
+# profile and the config file that its arguments select. Other commands, and a help request, run
+# without it.
+if [ "$#" -gt 0 ] && { [ "$COMMAND" != "start" ] || [ "$HELP" = true ]; }; then
+    exec interfold "$@"
+fi
+
+if ! KEY_FILE="$(resolve_path key_file)" || [ -z "$KEY_FILE" ]; then
+    echo "Error: Could not resolve the key file path from $CONFIG_FILE!"
     exit 1
 fi
 
-jq -e '
-    type == "object" and
-    (.password | type == "string" and length > 0) and
-    (.private_key | type == "string" and test("^0x[0-9a-fA-F]{64}$"))
-' "$SECRETS_FILE" >/dev/null || {
-    echo "Error: Invalid 'password' or 'private_key' in secrets file!"
-    exit 1
-}
+# `interfold password set` refuses to replace a key file, so set the password only once. Every
+# setup command names the same profile as the start, or it would provision `_default` instead.
+if [ -f "$KEY_FILE" ]; then
+    echo "Password is already set"
+else
+    require_secrets
+    echo "Setting password"
+    jq -er '.password' "$SECRETS_FILE" |
+        interfold password set ${NAME_ARGS[@]+"${NAME_ARGS[@]}"} --config="$CONFIG_FILE" --password-stdin
+fi
 
-# Set password
-echo "Setting password"
-jq -er '.password' "$SECRETS_FILE" | interfold password set --config "$CONFIG_FILE" --password-stdin
+if interfold wallet get ${NAME_ARGS[@]+"${NAME_ARGS[@]}"} --config="$CONFIG_FILE" >/dev/null 2>&1; then
+    echo "Wallet key is already set"
+else
+    require_secrets
+    echo "Setting wallet key"
+    # The wallet command atomically derives and stores the libp2p key from the operator key.
+    jq -er '.private_key' "$SECRETS_FILE" |
+        interfold wallet set ${NAME_ARGS[@]+"${NAME_ARGS[@]}"} --config="$CONFIG_FILE" --private-key-stdin
+fi
 
-echo "Setting wallet key"
-# The refactored wallet command atomically derives and stores the libp2p key
-# from the operator key, so a separate network-key command is no longer used.
-jq -er '.private_key' "$SECRETS_FILE" | interfold wallet set --config "$CONFIG_FILE" --private-key-stdin
-
-rm -f "$SECRETS_FILE"
+# A read-only secrets mount cannot be removed. Keep the file and continue the boot.
+if [ "$SECRETS_USED" = true ] && ! rm -f "$SECRETS_FILE" 2>/dev/null; then
+    echo "Could not remove $SECRETS_FILE. It is probably a read-only mount, so it stays in place."
+fi
 
 echo "Starting ciphernode"
-exec interfold start -v --config "$CONFIG_FILE"
-
+if [ "$#" -gt 0 ]; then
+    if [ -n "$CONFIG_ARG" ]; then
+        exec interfold "$@"
+    fi
+    # A start that names no config file gets the container's, the one the setup used. The option
+    # goes before a `--` terminator, or the node would read it as a positional argument.
+    START_ARGS=()
+    CONFIG_ADDED=false
+    for arg in "$@"; do
+        if [ "$arg" = "--" ] && [ "$CONFIG_ADDED" = false ]; then
+            START_ARGS+=("--config=$CONFIG_FILE")
+            CONFIG_ADDED=true
+        fi
+        START_ARGS+=("$arg")
+    done
+    if [ "$CONFIG_ADDED" = false ]; then
+        START_ARGS+=("--config=$CONFIG_FILE")
+    fi
+    exec interfold "${START_ARGS[@]}"
+fi
+exec interfold start -v --config="$CONFIG_FILE"

@@ -185,6 +185,12 @@ impl BusHandle<Enabled> {
     }
 
     /// Get a new timestamp. Note this ticks over the internal Hlc.
+    /// The latest event time that this node accepts from a peer now; a later one exceeds the
+    /// clock-drift allowance.
+    pub fn latest_admissible_ts(&self) -> Result<u128> {
+        Ok(self.hlc.latest_admissible()?.to_u128())
+    }
+
     pub fn ts(&self) -> Result<u128> {
         let ts = self.hlc.tick()?;
         Ok(ts.into())

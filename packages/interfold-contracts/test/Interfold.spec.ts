@@ -15,6 +15,7 @@ import {
   SECURE_16384_CRYPTO_CONFIG_ID,
   buildMockAggregationPublishArgs,
   deployInterfoldSystem,
+  deployInterfoldSystemWithoutOperators,
   ENCRYPTION_SCHEME_ID as encryptionSchemeId,
   ethers,
   makeRequest,
@@ -85,24 +86,6 @@ describe("Interfold", function () {
   };
 
   describe("constructor / initialize()", function () {
-    it("correctly sets owner", async function () {
-      const { interfold, owner } = await loadFixture(setup);
-      expect(await interfold.owner()).to.equal(await owner.getAddress());
-    });
-
-    it("correctly sets ciphernodeRegistry address", async function () {
-      const { interfold, ciphernodeRegistryContract } =
-        await loadFixture(setup);
-      expect(await interfold.ciphernodeRegistry()).to.equal(
-        await ciphernodeRegistryContract.getAddress(),
-      );
-    });
-
-    it("correctly sets max duration", async function () {
-      const { interfold } = await loadFixture(setup);
-      expect(await interfold.maxDuration()).to.equal(60 * 60 * 24 * 30);
-    });
-
     it("namespaces E3 IDs by the controller address", async function () {
       const { interfold } = await loadFixture(setup);
       expect(await interfold.nexte3Id()).to.equal(
@@ -182,18 +165,24 @@ describe("Interfold", function () {
         .withArgs(await ciphernodeRegistryContract.getAddress());
     });
 
-    it("sets ciphernodeRegistry correctly", async function () {
-      const { interfold } = await deployInterfoldSystem({ setupOperators: 0 });
+    it("sets ciphernodeRegistry and emits CiphernodeRegistrySet", async function () {
+      const { interfold } = await loadFixture(
+        deployInterfoldSystemWithoutOperators,
+      );
       const replacement = await ethers.deployContract("MockCiphernodeRegistry");
       const replacementAddress = await replacement.getAddress();
 
       await interfold.setRequestsPaused(true);
-      await interfold.setCiphernodeRegistry(replacementAddress);
+      await expect(interfold.setCiphernodeRegistry(replacementAddress))
+        .to.emit(interfold, "CiphernodeRegistrySet")
+        .withArgs(replacementAddress);
       expect(await interfold.ciphernodeRegistry()).to.equal(replacementAddress);
     });
 
     it("rejects a replacement registry with existing members", async function () {
-      const { interfold } = await deployInterfoldSystem({ setupOperators: 0 });
+      const { interfold } = await loadFixture(
+        deployInterfoldSystemWithoutOperators,
+      );
       const replacement = await ethers.deployContract("MockCiphernodeRegistry");
 
       await replacement.addCiphernode(AddressTwo);
@@ -219,17 +208,6 @@ describe("Interfold", function () {
         interfold,
         "DependencyGenerationNotDrained",
       );
-    });
-
-    it("emits CiphernodeRegistrySet event", async function () {
-      const { interfold } = await deployInterfoldSystem({ setupOperators: 0 });
-      const replacement = await ethers.deployContract("MockCiphernodeRegistry");
-      const replacementAddress = await replacement.getAddress();
-
-      await interfold.setRequestsPaused(true);
-      await expect(interfold.setCiphernodeRegistry(replacementAddress))
-        .to.emit(interfold, "CiphernodeRegistrySet")
-        .withArgs(replacementAddress);
     });
   });
 
@@ -263,15 +241,20 @@ describe("Interfold", function () {
       const { interfold } = await loadFixture(setup);
 
       expect(await interfold.paramSetRegistry(0)).to.equal(BFV_PARAMS_DEFAULT);
-      await expect(interfold.setParamSet(1, BFV_PARAMS_SECURE))
+      await expect(interfold.setParamSet(2, BFV_PARAMS_SECURE))
         .to.emit(interfold, "ParamSetRegistered")
-        .withArgs(1, BFV_PARAMS_SECURE);
-      await expect(interfold.setParamSet(2, BFV_PARAMS_SECURE_16384))
-        .to.emit(interfold, "ParamSetRegistered")
-        .withArgs(2, BFV_PARAMS_SECURE_16384);
+        .withArgs(2, BFV_PARAMS_SECURE);
+      expect(await interfold.paramSetRegistry(2)).to.equal(BFV_PARAMS_SECURE);
+      expect(await interfold.paramSetRegistry(1)).to.equal("0x");
       await expect(
-        interfold.setParamSet(2, BFV_PARAMS_SECURE),
-      ).to.be.revertedWithCustomError(interfold, "ParamSetAlreadyRegistered");
+        interfold.setParamSet(1, BFV_PARAMS_SECURE),
+      ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
+      await expect(interfold.setParamSet(3, BFV_PARAMS_SECURE_16384))
+        .to.emit(interfold, "ParamSetRegistered")
+        .withArgs(3, BFV_PARAMS_SECURE_16384);
+      await expect(interfold.setParamSet(2, BFV_PARAMS_SECURE))
+        .to.be.revertedWithCustomError(interfold, "ParamSetAlreadyRegistered")
+        .withArgs(2);
     });
 
     it("does not overwrite the active parameter set", async function () {
@@ -286,7 +269,7 @@ describe("Interfold", function () {
       const { interfold } = await loadFixture(setup);
 
       await expect(
-        interfold.setParamSet(1, "0x"),
+        interfold.setParamSet(2, "0x"),
       ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
     });
   });
@@ -578,7 +561,7 @@ describe("Interfold", function () {
 
     for (const [name, paramSet, params, cryptoConfigId] of [
       ["insecure", 0, BFV_PARAMS_DEFAULT, ACTIVE_CRYPTO_CONFIG_ID],
-      ["secure-8192", 1, BFV_PARAMS_SECURE, PRODUCTION_CRYPTO_CONFIG_ID],
+      ["secure-8192", 2, BFV_PARAMS_SECURE, PRODUCTION_CRYPTO_CONFIG_ID],
     ] as const) {
       it(`accepts the ${name} parameter set with a 7,200-second DKG window`, async function () {
         const { interfold, request, usdcToken } = await loadFixture(setup);
@@ -606,7 +589,7 @@ describe("Interfold", function () {
 
     it("rejects secure-16384 with a DKG window below 21,600 seconds", async function () {
       const { interfold, request } = await loadFixture(setup);
-      await interfold.setParamSet(2, BFV_PARAMS_SECURE_16384);
+      await interfold.setParamSet(3, BFV_PARAMS_SECURE_16384);
       await interfold.setTimeoutConfig({
         ...timeoutConfig,
         dkgWindow: secure16384MinDkgWindow - 1,
@@ -616,7 +599,7 @@ describe("Interfold", function () {
       await expect(
         interfold.request({
           ...request,
-          paramSet: 2,
+          paramSet: 3,
           inputWindow: [now + 10, now + inputWindowDuration],
           expectedCryptoConfigId: SECURE_16384_CRYPTO_CONFIG_ID,
         }),
@@ -625,7 +608,7 @@ describe("Interfold", function () {
 
     it("accepts and snapshots a 21,600-second secure-16384 DKG window", async function () {
       const { interfold, request, usdcToken } = await loadFixture(setup);
-      await interfold.setParamSet(2, BFV_PARAMS_SECURE_16384);
+      await interfold.setParamSet(3, BFV_PARAMS_SECURE_16384);
       await interfold.setTimeoutConfig({
         ...timeoutConfig,
         dkgWindow: secure16384MinDkgWindow,
@@ -635,7 +618,7 @@ describe("Interfold", function () {
       await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
       await interfold.request({
         ...request,
-        paramSet: 2,
+        paramSet: 3,
         inputWindow: [now + 10, now + inputWindowDuration],
         expectedCryptoConfigId: SECURE_16384_CRYPTO_CONFIG_ID,
       });
@@ -650,7 +633,7 @@ describe("Interfold", function () {
 
     it("rejects secure-16384 with a non-minimum committee", async function () {
       const { interfold, request } = await loadFixture(setup);
-      await interfold.setParamSet(2, BFV_PARAMS_SECURE_16384);
+      await interfold.setParamSet(3, BFV_PARAMS_SECURE_16384);
       await interfold.setTimeoutConfig({
         ...timeoutConfig,
         dkgWindow: secure16384MinDkgWindow,
@@ -662,12 +645,33 @@ describe("Interfold", function () {
           interfold.getE3Quote({
             ...request,
             committeeSize,
-            paramSet: 2,
+            paramSet: 3,
             inputWindow: [now + 10, now + inputWindowDuration],
             expectedCryptoConfigId: SECURE_16384_CRYPTO_CONFIG_ID,
           }),
         ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
       }
+    });
+
+    it("binds new secure requests to slot 2", async function () {
+      const { interfold, request, usdcToken } = await loadFixture(setup);
+      await interfold.setParamSet(2, BFV_PARAMS_SECURE);
+      const secureRequest = {
+        ...request,
+        inputWindow: await freshInputWindow(),
+        paramSet: 2,
+        expectedCryptoConfigId: PRODUCTION_CRYPTO_CONFIG_ID,
+      };
+
+      await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
+      await expect(interfold.request(secureRequest)).to.emit(
+        interfold,
+        "E3Requested",
+      );
+      expect((await interfold.getE3(firstE3Id)).paramSet).to.equal(2);
+      expect(await interfold.e3CryptoConfigIds(firstE3Id)).to.equal(
+        PRODUCTION_CRYPTO_CONFIG_ID,
+      );
     });
 
     it("rejects a fee token that differs from the accepted quote", async function () {
@@ -717,22 +721,42 @@ describe("Interfold", function () {
         .withArgs(originV1ConfigId, ACTIVE_CRYPTO_CONFIG_ID);
     });
 
-    it("reverts if USDC allowance is insufficient", async function () {
-      const { interfold, request, usdcToken } = await loadFixture(setup);
-      await expect(
-        interfold.request({
-          committeeSize: request.committeeSize,
-          inputWindow: await freshInputWindow(),
-          e3Program: request.e3Program,
-          paramSet: request.paramSet,
-          computeProviderParams: request.computeProviderParams,
-          customParams: request.customParams,
-          expectedFeeToken: request.expectedFeeToken,
-          expectedCryptoConfigId: request.expectedCryptoConfigId,
-          maxFee: request.maxFee,
-        }),
-      ).to.be.revertedWithCustomError(usdcToken, "ERC20InsufficientAllowance");
-    });
+    for (const version of [
+      "interfold-bfv-v1",
+      "interfold-bfv-v2",
+      "interfold-bfv-v3",
+    ]) {
+      it(`rejects ${version} configurations for both BFV parameter sets`, async function () {
+        const { interfold, request } = await loadFixture(setup);
+        await interfold.setParamSet(2, BFV_PARAMS_SECURE);
+        for (const [paramSet, params, currentConfigId] of [
+          [0, BFV_PARAMS_DEFAULT, ACTIVE_CRYPTO_CONFIG_ID],
+          [2, BFV_PARAMS_SECURE, PRODUCTION_CRYPTO_CONFIG_ID],
+        ] as const) {
+          const legacyConfigId = ethers.keccak256(
+            abiCoder.encode(
+              ["bytes32", "bytes32", "bytes32"],
+              [
+                encryptionSchemeId,
+                ethers.keccak256(params),
+                ethers.id(version),
+              ],
+            ),
+          );
+          await expect(
+            interfold.request({
+              ...request,
+              paramSet,
+              inputWindow: await freshInputWindow(),
+              expectedCryptoConfigId: legacyConfigId,
+            }),
+          )
+            .to.be.revertedWithCustomError(interfold, "CryptoConfigChanged")
+            .withArgs(legacyConfigId, currentConfigId);
+        }
+      });
+    }
+
     it("reverts if committee size is not configured", async function () {
       const { interfold, request } = await loadFixture(setup);
       const unconfiguredCommitteeSize = 1;

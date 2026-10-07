@@ -3,10 +3,5 @@ name = "e3-hamt"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "E3 - A serializable HAMT implementation"
+description = "E3 - A persistent HAMT implementation"
 repository.workspace = true
-
-[dependencies]
-serde.workspace = true
-bincode.workspace = true
-anyhow.workspace = true

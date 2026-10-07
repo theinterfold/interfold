@@ -42,7 +42,7 @@ describe('CRISP input availability flow', function () {
     await (await program.setMerkleRoot(e3Id, 1)).wait()
     await increaseTimeTo(start)
 
-    return { program, mockInterfold, e3Id, start, end }
+    return { program, mockInterfold, mockHonk, e3Id, start, end }
   }
 
   async function input(
@@ -95,6 +95,18 @@ describe('CRISP input availability flow', function () {
     expect(await program.isInputPublished(e3Id, ballot.encryptedVoteHash, ballot.encryptedVoteCommitment, ballot.slotAddress, 0)).to.equal(
       true,
     )
+  })
+
+  it('verifies ballot proofs against the round committee key, not a caller-supplied key', async function () {
+    const { program, mockInterfold, mockHonk, e3Id } = await openRound()
+    const verifier = await ethers.getContractAt('MockHonkVerifier', await mockHonk.getAddress())
+    await (await verifier.setExpectedPublicKey(await mockInterfold.committeePublicKey())).wait()
+    const ballot = await input(program, e3Id)
+    await expect(program.publishInput(e3Id, ballot.commitmentPayload)).to.emit(program, 'InputCommitted')
+
+    await (await verifier.setExpectedPublicKey(ethers.id('unrelated-key'))).wait()
+    const otherBallot = await input(program, e3Id, 'wrong-key')
+    await expect(program.publishInput(e3Id, otherBallot.commitmentPayload)).to.be.revertedWithCustomError(program, 'InvalidNoirProof')
   })
 
   it('reserves indices immediately so pending masks and revotes keep their parent chain', async function () {

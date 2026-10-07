@@ -22,27 +22,13 @@ impl AccusationVoting {
         ec: &EventContext<Sequenced>,
         actions: &mut Vec<VoteAction>,
     ) {
-        // Ignore votes for other E3s
-        if vote.e3_id != self.e3_id {
-            return;
-        }
-
-        // Verify voter is in committee
-        if !self.committee.contains(&vote.voter) {
-            warn!("Ignoring vote from non-committee member {}", vote.voter);
-            return;
-        }
-
-        // Ignore our own votes (already recorded)
-        if vote.voter == self.my_address {
-            return;
-        }
-
-        // Verify voter's ECDSA signature
-        if !self.verify_vote_signature(&vote) {
-            warn!("Invalid signature on vote from {} — ignoring", vote.voter);
-            return;
-        }
+        let vote = match self.admit_vote(vote) {
+            Ok(vote) => vote.into_inner(),
+            Err(rejection) => {
+                rejection.log();
+                return;
+            }
+        };
 
         let vote_accusation_id = vote.accusation_id;
 
@@ -62,10 +48,19 @@ impl AccusationVoting {
             return;
         };
 
-        // Reject votes whose signed window disagrees with the accusation.
-        if vote.issued_at != pending.accusation.issued_at
-            || vote.deadline != pending.accusation.deadline
-        {
+        // Reject votes whose signed window disagrees with the accusation. A later window
+        // is buffered: this node adopts it when that peer's accusation arrives.
+        let held_window = (pending.accusation.issued_at, pending.accusation.deadline);
+        if (vote.issued_at, vote.deadline) != held_window {
+            if vote.issued_at > pending.accusation.issued_at
+                && vote.deadline > pending.accusation.deadline
+                && vote.voter != pending.accusation.accused
+            {
+                let buf = self.buffered_votes.entry(vote_accusation_id).or_default();
+                buf.retain(|v| v.voter != vote.voter);
+                buf.push(vote);
+                return;
+            }
             warn!(
                 "Ignoring vote from {} — issued_at {} (expected {}) or deadline {} (expected {}) does not match the accusation",
                 vote.voter,

@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use std::fmt::Debug;
+use std::sync::Arc;
 
 use std::time::Duration;
 
@@ -39,7 +40,13 @@ pub(crate) struct SyncFetchBudget {
     max_bytes: usize,
     max_duration: Duration,
     exhausted: bool,
+    /// The latest event time that the fetch accepts now: a later one exceeds this node's
+    /// clock-drift allowance, which applies again when the history is published.
+    latest_ts: LatestTs,
 }
+
+/// The latest event time that the node accepts at the time of the call.
+pub(crate) type LatestTs = Arc<dyn Fn() -> Result<u128> + Send + Sync>;
 
 impl SyncFetchBudget {
     pub(crate) fn production() -> Self {
@@ -61,17 +68,45 @@ impl SyncFetchBudget {
             max_bytes,
             max_duration: MAX_SYNC_FETCH_DURATION,
             exhausted: false,
+            latest_ts: Arc::new(|| Ok(u128::MAX)),
         }
+    }
+
+    /// Refuse events stamped after the time that `latest_ts` returns when a history is checked.
+    pub(crate) fn with_latest_ts(mut self, latest_ts: LatestTs) -> Self {
+        self.latest_ts = latest_ts;
+        self
+    }
+
+    /// The latest event time that the fetch accepts now.
+    pub(crate) fn latest_ts(&self) -> Result<u128> {
+        (self.latest_ts)()
     }
 
     pub(crate) fn is_exhausted(&self) -> bool {
         self.exhausted
     }
 
-    fn remaining(&mut self) -> Result<Duration> {
+    /// The time left, or an error that marks the budget exhausted.
+    pub(crate) fn remaining(&mut self) -> Result<Duration> {
         match self.max_duration.checked_sub(self.started.elapsed()) {
             Some(remaining) => Ok(remaining),
             None => {
+                self.exhausted = true;
+                bail!("historical sync exceeded total deadline")
+            }
+        }
+    }
+
+    /// Run `work` within the time left, and mark the budget exhausted when the time runs out.
+    pub(crate) async fn within<T>(
+        &mut self,
+        work: impl std::future::Future<Output = Result<T>>,
+    ) -> Result<T> {
+        let remaining = self.remaining()?;
+        match tokio::time::timeout(remaining, work).await {
+            Ok(result) => result,
+            Err(_) => {
                 self.exhausted = true;
                 bail!("historical sync exceeded total deadline")
             }
@@ -123,6 +158,11 @@ pub struct EventBatch<E: Debug> {
     pub events: Vec<E>,
     pub next: BatchCursor,
     pub aggregate_id: AggregateId,
+    /// Timestamp from which the responder stores this network's history live: the time when the
+    /// gossip that it held during its own startup became durable. `None` while it still starts
+    /// up. A responder vouches only for history at or after this time; earlier records come from
+    /// its log and from its own peers.
+    pub observed_from: Option<u128>,
 }
 
 impl<E: Debug> TryFrom<Vec<u8>> for EventBatch<E>
@@ -205,30 +245,16 @@ where
     requester.request(request).await
 }
 
-#[cfg(test)]
-async fn fetch_all_batched_events<E>(
-    requester: DirectRequester<WithoutPeer>,
-    peer: PeerTarget,
-    aggregate_id: AggregateId,
-    since: u128,
-    batch_size: usize,
-) -> Result<Vec<E>>
-where
-    E: Debug + Serialize + TryFrom<Vec<u8>> + Send + Sync + 'static,
-    EventBatch<E>: TryFrom<Vec<u8>>,
-{
-    let mut budget = SyncFetchBudget::production();
-    fetch_all_batched_events_with_budget(
-        requester,
-        peer,
-        aggregate_id,
-        since,
-        batch_size,
-        &mut budget,
-    )
-    .await
+/// The history that one peer served for an aggregate.
+#[derive(Debug)]
+pub(crate) struct PeerHistory<E> {
+    pub events: Vec<E>,
+    /// The responder's `observed_from`, the same on every page.
+    pub observed_from: Option<u128>,
 }
 
+/// Fetch the history of `aggregate_id` after `since`, page by page. With `source_time`, the source
+/// fails when it has not ended in that time, which leaves the rest of the budget to other sources.
 pub(crate) async fn fetch_all_batched_events_with_budget<E>(
     requester: DirectRequester<WithoutPeer>,
     peer: PeerTarget,
@@ -236,7 +262,8 @@ pub(crate) async fn fetch_all_batched_events_with_budget<E>(
     since: u128,
     batch_size: usize,
     budget: &mut SyncFetchBudget,
-) -> Result<Vec<E>>
+    source_time: Option<Duration>,
+) -> Result<PeerHistory<E>>
 where
     E: Debug + Serialize + TryFrom<Vec<u8>> + Send + Sync + 'static,
     EventBatch<E>: TryFrom<Vec<u8>>,
@@ -246,6 +273,9 @@ where
     let requester = requester.to(peer);
     let mut all_events = Vec::new();
     let mut cursor = since;
+    let mut observed_from = None;
+    let mut first_page = true;
+    let source_deadline = source_time.map(|time| Instant::now() + time);
 
     loop {
         let request = FetchEventsSince::new(aggregate_id, cursor, batch_size);
@@ -254,14 +284,20 @@ where
             aggregate_id, cursor, batch_size
         );
         let remaining = budget.remaining()?;
-        let batch =
-            match tokio::time::timeout(remaining, fetch_events_since(&requester, request)).await {
-                Ok(result) => result?,
-                Err(_) => {
-                    budget.exhausted = true;
-                    bail!("historical sync exceeded total deadline");
-                }
-            };
+        let source_left =
+            source_deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
+        let wait = source_left.map_or(remaining, |left| left.min(remaining));
+        let batch = match tokio::time::timeout(wait, fetch_events_since(&requester, request)).await
+        {
+            Ok(result) => result?,
+            Err(_) if source_left.is_some_and(|left| left < remaining) => {
+                bail!("the history source used its share of the fetch deadline");
+            }
+            Err(_) => {
+                budget.exhausted = true;
+                bail!("historical sync exceeded total deadline");
+            }
+        };
         ensure!(
             batch.aggregate_id == aggregate_id,
             "sync peer returned aggregate {} while fetching {}",
@@ -286,6 +322,21 @@ where
             .try_into()
             .context("historical sync page size does not fit usize")?;
         budget.record_page(batch.events.len(), page_bytes)?;
+        // A responder that restarts or resets between two pages serves the rest from another log,
+        // and loses the time that it had. Its pages then do not form one history, so the source
+        // fails. A responder that ends its own startup during the fetch keeps its log; the source
+        // keeps the time of its first page, `None`, so it vouches for nothing.
+        if first_page {
+            observed_from = batch.observed_from;
+            first_page = false;
+        } else if observed_from.is_some() {
+            ensure!(
+                batch.observed_from == observed_from,
+                "sync peer changed its live-history time from {observed_from:?} to {:?} between \
+                 pages",
+                batch.observed_from
+            );
+        }
         all_events
             .try_reserve(batch.events.len())
             .map_err(|error| {
@@ -310,7 +361,10 @@ where
         all_events.len()
     );
 
-    Ok(all_events)
+    Ok(PeerHistory {
+        events: all_events,
+        observed_from,
+    })
 }
 
 #[cfg(test)]

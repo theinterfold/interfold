@@ -33,6 +33,9 @@
 //!    event log already contains a terminal event** for that E3. These are the
 //!    orphaned tickets that a crash mid-E3 can leave behind; they are the
 //!    "loose ends" a restart should clean up.
+//!
+//! Before these checks, the schema check reads the marker through the raw key/value store.
+//! An incompatible schema skips all checks that decode or repair event logs and snapshots.
 
 use crate::helpers::datastore::get_repositories;
 use anyhow::{bail, Context, Result};
@@ -46,12 +49,11 @@ use e3_sortition::{
     SortitionList, SortitionRepositoryFactory,
 };
 use e3_sync::{
-    decide_schema_version, has_schema_governed_kv_state, SchemaVersionDecision,
-    SyncRepositoryFactory, SCHEMA_VERSION,
+    inspect_persisted_schema_version, SchemaVersionDecision, SyncRepositoryFactory, SCHEMA_VERSION,
 };
 use e3_utils::enumerate_path;
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 /// Outcome severity for a single validation check.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,7 +95,6 @@ impl CheckResult {
             detail: detail.into(),
         }
     }
-    #[allow(dead_code)]
     fn warn(name: &str, detail: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -161,12 +162,158 @@ impl ValidationReport {
 
 /// Run every validation check against the node configured by `config`.
 ///
+/// Whether `path` holds a sled store: its `conf` and `db` files exist.
+/// What the store path holds.
+enum StorePresence {
+    /// Nothing, or an empty folder such as a mount point.
+    Absent,
+    /// A sled store: its `conf` and `db` files.
+    Present,
+    /// Other content, or content that validation cannot read.
+    Damaged(String),
+}
+
+fn store_presence(path: &std::path::Path) -> StorePresence {
+    let entries = match std::fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return StorePresence::Absent,
+        Err(error) => return StorePresence::Damaged(format!("validation cannot read it: {error}")),
+    };
+    let mut empty = true;
+    for entry in entries {
+        if let Err(error) = entry {
+            return StorePresence::Damaged(format!("validation cannot read it: {error}"));
+        }
+        empty = false;
+    }
+    if empty {
+        return StorePresence::Absent;
+    }
+    let file = |name: &str| std::fs::metadata(path.join(name)).map(|metadata| metadata.is_file());
+    match (file("conf"), file("db")) {
+        (Ok(true), Ok(true)) => StorePresence::Present,
+        (Err(error), _) | (_, Err(error)) if error.kind() != std::io::ErrorKind::NotFound => {
+            StorePresence::Damaged(format!("validation cannot read it: {error}"))
+        }
+        _ => StorePresence::Damaged("it lacks the store's `conf` or `db` file".to_owned()),
+    }
+}
+
+/// The node's event logs: the configured chains', and any other one on disk, as of a chain that
+/// the configuration no longer has.
+fn event_logs_on_disk(config: &AppConfig, aggregate_ids: &[AggregateId]) -> Vec<PathBuf> {
+    let log_file = config.log_file();
+    let mut paths: Vec<PathBuf> = aggregate_ids
+        .iter()
+        .map(|agg| enumerate_path(&log_file, agg.to_usize()))
+        .collect();
+    let (Some(folder), Some(name)) = (
+        log_file.parent(),
+        log_file.file_name().and_then(|name| name.to_str()),
+    ) else {
+        return paths;
+    };
+    let (stem, extension) = name.rfind('.').map_or((name, ""), |dot| name.split_at(dot));
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return paths;
+    };
+    for entry in entries.flatten() {
+        let Some(file) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let index = file
+            .strip_prefix(stem)
+            .and_then(|rest| rest.strip_prefix('.'))
+            .and_then(|rest| rest.strip_suffix(extension));
+        if index.is_some_and(|index| !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit()))
+            && !paths.contains(&entry.path())
+        {
+            paths.push(entry.path());
+        }
+    }
+    paths
+}
+
 /// Opens the persisted stores while holding the node's exclusive process fence.
 /// Returns the full report; callers decide how to surface it (the CLI prints it
 /// and exits non-zero on failure).
 pub async fn validate_node(config: &AppConfig, repair: bool) -> Result<ValidationReport> {
     let aggregate_ids = aggregate_ids(config);
     let mut report = ValidationReport::default();
+
+    // Opening the store creates it. Without one, report what the data directory holds instead. An
+    // empty folder at the store path, such as a mount point, holds no store either; other content
+    // there is a damaged store.
+    match store_presence(&config.db_file()) {
+        StorePresence::Present => {}
+        StorePresence::Damaged(reason) => {
+            report.push(CheckResult::fail(
+                "store",
+                format!(
+                    "the node store at {} is damaged: {reason}",
+                    config.db_file().display()
+                ),
+            ));
+            return Ok(report);
+        }
+        StorePresence::Absent => {
+            let mut logs_with_events = Vec::new();
+            let mut unreadable = Vec::new();
+            for path in event_logs_on_disk(config, &aggregate_ids) {
+                match CommitLogEventLog::has_records(&path) {
+                    Ok(true) => logs_with_events.push(path.display().to_string()),
+                    Ok(false) => {}
+                    Err(error) => unreadable.push(format!("{}: {error:#}", path.display())),
+                }
+            }
+            report.push(if !unreadable.is_empty() {
+                CheckResult::fail(
+                    "store",
+                    format!(
+                        "no node store at {}, and the event log(s) cannot be read: {}",
+                        config.db_file().display(),
+                        unreadable.join("; ")
+                    ),
+                )
+            } else if logs_with_events.is_empty() {
+                CheckResult::warn(
+                    "store",
+                    format!(
+                        "no node store at {}: the node has not started, so there is nothing to \
+                     validate",
+                        config.db_file().display()
+                    ),
+                )
+            } else {
+                CheckResult::fail(
+                    "store",
+                    format!(
+                        "no node store at {}, but the event log(s) {} hold events",
+                        config.db_file().display(),
+                        logs_with_events.join(", ")
+                    ),
+                )
+            });
+            return Ok(report);
+        }
+    }
+
+    let schema = check_schema_compatibility(inspect_persisted_schema_version(
+        &config.db_file(),
+        aggregate_ids
+            .iter()
+            .map(|agg| enumerate_path(&config.log_file(), agg.to_usize())),
+    )?);
+    let schema_supported = schema.severity != Severity::Fail;
+    report.push(schema);
+    if !schema_supported {
+        report.push(CheckResult::warn(
+            "skipped",
+            "the event-log, snapshot cursor, sortition-projection and open-loop checks did not \
+             run, because they read state in the stored schema",
+        ));
+        return Ok(report);
+    }
 
     // 1. Read the commit logs directly before starting any EventStore actor. The
     // checked reader lets the operator receive a structured validation report.
@@ -213,21 +360,45 @@ pub async fn validate_node(config: &AppConfig, repair: bool) -> Result<Validatio
 
     // 2. Only open the snapshot store after every source-of-truth log passed its
     // framing and decode checks. Cross-check each persisted replay cursor.
-    let repositories = get_repositories(config)?;
-    let persisted_schema = repositories.schema_version().read().await?;
-    let has_existing_state =
-        total_events > 0 || has_schema_governed_kv_state(&repositories).await?;
-    report.push(check_schema_compatibility(
-        persisted_schema,
-        has_existing_state,
-    ));
+    let repositories = match get_repositories(config) {
+        Ok(repositories) => repositories,
+        Err(error) => {
+            report.push(CheckResult::fail(
+                "store",
+                format!("the node store could not be opened: {error:#}"),
+            ));
+            return Ok(report);
+        }
+    };
     let mut snapshot_cursors = HashMap::new();
+    let mut unreadable_cursors = 0usize;
     for (agg, events) in &events_by_aggregate {
         let seqs: Vec<u64> = events.iter().map(|e| e.seq()).collect();
 
-        let cursor = repositories.aggregate_seq(*agg).read().await?.unwrap_or(0);
+        let cursor = match repositories.aggregate_seq(*agg).read().await {
+            Ok(cursor) => cursor.unwrap_or(0),
+            Err(error) => {
+                unreadable_cursors += 1;
+                report.push(CheckResult::fail(
+                    "snapshot-cursor",
+                    format!(
+                        "aggregate {}: the stored cursor could not be read: {error:#}",
+                        agg.to_usize()
+                    ),
+                ));
+                continue;
+            }
+        };
         snapshot_cursors.insert(*agg, cursor);
         report.push(check_cursor_consistency(*agg, cursor, &seqs));
+    }
+    if unreadable_cursors > 0 {
+        report.push(CheckResult::warn(
+            "skipped",
+            "the sortition-projection and open-loop checks did not run, because they need every \
+             snapshot cursor",
+        ));
+        return Ok(report);
     }
     report.push(CheckResult::pass(
         "event-store",
@@ -248,11 +419,26 @@ pub async fn validate_node(config: &AppConfig, repair: bool) -> Result<Validatio
             repair,
             source_state_is_valid,
         )
-        .await?,
+        .await
+        .unwrap_or_else(|error| {
+            CheckResult::fail(
+                "sortition-projection",
+                format!("the stored projection could not be read or repaired: {error:#}"),
+            )
+        }),
     );
 
     // 4. Open-loop / loose-ends audit against the persisted sortition state.
-    report.push(check_open_loops(&repositories, &terminal_keys).await?);
+    report.push(
+        check_open_loops(&repositories, &terminal_keys)
+            .await
+            .unwrap_or_else(|error| {
+                CheckResult::fail(
+                    "open-loops",
+                    format!("the stored node state could not be read: {error:#}"),
+                )
+            }),
+    );
 
     Ok(report)
 }
@@ -559,6 +745,12 @@ fn registered_node_states_from_events(
                 InterfoldEventData::ConfigurationUpdatedAt(event) => {
                     NodeRegistry::update_configuration(&mut node_states, event);
                 }
+                InterfoldEventData::EligibilityConfigurationVersionUpdatedAt(event) => {
+                    NodeRegistry::update_eligibility_version(&mut node_states, event);
+                }
+                InterfoldEventData::BondingAssetConfigUpdatedAt(event) => {
+                    NodeRegistry::update_bonding_asset_config(&mut node_states, event);
+                }
                 InterfoldEventData::CommitteeFinalized(data) => {
                     NodeRegistry::reconcile_committee_jobs(
                         &mut node_states,
@@ -692,9 +884,9 @@ fn display_addresses(addresses: &[String]) -> String {
 /// marker is acceptable only for a fresh store (empty or containing the complete bootstrap
 /// identity pair); stamping a version on protocol or unknown bytes would assert compatibility
 /// without evidence.
-fn check_schema_compatibility(persisted: Option<u32>, has_existing_state: bool) -> CheckResult {
+fn check_schema_compatibility(decision: SchemaVersionDecision) -> CheckResult {
     let name = "schema";
-    match decide_schema_version(persisted, SCHEMA_VERSION, has_existing_state) {
+    match decision {
         SchemaVersionDecision::Proceed => CheckResult::pass(
             name,
             format!("on-disk schema version {SCHEMA_VERSION} matches this binary"),
@@ -982,10 +1174,6 @@ fn read_event_log(
     Ok(events)
 }
 
-/// A non-empty `BTreeMap` alias kept for readability in tests.
-#[allow(dead_code)]
-type SeqMap = BTreeMap<AggregateId, u64>;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1084,20 +1272,25 @@ mod tests {
 
     #[test]
     fn schema_check_accepts_exact_version() {
-        let result = check_schema_compatibility(Some(SCHEMA_VERSION), true);
+        let result = check_schema_compatibility(SchemaVersionDecision::Proceed);
         assert_eq!(result.severity, Severity::Pass);
     }
 
     #[test]
     fn schema_check_rejects_missing_marker_on_nonempty_log() {
-        let result = check_schema_compatibility(None, true);
+        let result =
+            check_schema_compatibility(e3_sync::decide_schema_version(None, SCHEMA_VERSION, true));
         assert_eq!(result.severity, Severity::Fail);
         assert!(result.detail.contains("no schema marker"));
     }
 
     #[test]
     fn schema_check_rejects_incompatible_version() {
-        let result = check_schema_compatibility(Some(SCHEMA_VERSION + 1), true);
+        let result = check_schema_compatibility(e3_sync::decide_schema_version(
+            Some(SCHEMA_VERSION + 1),
+            SCHEMA_VERSION,
+            true,
+        ));
         assert_eq!(result.severity, Severity::Fail);
         assert!(result.detail.contains("newer"));
     }
@@ -1428,6 +1621,84 @@ mod tests {
             42
         );
         assert_eq!(states[&1].nodes["0xaaa"].ticket_balance_log_index, 7);
+    }
+
+    #[test]
+    fn node_state_replay_applies_eligibility_version_and_bonding_asset_updates() {
+        let evm = |data: InterfoldEventData, seq: u64| {
+            InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                data,
+                None,
+                seq as u128,
+                Some(seq),
+                EventSource::Evm,
+            )
+            .into_sequenced(seq)
+        };
+        let events = vec![(
+            AggregateId::new(1),
+            vec![
+                evm(
+                    CiphernodeAdded {
+                        address: "0xaaa".to_owned(),
+                        index: 0,
+                        num_nodes: 1,
+                        chain_id: 1,
+                    }
+                    .into(),
+                    1,
+                ),
+                evm(
+                    e3_events::OperatorActivationChangedAt {
+                        activation: e3_events::OperatorActivationChanged {
+                            operator: "0xaaa".to_owned(),
+                            active: true,
+                            chain_id: 1,
+                        },
+                        position: ChainPosition::new(1, 0),
+                    }
+                    .into(),
+                    2,
+                ),
+                evm(
+                    e3_events::BondingAssetConfigUpdatedAt {
+                        config: e3_events::BondingAssetConfigUpdated {
+                            ticket_token: "0x1".to_owned(),
+                            ciphernode_bond_token: "0x2".to_owned(),
+                            ticket_price: alloy::primitives::U256::from(25),
+                            required_ciphernode_bond: alloy::primitives::U256::from(1000),
+                            expected_ticket_decimals: 6,
+                            expected_ciphernode_bond_decimals: 18,
+                            configuration_version: 1,
+                            chain_id: 1,
+                        },
+                        position: ChainPosition::new(2, 0),
+                    }
+                    .into(),
+                    3,
+                ),
+                evm(
+                    e3_events::EligibilityConfigurationVersionUpdatedAt {
+                        update: e3_events::EligibilityConfigurationVersionUpdated {
+                            version: alloy::primitives::U256::from(2),
+                            chain_id: 1,
+                        },
+                        position: ChainPosition::new(2, 1),
+                    }
+                    .into(),
+                    4,
+                ),
+            ],
+        )];
+
+        let states =
+            registered_node_states_from_events(&events, &HashMap::from([(AggregateId::new(1), 4)]));
+
+        assert_eq!(states[&1].ticket_price, alloy::primitives::U256::from(25));
+        let node = &states[&1].nodes["0xaaa"];
+        assert!(!node.active);
+        assert!(node.active_at(1));
+        assert!(!node.active_at(2));
     }
 
     #[test]

@@ -4,10 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
@@ -336,11 +333,6 @@ where
         }
     }
 
-    /// Returns true if `key` is present.
-    pub fn contains_key(&self, key: &K) -> bool {
-        self.get(key).is_some()
-    }
-
     /// Collects all key/value pairs into a `Vec`. Iteration order is
     /// unspecified (hash-driven), so callers that need a deterministic order
     /// must sort the result themselves.
@@ -376,134 +368,9 @@ where
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct SerializedHamt<K, V> {
-    nodes: Vec<SerializedNode<K, V>>,
-    roots: Vec<HamtRoot>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct HamtRoot {
-    root_node_id: usize,
-    size: usize,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-enum SerializedNode<K, V> {
-    Empty,
-    Leaf { hash: u64, key: K, value: V },
-    Internal { bitmap: u32, children: Vec<usize> },
-    Collision { hash: u64, entries: Vec<(K, V)> },
-}
-
-impl<K, V> Hamt<K, V>
-where
-    K: Hash + Eq + Clone + Send + Sync + Serialize,
-    V: Clone + Send + Sync + Serialize,
-{
-    pub fn serialize_multiple(hamts: &[&Hamt<K, V>]) -> SerializedHamt<K, V> {
-        let mut node_map: HashMap<*const Node<K, V>, usize> = HashMap::new();
-        let mut nodes: Vec<SerializedNode<K, V>> = Vec::new();
-        let mut roots: Vec<HamtRoot> = Vec::new();
-
-        for hamt in hamts {
-            let root_id = Self::serialize_node(&hamt.root, &mut node_map, &mut nodes);
-            roots.push(HamtRoot {
-                root_node_id: root_id,
-                size: hamt.size,
-            });
-        }
-
-        SerializedHamt { nodes, roots }
-    }
-
-    fn serialize_node(
-        node: &Arc<Node<K, V>>,
-        node_map: &mut HashMap<*const Node<K, V>, usize>,
-        nodes: &mut Vec<SerializedNode<K, V>>,
-    ) -> usize {
-        let node_ptr = Arc::as_ptr(node);
-
-        // Check if we've already serialized this exact node
-        if let Some(&id) = node_map.get(&node_ptr) {
-            return id;
-        }
-
-        let serialized = match node.as_ref() {
-            Node::Empty => SerializedNode::Empty,
-            Node::Leaf { hash, key, value } => SerializedNode::Leaf {
-                hash: *hash,
-                key: key.clone(),
-                value: value.clone(),
-            },
-            Node::Internal { bitmap, children } => {
-                // Recursively serialize children FIRST, getting their IDs
-                let child_ids: Vec<usize> = children
-                    .iter()
-                    .map(|child| Self::serialize_node(child, node_map, nodes))
-                    .collect();
-                SerializedNode::Internal {
-                    bitmap: *bitmap,
-                    children: child_ids,
-                }
-            }
-            Node::Collision { hash, entries } => SerializedNode::Collision {
-                hash: *hash,
-                entries: entries.clone(),
-            },
-        };
-
-        // Now add THIS node after its children
-        let node_id = nodes.len();
-        nodes.push(serialized);
-        node_map.insert(node_ptr, node_id);
-        node_id
-    }
-
-    pub fn deserialize_multiple(serialized: SerializedHamt<K, V>) -> Vec<Hamt<K, V>>
-    where
-        K: DeserializeOwned,
-        V: DeserializeOwned,
-    {
-        let mut node_cache: Vec<Arc<Node<K, V>>> = Vec::new();
-
-        // Deserialize all nodes - children come before parents, so this works!
-        for serialized_node in serialized.nodes {
-            let node = match serialized_node {
-                SerializedNode::Empty => Arc::new(Node::Empty),
-                SerializedNode::Leaf { hash, key, value } => {
-                    Arc::new(Node::Leaf { hash, key, value })
-                }
-                SerializedNode::Internal { bitmap, children } => {
-                    let child_nodes = children.iter().map(|&id| node_cache[id].clone()).collect();
-                    Arc::new(Node::Internal {
-                        bitmap,
-                        children: child_nodes,
-                    })
-                }
-                SerializedNode::Collision { hash, entries } => {
-                    Arc::new(Node::Collision { hash, entries })
-                }
-            };
-            node_cache.push(node);
-        }
-
-        // Create HAMTs from roots
-        serialized
-            .roots
-            .into_iter()
-            .map(|root| Hamt {
-                root: node_cache[root.root_node_id].clone(),
-                size: root.size,
-            })
-            .collect()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::Result;
 
     #[test]
     fn it_works() {
@@ -522,33 +389,6 @@ mod tests {
         let map2 = map.insert("hello", 999);
         assert_eq!(Some(&42), map.get(&"hello"));
         assert_eq!(Some(&999), map2.get(&"hello"));
-    }
-
-    #[test]
-    fn test_serialization_deduplication() -> Result<()> {
-        let map1 = Hamt::new();
-        let map1 = map1.insert("hello".to_string(), 42);
-        let map1 = map1.insert("world".to_string(), 100);
-
-        let map2 = map1.insert("hello".to_string(), 999);
-
-        // Serialize both maps together
-        let serialized = Hamt::serialize_multiple(&[&map1, &map2]);
-
-        let bytes = bincode::serialize(&serialized)?;
-
-        println!("Total nodes serialized: {}", serialized.nodes.len());
-        println!("Number of HAMTs: {}", serialized.roots.len());
-
-        // Deserialize back
-        let from_bytes: SerializedHamt<String, i32> = bincode::deserialize(&bytes)?;
-        let deserialized = Hamt::deserialize_multiple(from_bytes);
-
-        assert_eq!(Some(&42), deserialized[0].get(&"hello".to_string()));
-        assert_eq!(Some(&100), deserialized[0].get(&"world".to_string()));
-        assert_eq!(Some(&999), deserialized[1].get(&"hello".to_string()));
-        assert_eq!(Some(&100), deserialized[1].get(&"world".to_string()));
-        Ok(())
     }
 
     #[test]
@@ -571,14 +411,6 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_absent_key_is_noop() {
-        let map = Hamt::new().insert("a".to_string(), 1);
-        let same = map.remove(&"missing".to_string());
-        assert_eq!(1, same.len());
-        assert_eq!(Some(&1), same.get(&"a".to_string()));
-    }
-
-    #[test]
     fn test_remove_until_empty() {
         let mut map = Hamt::new();
         for i in 0..50 {
@@ -590,17 +422,6 @@ mod tests {
         }
         assert!(map.is_empty());
         assert_eq!(0, map.len());
-    }
-
-    #[test]
-    fn test_contains_key_and_entries() {
-        let map = Hamt::new().insert(1u32, 10).insert(2, 20).insert(3, 30);
-        assert!(map.contains_key(&2));
-        assert!(!map.contains_key(&99));
-
-        let mut entries = map.entries();
-        entries.sort();
-        assert_eq!(vec![(1, 10), (2, 20), (3, 30)], entries);
     }
 
     #[test]

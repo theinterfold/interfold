@@ -36,6 +36,9 @@ struct MockState {
     generations: HashMap<PeerId, u64>,
     // The bridge has no historical peer-sync RPC. Retain gossip only during a test restart.
     missed_gossip: HashMap<PeerId, Vec<GossipData>>,
+    // Records a node stored only in its own DHT store. Peers can fetch them while that node is
+    // connected; a new generation of the node starts with an empty store.
+    local_records: HashMap<PeerId, HashMap<ContentHash, ArcBytes>>,
 }
 
 impl Default for Libp2pMock {
@@ -81,6 +84,7 @@ impl Libp2pMock {
             let mut state = self.state.write().await;
             if let Some(old_peer_id) = old_peer_id {
                 state.generations.remove(&old_peer_id);
+                state.local_records.remove(&old_peer_id);
                 if let Some(missed) = state.missed_gossip.remove(&old_peer_id) {
                     state
                         .missed_gossip
@@ -89,6 +93,7 @@ impl Libp2pMock {
                         .extend(missed);
                 }
             }
+            state.local_records.remove(&peer_id);
             state.generations.insert(peer_id, generation);
             state.nodes.insert(peer_id, (generation, handle.clone()));
             if let Some(missed) = state.missed_gossip.remove(&peer_id) {
@@ -174,11 +179,46 @@ impl Libp2pMock {
                             error!("Libp2pMock: failed to send DhtPutRecordSucceeded: {e}");
                         }
                     }
+                    NetCommand::DhtStoreLocal {
+                        correlation_id,
+                        key,
+                        value,
+                        ..
+                    } => {
+                        state
+                            .write()
+                            .await
+                            .local_records
+                            .entry(self_peer_id)
+                            .or_default()
+                            .insert(key.clone(), value);
+
+                        if let Err(e) = src_event_tx.send(NetEvent::DhtStoreLocalSucceeded {
+                            key,
+                            correlation_id,
+                        }) {
+                            error!("Libp2pMock: failed to send DhtStoreLocalSucceeded: {e}");
+                        }
+                    }
                     NetCommand::DhtGetRecord {
                         correlation_id,
                         key,
                     } => {
-                        let maybe_value = store.read().await.get(&key).cloned();
+                        // Uploaded records stand in for copies on the closest peers. A record
+                        // stored only locally is found while its node is connected, as when a
+                        // lookup reaches the publisher.
+                        let uploaded = store.read().await.get(&key).cloned();
+                        let maybe_value = match uploaded {
+                            Some(value) => Some(value),
+                            None => {
+                                let state = state.read().await;
+                                state
+                                    .local_records
+                                    .iter()
+                                    .filter(|(id, _)| state.nodes.contains_key(*id))
+                                    .find_map(|(_, records)| records.get(&key).cloned())
+                            }
+                        };
 
                         if let Some(value) = maybe_value {
                             if let Err(e) = src_event_tx.send(NetEvent::DhtGetRecordSucceeded {
@@ -199,6 +239,13 @@ impl Libp2pMock {
                         }
                     }
                     NetCommand::DhtRemoveRecords { keys } => {
+                        if let Some(local) =
+                            state.write().await.local_records.get_mut(&self_peer_id)
+                        {
+                            for key in &keys {
+                                local.remove(key);
+                            }
+                        }
                         let mut s = store.write().await;
                         for key in keys {
                             s.remove(&key);
@@ -264,6 +311,7 @@ mod tests {
                 expires: None,
                 value: ArcBytes::from_bytes(b"offline"),
                 key: offline_key.clone(),
+                deadline: std::time::Instant::now() + Duration::from_secs(240),
             })
             .unwrap();
         tokio::time::timeout(Duration::from_secs(1), dropped.changed())
@@ -282,6 +330,7 @@ mod tests {
                 expires: None,
                 value: ArcBytes::from_bytes(b"online"),
                 key: online_key.clone(),
+                deadline: std::time::Instant::now() + Duration::from_secs(240),
             })
             .unwrap();
         tokio::time::timeout(Duration::from_secs(1), async {
@@ -297,6 +346,205 @@ mod tests {
         .unwrap();
         assert!(mock.store.read().await.contains_key(&online_key));
         assert!(!mock.store.read().await.contains_key(&offline_key));
+    }
+
+    #[tokio::test]
+    async fn local_store_is_answered_and_fetchable_by_peers() {
+        let mock = Libp2pMock::new();
+        let publisher_id = PeerId::random();
+        let fetcher_id = PeerId::random();
+        let (_, publisher) = create_channel_bridge();
+        let (_, fetcher) = create_channel_bridge();
+        mock.add_node(publisher_id, publisher.clone()).await;
+        mock.add_node(fetcher_id, fetcher.clone()).await;
+
+        let offline_key = ContentHash::from_content(b"offline");
+        mock.disconnect_node(publisher_id).await;
+        let mut dropped = mock.dropped_commands.subscribe();
+        publisher
+            .cmd_tx()
+            .send(NetCommand::DhtStoreLocal {
+                correlation_id: CorrelationId::new(),
+                expires: None,
+                value: ArcBytes::from_bytes(b"offline"),
+                key: offline_key.clone(),
+            })
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), dropped.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!mock
+            .state
+            .read()
+            .await
+            .local_records
+            .contains_key(&publisher_id));
+
+        mock.reconnect_node(publisher_id, publisher.clone()).await;
+        let key = ContentHash::from_content(b"document");
+        let stored = CorrelationId::new();
+        let mut publisher_events = publisher.event_rx();
+        publisher
+            .cmd_tx()
+            .send(NetCommand::DhtStoreLocal {
+                correlation_id: stored,
+                expires: None,
+                value: ArcBytes::from_bytes(b"document"),
+                key: key.clone(),
+            })
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Ok(NetEvent::DhtStoreLocalSucceeded {
+                    key: answered,
+                    correlation_id,
+                }) = publisher_events.recv().await
+                {
+                    if answered == key && correlation_id == stored {
+                        break;
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        let mut fetcher_events = fetcher.event_rx();
+        fetcher
+            .cmd_tx()
+            .send(NetCommand::DhtGetRecord {
+                correlation_id: CorrelationId::new(),
+                key: key.clone(),
+            })
+            .unwrap();
+        let fetched = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Ok(NetEvent::DhtGetRecordSucceeded { value, .. }) =
+                    fetcher_events.recv().await
+                {
+                    break value;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(fetched.extract_bytes(), b"document".to_vec());
+    }
+
+    async fn store_local(node: &NetChannelBridge, key: &ContentHash, value: &[u8]) {
+        let mut events = node.event_rx();
+        let stored = CorrelationId::new();
+        node.cmd_tx()
+            .send(NetCommand::DhtStoreLocal {
+                correlation_id: stored,
+                expires: None,
+                value: ArcBytes::from_bytes(value),
+                key: key.clone(),
+            })
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Ok(NetEvent::DhtStoreLocalSucceeded { correlation_id, .. }) =
+                    events.recv().await
+                {
+                    if correlation_id == stored {
+                        break;
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    async fn upload(node: &NetChannelBridge, key: &ContentHash, value: &[u8]) {
+        let mut events = node.event_rx();
+        let uploaded = CorrelationId::new();
+        node.cmd_tx()
+            .send(NetCommand::DhtPutRecord {
+                correlation_id: uploaded,
+                expires: None,
+                value: ArcBytes::from_bytes(value),
+                key: key.clone(),
+                deadline: std::time::Instant::now() + Duration::from_secs(240),
+            })
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Ok(NetEvent::DhtPutRecordSucceeded { correlation_id, .. }) =
+                    events.recv().await
+                {
+                    if correlation_id == uploaded {
+                        break;
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    async fn fetch(node: &NetChannelBridge, key: &ContentHash) -> Option<Vec<u8>> {
+        let mut events = node.event_rx();
+        let fetch_id = CorrelationId::new();
+        node.cmd_tx()
+            .send(NetCommand::DhtGetRecord {
+                correlation_id: fetch_id,
+                key: key.clone(),
+            })
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                match events.recv().await {
+                    Ok(NetEvent::DhtGetRecordSucceeded {
+                        correlation_id,
+                        value,
+                        ..
+                    }) if correlation_id == fetch_id => break Some(value.extract_bytes()),
+                    Ok(NetEvent::DhtGetRecordError { correlation_id, .. })
+                        if correlation_id == fetch_id =>
+                    {
+                        break None
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn local_only_document_is_unavailable_after_publisher_disconnect() {
+        let mock = Libp2pMock::new();
+        let publisher_id = PeerId::random();
+        let fetcher_id = PeerId::random();
+        let (_, publisher) = create_channel_bridge();
+        let (_, fetcher) = create_channel_bridge();
+        mock.add_node(publisher_id, publisher.clone()).await;
+        mock.add_node(fetcher_id, fetcher.clone()).await;
+
+        let local = ContentHash::from_content(b"local");
+        let uploaded = ContentHash::from_content(b"uploaded");
+        store_local(&publisher, &local, b"local").await;
+        upload(&publisher, &uploaded, b"uploaded").await;
+        assert_eq!(fetch(&fetcher, &local).await, Some(b"local".to_vec()));
+
+        mock.disconnect_node(publisher_id).await;
+        assert_eq!(fetch(&fetcher, &local).await, None);
+        assert_eq!(fetch(&fetcher, &uploaded).await, Some(b"uploaded".to_vec()));
+
+        mock.reconnect_node(publisher_id, publisher.clone()).await;
+        assert_eq!(fetch(&fetcher, &local).await, Some(b"local".to_vec()));
+
+        // A restarted publisher starts with an empty store; uploaded copies stay with the peers.
+        let (_, restarted) = create_channel_bridge();
+        mock.disconnect_node_for_restart(publisher_id).await;
+        mock.add_replacement_node(publisher_id, PeerId::random(), restarted)
+            .await;
+        assert_eq!(fetch(&fetcher, &local).await, None);
+        assert_eq!(fetch(&fetcher, &uploaded).await, Some(b"uploaded".to_vec()));
     }
 
     #[tokio::test]
@@ -407,6 +655,7 @@ mod tests {
                 expires: None,
                 value: ArcBytes::from_bytes(b"stale"),
                 key: stale_key.clone(),
+                deadline: std::time::Instant::now() + Duration::from_secs(240),
             })
             .unwrap();
         tokio::time::timeout(Duration::from_secs(1), dropped.changed())

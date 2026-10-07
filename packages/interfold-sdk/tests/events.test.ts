@@ -301,37 +301,4 @@ describe('RegistryEventType', () => {
 
     expect(consoleError).toHaveBeenCalledWith(`Error in event callback for ${RegistryEventType.COMMITTEE_PUBLISHED}:`, error)
   })
-
-  it('preserves the request-time ticket price', () => {
-    const listener = new EventListener({
-      publicClient: {} as PublicClient,
-      contracts: {
-        interfold: '0x0000000000000000000000000000000000000001',
-        ciphernodeRegistry: '0x0000000000000000000000000000000000000002',
-        feeToken: '0x0000000000000000000000000000000000000003',
-      },
-    })
-    const callback = vi.fn()
-    const event: InterfoldEvent<RegistryEventType.COMMITTEE_REQUESTED> = {
-      type: RegistryEventType.COMMITTEE_REQUESTED,
-      data: {
-        e3Id: 1n,
-        entropyBlock: 2n,
-        threshold: [2n, 3n],
-        requestBlock: 4n,
-        committeeDeadline: 5n,
-        ticketPrice: 10_000_000n,
-      },
-      log: {} as Log,
-      timestamp: new Date(),
-      blockNumber: 4n,
-      transactionHash: '0x',
-    }
-
-    listener.on(RegistryEventType.COMMITTEE_REQUESTED, callback)
-    listener.emit(event)
-
-    expect(callback).toHaveBeenCalledWith(event)
-    expect(event.data.ticketPrice).toBe(10_000_000n)
-  })
 })

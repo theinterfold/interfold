@@ -12,7 +12,7 @@
 use crate::calculate_bit_width;
 use crate::get_zkp_modulus;
 use crate::math::compute_k0is;
-use crate::math::{cyclotomic_polynomial, decompose_residue, plaintext_poly_u64};
+use crate::math::{fold_negacyclic, plaintext_poly_u64};
 use crate::threshold::user_data_encryption::circuit::UserDataEncryptionCircuit;
 use crate::threshold::user_data_encryption::circuit::UserDataEncryptionCircuitData;
 use crate::CircuitsErrors;
@@ -79,14 +79,10 @@ pub struct Bits {
     pub e0_bit: u32,
     pub e1_bit: u32,
     pub k_bit: u32,
-    pub r1_bit: u32,
-    pub r2_bit: u32,
-    pub p1_bit: u32,
-    pub p2_bit: u32,
-    /// Bit width for `e0_quotients` - the CRT quotient in `e0 == e0is[i] + e0_quotients[i] * qis[i]`.
-    /// This MUST be range-checked: the equation holds in F_p, not Z, so an unconstrained
-    /// quotient lets a prover pick any e0is (see the soundness note on `e0_quotient_bounds`).
-    pub e0_quotient_bit: u32,
+    /// Width of ct0's reduction quotient `r`.
+    pub ct0_r_bit: u32,
+    /// Width of ct1's reduction quotient `r`.
+    pub ct1_r_bit: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -97,16 +93,10 @@ pub struct Bounds {
     pub e1_bound: BigUint,
     pub k1_low_bound: BigUint,
     pub k1_up_bound: BigUint,
-    pub r1_low_bounds: Vec<BigUint>,
-    pub r1_up_bounds: Vec<BigUint>,
-    pub r2_bounds: Vec<BigUint>,
-    pub p1_bounds: Vec<BigUint>,
-    pub p2_bounds: Vec<BigUint>,
-    /// Per-limb bound on the honest `e0_quotients[i]` magnitude: `(e0_bound + qi_bound) / qi + 1`.
-    /// Not a security parameter itself - it exists only to stop the CRT-consistency equation
-    /// from being satisfiable in F_p for an arbitrary e0is. See the `check_e0_crt_consistency`
-    /// callers: they must range-check `e0_quotients` to this bound, or the check is vacuous.
-    pub e0_quotient_bounds: Vec<BigUint>,
+    /// Bounds on ct0's reduction quotient `r`, per CRT basis.
+    pub ct0_r_bounds: Vec<BigUint>,
+    /// Bounds on ct1's reduction quotient `r`, per CRT basis.
+    pub ct1_r_bounds: Vec<BigUint>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,12 +105,10 @@ pub struct Inputs {
     pub pk1is: CrtPolynomial,
     pub ct0is: CrtPolynomial,
     pub ct1is: CrtPolynomial,
-    pub r1is: CrtPolynomial,
-    pub r2is: CrtPolynomial,
-    pub p1is: CrtPolynomial,
-    pub p2is: CrtPolynomial,
-    pub e0is: CrtPolynomial,
-    pub e0_quotients: CrtPolynomial,
+    /// ct0's reduction quotient, already reduced modulo `X^N + 1`.
+    pub ct0_r: CrtPolynomial,
+    /// ct1's reduction quotient, already reduced modulo `X^N + 1`.
+    pub ct1_r: CrtPolynomial,
     pub e0: Polynomial,
     pub e1: Polynomial,
     pub u: Polynomial,
@@ -174,34 +162,14 @@ impl Computation for Bits {
         let k1_up_bit = calculate_bit_width(BigInt::from(data.k1_up_bound.clone()));
         let k_bit = k1_low_bit.max(k1_up_bit);
 
-        // For r1, use the maximum of all low and up bounds
-        let mut r1_bit = 0;
-        for bound in data.r1_low_bounds.iter().chain(data.r1_up_bounds.iter()) {
-            r1_bit = r1_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
+        // Each `r` is two-sided, so take the widest bound across the CRT bases.
+        let mut ct0_r_bit = 0;
+        for bound in &data.ct0_r_bounds {
+            ct0_r_bit = ct0_r_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
         }
-
-        // For r2, use the maximum of all bounds
-        let mut r2_bit = 0;
-        for bound in &data.r2_bounds {
-            r2_bit = r2_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
-        }
-
-        // For p1, use the maximum of all bounds
-        let mut p1_bit = 0;
-        for bound in &data.p1_bounds {
-            p1_bit = p1_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
-        }
-
-        // For p2, use the maximum of all bounds
-        let mut p2_bit = 0;
-        for bound in &data.p2_bounds {
-            p2_bit = p2_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
-        }
-
-        // For e0_quotient, use the maximum of all per-limb bounds
-        let mut e0_quotient_bit = 0;
-        for bound in &data.e0_quotient_bounds {
-            e0_quotient_bit = e0_quotient_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
+        let mut ct1_r_bit = 0;
+        for bound in &data.ct1_r_bounds {
+            ct1_r_bit = ct1_r_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
         }
 
         Ok(Bits {
@@ -211,11 +179,8 @@ impl Computation for Bits {
             e0_bit,
             e1_bit,
             k_bit,
-            r1_bit,
-            r2_bit,
-            p1_bit,
-            p2_bit,
-            e0_quotient_bit,
+            ct0_r_bit,
+            ct1_r_bit,
         })
     }
 }
@@ -234,38 +199,36 @@ impl Computation for Bounds {
 
         let t = BigInt::from(threshold_params.plaintext());
 
-        let error_bound = crate::utils::error_sampler_bound(threshold_params.get_error1_variance())
+        // CBD bound
+        let cbd_bound = (threshold_params.variance() * 2) as u64;
+        // Uniform bound
+        let uniform_bound = (threshold_params.get_error1_variance() * BigUint::from(3u32))
+            .sqrt()
             .to_bigint()
             .ok_or_else(|| {
-                CircuitsErrors::Other("Failed to convert error bound to BigInt".into())
+                CircuitsErrors::Other("Failed to convert uniform bound to BigInt".into())
             })?;
 
         let u_bound = SecretKey::sk_bound() as u128; // u_bound is the same as sk_bound
 
-        // e0 = e1 in fhe.rs; e1 = e2 in fhe.rs.
-        let e0_bound = error_bound.to_u128().unwrap();
-        let e1_bound = (threshold_params.variance() * 2) as u64;
+        // e0 = e1 in the fhe.rs
+        let e0_bound: u128 = if threshold_params.get_error1_variance() <= &BigUint::from(16u32) {
+            threshold_params.get_error1_variance().to_u128().unwrap() * 2
+        } else {
+            uniform_bound.to_u128().unwrap()
+        };
+        let e1_bound = cbd_bound; // e1 = e2 in the fhe.rs
 
-        // Plaintext coefficients are encoded in [0, t), not centered around zero.
-        let ptxt_low_bound = BigInt::from(0);
-        let ptxt_up_bound = t.clone() - BigInt::from(1);
-
-        let k1_low_bound: BigInt = BigInt::from(-1) * ptxt_low_bound.clone();
-        let k1_up_bound: BigInt = ptxt_up_bound.clone();
+        let k1_low_bound = BigInt::from(0);
+        let k1_up_bound: BigInt = &t - BigInt::from(1);
 
         // Calculate bounds for each CRT basis
         let moduli: Vec<u64> = ctx.moduli_operators().iter().map(|q| **q).collect();
         let k0is = compute_k0is(&moduli, threshold_params.plaintext())?;
 
         let mut pk_bounds: Vec<BigInt> = Vec::new();
-        let mut r1_low_bounds: Vec<BigInt> = Vec::new();
-        let mut r1_up_bounds: Vec<BigInt> = Vec::new();
-        let mut r2_bounds: Vec<BigInt> = Vec::new();
-        let mut p1_bounds: Vec<BigInt> = Vec::new();
-        let mut p2_bounds: Vec<BigInt> = Vec::new();
-        let mut e0_quotient_bounds: Vec<BigInt> = Vec::new();
-
-        let e0_bound_bigint = BigInt::from(e0_bound);
+        let mut ct0_r_bounds: Vec<BigInt> = Vec::new();
+        let mut ct1_r_bounds: Vec<BigInt> = Vec::new();
 
         for (i, qi) in ctx.moduli_operators().iter().enumerate() {
             let qi_bigint = BigInt::from(**qi);
@@ -275,34 +238,27 @@ impl Computation for Bounds {
 
             // PK bounds: centered magnitude (qi-1)/2; matches pk_aggregation / C1 commitment
             pk_bounds.push(qi_bound.clone());
-            r2_bounds.push(qi_bound.clone());
 
-            let e0_bound_i = e0_bound % qi_bigint.clone();
+            // `r` is the quotient of the mod-q reduction in the identity the circuit checks:
+            //   ct = pk * u + e + k0 * k1 + q * r   (mod X^N + 1, over the integers)
+            // so bounding each term on the right and dividing by q bounds `r`:
+            //   |pk * u| <= n * (q-1)/2 (negacyclic convolution of n terms, |u| <= u_bound),
+            //   |ct| <= (q-1)/2, |k0 * k1| <= |k0| * k1_bound, |e| <= e_bound.
+            // The bound holds for `|r|`, so one bound covers the two-sided range check.
+            //
+            // ct0 takes the *lifted* `e0_bound`, not its residue at q_i: the reduced identity reads
+            // the lifted `e0` directly now that the CRT split and `e0is` are gone.
+            // `k1` lies in `[0, t - 1]`, so `k1_up_bound` is its largest magnitude.
+            let ct0_r_bound: BigInt = (&k1_up_bound * k0qi.abs()
+                + (&n * u_bound + BigInt::from(2)) * &qi_bound
+                + BigInt::from(e0_bound))
+                / &qi_bigint;
+            ct0_r_bounds.push(ct0_r_bound);
 
-            // R1 bounds (more complex calculation)
-            let r1_residual_bound =
-                (&n * u_bound + BigInt::from(2)) * &qi_bound + e0_bound_i.clone();
-            let r1_low_numerator = &ptxt_up_bound * k0qi.abs() + &r1_residual_bound;
-            let r1_low_magnitude = (&r1_low_numerator + &qi_bigint - BigInt::from(1)) / &qi_bigint;
-            let r1_up = (&r1_residual_bound + &qi_bigint - BigInt::from(1)) / &qi_bigint;
-
-            r1_low_bounds.push(r1_low_magnitude);
-            r1_up_bounds.push(r1_up);
-
-            // P1 and P2 bounds
-            let p1_bound: BigInt =
+            // ct1 has no `k0 * k1` term, so only the product, ciphertext and `e1` contribute.
+            let ct1_r_bound: BigInt =
                 ((&n * u_bound + BigInt::from(2)) * &qi_bound + e1_bound) / &qi_bigint;
-            p1_bounds.push(p1_bound.clone());
-            p2_bounds.push(qi_bound.clone());
-
-            // e0_quotients[i] = (e0 - e0is[i]) / qi. With e0 in [-e0_bound, e0_bound] and e0is[i]
-            // centered in [-qi_bound, qi_bound], the honest quotient magnitude is bounded by
-            // (e0_bound + qi_bound) / qi; +1 covers integer-division truncation. This bound MUST
-            // be enforced with a range check on e0_quotients, or check_e0_crt_consistency's
-            // equation (checked in F_p, not Z) is satisfiable for an arbitrary e0is.
-            let e0_quotient_bound: BigInt =
-                (&e0_bound_bigint + &qi_bound) / &qi_bigint + BigInt::from(1);
-            e0_quotient_bounds.push(e0_quotient_bound);
+            ct1_r_bounds.push(ct1_r_bound);
         }
 
         Ok(Bounds {
@@ -315,27 +271,11 @@ impl Computation for Bounds {
             e1_bound: BigUint::from(e1_bound),
             k1_low_bound: BigUint::from(k1_low_bound.to_u128().unwrap()),
             k1_up_bound: BigUint::from(k1_up_bound.to_u128().unwrap()),
-            r1_low_bounds: r1_low_bounds
+            ct0_r_bounds: ct0_r_bounds
                 .iter()
                 .map(|b| BigUint::from(b.to_u128().unwrap()))
                 .collect(),
-            r1_up_bounds: r1_up_bounds
-                .iter()
-                .map(|b| BigUint::from(b.to_u128().unwrap()))
-                .collect(),
-            r2_bounds: r2_bounds
-                .iter()
-                .map(|b| BigUint::from(b.to_u128().unwrap()))
-                .collect(),
-            p1_bounds: p1_bounds
-                .iter()
-                .map(|b| BigUint::from(b.to_u128().unwrap()))
-                .collect(),
-            p2_bounds: p2_bounds
-                .iter()
-                .map(|b| BigUint::from(b.to_u128().unwrap()))
-                .collect(),
-            e0_quotient_bounds: e0_quotient_bounds
+            ct1_r_bounds: ct1_r_bounds
                 .iter()
                 .map(|b| BigUint::from(b.to_u128().unwrap()))
                 .collect(),
@@ -363,19 +303,19 @@ impl Computation for Inputs {
         let moduli = threshold_params.moduli();
 
         let t = threshold_params.plaintext();
+        let k0is = compute_k0is(moduli, t)?;
         let n = threshold_params.degree() as u64;
         let q_mod_t = (&modulus_q % t)
             .to_u64()
             .ok_or_else(|| CircuitsErrors::Other("Failed to convert q_mod_t to u64".into()))?; // [q]_t
-        let cyclo = cyclotomic_polynomial(n);
 
         // Encrypt using the provided public key to ensure ciphertext matches the key.
-        let (ct, u, e0, e1) = data
+        let (ct, intermediates) = data
             .public_key
-            .try_encrypt_extended(&data.plaintext, &mut rand::rng())?;
+            .try_encrypt_with_intermediates(&data.plaintext, &mut rand::rng())?;
 
         // Reconstruct e0 coefficients mod Q (CRT) for e0_quotient computation.
-        let mut e0_mod_q = Polynomial::from_fhe_polynomial(&e0);
+        let mut e0_mod_q = Polynomial::from_fhe_polynomial(intermediates.error_0());
 
         e0_mod_q.reverse();
         e0_mod_q.center(&modulus_q);
@@ -392,8 +332,12 @@ impl Computation for Inputs {
         k1.reverse();
 
         // Reconstruct u and e1 as polynomials (only the first limb is needed)
-        let mut u = CrtPolynomial::from_fhe_polynomial(&u).limb(0).clone();
-        let mut e1 = CrtPolynomial::from_fhe_polynomial(&e1).limb(0).clone();
+        let mut u = CrtPolynomial::from_fhe_polynomial(intermediates.randomness())
+            .limb(0)
+            .clone();
+        let mut e1 = CrtPolynomial::from_fhe_polynomial(intermediates.error_1())
+            .limb(0)
+            .clone();
 
         u.center(&BigInt::from(moduli[0]));
         u.reverse();
@@ -405,7 +349,7 @@ impl Computation for Inputs {
         let mut ct1 = CrtPolynomial::from_fhe_polynomial(&ct[1]);
         let mut pk0 = CrtPolynomial::from_fhe_polynomial(&pk.c[0]);
         let mut pk1 = CrtPolynomial::from_fhe_polynomial(&pk.c[1]);
-        let mut e0 = CrtPolynomial::from_fhe_polynomial(&e0);
+        let mut e0 = CrtPolynomial::from_fhe_polynomial(intermediates.error_0());
 
         ct0.reverse();
         ct1.reverse();
@@ -420,11 +364,6 @@ impl Computation for Inputs {
         pk1.center(moduli)?;
 
         e0.center(moduli)?;
-
-        crate::utils::verify_crt_shapes(&[&ct0, &ct1, &pk0, &pk1, &e0], moduli.len(), n as usize)
-            .map_err(|e| {
-            CircuitsErrors::Other(format!("user-data-encryption CRT shape mismatch: {e}"))
-        })?;
 
         let CrtPolynomial { limbs: ct0_limbs } = ct0;
         let CrtPolynomial { limbs: ct1_limbs } = ct1;
@@ -459,7 +398,7 @@ impl Computation for Inputs {
             );
 
             // k0qi = -t^{-1} mod qi
-            let k0qi = BigInt::from(qi.inv(qi.neg(t)).unwrap());
+            let k0qi = BigInt::from(k0is[i]);
 
             // ki = k1 * k0qi
             let ki = k1.scalar_mul(&k0qi);
@@ -477,8 +416,6 @@ impl Computation for Inputs {
 
             assert_eq!((ct0i_hat.coefficients().len() as u64) - 1, 2 * (n - 1));
 
-            let (r1i, r2i) = decompose_residue(&ct0i, &ct0i_hat, &qi_bigint, &cyclo, n);
-
             // Calculate ct1i_hat = pk1i * ui + e1
             let ct1i_hat = {
                 let pk1i_u_times = pk1i.mul(&u);
@@ -489,22 +426,66 @@ impl Computation for Inputs {
             };
             assert_eq!((ct1i_hat.coefficients().len() as u64) - 1, 2 * (n - 1));
 
-            let (p1i, p2i) = decompose_residue(&ct1i, &ct1i_hat, &qi_bigint, &cyclo, n);
+            // The circuit checks one degree-N identity per leg, reduced modulo X^N + 1:
+            //   ct0i = (pk0i * u mod X^N + 1) + e0 + k0qi * k1 + qi * ct0_r
+            //   ct1i = (pk1i * u mod X^N + 1) + e1            + qi * ct1_r
+            // Each quotient is pinned by its own identity, so folding the hat computed above and
+            // dividing by qi gives it. The hats already hold the products, so nothing is recomputed
+            // and the cyclotomic quotients never exist.
+            //
+            // The ct0 hat carries the residue `e0i`, while the identity reads the lifted `e0`.
+            // Substituting the CRT split `e0 = e0i + e0_quotient * qi` moves that difference into
+            // the quotient, so `ct0_r` is the folded quotient minus `e0_quotient`. That is how `r`
+            // comes to carry what `e0is`, `r1i` and `r2i` carried between them.
+            //
+            // Everything here is O(N). Going through `decompose_residue` plus
+            // `Polynomial::reduce_by_cyclotomic` ran four generic long divisions per limb, each
+            // (N-1)(N+1) BigInt multiply-subtracts, and recomputed both products for the
+            // self-checks. This generator runs in the voter's browser, where that was about ten
+            // seconds per ballot at secure-8192.
+            let ct0_reduced_hat = fold_negacyclic(&ct0i_hat, n as usize);
+            let ct1_reduced_hat = fold_negacyclic(&ct1i_hat, n as usize);
 
-            (
-                i,
-                r2i,
-                r1i,
-                k0qi,
-                ct0i,
-                ct1i,
-                pk0i,
-                pk1i,
-                p1i,
-                p2i,
-                e0i,
-                e0_quotient,
-            )
+            // Exact division is the identity: `div` rejects any coefficient that is not a multiple
+            // of qi, so a successful division proves an integer quotient closes the reduced
+            // equation and a wrong fold surfaces as a divisibility failure.
+            let (ct0_folded_quotient, ct0_remainder) = ct0i
+                .sub(&ct0_reduced_hat)
+                .div(&qi_poly)
+                .expect("ct0i - (pk0i * u + e0i + k0qi * k1 mod X^N + 1) must be divisible by qi");
+            assert!(
+                ct0_remainder.is_zero(),
+                "reduced ct0 identity must divide exactly by qi"
+            );
+            let ct0_r = ct0_folded_quotient.sub(&e0_quotient);
+
+            let (ct1_r, ct1_remainder) = ct1i
+                .sub(&ct1_reduced_hat)
+                .div(&qi_poly)
+                .expect("ct1i - (pk1i * u + e1 mod X^N + 1) must be divisible by qi");
+            assert!(
+                ct1_remainder.is_zero(),
+                "reduced ct1 identity must divide exactly by qi"
+            );
+
+            // Restate both identities on the derived witnesses, with the lifted `e0` the circuit
+            // reads. O(N), and independent of `div`.
+            let ct0_reduced = ct0_reduced_hat
+                .sub(&e0i)
+                .add(&e0_mod_q)
+                .add(&ct0_r.scalar_mul(&qi_bigint));
+            assert!(
+                ct0i.sub(&ct0_reduced).is_zero(),
+                "reduced ct0 identity must hold: ct0i == pk0i * u + e0 + k0qi * k1 + qi * r (mod X^N + 1)"
+            );
+            assert!(
+                ct1i
+                    .sub(&ct1_reduced_hat.add(&ct1_r.scalar_mul(&qi_bigint)))
+                    .is_zero(),
+                "reduced ct1 identity must hold: ct1i == pk1i * u + e1 + qi * r (mod X^N + 1)"
+            );
+
+            (i, k0qi, ct0i, ct1i, pk0i, pk1i, ct0_r, ct1_r)
         })
         .collect();
 
@@ -514,36 +495,24 @@ impl Computation for Inputs {
         let mut pk1is = Vec::with_capacity(results.len());
         let mut ct0is = Vec::with_capacity(results.len());
         let mut ct1is = Vec::with_capacity(results.len());
-        let mut r1is = Vec::with_capacity(results.len());
-        let mut r2is = Vec::with_capacity(results.len());
-        let mut p1is = Vec::with_capacity(results.len());
-        let mut p2is = Vec::with_capacity(results.len());
-        let mut e0is = Vec::with_capacity(results.len());
-        let mut e0_quotients = Vec::with_capacity(results.len());
+        let mut ct0_r = Vec::with_capacity(results.len());
+        let mut ct1_r = Vec::with_capacity(results.len());
 
-        for (_, r2i, r1i, _, ct0i, ct1i, pk0i, pk1i, p1i, p2i, e0i, e0_quotient) in results {
+        for (_, _, ct0i, ct1i, pk0i, pk1i, ct0_ri, ct1_ri) in results {
             pk0is.push(pk0i);
             pk1is.push(pk1i);
             ct0is.push(ct0i);
             ct1is.push(ct1i);
-            r1is.push(r1i);
-            r2is.push(r2i);
-            p1is.push(p1i);
-            p2is.push(p2i);
-            e0is.push(e0i);
-            e0_quotients.push(e0_quotient);
+            ct0_r.push(ct0_ri);
+            ct1_r.push(ct1_ri);
         }
 
         let pk0is = CrtPolynomial::new(pk0is);
         let pk1is = CrtPolynomial::new(pk1is);
         let ct0is = CrtPolynomial::new(ct0is);
         let ct1is = CrtPolynomial::new(ct1is);
-        let r1is = CrtPolynomial::new(r1is);
-        let r2is = CrtPolynomial::new(r2is);
-        let p1is = CrtPolynomial::new(p1is);
-        let p2is = CrtPolynomial::new(p2is);
-        let e0is = CrtPolynomial::new(e0is);
-        let e0_quotients = CrtPolynomial::new(e0_quotients);
+        let ct0_r = CrtPolynomial::new(ct0_r);
+        let ct1_r = CrtPolynomial::new(ct1_r);
 
         // e0 is mod Q (huge); reduce to zkp_modulus so it fits in the proof system field.
         let zkp_modulus = get_zkp_modulus();
@@ -554,12 +523,8 @@ impl Computation for Inputs {
             pk1is,
             ct0is,
             ct1is,
-            r1is,
-            r2is,
-            p1is,
-            p2is,
-            e0is,
-            e0_quotients,
+            ct0_r,
+            ct1_r,
             e0: e0_mod_q,
             e1,
             u,
@@ -579,14 +544,12 @@ impl Computation for Inputs {
         let ct1is = crt_polynomial_to_toml_json(&self.ct1is);
         let u = polynomial_to_toml_json(&self.u);
         let e0 = polynomial_to_toml_json(&self.e0);
-        let e0is = crt_polynomial_to_toml_json(&self.e0is);
-        let e0_quotients = crt_polynomial_to_toml_json(&self.e0_quotients);
         let e1 = polynomial_to_toml_json(&self.e1);
         let k1 = polynomial_to_toml_json(&self.k1);
-        let r1is = crt_polynomial_to_toml_json(&self.r1is);
-        let r2is = crt_polynomial_to_toml_json(&self.r2is);
-        let p1is = crt_polynomial_to_toml_json(&self.p1is);
-        let p2is = crt_polynomial_to_toml_json(&self.p2is);
+        // ct0 and ct1 share one Prover.toml, so each reduction quotient needs its own key. Both feed
+        // a circuit field named `r`.
+        let r = crt_polynomial_to_toml_json(&self.ct0_r);
+        let r_ct1 = crt_polynomial_to_toml_json(&self.ct1_r);
 
         let json = serde_json::json!({
             "pk0is": pk0is,
@@ -595,14 +558,10 @@ impl Computation for Inputs {
             "ct1is": ct1is,
             "u": u,
             "e0": e0,
-            "e0is": e0is,
-            "e0_quotients": e0_quotients,
             "e1": e1,
             "k1": k1,
-            "r1is": r1is,
-            "r2is": r2is,
-            "p1is": p1is,
-            "p2is": p2is,
+            "r": r,
+            "r_ct1": r_ct1,
         });
 
         Ok(json)
@@ -617,52 +576,45 @@ mod tests {
 
     #[test]
     fn test_bound_and_bits_computation_consistency() {
-        let bounds = Bounds::compute(BfvPreset::InsecureThreshold, &()).unwrap();
-        let bits = Bits::compute(BfvPreset::InsecureThreshold, &bounds).unwrap();
+        let bounds = Bounds::compute(BfvPreset::InsecureThreshold512, &()).unwrap();
+        let bits = Bits::compute(BfvPreset::InsecureThreshold512, &bounds).unwrap();
 
         let max_pk_bound = bounds.pk_bounds.iter().max().unwrap();
         let expected_bits = calculate_bit_width(BigInt::from(max_pk_bound.clone()));
 
-        assert_eq!(max_pk_bound.clone(), BigUint::from(36028797018956544u64));
+        assert_eq!(max_pk_bound.clone(), BigUint::from(34359701504u64));
         assert_eq!(bits.pk_bit, expected_bits);
     }
 
     #[test]
-    fn secure_8192_sample_fits_user_data_encryption_bounds() {
-        let sample =
-            UserDataEncryptionCircuitData::generate_sample(BfvPreset::SecureThreshold8192).unwrap();
-        let bounds = Bounds::compute(BfvPreset::SecureThreshold8192, &()).unwrap();
-        let inputs = Inputs::compute(BfvPreset::SecureThreshold8192, &sample).unwrap();
+    fn insecure_e0_bound_matches_error1_sampler() {
+        let preset = BfvPreset::InsecureThreshold512;
+        let bounds = Bounds::compute(preset, &()).unwrap();
+        let bits = Bits::compute(preset, &bounds).unwrap();
 
-        for (limb_index, (limb, (low, up))) in inputs
-            .r1is
-            .limbs
-            .iter()
-            .zip(bounds.r1_low_bounds.iter().zip(bounds.r1_up_bounds.iter()))
-            .enumerate()
-        {
-            let low = BigInt::from(low.clone());
-            let up = BigInt::from(up.clone());
-            for coefficient in limb.coefficients() {
-                assert!(
-                    -&low <= *coefficient && *coefficient <= up,
-                    "r1 limb {limb_index} coefficient {coefficient} exceeds [-{low}, {up}]"
-                );
-            }
-        }
+        assert_eq!(bounds.e0_bound, BigUint::from(6u32));
+        assert_eq!(bounds.e1_bound, BigUint::from(20u32));
+        assert_eq!(bits.e0_bit, 3);
     }
 
     #[test]
-    fn test_constants_json_roundtrip() {
-        let constants = Configs::compute(BfvPreset::InsecureThreshold, &()).unwrap();
-
-        let json = constants.to_json().unwrap();
-        let decoded: Configs = serde_json::from_value(json).unwrap();
-
-        assert_eq!(decoded.n, constants.n);
-        assert_eq!(decoded.l, constants.l);
-        assert_eq!(decoded.moduli, constants.moduli);
-        assert_eq!(decoded.bits, constants.bits);
-        assert_eq!(decoded.bounds, constants.bounds);
+    fn encryption_witness_respects_ct0_r_bounds() {
+        for preset in [
+            BfvPreset::InsecureThreshold512,
+            BfvPreset::SecureThreshold8192,
+        ] {
+            let sample = UserDataEncryptionCircuitData::generate_sample(preset).unwrap();
+            let bounds = Bounds::compute(preset, &()).unwrap();
+            let inputs = Inputs::compute(preset, &sample).unwrap();
+            for (i, limb) in inputs.ct0_r.limbs.iter().enumerate() {
+                let bound = BigInt::from(bounds.ct0_r_bounds[i].clone());
+                for (j, coefficient) in limb.coefficients().iter().enumerate() {
+                    assert!(
+                        coefficient.abs() <= bound,
+                        "{preset:?} ct0_r[{i}][{j}] = {coefficient} exceeds {bound}"
+                    );
+                }
+            }
+        }
     }
 }

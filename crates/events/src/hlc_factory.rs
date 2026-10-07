@@ -61,6 +61,13 @@ impl HlcMethods for HlcState {
 
         Ok(hlc.tick()?)
     }
+    fn latest_admissible(&self) -> Result<HlcTimestamp, Self::Error> {
+        let HlcState::Ready(hlc) = self else {
+            return Err(HlcFactoryError::NotReady);
+        };
+
+        Ok(hlc.latest_admissible()?)
+    }
 }
 
 /// This solves an issue where Hlc needs a node_id which is derived from the address but the
@@ -119,5 +126,9 @@ impl HlcMethods for HlcFactory {
     fn receive(&self, remote: &HlcTimestamp) -> Result<HlcTimestamp, HlcFactoryError> {
         let guard = self.hlc.lock()?;
         guard.receive(remote)
+    }
+    fn latest_admissible(&self) -> Result<HlcTimestamp, HlcFactoryError> {
+        let guard = self.hlc.lock()?;
+        guard.latest_admissible()
     }
 }

@@ -40,7 +40,7 @@ impl ThresholdPlaintextAggregator {
         if !self.share_is_authenticated(party_id, &share, &signed_decryption_proofs, ciphertexts)? {
             warn!(
                 party_id,
-                "Ignoring a decryption bundle that does not match its signed party and ciphertext"
+                "Ignoring a decryption bundle that does not match its signed party, ciphertext, or canonical domain"
             );
             return Ok(());
         }
@@ -87,6 +87,7 @@ impl ThresholdPlaintextAggregator {
         c6_proofs: BTreeMap<u64, Vec<SignedProofPayload>>,
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
+        self.mark_started_as_aggregator();
         let request = self.c6_verification_request(c6_proofs);
         let request_id = e3_events::EventId::hash(InterfoldEventData::from(request.clone()));
         if self
@@ -112,7 +113,7 @@ impl ThresholdPlaintextAggregator {
         msg: TypedEvent<PlaintextVerificationResumed>,
     ) -> Result<()> {
         let (msg, ec) = msg.into_components();
-        if !self.can_run_aggregation_effects()
+        if !self.can_continue_aggregation_effects()
             || msg.e3_id != self.e3_id
             || ec.source() != e3_events::EventSource::Local
         {
@@ -169,7 +170,7 @@ impl ThresholdPlaintextAggregator {
     }
 
     fn apply_cached_c6_outcome(&mut self, ec: EventContext<Sequenced>) -> Result<()> {
-        if !self.can_run_aggregation_effects() {
+        if !self.can_continue_aggregation_effects() {
             return Ok(());
         }
         let Some(ThresholdPlaintextAggregatorState::VerifyingC6(state)) = self.state.get() else {

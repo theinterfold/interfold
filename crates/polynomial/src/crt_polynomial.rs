@@ -114,44 +114,34 @@ impl CrtPolynomial {
         let degree = ctx.degree;
         let l = ctx.q.len();
         if self.limbs.len() != l {
-            return Err(fhe_math::Error::InvalidCoefficientCount {
-                representation: fhe_math::rq::Representation::PowerBasis,
-                actual: self.limbs.len(),
-                degree,
-                moduli: l,
+            return Err(fhe_math::Error::InvalidCoefficientShape {
+                actual_rows: self.limbs.len(),
+                actual_columns: degree,
+                expected_rows: l,
+                expected_columns: degree,
             });
         }
         if moduli.len() != l {
-            return Err(fhe_math::Error::InvalidCoefficientCount {
-                representation: fhe_math::rq::Representation::PowerBasis,
-                actual: moduli.len(),
-                degree,
-                moduli: l,
+            return Err(fhe_math::Error::InvalidCoefficientShape {
+                actual_rows: moduli.len(),
+                actual_columns: degree,
+                expected_rows: l,
+                expected_columns: degree,
             });
         }
         let mut data = Vec::with_capacity(l * degree);
         for (i, &qi) in moduli.iter().enumerate().take(l) {
             let coeffs = self.limb(i).coefficients();
             if coeffs.len() != degree {
-                return Err(fhe_math::Error::InvalidCoefficientCount {
-                    representation: fhe_math::rq::Representation::PowerBasis,
-                    actual: coeffs.len(),
-                    degree,
-                    moduli: l,
+                return Err(fhe_math::Error::InvalidCoefficientShape {
+                    actual_rows: self.limbs.len(),
+                    actual_columns: coeffs.len(),
+                    expected_rows: l,
+                    expected_columns: degree,
                 });
             }
             for coeff in coeffs.iter().take(degree) {
-                let bm = BigInt::from(qi);
-                let mut r = coeff % &bm;
-                if r < BigInt::zero() {
-                    r += bm;
-                }
-                let u = r.to_u64().ok_or(fhe_math::Error::InvalidCoefficientCount {
-                    representation: fhe_math::rq::Representation::PowerBasis,
-                    actual: 1,
-                    degree,
-                    moduli: l,
-                })?;
+                let u = bigint_to_u64_mod(coeff, qi)?;
                 data.push(u);
             }
         }
@@ -268,4 +258,16 @@ impl CrtPolynomial {
     pub fn limb(&self, i: usize) -> &Polynomial {
         &self.limbs[i]
     }
+}
+
+fn bigint_to_u64_mod(c: &BigInt, m: u64) -> Result<u64, fhe_math::Error> {
+    if m < 2 {
+        return Err(fhe_math::Error::InvalidModulus(m));
+    }
+    let bm = BigInt::from(m);
+    let mut r = c % &bm;
+    if r < BigInt::zero() {
+        r += bm;
+    }
+    r.to_u64().ok_or(fhe_math::Error::InvalidModulus(m))
 }

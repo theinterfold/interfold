@@ -109,18 +109,18 @@ impl ShareEncryptionCircuitData {
         let pt = Plaintext::try_encode(&share_row, Encoding::poly(), &dkg_params)
             .map_err(|e| CircuitsErrors::Sample(format!("Failed to encode plaintext: {:?}", e)))?;
 
-        let (_ct, u_rns, e0_rns, e1_rns) = dkg_public_key
-            .try_encrypt_extended(&pt, &mut rng)
+        let (ct, intermediates) = dkg_public_key
+            .try_encrypt_with_intermediates(&pt, &mut rng)
             .map_err(|e| CircuitsErrors::Sample(format!("Failed to encrypt extended: {:?}", e)))?;
 
         Ok(ShareEncryptionCircuitData {
             plaintext: pt,
-            ciphertext: _ct,
+            ciphertext: ct,
             public_key: dkg_public_key,
             secret_key: dkg_secret_key,
-            u_rns,
-            e0_rns,
-            e1_rns,
+            u_rns: intermediates.randomness().clone(),
+            e0_rns: intermediates.error_0().clone(),
+            e1_rns: intermediates.error_1().clone(),
             dkg_input_type,
             party_idx: 0,
             mod_idx: 0,

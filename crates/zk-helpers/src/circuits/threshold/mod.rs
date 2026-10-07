@@ -13,3 +13,4 @@ pub mod rlk_aggregation;
 pub mod rlk_generation;
 pub mod share_decryption;
 pub mod user_data_encryption;
+pub mod user_data_encryption_chunked;

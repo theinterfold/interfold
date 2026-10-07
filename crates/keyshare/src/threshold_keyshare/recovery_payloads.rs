@@ -194,6 +194,7 @@ mod tests {
     fn share_event() -> TypedEvent<ThresholdShareCreated> {
         TypedEvent::new(
             ThresholdShareCreated {
+                signature: Default::default(),
                 e3_id: E3id::new("1", 1),
                 share: Arc::new(ThresholdShare {
                     party_id: 2,

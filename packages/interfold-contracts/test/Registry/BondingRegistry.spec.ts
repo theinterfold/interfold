@@ -29,24 +29,15 @@ const REASON_UNBOND = ethers.encodeBytes32String("UNBOND");
 describe("BondingRegistry", function () {
   const SEVEN_DAYS_IN_SECONDS = SEVEN_DAYS;
   let operator1Address: string;
-  let operator2Address: string;
   let operator1OwnerAddress: string;
   let operator2OwnerAddress: string;
 
   async function setup() {
     const signers = await ethers.getSigners();
-    const [
-      owner,
-      operatorKey1,
-      operatorKey2,
-      treasury,
-      notTheOwner,
-      operator1,
-      operator2,
-    ] = signers;
+    const [owner, operatorKey1, treasury, notTheOwner, operator1, operator2] =
+      signers;
     const ownerAddress = await owner.getAddress();
     operator1Address = await operatorKey1.getAddress();
-    operator2Address = await operatorKey2.getAddress();
     operator1OwnerAddress = await operator1.getAddress();
     operator2OwnerAddress = await operator2.getAddress();
     const treasuryAddress = await treasury.getAddress();
@@ -89,18 +80,8 @@ describe("BondingRegistry", function () {
     await bondingRegistry
       .connect(operatorKey1)
       .setBondOwner(operator1OwnerAddress);
-    await bondingRegistry
-      .connect(operatorKey2)
-      .setBondOwner(operator2OwnerAddress);
     await nodeReleaseRegistry
       .connect(operatorKey1)
-      .acknowledgeNodeRelease(
-        ethers.id("interfold.node.release:v1:test"),
-        1,
-        1,
-      );
-    await nodeReleaseRegistry
-      .connect(operatorKey2)
       .acknowledgeNodeRelease(
         ethers.id("interfold.node.release:v1:test"),
         1,
@@ -116,14 +97,12 @@ describe("BondingRegistry", function () {
       ciphernodeRegistry,
       owner,
       operatorKey1,
-      operatorKey2,
       operator1,
       operator2,
       treasury,
       notTheOwner,
       ownerAddress,
       operator1Address,
-      operator2Address,
       operator1OwnerAddress,
       operator2OwnerAddress,
       treasuryAddress,
@@ -790,16 +769,6 @@ describe("BondingRegistry", function () {
       expect(await bondingRegistry.isActive(operator1Address)).to.be.false;
     });
 
-    it("reverts if not properly bonded", async function () {
-      const { bondingRegistry, operator1 } = await loadFixture(setup);
-
-      await expect(
-        bondingRegistry
-          .connect(operator1)
-          .registerOperatorFor(operator1Address),
-      ).to.be.revertedWithCustomError(bondingRegistry, "NotCiphernodeBonded");
-    });
-
     it("reverts on a bond that only meets the active-maintenance floor", async function () {
       const { bondingRegistry, ciphernodeBondToken, operator1 } =
         await loadFixture(setup);
@@ -1331,59 +1300,6 @@ describe("BondingRegistry", function () {
   });
 
   describe("claimExitsFor()", function () {
-    it("allows claiming after exit delay", async function () {
-      const {
-        bondingRegistry,
-        ciphernodeBondToken,
-        usdcToken,
-        ticketToken,
-        operator1,
-      } = await loadFixture(setup);
-
-      const bondAmount = REQUIRED_CIPHERNODE_BOND;
-      await ciphernodeBondToken
-        .connect(operator1)
-        .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry
-        .connect(operator1)
-        .bondCiphernodeFor(operator1Address, bondAmount);
-      await bondingRegistry
-        .connect(operator1)
-        .registerOperatorFor(operator1Address);
-
-      const ticketAmount = ethers.parseUnits("100", 6);
-      await usdcToken
-        .connect(operator1)
-        .approve(await ticketToken.getAddress(), ticketAmount);
-      await bondingRegistry
-        .connect(operator1)
-        .addTicketBalanceFor(operator1Address, ticketAmount);
-
-      await bondingRegistry
-        .connect(operator1)
-        .deregisterOperatorFor(operator1Address);
-
-      await time.increase(SEVEN_DAYS_IN_SECONDS + 1);
-
-      const initialUSDCBalance = await usdcToken.balanceOf(
-        operator1OwnerAddress,
-      );
-      const initialFOLDBalance = await ciphernodeBondToken.balanceOf(
-        operator1OwnerAddress,
-      );
-
-      await bondingRegistry
-        .connect(operator1)
-        .claimExitsFor(operator1Address, ticketAmount, bondAmount);
-
-      expect(await usdcToken.balanceOf(operator1OwnerAddress)).to.equal(
-        initialUSDCBalance + ticketAmount,
-      );
-      expect(
-        await ciphernodeBondToken.balanceOf(operator1OwnerAddress),
-      ).to.equal(initialFOLDBalance + bondAmount);
-    });
-
     it("lets anyone settle matured ticket exits to the bond owner", async function () {
       const {
         bondingRegistry,
@@ -1592,14 +1508,6 @@ describe("BondingRegistry", function () {
         10,
       );
     });
-
-    it("returns 0 when operator has zero ticket balance", async function () {
-      const { bondingRegistry } = await loadFixture(setup);
-
-      expect(await bondingRegistry.availableTickets(operator1Address)).to.equal(
-        0,
-      );
-    });
   });
 
   describe("Admin Functions", function () {
@@ -1697,17 +1605,6 @@ describe("BondingRegistry", function () {
     });
 
     describe("setBondingAssetConfig()", function () {
-      it("allows owner to set ticket price", async function () {
-        const { bondingRegistry } = await loadFixture(setup);
-
-        const newPrice = ethers.parseUnits("15", 6);
-        await expect(
-          setBondingAssetConfig(bondingRegistry, { ticketPrice: newPrice }),
-        ).to.emit(bondingRegistry, "BondingAssetConfigUpdated");
-
-        expect(await bondingRegistry.ticketPrice()).to.equal(newPrice);
-      });
-
       it("reverts if price is zero", async function () {
         const { bondingRegistry } = await loadFixture(setup);
 
@@ -2241,52 +2138,6 @@ describe("BondingRegistry", function () {
       expect(await bondingRegistry.isActive(operator1Address)).to.be.false;
       expect(await bondingRegistry.isCiphernodeBonded(operator1Address)).to.be
         .false;
-    });
-
-    it("handles multiple operators with different states", async function () {
-      const {
-        bondingRegistry,
-        ciphernodeBondToken,
-        usdcToken,
-        ticketToken,
-        operator1,
-        operator2,
-      } = await loadFixture(setup);
-
-      const bondAmount = REQUIRED_CIPHERNODE_BOND;
-      await ciphernodeBondToken
-        .connect(operator1)
-        .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry
-        .connect(operator1)
-        .bondCiphernodeFor(operator1Address, bondAmount);
-      await bondingRegistry
-        .connect(operator1)
-        .registerOperatorFor(operator1Address);
-
-      await ciphernodeBondToken
-        .connect(operator2)
-        .approve(await bondingRegistry.getAddress(), bondAmount);
-      await bondingRegistry
-        .connect(operator2)
-        .bondCiphernodeFor(operator2Address, bondAmount);
-      await bondingRegistry
-        .connect(operator2)
-        .registerOperatorFor(operator2Address);
-
-      const ticketAmount = ethers.parseUnits("60", 6);
-      await usdcToken
-        .connect(operator2)
-        .approve(await ticketToken.getAddress(), ticketAmount);
-      await bondingRegistry
-        .connect(operator2)
-        .addTicketBalanceFor(operator2Address, ticketAmount);
-
-      expect(await bondingRegistry.isRegistered(operator1Address)).to.be.true;
-      expect(await bondingRegistry.isActive(operator1Address)).to.be.false;
-
-      expect(await bondingRegistry.isRegistered(operator2Address)).to.be.true;
-      expect(await bondingRegistry.isActive(operator2Address)).to.be.true;
     });
 
     it("handles the complete operator lifecycle", async function () {

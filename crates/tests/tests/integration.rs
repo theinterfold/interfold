@@ -50,10 +50,7 @@ use std::ffi::OsString;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{fs, path::PathBuf, sync::Arc};
-use tokio::{
-    sync::{broadcast, mpsc},
-    time::sleep,
-};
+use tokio::{sync::mpsc, time::sleep};
 
 #[derive(Debug, Clone, Copy)]
 struct BenchmarkParams {
@@ -374,32 +371,6 @@ impl Drop for EnvTimeoutVarsGuard {
             "E3_DECRYPTION_KEY_SHARED_COLLECTION_TIMEOUT_SECS",
             &self.dec_shared,
         );
-    }
-}
-
-/// RAII guard that restores a single env var on scope exit.
-#[allow(dead_code)]
-struct ScopedEnvVar {
-    name: &'static str,
-    original: Option<OsString>,
-}
-
-impl ScopedEnvVar {
-    #[allow(dead_code)]
-    fn set(name: &'static str, value: &str) -> Self {
-        let original = std::env::var_os(name);
-        std::env::set_var(name, value);
-        Self { name, original }
-    }
-}
-
-impl Drop for ScopedEnvVar {
-    fn drop(&mut self) {
-        if let Some(v) = &self.original {
-            std::env::set_var(self.name, v);
-        } else {
-            std::env::remove_var(self.name);
-        }
     }
 }
 
@@ -757,6 +728,13 @@ async fn setup_test_zk_backend(
                     src_dir.join("vk_hash")
                 };
                 copy_file(vk_hash_src, dst_dir.join(format!("{name}.vk_hash"))).await?;
+                if matches!(name, "nodes_fold" | "c6_fold") {
+                    copy_file(
+                        src_dir.join(format!("{name}.vk_tree_hash")),
+                        dst_dir.join(format!("{name}.vk_tree_hash")),
+                    )
+                    .await?;
+                }
                 Ok(())
             }
 
@@ -1259,28 +1237,6 @@ fn find_node_index_by_address(nodes: &CiphernodeSystem, address: &str) -> Result
     }
 
     bail!("Could not find node index for address {address}");
-}
-
-#[allow(dead_code)]
-async fn expect_node_events_with_timeouts(
-    nodes: &CiphernodeSystem,
-    index: usize,
-    expected: &[&str],
-    total_to: Duration,
-    per_evt_to: Duration,
-) -> Result<CiphernodeHistory> {
-    let h = nodes
-        .take_history_with_timeouts(index, expected.len(), Some(total_to), Some(per_evt_to))
-        .await
-        .map_err(|e| anyhow::anyhow!("FAILURE on node {index}: {expected:?} : {e}"))?;
-
-    println!(
-        "node {index} >> {:?} == {:?}",
-        h.event_types(),
-        expected.to_vec()
-    );
-    h.expect(expected.to_vec());
-    Ok(h)
 }
 
 fn project_history<F>(history: &[InterfoldEvent], mut projector: F) -> Vec<&'static str>
@@ -1859,6 +1815,8 @@ async fn test_trbfv_actor() -> Result<()> {
         finalization_ms: None,
         chain_id: Some(1),
         ingestion_confirmations: Some(0),
+        rpc_poll_interval_ms: Some(250),
+        rpc_log_range_blocks: None,
         data_availability: None,
     };
 
@@ -1874,6 +1832,15 @@ async fn test_trbfv_actor() -> Result<()> {
         String,
         BenchmarkRestartIdentity,
     >::new()));
+    let trigger_pipes = std::sync::Mutex::new(HashMap::new());
+    let connect_trigger = |node: &e3_ciphernode_builder::CiphernodeHandle| {
+        // Chain observations must pass through each node's durable event pipeline.
+        let pipe = e3_events::BusHandlePipe::new(node.bus().clone(), |_| true)
+            .start()
+            .recipient();
+        bus.subscribe(EventType::All, pipe.clone());
+        trigger_pipes.lock().unwrap().insert(node.address(), pipe);
+    };
     let restart_during_dkg =
         std::env::var("BENCHMARK_RESTART_DURING_DKG").is_ok_and(|value| value == "1");
     let restart_during_decryption =
@@ -1898,7 +1865,7 @@ async fn test_trbfv_actor() -> Result<()> {
             let paths = restart_root
                 .as_ref()
                 .map(|root| {
-                    let node_dir = root.join(format!("{addr}"));
+                    let node_dir = root.join(&addr);
                     fs::create_dir_all(&node_dir)?;
                     Ok::<_, anyhow::Error>((node_dir.join("log"), node_dir.join("kv")))
                 })
@@ -1916,7 +1883,6 @@ async fn test_trbfv_actor() -> Result<()> {
                     .with_pubkey_aggregation()
                     .with_sortition_score()
                     .with_threshold_plaintext_aggregation()
-                    .with_forked_bus(bus.event_bus())
                     .with_eventstore_aggregate_config_for_testing(
                         benchmark_aggregate_config.clone(),
                     )
@@ -1930,6 +1896,7 @@ async fn test_trbfv_actor() -> Result<()> {
                     b = b.with_persistence(log_path, kv_path);
                 }
                 let node = b.build().await?;
+                connect_trigger(&node);
                 if let Some((log_path, kv_path)) = paths {
                     restart_identities.lock().unwrap().insert(
                         node.address(),
@@ -1953,7 +1920,7 @@ async fn test_trbfv_actor() -> Result<()> {
                 let paths = restart_root
                     .as_ref()
                     .map(|root| {
-                        let node_dir = root.join(format!("{addr}"));
+                        let node_dir = root.join(&addr);
                         fs::create_dir_all(&node_dir)?;
                         Ok::<_, anyhow::Error>((node_dir.join("log"), node_dir.join("kv")))
                     })
@@ -1971,7 +1938,6 @@ async fn test_trbfv_actor() -> Result<()> {
                         .with_pubkey_aggregation()
                         .with_sortition_score()
                         .with_threshold_plaintext_aggregation()
-                        .with_forked_bus(bus.event_bus())
                         .with_eventstore_aggregate_config_for_testing(
                             benchmark_aggregate_config.clone(),
                         )
@@ -1985,6 +1951,7 @@ async fn test_trbfv_actor() -> Result<()> {
                         b = b.with_persistence(log_path, kv_path);
                     }
                     let node = b.build().await?;
+                    connect_trigger(&node);
                     if let Some((log_path, kv_path)) = paths {
                         restart_identities.lock().unwrap().insert(
                             node.address(),
@@ -2080,7 +2047,12 @@ async fn test_trbfv_actor() -> Result<()> {
         ticket_price: U256::from(10_000_000u64),
         chain_id,
     })?;
-    bus.publish_without_context(e3_requested)?;
+    bus.publish_from_remote(
+        e3_requested,
+        0,
+        Some(request_block),
+        e3_events::EventSource::Evm,
+    )?;
 
     if let Some(verifying_contract) = benchmark_dkg_fold_attestation_verifier_address() {
         // The benchmark has no live registry event. Seed the request-time signing context so
@@ -2299,38 +2271,44 @@ async fn test_trbfv_actor() -> Result<()> {
             .cloned()
             .context("restart identity is missing")?;
         println!("Stopping committee party {restart_party_id} during C4");
+        let trigger_pipe = trigger_pipes
+            .lock()
+            .unwrap()
+            .remove(&nodes[node_index].address())
+            .context("restart event pipe is missing")?;
         bus.event_bus()
-            .send(Unsubscribe::new(
-                EventType::All,
-                nodes[node_index].bus().event_bus().clone().recipient(),
-            ))
+            .send(Unsubscribe::new(EventType::All, trigger_pipe))
             .await?;
         nodes
-            .restart_node(node_index, async {
-                let mut builder = CiphernodeBuilder::new(identity.rng, cipher.clone())
-                    .with_history_collector()
-                    .with_shared_taskpool(&task_pool)
-                    .with_multithread_concurrent_jobs(concurrent_jobs)
-                    .with_shared_multithread_report(&multithread_report)
-                    .with_trbfv()
-                    .with_zkproof(zk_backend.clone())
-                    .with_signer(identity.signer)
-                    .with_pubkey_aggregation()
-                    .with_sortition_score()
-                    .with_threshold_plaintext_aggregation()
-                    .with_forked_bus(bus.event_bus())
-                    .with_eventstore_aggregate_config_for_testing(
-                        benchmark_aggregate_config.clone(),
-                    )
-                    .with_dkg_timing_reader_for_testing(dkg_timing_reader.clone())
-                    .with_chains(std::slice::from_ref(&bench_chain_config))
-                    .with_persistence(&identity.log_path, &identity.kv_path)
-                    .with_logging();
-                if !proof_aggregation_enabled {
-                    builder = builder.with_proof_aggregation_disabled_for_testing();
-                }
-                builder.build().await
-            })
+            .restart_node(
+                node_index,
+                Box::pin(async {
+                    let mut builder = CiphernodeBuilder::new(identity.rng, cipher.clone())
+                        .with_history_collector()
+                        .with_shared_taskpool(&task_pool)
+                        .with_multithread_concurrent_jobs(concurrent_jobs)
+                        .with_shared_multithread_report(&multithread_report)
+                        .with_trbfv()
+                        .with_zkproof(zk_backend.clone())
+                        .with_signer(identity.signer)
+                        .with_pubkey_aggregation()
+                        .with_sortition_score()
+                        .with_threshold_plaintext_aggregation()
+                        .with_eventstore_aggregate_config_for_testing(
+                            benchmark_aggregate_config.clone(),
+                        )
+                        .with_dkg_timing_reader_for_testing(dkg_timing_reader.clone())
+                        .with_chains(std::slice::from_ref(&bench_chain_config))
+                        .with_persistence(&identity.log_path, &identity.kv_path)
+                        .with_logging();
+                    if !proof_aggregation_enabled {
+                        builder = builder.with_proof_aggregation_disabled_for_testing();
+                    }
+                    let node = builder.build().await?;
+                    connect_trigger(&node);
+                    Ok(node)
+                }),
+            )
             .await?;
         println!("Restarted committee party {restart_party_id} during C4");
     }
@@ -2741,6 +2719,54 @@ async fn test_trbfv_actor() -> Result<()> {
         "{publication_event_name} must carry a non-empty DKG attestation payload"
     );
 
+    // The synthetic registry records the same confirmed observation as chain ingestion.
+    {
+        use alloy::sol_types::SolEvent;
+        let proof = e3_evm::encode_zk_proof(dkg_aggregator_proof.as_ref().unwrap())?;
+        let observation = e3_evm::ICiphernodeRegistry::CommitteeProofPublished {
+            e3Id: U256::ZERO,
+            nodes: pubkey_event.committee_addresses.clone(),
+            pkCommitment: pubkey_event.pk_commitment.into(),
+            proof,
+        }
+        .encode_log_data();
+        bus.publish_from_remote(
+            e3_events::EvmLogObserved {
+                contract: "CiphernodeRegistry".into(),
+                chain_id: 1,
+                e3_id: Some(e3_id.clone()),
+                event_name: "CommitteeProofPublished".into(),
+                known: true,
+                signature: Some(
+                    e3_evm::ICiphernodeRegistry::CommitteeProofPublished::SIGNATURE.into(),
+                ),
+                topics: observation
+                    .topics()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                data: ArcBytes::from_bytes(&observation.data),
+            },
+            0,
+            Some(request_block + 1),
+            e3_events::EventSource::Evm,
+        )?;
+        bus.publish_without_context(e3_events::CommitteePublished {
+            e3_id: e3_id.clone(),
+            nodes: pubkey_event
+                .committee_addresses
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            public_key: pubkey_bytes.clone(),
+            proof: ArcBytes::from_bytes(&[]),
+        })?;
+        bus.flush_event_pipeline().await?;
+        for node in nodes.iter() {
+            node.bus().flush_event_pipeline().await?;
+        }
+    }
+
     e3_bfv_client::validate_pk_commitment(
         &pubkey_bytes,
         publication_pk_commitment,
@@ -2846,38 +2872,44 @@ async fn test_trbfv_actor() -> Result<()> {
             );
         }
         println!("Stopping committee party {restart_party_id} at node index {node_index}");
+        let trigger_pipe = trigger_pipes
+            .lock()
+            .unwrap()
+            .remove(&nodes[node_index].address())
+            .context("restart event pipe is missing")?;
         bus.event_bus()
-            .send(Unsubscribe::new(
-                EventType::All,
-                nodes[node_index].bus().event_bus().clone().recipient(),
-            ))
+            .send(Unsubscribe::new(EventType::All, trigger_pipe))
             .await?;
         nodes
-            .restart_node(node_index, async {
-                let mut builder = CiphernodeBuilder::new(identity.rng, cipher.clone())
-                    .with_history_collector()
-                    .with_shared_taskpool(&task_pool)
-                    .with_multithread_concurrent_jobs(concurrent_jobs)
-                    .with_shared_multithread_report(&multithread_report)
-                    .with_trbfv()
-                    .with_zkproof(zk_backend.clone())
-                    .with_signer(identity.signer)
-                    .with_pubkey_aggregation()
-                    .with_sortition_score()
-                    .with_threshold_plaintext_aggregation()
-                    .with_forked_bus(bus.event_bus())
-                    .with_eventstore_aggregate_config_for_testing(
-                        benchmark_aggregate_config.clone(),
-                    )
-                    .with_dkg_timing_reader_for_testing(dkg_timing_reader.clone())
-                    .with_chains(std::slice::from_ref(&bench_chain_config))
-                    .with_persistence(&identity.log_path, &identity.kv_path)
-                    .with_logging();
-                if !proof_aggregation_enabled {
-                    builder = builder.with_proof_aggregation_disabled_for_testing();
-                }
-                builder.build().await
-            })
+            .restart_node(
+                node_index,
+                Box::pin(async {
+                    let mut builder = CiphernodeBuilder::new(identity.rng, cipher.clone())
+                        .with_history_collector()
+                        .with_shared_taskpool(&task_pool)
+                        .with_multithread_concurrent_jobs(concurrent_jobs)
+                        .with_shared_multithread_report(&multithread_report)
+                        .with_trbfv()
+                        .with_zkproof(zk_backend.clone())
+                        .with_signer(identity.signer)
+                        .with_pubkey_aggregation()
+                        .with_sortition_score()
+                        .with_threshold_plaintext_aggregation()
+                        .with_eventstore_aggregate_config_for_testing(
+                            benchmark_aggregate_config.clone(),
+                        )
+                        .with_dkg_timing_reader_for_testing(dkg_timing_reader.clone())
+                        .with_chains(std::slice::from_ref(&bench_chain_config))
+                        .with_persistence(&identity.log_path, &identity.kv_path)
+                        .with_logging();
+                    if !proof_aggregation_enabled {
+                        builder = builder.with_proof_aggregation_disabled_for_testing();
+                    }
+                    let node = builder.build().await?;
+                    connect_trigger(&node);
+                    Ok(node)
+                }),
+            )
             .await?;
         println!("Restarted committee party {restart_party_id} at node index {node_index}");
     }
@@ -3395,11 +3427,11 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
     use e3_net::{events::NetEvent, NetEventTranslator};
     use std::sync::Arc;
     use tokio::sync::mpsc;
-    use tokio::sync::{broadcast, Mutex};
+    use tokio::sync::Mutex;
 
     // Setup elements in test
     let (cmd_tx, mut cmd_rx) = mpsc::channel(100); // Transmit byte events to the network
-    let (event_tx, _) = broadcast::channel(100); // Receive byte events from the network
+    let event_tx = e3_net::NetEventChannel::new(100); // Receive byte events from the network
     let aggregate_config =
         AggregateConfig::new(HashMap::from([(AggregateId::new(1), Duration::ZERO)]));
     let system = EventSystem::new()
@@ -3415,6 +3447,7 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
         &event_rx,
         "my-topic",
         e3_net::NetworkPolicy::local_unrestricted(),
+        e3_net::LiveHistory::default(),
     );
 
     // Capture messages from output on msgs vec
@@ -3499,16 +3532,17 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
 }
 
 #[actix::test]
-async fn test_p2p_actor_forwards_events_to_bus() -> Result<()> {
-    use e3_events::KeyshareCreated;
+async fn test_p2p_actor_stores_a_repeated_gossip_event_once() -> Result<()> {
+    use e3_events::{EventBus, EventBusConfig, KeyshareCreated};
 
-    // Setup elements in test
-    let (cmd_tx, _) = mpsc::channel(100); // Transmit byte events to the network
-    let (event_tx, _event_rx) = broadcast::channel(100); // Receive byte events from the network
+    // With delivery dedup off, the bus history shows every stored copy of an event.
+    let (cmd_tx, _) = mpsc::channel(100);
+    let event_tx = e3_net::NetEventChannel::new(100);
+    let _event_rx = event_tx.subscribe();
     let aggregate_config =
         AggregateConfig::new(HashMap::from([(AggregateId::new(1), Duration::ZERO)]));
     let system = EventSystem::new()
-        .with_fresh_bus()
+        .with_event_bus(EventBus::new(EventBusConfig { deduplicate: false }).start())
         .with_aggregate_config(aggregate_config);
     let bus = system.handle()?.enable("test");
     let history_collector = bus.history();
@@ -3519,34 +3553,196 @@ async fn test_p2p_actor_forwards_events_to_bus() -> Result<()> {
         &e3_net::NetEventSubscriber::from(&event_tx),
         "mytopic",
         e3_net::NetworkPolicy::local_unrestricted(),
+        e3_net::LiveHistory::default(),
     );
 
-    // Only protocol artifacts can cross the gossip trust boundary. Use a forwardable keyshare.
-    let event = KeyshareCreated {
+    let keyshare = |party_id: u64| KeyshareCreated {
         e3_id: E3id::new("1235", 1),
         pubkey: ArcBytes::from_bytes(&[1, 2, 3, 4]),
-        node: "node-1".to_string(),
-        party_id: 0,
+        node: format!("node-{party_id}"),
+        party_id,
         signed_pk_generation_proof: None,
     };
+    let gossip = |event: KeyshareCreated| -> Result<NetEvent> {
+        Ok(NetEvent::GossipData(GossipData::GossipBytes(
+            bus.event_from(event, None)?.to_bytes()?,
+        )))
+    };
 
-    // lets send an event from the network
-    let _ = event_tx.send(NetEvent::GossipData(GossipData::GossipBytes(
-        bus.event_from(event.clone(), None)?.to_bytes()?,
-    )));
+    event_tx.send(gossip(keyshare(0))?)?;
+    let first = history_collector
+        .send(TakeEvents::<InterfoldEvent>::new(1))
+        .await?;
+    assert_eq!(first.events.len(), 1, "the first copy must be stored");
 
-    // check the history of the event bus
-    let history = history_collector
+    // A peer re-sends the same event in a new gossip message, then sends another event.
+    event_tx.send(gossip(keyshare(0))?)?;
+    event_tx.send(gossip(keyshare(1))?)?;
+    let next = history_collector
         .send(TakeEvents::<InterfoldEvent>::new(1))
         .await?;
 
+    assert_eq!(
+        next.events
+            .into_iter()
+            .map(|e| e.into_data())
+            .collect::<Vec<InterfoldEventData>>(),
+        vec![keyshare(1).into()],
+        "the repeated copy must not be stored again"
+    );
+
+    Ok(())
+}
+
+/// Collects the response of one event-store query.
+struct StoredEvents(Option<tokio::sync::oneshot::Sender<Vec<InterfoldEvent>>>);
+
+impl actix::Actor for StoredEvents {
+    type Context = actix::Context<Self>;
+}
+
+impl actix::Handler<e3_events::EventStoreQueryResponse> for StoredEvents {
+    type Result = ();
+    fn handle(&mut self, msg: e3_events::EventStoreQueryResponse, _: &mut Self::Context) {
+        if let Some(tx) = self.0.take() {
+            let _ = tx.send(msg.into_events().expect("event-store query failed"));
+        }
+    }
+}
+
+#[actix::test]
+async fn test_p2p_actor_stores_a_replayed_event_at_most_once_more() -> Result<()> {
+    use e3_events::{CorrelationId, EventSource, EventStoreQueryBy, KeyshareCreated, TsAgg};
+
+    // The default bus: it does not deliver an event ID twice, as after replay.
+    let (cmd_tx, _) = mpsc::channel(100);
+    let event_tx = e3_net::NetEventChannel::new(100);
+    let _event_rx = event_tx.subscribe();
+    let aggregate_config =
+        AggregateConfig::new(HashMap::from([(AggregateId::new(1), Duration::ZERO)]));
+    let system = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(aggregate_config);
+    let bus = system.handle()?.enable("test");
+
+    let keyshare = |party_id: u64| KeyshareCreated {
+        e3_id: E3id::new("1235", 1),
+        pubkey: ArcBytes::from_bytes(&[1, 2, 3, 4]),
+        node: format!("node-{party_id}"),
+        party_id,
+        signed_pk_generation_proof: None,
+    };
+    let gossip = |event: KeyshareCreated| -> Result<NetEvent> {
+        Ok(NetEvent::GossipData(GossipData::GossipBytes(
+            bus.event_from(event, None)?.to_bytes()?,
+        )))
+    };
+
+    // The event is already stored and known to the bus before the translator starts.
+    bus.publish_from_remote(keyshare(0), 1, None, EventSource::Net)?;
+    bus.flush_event_pipeline().await?;
+    let history_collector = bus.history();
+    NetEventTranslator::setup(
+        &bus,
+        &cmd_tx,
+        &e3_net::NetEventSubscriber::from(&event_tx),
+        "mytopic",
+        e3_net::NetworkPolicy::local_unrestricted(),
+        e3_net::LiveHistory::default(),
+    );
+
+    // A peer re-sends it three times, then sends another event.
+    for _ in 0..3 {
+        event_tx.send(gossip(keyshare(0))?)?;
+    }
+    event_tx.send(gossip(keyshare(1))?)?;
+    let next = history_collector
+        .send(TakeEvents::<InterfoldEvent>::new(1))
+        .await?;
+    assert_eq!(next.events.len(), 1, "the other event must be delivered");
+    bus.flush_event_pipeline().await?;
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let collector = StoredEvents(Some(tx)).start();
+    system
+        .in_mem_eventstore_router()?
+        .send(EventStoreQueryBy::<TsAgg>::new(
+            CorrelationId::new(),
+            HashMap::from([(AggregateId::new(1), 0)]),
+            collector.recipient(),
+        ))
+        .await?;
+    let stored = tokio::time::timeout(Duration::from_secs(5), rx).await??;
+    let copies = stored
+        .iter()
+        .filter(|event| event.get_data() == &InterfoldEventData::from(keyshare(0)))
+        .count();
+    assert_eq!(
+        copies, 2,
+        "one copy from before the translator started and one re-sent copy"
+    );
+
+    Ok(())
+}
+
+#[actix::test]
+async fn test_p2p_actor_mislabeled_event_does_not_suppress_the_real_one() -> Result<()> {
+    use e3_events::{EventContext, EventSource, KeyshareCreated, Unsequenced};
+
+    let (cmd_tx, _) = mpsc::channel(100);
+    let event_tx = e3_net::NetEventChannel::new(100);
+    let _event_rx = event_tx.subscribe();
+    let aggregate_config =
+        AggregateConfig::new(HashMap::from([(AggregateId::new(1), Duration::ZERO)]));
+    let system = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(aggregate_config);
+    let bus = system.handle()?.enable("test");
+    let history_collector = bus.history();
+    NetEventTranslator::setup(
+        &bus,
+        &cmd_tx,
+        &e3_net::NetEventSubscriber::from(&event_tx),
+        "mytopic",
+        e3_net::NetworkPolicy::local_unrestricted(),
+        e3_net::LiveHistory::default(),
+    );
+
+    let keyshare = |party_id: u64| KeyshareCreated {
+        e3_id: E3id::new("1235", 1),
+        pubkey: ArcBytes::from_bytes(&[1, 2, 3, 4]),
+        node: format!("node-{party_id}"),
+        party_id,
+        signed_pk_generation_proof: None,
+    };
+    let genuine = bus.event_from(keyshare(0), None)?;
+
+    // A peer sends party 1's keyshare labeled with the ID of party 0's keyshare.
+    let payload: InterfoldEventData = keyshare(1).into();
+    let context = EventContext::<Unsequenced>::new_origin(
+        genuine.id(),
+        1,
+        AggregateId::new(1),
+        None,
+        EventSource::Local,
+    );
+    let forged = bincode::serialize(&(payload, context))?;
+    event_tx.send(NetEvent::GossipData(GossipData::GossipBytes(forged)))?;
+    event_tx.send(NetEvent::GossipData(GossipData::GossipBytes(
+        genuine.to_bytes()?,
+    )))?;
+
+    let history = history_collector
+        .send(TakeEvents::<InterfoldEvent>::new(2))
+        .await?;
     assert_eq!(
         history
             .events
             .into_iter()
             .map(|e| e.into_data())
             .collect::<Vec<InterfoldEventData>>(),
-        vec![event.into()]
+        vec![keyshare(1).into(), keyshare(0).into()],
+        "the genuine event must still be stored after a mislabeled one"
     );
 
     Ok(())

@@ -135,6 +135,18 @@ pub enum KeyshareState {
 }
 
 impl KeyshareState {
+    /// Whether C2/C3 collection and verification can still change the DKG. The decryption-key
+    /// calculation ends that phase and retires the share batch.
+    pub fn share_collection_is_open(&self) -> bool {
+        matches!(
+            self,
+            KeyshareState::Init
+                | KeyshareState::CollectingEncryptionKeys(_)
+                | KeyshareState::GeneratingThresholdShare(_)
+                | KeyshareState::AggregatingDecryptionKey(_)
+        )
+    }
+
     pub fn next(self: &KeyshareState, new_state: KeyshareState) -> Result<KeyshareState> {
         use KeyshareState as K;
         // The following can be used to check that we are transitioning to a valid state
@@ -201,9 +213,9 @@ pub struct ThresholdKeyshareState {
     pub threshold_m: u64,
     pub threshold_n: u64,
     pub params: ArcBytes,
-    /// Aggregated public key bytes, captured from PublicKeyAggregated event for C6 proof.
+    /// Aggregated public key bytes validated against the chain commitment for C6 proof.
     pub aggregated_pk: Option<ArcBytes>,
-    /// Public E3 context captured with the aggregated key and bound into every
+    /// Public E3 context derived from chain facts and bound into every
     /// C6 proof so the final decryption proof cannot be replayed elsewhere.
     pub decryption_domain: Option<DecryptionDomainContext>,
     pub expelled_parties: HashSet<u64>,
@@ -218,6 +230,9 @@ pub struct ThresholdKeyshareState {
     /// authorization, so resume-after-crash must only re-publish when this is set;
     /// otherwise it could emit a keyshare that never passed C4 filtering.
     pub keyshare_published: bool,
+    /// Set when this node starts its decryption-key calculation from the accepted DKG roster.
+    /// From then on that roster is fixed, also after a restart that loses the calculation.
+    pub dkg_roster_fixed: bool,
 }
 
 impl ThresholdKeyshareState {
@@ -246,6 +261,7 @@ impl ThresholdKeyshareState {
             dkg_deadline_unix_secs: None,
             dkg_window_secs: None,
             keyshare_published: false,
+            dkg_roster_fixed: false,
         }
     }
 

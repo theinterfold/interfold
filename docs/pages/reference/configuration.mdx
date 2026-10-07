@@ -41,7 +41,7 @@ The loader combines four sources. A later source overrides an earlier one:
 1. The built-in defaults on this page
 2. The YAML file, after environment variable substitution
 3. Environment variables that start with `E3_`
-4. The `--otel` flag
+4. The `--otel` flag, when you give it
 
 After it combines the sources, the loader selects one node profile with `--name` and checks it. The
 loader ignores unknown keys at the top level and in a chain entry. An unknown key in a node profile
@@ -113,16 +113,16 @@ Run `interfold config get key_file`, `db_file`, `log_file`, or `work_dir` to see
 
 ## Top-level keys
 
-| Key          | Type             | Default                              | Meaning                                                                                                                              |
-| ------------ | ---------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `node`       | Node profile     | All profile defaults                 | The `_default` profile. Commands use it when `--name` is absent.                                                                     |
-| `nodes`      | Map of profiles  | Empty                                | Named profiles. Select one with `--name <name>`. `interfold nodes up` runs all of them. The name `_default` is reserved.             |
-| `chains`     | List of chains   | Empty                                | The EVM chains that the node reads and writes. See [chain keys](#chain-keys).                                                        |
-| `config_dir` | Path             | `.interfold/config` next to the file | Base folder for key files.                                                                                                           |
-| `data_dir`   | Path             | `.interfold/data` next to the file   | Base folder for the key/value store and the event log.                                                                               |
-| `custom_bb`  | Path             | None                                 | Barretenberg binary to use instead of the downloaded one. The node does not verify its checksum. The version must match the release. |
-| `program`    | Program settings | None                                 | Settings for `interfold program`. See [program settings](#program-settings).                                                         |
-| `otel`       | String           | None                                 | The loader replaces this key with the `--otel` flag, also when the flag is absent. Use `--otel` to set the endpoint.                 |
+| Key          | Type             | Default                              | Meaning                                                                                                                                   |
+| ------------ | ---------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `node`       | Node profile     | All profile defaults                 | The `_default` profile. Commands use it when `--name` is absent.                                                                          |
+| `nodes`      | Map of profiles  | Empty                                | Named profiles. Select one with `--name <name>`. `interfold nodes up` runs all of them. The name `_default` is reserved.                  |
+| `chains`     | List of chains   | Empty                                | The EVM chains that the node reads and writes. See [chain keys](#chain-keys).                                                             |
+| `config_dir` | Path             | `.interfold/config` next to the file | Base folder for key files.                                                                                                                |
+| `data_dir`   | Path             | `.interfold/data` next to the file   | Base folder for the key/value store and the event log.                                                                                    |
+| `custom_bb`  | Path             | None                                 | Barretenberg binary to use instead of the downloaded one. The node does not verify its checksum. The version must match the release.      |
+| `program`    | Program settings | None                                 | Settings for `interfold program`. See [program settings](#program-settings).                                                              |
+| `otel`       | String           | None                                 | OpenTelemetry collector gRPC endpoint, for example `http://localhost:4317`. `E3_OTEL` overrides it, and the `--otel` flag overrides both. |
 
 ## Node profile keys
 
@@ -130,14 +130,15 @@ The `node` key and each entry under `nodes` accept the same keys. Every key is o
 
 ### Network settings
 
-| Key              | Type                      | Default                     | Meaning                                                                                                                      |
-| ---------------- | ------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `network`        | String                    | Inferred from the chains    | P2P network profile. The built-in profiles are `mainnet`, `sepolia`, and `local`. See [network profiles](#network-profiles). |
-| `network_id`     | 64 hexadecimal characters | The fixed ID of the profile | 32-byte network identity. A custom network name requires it.                                                                 |
-| `peers`          | List of multiaddrs        | Empty                       | Peers to dial at start. When the list is empty, the node uses the bootstrap peers of the profile.                            |
-| `quic_port`      | Integer (UDP port)        | `9091`                      | Port of the libp2p QUIC listener. The node listens on all interfaces.                                                        |
-| `ctrl_port`      | Integer (TCP port)        | `50505`                     | Control port on `127.0.0.1`. The CLI sends read-only commands to a running node through it.                                  |
-| `dashboard_port` | Integer (TCP port)        | None                        | When set, the node serves a monitoring dashboard at `http://127.0.0.1:<port>`. See [Dashboard](/operate/dashboard).          |
+| Key              | Type                      | Default                     | Meaning                                                                                                                        |
+| ---------------- | ------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `network`        | String                    | Inferred from the chains    | P2P network profile. The built-in profiles are `mainnet`, `sepolia`, and `local`. See [network profiles](#network-profiles).   |
+| `network_id`     | 64 hexadecimal characters | The fixed ID of the profile | 32-byte network identity. A custom network name requires it.                                                                   |
+| `peers`          | List of multiaddrs        | Empty                       | Peers to dial at start. When the list is empty, the node uses the bootstrap peers of the profile.                              |
+| `quic_port`      | Integer (UDP port)        | `9091`                      | Port of the libp2p QUIC listener. The node listens on all interfaces.                                                          |
+| `ctrl_port`      | Integer (TCP port)        | `50505`                     | Control port on `127.0.0.1`. The CLI sends read-only commands to a running node through it.                                    |
+| `dashboard_port` | Integer (TCP port)        | None                        | When set, the node serves a monitoring dashboard at `http://127.0.0.1:<port>`. See [Dashboard](/operate/dashboard).            |
+| `bootstrap`      | Boolean                   | `false`                     | `interfold nodes up` starts this profile as a bootstrap peer (`interfold start --bootstrap`): networking and chain reads only. |
 
 Each profile on one host needs its own `quic_port` and `ctrl_port`.
 
@@ -172,15 +173,16 @@ key, so the peer ID follows the wallet.
 
 ### Compute and startup limits
 
-| Key                           | Type    | Default               | Meaning                                                                                                   |
-| ----------------------------- | ------- | --------------------- | --------------------------------------------------------------------------------------------------------- |
-| `multithread_reserve_threads` | Integer | `2`                   | Logical CPUs kept for Actix, libp2p, and RPC work. The compute pool does not use them.                    |
-| `multithread_concurrent_jobs` | Integer | `2`                   | Maximum number of CPU-heavy jobs (ZK proofs and TrBFV) at the same time. The node can use a lower value.  |
-| `startup_timeout_secs`        | Integer | `1800` (30 minutes)   | Deadline for construction and initial sync. A node that misses it exits with an error. Must be above `0`. |
-| `max_buffered_evm_events`     | Integer | `100000`              | Maximum decoded EVM events that the node holds for each chain during initial sync. Must be above `0`.     |
-| `max_buffered_net_events`     | Integer | `1024`                | Maximum network events that the node holds during startup sync. Must be above `0`.                        |
-| `max_buffered_net_bytes`      | Integer | `268435456` (256 MiB) | Maximum estimated bytes in the network startup buffer. Must be above `0`.                                 |
-| `skip_proof_aggregation`      | Boolean | `false`               | Test and CI only. See the note below.                                                                     |
+| Key                           | Type    | Default               | Meaning                                                                                                                                                                                                                               |
+| ----------------------------- | ------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `multithread_reserve_threads` | Integer | `2`                   | Logical CPUs kept for Actix, libp2p, and RPC work. The compute pool does not use them.                                                                                                                                                |
+| `multithread_concurrent_jobs` | Integer | `2`                   | Maximum number of CPU-heavy jobs (ZK proofs and TrBFV) at the same time. The node can use a lower value.                                                                                                                              |
+| `startup_timeout_secs`        | Integer | `1800` (30 minutes)   | Deadline for construction and initial sync. A node that misses it exits with an error. Must be above `0`.                                                                                                                             |
+| `bb_timeout_secs`             | Integer | `43200` (12 hours)    | Wall-clock cap of one `bb` proving or verification run. A run that exceeds it is killed and retried, hung or not, so keep it above the longest proof the host needs; a secure proof can take hours on a slow host. Must be above `0`. |
+| `max_buffered_evm_events`     | Integer | `100000`              | Maximum decoded EVM events that the node holds for each chain during initial sync. Must be above `0`.                                                                                                                                 |
+| `max_buffered_net_events`     | Integer | `1024`                | Maximum network events that the node holds during startup sync. Must be above `0`.                                                                                                                                                    |
+| `max_buffered_net_bytes`      | Integer | `268435456` (256 MiB) | Maximum estimated bytes in the network startup buffer. Must be above `0`.                                                                                                                                                             |
+| `skip_proof_aggregation`      | Boolean | `false`               | Test and CI only. See the note below.                                                                                                                                                                                                 |
 
 The node calculates the number of jobs that it admits. The number is the lowest of these values:
 
@@ -240,17 +242,19 @@ These rules also apply:
 
 Each entry in `chains` describes one EVM chain.
 
-| Key                       | Type    | Default      | Meaning                                                                                                                               |
-| ------------------------- | ------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                    | String  | Required     | Chain name for `--chain`. Use `mainnet` or `sepolia` so that `interfold config check` can compare the chain.                          |
-| `enabled`                 | Boolean | `true`       | When `false`, the node does not read the chain, and the loader ignores it for the network profile.                                    |
-| `rpc_url`                 | URL     | Required     | Ethereum RPC endpoint with the scheme `ws`, `wss`, `http`, or `https`. See [RPC endpoints](/operate/rpc-endpoints).                   |
-| `rpc_auth`                | Object  | `type: None` | RPC credentials. See [RPC authentication](#rpc-authentication).                                                                       |
-| `chain_id`                | Integer | None         | Expected chain ID. At start, the node stops when the RPC endpoint reports a different ID.                                             |
-| `ingestion_confirmations` | Integer | `1`          | Confirmations that a block needs before the node applies its logs. Set `0` only for a single-process development chain such as Anvil. |
-| `finalization_ms`         | Integer | `0`          | Write delay, in milliseconds, of the snapshot buffer for events from this chain.                                                      |
-| `data_availability`       | Object  | None         | Reader for ciphertexts on the data availability layer. `interfold start` requires it. See [data availability](#data-availability).    |
-| `contracts`               | Object  | Required     | Contract addresses. See [contract keys](#contract-keys).                                                                              |
+| Key                       | Type    | Default      | Meaning                                                                                                                                                                                                                                                                                         |
+| ------------------------- | ------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                    | String  | Required     | Chain name for `--chain`. Use `mainnet` or `sepolia` so that `interfold config check` can compare the chain.                                                                                                                                                                                    |
+| `enabled`                 | Boolean | `true`       | When `false`, the node does not read the chain, and the loader ignores it for the network profile.                                                                                                                                                                                              |
+| `rpc_url`                 | URL     | Required     | Ethereum RPC endpoint with the scheme `ws`, `wss`, `http`, or `https`. See [RPC endpoints](/operate/rpc-endpoints).                                                                                                                                                                             |
+| `rpc_auth`                | Object  | `type: None` | RPC credentials. See [RPC authentication](#rpc-authentication).                                                                                                                                                                                                                                 |
+| `chain_id`                | Integer | None         | Expected chain ID. At start, the node stops when the RPC endpoint reports a different ID.                                                                                                                                                                                                       |
+| `ingestion_confirmations` | Integer | `1`          | Confirmations that a block needs before the node applies its logs. Set `0` only for a single-process development chain such as Anvil.                                                                                                                                                           |
+| `rpc_poll_interval_ms`    | Integer | `7000`       | Milliseconds between the polls of an HTTP provider for a receipt or a new block. Set `250` only for a single-process development chain such as Anvil. A `localhost` URL does not shorten the interval, because it can be a proxy to a live chain.                                               |
+| `rpc_log_range_blocks`    | Integer | `10000`      | Widest block range of one `eth_getLogs` request. The node halves the range when the provider refuses it with a message that the node recognizes. Set the provider's documented cap when the node reports a failed log fetch at the full range, or a larger value when the provider permits one. |
+| `finalization_ms`         | Integer | `0`          | Write delay, in milliseconds, of the snapshot buffer for events from this chain.                                                                                                                                                                                                                |
+| `data_availability`       | Object  | None         | Reader for ciphertexts on the data availability layer. `interfold start` requires it. See [data availability](#data-availability).                                                                                                                                                              |
+| `contracts`               | Object  | Required     | Contract addresses. See [contract keys](#contract-keys).                                                                                                                                                                                                                                        |
 
 `interfold start` accepts only the chain IDs `1`, `11155111`, `1337`, and `31337`, because VRF
 sortition supports only these chains.
@@ -291,8 +295,9 @@ default:
 | Sepolia | `https://turing-rpc.avail.so/rpc`   |
 
 <Callout type='info'>
-  `interfold ciphernode setup` does not write a `data_availability` block. Add the block to the
-  chain entry before you run `interfold start`.
+  `interfold ciphernode setup` writes this block for Sepolia, with the Avail Turing endpoint. A
+  configuration from the setup of an earlier release has no block. Add it to the chain entry before
+  you run `interfold start`.
 </Callout>
 
 ### Contract keys
@@ -307,7 +312,7 @@ from [Contracts & Addresses](/reference/contracts).
 | `bonding_registry`              | Yes                    | The node, the `ciphernode` on-chain commands, `print-env`, `config check`                |
 | `slashing_manager`              | For `interfold start`  | The node, which submits slash proposals, and `config check`                              |
 | `fee_token`                     | No                     | `print-env`, `config check`                                                              |
-| `faucet`                        | For `interfold faucet` | `interfold faucet`, `config check`. Sepolia only.                                        |
+| `faucet`                        | For `interfold faucet` | `interfold faucet`, `config check`. Sepolia publishes a faucet. Mainnet does not.        |
 | `e3_program`                    | No                     | `print-env`. An application sets its own E3 program. `config check` does not compare it. |
 | `dkg_fold_attestation_verifier` | No                     | `config check`. The node reads the verifier address from the chain.                      |
 
@@ -415,6 +420,7 @@ chains:
     rpc_auth:
       type: None
     ingestion_confirmations: 0 # Anvil only. Keep the default on public chains.
+    rpc_poll_interval_ms: 250 # Anvil only. Keep the default on public chains.
     finalization_ms: 0
     data_availability:
       mode: mock_http

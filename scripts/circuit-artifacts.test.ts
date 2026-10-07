@@ -6,11 +6,14 @@
 
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { NoirCircuitBuilder, normalizeCargoLockForCircuitHash, stripRustTestModules } from './build-circuits'
+import { AbiCoder, id, keccak256 } from 'ethers'
+import { BFV_PARAMS } from '../packages/interfold-contracts/scripts/protocol/constants'
+import { committeeBoundUpdates, NoirCircuitBuilder, normalizeCargoLockForCircuitHash, stripRustTestModules } from './build-circuits'
+import { isPresetCommitteeSupported } from './circuit-constants'
 import {
   findArtifactRevision,
   RELEASE_REQUIRED_PAIRS,
@@ -59,6 +62,13 @@ function sourceHash(preset: string, committee: string): string {
   return `source:${preset}:${committee}`
 }
 
+test('every release pair is a supported build pair', () => {
+  assert.ok(RELEASE_REQUIRED_PAIRS.length > 0)
+  for (const [preset, committee] of RELEASE_REQUIRED_PAIRS) {
+    assert.ok(isPresetCommitteeSupported(preset, committee), `${preset}/${committee} cannot be built`)
+  }
+})
+
 function makeCompleteMatrix(): string {
   const dir = mkdtempSync(join(tmpdir(), 'interfold-circuit-matrix-'))
   for (const [preset, committee] of RELEASE_REQUIRED_PAIRS) {
@@ -73,6 +83,32 @@ function makeCompleteMatrix(): string {
   }
   return dir
 }
+
+test('checksums command covers exactly the staged circuit configurations', () => {
+  const dir = makeCompleteMatrix()
+  try {
+    for (const preset of ['insecure', 'secure-8192']) {
+      for (const committee of ['micro', 'small']) {
+        rmSync(join(dir, preset, committee), { recursive: true })
+      }
+    }
+    execFileSync('pnpm', ['tsx', 'scripts/circuit-artifacts.ts', 'checksums', '--dir', dir])
+    const manifest = JSON.parse(readFileSync(join(dir, 'checksums.json'), 'utf8'))
+    assert.equal(manifest.algorithm, 'sha256')
+    assert.deepEqual(
+      Object.keys(manifest.files).sort(),
+      ['insecure', 'secure-8192']
+        .flatMap((preset) => [...requiredArtifactMarkers(preset, 'minimum'), join(preset, 'minimum', '.build-stamp.json')])
+        .sort(),
+    )
+    assert.equal(
+      manifest.files['insecure-512/minimum/default/dkg/pk/pk.vk'],
+      '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
 
 test('artifact selection uses the newest matching build, not another source tree at the branch tip', () => {
   const dir = mkdtempSync(join(tmpdir(), 'interfold-circuit-history-'))
@@ -161,17 +197,22 @@ test('pair source hash ignores generated bounds but tracks other Noir config', (
   mkdirSync(configDir, { recursive: true })
   const thresholdPath = join(configDir, 'threshold.nr')
   const dkgPath = join(configDir, 'dkg.nr')
-  writeFileSync(thresholdPath, 'pub global PK_GENERATION_E_SM_BOUND: Field = 10;\npub global L: u32 = 2;\n')
+  // `nargo fmt` wraps a long array bound over two lines, and the array type holds a `;` of its own.
+  const threshold = (bound: number, quotients: string, l: number) =>
+    `pub global PK_GENERATION_E_SM_BOUND: Field = ${bound};\n` +
+    `pub global PK_GENERATION_E_SM_QUOTIENT_BOUNDS: [Field; L] =\n    [${quotients}];\n` +
+    `pub global L: u32 = ${l};\n`
+  writeFileSync(thresholdPath, threshold(10, '1, 2', 2))
   writeFileSync(dkgPath, 'pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 28;\n')
 
   try {
     const builder = new NoirCircuitBuilder(dir, { preset: 'insecure', committee: 'micro' })
     const originalHash = builder.computeSourceHash('insecure', 'micro')
-    writeFileSync(thresholdPath, 'pub global PK_GENERATION_E_SM_BOUND: Field = 20;\npub global L: u32 = 2;\n')
+    writeFileSync(thresholdPath, threshold(20, '3, 4', 2))
     writeFileSync(dkgPath, 'pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 30;\n')
     assert.equal(builder.computeSourceHash('insecure', 'micro'), originalHash)
 
-    writeFileSync(thresholdPath, 'pub global PK_GENERATION_E_SM_BOUND: Field = 20;\npub global L: u32 = 3;\n')
+    writeFileSync(thresholdPath, threshold(20, '3, 4', 3))
     assert.notEqual(builder.computeSourceHash('insecure', 'micro'), originalHash)
 
     const generatorDir = join(dir, 'crates', 'zk-helpers', 'src')
@@ -181,6 +222,101 @@ test('pair source hash ignores generated bounds but tracks other Noir config', (
     const generatorHash = builder.computeSourceHash('insecure', 'micro')
     writeFileSync(generatorPath, 'second')
     assert.notEqual(builder.computeSourceHash('insecure', 'micro'), generatorHash)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('every pair regenerates all of its C1/C2 bounds, array bounds included', () => {
+  const root = join(__dirname, '..')
+  for (const [preset, committee] of RELEASE_REQUIRED_PAIRS) {
+    for (const { path, generated, updated } of committeeBoundUpdates(root, preset, committee)) {
+      const config = updated.replace(/\s+/g, '')
+      for (const declaration of generated.match(/^pub global (?:PK_GENERATION|SHARE_COMPUTATION)_[A-Z0-9_]+:.*;$/gm) ?? []) {
+        assert.ok(config.includes(declaration.replace(/\s+/g, '')), `${preset}/${committee} ${path}: ${declaration}`)
+      }
+    }
+  }
+})
+
+test('every pair source hash tracks shared Noir sources and dependency pins', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'interfold-shared-noir-hash-'))
+  const sources = [
+    'circuits/lib/src/core/dkg/share_encryption.nr',
+    'circuits/lib/src/math/commitments.nr',
+    'circuits/lib/src/lib.nr',
+    'circuits/lib/Nargo.toml',
+  ]
+  try {
+    for (const source of sources) {
+      mkdirSync(join(dir, source, '..'), { recursive: true })
+      writeFileSync(join(dir, source), 'original')
+    }
+    const builder = new NoirCircuitBuilder(dir)
+    for (const [preset, committee] of RELEASE_REQUIRED_PAIRS) {
+      const original = builder.computeSourceHash(preset, committee)
+      for (const source of sources) {
+        writeFileSync(join(dir, source), 'changed')
+        assert.notEqual(builder.computeSourceHash(preset, committee), original, `${preset}/${committee}: ${source}`)
+        writeFileSync(join(dir, source), 'original')
+        assert.equal(builder.computeSourceHash(preset, committee), original)
+      }
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('shared Noir constants change the hash but the active preset does not', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'interfold-noir-selection-hash-'))
+  const configPath = join(dir, 'circuits/lib/src/configs/default/mod.nr')
+  const source = '// preset: insecure-512\npub use super::insecure::threshold;\npub global MAX_MSG_NON_ZERO_COEFFS: u32 = 100;\n'
+  try {
+    mkdirSync(join(configPath, '..'), { recursive: true })
+    writeFileSync(configPath, source)
+    const builder = new NoirCircuitBuilder(dir)
+    for (const [preset, committee] of RELEASE_REQUIRED_PAIRS) {
+      writeFileSync(configPath, source)
+      const original = builder.computeSourceHash(preset, committee)
+      writeFileSync(configPath, source.replace('insecure', 'secure-8192').replace('super::insecure::', 'super::secure::'))
+      assert.equal(builder.computeSourceHash(preset, committee), original)
+      writeFileSync(configPath, source.replace('= 100;', '= 101;'))
+      assert.notEqual(builder.computeSourceHash(preset, committee), original)
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('config generation binds both BFV parameter sets to circuit version v4', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'interfold-circuit-version-'))
+  const utilsPath = join(dir, 'packages/interfold-contracts/scripts/utils.ts')
+  const contractPath = join(dir, 'packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol')
+  try {
+    mkdirSync(join(utilsPath, '..'), { recursive: true })
+    mkdirSync(join(contractPath, '..'), { recursive: true })
+    copyFileSync(join(__dirname, '../packages/interfold-contracts/scripts/utils.ts'), utilsPath)
+    const builder = new NoirCircuitBuilder(dir)
+    builder.syncProtocolConfig('insecure', 'minimum')
+    const contract = readFileSync(contractPath, 'utf8')
+    const utils = readFileSync(utilsPath, 'utf8')
+    assert.match(contract, /CIRCUIT_VERSION = keccak256\("interfold-bfv-v4"\)/)
+    for (const [prefix, params] of [
+      ['INSECURE', BFV_PARAMS.insecure512],
+      ['SECURE', BFV_PARAMS.secure8192],
+    ] as const) {
+      const coder = AbiCoder.defaultAbiCoder()
+      const paramHash = keccak256(
+        coder.encode(
+          ['tuple(uint256 degree,uint256 plaintext_modulus,uint256[] moduli,string error1_variance)'],
+          [[params.degree, params.plaintextModulus, [...params.moduli], params.error1Variance]],
+        ),
+      )
+      const configId = (version: string) =>
+        keccak256(coder.encode(['bytes32', 'bytes32', 'bytes32'], [id('fhe.rs:BFV'), paramHash, id(version)]))
+      assert.match(contract, new RegExp(`${prefix}_CONFIG_ID =\\s*${configId('interfold-bfv-v4')}`))
+      assert.match(utils, new RegExp(`${prefix}_CONFIG_ID =\\s*"${configId('interfold-bfv-v4')}"`))
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -273,6 +409,7 @@ test('hydrate replaces stale targets at the paths used by Nargo', () => {
 
       mkdirSync(fixture.expectedTarget, { recursive: true })
       writeFileSync(join(fixture.expectedTarget, `${fixture.name}.json`), 'stale')
+      writeFileSync(join(fixture.expectedTarget, `${fixture.name}.vk_tree_hash`), 'stale-tree')
 
       const pairRoot = join(outputDir, preset, committee)
       for (const variant of ['default', 'evm', 'recursive']) {
@@ -280,6 +417,7 @@ test('hydrate replaces stale targets at the paths used by Nargo', () => {
         mkdirSync(artifactDir, { recursive: true })
         if (variant === 'default') {
           writeFileSync(join(artifactDir, `${fixture.name}.json`), `${fixture.name}-fresh`)
+          writeFileSync(join(artifactDir, `${fixture.name}.vk_tree_hash`), 'fresh-tree')
         }
         writeFileSync(join(artifactDir, `${fixture.name}.vk`), `${variant}-vk`)
         writeFileSync(join(artifactDir, `${fixture.name}.vk_hash`), `${variant}-hash`)
@@ -302,6 +440,7 @@ test('hydrate replaces stale targets at the paths used by Nargo', () => {
       assert.equal(readFileSync(join(fixture.expectedTarget, `${fixture.name}.vk_recursive`), 'utf8'), 'default-vk')
       assert.equal(readFileSync(join(fixture.expectedTarget, `${fixture.name}.vk`), 'utf8'), 'evm-vk')
       assert.equal(readFileSync(join(fixture.expectedTarget, `${fixture.name}.vk_noir`), 'utf8'), 'recursive-vk')
+      assert.equal(readFileSync(join(fixture.expectedTarget, `${fixture.name}.vk_tree_hash`), 'utf8'), 'fresh-tree')
     }
 
     const stamp = JSON.parse(readFileSync(join(dir, 'circuits', 'bin', '.active-preset.json'), 'utf8'))
@@ -323,23 +462,54 @@ test('accepts the exact supported circuit matrix', () => {
   }
 })
 
-test('accepts checksum manifests that cover the complete artifact set', () => {
-  const dir = makeCompleteMatrix()
+test('cache readiness and checksums include both complete VK-tree anchors', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'interfold-vk-tree-markers-'))
+  const outputDir = join(dir, 'dist', 'circuits')
+  const preset = 'insecure'
+  const committee = 'minimum'
+  const source = 'source-hash'
   try {
-    refreshChecksums(dir)
-    assert.doesNotThrow(() => validateArtifactChecksums(dir))
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
-
-test('rejects an artifact modified after checksum generation', () => {
-  const dir = makeCompleteMatrix()
-  try {
-    refreshChecksums(dir)
-    const marker = requiredArtifactMarkers('secure-8192', 'small')[0]
-    writeFileSync(join(dir, marker), 'modified')
-    assert.throws(() => validateArtifactChecksums(dir), /hash mismatch/)
+    const builder = new NoirCircuitBuilder(dir, { outputDir, preset, committee }) as unknown as {
+      requiredDistMarkers: (preset: string, committee: string) => string[]
+      requiredBinMarkers: () => string[]
+      isDistPresetUpToDate: (preset: string, committee: string, source: string) => boolean
+      isBinReadyForPreset: (preset: string, committee: string, source: string) => boolean
+      generateChecksumFile: (compiled: never[]) => string
+    }
+    const distMarkers = builder.requiredDistMarkers(preset, committee)
+    const binMarkers = builder.requiredBinMarkers()
+    for (const markers of [distMarkers, binMarkers]) {
+      assert.equal(markers.filter((file) => file.endsWith('.vk_tree_hash')).length, 2)
+      for (const file of markers) {
+        mkdirSync(join(file, '..'), { recursive: true })
+        writeFileSync(file, Buffer.alloc(32, 1))
+      }
+    }
+    const stamp = JSON.stringify({ preset, committee, sourceHash: source })
+    writeFileSync(join(outputDir, preset, committee, '.build-stamp.json'), stamp)
+    writeFileSync(join(dir, 'circuits', 'bin', '.active-preset.json'), stamp)
+    assert.equal(builder.isDistPresetUpToDate(preset, committee, source), true)
+    assert.equal(builder.isBinReadyForPreset(preset, committee, source), true)
+    builder.generateChecksumFile([])
+    const checksums = JSON.parse(readFileSync(join(outputDir, 'checksums.json'), 'utf8')).files as Record<string, string>
+    assert.equal(Object.keys(checksums).filter((file) => file.endsWith('.vk_tree_hash')).length, 2)
+    assert.equal(
+      readFileSync(join(outputDir, 'SHA256SUMS'), 'utf8')
+        .split('\n')
+        .filter((line) => line.endsWith('.vk_tree_hash')).length,
+      2,
+    )
+    for (const file of [...distMarkers, ...binMarkers].filter((file) => file.endsWith('.vk_tree_hash'))) {
+      assert.ok(existsSync(file))
+      unlinkSync(file)
+      assert.equal(
+        file.startsWith(outputDir)
+          ? builder.isDistPresetUpToDate(preset, committee, source)
+          : builder.isBinReadyForPreset(preset, committee, source),
+        false,
+      )
+      writeFileSync(file, Buffer.alloc(32, 1))
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -382,7 +552,7 @@ test('rejects a pair whose build stamp has a stale source hash', () => {
 })
 
 test('rejects a stamp-valid pair with a missing verification-key artifact', () => {
-  for (const extension of ['.vk', '.vk_hash']) {
+  for (const extension of ['.vk', '.vk_hash', '.vk_tree_hash']) {
     const dir = makeCompleteMatrix()
     try {
       const marker = requiredArtifactMarkers('secure-8192', 'small').find((artifact) => artifact.endsWith(extension))

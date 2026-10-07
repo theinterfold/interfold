@@ -10,9 +10,44 @@ pub struct E3RouterBuilder {
     pub recovered_selections: Vec<CiphernodeSelected>,
     pub recovery_store: Repository<RequestRouterCheckpoint>,
     pub store: Repository<E3RouterSnapshot>,
+    pub teardown_grace: Duration,
+    pub complete_on_restart: HashSet<E3id>,
+    pub fail_on_restart: HashMap<E3id, E3Stage>,
+}
+
+struct RecipientExtension {
+    key: &'static str,
+    inner: Box<dyn E3Extension>,
+}
+
+#[async_trait]
+impl E3Extension for RecipientExtension {
+    fn expected_recipient(&self) -> Option<&'static str> {
+        Some(self.key)
+    }
+
+    fn on_event(&self, context: &mut E3Context, event: &InterfoldEvent) {
+        self.inner.on_event(context, event);
+    }
+
+    async fn hydrate(
+        &self,
+        context: &mut E3Context,
+        snapshot: &crate::E3ContextSnapshot,
+    ) -> Result<()> {
+        self.inner.hydrate(context, snapshot).await
+    }
 }
 
 impl E3RouterBuilder {
+    /// Install an extension and register its recipient for deferred delivery.
+    pub fn with_recipient(self, key: &'static str, extension: Box<dyn E3Extension>) -> Self {
+        self.with(Box::new(RecipientExtension {
+            key,
+            inner: extension,
+        }))
+    }
+
     pub fn with(mut self, listener: Box<dyn E3Extension>) -> Self {
         self.extensions.push(listener);
         self
@@ -24,6 +59,26 @@ impl E3RouterBuilder {
         recovered_selections: Vec<CiphernodeSelected>,
     ) -> Self {
         self.recovered_selections = recovered_selections;
+        self
+    }
+
+    /// Set how long a slashably-failed E3 keeps its context before teardown.
+    pub fn with_teardown_grace(mut self, teardown_grace: Duration) -> Self {
+        self.teardown_grace = teardown_grace;
+        self
+    }
+
+    /// Set the finished E3s whose restored contexts complete at `EffectsEnabled` without resuming.
+    pub fn with_complete_on_restart(mut self, complete_on_restart: HashSet<E3id>) -> Self {
+        self.complete_on_restart = complete_on_restart;
+        self
+    }
+
+    /// Set the E3s that failed on chain with accusation or slashing work, with their local
+    /// lifecycle stage. Their restored contexts keep that work, but their protocol actors learn of
+    /// the failure at `EffectsEnabled` before effects resume.
+    pub fn with_fail_on_restart(mut self, fail_on_restart: HashMap<E3id, E3Stage>) -> Self {
+        self.fail_on_restart = fail_on_restart;
         self
     }
 
@@ -49,12 +104,17 @@ impl E3RouterBuilder {
             replay_cursors,
             recovery_store,
             recovered_selections,
+            teardown_grace: self.teardown_grace,
+            complete_on_restart: self.complete_on_restart,
+            fail_on_restart: self.fail_on_restart,
         };
 
-        let router = match snapshot {
+        let mut router = match snapshot {
             Some(snapshot) => E3Router::from_snapshot(params, snapshot).await?,
             None => E3Router::from_params(params),
         };
+        // Before replay can drive a restored context's protocol actors, as with a logged selection.
+        router.end_protocol_work_of_failed_contexts()?;
         for selection in &router.recovered_selections {
             ensure!(
                 router.completed.contains(&selection.e3_id)

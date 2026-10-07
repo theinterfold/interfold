@@ -5,8 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::domain::{
-    decide_schema_version, CollectOutcome, HistoricalEvmCollector, SchemaVersionDecision,
-    SnapshotMeta, SyncPlanner, SCHEMA_VERSION,
+    decide_node_role, decide_schema_version, CollectOutcome, HistoricalEvmCollector, NodeRole,
+    NodeRoleDecision, SchemaVersionDecision, SnapshotMeta, SyncPlanner, SCHEMA_VERSION,
 };
 use crate::replay_spool::ReplaySpool;
 use crate::SyncRepositoryFactory;
@@ -18,17 +18,18 @@ use e3_events::{
     BusHandle, CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteeRequested, CorrelationId,
     E3Requested, E3id, EffectsEnabled, Event, EventContext, EventContextAccessors, EventPublisher,
     EventStoreQueryBy, EventStoreQueryResponse, EventSubscriber, EventType, EvmEventConfig,
-    HistoricalEvmEventsReceived, HistoricalEvmSyncStart, HistoricalNetSyncStart, InterfoldEvent,
-    InterfoldEventData, Seed, SeqAgg, Sequenced, SlashExecuted, StoreKeys, SyncEffect, SyncEnded,
-    TicketGenerated, TypedEvent, Unsequenced,
+    HistoricalEvmEventsReceived, HistoricalEvmSyncStart, HistoricalNetSyncFailed,
+    HistoricalNetSyncStart, InterfoldEvent, InterfoldEventData, ReservedTimestamps, Seed, SeqAgg,
+    Sequenced, SlashExecuted, StoreKeys, SyncEffect, SyncEnded, TicketGenerated, TimestampClaim,
+    TypedEvent, Unsequenced,
 };
 use e3_utils::actix::channel as actix_toolbox;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     future::Future,
     time::Duration,
 };
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::{mpsc::Receiver, oneshot};
 use tracing::info;
 
 /// Advance the request-router checkpoint when it trails aggregate snapshots.
@@ -102,6 +103,39 @@ pub async fn reconcile_request_router_checkpoint(
         "Request-router checkpoint advanced"
     );
     Ok(())
+}
+
+/// The request contexts that the router holds when startup replay ends: those of its checkpoint,
+/// with the admissions and completions of the logged events after the checkpoint applied. Startup
+/// replays those events before effects resume, so a context that they admit resumes like one in
+/// the checkpoint, and startup checks both.
+pub async fn project_restored_request_contexts(
+    repositories: &Repositories,
+    aggregate_ids: impl IntoIterator<Item = AggregateId>,
+    eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+) -> Result<Vec<E3id>> {
+    let mut checkpoint = repositories
+        .request_router_checkpoint()
+        .read()
+        .await?
+        .context("request-router checkpoint is missing after storage preflight")?;
+    let cursors = aggregate_ids
+        .into_iter()
+        .map(|aggregate_id| {
+            let cursor = checkpoint
+                .replay_cursors
+                .get(&aggregate_id)
+                .copied()
+                .unwrap_or(0);
+            (aggregate_id, cursor)
+        })
+        .collect();
+    let spool = ReplaySpool::load_after(eventstore, cursors).await?;
+    spool.project(|event| {
+        e3_request::project_request_router_event(&mut checkpoint, event);
+        Ok(())
+    })?;
+    Ok(checkpoint.contexts)
 }
 
 #[derive(Clone, Debug)]
@@ -455,14 +489,12 @@ where
     net_ready.await?;
     info!("NetReady!");
     info!("Loading historical libp2p events...");
-    let events_received = bus.wait_for(EventType::HistoricalNetSyncEventsReceived);
-    bus.publish_without_context(HistoricalNetSyncStart::new(net_config.clone()))?;
-    let InterfoldEventData::HistoricalNetSyncEventsReceived(event) =
-        events_received.await?.into_data()
-    else {
-        bail!("failed to get HistoricalNetSyncEventsReceived");
-    };
-    let historical_net_events = event.events;
+    let historical_net_events = fetch_peer_history(
+        bus,
+        net_config,
+        reserved_timestamps(&historical_evm_events)?,
+    )
+    .await?;
     info!(
         "{} historical libp2p events loaded.",
         historical_net_events.len()
@@ -484,6 +516,54 @@ where
     // normal live operations
 
     Ok(())
+}
+
+/// The timestamps of the historical EVM events, which startup publishes with the peer history: a
+/// peer's event must not take one of them.
+fn reserved_timestamps(events: &[InterfoldEvent<Unsequenced>]) -> Result<ReservedTimestamps> {
+    let mut reserved = ReservedTimestamps::new();
+    for event in events {
+        reserved
+            .entry(event.aggregate_id())
+            .or_default()
+            .insert(event.ts(), TimestampClaim::of(event)?);
+    }
+    Ok(reserved)
+}
+
+/// Ask the network for the peer history after `since`, and wait for the history or for the
+/// failure of the fetch.
+async fn fetch_peer_history(
+    bus: &BusHandle,
+    since: BTreeMap<AggregateId, u128>,
+    reserved: ReservedTimestamps,
+) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
+    let (failure, failed) = actix_toolbox::oneshot::<HistoricalNetSyncFailed>();
+    let events_received = bus.wait_for(EventType::HistoricalNetSyncEventsReceived);
+    bus.publish_without_context(
+        HistoricalNetSyncStart::new(since)
+            .with_failure_recipient(failure)
+            .with_reserved(reserved),
+    )?;
+    await_peer_history(events_received, failed).await
+}
+
+/// The failure channel closes without a message when the fetch succeeds, so only a received
+/// failure ends the wait.
+async fn await_peer_history(
+    events_received: impl Future<Output = Result<InterfoldEvent<Sequenced>>>,
+    failed: oneshot::Receiver<HistoricalNetSyncFailed>,
+) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
+    let received = tokio::select! {
+        received = events_received => received?,
+        Some(failed) = async { failed.await.ok() } => {
+            bail!("startup peer history fetch failed: {}", failed.reason);
+        }
+    };
+    let InterfoldEventData::HistoricalNetSyncEventsReceived(event) = received.into_data() else {
+        bail!("failed to get HistoricalNetSyncEventsReceived");
+    };
+    Ok(event.events)
 }
 
 async fn publish_reconciled_history(
@@ -519,7 +599,10 @@ mod historical;
 mod preflight;
 
 pub use historical::collect_historical_evm_events;
-pub use preflight::{has_schema_governed_kv_state, preflight_schema_version};
+pub use preflight::{
+    has_schema_governed_kv_state, inspect_persisted_schema_version, preflight_node_role,
+    preflight_schema_version,
+};
 
 #[derive(Message)]
 #[rtype("()")]

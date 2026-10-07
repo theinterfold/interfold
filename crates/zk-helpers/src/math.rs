@@ -137,9 +137,15 @@ pub fn compute_k0is(moduli: &[u64], plaintext_modulus: u64) -> Result<Vec<u64>, 
         let m = Modulus::new(qi).map_err(|e| {
             CircuitsErrors::Sample(format!("Failed to create modulus for k0is: {:?}", e))
         })?;
-        let k0qi = m.inv(m.neg(plaintext_modulus)).ok_or_else(|| {
+        if plaintext_modulus >= qi {
+            return Err(CircuitsErrors::Other(format!(
+                "plaintext modulus {plaintext_modulus} must be smaller than CRT modulus {qi}"
+            )));
+        }
+        let neg_t = m.neg(plaintext_modulus);
+        let k0qi = m.inv(neg_t).ok_or_else(|| {
             CircuitsErrors::Fhe(fhe::Error::MathError(fhe_math::Error::NonInvertible {
-                value: m.neg(plaintext_modulus),
+                value: neg_t,
                 modulus: qi,
             }))
         })?;
@@ -212,6 +218,33 @@ pub fn cyclotomic_polynomial(n: u64) -> Vec<BigInt> {
     cyclo[0] = BigInt::from(1u64);
     cyclo[n as usize] = BigInt::from(1u64);
     cyclo
+}
+/// Reduces a polynomial of degree `2N-2` modulo `x^N + 1`, in O(N).
+///
+/// `x^N = -1` in the ring, so a coefficient at degree `e + N` folds onto degree `e` with its sign
+/// flipped. Coefficients are stored **descending**, so the coefficient of `x^(N-1-j)` sits at index
+/// `j`: its low part is `poly[N-1+j]` and the high part that wraps onto it is `poly[j-1]`. Index
+/// `j = 0` is degree `N-1`, whose partner would be degree `2N-1` and so does not exist.
+///
+/// This is the same fold [`decompose_residue`] performs inline, extracted so callers that only need
+/// the reduced value do not pay for [`Polynomial::reduce_by_cyclotomic`]. That routine goes through
+/// generic long division, whose inner loop runs over all `N+1` divisor coefficients including the
+/// `N-1` zeros of `x^N + 1` — about `N^2` BigInt multiply-subtracts, 67 million at `N = 8192`, for a
+/// result this computes in `N` subtractions. `fold_matches_generic_reduction` pins the two together.
+///
+/// # Panics
+///
+/// Panics when `poly` does not have exactly `2N-1` coefficients.
+pub fn fold_negacyclic(poly: &Polynomial, n: usize) -> Polynomial {
+    let c = poly.coefficients();
+    assert_eq!(c.len(), 2 * n - 1, "fold_negacyclic expects degree 2(N-1)");
+
+    let mut out = Vec::with_capacity(n);
+    out.push(c[n - 1].clone());
+    for j in 1..n {
+        out.push(&c[n - 1 + j] - &c[j - 1]);
+    }
+    Polynomial::new(out)
 }
 
 /// Decomposes the residue `xi - xi_hat` into `r1 * qi + r2 * cyclo` mod R_qi.
@@ -320,6 +353,121 @@ pub fn decompose_residue(
 mod tests {
     use super::*;
 
+    /// Deriving `r` from the folded identity must give what the old route gave.
+    ///
+    /// The previous derivation went `decompose_residue` -> `r1` -> `reduce_by_cyclotomic`. The new
+    /// one folds `hat` and divides: `r = (pk0 - fold(hat)) / qi`. Algebraically these agree, because
+    /// folding `pk0 = hat + r2 * cyclo + r1 * qi` kills the cyclo term and leaves
+    /// `pk0 = fold(hat) + fold(r1) * qi`. Witness sampling is random, so the two routes cannot be
+    /// compared by generating files twice — they have to be run against one shared input, here.
+    #[test]
+    fn folded_quotient_matches_decompose_then_reduce() {
+        let qi = BigInt::from(97u32);
+        for n in [2usize, 4, 8, 17] {
+            let cyclo = cyclotomic_polynomial(n as u64);
+            let hat = Polynomial::new(
+                (0..2 * n - 1)
+                    .map(|k| {
+                        let magnitude = BigInt::from((k * 131 + 7) as i64);
+                        if k % 2 == 0 {
+                            -magnitude
+                        } else {
+                            magnitude
+                        }
+                    })
+                    .collect::<Vec<BigInt>>(),
+            );
+
+            // `pk0` must be `hat` reduced into R_qi, which is what decompose_residue requires.
+            let folded = fold_negacyclic(&hat, n);
+            let pk0 = Polynomial::new(
+                folded
+                    .coefficients()
+                    .iter()
+                    .map(|c| center(&reduce(c, &qi), &qi))
+                    .collect::<Vec<BigInt>>(),
+            );
+
+            // Old route.
+            let (r1, _r2) = decompose_residue(&pk0, &hat, &qi, &cyclo, n as u64);
+            let old = r1.reduce_by_cyclotomic(&cyclo).unwrap();
+
+            // New route: fold once, then an exact scalar division.
+            let (new, remainder) = pk0
+                .sub(&folded)
+                .div(&Polynomial::constant(qi.clone()))
+                .unwrap();
+            assert!(remainder.is_zero(), "division must be exact at N = {n}");
+
+            assert_eq!(
+                old.coefficients(),
+                new.coefficients(),
+                "linear derivation disagrees with decompose+reduce at N = {n}"
+            );
+        }
+    }
+
+    /// The O(N) fold must agree with generic long division, coefficient for coefficient.
+    ///
+    /// This is the whole licence for skipping `reduce_by_cyclotomic`: the fast path is only safe
+    /// while it produces the same polynomial. Sizes are odd and even, and the inputs include
+    /// negative coefficients and a high half that wraps onto every position.
+    #[test]
+    fn fold_matches_generic_reduction() {
+        for n in [2usize, 3, 4, 8, 17] {
+            let cyclo = cyclotomic_polynomial(n as u64);
+            // Deterministic but sign-varying coefficients across the whole degree-2(N-1) range.
+            let coefficients: Vec<BigInt> = (0..2 * n - 1)
+                .map(|k| {
+                    let magnitude = BigInt::from((k * 37 + 11) as i64);
+                    if k % 3 == 0 {
+                        -magnitude
+                    } else {
+                        magnitude
+                    }
+                })
+                .collect();
+            let poly = Polynomial::new(coefficients);
+
+            let fast = fold_negacyclic(&poly, n);
+            let generic = poly.reduce_by_cyclotomic(&cyclo).unwrap();
+            assert_eq!(
+                fast.coefficients(),
+                generic.coefficients(),
+                "fold disagrees with long division at N = {n}"
+            );
+        }
+    }
+
+    /// A zero high half leaves the low half untouched, which fixes the index alignment.
+    ///
+    /// If the fold were off by one, or read the halves in the wrong order, this would shift.
+    #[test]
+    fn fold_of_low_half_only_is_the_identity() {
+        let n = 4;
+        // Degree 2(N-1) = 6, with everything above degree N-1 = 3 set to zero. Descending order
+        // puts the low half last, so the leading N-1 entries are the high half.
+        let poly = Polynomial::new(vec![
+            BigInt::from(0),
+            BigInt::from(0),
+            BigInt::from(0),
+            BigInt::from(7),
+            BigInt::from(-5),
+            BigInt::from(3),
+            BigInt::from(-1),
+        ]);
+        let folded = fold_negacyclic(&poly, n);
+        assert_eq!(
+            folded.coefficients(),
+            &[
+                BigInt::from(7),
+                BigInt::from(-5),
+                BigInt::from(3),
+                BigInt::from(-1)
+            ]
+        );
+    }
+
     /// Reference implementation kept to prove that the optimized `decompose_residue`
     /// stays bit-identical. Schoolbook long division, O(N^2).
     fn decompose_residue_reference(
@@ -426,6 +574,13 @@ mod tests {
         assert!(r2.is_zero());
         assert_eq!(r1.degree(), (2 * (n - 1)) as usize);
         assert_eq!(r2.degree(), (n - 2) as usize);
+    }
+
+    #[test]
+    fn compute_k0is_requires_plaintext_modulus_below_each_crt_modulus() {
+        assert_eq!(compute_k0is(&[17], 5).unwrap(), vec![10]);
+        assert!(compute_k0is(&[17], 17).is_err());
+        assert!(compute_k0is(&[17], 18).is_err());
     }
 
     #[test]

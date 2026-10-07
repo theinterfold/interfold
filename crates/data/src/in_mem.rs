@@ -6,7 +6,7 @@
 
 use crate::{
     in_mem_kv_store::{DataOp, InMemKvStore},
-    ShutdownStore, StoreHasExactKeys, StoreIsEmpty,
+    ShutdownStore, StoreGetChecked, StoreHasExactKeys, StoreIsEmpty, StoreKeysWithPrefix,
 };
 use actix::{Actor, ActorContext, Handler, Message};
 use anyhow::Result;
@@ -112,6 +112,22 @@ impl Handler<StoreHasExactKeys> for InMemStore {
 
     fn handle(&mut self, message: StoreHasExactKeys, _: &mut Self::Context) -> Self::Result {
         Ok(self.store.has_exact_keys(message.keys()))
+    }
+}
+
+impl Handler<StoreKeysWithPrefix> for InMemStore {
+    type Result = Result<Vec<Vec<u8>>>;
+
+    fn handle(&mut self, message: StoreKeysWithPrefix, _: &mut Self::Context) -> Self::Result {
+        Ok(self.store.keys_with_prefix(message.prefix()))
+    }
+}
+
+impl Handler<StoreGetChecked> for InMemStore {
+    type Result = Result<Option<Vec<u8>>>;
+
+    fn handle(&mut self, message: StoreGetChecked, _: &mut Self::Context) -> Self::Result {
+        Ok(self.store.get(message.key()))
     }
 }
 

@@ -7,7 +7,8 @@
 use super::*;
 
 #[actix::test]
-async fn schema_six_logs_remain_readable_but_cannot_start_schema_seven() -> anyhow::Result<()> {
+async fn schema_six_logs_remain_readable_but_cannot_start_the_current_schema() -> anyhow::Result<()>
+{
     let system = EventSystem::new().with_fresh_bus();
     let store = system.store()?;
     let repositories = Repositories::from(&store);

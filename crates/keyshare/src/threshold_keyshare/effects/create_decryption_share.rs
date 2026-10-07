@@ -13,17 +13,14 @@ impl ThresholdKeyshare {
         let (msg, ec) = msg.into_components();
         let ciphertext_output = msg.ciphertext_output;
 
-        // If we are already in Decrypting (or beyond), this is a duplicate
-        // event — e.g. replayed from the EventStore during crash recovery.
-        // Re-issue the compute request idempotently (downstream aggregation
-        // deduplicates by party_id) and skip the state transition.
+        // A replayed ciphertext can resume work that this process has not issued.
         {
             let state = self.state.try_get()?;
             match &state.state {
                 KeyshareState::Decrypting(_) => {
                     info!(
                         e3_id = %state.e3_id,
-                        "CiphertextOutputPublished received while already Decrypting — re-issuing decryption-share request"
+                        "CiphertextOutputPublished received while already Decrypting — resuming pending decryption-share work"
                     );
                     return self.issue_decryption_share_request(ec);
                 }
@@ -70,34 +67,35 @@ impl ThresholdKeyshare {
             s.new_state(next)
         })?;
 
-        let state = self.state.try_get()?;
-        let e3_id = state.get_e3_id();
-        let decrypting: Decrypting = state.clone().try_into()?;
-        let trbfv_config = state.get_trbfv_config();
-        let event = ComputeRequest::trbfv(
-            TrBFVRequest::CalculateDecryptionShare(CalculateDecryptionShareRequest {
-                name: format!("party_id({})", state.party_id),
-                ciphertexts: ciphertext_output,
-                sk_poly_sum: decrypting.sk_poly_sum,
-                es_poly_sum: decrypting.es_poly_sum,
-                trbfv_config,
-            }),
-            CorrelationId::new(),
-            e3_id.clone(),
-        );
-        self.bus.publish(event, ec)?; // CalculateDecryptionShareRequest
+        self.issue_decryption_share_request(ec)
+    }
+
+    /// Issue one share calculation per process. The worker retries the same request, and the
+    /// actor redelivers it when its result does not arrive.
+    pub(in crate::actors::threshold_keyshare) fn issue_decryption_share_request(
+        &mut self,
+        ec: EventContext<Sequenced>,
+    ) -> Result<()> {
+        if self.pending.decryption_share_request.is_some() {
+            return Ok(());
+        }
+        if self.publish_decryption_share_request(ec.clone())? {
+            self.pending.decryption_share_request = Some(IssuedDecryptionWork {
+                ec,
+                last_sent: std::time::Instant::now(),
+                redeliveries: 0,
+            });
+        }
         Ok(())
     }
 
-    /// (Re)issue the `CalculateDecryptionShare` compute request from the current
-    /// `Decrypting` state. Factored out of `handle_ciphertext_output_published` so the
-    /// boot-time resume path can re-drive the decryption-share computation idempotently
-    /// (the resulting `DecryptionshareCreated` is deduped by `party_id` at the aggregator).
-    pub(in crate::actors::threshold_keyshare) fn issue_decryption_share_request(
-        &self,
-        ec: EventContext<Sequenced>,
-    ) -> Result<()> {
+    /// Publish the share calculation for the saved ciphertext under a new correlation ID. Returns
+    /// false when the chain public-key context is not recovered yet.
+    fn publish_decryption_share_request(&mut self, ec: EventContext<Sequenced>) -> Result<bool> {
         let state = self.state.try_get()?;
+        if !self.public_key_context_is_recovered(&state) {
+            return Ok(false);
+        }
         let e3_id = state.get_e3_id();
         let decrypting: Decrypting = state.clone().try_into()?;
         let trbfv_config = state.get_trbfv_config();
@@ -113,6 +111,98 @@ impl ThresholdKeyshare {
             e3_id.clone(),
         );
         self.bus.publish(event, ec)?;
+        Ok(true)
+    }
+
+    pub(in crate::actors::threshold_keyshare) fn issue_decryption_proof_request(
+        &mut self,
+        mut pending: ShareDecryptionProofPending,
+        ec: EventContext<Sequenced>,
+    ) -> Result<()> {
+        if self.pending.decryption_proof_request.is_some() {
+            return Ok(());
+        }
+        let state = self.state.try_get()?;
+        if self
+            .canonical_keys
+            .repair_request(&state.e3_id, &mut pending.proof_request)
+            .is_err()
+        {
+            return Ok(());
+        }
+        self.recovery.try_mutate(&ec, |mut recovery| {
+            recovery.share_decryption_proof_pending =
+                Some(TypedEvent::new(pending.clone(), ec.clone()));
+            recovery.last_ec = Some(ec.clone());
+            Ok(recovery)
+        })?;
+        self.bus.publish(pending, ec.clone())?;
+        self.pending.decryption_proof_request = Some(IssuedDecryptionWork {
+            ec,
+            last_sent: std::time::Instant::now(),
+            redeliveries: 0,
+        });
+        Ok(())
+    }
+
+    /// Send outstanding decryption work again when its result has not arrived for
+    /// `DECRYPTION_REDELIVERY_DELAY`, at most `MAX_DECRYPTION_REDELIVERIES` times per phase. A lost
+    /// request or result otherwise holds the node in its phase until a restart.
+    pub(in crate::actors::threshold_keyshare) fn redeliver_decryption_work(
+        &mut self,
+        now: std::time::Instant,
+    ) -> Result<()> {
+        if !self.effects_enabled {
+            return Ok(());
+        }
+        let due = |work: &IssuedDecryptionWork| {
+            work.redeliveries < MAX_DECRYPTION_REDELIVERIES
+                && now.saturating_duration_since(work.last_sent) >= DECRYPTION_REDELIVERY_DELAY
+        };
+        let state = self.state.try_get()?;
+        match state.state {
+            KeyshareState::Decrypting(_) => {
+                let Some(work) = self.pending.decryption_share_request.clone().filter(due) else {
+                    return Ok(());
+                };
+                if self.publish_decryption_share_request(work.ec.clone())? {
+                    info!(
+                        e3_id = %state.e3_id,
+                        redelivery = work.redeliveries + 1,
+                        "Redelivering a decryption-share request whose result has not arrived"
+                    );
+                    self.pending.decryption_share_request = Some(IssuedDecryptionWork {
+                        last_sent: now,
+                        redeliveries: work.redeliveries + 1,
+                        ..work
+                    });
+                }
+            }
+            KeyshareState::GeneratingDecryptionProof(_) => {
+                let Some(work) = self.pending.decryption_proof_request.clone().filter(due) else {
+                    return Ok(());
+                };
+                let Some(pending) = self.recovery.try_get()?.share_decryption_proof_pending else {
+                    return Ok(());
+                };
+                let mut pending = pending.into_inner();
+                // A fresh value per redelivery, also after a restart: a counter would repeat the
+                // values of replayed earlier requests.
+                pending.redelivery = rand::random::<u64>().max(1);
+                info!(
+                    e3_id = %state.e3_id,
+                    redelivery = pending.redelivery,
+                    "Redelivering a C6 proof request whose result has not arrived"
+                );
+                self.bus.publish(pending, work.ec.clone())?;
+                self.pending.decryption_proof_request = Some(IssuedDecryptionWork {
+                    last_sent: now,
+                    redeliveries: work.redeliveries + 1,
+                    ..work
+                });
+            }
+            _ => {}
+        }
         Ok(())
     }
 
@@ -137,6 +227,10 @@ impl ThresholdKeyshare {
         let decrypting: Decrypting = state.clone().try_into()?;
         let d_share_poly = msg.d_share_poly;
 
+        anyhow::ensure!(
+            self.public_key_context_is_recovered(&state),
+            "chain public-key context is unavailable for C6 proof"
+        );
         let aggregated_pk_bytes = state
             .aggregated_pk
             .clone()
@@ -177,14 +271,9 @@ impl ThresholdKeyshare {
                 params_preset: threshold_preset,
                 committee_size,
             },
+            redelivery: 0,
         };
-        self.recovery.try_mutate(&ec, |mut recovery| {
-            recovery.share_decryption_proof_pending =
-                Some(TypedEvent::new(event.clone(), ec.clone()));
-            recovery.last_ec = Some(ec.clone());
-            Ok(recovery)
-        })?;
-        self.bus.publish(event, ec.clone())?;
+        self.issue_decryption_proof_request(event, ec.clone())?;
 
         // Transition to GeneratingDecryptionProof state
         self.state.try_mutate(&ec, |s| {

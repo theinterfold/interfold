@@ -9,7 +9,7 @@ use alloy::primitives::Address;
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::{anyhow, bail, Context, Result};
 use e3_crypto::{Cipher, SensitiveBytes};
-use e3_data::Persistable;
+use e3_data::{DurableIntent, Persistable};
 use e3_events::{
     prelude::*, trap, AggregationInputsReady, AggregationPhase, AggregatorChanged, BusHandle,
     CiphernodeSelected, CiphertextOutputPublished, CommitmentRosterSelected,
@@ -19,7 +19,7 @@ use e3_events::{
     Die, DkgCoordination, DkgCoordinationKind, DkgDealer, DkgProofSigned,
     DkgShareDecryptionProofRequest, E3Failed, E3RequestComplete, E3Stage, E3id, EType,
     EncryptionKey, EncryptionKeyCollectionFailed, EncryptionKeyCreated, EncryptionKeyPending,
-    EventContext, FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
+    EventContext, EventId, FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
     LbfvKeyShareDocumentCreated, LbfvKeyShareManifestPublished, PartyProofsToVerify,
     PartyShareDecryptionProofsToVerify, PkGenerationProofSigned, ProofPayload, ProofType,
     Sequenced, ShareDecryptionProofPending, ShareVerificationComplete, ShareVerificationDispatched,
@@ -50,37 +50,43 @@ use std::{
     pin::Pin,
     sync::Arc,
 };
-use tracing::{error, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::actors::decryption_key_shared_collector::{
     AllDecryptionKeySharesCollected, DecryptionKeySharedCollectionFailed,
     DecryptionKeySharedCollector, ExpelPartyFromDecryptionKeySharedCollection,
 };
 use crate::actors::encryption_key_collector::{
-    AllEncryptionKeysCollected, EncryptionKeyCollector, ExpelPartyFromKeyCollection,
+    AllEncryptionKeysCollected, EncryptionKeyCollector, EncryptionKeysReplayed,
+    ExpelPartyFromKeyCollection,
 };
 use crate::actors::threshold_share_collector::{
     ExpelPartyFromShareCollection, ThresholdShareCollector,
 };
 use crate::domain::timeout_policy::{
-    resolve_threshold_share_schedule, resolve_timeout, DkgTimeoutPhase,
+    past_dkg_deadline, past_phase_cutoff, resolve_encryption_key_timeout,
+    resolve_threshold_share_schedule, resolve_timeout, DerivedTimeout, DkgTimeoutPhase,
 };
 use crate::domain::{
-    build_decryption_key_plan, build_shares_generated_plan, dealer_identity, generate_bfv_keypair,
-    select_ready_roster, AggregatingDecryptionKey, BfvKeypairMaterial,
-    CollectingEncryptionKeysData, Decrypting, DecryptionKeyPlan, GeneratingDecryptionProof,
-    GeneratingThresholdShareData, KeyshareState, LbfvGenerationStateV1, ProofRequestData,
-    ReadyForDecryption, ReceivedShareProofs, ThresholdKeyshareState,
+    batch_grows, build_decryption_key_plan, build_shares_generated_plan, dealer_identity,
+    dispatch_verifies_batch, generate_bfv_keypair, select_ready_roster, AggregatingDecryptionKey,
+    BfvKeypairMaterial, CollectingEncryptionKeysData, Decrypting, DecryptionKeyPlan,
+    GeneratingDecryptionProof, GeneratingThresholdShareData, KeyshareState, LbfvGenerationStateV1,
+    ProofRequestData, ReadyForDecryption, ReadySummaryGate, ReceivedShareProofs,
+    ThresholdKeyshareState,
 };
 
 #[path = "recovery_state.rs"]
 mod recovery_state;
 pub use recovery_state::{
-    RecoveryPayloadRef, ThresholdKeyshareRecoveryState, THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION,
+    BfvKeyIntent, RecoveryPayloadRef, ThresholdKeyshareRecoveryState,
+    THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION,
 };
 #[path = "recovery_payloads.rs"]
 mod recovery_payloads;
 pub use recovery_payloads::ThresholdKeyshareRecoveryPayloads;
+#[path = "validation.rs"]
+mod validation;
 
 #[derive(Message, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[rtype(result = "()")]
@@ -137,6 +143,8 @@ pub struct ThresholdKeyshareParams {
     pub recovery: Persistable<ThresholdKeyshareRecoveryState>,
     pub lbfv_generation: Persistable<LbfvGenerationStateV1>,
     pub recovery_payloads: ThresholdKeyshareRecoveryPayloads,
+    /// Where this node's BFV encryption keypair is recorded.
+    pub bfv_key: DurableIntent<BfvKeyIntent>,
     pub dkg_timing_reader: DkgTimingReader,
     pub signer: PrivateKeySigner,
     pub effects_enabled: bool,
@@ -154,6 +162,10 @@ struct PendingKeyshareWork {
     gen_esi_response: Option<TypedEvent<ComputeResponse>>,
     /// Shares awaiting the C2/C3 verification result.
     shares: Vec<Arc<ThresholdShare>>,
+    /// C2/C3 results of dispatches that this process has not sent for the current batch, by
+    /// dispatch ID. A result applies when this actor sends a dispatch with its ID. There is at
+    /// most one entry for each distinct dispatch payload of the E3.
+    parked_share_verdicts: HashMap<EventId, TypedEvent<ShareVerificationComplete>>,
     /// C4 requests awaiting the threshold-decryption-key result.
     share_decryption_data: Option<(
         DkgShareDecryptionProofRequest,
@@ -165,9 +177,38 @@ struct PendingKeyshareWork {
     own_dkg_shares: Option<(SensitiveBytes, Vec<SensitiveBytes>)>,
     /// C4 completed before the signed C1 artifact became available.
     keyshare_publish: bool,
+    /// This node's BFV keypair whose record failed. The selection records the same keypair again.
+    bfv_key: Option<BfvKeyIntent>,
+    /// Decryption work issued in this process. The worker owns local retries; the actor redelivers
+    /// a request whose result did not arrive.
+    decryption_share_request: Option<IssuedDecryptionWork>,
+    decryption_proof_request: Option<IssuedDecryptionWork>,
 }
 
+/// One outstanding decryption request of this process and its redelivery count.
+#[derive(Clone)]
+pub(crate) struct IssuedDecryptionWork {
+    /// Cause of the first request; each redelivery uses it too.
+    pub(crate) ec: EventContext<Sequenced>,
+    pub(crate) last_sent: std::time::Instant,
+    pub(crate) redeliveries: u32,
+}
+
+/// EventBus fan-out logs a subscriber that misses its acceptance timeout and does not retry, so a
+/// decryption request or result can be lost. The actor sends the request again after this delay,
+/// at most `MAX_DECRYPTION_REDELIVERIES` times per phase. The compute gate and ProofRequestActor
+/// deduplicate the work, so a copy costs one event.
+pub(crate) const DECRYPTION_REDELIVERY_DELAY: std::time::Duration =
+    std::time::Duration::from_secs(5 * 60);
+pub(crate) const MAX_DECRYPTION_REDELIVERIES: u32 = 6;
+
+/// Check the outstanding decryption work at `now` and redeliver what is overdue.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub(crate) struct RedeliverDecryptionWork(pub(crate) std::time::Instant);
+
 pub struct ThresholdKeyshare {
+    canonical_keys: crate::canonical_key::CanonicalPublicKeys,
     bus: BusHandle,
     cipher: Arc<Cipher>,
     decryption_key_collector: Option<Addr<ThresholdShareCollector>>,
@@ -176,6 +217,9 @@ pub struct ThresholdKeyshare {
     state: Persistable<ThresholdKeyshareState>,
     recovery: Persistable<ThresholdKeyshareRecoveryState>,
     recovery_payloads: ThresholdKeyshareRecoveryPayloads,
+    bfv_keys: DurableIntent<BfvKeyIntent>,
+    /// This node's BFV keypair for the E3, read when the actor starts and set when it records it.
+    bfv_key: Option<BfvKeyIntent>,
     share_enc_preset: BfvPreset,
     interfold_address: Address,
     lbfv_generation: Persistable<LbfvGenerationStateV1>,
@@ -184,8 +228,11 @@ pub struct ThresholdKeyshare {
     active_aggregator_party_id: Option<u64>,
     is_aggregator: bool,
     effects_enabled: bool,
+    // Derived from canonical events and the lifecycle projection at hydration.
+    canonical_key_published: bool,
     roster_inputs_ready: bool,
     roster_proposal_pending: bool,
+    ready_summary: ReadySummaryGate,
     selection_timing_pending: bool,
     pending: PendingKeyshareWork,
 }
@@ -229,6 +276,7 @@ impl ThresholdKeyshare {
                 .collect()
         });
         Self {
+            canonical_keys: Default::default(),
             bus: params.bus,
             cipher: params.cipher,
             decryption_key_collector: None,
@@ -237,6 +285,8 @@ impl ThresholdKeyshare {
             state: params.state,
             recovery: params.recovery,
             recovery_payloads: params.recovery_payloads,
+            bfv_keys: params.bfv_key,
+            bfv_key: None,
             share_enc_preset: params.share_enc_preset,
             interfold_address: params.interfold_address,
             lbfv_generation: params.lbfv_generation,
@@ -245,8 +295,10 @@ impl ThresholdKeyshare {
             active_aggregator_party_id: recovered.active_aggregator_party_id,
             is_aggregator: recovered.is_aggregator,
             effects_enabled: params.effects_enabled,
+            canonical_key_published: false,
             roster_inputs_ready: false,
             roster_proposal_pending: false,
+            ready_summary: ReadySummaryGate::default(),
             selection_timing_pending: false,
             pending: PendingKeyshareWork {
                 shares: pending_shares,
@@ -256,6 +308,11 @@ impl ThresholdKeyshare {
                 ..Default::default()
             },
         }
+    }
+
+    pub fn with_canonical_keys(mut self, keys: crate::canonical_key::CanonicalPublicKeys) -> Self {
+        self.canonical_keys = keys;
+        self
     }
 
     fn store_signed_pk_generation_proof(
@@ -329,6 +386,28 @@ impl Actor for ThresholdKeyshare {
     type Context = actix::Context<Self>;
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT);
+        // Read this node's BFV keypair before any input, also for a keyshare that a replayed event
+        // created: the mailbox holds every input until the read completes.
+        let keys = self.bfv_keys.clone();
+        ctx.wait(async move { keys.restore().await }.into_actor(self).map(
+            |restored, actor, ctx| match restored {
+                Ok(key) => actor.bfv_key = key,
+                Err(error) => {
+                    error!(%error, "Could not restore the keyshare's recorded BFV key");
+                    actor.bus.err(EType::KeyGeneration, error);
+                    ctx.stop();
+                }
+            },
+        ));
+        ctx.run_interval(DECRYPTION_REDELIVERY_DELAY / 5, |_, ctx| {
+            ctx.notify(RedeliverDecryptionWork(std::time::Instant::now()));
+        });
+    }
+
+    fn stopped(&mut self, _: &mut Self::Context) {
+        if let Err(error) = self.stop_threshold_share_collector() {
+            error!(%error, "Could not stop threshold-share collection");
+        }
     }
 }
 

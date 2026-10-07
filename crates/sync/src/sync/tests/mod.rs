@@ -5,11 +5,12 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::{
-    collect_historical_evm_events, has_schema_governed_kv_state, preflight_schema_version,
-    project_restart_state_backfill, publish_reconciled_history,
+    await_peer_history, collect_historical_evm_events, fetch_peer_history,
+    has_schema_governed_kv_state, preflight_node_role, preflight_schema_version,
+    project_restart_state_backfill, project_restored_request_contexts, publish_reconciled_history,
     reconcile_request_router_checkpoint,
 };
-use crate::{SyncRepositoryFactory, SCHEMA_VERSION};
+use crate::{NodeRole, SyncRepositoryFactory, SCHEMA_VERSION};
 use e3_ciphernode_builder::EventSystem;
 use e3_data::Repositories;
 use e3_events::{
@@ -18,9 +19,10 @@ use e3_events::{
     CommitteeRequested, E3Requested, E3Stage, E3StageChanged, E3id, EffectsEnabled, Event,
     EventContextAccessors, EventPublisher, EventSubscriber, EventType, EvmEventConfig,
     EvmEventConfigChain, GetEvents, HistoricalEvmEventsReceived, HistoricalEvmSyncStart,
-    HistoricalNetSyncEventsReceived, HistoricalNetSyncStart, InterfoldEvent, InterfoldEventData,
-    NetReady, ProofType, RequestRouterCheckpoint, Seed, SlashExecuted, StoreKeys, SyncEffect,
-    SyncEnded, TakeEvents, TicketGenerated, TicketId, Unsequenced,
+    HistoricalNetSyncEventsReceived, HistoricalNetSyncFailed, HistoricalNetSyncStart,
+    InterfoldEvent, InterfoldEventData, NetReady, ProofType, RequestRouterCheckpoint, Seed,
+    SlashExecuted, StoreKeys, SyncEffect, SyncEnded, TakeEvents, TicketGenerated, TicketId,
+    Unsequenced,
 };
 use e3_utils::MAILBOX_LIMIT_LARGE;
 use std::collections::BTreeMap;
@@ -56,4 +58,5 @@ mod gates;
 #[path = "history.rs"]
 mod historical;
 mod replay;
+mod role;
 mod schema;

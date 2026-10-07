@@ -424,7 +424,7 @@ async function main() {
   );
 
   const benchmarkConfig = resolveBenchmarkConfig(foldedDoc);
-  const lbfvRows = benchmarkConfig.paramSet === 2 ? 5 : 3;
+  const lbfvRows = benchmarkConfig.preset === "secure-16384" ? 5 : 3;
   const expectedV2PublicInputs = 43 + 3 * benchmarkConfig.h + 3 * lbfvRows;
   const useV2Dkg = dkgPublicInputs.length === expectedV2PublicInputs;
   const expectedNodesFoldKeyHash = readVkRecursiveHash(
@@ -477,7 +477,7 @@ async function main() {
       ))
   ) {
     throw new Error(
-      "DKG aggregator proof public inputs do not match nodes_fold, pk_aggregation, sk_share_computation_chunk, or esm_share_computation_chunk .vk_recursive_hash artifacts",
+      "DKG aggregator public inputs do not match the nodes VK-tree anchor, C5, C2 chunk, or VK-binding hashes",
     );
   }
   if (
@@ -485,7 +485,7 @@ async function main() {
     decPublicInputs[1] !== expectedC7KeyHash
   ) {
     throw new Error(
-      "Decryption aggregator proof publicInputs[0..1] do not match c6_fold / decrypted_shares_aggregation .vk_recursive_hash artifacts",
+      "Decryption aggregator publicInputs[0..1] do not match the C6 VK-tree anchor and C7 VK hash",
     );
   }
 

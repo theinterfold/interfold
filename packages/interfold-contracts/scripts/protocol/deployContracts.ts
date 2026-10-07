@@ -17,13 +17,19 @@ import { ensurePoseidonT3 } from "./poseidon";
 import { deployProxy } from "./proxies";
 import { deployRandomnessProvider } from "./randomness";
 import type { ProtocolConfigFile, ProtocolDeployResult } from "./types";
-import { deployedAddress, feeAssetConfig, timeoutConfig } from "./values";
+import {
+  assertMockDeploymentAllowed,
+  deployedAddress,
+  feeAssetConfig,
+  timeoutConfig,
+} from "./values";
 
 export async function deployProtocolContracts(
   ethers: any,
   operator: any,
   config: ProtocolConfigFile,
 ): Promise<ProtocolDeployResult> {
+  assertMockDeploymentAllowed(config);
   const poseidonT3 = await ensurePoseidonT3(ethers);
 
   let initialE3Program = config.e3Programs[0];

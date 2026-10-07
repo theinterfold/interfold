@@ -59,6 +59,10 @@ pub struct NodeDefinition {
     pub autowallet: bool,
     /// Optional dashboard port. When set, serves a monitoring web UI on this port.
     pub dashboard_port: Option<u16>,
+    /// Run this profile as a bootstrap peer: networking and chain reads only, as
+    /// `interfold start --bootstrap`. `interfold nodes up` reads it for each profile it starts.
+    #[serde(default)]
+    pub bootstrap: bool,
     /// Logical CPUs reserved for Actix, libp2p, and RPC (not used by the Rayon compute pool).
     #[serde(default = "default_multithread_reserve_threads")]
     pub multithread_reserve_threads: usize,
@@ -72,6 +76,11 @@ pub struct NodeDefinition {
     /// protocol operation before this deadline exits non-zero instead of remaining falsely alive.
     #[serde(default = "default_startup_timeout_secs")]
     pub startup_timeout_secs: u64,
+    /// Wall-clock cap of one `bb` proving or verification run, in seconds. The cap kills any run
+    /// that exceeds it, hung or not, so it must stay above the longest proof the host needs. A
+    /// secure proof can take hours on a slow host.
+    #[serde(default = "default_bb_timeout_secs")]
+    pub bb_timeout_secs: u64,
     /// Maximum decoded EVM events retained per chain while initial sync is ordering historical
     /// and live data. Exceeding the bound fails startup; events are never silently discarded.
     #[serde(default = "default_max_buffered_evm_events")]
@@ -94,6 +103,10 @@ fn default_multithread_reserve_threads() -> usize {
 
 fn default_multithread_concurrent_jobs() -> Option<usize> {
     Some(2)
+}
+
+fn default_bb_timeout_secs() -> u64 {
+    12 * 60 * 60
 }
 
 fn default_startup_timeout_secs() -> u64 {
@@ -131,9 +144,11 @@ impl Default for NodeDefinition {
             autopassword: false,
             autowallet: false,
             dashboard_port: None,
+            bootstrap: false,
             multithread_reserve_threads: default_multithread_reserve_threads(),
             multithread_concurrent_jobs: default_multithread_concurrent_jobs(),
             startup_timeout_secs: default_startup_timeout_secs(),
+            bb_timeout_secs: default_bb_timeout_secs(),
             max_buffered_evm_events: default_max_buffered_evm_events(),
             max_buffered_net_events: default_max_buffered_net_events(),
             max_buffered_net_bytes: default_max_buffered_net_bytes(),
@@ -228,6 +243,9 @@ impl AppConfig {
         if node.startup_timeout_secs == 0 {
             bail!("node.startup_timeout_secs must be greater than zero");
         }
+        if node.bb_timeout_secs == 0 {
+            bail!("node.bb_timeout_secs must be greater than zero");
+        }
         if node.max_buffered_evm_events == 0 {
             bail!("node.max_buffered_evm_events must be greater than zero");
         }
@@ -304,6 +322,11 @@ impl AppConfig {
     /// Get the log file
     pub fn log_file(&self) -> PathBuf {
         self.paths.log_file()
+    }
+
+    /// Get the directory of this node's runtime state files
+    pub fn node_data_dir(&self) -> PathBuf {
+        self.paths.node_data_dir()
     }
 
     /// Get the bb binary path
@@ -444,6 +467,11 @@ impl AppConfig {
         self.node_def().startup_timeout_secs
     }
 
+    /// Wall-clock cap of one `bb` run
+    pub fn bb_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.node_def().bb_timeout_secs)
+    }
+
     /// Maximum per-chain decoded-event buffer used before EVM gateways become live.
     pub fn max_buffered_evm_events(&self) -> usize {
         self.node_def().max_buffered_evm_events
@@ -516,9 +544,11 @@ impl UnscopedAppConfig {
     }
 }
 
-/// Value struct for passing configuration from the cli to the configuration
+/// Value struct for passing configuration from the cli to the configuration. A flag that was not
+/// given is not serialized, so the value from the file or from `E3_*` stays.
 #[derive(Default, Serialize, Deserialize, Clone, Debug)]
 struct CliOverrides {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub otel: Option<String>,
     pub found_config_file: Option<PathBuf>,
     pub using_custom_config: bool,
@@ -865,6 +895,38 @@ chains:
         });
     }
 
+    /// `otel` comes from the `--otel` flag, else from `E3_OTEL`, else from the configuration file.
+    /// A flag that was not given leaves the others.
+    #[test]
+    fn otel_comes_from_the_flag_the_environment_or_the_file() {
+        Jail::expect_with(|jail| {
+            // An `E3_OTEL` of the shell that runs the test must not decide the first case.
+            jail.clear_env();
+            let home = format!("{}", jail.directory().to_string_lossy());
+            jail.set_env("HOME", &home);
+            jail.set_env("XDG_CONFIG_HOME", format!("{home}/.config"));
+            jail.create_file("interfold.config.yaml", "otel: \"http://from-yaml:4317\"\n")?;
+            let otel = |flag: Option<&str>| {
+                load_config(
+                    "_default",
+                    Some("interfold.config.yaml".to_string()),
+                    flag.map(str::to_string),
+                )
+                .map(|config| config.otel())
+                .map_err(|error| error.to_string())
+            };
+
+            assert_eq!(otel(None)?.as_deref(), Some("http://from-yaml:4317"));
+            jail.set_env("E3_OTEL", "http://from-env:4317");
+            assert_eq!(otel(None)?.as_deref(), Some("http://from-env:4317"));
+            assert_eq!(
+                otel(Some("http://from-flag:4317"))?.as_deref(),
+                Some("http://from-flag:4317")
+            );
+            Ok(())
+        });
+    }
+
     #[test]
     fn test_multithread_config() -> Result<()> {
         let config_str = r#"
@@ -980,6 +1042,58 @@ node:
         assert_eq!(default.max_buffered_evm_events(), 100_000);
         assert_eq!(default.max_buffered_net_events(), 1_024);
         assert_eq!(default.max_buffered_net_bytes(), 256 * 1024 * 1024);
+        Ok(())
+    }
+
+    #[test]
+    fn test_bb_timeout_config_and_default() -> Result<()> {
+        let configured: UnscopedAppConfig = serde_yaml::from_str(
+            r#"
+node:
+  bb_timeout_secs: 90
+"#,
+        )?;
+        let configured = configured.into_scoped_with_defaults(
+            "_default",
+            &PathBuf::from("/default/data"),
+            &PathBuf::from("/default/config"),
+            &PathBuf::from("/my/cwd"),
+        )?;
+        assert_eq!(configured.bb_timeout(), std::time::Duration::from_secs(90));
+
+        let default = UnscopedAppConfig::default().into_scoped_with_defaults(
+            "_default",
+            &PathBuf::from("/default/data"),
+            &PathBuf::from("/default/config"),
+            &PathBuf::from("/my/cwd"),
+        )?;
+        assert_eq!(
+            default.bb_timeout(),
+            std::time::Duration::from_secs(12 * 60 * 60)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_zero_bb_timeout_is_rejected() -> Result<()> {
+        let unscoped: UnscopedAppConfig = serde_yaml::from_str(
+            r#"
+node:
+  bb_timeout_secs: 0
+"#,
+        )?;
+        let error = unscoped
+            .into_scoped_with_defaults(
+                "_default",
+                &PathBuf::from("/default/data"),
+                &PathBuf::from("/default/config"),
+                &PathBuf::from("/my/cwd"),
+            )
+            .map(|_| ())
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("bb_timeout_secs must be greater than zero"));
         Ok(())
     }
 

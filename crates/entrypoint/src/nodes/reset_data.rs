@@ -13,6 +13,9 @@
 //!
 //! The identity is copied out as ciphertext. The password is never required, so the key material
 //! is not decrypted here.
+//!
+//! The command refuses to delete key-share state for an E3 that this node has not seen complete.
+//! The chain cannot restore a key share.
 
 use anyhow::{bail, Context, Result};
 use e3_ciphernode_builder::get_interfold_bus_handle;
@@ -27,6 +30,9 @@ use tracing::{info, warn};
 
 use crate::fence::ProcessFence;
 use crate::helpers::datastore::setup_datastore;
+use crate::nodes::state_guard::{
+    active_e3s_with_key_shares, check_deletion, pending_slash_reports, Deletion,
+};
 
 /// The encrypted identity pair, held while the store is rebuilt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,7 +118,7 @@ async fn restrict_permissions(_path: &Path) -> Result<()> {
 /// The index is not always a trailing suffix: `log_file` is configurable per node
 /// (`AppConfig::log_file`), so `events.log` enumerates to `events.0.log`. The split below mirrors
 /// `enumerate_path` exactly; `matches_enumeration_of` is pinned to it by test.
-async fn event_log_paths(log_file: &Path) -> Result<Vec<PathBuf>> {
+pub(crate) async fn event_log_paths(log_file: &Path) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
     // The un-enumerated path is included for older layouts that wrote to it directly.
     if fs::try_exists(log_file)
@@ -205,7 +211,10 @@ async fn remove_if_present(path: &Path) -> Result<()> {
 ///
 /// `backup_file` is written first and is left in place afterwards: it is the only copy of the
 /// identity between the delete and the restore.
-pub async fn execute(config: &AppConfig) -> Result<ResetOutcome> {
+///
+/// The reset refuses, before it deletes anything, when this node holds key-share state for an E3
+/// that it has not seen complete. `allow_active_e3s` overrides that refusal.
+pub async fn execute(config: &AppConfig, allow_active_e3s: bool) -> Result<ResetOutcome> {
     let db_file = config.db_file();
     let log_file = config.log_file();
 
@@ -217,15 +226,27 @@ pub async fn execute(config: &AppConfig) -> Result<ResetOutcome> {
          then re-run this command",
     )?;
 
-    let identity = {
+    let (identity, active_e3s, slash_reports) = {
         let bus = get_interfold_bus_handle()?;
         let store = setup_datastore(config, &bus)?;
-        let identity = read_identity(&store.repositories()).await?;
-        store.repositories().store.shutdown().await.ok();
-        identity
+        let repositories = store.repositories();
+        let identity = read_identity(&repositories).await;
+        let active_e3s = active_e3s_with_key_shares(&repositories).await;
+        let slash_reports = pending_slash_reports(&repositories).await;
+        repositories.store.shutdown().await.ok();
+        (identity, active_e3s, slash_reports)
     };
     // Release the sled handle before the directory is removed; a live handle would recreate it.
     SledDb::close_all_connections();
+    let identity = identity?;
+    if let Some(warning) = check_deletion(
+        active_e3s,
+        slash_reports,
+        allow_active_e3s,
+        &Deletion::RESET,
+    )? {
+        warn!("{warning}");
+    }
 
     if identity.is_empty() {
         warn!(

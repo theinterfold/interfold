@@ -26,24 +26,35 @@ fn load_vk_from_dir(circuit_dir: &Path, circuit_name: &str) -> Result<VkArtifact
 
     let vk_bytes = fs::read(&vk_path)
         .map_err(|e| ZkError::CircuitNotFound(format!("{}: {}", vk_path.display(), e)))?;
-    let vk_hash_bytes = fs::read(&vk_hash_path)
-        .map_err(|e| ZkError::CircuitNotFound(format!("{}: {}", vk_hash_path.display(), e)))?;
-
-    if vk_hash_bytes.len() != 32 {
-        return Err(ZkError::InvalidInput(format!(
-            "{}: expected 32 bytes, got {}",
-            vk_hash_path.display(),
-            vk_hash_bytes.len()
-        )));
-    }
-
     let verification_key = bytes_to_field_strings(&vk_bytes)?;
-    let key_hash = format!("0x{}", hex::encode(&vk_hash_bytes));
+    let key_hash = load_hash(&vk_hash_path)?;
 
     Ok(VkArtifacts {
         verification_key,
         key_hash,
     })
+}
+
+fn load_hash(path: &Path) -> Result<String, ZkError> {
+    let bytes = fs::read(path)
+        .map_err(|e| ZkError::CircuitNotFound(format!("{}: {}", path.display(), e)))?;
+    if bytes.len() != 32 {
+        return Err(ZkError::InvalidInput(format!(
+            "{}: expected 32 bytes, got {}",
+            path.display(),
+            bytes.len()
+        )));
+    }
+    Ok(format!("0x{}", hex::encode(bytes)))
+}
+
+/// Load the complete recursive VK-tree anchor for a final aggregator witness.
+pub fn load_vk_tree_hash(circuits_dir: &Path, circuit: CircuitName) -> Result<String, ZkError> {
+    load_hash(
+        &circuits_dir
+            .join(circuit.dir_path())
+            .join(format!("{}.vk_tree_hash", circuit.as_str())),
+    )
 }
 
 /// Loads VK artifacts from `.vk` and `.vk_hash` in the variant-specific circuits directory.

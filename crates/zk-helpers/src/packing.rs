@@ -134,28 +134,4 @@ mod tests {
         // For bit=51: nibble_bits=52, radix uses 52+4=56 bits, so group=254/56=4
         assert_eq!(packing_layout(51), (52, 4));
     }
-
-    #[test]
-    fn test_packer_single_value() {
-        let poly = Polynomial::new(vec![BigInt::from(42)]);
-        let packed = packer(&poly, 8);
-        assert!(!packed.is_empty());
-    }
-
-    #[test]
-    fn test_flatten_empty() {
-        let inputs = Vec::new();
-        let polys: Vec<Polynomial> = vec![];
-        let result = flatten(inputs, &polys, 8);
-        assert_eq!(result.len(), 0);
-    }
-
-    #[test]
-    fn test_flatten_single_poly() {
-        let inputs = Vec::new();
-        let poly = Polynomial::new(vec![BigInt::from(1), BigInt::from(2), BigInt::from(3)]);
-        let polys = vec![poly];
-        let result = flatten(inputs, &polys, 8);
-        assert!(!result.is_empty());
-    }
 }

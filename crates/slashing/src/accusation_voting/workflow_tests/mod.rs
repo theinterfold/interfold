@@ -121,7 +121,8 @@ fn insert_pending(
     id
 }
 
+mod admission;
 mod outcomes;
-/// Digest computation must be deterministic for identical inputs and must
-/// differ when any bound field changes.
+/// A vote signature must bind every admitted field, and tallies must reach
+/// quorum exactly at the threshold and converge on one vote window.
 mod voting;

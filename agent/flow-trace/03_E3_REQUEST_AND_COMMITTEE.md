@@ -231,11 +231,19 @@ configured provider's `RandomnessFulfilled` event from the chain:
 
 Chain ingestion waits for one confirmation by default, even when the configured URL points to a
 local RPC proxy. Only a single-process development chain explicitly sets
-`ingestion_confirmations: 0`. If an RPC log carries its block timestamp, the reader uses it without
-another provider request. Otherwise, it retries a temporarily missing block. During initial
-historical sync, an error that remains after the configured retries stops the EVM stream because the
-node cannot start from incomplete history. During live ingestion, a rejected zero-confirmation log
-or a failed confirmed-log backfill closes the current subscription and reconnects for canonical
+`ingestion_confirmations: 0`. The same rule applies to the HTTP poll interval for receipts and new
+blocks: 7 seconds by default, and `rpc_poll_interval_ms: 250` only on such a chain
+(`ChainConfig::rpc_poll_interval`, `ProviderConfig::for_chain`). If an RPC log carries its block
+timestamp, the reader uses it without another provider request. Otherwise, it retries a temporarily
+missing block. During initial historical sync, an error that remains after the configured retries
+stops the EVM stream because the node cannot start from incomplete history. During live ingestion,
+the `eth_subscribe` stream is a wake-up signal at every confirmation depth: a canonical
+`eth_getLogs` backfill from the watermark to the confirmed head delivers every log and advances the
+watermark (`handle_live_log`, `consume_live_logs`). With zero confirmations a notification starts
+that backfill at once. With a positive depth the periodic backfill (every 5 seconds) delivers the
+block once it is confirmed. The periodic backfill runs at every depth, so a log mined between a
+backfill and the subscription that follows it, or a log that the provider never announced, arrives
+with the next poll. A failed backfill closes the current subscription and reconnects for canonical
 backfill.
 
 At startup, each ciphernode loads the saved request-time registry and verifier for every active E3.
@@ -272,6 +280,7 @@ RandomnessProviderSolReader decodes RandomnessFulfilled
 │  → Registry accepts only the request-time provider and request ID
 │  → A response after randomnessDeadline is not usable
 │  → seed = keccak256(randomWord, chainId, registry, e3Id, requestId)
+│  → Stores the uint256 seed with `Seed::from`, the little-endian order that `hash_to_score` decodes
 ├─ Reads the frozen threshold, request timepoint, ticket price, and submission deadline
 └─ Publishes the existing durable CommitteeRequested event for the sortition actors
 
@@ -350,6 +359,132 @@ InterfoldSolReader decodes IInterfold::E3Requested log
         → The reservation exists before the ticket can leave this actor
         → A concurrent request sees the reduced local capacity
 ```
+
+### Request-router deferred delivery
+
+**Files:** `crates/request/src/context.rs`, `crates/request/src/routing/event_buffer.rs`,
+`crates/request/src/routing/event_size.rs`, `crates/utils/src/utility_types.rs`,
+`crates/events/src/interfold_event/mod.rs` (`compact_shared_collections`),
+`crates/request/src/routing/effects/build_context.rs`,
+`crates/ciphernode-builder/src/ciphernode_builder.rs` (`setup_extensions`).
+
+`E3RouterBuilder::with_recipient` installs an extension with its expected recipient key. `E3Context`
+derives missing recipients from those extensions, both at creation and hydration. Dependency-only
+extensions declare no recipient. A bootstrap router therefore retains no deferred protocol events,
+even while it routes admitted E3 history. `E3ContextSnapshot` still contains only the E3 ID,
+attached-recipient keys, and dependency keys.
+
+For each missing recipient, `EventBuffer` retains events in arrival order. The recipient receives
+that queue before the event that creates it. Each queued recipient copy consumes one item.
+
+`event_bytes` measures fixed-integer bincode size and nested allocation candidates in one serde
+pass. It allocates no encoded copy. Each string, byte buffer, collection, field, and variable
+payload adds a 64-byte reservation. Collection elements and map keys and values also add 64 bytes
+each. Fields, elements, and variable payloads reserve their inline Rust size as well. Fixed tuples
+retain their encoded-byte charge without per-element allocation charges.
+
+The 64-byte reservation covers reference counters, container headers, alignment, and allocator
+metadata on 64-bit nodes. An `Arc<Vec<u8>>` has two reference counters and a 24-byte vector header,
+before its byte storage. Its 40-byte allocation plus typical 16-byte allocator metadata fits this
+reservation. The collection slot is charged separately. Fields and inline byte arrays can receive
+reservations without separate allocations, so the count is conservative. Shared payloads count again
+for each recipient.
+
+Large contiguous buffers add constant overhead, with no charge per payload byte beyond their encoded
+size.
+
+`ArcBytes::try_from_bytes` removes spare byte capacity before it shares storage. The router forwards
+cloned events, whose owned vectors and strings retain only their used capacity. Before deferral,
+`compact_shared_collections` clones each shared key or threshold-share payload. This compacts its
+vectors and strings while its byte payloads remain shared.
+
+Each entry also reserves twice the inline `InterfoldEvent` size for the growing queue's capacity.
+These reservations cover retained storage rather than exact resident memory. Item limits also bound
+queue entries. These limits apply across all missing recipients of an E3:
+
+| Scope  |  Items | Accounted bytes |
+| ------ | -----: | --------------: |
+| One E3 |  4,096 |           1 GiB |
+| Router | 16,384 |           3 GiB |
+
+The capacity envelope uses N=19, H=14, and the secure 8192-degree preset. There are three threshold
+limbs and two DKG limbs (`crates/fhe-params/src/constants.rs`). The current `gen_esi_sss` path
+creates one smudging polynomial. The creation points determine which histories overlap:
+
+| Recipient                                              | Creation event                                                 | Deferred history                              |
+| ------------------------------------------------------ | -------------------------------------------------------------- | --------------------------------------------- |
+| `accusation_manager`, `commitment_consistency_checker` | `CommitteeFinalized`                                           | Request and committee formation               |
+| `threshold_keyshare`, `publickey`                      | `CiphernodeSelected`                                           | Formation and early peer contributions        |
+| `plaintext`                                            | `CiphertextOutputPublished`, once committee dependencies exist | DKG, computation, and early decryption shares |
+
+The creation hooks are in
+`crates/slashing/src/{accusation_manager_ext,commitment_consistency_checker_ext}.rs`,
+`crates/keyshare/src/ext.rs`, and `crates/aggregator/src/ext.rs`. The local C1–C4 witness history
+starts after local selection. It therefore needs one deferred copy for `plaintext`. A node outside
+the committee produces no local DKG witness history.
+
+The late-recipient allowance includes local events and document envelopes:
+
+- C3 generates `2 × (N − 1) × 3 = 108` proofs. C0, C1, two C2 proofs, and two C4 proofs bring the
+  base count to 114. Reserve four routed records per proof, including a failed computation's request
+  payload, result, signing, and aggregation. Another 256 records cover fold results, verification,
+  roster coordination, and lifecycle events. `32 × N = 608` records cover keys, shares, document
+  wrappers, and decryption. These allowances total 1,320. Round up to 1,536.
+- A DKG ciphertext or public key has at most `2 × 2 × 8192 × 8 = 262,144` coefficient bytes. A C3
+  request also has a 64 KiB share row and three 128 KiB randomness/error polynomials. Its
+  coefficient data totals 960 KiB. The 108 requests, full encrypted share, C1 witness, and two C2
+  share matrices fit a 160 MiB allowance for `ThresholdSharePending`.
+- Reserve another 128 MiB for the separately emitted C1–C3 `ComputeRequest` payloads. Plain
+  `ComputeRequest` events have no routing E3 ID and are ignored by this router.
+  `ComputeRequestError` retains the complete request and does have a routing E3 ID
+  (`crates/events/src/interfold_event/mod.rs`, `get_e3_id`). The allowance includes one such
+  additional copy of every request. It does not depend on payload sharing with the pending event.
+- Outbound shares target N−1 parties. Party-filtered ingress supplies at most N−1 peer shares. Allow
+  2 MiB for each of those 36 shares, including its C2/C3 proofs. Count both the typed event and its
+  `PublishDocumentRequested` or `DocumentReceived` envelope: 144 MiB.
+- Two C4 inputs use at most `2 × H × 3` DKG ciphertexts, or 21 MiB of coefficient data. Reserve 32
+  MiB for `DecryptionShareProofsPending` and another 32 MiB for its computation failures. Reserve 64
+  MiB for keys, TrBFV responses, decryption shares, proof records, and control events.
+
+These allowances total 560 MiB. Round up to 640 MiB for encoding, allocation reservations, inline
+storage, and payload variation. The allowance includes the separately routed request payloads.
+Repeated failures or contributions can consume the remaining margin and eventually trigger the
+overflow policy. These are capacity allowances, not event validation rules.
+
+Before local selection, reserve 80 MiB and 256 records for peer contributions and formation. At most
+three recipients still need that history after `CommitteeFinalized`: 240 MiB and 768 entries. Before
+committee finalization, five such prefixes use 400 MiB and 1,280 entries. These prefixes drain
+before local witnesses arrive. The peak is thus the late-recipient envelope, not five copies of it.
+The per-E3 budget leaves 384 MiB (60%) above 640 MiB and 2,560 entries above 1,536. Four
+simultaneous E3s reserve 2.5 GiB and 6,144 entries. The shared byte limit leaves 512 MiB (20%) above
+that allowance.
+
+The shared limit caps retained reservations at 3 GiB, including nested allocations and queue
+capacity. For an 8 GiB memory budget, reserve another 1.5 GiB for allocator fragmentation, freed
+storage, and an in-flight event. This leaves 3.5 GiB for the process baseline, live actors, and the
+system. The extra reserve is a tested operating allowance, not a bound on total node RSS or
+arbitrary incoming events. The buffer cannot bound storage that another actor or the network decoder
+already holds. Proof workers need their own memory allowance.
+
+`crates/request/src/routing/capacity_tests.rs` routes four independent secure-preset histories. It
+uses real pending-share, share, computation-error, document, and proof-result event types. Opaque
+payloads have secure-preset sizes plus encoding allowances, and each construction allocates and
+fills new storage. The fixture includes all 108 C3 requests and both C4 inputs again through
+computation failures. It delays local selection until peer contributions arrive, then checks ordered
+delivery at each recipient's creation event. Its 1,536-record histories fit below 512 MiB of
+reservations each. The Linux check measures resident growth with four histories and near the shared
+byte ceiling. It requires distinct resident storage and at most 4.5 GiB of peak resident growth
+during saturation, including allocator overhead. It also routes independently allocated empty byte
+buffers and requires their allocation reservations to trigger per-E3 overflow below the encoded-byte
+and item limits. Overflow assertions exercise the shipped defaults through `E3Router`. Separate
+regressions require shared byte storage and deferred shared collections to release spare capacity.
+
+If an addition exceeds either limit, the router discards that E3's queue for the missing recipient.
+It records a deferred-delivery failure, logs at ERROR, and rejects further deferral for that queue.
+It continues live routing, extension hooks, checkpoints, and other E3s. A late recipient still
+receives live events. The affected E3 can fail at its existing deadline. Teardown releases queue
+reservations and failure records. Restart starts with empty queues and failure records. The buffer
+does not read EventStore or recover events before the existing checkpoint.
 
 ### 2b. CiphernodeSelector Processing
 
@@ -664,8 +799,9 @@ A ready committee must finalize at or before its absolute DKG deadline.
    Ticket, activation, and configuration checkpoints use source seconds and log order from their
    `*At` payloads. The gateway captures these before the local clock merge. Snapshot replay and
    offline repair preserve the same positions; older backfill cannot overwrite newer checkpoints,
-   including within one block. Schema 7 requires a controlled resync of schema-6 histories; old
-   event variants stay decodable but do not supply trusted source timestamps.
+   including within one block. The operator of a schema-6 node clears its state with
+   `interfold node reset-data`, and the node syncs again from the chain history. Old event variants
+   stay decodable but do not supply trusted source timestamps.
 
 3. **Runtime committee order**: both the on-chain registry and Rust runtime normalize the finalized
    committee into ascending address order before deriving `party_id`. This keeps party IDs,
@@ -711,13 +847,14 @@ A ready committee must finalize at or before its absolute DKG deadline.
     `Interfold.initialize` registers it before it transfers ownership to `protocolOwner`. For
     DAO-owned deployments, `protocolOwner` is the DAO, not a Safe. Every registration rejects an
     address without runtime code. After initialization, only the owner can register or retire a
-    program. Retirement closes new request admission without changing existing E3 records. The
-    deployment can create `MockE3Program` as the initial program. This stateless program accepts the
-    active BFV scheme and applies no application rules. It has no owner, controller, or mutable
-    configuration. The request-time ciphertext verifier and decryption verifier still verify the
-    protocol proofs. Its deterministic data-availability receipt is only for tests. Requests remain
-    paused until a production E3 program is registered and wired, and an interface-incompatible
-    bootstrap mock is retired.
+    program. Retirement closes new request admission without changing existing E3 records. On
+    Sepolia and local chains, the deployment can create `MockE3Program` as the initial program; the
+    `check-config` and `deploy` actions refuse it, and `DeployableMockCiphertextVerifier`, on every
+    other chain. This stateless program accepts the active BFV scheme and applies no application
+    rules. It has no owner, controller, or mutable configuration. The request-time ciphertext
+    verifier and decryption verifier still verify the protocol proofs. Its deterministic
+    data-availability receipt is only for tests. Requests remain paused until a production E3
+    program is registered and wired, and an interface-incompatible bootstrap mock is retired.
 
 ---
 

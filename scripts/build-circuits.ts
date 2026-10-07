@@ -39,7 +39,7 @@ import {
   type CircuitPreset,
 } from './circuit-constants'
 
-const CIRCUIT_VERSION_LABEL = 'interfold-bfv-v2'
+const CIRCUIT_VERSION = 'interfold-bfv-v4'
 
 const LBFV_THRESHOLD_CIRCUITS = new Set([
   'lbfv_pk_generation',
@@ -195,6 +195,108 @@ export function stripRustTestModules(source: Buffer): Buffer {
     kept.push(lines[i])
   }
   return Buffer.from(kept.join('\n'))
+}
+
+/**
+ * The C1 and C2 bound globals. Their values depend on the committee, so the build regenerates them
+ * for each pair, and the source hash of a pair ignores them.
+ */
+const COMMITTEE_BOUND_SOURCES = [
+  { circuit: 'pk-generation', file: 'threshold.nr', prefix: 'PK_GENERATION_' },
+  { circuit: 'share-computation', file: 'dkg.nr', prefix: 'SHARE_COMPUTATION_' },
+] as const
+
+/**
+ * Return each `pub global NAME: ...;` declaration of a Noir source, keyed by name.
+ *
+ * A declaration ends at the first `;` outside brackets and parentheses. An array type such as
+ * `[Field; L]` contains a `;` of its own, and `nargo fmt` can wrap a value over several lines.
+ */
+function noirGlobalDeclarations(source: string): Map<string, string> {
+  const declarations = new Map<string, string>()
+  for (const match of source.matchAll(/^pub global ([A-Z0-9_]+):/gm)) {
+    let depth = 0
+    for (let end = match.index + match[0].length; end < source.length; end++) {
+      const char = source[end]
+      if (char === '[' || char === '(') depth++
+      else if (char === ']' || char === ')') depth--
+      else if (char === ';' && depth === 0) {
+        declarations.set(match[1], source.slice(match.index, end + 1))
+        break
+      }
+    }
+  }
+  return declarations
+}
+
+/** One Noir config file, with its C1 or C2 bound globals regenerated for a pair. */
+export interface CommitteeBoundUpdate {
+  path: string
+  generated: string
+  original: string
+  updated: string
+}
+
+/**
+ * Regenerate the C1 and C2 bound globals of one pair and return the new config text. Nothing is
+ * written. Every generated declaration replaces the whole committed declaration, so the array
+ * bounds change with the committee as the scalar bounds do.
+ */
+export function committeeBoundUpdates(rootDir: string, preset: CircuitPreset, committee: CircuitCommittee): CommitteeBoundUpdate[] {
+  const tier = PRESET_NOIR_CONFIG[preset]
+  const temporaryDir = mkdtempSync(join(tmpdir(), 'interfold-noir-config-'))
+  try {
+    return COMMITTEE_BOUND_SOURCES.map((source) => {
+      const outputDir = join(temporaryDir, source.circuit)
+      mkdirSync(outputDir)
+      execFileSync(
+        'cargo',
+        [
+          'run',
+          '--quiet',
+          '-p',
+          'e3-zk-helpers',
+          '--bin',
+          'zk_cli',
+          '--',
+          '--circuit',
+          source.circuit,
+          '--preset',
+          tier,
+          '--committee',
+          committee,
+          '--output',
+          outputDir,
+        ],
+        { cwd: rootDir, stdio: 'pipe' },
+      )
+      const path = join(rootDir, 'circuits', 'lib', 'src', 'configs', tier, source.file)
+      const generated = readFileSync(join(outputDir, 'configs.nr'), 'utf8')
+      const original = readFileSync(path, 'utf8')
+      const committed = noirGlobalDeclarations(original)
+      const fresh = noirGlobalDeclarations(generated)
+      let updated = original
+      let count = 0
+      for (const [name, declaration] of fresh) {
+        if (!name.startsWith(source.prefix)) continue
+        const current = committed.get(name)
+        if (current === undefined) throw new Error(`Missing ${name} in ${path}`)
+        // `nargo fmt` wraps long committed declarations. A layout difference alone is no change.
+        if (current.replace(/\s+/g, '') !== declaration.replace(/\s+/g, '')) updated = updated.replace(current, () => declaration)
+        count++
+      }
+      if (count === 0) throw new Error(`No ${source.prefix} constants generated for ${preset}/${committee}`)
+      // The pair source hash ignores every declaration with this prefix, so each one must be generated.
+      for (const name of committed.keys()) {
+        if (name.startsWith(source.prefix) && !fresh.has(name)) {
+          throw new Error(`${name} in ${path} is not generated for ${preset}/${committee}. Remove it or generate it.`)
+        }
+      }
+      return { path, generated, original, updated }
+    })
+  } finally {
+    rmSync(temporaryDir, { recursive: true, force: true })
+  }
 }
 
 interface CircuitInfo {
@@ -430,16 +532,16 @@ class NoirCircuitBuilder {
 
   private bfvConfig(preset: CircuitPreset, committee: CircuitCommittee) {
     const { h, t, n } = COMMITTEE_PARAMS[committee]
-    const paramSet = preset === CIRCUIT_PRESETS.INSECURE ? 0 : preset === CIRCUIT_PRESETS.SECURE_8192 ? 1 : 2
+    const paramSet = preset === CIRCUIT_PRESETS.INSECURE ? 0 : preset === CIRCUIT_PRESETS.SECURE_8192 ? 2 : 3
     const committeeSize = ALL_COMMITTEES.indexOf(committee)
-    const params = paramSet === 0 ? BFV_PARAMS.insecure : paramSet === 1 ? BFV_PARAMS.secure8192 : BFV_PARAMS.secure16384
+    const params = paramSet === 0 ? BFV_PARAMS.insecure : paramSet === 2 ? BFV_PARAMS.secure8192 : BFV_PARAMS.secure16384
     const encodedParams = AbiCoder.defaultAbiCoder().encode(
       ['tuple(uint256 degree,uint256 plaintext_modulus,uint256[] moduli,string error1_variance)'],
       [[params.degree, params.plaintextModulus, [...params.moduli], params.error1Variance]],
     )
     const paramSetHash = keccak256(encodedParams)
     const configId = keccak256(
-      AbiCoder.defaultAbiCoder().encode(['bytes32', 'bytes32', 'bytes32'], [id('fhe.rs:BFV'), paramSetHash, id(CIRCUIT_VERSION_LABEL)]),
+      AbiCoder.defaultAbiCoder().encode(['bytes32', 'bytes32', 'bytes32'], [id('fhe.rs:BFV'), paramSetHash, id(CIRCUIT_VERSION)]),
     )
     return { h, t, n, paramSet, committeeSize, paramSetHash, configId }
   }
@@ -627,7 +729,7 @@ import { IInterfold } from "../interfaces/IInterfold.sol";
 // currently supports the minimum committee because its V2 verifier route is available only for it.
 library ActiveCryptoConfig {
     bytes32 internal constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
-    bytes32 internal constant CIRCUIT_VERSION = keccak256("${CIRCUIT_VERSION_LABEL}");
+    bytes32 internal constant CIRCUIT_VERSION = keccak256("${CIRCUIT_VERSION}");
 
     bytes32 internal constant INSECURE_CONFIG_ID =
         ${testnet.configId};
@@ -863,6 +965,7 @@ library ActiveCryptoConfig {
       copyPair(join(defaultDir, `${packageName}.json`), join(targetDir, `${packageName}.json`))
       copyPair(join(defaultDir, `${packageName}.vk`), join(targetDir, `${packageName}.vk_recursive`))
       copyPair(join(defaultDir, `${packageName}.vk_hash`), join(targetDir, `${packageName}.vk_recursive_hash`))
+      copyPair(join(defaultDir, `${packageName}.vk_tree_hash`), join(targetDir, `${packageName}.vk_tree_hash`))
 
       const evmDir = join(distRoot, CIRCUIT_VARIANTS.EVM, circuit.group, circuit.name)
       copyPair(join(evmDir, `${packageName}.vk`), join(targetDir, `${packageName}.vk`))
@@ -891,6 +994,11 @@ library ActiveCryptoConfig {
       join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'decryption_aggregator.json'),
       join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'decryption_aggregator.vk'),
       ...requiredLbfvDistMarkers(dist, preset),
+      // VK-tree anchors that deployment pins. The trBFV DKG tree is not built for secure-16384.
+      ...(preset === CIRCUIT_PRESETS.SECURE_16384
+        ? []
+        : [join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, 'nodes_fold', 'nodes_fold.vk_tree_hash')]),
+      join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, 'c6_fold', 'c6_fold.vk_tree_hash'),
     ]
   }
 
@@ -905,6 +1013,10 @@ library ActiveCryptoConfig {
       join(hydratedCircuitTargetDir(bin, CIRCUIT_GROUPS.DKG, 'pk'), 'pk.json'),
       join(hydratedCircuitTargetDir(bin, CIRCUIT_GROUPS.THRESHOLD, 'pk_aggregation'), 'pk_aggregation.json'),
       ...requiredLbfvBinMarkers(bin, preset),
+      ...(preset === CIRCUIT_PRESETS.SECURE_16384
+        ? []
+        : [join(hydratedCircuitTargetDir(bin, CIRCUIT_GROUPS.AGGREGATION, 'nodes_fold'), 'nodes_fold.vk_tree_hash')]),
+      join(hydratedCircuitTargetDir(bin, CIRCUIT_GROUPS.AGGREGATION, 'c6_fold'), 'c6_fold.vk_tree_hash'),
     ]
   }
 
@@ -974,69 +1086,11 @@ library ActiveCryptoConfig {
   }
 
   private syncCommitteeBounds(preset: CircuitPreset, committee: CircuitCommittee): void {
-    const tier = PRESET_NOIR_CONFIG[preset]
-    const configDir = join(this.rootDir, 'circuits', 'lib', 'src', 'configs', tier)
-    const temporaryDir = mkdtempSync(join(tmpdir(), 'interfold-noir-config-'))
-    const sources = [
-      { circuit: 'pk-generation', file: 'threshold.nr', prefix: 'PK_GENERATION_' },
-      { circuit: 'share-computation', file: 'dkg.nr', prefix: 'SHARE_COMPUTATION_' },
-    ]
-
-    try {
-      for (const source of sources) {
-        const outputDir = join(temporaryDir, source.circuit)
-        mkdirSync(outputDir)
-        execFileSync(
-          'cargo',
-          [
-            'run',
-            '--quiet',
-            '-p',
-            'e3-zk-helpers',
-            '--bin',
-            'zk_cli',
-            '--',
-            '--circuit',
-            source.circuit,
-            '--preset',
-            preset,
-            '--committee',
-            committee,
-            '--output',
-            outputDir,
-          ],
-          { cwd: this.rootDir, stdio: 'pipe' },
-        )
-      }
-
-      for (const source of sources) {
-        const targetPath = join(configDir, source.file)
-        const generated = readFileSync(join(temporaryDir, source.circuit, 'configs.nr'), 'utf8')
-        const original = readFileSync(targetPath, 'utf8')
-        let updated = original
-        let count = 0
-        for (const match of generated.matchAll(/^pub global ([A-Z0-9_]+):[^;]*;/gm)) {
-          const name = match[1]
-          if (!name.startsWith(source.prefix)) continue
-          const declaration = new RegExp(`^pub global ${name}:[^;]*;`, 'm')
-          if (!declaration.test(updated)) {
-            // The name can be provided via an import alias (e.g. `pub use ...::{X_E_SM_BIT as
-            // PK_GENERATION_BIT_E_SM}`). An aliased value is owned by the committee config module,
-            // already regenerated above, so there is no literal declaration to patch. Skip it.
-            const alias = new RegExp(`as\\s+${name}\\b`)
-            if (alias.test(updated)) continue
-            throw new Error(`Missing ${name} in ${targetPath}`)
-          }
-          updated = updated.replace(declaration, match[0])
-          count++
-        }
-        if (count === 0) throw new Error(`No ${source.prefix} constants generated for ${preset}/${committee}`)
-        if (updated !== original) writeFileSync(targetPath, updated)
-      }
-      console.log(`   📋 Regenerated C1/C2 bounds for ${preset}/${committee}`)
-    } finally {
-      rmSync(temporaryDir, { recursive: true, force: true })
-    }
+    const changed = committeeBoundUpdates(this.rootDir, preset, committee).filter(({ original, updated }) => updated !== original)
+    for (const { path, updated } of changed) writeFileSync(path, updated)
+    // The generator writes each declaration on one line. Keep the committed configs as `nargo fmt` leaves them.
+    if (changed.length > 0) execSync('nargo fmt', { cwd: join(this.rootDir, 'circuits', 'lib'), stdio: ['ignore', 'pipe', 'inherit'] })
+    console.log(`   📋 Regenerated C1/C2 bounds for ${preset}/${committee}`)
   }
 
   private async buildForPreset(preset: CircuitPreset, committee: CircuitCommittee, modNrPath?: string): Promise<BuildResult> {
@@ -1124,6 +1178,13 @@ library ActiveCryptoConfig {
       }
 
       this.copyArtifacts(result.compiled, presetOutputDir, preset)
+      // Only a complete build with keys holds the whole VK tree.
+      const complete =
+        result.errors.length === 0 &&
+        !this.options.skipVk &&
+        !this.options.circuits &&
+        ALL_GROUPS.every((group) => this.options.groups?.includes(group))
+      this.refreshVkTreeHashes(presetOutputDir, complete)
       if (result.errors.length === 0) {
         if (this.hasCompleteCircuitSelection()) {
           this.writePresetStamp(preset, committee, sourceHash)
@@ -1462,6 +1523,40 @@ library ActiveCryptoConfig {
     return createHash('sha256').update(readFileSync(filePath)).digest('hex')
   }
 
+  /**
+   * Make the two immutable trust anchors match the keys of this build. A complete build computes
+   * them from the artifact pair. Any other build replaces some keys and keeps the rest, so it
+   * removes the anchors until the next complete build: an old anchor can hash a key that the pair
+   * no longer holds.
+   */
+  private refreshVkTreeHashes(pairDir: string, complete: boolean): void {
+    const anchors = ['nodes_fold', 'c6_fold'].map((name) => ({
+      name,
+      paths: [
+        join(pairDir, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, name, `${name}.vk_tree_hash`),
+        join(this.circuitsDir, CIRCUIT_GROUPS.AGGREGATION, name, 'target', `${name}.vk_tree_hash`),
+      ],
+    }))
+    for (const { paths } of anchors) for (const path of paths) rmSync(path, { force: true })
+    if (!complete) return
+
+    const hashes = JSON.parse(
+      execFileSync(
+        'cargo',
+        ['run', '--quiet', '--locked', '--release', '-p', 'e3-zk-helpers', '--bin', 'compute-vk-hash', '--', '--bfv-tree', pairDir],
+        { cwd: this.rootDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] },
+      ),
+    ) as Record<string, string>
+    for (const { name, paths } of anchors) {
+      const hash = hashes[name]
+      if (typeof hash !== 'string' || !/^0x[0-9a-f]{64}$/.test(hash)) {
+        throw new Error(`Invalid recursive VK-tree hash for ${name}`)
+      }
+      const bytes = Buffer.from(hash.slice(2), 'hex')
+      for (const path of paths) writeFileSync(path, bytes)
+    }
+  }
+
   private cleanOutputSelection(presets: CircuitPreset[], committees: CircuitCommittee[]): void {
     if (!this.options.clean || !existsSync(this.options.outputDir!)) return
 
@@ -1600,6 +1695,8 @@ library ActiveCryptoConfig {
     for (const c of circuits) this.hashDir(c.path, hash, `circuits/${c.group}/${c.name}`)
     // These sources generate the ignored bounds and parity matrices.
     for (const sourceDir of [
+      'circuits/lib/src/core',
+      'circuits/lib/src/math',
       'crates/zk-helpers/src',
       'crates/fhe-params/src',
       'crates/fhe/src',
@@ -1611,6 +1708,11 @@ library ActiveCryptoConfig {
       if (existsSync(path)) this.hashDir(path, hash)
     }
     for (const sourceFile of [
+      'circuits/lib/Nargo.toml',
+      'circuits/lib/src/lib.nr',
+      'circuits/lib/src/configs/mod.nr',
+      'circuits/lib/src/configs/committee/mod.nr',
+      'circuits/lib/src/configs/default/mod.nr',
       'scripts/build-circuits.ts',
       'scripts/circuit-constants.ts',
       'packages/interfold-contracts/scripts/protocol/constants.ts',
@@ -1619,7 +1721,16 @@ library ActiveCryptoConfig {
       const path = join(this.rootDir, sourceFile)
       if (existsSync(path)) {
         hash.update(sourceFile)
-        const source = readFileSync(path)
+        let source = readFileSync(path)
+        if (sourceFile === 'circuits/lib/src/configs/default/mod.nr') {
+          // The pair already identifies its preset. Keep shared constants, not the local selection.
+          source = Buffer.from(
+            source
+              .toString()
+              .replace(/preset: (insecure-512|secure-8192)/g, 'preset: <selected>')
+              .replace(/super::(insecure|secure)::/g, 'super::<selected>::'),
+          )
+        }
         hash.update(sourceFile === 'Cargo.lock' ? normalizeCargoLockForCircuitHash(source) : source)
       }
     }
@@ -1687,12 +1798,13 @@ library ActiveCryptoConfig {
       } else if (stat.isFile()) {
         hash.update(entryRelativePath)
         let source = readFileSync(fullPath)
-        if (normalizeBounds && (entry === 'dkg.nr' || entry === 'threshold.nr')) {
-          source = Buffer.from(
-            source
-              .toString()
-              .replace(/^pub global ((?:PK_GENERATION|SHARE_COMPUTATION)_[A-Z0-9_]+):[^;]*;/gm, 'pub global $1:<generated>;'),
-          )
+        const bounds = normalizeBounds ? COMMITTEE_BOUND_SOURCES.find(({ file }) => file === entryRelativePath) : undefined
+        if (bounds) {
+          let text = source.toString()
+          for (const [name, declaration] of noirGlobalDeclarations(text)) {
+            if (name.startsWith(bounds.prefix)) text = text.replace(declaration, () => `pub global ${name}:<generated>;`)
+          }
+          source = Buffer.from(text)
         }
         hash.update(entry.endsWith('.rs') ? stripRustTestModules(source) : source)
       }
@@ -1807,7 +1919,7 @@ export {
   CircuitGroup,
   CIRCUIT_GROUPS,
   CIRCUIT_PRESETS,
-  CIRCUIT_VERSION_LABEL,
+  CIRCUIT_VERSION,
   configModuleFiles,
   generatedConfigDrift,
   hydratedCircuitTargetDir,

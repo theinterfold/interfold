@@ -9,8 +9,14 @@
 //! These contain all decision/state logic that the actix actors and transport layer rely on.
 //! Nothing here touches actix, the event bus, channels, or libp2p directly.
 
+#[path = "closed_e3s.rs"]
+pub(crate) mod closed_e3s;
 #[path = "network_sync/correlator.rs"]
 pub(crate) mod correlator;
+#[path = "dht_put_summary.rs"]
+pub(crate) mod dht_put_summary;
+#[path = "dht_puts.rs"]
+pub(crate) mod dht_puts;
 #[path = "document_publishing/workflow.rs"]
 pub(crate) mod document_publishing;
 #[path = "event_conversion/workflow.rs"]
@@ -25,12 +31,17 @@ pub(crate) mod net_event_batch;
 mod network_status;
 #[path = "peer_failure_tracker.rs"]
 pub(crate) mod peer_failure_tracker;
+#[path = "replica_ledger.rs"]
+pub(crate) mod replica_ledger;
 #[path = "network_sync/workflow.rs"]
 pub(crate) mod sync_coordinator;
 #[path = "network_sync/wire.rs"]
 pub(crate) mod wire;
 
-pub use document_publishing::{datetime_to_instant_from_now, DocumentPublishingService};
+pub use document_publishing::{
+    datetime_to_instant_from_now, Cleanup, CleanupQueue, DocumentPublishingService, FetchQueue,
+    PublicationSchedule, RestorableDocuments, WaitingFetch,
+};
 pub use event_conversion::{EventConversionService, IncomingDocument};
 pub use event_translation::EventTranslationService;
 pub use network_status::{ConnectedPeer, NetworkSnapshot, NetworkStatus};

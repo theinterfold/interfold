@@ -21,6 +21,8 @@ const PUBLISH_INPUT_ABI = parseAbi(['function publishInput(uint256 e3Id, bytes d
  * @param crispProgram The CRISP program address.
  * @param e3Id The round.
  * @param encodedProof The compact proof-commitment payload returned by the availability service.
+ * @param isCancelled Returns true when the page that started the submission closed. It is checked
+ * after the simulation, which lasts as long as the RPC takes, so a closed page opens no wallet prompt.
  * @returns The transaction hash, after one confirmation.
  */
 export const submitInputCommitmentDirectly = async (
@@ -29,6 +31,7 @@ export const submitInputCommitmentDirectly = async (
   crispProgram: Address,
   e3Id: bigint,
   encodedProof: Hex,
+  isCancelled: () => boolean,
 ): Promise<Hex> => {
   const account = walletClient.account
   if (!account) throw new Error('Wallet has no account to submit from')
@@ -41,6 +44,7 @@ export const submitInputCommitmentDirectly = async (
     args: [e3Id, encodedProof],
   })
 
+  if (isCancelled()) throw new Error('The page closed before the wallet prompt')
   const hash = await walletClient.writeContract(request)
   const receipt = await publicClient.waitForTransactionReceipt({ hash })
 

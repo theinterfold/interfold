@@ -71,6 +71,10 @@ pub enum ZkRequest {
     LbfvAggregationFold(LbfvAggregationFoldRequest),
     /// Aggregate the secure-16384 DKG proof chain.
     DkgAggregationV2(DkgAggregationV2Request),
+    /// Re-verify a C3a/C3b proof that an accusation forwards. It is accusation work, so it still
+    /// runs after the E3 fails, until the request completes. Its response is
+    /// `ZkResponse::VerifyShareProofs`.
+    ReverifyAccusedProof(VerifyShareProofsRequest),
 }
 
 impl ZkRequest {

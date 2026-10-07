@@ -1,49 +1,171 @@
-## Encrypted Execution Environment (E3)
+---
+title: 'What is an E3?'
+description:
+  'An Encrypted Execution Environment (E3) is one confidential computation that the Interfold
+  contract records from request to result.'
+---
 
-An **Encrypted Execution Environment (E3)** enables secure computation over encrypted inputs from
-multiple independent parties. E3s combine three essential components to preserve input
-confidentiality and support correct execution:
+import { Flow, LinkCards, LinkCard } from '@/components/ui'
 
-1. **Fully Homomorphic Encryption (FHE):** Enables computation directly on encrypted data without
-   decrypting it.
-2. **Zero-Knowledge Proofs (ZKPs):** Enable verification of inputs and computation without revealing
-   sensitive information, making it possible to validate correctness while preserving privacy.
-3. **Distributed Threshold Cryptography (DTC):** Distributes cryptographic key control across
-   multiple ciphernodes, reducing reliance on any single operator and eliminating single points of
-   failure.
+# What is an E3?
 
-Together, these components make it possible to compute across private inputs without exposing the
-underlying data.
+An Encrypted Execution Environment (E3) is one confidential computation on the Interfold. This page
+explains the parts of an E3 and how they connect. It is for developers and operators who want the
+concept before the procedures. At the end, you can name each part and the proof that protects it.
 
-The docs site goes deeper on how the ciphernode stack implements this in practice (BFV, DKG, proofs
-**C0–C7**) in [Cryptography](/cryptography); tooling lives under [Noir Circuits](/noir-circuits).
+## Definition
 
-### When to Use E3s
+An E3 is one computation over encrypted inputs. The Interfold contract (`Interfold.sol`) creates the
+E3 when a requester calls `request`. The contract then records the E3 as it moves through its stages
+to a result or to a failure.
 
-E3s are useful when you need to:
+Each E3 has its own committee, its own DKG, and its own public key. Each E3 also has its own
+deadlines and its own fee escrow. The contract identifies the E3 with an `e3Id`.
 
-- Compute across sensitive inputs from multiple parties without taking custody of the underlying
-  plaintext data.
-- Build workflows compatible with data protection requirements such as GDPR or HIPAA.
-- Reduce operational and legal liability when handling sensitive data.
-- Produce shared results from otherwise inaccessible or sensitive datasets.
-- Reduce reliance on any single operator or trusted hardware component.
+An `e3Id` is a large number, not a small counter. Each Interfold deployment starts its counter at
+its own contract address shifted left by 96 bits. Tools must store an `e3Id` as a full `uint256`
+value.
 
-### Practical Use Cases
+<Flow
+  label='Parts of an E3'
+  steps={[
+    { label: 'Request', icon: 'contract', sub: 'The requester selects an E3 program and pays.' },
+    { label: 'Committee key', icon: 'key', sub: 'Ciphernodes run DKG and publish one key.' },
+    { label: 'Encrypted inputs', icon: 'lock', sub: 'Data providers encrypt under that key.' },
+    { label: 'Compute', icon: 'chip', sub: 'The compute provider runs over ciphertexts.' },
+    { label: 'Decrypt', icon: 'shield', sub: 'T + 1 shares decrypt only the output.' },
+  ]}
+/>
 
-- **Secret Ballots**: Implement voting systems that preserve ballot secrecy while producing
-  verifiable outcomes.
-- **Secure Data Analysis**: Compute across private datasets without taking custody of raw data.
-- **Collaborative Research**: Enable multiple organizations to jointly analyze sensitive data
-  without sharing the underlying records.
+## Parts of an E3
 
-### How E3s Work for Developers
+### E3 program
 
-As a developer, building with an E3 typically involves:
+The E3 program defines what the E3 computes. It has two parts:
 
-- Defining the computation logic for the E3 Program.
-- Configuring the parameters for the execution environment.
-- Submitting encrypted inputs.
-- Retrieving and verifying the result.
+- **The program contract.** A Solidity contract that implements `IE3Program` and
+  `IE3ProgramDataAvailability`. It validates each request, accepts inputs, and verifies the compute
+  proof and the data-availability receipt.
+- **The secure process.** The FHE computation that runs over the encrypted inputs. The default
+  template adds all inputs (`templates/default/program/src/lib.rs`).
 
-Each of these steps is covered in detail in the following sections.
+The owner of the Interfold contract must register a program with `registerE3Program` before requests
+can use it. The Interfold contract calls these program functions:
+
+| Function                 | When the Interfold contract calls it                                           |
+| ------------------------ | ------------------------------------------------------------------------------ |
+| `validate`               | During `request`. The program checks the parameters and returns the scheme ID. |
+| `verify`                 | During `publishCiphertextOutput`. The program checks the compute proof.        |
+| `verifyDataAvailability` | During `publishCiphertextOutput`. The program checks the availability receipt. |
+
+The `IE3Program` interface also has `publishInput`. Data providers call it directly on the program
+contract. See [Program Contract](/build/e3-program/program-contract) and
+[Secure Process](/build/e3-program/secure-process).
+
+### Encrypted inputs
+
+A data provider encrypts an input under the committee public key. Clients get the serialized key
+from `CommitteePublicKeyChunkPublished` events. A client must check the key against the proven
+commitment before it uses the key. The client then calls `publishInput(e3Id, data)` on the E3
+program.
+
+The E3 program sets the input rules. The default template rejects an input after `inputWindow[1]`. A
+program can also require a ZK proof that each ciphertext is a valid BFV encryption under the
+committee key. The `user_data_encryption` circuits make this proof, and `@interfold/sdk` can
+generate it in the client. CRISP requires such a proof for each ballot.
+
+### Committee
+
+The committee is a set of N ciphernodes that sortition selects for this E3. The requester selects
+the committee size. Three sizes exist:
+
+| Size      | Committee size N | DKG contributions H | Threshold T | Shares to decrypt (T + 1) |
+| --------- | ---------------: | ------------------: | ----------: | ------------------------: |
+| `Minimum` |                3 |                   2 |           1 |                         2 |
+| `Micro`   |                9 |                   5 |           4 |                         5 |
+| `Small`   |               19 |                  14 |           9 |                        10 |
+
+The committee runs DKG. The public key comes from H accepted contributions, and decryption needs T +
+1 shares. The [Cryptography](/learn/cryptography) page explains N, H, and T. The
+[Sortition](/internals/sortition) page explains how tickets select the committee.
+
+### Compute provider
+
+The compute provider runs the secure process over the published inputs after the input window
+closes. In the current code, the compute provider is the RISC Zero zkVM. The template and CRISP both
+use it. The zkVM produces a receipt that proves which program ran over which inputs.
+
+The ciphertext output is stored on a data-availability layer. The Interfold contract stores only the
+Keccak-256 hash of the output bytes and a SAFE commitment to the ciphertext. See
+[Compute Provider](/build/e3-program/compute-provider).
+
+### Output
+
+The E3 has two outputs:
+
+1. The ciphertext output. The compute provider produces it, and the E3 enters `CiphertextReady`.
+2. The plaintext output. The committee decrypts the ciphertext output with T + 1 shares, and the E3
+   enters `Complete`.
+
+The committee decrypts only the output. The inputs stay encrypted. Applications read the result from
+`getE3(e3Id).plaintextOutput` or from the `PlaintextOutputPublished` event.
+
+### Proofs
+
+Four kinds of proof protect an E3:
+
+| Proof                     | Made by                    | What it proves                                                   | Where it is verified                                                            |
+| ------------------------- | -------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| DKG proof (C0 to C5)      | The active aggregator      | Key generation and key aggregation were correct                  | `publishCommittee`, through `BfvPkVerifier` and `DkgFoldAttestationVerifier`    |
+| Input proof (optional)    | The data provider's client | The input is a valid BFV encryption under the committee key      | The E3 program, according to its own rules                                      |
+| Compute proof             | The compute provider       | The secure process ran over the committed inputs                 | `publishCiphertextOutput`, through the ciphertext verifier and program `verify` |
+| Decryption proof (C6, C7) | The active aggregator      | The plaintext is the correct decryption of the ciphertext output | `publishPlaintextOutput`, through `BfvDecryptionVerifier`                       |
+
+## The E3 record
+
+The Interfold contract stores each E3 as an `E3` struct (`interfaces/IE3.sol`). `getE3(e3Id)`
+returns it.
+
+| Field                  | Content                                                                      |
+| ---------------------- | ---------------------------------------------------------------------------- |
+| `seed`                 | A random seed for the computation. Committee selection uses a separate seed. |
+| `committeeSize`        | `Minimum`, `Micro`, or `Small`                                               |
+| `requestBlock`         | The request time as a timestamp. The name stays for ABI compatibility.       |
+| `inputWindow`          | The start and end times for inputs                                           |
+| `encryptionSchemeId`   | The scheme that `validate` returned, for example `keccak256("fhe.rs:BFV")`   |
+| `e3Program`            | The E3 program contract                                                      |
+| `paramSet`             | The BFV parameter set index                                                  |
+| `customParams`         | Application-defined ABI-encoded parameters                                   |
+| `decryptionVerifier`   | The verifier for the decryption proof                                        |
+| `pkVerifier`           | The verifier for the DKG proof                                               |
+| `committeePublicKey`   | The commitment to the committee public key                                   |
+| `ciphertextOutput`     | The Keccak-256 hash of the serialized ciphertext output                      |
+| `ciphertextCommitment` | The SAFE commitment to the ciphertext, used by the decryption proof          |
+| `plaintextOutput`      | The decrypted output                                                         |
+| `requester`            | The address that requested the E3                                            |
+
+## When an E3 fits
+
+An E3 fits a task when all of these conditions are true:
+
+- Several parties contribute inputs that they do not want to reveal.
+- The application needs one result from those inputs, for example a sum or a tally.
+- No single operator is acceptable as the custodian of the inputs.
+- The application can wait for committee setup, the input window, computation, and decryption. An E3
+  does not give a real-time result.
+
+The [Use Cases](/learn/use-cases) page shows examples and their limits.
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='Architecture' href='/learn/architecture' icon='layers' tag='Learn'>
+    The contracts and services that run an E3, and how they interact.
+  </LinkCard>
+  <LinkCard title='E3 lifecycle' href='/learn/e3-lifecycle' icon='flow' tag='Learn'>
+    Each stage, the call that enters it, its events, and its deadline.
+  </LinkCard>
+  <LinkCard title='Build an E3 program' href='/build/e3-program' icon='build' tag='Build'>
+    Write the program contract and the secure process.
+  </LinkCard>
+</LinkCards>

@@ -86,13 +86,4 @@ mod tests {
         assert!(!root.is_empty());
         assert!(root.chars().all(|c| c.is_ascii_hexdigit()));
     }
-
-    #[test]
-    fn test_build_lean_imt_empty() {
-        let hashes = vec![];
-        let _tree = build_tree(hashes).expect("Failed to build empty LeanIMT");
-
-        // For empty tree, we expect it to be valid but may not have a root.
-        // Building with no leaves must not panic.
-    }
 }

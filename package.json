@@ -1,7 +1,7 @@
 {
   "name": "@interfold/main",
   "description": "Interfold is an open-source protocol for Encrypted Execution Environments (E3).",
-  "version": "0.18.0",
+  "version": "0.19.0-test.2",
   "private": true,
   "license": "LGPL-3.0-only",
   "author": {
@@ -31,6 +31,7 @@
     "check:committee": "./scripts/check-committee.sh",
     "check:docs": "./scripts/check-doc-sync.sh",
     "check:addresses": "tsx scripts/check-addresses.ts",
+    "check:bindings": "tsx scripts/check-cli-bindings.ts",
     "check:invariants": "./scripts/check-invariants.sh",
     "provenance:manifest": "tsx scripts/generate-provenance-manifest.ts",
     "check:verifiers": "tsx scripts/generate-verifiers.ts --check",

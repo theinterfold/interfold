@@ -33,7 +33,7 @@ export const PROOF = "0x1337";
 
 // ── Active BFV parameter set ────────────────────────────────────────────────
 const abiCoder = ethers.AbiCoder.defaultAbiCoder();
-export const CIRCUIT_VERSION = ethers.id("interfold-bfv-v2");
+export const CIRCUIT_VERSION = ethers.id("interfold-bfv-v4");
 
 function encodeBfvParams(params: {
   degree: bigint;
@@ -103,8 +103,8 @@ export const SECURE_16384_CRYPTO_CONFIG_ID = ethers.keccak256(
 
 export function cryptoConfigIdForParamSet(paramSet: number): string {
   if (paramSet === 0) return ACTIVE_CRYPTO_CONFIG_ID;
-  if (paramSet === 1) return PRODUCTION_CRYPTO_CONFIG_ID;
-  if (paramSet === 2) return SECURE_16384_CRYPTO_CONFIG_ID;
+  if (paramSet === 2) return PRODUCTION_CRYPTO_CONFIG_ID;
+  if (paramSet === 3) return SECURE_16384_CRYPTO_CONFIG_ID;
   throw new Error(`Unsupported BFV parameter set: ${paramSet}`);
 }
 
@@ -141,9 +141,11 @@ export const COMMITTEE_THRESHOLDS_DEFAULT: ReadonlyArray<
 > = [[COMMITTEE_SIZE_MINIMUM, [2, 3]]];
 
 /**
- * Production `setCommitteeThresholds` values from `scripts/deployInterfold.ts`:
- * `[H, N]` (minimum honest roster, committee size). On-chain `threshold[0]`
- * is the registry viability threshold H (`activeCount >= H`).
+ * `setCommitteeThresholds` values for every committee size, as the protocol
+ * configurations and the mock-verifier local deployment
+ * (`scripts/deployInterfold.ts`) set them: `[H, N]` (minimum honest roster,
+ * committee size). On-chain `threshold[0]` is the registry viability threshold
+ * H (`activeCount >= H`).
  *
  * Pass via `deployInterfoldSystem({ committeeThresholds: [...] })` when a
  * spec exercises post-expulsion viability with production semantics.

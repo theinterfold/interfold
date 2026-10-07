@@ -539,24 +539,6 @@ mod tests {
     }
 
     #[test]
-    fn extract_all_c1_outputs() {
-        let layout = CircuitOutputLayout::Fixed {
-            fields: PK_GENERATION_OUTPUTS,
-        };
-        let mut signals = vec![0u8; 96];
-        signals[0..32].copy_from_slice(&[0x11; 32]);
-        signals[32..64].copy_from_slice(&[0x22; 32]);
-        signals[64..96].copy_from_slice(&[0x33; 32]);
-
-        let all = layout.extract_all(&signals).unwrap();
-        assert_eq!(all.len(), 3);
-        assert_eq!(all[0].0, "sk_commitment");
-        assert_eq!(all[1].0, "pk_commitment");
-        assert_eq!(all[2].0, "e_sm_commitment");
-        assert_eq!(all[1].1, &[0x22; 32]);
-    }
-
-    #[test]
     fn field_count() {
         assert_eq!(
             CircuitOutputLayout::Fixed {

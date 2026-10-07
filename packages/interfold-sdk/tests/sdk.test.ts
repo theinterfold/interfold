@@ -15,8 +15,8 @@ import { generatePublicKey, encryptNumber as standaloneEncryptNumber, encryptVec
 describe('crypto configuration IDs', () => {
   it('uses the v2 circuit identity for every BFV parameter set', () => {
     expect(cryptoConfigIdForParamSet(0)).to.equal('0x7317c190ccb1dccfa505bf5b9b923e341905f6675c16f958e0a7d853795517a5')
-    expect(cryptoConfigIdForParamSet(1)).to.equal('0xac5490c59e158cbb104642bba0ab7b3fd11ca49dd4bb05ce7bec8089ce3c8c31')
-    expect(cryptoConfigIdForParamSet(2)).to.equal('0xde3c303973a0bf2b841cd0e7266ae68a7e48f8b271ffd629b245485e52dc8cd8')
+    expect(cryptoConfigIdForParamSet(2)).to.equal('0xac5490c59e158cbb104642bba0ab7b3fd11ca49dd4bb05ce7bec8089ce3c8c31')
+    expect(cryptoConfigIdForParamSet(3)).to.equal('0xde3c303973a0bf2b841cd0e7266ae68a7e48f8b271ffd629b245485e52dc8cd8')
   })
 })
 

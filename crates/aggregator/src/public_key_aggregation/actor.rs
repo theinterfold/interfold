@@ -18,15 +18,15 @@ use e3_data::{Persistable, Repositories};
 use e3_events::DkgFoldAttestationContext;
 use e3_events::{
     prelude::*, AggregationInputsReady, AggregationPhase, AggregatorChanged, BusHandle,
-    CommitmentRosterSelected, ComputeRequest, ComputeRequestError, ComputeResponse,
-    ComputeResponseKind, CorrelationId, DKGRecursiveAggregationComplete, Die,
-    DkgAggregationRequest, E3Failed, E3Stage, E3id, EventContext, FailureReason, InterfoldEvent,
-    InterfoldEventData, KeyshareCreated, LbfvKeyShareDocumentFetchFailed,
-    LbfvKeyShareDocumentReceived, LbfvKeyShareManifestPublished, LbfvPublicKeyAggregated,
-    NodesFoldStepRequest, OrderedSet, PkAggregationProofPending, PkAggregationProofRequest,
-    PkAggregationProofSigned, Proof, ProofType, PublicKeyAggregated, Sequenced,
-    ShareVerificationComplete, ShareVerificationDispatched, SignedProofFailed, SignedProofPayload,
-    TypedEvent, VerificationKind, ZkRequest, ZkResponse,
+    CommitmentRosterSelected, CommitteeMemberExcluded, CommitteeMemberExpelled, ComputeRequest,
+    ComputeRequestError, ComputeResponse, ComputeResponseKind, CorrelationId,
+    DKGRecursiveAggregationComplete, Die, DkgAggregationRequest, E3Failed, E3Stage, E3id,
+    EventContext, FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
+    LbfvKeyShareDocumentFetchFailed, LbfvKeyShareDocumentReceived, LbfvKeyShareManifestPublished,
+    LbfvPublicKeyAggregated, NodesFoldStepRequest, OrderedSet, PkAggregationProofPending,
+    PkAggregationProofRequest, PkAggregationProofSigned, Proof, ProofType, PublicKeyAggregated,
+    Sequenced, ShareVerificationComplete, ShareVerificationDispatched, SignedProofFailed,
+    SignedProofPayload, TypedEvent, VerificationKind, ZkRequest, ZkResponse,
 };
 use e3_events::{trap, EType};
 use e3_fhe::{Fhe, GetAggregatePublicKey};
@@ -87,9 +87,14 @@ pub struct PublicKeyAggregator {
     local_party_id: u32,
     dkg_fold_attestation_context: Option<DkgFoldAttestationContext>,
     is_aggregator: bool,
+    /// This node started the in-flight aggregation as the active aggregator. A failover that
+    /// demotes it does not discard that work: the chain accepts the first valid key publication.
+    started_as_aggregator: bool,
     effects_enabled: bool,
     lbfv_retry_clock: Arc<dyn LbfvRetryClock>,
     lbfv_retry_timer: Option<SpawnHandle>,
+    /// Canonical publication is independent of this node's local DKG phase.
+    key_published: bool,
     /// C1 verification can finish during restart before replayed keyshares restore VerifyingC1.
     early_c1_verification: Option<(BTreeSet<u64>, TypedEvent<ShareVerificationComplete>)>,
     /// DKG recursive aggregation events received before entering GeneratingC5Proof.
@@ -102,6 +107,16 @@ pub struct PublicKeyAggregator {
     lbfv_aggregation_dispatch_at: HashMap<CorrelationId, AggregationDispatch>,
     /// Periodic redrive of l-BFV aggregation requests whose response was lost.
     lbfv_aggregation_redrive_timer: Option<SpawnHandle>,
+}
+
+/// States that only an active aggregator reaches: C1 verification completed and this node
+/// computed the aggregate key.
+pub(crate) fn aggregation_started(state: &PublicKeyAggregatorState) -> bool {
+    matches!(
+        state,
+        PublicKeyAggregatorState::GeneratingC5Proof { .. }
+            | PublicKeyAggregatorState::Complete { .. }
+    )
 }
 
 pub struct PublicKeyAggregatorParams {
@@ -118,6 +133,7 @@ pub struct PublicKeyAggregatorParams {
     pub lbfv_aggregation: Option<Persistable<LbfvAggregationStateV1>>,
     pub lbfv_publication: Option<Persistable<LbfvPublicKeyPublicationStateV1>>,
     pub initial_is_aggregator: bool,
+    pub initial_stage: E3Stage,
     pub effects_enabled: bool,
 }
 
@@ -143,7 +159,8 @@ impl PublicKeyAggregator {
             // actor's serialized in-memory view without issuing duplicate asynchronous writes.
             collection.stage();
         }
-        PublicKeyAggregator {
+        let started_as_aggregator = state.get().as_ref().is_some_and(aggregation_started);
+        let mut actor = PublicKeyAggregator {
             fhe: params.fhe,
             bus: params.bus,
             e3_id: params.e3_id,
@@ -155,9 +172,11 @@ impl PublicKeyAggregator {
             committee_size: params.committee_size,
             dkg_fold_attestation_context: params.dkg_fold_attestation_context,
             is_aggregator: params.initial_is_aggregator,
+            started_as_aggregator,
             effects_enabled: params.effects_enabled,
             lbfv_retry_clock,
             lbfv_retry_timer: None,
+            key_published: false,
             early_c1_verification: None,
             early_dkg_proofs: Vec::new(),
             lbfv_aggregation: params.lbfv_aggregation,
@@ -165,7 +184,16 @@ impl PublicKeyAggregator {
             lbfv_aggregation_dispatch_at: HashMap::new(),
             lbfv_aggregation_redrive_timer: None,
             local_party_id: params.local_party_id,
-        }
+        };
+        actor.observe_stage(&params.initial_stage);
+        actor
+    }
+
+    fn observe_stage(&mut self, stage: &E3Stage) {
+        self.key_published |= matches!(
+            stage,
+            E3Stage::KeyPublished | E3Stage::CiphertextReady | E3Stage::Complete
+        );
     }
 
     fn aggregation_inputs_ready(&self) -> bool {
@@ -189,8 +217,24 @@ impl PublicKeyAggregator {
         }
     }
 
+    /// Whether this node may start aggregation work: only the active aggregator does.
     fn can_run_aggregation_effects(&self) -> bool {
         self.effects_enabled && self.is_aggregator
+    }
+
+    /// Whether this node may continue aggregation work that is already in flight. A node that
+    /// started the work as the active aggregator continues it after a failover demotes it, until a
+    /// key is published on chain.
+    fn can_continue_aggregation_effects(&self) -> bool {
+        self.effects_enabled
+            && (self.is_aggregator || (self.started_as_aggregator && !self.key_published))
+    }
+
+    /// Record that this node, as the active aggregator, starts aggregation work.
+    fn mark_started_as_aggregator(&mut self) {
+        if self.can_run_aggregation_effects() {
+            self.started_as_aggregator = true;
+        }
     }
 
     fn publish_inputs_ready(&self, ec: EventContext<Sequenced>) -> Result<()> {

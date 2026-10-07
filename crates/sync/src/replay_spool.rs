@@ -54,6 +54,18 @@ impl ReplaySpool {
         Self::load_ranges(eventstore, ranges).await
     }
 
+    /// Load every event after the per-aggregate cursors, to the end of the log.
+    pub(crate) async fn load_after(
+        eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+        cursors: std::collections::HashMap<AggregateId, u64>,
+    ) -> Result<Self> {
+        let ranges = cursors
+            .into_iter()
+            .map(|(aggregate_id, cursor)| (aggregate_id, cursor.saturating_add(1).max(1), None))
+            .collect();
+        Self::load_ranges(eventstore, ranges).await
+    }
+
     /// Load the missing suffix between two per-aggregate cursor maps.
     pub(crate) async fn load_between(
         eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,

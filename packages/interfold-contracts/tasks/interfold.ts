@@ -19,7 +19,7 @@ import { task } from "hardhat/config";
 import { ArgumentType } from "hardhat/types/arguments";
 import path from "path";
 
-import { readDeploymentArgs } from "../scripts/utils";
+import { ACTIVE_BFV_PARAM_SET, readDeploymentArgs } from "../scripts/utils";
 import { assertCommitteeOwnerCapacity } from "./committeeCapacity";
 import { assembleUniqueCommitteePublicKey } from "./committeePublicKey";
 import { stageMockDataAvailabilityObject } from "./mockDataAvailability";
@@ -28,10 +28,10 @@ function cryptoConfigIdForParamSet(paramSet: number): string {
   if (paramSet === 0) {
     return "0x7317c190ccb1dccfa505bf5b9b923e341905f6675c16f958e0a7d853795517a5";
   }
-  if (paramSet === 1) {
+  if (paramSet === 2) {
     return "0xac5490c59e158cbb104642bba0ab7b3fd11ca49dd4bb05ce7bec8089ce3c8c31";
   }
-  if (paramSet === 2) {
+  if (paramSet === 3) {
     return "0xde3c303973a0bf2b841cd0e7266ae68a7e48f8b271ffd629b245485e52dc8cd8";
   }
   throw new Error(`Unsupported BFV parameter set: ${paramSet}`);
@@ -210,6 +210,13 @@ export const requestCommittee = task(
     type: ArgumentType.INT,
   })
   .addOption({
+    name: "paramSet",
+    description:
+      "BFV parameter set (0=insecure, 2=secure-8192, 3=secure-16384; default: the set of the active circuit build)",
+    defaultValue: ACTIVE_BFV_PARAM_SET,
+    type: ArgumentType.INT,
+  })
+  .addOption({
     name: "inputWindowStart",
     description: "start of input submission window (default: now + 300)",
     defaultValue: Math.floor(Date.now() / 1000) + 300,
@@ -249,6 +256,7 @@ export const requestCommittee = task(
     default: async (
       {
         committeeSize,
+        paramSet,
         inputWindowStart,
         inputWindowEnd,
         e3Address,
@@ -263,6 +271,8 @@ export const requestCommittee = task(
           "Invalid committee size - expected 0 (Minimum), 1 (Micro), or 2 (Small).",
         );
       }
+      // Throws for an unknown set before the task sends a transaction.
+      const expectedCryptoConfigId = cryptoConfigIdForParamSet(paramSet);
 
       const connection = await hre.network.connect();
       const { ethers } = connection;
@@ -272,6 +282,14 @@ export const requestCommittee = task(
       );
 
       const { interfold } = await getInterfoldConnection(hre);
+
+      // getE3Quote also rejects an unregistered set, but the build strips revert strings, so that
+      // revert carries no reason.
+      if ((await interfold.paramSetRegistry(paramSet)) === "0x") {
+        throw new Error(
+          `BFV parameter set ${paramSet} is not registered on this Interfold deployment. No E3 was requested.`,
+        );
+      }
 
       const { mockStableToken: mockUSDC } = await deployAndSaveMockStableToken({
         hre,
@@ -313,9 +331,6 @@ export const requestCommittee = task(
         hre.globalOptions.network,
       );
 
-      // paramSet: 0 = Insecure128, 1 = Secure8192
-      const paramSet = 0;
-
       let computeProviderParams = computeParams;
       const mockDecryptionVerifierArgs = readDeploymentArgs(
         "MockDecryptionVerifier",
@@ -350,7 +365,7 @@ export const requestCommittee = task(
         computeProviderParams,
         customParams,
         expectedFeeToken: await mockUSDCContract.getAddress(),
-        expectedCryptoConfigId: cryptoConfigIdForParamSet(paramSet),
+        expectedCryptoConfigId,
         maxFee: MaxUint256,
       };
 

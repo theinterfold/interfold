@@ -50,7 +50,7 @@ use e3_events::{
 use e3_fhe_params::build_pair_for_preset;
 use e3_fhe_params::create_deterministic_crp_from_default_seed;
 use e3_fhe_params::{BfvParamSet, BfvPreset};
-use e3_polynomial::CrtPolynomial;
+use e3_polynomial::{CrtPolynomial, Polynomial};
 use e3_trbfv::calculate_decryption_key::calculate_decryption_key;
 use e3_trbfv::calculate_decryption_share::calculate_decryption_share;
 use e3_trbfv::calculate_threshold_decryption::calculate_threshold_decryption;
@@ -172,6 +172,7 @@ impl Multithread {
         std::cmp::max(1, total_threads.saturating_sub(amount))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn attach(
         bus: &BusHandle,
         rng: SharedRng,
@@ -180,6 +181,7 @@ impl Multithread {
         task_scope: String,
         report: Option<Addr<MultithreadReport>>,
         lifecycle_stages: HashMap<E3id, E3Stage>,
+        canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
     ) -> Addr<Self> {
         let addr = Self::new(
             bus.clone(),
@@ -192,12 +194,18 @@ impl Multithread {
         .start();
 
         Self::subscribe_to_lifecycle(bus, &addr);
-        ComputeEffectGate::attach(bus, addr.clone().recipient(), lifecycle_stages);
+        ComputeEffectGate::attach(
+            bus,
+            addr.clone().recipient(),
+            lifecycle_stages,
+            canonical_keys,
+        );
         info!("Multithread actor waiting behind the replay-safe effect gate.");
 
         addr
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn attach_with_zk(
         bus: &BusHandle,
         rng: SharedRng,
@@ -207,6 +215,7 @@ impl Multithread {
         report: Option<Addr<MultithreadReport>>,
         zk_backend: &ZkBackend,
         lifecycle_stages: HashMap<E3id, E3Stage>,
+        canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
     ) -> Addr<Self> {
         let zk_prover = Arc::new(ZkProver::new(zk_backend));
         let actor = Self::new(
@@ -221,7 +230,12 @@ impl Multithread {
         let addr = actor.start();
         Self::subscribe_to_lifecycle(bus, &addr);
 
-        ComputeEffectGate::attach(bus, addr.clone().recipient(), lifecycle_stages);
+        ComputeEffectGate::attach(
+            bus,
+            addr.clone().recipient(),
+            lifecycle_stages,
+            canonical_keys,
+        );
         info!("Multithread actor with ZK waiting behind the replay-safe effect gate.");
 
         addr
@@ -241,19 +255,185 @@ impl Multithread {
     pub fn create_taskpool(threads: usize, max_tasks: usize) -> TaskPool {
         TaskPool::new(threads, max_tasks)
     }
-
-    fn task_group(&self, e3_id: &E3id) -> String {
-        task_group(&self.task_scope, e3_id)
-    }
 }
 
 fn task_group(scope: &str, e3_id: &E3id) -> String {
     format!("{scope}:{e3_id}")
 }
 
+/// Accusation re-verification outlives a failed E3, so it runs in its own group. A cancelled
+/// group stays cancelled, so the failure could not spare it in the E3's group.
+fn accusation_task_group(scope: &str, e3_id: &E3id) -> String {
+    format!("{scope}:{e3_id}:accusation")
+}
+
+fn request_task_group(scope: &str, request: &ComputeRequest) -> String {
+    match request.request {
+        ComputeRequestKind::Zk(ZkRequest::ReverifyAccusedProof(_)) => {
+            accusation_task_group(scope, &request.e3_id)
+        }
+        _ => task_group(scope, &request.e3_id),
+    }
+}
+
+/// The task groups of the work that `event` ends. A failure ends the protocol work; the end of the
+/// request also ends its accusation work.
+fn ended_task_groups(scope: &str, event: &InterfoldEventData) -> Vec<String> {
+    let (e3_id, ends_accusations) = match event {
+        InterfoldEventData::E3Failed(data) => (&data.e3_id, false),
+        InterfoldEventData::E3StageChanged(data) if data.new_stage == E3Stage::Failed => {
+            (&data.e3_id, false)
+        }
+        InterfoldEventData::E3StageChanged(data) if data.new_stage.is_terminal() => {
+            (&data.e3_id, true)
+        }
+        InterfoldEventData::E3RequestComplete(data) => (&data.e3_id, true),
+        _ => return Vec::new(),
+    };
+    let mut groups = vec![task_group(scope, e3_id)];
+    if ends_accusations {
+        groups.push(accusation_task_group(scope, e3_id));
+    }
+    groups
+}
+
 #[cfg(test)]
 mod task_group_tests {
     use super::*;
+
+    #[test]
+    fn a_failure_ends_protocol_work_and_the_request_end_ends_accusation_work() {
+        let e3_id = E3id::new("7", 1);
+        let protocol = task_group("node", &e3_id);
+        let accusation = accusation_task_group("node", &e3_id);
+        let stage = |new_stage| {
+            InterfoldEventData::from(e3_events::E3StageChanged {
+                e3_id: e3_id.clone(),
+                previous_stage: E3Stage::CommitteeFinalized,
+                new_stage,
+            })
+        };
+        let failed = InterfoldEventData::from(e3_events::E3Failed {
+            e3_id: e3_id.clone(),
+            failed_at_stage: E3Stage::CommitteeFinalized,
+            reason: e3_events::FailureReason::DKGInvalidShares,
+        });
+        let complete = InterfoldEventData::from(e3_events::E3RequestComplete {
+            e3_id: e3_id.clone(),
+        });
+
+        assert_eq!(ended_task_groups("node", &failed), vec![protocol.clone()]);
+        assert_eq!(
+            ended_task_groups("node", &stage(E3Stage::Failed)),
+            vec![protocol.clone()]
+        );
+        let both = vec![protocol.clone(), accusation.clone()];
+        assert_eq!(ended_task_groups("node", &complete), both);
+        assert_eq!(ended_task_groups("node", &stage(E3Stage::Complete)), both);
+        assert!(ended_task_groups("node", &stage(E3Stage::KeyPublished)).is_empty());
+
+        let request =
+            |kind| ComputeRequest::zk(kind, e3_events::CorrelationId::new(), e3_id.clone());
+        let proofs = VerifyShareProofsRequest {
+            party_proofs: vec![],
+            params_preset: e3_fhe_params::BfvPreset::default(),
+            committee_size: e3_zk_helpers::CiphernodesCommitteeSize::Micro,
+        };
+        assert_eq!(
+            request_task_group(
+                "node",
+                &request(ZkRequest::ReverifyAccusedProof(proofs.clone()))
+            ),
+            accusation
+        );
+        assert_eq!(
+            request_task_group("node", &request(ZkRequest::VerifyShareProofs(proofs))),
+            protocol
+        );
+    }
+
+    /// Through the worker and a real task pool: a failure cancels the E3's protocol work, its
+    /// accusation work still runs, and the end of the request cancels that too. Without a prover,
+    /// a ZK request that runs ends with an error result at once; a cancelled one ends with none.
+    #[actix::test]
+    async fn a_failure_cancels_protocol_work_and_leaves_accusation_work_until_the_request_ends(
+    ) -> anyhow::Result<()> {
+        use e3_events::{
+            CorrelationId, E3Failed, E3RequestComplete, Event, EventConstructorWithTimestamp,
+            EventSource, FailureReason, GetEvents, Unsequenced,
+        };
+        use rand::SeedableRng;
+
+        let (bus, history) = crate::effect_gate::tests::test_bus();
+        let rng: SharedRng = Arc::new(Mutex::new(rand_chacha::ChaCha20Rng::seed_from_u64(7)));
+        let cipher = Arc::new(Cipher::from_password("test-password").await?);
+        let worker = Multithread::new(
+            bus,
+            rng,
+            cipher,
+            TaskPool::new(1, 8),
+            "node".to_string(),
+            None,
+        )
+        .start();
+        let e3_id = E3id::new("7", 1);
+        let proofs = VerifyShareProofsRequest {
+            party_proofs: vec![],
+            params_preset: e3_fhe_params::BfvPreset::default(),
+            committee_size: e3_zk_helpers::CiphernodesCommitteeSize::Micro,
+        };
+        let request = |kind| ComputeRequest::zk(kind, CorrelationId::new(), e3_id.clone());
+        let event = |data: InterfoldEventData, seq: u64| {
+            InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                data,
+                None,
+                seq.into(),
+                None,
+                EventSource::Local,
+            )
+            .into_sequenced(seq)
+        };
+        let results = || async {
+            let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+            Ok::<_, anyhow::Error>(
+                events
+                    .iter()
+                    .filter_map(|event| match event.get_data() {
+                        InterfoldEventData::ComputeRequestError(error) => {
+                            Some(error.request().correlation_id)
+                        }
+                        InterfoldEventData::ComputeResponse(response) => {
+                            Some(response.correlation_id)
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        };
+
+        let failed = E3Failed {
+            e3_id: e3_id.clone(),
+            failed_at_stage: E3Stage::CommitteeFinalized,
+            reason: FailureReason::DKGInvalidShares,
+        };
+        worker.send(event(failed.into(), 1)).await?;
+        let accusation = request(ZkRequest::ReverifyAccusedProof(proofs.clone()));
+        let protocol = request(ZkRequest::VerifyShareProofs(proofs.clone()));
+        worker.send(event(accusation.clone().into(), 2)).await?;
+        worker.send(event(protocol.into(), 3)).await?;
+        actix::clock::sleep(Duration::from_millis(200)).await;
+        assert_eq!(results().await?, vec![accusation.correlation_id]);
+
+        let complete = E3RequestComplete {
+            e3_id: e3_id.clone(),
+        };
+        worker.send(event(complete.into(), 4)).await?;
+        let late = request(ZkRequest::ReverifyAccusedProof(proofs));
+        worker.send(event(late.into(), 5)).await?;
+        actix::clock::sleep(Duration::from_millis(200)).await;
+        assert_eq!(results().await?, vec![accusation.correlation_id]);
+        Ok(())
+    }
 
     #[test]
     fn shared_pool_groups_are_isolated_by_node() {
@@ -346,18 +526,12 @@ impl Handler<InterfoldEvent> for Multithread {
     type Result = ();
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         let (data, ec) = msg.into_components();
-        match data {
-            InterfoldEventData::ComputeRequest(data) => ctx.notify(TypedEvent::new(data, ec)),
-            InterfoldEventData::E3Failed(data) => {
-                self.task_pool.cancel_group(&self.task_group(&data.e3_id))
-            }
-            InterfoldEventData::E3RequestComplete(data) => {
-                self.task_pool.cancel_group(&self.task_group(&data.e3_id))
-            }
-            InterfoldEventData::E3StageChanged(data) if data.new_stage.is_terminal() => {
-                self.task_pool.cancel_group(&self.task_group(&data.e3_id))
-            }
-            _ => {}
+        if let InterfoldEventData::ComputeRequest(data) = data {
+            ctx.notify(TypedEvent::new(data, ec));
+            return;
+        }
+        for group in ended_task_groups(&self.task_scope, &data) {
+            self.task_pool.cancel_group(&group);
         }
     }
 }
@@ -383,6 +557,7 @@ impl Handler<TypedEvent<ComputeRequest>> for Multithread {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_compute_request_event(
     msg: TypedEvent<ComputeRequest>,
     bus: BusHandle,
@@ -398,7 +573,7 @@ async fn handle_compute_request_event(
     let job_name = msg_string.clone();
     let (msg, ctx) = msg.into_components();
     let request_snapshot = msg.clone();
-    let task_group = task_group(&task_scope, &msg.e3_id);
+    let task_group = request_task_group(&task_scope, &msg);
 
     let is_zk = matches!(&request_snapshot.request, ComputeRequestKind::Zk(_));
     let retries_local_worker_failures =
@@ -1572,6 +1747,9 @@ fn handle_zk_request(
         ZkRequest::VerifyShareProofs(req) => timefunc("zk_verify_share_proofs", id, || {
             handle_verify_share_proofs(&prover, req, request.clone())
         }),
+        ZkRequest::ReverifyAccusedProof(req) => timefunc("zk_reverify_accused_proof", id, || {
+            handle_verify_share_proofs(&prover, req, request.clone())
+        }),
         ZkRequest::VerifyShareDecryptionProofs(req) => {
             timefunc("zk_verify_share_decryption_proofs", id, || {
                 handle_verify_share_decryption_proofs(&prover, req, request.clone())
@@ -2115,6 +2293,7 @@ fn handle_pk_generation_proof(
     let sk = CrtPolynomial::from_fhe_polynomial(&sk_poly);
     let eek = CrtPolynomial::from_fhe_polynomial(&eek_poly);
     let e_sm = CrtPolynomial::from_fhe_polynomial(&e_sm_poly);
+    let e_sm_lifted = Polynomial::from_fhe_polynomial(&e_sm_poly);
 
     // 4. Build circuit data
     let committee = req.committee_size.values();
@@ -2123,6 +2302,7 @@ fn handle_pk_generation_proof(
         pk0_share,
         eek,
         e_sm,
+        e_sm_lifted,
         sk,
     };
 

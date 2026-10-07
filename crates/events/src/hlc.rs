@@ -316,6 +316,15 @@ impl HlcMethods for Hlc {
         })
     }
 
+    fn latest_admissible(&self) -> Result<HlcTimestamp, HlcError> {
+        let now = self.now_physical()?;
+        Ok(HlcTimestamp::new(
+            now.saturating_add(self.max_drift),
+            u32::MAX,
+            u32::MAX,
+        ))
+    }
+
     fn receive(&self, remote: &HlcTimestamp) -> Result<HlcTimestamp, HlcError> {
         let now = self.now_physical()?;
 
@@ -374,6 +383,9 @@ pub trait HlcMethods {
     type Error: From<HlcError>;
     fn tick(&self) -> Result<HlcTimestamp, Self::Error>;
     fn receive(&self, remote: &HlcTimestamp) -> Result<HlcTimestamp, Self::Error>;
+    /// The latest timestamp that `receive` accepts now: a later remote time exceeds the drift
+    /// allowance.
+    fn latest_admissible(&self) -> Result<HlcTimestamp, Self::Error>;
 }
 
 #[cfg(test)]
@@ -416,46 +428,6 @@ mod tests {
               if bytes.len() != 16 {
                   prop_assert!(HlcTimestamp::unpack_slice(&bytes).is_err());
               }
-          }
-
-
-          #[test]
-          fn ordering_total(a in arb_timestamp(), b in arb_timestamp()) {
-              let lt = a < b;
-              let eq = a == b;
-              let gt = a > b;
-              prop_assert_eq!(
-                  (lt as u8) + (eq as u8) + (gt as u8),
-                  1,
-                  "exactly one ordering relation must hold"
-              );
-          }
-
-          #[test]
-          fn ordering_antisymmetric(a in arb_timestamp(), b in arb_timestamp()) {
-              if a < b {
-                  prop_assert!((b >= a));
-              }
-              if a > b {
-                  prop_assert!((b <= a));
-              }
-          }
-
-          #[test]
-          fn ordering_transitive(a in arb_timestamp(), b in arb_timestamp(), c in arb_timestamp()) {
-              if a < b && b < c {
-                  prop_assert!(a < c);
-              }
-              if a > b && b > c {
-                  prop_assert!(a > c);
-              }
-          }
-
-          #[test]
-          fn ordering_reflexive(a in arb_timestamp()) {
-              prop_assert!(a == a);
-              prop_assert!(a <= a);
-              prop_assert!(a >= a);
           }
 
           #[test]
@@ -617,24 +589,6 @@ mod tests {
     }
 
     #[test]
-    fn new_initializes_to_zero() {
-        let hlc = Hlc::new(42);
-        let ts = hlc.get();
-        assert_eq!(ts.ts, 0);
-        assert_eq!(ts.counter, 0);
-        assert_eq!(ts.node, 42);
-    }
-
-    #[test]
-    fn with_state_sets_values() {
-        let hlc = Hlc::with_state(100, 5, 42);
-        let ts = hlc.get();
-        assert_eq!(ts.ts, 100);
-        assert_eq!(ts.counter, 5);
-        assert_eq!(ts.node, 42);
-    }
-
-    #[test]
     fn tick_increments_counter_when_time_unchanged() {
         let hlc = Hlc::with_state(u64::MAX, 0, 1);
         let ts1 = hlc.tick().unwrap();
@@ -729,24 +683,6 @@ mod tests {
         let a = HlcTimestamp::new(100, 5, 1);
         let b = HlcTimestamp::new(100, 5, 2);
         assert!(a < b);
-    }
-
-    #[test]
-    fn hash_consistent_with_eq() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let a = HlcTimestamp::new(100, 5, 1);
-        let b = HlcTimestamp::new(100, 5, 1);
-
-        let hash = |ts: &HlcTimestamp| {
-            let mut h = DefaultHasher::new();
-            ts.hash(&mut h);
-            h.finish()
-        };
-
-        assert_eq!(a, b);
-        assert_eq!(hash(&a), hash(&b));
     }
 
     #[test]

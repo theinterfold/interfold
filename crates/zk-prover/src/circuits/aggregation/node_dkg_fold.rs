@@ -446,6 +446,7 @@ fn validate_dkg_aggregation_shape(
 #[derive(Serialize)]
 struct DkgAggregatorWitness {
     nodes_fold_vk: Vec<String>,
+    nodes_fold_vk_hash: String,
     nodes_fold_proof: Vec<String>,
     nodes_fold_public: Vec<String>,
     c5_vk: Vec<String>,
@@ -583,12 +584,16 @@ pub fn prove_dkg_aggregation(
 
     let witness = DkgAggregatorWitness {
         nodes_fold_vk: nodes_fold_vk.verification_key.clone(),
+        nodes_fold_vk_hash: nodes_fold_vk.key_hash.clone(),
         nodes_fold_proof: proof_field_strings(&nodes_fold_proof)?,
         nodes_fold_public: proof_public_field_strings(&nodes_fold_proof)?,
         c5_vk: c5_vk.verification_key.clone(),
         c5_proof: proof_field_strings(input.c5_proof)?,
         c5_public: proof_public_field_strings(input.c5_proof)?,
-        nodes_fold_key_hash: nodes_fold_vk.key_hash.clone(),
+        nodes_fold_key_hash: vk::load_vk_tree_hash(
+            &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+            CircuitName::NodesFold,
+        )?,
         c5_key_hash: c5_vk.key_hash.clone(),
         party_ids: party_id_fields,
         committee_members,
@@ -643,6 +648,7 @@ pub struct DecryptionAggregationJob<'a> {
 #[derive(Serialize)]
 struct DecryptionAggregatorWitness {
     c6_fold_vk: Vec<String>,
+    c6_fold_vk_hash: String,
     c6_fold_proof: Vec<String>,
     c6_fold_public: Vec<String>,
     c7_vk: Vec<String>,
@@ -712,14 +718,14 @@ pub fn prove_decryption_aggregation_jobs(
             artifacts_dir,
         )?;
         let c6_fold_public = proof_public_field_strings(&c6_fold)?;
-        let domain_hi = c6_fold_public.get(4).cloned().ok_or_else(|| {
-            ZkError::InvalidInput("C6 fold proof is missing domain_hi at public input 4".into())
+        let domain_hi = c6_fold_public.get(5).cloned().ok_or_else(|| {
+            ZkError::InvalidInput("C6 fold proof is missing domain_hi at public input 5".into())
         })?;
-        let domain_lo = c6_fold_public.get(5).cloned().ok_or_else(|| {
-            ZkError::InvalidInput("C6 fold proof is missing domain_lo at public input 5".into())
+        let domain_lo = c6_fold_public.get(6).cloned().ok_or_else(|| {
+            ZkError::InvalidInput("C6 fold proof is missing domain_lo at public input 6".into())
         })?;
         let ciphertext_commitment = c6_fold_public
-            .get(6 + (2 * c6_total_slots))
+            .get(7 + (2 * c6_total_slots))
             .cloned()
             .ok_or_else(|| {
                 ZkError::InvalidInput(
@@ -729,12 +735,16 @@ pub fn prove_decryption_aggregation_jobs(
 
         let witness = DecryptionAggregatorWitness {
             c6_fold_vk: c6_fold_vk.verification_key.clone(),
+            c6_fold_vk_hash: c6_fold_vk.key_hash.clone(),
             c6_fold_proof: proof_field_strings(&c6_fold)?,
             c6_fold_public,
             c7_vk: c7_vk.verification_key.clone(),
             c7_proof: proof_field_strings(job.c7_proof)?,
             c7_public: proof_public_field_strings(job.c7_proof)?,
-            c6_fold_key_hash: c6_fold_vk.key_hash.clone(),
+            c6_fold_key_hash: vk::load_vk_tree_hash(
+                &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+                CircuitName::C6Fold,
+            )?,
             c7_key_hash: c7_vk.key_hash.clone(),
             committee_members: committee_members.clone(),
             committee_hash_hi: committee_hash_hi.clone(),

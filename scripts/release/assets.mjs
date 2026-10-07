@@ -5,6 +5,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync,
 import { basename, join } from 'node:path'
 
 import { ROOT_DIR, fail } from './core.mjs'
+import { releaseChannel } from './version.mjs'
 
 const REQUIRED_BINARIES = [
   'interfold-linux-x86_64.tar.gz',
@@ -71,7 +72,7 @@ function releaseNotes(options, requiredAssets, assetsDir, rootDir) {
   const { candidateSha, circuitSourceHash, isPrerelease, version } = options
   const changelogPath = join(rootDir, 'CHANGELOG.md')
   const changelog = existsSync(changelogPath) ? changelogForVersion(readFileSync(changelogPath, 'utf8'), version) : ''
-  const npmTag = isPrerelease ? 'next' : 'latest'
+  const npmTag = releaseChannel(version)
   const warning = isPrerelease
     ? '> **This is a pre-release version.**\n> Pre-release versions can contain bugs and breaking changes.\n\n'
     : ''
@@ -103,7 +104,7 @@ curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install
 Install Interfold:
 
 \`\`\`bash
-interfoldup install
+interfoldup install${isPrerelease ? ` --version v${version}` : ''}
 \`\`\`
 
 ### npm packages

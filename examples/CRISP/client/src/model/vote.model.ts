@@ -41,6 +41,11 @@ export interface BroadcastVoteResponse {
   message: string | null
 }
 
+/// Who sent a ballot's on-chain commitment. The CRISP server receives every ballot, because it
+/// attests that the ballot is available, so it sees each request on both routes. A transaction from
+/// the voter's wallet also shows the voter's address on-chain; a relayed one shows the server's.
+export type SubmissionRoute = 'wallet' | 'relay'
+
 export interface VoteStatusRequest {
   round_id: string
   address: string

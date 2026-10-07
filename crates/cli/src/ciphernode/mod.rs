@@ -18,9 +18,6 @@ mod utils;
 use context::ChainContext;
 use e3_console::Console;
 use serde::{Deserialize, Serialize};
-use zeroize::Zeroizing;
-
-use crate::helpers::{ensure_hex_zeroizing, parse_zeroizing};
 
 #[derive(Debug, Args, Clone, Default, Serialize, Deserialize)]
 pub struct ChainArgs {
@@ -39,38 +36,33 @@ impl ChainArgs {
 pub enum CiphernodeCommands {
     /// Setup local ciphernode configuration
     Setup {
-        /// P2P network profile for this development configuration
-        #[arg(long, value_parser = ["sepolia", "local"], default_value = "sepolia")]
+        /// P2P network profile and chain for this configuration. The command writes the Sepolia
+        /// deployment that is built into the binary.
+        #[arg(
+            long,
+            default_value = "sepolia",
+            value_parser = clap::builder::PossibleValuesParser::new([
+                clap::builder::PossibleValue::new("sepolia"),
+                // Earlier releases accepted `local`. The command refuses it and names the template.
+                clap::builder::PossibleValue::new("local").hide(true),
+            ])
+        )]
         network: String,
 
         /// An rpc url for interfold to connect to
         #[arg(long = "rpc-url", short = 'r')]
         rpc_url: Option<String>,
 
-        /// The password
-        #[arg(
-            short = 'p',
-            long,
-            value_parser = parse_zeroizing,
-            conflicts_with = "password_stdin"
-        )]
-        password: Option<Zeroizing<String>>,
+        /// The folder for the configuration file. Without it, the command prompts for one.
+        #[arg(long = "config-dir", value_name = "PATH")]
+        config_dir: Option<std::path::PathBuf>,
 
         /// Read the password from the first requested line on stdin
-        #[arg(long, conflicts_with = "password")]
+        #[arg(long)]
         password_stdin: bool,
 
-        /// Wallet Private Key
-        #[arg(
-            short = 'k',
-            long,
-            value_parser = ensure_hex_zeroizing,
-            conflicts_with = "private_key_stdin"
-        )]
-        private_key: Option<Zeroizing<String>>,
-
         /// Read the private key from the next requested line on stdin
-        #[arg(long, conflicts_with = "private_key")]
+        #[arg(long)]
         private_key_stdin: bool,
     },
     /// Authorize the initial wallet that will own this node's collateral
@@ -136,7 +128,7 @@ pub enum CiphernodeCommands {
         #[command(flatten)]
         chain: ChainArgs,
     },
-    /// Register an operator and recompute its activation state
+    /// Recompute the activation state of a registered operator
     Activate {
         /// Target operator; defaults to the configured signer for self-owned positions
         #[arg(long = "operator", value_name = "ADDRESS")]

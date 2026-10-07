@@ -116,7 +116,7 @@ pub struct CTRequest {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-/// A relay request: the round and the encoded input, nothing else.
+/// A relay request: the round, the encoded input, and the voter's choice of sender.
 ///
 /// Deliberately no address field. The slot is already inside the encoded proof, and the relay has
 /// no use for a caller-supplied copy — every byte the relay does not receive is a byte it cannot
@@ -125,6 +125,10 @@ pub struct CTRequest {
 pub struct VoteRequest {
     pub round_id: String,
     pub encoded_proof: String,
+    /// The voter asks that its own wallet send the commitment. The server then does not relay it
+    /// and uses no relay allowance for it. Clients that omit the field get `false`.
+    #[serde(default)]
+    pub send_from_wallet: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -148,6 +152,58 @@ pub struct PreviousCiphertextResponse {
     pub ciphertext: Vec<u8>,
     /// The tree index of that entry, which a client names as the parent of the input it builds.
     pub index: u64,
+}
+
+/// Names one submitted input of a round. The tuple is unique in a round, because the contract
+/// accepts one tree leaf for each tuple.
+#[derive(Debug, Deserialize)]
+pub struct InputSelectionRequest {
+    pub round_id: String,
+    pub slot_address: String,
+    pub encrypted_vote_commitment: String,
+    pub encrypted_vote_hash: String,
+    pub parent_index_plus_one: u64,
+}
+
+/// Where an input stands in the selection of its slot, resolved as the Secure Process resolves
+/// it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputSelectionStatus {
+    /// This server has indexed no entry for the input.
+    NotIndexed,
+    /// The entry is indexed, but an entry with a lower tree index is not, and that entry can
+    /// still take the slot.
+    SelectionPending,
+    /// The entry became the slot head at its turn. A later entry does not change this, but a
+    /// reorganization of the chain can: this server indexes from the chain head.
+    Selected,
+    /// The entry did not become the slot head at its turn, so the tally does not count it.
+    Excluded,
+}
+
+/// Why an entry did not become the slot head at its turn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExclusionReason {
+    /// An earlier entry that named the same parent took the slot.
+    EarlierSibling,
+    /// The parent of the entry was not the slot head at its turn, for another reason.
+    StaleParent,
+    /// The bytes of the entry do not reproduce its commitment.
+    Unusable,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct InputSelectionResponse {
+    pub status: InputSelectionStatus,
+    /// The tree index of the entry. `None` when the entry is not indexed.
+    pub index: Option<u64>,
+    /// The tree index of the current slot head, the same entry `state/previous-ciphertext`
+    /// returns. `None` when the slot holds no usable entry.
+    pub head_index: Option<u64>,
+    /// Set only when the status is `Excluded`.
+    pub reason: Option<ExclusionReason>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -280,6 +336,10 @@ pub struct E3Crisp {
     pub eligible_addresses: Vec<TokenHolder>,
     pub token_address: String,
     pub balance_threshold: String,
+    /// Ciphertexts that an older release kept in this record. Startup moves them to keys of their
+    /// own (`CrispE3Repository::move_inline_ciphertexts`). Only an input indexed before the input
+    /// commitments existed keeps its ciphertext here, and reads refuse its round.
+    #[serde(default)]
     pub ciphertext_inputs: Vec<(Vec<u8>, u64)>,
     /// The commitment the contract stored for each input, keyed by the same on-chain index.
     ///
@@ -313,6 +373,10 @@ pub struct E3Crisp {
     /// the next honest input names the same parent it did.
     #[serde(default)]
     pub input_parents: Vec<(u64, u64)>,
+    /// The content hash of each input's ciphertext, keyed by the same on-chain index. The bytes are
+    /// stored under it, so a read always pairs an input's fields with that input's bytes.
+    #[serde(default)]
+    pub input_ciphertext_hashes: Vec<(u64, [u8; 32])>,
     pub requester: String,
     pub num_options: String,
     pub credit_mode: CreditMode,

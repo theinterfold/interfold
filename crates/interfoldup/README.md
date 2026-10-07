@@ -38,6 +38,9 @@ interfoldup install --system
 
 # Install a specific release
 interfoldup install --version v0.13.0
+
+# Install the most recently published release, stable or pre-release (the dev channel)
+interfoldup install --version dev
 ```
 
 ### Update the Interfold CLI
@@ -51,6 +54,9 @@ interfoldup update --system
 
 # Move to a specific release, forward or backward
 interfoldup update --version v0.13.0
+
+# Move to the most recently published release, stable or pre-release
+interfoldup update --version dev
 ```
 
 ### Uninstall the Interfold CLI

@@ -49,8 +49,9 @@ pub fn generate_configs(
 
     let qis_str = join_display(&configs.moduli, ", ");
 
-    let r1_bounds_str = join_display(&configs.bounds.r1_bounds, ", ");
-    let r2_bounds_str = join_display(&configs.bounds.r2_bounds, ", ");
+    let e_sm_limb_bounds_str = join_display(&configs.bounds.e_sm_limb_bounds, ", ");
+    let e_sm_quotient_bounds_str = join_display(&configs.bounds.e_sm_quotient_bounds, ", ");
+    let r_bounds_str = join_display(&configs.bounds.r_bounds, ", ");
 
     let (threshold_params, _) = preset
         .build_pair()
@@ -80,15 +81,17 @@ pk_generation (CIRCUIT 1 - PUBLIC KEY THRESHOLD BFV)
 pub global {}_BIT_EEK: u32 = {};
 pub global {}_BIT_SK: u32 = {};
 pub global {}_BIT_E_SM: u32 = {};
-pub global {}_BIT_R1: u32 = {};
-pub global {}_BIT_R2: u32 = {};
+pub global {}_BIT_E_SM_LIFTED: u32 = {};
+pub global {}_BIT_E_SM_QUOTIENT: u32 = {};
+pub global {}_BIT_R: u32 = {};
 pub global {}_BIT_PK: u32 = {};
 
 pub global {}_EEK_BOUND: Field = {};
 pub global {}_SK_BOUND: Field = {};
 pub global {}_E_SM_BOUND: Field = {};
-pub global {}_R1_BOUNDS: [Field; L] = [{}];
-pub global {}_R2_BOUNDS: [Field; L] = [{}];
+pub global {}_E_SM_LIMB_BOUNDS: [Field; L] = [{}];
+pub global {}_E_SM_QUOTIENT_BOUNDS: [Field; L] = [{}];
+pub global {}_R_BOUNDS: [Field; L] = [{}];
 
 pub global {}_B_ENC: Field = {};
 
@@ -97,8 +100,9 @@ pub global {}_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfigs::new(
     {}_EEK_BOUND,
     {}_SK_BOUND,
     {}_E_SM_BOUND,
-    {}_R1_BOUNDS,
-    {}_R2_BOUNDS,
+    {}_E_SM_LIMB_BOUNDS,
+    {}_E_SM_QUOTIENT_BOUNDS,
+    {}_R_BOUNDS,
 );
 "#,
         configs.n,
@@ -112,9 +116,11 @@ pub global {}_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfigs::new(
         prefix,
         configs.bits.e_sm_bit,
         prefix,
-        configs.bits.r1_bit,
+        configs.bits.e_sm_lifted_bit,
         prefix,
-        configs.bits.r2_bit,
+        configs.bits.e_sm_quotient_bit,
+        prefix,
+        configs.bits.r_bit,
         prefix,
         configs.bits.pk_bit,
         prefix,
@@ -124,11 +130,14 @@ pub global {}_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfigs::new(
         prefix,
         configs.bounds.e_sm_bound,
         prefix,
-        r1_bounds_str,
+        e_sm_limb_bounds_str,
         prefix,
-        r2_bounds_str,
+        e_sm_quotient_bounds_str,
+        prefix,
+        r_bounds_str,
         prefix,
         b_enc,
+        prefix,
         prefix,
         prefix,
         prefix,

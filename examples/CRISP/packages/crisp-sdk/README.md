@@ -188,6 +188,33 @@ const head = await getPreviousCiphertext(serverUrl, e3Id, slotAddress)
 // commitment is never selected by the Secure Process, and never a valid parent.
 ```
 
+#### Submission Status
+
+A committed ballot counts only when the Secure Process selects it for its slot and its ciphertext is
+published. An earlier ballot or mask that names the same parent takes the slot first.
+
+```typescript
+import {
+  decodeInputIdentity,
+  getInputSelection,
+  getSubmissionStage,
+  getVoteAvailability,
+} from '@crisp-e3/sdk'
+
+const identity = decodeInputIdentity(encodedProof)
+const job = await getVoteAvailability(serverUrl, jobId)
+const selection = await getInputSelection(serverUrl, e3Id, identity)
+// undefined when the server has no record of the round (404).
+const { stage, retryOffered } = getSubmissionStage({
+  availability: job.status,
+  selection: selection ?? null,
+  now: Math.floor(Date.now() / 1000),
+  commitmentDeadline,
+})
+// stage: awaiting_commitment | selection_pending | availability_pending | counted | excluded | failed
+// retryOffered: true only for `excluded` before the commitment deadline.
+```
+
 ## API
 
 ### CrispSDK Class
@@ -228,6 +255,17 @@ const head = await getPreviousCiphertext(serverUrl, e3Id, slotAddress)
 - `generatePublicKey(): Uint8Array` - Generate a random public key
 - `encryptVote(vote: Vote, publicKey: Uint8Array): Uint8Array` - Encrypt a vote
 - `encodeSolidityProof(proof: ProofData): Hex` - Encode proof for Solidity contract
+- `decodeInputIdentity(encodedProof: Hex): InputIdentity` - Read the slot address, ciphertext
+  commitment, ciphertext hash, and parent index plus one from an `encodeSolidityProof` envelope
+
+### Submission Functions
+
+- `getInputSelection(serverUrl: string, e3Id: bigint, identity: InputIdentity): Promise<InputSelectionResponse | undefined>` -
+  Get the Secure Process selection state of an input. Undefined when the server has no record of the
+  round.
+- `getSubmissionStage(inputs: SubmissionStageInputs): SubmissionStatus` - Combine the availability
+  job status and the selection state into the stage of one ballot, and tell whether a retry is
+  offered
 
 ### Utility Functions
 

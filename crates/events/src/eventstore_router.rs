@@ -24,6 +24,17 @@ struct QueryAggregator {
     sender: Recipient<EventStoreQueryResponse>,
     pending: HashMap<CorrelationId, AggregateId>,
     collected_events: Vec<InterfoldEvent>,
+    query_count: usize,
+    /// Keep the records that a store holds for another aggregate.
+    keep_misrouted: bool,
+}
+
+/// Single-store queries keep the store's scan progress; quarantine does not change it.
+fn single_store_history(
+    query_count: usize,
+    history: Option<crate::HistoryProgress>,
+) -> Option<crate::HistoryProgress> {
+    (query_count == 1).then_some(history).flatten()
 }
 
 fn quarantine_misrouted_events(
@@ -40,17 +51,24 @@ fn quarantine_misrouted_events(
 }
 
 impl QueryAggregator {
-    fn new(parent_id: CorrelationId, sender: Recipient<EventStoreQueryResponse>) -> Self {
+    fn new(
+        parent_id: CorrelationId,
+        sender: Recipient<EventStoreQueryResponse>,
+        keep_misrouted: bool,
+    ) -> Self {
         Self {
             parent_id,
             sender,
             pending: HashMap::new(),
             collected_events: Vec::new(),
+            query_count: 0,
+            keep_misrouted,
         }
     }
 
     fn add_pending(&mut self, sub_query_id: CorrelationId, aggregate_id: AggregateId) {
         self.pending.insert(sub_query_id, aggregate_id);
+        self.query_count += 1;
     }
 
     #[allow(dead_code)]
@@ -75,6 +93,8 @@ impl Handler<EventStoreQueryResponse> for QueryAggregator {
                 aggregate_id,
                 self.pending.len()
             );
+            let log_head = (self.query_count == 1).then(|| msg.log_head()).flatten();
+            let history = single_store_history(self.query_count, msg.history());
             let events = match msg.into_events() {
                 Ok(events) => events,
                 Err(error) => {
@@ -91,7 +111,11 @@ impl Handler<EventStoreQueryResponse> for QueryAggregator {
                     return;
                 }
             };
-            let (events, quarantined) = quarantine_misrouted_events(events, aggregate_id);
+            let (events, quarantined) = if self.keep_misrouted {
+                (events, 0)
+            } else {
+                quarantine_misrouted_events(events, aggregate_id)
+            };
             self.collected_events.extend(events);
             if quarantined > 0 {
                 warn!(
@@ -106,7 +130,9 @@ impl Handler<EventStoreQueryResponse> for QueryAggregator {
                 let response = EventStoreQueryResponse::new(
                     self.parent_id,
                     std::mem::take(&mut self.collected_events),
-                );
+                )
+                .with_log_head(log_head)
+                .with_history(history);
                 self.sender.do_send(response);
                 ctx.notify(Die)
             }
@@ -163,6 +189,8 @@ impl<I: SequenceIndex, L: EventLog> EventStoreRouter<I, L> {
         let limit = msg.limit();
         let max_bytes = msg.max_bytes();
         let filter = msg.filter().cloned();
+        let timestamp_order = msg.timestamp_order();
+        let misrouted = msg.misrouted();
         let sender = msg.sender();
 
         let missing: Vec<_> = query
@@ -205,16 +233,19 @@ impl<I: SequenceIndex, L: EventLog> EventStoreRouter<I, L> {
             return Ok(());
         }
 
-        let mut aggregator = QueryAggregator::new(parent_id, sender);
+        let mut aggregator = QueryAggregator::new(parent_id, sender, misrouted);
         for (aggregate_id, _, sub_query_id, _) in &sub_queries {
             aggregator.add_pending(*sub_query_id, *aggregate_id);
         }
         let aggregator_addr = aggregator.start();
 
         for (aggregate_id, ts, sub_query_id, store_addr) in sub_queries {
-            let get_events_msg =
+            let mut get_events_msg =
                 EventStoreQueryBy::<Ts>::new(sub_query_id, ts, aggregator_addr.clone().recipient())
                     .with_options(limit, filter.clone(), max_bytes);
+            if timestamp_order {
+                get_events_msg = get_events_msg.in_timestamp_order();
+            }
             debug!("Sending query for aggregate {:?}", aggregate_id);
             store_addr.do_send(get_events_msg);
         }
@@ -233,6 +264,7 @@ impl<I: SequenceIndex, L: EventLog> EventStoreRouter<I, L> {
         let limit = msg.limit();
         let max_bytes = msg.max_bytes();
         let filter = msg.filter().cloned();
+        let misrouted = msg.misrouted();
         let sender = msg.sender();
 
         let missing: Vec<_> = query
@@ -275,7 +307,7 @@ impl<I: SequenceIndex, L: EventLog> EventStoreRouter<I, L> {
             return Ok(());
         }
 
-        let mut aggregator = QueryAggregator::new(parent_id, sender);
+        let mut aggregator = QueryAggregator::new(parent_id, sender, misrouted);
         for (aggregate_id, _, sub_query_id, _) in &sub_queries {
             aggregator.add_pending(*sub_query_id, *aggregate_id);
         }

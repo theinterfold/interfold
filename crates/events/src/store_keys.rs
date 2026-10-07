@@ -15,11 +15,11 @@ impl StoreKeys {
     }
 
     pub fn threshold_keyshare(e3_id: &E3id) -> String {
-        format!("//threshold_keyshare/{e3_id}")
+        format!("{}{e3_id}", Self::THRESHOLD_KEYSHARE_PREFIX)
     }
 
     pub fn threshold_keyshare_recovery(e3_id: &E3id) -> String {
-        format!("//threshold_keyshare_recovery/v1/{e3_id}")
+        format!("{}{e3_id}", Self::THRESHOLD_KEYSHARE_RECOVERY_PREFIX)
     }
 
     pub fn threshold_keyshare_lbfv_generation(e3_id: &E3id) -> String {
@@ -27,8 +27,32 @@ impl StoreKeys {
     }
 
     pub fn threshold_keyshare_recovery_payloads(e3_id: &E3id) -> String {
-        format!("//threshold_keyshare_recovery_payloads/v1/{e3_id}")
+        format!(
+            "{}{e3_id}",
+            Self::THRESHOLD_KEYSHARE_RECOVERY_PAYLOADS_PREFIX
+        )
     }
+
+    pub fn threshold_keyshare_bfv_key(e3_id: &E3id) -> String {
+        format!("{}{e3_id}", Self::THRESHOLD_KEYSHARE_BFV_KEY_PREFIX)
+    }
+
+    /// Key prefix of the key-share state of one E3. The E3 ID follows it.
+    pub const THRESHOLD_KEYSHARE_PREFIX: &'static str = "//threshold_keyshare/";
+
+    /// Key prefix of this node's BFV encryption keypair for one E3. The E3 ID follows it.
+    pub const THRESHOLD_KEYSHARE_BFV_KEY_PREFIX: &'static str = "//threshold_keyshare_bfv_key/v1/";
+
+    /// Key prefix of the key-share recovery state of one E3. The E3 ID follows it.
+    pub const THRESHOLD_KEYSHARE_RECOVERY_PREFIX: &'static str =
+        "//threshold_keyshare_recovery/v1/";
+
+    /// Key prefix of the key-share recovery payloads of one E3. The E3 ID follows it.
+    pub const THRESHOLD_KEYSHARE_RECOVERY_PAYLOADS_PREFIX: &'static str =
+        "//threshold_keyshare_recovery_payloads/v1/";
+
+    /// Key prefix of the slash writer state of one chain. The chain ID follows it.
+    pub const SLASHING_WRITER_PREFIX: &'static str = "//evm_writers/slashing/";
 
     pub fn plaintext(e3_id: &E3id) -> String {
         format!("//plaintext/{e3_id}")
@@ -135,7 +159,7 @@ impl StoreKeys {
     }
 
     pub fn slashing_writer_recovery(chain_id: u64) -> String {
-        format!("//evm_writers/slashing/{chain_id}/recovery/v1")
+        format!("{}{chain_id}/recovery/v1", Self::SLASHING_WRITER_PREFIX)
     }
 
     pub fn data_availability_recovery(chain_id: u64) -> String {
@@ -150,18 +174,6 @@ impl StoreKeys {
         String::from("//libp2p/keypair")
     }
 
-    pub fn interfold_sol_reader(chain_id: u64) -> String {
-        format!("//evm_readers/interfold/{chain_id}")
-    }
-
-    pub fn ciphernode_registry_reader(chain_id: u64) -> String {
-        format!("//evm_readers/ciphernode_registry/{chain_id}")
-    }
-
-    pub fn bonding_registry_reader(chain_id: u64) -> String {
-        format!("//evm_readers/bonding_registry/{chain_id}")
-    }
-
     pub fn node_state() -> String {
         String::from("//node_state")
     }
@@ -171,6 +183,12 @@ impl StoreKeys {
     /// downgrades loudly instead of silently loading garbage (H19/H20).
     pub fn schema_version() -> String {
         String::from("//schema_version")
+    }
+
+    /// Role of the node that owns this data directory (full or bootstrap). Written on first boot;
+    /// a node refuses to start on a directory that another role wrote.
+    pub fn node_role() -> String {
+        String::from("//node_role")
     }
 
     pub fn finalized_committees() -> String {

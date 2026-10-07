@@ -224,8 +224,13 @@ Governance may update `ticketPrice`, `requiredCiphernodeBond`, `ciphernodeBondAc
 operator statuses fail closed. Operators or governance then call `refreshOperatorStatus` (or its
 batch form) to re-evaluate registered operators under the new policy. Only operators refreshed into
 the current version count as active, so committee requests cannot rely on status cached under an
-older policy. The Rust sortition state consumes the same `ConfigurationUpdated` event and marks its
-chain-local operators inactive until matching `OperatorActivationChanged` refresh events arrive.
+older policy. Every version bump emits `EligibilityConfigurationVersionUpdated`, including
+asset-configuration changes and the node-release cutover. The Rust sortition state consumes it (and
+the older `ConfigurationUpdated`) and marks its chain-local operators inactive at the bump's chain
+position until matching `OperatorActivationChanged` refresh events arrive. The local dashboard does
+not apply the bump: it shows the last activation change of each operator.
+`BondingAssetConfigUpdated` sets the local ticket price; committee selection uses the request-time
+price from the committee request instead.
 
 Each base eligibility change also captures the number of registered operators. New committee
 requests remain blocked until every member of that set is checked or deregisters. A check counts
@@ -267,6 +272,12 @@ the requested timestamp. This separation lets already requested E3s accept their
 after an owner change or a governance policy change. New requests use the new rule at
 `requestBlock - 1`. If governance changes policy at the request timestamp, the capacity check fails
 closed until a later timestamp and a status refresh.
+
+The node dashboard (`fetch_operator_status`), `interfold ciphernode status` (`lifecycle.rs`) and the
+public operator guide show `isActive` as "Active". They show
+`eligibilityAt(operator, latest block timestamp)` separately as "Eligible for new committees", which
+the dashboard reports as unknown when that read fails. An operator in the admission cooldown is
+therefore active but not eligible.
 
 Pausing freezes the eligible pool at the timestamp before the pause. Waiting positions cannot enter
 while paused, even after expiry. New registrations and changed owners are also excluded. Changing or
@@ -535,10 +546,10 @@ quorum denominator while being unable to help meet it.
 
 Two contracts restore that weight:
 
-| Contract                     | Role                                                                                 |
-| ---------------------------- | ------------------------------------------------------------------------------------ |
-| `registry/BondedCheckpoints` | Records `totalBonded(owner)` over time. Only `BondingRegistry` may write.            |
-| `registry/BondedVotes`       | `IERC5805` view summing a primary vote source and bonded FOLD at the same timepoint. |
+| Contract                     | Role                                                                                                                                           |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `registry/BondedCheckpoints` | Records `totalBonded(owner)` over time. Only `BondingRegistry` may write.                                                                      |
+| `registry/BondedVotes`       | `IERC5805` that sums a primary vote source and bonded FOLD at the same timepoint, and moves an owner's bonded weight to one accepted delegate. |
 
 ```text
 BondedVotes.getPastVotes(account, t)              ← the NUMERATOR
@@ -546,8 +557,12 @@ BondedVotes.getPastVotes(account, t)              ← the NUMERATOR
 ├─ votesSource.getPastVotes(account, t)           ← either the token or an escrow adapter
 │    ├─ votesSource == token   → wallet-held FOLD (needs delegation)
 │    └─ votesSource == escrow  → only escrowed FOLD; idle wallet FOLD carries no weight
-├─ BondedCheckpoints.getPastBonded(account, t)    ← FOLD bonded as an operator
-└─ InterfoldToken.lockedBalanceAt(account, t)     ← vesting-locked FOLD, escrow source ONLY
+├─ bonded weight of account, unless a delegate represents it at t
+└─ bonded weight of each owner that account represents at t (MAX_BONDED_OWNERS = 3)
+
+bonded weight(owner, t)
+├─ BondedCheckpoints.getPastBonded(owner, t)      ← FOLD bonded as an operator
+└─ InterfoldToken.lockedBalanceAt(owner, t)       ← vesting-locked FOLD, escrow source ONLY
      minus the bonded total (saturating), because a bond satisfies a lock
 
 BondedVotes.getPastTotalSupply(t)                 ← the DENOMINATOR
@@ -682,10 +697,40 @@ total at the current timepoint, and cannot rewrite any past entry — so a third
 owner's history. Either call it for every existing owner after configuring, or configure the
 checkpoint contract in the same transaction that upgrades the registry, before any bonding.
 
-Bonded weight is **not delegatable** — the registry owns the position — so it always sits with the
-bond owner, including for an owner that never self-delegated. Wallet-held FOLD keeps its normal
-delegation through the token. `BondedVotes.delegate`/`delegateBySig` revert rather than silently
-doing nothing.
+Bonded weight moves only through `BondedVotes` itself. The registry owns the position, so token
+delegation leaves it with the bond owner, also for an owner that never self-delegated. An owner asks
+with `delegateBonded(delegatee)`, and the weight moves when the delegate calls
+`acceptBonded(owner)`. A request alone moves nothing, so nobody can push weight onto a delegate or
+take its place. A delegate represents at most three owners at a time (`MAX_BONDED_OWNERS`), one per
+checkpointed slot. Bonded weight is read again from its sources on every call, so each represented
+owner costs a full read: about 29k gas with one vesting lock. The cap keeps the cost of a vote
+bounded. `acceptBonded` takes the first free slot or reverts `BondedDelegateFull`. The owner ends
+the delegation with `delegateBonded` (zero, itself, or another delegate) and the delegate with
+`dropBonded(owner)`, both at once. `dropBonded` reverts `NotBondedDelegate` unless the caller is the
+owner's current delegate, so no third account can end a delegation. Both directions are checkpointed
+on the token's clock in the same call, so at every timepoint an owner's bonded weight counts at the
+owner or at exactly one delegate. Wallet-held FOLD keeps its delegation through the token and
+escrowed FOLD through the escrow. `BondedVotes.delegate` and `delegateBySig` still revert rather
+than silently doing nothing. `pendingBondedDelegate(owner)`, `bondedDelegate(owner)` and
+`bondedOwners(delegatee)` show the current state, and `BondedDelegationRequested` records each
+request. `getPastVotes` itself rejects an unsettled timepoint with `FutureLookup`, because an owner
+that delegated its weight away reads no bonded history that would reject it.
+
+Each change emits `BondedDelegateChanged(owner, fromDelegate, toDelegate)` on `BondedVotes`, not the
+IVotes `DelegateChanged`: `delegates()` names the votes source's delegate, and an indexer that reads
+`DelegateChanged` would record a different one. A delegate can hold bonded weight with no token log,
+no bond and no escrow position, so the CRISP census reads this event to find it.
+`EtherscanClient::get_bonded_delegate_candidates` adds every non-zero `toDelegate` to the
+candidates, and `getPastVotes` at the snapshot then keeps or drops each one. File:
+`examples/CRISP/server/src/server/token_holders/etherscan.rs`.
+
+Delegations live in the adapter. A replacement `BondedVotes`, for a new era or for an adapter from
+before bonded delegation, starts with none, so owners must delegate again. An adapter from before
+bonded delegation has the same constructor arguments as a current one, so `--action activate-voting`
+refuses a recorded one rather than reporting it as deployed, `--action validate` prints a `--` line
+for it, and `deployAndSaveBondedVotes` deploys a replacement. All three use `hasBondedDelegation`.
+Files: `scripts/protocol/activateVoting.ts`, `scripts/protocol/validate.ts`,
+`scripts/deployAndSave/bondedVotes.ts`, `scripts/protocol/values.ts`.
 
 ## Activation Thresholds Summary
 
@@ -825,6 +870,11 @@ The gateway stores ticket, activation, and configuration facts in their appended
 variants. Each variant carries the source block timestamp in seconds and log index, captured before
 the event bus merges its clock. Sortition and offline projection repair use those source positions,
 not receipt time. Each ticket, activation, and price projection retains its latest source position
-so overlapping restart backfill cannot replace newer state or append an older checkpoint. Schema 7
-rejects schema-6 stores because their histories can contain incorrect checkpoint times. Old variants
-remain readable for validation, but cannot build new trusted eligibility history.
+so overlapping restart backfill cannot replace newer state or append an older checkpoint. Releases
+from schema 7 on reject schema-6 stores, because their histories can contain incorrect checkpoint
+times. The decoder keeps the old variants, but they cannot build new trusted eligibility history,
+and `interfold node validate` rejects an unsupported store before it reads its events. A store
+written before the node decoded `EligibilityConfigurationVersionUpdated` and
+`BondingAssetConfigUpdated` holds them only as raw `EvmLogObserved` records, which no projection
+reads again. Such a store must be reset (the v0.19 schema 8 reset) so that the reader resyncs from
+the deploy block and decodes every version bump.

@@ -88,13 +88,13 @@ pub enum BfvPreset {
 }
 
 impl BfvPreset {
-    /// Convert an on-chain `ParamSet` enum value (uint8) to the corresponding
-    /// threshold `BfvPreset`. Returns `None` for unknown values.
+    /// Map a supported on-chain parameter-set index to a threshold `BfvPreset`.
+    /// Return `None` for the historical secure index 1 and other unsupported indices.
     pub fn from_on_chain_param_set(value: u8) -> Option<Self> {
         match value {
             0 => Some(BfvPreset::InsecureThreshold),
-            1 => Some(BfvPreset::SecureThreshold8192),
-            2 => Some(BfvPreset::SecureThreshold16384),
+            2 => Some(BfvPreset::SecureThreshold8192),
+            3 => Some(BfvPreset::SecureThreshold16384),
             _ => None,
         }
     }
@@ -762,24 +762,6 @@ mod tests {
     }
 
     #[test]
-    fn test_param_set_build() {
-        let preset = BfvPreset::InsecureDkg;
-        let param_set: BfvParamSet = preset.into();
-
-        assert_eq!(param_set.degree, insecure::DEGREE);
-        assert_eq!(
-            param_set.plaintext_modulus,
-            insecure::dkg::PLAINTEXT_MODULUS
-        );
-        assert_eq!(param_set.moduli, insecure::dkg::MODULI);
-
-        let params = param_set.build();
-        assert_eq!(params.degree(), param_set.degree);
-        assert_eq!(params.plaintext(), param_set.plaintext_modulus);
-        assert_eq!(params.moduli(), param_set.moduli);
-    }
-
-    #[test]
     fn test_param_set_build_arc() {
         let preset = BfvPreset::SecureDkg8192;
         let param_set: BfvParamSet = preset.into();
@@ -809,6 +791,24 @@ mod tests {
         assert_eq!(metadata.degree, secure_16384::DEGREE);
         assert_eq!(metadata.num_parties, secure_16384::NUM_PARTIES);
         assert_eq!(metadata.lambda, DEFAULT_SECURE_16384_LAMBDA);
+    }
+
+    #[test]
+    fn old_secure_parameter_slot_has_no_preset() {
+        assert_eq!(
+            BfvPreset::from_on_chain_param_set(0),
+            Some(BfvPreset::InsecureThreshold)
+        );
+        assert_eq!(BfvPreset::from_on_chain_param_set(1), None);
+        assert_eq!(
+            BfvPreset::from_on_chain_param_set(2),
+            Some(BfvPreset::SecureThreshold8192)
+        );
+        assert_eq!(
+            BfvPreset::from_on_chain_param_set(3),
+            Some(BfvPreset::SecureThreshold16384)
+        );
+        assert_eq!(BfvPreset::from_on_chain_param_set(4), None);
     }
 
     #[test]

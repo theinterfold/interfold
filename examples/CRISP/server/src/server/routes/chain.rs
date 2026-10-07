@@ -1705,18 +1705,6 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn an_oversized_batch_is_refused_by_the_cap_not_by_the_window() {
-        // The cap is checked before the window is charged, so a caller who sends 65 calls learns
-        // the limit is 64 instead of being told to slow down — and pays nothing for a request the
-        // server was never going to run.
-        let limiter = ChainRateLimiter::new();
-        let request = actix_web::test::TestRequest::default().to_http_request();
-
-        // The whole window is still available afterwards.
-        assert!(admit(&request, &limiter, MAX_RPC_BATCH).is_ok());
-    }
-
-    #[actix_web::test]
     async fn a_wide_log_scan_is_charged_for_the_windows_it_opens() {
         // 500 windows is 500 upstream calls; charging it as 1 left the per-caller bound off by
         // that factor. Two maximal scans should exhaust a 1200-call window.

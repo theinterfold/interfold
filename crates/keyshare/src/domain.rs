@@ -15,6 +15,8 @@ mod bfv_keygen;
 mod decryption_key_calculation;
 #[path = "threshold_keyshare/collect_decryption_keys.rs"]
 mod decryption_key_shared_collection;
+#[path = "threshold_keyshare/ready_summary.rs"]
+mod dkg_ready_summary;
 #[path = "threshold_keyshare/roster.rs"]
 mod dkg_roster;
 #[path = "threshold_keyshare/collect_encryption_keys.rs"]
@@ -39,6 +41,7 @@ pub use lbfv_generation_state::*;
 pub(crate) use bfv_keygen::*;
 pub(crate) use decryption_key_calculation::*;
 pub(crate) use decryption_key_shared_collection::*;
+pub(crate) use dkg_ready_summary::*;
 pub(crate) use dkg_roster::*;
 pub(crate) use encryption_key_collection::*;
 pub(crate) use share_generation::*;

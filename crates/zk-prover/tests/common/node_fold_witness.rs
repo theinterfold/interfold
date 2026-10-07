@@ -10,7 +10,7 @@
 use e3_fhe_params::build_pair_for_preset;
 use e3_fhe_params::create_deterministic_crp_from_default_seed;
 use e3_fhe_params::BfvPreset;
-use e3_polynomial::CrtPolynomial;
+use e3_polynomial::{CrtPolynomial, Polynomial};
 use e3_zk_helpers::circuits::dkg::share_computation::utils::compute_parity_matrix;
 use e3_zk_helpers::computation::DkgInputType;
 use e3_zk_helpers::dkg::share_computation::{
@@ -119,6 +119,7 @@ pub fn pk_generation_sample_with_esi_and_share(
         pk0_share: CrtPolynomial::from_fhe_polynomial(&pk0_share),
         eek: CrtPolynomial::from_fhe_polynomial(&e),
         e_sm: CrtPolynomial::from_fhe_polynomial(e_sm.deref()),
+        e_sm_lifted: Polynomial::from_fhe_polynomial(e_sm.deref()),
         sk: sk_crt,
     };
 
@@ -226,9 +227,6 @@ pub fn share_encryption_for_slot(
     dkg_input_type: DkgInputType,
     committee: CiphernodesCommittee,
 ) -> Result<ShareEncryptionCircuitData, CircuitsErrors> {
-    let (_, dkg_params) =
-        build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
-
     let (threshold_params, _) = build_pair_for_preset(preset)
         .map_err(|e| CircuitsErrors::Sample(format!("Failed to build pair for preset: {:?}", e)))?;
     let l = threshold_params.moduli().len();
@@ -251,21 +249,21 @@ pub fn share_encryption_for_slot(
     }
 
     let mut rng = rng();
-    let pt = Plaintext::try_encode(&share_row, Encoding::poly(), &dkg_params)
+    let pt = Plaintext::try_encode(&share_row, Encoding::poly(), &dkg_pk.params)
         .map_err(|e| CircuitsErrors::Sample(format!("encode plaintext: {:?}", e)))?;
 
-    let (_ct, u_rns, e0_rns, e1_rns) = dkg_pk
-        .try_encrypt_extended(&pt, &mut rng)
+    let (ct, encryption) = dkg_pk
+        .try_encrypt_with_intermediates(&pt, &mut rng)
         .map_err(|e| CircuitsErrors::Sample(format!("encrypt: {:?}", e)))?;
 
     Ok(ShareEncryptionCircuitData {
         plaintext: pt,
-        ciphertext: _ct,
+        ciphertext: ct,
         public_key: dkg_pk.clone(),
         secret_key: dkg_sk.clone(),
-        u_rns,
-        e0_rns,
-        e1_rns,
+        u_rns: encryption.randomness().clone(),
+        e0_rns: encryption.error_0().clone(),
+        e1_rns: encryption.error_1().clone(),
         dkg_input_type,
         party_idx: party as u32,
         mod_idx: mod_ix as u32,

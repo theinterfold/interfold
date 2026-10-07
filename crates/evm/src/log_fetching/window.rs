@@ -6,6 +6,8 @@
 
 //! Adaptive `eth_getLogs` block window.
 //!
+//! The default widest range is `DEFAULT_RPC_LOG_RANGE_BLOCKS` from the chain configuration.
+//!
 //! Hosted providers cap the block range of a single `eth_getLogs` call, and the cap is not
 //! discoverable: it is published in documentation, not over the wire. A fixed window therefore makes
 //! the node work on some providers and fail on others, and the failure arrives as an opaque
@@ -13,15 +15,18 @@
 //!
 //! This window starts at the widest range and halves it each time the provider rejects the range.
 //! The node then finds the provider's limit by itself, so an operator does not have to select an
-//! endpoint by its documented range cap.
+//! endpoint by its documented range cap. The widest range comes from the chain configuration
+//! (`rpc_log_range_blocks`), for a provider whose refusal the node does not recognize, or one that
+//! permits more than the default.
 //!
 //! The discovered width is kept for the remainder of the sync. A range cap is a property of the
 //! provider, not of the block range that was requested, so a window that grew back would find the
 //! same cap again on the next call and pay one more failed request for each chunk.
 
-/// Widest `eth_getLogs` range the node asks for. Providers that permit this range, or more, complete
-/// a sync in the fewest calls.
-pub(crate) const MAX_LOG_WINDOW: u64 = 10_000;
+use e3_config::chain_config::DEFAULT_RPC_LOG_RANGE_BLOCKS;
+
+/// Widest `eth_getLogs` range the node asks for unless the chain configuration sets one.
+pub(crate) const MAX_LOG_WINDOW: u64 = DEFAULT_RPC_LOG_RANGE_BLOCKS;
 
 /// Narrowest range the window can reach. One block always satisfies a range cap, so the node keeps a
 /// usable window against any provider.
@@ -30,10 +35,6 @@ pub(crate) const MIN_LOG_WINDOW: u64 = 1;
 /// Window width at or below which a sync is slow enough that the operator should know. A provider
 /// that caps the range this tightly needs hundreds of thousands of calls to read a long history.
 pub(crate) const NARROW_LOG_WINDOW_WARN: u64 = 128;
-
-/// Maximum halvings for one chunk. `MAX_LOG_WINDOW` reaches `MIN_LOG_WINDOW` in 14 halvings, so this
-/// bound stops a provider that rejects every range from looping, and never stops a real adaptation.
-pub(crate) const MAX_WINDOW_SHRINKS: u32 = 16;
 
 /// Provider messages that report a rejected block range or an oversized result set.
 ///
@@ -110,28 +111,19 @@ pub(crate) struct LogWindow {
     width: u64,
 }
 
-impl Default for LogWindow {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl LogWindow {
-    /// Start at the widest range and narrow it only when a provider rejects one.
+    /// Start at the default widest range, for tests. Production code starts at the chain's
+    /// configured range through [`LogWindow::with_max`], so a reader cannot forget the setting.
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
-        Self {
-            width: MAX_LOG_WINDOW,
-        }
+        Self::with_max(MAX_LOG_WINDOW)
     }
 
-    /// Build a window of an exact width, for tests.
-    ///
-    /// The width is clamped into `MIN_LOG_WINDOW..=MAX_LOG_WINDOW`, so a zero width cannot produce a
-    /// range that never advances.
-    #[cfg(test)]
-    pub(crate) fn with_width(width: u64) -> Self {
+    /// Start at `max_width`, the widest range the chain configuration allows. A width below the
+    /// floor is raised to it, because one block always satisfies a range cap.
+    pub(crate) fn with_max(max_width: u64) -> Self {
         Self {
-            width: width.clamp(MIN_LOG_WINDOW, MAX_LOG_WINDOW),
+            width: max_width.max(MIN_LOG_WINDOW),
         }
     }
 
@@ -152,7 +144,8 @@ impl LogWindow {
     ///
     /// Returns `false` when the window is already at `MIN_LOG_WINDOW`: a provider that refuses a
     /// single block is not applying a range cap, and the caller must report the error instead of
-    /// narrowing further.
+    /// narrowing further. The floor bounds the narrowing of one chunk by the logarithm of the
+    /// starting width, whatever range the chain configures.
     pub(crate) fn shrink(&mut self) -> bool {
         if self.width <= MIN_LOG_WINDOW {
             return false;
@@ -187,6 +180,17 @@ mod tests {
     }
 
     #[test]
+    fn a_configured_range_sets_the_starting_width() {
+        // A provider with a documented cap of 2,000 blocks and an unrecognized refusal message
+        // works only when the window starts at or below its cap.
+        assert_eq!(LogWindow::with_max(2_000).width(), 2_000);
+        // A provider that permits more than the default syncs in fewer calls.
+        assert_eq!(LogWindow::with_max(50_000).width(), 50_000);
+        // One block always satisfies a cap, so the floor is the smallest start.
+        assert_eq!(LogWindow::with_max(0).width(), MIN_LOG_WINDOW);
+    }
+
+    #[test]
     fn shrinking_halves_the_window() {
         let mut window = LogWindow::new();
 
@@ -198,7 +202,7 @@ mod tests {
 
     #[test]
     fn shrinking_stops_at_the_floor_and_reports_it() {
-        let mut window = LogWindow::with_width(2);
+        let mut window = LogWindow::with_max(2);
 
         assert!(window.shrink());
         assert_eq!(window.width(), MIN_LOG_WINDOW);
@@ -209,31 +213,18 @@ mod tests {
     }
 
     #[test]
-    fn the_widest_window_reaches_the_floor_within_the_shrink_budget() {
-        let mut window = LogWindow::new();
-        let mut shrinks = 0u32;
-
-        while window.shrink() {
-            shrinks += 1;
-            assert!(shrinks <= MAX_WINDOW_SHRINKS, "shrink budget is too small");
+    fn any_configured_range_reaches_the_floor_by_halving() {
+        // A chain may configure a range far above the default. Narrowing has no fixed budget, so a
+        // dense interval that a provider serves only in small pieces is still reached.
+        for start in [MAX_LOG_WINDOW, 1_000_000, u64::MAX] {
+            let mut window = LogWindow::with_max(start);
+            let mut shrinks = 0u32;
+            while window.shrink() {
+                shrinks += 1;
+            }
+            assert_eq!(window.width(), MIN_LOG_WINDOW);
+            assert!(shrinks <= 64, "{start} needed {shrinks} halvings");
         }
-
-        assert_eq!(window.width(), MIN_LOG_WINDOW);
-        assert!(shrinks < MAX_WINDOW_SHRINKS);
-    }
-
-    #[test]
-    fn a_zero_width_is_clamped_so_a_chunk_always_advances() {
-        let window = LogWindow::with_width(0);
-
-        assert_eq!(window.width(), MIN_LOG_WINDOW);
-        // A zero width would produce end_for(100, 200) == 99 and a range that never advances.
-        assert_eq!(window.end_for(100, 200), 100);
-    }
-
-    #[test]
-    fn a_width_above_the_maximum_is_clamped() {
-        assert_eq!(LogWindow::with_width(u64::MAX).width(), MAX_LOG_WINDOW);
     }
 
     #[test]
@@ -255,14 +246,14 @@ mod tests {
     #[test]
     fn narrow_windows_are_reported_for_the_operator() {
         assert!(!LogWindow::new().is_narrow());
-        assert!(LogWindow::with_width(NARROW_LOG_WINDOW_WARN).is_narrow());
-        assert!(LogWindow::with_width(10).is_narrow());
+        assert!(LogWindow::with_max(NARROW_LOG_WINDOW_WARN).is_narrow());
+        assert!(LogWindow::with_max(10).is_narrow());
     }
 
     #[test]
     fn the_chunk_estimate_follows_the_current_width() {
         assert_eq!(LogWindow::new().estimated_chunks(0, 24_999), 3);
-        assert_eq!(LogWindow::with_width(10).estimated_chunks(0, 99), 10);
+        assert_eq!(LogWindow::with_max(10).estimated_chunks(0, 99), 10);
         // An empty range needs no call.
         assert_eq!(LogWindow::new().estimated_chunks(200, 100), 0);
     }

@@ -105,6 +105,7 @@ impl fmt::Display for ComputeRequest {
                 ZkRequest::NodesFoldV2Step(_) => "ZkNodesFoldV2Step",
                 ZkRequest::LbfvAggregationFold(_) => "ZkLbfvAggregationFold",
                 ZkRequest::DkgAggregationV2(_) => "ZkDkgAggregationV2",
+                ZkRequest::ReverifyAccusedProof(_) => "ZkReverifyAccusedProof",
             },
         };
         write!(f, "{}", s)

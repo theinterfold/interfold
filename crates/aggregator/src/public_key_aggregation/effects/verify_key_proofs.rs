@@ -107,6 +107,7 @@ impl PublicKeyAggregator {
         if self.is_lbfv() {
             return Ok(());
         }
+        self.mark_started_as_aggregator();
         let C1Dispatch {
             party_proofs,
             no_proof_parties,
@@ -197,6 +198,15 @@ impl PublicKeyAggregator {
         }
 
         if msg.e3_id != self.e3_id {
+            return Ok(());
+        }
+        // A key on chain ends the C1 phase. A late result, such as one that a demoted node
+        // finishes, must not fail the E3 or accuse a dealer.
+        if self.key_published {
+            info!(
+                e3_id = %self.e3_id,
+                "Ignoring a C1 verification result after the key was published"
+            );
             return Ok(());
         }
 

@@ -33,8 +33,6 @@ pub(crate) enum DecryptionProofKind {
 pub(crate) struct NodeAggregationMeta {
     pub(crate) party_id: u64,
     pub(crate) total_expected: usize,
-    /// Buffered C0 proof, if it arrived before meta was stored.
-    pub(crate) pending_c0: Option<Proof>,
 }
 
 impl NodeAggregationMeta {
@@ -176,10 +174,13 @@ pub(crate) struct PendingShareDecryptionProof {
     pub(crate) node: String,
     pub(crate) decryption_share: Vec<ArcBytes>,
     pub(crate) ec: EventContext<Sequenced>,
+    /// The `redelivery` of the latest request seen for this proof.
+    pub(crate) redelivery: u64,
 }
 
 /// Pending C7 (DecryptedSharesAggregation) proof generation state.
 #[derive(Clone, Debug)]
 pub(crate) struct PendingAggregationProof {
     pub(crate) ec: EventContext<Sequenced>,
+    pub(crate) request: e3_events::DecryptedSharesAggregationProofRequest,
 }

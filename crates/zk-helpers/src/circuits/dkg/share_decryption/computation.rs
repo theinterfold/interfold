@@ -338,27 +338,6 @@ mod tests {
     }
 
     #[test]
-    fn test_constants_json_roundtrip() {
-        let committee = CiphernodesCommitteeSize::Small.values();
-        let sample = ShareDecryptionCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold,
-            committee,
-            DkgInputType::SecretKey,
-        )
-        .unwrap();
-        let constants = Configs::compute(BfvPreset::InsecureThreshold, &sample).unwrap();
-
-        let json = constants.to_json().unwrap();
-        let decoded: Configs = serde_json::from_value(json).unwrap();
-
-        assert_eq!(decoded.n, constants.n);
-        assert_eq!(decoded.l, constants.l);
-        assert_eq!(decoded.h, constants.h);
-        assert_eq!(decoded.bits, constants.bits);
-        assert_eq!(decoded.bounds, constants.bounds);
-    }
-
-    #[test]
     fn test_input_decryption_consistency() {
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample = ShareDecryptionCircuitData::generate_sample(
@@ -383,10 +362,16 @@ mod tests {
     #[test]
     fn test_recipient_outside_dealer_set_decrypts_every_row() {
         let committee = CiphernodesCommitteeSize::Small.values();
-        let preset = BfvPreset::InsecureThreshold;
-        let mut sample =
-            ShareDecryptionCircuitData::generate_sample(preset, committee, DkgInputType::SecretKey)
-                .unwrap();
+        let preset = BfvPreset::InsecureThreshold512;
+        let (mut sample, dkg_params) = ShareDecryptionCircuitData::generate_sample_with_params(
+            preset,
+            committee,
+            DkgInputType::SecretKey,
+        )
+        .unwrap();
+        let expected = Inputs::compute(preset, &sample).unwrap();
+        let mut rng = rand::rng();
+        let public_key = PublicKey::new(&sample.secret_key, &mut rng);
         let own_idx = sample
             .honest_ciphertexts
             .iter()

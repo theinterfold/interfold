@@ -6,8 +6,9 @@
 
 //! User data encryption circuit.
 //!
-//! This module computes the raw BFV witness and configuration for the recursive proof-tree
-//! builder. See [`UserDataEncryptionCircuit`] and [`UserDataEncryptionCircuitInput`].
+//! This circuit proves data encryption with a BFV public key (pk0, pk1) and produces
+//! Prover.toml and configs.nr for the Noir prover. See [`UserDataEncryptionCircuit`] and
+//! [`UserDataEncryptionCircuitInput`].
 
 pub mod circuit;
 pub mod codegen;

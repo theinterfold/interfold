@@ -5,6 +5,49 @@
 use super::*;
 
 impl ThresholdKeyshare {
+    pub(crate) fn observe_canonical_stage(&mut self, e3_id: &E3id, stage: &E3Stage) {
+        if self.state.get().is_some_and(|state| state.e3_id == *e3_id)
+            && matches!(
+                stage,
+                E3Stage::KeyPublished | E3Stage::CiphertextReady | E3Stage::Complete
+            )
+        {
+            self.canonical_key_published = true;
+        }
+    }
+
+    fn collector_failure_is_current(&self, e3_id: &E3id, phase: DkgTimeoutPhase) -> Result<bool> {
+        let state = self.state.try_get()?;
+        if state.e3_id != *e3_id || self.canonical_key_published {
+            return Ok(false);
+        }
+
+        Ok(match phase {
+            DkgTimeoutPhase::EncryptionKeyCollection => matches!(
+                state.state,
+                KeyshareState::Init | KeyshareState::CollectingEncryptionKeys(_)
+            ),
+            DkgTimeoutPhase::ThresholdShareCollection => matches!(
+                state.state,
+                KeyshareState::Init
+                    | KeyshareState::CollectingEncryptionKeys(_)
+                    | KeyshareState::GeneratingThresholdShare(_)
+                    | KeyshareState::AggregatingDecryptionKey(_)
+            ),
+            DkgTimeoutPhase::DecryptionKeySharedCollection => {
+                // ReadyForDecryption still collects C4 shares until publication is authorized.
+                if !matches!(state.state, KeyshareState::ReadyForDecryption(_))
+                    || state.keyshare_published
+                {
+                    return Ok(false);
+                }
+                let recovery = self.recovery.try_get()?;
+                !recovery.keyshare_publish_authorized
+                    && recovery.decryption_verification_complete.is_none()
+            }
+        })
+    }
+
     fn persist_terminal_failure(
         &mut self,
         failed_at_stage: E3Stage,
@@ -19,6 +62,41 @@ impl ThresholdKeyshare {
         if let Err(error) = self.discard_pending_lbfv_generation() {
             error!("Failed to clear l-BFV generation secrets after the main failure: {error}");
         }
+        Ok(())
+    }
+
+    /// End this node's DKG because it cannot continue with H encryption keys.
+    pub(in crate::actors::threshold_keyshare) fn fail_encryption_key_collection(
+        &mut self,
+        failure: EncryptionKeyCollectionFailed,
+    ) -> Result<()> {
+        if !self.collector_failure_is_current(
+            &failure.e3_id,
+            DkgTimeoutPhase::EncryptionKeyCollection,
+        )? {
+            return Ok(());
+        }
+        warn!(
+            e3_id = %failure.e3_id,
+            missing_parties = ?failure.missing_parties,
+            "Encryption key collection failed: {}",
+            failure.reason
+        );
+
+        // Clear the collector reference since it's stopped
+        self.encryption_key_collector = None;
+
+        self.persist_terminal_failure(E3Stage::CommitteeFinalized, FailureReason::DKGTimeout)?;
+
+        // Publish failure event to event bus for sync tracking
+        self.bus.publish_without_context(failure.clone())?;
+
+        self.bus.publish_without_context(E3Failed {
+            e3_id: failure.e3_id,
+            failed_at_stage: E3Stage::CommitteeFinalized,
+            reason: FailureReason::DKGTimeout,
+        })?;
+
         Ok(())
     }
 }
@@ -50,6 +128,16 @@ impl Handler<TypedEvent<ComputeResponse>> for ThresholdKeyshare {
             &self.bus.with_ec(msg.get_ctx()),
             || self.handle_compute_response(msg, ctx.address()),
         )
+    }
+}
+
+impl Handler<RedeliverDecryptionWork> for ThresholdKeyshare {
+    type Result = ();
+
+    fn handle(&mut self, msg: RedeliverDecryptionWork, _: &mut Self::Context) -> Self::Result {
+        if let Err(error) = self.redeliver_decryption_work(msg.0) {
+            error!(%error, "Could not redeliver decryption work");
+        }
     }
 }
 
@@ -112,7 +200,7 @@ impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {
             trap(
                 EType::KeyGeneration,
                 &self.bus.with_ec(msg.get_ctx()),
-                || self.handle_ciphernode_selected(msg, ctx.address()),
+                || self.handle_ciphernode_selected(msg, ctx),
             );
             return Box::pin(async {}.into_actor(self));
         }
@@ -133,7 +221,7 @@ impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {
                         state.dkg_window_secs = Some(window);
                         Ok(state)
                     })?;
-                    actor.handle_ciphernode_selected(msg.clone(), ctx.address())
+                    actor.handle_ciphernode_selected(msg.clone(), ctx)
                 });
                 if let Err(error) = result {
                     actor.bus.err(EType::KeyGeneration, error);
@@ -177,10 +265,10 @@ impl Handler<TypedEvent<ShareVerificationComplete>> for ThresholdKeyshare {
             EType::KeyGeneration,
             &self.bus.with_ec(msg.get_ctx()),
             || {
-                self.record_share_verification(&msg)?;
-                let ec = msg.get_ctx().clone();
-                self.handle_share_verification_complete(msg)?;
-                self.dispatch_expanded_threshold_share_batch(ec)
+                if !self.share_verification_applies(&msg)? {
+                    return Ok(());
+                }
+                self.apply_share_verification(msg)
             },
         )
     }
@@ -229,28 +317,7 @@ impl Handler<EncryptionKeyCollectionFailed> for ThresholdKeyshare {
         _ctx: &mut Self::Context,
     ) -> Self::Result {
         trap(EType::KeyGeneration, &self.bus.clone(), || {
-            warn!(
-                e3_id = %msg.e3_id,
-                missing_parties = ?msg.missing_parties,
-                "Encryption key collection failed: {}",
-                msg.reason
-            );
-
-            // Clear the collector reference since it's stopped
-            self.encryption_key_collector = None;
-
-            self.persist_terminal_failure(E3Stage::CommitteeFinalized, FailureReason::DKGTimeout)?;
-
-            // Publish failure event to event bus for sync tracking
-            self.bus.publish_without_context(msg.clone())?;
-
-            self.bus.publish_without_context(E3Failed {
-                e3_id: msg.e3_id,
-                failed_at_stage: E3Stage::CommitteeFinalized,
-                reason: FailureReason::DKGTimeout,
-            })?;
-
-            Ok(())
+            self.fail_encryption_key_collection(msg)
         })
     }
 }
@@ -263,6 +330,12 @@ impl Handler<ThresholdShareCollectionFailed> for ThresholdKeyshare {
         _ctx: &mut Self::Context,
     ) -> Self::Result {
         trap(EType::KeyGeneration, &self.bus.clone(), || {
+            if !self.collector_failure_is_current(
+                &msg.e3_id,
+                DkgTimeoutPhase::ThresholdShareCollection,
+            )? {
+                return Ok(());
+            }
             warn!(
                 e3_id = %msg.e3_id,
                 missing_parties = ?msg.missing_parties,
@@ -316,6 +389,12 @@ impl Handler<DecryptionKeySharedCollectionFailed> for ThresholdKeyshare {
         _ctx: &mut Self::Context,
     ) -> Self::Result {
         trap(EType::KeyGeneration, &self.bus.clone(), || {
+            if !self.collector_failure_is_current(
+                &msg.e3_id,
+                DkgTimeoutPhase::DecryptionKeySharedCollection,
+            )? {
+                return Ok(());
+            }
             warn!(
                 e3_id = %msg.e3_id,
                 missing_parties = ?msg.missing_parties,
@@ -345,6 +424,9 @@ impl Handler<TypedEvent<E3RequestComplete>> for ThresholdKeyshare {
         event: TypedEvent<E3RequestComplete>,
         ctx: &mut Self::Context,
     ) -> Self::Result {
+        // No decryption work is redelivered after the end, also while the cleanup below retries.
+        self.pending.decryption_share_request = None;
+        self.pending.decryption_proof_request = None;
         if let Err(error) = self.discard_pending_lbfv_generation() {
             error!("Failed to discard pending l-BFV generation secrets: {error}");
         }
@@ -353,11 +435,22 @@ impl Handler<TypedEvent<E3RequestComplete>> for ThresholdKeyshare {
             ctx.notify_later(event, std::time::Duration::from_secs(1));
             return;
         }
-        self.encryption_key_collector = None;
-        self.decryption_key_collector = None;
-        self.decryption_key_shared_collector = None;
-        self.pending = PendingKeyshareWork::default();
-        self.notify_sync(ctx, Die);
+        // The BFV keypair lives until the E3 ends. The actor stops only once its removal is on disk.
+        let keys = self.bfv_keys.clone();
+        ctx.wait(async move { keys.settle().await }.into_actor(self).map(
+            move |settled, actor, ctx| {
+                if let Err(error) = settled {
+                    error!(%error, "Could not remove the BFV key of an ended E3");
+                    ctx.notify_later(event, std::time::Duration::from_secs(1));
+                    return;
+                }
+                actor.bfv_key = None;
+                actor.encryption_key_collector = None;
+                actor.decryption_key_shared_collector = None;
+                actor.pending = PendingKeyshareWork::default();
+                actor.notify_sync(ctx, Die);
+            },
+        ));
     }
 }
 

@@ -27,8 +27,6 @@ export interface CircuitInputs {
   u: PolynomialInput
   e0: PolynomialInput
   e1: PolynomialInput
-  e0is: PolynomialInput[]
-  e0_quotients: PolynomialInput[]
   k1: PolynomialInput
   r1is: PolynomialInput[]
   r2is: PolynomialInput[]

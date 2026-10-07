@@ -4,18 +4,26 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use std::collections::{HashSet, VecDeque};
+use std::{
+    collections::{HashSet, VecDeque},
+    time::Instant,
+};
 
 use anyhow::{ensure, Result};
 use e3_events::{
-    prelude::*, Event, EventId, InterfoldEvent, InterfoldEventData, SeqState, Unsequenced,
+    prelude::*, Event, EventId, EventSource, InterfoldEvent, InterfoldEventData, SeqState,
+    Unsequenced,
 };
+use libp2p::PeerId;
 use tracing::{debug, trace};
 
-use crate::{events::GossipData, NetworkPolicy};
+use crate::{
+    events::GossipData,
+    seen_messages::{Admission, SeenIds},
+    NetworkPolicy,
+};
 
 const EVENT_DEDUP_CAPACITY: usize = 10_000;
-
 /// Pure translation/dedup logic backing the `NetEventTranslator` actor.
 ///
 /// Decides which local events should be gossiped to the network (and dedups them so the same
@@ -26,6 +34,7 @@ pub struct EventTranslationService {
     sent_events: HashSet<EventId>,
     sent_order: VecDeque<EventId>,
     pending_events: HashSet<EventId>,
+    stored_remote: SeenIds<EventId>,
     topic: String,
     network: NetworkPolicy,
 }
@@ -41,6 +50,7 @@ impl EventTranslationService {
             sent_events: HashSet::with_capacity(EVENT_DEDUP_CAPACITY),
             sent_order: VecDeque::with_capacity(EVENT_DEDUP_CAPACITY),
             pending_events: HashSet::new(),
+            stored_remote: SeenIds::new("stored_event"),
             topic: topic.to_string(),
             network,
         }
@@ -114,6 +124,28 @@ impl EventTranslationService {
         self.pending_events.remove(&id);
     }
 
+    /// Reserve retention before handing a gossip event to the event store. Roll back a rejected
+    /// handoff; a later failed append stops the node. Recording here also covers an event that
+    /// the EventBus knows from replay and does not deliver again.
+    pub fn admit_remote_event(&mut self, peer: Option<PeerId>, id: &EventId, now: Instant) -> bool {
+        self.stored_remote.admit(peer, id, now) == Admission::New
+    }
+
+    /// Undo a rejected handoff immediately after admission, before any other cache operation.
+    pub fn reject_remote_event(&mut self, id: &EventId) {
+        self.stored_remote.rollback_latest(id);
+    }
+
+    /// Record a protocol event from the peer network that the EventBus delivered, for example
+    /// one that historical sync stored. The bus delivers an event only after it is stored. The ID
+    /// comes from the payload, because a sync peer supplies the context ID.
+    pub fn record_stored_event(&mut self, event: &InterfoldEvent, now: Instant) {
+        if event.source() == EventSource::Net && Self::is_forwardable_event(event) {
+            self.stored_remote
+                .admit(None, &EventId::hash(event.get_data()), now);
+        }
+    }
+
     /// Decode an inbound gossip payload into the internal event to publish locally, recording it
     /// for dedup so it is not later rebroadcast.
     pub fn prepare_inbound(&mut self, data: GossipData) -> Result<InterfoldEvent<Unsequenced>> {
@@ -125,8 +157,9 @@ impl EventTranslationService {
         );
         Self::validate_signed_manifest(&event)?;
         self.network.validate_event(&event)?;
-        let id = event.id();
-        self.mark_published(id);
+        // Use the ID that the event store derives from the payload, not the peer-supplied context
+        // ID, so a mislabeled event cannot mark another event as sent.
+        self.mark_published(EventId::hash(event.get_data()));
         Ok(event)
     }
 
@@ -147,10 +180,10 @@ mod tests {
     };
     use e3_committee_hash::{hash_lbfv_proof_session, LbfvProofDomainContext};
     use e3_events::{
-        DkgCoordination, DkgCoordinationKind, DkgDealer, E3id, EventConstructorWithTimestamp,
-        EventSource, KeyshareCreated, LbfvKeyShareDocumentContextV1, LbfvKeyShareManifest,
-        LbfvKeyShareManifestPublished, LbfvKeyShareManifestV1, PlaintextAggregated,
-        SignedLbfvKeyShareManifest, TestEvent,
+        AggregateId, DkgCoordination, DkgCoordinationKind, DkgDealer, E3id,
+        EventConstructorWithTimestamp, EventContext, KeyshareCreated,
+        LbfvKeyShareDocumentContextV1, LbfvKeyShareManifest, LbfvKeyShareManifestPublished,
+        LbfvKeyShareManifestV1, PlaintextAggregated, SignedLbfvKeyShareManifest, TestEvent,
     };
     use e3_utils::ArcBytes;
 
@@ -238,6 +271,68 @@ mod tests {
             EventSource::Local,
         );
         event.into_sequenced(1)
+    }
+
+    #[test]
+    fn stored_remote_events_are_reported_until_the_window_ends() {
+        let mut svc = EventTranslationService::new("topic");
+        let remote = local_forwardable_event().with_source(EventSource::Net);
+        let id = remote.event_id();
+        let start = Instant::now();
+        assert!(!svc.stored_remote.contains(&id, start));
+        svc.record_stored_event(&remote, start);
+        assert!(svc
+            .stored_remote
+            .contains(&id, start + crate::seen_messages::SEEN_TTL / 2));
+        assert!(!svc
+            .stored_remote
+            .contains(&id, start + crate::seen_messages::SEEN_TTL));
+    }
+
+    #[test]
+    fn local_and_non_protocol_events_are_not_recorded_as_stored_remote_events() {
+        let mut svc = EventTranslationService::new("topic");
+        let start = Instant::now();
+        let local = local_forwardable_event();
+        svc.record_stored_event(&local, start);
+        assert!(!svc.stored_remote.contains(&local.event_id(), start));
+        let internal = local_test_event().with_source(EventSource::Net);
+        svc.record_stored_event(&internal, start);
+        assert!(!svc.stored_remote.contains(&internal.event_id(), start));
+    }
+
+    #[test]
+    fn a_mislabeled_stored_event_records_its_payload_id() -> Result<()> {
+        let mut svc = EventTranslationService::new("topic");
+        let genuine = local_forwardable_event();
+        let payload: InterfoldEventData = KeyshareCreated {
+            pubkey: ArcBytes::from_bytes(&[9]),
+            e3_id: E3id::new("1", 1),
+            node: "node-2".to_string(),
+            party_id: 2,
+            signed_pk_generation_proof: None,
+        }
+        .into();
+        // A sync peer labels another event with the ID of the genuine event.
+        let context = EventContext::<Unsequenced>::new_origin(
+            genuine.event_id(),
+            1,
+            AggregateId::new(1),
+            None,
+            EventSource::Net,
+        );
+        let forged: InterfoldEvent<Unsequenced> =
+            GossipData::GossipBytes(bincode::serialize(&(payload, context))?).try_into()?;
+        let forged = forged.into_sequenced(1);
+        assert_eq!(forged.event_id(), genuine.event_id());
+
+        let now = Instant::now();
+        svc.record_stored_event(&forged, now);
+        assert!(!svc.stored_remote.contains(&genuine.event_id(), now));
+        assert!(svc
+            .stored_remote
+            .contains(&EventId::hash(forged.get_data()), now));
+        Ok(())
     }
 
     #[test]

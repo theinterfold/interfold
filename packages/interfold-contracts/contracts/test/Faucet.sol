@@ -20,8 +20,8 @@ contract Faucet {
     constructor(address _fold, address _feeToken) payable {
         fold = IERC20(_fold);
         feeToken = IERC20(_feeToken);
-        AMOUNT_FOLD = 200 * 10 ** IERC20Metadata(_fold).decimals();
-        AMOUNT_FEE_TOKEN = 200 * 10 ** IERC20Metadata(_feeToken).decimals();
+        AMOUNT_FOLD = 1000 * 10 ** IERC20Metadata(_fold).decimals();
+        AMOUNT_FEE_TOKEN = 1000 * 10 ** IERC20Metadata(_feeToken).decimals();
     }
 
     function faucet() external {

@@ -1,214 +1,231 @@
 ---
-title: 'Putting It All Together'
+title: 'Complete Example'
+description:
+  'Follow one E3 through the default template, from pnpm dev:all to the decrypted sum, and see the
+  file and contract call that handle each step.'
 ---
 
-## Putting It All Together: A Complete Example
+import { Callout, Steps } from 'nextra/components'
+import { Lifecycle, LinkCard, LinkCards, Stage } from '@/components/ui'
 
-To solidify your understanding, let's walk through an example of building and deploying an E3
-Program using RISC Zero.
+# Complete Example
 
-### Step 1: Set Up Development Environment
+This page follows one E3 through the default template. The E3 adds two encrypted numbers. Each step
+names the file that does the work, the contract function it calls, and the event that marks the
+result. It is for developers who want to see how the parts of an E3 program connect before they
+change one. At the end, you know where to look when a step fails.
 
-- **Install Required Tools**:
-  - Rust and Cargo
-  - Node.js and pnpm
-  - Foundry and Anvil for Ethereum development
-  - RISC Zero toolchain
+## Before you start
 
-### Step 2: Write the Secure Process
+Make a project with `interfold init` and complete its setup. See [Quick Start](/build/quick-start).
+Template paths on this page are relative to the project root. Paths that start with `crates/` or
+`packages/` are in the Interfold repository.
 
-- Implement the computation logic in Rust.
-- Use the Compute Provider package for handling inputs and Merkle tree verification.
+The template runs in dev mode (`program.dev: true` in `interfold.config.yaml`). The compute proof is
+a mock, and a mock RISC Zero verifier accepts it. The rest of the flow is the same as in production.
 
-**Secure Process (Rust):**
+## The E3 at a glance
 
-```rust
-// src/main.rs
+<Lifecycle label='One E3 in the template'>
+  <Stage title='Deploy' actor='dev_ciphernodes.sh' event='E3ProgramRegistered'>
 
-#![no_main]
-#![no_std]
+`deploy/default.ts` deploys the verifiers and `MyProgram`, and registers the program.
 
-use e3_compute_provider::FHEInputs;
-use fhe::bfv::{BfvParameters, Ciphertext};
-use fhe_traits::{Deserialize, Serialize};
-use std::sync::Arc;
+  </Stage>
+  <Stage title='Request' actor='Client' event='E3Requested'>
 
-risc0_zkvm_guest::entry!(main);
+The client calls `request`. The Interfold contract calls `MyProgram.validate`.
 
-pub fn main() {
-    // Receive encrypted inputs
-    let fhe_inputs: FHEInputs = env::read();
+  </Stage>
+  <Stage title='Committee key' actor='Ciphernodes' event='CommitteePublicKeyChunkPublished'>
 
-    // Call your computation function
-    let result = fhe_processor(&fhe_inputs);
+The committee runs DKG and publishes its public key. The server schedules the compute.
 
-    // Commit the result
-    env::commit(&result);
-}
+  </Stage>
+  <Stage title='Inputs' actor='Client' event='InputPublished'>
+
+The client encrypts two numbers and calls `MyProgram.publishInput` two times.
+
+  </Stage>
+  <Stage title='Compute' actor='Server and program server' event='POST /run_compute'>
+
+After the input window closes, the server sends the inputs. The program server runs `fhe_processor`.
+
+  </Stage>
+  <Stage title='Publish output' actor='Server' event='CiphertextOutputReferencePublished'>
+
+The server calls `publishCiphertextOutput`. Both verifiers accept the proof.
+
+  </Stage>
+  <Stage title='Decrypt' actor='Ciphernodes' event='PlaintextOutputPublished'>
+
+T + 1 ciphernodes decrypt the sum. The client decodes and shows it.
+
+  </Stage>
+</Lifecycle>
+
+## Start the stack
+
+Run `pnpm dev:all` in the project root. `scripts/dev_all.sh` calls
+`scripts/dev_all_concurrently.sh`, which starts six processes:
+
+| Process    | Command                             | What it does                                                                  |
+| ---------- | ----------------------------------- | ----------------------------------------------------------------------------- |
+| `FRONTEND` | `pnpm dev:frontend`                 | Serves the client at `http://localhost:3000`                                  |
+| `EVM`      | `anvil`                             | Local chain on port 8545, chain ID 31337, one block each second               |
+| `CHAIN`    | `node ./scripts/anvil-automine.mjs` | Moves the chain time forward and fulfills local randomness requests           |
+| `CIPHER`   | `pnpm dev:ciphernodes`              | Deploys the contracts and starts five ciphernodes                             |
+| `SERVER`   | `TEST_MODE=1 pnpm dev:server`       | Runs the coordination server, `server/index.ts`, on port 8080                 |
+| `PROGRAM`  | `pnpm dev:program`                  | Runs `interfold program start`, which starts the program server on port 13151 |
+
+## Follow one E3
+
+<Steps>
+
+### Deploy the contracts
+
+`scripts/dev_ciphernodes.sh` runs `scripts/deploy-local.ts`. That script deploys the Interfold
+contracts with mocks, and then calls `deployTemplate` in `deploy/default.ts`. `deployTemplate` does
+these actions in order:
+
+1. Deploys `MockRISC0Verifier` and the `ImageID` library.
+2. Deploys `Risc0BfvCiphertextVerifier` with the mock verifier and `ImageID.PROGRAM_ID`.
+3. Calls `setCiphertextVerifier` for `keccak256("fhe.rs:BFV")`.
+4. Deploys `MyProgram` with the Interfold address, the mock verifier, and the image ID.
+5. Calls `registerE3Program`. The Interfold contract probes `supportsInterface` and emits
+   `E3ProgramRegistered`.
+
+`deployTemplate` writes the addresses to `interfold.config.yaml`. Then `dev_ciphernodes.sh` starts
+the ciphernodes with `interfold nodes up`.
+
+### Request the E3
+
+In the client, `client/src/pages/steps/RequestComputation.tsx` builds the request. It uses committee
+size `0` (`Minimum`), parameter set `0`, and an input window. The window opens 15 seconds after the
+current chain time and lasts 100 seconds. It calls `getE3Quote`, `approveFeeToken`, and `requestE3`
+from the SDK.
+
+On-chain, `Interfold.request` stores the E3 and calls `MyProgram.validate`. `validate` stores
+`keccak256(e3ProgramParams)`, starts an input tree of depth 20, and returns
+`keccak256("fhe.rs:BFV")`. The Interfold contract takes the fee, asks the registry for a committee,
+and emits `E3Requested`.
+
+### Publish the committee key
+
+The ciphernodes select a committee, run DKG, and publish the committee public key. The E3 moves to
+`KeyPublished`. The serialized key arrives in `CommitteePublicKeyChunkPublished` events.
+
+`server/index.ts` listens for these events in `setupEventListeners`. It assembles the key and checks
+it against the commitment with `validatePublicKeyCommitment`. Then `scheduleE3` waits until the
+chain time reaches `inputWindow[1]`.
+
+### Encrypt and submit the inputs
+
+`client/src/pages/steps/EnterInputs.tsx` encrypts each number with `encryptNumber` and computes its
+SAFE commitment with `computeCiphertextCommitment`. It calls `publishInput` in
+`client/src/utils/input.ts` for each input:
+
+```ts filename="client/src/utils/input.ts"
+const data = encodeAbiParameters(parseAbiParameters('bytes, bytes32'), [
+  input,
+  ciphertextCommitment,
+])
 ```
 
-### Step 3: Implement Compute Provider
+`MyProgram.publishInput` inserts the commitment as a leaf and emits
+`InputPublished(e3Id, ciphertext, index)`.
 
-- Implement the `ComputeProvider` trait for RISC Zero.
-- Handle proof generation and interaction with the zkVM.
+### Run the secure process
 
-**Compute Provider Implementation:**
+When the input window closes, `runProgram` in `server/index.ts` reads
+`paramSetRegistry(e3.paramSet)` from the Interfold contract. It reads all `InputPublished` events
+for the E3 from `MyProgram`. The server skips the E3 when it has fewer than two inputs.
 
-```rust
-pub struct Risc0Provider;
+`callFheRunner` in `server/runner.ts` posts the job to `http://127.0.0.1:13151/run_compute`. The
+body has the E3 ID, the proof domain, the parameters, the inputs, and the callback URL
+`http://127.0.0.1:8080`.
 
-impl ComputeProvider for Risc0Provider {
-    type Output = Risc0Output;
+The dev runner (`crates/support-scripts/dev/src/main.rs`) builds a `ComputeManager` with your
+`fhe_processor` from `program/src/lib.rs`. `start(policy())` builds the input tree, runs the
+processor, and computes the output hash, commitment, parameter hash, and input root. The runner
+encodes a mock proof with the parameter hash and the input root.
 
-    fn prove(&self, input: &ComputeInput) -> Self::Output {
-        // Set up the execution environment
-        let env = ExecutorEnv::builder()
-            .write(input)
-            .unwrap()
-            .build()
-            .unwrap();
+### Publish the output
 
-        // Generate the proof
-        let receipt = default_prover()
-            .prove_with_ctx(
-                env,
-                &VerifierContext::default(),
-                VOTING_ELF,
-                &ProverOpts::groth16(),
-            )
-            .unwrap()
-            .receipt;
+The program server posts the webhook to the server. `handleWebhookRequest` in `server/index.ts`
+stores the ciphertext under its Keccak-256 hash in `.interfold/data-availability`. Then it calls
+`publishCiphertextOutput` through the SDK.
 
-        // Extract and return the output
-        Risc0Output {
-            result: receipt.journal.decode().unwrap(),
-            bytes: receipt.journal.bytes.clone(),
-            seal: groth16::encode(receipt.inner.groth16().unwrap().seal.clone()).unwrap(),
-        }
-    }
-}
-```
+`Interfold.publishCiphertextOutput` does these checks in order:
 
-### Step 4: Write the E3 Program Contract
+1. The E3 is in `KeyPublished`, the input window is closed, and the compute deadline has not passed.
+   The output is not published yet, and the committee still meets its threshold.
+2. `MyProgram.verifyDataAvailability` checks that the Keccak-256 hash of the raw ciphertext equals
+   the content hash.
+3. `Risc0BfvCiphertextVerifier.verify` rebuilds the journal and calls the mock verifier.
+4. `MyProgram.verify` compares the parameter hash and the input root, rebuilds the journal, and
+   calls the mock verifier.
 
-- Define your E3 Program contract, integrating with the RISC Zero verifier.
+The E3 moves to `CiphertextReady`. The Interfold contract emits `CiphertextOutputReferencePublished`
+and `E3StageChanged`.
 
-**E3 Program Contract (Solidity):**
+### Decrypt the result
 
-```solidity
-// SPDX-License-Identifier: LGPL-3.0-only
-//
-// This file is provided WITHOUT ANY WARRANTY;
-// without even the implied warranty of MERCHANTABILITY
-// or FITNESS FOR A PARTICULAR PURPOSE.
-pragma solidity >=0.8.28;
+The ciphernodes fetch the output bytes from the server at `/availability/objects/<contentHash>`.
+This is the `mock_http` data-availability mode in `interfold.config.yaml`. The committee makes
+decryption shares. The aggregator combines T + 1 of them and calls `publishPlaintextOutput`. The E3
+moves to `Complete`, and the Interfold contract emits `PlaintextOutputPublished`.
 
-import {IInterfold, IE3Program} from "@interfold/contracts/interfaces/IInterfold.sol";
-import {IRiscZeroVerifier} from "risc0/IRiscZeroVerifier.sol";
+`client/src/pages/steps/EncryptSubmit.tsx` listens for `PlaintextOutputPublished`. It decodes the
+output with `decodePlaintextOutput` and shows the sum.
 
-contract MyE3Program is IE3Program {
-    bytes32 public constant IMAGE_ID = /* Your Image ID */;
-    bytes32 public constant ENCRYPTION_SCHEME_ID = /* Your Encryption Scheme ID */;
+</Steps>
 
-    IRiscZeroVerifier public verifier;
-    IInterfold public interfold;
+<Callout type='info'>
+  The Interfold contract emits `CiphertextOutputReferencePublished` when it accepts the output. The
+  SDK event type `CIPHERTEXT_OUTPUT_PUBLISHED` listens for `CiphertextOutputPublished`, which
+  `Interfold.sol` declares but does not emit.
+</Callout>
 
-    constructor(
-        IInterfold _interfold,
-        IRiscZeroVerifier _verifier
-    ) {
-        interfold = _interfold;
-        verifier = _verifier;
-    }
+## Where to change the example
 
-    // Implement validate and verify functions as shown earlier
-}
-```
+| Change                                | Files                                                                                    |
+| ------------------------------------- | ---------------------------------------------------------------------------------------- |
+| The computation                       | `program/src/lib.rs` (`fhe_processor`)                                                   |
+| The input leaf or the selection       | `program/src/lib.rs` (`policy`) and `contracts/MyProgram.sol` (`publishInput`), together |
+| Input validation                      | `contracts/MyProgram.sol` (`publishInput`)                                               |
+| The request parameters                | `client/src/pages/steps/RequestComputation.tsx`                                          |
+| How inputs reach the compute provider | `server/index.ts` (`runProgram`) and `server/runner.ts`                                  |
+| How the result is shown               | `client/src/pages/steps/EncryptSubmit.tsx` and `client/src/pages/steps/Results.tsx`      |
 
-### Step 5: Deploy Contracts
+## Compare with CRISP
 
-- Deploy the Interfold contracts to your desired network.
-- Deploy your E3 Program contract and register it with the Interfold contract.
+CRISP uses the same parts with production choices:
 
-### Step 6: Run Ciphernodes
+| Step              | Template                                               | CRISP                                                                            |
+| ----------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| Input submission  | One `publishInput` call with ciphertext and commitment | `publishInput` with a Noir proof, then `finalizeInput` with a DA receipt         |
+| Input leaf        | The SAFE commitment                                    | `sha256(keccak256(ciphertext) ‖ commitment ‖ slot ‖ parent)` mod the BN254 field |
+| Input policy      | `InputPolicy::default()`                               | `policy::crisp()`, one input for each slot                                       |
+| Compute provider  | Dev runner with a mock proof                           | `e3-support` container with Boundless proofs                                     |
+| Data availability | Local file store and a hash check                      | `AvailVectorXDataAvailabilityVerifier` (a mock on a local chain)                 |
+| Output publisher  | `server/index.ts`                                      | `examples/CRISP/server` (`/state/add-result` webhook)                            |
 
-- Start Ciphernodes and ensure they are registered with the Interfold contract.
+## Get help
 
-### Step 7: Submit a Computation Request
+[Gnosis Guild](https://gnosisguild.org) is the initial development team of the Interfold. Contact
+Gnosis Guild with questions about this example.
 
-- Use your application or a script to submit a computation request to the Interfold contract.
+## Next steps
 
-**Example (JavaScript):**
-
-```javascript
-// First approve the fee token
-await FeeTokenContract.approve(InterfoldContract.address, computationFee)
-
-// Then request the E3
-await InterfoldContract.request(
-  0, // CommitteeSize.Minimum
-  [inputWindowStart, inputWindowEnd],
-  e3ProgramAddress,
-  0, // paramSet (0 = insecure dev, 1 = secure production)
-  computeProviderParams,
-  '0x', // customParams
-)
-```
-
-### Step 8: Submit Encrypted Inputs
-
-- Data Providers encrypt their inputs and submit them along with ZKPs.
-
-### Step 9: Execute Computation and Verify Proof
-
-- The Compute Provider executes the Secure Process.
-- The E3 Program contract verifies the computation proof on-chain.
-
-### Step 10: Ciphernodes Decrypt Result
-
-- Ciphernodes submit decryption shares.
-- The Decryption Verifier contract verifies the correctness of the decryption.
-
-### Step 11: Retrieve Final Result
-
-- Listen for the `PlaintextOutputPublished` event.
-- Retrieve the plaintext result from the Interfold contract.
-
----
-
-## Conclusion
-
-By following this guide, you should now have a solid understanding of the Interfold and how to build
-your own E3 Programs. The Interfold provides a framework for privacy-preserving computations over
-encrypted data, enabling a new class of decentralized applications.
-
-**Key Takeaways:**
-
-- The Interfold distributes trust and ensures data remains encrypted throughout computation.
-- The modular architecture allows for flexibility in choosing Compute Providers and designing
-  computations.
-- The provided Compute Provider package simplifies integration and handles complex tasks like Merkle
-  tree verification.
-
----
-
-## Additional Resources
-
-- **Interfold GitHub Repository**:
-  [https://github.com/theinterfold/interfold](https://github.com/theinterfold/interfold)
-- **CRISP GitHub Repository**:
-  [https://github.com/theinterfold/interfold](https://github.com/theinterfold/interfold/tree/main/examples/CRISP)
-- **Interfold Quick Start**: [Quick Start](/quick-start)
-- **RISC Zero Documentation**: [https://www.risczero.com](https://www.risczero.com)
-- **Compute Provider Package**: Check the Interfold repository for the Compute Provider package and
-  examples.
-- **FHE Libraries**: Explore libraries like `fhe.rs` for Rust to handle homomorphic encryption.
-- **Zero-Knowledge Proof Libraries**: Use libraries like `risc0-zkvm` for proof generation and
-  verification.
-
----
-
-**Happy Building!**
-
-If you have any questions or need further assistance, feel free to reach out to
-[Gnosis Guild](https://gnosisguild.org), the initial development team building the Interfold.
+<LinkCards min={230}>
+  <LinkCard title='Secure process' href='/build/e3-program/secure-process' icon='chip'>
+    Change `fhe_processor` and test it.
+  </LinkCard>
+  <LinkCard title='Client and server' href='/build/client-and-server' icon='network'>
+    The client and the coordination server in more detail.
+  </LinkCard>
+  <LinkCard title='Run CRISP' href='/CRISP/running-e3' icon='vote'>
+    Run a full CRISP round on a local stack.
+  </LinkCard>
+</LinkCards>

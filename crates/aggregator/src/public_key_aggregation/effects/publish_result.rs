@@ -75,12 +75,6 @@ impl PublicKeyAggregator {
             .ok_or_else(|| anyhow::anyhow!("No EventContext for publish"))?;
 
         let pk_commitment = extract_pk_commitment(c5_proof)?;
-        // Test-only nodes reuse the already-generated C5 proof as a non-empty placeholder. Mock
-        // verifiers accept it; production DKG verifiers reject it because it is not a
-        // DkgAggregator proof. This keeps the testing escape hatch entirely in the ciphernode.
-        let published_dkg_proof = dkg_aggregated_proof
-            .clone()
-            .or_else(|| all_proofs_are_none.then(|| c5_proof.clone()));
 
         info!(
             "Publishing PublicKeyAggregated (dkg_evm_proof={})",
@@ -101,6 +95,28 @@ impl PublicKeyAggregator {
         let honest_party_ids_vec: Vec<u64> = honest_party_ids.iter().copied().collect();
         let honest_committee_addresses =
             committee_addresses_in_party_order(&honest_party_ids_vec, &party_nodes)?;
+
+        let published_dkg_proof = dkg_aggregated_proof.clone().or_else(|| {
+            all_proofs_are_none.then(|| {
+                // Mock registry observations need the final proof's roster and key fields.
+                // The C5 proof bytes remain invalid for a production DKG verifier.
+                let h = honest_party_ids.len();
+                let mut inputs = vec![[0u8; 32]; 6 + 3 * h];
+                for (slot, party) in honest_party_ids.iter().enumerate() {
+                    inputs[2 + slot] = alloy::primitives::U256::from(*party).to_be_bytes();
+                }
+                let hash =
+                    e3_committee_hash::committee_hash_limbs_from_addresses(&committee_addresses);
+                inputs[3 + h] = hash.hi.0;
+                inputs[4 + h] = hash.lo.0;
+                inputs[5 + 3 * h] = pk_commitment;
+                Proof::new(
+                    e3_events::CircuitName::DkgAggregator,
+                    c5_proof.data.clone(),
+                    ArcBytes::from_bytes(&inputs.concat()),
+                )
+            })
+        });
 
         let dkg_attestation_bundle = match dkg_aggregated_proof.as_ref() {
             Some(_) => {

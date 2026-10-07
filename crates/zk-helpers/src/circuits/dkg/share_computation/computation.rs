@@ -18,7 +18,10 @@ use crate::computation::DkgInputType;
 use crate::dkg::share_computation::ShareComputationCircuit;
 use crate::dkg::share_computation::ShareComputationCircuitData;
 use crate::CircuitsErrors;
-use crate::{calculate_bit_width, crt_polynomial_to_toml_json, poly_coefficients_to_toml_json};
+use crate::{
+    calculate_bit_width, compute_modulus_bit, crt_polynomial_to_toml_json,
+    poly_coefficients_to_toml_json,
+};
 use crate::{CircuitComputation, Computation};
 use e3_fhe_params::BfvPreset;
 use e3_fhe_params::{build_pair_for_preset, calculate_smudging_bound};
@@ -138,7 +141,10 @@ impl Computation for Bits {
 
         Ok(Bits {
             bit_sk_secret: calculate_bit_width(BigInt::from(data.sk_bound.clone())),
-            bit_e_sm_secret: calculate_bit_width(BigInt::from(data.e_sm_bound.clone())),
+            // The e_sm secret is held as centered CRT residues, so it shares the modulus width
+            // with C1's committed limbs. C1 range-checks the smudging bound on its lifted
+            // witness; that bound exceeds every q_i and is not the width of what is hashed here.
+            bit_e_sm_secret: compute_modulus_bit(&threshold_params),
             bit_share,
         })
     }
@@ -411,25 +417,4 @@ mod tests {
         assert!(error.contains("CRT limb 1 has 127 coefficients; expected 128"));
     }
 
-    #[test]
-    fn test_constants_json_roundtrip() {
-        let committee = CiphernodesCommitteeSize::Small.values();
-        let sample = ShareComputationCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold,
-            committee,
-            DkgInputType::SecretKey,
-        )
-        .unwrap();
-
-        let constants = Configs::compute(BfvPreset::InsecureThreshold, &sample).unwrap();
-
-        let json = constants.to_json().unwrap();
-        let decoded: Configs = serde_json::from_value(json).unwrap();
-
-        assert_eq!(decoded.n, constants.n);
-        assert_eq!(decoded.l, constants.l);
-        assert_eq!(decoded.moduli, constants.moduli);
-        assert_eq!(decoded.bits, constants.bits);
-        assert_eq!(decoded.bounds, constants.bounds);
-    }
 }

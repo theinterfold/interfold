@@ -16,9 +16,10 @@ use e3_fhe_params::{
     build_pair_for_preset, create_deterministic_crp_from_default_seed, generate_smudging_error,
     BfvPreset,
 };
-use e3_polynomial::CrtPolynomial;
+use e3_polynomial::{CrtPolynomial, Polynomial};
 use fhe::bfv::SecretKey;
 use fhe::mbfv::PublicKeyShare;
+use fhe::trbfv::{ShareManager, TRBFV};
 use fhe_math::rq::{Poly, PowerBasis};
 use std::ops::Deref;
 
@@ -36,10 +37,10 @@ impl PkGenerationCircuitData {
         let secret_key = SecretKey::random(&threshold_params, &mut rng);
         let crp = create_deterministic_crp_from_default_seed(&threshold_params);
 
-        let (pk0_share, _, sk, e) =
-            PublicKeyShare::new_extended(&secret_key, crp.clone(), &mut rng).map_err(|e| {
-                CircuitsErrors::Sample(format!("Failed to create public key share: {:?}", e))
-            })?;
+        let (pk_share, intermediates) =
+            PublicKeyShare::new_with_intermediates(&secret_key, crp.clone(), &mut rng).map_err(
+                |e| CircuitsErrors::Sample(format!("Failed to create public key share: {:?}", e)),
+            )?;
 
         let num_parties = committee.n;
 
@@ -76,10 +77,11 @@ impl PkGenerationCircuitData {
 
         Ok(PkGenerationCircuitData {
             committee,
-            pk0_share: CrtPolynomial::from_fhe_polynomial(&pk0_share),
-            eek: CrtPolynomial::from_fhe_polynomial(&e),
+            pk0_share: CrtPolynomial::from_fhe_polynomial(pk_share.p0_share()),
+            eek: CrtPolynomial::from_fhe_polynomial(intermediates.error()),
             e_sm: CrtPolynomial::from_fhe_polynomial(&e_sm),
-            sk: CrtPolynomial::from_fhe_polynomial(&sk),
+            e_sm_lifted: Polynomial::from_fhe_polynomial(&e_sm),
+            sk: CrtPolynomial::from_fhe_polynomial(intermediates.secret_key()),
         })
     }
 }
@@ -107,8 +109,7 @@ mod tests {
 
         assert_eq!(inputs.pk0is.limbs.len(), 3);
         assert_eq!(inputs.e_sm.limbs.len(), 3);
-        assert_eq!(inputs.r1is.limbs.len(), 3);
-        assert_eq!(inputs.r2is.limbs.len(), 3);
+        assert_eq!(inputs.ris.limbs.len(), 3);
         for coefficient in inputs.eek.coefficients() {
             assert!(
                 coefficient.abs() <= BigInt::from(bounds.eek_bound.clone()),
@@ -129,19 +130,14 @@ mod tests {
                 );
             }
         }
-        for (limb, bound) in inputs.r1is.limbs.iter().zip(&bounds.r1_bounds) {
+        // One quotient replaces the `r1` / `r2` pair now that the identity is checked reduced
+        // modulo X^N + 1. This is the check that would catch a bound derived from the wrong terms:
+        // the reduced `r` is a different polynomial from `r1`, so it needs its own bound to hold.
+        for (limb, bound) in inputs.ris.limbs.iter().zip(&bounds.r_bounds) {
             for coefficient in limb.coefficients() {
                 assert!(
                     coefficient.abs() <= BigInt::from(bound.clone()),
-                    "first quotient exceeds the C1 bound"
-                );
-            }
-        }
-        for (limb, bound) in inputs.r2is.limbs.iter().zip(&bounds.r2_bounds) {
-            for coefficient in limb.coefficients() {
-                assert!(
-                    coefficient.abs() <= BigInt::from(bound.clone()),
-                    "second quotient exceeds the C1 bound"
+                    "reduced quotient exceeds the C1 bound"
                 );
             }
         }

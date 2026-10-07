@@ -8,6 +8,33 @@ get_evm_timestamp() {
     | jq -r '.result.timestamp' | xargs printf "%d\n"
 }
 
+# Check which committee sizes the local deployment configured. With mock verifiers it configures
+# every size (0, 1 and 2). The ZK verifiers check one committee's H and T, so with them it
+# configures only the size of the active circuit build (ACTIVE_BFV_COMMITTEE_SIZE in the generated
+# scripts/utils.ts). Interfold itself rejects an [H, N] pair that does not match the size.
+# Usage: check_committee_sizes <interfold-contracts package dir> <zk verification true|false> [rpc_url]
+check_committee_sizes() {
+  local package="$1" zk="$2" rpc_url="${3:-http://localhost:8545}"
+  local interfold size total configured="" expected="0 1 2"
+  interfold=$(jq -r '.localhost.Interfold.address' "$package/deployed_contracts.json")
+  for size in 0 1 2; do
+    total=$(cast call "$interfold" "committeeThresholds(uint8,uint256)(uint32)" "$size" 1 \
+      --rpc-url "$rpc_url") || return 1
+    if [[ "$total" != "0" ]]; then
+      configured="${configured:+$configured }$size"
+    fi
+  done
+  if [[ "$zk" == "true" ]]; then
+    expected=$(sed -nE 's/^export const ACTIVE_BFV_COMMITTEE_SIZE = ([0-9]+);$/\1/p' \
+      "$package/scripts/utils.ts")
+  fi
+  if [[ -z "$expected" || "$configured" != "$expected" ]]; then
+    echo "The deployment configured committee sizes [$configured]; expected [$expected]" >&2
+    return 1
+  fi
+  echo "The deployment configured committee sizes [$configured]"
+}
+
 # Set INPUT_WINDOW_START/END. The committee cannot publish its key after the input window
 # closes (`validateCommitteePublication`), so the window must outlast the DKG timeout plus
 # restart and input preparation. The start leaves 60 seconds for the committee request.
@@ -65,4 +92,25 @@ extract_e3_id() {
   esac
 
   printf '%s\n' "$e3_id"
+}
+
+# Print the SHA-256 of stdin. Linux has sha256sum; macOS has shasum.
+sha256_of_stdin() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | cut -d' ' -f1
+  else
+    shasum -a 256 | cut -d' ' -f1
+  fi
+}
+
+# Print one digest of the circuits, the pinned versions, and `bb` in a noir folder.
+# Usage: noir_digest <noir dir>
+noir_digest() {
+  local noir_dir="$1"
+  (
+    cd "$noir_dir" || exit 1
+    find circuits bin version.json -type f | LC_ALL=C sort | while IFS= read -r file; do
+      printf '%s %s\n' "$(sha256_of_stdin <"$file")" "$file"
+    done
+  ) | sha256_of_stdin
 }

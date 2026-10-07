@@ -1,63 +1,95 @@
 ---
 title: 'Use Cases'
+description:
+  'Tasks that fit an E3, how CRISP uses the Interfold for private voting, and the limits to check
+  before you design an E3 program.'
 ---
 
-# Unlocking Interfold Use Cases
+import { LinkCards, LinkCard } from '@/components/ui'
 
-Leading confidential-compute platforms such as Ritual, Fhenix, and Olas showcase their ecosystems by
-highlighting concrete scenarios, personas, and implementation patterns. This page borrows that
-structure so you can quickly map Interfold building blocks to the outcomes you need.
+# Use Cases
 
-## Confidential Governance (CRISP-style)
+This page describes tasks that fit an E3 and the limits that apply to them. It is for developers who
+want to know if the Interfold fits their application. At the end, you can compare your task with a
+working example and with the checks in [Limits to check](#limits-to-check).
 
-- **Problem**: Public DAOs struggle to keep tallies, delegations, and vote rationales private during
-  sensitive decisions.
-- **Pattern**: Use the CRISP template (client, Rust server, Noir circuits) with the Interfold SDK.
-- **Flow**: DAO admins request an E3 round, contributors encrypt ballots in the browser, and
-  Ciphernodes publish the plaintext tally once the compute provider finishes execution.
-- **Extras**: Plug Synpress or Playwright into the client for scripted voting drills.
+## What fits an E3
 
-## Private Auctions & Matching Markets
+An E3 fits a task that has these properties:
 
-- **Problem**: Sealed-bid auctions or RFQ desks cannot run on public ledgers without leaking prices.
-- **Pattern**: Model each bid as an input validated by account-specific ZKPs (range/whitelist) and
-  aggregate them off-chain using BFV-friendly arithmetic in your Secure Process.
-- **Flow**: Traders submit encrypted bids, the compute provider computes the clearing price, and the
-  plaintext output unlocks settlement logic.
-- **Extras**: Pair with Foundry scripts (similar to Fhenix's CoFHE quick starts) to simulate extreme
-  bidding volumes before mainnet.
+- Several independent parties contribute inputs that must stay private.
+- The application needs one result from all inputs, and the result can be public.
+- The result is a computation that BFV supports well, for example a sum, a count, or a tally.
+- No single operator is acceptable as the custodian of the inputs.
+- The application can wait for the E3 stages. An E3 does not give a real-time result.
 
-## AI Agent Coordination
+## Private voting (CRISP)
 
-- **Problem**: Networks such as Ritual and Olas expose agent marketplaces; those agents still need a
-  privacy-preserving substrate for sensitive scoring, routing, or risk checks.
-- **Pattern**: Treat each agent as a Data Provider, push policy enforcement into the E3 Program's
-  `publishInput` validation, and let the Interfold host shared state transitions (e.g., allocating
-  budget or updating trust scores).
-- **Flow**: Agents encrypt telemetry, the Secure Process computes rankings, and downstream contracts
-  or marketplaces read the published plaintext.
-- **Extras**: Use `customParams` inside the E3 request to tag rounds per agent vertical (NFT
-  curation, wallet assistants, on-chain AI retrieval).
+CRISP (Coercion-Resistant Impartial Selection Protocol) is the reference application in
+`examples/CRISP`. It is a complete, working E3 program for secret ballots.
 
-## Identity, Compliance, and Scoring
+| Part of the E3    | What CRISP does                                                                             |
+| ----------------- | ------------------------------------------------------------------------------------------- |
+| Request           | The CRISP command-line tool requests one E3 for each voting round.                          |
+| Inputs            | Each voter encrypts a ballot in the browser under the committee key.                        |
+| Input proof       | The client generates a Noir proof that the ballot is valid. `CRISPProgram.sol` verifies it. |
+| Data availability | The ciphertext bytes go to Avail. The program checks the VectorX receipt.                   |
+| Secure process    | A RISC Zero program adds the encrypted ballots into an encrypted tally.                     |
+| Output            | The committee decrypts only the tally. Individual ballots stay encrypted.                   |
 
-- **Problem**: Identity attestations or credit scores leak sensitive attributes when stored directly
-  on-chain.
-- **Pattern**: Build circuits that validate proofs of residency, KYC, or AML results without
-  revealing raw data; only the computed risk vector is decrypted.
-- **Flow**: Validators encrypt attestations, the Secure Process derives the minimal disclosure blob,
-  and downstream protocols pull the plaintext via `PlaintextOutputPublished`.
-- **Extras**: Combine with `customParams` to pin jurisdictional policy, similar to how Fhenix
-  exposes "Key Considerations" per sector.
+CRISP has its own contracts, Noir circuits, a Rust coordination server, and a React client. Start
+with the [CRISP introduction](/CRISP/introduction), then follow [Setup](/CRISP/setup) to run it.
 
-## Solution Matrix
+## Sealed-bid auctions and private markets
 
-| Scenario                | Typical Inputs              | Secure Process Focus                 | Output Consumers                  |
-| ----------------------- | --------------------------- | ------------------------------------ | --------------------------------- |
-| Confidential Governance | Wallet + ballot selections  | Vote aggregation, quorum, randomness | DAO front-ends, multi-sigs        |
-| Private Auctions        | Bid amount, bidder proofs   | Price discovery, winner selection    | Settlement contracts              |
-| AI Agent Coordination   | Agent telemetry, task queue | Ranking, budget splits               | Agent marketplaces, orchestrators |
-| Identity / Compliance   | Encrypted attestations      | Risk flag derivation                 | On-chain registries, bridges      |
+Bidders submit encrypted bids, and only the auction result is decrypted. This pattern matches the E3
+model. The limit is the computation. The template and CRISP use only homomorphic addition. Other
+operations cost more and use the limited noise budget of the BFV parameter set.
 
-Next, explore the [Best Practices](/best-practices) and
-[Putting It All Together](/putting-it-together) guides to tailor these patterns to your app.
+Before you build an auction, confirm that your secure process can compute the result within that
+budget. A design can also decrypt an aggregate, for example the number of bids at each price level.
+The contract can then compute the result from the aggregate. This design reveals the aggregate, but
+not the individual bids.
+
+## Aggregate statistics over private data
+
+Several organizations can compute a total, a count, or a histogram over records that they do not
+share. Each organization encrypts its values, and the secure process adds them. Only the aggregate
+is decrypted. This pattern uses the same addition as the default template, which sums all inputs.
+
+## Limits to check
+
+Check these limits before you design an E3 program:
+
+- **The output is public.** The plaintext output goes on-chain. A small number of inputs can reveal
+  an individual value, for example a tally with one vote. The program must enforce a minimum input
+  count or other rules where this matters.
+- **The committee is the trust boundary.** T + 1 committee members that collude can decrypt any
+  ciphertext under the committee key. A larger committee raises T. On mainnet, only `Small` (T = 9)
+  can be requested at launch.
+- **Inputs need validation.** The E3 program decides which inputs to accept. Without an input proof,
+  a malformed ciphertext can corrupt the result or stop the E3.
+- **Time matters.** Committee setup, the input window, computation, and decryption each have a
+  deadline. The [E3 lifecycle](/learn/e3-lifecycle) page lists the values.
+- **Costs grow with the committee.** The fee pays for the committee work, and it grows with N. Use
+  `getE3Quote` to get the fee before you request.
+
+## Data protection
+
+The design can help an application meet data-protection goals. No single operator holds a plaintext
+input, and the committee decrypts only the output. The design does not by itself make an application
+compliant with a regulation. The application owner is responsible for that assessment.
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='CRISP' href='/CRISP/introduction' icon='vote' tag='Example'>
+    The complete private voting application, from circuits to client.
+  </LinkCard>
+  <LinkCard title='Quick Start' href='/build/quick-start' icon='rocket' tag='Build'>
+    Make a project from the template and run a complete E3 on your computer.
+  </LinkCard>
+  <LinkCard title='Best practices' href='/build/best-practices' icon='shield' tag='Build'>
+    Design rules for secure E3 programs.
+  </LinkCard>
+</LinkCards>

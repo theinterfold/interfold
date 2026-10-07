@@ -110,7 +110,7 @@ dependencies = [
  "mime",
  "percent-encoding",
  "pin-project-lite",
- "rand 0.9.4",
+ "rand 0.9.5",
  "sha1",
  "smallvec",
  "tokio",
@@ -405,6 +405,7 @@ dependencies = [
  "alloy-core",
  "alloy-eips",
  "alloy-genesis",
+ "alloy-json-rpc",
  "alloy-network",
  "alloy-node-bindings",
  "alloy-provider",
@@ -716,7 +717,7 @@ dependencies = [
  "keccak-asm",
  "paste",
  "proptest",
- "rand 0.9.4",
+ "rand 0.9.5",
  "ruint",
  "rustc-hash",
  "serde",
@@ -924,7 +925,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-serde",
  "alloy-sol-types",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "serde",
  "serde_json",
  "serde_with",
@@ -1234,7 +1235,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1245,7 +1246,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3365,7 +3366,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ab67060fc6b8ef687992d439ca0fa36e7ed17e9a0b16b25b601e8757df720de"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -3594,7 +3595,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3658,7 +3659,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "e3-aggregator"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "actix",
  "alloy",
@@ -3678,6 +3679,7 @@ dependencies = [
  "e3-polynomial",
  "e3-request",
  "e3-sortition",
+ "e3-sync",
  "e3-test-helpers",
  "e3-trbfv",
  "e3-utils",
@@ -3688,14 +3690,15 @@ dependencies = [
  "fhe-traits",
  "futures",
  "num-bigint 0.5.1",
- "rand 0.9.4",
+ "rand 0.9.5",
  "serde",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
 name = "e3-bfv-client"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "anyhow",
  "e3-fhe-params",
@@ -3705,18 +3708,19 @@ dependencies = [
  "fhe-math",
  "fhe-traits",
  "num-bigint 0.5.1",
- "rand 0.9.4",
+ "rand 0.9.5",
  "serde_json",
  "thiserror 1.0.69",
 ]
 
 [[package]]
 name = "e3-ciphernode-builder"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "actix",
  "alloy",
  "anyhow",
+ "async-trait",
  "bincode",
  "derivative",
  "e3-aggregator",
@@ -3750,7 +3754,7 @@ dependencies = [
 
 [[package]]
 name = "e3-cli"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "actix",
  "alloy",
@@ -3785,11 +3789,12 @@ dependencies = [
  "petname",
  "phf",
  "rand 0.8.5",
- "rand 0.9.4",
+ "rand 0.9.5",
  "reqwest",
  "serde",
  "serde_json",
  "serde_yaml",
+ "tempfile",
  "tokio",
  "toml",
  "tracing",
@@ -3801,7 +3806,7 @@ dependencies = [
 
 [[package]]
 name = "e3-committee-hash"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -3811,7 +3816,7 @@ dependencies = [
 
 [[package]]
 name = "e3-compute-provider"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "ark-bn254 0.4.0",
  "ark-ff 0.4.2",
@@ -3824,7 +3829,7 @@ dependencies = [
  "light-poseidon",
  "num-bigint 0.5.1",
  "num-traits",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rand_chacha 0.9.0",
  "rayon",
  "serde",
@@ -3837,7 +3842,7 @@ dependencies = [
 
 [[package]]
 name = "e3-config"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "alloy-primitives",
  "anyhow",
@@ -3848,11 +3853,10 @@ dependencies = [
  "hex",
  "path-clean",
  "petname",
- "rand 0.9.4",
+ "rand 0.9.5",
  "serde",
  "serde_yaml",
  "shellexpand",
- "tempfile",
  "toml",
  "tracing",
  "url",
@@ -3860,14 +3864,14 @@ dependencies = [
 
 [[package]]
 name = "e3-console"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "tokio",
 ]
 
 [[package]]
 name = "e3-crypto"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -3875,7 +3879,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "e3-utils",
- "rand 0.9.4",
+ "rand 0.9.5",
  "serde",
  "tokio",
  "tracing",
@@ -3885,7 +3889,7 @@ dependencies = [
 
 [[package]]
 name = "e3-daemon-server"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "anyhow",
  "e3-config",
@@ -3899,7 +3903,7 @@ dependencies = [
 
 [[package]]
 name = "e3-dashboard"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "actix-web",
  "alloy",
@@ -3921,7 +3925,7 @@ dependencies = [
 
 [[package]]
 name = "e3-data"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "actix",
  "alloy-primitives",
@@ -3944,7 +3948,7 @@ dependencies = [
 
 [[package]]
 name = "e3-data-availability"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -3960,7 +3964,7 @@ dependencies = [
 
 [[package]]
 name = "e3-entrypoint"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "actix",
  "actix-web",
@@ -3993,12 +3997,13 @@ dependencies = [
  "libc",
  "libp2p",
  "phf",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rand_chacha 0.9.0",
  "reqwest",
  "serde",
  "serde_json",
  "serde_yaml",
+ "sled",
  "tempfile",
  "tokio",
  "tracing",
@@ -4007,7 +4012,7 @@ dependencies = [
 
 [[package]]
 name = "e3-events"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "actix",
  "alloy",
@@ -4032,7 +4037,7 @@ dependencies = [
  "hex",
  "once_cell",
  "proptest",
- "rand 0.9.4",
+ "rand 0.9.5",
  "serde",
  "sha2 0.10.9",
  "strum 0.27.2",
@@ -4043,7 +4048,7 @@ dependencies = [
 
 [[package]]
 name = "e3-evm"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "actix",
  "alloy",
@@ -4064,7 +4069,9 @@ dependencies = [
  "e3-events",
  "e3-evm",
  "e3-fhe-params",
+ "e3-request",
  "e3-sortition",
+ "e3-sync",
  "e3-test-helpers",
  "e3-trbfv",
  "e3-utils",
@@ -4074,7 +4081,9 @@ dependencies = [
  "num-bigint 0.5.1",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
+ "tower 0.5.3",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -4083,7 +4092,7 @@ dependencies = [
 
 [[package]]
 name = "e3-evm-helpers"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "alloy",
  "anyhow",
@@ -4100,7 +4109,7 @@ dependencies = [
 
 [[package]]
 name = "e3-fhe"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "actix",
  "anyhow",
@@ -4115,7 +4124,7 @@ dependencies = [
  "fhe",
  "fhe-traits",
  "fhe-util",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rand_chacha 0.9.0",
  "serde",
  "tracing",
@@ -4123,7 +4132,7 @@ dependencies = [
 
 [[package]]
 name = "e3-fhe-params"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -4135,7 +4144,7 @@ dependencies = [
  "fhe-traits",
  "num-bigint 0.5.1",
  "num-traits",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rand_chacha 0.9.0",
  "serde",
  "serde_json",
@@ -4144,7 +4153,7 @@ dependencies = [
 
 [[package]]
 name = "e3-fs"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4157,16 +4166,11 @@ dependencies = [
 
 [[package]]
 name = "e3-hamt"
-version = "0.18.0"
-dependencies = [
- "anyhow",
- "bincode",
- "serde",
-]
+version = "0.19.0-test.2"
 
 [[package]]
 name = "e3-indexer"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "alloy",
  "async-trait",
@@ -4177,7 +4181,7 @@ dependencies = [
  "eyre",
  "fhe",
  "fhe-traits",
- "rand 0.9.4",
+ "rand 0.9.5",
  "serde",
  "thiserror 1.0.69",
  "tokio",
@@ -4186,7 +4190,7 @@ dependencies = [
 
 [[package]]
 name = "e3-init"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "anyhow",
  "async-recursion",
@@ -4205,7 +4209,7 @@ dependencies = [
 
 [[package]]
 name = "e3-keyshare"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "actix",
  "alloy",
@@ -4213,11 +4217,13 @@ dependencies = [
  "async-trait",
  "bincode",
  "e3-bfv-client",
+ "e3-ciphernode-builder",
  "e3-committee-hash",
  "e3-config",
  "e3-crypto",
  "e3-data",
  "e3-events",
+ "e3-evm",
  "e3-fhe",
  "e3-fhe-params",
  "e3-multithread",
@@ -4225,10 +4231,11 @@ dependencies = [
  "e3-trbfv",
  "e3-utils",
  "e3-zk-helpers",
+ "e3-zk-prover",
  "fhe",
  "fhe-traits",
  "ndarray",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rand_chacha 0.9.0",
  "rand_core 0.9.5",
  "serde",
@@ -4237,8 +4244,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "e3-layout-lock"
+version = "0.19.0-test.2"
+dependencies = [
+ "bincode",
+ "e3-utils",
+ "hex",
+ "serde",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "e3-logger"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "actix",
  "alloy",
@@ -4253,7 +4271,7 @@ dependencies = [
 
 [[package]]
 name = "e3-multithread"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "actix",
  "alloy",
@@ -4266,6 +4284,7 @@ dependencies = [
  "e3-events",
  "e3-fhe-params",
  "e3-polynomial",
+ "e3-request",
  "e3-trbfv",
  "e3-utils",
  "e3-zk-helpers",
@@ -4275,7 +4294,7 @@ dependencies = [
  "fhe-traits",
  "ndarray",
  "num-bigint 0.5.1",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rand_chacha 0.9.0",
  "rayon",
  "thiserror 1.0.69",
@@ -4286,7 +4305,7 @@ dependencies = [
 
 [[package]]
 name = "e3-net"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "actix",
  "alloy",
@@ -4302,14 +4321,18 @@ dependencies = [
  "e3-data",
  "e3-events",
  "e3-fhe-params",
+ "e3-layout-lock",
+ "e3-request",
+ "e3-sync",
  "e3-utils",
  "fhe",
  "fhe-traits",
  "futures",
  "hex",
  "libp2p",
- "rand 0.9.4",
+ "rand 0.9.5",
  "serde",
+ "serde_bytes",
  "sha2 0.10.9",
  "tokio",
  "tracing",
@@ -4319,7 +4342,7 @@ dependencies = [
 
 [[package]]
 name = "e3-parity-matrix"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "num-bigint 0.5.1",
  "num-traits",
@@ -4330,7 +4353,7 @@ dependencies = [
 
 [[package]]
 name = "e3-polynomial"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "bincode",
  "criterion",
@@ -4343,7 +4366,7 @@ dependencies = [
 
 [[package]]
 name = "e3-program-server"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "actix-web",
  "alloy-primitives",
@@ -4361,29 +4384,35 @@ dependencies = [
 
 [[package]]
 name = "e3-request"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "actix",
+ "alloy",
  "anyhow",
  "async-trait",
  "bincode",
+ "e3-bfv-client",
+ "e3-committee-hash",
  "e3-config",
+ "e3-crypto",
  "e3-data",
  "e3-events",
  "e3-fhe-params",
+ "e3-trbfv",
  "e3-utils",
+ "e3-zk-helpers",
  "serde",
  "tracing",
 ]
 
 [[package]]
 name = "e3-safe"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
  "hex",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rand_chacha 0.9.0",
  "risc0-bigint2",
  "sha3",
@@ -4392,7 +4421,7 @@ dependencies = [
 
 [[package]]
 name = "e3-sdk"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "e3-bfv-client",
  "e3-evm-helpers",
@@ -4402,7 +4431,7 @@ dependencies = [
 
 [[package]]
 name = "e3-slashing"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "actix",
  "alloy",
@@ -4413,6 +4442,7 @@ dependencies = [
  "e3-data",
  "e3-events",
  "e3-fhe-params",
+ "e3-layout-lock",
  "e3-request",
  "e3-utils",
  "e3-zk-helpers",
@@ -4424,7 +4454,7 @@ dependencies = [
 
 [[package]]
 name = "e3-sortition"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "actix",
  "alloy",
@@ -4438,7 +4468,7 @@ dependencies = [
  "e3-utils",
  "num",
  "num-bigint 0.5.1",
- "rand 0.9.4",
+ "rand 0.9.5",
  "serde",
  "tokio",
  "tracing",
@@ -4447,7 +4477,7 @@ dependencies = [
 
 [[package]]
 name = "e3-support-scripts"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4458,7 +4488,7 @@ dependencies = [
 
 [[package]]
 name = "e3-sync"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "actix",
  "anyhow",
@@ -4470,6 +4500,7 @@ dependencies = [
  "e3-request",
  "e3-test-helpers",
  "e3-utils",
+ "serde",
  "tempfile",
  "tokio",
  "tracing",
@@ -4477,10 +4508,9 @@ dependencies = [
 
 [[package]]
 name = "e3-test-helpers"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "actix",
- "alloy",
  "anyhow",
  "bincode",
  "clap",
@@ -4504,7 +4534,7 @@ dependencies = [
  "fhe-traits",
  "hex",
  "libp2p",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rand_chacha 0.9.0",
  "tokio",
  "tracing",
@@ -4513,7 +4543,7 @@ dependencies = [
 
 [[package]]
 name = "e3-tests"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "actix",
  "alloy",
@@ -4534,6 +4564,7 @@ dependencies = [
  "e3-fhe",
  "e3-fhe-params",
  "e3-keyshare",
+ "e3-layout-lock",
  "e3-logger",
  "e3-multithread",
  "e3-net",
@@ -4541,6 +4572,7 @@ dependencies = [
  "e3-request",
  "e3-sdk",
  "e3-sortition",
+ "e3-sync",
  "e3-test-helpers",
  "e3-trbfv",
  "e3-utils",
@@ -4549,9 +4581,11 @@ dependencies = [
  "fhe",
  "fhe-traits",
  "fhe-util",
+ "hex",
  "num-bigint 0.5.1",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rand_chacha 0.9.0",
+ "serde",
  "serde_json",
  "serial_test",
  "sha2 0.10.9",
@@ -4564,7 +4598,7 @@ dependencies = [
 
 [[package]]
 name = "e3-trbfv"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "anyhow",
  "bincode",
@@ -4584,7 +4618,7 @@ dependencies = [
  "ndarray",
  "num-bigint 0.5.1",
  "petname",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rand_chacha 0.9.0",
  "serde",
  "sha2 0.10.9",
@@ -4596,7 +4630,7 @@ dependencies = [
 
 [[package]]
 name = "e3-utils"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "actix",
  "alloy",
@@ -4605,7 +4639,7 @@ dependencies = [
  "derivative",
  "e3-utils-derive",
  "hex",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rand_chacha 0.9.0",
  "regex",
  "serde",
@@ -4615,7 +4649,7 @@ dependencies = [
 
 [[package]]
 name = "e3-utils-derive"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "hex",
  "proc-macro2",
@@ -4625,7 +4659,7 @@ dependencies = [
 
 [[package]]
 name = "e3-wasm"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "e3-bfv-client",
  "e3-fhe-params",
@@ -4638,7 +4672,7 @@ dependencies = [
 
 [[package]]
 name = "e3-zk-helpers"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "alloy-primitives",
  "anyhow",
@@ -4659,7 +4693,7 @@ dependencies = [
  "num-bigint 0.5.1",
  "num-integer",
  "num-traits",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rayon",
  "serde",
  "serde_json",
@@ -4671,7 +4705,7 @@ dependencies = [
 
 [[package]]
 name = "e3-zk-prover"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "acir",
  "actix",
@@ -4686,6 +4720,8 @@ dependencies = [
  "bn254_blackbox_solver",
  "chrono",
  "directories 5.0.1",
+ "e3-bfv-client",
+ "e3-ciphernode-builder",
  "e3-committee-hash",
  "e3-config",
  "e3-crypto",
@@ -4693,9 +4729,13 @@ dependencies = [
  "e3-events",
  "e3-evm",
  "e3-fhe-params",
+ "e3-layout-lock",
+ "e3-net",
  "e3-polynomial",
  "e3-request",
  "e3-slashing",
+ "e3-sortition",
+ "e3-sync",
  "e3-test-helpers",
  "e3-trbfv",
  "e3-utils",
@@ -4713,7 +4753,7 @@ dependencies = [
  "num-bigint 0.5.1",
  "num-traits",
  "paste",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rayon",
  "reqwest",
  "serde",
@@ -4918,7 +4958,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4972,7 +5012,7 @@ checksum = "4e7f34442dbe69c60fe8eaf58a8cafff81a1f278816d8ab4db255b3bef4ac3c4"
 dependencies = [
  "getrandom 0.3.4",
  "libm",
- "rand 0.9.4",
+ "rand 0.9.5",
  "siphasher",
 ]
 
@@ -5038,7 +5078,7 @@ dependencies = [
  "num-bigint 0.5.1",
  "num-traits",
  "prost 0.14.4",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rand_chacha 0.9.0",
  "rand_distr",
  "rayon",
@@ -5063,7 +5103,7 @@ dependencies = [
  "num-traits",
  "prost 0.14.4",
  "pulp",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rand_chacha 0.9.0",
  "serde",
  "sha2 0.10.9",
@@ -5076,7 +5116,7 @@ name = "fhe-traits"
 version = "0.3.0"
 source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#375cfc68fbb1dbd27c5fd204706e2dfee6086229"
 dependencies = [
- "rand 0.9.4",
+ "rand 0.9.5",
 ]
 
 [[package]]
@@ -5087,7 +5127,7 @@ dependencies = [
  "num-bigint-dig",
  "num-traits",
  "prime_factorization",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rand_distr",
  "rayon",
 ]
@@ -5713,7 +5753,7 @@ dependencies = [
  "idna",
  "ipnet",
  "once_cell",
- "rand 0.9.4",
+ "rand 0.9.5",
  "ring",
  "socket2 0.5.10",
  "thiserror 2.0.20",
@@ -5736,7 +5776,7 @@ dependencies = [
  "moka",
  "once_cell",
  "parking_lot 0.12.5",
- "rand 0.9.4",
+ "rand 0.9.5",
  "resolv-conf",
  "smallvec",
  "thiserror 2.0.20",
@@ -6133,7 +6173,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "log",
- "rand 0.9.4",
+ "rand 0.9.5",
  "tokio",
  "url",
  "xmltree",
@@ -6301,7 +6341,7 @@ dependencies = [
 
 [[package]]
 name = "interfoldup"
-version = "0.18.0"
+version = "0.19.0-test.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -6378,7 +6418,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7822,7 +7862,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7857,7 +7897,7 @@ checksum = "93e7820bc0a80a0238e650327316f929ba18d5be054b647490a3a6a339f3e7c0"
 dependencies = [
  "num-integer",
  "num-traits",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rand_core 0.9.5",
  "serde",
 ]
@@ -7873,7 +7913,7 @@ dependencies = [
  "num-iter",
  "num-traits",
  "once_cell",
- "rand 0.9.4",
+ "rand 0.9.5",
  "serde",
  "smallvec",
 ]
@@ -8178,7 +8218,7 @@ dependencies = [
  "glob",
  "opentelemetry",
  "percent-encoding",
- "rand 0.9.4",
+ "rand 0.9.5",
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
@@ -8199,7 +8239,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.45.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8419,7 +8459,7 @@ checksum = "9cd31dcfdbbd7431a807ef4df6edd6473228e94d5c805e8cf671227a21bad068"
 dependencies = [
  "anyhow",
  "clap",
- "itertools 0.13.0",
+ "itertools 0.15.0",
  "proc-macro2",
  "quote",
  "rand 0.8.5",
@@ -8798,7 +8838,7 @@ dependencies = [
  "bit-vec 0.8.0",
  "bitflags 2.10.0",
  "num-traits",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rand_chacha 0.9.0",
  "rand_xorshift 0.4.0",
  "regex-syntax",
@@ -8834,7 +8874,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -8847,7 +8887,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -8935,7 +8975,7 @@ dependencies = [
  "fastbloom",
  "getrandom 0.3.4",
  "lru-slab",
- "rand 0.9.4",
+ "rand 0.9.5",
  "ring",
  "rustc-hash",
  "rustls",
@@ -9002,9 +9042,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.9.4"
+version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44c5af06bb1b7d3216d91932aed5265164bf384dc89cd6ba05cf59a35f5f76ea"
+checksum = "b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41"
 dependencies = [
  "rand_chacha 0.9.0",
  "rand_core 0.9.5",
@@ -9074,7 +9114,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a8615d50dcf34fa31f7ab52692afec947c4dd0ab803cc87cb3b0b4570ff7463"
 dependencies = [
  "num-traits",
- "rand 0.9.4",
+ "rand 0.9.5",
 ]
 
 [[package]]
@@ -9439,7 +9479,7 @@ dependencies = [
  "primitive-types 0.12.2",
  "proptest",
  "rand 0.8.5",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rlp",
  "ruint-macro",
  "serde_core",
@@ -9548,7 +9588,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9606,7 +9646,7 @@ dependencies = [
  "security-framework 3.6.0",
  "security-framework-sys",
  "webpki-root-certs 0.26.11",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11005,7 +11045,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11537,7 +11577,7 @@ dependencies = [
  "http 1.4.0",
  "httparse",
  "log",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rustls",
  "rustls-pki-types",
  "sha1",
@@ -12020,7 +12060,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

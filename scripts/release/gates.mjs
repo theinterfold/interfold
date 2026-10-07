@@ -75,6 +75,7 @@ export function checkReleaseSafeguards(rootDir = ROOT_DIR) {
   requireText(release, 'Required circuit-artifacts branch is missing', 'missing circuit artifacts do not fail closed')
   requireText(release, 'if-no-files-found: error', 'missing release archives do not fail artifact upload')
   requireText(release, 'node scripts/release.mjs publish-npm', 'npm publication cannot resume safely')
+  requireText(release, 'aliases=(--tag "${image}:dev")', 'a stable release leaves the dev container aliases behind')
   requireText(
     jobSource(release, 'publish-npm-packages'),
     'npm install -g "npm@${NPM_VERSION}"',

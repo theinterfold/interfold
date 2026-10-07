@@ -7,8 +7,8 @@
 
 # Guards the agent/ harness docs against drift: if a branch changes protocol-bearing
 # code (contracts, circuits, or core crates) without touching agent/, the push is
-# rejected. agent/RULES.md requires flow-trace and invariant docs to be updated in the
-# same PR as the change they describe.
+# rejected. agent/RULES.md §Harness docs requires an agent/ update in the same PR when
+# the change makes a documented statement false.
 #
 # A watched path stands down automatically when the change provably cannot affect a
 # documented statement: a pure formatter reflow, or a diff whose changed lines name
@@ -28,7 +28,7 @@ if [[ "${SKIP_DOC_SYNC:-0}" == "1" ]]; then
 fi
 
 # Paths whose changes are expected to be reflected in agent/ docs. Mirrors the
-# "When to update" table in agent/RULES.md and the flow-trace area mapping.
+# "When an update is necessary" list in agent/prompts/update-flow-trace.md.
 WATCHED_REGEX='^(packages/interfold-contracts/(contracts|scripts|tasks)/|circuits/(lib|bin)/|crates/(aggregator|bfv-client|ciphernode-builder|cli|committee-hash|compute-provider|config|crypto|daemon-server|data|entrypoint|events|evm|evm-helpers|fhe|fhe-params|fs|indexer|keyshare|multithread|net|parity-matrix|polynomial|program-server|request|safe|slashing|sortition|sync|trbfv|zk-helpers|zk-prover)/src/)'
 DOCS_REGEX='^agent/(RULES|CONTEXT|ARCHITECTURE|CRATES_ARCHITECTURE)\.md$|^agent/invariants/|^agent/flow-trace/'
 
@@ -247,10 +247,7 @@ while IFS= read -r path; do
   echo "  - $path"
 done <<<"$unskipped_watched"
 echo
-echo "agent/RULES.md requires harness docs (flow-trace, agent/invariants/, architecture docs)"
-echo "to be updated in the same PR as the change they describe. Either:"
-echo
-echo "  1. update the relevant agent/ doc (start from agent/flow-trace/00_INDEX.md), or"
-echo "  2. if no documented behavior changed, add \"[skip-doc-sync]\" to a commit message"
-echo "     or re-run with SKIP_DOC_SYNC=1."
+echo "When this branch makes a statement in agent/ false (flow-trace, agent/invariants/,"
+echo "architecture docs), update that doc in the same PR (agent/prompts/update-flow-trace.md)."
+echo "When no documented statement changed, add \"[skip-doc-sync]\" to a commit message."
 exit 1

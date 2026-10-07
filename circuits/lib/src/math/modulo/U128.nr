@@ -9,6 +9,7 @@
 //! This module provides a `ModU128` struct that implements modular arithmetic operations
 //! with full constraint generation for zero-knowledge proof circuits. All operations
 //! are verified in-circuit to ensure correctness.
+use crate::math::helpers::assert_in_range;
 use super::unconstrained_U128::{
     __compute_mod_reduction, __div_mod, __inv_mod, __neg, __sub_with_underflow,
 };
@@ -60,6 +61,16 @@ impl ModU128 {
     ///
     /// # Panics
     /// The circuit will fail if the reduction is incorrect.
+    ///
+    /// # Do not use this on a value a prover controls
+    /// The quotient below is never bounded, and `n == q * quotient + remainder` is a field equation,
+    /// so a prover can pick **any** `remainder` in `[0, m)` and solve for a matching quotient. The
+    /// constraint set accepts `(2, 50)` and `((250 - 51) / 100, 51)` alike for `250 mod 100`, which is
+    /// the same unbounded-quotient shape as IF-012.
+    ///
+    /// It is sound where it is used: the only production caller is `bin/config`, which is `fn main()`
+    /// with no inputs, so every value it reduces is a compile-time `pub global` and there is no
+    /// adversary to choose the second remainder. Use [`reduce_mod_bounded`] for a witness.
     pub fn reduce_mod(self, n: Field) -> Field {
         // Safety: __compute_mod_reduction is safe to call here because we assert the properties of the output
         let (q, r) = unsafe { __compute_mod_reduction(n, self.m) };
@@ -197,6 +208,9 @@ impl ModU128 {
     /// # Panics
     /// The circuit will fail if `val` is not invertible modulo `m` (i.e., if
     /// `gcd(val, m) != 1`). For prime moduli, any non-zero `val` is invertible.
+    /// # Do not use this on a value a prover controls
+    /// The verification routes through [`ModU128::reduce_mod`], whose remainder is not pinned. Use
+    /// [`inv_mod_bounded`] for a witness.
     pub fn inv_mod(self, val: Field) -> Field {
         // Safety: __inv_mod is safe because we verify val * result = 1 (mod m) below
         let result = unsafe { __inv_mod(val, self.m) };
@@ -206,6 +220,82 @@ impl ModU128 {
 
         result
     }
+}
+
+/// `n mod q` in `[0, q)`, with the quotient **bounded** so the remainder is unique.
+///
+/// This exists alongside [`ModU128::reduce_mod`] rather than replacing it. That one asserts only
+/// `n == q * quotient + remainder` with `remainder < q`; because the equation is over the field and
+/// the quotient is unbounded, a prover can pick any `remainder` in `[0, q)` and solve for a matching
+/// quotient. That is harmless where it is used — `bin/config` reduces compile-time constants and has
+/// no prover-supplied input — but it is not safe for a witness a prover controls.
+///
+/// Bounding the quotient closes it: with `quotient < 2^BIT_K` and `remainder` in `[0, q)`, the sum
+/// `q * quotient + remainder` stays far below the field prime, so the field equation implies the
+/// integer one and the pair is the unique Euclidean division.
+///
+/// `BIT_K` must cover `n / q`, and `n` itself must fit 128 bits for the hint to be correct.
+pub fn reduce_mod_bounded<let BIT_Q: u32, let BIT_K: u32>(n: Field, q: Field) -> Field {
+    // Safety: the quotient bound and the canonical remainder interval below fix the division, so a
+    // wrong hint cannot satisfy both.
+    let (quotient, _) = unsafe { __compute_mod_reduction(n, q) };
+    quotient.assert_max_bit_size::<BIT_K>();
+    let remainder = n - q * quotient;
+    assert_in_range::<BIT_Q>(remainder, q);
+    remainder
+}
+
+/// `n mod q` as the **centered** representative in `[-(q-1)/2, (q-1)/2]`, for odd `q`.
+///
+/// The counterpart to [`reduce_mod_bounded`], which returns the `[0, q)` one. Circuits that hash a
+/// polynomial in centered form want this directly: reducing to `[0, q)` and then subtracting `q`
+/// behind a comparison computes the same value, but pays for a second representation on the way.
+///
+/// Same construction as [`reduce_mod_bounded`], shifted by `half`. The quotient is a hint bounded to
+/// `BIT_K`, which keeps `q * quotient` and `n` far below the field prime and so makes the
+/// subtraction an integer identity rather than a modular one. `assert_in_range` then pins
+/// `centered + half` to `[0, q)`. Any `q` consecutive integers contain exactly one representative of
+/// each residue class, so that window fixes `centered` uniquely and no other hint satisfies both
+/// checks. The quotient bound is therefore about the integer lift, not about which value is picked.
+///
+/// `q` must be odd, so that `half = (q - 1) / 2` is an integer and the window `[-half, half]` holds
+/// exactly `q` values. Every modulus here is an odd prime.
+///
+/// The caller must keep `n + half < 2^BIT_K * q`, because the quotient divided out is
+/// `floor((n + half) / q)` and not `floor(n / q)`. The weaker `n < 2^BIT_K * q` is **not** enough:
+/// every `n` in `[2^BIT_K * q - half, 2^BIT_K * q)` satisfies it while the honest quotient is already
+/// `2^BIT_K`. If the bound is missed the honest quotient overflows `BIT_K` and the circuit is
+/// unsatisfiable — a completeness failure, not a soundness one, since the centered window fixes the
+/// result whatever `BIT_K` allows.
+///
+/// For a sum of `H` canonical residues the condition is slack by a wide margin:
+/// `n + half <= (q - 1) * (H + 1/2)`, so the quotient is at most `H`.
+pub fn centered_mod_bounded<let BIT_Q: u32, let BIT_K: u32>(n: Field, q: Field) -> Field {
+    let half = (q - 1) / 2;
+    // Safety: the quotient bound and the canonical centered interval below fix the division, so a
+    // wrong hint cannot satisfy both.
+    let (quotient, _) = unsafe { __compute_mod_reduction(n + half, q) };
+    quotient.assert_max_bit_size::<BIT_K>();
+    let centered = n - q * quotient;
+    assert_in_range::<BIT_Q>(centered + half, q);
+    centered
+}
+
+/// The inverse of `a` modulo prime `q`, proven by `a * inverse == 1 (mod q)`.
+///
+/// Uses [`reduce_mod_bounded`] for the verification, so unlike [`ModU128::inv_mod`] the reduction
+/// behind the check pins its remainder. `a` is reduced first to keep the product under 128 bits.
+pub fn inv_mod_bounded<let BIT_Q: u32, let BIT_K: u32>(a: Field, q: Field) -> Field {
+    // Safety: the range check and the product below pin the inverse.
+    let inverse = unsafe { __inv_mod(a, q) };
+    assert_in_range::<BIT_Q>(inverse, q);
+    a.assert_max_bit_size::<128>();
+    let reduced = reduce_mod_bounded::<BIT_Q, BIT_K>(a, q);
+    assert(
+        reduce_mod_bounded::<BIT_Q, BIT_K>(reduced * inverse, q) == 1,
+        "modular inverse mismatch",
+    );
+    inverse
 }
 
 #[test]
@@ -587,4 +677,92 @@ fn test_operations_with_prime_modulus() {
     // Test division: (a / b) * b = a (mod m)
     let quot = m.div_mod(a, b);
     assert(m.mul_mod(quot, b) == a);
+}
+
+/// `centered_mod_bounded` at every boundary of the window, for `q = 101` (`half = 50`).
+///
+/// The interesting pairs are `half` / `half + 1`, where the representative flips sign, and `q - 1` /
+/// `q`, where it wraps. Off-by-one in either direction shows up here.
+#[test]
+fn test_centered_mod_bounded_window_boundaries() {
+    let q = 101;
+    // Below the flip, at it, and one past it.
+    assert(centered_mod_bounded::<7, 4>(0, q) == 0);
+    assert(centered_mod_bounded::<7, 4>(49, q) == 49);
+    assert(centered_mod_bounded::<7, 4>(50, q) == 50);
+    assert(centered_mod_bounded::<7, 4>(51, q) == -50);
+    // Top of the first period, then the wrap.
+    assert(centered_mod_bounded::<7, 4>(100, q) == -1);
+    assert(centered_mod_bounded::<7, 4>(101, q) == 0);
+    assert(centered_mod_bounded::<7, 4>(151, q) == 50);
+    assert(centered_mod_bounded::<7, 4>(152, q) == -50);
+}
+
+/// The C4 case: a sum of `H` residues, each in `[0, q)`, at the largest value it can take.
+///
+/// With `H = 14` and `q = 101` the sum tops out at `14 * 100 = 1400`, and the carry is exactly 14 —
+/// the worst case the `BIT_K` bound has to cover for the `small` committee.
+#[test]
+fn test_centered_mod_bounded_covers_full_aggregate() {
+    let q = 101;
+    let n = 14 * (q - 1);
+    // 1400 = 13 * 101 + 87, and 87 > 50, so the representative is 87 - 101.
+    assert(centered_mod_bounded::<7, 4>(n, q) == -14);
+    // The carry is floor((1400 + 50) / 101) = 14, which needs all four bits.
+    assert(centered_mod_bounded::<7, 5>(n, q) == -14);
+}
+
+/// The exact `BIT_K` threshold, which sits `half` below the naive one.
+///
+/// The quotient is `floor((n + half) / q)`, so the largest provable `n` is `2^BIT_K * q - half - 1`,
+/// not `2^BIT_K * q - 1`. With `q = 101`, `half = 50` and `BIT_K = 4` that is 1565: one more and the
+/// honest quotient is 16, which four bits cannot hold. The window between the two -- 1566 to 1615 --
+/// is exactly what a precondition written as `n < 2^BIT_K * q` would wrongly admit.
+#[test]
+fn test_centered_mod_bounded_carry_threshold_accounts_for_half() {
+    let q = 101;
+    // 1565 + 50 = 1615 = 15 * 101 + 100, so the carry is 15 and fits four bits.
+    // 1565 mod 101 is 50, exactly `half`, so the representative stays positive.
+    assert(centered_mod_bounded::<7, 4>(1565, q) == 50);
+    // One more: 1566 + 50 = 1616 = 16 * 101 exactly, so the carry is 16 and needs five bits.
+    // 1566 mod 101 is 51, one past `half`, so the representative flips to 51 - 101.
+    assert(centered_mod_bounded::<7, 5>(1566, q) == -50);
+}
+
+/// The first value the stricter precondition excludes must actually be unprovable.
+#[test(should_fail)]
+fn test_centered_mod_bounded_rejects_carry_just_past_threshold() {
+    // 1566 is below 2^4 * 101 = 1616, yet its carry is 16 -- the case the loose bound would allow.
+    let _ = centered_mod_bounded::<7, 4>(1566, 101);
+}
+
+/// A carry that does not fit `BIT_K` makes the circuit unsatisfiable rather than wrong.
+///
+/// This is the failure mode if a committee grows past the bound `execute` asserts: the honest
+/// prover cannot prove, which is the safe direction.
+#[test(should_fail)]
+fn test_centered_mod_bounded_rejects_overflowing_carry() {
+    let q = 101;
+    // Carry is 14; two bits hold at most 3.
+    let _ = centered_mod_bounded::<7, 2>(14 * (q - 1), q);
+}
+
+/// Centered and canonical reduction must describe the same residue class.
+///
+/// `centered_mod_bounded` replaced a `reduce_mod` followed by a conditional subtraction, so this
+/// pins the relationship that replacement relies on.
+#[test]
+fn test_centered_mod_bounded_agrees_with_reduce_mod_bounded() {
+    let q = 101;
+    let half = (q - 1) / 2;
+    for n in 0..303 {
+        let centered = centered_mod_bounded::<7, 4>(n as Field, q);
+        let reduced = reduce_mod_bounded::<7, 4>(n as Field, q);
+        let expected = if (reduced as u64) > (half as u64) {
+            reduced - q
+        } else {
+            reduced
+        };
+        assert(centered == expected);
+    }
 }

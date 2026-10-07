@@ -1,65 +1,138 @@
-## Welcome to the Interfold Developer Docs!
+---
+title: 'What is the Interfold?'
+description:
+  'The Interfold is an open-source protocol that gives independent parties one shared, verifiable
+  result from private inputs, without custody of the data or trusted hardware.'
+---
 
-> **Note on naming**
->
-> The Interfold was previously known as **Enclave**.
+import { Callout } from 'nextra/components'
+import { LinkCards, LinkCard } from '@/components/ui'
 
-**Here you'll find guides, references, and implementation resources for building on the Interfold
-protocol.**
+# What is the Interfold?
 
-If you're looking to build applications that coordinate computation across private inputs without
-taking custody of sensitive data, you're in the right place.
+The Interfold is an open-source protocol for Encrypted Execution Environments (E3s). Independent
+parties use it to get one shared, verifiable result from their private inputs. This page is for
+readers who are new to the protocol. It explains the problem, what the protocol does, the guarantees
+and what backs each one, and the roles. At the end, you know which part of the docs to read next.
 
-The Interfold is an open-source protocol that coordinates Encrypted Execution Environments (E3s)
-through a distributed network of ciphernodes. It allows independent parties to produce shared,
-verifiable outcomes from private inputs without custody, exposure, or trusted hardware.
+## The problem
 
-For example, the Interfold can coordinate sealed-bid auctions where participants submit encrypted
-bids, the winning outcome is computed without revealing individual inputs, and the result is
-publicly verifiable.
+Many applications need one result from inputs that belong to different parties. A vote tally, a
+sealed-bid auction, and a shared statistic are examples. Usually, one party collects the plaintext
+inputs and computes the result. That party then has custody of sensitive data, and every other party
+must trust it.
 
-### Why Use the Interfold?
+Trusted hardware is another approach, but it moves the trust to a hardware vendor. The Interfold
+needs neither a custodian nor trusted hardware. No single party holds the plaintext inputs or the
+full decryption key. Integrity and privacy come from cryptography and from economic incentives.
 
-The Interfold enables applications that coordinate computation across independent parties without
-exposing their private inputs. Instead of pooling sensitive data or delegating execution authority
-to a centralized operator, the protocol executes encrypted workflows across a distributed network of
-ciphernodes.
+## What the protocol does
 
-This makes it possible to build systems where multiple parties contribute private inputs to produce
-a shared, verifiable outcome while preserving confidentiality throughout execution.
+The Interfold contract (`Interfold.sol`) coordinates each E3 on-chain. A committee of ciphernodes
+does the cryptographic work off-chain and publishes proofs on-chain. One E3 has these steps:
 
-## Key Use Cases
+1. A requester pays a fee and requests an E3 for a registered E3 program.
+2. Sortition selects a committee of ciphernodes. A Chainlink VRF v2.5 random value seeds the
+   selection.
+3. The committee runs distributed key generation (DKG) and publishes one public key. No member holds
+   the matching secret key.
+4. Data providers encrypt their inputs under that public key and submit them to the E3 program.
+5. A compute provider runs the program computation over the ciphertexts. It publishes an encrypted
+   output and a proof that the computation is correct.
+6. At least T + 1 committee members publish decryption shares. The shares combine into the plaintext
+   output, which goes on-chain with a proof.
 
-- **Sealed Auctions and Private Markets:** Enable auctions and market mechanisms where bids remain
-  private while outcomes remain verifiable.
-- **Private Voting and Governance:** Build voting systems that preserve ballot secrecy while
-  producing publicly verifiable results.
-- **Processing Sensitive Data:** Handle personal, financial, or otherwise confidential data without
-  taking custody of plaintext inputs.
-- **Multiparty Computation Workflows:** Coordinate computation across independent parties
-  contributing private inputs without pooling their data.
-- **Collaborative Data Analysis:** Allow organizations to jointly compute over sensitive datasets
-  without exposing underlying records.
-- **Meeting Regulatory Requirements:** Build applications compatible with data protection
-  requirements such as HIPAA or GDPR.
+Each step has a deadline. When a step misses its deadline, anyone can mark the E3 as failed, and the
+refund rules apply. The [E3 lifecycle](/learn/e3-lifecycle) page describes each stage.
 
-## Cryptographic Stack
+For example, in a sealed-bid auction, each bidder encrypts a bid. The computation runs over the
+encrypted bids, and only the result is decrypted. The individual bids stay encrypted.
 
-The Interfold coordinates encrypted execution using a combination of Fully Homomorphic Encryption
-(FHE), Zero-Knowledge Proofs (ZKPs), and Distributed Threshold Cryptography (DTC).
+## Guarantees
 
-These components enable computation on encrypted inputs, verification of correct execution, and
-distributed control of decryption through the network of ciphernodes.
+The table shows each guarantee, the mechanism that backs it, and where the protocol checks it.
 
-For a dedicated walkthrough of threshold BFV, PV-TBFV, and the circuit phases (C0–C7), see
-[Cryptography](/cryptography). To compile and lint the Noir workspace, run `interfold noir`, and
-wire the prover from Rust, see [Noir Circuits](/noir-circuits).
+| Guarantee                                    | What backs it                                                            | Where the protocol checks it                                                               |
+| -------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| Inputs stay encrypted during the computation | Fully homomorphic encryption (FHE) with the threshold BFV scheme         | The compute provider receives only ciphertexts                                             |
+| No single party can decrypt                  | Threshold cryptography: DKG and Shamir secret sharing                    | The decryption proof combines T + 1 verified shares                                        |
+| Key generation and decryption are correct    | Zero-knowledge (ZK) proofs from circuits C0 to C7                        | `BfvPkVerifier` at `publishCommittee`, `BfvDecryptionVerifier` at `publishPlaintextOutput` |
+| The computation is correct                   | A compute proof (a RISC Zero zkVM receipt in the current code)           | The ciphertext verifier and the E3 program `verify` function at `publishCiphertextOutput`  |
+| Committee selection is random                | Ticket-weighted sortition with a Chainlink VRF v2.5 seed                 | `CiphernodeRegistry` functions `submitTicket` and `finalizeCommittee`                      |
+| Operators have a reason to act correctly     | Economic security: FOLD bonds, tFOLD tickets, slashing, rewards, refunds | `BondingRegistry`, `SlashingManager`, and `E3RefundManager`                                |
 
-### What You'll Learn
+### Fully homomorphic encryption
 
-This documentation covers everything you need to get started with the Interfold, including:
+BFV is a fully homomorphic encryption scheme. A program can add encrypted values and get an
+encrypted sum without decryption. The compute provider runs the program on ciphertexts only. It
+never sees an input or the output in plaintext.
 
-- Core concepts behind the Interfold protocol and E3s.
-- Building applications on the Interfold protocol.
-- Step-by-step guides for configuring and executing E3 workflows.
-- Code examples and best practices to streamline development.
+### Threshold cryptography
+
+The committee creates its public key with DKG. Each member contributes a piece of the secret key and
+splits it into Shamir shares for the other members. No member ever holds the complete secret key.
+Decryption needs T + 1 valid shares, and each share reveals nothing alone. The
+[Cryptography](/learn/cryptography) page explains the committee sizes and the math.
+
+### Zero-knowledge proofs
+
+Each ciphernode proves every key, share, and decryption step with a ZK proof. An aggregator folds
+these proofs into two recursive proofs for each E3. The protocol contracts verify both proofs
+on-chain, so anyone can check the result without trust in the committee.
+
+### Economic security
+
+A ciphernode needs a FOLD bond (`InterfoldToken`) and tFOLD tickets (`InterfoldTicketToken`) to
+serve on committees. The `SlashingManager` can slash ticket collateral and bonds for proven faults,
+ban an operator, and expel a committee member. A successful E3 pays the active committee members. A
+failed E3 returns fee escrow to the requester according to who caused the failure.
+
+## Assumptions and limits
+
+The guarantees depend on these conditions:
+
+- **Collusion threshold.** If T + 1 committee members collude, they can decrypt any ciphertext under
+  the committee key, including a single input. Larger committees raise T.
+- **Public output.** The plaintext output is public on-chain. The E3 program must make sure that the
+  output does not reveal an individual input, for example a tally with only one vote.
+- **Input validation.** The E3 program decides which inputs to accept. The default template does not
+  check that a ciphertext matches its commitment. A production program must verify this binding.
+- **Data availability.** The ciphertext output is stored outside Ethereum. The E3 program verifies a
+  receipt from the data-availability layer. CRISP uses Avail with the VectorX bridge.
+
+## Roles
+
+| Role                 | What the role does                                                                                                                 | Main interface                                      |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Requester            | Selects the E3 program, committee size, and input window. Pays the fee and receives the result.                                    | `Interfold.request`, `Interfold.getE3Quote`         |
+| Data provider        | Encrypts an input under the committee public key and submits it during the input window.                                           | The E3 program `publishInput` function              |
+| E3 program developer | Writes the program contract and the secure process, which is the FHE computation.                                                  | `IE3Program` (`validate`, `publishInput`, `verify`) |
+| Ciphernode operator  | Runs a ciphernode that serves on committees. The ciphernode needs a FOLD bond and tFOLD tickets.                                   | `BondingRegistry`, the `interfold start` command    |
+| Compute provider     | Runs the secure process over the encrypted inputs and produces a compute proof. The output and proof go to the Interfold contract. | `Interfold.publishCiphertextOutput`                 |
+
+One party can have more than one role. For example, an application can request an E3 and also run
+its compute provider.
+
+## Enclave is now The Interfold
+
+<Callout type='info'>
+  The Interfold was previously named Enclave. Older articles and code can still use the name
+  Enclave.
+</Callout>
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='What is an E3?' href='/learn/what-is-e3' icon='book' tag='Learn'>
+    The parts of one Encrypted Execution Environment and the proof that protects each part.
+  </LinkCard>
+  <LinkCard title='Architecture' href='/learn/architecture' icon='layers' tag='Learn'>
+    The on-chain contracts and off-chain services, and how they interact.
+  </LinkCard>
+  <LinkCard title='Quick Start' href='/build/quick-start' icon='build' tag='Build'>
+    Make a project from the template and run a complete E3 on your computer.
+  </LinkCard>
+  <LinkCard title='Run a ciphernode' href='/operate' icon='node' tag='Operate'>
+    Bond FOLD, get tickets, and serve on committees.
+  </LinkCard>
+</LinkCards>

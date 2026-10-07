@@ -23,13 +23,13 @@ library ActiveCryptoConfig {
 
     bytes32 internal constant SECURE_CONFIG_ID =
         0xac5490c59e158cbb104642bba0ab7b3fd11ca49dd4bb05ce7bec8089ce3c8c31;
-    uint8 internal constant SECURE_PARAM_SET = 1;
+    uint8 internal constant SECURE_PARAM_SET = 2;
     bytes32 internal constant SECURE_PARAM_SET_HASH =
         0x80775a19b6126a12943f9c1c53f92299f0c92ece819b625026ab1406bbbe0721;
 
     bytes32 internal constant SECURE_16384_CONFIG_ID =
         0xde3c303973a0bf2b841cd0e7266ae68a7e48f8b271ffd629b245485e52dc8cd8;
-    uint8 internal constant SECURE_16384_PARAM_SET = 2;
+    uint8 internal constant SECURE_16384_PARAM_SET = 3;
     bytes32 internal constant SECURE_16384_PARAM_SET_HASH =
         0x8afd5dddf1bc0cfb00c70e9a7d0a0fb11bd0617df27574fa7d2ccf9ae3a6bdb8;
 

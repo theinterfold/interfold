@@ -124,11 +124,7 @@ function publicInputs(
   inputs[33] = ethers.toBeHex(0, 32);
   inputs[34] = acceptedHi;
   inputs[35] = acceptedLo;
-  inputs.splice(
-    36 + 3 * lbfvRows,
-    V2_VK_BINDING.length,
-    ...V2_VK_BINDING,
-  );
+  inputs.splice(36 + 3 * lbfvRows, V2_VK_BINDING.length, ...V2_VK_BINDING);
   return inputs;
 }
 
@@ -145,7 +141,7 @@ describe("BfvPkVerifierV2", function () {
     expect(await dkgAggregatorV2Verifier.getAddress()).to.be.properAddress;
   });
 
-  async function deployFixture(paramSet = 2) {
+  async function deployFixture(paramSet = 3) {
     const circuit = await ethers.deployContract("MockCircuitVerifier");
     await circuit.waitForDeployment();
     await circuit.setReturnValue(true);

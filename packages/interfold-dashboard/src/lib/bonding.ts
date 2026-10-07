@@ -48,6 +48,11 @@ export type OperatorStatus = {
   bonded: boolean
   registered: boolean
   active: boolean
+  /**
+   * Eligible for new committees at the latest block (`eligibilityAt`). Unlike `active`, this also
+   * applies the admission cooldown and the admission policy. `null` when the read fails.
+   */
+  eligible: boolean | null
   exitInProgress: boolean
 }
 
@@ -117,7 +122,23 @@ async function tokenDecimals(token: Address, fallback: number): Promise<number> 
   }
 }
 
+// Never rejects: a failed read makes only the eligibility unknown, not the whole status.
+async function fetchEligibility(operator: Address): Promise<boolean | null> {
+  try {
+    const block = await publicClient.getBlock()
+    const [eligible] = (await (publicClient.readContract as any)({
+      ...registry,
+      functionName: 'eligibilityAt',
+      args: [operator, block.timestamp],
+    })) as [boolean, bigint]
+    return eligible
+  } catch {
+    return null
+  }
+}
+
 export async function fetchOperatorStatus(operator: Address): Promise<OperatorStatus> {
+  const eligibility = fetchEligibility(operator)
   const [bondOwner, pendingBondOwner, ciphernodeBond, ticketBalance, availableTickets, bonded, registered, active, exitInProgress] =
     await Promise.all([
       (publicClient.readContract as any)({ ...registry, functionName: 'bondOwnerOf', args: [operator] }) as Promise<Address>,
@@ -140,6 +161,7 @@ export async function fetchOperatorStatus(operator: Address): Promise<OperatorSt
     bonded,
     registered,
     active,
+    eligible: await eligibility,
     exitInProgress,
   }
 }

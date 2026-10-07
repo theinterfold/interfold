@@ -40,7 +40,10 @@ case "$file" in
     fi
     ;;
   *.ts | *.tsx | *.js | *.jsx | *.mjs | *.cjs | *.json | *.md | *.mdx | *.yml | *.yaml | *.css | *.sol)
-    if ! pnpm exec prettier --write "$file" >/dev/null 2>&1; then
+    # The local binary avoids the pnpm startup cost, which every agent edit pays.
+    prettier=(pnpm exec prettier)
+    [[ -x node_modules/.bin/prettier ]] && prettier=(node_modules/.bin/prettier)
+    if ! "${prettier[@]}" --write "$file" >/dev/null 2>&1; then
       echo "agent-format-hook: prettier failed for $file" >&2
     fi
     ;;

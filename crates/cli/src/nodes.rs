@@ -39,9 +39,26 @@ pub enum NodeCommands {
     /// List all process statuses
     Ps,
 
-    /// Purge all local ciphernode data. This will delete all passwords and prior ciphernode
-    /// events.
-    Purge,
+    /// Delete `.interfold/data` and `.interfold/config` in the current directory, including each
+    /// node's operator key and libp2p key. To clear a node's state and keep its identity, use
+    /// `interfold node reset-data`.
+    ///
+    /// Refuses when it finds a running node whose state it deletes. Refuses when such a node holds
+    /// key-share state for an E3 that it has not seen complete. Refuses when it cannot check such
+    /// a node. The chain cannot restore a deleted key share.
+    Purge {
+        /// Confirm the deletion.
+        #[arg(long)]
+        yes: bool,
+
+        /// Override the refusal for an active key share and for a node that the command cannot
+        /// check. The node permanently loses its key share. Check first that each listed E3 is
+        /// complete or failed on chain, and that one day has passed after its lifecycle deadline.
+        /// The command checks the store that each node recorded at its last start; for a node that
+        /// has not started with this release, it checks the store at the configured path.
+        #[arg(long)]
+        allow_active_e3s: bool,
+    },
 
     /// Start an individual node in the nodes set
     Start {
@@ -64,7 +81,7 @@ pub enum NodeCommands {
         id: String,
     },
 
-    /// Stop the individual node in the nodes set
+    /// Stop and start the individual node in the nodes set
     Restart {
         /// The id of the node
         #[arg(index = 1)]
@@ -92,7 +109,10 @@ pub async fn execute(
         NodeCommands::Status { id } => nodes_status::execute(&id).await?,
         NodeCommands::Stop { id } => nodes_stop::execute(&id).await?,
         NodeCommands::Restart { id } => nodes_restart::execute(&id).await?,
-        NodeCommands::Purge => nodes_purge::execute().await?,
+        NodeCommands::Purge {
+            yes,
+            allow_active_e3s,
+        } => nodes_purge::execute(config, config_string, yes, allow_active_e3s).await?,
     };
 
     Ok(())

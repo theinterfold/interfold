@@ -6,7 +6,7 @@
 
 //! Pure selection of an H-dealer set with complete, matching recipient receipts.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use alloy::primitives::keccak256;
 use alloy::sol_types::SolValue;
@@ -51,6 +51,42 @@ pub(crate) fn dealer_identity(
         party_id,
         contribution_hash,
     })
+}
+
+/// Whether the share batch `candidate` grows the recorded batch `previous`: without their expelled
+/// dealers, `candidate` holds every dealer of `previous` and at least one more. A dealer expelled
+/// after `previous` was recorded therefore does not block a larger batch, and an expelled dealer in
+/// `candidate` does not count as growth.
+pub(crate) fn batch_grows(
+    previous: &BTreeSet<u64>,
+    candidate: &BTreeSet<u64>,
+    expelled: &HashSet<u64>,
+) -> bool {
+    let live = |batch: &BTreeSet<u64>| -> BTreeSet<u64> {
+        batch
+            .iter()
+            .filter(|party_id| !expelled.contains(party_id))
+            .copied()
+            .collect()
+    };
+    let (previous, candidate) = (live(previous), live(candidate));
+    previous.len() < candidate.len() && previous.is_subset(&candidate)
+}
+
+/// Whether a C2/C3 dispatch verified the share batch `batch` of this node, without this node's own
+/// party: `verified`, its senders and pre-dishonest parties, holds every dealer of `batch` that is
+/// not expelled, and no dealer outside `batch`. A dispatch leaves out the dealers expelled when it
+/// was sent, so a later expulsion does not change the answer, and a dispatch of an earlier batch
+/// does not verify a grown one.
+pub(crate) fn dispatch_verifies_batch(
+    verified: &BTreeSet<u64>,
+    batch: &BTreeSet<u64>,
+    expelled: &HashSet<u64>,
+) -> bool {
+    verified.is_subset(batch)
+        && batch
+            .iter()
+            .all(|party_id| expelled.contains(party_id) || verified.contains(party_id))
 }
 
 /// Find the first H-party set whose members each hold the same version of
@@ -294,5 +330,66 @@ mod tests {
     fn cannot_select_below_h() {
         let ready = BTreeMap::from([(0, dealers(&[0, 1]))]);
         assert!(select_ready_roster(&ready, 2).is_none());
+    }
+
+    fn ids(ids: &[u64]) -> BTreeSet<u64> {
+        ids.iter().copied().collect()
+    }
+
+    #[test]
+    fn a_batch_grows_past_an_expelled_dealer() {
+        let expelled = HashSet::from([1]);
+        assert!(batch_grows(&ids(&[1, 2]), &ids(&[2, 3]), &expelled));
+        assert!(batch_grows(&ids(&[1]), &ids(&[2]), &expelled));
+        // Without the expulsion, dropping dealer 1 is not growth.
+        assert!(!batch_grows(&ids(&[1, 2]), &ids(&[2, 3]), &HashSet::new()));
+    }
+
+    #[test]
+    fn a_dispatch_verifies_the_batch_whose_live_dealers_it_holds() {
+        let batch = ids(&[1, 2, 3]);
+        assert!(dispatch_verifies_batch(
+            &ids(&[1, 2, 3]),
+            &batch,
+            &HashSet::new()
+        ));
+        // Dealer 3 was expelled before the dispatch, or after it.
+        let expelled = HashSet::from([3]);
+        assert!(dispatch_verifies_batch(&ids(&[1, 2]), &batch, &expelled));
+        assert!(dispatch_verifies_batch(&ids(&[1, 2, 3]), &batch, &expelled));
+        // A dispatch of the earlier batch `{1, 2}` does not verify the grown batch.
+        assert!(!dispatch_verifies_batch(
+            &ids(&[1, 2]),
+            &batch,
+            &HashSet::new()
+        ));
+        // A dealer outside the batch.
+        assert!(!dispatch_verifies_batch(
+            &ids(&[1, 2, 3, 4]),
+            &batch,
+            &HashSet::new()
+        ));
+    }
+
+    #[test]
+    fn a_batch_must_still_hold_every_remaining_dealer_and_add_one() {
+        let expelled = HashSet::from([1]);
+        // The remaining dealer 2 is missing.
+        assert!(!batch_grows(&ids(&[1, 2]), &ids(&[3, 4]), &expelled));
+        // Only the expelled dealer left; no dealer was added.
+        assert!(!batch_grows(&ids(&[1, 2]), &ids(&[2]), &expelled));
+        assert!(batch_grows(&ids(&[2]), &ids(&[2, 3]), &HashSet::new()));
+        // An expelled dealer in the candidate is not growth.
+        let expelled = HashSet::from([1, 3]);
+        assert!(!batch_grows(
+            &ids(&[1, 2, 4, 5]),
+            &ids(&[2, 3, 4, 5]),
+            &expelled
+        ));
+        assert!(batch_grows(
+            &ids(&[1, 2, 4, 5]),
+            &ids(&[2, 3, 4, 5, 6]),
+            &expelled
+        ));
     }
 }

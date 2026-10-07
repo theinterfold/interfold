@@ -1,6 +1,6 @@
 {
   "name": "@crisp-e3/sdk",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "type": "module",
   "author": {
     "name": "gnosisguild",
@@ -49,8 +49,6 @@
     "build:wasm": "pnpm -C ../crisp-zk-inputs build",
     "build": "pnpm build:testing",
     "test": "pnpm stage:preset insecure && vitest --run",
-    "test:core-and-ballot-proofs": "pnpm stage:preset insecure && vitest --run -t \"^(?!.*generateMaskVoteProof)\"",
-    "test:mask-proofs": "pnpm stage:preset insecure && vitest --run tests/vote.test.ts -t \"generateMaskVoteProof\"",
     "stage:preset": "node ../../scripts/stage-preset-artifacts.mjs",
     "build:presets": "node ../../scripts/build-presets.mjs",
     "build:presets:all": "node ../../scripts/build-presets.mjs --all",

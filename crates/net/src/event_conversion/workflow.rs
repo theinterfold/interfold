@@ -12,7 +12,7 @@ use e3_events::{
 };
 use e3_utils::ArcBytes;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::debug;
 
 use super::wire::{decode, MAX_DHT_DOCUMENT_BYTES};
 
@@ -104,8 +104,10 @@ impl EventConversionService {
             return Ok(None);
         }
         let target_party_id = msg.target_party_id;
-        info!(
-            "Publishing ThresholdShare from party {} for target party {} (E3 {})",
+        // Recovery converts every historical share too, so this is not a publication yet. The
+        // document publisher logs the publications that start.
+        debug!(
+            "Converted ThresholdShare from party {} for target party {} (E3 {})",
             msg.share.party_id, target_party_id, msg.e3_id
         );
         let e3_id = msg.e3_id.clone();
@@ -187,13 +189,7 @@ impl EventConversionService {
                 );
                 IncomingDocument::ThresholdShare(ThresholdShareCreated {
                     external: true,
-                    e3_id: evt.e3_id,
-                    share: evt.share,
-                    target_party_id: evt.target_party_id,
-                    signed_c2a_proof: evt.signed_c2a_proof,
-                    signed_c2b_proof: evt.signed_c2b_proof,
-                    signed_c3a_proofs: evt.signed_c3a_proofs,
-                    signed_c3b_proofs: evt.signed_c3b_proofs,
+                    ..evt
                 })
             }
             ReceivableDocument::EncryptionKeyCreated(evt) => {
@@ -636,5 +632,24 @@ mod tests {
         let bytes = vec![0; MAX_DHT_DOCUMENT_BYTES + 1];
         let error = encode_bounded(&bytes).unwrap_err();
         assert!(error.to_string().contains("exceeds the"));
+    }
+}
+
+#[cfg(test)]
+mod layout_lock {
+    //! Locks the encoded layout of the DHT document payload. The payload has no version envelope,
+    //! and peers on two releases fetch each other's documents. `e3-tests` cannot reach this type.
+
+    use super::ReceivableDocument;
+    use std::path::Path;
+
+    #[test]
+    fn dht_document_layout_matches_the_locked_fixture() {
+        let rows =
+            e3_layout_lock::sample_rows::<ReceivableDocument, _>("dht_document", |_| String::new());
+        e3_layout_lock::assert_fixture(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/layout_lock.txt"),
+            &rows,
+        );
     }
 }

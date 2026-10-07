@@ -116,8 +116,12 @@ pnpm -C examples/CRISP publish:packages --channel prod --resume 0.20.0
 ```
 
 `--resume` skips exact versions that npm already serves. Use it only for the same release attempt.
-The publisher waits for each new package to become visible before it publishes a dependent package.
-It can wait for up to ten minutes because npm registry propagation can take several minutes.
+Before you resume, wait until npm serves every version that it accepted, for example with
+`npm view @crisp-e3/zk-inputs@0.20.0 version`.
+
+npm processes a publish asynchronously, and it can take about an hour to serve the new version. The
+publisher therefore publishes all packages first. Then it waits until npm serves each new version,
+for up to two hours for each package.
 
 Two gates run on the way:
 

@@ -919,6 +919,10 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   }
 
   /// @notice Decode the tally from the plaintext output
+  /// @dev Each coefficient counts the selected slots whose ballot sets that bit, modulo the
+  /// plaintext modulus that the committee decrypts under: 100 for insecure, 1,000,000 for
+  /// secure-8192, and 1,000 for secure-16384. The count is exact only while fewer ballots than the modulus set the same bit in
+  /// one round. This contract does not enforce that bound.
   /// @param e3Id The E3 program ID
   /// @return votes - an array of vote counts for each option
   function decodeTally(uint256 e3Id) public view returns (uint256[] memory votes) {

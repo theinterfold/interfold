@@ -3,14 +3,16 @@
 //! Actix routing for local replay, remote sync requests, and readiness signals.
 
 use super::*;
+use crate::domain::net_event_batch::LatestTs;
 use e3_events::E3Stage;
+use std::sync::Arc;
 
 impl Actor for NetSyncManager {
     type Context = actix::Context<Self>;
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT);
-        ctx.run_interval(DKG_COORDINATION_REANNOUNCE_INTERVAL, |this, _| {
-            this.reannounce_dkg_coordination();
+        ctx.run_interval(REANNOUNCE_TICK, |this, _| {
+            this.reannounce_due(Instant::now());
         });
     }
 }
@@ -27,11 +29,15 @@ impl Handler<InterfoldEvent> for NetSyncManager {
                 // Capture the snapshot-cursor map so we can bound the post-restart re-broadcast of
                 // our own forwardable artifacts to the in-flight window (H3/H11).
                 self.rebroadcast_since = Some(data.since.clone().into_iter().collect());
+                self.finish_local_replay();
                 self.maybe_rebroadcast_own_artifacts(ctx);
                 ctx.notify(TypedEvent::new(data, ec));
             }
-            InterfoldEventData::DkgCoordination(data) => {
-                self.remember_dkg_coordination(original, &data);
+            InterfoldEventData::DkgCoordination(_) => {
+                self.remember_dkg_coordination(original);
+            }
+            InterfoldEventData::DecryptionshareCreated(_) => {
+                self.remember_decryption_share(original);
             }
             InterfoldEventData::E3StageChanged(data) => {
                 if matches!(
@@ -43,12 +49,23 @@ impl Handler<InterfoldEvent> for NetSyncManager {
                 ) {
                     self.forget_dkg_coordination(&data.e3_id);
                 }
+                if data.new_stage.is_terminal() {
+                    // Only a stage change from the chain ends an E3 for good, as for documents.
+                    if original.source() == EventSource::Evm {
+                        self.mark_e3_ended(&data.e3_id);
+                    } else {
+                        self.forget_e3_announcements(&data.e3_id);
+                    }
+                }
             }
+            // `E3Failed` and `E3RequestComplete` can come from this node alone while the E3
+            // continues on chain. They stop the current re-sends, but a later message of the E3 is
+            // still re-sent.
             InterfoldEventData::E3Failed(data) => {
-                self.forget_dkg_coordination(&data.e3_id);
+                self.forget_e3_announcements(&data.e3_id);
             }
             InterfoldEventData::E3RequestComplete(data) => {
-                self.forget_dkg_coordination(&data.e3_id);
+                self.forget_e3_announcements(&data.e3_id);
             }
             _ => {}
         }
@@ -64,18 +81,75 @@ impl Handler<TypedEvent<HistoricalNetSyncStart>> for NetSyncManager {
         ctx: &mut Self::Context,
     ) -> Self::Result {
         info!("HISTORICAL_NET_SYNC_START");
-        trap_fut(
-            EType::Net,
-            &self.bus.with_ec(msg.get_ctx()),
-            handle_sync_request_event(
-                self.tx.clone(),
-                self.rx.clone(),
-                msg,
-                ctx.address(),
-                !self.readiness_all_peers_dialed(),
-                self.network.clone(),
-            ),
-        )
+        let bus = self.bus.with_ec(msg.get_ctx());
+        let event_context = msg.get_ctx().clone();
+        let failure = msg.failure.clone();
+        self.history_failure = failure.clone();
+        let address = ctx.address();
+        // Peers' events must stay within the clock-drift allowance, which the node applies again
+        // when it publishes the history. The allowance grows with the clock, so each source is
+        // checked against it when its history is complete. A clock that cannot tell it fails the
+        // fetch before any peer is asked.
+        if let Err(error) = self.bus.latest_admissible_ts() {
+            report_required_history_failure(&bus, failure, error);
+            return Box::pin(async {});
+        }
+        let clock = self.bus.clone();
+        let latest_ts: LatestTs = Arc::new(move || clock.latest_admissible_ts());
+        let fetch = handle_sync_request_event(
+            self.tx.clone(),
+            self.rx.clone(),
+            msg,
+            address.clone(),
+            !self.readiness_all_peers_dialed(),
+            self.network.clone(),
+            HistoryBounds {
+                latest_ts,
+                eventstore: self.eventstore.clone(),
+            },
+        );
+        if !self.peer_history_optional {
+            return Box::pin(async move {
+                if let Err(error) = fetch.await {
+                    report_required_history_failure(&bus, failure, error);
+                }
+            });
+        }
+        // A node that uses no E3 history continues with none when no peer can serve it.
+        Box::pin(async move {
+            let Err(error) = fetch.await else {
+                return;
+            };
+            warn!("No peer served the startup history; continuing without it: {error:#}");
+            let empty = SyncRequestSucceeded {
+                response: SyncResponseValue {
+                    events: vec![],
+                    ts: 0,
+                },
+            };
+            if let Err(error) = address.try_send(TypedEvent::new(empty, event_context)) {
+                bus.err(EType::Net, anyhow::anyhow!("{error}"));
+            }
+        })
+    }
+}
+
+/// Startup cannot continue without the required history, so the failure goes back to the startup
+/// coordinator, which stops at once instead of at its deadline. The bus reports the failure only
+/// when no coordinator receives it.
+fn report_required_history_failure(
+    bus: &BusHandle,
+    failure: Option<Recipient<HistoricalNetSyncFailed>>,
+    error: anyhow::Error,
+) {
+    let reason = format!("{error:#}");
+    let delivered = failure.is_some_and(|recipient| {
+        recipient
+            .try_send(HistoricalNetSyncFailed { reason })
+            .is_ok()
+    });
+    if !delivered {
+        bus.err(EType::Net, error);
     }
 }
 
@@ -95,22 +169,27 @@ impl Handler<TypedEvent<SyncRequestSucceeded>> for NetSyncManager {
         msg: TypedEvent<SyncRequestSucceeded>,
         _: &mut Self::Context,
     ) -> Self::Result {
-        trap(EType::Net, &self.bus.with_ec(msg.get_ctx()), || {
-            info!("SYNC REQUEST SUCCEEDED");
-            let (msg, ctx) = msg.into_components();
-            let response = msg.response;
-            self.bus.publish_from_remote_as_response(
-                HistoricalNetSyncEventsReceived {
-                    events: response.events.to_vec(),
-                },
-                response.ts,
-                ctx,
-                None,
-                EventSource::Net,
-            )?;
-
-            Ok(())
-        });
+        info!("SYNC REQUEST SUCCEEDED");
+        let bus = self.bus.with_ec(msg.get_ctx());
+        let (msg, ctx) = msg.into_components();
+        let response = msg.response;
+        if let Err(error) = self.bus.publish_from_remote_as_response(
+            HistoricalNetSyncEventsReceived {
+                events: response.events.to_vec(),
+            },
+            response.ts,
+            ctx,
+            None,
+            EventSource::Net,
+        ) {
+            // Startup waits for this history; without it, it would wait until its deadline.
+            let error = error.context("failed to publish the fetched peer history");
+            if self.peer_history_optional {
+                bus.err(EType::Net, error);
+            } else {
+                report_required_history_failure(&bus, self.history_failure.take(), error);
+            }
+        }
     }
 }
 
@@ -161,12 +240,19 @@ impl Handler<IncomingRequest> for NetSyncManager {
             );
             let query: HashMap<AggregateId, u128> =
                 HashMap::from([(fetch_request.aggregate_id(), fetch_request.since())]);
-            self.requests
-                .insert(id, PendingSyncRequest { peer, responder });
+            self.requests.insert(
+                id,
+                PendingSyncRequest {
+                    peer,
+                    responder,
+                    observed_from: self.live_history.since(),
+                },
+            );
             let storage_query =
                 EventStoreQueryBy::<TsAgg>::new(id, query, ctx.address().recipient())
                     .with_limit(scan_limit as u64)
-                    .with_max_bytes(MAX_SYNC_SCAN_BYTES);
+                    .with_max_bytes(MAX_SYNC_SCAN_BYTES)
+                    .in_timestamp_order();
             if let Err(error) = self.eventstore.try_send(storage_query) {
                 if let Some(pending) = self.requests.remove(&id) {
                     pending.responder.respond(ProtocolResponse::Error(
@@ -190,6 +276,7 @@ impl Handler<EventStoreQueryResponse> for NetSyncManager {
     fn handle(&mut self, msg: EventStoreQueryResponse, _: &mut Self::Context) -> Self::Result {
         let response_id = msg.id();
         let is_rebroadcast = self.rebroadcast_query_ids.remove(&response_id);
+        let history = msg.history();
         trap(EType::Net, &self.bus.clone(), || {
             let events = match msg.into_events() {
                 Ok(events) => events,
@@ -230,8 +317,23 @@ impl Handler<EventStoreQueryResponse> for NetSyncManager {
                     }
                 }
             }
-            match build_sync_batch(events, &fetch_request) {
+            let Some(history) = history else {
+                pending.responder.respond(ProtocolResponse::Error(
+                    "historical sync storage returned no scan progress".to_string(),
+                ))?;
+                bail!("event store answered a historical-sync page without scan progress");
+            };
+            // The live-history time from the admission counts only if it still holds: a reply
+            // must not say that the node observed a range live after the node lost gossip.
+            let observed_from = pending
+                .observed_from
+                .filter(|_| self.live_history.since() == pending.observed_from);
+            match build_sync_batch(events, history, observed_from, &fetch_request) {
                 SyncBatchOutcome::BadRequest(reason) => pending.responder.bad_request(reason)?,
+                SyncBatchOutcome::Failed(reason) => {
+                    warn!(%reason, "Cannot serve a historical-sync request");
+                    pending.responder.respond(ProtocolResponse::Error(reason))?
+                }
                 SyncBatchOutcome::Batch(batch) => pending.responder.ok(batch)?,
             }
 

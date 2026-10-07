@@ -14,6 +14,7 @@ use e3_events::{
 };
 use e3_utils::MAILBOX_LIMIT;
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use tracing::{debug, info};
 
 use e3_trbfv::lbfv_operation::LbfvOperationId;
@@ -27,35 +28,28 @@ enum RequestIdentity {
 type RequestKey = (E3id, RequestIdentity);
 
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 enum ComputeOutcome {
     Response(ComputeResponse),
     Error(ComputeRequestError),
 }
 
 struct ForwardedRequest {
-    correlation_id: CorrelationId,
+    /// IDs under which the request went to the worker, the first one first.
+    correlation_ids: Vec<CorrelationId>,
+    forwarded_at: Instant,
     waiting: Vec<CorrelationId>,
     outcome: Option<ComputeOutcome>,
-    /// Unix seconds when the request was forwarded. An entry without an outcome
-    /// older than `stale_after_secs` is evicted so a retry can run again.
-    sent_at: u64,
 }
 
-/// A forwarded request without an outcome becomes re-forwardable after this many
-/// seconds, so a response the event bus dropped cannot park retries forever. The
-/// value must stay below the public-key aggregator's l-BFV correlation timeouts,
-/// which bound the only in-process re-publishers of an identical request. The
-/// eviction applies to every compute kind: a re-published legacy request (for
-/// example a streaming nodes-fold step) must also run again, and a duplicated
-/// job is harmless because responses still resolve by correlation ID.
-const FORWARDED_STALE_AFTER_SECS: u64 = 300;
-
-fn now_unix_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
+/// A request that comes again under a new ID this long after it went to the worker, with no
+/// result in the gate, goes to the worker again. EventBus fan-out can drop the result on its way
+/// to the gate, and the gate would otherwise keep every later ID waiting for good. The value must
+/// stay below the public-key aggregator's l-BFV correlation timeouts, which bound the only
+/// in-process re-publishers of an identical l-BFV request. The rule applies to every compute
+/// kind: a re-published legacy request (for example a streaming nodes-fold step) must also run
+/// again, and a duplicated job is harmless because responses still resolve by correlation ID.
+const REFORWARD_AFTER: Duration = Duration::from_secs(10 * 60);
 
 /// Buffers compute effects observed during EventStore replay. Legacy requests
 /// use their complete payload as the deduplication key. l-BFV requests use
@@ -65,7 +59,6 @@ fn now_unix_secs() -> u64 {
 /// pre-crash copy.
 ///
 /// Deduplication spans the replay-to-live boundary. A later request with the
-
 /// same identity does not repeat the compute. The gate sends the result to each
 /// requester's correlation ID, including IDs created after restart. Terminal
 /// events clear the per-E3 keys.
@@ -78,8 +71,8 @@ pub(crate) struct ComputeEffectGate {
     request_keys_by_correlation: HashMap<CorrelationId, RequestKey>,
     replayed_responses: HashMap<RequestKey, ComputeOutcome>,
     stages: HashMap<E3id, E3Stage>,
-    /// Age after which a forwarded request without an outcome is evicted.
-    stale_after_secs: u64,
+    canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
+    reforward_after: Duration,
 }
 
 impl ComputeEffectGate {
@@ -93,7 +86,8 @@ impl ComputeEffectGate {
             request_keys_by_correlation: HashMap::new(),
             replayed_responses: HashMap::new(),
             stages: initial_stages,
-            stale_after_secs: FORWARDED_STALE_AFTER_SECS,
+            canonical_keys: Default::default(),
+            reforward_after: REFORWARD_AFTER,
         }
     }
 
@@ -174,8 +168,18 @@ impl ComputeEffectGate {
         Self::request_is_obsolete_at_stage(self.stages.get(e3_id), kind)
     }
 
+    /// Accusation work of a failed E3 runs until the request completes, so that a node can still
+    /// vote on an accusation whose proof it has not verified.
+    fn is_accusation_request(kind: &ComputeRequestKind) -> bool {
+        matches!(
+            kind,
+            ComputeRequestKind::Zk(ZkRequest::ReverifyAccusedProof(_))
+        )
+    }
+
     fn request_is_obsolete_at_stage(stage: Option<&E3Stage>, kind: &ComputeRequestKind) -> bool {
         match stage {
+            Some(E3Stage::Failed) if Self::is_accusation_request(kind) => false,
             Some(E3Stage::Complete | E3Stage::Failed) => true,
             Some(stage) if Self::stage_rank(stage) >= Self::stage_rank(&E3Stage::KeyPublished) => {
                 Self::is_dkg_request(kind)
@@ -184,11 +188,27 @@ impl ComputeEffectGate {
         }
     }
 
+    /// Every l-BFV operation ID belongs to DKG work, so an l-BFV key ends where DKG work ends.
+    fn identity_is_obsolete_at_stage(stage: Option<&E3Stage>, identity: &RequestIdentity) -> bool {
+        match identity {
+            RequestIdentity::Legacy(kind) => Self::request_is_obsolete_at_stage(stage, kind),
+            RequestIdentity::Lbfv(_) => match stage {
+                Some(E3Stage::Complete | E3Stage::Failed) => true,
+                Some(stage) => Self::stage_rank(stage) >= Self::stage_rank(&E3Stage::KeyPublished),
+                None => false,
+            },
+        }
+    }
+
     fn record_stage(&mut self, e3_id: E3id, new_stage: E3Stage) {
+        // A complete request is final, also after a failure: its accusation work ended too.
         let should_advance = self
             .stages
             .get(&e3_id)
-            .map(|current| Self::stage_rank(&new_stage) > Self::stage_rank(current))
+            .map(|current| {
+                *current != E3Stage::Complete
+                    && Self::stage_rank(&new_stage) > Self::stage_rank(current)
+            })
             .unwrap_or(true);
         if should_advance {
             self.stages.insert(e3_id.clone(), new_stage);
@@ -224,6 +244,14 @@ impl ComputeEffectGate {
                 debug!(e3_id = %request.e3_id, "dropping compute effect made obsolete by lifecycle stage");
                 return false;
             }
+            if let ComputeRequestKind::Zk(ZkRequest::ThresholdShareDecryption(proof)) =
+                &request.request
+            {
+                if !self.canonical_keys.accepts_request(&request.e3_id, proof) {
+                    debug!(e3_id = %request.e3_id, "Discarding C6 compute work without canonical public inputs");
+                    return false;
+                }
+            }
             let key = (
                 request.e3_id.clone(),
                 Self::request_identity(&request.request),
@@ -239,53 +267,37 @@ impl ComputeEffectGate {
                 );
                 return false;
             }
-
-            let now = now_unix_secs();
-            let existing = self.forwarded.get(&key).map(|forwarded| {
-                (
-                    forwarded.correlation_id == correlation_id,
-                    forwarded.outcome.clone(),
-                    forwarded.sent_at,
-                    forwarded.waiting.contains(&correlation_id),
-                )
-            });
-            match existing {
-                Some((true, ..)) => {
+            match self.forwarded.get_mut(&key) {
+                Some(forwarded) if forwarded.correlation_ids.contains(&correlation_id) => {
                     debug!("dropping duplicate compute effect with the same correlation ID");
                     return false;
                 }
-                Some((_, Some(outcome), ..)) => {
-                    self.publish_outcome(&outcome, correlation_id, &event);
-                    return false;
-                }
-                Some((_, None, sent_at, already_waiting)) => {
-                    if now.saturating_sub(sent_at) > self.stale_after_secs {
-                        // The worker finished but its outcome never arrived, so
-                        // parked retries cannot recover. Evict the entry and
-                        // forward this request again, keeping the parked
-                        // waiters so the retry outcome still fans out to them.
-                        debug!("evicting a stale forwarded compute effect without an outcome");
-                        let mut entry = self.forwarded.remove(&key).expect("entry exists");
-                        entry.correlation_id = correlation_id;
-                        entry.sent_at = now;
-                        self.forwarded.insert(key, entry);
-                    } else {
-                        if !already_waiting {
-                            if let Some(forwarded) = self.forwarded.get_mut(&key) {
-                                forwarded.waiting.push(correlation_id);
-                            }
+                Some(forwarded) => {
+                    if let Some(outcome) = forwarded.outcome.clone() {
+                        self.publish_outcome(&outcome, correlation_id, &event);
+                        return false;
+                    }
+                    if forwarded.forwarded_at.elapsed() < self.reforward_after {
+                        if !forwarded.waiting.contains(&correlation_id) {
+                            forwarded.waiting.push(correlation_id);
                         }
                         return false;
                     }
+                    info!(
+                        e3_id = %key.0,
+                        "Sending a compute request to the worker again: its result has not reached the gate"
+                    );
+                    forwarded.correlation_ids.push(correlation_id);
+                    forwarded.forwarded_at = Instant::now();
                 }
                 None => {
                     self.forwarded.insert(
                         key,
                         ForwardedRequest {
-                            correlation_id,
+                            correlation_ids: vec![correlation_id],
+                            forwarded_at: Instant::now(),
                             waiting: Vec::new(),
                             outcome: None,
-                            sent_at: now,
                         },
                     );
                 }
@@ -314,7 +326,7 @@ impl ComputeEffectGate {
         let forwarded_key = key.as_ref().filter(|key| {
             self.forwarded
                 .get(*key)
-                .is_some_and(|forwarded| forwarded.correlation_id == correlation_id)
+                .is_some_and(|forwarded| forwarded.correlation_ids.contains(&correlation_id))
         });
         let Some(forwarded_key) = forwarded_key else {
             // During EventStore replay, a successful response can arrive before effects are
@@ -332,7 +344,12 @@ impl ComputeEffectGate {
             .forwarded
             .get_mut(forwarded_key)
             .expect("forwarded key was checked above");
+        if matches!(forwarded.outcome, Some(ComputeOutcome::Response(_))) {
+            // A request sent to the worker again can finish twice. Keep the first success.
+            return;
+        }
         forwarded.outcome = Some(outcome.clone());
+        // The worker answers each ID it ran itself.
         let waiting = std::mem::take(&mut forwarded.waiting);
         for waiting_id in waiting {
             self.publish_outcome(&outcome, waiting_id, event);
@@ -375,10 +392,11 @@ impl ComputeEffectGate {
         bus: &BusHandle,
         target: Recipient<InterfoldEvent>,
         initial_stages: HashMap<E3id, E3Stage>,
+        canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
     ) {
-        let gate = Self::new(target, initial_stages)
-            .with_bus(bus.clone())
-            .start();
+        let mut gate = Self::new(target, initial_stages).with_bus(bus.clone());
+        gate.canonical_keys = canonical_keys;
+        let gate = gate.start();
         bus.subscribe_all(
             &[
                 EventType::ComputeRequest,
@@ -428,15 +446,17 @@ impl ComputeEffectGate {
         info!(count, "released replay-safe compute effects");
     }
 
+    /// Clear the keys of the work of `e3_id` that its stage makes obsolete. A failure keeps the
+    /// accusation work; a complete request keeps nothing.
     fn cancel(&mut self, e3_id: &E3id) {
-        self.pending
-            .retain(|(pending_id, _), _| pending_id != e3_id);
-        self.forwarded
-            .retain(|(forwarded_id, _), _| forwarded_id != e3_id);
-        self.replayed_responses
-            .retain(|(response_id, _), _| response_id != e3_id);
-        self.request_keys_by_correlation
-            .retain(|_, (request_id, _)| request_id != e3_id);
+        let stage = self.stages.get(e3_id).cloned();
+        let ends = |(request_id, identity): &RequestKey| {
+            request_id == e3_id && Self::identity_is_obsolete_at_stage(stage.as_ref(), identity)
+        };
+        self.pending.retain(|key, _| !ends(key));
+        self.forwarded.retain(|key, _| !ends(key));
+        self.replayed_responses.retain(|key, _| !ends(key));
+        self.request_keys_by_correlation.retain(|_, key| !ends(key));
     }
 }
 
@@ -462,7 +482,9 @@ impl Handler<InterfoldEvent> for ComputeEffectGate {
             }
             InterfoldEventData::EffectsEnabled(_) => self.enable(),
             InterfoldEventData::E3RequestComplete(complete) => {
-                self.record_stage(complete.e3_id.clone(), E3Stage::Complete);
+                // The request ends after a failure too, so Complete replaces Failed here.
+                self.stages
+                    .insert(complete.e3_id.clone(), E3Stage::Complete);
                 self.cancel(&complete.e3_id);
             }
             InterfoldEventData::E3Failed(failed) => {
@@ -481,7 +503,7 @@ impl Handler<InterfoldEvent> for ComputeEffectGate {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use actix::{Addr, Message, ResponseFuture};
     use e3_crypto::SensitiveBytes;
@@ -554,7 +576,7 @@ mod tests {
         }
     }
 
-    fn test_bus() -> (BusHandle, Addr<HistoryCollector<InterfoldEvent>>) {
+    pub(crate) fn test_bus() -> (BusHandle, Addr<HistoryCollector<InterfoldEvent>>) {
         let event_bus =
             EventBus::<InterfoldEvent>::new(EventBusConfig { deduplicate: true }).start();
         let store = TestEventStore::default().start();
@@ -698,6 +720,53 @@ mod tests {
             EventSource::Local,
         )
         .into_sequenced(1)
+    }
+
+    /// An accusation's re-verification of the forwarded C3a proof of `party`.
+    fn accusation_compute(
+        correlation_id: CorrelationId,
+        timestamp: u128,
+        party: u64,
+    ) -> InterfoldEvent {
+        let InterfoldEventData::ComputeRequest(mut request) = share_verification_compute(
+            correlation_id,
+            timestamp,
+            ProofType::C3aSkShareEncryption,
+            CircuitName::ShareEncryption,
+        )
+        .into_data() else {
+            unreachable!();
+        };
+        let ComputeRequestKind::Zk(ZkRequest::VerifyShareProofs(mut proofs)) = request.request
+        else {
+            unreachable!();
+        };
+        proofs.party_proofs[0].sender_party_id = party;
+        request.request = ComputeRequestKind::Zk(ZkRequest::ReverifyAccusedProof(proofs));
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            request.into(),
+            None,
+            timestamp,
+            None,
+            EventSource::Local,
+        )
+        .into_sequenced(1)
+    }
+
+    fn failed() -> InterfoldEvent {
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            e3_events::E3Failed {
+                e3_id: E3id::new("4", 1),
+                failed_at_stage: E3Stage::CommitteeFinalized,
+                reason: e3_events::FailureReason::DKGInvalidShares,
+            }
+            .into(),
+            None,
+            35,
+            None,
+            EventSource::Evm,
+        )
+        .into_sequenced(3)
     }
 
     fn effects_enabled() -> InterfoldEvent {
@@ -935,8 +1004,8 @@ mod tests {
 
         // The first outcome never arrives. After the stale threshold the retry
         // must run again instead of parking forever.
-        let aged = now_unix_secs().saturating_sub(gate.stale_after_secs + 1);
-        gate.forwarded.get_mut(&key).unwrap().sent_at = aged;
+        assert!(gate.forwarded.get(&key).unwrap().outcome.is_none());
+        gate.reforward_after = Duration::ZERO;
         assert!(gate.forward(compute(retry, 12)));
         assert_eq!(recorder.send(Received).await.unwrap(), vec![first, retry]);
     }
@@ -955,7 +1024,8 @@ mod tests {
         let key = request_key(&event);
         assert!(gate.forward(event));
         assert!(!gate.forward(compute(parked, 11)));
-        gate.forwarded.get_mut(&key).unwrap().sent_at = 0;
+        assert!(gate.forwarded.get(&key).unwrap().outcome.is_none());
+        gate.reforward_after = Duration::ZERO;
         assert!(gate.forward(compute(retry, 12)));
         gate.on_outcome(&outcome_event(response(retry)));
 
@@ -982,7 +1052,7 @@ mod tests {
 
         // An aged entry with an outcome still answers the retry from the
         // outcome instead of running the compute again.
-        gate.forwarded.get_mut(&key).unwrap().sent_at = 0;
+        gate.reforward_after = Duration::ZERO;
         assert!(!gate.forward(compute(retry, 11)));
         assert_eq!(recorder.send(Received).await.unwrap(), vec![first]);
         assert!(gate.forwarded.get(&key).unwrap().outcome.is_some());
@@ -1077,6 +1147,90 @@ mod tests {
     }
 
     #[actix::test]
+    async fn a_failed_e3_keeps_its_accusation_work_until_the_request_completes() {
+        let recorder = Recorder::default().start();
+        let stages = HashMap::from([(E3id::new("4", 1), E3Stage::Failed)]);
+        let gate = ComputeEffectGate::new(recorder.clone().recipient(), stages).start();
+        let dkg = CorrelationId::new();
+        let accusation = CorrelationId::new();
+
+        gate.send(effects_enabled()).await.unwrap();
+        gate.send(share_verification_compute(
+            dkg,
+            40,
+            ProofType::C3aSkShareEncryption,
+            CircuitName::ShareEncryption,
+        ))
+        .await
+        .unwrap();
+        gate.send(accusation_compute(accusation, 41, 0))
+            .await
+            .unwrap();
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![accusation]);
+
+        // Another accused proof after the request completed.
+        gate.send(completed()).await.unwrap();
+        gate.send(accusation_compute(CorrelationId::new(), 42, 1))
+            .await
+            .unwrap();
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![accusation]);
+    }
+
+    #[actix::test]
+    async fn a_failure_keeps_queued_accusation_work_and_drops_the_rest() {
+        let recorder = Recorder::default().start();
+        let gate = ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new()).start();
+        let accusation = CorrelationId::new();
+
+        gate.send(compute(CorrelationId::new(), 10)).await.unwrap();
+        gate.send(accusation_compute(accusation, 11, 0))
+            .await
+            .unwrap();
+        gate.send(failed()).await.unwrap();
+        gate.send(effects_enabled()).await.unwrap();
+
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![accusation]);
+    }
+
+    #[actix::test]
+    async fn stalled_request_goes_to_the_worker_again() {
+        let (bus, history) = test_bus();
+        let recorder = Recorder::default().start();
+        let mut gate =
+            ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new()).with_bus(bus);
+        gate.reforward_after = Duration::from_millis(500);
+        let gate = gate.start();
+        let lost = CorrelationId::new();
+        let waiting = CorrelationId::new();
+        let again = CorrelationId::new();
+        let late = CorrelationId::new();
+
+        // The answer to `lost` never reaches the gate. A new ID soon after waits for it, and a
+        // new ID after the window sends the request to the worker again.
+        gate.send(compute(lost, 10)).await.unwrap();
+        gate.send(effects_enabled()).await.unwrap();
+        gate.send(compute(waiting, 40)).await.unwrap();
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![lost]);
+        actix::clock::sleep(Duration::from_millis(600)).await;
+        gate.send(compute(again, 50)).await.unwrap();
+        gate.send(compute(again, 50)).await.unwrap();
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![lost, again]);
+
+        // The second run answers the waiting ID. A late error from the first run does not
+        // replace that success.
+        gate.send(outcome_event(response(again))).await.unwrap();
+        gate.send(outcome_event(failure(lost))).await.unwrap();
+        gate.send(compute(late, 60)).await.unwrap();
+        for expected in [waiting, late] {
+            assert!(matches!(
+                next_outcome(&history).await.into_data(),
+                InterfoldEventData::ComputeResponse(result) if result.correlation_id == expected
+            ));
+        }
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![lost, again]);
+    }
+
+    #[actix::test]
     async fn key_published_snapshot_discards_obsolete_dkg_work() {
         let recorder = Recorder::default().start();
         let stages = HashMap::from([(E3id::new("4", 1), E3Stage::KeyPublished)]);
@@ -1116,5 +1270,71 @@ mod tests {
         gate.send(effects_enabled()).await.unwrap();
 
         assert_eq!(recorder.send(Received).await.unwrap(), vec![correlation_id]);
+    }
+    #[actix::test]
+    async fn replayed_c6_compute_requires_canonical_public_inputs() -> anyhow::Result<()> {
+        use alloy::primitives::Address;
+        use e3_fhe_params::BfvParamSet;
+        use e3_request::canonical_key::{CanonicalPublicKey, CanonicalPublicKeys};
+        let id = E3id::new("84", 1);
+        let params = BfvParamSet::from(BfvPreset::InsecureThreshold);
+        let bytes = e3_bfv_client::client::generate_public_key(
+            params.degree,
+            params.plaintext_modulus,
+            params.moduli.to_vec(),
+        )?;
+        let key = CanonicalPublicKey {
+            pk_commitment: e3_bfv_client::compute_pk_commitment(
+                bytes.clone(),
+                params.degree,
+                params.plaintext_modulus,
+                params.moduli.to_vec(),
+            )?,
+            committee: vec![
+                Address::repeat_byte(1),
+                Address::repeat_byte(2),
+                Address::repeat_byte(3),
+            ],
+            honest_committee: vec![Address::repeat_byte(1), Address::repeat_byte(3)],
+            params_preset: BfvPreset::InsecureThreshold,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            interfold_address: Address::repeat_byte(9),
+            sk_agg_commits: vec![],
+            esm_agg_commits: vec![],
+        };
+        let keys = CanonicalPublicKeys::default();
+        keys.insert(id.clone(), key.clone())?;
+        let mut request = e3_events::ThresholdShareDecryptionProofRequest {
+            ciphertext_bytes: vec![ArcBytes::from_bytes(&[5])],
+            aggregated_pk_bytes: ArcBytes::from_bytes(&bytes),
+            sk_poly_sum: e3_crypto::SensitiveBytes::from_encrypted(&[2]),
+            es_poly_sum: vec![e3_crypto::SensitiveBytes::from_encrypted(&[3])],
+            d_share_bytes: vec![ArcBytes::from_bytes(&[4])],
+            decryption_domain: key.domain(Address::ZERO),
+            params_preset: key.params_preset,
+            committee_size: key.committee_size,
+        };
+        let target = Recorder::default().start();
+        let mut gate = ComputeEffectGate::new(target.clone().recipient(), HashMap::new());
+        gate.canonical_keys = keys;
+        let gate = gate.start();
+        gate.send(outcome_event(ComputeRequest::zk(
+            ZkRequest::ThresholdShareDecryption(request.clone()),
+            CorrelationId::new(),
+            id.clone(),
+        )))
+        .await?;
+        request.decryption_domain = key.domain(key.interfold_address);
+        let accepted = CorrelationId::new();
+        gate.send(outcome_event(ComputeRequest::zk(
+            ZkRequest::ThresholdShareDecryption(request),
+            accepted,
+            id,
+        )))
+        .await?;
+        assert!(target.send(Received).await?.is_empty());
+        gate.send(outcome_event(EffectsEnabled::new())).await?;
+        assert_eq!(target.send(Received).await?, vec![accepted]);
+        Ok(())
     }
 }

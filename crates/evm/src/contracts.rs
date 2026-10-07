@@ -84,6 +84,7 @@ sol! {
         function nodeReleaseRegistry() external view returns (address);
         function bondingRegistry() external view returns (address);
         function ciphernodeRegistry() external view returns (address);
+        function slashingManager() external view returns (address);
 
         // ── Events ──────────────────────────────────────────────────────────
         event E3Requested(uint256 e3Id, E3 e3, bytes32 indexed cryptoConfigId);
@@ -117,6 +118,8 @@ sol! {
         error E3AlreadyComplete(uint256 e3Id);
         error MarkE3FailedInGracePeriod(uint256 e3Id, uint256 gracePeriodEnds);
         error DKGDeadlinePassed(uint256 e3Id, uint256 deadline);
+        // Declared by IE3RefundManager. `processE3Failure` forwards it unchanged.
+        error SettlementBlocked();
     }
 }
 
@@ -253,6 +256,13 @@ sol! {
         function getActiveCommitteeNodes(
             uint256 e3Id
         ) external view returns (address[] memory nodes, uint256[] memory scores);
+
+        function isCommitteeMember(uint256 e3Id, address node) external view returns (bool);
+
+        function isCommitteeMemberActive(
+            uint256 e3Id,
+            address node
+        ) external view returns (bool);
 
         function dkgFoldAttestationVerifier() external view returns (address);
 
@@ -447,6 +457,10 @@ sol! {
         function availableTickets(address operator) external view returns (uint256);
         function isRegistered(address operator) external view returns (bool);
         function isActive(address operator) external view returns (bool);
+        function eligibilityAt(
+            address operator,
+            uint256 timepoint
+        ) external view returns (bool active, uint256 activeOperatorCount);
         function numActiveOperators() external view returns (uint256);
         function hasExitInProgress(address operator) external view returns (bool);
 
@@ -470,6 +484,13 @@ sol! {
 
         event BondOwnerSet(address indexed operator, address indexed bondOwner);
 
+        event CommitteeObligationUpdated(
+            uint256 indexed e3Id,
+            address indexed registry,
+            address indexed operator,
+            bool active
+        );
+
         struct AdmissionPolicy {
             bool cooldownEnabled;
             bool admissionsPaused;
@@ -485,6 +506,18 @@ sol! {
             bytes32 indexed parameter,
             uint256 oldValue,
             uint256 newValue
+        );
+
+        event EligibilityConfigurationVersionUpdated(uint256 indexed version);
+
+        event BondingAssetConfigUpdated(
+            address indexed ticketToken,
+            address indexed ciphernodeBondToken,
+            uint256 ticketPrice,
+            uint256 requiredCiphernodeBond,
+            uint8 expectedTicketDecimals,
+            uint8 expectedCiphernodeBondDecimals,
+            uint64 indexed configurationVersion
         );
     }
 }
