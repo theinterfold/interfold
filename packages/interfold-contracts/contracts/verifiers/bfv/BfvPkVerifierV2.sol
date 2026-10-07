@@ -81,7 +81,11 @@ contract BfvPkVerifierV2 is IPkVerifier {
         if (_ciphernodeRegistry.code.length == 0) {
             revert InvalidRegistry(_ciphernodeRegistry);
         }
-        if (_paramSet > ActiveCryptoConfig.SECURE_16384_PARAM_SET) {
+        // The V2 statement exists only on the l-BFV path.
+        if (
+            _paramSet != ActiveCryptoConfig.SECURE_16384_PARAM_SET &&
+            _paramSet != ActiveCryptoConfig.INSECURE_LBFV_PARAM_SET
+        ) {
             revert InvalidParamSet(_paramSet);
         }
         if (_committeeH == 0 || _committeeN == 0 || _committeeH > _committeeN) {
