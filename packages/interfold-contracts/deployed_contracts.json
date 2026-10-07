@@ -411,8 +411,8 @@
       }
     },
     "Risc0BfvCiphertextVerifier": {
-      "address": "0x46efa79e2F2cdB3C5734D989169256de21653F11",
-      "blockNumber": 11856595,
+      "address": "0x52569C1D143bA4B423f19904b58A1271756fc991",
+      "blockNumber": 11862783,
       "constructorArgs": {
         "verifier": "0x254Cef2769D589E36208e9bD2da031A568fa49cD",
         "imageId": "0xa38bb986e6c064ba05001b83fd40dccbaceec63aa397d4220ac25ad4d2c84338"

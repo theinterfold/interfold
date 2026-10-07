@@ -538,12 +538,12 @@
       }
     },
     "MockVotingToken": {
-      "address": "0xF68Af5A211B7fD2b169ADdc30751120e469E8794",
-      "blockNumber": 11856610
+      "address": "0xa341D6D045e32dBEc8Bb76149c92302CfAA61aDb",
+      "blockNumber": 11862795
     },
     "Risc0BfvCiphertextVerifier": {
-      "address": "0x46efa79e2F2cdB3C5734D989169256de21653F11",
-      "blockNumber": 11856595,
+      "address": "0x52569C1D143bA4B423f19904b58A1271756fc991",
+      "blockNumber": 11862783,
       "constructorArgs": {
         "verifier": "0x254Cef2769D589E36208e9bD2da031A568fa49cD",
         "imageId": "0xa38bb986e6c064ba05001b83fd40dccbaceec63aa397d4220ac25ad4d2c84338"
@@ -554,38 +554,38 @@
       "blockNumber": 11855804
     },
     "HonkVerifier": {
-      "address": "0x7956B729a4b0Cea5D949b3a0d32AfC45b2f96048",
-      "blockNumber": 11856600
+      "address": "0x31319447C60888AC8E144f112615Fb45CCAD9CBa",
+      "blockNumber": 11862786
     },
     "OnchainHonkVerifier": {
-      "address": "0xE3cadC6719373BB9Bea2a4Cc1e99E6550FFCb990",
-      "blockNumber": 11856603
+      "address": "0x4F209aAd7cD8E5a1d0a577F97C5b76Dd01192322",
+      "blockNumber": 11862789
     },
     "AvailVectorXDataAvailabilityVerifier": {
-      "address": "0x1512D8C6e1987999772ca0AfCC9cdC044Ee465eD",
-      "blockNumber": 11856604,
+      "address": "0x099b65d98773c0219467dc00DE11022c2d055Fbc",
+      "blockNumber": 11862790,
       "constructorArgs": {
         "bridge": "0x967F7DdC4ec508462231849AE81eeaa68Ad01389",
         "vectorx": "0xe542db219a7e2b29c7aeaeace242c9a2cd528f96"
       }
     },
     "CRISPProgram": {
-      "address": "0x1ED67a0D7F0B041559EeDC1350c575D119bEF89c",
-      "blockNumber": 11856606,
+      "address": "0x9Dc6edB343A89a25dC8bEF324F721Cca78E86AFD",
+      "blockNumber": 11862791,
       "constructorArgs": {
         "initialOwner": "0x8837e47c4Bb520ADE83AAB761C3B60679443af1B",
         "verifierAddress": "0x254Cef2769D589E36208e9bD2da031A568fa49cD",
-        "honkVerifierAddress": "0x7956B729a4b0Cea5D949b3a0d32AfC45b2f96048",
-        "onchainHonkVerifierAddress": "0xE3cadC6719373BB9Bea2a4Cc1e99E6550FFCb990",
-        "dataAvailabilityVerifierAddress": "0x1512D8C6e1987999772ca0AfCC9cdC044Ee465eD",
+        "honkVerifierAddress": "0x31319447C60888AC8E144f112615Fb45CCAD9CBa",
+        "onchainHonkVerifierAddress": "0x4F209aAd7cD8E5a1d0a577F97C5b76Dd01192322",
+        "dataAvailabilityVerifierAddress": "0x099b65d98773c0219467dc00DE11022c2d055Fbc",
         "availabilityFinalizationWindow": 10800,
         "inputAvailabilitySigner": "0x8837e47c4Bb520ADE83AAB761C3B60679443af1B",
         "imageId": "0xa38bb986e6c064ba05001b83fd40dccbaceec63aa397d4220ac25ad4d2c84338"
       }
     },
     "SelfRegistry": {
-      "address": "0x40d544Fd954E98a25c221E24Af24F915BD820210",
-      "blockNumber": 11856611
+      "address": "0xD6fc1f74C34731b698a9f6C156551704c08F810B",
+      "blockNumber": 11862796
     },
     "Faucet": {
       "address": "0xA7f0A637Af62fA4E0b46E397D1b85E9b4807f019",

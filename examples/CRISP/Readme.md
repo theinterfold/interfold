@@ -211,9 +211,12 @@ model VectorX latency or Avail fees.
 Sepolia and Ethereum mainnet use Avail. Sepolia uses a mock RISC Zero verifier, so the CRISP
 contract and the protocol ciphertext verifier on Sepolia accept dev-mode RISC Zero proofs. Ethereum
 mainnet uses real RISC Zero verification. CRISPProgram on Sepolia is
-`0x1ED67a0D7F0B041559EeDC1350c575D119bEF89c`, and its Avail data availability verifier is
-`AvailVectorXDataAvailabilityVerifier` (`0x1512D8C6e1987999772ca0AfCC9cdC044Ee465eD`). Before
-starting the CRISP server:
+`0x9Dc6edB343A89a25dC8bEF324F721Cca78E86AFD`, and its Avail data availability verifier is
+`AvailVectorXDataAvailabilityVerifier` (`0x099b65d98773c0219467dc00DE11022c2d055Fbc`). The two Noir
+verifiers of this CRISPProgram come from the circuits of commit `8abc2fdb7`, which published
+`@crisp-e3/sdk` 0.24.0. Thus a Sepolia client must prove with SDK 0.24.0. The circuits in this
+directory are newer, and their ballot proofs do not pass these verifiers. Before starting the CRISP
+server:
 
 1. Register an Avail App ID for CRISP.
 2. Fund a dedicated Avail account that can pay for every `submit_data` transaction.

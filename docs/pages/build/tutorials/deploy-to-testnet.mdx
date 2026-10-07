@@ -52,9 +52,9 @@ full list for each network.
 | `BondedVotes`                  | `0x85E5176A8d387BE3B53506DDCbBC8aa9c2156E9F` | 11855958     | Voting power of bonded FOLD                                 |
 | `BfvPkVerifierRouter`          | `0x3Cd2472722cad8D17AEd31869b4353eCd10a0425` | 11855912     | Verifies the committee public key proofs                    |
 | `BfvDecryptionVerifierRouter`  | `0xe52e7d820f3A1c56f952B8D7Ba2FA4100c6999D2` | 11855913     | Verifies the decryption proofs                              |
-| `Risc0BfvCiphertextVerifier`   | `0x46efa79e2F2cdB3C5734D989169256de21653F11` | 11856595     | Checks the compute proof of each output ciphertext          |
+| `Risc0BfvCiphertextVerifier`   | `0x52569C1D143bA4B423f19904b58A1271756fc991` | 11862783     | Checks the compute proof of each output ciphertext          |
 | `MockRISC0Verifier`            | `0x254Cef2769D589E36208e9bD2da031A568fa49cD` | 11856523     | Accepts every seal. The ciphertext verifier wraps it        |
-| `CRISPProgram`                 | `0x1ED67a0D7F0B041559EeDC1350c575D119bEF89c` | 11856606     | The CRISP E3 program                                        |
+| `CRISPProgram`                 | `0x9Dc6edB343A89a25dC8bEF324F721Cca78E86AFD` | 11862791     | The CRISP E3 program                                        |
 | `Faucet`                       | `0xA7f0A637Af62fA4E0b46E397D1b85E9b4807f019` | 11856142     | Test faucet. It sends 1000 FOLD and 1000 USDC               |
 
 `MockUSDC` is a test token. Anyone can call its `mint` function. The deployment uses the same token
@@ -276,7 +276,7 @@ with `E3ProgramNotAllowed`.
 ### Check the protocol ciphertext verifier
 
 Every output proof must pass the ciphertext verifier that the owner set for BFV. On Sepolia, this is
-`Risc0BfvCiphertextVerifier` at `0x46efa79e2F2cdB3C5734D989169256de21653F11`. It wraps
+`Risc0BfvCiphertextVerifier` at `0x52569C1D143bA4B423f19904b58A1271756fc991`. It wraps
 `MockRISC0Verifier` at `0x254Cef2769D589E36208e9bD2da031A568fa49cD`. The mock verifier accepts every
 seal. Read the verifier address:
 

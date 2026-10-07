@@ -85,19 +85,19 @@ const ALLOWED: Record<string, string> = {
 
   // An E3 program belongs to its application, not to the protocol. See the
   // comment on `CONTRACT_KEYS` in packages/interfold-contracts/scripts/genManifest.ts.
-  '0x1ed67a0d7f0b041559eedc1350c575d119bef89c': 'CRISPProgram, sepolia',
+  '0x9dc6edb343a89a25dc8bef324f721cca78e86afd': 'CRISPProgram, sepolia',
   '0x53fcdb21e73a461cfe6c64b19855204384b91ba3': 'CRISPProgram, mainnet',
 
   // Sepolia contracts that the docs list but the manifest does not publish (it publishes only
   // the CONTRACT_KEYS set). Source: packages/interfold-contracts/deploy/protocol/sepolia-protocol.deployment.json
   // and examples/CRISP/packages/crisp-contracts/deployed_contracts.json.
   '0x254cef2769d589e36208e9bd2da031a568fa49cd': 'MockRISC0Verifier, sepolia (wrapped by the ciphertext verifier and used by CRISP)',
-  '0x1512d8c6e1987999772ca0afcc9cdc044ee465ed': 'AvailVectorXDataAvailabilityVerifier (CRISP), sepolia',
-  '0x7956b729a4b0cea5d949b3a0d32afc45b2f96048': 'HonkVerifier (CRISP), sepolia',
-  '0xe3cadc6719373bb9bea2a4cc1e99e6550ffcb990': 'OnchainHonkVerifier (CRISP), sepolia',
-  '0xf68af5a211b7fd2b169addc30751120e469e8794': 'MockVotingToken (CRISP), sepolia',
+  '0x099b65d98773c0219467dc00de11022c2d055fbc': 'AvailVectorXDataAvailabilityVerifier (CRISP), sepolia',
+  '0x31319447c60888ac8e144f112615fb45ccad9cba': 'HonkVerifier (CRISP), sepolia',
+  '0x4f209aad7cd8e5a1d0a577f97c5b76dd01192322': 'OnchainHonkVerifier (CRISP), sepolia',
+  '0xa341d6d045e32dbec8bb76149c92302cfaa61adb': 'MockVotingToken (CRISP), sepolia',
   '0x3d95cfa8018db4b5474bfe536702b5dc05ee1444': 'BondedCheckpoints, sepolia',
-  '0x40d544fd954e98a25c221e24af24f915bd820210': 'SelfRegistry (CRISP), sepolia',
+  '0xd6fc1f74c34731b698a9f6c156551704c08f810b': 'SelfRegistry (CRISP), sepolia',
   '0x46cd950499b312e53cb73a1d1e12d3541966f823': 'ChainlinkVrfRandomnessProvider, sepolia',
   '0x85e5176a8d387be3b53506ddcbbc8aa9c2156e9f': 'BondedVotes, sepolia',
 
