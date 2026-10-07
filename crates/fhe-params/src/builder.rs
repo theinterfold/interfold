@@ -164,7 +164,7 @@ mod tests {
     use super::*;
     use crate::constants::{defaults, insecure, secure_16384, secure_8192};
     use crate::presets::BfvPreset;
-    use fhe::trbfv::{SmudgingBoundCalculator, SmudgingBoundCalculatorConfig};
+    use crate::smudging::calculate_smudging_bound;
     use num_bigint::BigUint;
     use std::str::FromStr;
 
@@ -253,9 +253,22 @@ mod tests {
         let param_set = preset.into();
         let params = build_bfv_params_from_set(param_set);
 
-        assert_eq!(params.degree(), insecure::DEGREE);
-        assert_eq!(params.plaintext(), insecure::dkg::PLAINTEXT_MODULUS);
-        assert_eq!(params.moduli(), insecure::dkg::MODULI);
+        let defaults = BfvPreset::SecureThreshold8192.search_defaults().unwrap();
+        let smudging_bound = calculate_smudging_bound(
+            threshold.clone(),
+            defaults.n as usize,
+            defaults.z as usize,
+            defaults.mult_depth,
+            BfvPreset::SecureThreshold8192.lambda().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            smudging_bound.to_string(),
+            "132922799578495921427264261134328266752000000"
+        );
+        let b_c = BigUint::parse_bytes(b"230584300921376913729000000", 10).unwrap();
+        let delta = &threshold_q / threshold.plaintext();
+        assert!(BigUint::from(2u8) * (b_c + BigUint::from(defaults.n) * smudging_bound) < delta);
     }
 
     #[test]
