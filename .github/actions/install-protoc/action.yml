@@ -1,0 +1,22 @@
+name: Install protoc
+description: Install the pinned Protocol Buffers compiler from its release archive
+
+# protoc 21.12 is the version that ubuntu-24.04's protobuf-compiler package ships. The archive takes
+# seconds where `apt-get update` took minutes and once hung until the job timed out.
+runs:
+  using: composite
+  steps:
+    - name: Install protoc
+      shell: bash
+      run: |
+        version=21.12
+        archive="${RUNNER_TEMP}/protoc-${version}.zip"
+        curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors \
+          --connect-timeout 20 --max-time 120 --retry-max-time 300 \
+          "https://github.com/protocolbuffers/protobuf/releases/download/v${version}/protoc-${version}-linux-x86_64.zip" \
+          -o "${archive}"
+        echo "3a4c1e5f2516c639d3079b1586e703fc7bcfa2136d58bda24d1d54f949c315e8  ${archive}" \
+          | sha256sum --check
+        sudo unzip -o -q "${archive}" -d /usr/local bin/protoc 'include/*'
+        sudo chmod 755 /usr/local/bin/protoc
+        protoc --version

@@ -356,7 +356,10 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Test DAppNode credentials and health checks
-        run: sudo apt-get update && sudo apt-get install -y gettext-base && bash dappnode/tests/test-hardening.sh
+        run: |
+          timeout 180 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          timeout 180 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y gettext-base
+          bash dappnode/tests/test-hardening.sh
       - name: Test the ciphernode image state location
         run: bash crates/tests/docker/test-ciphernode-entrypoint.sh
 
@@ -850,7 +853,8 @@ jobs:
       - name: Install Barretenberg (bb)
         if: steps.cache-integration-bb.outputs.cache-hit != 'true'
         run: |
-          curl -fsSL "https://github.com/AztecProtocol/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 \
+            "https://github.com/AztecProtocol/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
           mkdir -p bb_extract && tar -xzf bb.tar.gz -C bb_extract
           BB_BIN=$(find bb_extract -name bb -type f | head -n 1)
           sudo mv "$BB_BIN" /usr/local/bin/bb
@@ -1221,7 +1225,7 @@ jobs:
 
       - name: Install yq
         run: |
-          sudo wget -qO- https://github.com/mikefarah/yq/releases/download/v4.45.1/yq_linux_amd64.tar.gz | sudo tar xz -C /usr/local/bin --transform='s|yq_linux_amd64|yq|' --no-same-owner
+          sudo wget -q --timeout=30 --tries=5 -O- https://github.com/mikefarah/yq/releases/download/v4.45.1/yq_linux_amd64.tar.gz | sudo tar xz -C /usr/local/bin --transform='s|yq_linux_amd64|yq|' --no-same-owner
 
       - name: Install dependencies
         working-directory: .
@@ -1283,7 +1287,8 @@ jobs:
       - name: Install Barretenberg (bb)
         if: steps.cache-bb.outputs.cache-hit != 'true'
         run: |
-          curl -fsSL "https://github.com/AztecProtocol/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 \
+            "https://github.com/AztecProtocol/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
           mkdir -p bb_extract && tar -xzf bb.tar.gz -C bb_extract
           BB_BIN=$(find bb_extract -name bb -type f | head -n 1)
           sudo mv "$BB_BIN" /usr/local/bin/bb
@@ -1368,7 +1373,7 @@ jobs:
           toolchain: ${{ env.NOIR_TOOLCHAIN }}
 
       - name: Install protoc
-        run: sudo apt-get update -y && sudo apt-get install -y protobuf-compiler
+        uses: ./.github/actions/install-protoc
 
       - name: Cache Barretenberg binary
         id: cache-bb
@@ -1380,7 +1385,8 @@ jobs:
       - name: Install Barretenberg (bb)
         if: steps.cache-bb.outputs.cache-hit != 'true'
         run: |
-          curl -fsSL "https://github.com/AztecProtocol/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 \
+            "https://github.com/AztecProtocol/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
           mkdir -p bb_extract && tar -xzf bb.tar.gz -C bb_extract
           BB_BIN=$(find bb_extract -name bb -type f | head -n 1)
           sudo mv "$BB_BIN" /usr/local/bin/bb
@@ -1507,7 +1513,8 @@ jobs:
       - name: Install Barretenberg (bb)
         if: steps.cache-bb.outputs.cache-hit != 'true'
         run: |
-          curl -fsSL "https://github.com/AztecProtocol/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 \
+            "https://github.com/AztecProtocol/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
           mkdir -p bb_extract && tar -xzf bb.tar.gz -C bb_extract
           BB_BIN=$(find bb_extract -name bb -type f | head -n 1)
           sudo mv "$BB_BIN" /usr/local/bin/bb
@@ -1611,7 +1618,7 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - name: Install protoc
-        run: sudo apt-get update -y && sudo apt-get install -y protobuf-compiler
+        uses: ./.github/actions/install-protoc
       - name: Test program backend selection
         run: cargo test --locked -p e3-support-scripts
       - name: Build support scripts
@@ -1679,7 +1686,7 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - name: Install protoc
-        run: sudo apt-get update -y && sudo apt-get install -y protobuf-compiler
+        uses: ./.github/actions/install-protoc
       - name: Install the OpenVM guest toolchain
         run: rustup toolchain install nightly-2026-01-18 --component rust-src
       - name: Cache cargo-openvm
@@ -1744,7 +1751,7 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install protoc
-        run: sudo apt-get update -y && sudo apt-get install -y protobuf-compiler
+        uses: ./.github/actions/install-protoc
 
       - name: Install node dependencies
         run: pnpm install --frozen-lockfile
@@ -1810,7 +1817,7 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install protoc
-        run: sudo apt-get update -y && sudo apt-get install -y protobuf-compiler
+        uses: ./.github/actions/install-protoc
 
       - name: Install node dependencies
         run: pnpm install --frozen-lockfile
@@ -1869,7 +1876,7 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install protoc
-        run: sudo apt-get update -y && sudo apt-get install -y protobuf-compiler
+        uses: ./.github/actions/install-protoc
 
       - name: Install node dependencies
         run: pnpm install --frozen-lockfile
@@ -1915,7 +1922,8 @@ jobs:
       - name: Install Barretenberg (bb)
         if: steps.cache-bb.outputs.cache-hit != 'true'
         run: |
-          curl -fsSL "https://github.com/AztecProtocol/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 \
+            "https://github.com/AztecProtocol/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
           mkdir -p bb_extract && tar -xzf bb.tar.gz -C bb_extract
           BB_BIN=$(find bb_extract -name bb -type f | head -n 1)
           sudo mv "$BB_BIN" /usr/local/bin/bb

@@ -1,20 +1,18 @@
 name: Install Solidity and Protobuf compilers
-description: Installs the pinned Solidity compiler and Ubuntu Protobuf compiler
+description: Installs the pinned Solidity compiler and the pinned Protobuf compiler
 
 runs:
   using: composite
   steps:
     - name: Install Protobuf compiler
-      shell: bash
-      run: |
-        sudo apt-get -o Acquire::Retries=5 update -y
-        sudo apt-get -o Acquire::Retries=5 install -y protobuf-compiler
+      uses: ./.github/actions/install-protoc
 
     - name: Install Solidity compiler
       shell: bash
       run: |
         solc_binary="${RUNNER_TEMP}/solc-0.8.28"
         curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors \
+          --connect-timeout 20 --max-time 120 --retry-max-time 300 \
           https://github.com/ethereum/solidity/releases/download/v0.8.28/solc-static-linux \
           -o "${solc_binary}"
         echo "9a0fb7e0db2c0641dbae1c5cc645dc686820c83af516226abb1c0a2f76636f25  ${solc_binary}" \
