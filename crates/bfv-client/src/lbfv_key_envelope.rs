@@ -339,7 +339,7 @@ fn field_bytes(value: &BigInt) -> Result<[u8; 32]> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use e3_zk_helpers::circuits::threshold::lbfv_pk_aggregation::{
         LbfvPkAggregationCircuitData, LbfvPkAggregationInputs,
@@ -397,7 +397,7 @@ mod tests {
         Ok((preset, public_key, rlk))
     }
 
-    fn envelope() -> Result<Vec<u8>> {
+    pub(crate) fn envelope() -> Result<Vec<u8>> {
         let (preset, public_key, rlk) = operational_keys()?;
         encode_lbfv_key_envelope(&public_key.to_bytes(), &rlk.to_bytes(), preset)
     }

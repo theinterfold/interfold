@@ -419,6 +419,22 @@ impl BfvPreset {
         })
     }
 
+    /// The preset that runs the l-BFV path with this threshold preset's parameters, if one exists:
+    /// `InsecureThresholdLbfv` for the insecure parameters, itself for `SecureThreshold16384`.
+    ///
+    /// A lookup by parameters alone resolves to the trBFV label. A caller that holds an l-BFV
+    /// key envelope knows the path and uses this to recover the l-BFV label.
+    pub fn lbfv_label(self) -> Option<Self> {
+        let own = BfvParamSet::from(self);
+        Self::PAIR_PRESETS.iter().copied().find(|candidate| {
+            let parameters = BfvParamSet::from(*candidate);
+            crate::lbfv::supports_lbfv(*candidate)
+                && parameters.degree == own.degree
+                && parameters.plaintext_modulus == own.plaintext_modulus
+                && parameters.moduli == own.moduli
+        })
+    }
+
     /// Returns the DKG preset that pairs with this threshold preset.
     ///
     /// Used when you have a threshold preset (e.g. for encryption/decryption) and need
@@ -704,6 +720,21 @@ mod tests {
         assert_eq!(lbfv.degree, trbfv.degree);
         assert_eq!(lbfv.moduli, trbfv.moduli);
         assert_eq!(lbfv.plaintext_modulus, trbfv.plaintext_modulus);
+    }
+
+    #[test]
+    fn lbfv_label_names_the_lbfv_preset_with_the_same_parameters() {
+        for preset in [
+            BfvPreset::InsecureThreshold,
+            BfvPreset::InsecureThresholdLbfv,
+        ] {
+            assert_eq!(preset.lbfv_label(), Some(BfvPreset::InsecureThresholdLbfv));
+        }
+        assert_eq!(
+            BfvPreset::SecureThreshold16384.lbfv_label(),
+            Some(BfvPreset::SecureThreshold16384)
+        );
+        assert_eq!(BfvPreset::SecureThreshold8192.lbfv_label(), None);
     }
 
     #[test]

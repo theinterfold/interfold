@@ -11,12 +11,10 @@ import userDataEncryptionCircuit from '../../../../circuits/bin/threshold/target
 import { CompiledCircuit, Noir } from '@noir-lang/noir_js'
 import { proofToFields } from '../utils'
 
-import type { CircuitInputs } from './user-data-encryption'
+import type { TrbfvCircuitInputs } from './user-data-encryption'
 
-export const proveUserDataEncryption = async (circuitInputs: CircuitInputs): Promise<ProofData> => {
-  // The outer circuit needs 2^21 SRS points. Pass the size to `new`: on the WASM backend that
-  // browsers use, a later `initSRSChonk` call does not enlarge the SRS that `new` loads.
-  const api = await Barretenberg.new({ srsSize: 2 ** 21 })
+export const proveUserDataEncryption = async (circuitInputs: TrbfvCircuitInputs): Promise<ProofData> => {
+  const api = await Barretenberg.new()
 
   try {
     const { witness: userDataEncryptionCt0Witness } = await executeCircuit(userDataEncryptionCt0Circuit as CompiledCircuit, {

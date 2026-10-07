@@ -33,9 +33,9 @@ ARTIFACTS=(
   ct1_eval_chunk_main_root
   ct1_eval_pk_ct
   ct1_eval_chunk_identity
-  user_data_encryption
-  user_data_encryption_ct0
-  user_data_encryption_ct1
+  user_data_encryption_chunked
+  user_data_encryption_ct0_chunked
+  user_data_encryption_ct1_chunked
 )
 
 rm -rf "${DIST}"

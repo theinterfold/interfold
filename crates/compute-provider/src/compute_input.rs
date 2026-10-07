@@ -10,8 +10,6 @@ use crate::policy::InputPolicy;
 use crate::secure_process::{absorb_all, SecureProcess};
 use fhe::bfv::BfvParameters;
 use fhe::trlbfv::LBFVRelinearizationKey;
-use fhe_traits::DeserializeParametrized;
-use sha3::{Digest, Keccak256};
 use std::sync::Arc;
 
 pub type FHEProcessor = for<'a> fn(FHEProcessorInput<'a>) -> Vec<u8>;
@@ -100,6 +98,15 @@ pub enum ComputeError {
 
     #[error("failed to validate the committee key: {0}")]
     CommitteeKey(String),
+
+    #[error("the round has {expected} inputs, but {actual} were read")]
+    InputCount { expected: usize, actual: usize },
+
+    #[error("input {index} differs from the ciphertext read in the first pass")]
+    InputChanged { index: usize },
+
+    #[error("the processor returned before reading {remaining} selected inputs")]
+    Unread { remaining: usize },
 }
 
 impl ComputeInput {
@@ -138,7 +145,7 @@ impl ComputeInput {
         fhe_processor: FHEProcessor,
         policy: InputPolicy,
     ) -> Result<(ComputeResult, Vec<u8>), ComputeError> {
-        self.run_bound(fhe_processor, policy, None)
+        self.run_bound_batched(fhe_processor, policy, None, Batching::Sequential)
     }
 
     fn run_bound(
@@ -147,35 +154,13 @@ impl ComputeInput {
         policy: InputPolicy,
         expected_commitment: Option<[u8; 32]>,
     ) -> Result<(ComputeResult, Vec<u8>), ComputeError> {
-        let params = decode_bfv_params_arc(&self.fhe_inputs.params)
-            .map_err(|e| ComputeError::DecodeParams(e.to_string()))?;
-        let preset = e3_fhe_params::BfvPreset::from_threshold_parameters(
-            params.degree(),
-            params.plaintext(),
-            params.moduli(),
-        );
-        let relinearization_key = if preset == Some(e3_fhe_params::BfvPreset::SecureThreshold16384)
-        {
-            let expected_commitment = expected_commitment.ok_or_else(|| {
-                ComputeError::CommitteeKey(
-                    "secure-16384 computation requires a committee-key commitment".to_string(),
-                )
-            })?;
-            let (_, _) = e3_bfv_client::validate_lbfv_key_envelope(
-                &self.fhe_inputs.committee_key,
-                expected_commitment,
-                e3_fhe_params::BfvPreset::SecureThreshold16384,
-            )
-            .map_err(|error| ComputeError::CommitteeKey(error.to_string()))?;
-            let envelope = e3_bfv_client::decode_lbfv_key_envelope(&self.fhe_inputs.committee_key)
-                .map_err(|error| ComputeError::CommitteeKey(error.to_string()))?;
-            Some(
-                LBFVRelinearizationKey::from_bytes(&envelope.relinearization_key, &params)
-                    .map_err(|error| ComputeError::CommitteeKey(error.to_string()))?,
-            )
-        } else {
-            None
-        };
+        self.run_bound_batched(
+            fhe_processor,
+            policy,
+            expected_commitment,
+            Batching::Sequential,
+        )
+    }
 
     /// As [`Self::run`], choosing how the per-input commitments are scheduled.
     ///
@@ -188,7 +173,20 @@ impl ComputeInput {
         policy: InputPolicy,
         batching: Batching,
     ) -> Result<(ComputeResult, Vec<u8>), ComputeError> {
-        self.run_selected(fhe_processor, policy, batching)
+        self.run_bound_batched(fhe_processor, policy, None, batching)
+    }
+
+    /// As [`Self::run_batched`], and binds an l-BFV committee key to `expected_commitment`.
+    ///
+    /// See [`SecureProcess::bind_committee_key`].
+    pub fn run_bound_batched(
+        &self,
+        fhe_processor: FHEProcessor,
+        policy: InputPolicy,
+        expected_commitment: Option<[u8; 32]>,
+        batching: Batching,
+    ) -> Result<(ComputeResult, Vec<u8>), ComputeError> {
+        self.run_bound_selected(fhe_processor, policy, expected_commitment, batching)
             .map(|(result, ciphertext, _)| (result, ciphertext))
     }
 
@@ -203,6 +201,20 @@ impl ComputeInput {
         policy: InputPolicy,
         batching: Batching,
     ) -> Result<(ComputeResult, Vec<u8>, Vec<usize>), ComputeError> {
+        self.run_bound_selected(fhe_processor, policy, None, batching)
+    }
+
+    /// As [`Self::run_selected`], and binds an l-BFV committee key to `expected_commitment`.
+    ///
+    /// A host that proves with a zkVM passes the committee public key hash the journal reveals, so
+    /// the relinearization key the processor receives is the one the committee committed to.
+    pub fn run_bound_selected(
+        &self,
+        fhe_processor: FHEProcessor,
+        policy: InputPolicy,
+        expected_commitment: Option<[u8; 32]>,
+        batching: Batching,
+    ) -> Result<(ComputeResult, Vec<u8>, Vec<usize>), ComputeError> {
         let ciphertexts = &self.fhe_inputs.ciphertexts;
         let mut process = SecureProcess::new(
             &self.fhe_inputs.params,
@@ -210,6 +222,7 @@ impl ComputeInput {
             self.published.clone(),
             policy,
         )?;
+        process.bind_committee_key(&self.fhe_inputs.committee_key, expected_commitment)?;
         absorb_all(&mut process, ciphertexts, batching)?;
 
         let selected = process.select()?;
@@ -217,37 +230,21 @@ impl ComputeInput {
         // The processor sees only what the policy selected. Both the root and this set are
         // functions of values the root binds, so any prover over the same published inputs reaches
         // the same result.
-        let processed_ciphertext = (fhe_processor)(&FHEProcessorInput {
-            ciphertexts: &selected,
-            params: &params,
-            relinearization_key: relinearization_key.as_ref(),
-        });
-        let processed_hash = Keccak256::digest(&processed_ciphertext).to_vec();
-        let ciphertext_commitment =
-            compute_ct_commitment_with_params(&processed_ciphertext, &params)
-                .map_err(|e| ComputeError::OutputCommitment(e.to_string()))?
-                .to_vec();
-        let params_hash = Keccak256::digest(&self.fhe_inputs.params).to_vec();
-
-        Ok((
-            ComputeResult {
-                ciphertext_hash: processed_hash,
-                ciphertext_commitment,
-                params_hash,
-                merkle_root: hex::decode(merkle_root)
-                    .map_err(|e| ComputeError::MerkleTree(e.to_string()))?,
-            },
-            processed_ciphertext,
-        ))
+        let (result, ciphertext) =
+            selected.finish(fhe_processor, |index| Ok(ciphertexts[index].0.clone()))?;
+        Ok((result, ciphertext, indices))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::policy::{all_inputs, commitment_leaf, PublishedInput};
+    use crate::merkle_tree_builder::MerkleTreeBuilder;
+    use crate::policy::{all_inputs, commitment_leaf, InputRecord, PublishedInput};
+    use e3_bfv_client::client::compute_ct_commitment;
     use e3_fhe_params::{
-        build_pair_for_preset, encode_bfv_params, lbfv_crs_seed, lbfv_urs_seed, BfvPreset,
+        build_pair_for_preset, decode_bfv_params_arc, encode_bfv_params, lbfv_crs_seed,
+        lbfv_urs_seed, BfvPreset,
     };
     use fhe::aggregate::AggregateIter;
     use fhe::bfv::{Ciphertext, CommonRandomPolyVec, Encoding, Plaintext, PublicKey, SecretKey};
@@ -255,14 +252,14 @@ mod tests {
         aggregate_relinearization_key, LBFVPublicKey, PublicKeyShare, RelinKeyShare,
     };
     use fhe_traits::{
-        FheDecoder, FheDecrypter, FheEncoder, FheEncrypter, Serialize as FheSerialize,
+        DeserializeParametrized, FheDecoder, FheDecrypter, FheEncoder, FheEncrypter,
+        Serialize as FheSerialize,
     };
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
     use sha3::{Digest, Keccak256};
 
     fn sum_processor(inputs: FHEProcessorInput<'_>) -> Vec<u8> {
-        use fhe_traits::DeserializeParametrized;
         let mut sum = Ciphertext::zero(inputs.params);
         for (bytes, _) in inputs.ciphertexts {
             sum += &Ciphertext::from_bytes(&bytes, inputs.params).unwrap();
@@ -270,8 +267,9 @@ mod tests {
         sum.to_bytes()
     }
 
-    fn square_and_relinearize_processor(inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
-        let ciphertext = Ciphertext::from_bytes(&inputs.ciphertexts[0].0, inputs.params).unwrap();
+    fn square_and_relinearize_processor(inputs: FHEProcessorInput<'_>) -> Vec<u8> {
+        let (bytes, _) = inputs.ciphertexts.next().unwrap();
+        let ciphertext = Ciphertext::from_bytes(&bytes, inputs.params).unwrap();
         let mut square = &ciphertext * &ciphertext;
         inputs
             .relinearization_key
@@ -339,7 +337,7 @@ mod tests {
     }
 
     fn encrypted_inputs(values: &[u64]) -> FHEInputs {
-        let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold).unwrap();
+        let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold64).unwrap();
         let mut rng = ChaCha8Rng::seed_from_u64(7);
         let secret_key = SecretKey::random(&params, &mut rng);
         let public_key = PublicKey::new(&secret_key, &mut rng);
