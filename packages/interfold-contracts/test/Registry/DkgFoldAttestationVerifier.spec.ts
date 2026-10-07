@@ -99,7 +99,7 @@ describe("DkgFoldAttestationVerifier", function () {
     expect(esmAggCommits).to.deep.equal(fixture.esmCommits);
   });
 
-  it("does not classify a 63-input legacy statement as V2", async function () {
+  it("does not classify a thirteen-party trBFV statement as V2", async function () {
     const { owner, mockRegistry, verifier } = await loadFixture(setup);
     const signers = await ethers.getSigners();
     const fixture = await buildMockDkgAttestationFixtureData(

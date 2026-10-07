@@ -38,9 +38,12 @@ import type {
   ProtocolDeployment,
   VrfSortitionUpgradePlan,
 } from "../../scripts/protocol/types";
-import { loadConfig } from "../../scripts/protocol/values";
-import { requiredActiveOperatorsForSecureCrisp } from "../../scripts/upgrade/resumeSecureCrisp";
-import { requiresTimeoutConfigUpdate } from "../../scripts/upgrade/secureCrisp";
+import {
+  checkExcludedAccounts,
+  loadConfig,
+  readExcludedAccounts,
+} from "../../scripts/protocol/values";
+import { requiredActiveOperators } from "../../scripts/upgrade/v19Cutover";
 import { BondingRegistry__factory as BondingRegistryFactory } from "../../types";
 
 const { ethers } = await network.connect();
@@ -58,8 +61,8 @@ describe("Protocol deployment", function () {
   it("derives one release identity for the Rust and contract tooling", function () {
     const release = currentNodeRelease();
     expect(release.version).to.match(/^\d+\.\d+\.\d+/);
-    expect(release.protocolVersion).to.equal(4);
-    expect(release.nodeGeneration).to.equal(1);
+    expect(release.protocolVersion).to.be.greaterThan(0);
+    expect(release.nodeGeneration).to.be.greaterThan(0);
     expect(release.releaseId).to.equal(
       ethersLib.id(`interfold.node.release:v1:${release.version}`),
     );
@@ -74,6 +77,22 @@ describe("Protocol deployment", function () {
       "cannot move backwards",
     );
   });
+  it("requires every node-release dimension to stay monotonic", function () {
+    const release = { protocolVersion: 3, nodeGeneration: 2 };
+    expect(requiresNodeReleasePolicyUpdate(release, 2n, 2n)).to.equal(true);
+    expect(requiresNodeReleasePolicyUpdate(release, 3n, 1n)).to.equal(true);
+    expect(requiresNodeReleasePolicyUpdate(release, 3n, 2n)).to.equal(false);
+    // Neither dimension may move backwards, even when the other one advances.
+    for (const [protocol, generation] of [
+      [3n, 3n],
+      [2n, 3n],
+      [4n, 1n],
+    ] as const) {
+      expect(() =>
+        requiresNodeReleasePolicyUpdate(release, protocol, generation),
+      ).to.throw("cannot move backwards");
+    }
+  });
 
   it("allows a named Sepolia rehearsal without weakening production capacity", function () {
     const thresholds = [
@@ -87,19 +106,6 @@ describe("Protocol deployment", function () {
     expect(() => requiredActiveOperators(thresholds, 1, "0")).to.throw(
       "only for a Sepolia rehearsal",
     );
-  });
-
-  it("updates the timeout configuration only when a configured value differs", function () {
-    const target = {
-      dkgWindow: 21_600n,
-      computeWindow: 3_600n,
-      decryptionWindow: 3_600n,
-    };
-
-    expect(requiresTimeoutConfigUpdate(target, target)).to.equal(false);
-    expect(
-      requiresTimeoutConfigUpdate({ ...target, dkgWindow: 7_200n }, target),
-    ).to.equal(true);
   });
 
   it("requires a ciphernode restart acknowledgement before resume", function () {

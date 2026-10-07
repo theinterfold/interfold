@@ -9,6 +9,7 @@ import {
   getBfvPkVkBindingHashPaths,
   getBfvV2SubCircuitVkHashPaths,
   getBfvV2VkBindingHashPaths,
+  isLbfvParamSet,
   readVkRecursiveHash,
 } from "../utils";
 import { ADDRESS_ONE } from "./constants";
@@ -422,7 +423,15 @@ async function deployBfvVerifierRoute(
     config,
     "DecryptionAggregatorVerifier",
   );
-  const v2Source = bfvV2HonkSource(config);
+  // The trBFV path (parameter sets 0 and 2) verifies main's `dkg_aggregator`; the l-BFV path
+  // (3 and 4) verifies `dkg_aggregator_v2`.
+  const lbfv = isLbfvParamSet(config.paramSet);
+  const v2Source = lbfv ? bfvV2HonkSource(config) : undefined;
+  if (lbfv && !v2Source) {
+    throw new Error(
+      `No DkgAggregatorV2Verifier for ${config.preset}/${config.committee}`,
+    );
+  }
 
   const zkTranscriptFactory = await ethers.getContractFactory(
     `${dkgSource}:ZKTranscriptLib`,
@@ -492,20 +501,18 @@ async function deployBfvVerifierRoute(
     await deployedAddress(decryptionAggregator);
 
   const pkPaths = getBfvPkSubCircuitVkHashPaths(config);
-  const pkFactory = await ethers.getContractFactory("BfvPkVerifier");
-  const pk = await pkFactory.deploy(
-    dkgAggregatorVerifier,
-    readVkRecursiveHash(pkPaths.nodesFold, config),
-    readVkRecursiveHash(pkPaths.c5, config),
-    readVkRecursiveHash(pkPaths.skC2Chunk, config),
-    readVkRecursiveHash(pkPaths.esmC2Chunk, config),
-    getBfvPkVkBindingHashPaths(config).map((filePath) =>
-      readVkRecursiveHash(filePath, config),
-    ),
-    config.h,
-  );
-  await pk.waitForDeployment();
-  const pkVerifier = await deployedAddress(pk);
+  let pkVerifier: string | undefined;
+  if (!lbfv) {
+    const pkFactory = await ethers.getContractFactory("BfvPkVerifier");
+    const pk = await pkFactory.deploy(
+      dkgAggregatorVerifier,
+      readVkRecursiveHash(pkPaths.nodesFold, config),
+      readVkRecursiveHash(pkPaths.c5, config),
+      config.h,
+    );
+    await pk.waitForDeployment();
+    pkVerifier = await deployedAddress(pk);
+  }
 
   let pkVerifierV2: string | undefined;
   if (dkgAggregatorV2Verifier) {
@@ -551,7 +558,8 @@ async function deployBfvVerifierRoute(
     paramSet: config.paramSet,
     committeeSize: config.committeeSize,
     decryptionVerifier,
-    pkVerifier,
+    // The route's DKG verifier: main's BfvPkVerifier on trBFV, BfvPkVerifierV2 on l-BFV.
+    pkVerifier: (pkVerifierV2 ?? pkVerifier) as string,
     ...(pkVerifierV2 ? { pkVerifierV2 } : {}),
     dkgAggregatorVerifier,
     ...(dkgAggregatorV2Verifier ? { dkgAggregatorV2Verifier } : {}),

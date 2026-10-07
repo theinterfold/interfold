@@ -86,24 +86,13 @@ export const deployAndSaveBfvPkVerifier = async (
   const expectedC5KeyHash = readVkRecursiveHash(
     getBfvPkSubCircuitVkHashPaths().c5,
   );
-  const expectedSkC2ChunkKeyHash = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths().skC2Chunk,
-  );
-  const expectedESmC2ChunkKeyHash = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths().esmC2Chunk,
-  );
-  const expectedVkBinding = getBfvPkVkBindingHashPaths().map((filePath) =>
-    readVkRecursiveHash(filePath),
-  );
 
+  // The trBFV verifier anchors the nodes-fold VK tree and C5; the tree binds every inner VK.
   const bfvPkVerifierFactory = await ethers.getContractFactory("BfvPkVerifier");
   const bfvPkVerifier = await bfvPkVerifierFactory.deploy(
     circuitVerifierArgs.address,
     expectedNodesFoldKeyHash,
     expectedC5KeyHash,
-    expectedSkC2ChunkKeyHash,
-    expectedESmC2ChunkKeyHash,
-    expectedVkBinding,
     BFV_DKG_H,
   );
 

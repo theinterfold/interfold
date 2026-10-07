@@ -592,9 +592,6 @@ async function main() {
       dkgAggAddress,
       expectedNodesFoldKeyHash,
       expectedC5KeyHash,
-      expectedSkC2ChunkKeyHash,
-      expectedESmC2ChunkKeyHash,
-      expectedVkBinding,
       benchmarkConfig.h,
     );
   }
