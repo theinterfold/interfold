@@ -447,12 +447,24 @@ mod tests {
     }
 
     /// A stand-in worker: a shell script that behaves as the test needs.
+    ///
+    /// A child process writes it. Tests in this process fork while others run, and a forked child
+    /// keeps a copy of any file this process has open for writing until it executes. Executing the
+    /// script while such a copy is open fails with ETXTBSY.
     #[cfg(unix)]
     fn worker(directory: &Path, name: &str, body: &str) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
         let path = directory.join(name);
-        fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        let status = std::process::Command::new("/bin/sh")
+            .args([
+                "-c",
+                "printf '%s' \"$2\" > \"$1\" && chmod 755 \"$1\"",
+                "sh",
+            ])
+            .arg(&path)
+            .arg(format!("#!/bin/sh\n{body}\n"))
+            .status()
+            .unwrap();
+        assert!(status.success(), "cannot write the stand-in worker");
         path
     }
 
@@ -529,20 +541,21 @@ mod tests {
     async fn the_deadline_also_stops_a_wrapper_scripts_prover() {
         let directory = tempfile::tempdir().unwrap();
         let pid_file = directory.path().join("prover.pid");
-        let wrapper = worker(
-            directory.path(),
-            "wrapper",
-            &format!("sleep 30 &\necho $! > {}\nwait", pid_file.display()),
-        );
+        let script = directory.path().join("wrapper.sh");
+        let body = format!("sleep 30 &\necho $! > {}\nwait\n", pid_file.display());
+        fs::write(&script, body).unwrap();
 
-        run_worker(
-            &wrapper,
-            &[],
+        // /bin/sh reads the script, so the test does not execute a file it has just written:
+        // that can fail with ETXTBSY while another test in this process forks.
+        let error = run_worker(
+            Path::new("/bin/sh"),
+            &[script.as_os_str()],
             Duration::from_millis(500),
             "proof generation",
         )
         .await
         .unwrap_err();
+        assert!(error.to_string().contains("did not finish"), "{error}");
 
         let pid: libc::pid_t = fs::read_to_string(&pid_file)
             .unwrap()
