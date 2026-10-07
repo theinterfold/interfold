@@ -1693,15 +1693,17 @@ jobs:
         uses: ./.github/actions/install-protoc
       - name: Install the OpenVM guest toolchain
         run: rustup toolchain install nightly-2026-01-18 --component rust-src
-      - name: Cache cargo-openvm
-        id: cargo_openvm
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/.cargo/bin/cargo-openvm
-          key: cargo-openvm-v2.0.2-${{ runner.os }}
+      # The published binary of the pinned release, checked against its SHA-256. Building it from
+      # source took 7-9 minutes whenever its cache missed.
       - name: Install cargo-openvm
-        if: steps.cargo_openvm.outputs.cache-hit != 'true'
-        run: cargo install --locked --git https://github.com/openvm-org/openvm.git --tag v2.0.2 cargo-openvm
+        run: |
+          archive="${RUNNER_TEMP}/cargo-openvm.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 \
+            https://github.com/openvm-org/openvm/releases/download/v2.0.2/cargo-openvm-v2.0.2-x86_64-unknown-linux-gnu.tar.gz \
+            -o "${archive}"
+          echo "c2a1d63a96c093a4969c799f3021fb991b0c51f56b53f26e3468d2d13676de2f  ${archive}" | sha256sum --check
+          tar -xzf "${archive}" -C ~/.cargo/bin cargo-openvm
+          cargo openvm --version
       - name: Build the template guest
         working-directory: templates/default/guest
         env:
