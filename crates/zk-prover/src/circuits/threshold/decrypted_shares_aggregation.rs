@@ -21,7 +21,20 @@ impl Provable for DecryptedSharesAggregationCircuit {
         CircuitName::DecryptedSharesAggregation
     }
 
+    /// The l-BFV path's modulus is wider than the bounded C7 supports, so it proves the same
+    /// statement with `decrypted_shares_aggregation_wide`.
+    fn resolve_circuit_name(&self, params: &Self::Params, _input: &Self::Input) -> CircuitName {
+        if e3_fhe_params::is_lbfv_path(*params) {
+            CircuitName::DecryptedSharesAggregationWide
+        } else {
+            CircuitName::DecryptedSharesAggregation
+        }
+    }
+
     fn valid_circuits(&self) -> Vec<CircuitName> {
-        vec![CircuitName::DecryptedSharesAggregation]
+        vec![
+            CircuitName::DecryptedSharesAggregation,
+            CircuitName::DecryptedSharesAggregationWide,
+        ]
     }
 }

@@ -1788,9 +1788,12 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │   │   ├─ Dispatches ComputeRequest::zk(
 │   │   │     ZkRequest::DecryptedSharesAggregation {...}
 │   │   │   )
-│   │   │   → Circuit: DecryptedSharesAggregation (C7)
+│   │   │   → Circuit: DecryptedSharesAggregation (C7) on trBFV,
+│   │   │     DecryptedSharesAggregationWide on l-BFV (`is_lbfv_path`)
 │   │   │   → Proves plaintext was correctly reconstructed from T+1 shares
-│   │   │   → Uses `U384` for `t * u mod Q`; secure-16384 needs a 260-bit intermediate
+│   │   │   → The wide C7 decodes in `U384`; secure-16384 needs a 260-bit intermediate
+│   │   │   → The aggregator's batch check, the decryption-aggregation VK load and the
+│   │   │     decryption router route all follow the E3's path
 │   │   ├─ ZkActor generates proof(s) via bb binary
 │   │   ├─ Deduplicates the exact request; a replacement batch invalidates old worker correlations
 │   │   ├─ Signs each C7 proof (one per ciphertext index)

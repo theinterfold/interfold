@@ -211,7 +211,7 @@ pub enum CircuitName {
     C3abFoldChunked = 46,
     /// Per-node DKG fold of the l-BFV path's C0..C4 proofs.
     NodeFoldChunked = 47,
-    /// C7 with wide (U384) reconstruction for secure-16384. KNOWN UNSOUND, see the circuit header.
+    /// C7 for the l-BFV path, whose ciphertext modulus is wider than the bounded C7 supports.
     DecryptedSharesAggregationWide = 48,
 }
 

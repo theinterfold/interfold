@@ -135,7 +135,7 @@ unconstrained fn divide_big_hint(x: Field, q: Field) -> Field {
 ///
 /// The inverse of the denominator is hinted and then proven, which replaces an in-circuit modular
 /// inversion. Ids must be distinct, strictly increasing and within the committee.
-fn lagrange_coefficients<let H: u32, let L: u32, let BIT_Q: u32, let BIT_K: u32>(
+pub fn lagrange_coefficients<let H: u32, let L: u32, let BIT_Q: u32, let BIT_K: u32>(
     qis: [Field; L],
     ids: [Field; H],
     n_parties: u32,
@@ -244,7 +244,7 @@ fn rounded_decode<let BIT_T: u32, let BIT_Q_TOTAL: u32>(
     }
 }
 
-fn assert_decoded_coefficient(computed_message: Field, claimed_message: Field) {
+pub fn assert_decoded_coefficient(computed_message: Field, claimed_message: Field) {
     assert(computed_message == claimed_message, "decoded message mismatch");
 }
 

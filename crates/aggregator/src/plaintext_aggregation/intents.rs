@@ -7,11 +7,13 @@ use e3_zk_helpers::circuits::threshold::decrypted_shares_aggregation::MAX_MSG_NO
 use tracing::warn;
 
 /// Match C7's ordered commitments, one-based party IDs, and message to the selected C6 batch.
+/// Each proof must come from the C7 circuit of `preset`'s protocol path.
 pub(crate) fn c7_proofs_match_batch(
     proofs: &[Proof],
     c6: &[(u64, Vec<Proof>)],
     plaintext: &[ArcBytes],
     slots: usize,
+    preset: e3_fhe_params::BfvPreset,
 ) -> bool {
     use alloy::primitives::U256;
     if proofs.len() != plaintext.len() || c6.len() < slots || slots == 0 {
@@ -23,7 +25,9 @@ pub(crate) fn c7_proofs_match_batch(
         .zip(plaintext)
         .enumerate()
         .all(|(index, (proof, message))| {
-            if proof.circuit != CircuitName::DecryptedSharesAggregation
+            if !e3_events::ProofType::C7DecryptedSharesAggregation
+                .circuit_names_for(preset)
+                .contains(&proof.circuit)
                 || proof.public_signals.len() != (2 * slots + MAX_MSG_NON_ZERO_COEFFS) * 32
             {
                 return false;

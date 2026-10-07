@@ -615,6 +615,10 @@ export function getBfvV2VkBindingHashPaths(config?: ActiveBfvConfig) {
 export function getBfvDecryptionSubCircuitVkHashPaths(
   config?: ActiveBfvConfig,
 ) {
+  // The l-BFV path proves C7 with the wide circuit; the trBFV path with the bounded one.
+  const c7Circuit = isLbfvParamSet(config?.paramSet ?? localBfvParamSet())
+    ? "decrypted_shares_aggregation_wide"
+    : "decrypted_shares_aggregation";
   if (config) {
     const root = distCircuitRoot(config);
     return {
@@ -624,14 +628,14 @@ export function getBfvDecryptionSubCircuitVkHashPaths(
       ),
       c7: path.join(
         root,
-        "default/threshold/decrypted_shares_aggregation/decrypted_shares_aggregation.vk_hash",
+        `default/threshold/${c7Circuit}/${c7Circuit}.vk_hash`,
       ),
     } as const;
   }
 
   return {
     c6Fold: localVkTreeHashPath("recursive_aggregation", "c6_fold"),
-    c7: localRecursiveVkHashPath("threshold", "decrypted_shares_aggregation"),
+    c7: localRecursiveVkHashPath("threshold", c7Circuit),
   } as const;
 }
 

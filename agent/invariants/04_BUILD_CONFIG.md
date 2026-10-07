@@ -28,7 +28,9 @@ every section.
   both files from the pair and from `circuits/bin/`, because an old anchor can hash a key that the
   build replaced. Hydration copies both files into `circuits/bin/`. Build-cache markers and release
   validation require both files. Deployment uses them as public-input-zero pins and retains the
-  separate C5/C7 VK pins. — `scripts/build-circuits.ts`; `scripts/circuit-artifacts.ts`;
+  separate C5/C7 VK pins. The C7 pin is per path: the l-BFV decryption routes pin
+  `decrypted_shares_aggregation_wide`, and the router accepts a route only for the E3's parameter
+  set. — `scripts/build-circuits.ts`; `scripts/circuit-artifacts.ts`;
   `scripts/utils.ts`
 - `pnpm store:circuits pull` selects the newest first-parent `circuit-artifacts` commit whose
   `SOURCE_HASH` matches the current source tree. A different build at the branch tip must not

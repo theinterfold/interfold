@@ -705,9 +705,15 @@ pub fn prove_decryption_aggregation_jobs(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
         CircuitName::C6Fold,
     )?;
+    // The l-BFV path proves C7 with the wide circuit; both share one public layout.
+    let c7_circuit = if e3_fhe_params::is_lbfv_path(preset) {
+        CircuitName::DecryptedSharesAggregationWide
+    } else {
+        CircuitName::DecryptedSharesAggregation
+    };
     let c7_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::DecryptedSharesAggregation,
+        c7_circuit,
     )?;
     let compiled = load_compiled_circuit(
         prover,
@@ -756,6 +762,12 @@ pub fn prove_decryption_aggregation_jobs(
                 )
             })?;
 
+        if job.c7_proof.circuit != c7_circuit {
+            return Err(ZkError::InvalidInput(format!(
+                "invalid C7 proof circuit {}, expected {c7_circuit}",
+                job.c7_proof.circuit
+            )));
+        }
         let witness = DecryptionAggregatorWitness {
             c6_fold_vk: c6_fold_vk.verification_key.clone(),
             c6_fold_vk_hash: c6_fold_vk.key_hash.clone(),

@@ -162,12 +162,17 @@ describe("BFV verifier routers", function () {
       "MockBfvDecryptionVerifierRoute",
       [9, HASH_C, HASH_D, true],
     );
+    const interfold = await ethers.deployContract("MockBfvV2Interfold", [0]);
+    const registry = await ethers.deployContract("MockCiphernodeRegistry");
+    await registry.setInterfold(await interfold.getAddress());
     const router = await ethers.deployContract("BfvDecryptionVerifierRouter", [
+      await registry.getAddress(),
       [
         await minimum.getAddress(),
         await sameLength.getAddress(),
         await small.getAddress(),
       ],
+      [0, 0, 0],
       9,
     ]);
     const smallProof = proofWithAnchors(138, HASH_C, HASH_D);
@@ -192,5 +197,51 @@ describe("BFV verifier routers", function () {
     await expect(
       verify(proofWithAnchors(115, HASH_A, HASH_B)),
     ).to.be.revertedWithCustomError(router, "InvalidPublicInputsLength");
+  });
+
+  it("rejects a decryption route for a different E3 parameter set", async function () {
+    // The E3 runs the l-BFV path (parameter set 4); its proof carries the trBFV route's anchors.
+    const interfold = await ethers.deployContract("MockBfvV2Interfold", [4]);
+    const registry = await ethers.deployContract("MockCiphernodeRegistry");
+    await registry.setInterfold(await interfold.getAddress());
+    const trbfv = await ethers.deployContract(
+      "MockBfvDecryptionVerifierRoute",
+      [1, HASH_A, HASH_B, true],
+    );
+    const lbfv = await ethers.deployContract("MockBfvDecryptionVerifierRoute", [
+      1,
+      HASH_A,
+      HASH_C,
+      true,
+    ]);
+    const router = await ethers.deployContract("BfvDecryptionVerifierRouter", [
+      await registry.getAddress(),
+      [await trbfv.getAddress(), await lbfv.getAddress()],
+      [0, 4],
+      1,
+    ]);
+    const context = [
+      21,
+      ethers.id("decryption-domain"),
+      ethers.id("plaintext-output"),
+      ethers.id("decryption-committee"),
+      ethers.id("ciphertext-commitment"),
+    ] as const;
+
+    expect((await router.routeAt(1))[4]).to.equal(4);
+    expect(
+      await router.verify.staticCall(
+        ...context,
+        proofWithAnchors(114, HASH_A, HASH_C),
+      ),
+    ).to.equal(true);
+    await expect(
+      router.verify.staticCall(
+        ...context,
+        proofWithAnchors(114, HASH_A, HASH_B),
+      ),
+    )
+      .to.be.revertedWithCustomError(router, "ParamSetRouteMismatch")
+      .withArgs(4);
   });
 });

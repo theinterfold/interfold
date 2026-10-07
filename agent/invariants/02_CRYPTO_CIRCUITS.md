@@ -256,7 +256,10 @@ every section.
 - C7 derives `u` through bounded interpolation and `garner_reconstruct`; it accepts neither
   `u_global` nor CRT reconstruction quotients as witnesses. `reduce_mod_bounded` and
   `inv_mod_bounded` constrain every reduction and inverse hint used by that path. The rounded decode
-  constrains its own quotient and remainder. — `flow-trace/04`
+  constrains its own quotient and remainder. The l-BFV path's `decrypted_shares_aggregation_wide`
+  proves the same statement for Q near 2^250: `garner_mixed_radix` keeps every reduction below 128
+  bits, `exact_q_total` proves Q is below the field, and the decode divides in U384 with the
+  constrained `udiv_mod`. — `flow-trace/04`
 - **`ModU128::reduce_mod` does not pin its remainder; use `reduce_mod_bounded` for anything a prover
   controls.** It asserts `n == q * quotient + remainder` with `remainder < q` but never bounds the
   quotient, and the equation is over the field — so a prover picks any `remainder` in `[0, q)` and
@@ -709,8 +712,9 @@ every section.
   `lib::core::threshold::user_data_encryption_chunk`, `examples/CRISP/scripts/compute_vk_hash.sh`
 - Circuit soundness fixes to preserve: `ModU64::div_mod` verifies
   `result*divisor == dividend (mod modulus)` (IF-001); C7 compares **every** decoded coefficient,
-  including zeros, to the claimed message (IF-002), and uses `U384` so the secure-16384
-  `t * u mod Q` decode does not wrap at 256 bits (l-BFV C7 decode width). Every `pack` call
+  including zeros, to the claimed message (IF-002). The l-BFV C7
+  (`decrypted_shares_aggregation_wide`) forms the decode numerator `t * u + (Q - 1) / 2` in `U384`,
+  because at secure-16384 it passes the field (l-BFV C7 decode width). Every `pack` call
   constrains the shifted digit, after BN254 field addition, to its radix before the packed value
   enters a commitment or Fiat-Shamir transcript. Values near the field modulus can wrap below the
   offset and represent negative coefficients; the range check applies to the shifted digit, not the

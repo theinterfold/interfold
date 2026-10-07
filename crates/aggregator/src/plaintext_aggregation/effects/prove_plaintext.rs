@@ -65,6 +65,7 @@ impl ThresholdPlaintextAggregator {
                 .unwrap_or_default(),
             &state.plaintext,
             state.threshold_m as usize + 1,
+            self.params_preset,
         ) {
             warn!("Ignoring C7 proofs for a different decryption batch");
             return self.dispatch_c7_proof_request(

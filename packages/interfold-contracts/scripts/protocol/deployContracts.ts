@@ -385,7 +385,9 @@ export async function deployBfvVerifierRoutes(
       "BfvDecryptionVerifierRouter",
     );
     const decryptionRouter = await decryptionRouterFactory.deploy(
+      registry,
       routes.map((route) => route.decryptionVerifier),
+      routes.map((route) => route.paramSet),
       defaultConfig.t,
     );
     await decryptionRouter.waitForDeployment();
