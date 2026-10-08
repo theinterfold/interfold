@@ -224,7 +224,7 @@ implementation, the CRISP owner and binding, the image ID that CRISP, the cipher
 the receipt verifier share, the expected guest commitments and Halo2 runtime code hash
 (`--openvm-identity`, required on mainnet), the Avail bridge and finalization window, and the input
 signer. `upgrade:v19:validate` only reads, so it repeats; `--write-records` then updates the
-deployment record. After the batch executes, operators restart on the release, which acknowledges
+deployment record and `deployed_contracts.json`, which the release manifest is built from. After the batch executes, operators restart on the release, which acknowledges
 it. `upgrade:v19:refresh` reads the registered operators from the registry's `CiphernodeAdded` logs
 and refreshes each one that is not active: capacity reads zero until every registered operator is
 refreshed, and an operator that does not run the release reads as inactive. In the block after the

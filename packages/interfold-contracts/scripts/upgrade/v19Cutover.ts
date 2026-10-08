@@ -9,8 +9,8 @@
 //   prepare   deploys the implementation and the BFV routes with the operator key, then writes
 //             the plan, the governance batch and the Aragon Safe batch.
 //   validate  checks the chain against the plan after governance executed the batch. It only
-//             reads, so it can run any number of times; `--write-records` updates the deployment
-//             record afterwards.
+//             reads, so it can run any number of times; `--write-records` then updates the
+//             deployment record and `deployed_contracts.json`.
 //   refresh   refreshes the status of every registered operator that its own release
 //             acknowledgment has not refreshed. The new release policy makes every cached status
 //             stale, and committee capacity reads zero until each registered operator is refreshed.
@@ -253,8 +253,9 @@ export function readOpenVmIdentity(file: string): OpenVmGuestIdentity {
 }
 
 /** The CRISP contracts that the batch wires, from the CRISP deployment record. */
-export function resolveOpenVmCrisp(
-  network = networkName(),
+/** The CRISP contracts that the CRISP deployment recorded for `network`. */
+function readCrispRecord(
+  network: string,
   record = arg("crisp-deployments") ??
     path.join(
       repoRoot,
@@ -264,12 +265,7 @@ export function resolveOpenVmCrisp(
       "crisp-contracts",
       "deployed_contracts.json",
     ),
-): {
-  crispProgram: string;
-  ciphertextVerifier: string;
-  dataAvailabilityVerifier: string;
-  availDataAvailability: boolean;
-} {
+): CrispDeploymentRecord[string] {
   const file = resolvePath(record);
   if (!fs.existsSync(file)) {
     throw new Error(`CRISP deployment file not found: ${file}`);
@@ -278,6 +274,19 @@ export function resolveOpenVmCrisp(
   if (!deployment) {
     throw new Error(`No CRISP deployment is recorded for ${network}`);
   }
+  return deployment;
+}
+
+export function resolveOpenVmCrisp(
+  network = networkName(),
+  record?: string,
+): {
+  crispProgram: string;
+  ciphertextVerifier: string;
+  dataAvailabilityVerifier: string;
+  availDataAvailability: boolean;
+} {
+  const deployment = readCrispRecord(network, record);
   return {
     crispProgram: address(
       deployment.CRISPProgram?.address ?? "",
@@ -637,6 +646,7 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
   }
 
   const [operator] = await ethers.getSigners();
+  const deployFromBlock = (await ethers.provider.getBlockNumber()) + 1;
   const upgrade = await deployUpgradeImplementation(
     ethers,
     operator,
@@ -710,6 +720,7 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
     interfoldProxyAdmin: deployment.interfoldProxyAdmin,
     previousInterfoldImplementation: liveImplementation,
     interfoldImplementation: upgrade.implementation,
+    deployFromBlock,
     lifecycleLibrary: upgrade.lifecycleLibrary,
     pricingLibrary: upgrade.pricingLibrary,
     registryProxy: deployment.ciphernodeRegistry,
@@ -796,7 +807,7 @@ v0.19 cutover prepared
 
 /**
  * Check the executed cutover against the plan. Reads only, so it can run before resume and again
- * after it. `--write-records` copies the new addresses into the deployment record.
+ * after it. `--write-records` copies the new addresses into both deployment records.
  */
 export async function validateV19Cutover(): Promise<V19CutoverPlan> {
   const { ethers } = await connect();
@@ -925,6 +936,7 @@ export async function validateV19Cutover(): Promise<V19CutoverPlan> {
     deployment.decryptionVerifierRelationsLib =
       first.decryptionVerifierRelationsLib;
     writeJson(deploymentPath(config), deployment);
+    writeDeployedContracts(networkName(), plan);
   }
 
   console.log(`
@@ -934,9 +946,51 @@ v0.19 cutover validated
   CRISP program:            ${plan.crispProgram}
   node release:             protocol ${plan.nodeRelease.protocolVersion}, generation ${plan.nodeRelease.nodeGeneration}
   requests:                 ${paused ? "paused" : "open"}
-  deployment record:        ${hasFlag("write-records") ? "updated" : "unchanged (pass --write-records to update it)"}
+  deployment records:       ${hasFlag("write-records") ? "updated" : "unchanged (pass --write-records to update them)"}
 `);
   return plan;
+}
+
+/**
+ * Record the cutover's contracts in `deployed_contracts.json`, which the release manifest is built
+ * from. The OpenVM verifiers come from the CRISP record and replace the RISC Zero one; a contract
+ * that `prepare` deployed gets the block before which none of them existed.
+ */
+function writeDeployedContracts(network: string, plan: V19CutoverPlan): void {
+  const file = path.resolve(protocolDir, "..", "..", "deployed_contracts.json");
+  type ContractRecord = {
+    address?: string;
+    blockNumber?: number;
+    [field: string]: unknown;
+  };
+  const records = fs.existsSync(file)
+    ? readJson<{ [network: string]: { [name: string]: ContractRecord } }>(file)
+    : {};
+  const chain = (records[network] ??= {});
+  const deployed = (address: string): ContractRecord =>
+    plan.deployFromBlock === undefined
+      ? { address }
+      : { address, blockNumber: plan.deployFromBlock };
+  const interfold = chain.Interfold as
+    | { proxyRecords?: { implementationAddress?: string }; libraries?: unknown }
+    | undefined;
+  if (interfold?.proxyRecords) {
+    interfold.proxyRecords.implementationAddress = plan.interfoldImplementation;
+    interfold.libraries = {
+      InterfoldLifecycle: plan.lifecycleLibrary,
+      InterfoldPricing: plan.pricingLibrary,
+    };
+  }
+  chain.InterfoldLifecycle = deployed(plan.lifecycleLibrary);
+  chain.InterfoldPricing = deployed(plan.pricingLibrary);
+  chain.BfvPkVerifierRouter = deployed(plan.pkVerifier);
+  chain.BfvDecryptionVerifierRouter = deployed(plan.decryptionVerifier);
+  const crisp = readCrispRecord(network);
+  for (const name of ["OpenVmBfvCiphertextVerifier", "OpenVmReceiptVerifier"]) {
+    if (crisp[name]?.address) chain[name] = crisp[name];
+  }
+  delete chain.Risc0BfvCiphertextVerifier;
+  writeJson(file, records);
 }
 
 export async function prepareV19Resume(): Promise<void> {

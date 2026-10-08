@@ -130,6 +130,9 @@ async function main() {
   fs.writeFileSync(forkDeployment, JSON.stringify({ ...deployment, name: "mainnet-fork" }, null, 2));
   const crispRecord = path.join(crispDir, "deployed_contracts.json");
   const crispRecordBackup = fs.readFileSync(crispRecord);
+  // `validate --write-records` writes the `mainnet` records of both files.
+  const protocolRecord = path.join(packageDir, "deployed_contracts.json");
+  const protocolRecordBackup = fs.readFileSync(protocolRecord);
 
   const stopFork = await startFork();
   try {
@@ -301,6 +304,8 @@ async function main() {
   } finally {
     stopFork();
     fs.writeFileSync(crispRecord, crispRecordBackup);
+    fs.copyFileSync(protocolRecord, path.join(work, "deployed_contracts.fork.json"));
+    fs.writeFileSync(protocolRecord, protocolRecordBackup);
     // Copy, not rename: the work dir can be on another filesystem.
     for (const file of fs.readdirSync(protocolDir)) {
       if (!file.startsWith("mainnet-fork.")) continue;

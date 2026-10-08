@@ -338,6 +338,8 @@ export interface V19CutoverPlan {
   interfoldImplementation: string;
   lifecycleLibrary: string;
   pricingLibrary: string;
+  /** No contract that `prepare` deployed is older than this block. */
+  deployFromBlock?: number;
   registryProxy: string;
   nodeReleaseRegistry: string;
   nodeRelease: {
