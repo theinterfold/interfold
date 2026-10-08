@@ -2,9 +2,10 @@
   "name": "sepolia-protocol",
   "chainId": 11155111,
   "protocolOwner": "0x8837e47c4Bb520ADE83AAB761C3B60679443af1B",
-  "fold": "0x278d7c3bC100505bfC38163e23Fe2524E3993e83",
-  "bondingRegistryProxy": "0x55Cf62396e1CAE6Fcc380CfE0b4C48103C4a3711",
-  "bondingRegistryProxyAdmin": "0x67eBfe2cde298CD9C97827474aa741A0A16608e5",
+  "fold": "0x3192Ee1FeE48159807058aA78038cf80cB3450Cb",
+  "escrowVotesAdapter": "0xeFFdE23b6D897035F47499b66071F3f4696fb2A9",
+  "bondingRegistryProxy": "0x8687bC7C8f055b41aD2C2447c04aCBD76C1075b2",
+  "bondingRegistryProxyAdmin": "0x385E7D928fAB7Dfa7DB721E158675059377C9bBc",
   "feeToken": "0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B",
   "feeTokenDecimals": 6,
   "ticketUnderlyingToken": "0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B",
@@ -87,7 +88,7 @@
   "verifiers": {
     "deploy": true
   },
-  "ciphertextVerifier": "0xBBcE489cf767904Ca808944806110d8c8A9332Da",
-  "bindInitialE3Program": true,
-  "e3Programs": ["0xc6b6f740C85878D046A50f203A3Aa379150bF8C7"]
+  "deployMockE3Program": true,
+  "bindInitialE3Program": false,
+  "e3Programs": ["0x0000000000000000000000000000000000000000"]
 }

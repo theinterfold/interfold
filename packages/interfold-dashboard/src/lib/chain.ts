@@ -84,15 +84,15 @@ const NETWORKS: Record<string, NetworkProfile> = {
     name: 'Sepolia',
     rpc: 'https://ethereum-sepolia.publicnode.com',
     explorer: 'https://sepolia.etherscan.io',
-    interfold: '0xc5DD9418A0aBF15678F974D2348B4be4D3832B54',
-    ciphernodeRegistry: '0xfa0fCE6afd9b59E2Ac69DC53A128ee5835346B5e',
+    interfold: '0xBD5B6D1aDA9e0eB248B678469C9Cd6a63507E42b',
+    ciphernodeRegistry: '0xb1E8640CF8D0A927290E3d9E1b01c4899B5225Ef',
     crispProgram: '0x9Dc6edB343A89a25dC8bEF324F721Cca78E86AFD',
-    bondingRegistry: '0x55Cf62396e1CAE6Fcc380CfE0b4C48103C4a3711',
+    bondingRegistry: '0x8687bC7C8f055b41aD2C2447c04aCBD76C1075b2',
     // Test Faucet. It sends 1000 FOLD and 1000 MockUSDC.
-    faucet: '0xA7f0A637Af62fA4E0b46E397D1b85E9b4807f019',
-    // Earliest of the Interfold (11855915), CiphernodeRegistry (11855915) and CRISPProgram
-    // (11862791) deploy blocks. A later value silently drops early registry events.
-    deployBlock: '11855915',
+    faucet: '0x1B4340A65BB669267BF5DE37385B139987C3F09c',
+    // Deploy block of the Interfold and the CiphernodeRegistry. A later value silently drops early
+    // registry events.
+    deployBlock: '11873232',
     // MockUSDC (0xE2e534F7…555B), the fee token and ticket collateral. Anyone can mint it.
     feeSymbol: 'USDC',
     feeDecimals: 6,

@@ -91,15 +91,15 @@ const ALLOWED: Record<string, string> = {
   // Sepolia contracts that the docs list but the manifest does not publish (it publishes only
   // the CONTRACT_KEYS set). Source: packages/interfold-contracts/deploy/protocol/sepolia-protocol.deployment.json
   // and examples/CRISP/packages/crisp-contracts/deployed_contracts.json.
-  '0x254cef2769d589e36208e9bd2da031a568fa49cd': 'MockRISC0Verifier, sepolia (wrapped by the ciphertext verifier and used by CRISP)',
+  '0x254cef2769d589e36208e9bd2da031a568fa49cd': 'MockRISC0Verifier (CRISP), sepolia',
   '0x099b65d98773c0219467dc00de11022c2d055fbc': 'AvailVectorXDataAvailabilityVerifier (CRISP), sepolia',
   '0x31319447c60888ac8e144f112615fb45ccad9cba': 'HonkVerifier (CRISP), sepolia',
   '0x4f209aad7cd8e5a1d0a577f97c5b76dd01192322': 'OnchainHonkVerifier (CRISP), sepolia',
   '0xa341d6d045e32dbec8bb76149c92302cfaa61adb': 'MockVotingToken (CRISP), sepolia',
-  '0x3d95cfa8018db4b5474bfe536702b5dc05ee1444': 'BondedCheckpoints, sepolia',
+  '0x4b4b85f007c241bd8bf22c951efe0f44d82ae6d1': 'BondedCheckpoints, sepolia',
   '0xd6fc1f74c34731b698a9f6c156551704c08f810b': 'SelfRegistry (CRISP), sepolia',
-  '0x46cd950499b312e53cb73a1d1e12d3541966f823': 'ChainlinkVrfRandomnessProvider, sepolia',
-  '0x85e5176a8d387be3b53506ddcbbc8aa9c2156e9f': 'BondedVotes, sepolia',
+  '0xf94e961832585c10a4df82af9e890aec4fc29758': 'ChainlinkVrfRandomnessProvider, sepolia',
+  '0x1c721de6a736054dbe7e8fce99a68b76d4f603fb': 'BondedVotes, sepolia',
 
   // TODO: record this in deployed_contracts.json so the manifest can publish
   // it. Until then no check can tell a correct value here from a stale one.
