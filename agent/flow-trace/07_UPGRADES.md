@@ -194,6 +194,37 @@ requires the full registration refresh to be complete before the `T-1` boundary.
 status is not a heartbeat, so the flag is an explicit operator confirmation that those processes are
 online and mutually reachable.
 
+## v0.19 cutover on mainnet
+
+The secure-CRISP builder ran the v0.18 activation. It reads the RISC Zero CRISP program, so it
+cannot prepare the v0.19 cutover, which moves the circuits to `interfold-bfv-v5`, adds secure
+parameter set 2 and wires the OpenVM CRISP program. With requests paused and every E3 and committee
+drained, `upgrade:v19` (`scripts/upgrade/v19Cutover.ts prepare`) deploys the Interfold
+implementation with its libraries and the BFV verifier routes, then writes one governance batch:
+
+```text
+upgrade Interfold in place (new lifecycle and pricing libraries)
+  -> register parameter set 2 if it is missing, and each committee threshold that differs
+  -> install the PK and decryption verifier routers and the OpenVM ciphertext verifier
+  -> register the OpenVM CRISP program and retire the earlier programs
+  -> bind CRISP to Interfold
+  -> require protocol 8 and generation 2, which invalidates every cached operator status
+  -> keep requests paused
+```
+
+`prepare` checks the drained and paused state, the deployment record against the live
+implementation, the CRISP owner and binding, the image ID that CRISP, the ciphertext verifier and
+the receipt verifier share, the expected guest commitments and Halo2 runtime code hash
+(`--openvm-identity`, required on mainnet), the Avail bridge and finalization window, and the input
+signer. `upgrade:v19:validate` only reads, so it repeats; `--write-records` then updates the
+deployment record. After the batch executes, operators restart on the release, which acknowledges
+it. `upgrade:v19:refresh` reads the registered operators from the registry's `CiphernodeAdded` logs
+and refreshes each one that is not active: capacity reads zero until every registered operator is
+refreshed, and an operator that does not run the release reads as inactive. In the block after the
+refresh, `upgrade:v19:resume -- --ciphernodes-restarted` validates again, checks release-ready
+operators and snapshot owner capacity for the largest committee, and writes the unpause batch.
+`upgrade:v19:simulate` runs the sequence on an anvil fork of mainnet.
+
 The CRISP server probes `earliestVotingStart()` when it creates a round. During an ordered legacy
 cutover, a new server can derive the same lower bound from the live Interfold randomness, sortition,
 and DKG windows if the old CRISP program does not expose that selector. This fallback supports the
