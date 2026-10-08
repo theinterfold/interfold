@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::{
+    dial_guard::{DialGuard, RecentDials},
     dialer::dial_peers,
     events::{
         GossipData, GossipPublishFailure, IncomingRequest, NetCommand, NetEvent,
@@ -187,28 +188,33 @@ impl PeerConnectionFailures {
 fn is_loopback_addr(addr: &Multiaddr) -> bool {
     addr.iter().any(|p| match p {
         Protocol::Ip4(ip) => ip.is_loopback(),
-        Protocol::Ip6(ip) => ip.is_loopback(),
+        // Also the IPv4-mapped form, ::ffff:127.0.0.1.
+        Protocol::Ip6(ip) => {
+            ip.is_loopback() || ip.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
+        }
         _ => false,
     })
 }
 
 /// Returns true only when we should filter loopback addresses from Kademlia.
-/// This is the case when the node has at least one non-loopback listener,
-/// meaning it's in a production-like environment where propagating loopback
-/// addresses to remote peers would cause them to dial themselves.
+/// This is the case on a public network, and when the node has at least one non-loopback
+/// listener, meaning it's in a production-like environment where propagating loopback
+/// addresses to remote peers would cause them to dial themselves. A public network does not
+/// wait for the listeners: right after a start the swarm has not reported them yet.
 /// In localhost test environments (all listeners on 127.0.0.1) we allow
 /// loopback so that peers can discover each other.
-fn should_filter_loopback(swarm: &Swarm<NodeBehaviour>) -> bool {
-    swarm
-        .listeners()
-        .any(|addr| !is_loopback_addr(addr) && !is_unspecified_addr(addr))
+fn should_filter_loopback(swarm: &Swarm<NodeBehaviour>, network: &NetworkPolicy) -> bool {
+    network.profile().is_public()
+        || swarm
+            .listeners()
+            .any(|addr| !is_loopback_addr(addr) && !is_unspecified_addr(addr))
 }
 
 /// Strip a trailing `/p2p/<peer-id>` component from a multiaddr.
 /// Needed when re-keying a routing entry after a peer ID mismatch: the dialed
 /// address still pins the stale peer ID, and re-adding it verbatim under the
 /// new peer ID would make every subsequent dial fail with `WrongPeerId` again.
-fn strip_peer_id(mut addr: Multiaddr) -> Multiaddr {
+pub(crate) fn strip_peer_id(mut addr: Multiaddr) -> Multiaddr {
     if matches!(addr.iter().last(), Some(Protocol::P2p(_))) {
         addr.pop();
     }
@@ -313,6 +319,12 @@ struct ConfiguredPeer {
     peer_id: Option<libp2p::PeerId>,
     address: Multiaddr,
     identity_pinned: bool,
+    /// Whether `peer_id` comes from the configuration or from an admitted connection of the
+    /// configured address, not from a rebind after a mismatch at another address.
+    identity_trusted: bool,
+    /// The concrete address of the last outbound connection to the trusted identity, such as the
+    /// address that a `/dnsaddr` resolved to.
+    fallback: Option<Multiaddr>,
 }
 
 impl ConfiguredPeer {
@@ -325,6 +337,8 @@ impl ConfiguredPeer {
             peer_id,
             address: strip_peer_id(address),
             identity_pinned: peer_id.is_some(),
+            identity_trusted: peer_id.is_some(),
+            fallback: None,
         }
     }
 
@@ -356,6 +370,8 @@ fn rebind_configured_peer(
         .filter(|peer| peer.matches_endpoint(expected, address))
     {
         configured_peer.peer_id = Some(obtained);
+        configured_peer.identity_trusted = false;
+        configured_peer.fallback = None;
     }
     true
 }
@@ -421,6 +437,8 @@ pub struct Libp2pNetInterface {
     status: NetworkStatus,
     /// Immutable identity and deployment policy for this process.
     network: NetworkPolicy,
+    /// The concrete addresses of recent successful dials, recorded below the DNS layer.
+    recent_dials: RecentDials,
 }
 
 impl Libp2pNetInterface {
@@ -453,9 +471,17 @@ impl Libp2pNetInterface {
         let (cmd_tx, cmd_rx) = mpsc::channel(CMD_CHANNEL_SIZE);
         let status = NetworkStatus::new(peers.len());
 
+        let recent_dials = RecentDials::default();
         let swarm = libp2p::SwarmBuilder::with_existing_identity(id.into_keypair())
             .with_tokio()
-            .with_quic()
+            // QUIC under the dial guard, which sits below the DNS layer so it also sees the
+            // addresses that a `/dnsaddr` resolves to.
+            .with_other_transport(|key| {
+                DialGuard::new(
+                    libp2p::quic::tokio::Transport::new(libp2p::quic::Config::new(key)),
+                    recent_dials.clone(),
+                )
+            })?
             .with_dns()
             .map_err(|e| anyhow::anyhow!("Failed to enable DNS: {e}"))?
             .with_behaviour(|key| create_behaviour(key, &network))?
@@ -473,6 +499,7 @@ impl Libp2pNetInterface {
             cmd_rx,
             status,
             network,
+            recent_dials,
         })
     }
 
@@ -637,15 +664,12 @@ impl Libp2pNetInterface {
                     }
 
                     if let NetCommand::ConfiguredPeerAdmitted { address, peer_id } = command {
-                        let address = strip_peer_id(address);
-                        for configured_peer in &mut configured_peers {
-                            if configured_peer.address == address
-                                && (!configured_peer.identity_pinned
-                                    || configured_peer.peer_id == Some(peer_id))
-                            {
-                                configured_peer.peer_id = Some(peer_id);
-                            }
-                        }
+                        admit_configured_peer(
+                            &mut configured_peers,
+                            address,
+                            peer_id,
+                            &self.recent_dials,
+                        );
                         continue;
                     }
 
@@ -677,6 +701,7 @@ impl Libp2pNetInterface {
                         &mut seen_gossip,
                         &mut dht_puts,
                         &self.network,
+                        &self.recent_dials,
                         &self.status,
                         event,
                     ).await {
@@ -744,6 +769,55 @@ fn reconcile_gossip_subscriptions(
     }
 }
 
+/// The addresses of one configured-peer redial: the configured address, and its fallback. A
+/// configured `/dnsaddr` goes through the resolver that libp2p built from the system configuration
+/// when the node started. The fallback reaches the peer without DNS. libp2p dials both at once.
+fn redial_addresses(configured_peer: &ConfiguredPeer) -> Vec<Multiaddr> {
+    let mut addresses = vec![configured_peer.address.clone()];
+    addresses.extend(configured_peer.fallback.clone());
+    addresses
+}
+
+/// Record that a configured address produced an admitted connection to `peer_id`. That identity
+/// is trusted, and the concrete address of the dial becomes the peer's fallback.
+fn admit_configured_peer(
+    configured: &mut [ConfiguredPeer],
+    address: Multiaddr,
+    peer_id: libp2p::PeerId,
+    recent_dials: &RecentDials,
+) {
+    let address = strip_peer_id(address);
+    for configured_peer in configured.iter_mut() {
+        if configured_peer.address == address
+            && (!configured_peer.identity_pinned || configured_peer.peer_id == Some(peer_id))
+        {
+            configured_peer.peer_id = Some(peer_id);
+            configured_peer.identity_trusted = true;
+        }
+    }
+    refresh_configured_fallbacks(configured, &peer_id, recent_dials);
+}
+
+/// After an outbound connection to `peer_id`, make the concrete address of its dial the fallback of
+/// each configured peer that trusts that identity. An identity that a rebind set is not trusted, so
+/// an identity that another peer's routing data supplied never gets a fallback.
+fn refresh_configured_fallbacks(
+    configured: &mut [ConfiguredPeer],
+    peer_id: &libp2p::PeerId,
+    recent_dials: &RecentDials,
+) {
+    let Some(concrete) = recent_dials.get(peer_id) else {
+        return;
+    };
+    for configured_peer in configured.iter_mut().filter(|configured_peer| {
+        configured_peer.identity_trusted && configured_peer.peer_id == Some(*peer_id)
+    }) {
+        if concrete != configured_peer.address {
+            configured_peer.fallback = Some(concrete.clone());
+        }
+    }
+}
+
 fn redial_disconnected_configured_peers(
     swarm: &mut Swarm<NodeBehaviour>,
     configured: &[ConfiguredPeer],
@@ -765,7 +839,7 @@ fn redial_disconnected_configured_peers(
             continue;
         }
         let options = DialOpts::peer_id(peer_id)
-            .addresses(vec![configured_peer.address.clone()])
+            .addresses(redial_addresses(configured_peer))
             .build();
         match swarm.dial(options) {
             Ok(()) => debug!(
@@ -899,6 +973,7 @@ async fn process_swarm_event(
     seen_gossip: &mut GossipIngress,
     dht_puts: &mut DhtPuts,
     network: &NetworkPolicy,
+    recent_dials: &RecentDials,
     status: &NetworkStatus,
     event: SwarmEvent<NodeBehaviourEvent>,
 ) -> Result<()> {
@@ -913,6 +988,9 @@ async fn process_swarm_event(
             // The authenticated transport identity is necessary but not sufficient. Keep the
             // connection staged until Identify confirms the Interfold network and capabilities.
             let remote_addr = endpoint.get_remote_address().clone();
+            if endpoint.is_dialer() {
+                refresh_configured_fallbacks(configured_peers, &peer_id, recent_dials);
+            }
             peer_addresses
                 .entry(peer_id)
                 .or_default()
@@ -934,7 +1012,7 @@ async fn process_swarm_event(
                     direction,
                     num_established.get(),
                 );
-                if !(should_filter_loopback(swarm) && is_loopback_addr(&remote_addr)) {
+                if !(should_filter_loopback(swarm, network) && is_loopback_addr(&remote_addr)) {
                     swarm
                         .behaviour_mut()
                         .kademlia
@@ -989,6 +1067,37 @@ async fn process_swarm_event(
                             %failed_peer,
                             %remote_addr,
                             "Dialed this node through an address advertised for another peer; removed the address"
+                        );
+                        event_tx.send(NetEvent::OutgoingConnectionError {
+                            connection_id,
+                            error: Arc::new(error),
+                        })?;
+                        return Ok(());
+                    }
+                    let stale = strip_peer_id(remote_addr.clone());
+                    let mut was_fallback = false;
+                    for configured_peer in configured_peers.iter_mut() {
+                        if configured_peer.peer_id == Some(*failed_peer)
+                            && configured_peer.fallback.as_ref() == Some(&stale)
+                        {
+                            configured_peer.fallback = None;
+                            was_fallback = true;
+                        }
+                    }
+                    if was_fallback {
+                        // Another node now answers at a configured peer's fallback, an address
+                        // that this node kept. Drop the address only: the configured address still
+                        // names the peer, so neither quarantine nor rebind it.
+                        // remove_address adds /p2p/<peer> before it compares.
+                        swarm
+                            .behaviour_mut()
+                            .kademlia
+                            .remove_address(failed_peer, &stale);
+                        debug!(
+                            %failed_peer,
+                            %remote_addr,
+                            %obtained,
+                            "Another node answers at the fallback of a configured peer; dropped it"
                         );
                         event_tx.send(NetEvent::OutgoingConnectionError {
                             connection_id,
@@ -1096,7 +1205,7 @@ async fn process_swarm_event(
             if peer_failures.is_quarantined(&peer) {
                 swarm.behaviour_mut().kademlia.remove_peer(&peer);
                 debug!(%peer, "Ignored a quarantined Kademlia routing update");
-            } else if should_filter_loopback(swarm) {
+            } else if should_filter_loopback(swarm, network) {
                 // Kademlia adds a dialed address to an existing entry without the filter that
                 // `add_address` applies. Remote peers would receive a loopback address in
                 // FIND_NODE responses and dial themselves.
@@ -1485,7 +1594,7 @@ async fn process_swarm_event(
                 debug!(%peer_id, "Received Identify for an unstaged peer");
                 return Ok(());
             }
-            let filter = should_filter_loopback(swarm);
+            let filter = should_filter_loopback(swarm, network);
             peer_addresses.entry(peer_id).or_default().refresh(
                 peer_id,
                 info.listen_addrs,
@@ -2373,6 +2482,16 @@ mod tests {
     }
 
     #[test]
+    fn ipv4_mapped_loopback_is_loopback() {
+        assert!(super::is_loopback_addr(
+            &"/ip6/::ffff:127.0.0.1/udp/9091/quic-v1".parse().unwrap()
+        ));
+        assert!(!super::is_loopback_addr(
+            &"/ip6/::ffff:192.0.2.1/udp/9091/quic-v1".parse().unwrap()
+        ));
+    }
+
+    #[test]
     fn strip_peer_id_removes_trailing_p2p_component() {
         let peer = PeerId::random();
         let addr: libp2p::Multiaddr = format!("/ip4/172.20.0.1/udp/9091/quic-v1/p2p/{peer}")
@@ -2423,6 +2542,83 @@ mod tests {
             &address,
         ));
         assert_eq!(configured[0].peer_id, Some(obtained));
+    }
+
+    #[test]
+    fn a_configured_peer_redial_adds_its_fallback() {
+        let mut configured = super::ConfiguredPeer::from_address(
+            "/dnsaddr/bootstrap.interfold.network".parse().unwrap(),
+        );
+        assert_eq!(
+            super::redial_addresses(&configured),
+            vec![configured.address.clone()]
+        );
+
+        let concrete: Multiaddr = "/ip4/34.192.113.100/udp/9501/quic-v1".parse().unwrap();
+        configured.fallback = Some(concrete.clone());
+        assert_eq!(
+            super::redial_addresses(&configured),
+            vec![configured.address.clone(), concrete]
+        );
+    }
+
+    #[test]
+    fn admission_through_the_configured_address_sets_the_fallback() {
+        let peer = PeerId::random();
+        let dnsaddr: Multiaddr = "/dnsaddr/bootstrap.interfold.network".parse().unwrap();
+        let concrete: Multiaddr = "/ip4/34.192.113.100/udp/9501/quic-v1".parse().unwrap();
+        let recent = super::RecentDials::default();
+        recent.record(peer, concrete.clone());
+        let mut configured = vec![super::ConfiguredPeer::from_address(dnsaddr.clone())];
+
+        super::admit_configured_peer(&mut configured, dnsaddr, peer, &recent);
+
+        assert_eq!(configured[0].peer_id, Some(peer));
+        assert!(configured[0].identity_trusted);
+        assert_eq!(configured[0].fallback, Some(concrete));
+    }
+
+    #[test]
+    fn a_connection_refreshes_only_a_trusted_fallback() {
+        let peer = PeerId::random();
+        let moved: Multiaddr = "/ip4/34.192.113.101/udp/9501/quic-v1".parse().unwrap();
+        let recent = super::RecentDials::default();
+        recent.record(peer, moved.clone());
+        let dnsaddr: Multiaddr = "/dnsaddr/bootstrap.interfold.network".parse().unwrap();
+        let mut trusted = super::ConfiguredPeer::from_address(dnsaddr.clone());
+        trusted.peer_id = Some(peer);
+        trusted.identity_trusted = true;
+        trusted.fallback = Some("/ip4/34.192.113.100/udp/9501/quic-v1".parse().unwrap());
+        let mut rebound = super::ConfiguredPeer::from_address(dnsaddr);
+        rebound.peer_id = Some(peer);
+        let mut configured = vec![trusted, rebound];
+
+        super::refresh_configured_fallbacks(&mut configured, &peer, &recent);
+
+        assert_eq!(configured[0].fallback, Some(moved));
+        assert_eq!(configured[1].fallback, None);
+    }
+
+    #[test]
+    fn a_rebind_drops_the_fallback() {
+        let expected = PeerId::random();
+        let obtained = PeerId::random();
+        let dnsaddr: Multiaddr = "/dnsaddr/bootstrap.interfold.network".parse().unwrap();
+        let mut configured = vec![super::ConfiguredPeer::from_address(dnsaddr)];
+        configured[0].peer_id = Some(expected);
+        configured[0].fallback = Some("/ip4/34.192.113.100/udp/9501/quic-v1".parse().unwrap());
+
+        // Any address matches a `/dnsaddr` entry, also one that another peer supplied.
+        assert!(super::rebind_configured_peer(
+            &mut configured,
+            &expected,
+            obtained,
+            &"/ip4/192.0.2.9/udp/9091/quic-v1".parse().unwrap(),
+        ));
+
+        assert_eq!(configured[0].peer_id, Some(obtained));
+        assert!(!configured[0].identity_trusted);
+        assert_eq!(configured[0].fallback, None);
     }
 
     #[test]

@@ -34,12 +34,12 @@ struct TestNode {
 
 impl TestNode {
     fn new() -> anyhow::Result<Self> {
-        let mut interface = super::Libp2pNetInterface::new(
-            super::Libp2pKeypair::generate(),
-            vec![],
-            None,
-            super::NetworkPolicy::local_unrestricted(),
-        )?;
+        Self::with_policy(super::NetworkPolicy::local_unrestricted())
+    }
+
+    fn with_policy(policy: super::NetworkPolicy) -> anyhow::Result<Self> {
+        let mut interface =
+            super::Libp2pNetInterface::new(super::Libp2pKeypair::generate(), vec![], None, policy)?;
         let topic = interface.topic.clone();
         interface
             .swarm
@@ -80,6 +80,14 @@ impl TestNode {
         &mut self,
         event: super::SwarmEvent<super::NodeBehaviourEvent>,
     ) -> anyhow::Result<()> {
+        self.process_with_configured(&mut [], event).await
+    }
+
+    async fn process_with_configured(
+        &mut self,
+        configured: &mut [super::ConfiguredPeer],
+        event: super::SwarmEvent<super::NodeBehaviourEvent>,
+    ) -> anyhow::Result<()> {
         super::process_swarm_event(
             &mut self.interface.swarm,
             &self.interface.event_tx,
@@ -88,11 +96,12 @@ impl TestNode {
             &mut self.peer_failures,
             &mut self.admission,
             &mut self.peer_addresses,
-            &mut [],
+            configured,
             &mut self.replicas,
             &mut self.seen_gossip,
             &mut self.dht_puts,
             &self.interface.network,
+            &self.interface.recent_dials,
             &self.interface.status,
             event,
         )
@@ -263,6 +272,96 @@ impl<T: Transport + Unpin> Transport for AddressTestTransport<T> {
     }
 }
 
+/// A node does not dial a loopback address on its own port, which another node can advertise for a
+/// peer: the dial would reach this node and fail the whole dial to that peer. libp2p refuses only an
+/// exact listen address, and a routing-table address carries the peer ID.
+#[tokio::test]
+async fn a_node_does_not_dial_a_loopback_address_on_its_own_port() -> anyhow::Result<()> {
+    let mut node = TestNode::new()?;
+    let (_, own_address) = node.listen().await?;
+    let peer = PeerId::random();
+
+    node.interface.swarm.dial(
+        libp2p::swarm::dial_opts::DialOpts::peer_id(peer)
+            .addresses(vec![
+                own_address.with(libp2p::multiaddr::Protocol::P2p(peer))
+            ])
+            .build(),
+    )?;
+
+    loop {
+        match node.next_event().await? {
+            super::SwarmEvent::OutgoingConnectionError { error, .. } => {
+                assert!(
+                    format!("{error:?}").contains("MultiaddrNotSupported"),
+                    "the dial reached this node: {error:?}"
+                );
+                return Ok(());
+            }
+            super::SwarmEvent::ConnectionEstablished { .. } => {
+                anyhow::bail!("the node dialed its own port")
+            }
+            _ => {}
+        }
+    }
+}
+
+/// A peer-ID mismatch at a configured peer's fallback drops the fallback only. The configured
+/// address still names the peer, so an unpinned `/dnsaddr` peer is neither quarantined nor rebound
+/// to the identity that answered at an address this node kept.
+#[tokio::test]
+async fn a_mismatch_at_a_configured_fallback_drops_it() -> anyhow::Result<()> {
+    let mut node = TestNode::new()?;
+    let peer = PeerId::random();
+    let fallback: Multiaddr = "/ip4/192.0.2.7/udp/9501/quic-v1".parse()?;
+    let mut configured = [super::ConfiguredPeer::from_address(
+        "/dnsaddr/bootstrap.interfold.network".parse()?,
+    )];
+    configured[0].peer_id = Some(peer);
+    configured[0].identity_trusted = true;
+    configured[0].fallback = Some(fallback.clone());
+    let other: Multiaddr = "/ip4/192.0.2.8/udp/9501/quic-v1".parse()?;
+    let kademlia = &mut node.interface.swarm.behaviour_mut().kademlia;
+    kademlia.add_address(&peer, fallback.clone());
+    kademlia.add_address(&peer, other.clone());
+
+    node.process_with_configured(
+        &mut configured,
+        super::SwarmEvent::OutgoingConnectionError {
+            peer_id: Some(peer),
+            connection_id: ConnectionId::new_unchecked(1),
+            error: libp2p::swarm::DialError::WrongPeerId {
+                obtained: PeerId::random(),
+                address: fallback.with(libp2p::multiaddr::Protocol::P2p(peer)),
+            },
+        },
+    )
+    .await?;
+
+    assert_eq!(configured[0].fallback, None);
+    assert_eq!(configured[0].peer_id, Some(peer));
+    assert!(configured[0].identity_trusted);
+    assert!(!node.peer_failures.is_identity_quarantined(&peer));
+    let routed: Vec<Multiaddr> = node
+        .interface
+        .swarm
+        .behaviour_mut()
+        .kademlia
+        .kbucket(peer)
+        .into_iter()
+        .flat_map(|bucket| {
+            bucket
+                .iter()
+                .filter(|entry| entry.node.key.preimage() == &peer)
+                .flat_map(|entry| entry.node.value.iter().cloned().collect::<Vec<_>>())
+                .collect::<Vec<_>>()
+        })
+        .map(super::strip_peer_id)
+        .collect();
+    assert_eq!(routed, vec![other]);
+    Ok(())
+}
+
 #[tokio::test]
 async fn identify_reconnections_dial_only_filtered_addresses() -> anyhow::Result<()> {
     let mut node = TestNode::new()?;
@@ -288,7 +387,10 @@ async fn identify_reconnections_dial_only_filtered_addresses() -> anyhow::Result
         .gossipsub
         .subscribe(&node.interface.topic)?;
     node.listen().await?;
-    assert!(super::should_filter_loopback(&node.interface.swarm));
+    assert!(super::should_filter_loopback(
+        &node.interface.swarm,
+        &node.interface.network
+    ));
     let (old_listener, loopback) = remote.listen().await?;
     let public = with_ip(loopback.clone(), Ipv4Addr::new(203, 0, 113, 2));
     remote.interface.swarm.add_external_address(public.clone());

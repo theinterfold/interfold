@@ -147,6 +147,12 @@ impl NetworkProfile {
         &self.bootstrap_peers
     }
 
+    /// Whether this is a public network: mainnet or Sepolia. Their nodes never reach each other
+    /// through a loopback address. Local and custom networks can run several nodes on one host.
+    pub fn is_public(&self) -> bool {
+        matches!(self.name.as_str(), "mainnet" | "sepolia")
+    }
+
     /// Use explicit peers when present. Otherwise, use the profile bootstrap peers.
     pub fn resolve_peers(&self, peers: Vec<String>) -> Result<Vec<String>> {
         if peers.is_empty() {
@@ -308,6 +314,13 @@ mod tests {
                 .name(),
             "sepolia"
         );
+    }
+
+    #[test]
+    fn only_mainnet_and_sepolia_are_public() {
+        assert!(NetworkProfile::mainnet().is_public());
+        assert!(NetworkProfile::sepolia().is_public());
+        assert!(!NetworkProfile::local().is_public());
     }
 
     #[test]
