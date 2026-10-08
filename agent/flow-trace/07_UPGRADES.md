@@ -54,7 +54,8 @@ dependency and Docker argument rules.
 Circuit installation checks every pair in `crates/zk-prover/supported-configurations.json` before it
 replaces the installed circuits and version record. Local and CI callers can explicitly request a
 nonempty subset. `noir setup --circuits-archive` accepts repeated `--circuits-configuration` options
-for this purpose. An archive cannot select its own required configuration set.
+for this purpose. An archive cannot select its own required configuration set. A local archive must
+have the binary's release pin unless `--allow-unpinned-archive` is set.
 
 If circuit replacement or the version update fails, the installer attempts rollback and returns the
 original installation error. It logs each failed rollback rename with its source and target paths.

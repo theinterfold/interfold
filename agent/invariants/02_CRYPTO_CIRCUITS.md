@@ -94,7 +94,8 @@ every section.
   logs its path for recovery. — `crates/zk-prover/src/backend/download.rs`
 - Archive pins ship with the binary; neither the archive nor its download endpoint supplies the
   expected digest at runtime. The 0.18.0 pin comes from the published GitHub asset digest. Local
-  archive installation trusts the operator's file and does not require a release pin. Release
+  archive installation requires the same pin unless the operator passes `--allow-unpinned-archive`,
+  as CI does for a candidate build; a missing pin then fails closed too. Release
   packaging supplies `E3_CIRCUITS_ARCHIVE_SHA256` before binary and ciphernode image compilation.
   `build.rs` validates the digest, and `ZkConfig::default` binds it to the crate version. Other pins
   remain in `versions.json`. The workflow retains the same archive bytes for publication.

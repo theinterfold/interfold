@@ -1425,7 +1425,7 @@ jobs:
         run: |
           tar -C "$GITHUB_WORKSPACE/dist" -czf "$RUNNER_TEMP/circuits-candidate.tar.gz" circuits/
           interfold noir setup --circuits-archive "$RUNNER_TEMP/circuits-candidate.tar.gz" \
-            --circuits-configuration insecure-512/minimum
+            --circuits-configuration insecure-512/minimum --allow-unpinned-archive
           interfold noir setup
 
       - name: Run Playwright tests
@@ -2116,7 +2116,7 @@ jobs:
         run: |
           tar -C "$GITHUB_WORKSPACE/dist" -czf "$RUNNER_TEMP/circuits-candidate.tar.gz" circuits/
           interfold noir setup --circuits-archive "$RUNNER_TEMP/circuits-candidate.tar.gz" \
-            --circuits-configuration insecure-512/minimum
+            --circuits-configuration insecure-512/minimum --allow-unpinned-archive
           interfold noir setup
 
       - name: Verify downloaded artifacts
