@@ -20,7 +20,6 @@ use std::{
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
-use tracing::warn;
 
 /// IDs that one boot of a node reserves. A boot that issues more could repeat some of them in the
 /// next boot; at any realistic rate that takes years.
@@ -67,14 +66,19 @@ impl Display for CorrelationId {
 }
 
 /// Keep this process's correlation IDs above every ID that an earlier boot of the node issued:
-/// raise the next ID to the reservation recorded at `path`, then record a reservation above the IDs
-/// that this boot can issue. A file that cannot be parsed leaves the clock seed in place.
+/// raise the next ID to the reservation recorded at `path`, then durably record a reservation above
+/// the IDs that this boot can issue. A node without the file, such as one that starts from reset
+/// state, keeps the clock seed. A file that is not a number stops the start: guessing could repeat
+/// IDs that the event log replays.
 pub fn reserve_correlation_ids(path: &Path) -> anyhow::Result<()> {
     let recorded = match fs::read_to_string(path) {
-        Ok(text) => text.trim().parse::<usize>().unwrap_or_else(|_| {
-            warn!(path = %path.display(), "Ignoring an unreadable correlation ID reservation");
-            0
-        }),
+        Ok(text) => text.trim().parse::<usize>().with_context(|| {
+            format!(
+                "{} does not hold a correlation ID reservation; restore it, or remove it together \
+                 with the event log by resetting the node state",
+                path.display()
+            )
+        })?,
         Err(error) if error.kind() == io::ErrorKind::NotFound => 0,
         Err(error) => {
             return Err(error).with_context(|| format!("failed to read {}", path.display()))
@@ -84,11 +88,21 @@ pub fn reserve_correlation_ids(path: &Path) -> anyhow::Result<()> {
         .fetch_max(recorded, Ordering::SeqCst)
         .max(recorded);
     let reservation = next.saturating_add(CORRELATION_ID_RESERVATION);
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
     let staged = path.with_extension("staged");
     fs::write(&staged, reservation.to_string())
         .with_context(|| format!("failed to write {}", staged.display()))?;
     fs::File::open(&staged)?.sync_all()?;
     fs::rename(&staged, path).with_context(|| format!("failed to replace {}", path.display()))?;
+    // The rename is durable only once the directory entry is.
+    #[cfg(unix)]
+    fs::File::open(parent)?
+        .sync_all()
+        .with_context(|| format!("failed to sync {}", parent.display()))?;
     Ok(())
 }
 
@@ -134,5 +148,25 @@ mod tests {
         let recorded: usize = fs::read_to_string(&path).unwrap().trim().parse().unwrap();
         assert!(recorded >= reserved + CORRELATION_ID_RESERVATION);
         fs::remove_file(&path).unwrap();
+    }
+
+    /// A fresh node writes its first reservation into a folder that does not exist yet, and a
+    /// reservation that is not a number stops the start instead of being ignored.
+    #[test]
+    fn a_fresh_folder_gets_a_reservation_and_a_broken_one_stops_the_start() {
+        let dir = std::env::temp_dir().join(format!(
+            "correlation-ids-{}-{}",
+            std::process::id(),
+            CorrelationId::new().id
+        ));
+        let path = dir.join("node").join("correlation-ids");
+
+        reserve_correlation_ids(&path).unwrap();
+        let recorded: usize = fs::read_to_string(&path).unwrap().trim().parse().unwrap();
+        assert!(recorded > CorrelationId::new().id);
+
+        fs::write(&path, "not a number").unwrap();
+        assert!(reserve_correlation_ids(&path).is_err());
+        fs::remove_dir_all(&dir).unwrap();
     }
 }
