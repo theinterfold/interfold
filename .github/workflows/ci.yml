@@ -1787,10 +1787,6 @@ jobs:
       - name: Build the React package
         run: pnpm react:build
 
-      - name: Test the SDK
-        if: needs.detect_changes.outputs.sdk_tests == 'true'
-        uses: ./.github/actions/sdk-tests
-
       - name: Upload SDK artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -1808,6 +1804,41 @@ jobs:
             circuits/bin/threshold/target
           retention-days: 1
           if-no-files-found: error
+
+  # The SDK tests read only the outputs that build_sdk uploads: the SDK, WASM and contract builds and
+  # the threshold circuits. In their own job, they no longer hold back the jobs that download them.
+  sdk_tests:
+    needs: [detect_changes, build_sdk]
+    if: needs.detect_changes.outputs.sdk_tests == 'true'
+    timeout-minutes: 30
+    runs-on:
+      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
+      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
+      'sdk_tests') || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download SDK artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: sdk-artifacts
+          path: ./
+
+      - name: Test the SDK
+        uses: ./.github/actions/sdk-tests
 
   build_crisp_sdk:
     needs: [detect_changes]
