@@ -1041,9 +1041,8 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Cache Rust dependencies
-        uses: ./.github/actions/cache-dependencies
-
+      # No Rust cache: the release build below reuses only crate sources from the debug builds in the
+      # root target cache, and restoring that cache took 70 seconds.
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
