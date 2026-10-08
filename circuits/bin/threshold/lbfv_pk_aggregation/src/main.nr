@@ -6,7 +6,7 @@
 
 use lib::configs::default::{H, N_PARTIES};
 use lib::configs::default::threshold::{
-    GADGET_DIM, L, LBFV_CRS_GADGET_ROWS, N, PK_AGGREGATION_BIT_PK, PK_AGGREGATION_CONFIGS,
+    GADGET_DIM, L, LBFV_CRS_ROW_COMMITMENTS, N, PK_AGGREGATION_BIT_PK, PK_AGGREGATION_CONFIGS,
     PK_GENERATION_BIT_PK,
 };
 use lib::core::threshold::lbfv_pk_aggregation::LbfvPkAggregation;
@@ -38,10 +38,9 @@ fn main(
         },
         row_index,
     );
-    let crs_row = LBFV_CRS_GADGET_ROWS[row_index];
     let circuit: LbfvPkAggregation<N, H, L, PK_AGGREGATION_BIT_PK> = LbfvPkAggregation::new(
         PK_AGGREGATION_CONFIGS,
-        crs_row,
+        LBFV_CRS_ROW_COMMITMENTS[row_index],
         expected_pk_generation_commitments,
         pk0,
         pk0_agg,

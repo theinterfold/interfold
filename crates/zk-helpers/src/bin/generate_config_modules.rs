@@ -29,6 +29,7 @@ use e3_fhe_params::{
 };
 use e3_polynomial::CrtPolynomial;
 use e3_zk_helpers::ciphernodes_committee::CiphernodesCommitteeSize;
+use e3_zk_helpers::circuits::commitments::compute_pk_aggregation_pk1_commitment;
 use e3_zk_helpers::circuits::dkg::pk::computation::{Bits as DkgPkBits, Configs as DkgPkConfigs};
 use e3_zk_helpers::circuits::dkg::share_encryption::circuit::ShareEncryptionCircuitData;
 use e3_zk_helpers::circuits::dkg::share_encryption::Configs as ShareEncryptionConfigs;
@@ -248,18 +249,29 @@ fn crp_block(threshold_params: &std::sync::Arc<fhe::bfv::BfvParameters>) -> Resu
 /// The outer vector is the l-BFV key-switching slot. Each row contains the CRT limbs of one
 /// concrete polynomial. The values must remain identical to the `CommonRandomPolyVec` used by the
 /// runtime l-BFV key path.
-fn lbfv_rows_block(
+fn lbfv_crt_rows(
     threshold_params: &std::sync::Arc<fhe::bfv::BfvParameters>,
     seed: [u8; 32],
-) -> Result<String> {
-    let rows = fhe::bfv::CommonRandomPolyVec::from_seed(threshold_params, seed)?
+) -> Result<Vec<CrtPolynomial>> {
+    fhe::bfv::CommonRandomPolyVec::from_seed(threshold_params, seed)?
         .to_polys()
         .into_iter()
         .map(|poly| {
             let mut row = CrtPolynomial::from_fhe_polynomial(&poly);
             row.reverse();
             row.center(threshold_params.moduli())?;
+            Ok(row)
+        })
+        .collect()
+}
 
+fn lbfv_rows_block(
+    threshold_params: &std::sync::Arc<fhe::bfv::BfvParameters>,
+    seed: [u8; 32],
+) -> Result<String> {
+    let rows = lbfv_crt_rows(threshold_params, seed)?
+        .into_iter()
+        .map(|row| {
             let limbs = row
                 .limbs
                 .iter()
@@ -308,6 +320,16 @@ fn render_lbfv(preset: BfvPreset) -> Result<Option<(String, String, String)>> {
     let crs_rows = lbfv_rows_block(&threshold_params, crs_seed)?;
     let urs_rows = lbfv_rows_block(&threshold_params, urs_seed)?;
     let gadget_scalars = lbfv_gadget_scalars(&threshold_params)?;
+    // `lbfv_pk_aggregation` uses these instead of hashing the fixed CRS row in-circuit.
+    let pk_bit = PkAggregationConfigs::compute(preset, &())
+        .with_context(|| format!("PkAggregationConfigs::compute({preset:?}) failed"))?
+        .bits
+        .pk_bit;
+    let crs_row_commitments = lbfv_crt_rows(&threshold_params, crs_seed)?
+        .iter()
+        .map(|row| compute_pk_aggregation_pk1_commitment(row, pk_bit).to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
     let slug = preset.noir_config_module();
     let header = format!(
         "{LICENSE}\nuse crate::math::polynomial::Polynomial;\nuse super::super::threshold::{{GADGET_DIM, L, N}};\n"
@@ -319,7 +341,7 @@ fn render_lbfv(preset: BfvPreset) -> Result<Option<(String, String, String)>> {
         "{header}\npub global LBFV_URS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = {urs_rows};\n"
     );
     let module = format!(
-        "{LICENSE}\nuse super::threshold::GADGET_DIM;\n\npub mod crs;\npub mod urs;\n\npub use crate::configs::{slug}::lbfv::crs::LBFV_CRS_GADGET_ROWS;\npub use crate::configs::{slug}::lbfv::urs::LBFV_URS_GADGET_ROWS;\n\npub global G_GADGET_ROWS: [Field; GADGET_DIM] = {gadget_scalars};\n"
+        "{LICENSE}\nuse super::threshold::GADGET_DIM;\n\npub mod crs;\npub mod urs;\n\npub use crate::configs::{slug}::lbfv::crs::LBFV_CRS_GADGET_ROWS;\npub use crate::configs::{slug}::lbfv::urs::LBFV_URS_GADGET_ROWS;\n\npub global G_GADGET_ROWS: [Field; GADGET_DIM] = {gadget_scalars};\n\n/// `commit(LBFV_CRS_GADGET_ROWS[row])` under `DS_PK_AGGREGATION`, the `pk1` half of C5's output.\npub global LBFV_CRS_ROW_COMMITMENTS: [Field; GADGET_DIM] = [{crs_row_commitments}];\n"
     );
 
     Ok(Some((module, crs, urs)))
@@ -491,7 +513,7 @@ pub global LBFV_PK_GENERATION_R2_BOUNDS: [Field; L] = [{}];",
         .collect::<Vec<_>>()
         .join(", ");
     let lbfv_rows = if lbfv_enabled {
-        "pub use super::lbfv::{G_GADGET_ROWS, LBFV_CRS_GADGET_ROWS, LBFV_URS_GADGET_ROWS};"
+        "pub use super::lbfv::{\n    G_GADGET_ROWS, LBFV_CRS_GADGET_ROWS, LBFV_CRS_ROW_COMMITMENTS, LBFV_URS_GADGET_ROWS,\n};"
             .to_string()
     } else {
         let rows = std::iter::repeat("CRP")
@@ -499,8 +521,12 @@ pub global LBFV_PK_GENERATION_R2_BOUNDS: [Field; L] = [{}];",
             .collect::<Vec<_>>()
             .join(", ");
         format!(
-            "pub global LBFV_CRS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{rows}];\npub global LBFV_URS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{rows}];\npub global G_GADGET_ROWS: [Field; GADGET_DIM] = [{}];",
+            "pub global LBFV_CRS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{rows}];\npub global LBFV_URS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{rows}];\npub global G_GADGET_ROWS: [Field; GADGET_DIM] = [{}];\n// No l-BFV rows on this preset; `lbfv_pk_aggregation` is never built for it.\npub global LBFV_CRS_ROW_COMMITMENTS: [Field; GADGET_DIM] = [{}];",
             std::iter::repeat("1")
+                .take(pkgen.l as usize)
+                .collect::<Vec<_>>()
+                .join(", "),
+            std::iter::repeat("0")
                 .take(pkgen.l as usize)
                 .collect::<Vec<_>>()
                 .join(", ")

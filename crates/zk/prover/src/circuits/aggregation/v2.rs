@@ -343,9 +343,6 @@ struct NodeFoldV2Witness {
     node_fold_vk: Vec<String>,
     node_fold_proof: Vec<String>,
     node_fold_public: Vec<String>,
-    c1_vk: Vec<String>,
-    c1_proof: Vec<String>,
-    c1_public: Vec<String>,
     generation_vk: Vec<String>,
     generation_proof: Vec<String>,
     generation_public: Vec<String>,
@@ -389,6 +386,13 @@ fn prove_node_dkg_fold_v2_with_shape(
         C1_PUBLIC_FIELDS,
         "V2 legacy C1",
     )?;
+    // The circuit takes C1's sk root from the legacy fold, which exports it just before its VK
+    // manifest. Check the supplied C1 against it here so a mismatch fails before proving.
+    if c1_public.first() != node_fold_public.get(node_fields - 2) {
+        return Err(ZkError::InvalidInput(
+            "V2 legacy C1 sk root does not match the legacy node fold".into(),
+        ));
+    }
     let c1_vk = load_vk(
         prover,
         CircuitVariant::Recursive,
@@ -412,9 +416,6 @@ fn prove_node_dkg_fold_v2_with_shape(
         node_fold_vk: node_fold_vk.verification_key,
         node_fold_proof: proof_fields(legacy_node_fold_proof)?,
         node_fold_public,
-        c1_vk: c1_vk.verification_key,
-        c1_proof: proof_fields(c1_proof)?,
-        c1_public,
         generation_vk: generation_vk.verification_key,
         generation_proof: proof_fields(generation_proof)?,
         generation_public,
@@ -859,9 +860,6 @@ struct DkgAggregationV2Witness {
     nodes_fold_vk: Vec<String>,
     nodes_fold_proof: Vec<String>,
     nodes_fold_public: Vec<String>,
-    c5_vk: Vec<String>,
-    c5_proof: Vec<String>,
-    c5_public: Vec<String>,
     nodes_fold_key_hash: String,
     c5_key_hash: String,
     party_ids: Vec<String>,
@@ -996,7 +994,9 @@ pub fn prove_dkg_aggregation_v2(
         nodes_fields,
         "V2 nodes fold",
     )?;
-    let c5_public = checked_public_fields(
+    // The circuit no longer verifies C5; it only pins C5's VK hash as a public input. Keep the
+    // shape check so a wrong proof still fails here rather than silently.
+    checked_public_fields(
         c5_proof,
         CircuitName::PkAggregation,
         c5_public_fields(expected.h),
@@ -1043,9 +1043,6 @@ pub fn prove_dkg_aggregation_v2(
         nodes_fold_vk: nodes_vk.verification_key,
         nodes_fold_proof: proof_fields(nodes_fold_proof)?,
         nodes_fold_public,
-        c5_vk: c5_vk.verification_key,
-        c5_proof: proof_fields(c5_proof)?,
-        c5_public,
         nodes_fold_key_hash: nodes_vk.key_hash,
         c5_key_hash: c5_vk.key_hash,
         party_ids: party_ids.iter().copied().map(u64_to_field_hex).collect(),
