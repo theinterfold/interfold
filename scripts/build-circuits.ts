@@ -56,6 +56,15 @@ export function pinnedToolchain(rootDir: string): { nargo: string; bb: string } 
 }
 
 /**
+ * Whether a tool's `--version` output reports exactly `version`. Build metadata after `+` (nargo's
+ * commit) is the same version; a prerelease suffix after `-` or another component is not.
+ */
+export function reportsToolVersion(output: string, version: string): boolean {
+  const escaped = version.replace(/[.+]/g, '\\$&')
+  return new RegExp(`(^|[\\s=])v?${escaped}(\\+\\S*)?\\r?$`, 'm').test(output)
+}
+
+/**
  * Reduce Cargo.lock to the external crate pins that the circuit generators compile against.
  *
  * Circuit output comes from the Noir sources and from the Rust generators that write the C1/C2
@@ -1055,7 +1064,7 @@ library ActiveCryptoConfig {
     } catch {
       throw new Error(`${name} is not installed or not in PATH`)
     }
-    if (!new RegExp(`(^|[^0-9A-Za-z.])v?${version.replace(/[.+]/g, '\\$&')}($|[^0-9A-Za-z.])`, 'm').test(output)) {
+    if (!reportsToolVersion(output, version)) {
       throw new Error(`${name} must be version ${version}, the pinned toolchain; \`${cmd}\` printed: ${output.trim()}`)
     }
   }

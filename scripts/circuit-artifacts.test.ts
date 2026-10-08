@@ -12,7 +12,13 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { AbiCoder, id, keccak256 } from 'ethers'
 import { BFV_PARAMS } from '../packages/interfold-contracts/scripts/protocol/constants'
-import { committeeBoundUpdates, NoirCircuitBuilder, normalizeCargoLockForCircuitHash, stripRustTestModules } from './build-circuits'
+import {
+  committeeBoundUpdates,
+  NoirCircuitBuilder,
+  normalizeCargoLockForCircuitHash,
+  reportsToolVersion,
+  stripRustTestModules,
+} from './build-circuits'
 import { isPresetCommitteeSupported } from './circuit-constants'
 import {
   findArtifactRevision,
@@ -231,6 +237,20 @@ test('every pair regenerates all of its C1/C2 bounds, array bounds included', ()
         assert.ok(config.includes(declaration.replace(/\s+/g, '')), `${preset}/${committee} ${path}: ${declaration}`)
       }
     }
+  }
+})
+
+test('the circuit build accepts only the pinned nargo and bb versions', () => {
+  const nargo = (version: string) =>
+    `nargo version = ${version}\nnoirc version = ${version}+40d6574f851d926f93e0c3a271bac3e6e82ac905\n(git version hash: 40d6574f, is dirty: false)\n`
+  assert.ok(reportsToolVersion(nargo('1.0.0-beta.26'), '1.0.0-beta.26'))
+  assert.ok(reportsToolVersion('5.2.0\n', '5.2.0'))
+  assert.ok(reportsToolVersion('v5.2.0\r\n', '5.2.0'))
+  for (const other of ['1.0.0-beta.26-dev', '1.0.0-beta.260', '1.0.0-beta.25']) {
+    assert.ok(!reportsToolVersion(nargo(other), '1.0.0-beta.26'), other)
+  }
+  for (const other of ['5.2.0-nightly', '5.2.01', '15.2.0', '5.1.0']) {
+    assert.ok(!reportsToolVersion(`${other}\n`, '5.2.0'), other)
   }
 })
 
