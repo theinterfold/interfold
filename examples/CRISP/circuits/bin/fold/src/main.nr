@@ -13,7 +13,7 @@ use interfold_lib::math::commitments::compute_vk_hash;
 pub global CRISP_FOLD_EXPECTED_KEY_HASH_INSECURE: Field =
     0x0fb783a0f9843410cc8252d269ec225a349870415444cbb2263284af2819e1cc;
 pub global CRISP_FOLD_EXPECTED_KEY_HASH_SECURE: Field =
-    0x21762277d29d63c5947d473c545e2caaf26441747f77923558c1f60495037448;
+    0x196e81843c72ecfb887e91c1d4243ba605c244193d8e196458c0f0c173f26f58;
 
 fn main(
     // User Data Encryption Section.

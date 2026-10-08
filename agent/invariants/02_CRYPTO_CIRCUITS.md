@@ -368,15 +368,14 @@ every section.
   not create (the parent's and the ballot's ciphertexts) and keep plain `pack`: `verify_slot_update`
   checks a relation that is linear and aligned coefficient by coefficient across ciphertexts packed
   with the same `BIT_CT`, so an opening that keeps the carriers proves the same relation for the
-  committed coefficients. With the checked helper on the three commitments, the secure `crisp`
-  circuit measured 2,520,034 gates, above the browser ceiling. The exemption holds only for that
-  shape of relation, and only while every commitment in it has a bounded opening that something else
-  fixes: the ballot through the range checks of `user_data_encryption_ct0/ct1`, and the parent and
-  the published result because `chain_head_per_slot` takes an entry only when its bytes reproduce
-  its commitment and it extends the selected head. A check at one point over those commitments, or a
-  Secure Process that follows a parent by its stored commitment without its bytes, needs injective
-  openings: chained masks could then carry a coefficient past the radix and shift a plaintext
-  coefficient by a carry. — `flow-trace/04`
+  committed coefficients. The exemption holds only for that shape of relation, and only while every
+  commitment in it has a bounded opening that something else fixes: the ballot through the range
+  checks of `user_data_encryption_ct0/ct1`, and the parent and the published result because
+  `chain_head_per_slot` takes an entry only when its bytes reproduce its commitment and it extends
+  the selected head. A check at one point over those commitments, or a Secure Process that follows a
+  parent by its stored commitment without its bytes, needs injective openings: chained masks could
+  then carry a coefficient past the radix and shift a plaintext coefficient by a carry. —
+  `flow-trace/04`
 - A bound that is not tight enough for the slot is no bound for this purpose. C2b's `as u64` cast
   limited coefficients to `2^64` while the slot was `radix = 2^64` with `base = 2^60`, so a digit
   could still overflow. — `flow-trace/04`

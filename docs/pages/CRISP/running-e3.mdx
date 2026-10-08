@@ -289,8 +289,9 @@ an eligible voter. The limits hold only when the census leaf holds that voting p
 
 In a `CUSTOM` round, the weight of a voter is an integer, and the division discards the remainder.
 In a census tree round, a voter with less voting power than the divisor has a weight of 0. This
-voter can cast only an empty ballot. For example, a total supply of 1,000,000,000,000 and a `t` of
-1,000,000 give a minimum divisor of 1,000,001. A holder with 1,000,000 votes then has a weight of 0.
+voter can cast only an empty ballot. For example, a total supply of 1,000,000,000,000 and the
+`secure-8192` `t` of 17,000,000 give a minimum divisor of 58,824. A holder with 58,823 votes then
+has a weight of 0.
 
 In an `ONCHAIN` round, `minVotingPower` must be at least the divisor, or `validate` reverts with
 `MinVotingPowerBelowScale`. Thus each voter that can publish an input has a weight of at least 1.

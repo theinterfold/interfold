@@ -215,13 +215,12 @@ For `secure-8192`, the threshold key uses plaintext modulus 17,000,000 and three
 (`0x0800000000db4001`, `0x0800000000d54001`, `0x0800000000cbc001`). The paired share-encryption key
 uses plaintext modulus 576460752317792257 (the largest threshold prime) and two 62-bit primes
 (`0x2000000000104001`, `0x200000000013c001`). Both use ring degree 8192 and statistical security
-parameter 45. The threshold encryption error variance is
-17723039943798878305460955570711717478400. These values bind the C1-C7 witness dimensions and the
-on-chain BFV parameter hash. C7 uses `Q_INVERSE_MOD_T = 3898177`, the inverse of the product of the
-three threshold primes modulo 17,000,000. New secure E3s use on-chain parameter-set index 2. Index 1
-retains the previous secure tuple for historical requests. C3 share encryption and user-data
-encryption use non-centered `k1` residues in `[0, t - 1]`; the Rust witness, Noir equation, and
-quotient bounds must agree.
+parameter 45. The threshold encryption error variance is 17723039943798878305460955570711717478400.
+These values bind the C1-C7 witness dimensions and the on-chain BFV parameter hash. C7 uses
+`Q_INVERSE_MOD_T = 3898177`, the inverse of the product of the three threshold primes modulo
+17,000,000. New secure E3s use on-chain parameter-set index 2. Index 1 retains the previous secure
+tuple for historical requests. C3 share encryption and user-data encryption use non-centered `k1`
+residues in `[0, t - 1]`; the Rust witness, Noir equation, and quotient bounds must agree.
 
 ```
 ThresholdKeyshare receives AllEncryptionKeysCollected
@@ -1929,9 +1928,9 @@ the round only when both records exist. Either handler can complete the activati
 records converge, and deferred checks cover slow live-handler ordering. Duplicate request and
 committee events do not reset the round, replace indexed output, or resubmit an already-matching
 Merkle root. A duplicate request whose holder discovery fails keeps the stored census and owes a
-retry. The shared Interfold contract also emits requests for other E3 programs. The CRISP
-indexer ignores those requests before it creates a round or makes a program-specific RPC call. An
-old program's historical round therefore cannot stop a fresh CRISP backfill.
+retry. The shared Interfold contract also emits requests for other E3 programs. The CRISP indexer
+ignores those requests before it creates a round or makes a program-specific RPC call. An old
+program's historical round therefore cannot stop a fresh CRISP backfill.
 
 Startup rebuilds deadline callbacks for active and expired rounds and releases an interrupted
 compute submission for retry. The compute transition is atomic, and a synchronous program-server
@@ -2218,8 +2217,8 @@ derived from the commitments accepted a mask that published its ballot alone: th
 second opening of the parent commitment that satisfied the single equation. A per-coefficient linear
 relation, aligned across three ciphertexts that pack with the same `BIT_CT`, proves the same
 statement for the committed coefficients under any opening that keeps the carriers, so the circuit
-needs no `pack_checked` digit asserts. At secure-8192 the `crisp` circuit is 1,750,827 gates and
-`crisp_onchain` 1,731,104, under the `2^21` browser ceiling.
+needs no `pack_checked` digit asserts. At secure-8192 the `crisp` circuit is 1,759,587 gates and
+`crisp_onchain` 1,739,864, under the `2^21` browser ceiling.
 
 The circuit returns `sum_ct_commitment` on every path, so the public inputs, the stored commitment,
 the ballot digest, and the published ciphertext have the same shape whichever operation ran. Telling
