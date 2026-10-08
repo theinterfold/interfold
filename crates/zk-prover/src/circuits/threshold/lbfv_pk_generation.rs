@@ -24,7 +24,7 @@ use e3_zk_helpers::threshold::pk_generation::{
     derive_lbfv_pk_generation_limb_inputs, LbfvPkGenerationCircuitData,
     LbfvPkGenerationLimbCircuit, LbfvPkGenerationLimbCircuitData, LbfvPkGenerationLimbInputs,
 };
-use e3_zk_helpers::{crt_polynomial_to_toml_json, Computation};
+use e3_zk_helpers::Computation;
 use serde::Serialize;
 use std::fs;
 

@@ -19,7 +19,6 @@ use crate::{
 };
 use e3_events::{CircuitName, CircuitVariant, Proof};
 use e3_fhe_params::{lbfv_crs_seed, lbfv_urs_seed, BfvPreset};
-use e3_zk_helpers::crt_polynomial_to_toml_json;
 use e3_zk_helpers::threshold::lbfv_proof_domain::lbfv_proof_session;
 use e3_zk_helpers::threshold::rlk_generation::{
     derive_rlk_generation_limb_inputs, RlkGenerationCircuitData, RlkGenerationLimbCircuit,

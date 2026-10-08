@@ -5,32 +5,11 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 /// Default coefficient count per C2 chunk in the compiled Noir artifacts.
-pub const DEFAULT_C2_CHUNK_SIZE: usize = 512;
+pub use e3_zk_helpers::circuits::dkg::share_computation::DEFAULT_C2_CHUNK_SIZE;
 /// Default chunk count per C2 batch in the compiled Noir artifacts.
 pub const DEFAULT_C2_CHUNKS_PER_BATCH: usize = 4;
 
-/// Coefficients per C2 chunk for a polynomial degree and committee size.
-///
-/// A C2 leaf proves every party's share of its coefficients, so its cost grows with
-/// `chunk_size * n_parties`. At degree 16384 the size is chosen so the leaves stay near 2^21
-/// gates (measured: chunk 4096 with 3 parties gives 1.29M for sk, 2.19M for e_sm), which cuts the
-/// leaf and batch count and keeps the finalizer at one or a few recursive verifications. Other
-/// degrees keep the default. Mirrored by the `SHARE_COMPUTATION_CHUNK_SIZE` expression the config
-/// generator writes into each preset's `dkg.nr`.
-pub fn c2_chunk_size(degree: usize, n_parties: usize) -> usize {
-    let size = if degree >= 16384 {
-        if n_parties <= 4 {
-            4096
-        } else if n_parties <= 12 {
-            1024
-        } else {
-            DEFAULT_C2_CHUNK_SIZE
-        }
-    } else {
-        DEFAULT_C2_CHUNK_SIZE
-    };
-    size.min(degree)
-}
+pub use e3_zk_helpers::circuits::dkg::share_computation::c2_chunk_size;
 
 // The derived layout (`chunk_count`, `chunks_per_batch`, `batch_count`) is
 // computed by `c2_chunk_layout::C2ChunkLayout` from `c2_chunk_size`.
