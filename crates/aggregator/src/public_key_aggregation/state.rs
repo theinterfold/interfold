@@ -14,6 +14,9 @@ pub struct PublicKeyAggregatorRecoveryState {
     pub pending_publication: Option<PublicKeyAggregated>,
     pub selected_roster: Option<BTreeSet<u64>>,
     pub last_ec: Option<EventContext<Sequenced>>,
+    /// This node dispatched C1 verification as the active aggregator. Every node enters
+    /// `VerifyingC1`, so after a restart only this record shows that the work is this node's.
+    pub started_as_aggregator: bool,
 }
 
 impl Default for PublicKeyAggregatorRecoveryState {
@@ -23,6 +26,7 @@ impl Default for PublicKeyAggregatorRecoveryState {
             pending_publication: None,
             selected_roster: None,
             last_ec: None,
+            started_as_aggregator: false,
         }
     }
 }
