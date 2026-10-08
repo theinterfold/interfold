@@ -40,6 +40,7 @@ fn main(
     );
     let circuit: LbfvPkAggregation<N, H, L, PK_AGGREGATION_BIT_PK> = LbfvPkAggregation::new(
         PK_AGGREGATION_CONFIGS,
+        row_index,
         LBFV_CRS_ROW_COMMITMENTS[row_index],
         expected_pk_generation_commitments,
         pk0,
