@@ -157,7 +157,7 @@ function generatedConfigDrift(generatedDir: string, committedDir: string): strin
   const committedFiles = configModuleFiles(committedDir)
   if (generatedFiles.join('\n') !== committedFiles.join('\n')) return 'file set'
 
-  const normalize = (content: string) => content.replace(/\s+/g, '').replace(/,([}\]])/g, '$1')
+  const normalize = (content: string) => content.replace(/\s+/g, '').replace(/,([}\])])/g, '$1')
   for (const file of generatedFiles) {
     if (normalize(readFileSync(join(committedDir, file), 'utf8')) !== normalize(readFileSync(join(generatedDir, file), 'utf8'))) {
       return file
