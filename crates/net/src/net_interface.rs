@@ -177,6 +177,10 @@ impl PeerConnectionFailures {
     fn quarantined_peers(&mut self) -> Vec<libp2p::PeerId> {
         let now = Instant::now();
         self.quarantined_until.retain(|_, until| *until > now);
+        // An identity marker lasts as long as the quarantine that it qualifies.
+        let quarantined = &self.quarantined_until;
+        self.identity_quarantined
+            .retain(|peer_id| quarantined.contains_key(peer_id));
         self.quarantined_until.keys().copied().collect()
     }
 }
@@ -2479,6 +2483,20 @@ mod tests {
 
         failures.connection_succeeded(&wrong_identity);
         assert!(!failures.is_identity_quarantined(&wrong_identity));
+    }
+
+    /// The periodic cleanup drops an identity marker with its expired quarantine, also for a peer
+    /// that the node never looks up again.
+    #[test]
+    fn identity_markers_expire_with_their_quarantine() {
+        let peer = PeerId::random();
+        let mut failures = super::PeerConnectionFailures::new();
+
+        failures.quarantine_identity(&peer);
+        failures.quarantined_until.insert(peer, Instant::now());
+
+        assert!(failures.quarantined_peers().is_empty());
+        assert!(failures.identity_quarantined.is_empty());
     }
 
     #[test]
