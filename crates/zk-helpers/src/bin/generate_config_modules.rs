@@ -319,22 +319,6 @@ fn lbfv_rows_block(
     Ok(format!("[\n{}\n]", rows.join(",\n")))
 }
 
-/// Serialize the fixed Garner coefficients used by the l-BFV key-switching rows.
-fn lbfv_gadget_scalars(
-    threshold_params: &std::sync::Arc<fhe::bfv::BfvParameters>,
-) -> Result<String> {
-    let rns = fhe_math::rns::RnsContext::new(threshold_params.moduli())?;
-    let values = (0..threshold_params.moduli().len())
-        .map(|index| {
-            let coefficient = rns
-                .get_garner(index)
-                .ok_or_else(|| anyhow::anyhow!("missing Garner coefficient at index {index}"))?;
-            Ok(bigint_to_field(&BigInt::from(coefficient.clone())).to_string())
-        })
-        .collect::<Result<Vec<_>>>()?;
-    Ok(format!("[{}]", values.join(", ")))
-}
-
 fn render_lbfv(preset: BfvPreset) -> Result<Option<(String, String, String)>> {
     let (Some(crs_seed), Some(urs_seed)) = (lbfv_crs_seed(preset), lbfv_urs_seed(preset)) else {
         return Ok(None);
@@ -344,7 +328,6 @@ fn render_lbfv(preset: BfvPreset) -> Result<Option<(String, String, String)>> {
         .with_context(|| format!("build_pair_for_preset({preset:?}) failed"))?;
     let crs_rows = lbfv_rows_block(&threshold_params, crs_seed)?;
     let urs_rows = lbfv_rows_block(&threshold_params, urs_seed)?;
-    let gadget_scalars = lbfv_gadget_scalars(&threshold_params)?;
     // `lbfv_pk_aggregation` uses these instead of hashing the fixed CRS row in-circuit.
     let pk_bit = PkAggregationConfigs::compute(preset, &())
         .with_context(|| format!("PkAggregationConfigs::compute({preset:?}) failed"))?
@@ -366,7 +349,7 @@ fn render_lbfv(preset: BfvPreset) -> Result<Option<(String, String, String)>> {
         "{header}\npub global LBFV_URS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = {urs_rows};\n"
     );
     let module = format!(
-        "{LICENSE}\nuse super::threshold::GADGET_DIM;\n\npub mod crs;\npub mod urs;\n\npub use crate::configs::{slug}::lbfv::crs::LBFV_CRS_GADGET_ROWS;\npub use crate::configs::{slug}::lbfv::urs::LBFV_URS_GADGET_ROWS;\n\npub global G_GADGET_ROWS: [Field; GADGET_DIM] = {gadget_scalars};\n\n/// `commit(LBFV_CRS_GADGET_ROWS[row])` under `DS_PK_AGGREGATION`, the `pk1` half of C5's output.\npub global LBFV_CRS_ROW_COMMITMENTS: [Field; GADGET_DIM] = [{crs_row_commitments}];\n"
+        "{LICENSE}\nuse super::threshold::GADGET_DIM;\n\npub mod crs;\npub mod urs;\n\npub use crate::configs::{slug}::lbfv::crs::LBFV_CRS_GADGET_ROWS;\npub use crate::configs::{slug}::lbfv::urs::LBFV_URS_GADGET_ROWS;\n\n/// `commit(LBFV_CRS_GADGET_ROWS[row])` under `DS_PK_AGGREGATION`, the `pk1` half of C5's output.\npub global LBFV_CRS_ROW_COMMITMENTS: [Field; GADGET_DIM] = [{crs_row_commitments}];\n"
     );
 
     Ok(Some((module, crs, urs)))
@@ -434,9 +417,12 @@ fn render_threshold(preset: BfvPreset) -> Result<String> {
             "USER_DATA_ENCRYPTION_CHUNKED_CT1_CONFIGS",
         ],
     );
-    let (lbfv_r1_bounds, lbfv_r2_bounds) =
-        th::pk_generation::lbfv_limb_quotient_bounds(preset, &pkgen.bounds.eek_bound)
-            .context("lbfv_limb_quotient_bounds failed")?;
+    let lbfv_r_bounds = th::pk_generation::lbfv_limb_quotient_bounds(
+        preset,
+        &pkgen.bounds.sk_bound,
+        &pkgen.bounds.eek_bound,
+    )
+    .context("lbfv_limb_quotient_bounds failed")?;
     let bit_of = |bounds: &[BigUint]| {
         bounds
             .iter()
@@ -517,19 +503,15 @@ pub global PARAMS_SMUDGING_B_ENC: Field = {};
         "pk_generation (CIRCUIT 1 - PUBLIC KEY THRESHOLD BFV)",
         &render_globals(&[&pkgen_globals]),
     );
-    // The l-BFV public-key limb still checks the unreduced relation (`r1` of length 2N - 1, the
-    // cyclotomic quotient `r2`), so it carries its own quotient bounds rather than C1's.
+    // The l-BFV public-key limb checks the reduced relation for one limb, so its quotient `r`
+    // has `N` coefficients and its own per-limb bound.
     let lbfv_pk_section = section(
         "lbfv_pk_generation_limb (l-BFV PUBLIC KEY LIMB)",
         &format!(
-            "pub global LBFV_PK_GENERATION_BIT_R1: u32 = {};
-pub global LBFV_PK_GENERATION_BIT_R2: u32 = {};
-pub global LBFV_PK_GENERATION_R1_BOUNDS: [Field; L] = [{}];
-pub global LBFV_PK_GENERATION_R2_BOUNDS: [Field; L] = [{}];",
-            bit_of(&lbfv_r1_bounds),
-            bit_of(&lbfv_r2_bounds),
-            join_biguint(&lbfv_r1_bounds),
-            join_biguint(&lbfv_r2_bounds),
+            "pub global LBFV_PK_GENERATION_BIT_R: u32 = {};
+pub global LBFV_PK_GENERATION_R_BOUNDS: [Field; L] = [{}];",
+            bit_of(&lbfv_r_bounds),
+            join_biguint(&lbfv_r_bounds),
         ),
     );
 
@@ -538,7 +520,7 @@ pub global LBFV_PK_GENERATION_R2_BOUNDS: [Field; L] = [{}];",
         .collect::<Vec<_>>()
         .join(", ");
     let lbfv_rows = if lbfv_enabled {
-        "pub use super::lbfv::{\n    G_GADGET_ROWS, LBFV_CRS_GADGET_ROWS, LBFV_CRS_ROW_COMMITMENTS, LBFV_URS_GADGET_ROWS,\n};"
+        "pub use super::lbfv::{\n    LBFV_CRS_GADGET_ROWS, LBFV_CRS_ROW_COMMITMENTS, LBFV_URS_GADGET_ROWS,\n};"
             .to_string()
     } else {
         let rows = std::iter::repeat("CRP")
@@ -546,11 +528,7 @@ pub global LBFV_PK_GENERATION_R2_BOUNDS: [Field; L] = [{}];",
             .collect::<Vec<_>>()
             .join(", ");
         format!(
-            "pub global LBFV_CRS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{rows}];\npub global LBFV_URS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{rows}];\npub global G_GADGET_ROWS: [Field; GADGET_DIM] = [{}];\n// No l-BFV rows on this preset; `lbfv_pk_aggregation` is never built for it.\npub global LBFV_CRS_ROW_COMMITMENTS: [Field; GADGET_DIM] = [{}];",
-            std::iter::repeat("1")
-                .take(pkgen.l as usize)
-                .collect::<Vec<_>>()
-                .join(", "),
+            "pub global LBFV_CRS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{rows}];\npub global LBFV_URS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{rows}];\n// No l-BFV rows on this preset; `lbfv_pk_aggregation` is never built for it.\npub global LBFV_CRS_ROW_COMMITMENTS: [Field; GADGET_DIM] = [{}];",
             std::iter::repeat("0")
                 .take(pkgen.l as usize)
                 .collect::<Vec<_>>()
@@ -568,57 +546,45 @@ pub global LBFV_PK_GENERATION_R2_BOUNDS: [Field; L] = [{}];",
 pub global RLK_GENERATION_BIT_SK: u32 = {};
 pub global RLK_GENERATION_BIT_E0: u32 = {};
 pub global RLK_GENERATION_BIT_E2: u32 = {};
-pub global RLK_GENERATION_BIT_R1_D0: u32 = {};
-pub global RLK_GENERATION_BIT_R2_D0: u32 = {};
-pub global RLK_GENERATION_BIT_R1_D2: u32 = {};
-pub global RLK_GENERATION_BIT_R2_D2: u32 = {};
+pub global RLK_GENERATION_BIT_RD0: u32 = {};
+pub global RLK_GENERATION_BIT_RD2: u32 = {};
 pub global RLK_GENERATION_BIT_D: u32 = {};
 
 pub global RLK_GENERATION_R_BOUND: Field = {};
 pub global RLK_GENERATION_SK_BOUND: Field = {};
 pub global RLK_GENERATION_E0_BOUND: Field = {};
 pub global RLK_GENERATION_E2_BOUND: Field = {};
-pub global RLK_GENERATION_R1_D0_BOUNDS: [Field; L] = [{}];
-pub global RLK_GENERATION_R2_D0_BOUNDS: [Field; L] = [{}];
-pub global RLK_GENERATION_R1_D2_BOUNDS: [Field; L] = [{}];
-pub global RLK_GENERATION_R2_D2_BOUNDS: [Field; L] = [{}];",
+pub global RLK_GENERATION_RD0_BOUNDS: [Field; L] = [{}];
+pub global RLK_GENERATION_RD2_BOUNDS: [Field; L] = [{}];",
             rlkgen.bits.r_bit,
             rlkgen.bits.sk_bit,
             rlkgen.bits.e0_bit,
             rlkgen.bits.e2_bit,
-            rlkgen.bits.r1_d0_bit,
-            rlkgen.bits.r2_d0_bit,
-            rlkgen.bits.r1_d2_bit,
-            rlkgen.bits.r2_d2_bit,
+            rlkgen.bits.rd0_bit,
+            rlkgen.bits.rd2_bit,
             rlkgen.bits.d_bit,
             rlkgen.bounds.r_bound,
             rlkgen.bounds.sk_bound,
             rlkgen.bounds.e0_bound,
             rlkgen.bounds.e2_bound,
-            join_biguint(&rlkgen.bounds.r1_d0_bounds),
-            join_biguint(&rlkgen.bounds.r2_d0_bounds),
-            join_biguint(&rlkgen.bounds.r1_d2_bounds),
-            join_biguint(&rlkgen.bounds.r2_d2_bounds),
+            join_biguint(&rlkgen.bounds.rd0_bounds),
+            join_biguint(&rlkgen.bounds.rd2_bounds),
         )
     } else {
         "pub global RLK_GENERATION_BIT_R: u32 = PK_GENERATION_BIT_SK;
 pub global RLK_GENERATION_BIT_SK: u32 = PK_GENERATION_BIT_SK;
 pub global RLK_GENERATION_BIT_E0: u32 = PK_GENERATION_BIT_EEK;
 pub global RLK_GENERATION_BIT_E2: u32 = PK_GENERATION_BIT_EEK;
-pub global RLK_GENERATION_BIT_R1_D0: u32 = LBFV_PK_GENERATION_BIT_R1;
-pub global RLK_GENERATION_BIT_R2_D0: u32 = LBFV_PK_GENERATION_BIT_R2;
-pub global RLK_GENERATION_BIT_R1_D2: u32 = LBFV_PK_GENERATION_BIT_R1;
-pub global RLK_GENERATION_BIT_R2_D2: u32 = LBFV_PK_GENERATION_BIT_R2;
+pub global RLK_GENERATION_BIT_RD0: u32 = LBFV_PK_GENERATION_BIT_R;
+pub global RLK_GENERATION_BIT_RD2: u32 = LBFV_PK_GENERATION_BIT_R;
 pub global RLK_GENERATION_BIT_D: u32 = PK_GENERATION_BIT_PK;
 
 pub global RLK_GENERATION_R_BOUND: Field = PK_GENERATION_SK_BOUND;
 pub global RLK_GENERATION_SK_BOUND: Field = PK_GENERATION_SK_BOUND;
 pub global RLK_GENERATION_E0_BOUND: Field = PK_GENERATION_EEK_BOUND;
 pub global RLK_GENERATION_E2_BOUND: Field = PK_GENERATION_EEK_BOUND;
-pub global RLK_GENERATION_R1_D0_BOUNDS: [Field; L] = LBFV_PK_GENERATION_R1_BOUNDS;
-pub global RLK_GENERATION_R2_D0_BOUNDS: [Field; L] = LBFV_PK_GENERATION_R2_BOUNDS;
-pub global RLK_GENERATION_R1_D2_BOUNDS: [Field; L] = LBFV_PK_GENERATION_R1_BOUNDS;
-pub global RLK_GENERATION_R2_D2_BOUNDS: [Field; L] = LBFV_PK_GENERATION_R2_BOUNDS;"
+pub global RLK_GENERATION_RD0_BOUNDS: [Field; L] = LBFV_PK_GENERATION_R_BOUNDS;
+pub global RLK_GENERATION_RD2_BOUNDS: [Field; L] = LBFV_PK_GENERATION_R_BOUNDS;"
             .to_string()
     };
     let rlk_section = section(
@@ -639,10 +605,8 @@ pub global RLK_GENERATION_CONFIGS: RlkGenerationConfigs<N, L> = RlkGenerationCon
     RLK_GENERATION_SK_BOUND,
     RLK_GENERATION_E0_BOUND,
     RLK_GENERATION_E2_BOUND,
-    RLK_GENERATION_R1_D0_BOUNDS,
-    RLK_GENERATION_R2_D0_BOUNDS,
-    RLK_GENERATION_R1_D2_BOUNDS,
-    RLK_GENERATION_R2_D2_BOUNDS,
+    RLK_GENERATION_RD0_BOUNDS,
+    RLK_GENERATION_RD2_BOUNDS,
 );
 
 pub global RLK_AGGREGATION_BIT_D: u32 = PK_GENERATION_BIT_PK;

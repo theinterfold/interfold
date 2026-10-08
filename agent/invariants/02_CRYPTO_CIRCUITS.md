@@ -250,9 +250,14 @@ every section.
   range check. A value that no upstream commitment bounds still needs its own bound: C1's `pk0`,
   because C1 originates it and the key equation absorbs `+q` against `r1`; and C5's `pk0_agg`,
   because `verify_pk_for_basis` pins it only modulo `q_l`. — `flow-trace/04`
-- Every prover-chosen modular quotient needs a bound. This includes C1's `e_sm` CRT lift and the
-  reduced encryption quotients in ct0, ct1, and C3. Bounds on the other operands must also prevent
-  field wraparound. — `flow-trace/04`
+- Every prover-chosen modular quotient needs a bound. This includes C1's `e_sm` CRT lift, the
+  reduced encryption quotients in ct0, ct1, and C3, and the reduced key quotients `r` of
+  `lbfv_pk_generation_limb` and `rd0`/`rd2` of `rlk_generation_limb`. Bounds on the other operands
+  must also prevent field wraparound. — `flow-trace/04`
+- `rlk_generation_limb` uses `delta = (row_index == limb_index)` in place of the row's Garner
+  coefficient. This is correct only because each Garner coefficient is `1 mod q_row` and `0 mod`
+  every other modulus; `garner_coefficient_is_the_crt_unit_vector` checks this for each l-BFV
+  preset. — `crates/zk-helpers/src/circuits/threshold/rlk_generation.rs`
 - C7 derives `u` through bounded interpolation and `garner_reconstruct`; it accepts neither
   `u_global` nor CRT reconstruction quotients as witnesses. `reduce_mod_bounded` and
   `inv_mod_bounded` constrain every reduction and inverse hint used by that path. The rounded decode

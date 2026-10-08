@@ -247,6 +247,57 @@ pub fn fold_negacyclic(poly: &Polynomial, n: usize) -> Polynomial {
     Polynomial::new(out)
 }
 
+/// Returns `a * b mod X^N + 1` over the integers, with exactly `N` coefficients.
+///
+/// # Errors
+///
+/// Returns an error when an operand has more than `N` coefficients.
+pub fn negacyclic_mul(
+    a: &Polynomial,
+    b: &Polynomial,
+    n: usize,
+) -> Result<Polynomial, CircuitsErrors> {
+    if a.coefficients().len() > n || b.coefficients().len() > n {
+        return Err(CircuitsErrors::Other(format!(
+            "negacyclic product operands must have at most {n} coefficients"
+        )));
+    }
+    // `mul` collapses a zero factor to one coefficient; the fold needs all `2N - 1`.
+    let product = Polynomial::zero(2 * n - 2).add(&a.mul(b));
+    Ok(fold_negacyclic(&product, n))
+}
+
+/// Divides every coefficient of `numerator` by `modulus` exactly.
+///
+/// A reduced identity `x == x_hat + modulus * k` holds over the integers exactly when
+/// `x - x_hat` divides coefficient-wise, so a remainder means the caller built an inconsistent
+/// witness.
+///
+/// # Errors
+///
+/// Returns an error naming `what` when a coefficient is not a multiple of `modulus`.
+pub fn exact_quotient(
+    numerator: &Polynomial,
+    modulus: &BigInt,
+    what: &str,
+) -> Result<Polynomial, CircuitsErrors> {
+    numerator
+        .coefficients()
+        .iter()
+        .map(|coefficient| {
+            let (quotient, remainder) = coefficient.div_rem(modulus);
+            if remainder.is_zero() {
+                Ok(quotient)
+            } else {
+                Err(CircuitsErrors::Other(format!(
+                    "{what} is not divisible by its CRT modulus"
+                )))
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Polynomial::new)
+}
+
 /// Decomposes the residue `xi - xi_hat` into `r1 * qi + r2 * cyclo` mod R_qi.
 ///
 /// `cyclo` must be `x^N + 1`, which gives every division a closed form and makes the
