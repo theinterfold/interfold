@@ -152,19 +152,16 @@ fn render_globals(sources: &[&CircuitGlobals]) -> String {
     out.join("\n")
 }
 
+/// The `use` lines in sorted order, which is the order `nargo fmt` leaves them in. Emitting them
+/// unsorted made every formatted config file look drifted to the build's drift check.
 fn render_uses(base: &[&str], sources: &[&CircuitGlobals]) -> String {
-    let mut seen = std::collections::BTreeSet::new();
-    let mut out = Vec::new();
-    for line in base
-        .iter()
+    base.iter()
         .map(|l| l.to_string())
         .chain(sources.iter().flat_map(|s| s.uses.clone()))
-    {
-        if seen.insert(line.clone()) {
-            out.push(line);
-        }
-    }
-    out.join("\n")
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn join_biguint(vals: &[BigUint]) -> String {
