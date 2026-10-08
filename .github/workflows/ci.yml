@@ -1920,8 +1920,15 @@ jobs:
       ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
       github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
       'sdk_tests') || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      actions: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          # Keeps the token out of .git/config, where install and build scripts could read it and use
+          # this job's actions: write. The cancel step gets the token on its own.
+          persist-credentials: false
 
       - name: Install pnpm
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
@@ -1944,6 +1951,12 @@ jobs:
 
       - name: Test the SDK
         uses: ./.github/actions/sdk-tests
+
+      - name: Cancel workflow on failure
+        if: failure()
+        run: gh run cancel ${{ github.run_id }}
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   build_crisp_sdk:
     needs: [detect_changes]
