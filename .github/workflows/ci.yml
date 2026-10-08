@@ -1694,6 +1694,7 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - name: Install protoc
         uses: ./.github/actions/install-protoc
+      # The e3-support-scripts tests run in rust_unit_tests: every input of that crate selects it.
       - name: Build support scripts
         run: cd templates/default && cargo build --locked --bin e3-support-scripts-dev
       # The OpenVM proving service links the template program. Its guest needs cargo-openvm and a GPU
@@ -1713,11 +1714,6 @@ jobs:
           path: templates/default/target/debug/e3-support-scripts-dev
           retention-days: 1
           if-no-files-found: error
-      # rust_unit_tests runs these tests in its lib and doc legs. They run here, after the upload so
-      # that template_integration does not wait for them, only when that job does not run.
-      - name: Test program backend selection
-        if: needs.detect_changes.outputs.rust_unit_tests != 'true'
-        run: cargo test --locked -p e3-support-scripts
 
   # The CPU build of the OpenVM worker and its tests. Proofs and the CUDA build need a GPU host.
   openvm_worker:
