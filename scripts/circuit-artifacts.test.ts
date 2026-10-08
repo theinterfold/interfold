@@ -12,13 +12,20 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { AbiCoder, id, keccak256 } from 'ethers'
 import { BFV_PARAMS } from '../packages/interfold-contracts/scripts/protocol/constants'
-import { committeeBoundUpdates, NoirCircuitBuilder, normalizeCargoLockForCircuitHash, stripRustTestModules } from './build-circuits'
+import {
+  committeeBoundUpdates,
+  NoirCircuitBuilder,
+  normalizeCargoLockForCircuitHash,
+  reportsToolVersion,
+  stripRustTestModules,
+} from './build-circuits'
 import { isPresetCommitteeSupported } from './circuit-constants'
 import {
   findArtifactRevision,
   RELEASE_REQUIRED_PAIRS,
   requiredArtifactMarkers,
   validateArtifactSet,
+  validateChecksums,
   validateReleaseArtifacts,
 } from './circuit-artifacts'
 
@@ -69,6 +76,36 @@ test('checksums command covers exactly the staged circuit configurations', () =>
       manifest.files['insecure-512/minimum/default/dkg/pk/pk.vk'],
       '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
     )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('release verification refuses the checksum manifests that a node refuses', () => {
+  const dir = makeCompleteMatrix()
+  try {
+    execFileSync('pnpm', ['tsx', 'scripts/circuit-artifacts.ts', 'checksums', '--dir', dir])
+    validateChecksums(dir)
+    const manifestPath = join(dir, 'checksums.json')
+    const manifest = readFileSync(manifestPath, 'utf8')
+    const [first] = Object.keys(JSON.parse(manifest).files).filter((file) => !file.endsWith('.build-stamp.json'))
+    const edit = (change: (files: Record<string, string>) => void) => {
+      const parsed = JSON.parse(manifest)
+      change(parsed.files)
+      writeFileSync(manifestPath, JSON.stringify(parsed))
+    }
+
+    edit((files) => delete files[first])
+    assert.throws(() => validateChecksums(dir), /does not list/)
+    edit((files) => (files[first] = '0'.repeat(64)))
+    assert.throws(() => validateChecksums(dir), /wrong digest/)
+    edit((files) => (files['../outside'] = files[first]))
+    assert.throws(() => validateChecksums(dir), /invalid path/)
+    edit((files) => (files['insecure-512/minimum/absent.json'] = files[first]))
+    assert.throws(() => validateChecksums(dir), /missing file/)
+    edit(() => {})
+    unlinkSync(manifestPath)
+    assert.throws(() => validateChecksums(dir), /checksums.json is missing/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -200,6 +237,50 @@ test('every pair regenerates all of its C1/C2 bounds, array bounds included', ()
         assert.ok(config.includes(declaration.replace(/\s+/g, '')), `${preset}/${committee} ${path}: ${declaration}`)
       }
     }
+  }
+})
+
+test('the circuit build accepts only the pinned nargo and bb versions', () => {
+  const nargo = (version: string) =>
+    `nargo version = ${version}\nnoirc version = ${version}+40d6574f851d926f93e0c3a271bac3e6e82ac905\n(git version hash: 40d6574f, is dirty: false)\n`
+  assert.ok(reportsToolVersion(nargo('1.0.0-beta.26'), '1.0.0-beta.26'))
+  assert.ok(reportsToolVersion('5.2.0\n', '5.2.0'))
+  assert.ok(reportsToolVersion('v5.2.0\r\n', '5.2.0'))
+  for (const other of ['1.0.0-beta.26-dev', '1.0.0-beta.260', '1.0.0-beta.25']) {
+    assert.ok(!reportsToolVersion(nargo(other), '1.0.0-beta.26'), other)
+  }
+  for (const other of ['5.2.0-nightly', '5.2.01', '15.2.0', '5.1.0']) {
+    assert.ok(!reportsToolVersion(`${other}\n`, '5.2.0'), other)
+  }
+})
+
+test('every pair source hash tracks the pinned nargo and bb versions', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'interfold-toolchain-hash-'))
+  const cargo = (tag: string) => `[dependencies]\nnargo = { git = "https://github.com/noir-lang/noir", tag = "${tag}" }\n`
+  const versions = (bb: string) => JSON.stringify({ required_bb_version: bb, required_circuits_version: '0.0.0' })
+  try {
+    mkdirSync(join(dir, 'crates', 'zk-prover'), { recursive: true })
+    writeFileSync(join(dir, 'crates', 'zk-prover', 'Cargo.toml'), cargo('v1.0.0'))
+    writeFileSync(join(dir, 'crates', 'zk-prover', 'versions.json'), versions('5.0.0'))
+    const builder = new NoirCircuitBuilder(dir)
+    for (const [preset, committee] of RELEASE_REQUIRED_PAIRS) {
+      const original = builder.computeSourceHash(preset, committee)
+      writeFileSync(join(dir, 'crates', 'zk-prover', 'versions.json'), versions('5.0.1'))
+      assert.notEqual(builder.computeSourceHash(preset, committee), original, `${preset}/${committee}: bb`)
+      writeFileSync(join(dir, 'crates', 'zk-prover', 'versions.json'), versions('5.0.0'))
+      writeFileSync(join(dir, 'crates', 'zk-prover', 'Cargo.toml'), cargo('v1.0.1'))
+      assert.notEqual(builder.computeSourceHash(preset, committee), original, `${preset}/${committee}: nargo`)
+      writeFileSync(join(dir, 'crates', 'zk-prover', 'Cargo.toml'), cargo('v1.0.0'))
+      // A release that changes only the circuit version keeps the artifacts current.
+      writeFileSync(
+        join(dir, 'crates', 'zk-prover', 'versions.json'),
+        JSON.stringify({ required_bb_version: '5.0.0', required_circuits_version: '9.9.9' }),
+      )
+      assert.equal(builder.computeSourceHash(preset, committee), original)
+      writeFileSync(join(dir, 'crates', 'zk-prover', 'versions.json'), versions('5.0.0'))
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
   }
 })
 

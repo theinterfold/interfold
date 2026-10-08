@@ -20,7 +20,7 @@ use alloy::{
     sol,
     transports::RpcError,
 };
-use e3_evm_helpers::nonce::send_with_next_nonce;
+use e3_evm_helpers::{contracts::Interfold, nonce::send_with_next_nonce};
 use eyre::Result;
 use std::sync::Arc;
 
@@ -101,6 +101,19 @@ sol! {
     contract CiphernodeRegistryTiming {
         function randomnessRequestTimeout() external view returns (uint256);
         function sortitionSubmissionWindow() external view returns (uint256);
+    }
+
+    #[sol(rpc)]
+    contract CiphertextVerifier {
+        function verify(
+            uint256 e3Id,
+            bytes32 encryptionSchemeId,
+            bytes32 paramsHash,
+            bytes32 committeePublicKey,
+            bytes32 ciphertextOutputHash,
+            bytes32 ciphertextCommitment,
+            bytes proof
+        ) external view returns (bool);
     }
 
     #[sol(rpc)]
@@ -219,6 +232,40 @@ fn derive_earliest_voting_start(
 pub struct CRISPContract<P = CRISPWriteProvider> {
     provider: Arc<P>,
     contract_address: Address,
+}
+
+/// The ERC-7201 location of Interfold's `CiphertextVerifierStorage.Layout`
+/// (`erc7201:interfold.storage.CiphertextVerifier`, set in `InterfoldLifecycle.sol`).
+const CIPHERTEXT_VERIFIER_STORAGE: B256 =
+    alloy::primitives::b256!("fc399dd26441dab88259cd69fffcf8b5f96dd87f2db63f29285d86101a4d1500");
+
+/// The storage slot of `requests[e3Id]`: the mapping is the second field of the layout, and the
+/// slot of a mapping value is `keccak256(abi.encode(key, mapping slot))`.
+fn request_config_slot(e3_id: U256) -> U256 {
+    let requests = U256::from_be_bytes(CIPHERTEXT_VERIFIER_STORAGE.0) + U256::from(1);
+    let mut key = [0u8; 64];
+    key[..32].copy_from_slice(&e3_id.to_be_bytes::<32>());
+    key[32..].copy_from_slice(&requests.to_be_bytes::<32>());
+    U256::from_be_bytes(alloy::primitives::keccak256(key).0)
+}
+
+/// The ciphertext verifier and parameter hash that Interfold froze for an E3 at request time:
+/// `requests[e3Id]`, the second field of `CiphertextVerifierStorage.Layout`. Interfold has no getter
+/// for them, and the scheme's current verifier can differ after a rotation.
+async fn frozen_ciphertext_verifier<P: Provider>(
+    provider: &P,
+    interfold: Address,
+    e3_id: U256,
+) -> Result<(Address, B256)> {
+    let slot = request_config_slot(e3_id);
+    let verifier = provider.get_storage_at(interfold, slot).await?;
+    let params_hash = provider
+        .get_storage_at(interfold, slot + U256::from(1))
+        .await?;
+    Ok((
+        Address::from_word(B256::from(verifier.to_be_bytes::<32>())),
+        B256::from(params_hash.to_be_bytes::<32>()),
+    ))
 }
 
 impl CRISPContract<CRISPWriteProvider> {
@@ -524,9 +571,11 @@ impl CRISPContract<CRISPWriteProvider> {
 
     /// Check the aggregate ciphertext and its compute proof before paying to publish it to DA.
     ///
-    /// This calls the same CRISP verifier that Interfold calls after the availability receipt is
-    /// ready. The earlier check prevents an unauthenticated or malformed webhook from spending
-    /// the server's Avail balance on bytes that can never be accepted on Ethereum.
+    /// Interfold accepts the output only if the E3's ciphertext verifier and CRISP both accept the
+    /// proof, after the availability receipt is ready. This runs both checks first, so that an
+    /// unauthenticated or malformed webhook cannot spend the server's Avail balance on bytes that
+    /// can never be accepted on Ethereum. The E3's verifier is the one Interfold froze at request
+    /// time, which a later rotation does not change.
     pub async fn validate_compute_output(
         &self,
         e3_id: U256,
@@ -534,12 +583,46 @@ impl CRISPContract<CRISPWriteProvider> {
         ciphertext_commitment: B256,
         proof: Bytes,
     ) -> Result<()> {
-        let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
+        let provider = self.provider.as_ref();
+        let contract = CRISPProgram::new(self.contract_address, provider);
         let accepted = contract
-            .verify(e3_id, ciphertext_output_hash, ciphertext_commitment, proof)
+            .verify(
+                e3_id,
+                ciphertext_output_hash,
+                ciphertext_commitment,
+                proof.clone(),
+            )
             .call()
             .await?;
         eyre::ensure!(accepted, "CRISP rejected the aggregate ciphertext proof");
+
+        let interfold_address = contract.interfold().call().await?;
+        let (verifier, params_hash) =
+            frozen_ciphertext_verifier(provider, interfold_address, e3_id).await?;
+        eyre::ensure!(
+            verifier != Address::ZERO,
+            "Interfold holds no ciphertext verifier for the E3"
+        );
+        let e3 = Interfold::new(interfold_address, provider)
+            .getE3(e3_id)
+            .call()
+            .await?;
+        let accepted = CiphertextVerifier::new(verifier, provider)
+            .verify(
+                e3_id,
+                e3.encryptionSchemeId,
+                params_hash,
+                e3.committeePublicKey,
+                ciphertext_output_hash,
+                ciphertext_commitment,
+                proof,
+            )
+            .call()
+            .await?;
+        eyre::ensure!(
+            accepted,
+            "the E3's ciphertext verifier rejected the aggregate ciphertext proof"
+        );
         Ok(())
     }
 
@@ -692,6 +775,111 @@ impl CRISPContractFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// CRISP accepts the aggregate proof and the verifier that Interfold froze for the E3 rejects
+    /// it: Interfold would refuse the output, so the server must refuse before it pays for
+    /// availability. The frozen verifier is read from Interfold's storage, so a verifier rotated
+    /// after the request is never asked.
+    #[tokio::test]
+    async fn an_output_that_the_e3_verifier_rejects_is_refused() {
+        use alloy::{sol_types::SolCall, transports::mock::Asserter};
+        use e3_evm_helpers::contracts::{CommitteeSize, E3};
+
+        let asserter = Asserter::new();
+        let provider = ProviderBuilder::new()
+            .wallet(EthereumWallet::from(PrivateKeySigner::random()))
+            .connect_mocked_client(asserter.clone());
+        let crisp = CRISPContract {
+            provider: Arc::new(provider),
+            contract_address: Address::repeat_byte(1),
+        };
+        let e3 = E3 {
+            seed: U256::ZERO,
+            committeeSize: CommitteeSize::Minimum,
+            requestBlock: U256::ZERO,
+            inputWindow: [U256::ZERO; 2],
+            encryptionSchemeId: B256::repeat_byte(2),
+            e3Program: Address::repeat_byte(1),
+            paramSet: 2,
+            customParams: Bytes::new(),
+            decryptionVerifier: Address::ZERO,
+            pkVerifier: Address::ZERO,
+            committeePublicKey: B256::repeat_byte(3),
+            ciphertextOutput: B256::ZERO,
+            plaintextOutput: Bytes::new(),
+            requester: Address::ZERO,
+            ciphertextCommitment: B256::ZERO,
+        };
+        let frozen = Address::repeat_byte(5);
+        for (verifier, protocol_accepts) in [(frozen, false), (frozen, true), (Address::ZERO, true)]
+        {
+            let push = |data: Vec<u8>| asserter.push_success(&Bytes::from(data));
+            push(CRISPProgram::verifyCall::abi_encode_returns(&true));
+            push(CRISPProgram::interfoldCall::abi_encode_returns(
+                &Address::repeat_byte(4),
+            ));
+            // `requests[e3Id]`: the verifier, then the parameter hash.
+            asserter.push_success(&verifier.into_word());
+            asserter.push_success(&B256::repeat_byte(6));
+            if verifier != Address::ZERO {
+                push(Interfold::getE3Call::abi_encode_returns(&e3));
+                push(CiphertextVerifier::verifyCall::abi_encode_returns(
+                    &protocol_accepts,
+                ));
+            }
+
+            let result = crisp
+                .validate_compute_output(U256::from(1), B256::ZERO, B256::ZERO, Bytes::new())
+                .await;
+            match (verifier == Address::ZERO, protocol_accepts) {
+                (true, _) => assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("no ciphertext verifier")),
+                (false, true) => result.unwrap(),
+                (false, false) => {
+                    let error = result.unwrap_err().to_string();
+                    assert!(error.contains("ciphertext verifier rejected"), "{error}");
+                }
+            }
+        }
+    }
+
+    /// The slot of `requests[e3Id]`, against `cast index uint256 <e3Id> <namespace + 1>`.
+    #[test]
+    fn the_request_config_slot_is_the_mapping_slot() {
+        assert_eq!(
+            request_config_slot(U256::from(1)),
+            U256::from_be_bytes(
+                alloy::primitives::b256!(
+                    "16fd55b120c97b5773cf45474582700e3b7605a07ad4413eb32f632619891086"
+                )
+                .0
+            )
+        );
+        assert_eq!(
+            request_config_slot(U256::from(0x123456789abcdef_u64)),
+            U256::from_be_bytes(
+                alloy::primitives::b256!(
+                    "d1103c916f8d949d5cd03237419b6690836eed54753a486eeba88b2994307705"
+                )
+                .0
+            )
+        );
+    }
+
+    /// The storage location is the ERC-7201 slot of Interfold's ciphertext-verifier namespace.
+    #[test]
+    fn the_verifier_storage_is_the_namespaced_slot() {
+        use alloy::primitives::keccak256;
+
+        let namespace = U256::from_be_bytes(keccak256("interfold.storage.CiphertextVerifier").0)
+            - U256::from(1);
+        let slot = keccak256(namespace.to_be_bytes::<32>()).0;
+        let mut expected = slot;
+        expected[31] = 0;
+        assert_eq!(CIPHERTEXT_VERIFIER_STORAGE, B256::from(expected));
+    }
 
     #[test]
     fn compatibility_schedule_includes_every_committee_setup_window() {

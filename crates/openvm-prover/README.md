@@ -30,8 +30,8 @@ hex-encoded round.
 
 - Rust 1.91.1, and `cargo-openvm` v2.0.2 with its guest toolchain:
   `cargo install --locked --git https://github.com/openvm-org/openvm.git --tag v2.0.2 cargo-openvm`.
-- The Halo2 proving key, KZG parameters and EVM verifier from `cargo openvm setup`, in `~/.openvm`
-  by default. Verify their provenance and checksums before use.
+- The Halo2 proving key, KZG parameters and EVM verifier from `cargo openvm setup --evm`, in
+  `~/.openvm` by default. Verify their provenance and checksums before use.
 - For a GPU: the CUDA toolkit and driver, and `nvcc` on `PATH` when building the CUDA worker.
 
 ## Build the workers
@@ -60,7 +60,7 @@ program:
     prover_bin: /opt/openvm/interfold-openvm-prover # the CPU worker
     prover_bin_cuda: /opt/openvm/interfold-openvm-prover-cuda # optional
     backend: auto # auto, cpu or cuda
-    # setup_dir: /home/me/.openvm         # what `cargo openvm setup` wrote
+    # setup_dir: /home/me/.openvm         # what `cargo openvm setup --evm` wrote
 ```
 
 With `backend: auto` the service runs the CUDA worker's `probe` at startup. When that opens a GPU,

@@ -323,6 +323,58 @@ export interface SecureCrispUpgradePlan {
   safeProposal?: SafeProposal;
 }
 
+/** The OpenVM guest identity that a release's CRISP receipt verifier must carry. */
+export interface OpenVmGuestIdentity {
+  appExeCommit: string;
+  appVmCommit: string;
+  /** keccak256 of the Halo2 verifier's runtime code. */
+  halo2RuntimeCodeHash: string;
+}
+
+/** The v0.19 cutover: one paused-protocol batch that `v19Cutover.ts` prepares and validates. */
+export interface V19CutoverPlan {
+  name: string;
+  chainId: number;
+  operator: string;
+  protocolOwner: string;
+  interfoldProxy: string;
+  interfoldProxyAdmin: string;
+  previousInterfoldImplementation: string;
+  interfoldImplementation: string;
+  lifecycleLibrary: string;
+  pricingLibrary: string;
+  /** No contract that `prepare` deployed is older than this block. */
+  deployFromBlock?: number;
+  registryProxy: string;
+  nodeReleaseRegistry: string;
+  nodeRelease: {
+    version: string;
+    protocolVersion: number;
+    nodeGeneration: number;
+    releaseId: string;
+  };
+  nodeReleasePolicyUpdated: boolean;
+  cryptoConfigId: string;
+  paramSet: number;
+  /** The batch registers the parameter set, which the chain does not hold yet. */
+  paramSetRegisteredByBatch: boolean;
+  pkVerifier: string;
+  decryptionVerifier: string;
+  bfvVerifierRoutes: BfvVerifierRouteDeployment[];
+  ciphertextVerifier: string;
+  openVmReceiptVerifier: string;
+  openVmIdentity: OpenVmGuestIdentity;
+  crispProgram: string;
+  crispImageId: string;
+  retiredE3Programs: string[];
+  dataAvailabilityVerifier: string;
+  availDataAvailability: boolean;
+  inputAvailabilitySigner: string;
+  safeTransactions: string;
+  governanceSafeBuilder?: string;
+  safeProposal?: SafeProposal;
+}
+
 export interface SafeTransaction {
   to: string;
   value: string;

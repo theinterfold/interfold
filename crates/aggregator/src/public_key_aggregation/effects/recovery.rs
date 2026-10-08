@@ -66,13 +66,14 @@ impl PublicKeyAggregator {
         }
 
         // The active aggregator resumes any phase. A demoted node resumes only the work that it
-        // started, which is every phase after C1 verification.
+        // started: every phase after C1 verification, and a C1 verification that it dispatched.
         if !(self.can_run_aggregation_effects()
-            || (aggregation_started(&state) && self.can_continue_aggregation_effects()))
+            || ((aggregation_started(&state) || self.started_as_aggregator)
+                && self.can_continue_aggregation_effects()))
         {
             return Ok(());
         }
-        self.mark_started_as_aggregator();
+        self.mark_started_as_aggregator(&effects_context)?;
 
         match state {
             PublicKeyAggregatorState::VerifyingC1 { .. } => {

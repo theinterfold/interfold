@@ -94,16 +94,18 @@ every section.
   logs its path for recovery. — `crates/zk-prover/src/backend/download.rs`
 - Archive pins ship with the binary; neither the archive nor its download endpoint supplies the
   expected digest at runtime. The 0.18.0 pin comes from the published GitHub asset digest. Local
-  archive installation trusts the operator's file and does not require a release pin. Release
-  packaging supplies `E3_CIRCUITS_ARCHIVE_SHA256` before binary and ciphernode image compilation.
-  `build.rs` validates the digest, and `ZkConfig::default` binds it to the crate version. Other pins
-  remain in `versions.json`. The workflow retains the same archive bytes for publication.
-  `SOURCE_HASH` identifies circuit sources, not archive bytes, and cannot replace this check.
+  archive installation requires the same pin unless the operator passes `--allow-unpinned-archive`,
+  as CI does for a candidate build; a missing pin then fails closed too. Release packaging supplies
+  `E3_CIRCUITS_ARCHIVE_SHA256` before binary and ciphernode image compilation. `build.rs` validates
+  the digest, and `ZkConfig::default` binds it to the crate version. Other pins remain in
+  `versions.json`. The workflow retains the same archive bytes for publication. `SOURCE_HASH`
+  identifies circuit sources, not archive bytes, and cannot replace this check.
 - Artifact identity must cover every source that compiles into an artifact. `computeSourceHash`
   (`scripts/build-circuits.ts`) includes shared Noir logic, the library entry point and dependency
-  manifest, and shared configuration constants. It normalizes the active preset selector because
-  each pair already identifies its preset. A library-only change invalidates every affected pair.
-  Rebuild and push those pairs before release.
+  manifest, shared configuration constants, and the pinned toolchain: nargo at the Noir tag of the
+  prover crates and bb at `required_bb_version`. The build refuses a nargo or bb of another version.
+  It normalizes the active preset selector because each pair already identifies its preset. A
+  library-only change invalidates every affected pair. Rebuild and push those pairs before release.
 - The pair source hash ignores generated C1/C2 bound values and includes the Rust sources that
   generate them, without their `#[cfg(test)]` modules. Switching the active committee or editing a
   test module must not change another pair's source hash.
@@ -122,8 +124,9 @@ every section.
   result authorizes only its exact dispatch batch. Share admission checks the signed sender, E3,
   proof type, raw bytes, and ciphertext position before reserving a party slot. — `flow-trace/04`
 
-- SK splits into N shares; exactly **T+1** shares feed the recursive decryption proof. —
-  `flow-trace/04`
+- SK splits into N shares; exactly **T+1** shares feed the recursive decryption proof. The C7 input
+  computation (`Inputs::compute` in `decrypted_shares_aggregation`) refuses any other count of
+  shares or party IDs, so an oversized witness cannot be built. — `flow-trace/04`
 - Runtime `party_id` derives from the finalized committee normalized by ascending address and is
   zero-indexed. DKG circuit party IDs and fold-attestation slots use the same zero-based index. Only
   decryption uses one-based Shamir coordinates, `party_id + 1`, which must be strictly increasing;
@@ -192,7 +195,7 @@ every section.
 - fhe.rs v0.4.1 derives additive smudging bounds as `2^(lambda + 1) * degree * B_C` and uses
   sampler-specific encryption error bounds. The C1/C2 Noir bit widths must use the same bounds as
   the Rust sampler for each preset and committee. Regenerate them with `pnpm build:circuits`;
-  rebuild the matching verifier artifacts before deploying a protocol-version-7 node. —
+  rebuild the matching verifier artifacts before deploying a protocol-version-8 node. —
   `flow-trace/04`; `scripts/build-circuits.ts`
 - fhe.rs v0.4.1 passes plaintext-scaled ballot coefficients as non-centered residues. Both CRISP
   vote circuits decode each ballot weight against `Q_MOD_T`, rather than `Q_MOD_T_CENTERED`. —
@@ -200,8 +203,8 @@ every section.
 - The C3 and user-data-encryption `k1` witnesses use non-centered residues in `[0, t - 1]`. Their
   Noir equations and asymmetric quotient bounds must match the Rust witnesses. —
   `circuits/lib/src/core/dkg/share_encryption.nr`; `crates/zk-helpers/src/circuits/`
-- Mainnet secure parameter-set index 1 contains the old tuple. Version 7 registers the new tuple at
-  index 2 and must not reinterpret old index-1 E3s as version-7 secure requests. — `flow-trace/07`;
+- Mainnet secure parameter-set index 1 contains the old tuple. Version 8 registers the new tuple at
+  index 2 and must not reinterpret old index-1 E3s as version-8 secure requests. — `flow-trace/07`;
   `crates/fhe-params/src/presets.rs`; `ActiveCryptoConfig.sol`
 - The local C1, C2a, C2b, and every C3a and C3b proof must complete and be signed before any
   `ThresholdShareCreated` is published. C4 through C7 belong to later phases. —

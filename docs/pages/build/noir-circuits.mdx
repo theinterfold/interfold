@@ -257,8 +257,9 @@ The build records the active pair in `circuits/bin/.active-preset.json`.
 Downloaded release archives must match the SHA-256 compiled into the binary for their version. The
 binary includes pins from `crates/zk-prover/versions.json` (`circuits_checksums`) and the release
 build input. The installer checks it before extraction, then requires a nonempty internal manifest
-that covers every artifact file. Root manifests, `SOURCE_HASH`, and build stamps are metadata. Local
-builds and `noir setup --circuits-archive` do not need an archive pin.
+that covers every artifact file. Root manifests, `SOURCE_HASH`, and build stamps are metadata.
+`noir setup --circuits-archive` requires the same pin for a local archive. Add
+`--allow-unpinned-archive` to install another archive, such as a local build.
 
 The installer requires every pair in `crates/zk-prover/supported-configurations.json` by default,
 including for `noir setup --circuits-archive`. The release validator uses the same matrix. For a

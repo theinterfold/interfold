@@ -46,7 +46,7 @@ pub struct OpenVmConfig {
     pub prover_bin_cuda: Option<PathBuf>,
     #[serde(default)]
     pub backend: OpenVmBackend,
-    /// The directory `cargo openvm setup` wrote the Halo2 key, parameters and verifier to.
+    /// The directory `cargo openvm setup --evm` wrote the Halo2 key, parameters and verifier to.
     /// Defaults to `~/.openvm`.
     #[serde(default)]
     pub setup_dir: Option<PathBuf>,

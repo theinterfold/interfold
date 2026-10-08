@@ -237,10 +237,13 @@ impl ThresholdKeyshare {
             "Storing early DecryptionKeyShared from party {} (state: AggregatingDecryptionKey)",
             party_id
         );
+        // The first authenticated message from each party, as the recovery record and the live
+        // collector keep it.
         self.pending
             .c4_verification_shares
             .get_or_insert_with(HashMap::new)
-            .insert(party_id, data);
+            .entry(party_id)
+            .or_insert(data);
         Ok(())
     }
 }

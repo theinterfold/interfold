@@ -269,12 +269,17 @@ the code does not meet yet.
 - Effects stay disabled until durable replay completes and both historical sources merge in HLC
   order. Startup fences `EffectsEnabled` → `SyncEffect` → canonical history → `SyncEnded` in that
   order. `ComputeEffectGate` buffers and deduplicates until `EffectsEnabled`. It sends a live
-  response or error to every waiting correlation ID. It reuses a response seen during replay, but
-  not a replayed error, so the regenerated request runs again. A request under a new ID whose result
-  has not reached the gate 10 minutes after it went to the worker goes to the worker again, because
-  fan-out can drop that result, but only when no run of it is left in the worker, so one request
-  runs once at a time. A hung run holds back the re-send until the prover's cap ends it. —
-  `crates/multithread/src/effect_gate.rs`; `CRATES_ARCHITECTURE.md`
+  response or error to every waiting correlation ID. A node raises its correlation IDs above the
+  reservation that its earlier boot recorded (`correlation-ids` beside the event log) before replay,
+  so a restart does not repeat an ID that the log can replay, also after a clock rollback. A node
+  whose state predates the file starts from the clock; a v0.19.0 node starts from reset state, so
+  its log holds no older IDs. The gate takes an outcome only for the request of the same E3. It
+  reuses a response seen during replay, but not a replayed error, so the regenerated request runs
+  again. A request under a new ID whose result has not reached the gate 10 minutes after it went to
+  the worker goes to the worker again, because fan-out can drop that result, but only when no run of
+  it is left in the worker, so one request runs once at a time. A hung run holds back the re-send
+  until the prover's cap ends it. — `crates/multithread/src/effect_gate.rs`;
+  `crates/events/src/correlation_id.rs`; `CRATES_ARCHITECTURE.md`
 - Keyshare coalesces decryption work per phase in each process. Admission of an already-retained
   canonical key is a no-op. Repeated chain observations and resume signals cannot add share
   correlations or repeat C6 proof intents. Hydration clears the dispatch markers, and the worker

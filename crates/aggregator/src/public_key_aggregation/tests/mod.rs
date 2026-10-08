@@ -306,6 +306,80 @@ async fn demoted_aggregator_finishes_the_c1_verification_it_dispatched() -> Resu
     Ok(())
 }
 
+/// Build the micro-committee aggregator over persisted state, as a node boot does.
+fn booted_micro_aggregator(
+    bus: &BusHandle,
+    fhe: &Arc<Fhe>,
+    e3_id: &E3id,
+    initial_is_aggregator: bool,
+    state: Persistable<PublicKeyAggregatorState>,
+    recovery: Persistable<PublicKeyAggregatorRecoveryState>,
+) -> PublicKeyAggregator {
+    PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe: fhe.clone(),
+            bus: bus.clone(),
+            e3_id: e3_id.clone(),
+            params_preset: BfvPreset::InsecureThreshold512,
+            committee_size: CiphernodesCommitteeSize::Micro,
+            dkg_fold_attestation_context: None,
+            recovery,
+            initial_is_aggregator,
+            initial_stage: E3Stage::None,
+            effects_enabled: true,
+        },
+        state,
+    )
+}
+
+/// The aggregator dispatched C1 verification, and a failover demoted it while it was down. After
+/// the restart it still finishes the C1 work and requests the key proof.
+#[actix::test]
+async fn demoted_aggregator_resumes_the_c1_verification_it_dispatched_after_restart() -> Result<()>
+{
+    let (bus, rng, _seed, params, crp, _errors, history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+    let e3_id = E3id::new("42", 1);
+    let fhe = Arc::new(Fhe::new(params, crp, rng));
+    let (state, threshold_n, _, circuit_h) = verifying_c1_non_square_state(&fhe, &e3_id)?;
+    let states = Repository::new(DataStore::from_in_mem(&InMemStore::new(false).start()));
+    let recoveries = Repository::new(DataStore::from_in_mem(&InMemStore::new(false).start()));
+    let mut first_boot = booted_micro_aggregator(
+        &bus,
+        &fhe,
+        &e3_id,
+        true,
+        states.send(Some(state)),
+        recoveries.send(Some(PublicKeyAggregatorRecoveryState::default())),
+    );
+    first_boot.continue_c1_verification(test_ctx(EffectsEnabled::new()))?;
+    drop(first_boot);
+
+    let mut second_boot = booted_micro_aggregator(
+        &bus,
+        &fhe,
+        &e3_id,
+        false,
+        states.load().await?,
+        recoveries.load().await?,
+    );
+    second_boot.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
+    let second_boot = second_boot.start();
+    second_boot
+        .send(c1_verified(
+            &e3_id,
+            (circuit_h as u64..threshold_n as u64).collect(),
+        ))
+        .await?;
+
+    assert!(matches!(
+        states.read().await?,
+        Some(PublicKeyAggregatorState::GeneratingC5Proof { .. })
+    ));
+    assert!(c5_proof_requested(&history, &e3_id).await?);
+    Ok(())
+}
+
 #[actix::test]
 async fn a_late_c1_failure_after_key_publication_does_not_fail_the_e3() -> Result<()> {
     let (bus, rng, _seed, params, crp, _errors, history) =
@@ -738,7 +812,7 @@ fn c5_state_without_node_proofs() -> PublicKeyAggregatorState {
 async fn a_demoted_aggregator_publishes_the_key_from_its_c5_proof() -> Result<()> {
     let (mut aggregator, history, e3_id) =
         build_public_key_aggregator(c5_state_without_node_proofs()).await?;
-    aggregator.mark_started_as_aggregator();
+    aggregator.mark_started_as_aggregator(&test_ctx(EffectsEnabled::new()))?;
     let actor = aggregator.start();
     let demotion = AggregatorChanged {
         e3_id: e3_id.clone(),

@@ -704,6 +704,12 @@ impl CiphernodeBuilder {
         #[cfg(not(feature = "test-helpers"))]
         let eventstore_aggregate_config = aggregate_config.clone();
 
+        // The event log replays the correlation IDs of earlier boots: keep this boot's IDs above
+        // them before replay starts.
+        if let EventSystemType::Persisted { log_path, .. } = &self.event_system {
+            e3_events::reserve_correlation_ids(&log_path.with_file_name("correlation-ids"))?;
+        }
+
         // Build the event system (store + eventstore)
         let event_system = self.create_event_system(local_bus, &eventstore_aggregate_config);
         let store = event_system.store()?;

@@ -42,6 +42,29 @@ import {
 const CIRCUIT_VERSION = 'interfold-bfv-v5'
 
 /**
+ * The circuit toolchain that the repository pins: nargo at the Noir tag of the prover crates, and bb
+ * at the version that nodes install. `undefined` for a tree without these files.
+ */
+export function pinnedToolchain(rootDir: string): { nargo: string; bb: string } | undefined {
+  const cargoPath = join(rootDir, 'crates', 'zk-prover', 'Cargo.toml')
+  const versionsPath = join(rootDir, 'crates', 'zk-prover', 'versions.json')
+  if (!existsSync(cargoPath) || !existsSync(versionsPath)) return undefined
+  const nargo = /noir-lang\/noir", tag = "v([^"]+)"/.exec(readFileSync(cargoPath, 'utf8'))?.[1]
+  const bb: unknown = JSON.parse(readFileSync(versionsPath, 'utf8')).required_bb_version
+  if (!nargo || typeof bb !== 'string') throw new Error('Cannot read the pinned nargo and bb versions')
+  return { nargo, bb }
+}
+
+/**
+ * Whether a tool's `--version` output reports exactly `version`. Build metadata after `+` (nargo's
+ * commit) is the same version; a prerelease suffix after `-` or another component is not.
+ */
+export function reportsToolVersion(output: string, version: string): boolean {
+  const escaped = version.replace(/[.+]/g, '\\$&')
+  return new RegExp(`(^|[\\s=])v?${escaped}(\\+\\S*)?\\r?$`, 'm').test(output)
+}
+
+/**
  * Reduce Cargo.lock to the external crate pins that the circuit generators compile against.
  *
  * Circuit output comes from the Noir sources and from the Rust generators that write the C1/C2
@@ -931,8 +954,10 @@ library ActiveCryptoConfig {
     console.log(`\n🔮 Building preset: ${preset}, committee: ${committee}...`)
 
     try {
-      this.checkTool('nargo --version', 'nargo')
-      if (!this.options.skipVk) this.checkTool('bb --version', 'bb')
+      const toolchain = pinnedToolchain(this.rootDir)
+      if (!toolchain) throw new Error('The tree pins no circuit toolchain (crates/zk-prover)')
+      this.checkTool('nargo --version', 'nargo', toolchain.nargo)
+      if (!this.options.skipVk) this.checkTool('bb --version', 'bb', toolchain.bb)
 
       const circuits = this.discoverCircuits()
       if (circuits.length === 0) {
@@ -1031,11 +1056,16 @@ library ActiveCryptoConfig {
     return result
   }
 
-  private checkTool(cmd: string, name: string): void {
+  /** The tool must be installed at the pinned version: another version can write other keys. */
+  private checkTool(cmd: string, name: string, version: string): void {
+    let output: string
     try {
-      execSync(cmd, { stdio: ['pipe', 'pipe', 'pipe'] })
+      output = execSync(cmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] })
     } catch {
       throw new Error(`${name} is not installed or not in PATH`)
+    }
+    if (!reportsToolVersion(output, version)) {
+      throw new Error(`${name} must be version ${version}, the pinned toolchain; \`${cmd}\` printed: ${output.trim()}`)
     }
   }
 
@@ -1486,6 +1516,9 @@ library ActiveCryptoConfig {
       const path = join(this.rootDir, sourceDir)
       if (existsSync(path)) this.hashDir(path, hash)
     }
+    // The toolchain writes the artifacts: the same sources under another nargo or bb give other keys.
+    const toolchain = pinnedToolchain(this.rootDir)
+    if (toolchain) hash.update(`toolchain:nargo ${toolchain.nargo} bb ${toolchain.bb}\n`)
     for (const sourceFile of [
       'circuits/lib/Nargo.toml',
       'circuits/lib/src/lib.nr',

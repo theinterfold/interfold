@@ -680,7 +680,7 @@ impl<S: DataStore> CrispE3Repository<S> {
     /// The indexer's E3 record, or `None` when the round has none yet. Read straight from the
     /// store because `E3Repository::get_e3` folds the missing case into an error string. The key
     /// mirrors `E3Repository::e3_key`.
-    async fn try_get_e3(&self) -> Result<Option<InterfoldE3>> {
+    pub async fn try_get_e3(&self) -> Result<Option<InterfoldE3>> {
         let key = format!("_e3:{}", self.e3_id);
         self.store
             .get(&key)
@@ -1036,6 +1036,15 @@ impl<S: DataStore> CrispE3Repository<S> {
             .map(|e3_crisp| e3_crisp.eligible_addresses))
     }
 
+    /// Record the census snapshot of a round that registered without it.
+    pub async fn set_snapshot_block(&mut self, snapshot: u64) -> Result<()> {
+        self.update_crisp("set the census snapshot", |round| {
+            round.snapshot_block = snapshot
+        })
+        .await?;
+        Ok(())
+    }
+
     /// Record whether holder discovery is still owed for this round.
     pub async fn set_discovery_pending(&mut self, pending: bool) -> Result<()> {
         self.update_crisp("set discovery_pending", |round| {
@@ -1062,13 +1071,18 @@ impl<S: DataStore> CrispE3Repository<S> {
     }
 }
 
-/// The block the census was built at. A round stored before the snapshot block was persisted
-/// (`stored_snapshot_block` is 0) falls back to the block before the request.
+/// A stored snapshot that the server has not read yet: the round registered before the census
+/// token's clock could be read, and the retry pass reads it.
+pub const UNKNOWN_SNAPSHOT: u64 = u64::MAX;
+
+/// The census snapshot, in the census token's clock. A round stored before the snapshot was
+/// persisted (`stored_snapshot_block` is 0) falls back to the request time minus one, its clock
+/// then. A snapshot that is not known yet is served as 0, never as a time in another clock.
 fn snapshot_block(request_block: u64, stored_snapshot_block: u64) -> u64 {
-    if stored_snapshot_block == 0 {
-        request_block.saturating_sub(1)
-    } else {
-        stored_snapshot_block
+    match stored_snapshot_block {
+        0 => request_block.saturating_sub(1),
+        UNKNOWN_SNAPSHOT => 0,
+        stored => stored,
     }
 }
 
@@ -1226,6 +1240,8 @@ mod tests {
         assert_eq!(snapshot_block(100, 99), 99);
         assert_eq!(snapshot_block(100, 0), 99);
         assert_eq!(snapshot_block(0, 0), 0);
+        // A snapshot the server has not read yet is not served as the request time.
+        assert_eq!(snapshot_block(100, super::UNKNOWN_SNAPSHOT), 0);
     }
 
     #[tokio::test]

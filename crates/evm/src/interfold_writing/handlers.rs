@@ -382,9 +382,13 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPlaintext>
                 match should_publish_plaintext(provider.clone(), contract_address, e3_id.clone())
                     .await
                 {
-                    Ok(false) => {
-                        info!(e3_id = %e3_id, "Skipping publishPlaintextOutput; plaintext already published");
+                    Ok(PlaintextPublication::Done) => {
+                        info!(e3_id = %e3_id, "Skipping publishPlaintextOutput; the E3 ended or has its plaintext");
                         return (e3_id, true);
+                    }
+                    Ok(PlaintextPublication::NotYet) => {
+                        info!(e3_id = %e3_id, "The provider does not show the ciphertext yet; retrying publishPlaintextOutput later");
+                        return (e3_id, false);
                     }
                     Err(err) => {
                         bus.err(
@@ -396,7 +400,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPlaintext>
                         );
                         return (e3_id, false);
                     }
-                    Ok(true) => {}
+                    Ok(PlaintextPublication::Publish) => {}
                 }
 
                 let result = publish_plaintext_output(

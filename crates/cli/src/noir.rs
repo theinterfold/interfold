@@ -29,6 +29,11 @@ pub enum NoirCommands {
         /// Without this option, require the full supported matrix.
         #[arg(long, value_name = "PRESET/COMMITTEE", requires = "circuits_archive")]
         circuits_configuration: Vec<String>,
+
+        /// Install a local archive that does not match this binary's release pin, such as a local
+        /// build. Without this option, the archive must have the pinned SHA-256.
+        #[arg(long, requires = "circuits_archive")]
+        allow_unpinned_archive: bool,
     },
 }
 
@@ -43,6 +48,7 @@ pub async fn execute(out: Console, command: NoirCommands, config: &AppConfig) ->
             force,
             circuits_archive,
             circuits_configuration,
+            allow_unpinned_archive,
         } => {
             execute_setup(
                 out,
@@ -50,6 +56,7 @@ pub async fn execute(out: Console, command: NoirCommands, config: &AppConfig) ->
                 force,
                 circuits_archive,
                 circuits_configuration,
+                allow_unpinned_archive,
             )
             .await?;
         }
@@ -70,6 +77,7 @@ pub async fn execute_without_config(out: Console, command: NoirCommands) -> Resu
             force,
             circuits_archive,
             circuits_configuration,
+            allow_unpinned_archive,
         } => {
             execute_setup(
                 out,
@@ -77,6 +85,7 @@ pub async fn execute_without_config(out: Console, command: NoirCommands) -> Resu
                 force,
                 circuits_archive,
                 circuits_configuration,
+                allow_unpinned_archive,
             )
             .await?;
         }
@@ -177,6 +186,7 @@ async fn execute_setup(
     force: bool,
     circuits_archive: Option<PathBuf>,
     circuits_configuration: Vec<String>,
+    allow_unpinned_archive: bool,
 ) -> Result<()> {
     log!(out, "Setting up ZK prover...\n");
     log!(
@@ -193,7 +203,9 @@ async fn execute_setup(
     if let Some(archive) = circuits_archive.as_deref() {
         log!(out, "  circuits archive:      {}\n", archive.display());
         let result = if circuits_configuration.is_empty() {
-            backend.install_circuits_archive(archive).await
+            backend
+                .install_circuits_archive(archive, allow_unpinned_archive)
+                .await
         } else {
             let configurations = circuits_configuration
                 .iter()
@@ -207,7 +219,11 @@ async fn execute_setup(
                 })
                 .collect::<Result<Vec<_>>>()?;
             backend
-                .install_circuits_archive_for_configurations(archive, &configurations)
+                .install_circuits_archive_for_configurations(
+                    archive,
+                    &configurations,
+                    allow_unpinned_archive,
+                )
                 .await
         };
         result.map_err(|e| anyhow!("Failed to install circuits archive: {}", e))?;
@@ -366,6 +382,7 @@ mod tests {
             "setup",
             "--circuits-archive",
             archive.to_str().unwrap(),
+            "--allow-unpinned-archive",
             "--config",
             config_file.to_str().unwrap(),
         ];

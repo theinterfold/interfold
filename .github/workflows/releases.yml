@@ -286,6 +286,8 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # The newest circuit-artifacts revision whose SOURCE_HASH is this tree's, not the branch tip,
+      # which can hold a build of another tree. The hash covers the sources and the toolchain pins.
       - name: Pull circuit artifacts
         id: pull
         run: |
@@ -296,9 +298,7 @@ jobs:
             echo "::error::Required circuit-artifacts branch is missing."
             exit 1
           fi
-          mkdir -p dist/circuits
-          git archive --format=tar --output="$RUNNER_TEMP/circuit-artifacts.tar" origin/circuit-artifacts
-          tar -xf "$RUNNER_TEMP/circuit-artifacts.tar" -C dist/circuits
+          pnpm store:circuits pull
 
       - name: Verify circuit artifacts match source
         # This check requires exactly one source-bound build stamp for each of the six supported

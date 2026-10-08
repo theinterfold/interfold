@@ -282,26 +282,108 @@ pub(in crate::actors::interfold_sol_writer) async fn publish_plaintext_output<
     .await
 }
 
+/// What the chain says about publishing an E3's plaintext now.
+#[derive(Debug, PartialEq, Eq)]
+pub(in crate::actors::interfold_sol_writer) enum PlaintextPublication {
+    /// The E3 waits for its plaintext.
+    Publish,
+    /// The E3 ended, or its plaintext is on chain: stop retrying.
+    Done,
+    /// The provider does not show the ciphertext yet, for example a node behind the others: retry.
+    NotYet,
+}
+
+/// Only an E3 that waits for its plaintext accepts one. Any node that computed a result submits
+/// it, so a completed or failed E3 must end the retries instead of reverting forever. An earlier
+/// stage is a provider that lags the history the result came from, so it must not end them.
+pub(in crate::actors::interfold_sol_writer) fn plaintext_publication(
+    stage: u8,
+    plaintext_published: bool,
+) -> PlaintextPublication {
+    match stage {
+        CIPHERTEXT_READY_STAGE if plaintext_published => PlaintextPublication::Done,
+        CIPHERTEXT_READY_STAGE => PlaintextPublication::Publish,
+        COMPLETE_STAGE | FAILED_STAGE => PlaintextPublication::Done,
+        _ => PlaintextPublication::NotYet,
+    }
+}
+
 pub(in crate::actors::interfold_sol_writer) async fn should_publish_plaintext<
     P: Provider + WalletProvider + Clone,
 >(
     provider: EthProvider<P>,
     contract_address: Address,
     e3_id: E3id,
-) -> Result<bool> {
+) -> Result<PlaintextPublication> {
     let e3_id: U256 = e3_id.try_into()?;
     let contract = IInterfold::new(contract_address, provider.provider());
-    // Only an E3 that waits for its plaintext accepts one. Any node that computed a result
-    // submits it, so a completed or failed E3 must end the retries instead of reverting forever.
-    if contract.getE3Stage(e3_id).call().await? != CIPHERTEXT_READY_STAGE {
-        return Ok(false);
+    let stage = contract.getE3Stage(e3_id).call().await?;
+    if stage != CIPHERTEXT_READY_STAGE {
+        return Ok(plaintext_publication(stage, false));
     }
     let e3 = contract.getE3(e3_id).call().await?;
-    Ok(e3.plaintextOutput.is_empty())
+    Ok(plaintext_publication(stage, !e3.plaintextOutput.is_empty()))
 }
 
-/// `E3Stage.CiphertextReady` in the Interfold contract.
+/// `E3Stage.CiphertextReady`, `Complete` and `Failed` in the Interfold contract.
 const CIPHERTEXT_READY_STAGE: u8 = 4;
+const COMPLETE_STAGE: u8 = 5;
+const FAILED_STAGE: u8 = 6;
+
+#[cfg(test)]
+mod plaintext_publication_tests {
+    use super::*;
+    use alloy::{
+        network::EthereumWallet, providers::ProviderBuilder, signers::local::PrivateKeySigner,
+        sol_types::SolValue, transports::mock::Asserter,
+    };
+
+    /// A provider behind the node that aggregated the plaintext still shows the E3 before
+    /// CiphertextReady. The writer must retry, not drop the plaintext as already published.
+    #[actix::test]
+    async fn a_lagging_provider_retries_the_plaintext() -> Result<()> {
+        let asserter = Asserter::new();
+        asserter.push_success(&"0x1");
+        let provider = EthProvider::new(
+            ProviderBuilder::new()
+                .wallet(EthereumWallet::from(PrivateKeySigner::random()))
+                .connect_mocked_client(asserter.clone()),
+        )
+        .await?;
+        for stage in 0..CIPHERTEXT_READY_STAGE {
+            asserter.push_success(&Bytes::from(U256::from(stage).abi_encode()));
+            assert_eq!(
+                should_publish_plaintext(provider.clone(), Address::ZERO, E3id::new("7", 1))
+                    .await?,
+                PlaintextPublication::NotYet,
+                "stage {stage}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_ciphertext_ready_e3_is_published_once() {
+        assert_eq!(
+            plaintext_publication(CIPHERTEXT_READY_STAGE, false),
+            PlaintextPublication::Publish
+        );
+        assert_eq!(
+            plaintext_publication(CIPHERTEXT_READY_STAGE, true),
+            PlaintextPublication::Done
+        );
+    }
+
+    #[test]
+    fn an_ended_e3_stops_the_retries() {
+        for stage in [COMPLETE_STAGE, FAILED_STAGE] {
+            assert_eq!(
+                plaintext_publication(stage, false),
+                PlaintextPublication::Done
+            );
+        }
+    }
+}
 
 pub(in crate::actors::interfold_sol_writer) async fn process_e3_failure<
     P: Provider + WalletProvider + Clone,

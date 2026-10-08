@@ -268,6 +268,20 @@ impl Handler<DocumentIngress> for DocumentPublisher {
             debug!("Ignored an invalid or expired document notification");
             return;
         }
+        // The document is published at the notification's time, which the clock refuses beyond its
+        // drift allowance. Such a notification cannot deliver the document, and it must not take
+        // the place of one that can.
+        match self.bus.latest_admissible_ts() {
+            Ok(latest) if msg.ts <= latest => {}
+            Ok(_) => {
+                debug!("Ignored a document notification stamped beyond the clock-drift allowance");
+                return;
+            }
+            Err(error) => {
+                self.bus.err(EType::DocumentPublishing, error);
+                return;
+            }
+        }
         let id = (msg.meta.e3_id.clone(), msg.key.clone());
         if self.closed_e3s.contains(&msg.meta.e3_id) {
             return;

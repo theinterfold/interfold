@@ -276,11 +276,13 @@ Install the Interfold CLI (see [Installation](/build/installation)) and `cargo-o
 
 ```bash
 cargo install --locked --git https://github.com/openvm-org/openvm.git --tag v2.0.2 cargo-openvm
-cargo openvm setup
+cargo openvm setup --evm
 ```
 
-`cargo openvm setup` writes the Halo2 proving key, the KZG parameters, and the EVM verifier to
-`~/.openvm`. Check their provenance before you use them.
+`cargo openvm setup --evm` writes the Halo2 proving key, the KZG parameters, and the EVM verifier to
+`~/.openvm`. Without `--evm` it writes only the recursion keys, and the compile step stops.
+Generating the Halo2 key needs a large amount of memory; `--download` fetches OpenVM's prebuilt key
+and verifier instead. Check their provenance before you use them.
 
 ### Build the workers
 
@@ -309,12 +311,12 @@ program:
     backend: auto
 ```
 
-| Key               | Default     | Meaning                                       |
-| ----------------- | ----------- | --------------------------------------------- |
-| `prover_bin`      | None        | The CPU worker                                |
-| `prover_bin_cuda` | None        | The CUDA worker                               |
-| `backend`         | `auto`      | `auto`, `cpu`, or `cuda`                      |
-| `setup_dir`       | `~/.openvm` | The directory that `cargo openvm setup` wrote |
+| Key               | Default     | Meaning                                             |
+| ----------------- | ----------- | --------------------------------------------------- |
+| `prover_bin`      | None        | The CPU worker                                      |
+| `prover_bin_cuda` | None        | The CUDA worker                                     |
+| `backend`         | `auto`      | `auto`, `cpu`, or `cuda`                            |
+| `setup_dir`       | `~/.openvm` | The directory that `cargo openvm setup --evm` wrote |
 
 Set at least one worker. Every path is absolute. With `backend: auto` the service uses the CUDA
 worker when it is set and can open a GPU, and the CPU worker otherwise. `cuda` refuses to start

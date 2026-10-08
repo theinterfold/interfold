@@ -1059,6 +1059,45 @@ describe("Interfold", function () {
       );
     });
 
+    // The CRISP server reads `requests[e3Id]` here before it pays for availability
+    // (examples/CRISP/crates/evm_helpers), because Interfold has no getter for it.
+    it("stores the request-time verifier and parameter hash at the namespaced location", async function () {
+      const { interfold, request, usdcToken, mocks } = await loadFixture(setup);
+      const replacement = await ethers.deployContract("MockCiphertextVerifier");
+      await makeRequest(interfold, usdcToken, {
+        ...request,
+        inputWindow: await freshInputWindow(20, 100),
+      });
+      await interfold.setCiphertextVerifier(
+        encryptionSchemeId,
+        await replacement.getAddress(),
+      );
+
+      const coder = ethers.AbiCoder.defaultAbiCoder();
+      const namespace =
+        BigInt(ethers.id("interfold.storage.CiphertextVerifier")) - 1n;
+      const base =
+        BigInt(ethers.keccak256(coder.encode(["uint256"], [namespace]))) &
+        ~0xffn;
+      expect(ethers.toBeHex(base, 32)).to.equal(
+        "0xfc399dd26441dab88259cd69fffcf8b5f96dd87f2db63f29285d86101a4d1500",
+      );
+      const slot = BigInt(
+        ethers.keccak256(
+          coder.encode(["uint256", "uint256"], [firstE3Id, base + 1n]),
+        ),
+      );
+      const proxy = await interfold.getAddress();
+      const verifier = await ethers.provider.getStorage(proxy, slot);
+      const paramsHash = await ethers.provider.getStorage(proxy, slot + 1n);
+      expect(ethers.getAddress(ethers.dataSlice(verifier, 12))).to.equal(
+        await mocks.ciphertextVerifier.getAddress(),
+      );
+      expect(paramsHash).to.equal(
+        ethers.keccak256(await interfold.paramSetRegistry(request.paramSet)),
+      );
+    });
+
     it("keeps the request-time verifier after verifier rotation", async function () {
       const {
         interfold,

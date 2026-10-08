@@ -921,10 +921,13 @@ therefore retry, while completed C1-C4 proof work and randomized TrBFV output ar
 Live, a request under a new ID whose result has not reached the gate 10 minutes after it went to the
 worker goes to the worker again, because EventBus fan-out can drop that result, but only when no run
 of it is left in the worker (`RunningJobs`: from the worker's intake, queued ones included, until
-the run ends, counted per correlation ID because IDs restart in each process). A slow proof under
+the run ends, counted per correlation ID). A slow proof under
 load therefore runs once. A run that hangs holds back the re-send until it ends; the prover's own
 cap (`bb_timeout_secs`, 12 hours by default) bounds that. The first success answers the waiting IDs
-and later requests.
+and later requests. Before replay, a node raises its correlation IDs above the reservation that its
+earlier boot recorded (`correlation-ids` beside the event log), so a replayed response of an earlier
+boot never answers a new request, also after a clock rollback; the gate also takes an outcome only
+for the request of the same E3.
 
 A restored plaintext recipient can remain dormant while confirmed key authority is missing. It keeps
 the saved actor state and ordered replay inputs, then validates recovery before forwarding them.

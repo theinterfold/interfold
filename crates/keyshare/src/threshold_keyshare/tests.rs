@@ -5580,6 +5580,56 @@ async fn recovery_keeps_the_first_c0_and_c4_from_each_party() -> Result<()> {
     Ok(())
 }
 
+/// Two authenticated C4 messages from one party arrive before the node is ready for them. The
+/// early buffer keeps the first, as the recovery record does, so a restart verifies the same input.
+#[actix::test]
+async fn the_early_c4_buffer_keeps_the_first_message_from_each_party() -> Result<()> {
+    let e3_id = E3id::new("47", 1);
+    let (bus, _) = test_bus();
+    let (state, _) = test_state(
+        &e3_id,
+        KeyshareState::AggregatingDecryptionKey(aggregating_decryption_key_for_roster_test()),
+    );
+    let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: DEFAULT_BFV_PRESET,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: true,
+        recovery: test_recovery(),
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    });
+    let first_event = peer_c4_event(&e3_id, 1);
+    let ec = first_event.get_ctx().clone();
+    let InterfoldEventData::DecryptionKeyShared(first) = first_event.get_data() else {
+        unreachable!();
+    };
+    let mut later = first.clone();
+    later.signed_sk_decryption_proof.signature = ArcBytes::from_bytes(&[9]);
+
+    for share in [first.clone(), later] {
+        actor.record_decryption_key_share(&TypedEvent::new(share.clone(), ec.clone()))?;
+        actor.handle_early_decryption_key_share(share, ec.clone())?;
+    }
+
+    let buffered = actor
+        .pending
+        .c4_verification_shares
+        .as_ref()
+        .and_then(|shares| shares.get(&1))
+        .cloned();
+    assert_eq!(buffered, Some(first.clone()));
+    let recovered = actor.recovery.try_get()?.decryption_key_shares[&1]
+        .clone()
+        .into_inner();
+    assert_eq!(recovered, first.clone());
+    Ok(())
+}
+
 fn ready_for_c4_test() -> ReadyForDecryption {
     ReadyForDecryption {
         pk_share: ArcBytes::from_bytes(&[1]),
