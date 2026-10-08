@@ -196,22 +196,6 @@ fn smudging_b_enc_value(preset: BfvPreset) -> Result<BigUint> {
     Ok(error_sampler_bound(threshold_params.get_error1_variance()))
 }
 
-/// Numeric value of the `SHARE_COMPUTATION_CHUNK_SIZE` expression for one committee size.
-fn c2_chunk_size_for_committee(degree: u32, n_parties: u32) -> u32 {
-    let size = if degree >= 16384 {
-        if n_parties <= 4 {
-            4096
-        } else if n_parties <= 12 {
-            1024
-        } else {
-            DEFAULT_C2_CHUNK_SIZE
-        }
-    } else {
-        DEFAULT_C2_CHUNK_SIZE
-    };
-    size.min(degree)
-}
-
 /// The C2 chunk grid as Noir global expressions, matching `c2_chunk_layout::C2ChunkLayout::compiled`
 /// and `c2_chunk_config::c2_chunk_size`.
 ///
@@ -689,7 +673,7 @@ fn render_dkg(preset: BfvPreset) -> Result<String> {
             committee.n,
             committee.threshold,
             // Only feeds the two chunk globals excluded below; the chunk-grid section owns them.
-            c2_chunk_size_for_committee(dkg_pk.n as u32, committee.n as u32) as usize,
+            e3_zk_helpers::circuits::dkg::share_computation::c2_chunk_size(dkg_pk.n, committee.n),
         )
         .context("share_computation codegen failed")?,
         "SHARE_COMPUTATION",

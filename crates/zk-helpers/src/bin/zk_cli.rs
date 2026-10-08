@@ -203,7 +203,7 @@ struct Cli {
     /// When used with --toml: do not write configs.nr (e.g. for benchmarks where circuits use lib configs).
     #[arg(long, default_value = "false")]
     no_configs: bool,
-    /// C2 coefficient chunk size. Defaults to min(512, polynomial degree).
+    /// C2 coefficient chunk size. Defaults to the compiled size for the preset and committee.
     #[arg(long)]
     chunk_size: Option<usize>,
     /// Row in the public l-BFV key-switching vectors.
@@ -283,9 +283,17 @@ fn main() -> Result<()> {
         ));
     }
 
-    let chunk_size = args
-        .chunk_size
-        .unwrap_or_else(|| preset.metadata().degree.min(512));
+    let chunk_size = args.chunk_size.map_or_else(
+        || {
+            parse_committee(&args.committee).map(|committee| {
+                e3_zk_helpers::circuits::dkg::share_computation::c2_chunk_size(
+                    preset.metadata().degree,
+                    committee.values().n,
+                )
+            })
+        },
+        Ok,
+    )?;
     if chunk_size == 0 || !preset.metadata().degree.is_multiple_of(chunk_size) {
         return Err(anyhow!(
             "--chunk-size must be a nonzero divisor of the polynomial degree {}",
