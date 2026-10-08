@@ -178,12 +178,16 @@ impl<let N: u32, let H: u32, let L: u32, let BIT_PK: u32> PkAggregation<N, H, L,
 
 impl<let N: u32, let H: u32, let L: u32, let BIT_PK: u32> PkAggregation<N, H, L, BIT_PK> {
     /// [`PkAggregation::execute`] for the l-BFV path, where `crp` is a fixed CRS row whose
-    /// commitment is a generated constant. Runs the same checks and returns the same value as
-    /// `execute` would with that row as `crp`, without hashing the row in-circuit. `self.crp` is
+    /// commitment is a generated constant, and each party's `pk0` is committed in the l-BFV row
+    /// form rather than C1's. Returns the same value as `execute` would with that row as `crp`,
+    /// without hashing the row in-circuit. `self.crp` and `expected_threshold_pk_commitments` are
     /// not read.
-    pub fn execute_with_crp_commitment(self, crp_commitment: Field) -> Field {
+    ///
+    /// The caller MUST already have opened every `pk0[i]` against its expected commitment with a
+    /// checked (injective) packing of values its creator bounded; that opening is what transfers
+    /// the centered bound `verify_pk_for_basis` relies on.
+    pub fn execute_opened_with_crp_commitment(self, crp_commitment: Field) -> Field {
         self.verify_pk_ranges();
-        self.verify_pk_commitments();
         for basis_idx in 0..L {
             self.verify_pk_for_basis(self.pk0, self.pk0_agg, basis_idx);
         }
