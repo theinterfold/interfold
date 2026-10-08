@@ -10,7 +10,7 @@ use crate::math::commitments::{
     compute_sc_sk_secret_root_from_polynomial,
 };
 use crate::math::helpers::flatten_checked;
-use crate::math::polynomial::{negacyclic_kernel, Polynomial};
+use crate::math::polynomial::{negacyclic_kernel, Polynomial, select_constant_dot};
 
 /// Prove the two RLK equations for one row and one CRT limb.
 ///
@@ -23,7 +23,9 @@ use crate::math::polynomial::{negacyclic_kernel, Polynomial};
 /// coefficient is `1 mod q_row` and `0 mod q_j` for `j != row`, so modulo `q_i` it equals
 /// `delta`, and the identities fix the same residues `d0`, `d2` that `g_row` does. The Rust test
 /// `garner_coefficient_is_the_crt_unit_vector` pins this congruence for the l-BFV presets.
-pub struct RlkGenerationLimb<let N: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, let BIT_E2: u32, let BIT_RD0: u32, let BIT_RD2: u32, let BIT_D: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
+/// `d1` and `a` are entry `[row_index][limb_index]` of the compile-time URS and CRS tables. The
+/// tables are never indexed at runtime: see `select_constant_dot`.
+pub struct RlkGenerationLimb<let N: u32, let L: u32, let ROWS: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, let BIT_E2: u32, let BIT_RD0: u32, let BIT_RD2: u32, let BIT_D: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
     r_bound: Field,
     sk_bound: Field,
     e0_bound: Field,
@@ -31,8 +33,8 @@ pub struct RlkGenerationLimb<let N: u32, let BIT_R: u32, let BIT_SK: u32, let BI
     rd0_bound: Field,
     rd2_bound: Field,
     qi: Field,
-    d1: Polynomial<N>,
-    a: Polynomial<N>,
+    urs: [[Polynomial<N>; L]; ROWS],
+    crs: [[Polynomial<N>; L]; ROWS],
     row_index: u32,
     limb_index: u32,
     sk: Polynomial<N>,
@@ -45,7 +47,7 @@ pub struct RlkGenerationLimb<let N: u32, let BIT_R: u32, let BIT_SK: u32, let BI
     d2: Polynomial<N>,
 }
 
-impl<let N: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, let BIT_E2: u32, let BIT_RD0: u32, let BIT_RD2: u32, let BIT_D: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> RlkGenerationLimb<N, BIT_R, BIT_SK, BIT_E0, BIT_E2, BIT_RD0, BIT_RD2, BIT_D, N_CHUNKS, CHUNK_SIZE> {
+impl<let N: u32, let L: u32, let ROWS: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, let BIT_E2: u32, let BIT_RD0: u32, let BIT_RD2: u32, let BIT_D: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> RlkGenerationLimb<N, L, ROWS, BIT_R, BIT_SK, BIT_E0, BIT_E2, BIT_RD0, BIT_RD2, BIT_D, N_CHUNKS, CHUNK_SIZE> {
     pub fn new(
         r_bound: Field,
         sk_bound: Field,
@@ -54,8 +56,8 @@ impl<let N: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, let BIT_E2: u
         rd0_bound: Field,
         rd2_bound: Field,
         qi: Field,
-        d1: Polynomial<N>,
-        a: Polynomial<N>,
+        urs: [[Polynomial<N>; L]; ROWS],
+        crs: [[Polynomial<N>; L]; ROWS],
         row_index: u32,
         limb_index: u32,
         sk: Polynomial<N>,
@@ -75,8 +77,8 @@ impl<let N: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, let BIT_E2: u
             rd0_bound,
             rd2_bound,
             qi,
-            d1,
-            a,
+            urs,
+            crs,
             row_index,
             limb_index,
             sk,
@@ -149,8 +151,8 @@ impl<let N: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, let BIT_E2: u
 
     /// Absorbs every value the identities read before deriving `gamma`.
     ///
-    /// `delta` is a function of `row_index` and `limb_index`, which open the payload, so it needs
-    /// no entry of its own.
+    /// `delta` and the URS/CRS rows are functions of `row_index` and `limb_index`, which open the
+    /// payload, so they need no entries of their own.
     fn generate_challenge(
         self,
         sk_commitment: Field,
@@ -161,8 +163,6 @@ impl<let N: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, let BIT_E2: u
         d2_limb_commitment: Field,
     ) -> Field {
         let mut payload = [self.row_index as Field, self.limb_index as Field].as_vector();
-        payload = flatten_checked::<_, _, BIT_D>(payload, [self.d1]);
-        payload = flatten_checked::<_, _, BIT_D>(payload, [self.a]);
         payload = payload.push_back(self.qi);
         payload = flatten_checked::<_, _, BIT_E0>(payload, [self.e0]);
         payload = flatten_checked::<_, _, BIT_E2>(payload, [self.e2]);
@@ -203,11 +203,13 @@ impl<let N: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, let BIT_E2: u
         }
 
         assert(
-            Polynomial::new(residual_d0).eval(gamma) == -self.d1.dot(k_sk),
+            Polynomial::new(residual_d0).eval(gamma)
+                == -select_constant_dot(self.urs, self.row_index, self.limb_index, k_sk),
             "RLK d0 equation failed",
         );
         assert(
-            Polynomial::new(residual_d2).eval(gamma) == self.a.dot(k_r),
+            Polynomial::new(residual_d2).eval(gamma)
+                == select_constant_dot(self.crs, self.row_index, self.limb_index, k_r),
             "RLK d2 equation failed",
         );
     }
@@ -216,7 +218,9 @@ impl<let N: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, let BIT_E2: u
 // Worked at `N = 4`, `q = 97`, coefficients highest degree first. The honest witnesses were
 // computed by folding the schoolbook products with `X^4 = -1` and dividing by `q` exactly.
 // Bounds: sk = r = 1, e = 3, rd = ((4 + 2) * 48 + 3 + 1) / 97 = 3, d = 48.
-type TestLimb = RlkGenerationLimb<4, 1, 1, 2, 2, 2, 2, 6, 1, 4>;
+// Two-by-two URS/CRS tables with the same `d1` and `a` in every slot, so tests can move the row
+// and limb indices without changing the products.
+type TestLimb = RlkGenerationLimb<4, 2, 2, 1, 1, 2, 2, 2, 2, 6, 1, 4>;
 
 fn test_limb(
     row_index: u32,
@@ -234,8 +238,8 @@ fn test_limb(
         3,
         3,
         97,
-        Polynomial::new([30, -40, 20, -10]),
-        Polynomial::new([12, 45, -33, 7]),
+        [[Polynomial::new([30, -40, 20, -10]); 2]; 2],
+        [[Polynomial::new([12, 45, -33, 7]); 2]; 2],
         row_index,
         limb_index,
         Polynomial::new([0, 1, -1, 1]),

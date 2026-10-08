@@ -33,12 +33,12 @@ fn main(
     );
     assert(limb_index < L, "limb_index out of range");
 
-    let circuit: LbfvPkGenerationLimb<N, PK_GENERATION_BIT_EEK, PK_GENERATION_BIT_SK, LBFV_PK_GENERATION_BIT_R, PK_GENERATION_BIT_PK, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE> = LbfvPkGenerationLimb::new(
+    let circuit: LbfvPkGenerationLimb<N, L, GADGET_DIM, PK_GENERATION_BIT_EEK, PK_GENERATION_BIT_SK, LBFV_PK_GENERATION_BIT_R, PK_GENERATION_BIT_PK, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE> = LbfvPkGenerationLimb::new(
         PK_GENERATION_CONFIGS.eek_bound,
         PK_GENERATION_CONFIGS.sk_bound,
         LBFV_PK_GENERATION_R_BOUNDS[limb_index],
         PK_GENERATION_CONFIGS.qis[limb_index],
-        LBFV_CRS_GADGET_ROWS[row_index][limb_index],
+        LBFV_CRS_GADGET_ROWS,
         row_index,
         limb_index,
         eek,

@@ -247,6 +247,42 @@ fn test_polynomial_eval_zero() {
     assert(result == 0);
 }
 
+/// `table[row][limb].dot(k)` for a compile-time `table` and runtime `row`/`limb`.
+///
+/// Indexing a constant table with a runtime index makes the circuit build a memory table over
+/// every entry (`ROWS * L * N` of them), which dominated the l-BFV limb circuits. Here every entry
+/// is a constant polynomial, so each `dot` is a linear combination of `k` and the selection is
+/// `ROWS * L` multiplications. The caller must range-check `row < ROWS` and `limb < L`: an
+/// out-of-range index selects nothing and returns 0.
+pub fn select_constant_dot<let N: u32, let L: u32, let ROWS: u32>(
+    table: [[Polynomial<N>; L]; ROWS],
+    row: u32,
+    limb: u32,
+    k: [Field; N],
+) -> Field {
+    let mut out: Field = 0;
+    for r in 0..ROWS {
+        for l in 0..L {
+            let selected = ((row == r) & (limb == l)) as Field;
+            out += selected * table[r][l].dot(k);
+        }
+    }
+    out
+}
+
+#[test]
+fn test_select_constant_dot_picks_the_indexed_entry() {
+    let table = [
+        [Polynomial::new([1, 2]), Polynomial::new([3, 4])],
+        [Polynomial::new([5, 6]), Polynomial::new([7, 8])],
+    ];
+    let k = [10, 100];
+    assert(select_constant_dot(table, 0, 0, k) == 210);
+    assert(select_constant_dot(table, 0, 1, k) == 430);
+    assert(select_constant_dot(table, 1, 0, k) == 650);
+    assert(select_constant_dot(table, 1, 1, k) == 870);
+}
+
 /// Evaluation kernel for `u` modulo `X^N + 1`: `out[j]` is `(X^(N-1-j) * u mod X^N + 1)(x)`.
 ///
 /// `a.dot(negacyclic_kernel(u, x))` then equals `(a * u mod X^N + 1)(x)` without the prover
