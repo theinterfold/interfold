@@ -253,6 +253,7 @@ mod tests {
     use super::*;
     use crate::server::models::{CensusMode, CreditMode, CustomParams, E3Crisp};
     use crate::server::repo::CrispE3Repository;
+    use alloy_primitives::Address;
     use e3_fhe_params::{build_bfv_params_from_set_arc, BfvParamSet, BfvPreset};
     use e3_sdk::indexer::SharedStore;
     use std::sync::Arc;
@@ -299,7 +300,7 @@ mod tests {
             voting_power_divisor: "0".to_string(),
         };
         round
-            .initialize_round(params, "requester".to_string(), 100, 100, 1)
+            .initialize_round(params, Address::ZERO, "requester".to_string(), 100, 100, 1)
             .await
             .unwrap();
         round

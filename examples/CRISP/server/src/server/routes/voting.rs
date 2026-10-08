@@ -364,6 +364,7 @@ mod tests {
         rate_limit::ChainRateLimiter,
     };
     use actix_web::{http::StatusCode, test, web, App};
+    use alloy_primitives::Address;
     use e3_sdk::indexer::SharedStore;
     use serde_json::json;
     use std::sync::Arc;
@@ -388,6 +389,7 @@ mod tests {
                     census_mode: CensusMode::Token,
                     voting_power_divisor: "0".to_owned(),
                 },
+                Address::ZERO,
                 "requester".to_owned(),
                 100,
                 100,

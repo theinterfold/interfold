@@ -569,6 +569,7 @@ pub async fn register_e3_requested(
                 // save the e3 details
                 repo.initialize_round(
                     custom_params,
+                    event.e3.e3Program,
                     e3.requester.to_string(),
                     voting_end_time,
                     input_window[1],
@@ -1062,9 +1063,48 @@ pub async fn register_ciphertext_output_reference_published(
     Ok(indexer)
 }
 
+/// Record the tally that `PlaintextOutputPublished` carries, and finish the round.
+///
+/// `decode_tally` reads the ballot layout of this server. Each `CRISPProgram` deployment fixes the
+/// layout of its rounds, so the tally of a round that another program requested stays empty. So
+/// does the tally of a round stored without its program, because its layout is unknown.
+async fn record_plaintext_output<S: DataStore>(
+    repo: &mut CrispE3Repository<S>,
+    e3_id: &str,
+    plaintext_output: &[u8],
+    configured_program: Address,
+) -> eyre::Result<()> {
+    let round = repo.get_crisp().await?;
+    let same_program = round
+        .e3_program
+        .parse::<Address>()
+        .is_ok_and(|program| is_configured_e3_program(program, configured_program));
+
+    if same_program {
+        let vote_counts = decode_tally(plaintext_output, round.num_options.parse()?)?;
+        for (i, count) in vote_counts.iter().enumerate() {
+            info!("[e3_id={}] Option index: {} votes: {:?}", e3_id, i, count);
+        }
+        repo.set_votes(vote_counts).await?;
+    } else {
+        warn!(
+            "[e3_id={}] Leaving the tally empty: the round's program '{}' is not the configured \
+             program {}, so its ballot layout can differ",
+            e3_id, round.e3_program, configured_program
+        );
+    }
+
+    repo.update_status("Finished").await
+}
+
 pub async fn register_plaintext_output_published(
     indexer: InterfoldIndexer<impl DataStore, ReadWrite>,
 ) -> Result<InterfoldIndexer<impl DataStore, ReadWrite>> {
+    let configured_program: Address = CONFIG
+        .e3_program_address
+        .parse()
+        .with_context(|| "Invalid configured E3 program address")?;
+
     // PlaintextOutputPublished
     indexer
         .add_event_handler(move |event: PlaintextOutputPublished, ctx| {
@@ -1073,19 +1113,13 @@ pub async fn register_plaintext_output_published(
             let mut repo = CrispE3Repository::new(store, &e3_id);
             async move {
                 info!("[e3_id={}] Handling PlaintextOutputPublished", e3_id);
-
-                let num_options = repo.get_num_options().await?;
-
-                // The plaintextOutput from the event contains the result of the FHE computation.
-                // Decode the tally using the utility function.
-                let vote_counts = decode_tally(&event.plaintextOutput, num_options)?;
-
-                for (i, count) in vote_counts.iter().enumerate() {
-                    info!("[e3_id={}] Option index: {} votes: {:?}", e3_id, i, count);
-                }
-
-                repo.set_votes(vote_counts).await?;
-                repo.update_status("Finished").await?;
+                record_plaintext_output(
+                    &mut repo,
+                    &e3_id,
+                    &event.plaintextOutput,
+                    configured_program,
+                )
+                .await?;
                 Ok(())
             }
         })
@@ -2026,6 +2060,7 @@ mod pending_discovery_tests {
     use super::{holders_or_owed, pending_discovery_step, store_census, PendingDiscoveryStep};
     use crate::server::models::{CensusMode, CreditMode, CustomParams, E3Crisp, TokenHolder};
     use crate::server::repo::CrispE3Repository;
+    use alloy_primitives::Address;
     use e3_sdk::indexer::{InMemoryStore, SharedStore};
     use std::sync::Arc;
     use tokio::sync::RwLock;
@@ -2055,6 +2090,7 @@ mod pending_discovery_tests {
             snapshot_block: 1,
             census_mode: CensusMode::Onchain,
             discovery_pending: pending,
+            e3_program: String::new(),
         }
     }
 
@@ -2107,6 +2143,7 @@ mod pending_discovery_tests {
         };
         repo.initialize_round(
             params,
+            Address::ZERO,
             "0x0000000000000000000000000000000000000002".into(),
             100,
             100,
@@ -2163,5 +2200,74 @@ mod pending_discovery_tests {
         let (holders, owed) = holders_or_owed("1", false, Err(eyre::eyre!("rate limited")));
         assert!(holders.is_empty());
         assert!(owed);
+    }
+}
+
+#[cfg(test)]
+mod plaintext_output_tests {
+    use super::record_plaintext_output;
+    use crate::server::models::{CensusMode, CreditMode, CustomParams, E3Crisp};
+    use crate::server::repo::{CrispE3Repository, CRISP_KEY_PREFIX};
+    use alloy_primitives::Address;
+    use crisp_utils::MAX_MSG_NON_ZERO_COEFFS;
+    use e3_sdk::indexer::{DataStore, InMemoryStore, SharedStore};
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    /// Each `CRISPProgram` deployment fixes the ballot layout of its rounds, and the server decodes
+    /// its own layout only. A round of another program, or a round stored without its program,
+    /// finishes with an empty tally. The server does not read it under the wrong layout.
+    #[tokio::test]
+    async fn only_a_round_of_the_configured_program_gets_a_tally() {
+        let configured = Address::repeat_byte(0x11);
+        let store = SharedStore::new(Arc::new(RwLock::new(InMemoryStore::new())));
+        let params = || CustomParams {
+            token_address: "0x0000000000000000000000000000000000000001".to_string(),
+            balance_threshold: "1".to_string(),
+            num_options: "2".to_string(),
+            credit_mode: CreditMode::Constant,
+            credits: Some("1".to_string()),
+            census_mode: CensusMode::Token,
+            voting_power_divisor: "0".to_string(),
+        };
+        // One little-endian u64 per coefficient: 3 on option 0 and 5 on option 1.
+        let mut output = vec![0u8; 8 * MAX_MSG_NON_ZERO_COEFFS];
+        output[0] = 3;
+        output[8] = 5;
+
+        for (e3_id, program, keeps_program, tally) in [
+            ("1", configured, true, vec!["3", "5"]),
+            ("2", Address::repeat_byte(0x22), true, vec![]),
+            ("3", configured, false, vec![]),
+        ] {
+            let mut repo = CrispE3Repository::new(store.clone(), e3_id);
+            repo.initialize_round(params(), program, "requester".to_string(), 100, 100, 1)
+                .await
+                .unwrap();
+            if !keeps_program {
+                // A stored record without `e3_program` decodes it as empty.
+                store
+                    .clone()
+                    .modify(
+                        &format!("{CRISP_KEY_PREFIX}{e3_id}"),
+                        |round: Option<E3Crisp>| {
+                            round.map(|mut round| {
+                                round.e3_program.clear();
+                                round
+                            })
+                        },
+                    )
+                    .await
+                    .unwrap();
+            }
+
+            record_plaintext_output(&mut repo, e3_id, &output, configured)
+                .await
+                .unwrap();
+
+            let round = repo.get_crisp().await.unwrap();
+            assert_eq!(round.tally, tally, "round {e3_id}");
+            assert_eq!(round.status, "Finished", "round {e3_id}");
+        }
     }
 }

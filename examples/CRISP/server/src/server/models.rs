@@ -399,6 +399,12 @@ pub struct E3Crisp {
     /// forgets: the `E3Requested` event is not replayed once the cursor passes it.
     #[serde(default)]
     pub discovery_pending: bool,
+    /// The program that requested the round. Each `CRISPProgram` deployment fixes the ballot
+    /// layout of its rounds, so the server decodes a tally only for rounds of its configured
+    /// program. Empty when the stored record has no program, and then the round's layout is
+    /// unknown.
+    #[serde(default)]
+    pub e3_program: String,
 }
 
 impl From<E3> for WebResultRequest {

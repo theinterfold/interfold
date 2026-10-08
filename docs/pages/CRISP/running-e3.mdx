@@ -195,20 +195,26 @@ A stage that misses its deadline makes the E3 fail. See the E3 lifecycle page.
 If a round receives no votes, the server does not request a computation. It logs
 `E3 has no votes to decrypt. Setting status to Finished.` and sets the status to `Finished`.
 
+The server records the program that requested each round. On `PlaintextOutputPublished`, it decodes
+the tally only for a round of the configured `E3_PROGRAM_ADDRESS`, because each `CRISPProgram`
+deployment fixes its own ballot layout. Any other round gets an empty tally and the status
+`Finished`. This applies also to a round that an earlier server release stored.
+
 ### Server log messages
 
 The CRISP server writes these messages to the `pnpm dev:up` terminal (`server/src/server/indexer.rs`
 and `server/src/server/routes/state.rs`). `<id>` is the E3 ID.
 
-| Message                                                                            | Meaning                                             |
-| ---------------------------------------------------------------------------------- | --------------------------------------------------- |
-| `[e3_id=<id>] Using mocked token holders for local network (chain_id: 31337)`      | The server uses the fixed local census.             |
-| `[e3_id=<id>] setMerkleRoot successful. TxHash: ...`                               | The census root is on-chain.                        |
-| `[e3_id=<id>] Activated CRISP round and registered deadline callbacks`             | The key is available and the round is active.       |
-| `[e3_id=<id>] Starting computation for E3 (<n> ciphertext input(s), <m> voter(s))` | The input window closed and the computation starts. |
-| `Received program server result for E3 ID: <id>, ...`                              | The program server returned the encrypted sum.      |
-| `[e3_id=<id>] Handling CiphertextOutputPublished`                                  | The encrypted sum is on-chain.                      |
-| `[e3_id=<id>] Option index: <i> votes: <count>`                                    | The decoded total for option `<i>`.                 |
+| Message                                                                                                              | Meaning                                                     |
+| -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `[e3_id=<id>] Using mocked token holders for local network (chain_id: 31337)`                                        | The server uses the fixed local census.                     |
+| `[e3_id=<id>] setMerkleRoot successful. TxHash: ...`                                                                 | The census root is on-chain.                                |
+| `[e3_id=<id>] Activated CRISP round and registered deadline callbacks`                                               | The key is available and the round is active.               |
+| `[e3_id=<id>] Starting computation for E3 (<n> ciphertext input(s), <m> voter(s))`                                   | The input window closed and the computation starts.         |
+| `Received program server result for E3 ID: <id>, ...`                                                                | The program server returned the encrypted sum.              |
+| `[e3_id=<id>] Handling CiphertextOutputPublished`                                                                    | The encrypted sum is on-chain.                              |
+| `[e3_id=<id>] Option index: <i> votes: <count>`                                                                      | The decoded total for option `<i>`.                         |
+| `[e3_id=<id>] Leaving the tally empty: the round's program '<address>' is not the configured program <address>, ...` | The round finished, and this server stores no tally for it. |
 
 The ciphernode `cn1` also serves the node dashboard at `http://127.0.0.1:8080`. See
 [Node dashboard](/operate/dashboard).

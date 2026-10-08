@@ -12,7 +12,7 @@ use super::{
     database::{generate_emoji, CIPHERTEXT_KEY_PREFIX, INPUT_GENERATION_KEY_PREFIX},
     models::{CurrentRound, E3Crisp, E3StateLite, WebResultRequest},
 };
-use alloy::primitives::keccak256;
+use alloy::primitives::{keccak256, Address};
 use e3_compute_provider::policy::InputRecord;
 use e3_sdk::indexer::{models::E3 as InterfoldE3, DataStore, E3Repository, SharedStore};
 use e3_user_program::policy::chain_head_per_slot;
@@ -642,6 +642,7 @@ impl<S: DataStore> CrispE3Repository<S> {
     pub async fn initialize_round(
         &mut self,
         custom_params: CustomParams,
+        e3_program: Address,
         requester: String,
         voting_end_time: u64,
         end_time: u64,
@@ -672,6 +673,7 @@ impl<S: DataStore> CrispE3Repository<S> {
             end_time,
             snapshot_block,
             discovery_pending: false,
+            e3_program: e3_program.to_string(),
         };
 
         self.store
@@ -703,11 +705,6 @@ impl<S: DataStore> CrispE3Repository<S> {
             .get::<InterfoldE3>(&key)
             .await
             .map_err(|e| eyre::eyre!("Could get e3 at '{key}' due to error: {e}"))
-    }
-
-    pub async fn get_num_options(&self) -> Result<usize> {
-        let e3_crisp = self.get_crisp().await?;
-        Ok(e3_crisp.num_options.parse::<usize>()?)
     }
 
     /// How many slots hold at least one available, locally indexed entry.
@@ -1240,7 +1237,7 @@ mod tests {
         CensusMode, CreditMode, CustomParams, E3Crisp, ExclusionReason, InputSelectionResponse,
         InputSelectionStatus,
     };
-    use alloy::primitives::keccak256;
+    use alloy::primitives::{keccak256, Address};
     use async_trait::async_trait;
     use e3_fhe_params::{build_bfv_params_from_set_arc, BfvParamSet, BfvPreset};
     use e3_sdk::indexer::{DataStore, InMemoryStore, SharedStore};
@@ -1358,6 +1355,7 @@ mod tests {
             snapshot_block: 1,
             census_mode: CensusMode::Token,
             discovery_pending: false,
+            e3_program: String::new(),
         }
     }
 
@@ -1467,12 +1465,26 @@ mod tests {
         };
 
         round
-            .initialize_round(params(), "requester".to_string(), 100, 100, 1)
+            .initialize_round(
+                params(),
+                Address::ZERO,
+                "requester".to_string(),
+                100,
+                100,
+                1,
+            )
             .await
             .unwrap();
         round.update_status("Finished").await.unwrap();
         round
-            .initialize_round(params(), "requester".to_string(), 200, 200, 2)
+            .initialize_round(
+                params(),
+                Address::ZERO,
+                "requester".to_string(),
+                200,
+                200,
+                2,
+            )
             .await
             .unwrap();
 
