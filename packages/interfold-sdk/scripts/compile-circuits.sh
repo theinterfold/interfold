@@ -68,8 +68,8 @@ import { readFileSync } from 'node:fs'
 
 const [artifactPath, expectedDegreeText] = process.argv.slice(2)
 const artifact = JSON.parse(readFileSync(artifactPath, 'utf8'))
-const pk0is = artifact.abi.parameters.find(({ name }) => name === 'pk0is')
-const degree = pk0is?.type?.type?.fields?.find(({ name }) => name === 'coefficients')?.type?.length
+const ct0is = artifact.abi.parameters.find(({ name }) => name === 'ct0is')
+const degree = ct0is?.type?.type?.fields?.find(({ name }) => name === 'coefficients')?.type?.length
 const expectedDegree = Number(expectedDegreeText)
 if (degree !== expectedDegree) {
   throw new Error(`${artifactPath} has polynomial degree ${degree}; expected ${expectedDegree}.`)
