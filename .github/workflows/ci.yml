@@ -432,8 +432,9 @@ jobs:
         if: matrix.suite == 'lib'
         run: pnpm rust:lint
 
+      # The Agent Harness workflow runs the same script on every pull request.
       - name: Check repository invariants
-        if: matrix.suite == 'lib'
+        if: matrix.suite == 'lib' && github.event_name != 'pull_request'
         run: pnpm check:invariants
 
       - name: Compile contracts for ABI catalog tests
@@ -1638,8 +1639,6 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - name: Install protoc
         uses: ./.github/actions/install-protoc
-      - name: Test program backend selection
-        run: cargo test --locked -p e3-support-scripts
       - name: Build support scripts
         run: cd templates/default && cargo build --locked --bin e3-support-scripts-dev
       # The OpenVM proving service links the template program. Its guest needs cargo-openvm and a GPU
@@ -1659,6 +1658,11 @@ jobs:
           path: templates/default/target/debug/e3-support-scripts-dev
           retention-days: 1
           if-no-files-found: error
+      # rust_unit_tests runs these tests in its lib and doc legs. They run here, after the upload so
+      # that template_integration does not wait for them, only when that job does not run.
+      - name: Test program backend selection
+        if: needs.detect_changes.outputs.rust_unit_tests != 'true'
+        run: cargo test --locked -p e3-support-scripts
 
   # The CPU build of the OpenVM worker and its tests. Proofs and the CUDA build need a GPU host.
   openvm_worker:
@@ -1979,7 +1983,7 @@ jobs:
           pnpm test:integration
 
   test_interfold_init:
-    needs: [detect_changes, build_interfold_cli, build_e3_support_dev]
+    needs: [detect_changes, build_interfold_cli]
     if: needs.detect_changes.outputs.init == 'true'
     timeout-minutes: 10
     runs-on:
