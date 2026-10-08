@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use alloy::{
-    eips::BlockId,
+    eips::{BlockId, BlockNumberOrTag},
     network::{Ethereum, EthereumWallet},
     primitives::{Address, Bytes, B256, I256, U256},
     providers::{
@@ -656,13 +656,20 @@ impl CRISPContract<CRISPReadProvider> {
 
     /// The voting-power divisor and snapshot `CRISPProgram` stored for a CUSTOM-credit round at
     /// request time. A census must scale every voter by exactly this divisor and read every voter at
-    /// exactly this snapshot. `validate` writes both in one transaction and both are read at one
-    /// block, so a non-zero divisor vouches for the snapshot beside it. `Ok(None)` when the divisor
-    /// is zero: a CONSTANT-credit round, a round it never initialized, or a node that lacks the
-    /// request block.
+    /// exactly this snapshot. `validate` writes both in one transaction, and both reads name one
+    /// block by its hash, so a non-zero divisor vouches for the snapshot beside it. `Ok(None)` when
+    /// the divisor is zero: a CONSTANT-credit round, a round it never initialized, or a node that
+    /// lacks the request block.
     pub async fn stored_voting_power_scale(&self, e3_id: U256) -> Result<Option<(U256, u64)>> {
         let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
-        let block = BlockId::number(self.provider.get_block_number().await?);
+        // Nodes behind one endpoint can hold different blocks at one height. A hash names one
+        // block, and a node without that block fails the call.
+        let head = self
+            .provider
+            .get_block_by_number(BlockNumberOrTag::Latest)
+            .await?
+            .ok_or_else(|| eyre::eyre!("The node returned no latest block"))?;
+        let block = BlockId::hash(head.header.hash);
         let divisor = contract
             .votingPowerDivisorOf(e3_id)
             .block(block)

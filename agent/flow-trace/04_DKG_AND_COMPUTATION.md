@@ -1928,7 +1928,8 @@ lookup uses the request record, so a round remains visible while its key is pend
 the round only when both records exist. Either handler can complete the activation after their
 records converge, and deferred checks cover slow live-handler ordering. Duplicate request and
 committee events do not reset the round, replace indexed output, or resubmit an already-matching
-Merkle root. The shared Interfold contract also emits requests for other E3 programs. The CRISP
+Merkle root. A duplicate request whose holder discovery fails keeps the stored census and owes a
+retry. The shared Interfold contract also emits requests for other E3 programs. The CRISP
 indexer ignores those requests before it creates a round or makes a program-specific RPC call. An
 old program's historical round therefore cannot stop a fresh CRISP backfill.
 

@@ -56,8 +56,9 @@ type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 /// The subscription delivers the event when one node has the block. The HTTP provider spreads
 /// reads over nodes that can trail that node by most of a block. Until they have it, `getE3`
 /// reverts with `E3DoesNotExist` and the stored divisor reads as zero. Five attempts wait
-/// 2 + 4 + 8 + 16 = 30 s in total, which covers more than two Sepolia blocks. A live handler error
-/// is not retried later, so a shorter wait loses the round.
+/// 2 + 4 + 8 + 16 = 30 s in total, which covers more than two Sepolia blocks. Nothing retries a
+/// live handler error, so a shorter wait for `getE3` loses the round. A shorter wait for the
+/// divisor defers the census to the retry pass.
 const E3_VISIBLE_ATTEMPTS: u32 = 5;
 
 fn is_configured_e3_program(event_program: Address, configured_program: Address) -> bool {
@@ -260,10 +261,10 @@ async fn discover_holders(
 /// The holders to register a round with, and whether its discovery is still owed.
 ///
 /// A failed discovery never drops the round. The `E3Requested` log is not replayed once the cursor
-/// passes it, so the round registers with an empty list and the retry pass builds the census. The
-/// cause is usually transient: a rate limit, a rejected API key, or a voter whose votes could not
-/// be read. An on-chain round stays votable meanwhile. A census-tree round takes no ballot until
-/// the retry pass posts its root.
+/// passes it, so the round registers and the retry pass builds the census. The cause is usually
+/// transient: a rate limit, a rejected API key, or a voter whose votes could not be read. An
+/// on-chain round stays votable meanwhile. A new census-tree round takes no ballot until the retry
+/// pass posts its root.
 fn holders_or_owed(
     e3_id: &str,
     is_onchain_census: bool,
@@ -282,8 +283,8 @@ fn holders_or_owed(
         );
     } else {
         warn!(
-            "[e3_id={}] Census discovery failed: {:#}. The round is recorded without a census and \
-             takes no ballot until a retry posts its root.",
+            "[e3_id={}] Census discovery failed: {:#}. The round keeps any census it holds, and \
+             a new round takes no ballot until a retry posts its root.",
             e3_id, error
         );
     }
@@ -575,36 +576,19 @@ pub async fn register_e3_requested(
                 )
                 .await?;
 
-                // Store eligible addresses in the repository.
-                repo.set_eligible_addresses(token_holders.clone()).await?;
-
-                // Record the debt so `retry_pending_discovery` settles it later. Two causes:
+                // Store the census, or record the debt so `retry_pending_discovery` settles it
+                // later. Two causes of debt:
                 //
                 //   - discovery was SKIPPED for want of a divisor and snapshot, not refused; or
                 //   - discovery RAN and failed, which `holders_or_owed` absorbs to keep the round.
                 //
                 // The event is not replayed once the cursor passes it, so nothing else would
-                // retry. The retry pass itself is started below, after `record_round`: it scans
-                // the round index and exits when nothing is owed, so starting it here could let
-                // it run before this round is listed, find nothing, and leave the debt to a
-                // restart.
-                let retry_discovery =
-                    record_discovery_debt(&mut repo, divisor_unavailable, discovery_failed).await?;
-
-                // Poseidon hashes exist to build the census tree, and an on-chain census has no
-                // tree: `_eligibility` reads power from the token per input. The addresses are
-                // stored above and that is all a client needs here — a mask is written to someone
-                // else's slot, so it needs a list of who holds power, not a membership proof.
-                let token_holder_hashes = if is_onchain_census {
-                    Vec::new()
-                } else {
-                    let hashes = compute_token_holder_hashes(&token_holders)
-                        .with_context(|| "Failed to compute token holder hashes")?;
-
-                    repo.set_token_holder_hashes(hashes.clone()).await?;
-
-                    hashes
-                };
+                // retry. The retry task is woken below, after `record_round`: it scans the round
+                // index and sleeps when nothing is owed, so waking it here could let it run before
+                // this round is listed, find nothing, and sleep with the debt unpaid.
+                let owed = divisor_unavailable || discovery_failed;
+                let root_leaves =
+                    store_census(&mut repo, token_holders, is_onchain_census, owed).await?;
 
                 CurrentRoundRepository::new(store.clone())
                     .record_round(&e3_id)
@@ -613,16 +597,16 @@ pub async fn register_e3_requested(
                 // The round is listed, so the retry task can find its debt. Wake the one task
                 // started at registration instead of spawning another: each task rescans every
                 // owed round, so one per debt multiplied the discovery calls.
-                if retry_discovery {
+                if owed {
                     DISCOVERY_OWED.notify_one();
                 }
 
-                // Skipped for an on-chain census: `_eligibility` never reads `merkleRoot` in
+                // No leaves for an on-chain census: `_eligibility` never reads `merkleRoot` in
                 // that mode, so posting one would spend gas to publish a value nothing consults —
-                // and would imply the list gates eligibility when it does not. Skipped for an owed
-                // census too: the retry pass posts its root.
-                if !is_onchain_census && !retry_discovery {
-                    ensure_merkle_root(&e3_id, token_holder_hashes).await?;
+                // and would imply the list gates eligibility when it does not. No leaves for an
+                // owed census either: the retry pass posts its root.
+                if let Some(leaves) = root_leaves {
+                    ensure_merkle_root(&e3_id, leaves).await?;
                 }
 
                 // Committee and request handlers run concurrently for live logs. If the key was
@@ -1427,28 +1411,52 @@ fn pending_discovery_step(round: &E3Crisp) -> PendingDiscoveryStep {
     }
 }
 
-/// Persist a missing census and report whether the retry task must be woken.
-async fn record_discovery_debt<S: DataStore>(
+/// Store the census that discovery found, or record that the round still owes one.
+///
+/// Returns the leaf hashes to post as the census root, or `None` when no root is due: the census
+/// is owed, or it is on-chain. An owed census writes no list, so a new round keeps the empty lists
+/// from `initialize_round`. A round whose `E3Requested` arrives again and fails discovery keeps the
+/// census it holds until the retry pass rebuilds it, and a rebuilt Merkle census must match the
+/// posted root.
+async fn store_census<S: DataStore>(
     repo: &mut CrispE3Repository<S>,
-    divisor_unavailable: bool,
-    discovery_failed: bool,
-) -> eyre::Result<bool> {
-    let retry_discovery = divisor_unavailable || discovery_failed;
-    if retry_discovery {
+    holders: Vec<TokenHolder>,
+    is_onchain_census: bool,
+    owed: bool,
+) -> eyre::Result<Option<Vec<String>>> {
+    if owed {
         repo.set_discovery_pending(true).await?;
+        return Ok(None);
     }
-    Ok(retry_discovery)
+    // Poseidon hashes exist to build the census tree, and an on-chain census has no tree:
+    // `_eligibility` reads power from the token per input. The addresses are all a client needs
+    // there: a mask is written to someone else's slot, so it needs a list of who holds power, not
+    // a membership proof.
+    let leaves = if is_onchain_census {
+        None
+    } else {
+        Some(
+            compute_token_holder_hashes(&holders)
+                .with_context(|| "Failed to compute token holder hashes")?,
+        )
+    };
+    repo.set_eligible_addresses(holders).await?;
+    if let Some(hashes) = &leaves {
+        repo.set_token_holder_hashes(hashes.clone()).await?;
+    }
+    Ok(leaves)
 }
 
 /// Settle holder discovery for rounds that were registered without a census.
 ///
 /// A round carries `discovery_pending` when its census could not be built at `E3Requested`:
 /// either the stored voting-power divisor and snapshot could not be read, or discovery itself
-/// failed. Such a round serves no mask targets, and a Merkle one takes no ballot until this pass
-/// posts its root. The event is not replayed once the cursor passes it, so this pass is the only
-/// retry. It reads the divisor and snapshot again for each such CUSTOM-credit round and, when they
-/// answer, runs the same discovery the handler would have run. A round that has ended is dropped
-/// from the pass: it takes no more ballots.
+/// failed. A new round in this state serves no mask targets, and a Merkle one takes no ballot until
+/// this pass posts its root. A round whose `E3Requested` arrives again keeps the census it holds
+/// until this pass rebuilds it. The event is not replayed once the cursor passes it, so this pass
+/// is the only retry. It reads the divisor and snapshot again for each such CUSTOM-credit round
+/// and, when they answer, runs the same discovery the handler would have run. A round that has
+/// ended is dropped from the pass: it takes no more ballots.
 ///
 /// One task for the process, started at registration. It sleeps on `DISCOVERY_OWED` while nothing
 /// is owed. `notify_one` keeps a permit when the task is mid-pass, so debt recorded after the pass
@@ -1987,7 +1995,8 @@ mod stored_divisor_tests {
     use std::time::Duration;
 
     /// `CRISPProgram` never stores a zero divisor for a CUSTOM-credit round. A zero read is a node
-    /// that does not have the request block yet, and taking it as final drops the round.
+    /// that does not have the request block yet. Taking it as final defers the census to the retry
+    /// pass.
     #[tokio::test]
     async fn a_zero_read_from_a_lagging_node_is_retried() {
         let anvil = alloy::node_bindings::Anvil::new().try_spawn().unwrap();
@@ -2014,9 +2023,7 @@ mod stored_divisor_tests {
 
 #[cfg(test)]
 mod pending_discovery_tests {
-    use super::{
-        holders_or_owed, pending_discovery_step, record_discovery_debt, PendingDiscoveryStep,
-    };
+    use super::{holders_or_owed, pending_discovery_step, store_census, PendingDiscoveryStep};
     use crate::server::models::{CensusMode, CreditMode, CustomParams, E3Crisp, TokenHolder};
     use crate::server::repo::CrispE3Repository;
     use e3_sdk::indexer::{InMemoryStore, SharedStore};
@@ -2082,11 +2089,11 @@ mod pending_discovery_tests {
         );
     }
 
-    /// A failed discovery owes a retry even when the divisor was readable, and the debt is
-    /// durable: it survives a re-read of the store and clears only when told to. A restart
-    /// therefore retries rather than forgets, which is what makes the event's non-replay safe.
+    /// A failed discovery owes a retry, and the debt is in the store, not in the handler. A round
+    /// whose `E3Requested` arrives again and fails discovery keeps the census it holds: voters
+    /// still need its leaf hashes to prove membership against the posted root.
     #[tokio::test]
-    async fn the_discovery_debt_is_durable_and_clears_on_demand() {
+    async fn a_failed_discovery_owes_a_retry_and_keeps_the_stored_census() {
         let store = SharedStore::new(Arc::new(RwLock::new(InMemoryStore::new())));
         let mut repo = CrispE3Repository::new(store.clone(), "7");
         let params = CustomParams {
@@ -2095,7 +2102,7 @@ mod pending_discovery_tests {
             num_options: "2".to_string(),
             credit_mode: CreditMode::Constant,
             credits: Some("1".to_string()),
-            census_mode: CensusMode::Onchain,
+            census_mode: CensusMode::Token,
             voting_power_divisor: "0".to_string(),
         };
         repo.initialize_round(
@@ -2107,29 +2114,35 @@ mod pending_discovery_tests {
         )
         .await
         .unwrap();
-        assert!(!record_discovery_debt(&mut repo, false, false)
-            .await
-            .unwrap());
-        assert!(!repo.get_crisp().await.unwrap().discovery_pending);
-
-        assert!(record_discovery_debt(&mut repo, false, true).await.unwrap());
-        let reread = CrispE3Repository::new(store.clone(), "7");
-        assert!(reread.get_crisp().await.unwrap().discovery_pending);
-        assert_eq!(
-            pending_discovery_step(&reread.get_crisp().await.unwrap()),
-            PendingDiscoveryStep::Retry
-        );
-
-        // Settling stores the holders and then clears the debt, in that order.
         let holders = vec![TokenHolder {
             address: "0x0000000000000000000000000000000000000003".to_string(),
             balance: "5".to_string(),
         }];
-        repo.set_eligible_addresses(holders.clone()).await.unwrap();
-        repo.set_discovery_pending(false).await.unwrap();
-        let settled = reread.get_crisp().await.unwrap();
-        assert_eq!(settled.eligible_addresses, holders);
-        assert!(!settled.discovery_pending);
+        let leaves = store_census(&mut repo, holders.clone(), false, false)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            pending_discovery_step(&repo.get_crisp().await.unwrap()),
+            PendingDiscoveryStep::Skip
+        );
+
+        assert_eq!(
+            store_census(&mut repo, Vec::new(), false, true)
+                .await
+                .unwrap(),
+            None
+        );
+        let replayed = CrispE3Repository::new(store.clone(), "7")
+            .get_crisp()
+            .await
+            .unwrap();
+        assert_eq!(replayed.eligible_addresses, holders);
+        assert_eq!(replayed.token_holder_hashes, leaves);
+        assert_eq!(
+            pending_discovery_step(&replayed),
+            PendingDiscoveryStep::Retry
+        );
     }
 
     /// A stored round written before the field existed decodes as not pending: those rounds
