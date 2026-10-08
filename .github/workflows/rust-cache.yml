@@ -5,8 +5,8 @@ name: rust-cache
 # main, and the first run of every pull request compiled the whole workspace from scratch.
 #
 # This job builds what the `ci` Rust jobs compile and saves it on main under the same key as
-# `.github/actions/cache-dependencies`. Pull requests only restore the root target cache: this job is
-# its one writer.
+# `.github/actions/cache-dependencies`. It is the one writer of the root target cache: every ci job,
+# on pull requests and on main, only restores it.
 #
 # The key changes with Cargo.lock, the toolchain and the debug-information settings, so this runs
 # when Cargo.lock or the cache configuration changes. Workspace crates compiled from an older main
@@ -59,6 +59,8 @@ jobs:
       - name: Cache Rust dependencies
         id: cache
         uses: ./.github/actions/cache-dependencies
+        with:
+          root-writer: 'true'
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
