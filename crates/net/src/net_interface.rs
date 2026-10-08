@@ -188,7 +188,10 @@ impl PeerConnectionFailures {
 fn is_loopback_addr(addr: &Multiaddr) -> bool {
     addr.iter().any(|p| match p {
         Protocol::Ip4(ip) => ip.is_loopback(),
-        Protocol::Ip6(ip) => ip.is_loopback(),
+        // Also the IPv4-mapped form, ::ffff:127.0.0.1.
+        Protocol::Ip6(ip) => {
+            ip.is_loopback() || ip.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
+        }
         _ => false,
     })
 }
@@ -1085,6 +1088,7 @@ async fn process_swarm_event(
                         // Another node now answers at a configured peer's fallback, an address
                         // that this node kept. Drop the address only: the configured address still
                         // names the peer, so neither quarantine nor rebind it.
+                        // remove_address adds /p2p/<peer> before it compares.
                         swarm
                             .behaviour_mut()
                             .kademlia
@@ -2475,6 +2479,16 @@ mod tests {
 
         failures.connection_succeeded(&wrong_identity);
         assert!(!failures.is_identity_quarantined(&wrong_identity));
+    }
+
+    #[test]
+    fn ipv4_mapped_loopback_is_loopback() {
+        assert!(super::is_loopback_addr(
+            &"/ip6/::ffff:127.0.0.1/udp/9091/quic-v1".parse().unwrap()
+        ));
+        assert!(!super::is_loopback_addr(
+            &"/ip6/::ffff:192.0.2.1/udp/9091/quic-v1".parse().unwrap()
+        ));
     }
 
     #[test]

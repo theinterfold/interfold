@@ -320,6 +320,10 @@ async fn a_mismatch_at_a_configured_fallback_drops_it() -> anyhow::Result<()> {
     configured[0].peer_id = Some(peer);
     configured[0].identity_trusted = true;
     configured[0].fallback = Some(fallback.clone());
+    let other: Multiaddr = "/ip4/192.0.2.8/udp/9501/quic-v1".parse()?;
+    let kademlia = &mut node.interface.swarm.behaviour_mut().kademlia;
+    kademlia.add_address(&peer, fallback.clone());
+    kademlia.add_address(&peer, other.clone());
 
     node.process_with_configured(
         &mut configured,
@@ -338,6 +342,23 @@ async fn a_mismatch_at_a_configured_fallback_drops_it() -> anyhow::Result<()> {
     assert_eq!(configured[0].peer_id, Some(peer));
     assert!(configured[0].identity_trusted);
     assert!(!node.peer_failures.is_identity_quarantined(&peer));
+    let routed: Vec<Multiaddr> = node
+        .interface
+        .swarm
+        .behaviour_mut()
+        .kademlia
+        .kbucket(peer)
+        .into_iter()
+        .flat_map(|bucket| {
+            bucket
+                .iter()
+                .filter(|entry| entry.node.key.preimage() == &peer)
+                .flat_map(|entry| entry.node.value.iter().cloned().collect::<Vec<_>>())
+                .collect::<Vec<_>>()
+        })
+        .map(super::strip_peer_id)
+        .collect();
+    assert_eq!(routed, vec![other]);
     Ok(())
 }
 
