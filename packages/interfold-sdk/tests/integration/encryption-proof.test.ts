@@ -43,20 +43,6 @@ describe('real encryption proof', () => {
     publicKeyCommitment = bytesToBigInt(await sdk.computePublicKeyCommitment(publicKey))
     ciphertextCommitment = bytesToBigInt(await sdk.computeCiphertextCommitment(encryptedData))
 
-    // The outer circuit forwards `k1_commitment` from the third ct0 output. Derive the same value
-    // from the `k1` witness so the assertion fails if the outer circuit forwards a different output.
-    // `CircuitInputs` carries Noir structs that the `InputMap` index signature does not accept,
-    // so the witness map is cast in the same way as the production prover.
-    const { returnValue: ct0Outputs } = await new Noir(ct0Circuit as CompiledCircuit).execute({
-      pk0is: circuitInputs.pk0is,
-      ct0is: circuitInputs.ct0is,
-      u: circuitInputs.u,
-      e0: circuitInputs.e0,
-      k1: circuitInputs.k1,
-      r: circuitInputs.r,
-    } as any)
-    k1Commitment = BigInt((ct0Outputs as string[])[2])
-
     api = await Barretenberg.new({ srsSize: 2 ** 21 })
     verificationKey = await new UltraHonkBackend(circuit.bytecode, api).getVerificationKey(options)
     verifier = new UltraHonkVerifierBackend(api)

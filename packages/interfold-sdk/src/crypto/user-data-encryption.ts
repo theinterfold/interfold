@@ -116,11 +116,9 @@ export const generateProof = async (circuitInputs: CircuitInputs, presetName?: T
   const { proveUserDataEncryptionTree } = await import('@interfold/user-data-encryption-prover')
   const { proofToFields } = await import('../utils')
   const { userDataEncryption, ...proofTreeCircuits } = await loadProofBundle(bundleName)
-  const api = await Barretenberg.new()
-
+  // Size the SRS at creation; see `proveUserDataEncryption`.
+  const api = await Barretenberg.new({ srsSize: 2 ** 21 })
   try {
-    await api.initSRSChonk(2 ** 21) // fold circuit needs 2^21 points; default is 2^20
-
     const { ct0, ct1 } = await proveUserDataEncryptionTree(api, proofTreeCircuits, circuitInputs)
 
     const { witness: userDataEncryptionWitness } = await executeCircuit(userDataEncryption, {

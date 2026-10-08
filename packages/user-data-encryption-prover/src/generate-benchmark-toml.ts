@@ -84,9 +84,8 @@ const main = async () => {
   const options = parseOptions()
   const inputs = JSON.parse(readFileSync(options.input, 'utf8')) as UserDataEncryptionInputs
   const circuits = loadCircuits(options.preset, options.committee)
-  const api = await Barretenberg.new()
+  const api = await Barretenberg.new({ srsSize: 2 ** 21 })
   try {
-    await api.initSRSChonk(2 ** 21)
     const topLevel = await buildUserDataEncryptionTopLevelInputs(api, circuits, inputs)
     writeFileSync(join(options.outputRoot, 'user_data_encryption_ct0', 'Prover.toml'), toToml(topLevel.ct0))
     writeFileSync(join(options.outputRoot, 'user_data_encryption_ct1', 'Prover.toml'), toToml(topLevel.ct1))
