@@ -18,8 +18,8 @@ importers:
   .:
     dependencies:
       '@crisp-e3/sdk':
-        specifier: 0.24.0
-        version: 0.24.0(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.25.76)
+        specifier: 0.25.0
+        version: 0.25.0(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.25.76)
       '@emotion/babel-plugin':
         specifier: ^11.11.0
         version: 11.13.5
@@ -733,11 +733,11 @@ packages:
   '@coinbase/wallet-sdk@4.3.6':
     resolution: {integrity: sha512-4q8BNG1ViL4mSAAvPAtpwlOs1gpC+67eQtgIwNvT3xyeyFFd+guwkc8bcX5rTmQhXpqnhzC4f0obACbP9CqMSA==}
 
-  '@crisp-e3/sdk@0.24.0':
-    resolution: {integrity: sha512-xHL5uhEC6/pe1AOI3wgdcfr6uVicjRF+6WpPDbfdALJG3NmKMS0PXZC/Ew8Z0l88PzF67DBN0rKevvzCwTwG5Q==}
+  '@crisp-e3/sdk@0.25.0':
+    resolution: {integrity: sha512-KyKmWtImwTegaO0YFPbGcFE1m79E1EgVBjh1VNcfwgIivkeXGGzy6I9usN2FqfYYXPKzHCKlMSbestras+Ad3w==}
 
-  '@crisp-e3/zk-inputs@0.24.0':
-    resolution: {integrity: sha512-AVr9EpBvqVyne9uw9PKpdZ7MN6fted96BLH/l2MPdyXSKGdb7yGRHxEL9PxjY+fB0j8WucfSiAh0+PC62TpQLA==}
+  '@crisp-e3/zk-inputs@0.25.0':
+    resolution: {integrity: sha512-jnM9hXzEGbPrRk3LLH9dj5rJ0ZxP6DmtbXCyxHCv4RqoDm6y4WbJQK2lFE2+4bUQV15fnzqQqR40WXYnpFL7gQ==}
 
   '@ecies/ciphers@0.2.6':
     resolution: {integrity: sha512-patgsRPKGkhhoBjETV4XxD0En4ui5fbX0hzayqI3M8tvNMGUoUvmyYAIWwlxBc1KX5cturfqByYdj5bYGRpN9g==}
@@ -5635,10 +5635,10 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@crisp-e3/sdk@0.24.0(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.25.76)':
+  '@crisp-e3/sdk@0.25.0(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.25.76)':
     dependencies:
       '@aztec/bb.js': 5.1.0
-      '@crisp-e3/zk-inputs': 0.24.0
+      '@crisp-e3/zk-inputs': 0.25.0
       '@noir-lang/noir_js': 1.0.0-beta.26
       '@zk-kit/lean-imt': 2.2.5(bufferutil@4.1.0)(utf-8-validate@5.0.10)
       poseidon-lite: 0.3.0
@@ -5649,7 +5649,7 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@crisp-e3/zk-inputs@0.24.0': {}
+  '@crisp-e3/zk-inputs@0.25.0': {}
 
   '@ecies/ciphers@0.2.6(@noble/ciphers@1.3.0)':
     dependencies:
