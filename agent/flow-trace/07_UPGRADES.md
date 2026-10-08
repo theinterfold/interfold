@@ -17,19 +17,19 @@ within the same protocol version.
 The v0.19 DKG message layout requires storage schema 8, threshold-keyshare recovery schema 8, gossip
 wire major 5, and sync wire major 4. Both `ThresholdShareCreated` and `DecryptionKeyShared` include
 a dealer signature. Their event-log records, recovery inputs, and DHT payloads are incompatible with
-the unsigned layout. Protocol version 8 and node generation 2 are the release cutover values.
-This change requires drain-and-resync; it has no layout migration.
+the unsigned layout. Protocol version 8 and node generation 2 are the release cutover values. This
+change requires drain-and-resync; it has no layout migration.
 
 The cutover requires `protocol_version` 8, which the secure parameter set and circuit version
 `interfold-bfv-v5` need; a 0.19.0 test build reports 7 and fails the release check of the cutover.
-The fhe.rs smudging bound and BFV validation rules
-change the DKG and proof inputs. Its non-centered plaintext scale also changes the CRISP ballot
-check and its circuit artifacts. Drain active E3s and install matching circuit artifacts and
-verifier routes before requests resume. Both parameter sets use the circuit ID domain
-`interfold-bfv-v5`. Old clients must update their expected configuration IDs before they submit new
-requests. The OpenVM guest builds from the same tree. A change to its sources or its fhe.rs pin
-changes its application commitments, so rebuild the guest, regenerate its keys and provenance
-record, and deploy matching receipt verifiers before such a change serves a live program.
+The fhe.rs smudging bound and BFV validation rules change the DKG and proof inputs. Its non-centered
+plaintext scale also changes the CRISP ballot check and its circuit artifacts. Drain active E3s and
+install matching circuit artifacts and verifier routes before requests resume. Both parameter sets
+use the circuit ID domain `interfold-bfv-v5`. Old clients must update their expected configuration
+IDs before they submit new requests. The OpenVM guest builds from the same tree. A change to its
+sources or its fhe.rs pin changes its application commitments, so rebuild the guest, regenerate its
+keys and provenance record, and deploy matching receipt verifiers before such a change serves a live
+program.
 
 The mainnet `paramSetRegistry(1)` contains the previous secure parameters and cannot be changed.
 Version 8 uses parameter-set index 2 for the new secure tuple. Keep index 1 intact for old E3
@@ -142,13 +142,13 @@ The old and new stacks must use separate addresses so clients cannot silently co
 The BFV circuits use `interfold-bfv-v5` with compiled `protocol_version = 8` and
 `node_generation = 2`. The configuration ID binds this circuit version even when BFV parameters stay
 unchanged. The builder generates both precomputed IDs. Runtime readers, CRISP intake, request
-tooling, and the SDK use the same IDs and reject v1 through v4 requests. The indexer also accepts
-v1 keys of historical index-0 and index-1 E3s, as the version model describes. It skips keys for
-other unsupported configuration IDs without storing them. This lets its catch-up cursor advance
-across drained unsupported rounds to recover supported rounds. Recursive folds carry fixed leaf,
-fold, and genesis VK hashes. Final aggregator public input zero binds the complete recursive VK
-tree. These proof formats require a governance cutover, not a mixed rolling release. Rebuild all six
-artifact pairs and replace the immutable BFV verifier wrappers and routers before requests resume.
+tooling, and the SDK use the same IDs and reject v1 through v4 requests. The indexer also accepts v1
+keys of historical index-0 and index-1 E3s, as the version model describes. It skips keys for other
+unsupported configuration IDs without storing them. This lets its catch-up cursor advance across
+drained unsupported rounds to recover supported rounds. Recursive folds carry fixed leaf, fold, and
+genesis VK hashes. Final aggregator public input zero binds the complete recursive VK tree. These
+proof formats require a governance cutover, not a mixed rolling release. Rebuild all six artifact
+pairs and replace the immutable BFV verifier wrappers and routers before requests resume.
 
 The initial VRF upgrade follows this combined path because it introduces the controller and changes
 both `Interfold` and `BondingRegistry`.
@@ -205,10 +205,10 @@ online and mutually reachable.
 ## v0.19 cutover on mainnet
 
 `upgrade:secure-crisp` reads the RISC Zero CRISP program, so it cannot prepare the v0.19 cutover,
-which moves the circuits to `interfold-bfv-v5`, adds secure
-parameter set 2 and wires the OpenVM CRISP program. With requests paused and every E3 and committee
-drained, `upgrade:v19` (`scripts/upgrade/v19Cutover.ts prepare`) deploys the Interfold
-implementation with its libraries and the BFV verifier routes, then writes one governance batch:
+which moves the circuits to `interfold-bfv-v5`, adds secure parameter set 2 and wires the OpenVM
+CRISP program. With requests paused and every E3 and committee drained, `upgrade:v19`
+(`scripts/upgrade/v19Cutover.ts prepare`) deploys the Interfold implementation with its libraries
+and the BFV verifier routes, then writes one governance batch:
 
 ```text
 upgrade Interfold in place (new lifecycle and pricing libraries)
@@ -225,12 +225,13 @@ implementation, the CRISP owner and binding, the image ID that CRISP, the cipher
 the receipt verifier share, the expected guest commitments and Halo2 runtime code hash
 (`--openvm-identity`, required on mainnet), the Avail bridge and finalization window, and the input
 signer. `upgrade:v19:validate` only reads, so it repeats; `--write-records` then updates the
-deployment record and `deployed_contracts.json`, which the release manifest is built from. After the batch executes, operators restart on the release, which acknowledges
-it. `upgrade:v19:refresh` reads the registered operators from the registry's `CiphernodeAdded` logs
-and refreshes each one that is not active: capacity reads zero until every registered operator is
-refreshed, and an operator that does not run the release reads as inactive. In the block after the
-refresh, `upgrade:v19:resume -- --ciphernodes-restarted` validates again, checks release-ready
-operators and snapshot owner capacity for the largest committee, and writes the unpause batch.
+deployment record and `deployed_contracts.json`, which the release manifest is built from. After the
+batch executes, operators restart on the release, which acknowledges it. `upgrade:v19:refresh` reads
+the registered operators from the registry's `CiphernodeAdded` logs and refreshes each one that is
+not active: capacity reads zero until every registered operator is refreshed, and an operator that
+does not run the release reads as inactive. In the block after the refresh,
+`upgrade:v19:resume -- --ciphernodes-restarted` validates again, checks release-ready operators and
+snapshot owner capacity for the largest committee, and writes the unpause batch.
 `upgrade:v19:simulate` runs the sequence on an anvil fork of mainnet.
 
 The CRISP server probes `earliestVotingStart()` when it creates a round. During an ordered legacy
