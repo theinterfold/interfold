@@ -85,7 +85,8 @@ async fn request_round(client: &Client, url: &Url, cron_api_key: &str) -> bool {
                     .unwrap_or_else(|e| format!("<unreadable response body: {e}>"));
                 println!("Failed to request new E3 round: {body:?}");
             }
-            Err(e) if e.is_timeout() => {
+            // A connect timeout means the POST never reached the server, so it is retried below.
+            Err(e) if e.is_timeout() && !e.is_connect() => {
                 println!(
                     "Round request timed out; it may still succeed, so it is not retried: {e:?}"
                 );

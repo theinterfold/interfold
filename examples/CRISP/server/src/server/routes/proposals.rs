@@ -146,11 +146,12 @@ struct PluginCache {
 /// block-scoped range no longer describes.
 static CACHE: LazyLock<ScanCache<PluginCache>> = LazyLock::new(ScanCache::new);
 
-/// The cached list when it covers `[scan_from, block]`.
-fn cached_proposals(key: &str, scan_from: u64, block: u64) -> Option<Vec<Proposal>> {
+/// The cached list and the block it was scanned from, when it covers `[scan_from, block]`. The
+/// list can hold proposals older than `scan_from`, so flags must be resolved from its own start.
+fn cached_proposals(key: &str, scan_from: u64, block: u64) -> Option<(u64, Vec<Proposal>)> {
     CACHE.peek(key, |entry| {
         let (from, to) = entry.scanned?;
-        (from <= scan_from && to >= block).then(|| entry.proposals.clone())
+        (from <= scan_from && to >= block).then(|| (from, entry.proposals.clone()))
     })
 }
 
@@ -216,14 +217,14 @@ async fn proposal_list(
     ctx: &ScanCtx,
 ) -> Result<(u64, Vec<Proposal>), HttpResponse> {
     if let Some(hit) = cached_proposals(&ctx.key, ctx.scan_from, ctx.block) {
-        return Ok((ctx.scan_from, hit));
+        return Ok(hit);
     }
 
     // Whoever waited here almost certainly no longer needs to scan, so check again.
     let _scanning = CACHE.exclusive(&ctx.key).await;
 
     if let Some(hit) = cached_proposals(&ctx.key, ctx.scan_from, ctx.block) {
-        return Ok((ctx.scan_from, hit));
+        return Ok(hit);
     }
 
     let reusable = CACHE.peek(&ctx.key, |entry| {

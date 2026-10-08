@@ -778,6 +778,31 @@ async fn logs(
         );
     }
 
+    // Parsed before either source and before the window charge, so the index and the upstream
+    // path refuse the same filters. Refused, not truncated: a log has at most four topics.
+    if request.topics.len() > 4 {
+        return json_message(
+            StatusCode::BAD_REQUEST,
+            "At most 4 topic positions may be filtered",
+        );
+    }
+    let mut topics = Vec::with_capacity(request.topics.len());
+    for (position, topic) in request.topics.iter().enumerate() {
+        match topic
+            .as_deref()
+            .map(|t| B256::from_str(t.trim()))
+            .transpose()
+        {
+            Ok(topic) => topics.push(topic),
+            Err(_) => {
+                return json_message(
+                    StatusCode::BAD_REQUEST,
+                    format!("Invalid topic at position {position}"),
+                )
+            }
+        }
+    }
+
     // Served from the index when it demonstrably covers the whole range: a scan of a contract's
     // history becomes one read. A silently short answer is worse than a slower correct one.
     let from = request.from_block.unwrap_or(0);
@@ -787,9 +812,11 @@ async fn logs(
         let to = request.to_block.unwrap_or(indexed.1);
 
         if covered(Some(indexed), from, to) {
+            let wanted: Vec<Option<String>> =
+                topics.iter().map(|t| t.map(|h| h.to_string())).collect();
             match store
                 .logs()
-                .query(&request.address, from, to, &request.topics)
+                .query(&request.address, from, to, &wanted)
                 .await
             {
                 Ok(found) => {
@@ -856,24 +883,9 @@ async fn logs(
         return refused;
     }
 
-    // Refused, not truncated: a log has at most four topics, and dropping extras would return
-    // logs that do not match the filter, differently from the index path.
-    if request.topics.len() > 4 {
-        return json_message(
-            StatusCode::BAD_REQUEST,
-            "At most 4 topic positions may be filtered",
-        );
-    }
-
     let mut base = Filter::new().address(address);
-    for (position, topic) in request.topics.iter().enumerate() {
-        let Some(topic) = topic else { continue };
-        let Ok(hash) = B256::from_str(topic.trim()) else {
-            return json_message(
-                StatusCode::BAD_REQUEST,
-                format!("Invalid topic at position {position}"),
-            );
-        };
+    for (position, topic) in topics.into_iter().enumerate() {
+        let Some(hash) = topic else { continue };
         base = match position {
             0 => base.event_signature(hash),
             1 => base.topic1(hash),

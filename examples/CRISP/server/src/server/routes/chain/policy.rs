@@ -28,15 +28,9 @@ pub(super) fn hex_u64(value: &str) -> Option<u64> {
 /// The cache key for an `eth_call`, or `None` when the shape is not one we can key on.
 ///
 /// A call carrying `from`, `value` or a gas field is not keyed: those can change the result, and
-/// a key that ignores them would serve one caller's answer to another.
+/// a key that ignores them would serve one caller's answer to another. A call with a state
+/// override never reaches here: `requested_addresses` refuses it.
 pub(super) fn call_cache_key(params: &Value) -> Option<(String, String, Option<u64>)> {
-    // A state override in the third position lets the caller choose the bytes the node returns.
-    // It is forwarded verbatim, so a key ignoring it would let one caller pick what every other
-    // caller is served for the rest of the block.
-    if params.get(2).is_some_and(|v| !v.is_null()) {
-        return None;
-    }
-
     let tx = params.get(0)?.as_object()?;
 
     // An allowlist of the fields the key accounts for: any field this endpoint does not
@@ -251,6 +245,12 @@ pub(super) fn requested_addresses(method: &str, params: &Value) -> Scope {
     let Some(first) = params.get(0) else {
         return Scope::Unscoped("this method requires a filter or call object");
     };
+
+    // A state override can replace the code at an allowlisted `to`, which makes the call
+    // arbitrary EVM again.
+    if field == "to" && params.get(2).is_some_and(|v| !v.is_null()) {
+        return Scope::Unscoped("state overrides are not served by this indexer");
+    }
 
     // Only a call's `to`: an `eth_getLogs` naming Multicall3 asks for that contract's own logs.
     if field == "to"
@@ -518,6 +518,19 @@ mod tests {
             requested_addresses("eth_call", &json!([{}])),
             Scope::Unscoped(_)
         ));
+
+        // A state override can replace the code at an allowlisted `to`.
+        let overridden = json!([
+            { "to": "0x1111111111111111111111111111111111111111" },
+            "latest",
+            { "0x1111111111111111111111111111111111111111": { "code": "0x00" } }
+        ]);
+        for method in ["eth_call", "eth_estimateGas"] {
+            assert!(matches!(
+                requested_addresses(method, &overridden),
+                Scope::Unscoped(_)
+            ));
+        }
     }
 
     #[test]
