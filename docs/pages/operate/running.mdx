@@ -87,7 +87,7 @@ chains:
   <Tabs.Tab unmount={false}>
 
 <Callout type='info'>
-  E3 requests on Sepolia stay paused until operators that run the 0.19.0-test.1 release register.
+  E3 requests on Sepolia stay paused until operators that run the 0.19.0 release register.
   Run that release on Sepolia. A node of an earlier release does not match the Sepolia deployment.
 </Callout>
 
@@ -275,11 +275,11 @@ Install `interfoldup`, then use it to install a fixed `interfold` release.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install | bash
-interfoldup install --version v0.18.0
+interfoldup install --version v0.19.0
 interfold --version
 ```
 
-The last command prints the installed version, for example `interfold 0.18.0`. Add `--system` to
+The last command prints the installed version, for example `interfold 0.19.0`. Add `--system` to
 install into `/usr/local/bin` instead of `~/.local/bin`.
 
 ### Save the configuration file
@@ -364,7 +364,7 @@ See [Docker state](#docker-state).
 ### Pull a versioned image
 
 ```bash
-export CIPHERNODE_IMAGE='ghcr.io/theinterfold/ciphernode:0.18.0'
+export CIPHERNODE_IMAGE='ghcr.io/theinterfold/ciphernode:0.19.0'
 docker pull "$CIPHERNODE_IMAGE"
 ```
 
@@ -406,7 +406,9 @@ Both values are required. The wallet command derives the libp2p identity from th
 the password and the key in your secret management system.
 
 The entrypoint reads this file only when the volume has no key file or no wallet key. After it uses
-the file, it tries to delete it. A read-only mount stays in place, and the boot continues.
+the file, it tries to delete it. A read-only mount stays in place, and the boot continues. Images
+before 0.19.0 read the file on every boot and stop when they cannot delete it, so they fail with
+this read-only mount.
 
 Do not set `autopassword` or `autowallet` in `config.yaml` for the image. With `autopassword`, the
 node creates a random password before the entrypoint can set the password from this file. With
