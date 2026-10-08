@@ -98,7 +98,7 @@ const ALLOWED: Record<string, string> = {
   '0x52c1ab7e5ee4a8f5ea1ad8d00971f2a7a49ae28c': 'MockVotingToken (CRISP), sepolia',
   '0x4b4b85f007c241bd8bf22c951efe0f44d82ae6d1': 'BondedCheckpoints, sepolia',
   '0x31de033af64f9955b729714d49c8bbf3b5f33847': 'SelfRegistry (CRISP), sepolia',
-  '0xf94e961832585c10a4df82af9e890aec4fc29758': 'ChainlinkVrfRandomnessProvider, sepolia',
+  '0xea5a716afce9c7a4fd6808ca7b0db4dec40a9e1b': 'ChainlinkVrfRandomnessProvider, sepolia',
   '0x1c721de6a736054dbe7e8fce99a68b76d4f603fb': 'BondedVotes, sepolia',
 
   // TODO: record this in deployed_contracts.json so the manifest can publish

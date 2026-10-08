@@ -17,10 +17,10 @@
     "subscriptionId": "68475570197186622747725579713231483360545746156730899555624157381286514435070",
     "keyHash": "0x787d74caea10b2b357790d5b5247c2f63d1d91572a9846f780606e4d953677ae",
     "requestConfirmations": 3,
-    "callbackGasLimit": 150000,
+    "callbackGasLimit": 500000,
     "nativePayment": true,
     "minimumSubscriptionBalance": "100000000000000000",
-    "requestTimeout": "3600"
+    "requestTimeout": "936"
   },
   "ticketToken": {
     "lockRegistry": true
@@ -34,7 +34,7 @@
     "exitDelay": "2592000"
   },
   "registry": {
-    "sortitionSubmissionWindow": "600"
+    "sortitionSubmissionWindow": "180"
   },
   "slashing": {
     "initialDelay": "172800"
@@ -43,7 +43,7 @@
     "maxDuration": "2592000",
     "markFailedGracePeriod": "3600",
     "timeoutConfig": {
-      "dkgWindow": "21600",
+      "dkgWindow": "1200",
       "computeWindow": "604800",
       "decryptionWindow": "21600"
     },

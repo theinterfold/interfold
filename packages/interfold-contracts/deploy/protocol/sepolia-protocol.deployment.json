@@ -23,7 +23,7 @@
   "slashingEvidenceLib": "0xcAe1471A7ba6076A29ea6fC172271FEcc32614C5",
   "poseidonT3": "0x3333333C0A88F9BE4fd23ed0536F9B6c427e3B93",
   "registrySortitionLib": "0xffe03452b5C4eb37332dC6C6026c05b401266Fb2",
-  "randomnessProvider": "0xf94e961832585C10A4DF82AF9E890aEc4fc29758",
+  "randomnessProvider": "0xea5A716afCe9C7a4fD6808ca7b0dB4dEC40A9e1b",
   "randomnessProviderOwnershipAcceptanceRequired": false,
   "ciphernodeRegistry": "0xb1E8640CF8D0A927290E3d9E1b01c4899B5225Ef",
   "ciphernodeRegistryImplementation": "0x8Ad017B9a9E2E26cd90FfE5d7A347b25E6861dE2",

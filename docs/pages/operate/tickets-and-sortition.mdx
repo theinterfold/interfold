@@ -36,8 +36,9 @@ non-transferable balance keeps each ticket attributable to one operator, so a sl
 
 ### Values per network
 
-The table shows the values at deployment. Governance can change each value, so always read the live
-values before you fund a position (see [Parameters](#parameters)).
+The table shows the values in the deployment configuration of each network. Governance can change
+each value, so always read the live values before you fund a position (see
+[Parameters](#parameters)).
 
 | Value                       | Mainnet                    | Sepolia                                |
 | --------------------------- | -------------------------- | -------------------------------------- |
@@ -46,8 +47,8 @@ values before you fund a position (see [Parameters](#parameters)).
 | `minTicketBalance`          | 1 ticket                   | 1 ticket                               |
 | `requiredCiphernodeBond`    | 32,000 FOLD                | 100 FOLD                               |
 | `exitDelay`                 | 2,592,000 s (30 days)      | 2,592,000 s (30 days)                  |
-| `sortitionSubmissionWindow` | 600 s                      | 600 s                                  |
-| `randomnessRequestTimeout`  | 3,600 s                    | 3,600 s                                |
+| `sortitionSubmissionWindow` | 600 s                      | 180 s                                  |
+| `randomnessRequestTimeout`  | 3,600 s                    | 936 s                                  |
 
 On mainnet, a fixed `ticketPrice` is a fixed number of sUSDS shares. It is not a fixed USDS amount.
 

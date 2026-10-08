@@ -343,15 +343,15 @@
       "blockNumber": 11873232
     },
     "ChainlinkVrfRandomnessProvider": {
-      "address": "0xf94e961832585C10A4DF82AF9E890aEc4fc29758",
-      "blockNumber": 11873232,
+      "address": "0xea5A716afCe9C7a4fD6808ca7b0dB4dEC40A9e1b",
+      "blockNumber": 11873568,
       "constructorArgs": {
         "requesterAddress": "0xb1E8640CF8D0A927290E3d9E1b01c4899B5225Ef",
         "coordinator": "0x9DdfaCa8183c41ad55329BdeeD9F6A8d53168B1B",
         "vrfSubscriptionId": "68475570197186622747725579713231483360545746156730899555624157381286514435070",
         "vrfKeyHash": "0x787d74caea10b2b357790d5b5247c2f63d1d91572a9846f780606e4d953677ae",
         "vrfRequestConfirmations": 3,
-        "vrfCallbackGasLimit": 150000,
+        "vrfCallbackGasLimit": 500000,
         "payInNativeToken": true,
         "vrfMinimumSubscriptionBalance": "100000000000000000",
         "protocolOwner": "0x8837e47c4Bb520ADE83AAB761C3B60679443af1B"
