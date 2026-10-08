@@ -156,9 +156,13 @@ The `BondedVotes` contract gives no voting power to these two accounts:
 - The Gnosis Guild Safe, `0x12BEEF35025841EFccb77D6EE40df86400Fdb4bB`
 
 For these accounts, `getPastVotes`, `getVotes`, and `balanceOf` return zero. These accounts cannot
-give bonded or vesting FOLD to a delegate, and they cannot be a delegate. The list is set when the
-contract is deployed, and it cannot change. The FOLD of these accounts stays in the total supply,
-which is the quorum denominator.
+give bonded or vesting FOLD to a delegate, and they cannot be a bonded delegate. The list is set
+when the contract is deployed, and it cannot change. The FOLD of these accounts stays in the total
+supply, which is the quorum denominator.
+
+The exclusion applies to these two addresses, not to their FOLD. If one of these accounts transfers
+FOLD to a different address, that FOLD can give voting power to its new holder. If one of these
+accounts transfers the ownership of a bond, the bonded FOLD counts for the new bond owner.
 
 `BondedVotes` does not see delegation in the voting escrow or in the FOLD contract. If one of these
 accounts delegates locked FOLD to another address, that address gets the voting power. If you

@@ -212,6 +212,32 @@ describe("BondedVotes", function () {
         .to.be.revertedWithCustomError(excluded, "ExcludedAccount")
         .withArgs(bondOwnerAddress);
     });
+
+    it("rejects the zero address as an excluded account", async function () {
+      const { ciphernodeBondToken, checkpoints, bondOwnerAddress } =
+        await loadFixture(setup);
+      const tokenAddress = await ciphernodeBondToken.getAddress();
+      const factory = await ethers.getContractFactory("BondedVotes");
+
+      await expect(
+        factory.deploy(
+          tokenAddress,
+          tokenAddress,
+          await checkpoints.getAddress(),
+          [bondOwnerAddress, ethers.ZeroAddress],
+        ),
+      ).to.be.revertedWithCustomError(factory, "ZeroAddress");
+    });
+
+    /// The answer for an excluded account is always zero, but a timepoint that has not settled
+    /// gets no answer for any account.
+    it("rejects a timepoint that has not settled for an excluded account too", async function () {
+      const { excluded, bondOwnerAddress } = await loadFixture(excludedSetup);
+
+      await expect(
+        excluded.getPastVotes(bondOwnerAddress, await excluded.clock()),
+      ).to.be.revertedWithCustomError(excluded, "FutureLookup");
+    });
   });
 
   describe("bonding", function () {
@@ -1623,6 +1649,43 @@ describe("BondedVotes", function () {
         expect(
           await veBondedVotes.getPastVotes(bondOwnerAddress, timepoint),
         ).to.equal(LOCKED + ALLOCATION);
+      });
+
+      /// The mainnet configuration. The treasury Safes vote through an escrow votes source, and
+      /// almost all of their weight is vesting-locked FOLD.
+      it("gives an excluded account none of its locked, escrowed or bonded FOLD", async function () {
+        const {
+          veBondedVotes,
+          ciphernodeBondToken,
+          adapter,
+          checkpoints,
+          foldAddress,
+          bond,
+          bondOwnerAddress,
+        } = await loadFixture(veSetup);
+        const excluded = (await ethers.deployContract("BondedVotes", [
+          foldAddress,
+          await adapter.getAddress(),
+          await checkpoints.getAddress(),
+          [bondOwnerAddress],
+        ])) as unknown as BondedVotes;
+
+        await allocate(ciphernodeBondToken, bondOwnerAddress, ALLOCATION);
+        await adapter.setVotes(bondOwnerAddress, LOCKED);
+        await bond(BOND);
+
+        await time.increase(1);
+        const timepoint = (await time.latest()) - 1;
+
+        // An adapter that excludes nobody counts all three halves for the same account.
+        expect(
+          await veBondedVotes.getPastVotes(bondOwnerAddress, timepoint),
+        ).to.equal(LOCKED + ALLOCATION);
+        expect(
+          await excluded.getPastVotes(bondOwnerAddress, timepoint),
+        ).to.equal(0n);
+        expect(await excluded.getVotes(bondOwnerAddress)).to.equal(0n);
+        expect(await excluded.balanceOf(bondOwnerAddress)).to.equal(0n);
       });
 
       /// The one place a naive `locked + escrowed + bonded` sum goes wrong. A bond SATISFIES a

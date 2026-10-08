@@ -3,11 +3,10 @@ import { connect } from "./cli";
 import { deploymentPath, readJson, writeJson } from "./files";
 import type { ProtocolDeployment } from "./types";
 import {
+  checkExcludedAccounts,
   deployedAddress,
   loadConfig,
-  readExcludedAccounts,
   requireContract,
-  sameAccounts,
 } from "./values";
 
 /**
@@ -71,20 +70,15 @@ export async function actionActivateVoting(): Promise<void> {
       deployment.bondedVotes,
       "bondedVotes",
     );
-    const deployed = await readExcludedAccounts(
+    // An older adapter is refused even with nothing configured, so that the record names current
+    // code.
+    const outdated = await checkExcludedAccounts(
       ethers.provider,
       deployment.bondedVotes,
+      excludedAccounts,
+      deploymentPath(config),
     );
-    if (!deployed || !sameAccounts(deployed, excludedAccounts)) {
-      throw new Error(
-        `BondedVotes at ${deployment.bondedVotes} ` +
-          (deployed
-            ? `excludes [${deployed.join(", ")}], not [${excludedAccounts.join(", ")}]. `
-            : "predates the excluded-account list. ") +
-          `To replace it, remove bondedVotes from ${deploymentPath(config)} and run this action ` +
-          "again, then point the governance plugin and new CRISP rounds at the new address.",
-      );
-    }
+    if (outdated) throw new Error(outdated);
     console.log(`BondedVotes already deployed at ${deployment.bondedVotes}`);
     return;
   }

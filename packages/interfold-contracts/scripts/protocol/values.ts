@@ -106,6 +106,40 @@ export function sameAccounts(
   );
 }
 
+/**
+ * Checks the accounts that the `BondedVotes` at `target` excludes against `expected`, the
+ * configured `bondedVotesExcludedAccounts`. `activate-voting` and `validate` both decide with it.
+ *
+ * Throws when the adapter excludes other accounts. Also throws when its code predates the list and
+ * `expected` names an account, because that account can still vote through it. Code from before
+ * the list excludes nobody, so with nothing configured it is out of date but not wrong: for it, this
+ * returns the reason and the replacement steps. Returns `undefined` when the adapter excludes
+ * exactly `expected`.
+ */
+export async function checkExcludedAccounts(
+  provider: ethersLib.Provider,
+  target: string,
+  expected: readonly string[],
+  deploymentFile: string,
+): Promise<string | undefined> {
+  const deployed = await readExcludedAccounts(provider, target);
+  if (deployed && sameAccounts(deployed, expected)) return undefined;
+
+  const replace =
+    `To replace it, remove bondedVotes from ${deploymentFile} and run --action activate-voting. ` +
+    "Then point the governance plugin and new CRISP rounds at the new address.";
+  if (!deployed && expected.length === 0) {
+    return `BondedVotes at ${target} predates the excluded-account list. ${replace}`;
+  }
+  throw new Error(
+    `BondedVotes at ${target} ` +
+      (deployed
+        ? `excludes [${deployed.join(", ")}], not [${expected.join(", ")}]. `
+        : `predates the excluded-account list, so [${expected.join(", ")}] can still vote through it. `) +
+      replace,
+  );
+}
+
 export async function deployedAddress(contract: {
   target?: unknown;
   getAddress?: () => Promise<string>;

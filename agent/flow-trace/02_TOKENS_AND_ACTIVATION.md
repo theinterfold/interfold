@@ -739,14 +739,15 @@ candidates, and `getPastVotes` at the snapshot then keeps or drops each one. Fil
 
 Delegations live in the adapter. A replacement `BondedVotes`, for a new era or for an older adapter,
 starts with none, so owners must delegate again. An adapter from before the excluded-account list
-can have the same token, votes source and history as a current one, so `--action activate-voting`
-reuses a recorded adapter only when `readExcludedAccounts` returns the configured
-`bondedVotesExcludedAccounts`. It refuses an older adapter or a different list rather than reporting
-it as deployed. `--action validate` fails on a different list, and on an older adapter when the
-config excludes any account; with no exclusions it prints a `--` line for an older adapter.
-`deployAndSaveBondedVotes` deploys a replacement. Files: `scripts/protocol/activateVoting.ts`,
-`scripts/protocol/validate.ts`, `scripts/deployAndSave/bondedVotes.ts`,
-`scripts/protocol/values.ts`.
+can have the same token, votes source and history as a current one. `checkExcludedAccounts` decides
+for both actions: `--action activate-voting` reuses a recorded adapter only when
+`readExcludedAccounts` returns the configured `bondedVotesExcludedAccounts`. It refuses an older
+adapter or a different list rather than reporting it as deployed. `--action validate` runs this
+check after all other checks. It fails on a different list, and on an older adapter when the config
+excludes any account; with no exclusions it prints a `--` line for an older adapter. Each message
+names the replacement steps. `deployAndSaveBondedVotes` deploys a replacement. Files:
+`scripts/protocol/activateVoting.ts`, `scripts/protocol/validate.ts`,
+`scripts/deployAndSave/bondedVotes.ts`, `scripts/protocol/values.ts`.
 
 ## Activation Thresholds Summary
 

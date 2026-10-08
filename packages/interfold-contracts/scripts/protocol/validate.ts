@@ -6,12 +6,7 @@ import { deploymentPath, readJson } from "./files";
 import { currentNodeRelease } from "./nodeRelease";
 import { assertVrfSubscription, requireRandomnessConfig } from "./randomness";
 import type { ProtocolDeployment } from "./types";
-import {
-  loadConfig,
-  readExcludedAccounts,
-  requireContract,
-  sameAccounts,
-} from "./values";
+import { checkExcludedAccounts, loadConfig, requireContract } from "./values";
 
 function assertEqual(label: string, actual: unknown, expected: unknown): void {
   if (String(actual).toLowerCase() !== String(expected).toLowerCase()) {
@@ -357,29 +352,6 @@ export async function actionValidate(): Promise<void> {
         deployment.bondingRegistryProxy,
       ],
     );
-    const excluded = await readExcludedAccounts(
-      ethers.provider,
-      deployment.bondedVotes,
-    );
-    const expectedExcluded = config.bondedVotesExcludedAccounts ?? [];
-    // An adapter from before the list excludes nobody. That is a failure only when the config
-    // excludes someone, because those accounts still vote through it.
-    if (!excluded && expectedExcluded.length > 0) {
-      throw new Error(
-        `bondedVotes predates the excluded-account list, so [${expectedExcluded.join(", ")}] ` +
-          "still vote through it. Replace it with --action activate-voting.",
-      );
-    } else if (!excluded) {
-      console.log(
-        "  -- bondedVotes predates the excluded-account list (replace it with --action activate-voting)",
-      );
-    } else if (!sameAccounts(excluded, expectedExcluded)) {
-      throw new Error(
-        `bondedVotes.excludedAccounts: expected [${expectedExcluded.join(", ")}], got [${excluded.join(", ")}]`,
-      );
-    } else {
-      console.log("  ok bondedVotes.excludedAccounts");
-    }
   } else {
     console.log("  -- bondedVotes not deployed yet (--action activate-voting)");
   }
@@ -516,6 +488,19 @@ export async function actionValidate(): Promise<void> {
   if (!(await slashing.hasRole(defaultAdmin, config.protocolOwner))) {
     throw new Error(
       "Protocol owner does not have SlashingManager DEFAULT_ADMIN_ROLE",
+    );
+  }
+
+  // Last, so that an adapter that must be replaced does not hide the results of the other checks.
+  if (deployment.bondedVotes) {
+    const outdated = await checkExcludedAccounts(
+      ethers.provider,
+      deployment.bondedVotes,
+      config.bondedVotesExcludedAccounts ?? [],
+      deploymentPath(config),
+    );
+    console.log(
+      outdated ? `  -- ${outdated}` : "  ok bondedVotes.excludedAccounts",
     );
   }
   console.log("Protocol validation complete");
