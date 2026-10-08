@@ -102,9 +102,11 @@ every section.
   `SOURCE_HASH` identifies circuit sources, not archive bytes, and cannot replace this check.
 - Artifact identity must cover every source that compiles into an artifact. `computeSourceHash`
   (`scripts/build-circuits.ts`) includes shared Noir logic, the library entry point and dependency
-  manifest, and shared configuration constants. It normalizes the active preset selector because
-  each pair already identifies its preset. A library-only change invalidates every affected pair.
-  Rebuild and push those pairs before release.
+  manifest, shared configuration constants, and the pinned toolchain: nargo at the Noir tag of the
+  prover crates and bb at `required_bb_version`. The build refuses a nargo or bb of another
+  version. It normalizes the active preset selector because each pair already identifies its preset.
+  A library-only change invalidates every affected pair. Rebuild and push those pairs before
+  release.
 - The pair source hash ignores generated C1/C2 bound values and includes the Rust sources that
   generate them, without their `#[cfg(test)]` modules. Switching the active committee or editing a
   test module must not change another pair's source hash.
