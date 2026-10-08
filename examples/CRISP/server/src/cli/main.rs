@@ -7,25 +7,12 @@
 mod approve;
 mod commands;
 
-use dialoguer::{theme::ColorfulTheme, FuzzySelect, Input};
-use reqwest::Client;
-
-use commands::{default_registry_hint, default_voting_token_hint, initialize_crisp_round};
-use crisp::logger::init_logger;
-use log::info;
-
 use clap::{Parser, Subcommand};
-use once_cell::sync::Lazy;
-use sled::Db;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-
-use crate::commands::check_committee_key_published;
-
-pub static CLI_DB: Lazy<Arc<RwLock<Db>>> = Lazy::new(|| {
-    let pathdb = std::env::current_dir().unwrap().join("database/cli");
-    Arc::new(RwLock::new(sled::open(pathdb).unwrap()))
-});
+use commands::{check_committee_key_published, default_hint, initialize_crisp_round};
+use crisp::logger::init_logger;
+use dialoguer::{theme::ColorfulTheme, FuzzySelect, Input};
+use eyre::Result;
+use log::info;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -63,10 +50,9 @@ enum Commands {
 }
 
 #[tokio::main]
-pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn main() -> Result<()> {
     init_logger();
 
-    let _client = Client::new();
     let cli = Cli::parse();
 
     if cli.environment != 0 {
@@ -81,104 +67,71 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             onchain,
         }) => {
             let balance_threshold =
-                balance_threshold.unwrap_or_else(|| default_balance_threshold(onchain));
+                balance_threshold.unwrap_or_else(|| default_balance_threshold(onchain).to_owned());
             let e3_id = initialize_crisp_round(&token_address, &balance_threshold, onchain).await?;
-            println!("{}", e3_id);
+            println!("{e3_id}");
         }
         Some(Commands::CheckE3Ready { e3id }) => {
-            let is_ready = check_committee_key_published(&e3id).await?;
-            println!("{}", is_ready);
+            println!("{}", check_committee_key_published(&e3id).await?);
         }
         None => {
-            // Fall back to interactive mode if no command was specified
-            let action = select_action()?;
-            match action {
-                0 => {
-                    let onchain = select_census()? == 1;
-                    let token_address = if onchain {
-                        get_registry_address()?
-                    } else {
-                        get_token_address()?
-                    };
-                    let balance_threshold = get_balance_threshold(onchain)?;
-                    let e3_id =
-                        initialize_crisp_round(&token_address, &balance_threshold, onchain).await?;
-                    println!("E3 ID: {}", e3_id);
-                }
-                _ => unreachable!(),
-            }
+            // Without a command, ask for the round settings.
+            select(
+                "Create a new CRISP round or participate in an existing round.",
+                &["Initialize new E3 round."],
+            )?;
+            let onchain = select(
+                "Who may vote in this round?",
+                &[
+                    "Token census — holders of a token at a snapshot may vote.",
+                    "Open registration — anyone can register on-chain during the round and vote.",
+                ],
+            )? == 1;
+            let token_address = if onchain {
+                prompt(
+                    "Enter the registry (or votes token) eligibility is read from",
+                    default_hint("SelfRegistry"),
+                )?
+            } else {
+                prompt(
+                    "Enter the token contract address for the voting round",
+                    default_hint("MockVotingToken"),
+                )?
+            };
+            let balance_threshold = prompt(
+                "Enter the balance threshold for the voting round",
+                default_balance_threshold(onchain).to_owned(),
+            )?;
+            let e3_id = initialize_crisp_round(&token_address, &balance_threshold, onchain).await?;
+            println!("E3 ID: {e3_id}");
         }
     }
 
     Ok(())
 }
 
-#[allow(dead_code)]
-fn select_environment() -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
-    let selections = &["CRISP: Voting Protocol (ETH)", "More Coming Soon!"];
+fn select(prompt: &str, items: &[&str]) -> Result<usize> {
     Ok(FuzzySelect::with_theme(&ColorfulTheme::default())
-        .with_prompt("Interfold (EEEE): Please choose the private execution environment you would like to run!")
+        .with_prompt(prompt)
         .default(0)
-        .items(&selections[..])
+        .items(items)
         .interact()?)
 }
 
-fn select_action() -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
-    let selections = &[
-        "Initialize new E3 round.",
-        // "Participate in an E3 round.",
-        // "Activate an E3 round.",
-        // "Decrypt Ciphertext & Publish Results",
-    ];
-    Ok(FuzzySelect::with_theme(&ColorfulTheme::default())
-        .with_prompt("Create a new CRISP round or participate in an existing round.")
-        .default(0)
-        .items(&selections[..])
-        .interact()?)
-}
-
-fn select_census() -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
-    let selections = &[
-        "Token census — holders of a token at a snapshot may vote.",
-        "Open registration — anyone can register on-chain during the round and vote.",
-    ];
-    Ok(FuzzySelect::with_theme(&ColorfulTheme::default())
-        .with_prompt("Who may vote in this round?")
-        .default(0)
-        .items(&selections[..])
-        .interact()?)
-}
-
-fn get_token_address() -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+fn prompt(text: &str, default: String) -> Result<String> {
     Ok(Input::with_theme(&ColorfulTheme::default())
-        .with_prompt("Enter the token contract address for the voting round")
-        .default(default_voting_token_hint())
-        .interact_text()?)
-}
-
-fn get_registry_address() -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    Ok(Input::with_theme(&ColorfulTheme::default())
-        .with_prompt("Enter the registry (or votes token) eligibility is read from")
-        .default(default_registry_hint())
+        .with_prompt(text)
+        .default(default)
         .interact_text()?)
 }
 
 /// The floor a slot must clear to vote, in the token's raw units. A registered `SelfRegistry`
-/// account reports exactly 1, so an open-registration round defaults to that; a token round keeps
-/// the one-full-token default this CLI always had.
-fn default_balance_threshold(onchain: bool) -> String {
+/// account reports exactly 1, so an open-registration round defaults to that; a token round
+/// defaults to one full token.
+fn default_balance_threshold(onchain: bool) -> &'static str {
     if onchain {
-        "1".to_string()
+        "1"
     } else {
-        "1000000000000000000".to_string()
+        "1000000000000000000"
     }
-}
-
-fn get_balance_threshold(
-    onchain: bool,
-) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    Ok(Input::with_theme(&ColorfulTheme::default())
-        .with_prompt("Enter the balance threshold for the voting round")
-        .default(default_balance_threshold(onchain))
-        .interact_text()?)
 }

@@ -34,9 +34,9 @@ fn route_template(request: &ServiceRequest) -> String {
 mod tests {
     use super::*;
     use actix_web::{test, App};
-    use std::sync::{Mutex, Once};
+    use std::sync::{Mutex, PoisonError};
 
-    /// Keeps the access log lines, so a test can read what the middleware wrote.
+    /// Keeps the access log lines, so the test can read what the middleware wrote.
     struct AccessLogCapture(Mutex<Vec<String>>);
 
     impl log::Log for AccessLogCapture {
@@ -46,10 +46,8 @@ mod tests {
 
         fn log(&self, record: &log::Record) {
             if self.enabled(record.metadata()) {
-                self.0
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .push(record.args().to_string());
+                let mut lines = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+                lines.push(record.args().to_string());
             }
         }
 
@@ -58,23 +56,14 @@ mod tests {
 
     static CAPTURE: AccessLogCapture = AccessLogCapture(Mutex::new(Vec::new()));
 
-    /// Install the capture as the process logger. The logger is process-wide and can be set only
-    /// once, so every test of this module shares it and reads only its own lines.
-    fn capture() -> &'static AccessLogCapture {
-        static INSTALL: Once = Once::new();
-        INSTALL.call_once(|| {
-            log::set_logger(&CAPTURE).expect("no other logger is installed in the test binary");
-            log::set_max_level(log::LevelFilter::Info);
-        });
-        &CAPTURE
-    }
-
     /// An access log line names the route template and never the identifier in the path or the
     /// caller address. The handlers have no application data here and answer with an error, and
     /// the middleware logs the request all the same.
     #[actix_web::test]
     async fn access_log_lines_hold_the_route_and_not_the_caller_or_the_path() {
-        let capture = capture();
+        log::set_logger(&CAPTURE).expect("no other logger is installed in the test binary");
+        log::set_max_level(log::LevelFilter::Info);
+
         let job_id = format!("0x{}", "5a".repeat(32));
         let caller = "203.0.113.7:4567".parse().unwrap();
         let app = test::init_service(
@@ -85,54 +74,32 @@ mod tests {
         .await;
 
         let requests = [
-            test::TestRequest::get()
-                .uri(&format!("/voting/availability/{job_id}"))
-                .peer_addr(caller)
-                .to_request(),
+            test::TestRequest::get().uri(&format!("/voting/availability/{job_id}")),
             test::TestRequest::post()
                 .uri("/voting/broadcast")
-                .peer_addr(caller)
-                .set_json(serde_json::json!({ "round_id": "1", "encoded_proof": "0x00" }))
-                .to_request(),
-            test::TestRequest::get()
-                .uri(&format!("/no-such-route/{job_id}"))
-                .peer_addr(caller)
-                .to_request(),
+                .set_json(serde_json::json!({ "round_id": "1", "encoded_proof": "0x00" })),
+            test::TestRequest::get().uri(&format!("/no-such-route/{job_id}")),
         ];
         for request in requests {
             // The middleware writes the line when the response body is dropped.
-            drop(test::call_service(&app, request).await);
+            drop(test::call_service(&app, request.peer_addr(caller).to_request()).await);
         }
 
-        let lines = capture
-            .0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.starts_with(r#""GET /voting/availability/{job_id}" "#)),
-            "{lines:?}"
-        );
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.starts_with(r#""POST /voting/broadcast" "#)),
-            "{lines:?}"
-        );
-        assert!(
-            lines.iter().any(|line| line.starts_with(r#""GET -" "#)),
-            "{lines:?}"
-        );
-        for line in &lines {
+        let lines = CAPTURE.0.lock().unwrap_or_else(PoisonError::into_inner);
+        for route in [
+            r#""GET /voting/availability/{job_id}" "#,
+            r#""POST /voting/broadcast" "#,
+            r#""GET -" "#,
+        ] {
             assert!(
-                !line.contains("5a5a5a"),
-                "the path identifier is logged: {line}"
+                lines.iter().any(|line| line.starts_with(route)),
+                "{lines:?}"
             );
+        }
+        for line in lines.iter() {
             assert!(
-                !line.contains("203.0.113.7"),
-                "the caller is logged: {line}"
+                !line.contains("5a5a5a") && !line.contains("203.0.113.7"),
+                "the path identifier or the caller is logged: {line}"
             );
         }
     }

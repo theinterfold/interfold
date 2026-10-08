@@ -13,163 +13,92 @@ use std::str::FromStr;
 
 use crate::server::models::TokenHolder;
 
-/// Computes Poseidon hashes for token holder address + balance pairs.
+/// Hex-encoded Poseidon(address, balance) leaf for each holder.
 ///
-/// # Arguments
-/// * `token_holders` - A vector of TokenHolder structs containing address and balance.
-///
-/// # Returns
-/// A Result containing either a vector of hex-encoded Poseidon hashes or an error.
-/// Returns an error if any token holder has invalid address or balance data.
+/// The address must fit the field (a 20-byte address always does). The balance is a decimal
+/// string of any size, reduced modulo the field order.
 pub fn compute_token_holder_hashes(token_holders: &[TokenHolder]) -> Result<Vec<String>> {
-    let mut hashes = Vec::new();
+    token_holders
+        .iter()
+        .map(|holder| {
+            let address_hex = holder.address.trim_start_matches("0x");
+            let address_bigint = BigUint::parse_bytes(address_hex.as_bytes(), 16)
+                .ok_or_else(|| eyre::eyre!("Invalid address format"))?;
+            let address_fr = Fr::from_str(&address_bigint.to_string())
+                .map_err(|_| eyre::eyre!("Failed to convert address to field element"))?;
 
-    for holder in token_holders.iter() {
-        // Convert address directly to field element.
-        let address_hex = holder.address.trim_start_matches("0x");
-        let address_bigint = BigUint::parse_bytes(address_hex.as_bytes(), 16)
-            .ok_or_else(|| eyre::eyre!("Invalid address format"))?;
-        let address_fr = Fr::from_str(&address_bigint.to_string())
-            .map_err(|_| eyre::eyre!("Failed to convert address to field element"))?;
+            let balance = BigUint::from_str(&holder.balance)
+                .map_err(|e| eyre::eyre!("Invalid balance format: {}", e))?;
+            let balance_fr = Fr::from_be_bytes_mod_order(&balance.to_bytes_be());
 
-        // Convert balance to field element safely, reducing modulo field order if necessary.
-        let balance_bigint = BigUint::from_str(&holder.balance)
-            .map_err(|e| eyre::eyre!("Invalid balance format: {}", e))?;
-        let balance_bytes = balance_bigint.to_bytes_be();
-        let mut padded_bytes = [0u8; 32];
-        let start = 32usize.saturating_sub(balance_bytes.len());
-        padded_bytes[start..].copy_from_slice(&balance_bytes);
-        let balance_fr = Fr::from_be_bytes_mod_order(&padded_bytes);
-
-        // Compute Poseidon hash of address + balance.
-        let mut poseidon = Poseidon::<Fr>::new_circom(2).unwrap();
-        let hash_bigint: BigInt<4> = poseidon.hash(&[address_fr, balance_fr]).unwrap().into();
-        let hash = hex::encode(hash_bigint.to_bytes_be());
-
-        hashes.push(hash);
-    }
-
-    Ok(hashes)
+            let mut poseidon = Poseidon::<Fr>::new_circom(2)?;
+            let hash: BigInt<4> = poseidon.hash(&[address_fr, balance_fr])?.into();
+            Ok(hex::encode(hash.to_bytes_be()))
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_compute_token_holder_hashes() {
-        let token_holders = vec![
-            TokenHolder {
-                address: "0x1234567890123456789012345678901234567890".to_string(),
-                balance: "1000".to_string(),
-            },
-            TokenHolder {
-                address: "0x2345678901234567890123456789012345678901".to_string(),
-                balance: "500".to_string(),
-            },
-        ];
+    const ADDRESS: &str = "0x1234567890123456789012345678901234567890";
+    const BN254_MODULUS: &str =
+        "21888242871839275222246405745257275088548364400416034343698204186575808495617";
 
-        let hashes = compute_token_holder_hashes(&token_holders)
-            .expect("Should compute hashes successfully");
-
-        println!("Hashes: {:?}", hashes);
-
-        assert_eq!(hashes.len(), 2);
-        assert!(!hashes[0].is_empty());
-        assert!(!hashes[1].is_empty());
-        assert_ne!(hashes[0], hashes[1]);
-        assert_eq!(
-            hashes[0],
-            "0cb36cd64fcc99d7f742ae77954eda75236e182d7c10de1660f62f56c582b518"
-        );
-        assert_eq!(
-            hashes[1],
-            "0793d785764e7afa3343e9ef2f1b1ad6d367a93622ddaaec328686a402a1d085"
-        );
-
-        // Verify hash format (should be hex string)
-        for hash in &hashes {
-            assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    fn holder(address: &str, balance: &str) -> TokenHolder {
+        TokenHolder {
+            address: address.to_string(),
+            balance: balance.to_string(),
         }
     }
 
-    #[test]
-    fn test_balance_modulo_reduction() {
-        // Test that balances larger than the field modulus are properly reduced
-        // BN254 field modulus + 1 should reduce to 1
-        let field_modulus_plus_one =
-            "21888242871839275222246405745257275088548364400416034343698204186575808495618";
-
-        let token_holders = vec![TokenHolder {
-            address: "0x1234567890123456789012345678901234567890".to_string(),
-            balance: field_modulus_plus_one.to_string(),
-        }];
-
-        // This should not panic and should reduce the balance to 1 (mod field_modulus)
-        let hashes = compute_token_holder_hashes(&token_holders)
-            .expect("Should compute hashes successfully");
-
-        assert_eq!(hashes.len(), 1);
-        assert!(!hashes[0].is_empty());
-        assert!(hashes[0].chars().all(|c| c.is_ascii_hexdigit()));
+    fn hash_of(address: &str, balance: &str) -> String {
+        compute_token_holder_hashes(&[holder(address, balance)])
+            .expect("hash")
+            .remove(0)
     }
 
     #[test]
-    fn test_invalid_address_format() {
-        let token_holders = vec![TokenHolder {
-            address: "invalid_address".to_string(),
-            balance: "1000".to_string(),
-        }];
+    fn leaves_match_the_pinned_vectors() {
+        let hashes = compute_token_holder_hashes(&[
+            holder(ADDRESS, "1000"),
+            holder("0x2345678901234567890123456789012345678901", "500"),
+        ])
+        .expect("Should compute hashes successfully");
 
-        let result = compute_token_holder_hashes(&token_holders);
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid address format"));
+        assert_eq!(
+            hashes,
+            [
+                "0cb36cd64fcc99d7f742ae77954eda75236e182d7c10de1660f62f56c582b518",
+                "0793d785764e7afa3343e9ef2f1b1ad6d367a93622ddaaec328686a402a1d085",
+            ]
+        );
+        // The `0x` prefix is optional.
+        assert_eq!(hash_of(ADDRESS.trim_start_matches("0x"), "1000"), hashes[0]);
     }
 
     #[test]
-    fn test_invalid_balance_format() {
-        let token_holders = vec![TokenHolder {
-            address: "0x1234567890123456789012345678901234567890".to_string(),
-            balance: "not_a_number".to_string(),
-        }];
+    fn balances_are_reduced_modulo_the_field_order() {
+        let one = hash_of(ADDRESS, "1");
+        let modulus = BigUint::from_str(BN254_MODULUS).unwrap();
 
-        let result = compute_token_holder_hashes(&token_holders);
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid balance format"));
+        assert_eq!(hash_of(ADDRESS, &(&modulus + 1u8).to_string()), one);
+        // Wider than 32 bytes: the value still reduces instead of overflowing a fixed buffer.
+        assert_eq!(
+            hash_of(ADDRESS, &((&modulus << 256usize) + 1u8).to_string()),
+            one
+        );
     }
 
     #[test]
-    fn test_empty_balance() {
-        let token_holders = vec![TokenHolder {
-            address: "0x1234567890123456789012345678901234567890".to_string(),
-            balance: "".to_string(),
-        }];
-
-        let result = compute_token_holder_hashes(&token_holders);
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid balance format"));
-    }
-
-    #[test]
-    fn test_address_without_0x_prefix() {
-        let token_holders = vec![TokenHolder {
-            address: "1234567890123456789012345678901234567890".to_string(),
-            balance: "1000".to_string(),
-        }];
-
-        let result = compute_token_holder_hashes(&token_holders);
-        assert!(result.is_ok());
-        let hashes = result.unwrap();
-        assert_eq!(hashes.len(), 1);
-        assert!(!hashes[0].is_empty());
+    fn malformed_holders_are_errors() {
+        for (address, balance, message) in [
+            ("invalid_address", "1000", "Invalid address format"),
+            (ADDRESS, "not_a_number", "Invalid balance format"),
+        ] {
+            let error = compute_token_holder_hashes(&[holder(address, balance)]).unwrap_err();
+            assert!(error.to_string().contains(message), "{error}");
+        }
     }
 }

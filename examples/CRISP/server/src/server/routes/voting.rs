@@ -4,7 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use super::chain::admit;
+use super::{
+    chain::{admit, identify},
+    state::job_response,
+};
 use crate::server::{
     app_data::AppData,
     data_availability::{input_rejection_message, AvailabilityService},
@@ -17,7 +20,7 @@ use crate::server::{
     CONFIG,
 };
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
-use alloy::primitives::{Bytes, B256};
+use alloy::primitives::B256;
 use log::{error, info, warn};
 use std::str::FromStr;
 
@@ -46,6 +49,30 @@ pub fn setup_routes(config: &mut web::ServiceConfig) {
     );
 }
 
+/// A `FailedBroadcast` body that carries only `message`.
+fn failed(message: impl Into<String>) -> VoteResponse {
+    VoteResponse {
+        status: VoteResponseStatus::FailedBroadcast,
+        tx_hash: None,
+        job_id: None,
+        encoded_proof: None,
+        message: Some(message.into()),
+    }
+}
+
+/// The answer to an availability-service error: 400 when the service conclusively rejected the
+/// ballot, 503 for any other failure.
+fn availability_error(e3_key: &str, error: &anyhow::Error) -> HttpResponse {
+    if let Some(message) = input_rejection_message(error) {
+        warn!("[e3_id={e3_key}] Vote rejected: {error}");
+        return HttpResponse::BadRequest().json(failed(message));
+    }
+    error!("[e3_id={e3_key}] Availability service failed: {error}");
+    HttpResponse::ServiceUnavailable().json(failed(
+        "The availability service is temporarily unavailable",
+    ))
+}
+
 async fn get_available_object(
     content_hash: web::Path<String>,
     availability: web::Data<AvailabilityService>,
@@ -66,19 +93,11 @@ async fn get_available_object(
     }
 }
 
-/// Get the slot activity for an address in a specific round.
+/// The slot activity for an address in a round.
 ///
 /// Reports whether the slot holds any published entry, not whether its owner voted: a mask is
 /// indistinguishable from a vote by design, and the server does not track who submitted what.
 /// A client that wants "did I vote" must remember its own submissions.
-///
-/// # Arguments
-///
-/// * `VoteStatusRequest` - The request containing round_id and address
-///
-/// # Returns
-///
-/// * A JSON response with the slot activity
 async fn get_vote_status(
     data: web::Json<VoteStatusRequest>,
     store: web::Data<AppData>,
@@ -88,7 +107,7 @@ async fn get_vote_status(
         Ok(e3_id) => e3_id,
         Err(e) => return HttpResponse::BadRequest().json(e.to_string()),
     };
-    info!("[e3_id={}] Checking slot activity", e3_id);
+    info!("[e3_id={e3_id}] Checking slot activity");
 
     // Validated before any storage access: a malformed address is the client's error, not a
     // database failure.
@@ -97,20 +116,22 @@ async fn get_vote_status(
         Err(e) => return HttpResponse::BadRequest().json(e.to_string()),
     };
 
-    let slot_active = match store.e3(&e3_id).slot_has_activity(slot).await {
+    let round = store.e3(&e3_id);
+    let slot_active = match round.slot_has_activity(slot).await {
         Ok(active) => active,
         Err(e) => {
-            error!(
-                "[e3_id={}] Database error checking slot activity: {:?}",
-                e3_id, e
-            );
+            error!("[e3_id={e3_id}] Database error checking slot activity: {e:?}");
             return HttpResponse::InternalServerError().json("Internal server error");
         }
     };
 
-    let round_status = match store.e3(&e3_id).get_e3_state_lite().await {
+    // A round without readable state still answers; `round_status` is null.
+    let round_status = match round.get_e3_state_lite().await {
         Ok(state) => Some(state.status),
-        Err(_) => None,
+        Err(e) => {
+            warn!("[e3_id={e3_id}] Could not read the round status: {e:?}");
+            None
+        }
     };
 
     HttpResponse::Ok().json(VoteStatusResponse {
@@ -169,28 +190,17 @@ async fn get_input_selection(
         Ok(Some(selection)) => HttpResponse::Ok().json(selection),
         Ok(None) => HttpResponse::NotFound().json(format!("No record of round {e3_id}")),
         Err(e) => {
-            error!(
-                "[e3_id={}] Could not resolve an input selection: {}",
-                e3_id, e
-            );
+            error!("[e3_id={e3_id}] Could not resolve an input selection: {e}");
             HttpResponse::InternalServerError().json("Internal server error")
         }
     }
 }
 
-/// Broadcast an encrypted vote to the blockchain
+/// Broadcast an encrypted vote to the blockchain.
 ///
 /// The relay signs and pays for the transaction, so the input is dry-run first — an invalid
 /// proof, a stale parent, or a closed window is refused as a client error instead of costing a
 /// reverted transaction — and traffic is rate limited per caller and globally.
-///
-/// # Arguments
-///
-/// * `EncryptedVote` - The vote data to be broadcast
-///
-/// # Returns
-///
-/// * A JSON response indicating the success or failure of the operation
 async fn broadcast_encrypted_vote(
     request: HttpRequest,
     data: web::Json<VoteRequest>,
@@ -198,21 +208,15 @@ async fn broadcast_encrypted_vote(
     availability: web::Data<AvailabilityService>,
 ) -> impl Responder {
     // Same identity rule as the read routes, and it matters more here: this window is what stops
-    // one caller spending the relay's gas. A forgeable key is no key at all — see `caller_id`.
-    let caller = super::chain::identify(&request, CONFIG.trust_proxy_headers);
+    // one caller spending the relay's gas. A forgeable key is no key at all — see `identify`.
+    let caller = identify(&request, CONFIG.trust_proxy_headers);
 
     // Caller admission only. A later global reservation is returned if validation or
     // infrastructure fails before a durable availability job is admitted.
     if limiter.check_caller(&caller).is_err() {
         warn!("Rate limit (caller) refused a broadcast from {caller}");
-
-        return HttpResponse::TooManyRequests().json(VoteResponse {
-            status: VoteResponseStatus::FailedBroadcast,
-            tx_hash: None,
-            job_id: None,
-            encoded_proof: None,
-            message: Some("Too many votes from this address, slow down".to_string()),
-        });
+        return HttpResponse::TooManyRequests()
+            .json(failed("Too many votes from this address, slow down"));
     }
 
     let vote = data.into_inner();
@@ -222,25 +226,18 @@ async fn broadcast_encrypted_vote(
     };
     let e3_key = e3_id.to_string();
 
-    info!("[e3_id={}] Broadcasting encrypted vote", e3_key);
+    info!("[e3_id={e3_key}] Broadcasting encrypted vote");
 
-    // encoded_proof is already encoded in JavaScript, just decode from hex
+    // The client already encodes the proof; this only decodes the hex.
     let hex_str = vote
         .encoded_proof
         .strip_prefix("0x")
         .unwrap_or(&vote.encoded_proof);
     let encoded_proof = match hex::decode(hex_str) {
-        Ok(decoded) => Bytes::from(decoded),
+        Ok(decoded) => decoded,
         Err(e) => {
-            error!("[e3_id={}] Failed to decode encoded_proof: {:?}", e3_key, e);
-
-            return HttpResponse::BadRequest().json(VoteResponse {
-                status: VoteResponseStatus::FailedBroadcast,
-                tx_hash: None,
-                job_id: None,
-                encoded_proof: None,
-                message: Some("Invalid hex encoded proof".to_string()),
-            });
+            error!("[e3_id={e3_key}] Failed to decode encoded_proof: {e:?}");
+            return HttpResponse::BadRequest().json(failed("Invalid hex encoded proof"));
         }
     };
 
@@ -252,46 +249,17 @@ async fn broadcast_encrypted_vote(
         .existing_input_job(&e3_key, &encoded_proof)
         .await
     {
-        Ok(Some(job)) if job.status == "success" => return HttpResponse::Ok().json(job),
-        Ok(Some(job)) => return HttpResponse::Accepted().json(job),
+        Ok(Some(job)) => return job_response(job),
         Ok(None) => {}
-        Err(error) => {
-            if let Some(message) = input_rejection_message(&error) {
-                warn!("[e3_id={}] Vote rejected: {}", e3_key, error);
-                return HttpResponse::BadRequest().json(VoteResponse {
-                    status: VoteResponseStatus::FailedBroadcast,
-                    tx_hash: None,
-                    job_id: None,
-                    encoded_proof: None,
-                    message: Some(message.to_string()),
-                });
-            }
-            error!("[e3_id={}] Availability service failed: {}", e3_key, error);
-            return HttpResponse::ServiceUnavailable().json(VoteResponse {
-                status: VoteResponseStatus::FailedBroadcast,
-                tx_hash: None,
-                job_id: None,
-                encoded_proof: None,
-                message: Some("The availability service is temporarily unavailable".to_string()),
-            });
-        }
+        Err(error) => return availability_error(&e3_key, &error),
     }
 
     // Reserve a global slot before the service can admit work that may spend relay funds. The
     // guard owns this request's reservation and returns it on any path that admits nothing.
-    let reservation = match limiter.try_reserve_global() {
-        Ok(reservation) => reservation,
-        Err(_) => {
-            warn!("Rate limit (global) refused a broadcast from {caller}");
-
-            return HttpResponse::TooManyRequests().json(VoteResponse {
-                status: VoteResponseStatus::FailedBroadcast,
-                tx_hash: None,
-                job_id: None,
-                encoded_proof: None,
-                message: Some("The relay is busy, please try again shortly".to_string()),
-            });
-        }
+    let Ok(reservation) = limiter.try_reserve_global() else {
+        warn!("Rate limit (global) refused a broadcast from {caller}");
+        return HttpResponse::TooManyRequests()
+            .json(failed("The relay is busy, please try again shortly"));
     };
 
     // The service commits the reservation in the step that writes the durable job and returns
@@ -301,39 +269,14 @@ async fn broadcast_encrypted_vote(
     match availability
         .stage_input(
             &e3_key,
-            encoded_proof.to_vec(),
+            encoded_proof,
             vote.send_from_wallet,
             Some(reservation),
         )
         .await
     {
-        Ok(staged) => {
-            if staged.view.status == "success" {
-                HttpResponse::Ok().json(staged.view)
-            } else {
-                HttpResponse::Accepted().json(staged.view)
-            }
-        }
-        Err(error) => {
-            if let Some(message) = input_rejection_message(&error) {
-                warn!("[e3_id={}] Vote rejected: {}", e3_key, error);
-                return HttpResponse::BadRequest().json(VoteResponse {
-                    status: VoteResponseStatus::FailedBroadcast,
-                    tx_hash: None,
-                    job_id: None,
-                    encoded_proof: None,
-                    message: Some(message.to_string()),
-                });
-            }
-            error!("[e3_id={}] Availability service failed: {}", e3_key, error);
-            HttpResponse::ServiceUnavailable().json(VoteResponse {
-                status: VoteResponseStatus::FailedBroadcast,
-                tx_hash: None,
-                job_id: None,
-                encoded_proof: None,
-                message: Some("The availability service is temporarily unavailable".to_string()),
-            })
-        }
+        Ok(staged) => job_response(staged.view),
+        Err(error) => availability_error(&e3_key, &error),
     }
 }
 
@@ -400,7 +343,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(data))
-                .app_data(web::Data::new(ChainRateLimiter::new()))
+                .app_data(web::Data::new(ChainRateLimiter::with_trust(false)))
                 .configure(super::super::setup_routes),
         )
         .await;

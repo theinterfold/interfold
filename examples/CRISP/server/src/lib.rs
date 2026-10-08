@@ -6,5 +6,6 @@
 
 pub mod config;
 pub mod deployments;
+pub mod e3_request;
 pub mod logger;
 pub mod server;

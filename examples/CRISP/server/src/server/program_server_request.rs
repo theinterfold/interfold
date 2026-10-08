@@ -4,189 +4,139 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::server::CONFIG;
+use super::{repo::InputSnapshot, rpc, CONFIG};
 
-use anyhow::Result;
+use alloy::hex::encode_prefixed;
+use e3_sdk::indexer::models::E3;
+use eyre::{bail, Context, Result};
 use serde::{Deserialize, Serialize, Serializer};
+use std::time::Duration;
 
-#[derive(Debug, Serialize)]
-pub struct ComputeRequest {
-    pub e3_id: Option<String>,
-    pub chain_id: u64,
-    pub interfold_address: String,
-    #[serde(serialize_with = "serialize_as_hex")]
-    pub encryption_scheme_id: Vec<u8>,
-    #[serde(serialize_with = "serialize_as_hex")]
-    pub committee_public_key_hash: Vec<u8>,
-    #[serde(serialize_with = "serialize_as_hex")]
-    pub params: Vec<u8>,
+/// The program server answers as soon as it has read the request body, and it allows that body
+/// 120 s to arrive. The client deadline covers the upload too, so it matches that allowance.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+
+#[derive(Serialize)]
+struct ComputeRequest {
+    e3_id: Option<String>,
+    chain_id: u64,
+    interfold_address: String,
+    #[serde(serialize_with = "serialize_hex")]
+    encryption_scheme_id: Vec<u8>,
+    #[serde(serialize_with = "serialize_hex")]
+    committee_public_key_hash: Vec<u8>,
+    #[serde(serialize_with = "serialize_hex")]
+    params: Vec<u8>,
     #[serde(serialize_with = "serialize_hex_tuple")]
-    pub ciphertext_inputs: Vec<(Vec<u8>, u64)>,
+    ciphertext_inputs: Vec<(Vec<u8>, u64)>,
     /// One commitment per input, in the same order. Lets the Secure Process reject an input whose
     /// published bytes are not the ciphertext that was proven, instead of losing the round.
     #[serde(serialize_with = "serialize_hex_list")]
-    pub input_commitments: Vec<[u8; 32]>,
+    input_commitments: Vec<[u8; 32]>,
     /// The slot each input was published to, in the same order.
-    #[serde(serialize_with = "serialize_hex_slots")]
-    pub input_slots: Vec<[u8; 20]>,
+    #[serde(serialize_with = "serialize_hex_list")]
+    input_slots: Vec<[u8; 20]>,
     /// The entry each input names as the one it extends, plus one, in the same order. Zero means it
     /// extends nothing. The Secure Process walks each slot's chain by this.
-    pub input_parents: Vec<u64>,
-    pub callback_url: Option<String>,
+    input_parents: Vec<u64>,
+    callback_url: Option<String>,
 }
 
-fn serialize_as_hex<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let hex_string = format!("0x{}", hex::encode(bytes));
-    serializer.serialize_str(&hex_string)
+fn serialize_hex<S: Serializer>(
+    bytes: &impl AsRef<[u8]>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&encode_prefixed(bytes))
 }
 
-fn serialize_hex_list<S>(items: &[[u8; 32]], serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let hex_items: Vec<String> = items
-        .iter()
-        .map(|bytes| format!("0x{}", hex::encode(bytes)))
-        .collect();
-    hex_items.serialize(serializer)
+fn serialize_hex_list<S: Serializer, T: AsRef<[u8]>>(
+    items: &[T],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.collect_seq(items.iter().map(encode_prefixed))
 }
 
-fn serialize_hex_slots<S>(items: &[[u8; 20]], serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let hex_items: Vec<String> = items
-        .iter()
-        .map(|bytes| format!("0x{}", hex::encode(bytes)))
-        .collect();
-    hex_items.serialize(serializer)
+fn serialize_hex_tuple<S: Serializer>(
+    tuples: &[(Vec<u8>, u64)],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.collect_seq(
+        tuples
+            .iter()
+            .map(|(bytes, index)| (encode_prefixed(bytes), index)),
+    )
 }
 
-fn serialize_hex_tuple<S>(tuples: &[(Vec<u8>, u64)], serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let hex_tuples: Vec<(String, u64)> = tuples
-        .iter()
-        .map(|(bytes, num)| (format!("0x{}", hex::encode(bytes)), *num))
-        .collect();
-    hex_tuples.serialize(serializer)
+#[derive(Deserialize)]
+struct ProcessingResponse {
+    status: String,
+    e3_id: String,
 }
 
-#[derive(Deserialize, Serialize)]
-pub struct ProcessingResponse {
-    pub status: String,
-    pub e3_id: String,
-}
-
-fn build_compute_request(
-    client: &reqwest::Client,
-    program_server_url: &str,
-    request: &ComputeRequest,
-) -> reqwest::RequestBuilder {
-    client
-        .post(format!("{program_server_url}/run_compute"))
-        .json(request)
-}
-
-/// The published inputs for a round, in on-chain index order.
-///
-/// Grouped because the four vectors are only meaningful together: entry `i` of each describes the
-/// same input, and a length mismatch mis-pairs ciphertexts with the commitments that prove them.
-pub struct RoundInputs {
-    pub ciphertexts: Vec<(Vec<u8>, u64)>,
-    pub commitments: Vec<[u8; 32]>,
-    pub slots: Vec<[u8; 20]>,
-    /// The entry each input names as the one it extends, plus one; zero for none.
-    pub parents: Vec<u64>,
-}
-
-pub async fn run_compute(
-    e3_id: &str,
-    chain_id: u64,
-    interfold_address: String,
-    encryption_scheme_id: Vec<u8>,
-    committee_public_key_hash: Vec<u8>,
-    params: Vec<u8>,
-    inputs: RoundInputs,
-    webhook_url: String,
-) -> Result<(String, String)> {
+/// Ask the program server to compute round `e3_id` from its indexed inputs. The server answers
+/// "processing" and posts the result to `/state/add-result`; any other answer is an error.
+pub async fn run_compute(e3_id: &str, e3: E3, inputs: InputSnapshot) -> Result<()> {
     let request = ComputeRequest {
         e3_id: Some(e3_id.to_string()),
-        chain_id,
-        interfold_address,
-        encryption_scheme_id,
-        committee_public_key_hash,
-        callback_url: Some(webhook_url),
-        params,
+        chain_id: e3.chain_id,
+        interfold_address: e3.interfold_address,
+        encryption_scheme_id: e3.encryption_scheme_id,
+        committee_public_key_hash: e3.committee_public_key_hash,
+        params: e3.e3_params,
         ciphertext_inputs: inputs.ciphertexts,
         input_commitments: inputs.commitments,
         input_slots: inputs.slots,
         input_parents: inputs.parents,
+        callback_url: Some(format!(
+            "{}/state/add-result",
+            CONFIG.interfold_server_url_for_clients()
+        )),
     };
 
-    println!("Sending request");
+    let response = rpc::HTTP
+        .post(format!("{}/run_compute", CONFIG.program_server_url))
+        .timeout(REQUEST_TIMEOUT)
+        .json(&request)
+        .send()
+        .await
+        .context("Error sending run compute request")?;
 
-    let response = build_compute_request(
-        &reqwest::Client::new(),
-        &CONFIG.program_server_url,
-        &request,
-    )
-    .send()
-    .await?;
-
-    // `error_for_status()` reports the code and drops the body, but the program server puts the
-    // actual reason there (actix returns the handler's message as the payload): a missing field,
-    // a params blob over the size limit, an address that is not 20 bytes. Without the body a
-    // schema mismatch between this server and the program server is indistinguishable from a
-    // malformed E3 record, and both read as a bare "400 Bad Request".
+    // The program server puts the reason for a refusal in the body: a missing field, a params blob
+    // over the size limit, an address that is not 20 bytes. Without it a schema mismatch reads as
+    // a bare "400 Bad Request".
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
-        anyhow::bail!("program server rejected the compute request ({status}): {body}");
+        bail!("program server rejected the compute request ({status}): {body}");
     }
 
-    let response: ProcessingResponse = response.json().await?;
-
-    Ok((response.e3_id, response.status))
+    let response: ProcessingResponse = response
+        .json()
+        .await
+        .context("Error reading the run compute response")?;
+    if response.e3_id != e3_id {
+        bail!(
+            "Computation request returned unexpected E3 ID: expected {e3_id}, got {}",
+            response.e3_id
+        );
+    }
+    if response.status != "processing" {
+        bail!(
+            "Computation request failed with status: {}",
+            response.status
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use reqwest::header::AUTHORIZATION;
-
-    use super::{build_compute_request, ComputeRequest};
-
-    #[test]
-    fn compute_request_does_not_require_authorization() {
-        let request = ComputeRequest {
-            e3_id: Some("7".to_string()),
-            chain_id: 31_337,
-            interfold_address: "0x1111111111111111111111111111111111111111".to_string(),
-            encryption_scheme_id: vec![0x22; 32],
-            committee_public_key_hash: vec![0x33; 32],
-            params: vec![1, 2, 3],
-            ciphertext_inputs: vec![],
-            input_commitments: vec![],
-            input_slots: vec![],
-            input_parents: vec![],
-            callback_url: Some("http://127.0.0.1:4000/state/add-result".to_string()),
-        };
-
-        let request =
-            build_compute_request(&reqwest::Client::new(), "http://127.0.0.1:13151", &request)
-                .build()
-                .expect("request should build");
-
-        assert_eq!(request.url().as_str(), "http://127.0.0.1:13151/run_compute");
-        assert!(!request.headers().contains_key(AUTHORIZATION));
-    }
+    use super::ComputeRequest;
+    use serde_json::json;
 
     /// The Secure Process can only reject an input whose bytes contradict its commitment if the
-    /// commitments actually reach it, in the same order as the inputs.
+    /// commitments, slots, and parents reach it as hex strings and integers, one per input, in the
+    /// order of the inputs.
     #[test]
     fn compute_request_carries_commitments_in_input_order() {
         let request = ComputeRequest {
@@ -204,12 +154,23 @@ mod tests {
         };
 
         let json = serde_json::to_value(&request).expect("request should serialize");
-        let commitments = json["input_commitments"]
-            .as_array()
-            .expect("input_commitments must serialize as an array");
 
-        assert_eq!(commitments.len(), 2);
-        assert_eq!(commitments[0], format!("0x{}", "11".repeat(32)));
-        assert_eq!(commitments[1], format!("0x{}", "22".repeat(32)));
+        assert_eq!(json["params"], "0x010203");
+        assert_eq!(json["ciphertext_inputs"], json!([["0xaa", 0], ["0xbb", 1]]));
+        assert_eq!(
+            json["input_commitments"],
+            json!([
+                format!("0x{}", "11".repeat(32)),
+                format!("0x{}", "22".repeat(32))
+            ])
+        );
+        assert_eq!(
+            json["input_slots"],
+            json!([
+                format!("0x{}", "01".repeat(20)),
+                format!("0x{}", "02".repeat(20))
+            ])
+        );
+        assert_eq!(json["input_parents"], json!([0, 1]));
     }
 }
