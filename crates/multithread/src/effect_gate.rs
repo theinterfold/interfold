@@ -329,9 +329,16 @@ impl ComputeEffectGate {
             ),
             _ => return,
         };
+        // An ID names one request. An outcome of another E3 under the same ID answers a request of
+        // an earlier boot, so it must not answer, or be kept for, the request that holds the ID now.
+        let outcome_e3 = match &outcome {
+            ComputeOutcome::Response(response) => &response.e3_id,
+            ComputeOutcome::Error(error) => &error.request().e3_id,
+        };
         let key = self
             .request_keys_by_correlation
             .get(&correlation_id)
+            .filter(|key| &key.0 == outcome_e3)
             .cloned();
         let forwarded_key = key.as_ref().filter(|key| {
             self.forwarded
@@ -722,6 +729,24 @@ pub(crate) mod tests {
         .into_sequenced(1)
     }
 
+    /// `compute` for another E3: the request that a fresh boot can number like an old one.
+    fn compute_for_other_e3(correlation_id: CorrelationId, timestamp: u128) -> InterfoldEvent {
+        let InterfoldEventData::ComputeRequest(mut request) =
+            compute(correlation_id, timestamp).into_data()
+        else {
+            unreachable!();
+        };
+        request.e3_id = E3id::new("4", 2);
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            request.into(),
+            None,
+            timestamp,
+            None,
+            EventSource::Local,
+        )
+        .into_sequenced(1)
+    }
+
     fn failed() -> InterfoldEvent {
         InterfoldEvent::<Unsequenced>::new_with_timestamp(
             e3_events::E3Failed {
@@ -799,6 +824,27 @@ pub(crate) mod tests {
             InterfoldEventData::ComputeResponse(result)
                 if result.correlation_id == regenerated
         ));
+    }
+
+    #[actix::test]
+    async fn an_earlier_boots_response_does_not_answer_a_request_with_the_same_id() {
+        let (bus, _history) = test_bus();
+        let recorder = Recorder::default().start();
+        let gate = ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new())
+            .with_bus(bus)
+            .start();
+        let reused = CorrelationId::new();
+
+        // Replay delivers an old request of E3 1 and, later, its response. In between, a hydrated
+        // actor of E3 2 issues a fresh request that carries the same ID.
+        gate.send(compute(reused, 10)).await.unwrap();
+        gate.send(compute_for_other_e3(reused, 20)).await.unwrap();
+        gate.send(outcome_event(response(reused))).await.unwrap();
+        gate.send(effects_enabled()).await.unwrap();
+
+        // Both requests reach the worker. Without the ownership check the gate answers E3 2 with
+        // E3 1's proof and sends only the E3 1 request.
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![reused, reused]);
     }
 
     #[actix::test]
