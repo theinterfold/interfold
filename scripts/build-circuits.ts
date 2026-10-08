@@ -251,6 +251,16 @@ const COMMITTEE_BOUND_SOURCES = [
   { circuit: 'share-computation', file: 'dkg.nr', prefix: 'SHARE_COMPUTATION_' },
 ] as const
 
+// The C2 chunk grid shares the `SHARE_COMPUTATION_` prefix but is written by the config generator's
+// chunk-grid section, at degree 16384 as an expression over the active committee. The committee
+// sync must neither require these from `zk_cli` nor overwrite them with one committee's literals.
+const GENERATOR_OWNED_GLOBALS = new Set([
+  'SHARE_COMPUTATION_CHUNK_SIZE',
+  'SHARE_COMPUTATION_N_CHUNKS',
+  'SHARE_COMPUTATION_CHUNKS_PER_BATCH',
+  'SHARE_COMPUTATION_N_BATCHES',
+])
+
 /**
  * Return each `pub global NAME: ...;` declaration of a Noir source, keyed by name.
  *
@@ -323,7 +333,7 @@ export function committeeBoundUpdates(rootDir: string, preset: CircuitPreset, co
       let updated = original
       let count = 0
       for (const [name, declaration] of fresh) {
-        if (!name.startsWith(source.prefix)) continue
+        if (!name.startsWith(source.prefix) || GENERATOR_OWNED_GLOBALS.has(name)) continue
         const current = committed.get(name)
         if (current === undefined) throw new Error(`Missing ${name} in ${path}`)
         // `nargo fmt` wraps long committed declarations. A layout difference alone is no change.
@@ -333,7 +343,7 @@ export function committeeBoundUpdates(rootDir: string, preset: CircuitPreset, co
       if (count === 0) throw new Error(`No ${source.prefix} constants generated for ${preset}/${committee}`)
       // The pair source hash ignores every declaration with this prefix, so each one must be generated.
       for (const name of committed.keys()) {
-        if (name.startsWith(source.prefix) && !fresh.has(name)) {
+        if (name.startsWith(source.prefix) && !GENERATOR_OWNED_GLOBALS.has(name) && !fresh.has(name)) {
           throw new Error(`${name} in ${path} is not generated for ${preset}/${committee}. Remove it or generate it.`)
         }
       }
@@ -1854,7 +1864,9 @@ library ActiveCryptoConfig {
         if (bounds) {
           let text = source.toString()
           for (const [name, declaration] of noirGlobalDeclarations(text)) {
-            if (name.startsWith(bounds.prefix)) text = text.replace(declaration, () => `pub global ${name}:<generated>;`)
+            if (name.startsWith(bounds.prefix) && !GENERATOR_OWNED_GLOBALS.has(name)) {
+              text = text.replace(declaration, () => `pub global ${name}:<generated>;`)
+            }
           }
           source = Buffer.from(text)
         }
