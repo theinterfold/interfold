@@ -9,8 +9,8 @@
 //! grid - `u`/`e0`/`k1`/`r2is`/`r1is` together, 2 chunks - each chunk range-checked independently
 //! and combined through a two-level tree (max 2 recursive verifications per circuit):
 //! `ct0_chunk_main` (leaves, 2 instances) -> `ct0_chunk_main_root` (verifies both leaves
-//! directly, no intermediate pair level) + separate `ct0_pk_ct_commit` (commits `pk0is` and
-//! `ct0is` together) -> `ct0_chunk_gamma` (verifies `ct0_chunk_main_root` and
+//! directly, no intermediate pair level) + separate `ct0_pk_ct_commit` (range-checks and commits
+//! `ct0is`, passes the `pk0is` commitment through) -> `ct0_chunk_gamma` (verifies `ct0_chunk_main_root` and
 //! `ct0_pk_ct_commit`, derives gamma). Round B (`ct0_eval_chunk_*`) mirrors this shape to
 //! evaluate every chunk at gamma and sum the partial evaluations, converging on
 //! `ct0_eval_chunk_identity` (the actual Schwartz-Zippel identity check).
