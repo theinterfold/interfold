@@ -240,6 +240,56 @@ test('release assets require the complete binary and circuit set', () => {
   })
 })
 
+test('stable release notes list the pre-release changes and the upgrade note', () => {
+  const rootDir = temporaryDirectory('interfold-release-notes')
+  const distDir = join(rootDir, 'dist', 'downloads')
+  const deploymentsDir = join(rootDir, 'deployments')
+  const notesDir = join(rootDir, 'scripts', 'release', 'notes')
+  mkdirSync(distDir, { recursive: true })
+  mkdirSync(deploymentsDir)
+  mkdirSync(notesDir, { recursive: true })
+
+  for (const archive of [
+    'interfold-linux-x86_64.tar.gz',
+    'interfoldup-linux-x86_64.tar.gz',
+    'interfold-macos-aarch64.tar.gz',
+    'interfoldup-macos-aarch64.tar.gz',
+    'circuits-1.3.0.tar.gz',
+  ]) {
+    writeFileSync(join(distDir, archive), archive)
+  }
+  writeFileSync(join(deploymentsDir, 'manifest.json'), '{}\n')
+  writeFileSync(
+    join(rootDir, 'CHANGELOG.md'),
+    [
+      '#### [v1.3.0](compare)\n\nStable changes.\n',
+      '#### [v1.3.0-test.2](compare)\n\nSecond test changes.\n',
+      '#### [v1.3.0-test.1](compare)\n\nFirst test changes.\n',
+      '#### [v1.2.3](compare)\n\nOld changes.\n',
+    ].join('\n'),
+  )
+  writeFileSync(join(notesDir, '1.3.0.md'), 'Reset each node.\n')
+
+  prepareReleaseAssets(
+    {
+      candidateSha: 'abc123',
+      circuitSourceHash: 'circuit-source',
+      isPrerelease: false,
+      tagName: 'v1.3.0',
+      version: '1.3.0',
+      workflowRunId: '456',
+    },
+    rootDir,
+  )
+
+  const notes = readFileSync(join(rootDir, 'release_notes.md'), 'utf8')
+  assert.match(notes, /### Upgrade\n\nReset each node\./)
+  for (const section of ['Stable changes.', 'Second test changes.', 'First test changes.']) {
+    assert.ok(notes.includes(section), section)
+  }
+  assert.doesNotMatch(notes, /Old changes\./)
+})
+
 test('release versions use semantic version syntax', () => {
   assert.equal(normalizeVersion('v1.2.3-beta.1'), '1.2.3-beta.1')
   assert.throws(() => normalizeVersion('release-1.2.3'), /not a semantic version/)
