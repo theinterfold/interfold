@@ -18,19 +18,15 @@ DIST="${SCRIPT_DIR}/../circuits/dist"
 PRESETS=(secure-8192 secure-16384 insecure)
 ARTIFACTS=(
   ct0_chunk_main
-  ct0_chunk_main_root
   ct0_pk_ct_commit
   ct0_chunk_gamma
   ct0_eval_chunk_main
-  ct0_eval_chunk_main_root
   ct0_eval_pk_ct
   ct0_eval_chunk_identity
   ct1_chunk_main
-  ct1_chunk_main_root
   ct1_pk_ct_commit
   ct1_chunk_gamma
   ct1_eval_chunk_main
-  ct1_eval_chunk_main_root
   ct1_eval_pk_ct
   ct1_eval_chunk_identity
   user_data_encryption_chunked

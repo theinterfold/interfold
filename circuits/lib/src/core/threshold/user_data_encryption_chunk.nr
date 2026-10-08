@@ -6,27 +6,22 @@
 
 //! User-data encryption, coefficient-level chunk leaves (P3).
 //!
-//! Proving a whole ciphertext leg in one circuit does not fit the browser's ~2M gate ceiling at
-//! N=16384, L=5, so each leg's witness is split into `N_CHUNKS` coefficient slices, each slice is
-//! proved in its own leaf circuit, and the leaves are recombined through a small recursive tree.
-//! This module holds the per-slice logic those leaves run, so the checks that actually protect
-//! the protocol live somewhere `nargo test` can reach them and read their bounds from one
-//! generated `Configs` rather than from loose globals at each call site.
+//! Each ciphertext leg (ct0, ct1) is proved in two rounds over one leaf per round. The leg's
+//! identity is checked reduced modulo `X^N + 1`, so it has no cyclotomic quotient and its
+//! modulus-switch quotient (`r1is` / `p1is`) has `N` coefficients; the whole witness fits one
+//! browser leaf. This module holds the leaf logic, so the checks that protect the protocol live
+//! somewhere `nargo test` can reach them and read their bounds from one generated `Configs`.
 //!
-//! Each leg's grid is *merged*: `r1is`/`p1is` are padded to `2N` where every other polynomial is
-//! padded to `N`, so at a shared chunk count their slices are exactly twice as wide
-//! (`R1_CHUNK_SIZE == 2 * CHUNK_SIZE`) and the same `chunk_idx` addresses both.
-//!
-//! Two rounds run over the same slices. Round A range-checks them and commits; Round B
-//! re-supplies them, re-derives the identical commitments for cross-round binding, and evaluates
-//! at the Fiat-Shamir challenge. Both rounds build the same `Ct0ChunkLeaf`/`Ct1ChunkLeaf` - Round
-//! A additionally calls `check_range_bounds` and `check_padding`, Round B additionally calls
-//! `chunk_gamma_pow`.
+//! Round A range-checks the witness and commits each polynomial; Round B re-supplies it,
+//! re-derives the identical commitments for cross-round binding, and evaluates at the Fiat-Shamir
+//! challenge. Both rounds build the same `Ct0ChunkLeaf`/`Ct1ChunkLeaf`; only Round A calls
+//! `check_range_bounds`. The product `pk * u mod X^N + 1` is evaluated in `ct*_eval_pk_ct`
+//! through `negacyclic_kernel`, so it never enters a witness.
 
 use crate::math::commitments::{
     compute_ude_chunk_commitment, compute_ude_chunk_root_commitment,
     compute_ude_multi_chunk_commitment, compute_vk_hash, UDE_KIND_CT0_E0, UDE_KIND_CT0_K1,
-    UDE_KIND_CT0_R1, UDE_KIND_CT0_R2, UDE_KIND_CT1_E1, UDE_KIND_CT1_P1, UDE_KIND_CT1_P2, UDE_KIND_U,
+    UDE_KIND_CT0_R1, UDE_KIND_CT1_E1, UDE_KIND_CT1_P1, UDE_KIND_U,
 };
 use crate::math::polynomial::Polynomial;
 
@@ -40,7 +35,6 @@ pub struct Ct0ChunkConfigs<let L: u32> {
     pub k1_up_bound: Field,
     pub r1_low_bounds: [Field; L],
     pub r1_up_bounds: [Field; L],
-    pub r2_bounds: [Field; L],
 }
 
 impl<let L: u32> Ct0ChunkConfigs<L> {
@@ -52,7 +46,6 @@ impl<let L: u32> Ct0ChunkConfigs<L> {
         k1_up_bound: Field,
         r1_low_bounds: [Field; L],
         r1_up_bounds: [Field; L],
-        r2_bounds: [Field; L],
     ) -> Self {
         Ct0ChunkConfigs {
             qis,
@@ -62,7 +55,6 @@ impl<let L: u32> Ct0ChunkConfigs<L> {
             k1_up_bound,
             r1_low_bounds,
             r1_up_bounds,
-            r2_bounds,
         }
     }
 }
@@ -73,37 +65,36 @@ pub struct Ct1ChunkConfigs<let L: u32> {
     pub u_bound: Field,
     pub e1_bound: Field,
     pub p1_bounds: [Field; L],
-    pub p2_bounds: [Field; L],
 }
 
 impl<let L: u32> Ct1ChunkConfigs<L> {
-    pub fn new(
-        u_bound: Field,
-        e1_bound: Field,
-        p1_bounds: [Field; L],
-        p2_bounds: [Field; L],
-    ) -> Self {
-        Ct1ChunkConfigs { u_bound, e1_bound, p1_bounds, p2_bounds }
+    pub fn new(u_bound: Field, e1_bound: Field, p1_bounds: [Field; L]) -> Self {
+        Ct1ChunkConfigs { u_bound, e1_bound, p1_bounds }
     }
 }
 
-/// One `chunk_idx` slice of ct0's merged main+r1 grid: `u`, `e0`, `k1`, `r2is` at `CHUNK_SIZE`
-/// coefficients each, plus `r1is` at `R1_CHUNK_SIZE == 2 * CHUNK_SIZE`.
+/// Each ciphertext leg is proved as a single leaf per round over the whole polynomials: the reduced
+/// identities (`ct0 = (pk0 * u mod X^N + 1) + e0 + k0 * k1 + q * r1` and
+/// `ct1 = (pk1 * u mod X^N + 1) + e1 + q * p1`) have no cyclotomic quotient and `N`-coefficient
+/// `r1`/`p1`, so the full witness fits one browser leaf and no chunk-root level is needed. The
+/// commitments keep the chunk format with this single chunk.
+pub global UDE_N_CHUNKS: u32 = 1;
+
+/// ct0's witness for one round: `u`, `e0`, `k1` and the reduced quotients `r1is`, all `N` wide.
 ///
-/// `n` is the *full* polynomial length (N), not the slice width - it is hashed into every chunk
-/// commitment so a slice can never be reinterpreted as belonging to a different-sized run.
-pub struct Ct0ChunkLeaf<let CHUNK_SIZE: u32, let R1_CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_K: u32, let BIT_R2: u32, let BIT_R1: u32> {
+/// `n` is the full polynomial length, hashed into every commitment so a commitment can never be
+/// reinterpreted as belonging to a different-sized run.
+pub struct Ct0ChunkLeaf<let CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_K: u32, let BIT_R1: u32> {
     configs: Ct0ChunkConfigs<L>,
     chunk_idx: u32,
     n: u32,
     u_chunk: Polynomial<CHUNK_SIZE>,
     e0_chunk: Polynomial<CHUNK_SIZE>,
     k1_chunk: Polynomial<CHUNK_SIZE>,
-    r2is_chunk: [Polynomial<CHUNK_SIZE>; L],
-    r1is_chunk: [Polynomial<R1_CHUNK_SIZE>; L],
+    r1is_chunk: [Polynomial<CHUNK_SIZE>; L],
 }
 
-impl<let CHUNK_SIZE: u32, let R1_CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_K: u32, let BIT_R2: u32, let BIT_R1: u32> Ct0ChunkLeaf<CHUNK_SIZE, R1_CHUNK_SIZE, L, BIT_U, BIT_E0, BIT_K, BIT_R2, BIT_R1> {
+impl<let CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_K: u32, let BIT_R1: u32> Ct0ChunkLeaf<CHUNK_SIZE, L, BIT_U, BIT_E0, BIT_K, BIT_R1> {
     pub fn new(
         configs: Ct0ChunkConfigs<L>,
         chunk_idx: u32,
@@ -111,33 +102,13 @@ impl<let CHUNK_SIZE: u32, let R1_CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, le
         u_chunk: Polynomial<CHUNK_SIZE>,
         e0_chunk: Polynomial<CHUNK_SIZE>,
         k1_chunk: Polynomial<CHUNK_SIZE>,
-        r2is_chunk: [Polynomial<CHUNK_SIZE>; L],
-        r1is_chunk: [Polynomial<R1_CHUNK_SIZE>; L],
+        r1is_chunk: [Polynomial<CHUNK_SIZE>; L],
     ) -> Self {
-        Ct0ChunkLeaf { configs, chunk_idx, n, u_chunk, e0_chunk, k1_chunk, r2is_chunk, r1is_chunk }
+        Ct0ChunkLeaf { configs, chunk_idx, n, u_chunk, e0_chunk, k1_chunk, r1is_chunk }
     }
 
-    /// `r2is` and `r1is` are padded from their native degrees (`N-1` and `2N-1`) to `N` and `2N`
-    /// by one leading zero (see `Polynomial`'s descending-degree convention). That padding slot
-    /// lives at global index 0, i.e. chunk 0's local offset 0, so only chunk 0 checks it.
-    pub fn check_padding(self) {
-        if self.chunk_idx == 0 {
-            for i in 0..L {
-                assert(
-                    self.r2is_chunk[i].coefficients[0] == 0,
-                    "r2is padding coefficient must be zero",
-                );
-                assert(
-                    self.r1is_chunk[i].coefficients[0] == 0,
-                    "r1is padding coefficient must be zero",
-                );
-            }
-        }
-    }
-
-    /// Round A only. Every coefficient in this slice is range-checked here and nowhere else, so
-    /// the union over all `chunk_idx` in `0..N_CHUNKS` covers each polynomial exactly once - a
-    /// chunk that is never proved is a coefficient range that is never checked.
+    /// Round A only. Every coefficient is range-checked here and nowhere else; Round B re-derives
+    /// the same checked commitments, which pins its witness to these bounded values.
     pub fn check_range_bounds(self) {
         self.u_chunk.range_check_2bounds::<BIT_U>(self.configs.u_bound, self.configs.u_bound);
         self.e0_chunk.range_check_2bounds::<BIT_E0>(self.configs.e0_bound, self.configs.e0_bound);
@@ -146,10 +117,6 @@ impl<let CHUNK_SIZE: u32, let R1_CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, le
             self.configs.k1_low_bound,
         );
         for i in 0..L {
-            self.r2is_chunk[i].range_check_2bounds::<BIT_R2>(
-                self.configs.r2_bounds[i],
-                self.configs.r2_bounds[i],
-            );
             self.r1is_chunk[i].range_check_2bounds::<BIT_R1>(
                 self.configs.r1_up_bounds[i],
                 self.configs.r1_low_bounds[i],
@@ -161,10 +128,10 @@ impl<let CHUNK_SIZE: u32, let R1_CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, le
     /// cross-checks ct0's and ct1's `u` commitment directly, and `k1`'s survives into ct0's final
     /// output tuple, so both must stay independently recoverable.
     ///
-    /// Returns `(u, e0, k1, r2, r1)`. Both rounds call this and the top-level circuit asserts the
+    /// Returns `(u, e0, k1, r1)`. Both rounds call this and the top-level circuit asserts the
     /// resulting roots match - that equality is what stops a prover from range-checking one
     /// witness in Round A and evaluating a different one in Round B.
-    pub fn commitments(self) -> (Field, Field, Field, Field, Field) {
+    pub fn commitments(self) -> (Field, Field, Field, Field) {
         let u_commit = compute_ude_chunk_commitment::<CHUNK_SIZE, BIT_U>(
             UDE_KIND_U,
             self.chunk_idx,
@@ -183,74 +150,44 @@ impl<let CHUNK_SIZE: u32, let R1_CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, le
             self.n,
             self.k1_chunk,
         );
-        let r2_commit = compute_ude_multi_chunk_commitment::<CHUNK_SIZE, L, BIT_R2>(
-            UDE_KIND_CT0_R2,
-            self.chunk_idx,
-            self.n,
-            self.r2is_chunk,
-        );
-        let r1_commit = compute_ude_multi_chunk_commitment::<R1_CHUNK_SIZE, L, BIT_R1>(
+        let r1_commit = compute_ude_multi_chunk_commitment::<CHUNK_SIZE, L, BIT_R1>(
             UDE_KIND_CT0_R1,
             self.chunk_idx,
             self.n,
             self.r1is_chunk,
         );
 
-        (u_commit, e0_commit, k1_commit, r2_commit, r1_commit)
+        (u_commit, e0_commit, k1_commit, r1_commit)
     }
 }
 
-/// One `chunk_idx` slice of ct1's merged main+p1 grid: `u`, `e1`, `p2is` at `CHUNK_SIZE`
-/// coefficients each, plus `p1is` at `R1_CHUNK_SIZE == 2 * CHUNK_SIZE`.
-pub struct Ct1ChunkLeaf<let CHUNK_SIZE: u32, let R1_CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, let BIT_E1: u32, let BIT_P2: u32, let BIT_P1: u32> {
+/// ct1's witness for one round: `u`, `e1` and the reduced quotients `p1is`, all `N` wide.
+pub struct Ct1ChunkLeaf<let CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, let BIT_E1: u32, let BIT_P1: u32> {
     configs: Ct1ChunkConfigs<L>,
     chunk_idx: u32,
     n: u32,
     u_chunk: Polynomial<CHUNK_SIZE>,
     e1_chunk: Polynomial<CHUNK_SIZE>,
-    p2is_chunk: [Polynomial<CHUNK_SIZE>; L],
-    p1is_chunk: [Polynomial<R1_CHUNK_SIZE>; L],
+    p1is_chunk: [Polynomial<CHUNK_SIZE>; L],
 }
 
-impl<let CHUNK_SIZE: u32, let R1_CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, let BIT_E1: u32, let BIT_P2: u32, let BIT_P1: u32> Ct1ChunkLeaf<CHUNK_SIZE, R1_CHUNK_SIZE, L, BIT_U, BIT_E1, BIT_P2, BIT_P1> {
+impl<let CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, let BIT_E1: u32, let BIT_P1: u32> Ct1ChunkLeaf<CHUNK_SIZE, L, BIT_U, BIT_E1, BIT_P1> {
     pub fn new(
         configs: Ct1ChunkConfigs<L>,
         chunk_idx: u32,
         n: u32,
         u_chunk: Polynomial<CHUNK_SIZE>,
         e1_chunk: Polynomial<CHUNK_SIZE>,
-        p2is_chunk: [Polynomial<CHUNK_SIZE>; L],
-        p1is_chunk: [Polynomial<R1_CHUNK_SIZE>; L],
+        p1is_chunk: [Polynomial<CHUNK_SIZE>; L],
     ) -> Self {
-        Ct1ChunkLeaf { configs, chunk_idx, n, u_chunk, e1_chunk, p2is_chunk, p1is_chunk }
+        Ct1ChunkLeaf { configs, chunk_idx, n, u_chunk, e1_chunk, p1is_chunk }
     }
 
-    /// See `Ct0ChunkLeaf::check_padding` - `p2is`/`p1is` carry the same leading zero.
-    pub fn check_padding(self) {
-        if self.chunk_idx == 0 {
-            for i in 0..L {
-                assert(
-                    self.p2is_chunk[i].coefficients[0] == 0,
-                    "p2is padding coefficient must be zero",
-                );
-                assert(
-                    self.p1is_chunk[i].coefficients[0] == 0,
-                    "p1is padding coefficient must be zero",
-                );
-            }
-        }
-    }
-
-    /// Round A only. Note `p1is` is checked with the same bound in both directions, unlike ct0's
-    /// `r1is`, which has a separate low and up bound per limb.
+    /// Round A only; see `Ct0ChunkLeaf::check_range_bounds`.
     pub fn check_range_bounds(self) {
         self.u_chunk.range_check_2bounds::<BIT_U>(self.configs.u_bound, self.configs.u_bound);
         self.e1_chunk.range_check_2bounds::<BIT_E1>(self.configs.e1_bound, self.configs.e1_bound);
         for i in 0..L {
-            self.p2is_chunk[i].range_check_2bounds::<BIT_P2>(
-                self.configs.p2_bounds[i],
-                self.configs.p2_bounds[i],
-            );
             self.p1is_chunk[i].range_check_2bounds::<BIT_P1>(
                 self.configs.p1_bounds[i],
                 self.configs.p1_bounds[i],
@@ -258,8 +195,8 @@ impl<let CHUNK_SIZE: u32, let R1_CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, le
         }
     }
 
-    /// Returns `(u, e1, p2, p1)`. See `Ct0ChunkLeaf::commitments`.
-    pub fn commitments(self) -> (Field, Field, Field, Field) {
+    /// Returns `(u, e1, p1)`, one commitment per polynomial; see `Ct0ChunkLeaf::commitments`.
+    pub fn commitments(self) -> (Field, Field, Field) {
         let u_commit = compute_ude_chunk_commitment::<CHUNK_SIZE, BIT_U>(
             UDE_KIND_U,
             self.chunk_idx,
@@ -272,38 +209,15 @@ impl<let CHUNK_SIZE: u32, let R1_CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, le
             self.n,
             self.e1_chunk,
         );
-        let p2_commit = compute_ude_multi_chunk_commitment::<CHUNK_SIZE, L, BIT_P2>(
-            UDE_KIND_CT1_P2,
-            self.chunk_idx,
-            self.n,
-            self.p2is_chunk,
-        );
-        let p1_commit = compute_ude_multi_chunk_commitment::<R1_CHUNK_SIZE, L, BIT_P1>(
+        let p1_commit = compute_ude_multi_chunk_commitment::<CHUNK_SIZE, L, BIT_P1>(
             UDE_KIND_CT1_P1,
             self.chunk_idx,
             self.n,
             self.p1is_chunk,
         );
 
-        (u_commit, e1_commit, p2_commit, p1_commit)
+        (u_commit, e1_commit, p1_commit)
     }
-}
-
-/// The `gamma` power that lifts a chunk's *local* Horner evaluation into its contribution to the
-/// full-length one.
-///
-/// `Polynomial::eval` treats a `chunk_size`-length slice as its own complete polynomial, so the
-/// slice's real contribution is `local_eval * gamma^offset`, where `offset` is the degree of the
-/// chunk's lowest coefficient. In the descending-coefficient layout that is
-/// `total_len - (chunk_idx + 1) * chunk_size`. Summing every chunk's contribution reconstructs
-/// the full evaluation exactly.
-///
-/// `total_len` is `N` for the main grid and `2 * N` for `r1is`/`p1is`, which is the whole reason
-/// this is a parameter rather than a constant - passing the wrong one silently produces a valid
-/// proof of the wrong polynomial.
-pub fn chunk_gamma_pow(total_len: u32, chunk_size: u32, chunk_idx: u32, gamma: Field) -> Field {
-    let offset = total_len - ((chunk_idx + 1) * chunk_size);
-    gamma.pow_32(offset as Field)
 }
 
 /// Pin every ciphertext limb to its centered residue `[-(q_i-1)/2, (q_i-1)/2]`.
@@ -358,21 +272,17 @@ pub fn ude_single_root_from_polynomial<let N: u32, let N_CHUNKS: u32, let CHUNK_
 pub fn ct0_chunk_roots(
     n: u32,
     chunk_size: u32,
-    r1_chunk_size: u32,
     u_commitments: [Field],
     e0_commitments: [Field],
     k1_commitments: [Field],
-    r2_commitments: [Field],
     r1_commitments: [Field],
-) -> (Field, Field, Field, Field, Field) {
+) -> (Field, Field, Field, Field) {
     let u_root = compute_ude_chunk_root_commitment(UDE_KIND_U, n, chunk_size, u_commitments);
     let e0_root = compute_ude_chunk_root_commitment(UDE_KIND_CT0_E0, n, chunk_size, e0_commitments);
     let k1_root = compute_ude_chunk_root_commitment(UDE_KIND_CT0_K1, n, chunk_size, k1_commitments);
-    let r2_root = compute_ude_chunk_root_commitment(UDE_KIND_CT0_R2, n, chunk_size, r2_commitments);
-    let r1_root =
-        compute_ude_chunk_root_commitment(UDE_KIND_CT0_R1, n, r1_chunk_size, r1_commitments);
+    let r1_root = compute_ude_chunk_root_commitment(UDE_KIND_CT0_R1, n, chunk_size, r1_commitments);
 
-    (u_root, e0_root, k1_root, r2_root, r1_root)
+    (u_root, e0_root, k1_root, r1_root)
 }
 
 /// Fold every chunk's ct1 commitments into the four per-polynomial roots, in the order
@@ -380,24 +290,20 @@ pub fn ct0_chunk_roots(
 pub fn ct1_chunk_roots(
     n: u32,
     chunk_size: u32,
-    p1_chunk_size: u32,
     u_commitments: [Field],
     e1_commitments: [Field],
-    p2_commitments: [Field],
     p1_commitments: [Field],
-) -> (Field, Field, Field, Field) {
+) -> (Field, Field, Field) {
     let u_root = compute_ude_chunk_root_commitment(UDE_KIND_U, n, chunk_size, u_commitments);
     let e1_root = compute_ude_chunk_root_commitment(UDE_KIND_CT1_E1, n, chunk_size, e1_commitments);
-    let p2_root = compute_ude_chunk_root_commitment(UDE_KIND_CT1_P2, n, chunk_size, p2_commitments);
-    let p1_root =
-        compute_ude_chunk_root_commitment(UDE_KIND_CT1_P1, n, p1_chunk_size, p1_commitments);
+    let p1_root = compute_ude_chunk_root_commitment(UDE_KIND_CT1_P1, n, chunk_size, p1_commitments);
 
-    (u_root, e1_root, p2_root, p1_root)
+    (u_root, e1_root, p1_root)
 }
 
 /// Number of child key hashes each round circuit (`*_chunk_gamma` and `*_eval_chunk_identity`)
-/// puts first in its outputs, in the order root, leaf, pk/ct.
-pub global UDE_ROUND_CHILD_KEY_HASHES: u32 = 3;
+/// puts first in its outputs, in the order leaf, pk/ct.
+pub global UDE_ROUND_CHILD_KEY_HASHES: u32 = 2;
 
 /// The VK manifest for one ciphertext leg: the key hash of every circuit below the top-level
 /// circuit, as one value.
@@ -410,25 +316,23 @@ pub global UDE_ROUND_CHILD_KEY_HASHES: u32 = 3;
 /// to a deployment anchor.
 ///
 /// The order is part of the anchor. Keep it identical in any off-chain code that computes the
-/// expected value: round A key hash, then its root, leaf, and pk/ct key hashes, then the same four
-/// values for round B.
-pub fn compute_ude_vk_manifest(
+/// expected value: round A key hash, then its leaf and pk/ct key hashes, then the same three values
+/// for round B.
+pub fn compute_ude_vk_manifest<let C: u32>(
     round_a_key_hash: Field,
-    round_a_children: [Field; UDE_ROUND_CHILD_KEY_HASHES],
+    round_a_children: [Field; C],
     round_b_key_hash: Field,
-    round_b_children: [Field; UDE_ROUND_CHILD_KEY_HASHES],
+    round_b_children: [Field; C],
 ) -> Field {
-    compute_vk_hash([
-        round_a_key_hash,
-        round_a_children[0],
-        round_a_children[1],
-        round_a_children[2],
-        round_b_key_hash,
-        round_b_children[0],
-        round_b_children[1],
-        round_b_children[2],
-    ]
-        .as_vector())
+    let mut payload = [round_a_key_hash].as_vector();
+    for i in 0..C {
+        payload = payload.push_back(round_a_children[i]);
+    }
+    payload = payload.push_back(round_b_key_hash);
+    for i in 0..C {
+        payload = payload.push_back(round_b_children[i]);
+    }
+    compute_vk_hash(payload)
 }
 
 /// The complete VK chain for one ciphertext leg: the top-level circuit's key hash, then the
@@ -458,23 +362,17 @@ fn test_chunk_configs_new_roundtrip() {
 }
 
 fn test_ct0_configs(qis0: Field, e0_bound: Field) -> Ct0ChunkConfigs<1> {
-    Ct0ChunkConfigs::new([qis0], 1, e0_bound, 0, 1, [0], [0], [0])
+    Ct0ChunkConfigs::new([qis0], 1, e0_bound, 0, 1, [0], [0])
 }
 
-fn test_ct0_leaf(
-    chunk_idx: u32,
-    u_coeffs: [Field; 2],
-    r2_coeffs: [Field; 2],
-    r1_coeffs: [Field; 4],
-) -> Ct0ChunkLeaf<2, 4, 1, 1, 8, 1, 1, 1> {
+fn test_ct0_leaf(u_coeffs: [Field; 2], r1_coeffs: [Field; 2]) -> Ct0ChunkLeaf<2, 1, 1, 8, 1, 1> {
     Ct0ChunkLeaf::new(
         test_ct0_configs(1125899917262849, 100),
-        chunk_idx,
-        4,
+        0,
+        2,
         Polynomial::new(u_coeffs),
         Polynomial::new([0, 0]),
         Polynomial::new([0, 0]),
-        [Polynomial::new(r2_coeffs)],
         [Polynomial::new(r1_coeffs)],
     )
 }
@@ -483,46 +381,18 @@ fn test_ct0_leaf(
 /// coefficient of 2 is out of range.
 #[test(should_fail)]
 fn test_ct0_chunk_range_bounds_rejects_out_of_range_u() {
-    test_ct0_leaf(0, [2, 0], [0, 0], [0, 0, 0, 0]).check_range_bounds();
+    test_ct0_leaf([2, 0], [0, 0]).check_range_bounds();
 }
 
 #[test]
 fn test_ct0_chunk_range_bounds_accepts_in_range_u() {
-    test_ct0_leaf(0, [1, 0], [0, 0], [0, 0, 0, 0]).check_range_bounds();
+    test_ct0_leaf([1, 0], [0, 0]).check_range_bounds();
 }
 
-/// The `r2is`/`r1is` padding slot sits at global index 0, i.e. chunk 0's local offset 0.
+/// `r1` is bounded too: its up bound is 0 in `test_ct0_configs`.
 #[test(should_fail)]
-fn test_ct0_chunk_padding_rejects_nonzero_r2_pad() {
-    test_ct0_leaf(0, [0, 0], [1, 0], [0, 0, 0, 0]).check_padding();
-}
-
-#[test(should_fail)]
-fn test_ct0_chunk_padding_rejects_nonzero_r1_pad() {
-    test_ct0_leaf(0, [0, 0], [0, 0], [1, 0, 0, 0]).check_padding();
-}
-
-/// Only chunk 0 owns the padding slot, so the same coefficient is unremarkable in chunk 1.
-#[test]
-fn test_ct0_chunk_padding_ignores_later_chunks() {
-    test_ct0_leaf(1, [0, 0], [1, 0], [1, 0, 0, 0]).check_padding();
-}
-
-/// The whole point of the offset convention: summing each chunk's `local_eval * gamma^offset`
-/// must reproduce the full-length Horner evaluation exactly.
-#[test]
-fn test_chunk_gamma_pow_reconstructs_full_evaluation() {
-    let gamma: Field = 7;
-    let full = Polynomial::new([3, 5, 11, 2]); // descending: 3g^3 + 5g^2 + 11g + 2
-    let expected = full.eval(gamma);
-
-    let chunk0 = Polynomial::new([3, 5]);
-    let chunk1 = Polynomial::new([11, 2]);
-
-    let partial0 = chunk0.eval(gamma) * chunk_gamma_pow(4, 2, 0, gamma);
-    let partial1 = chunk1.eval(gamma) * chunk_gamma_pow(4, 2, 1, gamma);
-
-    assert(partial0 + partial1 == expected);
+fn test_ct0_chunk_range_bounds_rejects_out_of_range_r1() {
+    test_ct0_leaf([0, 0], [1, 0]).check_range_bounds();
 }
 
 #[test]
@@ -537,55 +407,15 @@ fn test_ude_single_root_from_polynomial_matches_leaf_order() {
     assert(ude_single_root_from_polynomial::<4, 2, 2, 8>(UDE_KIND_CT0_K1, polynomial) == expected);
 }
 
-/// `r1is`/`p1is` are padded to `2N`, so their offsets are computed against the doubled length -
-/// passing `N` there would silently prove the wrong polynomial.
+/// Every ct0 root has its own domain tag, so the same commitments give four different roots.
 #[test]
-fn test_chunk_gamma_pow_uses_the_grid_it_is_given() {
-    let gamma: Field = 7;
-
-    // Last chunk always contributes at offset 0, whichever grid it belongs to.
-    assert(chunk_gamma_pow(4, 2, 1, gamma) == 1);
-    assert(chunk_gamma_pow(8, 4, 1, gamma) == 1);
-
-    // Chunk 0 of the main grid sits at offset 2; of the doubled grid, at offset 4.
-    assert(chunk_gamma_pow(4, 2, 0, gamma) == gamma.pow_32(2));
-    assert(chunk_gamma_pow(8, 4, 0, gamma) == gamma.pow_32(4));
-}
-
-/// `r1` must be rooted under its own chunk width. Using the main width would produce a root the
-/// leaves can never match, so the two must differ for the same commitments.
-#[test]
-fn test_ct0_chunk_roots_separate_r1_by_chunk_width() {
-    let commitments = [1, 2];
-    let (u_root, e0_root, k1_root, r2_root, r1_root) = ct0_chunk_roots(
-        4,
-        2,
-        4,
-        commitments,
-        commitments,
-        commitments,
-        commitments,
-        commitments,
-    );
-
-    // Same inputs, different domain tags: every root must differ.
+fn test_ct0_chunk_roots_separate_kinds() {
+    let commitments = [1];
+    let (u_root, e0_root, k1_root, r1_root) =
+        ct0_chunk_roots(4, 4, commitments, commitments, commitments, commitments);
     assert(u_root != e0_root);
     assert(e0_root != k1_root);
-    assert(k1_root != r2_root);
-    assert(r2_root != r1_root);
-
-    // And r1 rooted at the main width is a different value than at its own width.
-    let (_, _, _, _, r1_root_wrong_width) = ct0_chunk_roots(
-        4,
-        2,
-        2,
-        commitments,
-        commitments,
-        commitments,
-        commitments,
-        commitments,
-    );
-    assert(r1_root != r1_root_wrong_width);
+    assert(k1_root != r1_root);
 }
 
 /// ct0's and ct1's `u` share one domain tag - the `user_data_encryption` wrapper asserts the two
@@ -593,18 +423,9 @@ fn test_ct0_chunk_roots_separate_r1_by_chunk_width() {
 #[test]
 fn test_chunk_roots_agree_on_u_across_legs() {
     let commitments = [1, 2];
-    let (ct0_u_root, _, _, _, _) = ct0_chunk_roots(
-        4,
-        2,
-        4,
-        commitments,
-        commitments,
-        commitments,
-        commitments,
-        commitments,
-    );
-    let (ct1_u_root, ct1_e1_root, _, _) =
-        ct1_chunk_roots(4, 2, 4, commitments, commitments, commitments, commitments);
+    let (ct0_u_root, _, _, _) =
+        ct0_chunk_roots(4, 2, commitments, commitments, commitments, commitments);
+    let (ct1_u_root, ct1_e1_root, _) = ct1_chunk_roots(4, 2, commitments, commitments, commitments);
 
     assert(ct0_u_root == ct1_u_root);
     // Everything else stays separated.
@@ -646,6 +467,15 @@ fn test_ude_vk_manifest_matches_flat_vk_hash() {
             == compute_vk_hash([1, 2, 3, 4, 5, 6, 7, 8].as_vector()),
     );
     assert(compute_ude_vk_chain(10, 11) == compute_vk_hash([10, 11].as_vector()));
+}
+
+/// ct0's two-child manifest is the flat hash of its six slots.
+#[test]
+fn test_ct0_vk_manifest_matches_flat_vk_hash() {
+    assert(
+        compute_ude_vk_manifest(1, [2, 3], 5, [6, 7])
+            == compute_vk_hash([1, 2, 3, 5, 6, 7].as_vector()),
+    );
 }
 
 #[test]

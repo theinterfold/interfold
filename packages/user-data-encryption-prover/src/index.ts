@@ -24,10 +24,10 @@ export type UserDataEncryptionInputs = {
   e0: NoirPolynomial
   e1: NoirPolynomial
   k1: NoirPolynomial
+  /** Reduced ct0 quotients, `N` coefficients each (the identity is checked mod X^N + 1). */
   r1is: NoirCrtPolynomial
-  r2is: NoirCrtPolynomial
+  /** Reduced ct1 quotients, `N` coefficients each. */
   p1is: NoirCrtPolynomial
-  p2is: NoirCrtPolynomial
   /** `commit(pk0is)`; round A passes it through instead of hashing the key. */
   pk0_commitment: Field
   /** `commit(pk1is)`; as `pk0_commitment`. */
@@ -36,20 +36,16 @@ export type UserDataEncryptionInputs = {
 
 export type UserDataEncryptionCircuitBundle = {
   ct0ChunkMain: CompiledCircuit
-  ct0ChunkMainRoot: CompiledCircuit
   ct0PkCtCommit: CompiledCircuit
   ct0ChunkGamma: CompiledCircuit
   ct0EvalChunkMain: CompiledCircuit
-  ct0EvalChunkMainRoot: CompiledCircuit
   ct0EvalPkCt: CompiledCircuit
   ct0EvalChunkIdentity: CompiledCircuit
   userDataEncryptionCt0: CompiledCircuit
   ct1ChunkMain: CompiledCircuit
-  ct1ChunkMainRoot: CompiledCircuit
   ct1PkCtCommit: CompiledCircuit
   ct1ChunkGamma: CompiledCircuit
   ct1EvalChunkMain: CompiledCircuit
-  ct1EvalChunkMainRoot: CompiledCircuit
   ct1EvalPkCt: CompiledCircuit
   ct1EvalChunkIdentity: CompiledCircuit
   userDataEncryptionCt1: CompiledCircuit
@@ -98,10 +94,10 @@ const prove = async (
   return { proof, publicInputs, vkAsFields: artifacts.vkAsFields, vkHash: artifacts.vkHash }
 }
 
-const assertShape = (inputs: UserDataEncryptionInputs): { n: number; l: number; chunkSize: number } => {
+const assertShape = (inputs: UserDataEncryptionInputs): { n: number; l: number } => {
   const n = inputs.u.coefficients.length
   const l = inputs.pk0is.length
-  if (n === 0 || n % 2 !== 0) throw new Error(`The user-data encryption degree must be positive and even; got ${n}.`)
+  if (n === 0) throw new Error('The user-data encryption degree must be positive.')
   if (l === 0) throw new Error('The user-data encryption input must contain at least one CRT limb.')
 
   const checkRows = (name: string, rows: NoirCrtPolynomial, width: number) => {
@@ -120,93 +116,48 @@ const assertShape = (inputs: UserDataEncryptionInputs): { n: number; l: number; 
   checkRows('pk1is', inputs.pk1is, n)
   checkRows('ct0is', inputs.ct0is, n)
   checkRows('ct1is', inputs.ct1is, n)
-  checkRows('r1is', inputs.r1is, 2 * n - 1)
-  checkRows('r2is', inputs.r2is, n - 1)
-  checkRows('p1is', inputs.p1is, 2 * n - 1)
-  checkRows('p2is', inputs.p2is, n - 1)
+  checkRows('r1is', inputs.r1is, n)
+  checkRows('p1is', inputs.p1is, n)
 
-  return { n, l, chunkSize: n / 2 }
-}
-
-const padLeadingZero = (polynomial: NoirPolynomial): NoirPolynomial => ({ coefficients: ['0', ...polynomial.coefficients] })
-const chunk = (polynomial: NoirPolynomial, chunkIndex: number, chunkSize: number): NoirPolynomial => ({
-  coefficients: polynomial.coefficients.slice(chunkIndex * chunkSize, (chunkIndex + 1) * chunkSize),
-})
-const chunkRows = (rows: NoirCrtPolynomial, chunkIndex: number, chunkSize: number): NoirCrtPolynomial =>
-  rows.map((row) => chunk(row, chunkIndex, chunkSize))
-
-const sameVerificationKey = (left: RecursiveProof, right: RecursiveProof, circuitName: string) => {
-  if (left.vkHash !== right.vkHash) throw new Error(`${circuitName} instances produced different verification keys.`)
+  return { n, l }
 }
 
 const leafProof = (proof: RecursiveProof) => proofToFields(proof.proof)
+
+// Each leg runs two rounds with one ZK leaf per round. Round A: the leaf range-checks and commits
+// the witness, `*_pk_ct_commit` commits the ciphertext, and `*_chunk_gamma` verifies both and
+// derives the challenge. Round B: the leaf re-derives the commitments and evaluates at gamma,
+// `*_eval_pk_ct` evaluates the ciphertext and the reduced `pk * u` product, and
+// `*_eval_chunk_identity` verifies both and checks the identity.
 
 const buildCt0TopLevelInputs = async (
   api: Barretenberg,
   circuits: UserDataEncryptionCircuitBundle,
   inputs: UserDataEncryptionInputs,
   l: number,
-  chunkSize: number,
 ): Promise<NoirInputMap> => {
-  const r1is = inputs.r1is.map(padLeadingZero)
-  const r2is = inputs.r2is.map(padLeadingZero)
+  const witness = { u: inputs.u, e0: inputs.e0, k1: inputs.k1, r1is: inputs.r1is }
 
-  const roundALeaves: RecursiveProof[] = []
-  for (let chunkIndex = 0; chunkIndex < 2; chunkIndex++) {
-    roundALeaves.push(
-      await prove(
-        api,
-        circuits.ct0ChunkMain,
-        {
-          chunk_idx: chunkIndex,
-          u_chunk: chunk(inputs.u, chunkIndex, chunkSize),
-          e0_chunk: chunk(inputs.e0, chunkIndex, chunkSize),
-          k1_chunk: chunk(inputs.k1, chunkIndex, chunkSize),
-          r2is_chunk: chunkRows(r2is, chunkIndex, chunkSize),
-          r1is_chunk: chunkRows(r1is, chunkIndex, 2 * chunkSize),
-        },
-        'noir-recursive',
-      ),
-    )
-  }
-  sameVerificationKey(roundALeaves[0], roundALeaves[1], 'ct0_chunk_main')
-
-  const roundARoot = await prove(
+  // Leaf outputs: u, e0, k1, r1 commitments.
+  const roundALeaf = await prove(api, circuits.ct0ChunkMain, witness, 'noir-recursive')
+  const roundAPkCt = await prove(
     api,
-    circuits.ct0ChunkMainRoot,
-    {
-      leaf_vk: roundALeaves[0].vkAsFields,
-      leaf_key_hash: roundALeaves[0].vkHash,
-      leaf0_proof: leafProof(roundALeaves[0]),
-      leaf0_u: roundALeaves[0].publicInputs[1],
-      leaf0_e0: roundALeaves[0].publicInputs[2],
-      leaf0_k1: roundALeaves[0].publicInputs[3],
-      leaf0_r2: roundALeaves[0].publicInputs[4],
-      leaf0_r1: roundALeaves[0].publicInputs[5],
-      leaf1_proof: leafProof(roundALeaves[1]),
-      leaf1_u: roundALeaves[1].publicInputs[1],
-      leaf1_e0: roundALeaves[1].publicInputs[2],
-      leaf1_k1: roundALeaves[1].publicInputs[3],
-      leaf1_r2: roundALeaves[1].publicInputs[4],
-      leaf1_r1: roundALeaves[1].publicInputs[5],
-    },
-    'noir-recursive-no-zk',
+    circuits.ct0PkCtCommit,
+    { pk0_commitment: inputs.pk0_commitment, ct0is: inputs.ct0is },
+    'noir-recursive',
   )
-
-  const roundAPkCt = await prove(api, circuits.ct0PkCtCommit, { pk0_commitment: inputs.pk0_commitment, ct0is: inputs.ct0is }, 'noir-recursive')
+  // Round outputs: leaf and pk/ct key hashes, pk0 and ct0 commitments, k1/u/e0/r1 roots, gammas[L].
   const roundA = await prove(
     api,
     circuits.ct0ChunkGamma,
     {
-      roots_vk: roundARoot.vkAsFields,
-      roots_key_hash: roundARoot.vkHash,
-      roots_proof: leafProof(roundARoot),
-      leaf_key_hash: roundARoot.publicInputs[0],
-      u_root: roundARoot.publicInputs[1],
-      e0_root: roundARoot.publicInputs[2],
-      k1_root: roundARoot.publicInputs[3],
-      r2_root: roundARoot.publicInputs[4],
-      r1_root: roundARoot.publicInputs[5],
+      leaf_vk: roundALeaf.vkAsFields,
+      leaf_key_hash: roundALeaf.vkHash,
+      leaf_proof: leafProof(roundALeaf),
+      u_commit: roundALeaf.publicInputs[0],
+      e0_commit: roundALeaf.publicInputs[1],
+      k1_commit: roundALeaf.publicInputs[2],
+      r1_commit: roundALeaf.publicInputs[3],
       pk_ct_vk: roundAPkCt.vkAsFields,
       pk_ct_key_hash: roundAPkCt.vkHash,
       pk_ct_proof: leafProof(roundAPkCt),
@@ -216,70 +167,28 @@ const buildCt0TopLevelInputs = async (
     'noir-recursive-no-zk',
   )
 
-  const gamma = roundA.publicInputs[10]
-  const roundBLeaves: RecursiveProof[] = []
-  for (let chunkIndex = 0; chunkIndex < 2; chunkIndex++) {
-    roundBLeaves.push(
-      await prove(
-        api,
-        circuits.ct0EvalChunkMain,
-        {
-          chunk_idx: chunkIndex,
-          u_chunk: chunk(inputs.u, chunkIndex, chunkSize),
-          e0_chunk: chunk(inputs.e0, chunkIndex, chunkSize),
-          k1_chunk: chunk(inputs.k1, chunkIndex, chunkSize),
-          r2is_chunk: chunkRows(r2is, chunkIndex, chunkSize),
-          r1is_chunk: chunkRows(r1is, chunkIndex, 2 * chunkSize),
-          gamma,
-        },
-        'noir-recursive',
-      ),
-    )
-  }
-  sameVerificationKey(roundBLeaves[0], roundBLeaves[1], 'ct0_eval_chunk_main')
-
-  const ct0EvalRootInputs = (leaf: RecursiveProof, prefix: 'leaf0' | 'leaf1') => {
-    const values: NoirInputMap = {
-      [`${prefix}_proof`]: leafProof(leaf),
-      [`${prefix}_gamma`]: leaf.publicInputs[1],
-      [`${prefix}_u`]: leaf.publicInputs[2],
-      [`${prefix}_e0`]: leaf.publicInputs[3],
-      [`${prefix}_k1`]: leaf.publicInputs[4],
-      [`${prefix}_r2`]: leaf.publicInputs[5],
-      [`${prefix}_r1`]: leaf.publicInputs[6],
-      [`${prefix}_u_partial`]: leaf.publicInputs[7],
-      [`${prefix}_k1_partial`]: leaf.publicInputs[8],
-      [`${prefix}_e0_partial`]: leaf.publicInputs[9],
-      [`${prefix}_r2i_partial`]: leaf.publicInputs.slice(10, 10 + l),
-      [`${prefix}_r1i_partial`]: leaf.publicInputs.slice(10 + l, 10 + 2 * l),
-    }
-    return values
-  }
-  const roundBRoot = await prove(
+  const batching = roundA.publicInputs.slice(8, 8 + l)
+  const gamma = batching[0]
+  const roundBLeaf = await prove(api, circuits.ct0EvalChunkMain, { ...witness, gamma }, 'noir-recursive')
+  const roundBPkCt = await prove(
     api,
-    circuits.ct0EvalChunkMainRoot,
-    {
-      leaf_vk: roundBLeaves[0].vkAsFields,
-      leaf_key_hash: roundBLeaves[0].vkHash,
-      ...ct0EvalRootInputs(roundBLeaves[0], 'leaf0'),
-      ...ct0EvalRootInputs(roundBLeaves[1], 'leaf1'),
-    },
-    'noir-recursive-no-zk',
+    circuits.ct0EvalPkCt,
+    { pk0is: inputs.pk0is, ct0is: inputs.ct0is, u: inputs.u, gamma },
+    'noir-recursive',
   )
-  const roundBPkCt = await prove(api, circuits.ct0EvalPkCt, { pk0is: inputs.pk0is, ct0is: inputs.ct0is, gamma }, 'noir-recursive')
   const roundB = await prove(
     api,
     circuits.ct0EvalChunkIdentity,
     {
-      roots_vk: roundBRoot.vkAsFields,
-      roots_key_hash: roundBRoot.vkHash,
-      roots_proof: leafProof(roundBRoot),
-      roots_public_inputs: roundBRoot.publicInputs,
+      leaf_vk: roundBLeaf.vkAsFields,
+      leaf_key_hash: roundBLeaf.vkHash,
+      leaf_proof: leafProof(roundBLeaf),
+      leaf_public_inputs: roundBLeaf.publicInputs,
       pk_ct_vk: roundBPkCt.vkAsFields,
       pk_ct_key_hash: roundBPkCt.vkHash,
       pk_ct_proof: leafProof(roundBPkCt),
       pk_ct_public_inputs: roundBPkCt.publicInputs,
-      ct0_batching_coeffs: roundA.publicInputs.slice(10, 10 + l),
+      ct0_batching_coeffs: batching,
     },
     'noir-recursive-no-zk',
   )
@@ -302,62 +211,29 @@ const buildCt1TopLevelInputs = async (
   circuits: UserDataEncryptionCircuitBundle,
   inputs: UserDataEncryptionInputs,
   l: number,
-  chunkSize: number,
 ): Promise<NoirInputMap> => {
-  const p1is = inputs.p1is.map(padLeadingZero)
-  const p2is = inputs.p2is.map(padLeadingZero)
+  const witness = { u: inputs.u, e1: inputs.e1, p1is: inputs.p1is }
 
-  const roundALeaves: RecursiveProof[] = []
-  for (let chunkIndex = 0; chunkIndex < 2; chunkIndex++) {
-    roundALeaves.push(
-      await prove(
-        api,
-        circuits.ct1ChunkMain,
-        {
-          chunk_idx: chunkIndex,
-          u_chunk: chunk(inputs.u, chunkIndex, chunkSize),
-          e1_chunk: chunk(inputs.e1, chunkIndex, chunkSize),
-          p2is_chunk: chunkRows(p2is, chunkIndex, chunkSize),
-          p1is_chunk: chunkRows(p1is, chunkIndex, 2 * chunkSize),
-        },
-        'noir-recursive',
-      ),
-    )
-  }
-  sameVerificationKey(roundALeaves[0], roundALeaves[1], 'ct1_chunk_main')
-
-  const roundARoot = await prove(
+  // Leaf outputs: u, e1, p1 commitments.
+  const roundALeaf = await prove(api, circuits.ct1ChunkMain, witness, 'noir-recursive')
+  const roundAPkCt = await prove(
     api,
-    circuits.ct1ChunkMainRoot,
-    {
-      leaf_vk: roundALeaves[0].vkAsFields,
-      leaf_key_hash: roundALeaves[0].vkHash,
-      leaf0_proof: leafProof(roundALeaves[0]),
-      leaf0_u: roundALeaves[0].publicInputs[1],
-      leaf0_e1: roundALeaves[0].publicInputs[2],
-      leaf0_p2: roundALeaves[0].publicInputs[3],
-      leaf0_p1: roundALeaves[0].publicInputs[4],
-      leaf1_proof: leafProof(roundALeaves[1]),
-      leaf1_u: roundALeaves[1].publicInputs[1],
-      leaf1_e1: roundALeaves[1].publicInputs[2],
-      leaf1_p2: roundALeaves[1].publicInputs[3],
-      leaf1_p1: roundALeaves[1].publicInputs[4],
-    },
-    'noir-recursive-no-zk',
+    circuits.ct1PkCtCommit,
+    { pk1_commitment: inputs.pk1_commitment, ct1is: inputs.ct1is },
+    'noir-recursive',
   )
-  const roundAPkCt = await prove(api, circuits.ct1PkCtCommit, { pk1_commitment: inputs.pk1_commitment, ct1is: inputs.ct1is }, 'noir-recursive')
+  // Round outputs: leaf and pk/ct key hashes, pk1 and ct1 commitments, u/e1/p1 roots, gamma,
+  // batching[L].
   const roundA = await prove(
     api,
     circuits.ct1ChunkGamma,
     {
-      roots_vk: roundARoot.vkAsFields,
-      roots_key_hash: roundARoot.vkHash,
-      roots_proof: leafProof(roundARoot),
-      leaf_key_hash: roundARoot.publicInputs[0],
-      u_root: roundARoot.publicInputs[1],
-      e1_root: roundARoot.publicInputs[2],
-      p2_root: roundARoot.publicInputs[3],
-      p1_root: roundARoot.publicInputs[4],
+      leaf_vk: roundALeaf.vkAsFields,
+      leaf_key_hash: roundALeaf.vkHash,
+      leaf_proof: leafProof(roundALeaf),
+      u_commit: roundALeaf.publicInputs[0],
+      e1_commit: roundALeaf.publicInputs[1],
+      p1_commit: roundALeaf.publicInputs[2],
       pk_ct_vk: roundAPkCt.vkAsFields,
       pk_ct_key_hash: roundAPkCt.vkHash,
       pk_ct_proof: leafProof(roundAPkCt),
@@ -367,67 +243,27 @@ const buildCt1TopLevelInputs = async (
     'noir-recursive-no-zk',
   )
 
-  const gamma = roundA.publicInputs[9]
-  const roundBLeaves: RecursiveProof[] = []
-  for (let chunkIndex = 0; chunkIndex < 2; chunkIndex++) {
-    roundBLeaves.push(
-      await prove(
-        api,
-        circuits.ct1EvalChunkMain,
-        {
-          chunk_idx: chunkIndex,
-          u_chunk: chunk(inputs.u, chunkIndex, chunkSize),
-          e1_chunk: chunk(inputs.e1, chunkIndex, chunkSize),
-          p2is_chunk: chunkRows(p2is, chunkIndex, chunkSize),
-          p1is_chunk: chunkRows(p1is, chunkIndex, 2 * chunkSize),
-          gamma,
-        },
-        'noir-recursive',
-      ),
-    )
-  }
-  sameVerificationKey(roundBLeaves[0], roundBLeaves[1], 'ct1_eval_chunk_main')
-
-  const ct1EvalRootInputs = (leaf: RecursiveProof, prefix: 'leaf0' | 'leaf1') => {
-    const values: NoirInputMap = {
-      [`${prefix}_proof`]: leafProof(leaf),
-      [`${prefix}_gamma`]: leaf.publicInputs[1],
-      [`${prefix}_u`]: leaf.publicInputs[2],
-      [`${prefix}_e1`]: leaf.publicInputs[3],
-      [`${prefix}_p2`]: leaf.publicInputs[4],
-      [`${prefix}_p1`]: leaf.publicInputs[5],
-      [`${prefix}_u_partial`]: leaf.publicInputs[6],
-      [`${prefix}_e1_partial`]: leaf.publicInputs[7],
-      [`${prefix}_p2i_partial`]: leaf.publicInputs.slice(8, 8 + l),
-      [`${prefix}_p1i_partial`]: leaf.publicInputs.slice(8 + l, 8 + 2 * l),
-    }
-    return values
-  }
-  const roundBRoot = await prove(
+  const gamma = roundA.publicInputs[7]
+  const roundBLeaf = await prove(api, circuits.ct1EvalChunkMain, { ...witness, gamma }, 'noir-recursive')
+  const roundBPkCt = await prove(
     api,
-    circuits.ct1EvalChunkMainRoot,
-    {
-      leaf_vk: roundBLeaves[0].vkAsFields,
-      leaf_key_hash: roundBLeaves[0].vkHash,
-      ...ct1EvalRootInputs(roundBLeaves[0], 'leaf0'),
-      ...ct1EvalRootInputs(roundBLeaves[1], 'leaf1'),
-    },
-    'noir-recursive-no-zk',
+    circuits.ct1EvalPkCt,
+    { pk1is: inputs.pk1is, ct1is: inputs.ct1is, u: inputs.u, gamma },
+    'noir-recursive',
   )
-  const roundBPkCt = await prove(api, circuits.ct1EvalPkCt, { pk1is: inputs.pk1is, ct1is: inputs.ct1is, gamma }, 'noir-recursive')
   const roundB = await prove(
     api,
     circuits.ct1EvalChunkIdentity,
     {
-      roots_vk: roundBRoot.vkAsFields,
-      roots_key_hash: roundBRoot.vkHash,
-      roots_proof: leafProof(roundBRoot),
-      roots_public_inputs: roundBRoot.publicInputs,
+      leaf_vk: roundBLeaf.vkAsFields,
+      leaf_key_hash: roundBLeaf.vkHash,
+      leaf_proof: leafProof(roundBLeaf),
+      leaf_public_inputs: roundBLeaf.publicInputs,
       pk_ct_vk: roundBPkCt.vkAsFields,
       pk_ct_key_hash: roundBPkCt.vkHash,
       pk_ct_proof: leafProof(roundBPkCt),
       pk_ct_public_inputs: roundBPkCt.publicInputs,
-      ct1_batching_coeffs: roundA.publicInputs.slice(10, 10 + l),
+      ct1_batching_coeffs: roundA.publicInputs.slice(8, 8 + l),
     },
     'noir-recursive-no-zk',
   )
@@ -450,9 +286,9 @@ export const buildUserDataEncryptionTopLevelInputs = async (
   circuits: UserDataEncryptionCircuitBundle,
   inputs: UserDataEncryptionInputs,
 ): Promise<UserDataEncryptionTopLevelInputs> => {
-  const { l, chunkSize } = assertShape(inputs)
-  const ct0 = await buildCt0TopLevelInputs(api, circuits, inputs, l, chunkSize)
-  const ct1 = await buildCt1TopLevelInputs(api, circuits, inputs, l, chunkSize)
+  const { l } = assertShape(inputs)
+  const ct0 = await buildCt0TopLevelInputs(api, circuits, inputs, l)
+  const ct1 = await buildCt1TopLevelInputs(api, circuits, inputs, l)
   return { ct0, ct1 }
 }
 

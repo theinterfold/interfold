@@ -4,47 +4,35 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Verifies `ct0_chunk_main_root` (non-ZK - it covers all five witness groups, u/e0/k1/r2/r1
-//! merged into one grid) and `ct0_pk_ct_commit` (ZK - it holds the raw `ct0is` witness and
-//! passes the `pk0is` commitment through), gathering every commitment the ct0 challenge depends on, then derives `gamma`. The
-//! transcript hashes commitments and roots rather than raw coefficients, which is what keeps this
-//! circuit inside the gate budget.
-//!
-//! The root's public inputs start with its leaf key hash. This circuit reads that value and
-//! outputs it with the root and pk/ct key hashes, in the order root, leaf, pk/ct. It does not
-//! compare them to expected values: `user_data_encryption_ct0` folds them into the VK manifest,
-//! and the verifier checks the manifest against a deployment anchor.
-//!
-//! Outputs: 3 key hashes, then `pk0`, `ct0`, `k1`, `u`, `e0`, `r2`, `r1`, then `ct0_gammas[L]`.
+//! Verifies the Round A ct0 leaf and `ct0_pk_ct_commit` (both ZK - each holds raw witness),
+//! rebuilds the single-chunk roots from the leaf's commitments, and derives `gamma` from every
+//! commitment the ct0 challenge depends on. The transcript hashes commitments and roots rather than
+//! raw coefficients, which is what keeps this circuit inside the gate budget.
 
-use bb_proof_verification::{
-    UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
-    verify_honk_proof_non_zk,
-};
-use lib::configs::default::threshold::L;
+use bb_proof_verification::{UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof};
+use lib::configs::default::threshold::{L, N};
+use lib::core::threshold::user_data_encryption_chunk::ct0_chunk_roots;
 use lib::math::commitments::compute_user_data_encryption_ct0_challenge;
 
 fn main(
-    roots_vk: UltraHonkVerificationKey,
-    roots_key_hash: Field,
-    roots_proof: UltraHonkProof,
+    leaf_vk: UltraHonkVerificationKey,
     leaf_key_hash: Field,
-    u_root: Field,
-    e0_root: Field,
-    k1_root: Field,
-    r2_root: Field,
-    r1_root: Field,
+    leaf_proof: UltraHonkZKProof,
+    u_commit: Field,
+    e0_commit: Field,
+    k1_commit: Field,
+    r1_commit: Field,
     pk_ct_vk: UltraHonkVerificationKey,
     pk_ct_key_hash: Field,
     pk_ct_proof: UltraHonkZKProof,
     pk0_commitment: Field,
     ct0_commitment: Field,
-) -> pub (Field, Field, Field, Field, Field, Field, Field, Field, Field, Field, [Field; L]) {
-    verify_honk_proof_non_zk(
-        roots_vk,
-        roots_proof,
-        [leaf_key_hash, u_root, e0_root, k1_root, r2_root, r1_root],
-        roots_key_hash,
+) -> pub (Field, Field, Field, Field, Field, Field, Field, Field, [Field; L]) {
+    verify_honk_proof(
+        leaf_vk,
+        leaf_proof,
+        [u_commit, e0_commit, k1_commit, r1_commit],
+        leaf_key_hash,
     );
     verify_honk_proof(
         pk_ct_vk,
@@ -53,8 +41,10 @@ fn main(
         pk_ct_key_hash,
     );
 
-    let payload =
-        [pk0_commitment, ct0_commitment, k1_root, u_root, e0_root, r2_root, r1_root].as_vector();
+    let (u_root, e0_root, k1_root, r1_root) =
+        ct0_chunk_roots(N, N, [u_commit], [e0_commit], [k1_commit], [r1_commit]);
+
+    let payload = [pk0_commitment, ct0_commitment, k1_root, u_root, e0_root, r1_root].as_vector();
     let gammas = compute_user_data_encryption_ct0_challenge::<L>(payload);
 
     let mut ct0_gammas: [Field; L] = [0; L];
@@ -63,7 +53,7 @@ fn main(
     }
 
     (
-        roots_key_hash, leaf_key_hash, pk_ct_key_hash, pk0_commitment, ct0_commitment, k1_root,
-        u_root, e0_root, r2_root, r1_root, ct0_gammas,
+        leaf_key_hash, pk_ct_key_hash, pk0_commitment, ct0_commitment, k1_root, u_root, e0_root,
+        r1_root, ct0_gammas,
     )
 }

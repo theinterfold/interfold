@@ -896,12 +896,12 @@ fn test_u_commitment_matches_across_ct0_and_ct1_legs() {
     let u_chunk1: Polynomial<2> = Polynomial::new([13, 17]);
     let n: u32 = 4;
 
-    // Exactly what ct0_chunk_main / ct0_chunk_main_root compute for `u`...
+    // The same chunk commitments and root that the ct0 leaf and round circuit compute for `u`...
     let ct0_c0 = compute_ude_chunk_commitment::<2, 8>(UDE_KIND_U, 0, n, u_chunk0);
     let ct0_c1 = compute_ude_chunk_commitment::<2, 8>(UDE_KIND_U, 1, n, u_chunk1);
     let ct0_u_root = compute_ude_chunk_root_commitment(UDE_KIND_U, n, 2, [ct0_c0, ct0_c1]);
 
-    // ...and what ct1_chunk_main / ct1_chunk_main_root compute for the same `u`.
+    // ...and what the ct1 leaf and round circuit compute for the same `u`.
     let ct1_c0 = compute_ude_chunk_commitment::<2, 8>(UDE_KIND_U, 0, n, u_chunk0);
     let ct1_c1 = compute_ude_chunk_commitment::<2, 8>(UDE_KIND_U, 1, n, u_chunk1);
     let ct1_u_root = compute_ude_chunk_root_commitment(UDE_KIND_U, n, 2, [ct1_c0, ct1_c1]);

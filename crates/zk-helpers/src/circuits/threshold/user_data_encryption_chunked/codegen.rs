@@ -45,9 +45,7 @@ pub fn generate_configs(_: BfvPreset, configs: &Configs) -> CodegenConfigs {
     let prefix = <UserDataEncryptionCircuit as Circuit>::PREFIX;
 
     format!(
-        r#"use crate::core::threshold::user_data_encryption_ct0::Configs as UserDataEncryptionCt0Configs;
-use crate::core::threshold::user_data_encryption_ct1::Configs as UserDataEncryptionCt1Configs;
-use crate::core::threshold::user_data_encryption_chunk::Ct0ChunkConfigs as UserDataEncryptionCt0ChunkConfigs;
+        r#"use crate::core::threshold::user_data_encryption_chunk::Ct0ChunkConfigs as UserDataEncryptionCt0ChunkConfigs;
 use crate::core::threshold::user_data_encryption_chunk::Ct1ChunkConfigs as UserDataEncryptionCt1ChunkConfigs;
 
 // Global configs for User Data Encryption circuit
@@ -68,9 +66,7 @@ pub global {prefix}_BIT_E0: u32 = {bit_e0};
 pub global {prefix}_BIT_E1: u32 = {bit_e1};
 pub global {prefix}_BIT_K: u32 = {bit_k};
 pub global {prefix}_BIT_R1: u32 = {bit_r1};
-pub global {prefix}_BIT_R2: u32 = {bit_r2};
 pub global {prefix}_BIT_P1: u32 = {bit_p1};
-pub global {prefix}_BIT_P2: u32 = {bit_p2};
 
 pub global {prefix}_K0IS: [Field; L] = [{k0is}];
 pub global {prefix}_PK_BOUNDS: [Field; L] = [{pk_bounds}];
@@ -81,43 +77,8 @@ pub global {prefix}_K1_LOW_BOUND: Field = {k1_low_bound};
 pub global {prefix}_K1_UP_BOUND: Field = {k1_up_bound};
 pub global {prefix}_R1_LOW_BOUNDS: [Field; L] = [{r1_low_bounds}];
 pub global {prefix}_R1_UP_BOUNDS: [Field; L] = [{r1_up_bounds}];
-pub global {prefix}_R2_BOUNDS: [Field; L] = [{r2_bounds}];
 pub global {prefix}_P1_BOUNDS: [Field; L] = [{p1_bounds}];
-pub global {prefix}_P2_BOUNDS: [Field; L] = [{p2_bounds}];
 
-/************************************
--------------------------------------
-user_data_encryption_ct0 (CIRCUIT A - CT0 ENCRYPTION)
--------------------------------------
-************************************/
-
-pub global {prefix}_CT0_CONFIGS: UserDataEncryptionCt0Configs<N, L> = UserDataEncryptionCt0Configs::new(
-    QIS,
-    {prefix}_K0IS,
-    {prefix}_E0_BOUND,
-    {prefix}_U_BOUND,
-    {prefix}_R1_LOW_BOUNDS,
-    {prefix}_R1_UP_BOUNDS,
-    {prefix}_R2_BOUNDS,
-    {prefix}_K1_LOW_BOUND,
-    {prefix}_K1_UP_BOUND,
-);
-
-/************************************
--------------------------------------
-user_data_encryption_ct1 (CIRCUIT B - CT1 ENCRYPTION)
--------------------------------------
-************************************/
-
-pub global {prefix}_CT1_CONFIGS: UserDataEncryptionCt1Configs<N, L> = UserDataEncryptionCt1Configs::new(
-    QIS,
-    {prefix}_E1_BOUND,
-    {prefix}_U_BOUND,
-    {prefix}_P1_BOUNDS,
-    {prefix}_P2_BOUNDS,
-);
-
-pub global {prefix}_N_CHUNKS: u32 = 2;
 pub global {prefix}_CT0_CHUNK_CONFIGS: UserDataEncryptionCt0ChunkConfigs<L> = UserDataEncryptionCt0ChunkConfigs::new(
     QIS,
     {prefix}_U_BOUND,
@@ -126,13 +87,11 @@ pub global {prefix}_CT0_CHUNK_CONFIGS: UserDataEncryptionCt0ChunkConfigs<L> = Us
     {prefix}_K1_UP_BOUND,
     {prefix}_R1_LOW_BOUNDS,
     {prefix}_R1_UP_BOUNDS,
-    {prefix}_R2_BOUNDS,
 );
 pub global {prefix}_CT1_CHUNK_CONFIGS: UserDataEncryptionCt1ChunkConfigs<L> = UserDataEncryptionCt1ChunkConfigs::new(
     {prefix}_U_BOUND,
     {prefix}_E1_BOUND,
     {prefix}_P1_BOUNDS,
-    {prefix}_P2_BOUNDS,
 );
 "#,
         n = configs.n,
@@ -146,9 +105,7 @@ pub global {prefix}_CT1_CHUNK_CONFIGS: UserDataEncryptionCt1ChunkConfigs<L> = Us
         bit_e1 = configs.bits.e1_bit,
         bit_k = configs.bits.k_bit,
         bit_r1 = configs.bits.r1_bit,
-        bit_r2 = configs.bits.r2_bit,
         bit_p1 = configs.bits.p1_bit,
-        bit_p2 = configs.bits.p2_bit,
         k0is = join_display(&configs.k0is, ", "),
         pk_bounds = join_display(&configs.bounds.pk_bounds, ", "),
         e0_bound = configs.bounds.e0_bound,
@@ -158,9 +115,7 @@ pub global {prefix}_CT1_CHUNK_CONFIGS: UserDataEncryptionCt1ChunkConfigs<L> = Us
         k1_up_bound = configs.bounds.k1_up_bound,
         r1_low_bounds = join_display(&configs.bounds.r1_low_bounds, ", "),
         r1_up_bounds = join_display(&configs.bounds.r1_up_bounds, ", "),
-        r2_bounds = join_display(&configs.bounds.r2_bounds, ", "),
         p1_bounds = join_display(&configs.bounds.p1_bounds, ", "),
-        p2_bounds = join_display(&configs.bounds.p2_bounds, ", "),
     )
 }
 

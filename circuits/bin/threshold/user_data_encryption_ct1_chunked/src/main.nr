@@ -4,20 +4,14 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Top-level ct1 (P3), mirroring ct0's split. Proving ct1 in a single circuit does not fit the
-//! browser's ~2M gate ceiling at N=16384, L=5, so its work is split by coefficient-level chunking
-//! into one merged grid - `u`/`e1`/`p2is`/`p1is` together, 2 chunks - each chunk range-checked
-//! independently and combined directly into a root (N_CHUNKS=2 needs no intermediate pair level):
-//! `ct1_chunk_main` (leaves, 2 instances) -> `ct1_chunk_main_root` (verifies both leaves
-//! directly) + separate `ct1_pk_ct_commit` (range-checks and commits `ct1is`, passes the `pk1is` commitment through) ->
-//! `ct1_chunk_gamma` (verifies `ct1_chunk_main_root` and `ct1_pk_ct_commit`, derives gamma).
-//! Round B (`ct1_eval_chunk_*`) mirrors this shape to evaluate every chunk at gamma and sum the
-//! partial evaluations, converging on `ct1_eval_chunk_identity` (the actual Schwartz-Zippel
-//! identity check).
+//! Top-level ct1 (P3). Same two-round shape as `user_data_encryption_ct0_chunked`, over ct1's
+//! witness (`u`/`e1`/`p1is`): `ct1_chunk_main` and `ct1_pk_ct_commit` feed `ct1_chunk_gamma`;
+//! `ct1_eval_chunk_main` and `ct1_eval_pk_ct` feed `ct1_eval_chunk_identity`, which checks the
+//! identity reduced modulo `X^N + 1`.
 //!
-//! This circuit verifies both final proofs and checks every commitment and batching coefficient
-//! they produced agree. It also folds every key hash below it into the VK manifest and outputs
-//! the manifest first - see `user_data_encryption_ct0` for why.
+//! This circuit verifies both round proofs, checks their commitments, gamma and batching
+//! coefficients agree, and folds the four child key hashes and its own two into the leg's VK
+//! manifest (see `user_data_encryption_ct0_chunked`).
 //!
 //! Outputs: `vk_manifest`, `pk1_commitment`, `ct1_commitment`, `u_root`.
 
@@ -27,17 +21,16 @@ use lib::core::threshold::user_data_encryption_chunk::{
     compute_ude_vk_manifest, UDE_ROUND_CHILD_KEY_HASHES,
 };
 
-// Both rounds share one output layout: 3 key hashes (root, leaf, pk/ct), `pk1`, `ct1`, `u`, `e1`,
-// `p2`, `p1`, `gamma`, then the L batching coefficients.
-global ROUND_LEN: u32 = 10 + L;
-global PK1: u32 = 3;
-global CT1: u32 = 4;
-global U: u32 = 5;
-global E1: u32 = 6;
-global P2: u32 = 7;
-global P1: u32 = 8;
-global GAMMA: u32 = 9;
-global BATCHING: u32 = 10;
+// Both rounds share one output layout: leaf and pk/ct key hashes, pk1 and ct1 commitments, u/e1/p1 roots, gamma, then
+// the batching coefficients.
+global ROUND_LEN: u32 = 8 + L;
+global PK1: u32 = 2;
+global CT1: u32 = 3;
+global U: u32 = 4;
+global E1: u32 = 5;
+global P1: u32 = 6;
+global GAMMA: u32 = 7;
+global BATCHING: u32 = 8;
 
 fn main(
     a_vk: UltraHonkVerificationKey,
@@ -59,7 +52,6 @@ fn main(
     assert(a[CT1] == b[CT1], "ct1_commitment mismatch between rounds");
     assert(a[U] == b[U], "u root mismatch between rounds");
     assert(a[E1] == b[E1], "e1 root mismatch between rounds");
-    assert(a[P2] == b[P2], "p2 root mismatch between rounds");
     assert(a[P1] == b[P1], "p1 root mismatch between rounds");
     assert(a[GAMMA] == b[GAMMA], "gamma mismatch between rounds");
     for i in 0..L {

@@ -45,9 +45,7 @@ export interface ChunkedCircuitInputs {
   e1: PolynomialInput
   k1: PolynomialInput
   r1is: PolynomialInput[]
-  r2is: PolynomialInput[]
   p1is: PolynomialInput[]
-  p2is: PolynomialInput[]
   pk_commitment: string
   /** `commit(pk0is)`, passed through by round A of the ct0 tree. */
   pk0_commitment: string
