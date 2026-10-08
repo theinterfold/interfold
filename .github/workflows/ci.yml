@@ -1881,6 +1881,11 @@ jobs:
         with:
           toolchain: ${{ env.NOIR_TOOLCHAIN }}
 
+      # The preset build runs the root circuit tools (scripts/build-circuits.ts), which took about two
+      # and a half of this step's six minutes when built from scratch. rust-cache.yml warms them.
+      - name: Cache Rust dependencies
+        uses: ./.github/actions/cache-dependencies
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:

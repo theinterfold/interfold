@@ -88,3 +88,9 @@ jobs:
       # Doc-tests link against the non-test build of each library.
       - name: Build libraries and binaries
         run: cargo build
+
+      # scripts/build-circuits.ts runs these e3-zk-helpers tools with --release in every ci job that
+      # builds or hydrates circuits, zk_prover_e2e included. Built from scratch, they took about two
+      # minutes.
+      - name: Build the release circuit tools
+        run: cargo build --release -p e3-zk-helpers --bins
