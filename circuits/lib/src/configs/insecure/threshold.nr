@@ -462,11 +462,8 @@ lbfv_pk_generation_limb (l-BFV PUBLIC KEY LIMB)
 -------------------------------------
 ************************************/
 
-pub global LBFV_PK_GENERATION_BIT_R1: u32 = 8;
-pub global LBFV_PK_GENERATION_BIT_R2: u32 = 56;
-pub global LBFV_PK_GENERATION_R1_BOUNDS: [Field; L] = [64, 64, 64];
-pub global LBFV_PK_GENERATION_R2_BOUNDS: [Field; L] =
-    [36028797018956544, 36028797018956160, 36028797018952320];
+pub global LBFV_PK_GENERATION_BIT_R: u32 = 8;
+pub global LBFV_PK_GENERATION_R_BOUNDS: [Field; L] = [64, 64, 64];
 
 /************************************
 -------------------------------------
@@ -479,38 +476,22 @@ pub global GADGET_DIM: u32 = L;
 pub global CRP_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP, CRP, CRP];
 // l-BFV rows are fixed public randomness for the supported preset. Unsupported presets retain
 // placeholder declarations because their RLK path is disabled.
-pub use super::lbfv::{
-    G_GADGET_ROWS, LBFV_CRS_GADGET_ROWS, LBFV_CRS_ROW_COMMITMENTS, LBFV_URS_GADGET_ROWS,
-};
+pub use super::lbfv::{LBFV_CRS_GADGET_ROWS, LBFV_CRS_ROW_COMMITMENTS, LBFV_URS_GADGET_ROWS};
 
 pub global RLK_GENERATION_BIT_R: u32 = 1;
 pub global RLK_GENERATION_BIT_SK: u32 = 1;
 pub global RLK_GENERATION_BIT_E0: u32 = 5;
 pub global RLK_GENERATION_BIT_E2: u32 = 5;
-pub global RLK_GENERATION_BIT_R1_D0: u32 = 111;
-pub global RLK_GENERATION_BIT_R2_D0: u32 = 55;
-pub global RLK_GENERATION_BIT_R1_D2: u32 = 111;
-pub global RLK_GENERATION_BIT_R2_D2: u32 = 55;
+pub global RLK_GENERATION_BIT_RD0: u32 = 7;
+pub global RLK_GENERATION_BIT_RD2: u32 = 7;
 pub global RLK_GENERATION_BIT_D: u32 = 55;
 
 pub global RLK_GENERATION_R_BOUND: Field = 1;
 pub global RLK_GENERATION_SK_BOUND: Field = 1;
 pub global RLK_GENERATION_E0_BOUND: Field = 20;
 pub global RLK_GENERATION_E2_BOUND: Field = 20;
-pub global RLK_GENERATION_R1_D0_BOUNDS: [Field; L] = [
-    1771329638433486218358937929283521,
-    1771329638433505097440046315550658,
-    1771329638433693888251130200355778,
-];
-pub global RLK_GENERATION_R2_D0_BOUNDS: [Field; L] =
-    [36028797018956544, 36028797018956160, 36028797018952320];
-pub global RLK_GENERATION_R1_D2_BOUNDS: [Field; L] = [
-    1771329638433486218358937929283521,
-    1771329638433505097440046315550658,
-    1771329638433693888251130200355778,
-];
-pub global RLK_GENERATION_R2_D2_BOUNDS: [Field; L] =
-    [36028797018956544, 36028797018956160, 36028797018952320];
+pub global RLK_GENERATION_RD0_BOUNDS: [Field; L] = [64, 64, 64];
+pub global RLK_GENERATION_RD2_BOUNDS: [Field; L] = [64, 64, 64];
 
 pub global RLK_GENERATION_CONFIGS: RlkGenerationConfigs<N, L> = RlkGenerationConfigs::new(
     QIS,
@@ -518,10 +499,8 @@ pub global RLK_GENERATION_CONFIGS: RlkGenerationConfigs<N, L> = RlkGenerationCon
     RLK_GENERATION_SK_BOUND,
     RLK_GENERATION_E0_BOUND,
     RLK_GENERATION_E2_BOUND,
-    RLK_GENERATION_R1_D0_BOUNDS,
-    RLK_GENERATION_R2_D0_BOUNDS,
-    RLK_GENERATION_R1_D2_BOUNDS,
-    RLK_GENERATION_R2_D2_BOUNDS,
+    RLK_GENERATION_RD0_BOUNDS,
+    RLK_GENERATION_RD2_BOUNDS,
 );
 
 pub global RLK_AGGREGATION_BIT_D: u32 = PK_GENERATION_BIT_PK;

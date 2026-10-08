@@ -7,8 +7,8 @@
 //! Conversion of l-BFV relinearization-key rows into Noir witnesses.
 
 use crate::math::{
-    cyclotomic_polynomial, decompose_residue, fhe_poly_to_crt_centered_checked,
-    fhe_secret_key_to_crt_centered, validate_fhe_poly_context,
+    exact_quotient, fhe_poly_to_crt_centered_checked, fhe_secret_key_to_crt_centered,
+    negacyclic_mul, validate_fhe_poly_context,
 };
 use crate::threshold::lbfv_proof_domain::{
     lbfv_proof_session, sample_lbfv_proof_domain, validate_lbfv_generation_party_id,
@@ -23,7 +23,6 @@ use e3_fhe_params::{build_pair_for_preset, lbfv_crs_seed, lbfv_urs_seed, BfvPres
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use fhe::bfv::{BfvParameters, CommonRandomPolyVec, SecretKey};
 use fhe::trlbfv::{PublicKeyShare, RelinKeyShare, RlkWitness};
-use fhe_math::rns::RnsContext;
 use fhe_math::rq::Context;
 use num_bigint::{BigInt, BigUint};
 use std::sync::Arc;
@@ -71,14 +70,10 @@ pub struct RlkGenerationCircuitData {
     pub e0: Polynomial,
     /// Error polynomial for the `d2` equation.
     pub e2: Polynomial,
-    /// Modulus-switching quotients for the `d0` equation.
-    pub r1_d0: CrtPolynomial,
-    /// Cyclotomic-reduction quotients for the `d0` equation.
-    pub r2_d0: CrtPolynomial,
-    /// Modulus-switching quotients for the `d2` equation.
-    pub r1_d2: CrtPolynomial,
-    /// Cyclotomic-reduction quotients for the `d2` equation.
-    pub r2_d2: CrtPolynomial,
+    /// Per-limb quotients of the reduced `d0` identity, `N` coefficients each.
+    pub rd0: CrtPolynomial,
+    /// Per-limb quotients of the reduced `d2` identity, `N` coefficients each.
+    pub rd2: CrtPolynomial,
     /// Secret-dependent `d0` row in CRT form.
     pub d0: CrtPolynomial,
     /// Secret-dependent `d2` row in CRT form.
@@ -102,10 +97,8 @@ pub struct RlkGenerationLimbInput<'a> {
     pub r: &'a Polynomial,
     pub e0: &'a Polynomial,
     pub e2: &'a Polynomial,
-    pub r1_d0: &'a Polynomial,
-    pub r2_d0: &'a Polynomial,
-    pub r1_d2: &'a Polynomial,
-    pub r2_d2: &'a Polynomial,
+    pub rd0: &'a Polynomial,
+    pub rd2: &'a Polynomial,
     pub d0: &'a Polynomial,
     pub d2: &'a Polynomial,
 }
@@ -123,10 +116,8 @@ impl RlkGenerationLimbInput<'_> {
             "r": polynomial_to_toml_json(self.r),
             "e0": polynomial_to_toml_json(self.e0),
             "e2": polynomial_to_toml_json(self.e2),
-            "r1_d0": polynomial_to_toml_json(self.r1_d0),
-            "r2_d0": polynomial_to_toml_json(self.r2_d0),
-            "r1_d2": polynomial_to_toml_json(self.r1_d2),
-            "r2_d2": polynomial_to_toml_json(self.r2_d2),
+            "rd0": polynomial_to_toml_json(self.rd0),
+            "rd2": polynomial_to_toml_json(self.rd2),
             "d0": polynomial_to_toml_json(self.d0),
             "d2": polynomial_to_toml_json(self.d2),
         })
@@ -157,10 +148,8 @@ pub struct RlkGenerationBits {
     pub sk_bit: u32,
     pub e0_bit: u32,
     pub e2_bit: u32,
-    pub r1_d0_bit: u32,
-    pub r2_d0_bit: u32,
-    pub r1_d2_bit: u32,
-    pub r2_d2_bit: u32,
+    pub rd0_bit: u32,
+    pub rd2_bit: u32,
     pub d_bit: u32,
 }
 
@@ -171,10 +160,8 @@ pub struct RlkGenerationBounds {
     pub sk_bound: BigUint,
     pub e0_bound: BigUint,
     pub e2_bound: BigUint,
-    pub r1_d0_bounds: Vec<BigUint>,
-    pub r2_d0_bounds: Vec<BigUint>,
-    pub r1_d2_bounds: Vec<BigUint>,
-    pub r2_d2_bounds: Vec<BigUint>,
+    pub rd0_bounds: Vec<BigUint>,
+    pub rd2_bounds: Vec<BigUint>,
 }
 
 /// Prover inputs for one CRT limb of one RLK gadget row.
@@ -189,10 +176,8 @@ pub struct RlkGenerationLimbInputs {
     pub r: Polynomial,
     pub e0: Polynomial,
     pub e2: Polynomial,
-    pub r1_d0: Polynomial,
-    pub r2_d0: Polynomial,
-    pub r1_d2: Polynomial,
-    pub r2_d2: Polynomial,
+    pub rd0: Polynomial,
+    pub rd2: Polynomial,
     pub d0: Polynomial,
     pub d2: Polynomial,
 }
@@ -249,44 +234,37 @@ impl Computation for RlkGenerationBounds {
         let (params, _) = build_pair_for_preset(preset)
             .map_err(|error| CircuitsErrors::Other(error.to_string()))?;
         let pk_bounds = crate::threshold::pk_generation::Bounds::compute(preset, committee)?;
-        let rns = RnsContext::new(params.moduli())
-            .map_err(|error| CircuitsErrors::Other(error.to_string()))?;
-        let max_garner = (0..params.moduli().len())
-            .map(|index| {
-                rns.get_garner(index).cloned().ok_or_else(|| {
-                    CircuitsErrors::Other(format!("missing Garner coefficient at index {index}"))
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .max()
-            .ok_or_else(|| CircuitsErrors::Other("l-BFV has no Garner coefficients".to_string()))?;
 
         let n = BigUint::from(params.degree());
         let sk_bound = pk_bounds.sk_bound;
+        let r_bound = sk_bound.clone();
         let error_bound = pk_bounds.eek_bound;
-        let mut r1_bounds = Vec::with_capacity(params.moduli().len());
-        let mut r2_bounds = Vec::with_capacity(params.moduli().len());
-        for modulus in params.moduli() {
-            let modulus = BigUint::from(*modulus);
-            let centered_bound = (&modulus - 1u32) / 2u32;
-            let numerator = &n * &centered_bound * &sk_bound
-                + &error_bound
-                + &max_garner * &sk_bound
-                + 2u32 * &centered_bound;
-            r1_bounds.push(numerator / &modulus);
-            r2_bounds.push(centered_bound);
-        }
+        // The limb checks, over the integers and per CRT limb,
+        //   d0 = -(d1 * sk mod X^N + 1) + e0 + delta * r  + q_i * rd0
+        //   d2 =  (a  * r  mod X^N + 1) + e2 + delta * sk + q_i * rd2
+        // with delta in {0, 1}. With qb = (q_i - 1) / 2 and m = max(sk_bound, r_bound):
+        // |d| <= qb, |d1|, |a| <= qb (stored centered), so each negacyclic product is at most
+        // N * qb * m, |e| <= error_bound and |delta * r|, |delta * sk| <= m. Dividing by q_i bounds
+        // `rd`; the `+ 2` keeps one qb of margin, as C1's `r` bound does. Both identities share
+        // the same term bounds, so one bound serves `rd0` and `rd2`.
+        let m = std::cmp::max(&sk_bound, &r_bound).clone();
+        let rd_bounds = params
+            .moduli()
+            .iter()
+            .map(|modulus| {
+                let modulus = BigUint::from(*modulus);
+                let centered_bound = (&modulus - 1u32) / 2u32;
+                ((&n * &m + 2u32) * &centered_bound + &error_bound + &m) / &modulus
+            })
+            .collect::<Vec<_>>();
 
         Ok(Self {
-            r_bound: sk_bound.clone(),
+            r_bound,
             sk_bound,
             e0_bound: error_bound.clone(),
             e2_bound: error_bound,
-            r1_d0_bounds: r1_bounds.clone(),
-            r2_d0_bounds: r2_bounds.clone(),
-            r1_d2_bounds: r1_bounds,
-            r2_d2_bounds: r2_bounds,
+            rd0_bounds: rd_bounds.clone(),
+            rd2_bounds: rd_bounds,
         })
     }
 }
@@ -306,17 +284,14 @@ impl Computation for RlkGenerationBits {
                 .max()
                 .unwrap_or(0)
         };
-        let r1_bit = max_bit(&bounds.r1_d0_bounds);
-        let r2_bit = max_bit(&bounds.r2_d0_bounds);
+
         Ok(Self {
             r_bit: calculate_bit_width(BigInt::from(bounds.r_bound.clone())),
             sk_bit: calculate_bit_width(BigInt::from(bounds.sk_bound.clone())),
             e0_bit: calculate_bit_width(BigInt::from(bounds.e0_bound.clone())),
             e2_bit: calculate_bit_width(BigInt::from(bounds.e2_bound.clone())),
-            r1_d0_bit: r1_bit,
-            r2_d0_bit: r2_bit,
-            r1_d2_bit: r1_bit,
-            r2_d2_bit: r2_bit,
+            rd0_bit: max_bit(&bounds.rd0_bounds),
+            rd2_bit: max_bit(&bounds.rd2_bounds),
             d_bit: crate::compute_modulus_bit(&params),
         })
     }
@@ -349,10 +324,8 @@ impl Computation for RlkGenerationLimbInputs {
             r: limb.r.clone(),
             e0: limb.e0.clone(),
             e2: limb.e2.clone(),
-            r1_d0: limb.r1_d0.clone(),
-            r2_d0: limb.r2_d0.clone(),
-            r1_d2: limb.r1_d2.clone(),
-            r2_d2: limb.r2_d2.clone(),
+            rd0: limb.rd0.clone(),
+            rd2: limb.rd2.clone(),
             d0: limb.d0.clone(),
             d2: limb.d2.clone(),
         })
@@ -369,10 +342,8 @@ impl Computation for RlkGenerationLimbInputs {
             "r": polynomial_to_toml_json(&self.r),
             "e0": polynomial_to_toml_json(&self.e0),
             "e2": polynomial_to_toml_json(&self.e2),
-            "r1_d0": polynomial_to_toml_json(&self.r1_d0),
-            "r2_d0": polynomial_to_toml_json(&self.r2_d0),
-            "r1_d2": polynomial_to_toml_json(&self.r1_d2),
-            "r2_d2": polynomial_to_toml_json(&self.r2_d2),
+            "rd0": polynomial_to_toml_json(&self.rd0),
+            "rd2": polynomial_to_toml_json(&self.rd2),
             "d0": polynomial_to_toml_json(&self.d0),
             "d2": polynomial_to_toml_json(&self.d2),
         }))
@@ -402,13 +373,8 @@ pub fn derive_rlk_generation_limb_inputs(
     let n = params.degree();
     verify_crt_shapes(&[&row.d0, &row.d2], l, n)
         .map_err(|error| CircuitsErrors::Other(format!("RLK CRT shape mismatch: {error}")))?;
-    for (name, polynomial, degree) in [
-        ("r1_d0", &row.r1_d0, 2 * n - 1),
-        ("r2_d0", &row.r2_d0, n - 1),
-        ("r1_d2", &row.r1_d2, 2 * n - 1),
-        ("r2_d2", &row.r2_d2, n - 1),
-    ] {
-        validate_crt_shape(polynomial, l, degree)
+    for (name, polynomial) in [("rd0", &row.rd0), ("rd2", &row.rd2)] {
+        validate_crt_shape(polynomial, l, n)
             .map_err(|error| CircuitsErrors::Other(format!("invalid RLK {name} shape: {error}")))?;
     }
     for (name, polynomial) in [
@@ -436,10 +402,8 @@ pub fn derive_rlk_generation_limb_inputs(
             r: &row.r,
             e0: &row.e0,
             e2: &row.e2,
-            r1_d0: row.r1_d0.limb(limb_index),
-            r2_d0: row.r2_d0.limb(limb_index),
-            r1_d2: row.r1_d2.limb(limb_index),
-            r2_d2: row.r2_d2.limb(limb_index),
+            rd0: row.rd0.limb(limb_index),
+            rd2: row.rd2.limb(limb_index),
             d0: row.d0.limb(limb_index),
             d2: row.d2.limb(limb_index),
         })
@@ -470,10 +434,8 @@ pub fn generate_toml(inputs: RlkGenerationLimbInputs) -> Result<CodegenToml, Cir
 pub fn generate_configs(configs: &RlkGenerationConfigs) -> CodegenConfigs {
     let prefix = <RlkGenerationCircuit as Circuit>::PREFIX;
     let moduli = crate::utils::join_display(&configs.moduli, ", ");
-    let r1_d0 = crate::utils::join_display(&configs.bounds.r1_d0_bounds, ", ");
-    let r2_d0 = crate::utils::join_display(&configs.bounds.r2_d0_bounds, ", ");
-    let r1_d2 = crate::utils::join_display(&configs.bounds.r1_d2_bounds, ", ");
-    let r2_d2 = crate::utils::join_display(&configs.bounds.r2_d2_bounds, ", ");
+    let rd0 = crate::utils::join_display(&configs.bounds.rd0_bounds, ", ");
+    let rd2 = crate::utils::join_display(&configs.bounds.rd2_bounds, ", ");
 
     format!(
         r#"use crate::core::threshold::rlk_generation::Configs as RlkGenerationConfigs;
@@ -486,20 +448,16 @@ pub global {prefix}_BIT_R: u32 = {};
 pub global {prefix}_BIT_SK: u32 = {};
 pub global {prefix}_BIT_E0: u32 = {};
 pub global {prefix}_BIT_E2: u32 = {};
-pub global {prefix}_BIT_R1_D0: u32 = {};
-pub global {prefix}_BIT_R2_D0: u32 = {};
-pub global {prefix}_BIT_R1_D2: u32 = {};
-pub global {prefix}_BIT_R2_D2: u32 = {};
+pub global {prefix}_BIT_RD0: u32 = {};
+pub global {prefix}_BIT_RD2: u32 = {};
 pub global {prefix}_BIT_D: u32 = {};
 
 pub global {prefix}_R_BOUND: Field = {};
 pub global {prefix}_SK_BOUND: Field = {};
 pub global {prefix}_E0_BOUND: Field = {};
 pub global {prefix}_E2_BOUND: Field = {};
-pub global {prefix}_R1_D0_BOUNDS: [Field; L] = [{}];
-pub global {prefix}_R2_D0_BOUNDS: [Field; L] = [{}];
-pub global {prefix}_R1_D2_BOUNDS: [Field; L] = [{}];
-pub global {prefix}_R2_D2_BOUNDS: [Field; L] = [{}];
+pub global {prefix}_RD0_BOUNDS: [Field; L] = [{}];
+pub global {prefix}_RD2_BOUNDS: [Field; L] = [{}];
 
 pub global {prefix}_CONFIGS: RlkGenerationConfigs<N, L> = RlkGenerationConfigs::new(
     QIS,
@@ -507,10 +465,8 @@ pub global {prefix}_CONFIGS: RlkGenerationConfigs<N, L> = RlkGenerationConfigs::
     {prefix}_SK_BOUND,
     {prefix}_E0_BOUND,
     {prefix}_E2_BOUND,
-    {prefix}_R1_D0_BOUNDS,
-    {prefix}_R2_D0_BOUNDS,
-    {prefix}_R1_D2_BOUNDS,
-    {prefix}_R2_D2_BOUNDS,
+    {prefix}_RD0_BOUNDS,
+    {prefix}_RD2_BOUNDS,
 );
 "#,
         configs.n,
@@ -520,19 +476,15 @@ pub global {prefix}_CONFIGS: RlkGenerationConfigs<N, L> = RlkGenerationConfigs::
         configs.bits.sk_bit,
         configs.bits.e0_bit,
         configs.bits.e2_bit,
-        configs.bits.r1_d0_bit,
-        configs.bits.r2_d0_bit,
-        configs.bits.r1_d2_bit,
-        configs.bits.r2_d2_bit,
+        configs.bits.rd0_bit,
+        configs.bits.rd2_bit,
         configs.bits.d_bit,
         configs.bounds.r_bound,
         configs.bounds.sk_bound,
         configs.bounds.e0_bound,
         configs.bounds.e2_bound,
-        r1_d0,
-        r2_d0,
-        r1_d2,
-        r2_d2,
+        rd0,
+        rd2,
         prefix = prefix,
     )
 }
@@ -547,8 +499,6 @@ pub struct RlkGenerationAdapter {
     degree: usize,
     d1_rows: Vec<CrtPolynomial>,
     a_rows: Vec<CrtPolynomial>,
-    garner: Vec<BigInt>,
-    cyclotomic: Vec<BigInt>,
 }
 
 impl RlkGenerationAdapter {
@@ -666,42 +616,22 @@ impl RlkGenerationAdapter {
         let e0 = e0_crt.limb(0).clone();
         let e2 = e2_crt.limb(0).clone();
 
-        let mut r1_d0 = Vec::with_capacity(self.moduli.len());
-        let mut r2_d0 = Vec::with_capacity(self.moduli.len());
-        let mut r1_d2 = Vec::with_capacity(self.moduli.len());
-        let mut r2_d2 = Vec::with_capacity(self.moduli.len());
+        let mut rd0 = Vec::with_capacity(self.moduli.len());
+        let mut rd2 = Vec::with_capacity(self.moduli.len());
 
         for (i, qi) in self.moduli.iter().enumerate() {
-            let d0_hat = self.d1_rows[row]
-                .limb(i)
-                .neg()
-                .mul(&sk)
-                .add(&e0)
-                .add(&r.scalar_mul(&self.garner[row]));
-            let (r1, r2) = decompose_residue(
-                d0.limb(i),
-                &d0_hat,
-                &BigInt::from(*qi),
-                &self.cyclotomic,
-                self.degree as u64,
-            );
-            r1_d0.push(r1);
-            r2_d0.push(r2);
-
-            let d2_hat = self.a_rows[row]
-                .limb(i)
-                .mul(&r)
-                .add(&e2)
-                .add(&sk.scalar_mul(&self.garner[row]));
-            let (r1, r2) = decompose_residue(
-                d2.limb(i),
-                &d2_hat,
-                &BigInt::from(*qi),
-                &self.cyclotomic,
-                self.degree as u64,
-            );
-            r1_d2.push(r1);
-            r2_d2.push(r2);
+            let (d0_hat, d2_hat) = self.reduced_limb_terms(row, i, &sk, &r, &e0, &e2)?;
+            let qi = BigInt::from(*qi);
+            rd0.push(exact_quotient(
+                &d0.limb(i).sub(&d0_hat),
+                &qi,
+                "RLK d0 reduced identity",
+            )?);
+            rd2.push(exact_quotient(
+                &d2.limb(i).sub(&d2_hat),
+                &qi,
+                "RLK d2 reduced identity",
+            )?);
         }
 
         Ok(RlkGenerationCircuitData {
@@ -713,13 +643,34 @@ impl RlkGenerationAdapter {
             r,
             e0,
             e2,
-            r1_d0: CrtPolynomial::new(r1_d0),
-            r2_d0: CrtPolynomial::new(r2_d0),
-            r1_d2: CrtPolynomial::new(r1_d2),
-            r2_d2: CrtPolynomial::new(r2_d2),
+            rd0: CrtPolynomial::new(rd0),
+            rd2: CrtPolynomial::new(rd2),
             d0,
             d2,
         })
+    }
+
+    /// The right-hand sides of both reduced identities at one limb, before the `q_i` quotient:
+    ///   `-(d1 * sk mod X^N + 1) + e0 + delta * r` and `(a * r mod X^N + 1) + e2 + delta * sk`
+    /// where `delta = (row == limb)` is the row's Garner coefficient reduced modulo `q_limb`.
+    fn reduced_limb_terms(
+        &self,
+        row: usize,
+        limb: usize,
+        sk: &Polynomial,
+        r: &Polynomial,
+        e0: &Polynomial,
+        e2: &Polynomial,
+    ) -> Result<(Polynomial, Polynomial), CircuitsErrors> {
+        let mut d0_hat = negacyclic_mul(self.d1_rows[row].limb(limb), sk, self.degree)?
+            .neg()
+            .add(e0);
+        let mut d2_hat = negacyclic_mul(self.a_rows[row].limb(limb), r, self.degree)?.add(e2);
+        if row == limb {
+            d0_hat = d0_hat.add(r);
+            d2_hat = d2_hat.add(sk);
+        }
+        Ok((d0_hat, d2_hat))
     }
 
     /// Convert every RLK row and clear the private FHE witness after conversion.
@@ -799,21 +750,6 @@ impl RlkGenerationAdapter {
             .map(|poly| fhe_poly_to_crt_centered_checked(poly, &moduli, degree))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let rns =
-            RnsContext::new(&moduli).map_err(|error| CircuitsErrors::Other(error.to_string()))?;
-        let garner = (0..moduli.len())
-            .map(|index| {
-                rns.get_garner(index)
-                    .cloned()
-                    .map(BigInt::from)
-                    .ok_or_else(|| {
-                        CircuitsErrors::Other(format!(
-                            "missing Garner coefficient at index {index}"
-                        ))
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
         Ok(Self {
             context: params
                 .context_at_level(0)
@@ -823,8 +759,6 @@ impl RlkGenerationAdapter {
             degree,
             d1_rows,
             a_rows,
-            garner,
-            cyclotomic: cyclotomic_polynomial(degree as u64),
         })
     }
 }
@@ -928,6 +862,7 @@ mod tests {
     use fhe_traits::{
         DeserializeParametrized, FheDecoder, FheDecrypter, FheEncoder, FheEncrypter, Serialize,
     };
+    use num_traits::Signed;
     use rand::rng;
 
     #[test]
@@ -952,6 +887,7 @@ mod tests {
             &mut rng,
         )?;
         let committee = CiphernodesCommitteeSize::Minimum.values();
+        let cyclotomic = crate::math::cyclotomic_polynomial(params.degree() as u64);
 
         let rows = adapter.all_rows_data(
             committee,
@@ -965,37 +901,39 @@ mod tests {
             assert_eq!(data.row_index, row_index as u32);
             assert_eq!(data.d0.limbs.len(), params.moduli().len());
             assert_eq!(data.d2.limbs.len(), params.moduli().len());
-            assert_eq!(data.r1_d0.limbs.len(), params.moduli().len());
-            assert_eq!(data.r2_d0.limbs.len(), params.moduli().len());
-            assert_eq!(data.r1_d2.limbs.len(), params.moduli().len());
-            assert_eq!(data.r2_d2.limbs.len(), params.moduli().len());
+            assert_eq!(data.rd0.limbs.len(), params.moduli().len());
+            assert_eq!(data.rd2.limbs.len(), params.moduli().len());
 
             for (i, qi) in params.moduli().iter().enumerate() {
-                let qi_poly = Polynomial::new(vec![BigInt::from(*qi)]);
-                let cyclo_poly = Polynomial::new(adapter.cyclotomic.clone());
+                let qi = BigInt::from(*qi);
+                let delta = BigInt::from(u8::from(row_index == i));
+                assert_eq!(data.rd0.limb(i).coefficients().len(), params.degree());
+                assert_eq!(data.rd2.limb(i).coefficients().len(), params.degree());
 
-                let d0_hat = adapter.d1_rows[row_index]
+                // The reduced identities the limb circuit checks, restated with the generic
+                // cyclotomic reduction rather than the fold the witness uses. `d0`/`d2` come from
+                // the FHE share, which applies the full Garner coefficient, so this also checks
+                // that `delta` reproduces it modulo q_i.
+                let d0_expected = adapter.d1_rows[row_index]
                     .limb(i)
-                    .neg()
                     .mul(&data.sk)
+                    .reduce_by_cyclotomic(&cyclotomic)
+                    .map_err(|error| CircuitsErrors::Other(error.to_string()))?
+                    .neg()
                     .add(&data.e0)
-                    .add(&data.r.scalar_mul(&adapter.garner[row_index]));
-                let d0_calculated = d0_hat
-                    .add(&data.r1_d0.limb(i).mul(&qi_poly))
-                    .add(&data.r2_d0.limb(i).mul(&cyclo_poly))
-                    .trim_leading_zeros();
-                assert_eq!(&d0_calculated, data.d0.limb(i));
+                    .add(&data.r.scalar_mul(&delta))
+                    .add(&data.rd0.limb(i).scalar_mul(&qi));
+                assert!(data.d0.limb(i).sub(&d0_expected).is_zero());
 
-                let d2_hat = adapter.a_rows[row_index]
+                let d2_expected = adapter.a_rows[row_index]
                     .limb(i)
                     .mul(&data.r)
+                    .reduce_by_cyclotomic(&cyclotomic)
+                    .map_err(|error| CircuitsErrors::Other(error.to_string()))?
                     .add(&data.e2)
-                    .add(&data.sk.scalar_mul(&adapter.garner[row_index]));
-                let d2_calculated = d2_hat
-                    .add(&data.r1_d2.limb(i).mul(&qi_poly))
-                    .add(&data.r2_d2.limb(i).mul(&cyclo_poly))
-                    .trim_leading_zeros();
-                assert_eq!(&d2_calculated, data.d2.limb(i));
+                    .add(&data.sk.scalar_mul(&delta))
+                    .add(&data.rd2.limb(i).scalar_mul(&qi));
+                assert!(data.d2.limb(i).sub(&d2_expected).is_zero());
             }
         }
 
@@ -1007,26 +945,81 @@ mod tests {
         assert!(RlkGenerationAdapter::new(BfvPreset::SecureThreshold8192).is_err());
     }
 
+    /// The limb circuit replaces the row's gadget scalar, the Garner coefficient `g_row`, by
+    /// `delta = (row == limb)`. That is sound only because `g_row` is the CRT unit vector:
+    /// `1 mod q_row` and `0 mod q_j` for every other modulus.
     #[test]
-    fn secure_bounds_include_the_garner_term() -> Result<(), CircuitsErrors> {
+    fn garner_coefficient_is_the_crt_unit_vector() -> Result<(), CircuitsErrors> {
+        for preset in [
+            BfvPreset::InsecureThresholdLbfv,
+            BfvPreset::SecureThreshold16384,
+        ] {
+            let (params, _) = build_pair_for_preset(preset)
+                .map_err(|error| CircuitsErrors::Other(error.to_string()))?;
+            let rns = fhe_math::rns::RnsContext::new(params.moduli())
+                .map_err(|error| CircuitsErrors::Other(error.to_string()))?;
+            for row in 0..params.moduli().len() {
+                let garner = rns.get_garner(row).ok_or_else(|| {
+                    CircuitsErrors::Other(format!("missing Garner coefficient at index {row}"))
+                })?;
+                for (limb, modulus) in params.moduli().iter().enumerate() {
+                    let expected = BigUint::from(u8::from(row == limb));
+                    assert_eq!(
+                        garner % BigUint::from(*modulus),
+                        expected,
+                        "{preset:?}: Garner coefficient {row} mod q_{limb}"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The reduced identity needs one quotient bound for both equations, and with the 0/1
+    /// gadget scalar it is the same order as the public-key limb's `r` bound, not the product of
+    /// a full-width Garner coefficient.
+    #[test]
+    fn secure_rd_bounds_track_the_public_key_bound() -> Result<(), CircuitsErrors> {
         let preset = BfvPreset::SecureThreshold16384;
         let committee = CiphernodesCommitteeSize::Minimum.values();
         let bounds = RlkGenerationBounds::compute(preset, &committee)?;
         let pk_bounds = crate::threshold::pk_generation::Bounds::compute(preset, &committee)?;
-        let (pk_r1_bounds, _) = crate::threshold::pk_generation::lbfv_limb_quotient_bounds(
+        let pk_r_bounds = crate::threshold::pk_generation::lbfv_limb_quotient_bounds(
             preset,
+            &pk_bounds.sk_bound,
             &pk_bounds.eek_bound,
         )?;
         let bits = RlkGenerationBits::compute(preset, &bounds)?;
 
-        assert!(bounds
-            .r1_d0_bounds
+        assert_eq!(bounds.rd0_bounds, bounds.rd2_bounds);
+        for (rlk, pk) in bounds.rd0_bounds.iter().zip(&pk_r_bounds) {
+            assert!(rlk >= pk && rlk - pk <= BigUint::from(1u8));
+        }
+        assert_eq!(bits.rd0_bit, bits.rd2_bit);
+        assert!(bits.rd0_bit < 32);
+        Ok(())
+    }
+
+    /// The circuit range-checks `rd0`/`rd2` against these bounds, so honest diagonal and
+    /// off-diagonal limbs must fit them.
+    #[test]
+    fn sample_quotients_fit_the_limb_bounds() -> Result<(), CircuitsErrors> {
+        let preset = BfvPreset::InsecureThresholdLbfv;
+        let committee = CiphernodesCommitteeSize::Minimum.values();
+        let bounds = RlkGenerationBounds::compute(preset, &committee)?;
+        let row = RlkGenerationCircuitData::generate_sample(preset, committee)?;
+        let fits = |polynomial: &Polynomial, bound: &BigUint| {
+            let bound = BigInt::from(bound.clone());
+            polynomial.coefficients().iter().all(|c| c.abs() <= bound)
+        };
+
+        for (limb_index, limb) in derive_rlk_generation_limb_inputs(preset, &row)?
             .iter()
-            .zip(pk_r1_bounds.iter())
-            .all(|(rlk, pk)| rlk > pk));
-        assert_eq!(bounds.r1_d0_bounds, bounds.r1_d2_bounds);
-        assert_eq!(bounds.r2_d0_bounds, bounds.r2_d2_bounds);
-        assert!(bits.r1_d0_bit > bits.r2_d0_bit);
+            .enumerate()
+        {
+            assert!(fits(limb.rd0, &bounds.rd0_bounds[limb_index]));
+            assert!(fits(limb.rd2, &bounds.rd2_bounds[limb_index]));
+        }
         Ok(())
     }
 
@@ -1037,8 +1030,8 @@ mod tests {
         let configs = RlkGenerationConfigs::compute(preset, &committee)?;
         let noir = generate_configs(&configs);
 
-        assert!(noir.contains("RLK_GENERATION_R1_D0_BOUNDS"));
-        assert!(noir.contains(&configs.bounds.r1_d0_bounds[0].to_string()));
+        assert!(noir.contains("RLK_GENERATION_RD0_BOUNDS"));
+        assert!(noir.contains(&configs.bounds.rd0_bounds[0].to_string()));
         Ok(())
     }
 
@@ -1055,10 +1048,8 @@ mod tests {
             r: polynomial.clone(),
             e0: polynomial.clone(),
             e2: polynomial.clone(),
-            r1_d0: polynomial.clone(),
-            r2_d0: polynomial.clone(),
-            r1_d2: polynomial.clone(),
-            r2_d2: polynomial.clone(),
+            rd0: polynomial.clone(),
+            rd2: polynomial.clone(),
             d0: polynomial.clone(),
             d2: polynomial,
         };
@@ -1092,10 +1083,8 @@ mod tests {
             r: polynomial(metadata.degree),
             e0: polynomial(metadata.degree),
             e2: polynomial(metadata.degree),
-            r1_d0: crt(2 * metadata.degree - 1),
-            r2_d0: crt(metadata.degree - 1),
-            r1_d2: crt(2 * metadata.degree - 1),
-            r2_d2: crt(metadata.degree - 1),
+            rd0: crt(metadata.degree),
+            rd2: crt(metadata.degree),
             d0: crt(metadata.degree),
             d2: crt(metadata.degree),
         };
