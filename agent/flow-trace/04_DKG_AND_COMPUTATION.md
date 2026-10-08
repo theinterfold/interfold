@@ -885,6 +885,8 @@ phase.
 │   │     key; the first valid committee publication on chain wins. Once a key is on chain,
 │   │     the demoted node stops, and any node ignores a late C1 result: it neither fails the
 │   │     E3 nor accuses a dealer. A node that did not start the work ignores worker results
+│   │   → The public-key recovery record keeps that the node dispatched the C1 verification, so a
+│   │     restart after the demotion still finishes it (every node enters VerifyingC1)
 │   │     File: crates/aggregator/src/public_key_aggregation/actor.rs (started_as_aggregator)
 │   ├─ C1 verification runs over the exact H selected submitters; failures stop DKG
 │   │
