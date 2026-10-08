@@ -219,19 +219,21 @@ impl Planner {
                 location,
                 records,
             } => {
-                let configured = facts
-                    .nodes
-                    .iter()
-                    .any(|node| node.key_file.parent() == Some(location.resolved.as_path()));
-                if configured {
-                    return;
-                }
+                let in_folder = |node: &&NodeFacts| {
+                    node.key_file.parent() == Some(location.resolved.as_path())
+                };
                 // A key file in the folder with a record is checked through the store that the
-                // record names, before the store of a node folder of the same name.
-                if !records.is_empty() {
-                    for (_, recorded) in records {
+                // record names, before the store of a node folder of the same name. A configured
+                // node's key file in the folder does not cover the other key files there.
+                for (key_file, recorded) in records {
+                    let configured = facts.nodes.iter().filter(in_folder).any(|node| {
+                        node.key_file.file_name() == key_file.file_name()
+                    });
+                    if !configured {
                         self.add_recorded(recorded, name, true);
                     }
+                }
+                if !records.is_empty() || facts.nodes.iter().any(|node| in_folder(&node)) {
                     return;
                 }
                 // A node folder of the same name must hold the store that the key protects, or be
@@ -806,6 +808,36 @@ mod tests {
         let plan = plan(&facts(vec![rerun], vec![], vec![]));
         assert!(plan.unchecked.is_empty());
         assert_eq!(plan.locks.len(), 1);
+    }
+
+    /// A folder holds a configured node's key file and the key file of a removed profile: the
+    /// removed profile's key is checked through its record too.
+    #[test]
+    fn a_configured_key_file_does_not_cover_the_other_key_files_in_its_folder() {
+        let folder = ConfigEntry::Folder {
+            name: "cn1".to_string(),
+            location: at(&format!("{CONFIG}/cn1")),
+            records: vec![(
+                PathBuf::from(format!("{CONFIG}/cn1/old.key")),
+                recorded(&["/elsewhere/old/db"]),
+            )],
+        };
+        let plan = plan(&facts(
+            vec![node("cn1")],
+            vec![node_folder("cn1", &["db"])],
+            vec![folder],
+        ));
+
+        let old = plan
+            .stores
+            .iter()
+            .find(|store| store.db_file == Path::new("/elsewhere/old/db"))
+            .expect("the removed profile's store is checked");
+        assert!(old.needs_identity);
+        assert!(plan
+            .locks
+            .iter()
+            .any(|lock| lock.path == Path::new("/elsewhere/old/interfold.lock")));
     }
 
     /// A key file that no configured node uses is checked through its record, instead of refused.
