@@ -293,6 +293,11 @@ jobs:
         run: |
           SOURCE_HASH=$(pnpm tsx scripts/build-circuits.ts hash)
           echo "source_hash=$SOURCE_HASH" >> "$GITHUB_OUTPUT"
+
+          if ! git fetch origin circuit-artifacts; then
+            echo "::error::Required circuit-artifacts branch is missing."
+            exit 1
+          fi
           pnpm store:circuits pull
 
       - name: Verify circuit artifacts match source
