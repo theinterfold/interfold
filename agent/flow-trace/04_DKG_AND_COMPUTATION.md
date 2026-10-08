@@ -428,8 +428,9 @@ computation), C3 (share encryption), and C4 (share decryption) witness computati
 generated `configs.nr` values (`SHARE_COMPUTATION_CHUNK_SIZE` / `SHARE_COMPUTATION_N_CHUNKS`), so
 the witness always matches the circuit parameters the artifacts were generated against. The
 generated `configs.nr` `N` and `L` values come from the same parameter object that drives the
-witness computation. The committed `configs.nr` writes the chunk size as an expression over the
-active committee's `N_PARTIES`, so the compiled circuits follow the same rule. A non-default `--chunk-size` produces artifacts that
+witness computation. The secure-16384 `dkg.nr` writes the chunk size as an expression over the
+active committee's `N_PARTIES`; the insecure and secure-8192 files write the fixed values 128 and
+512. A non-default `--chunk-size` produces artifacts that
 are valid only if the C2/C3/C4 circuits are recompiled against the generated `configs.nr`.
 
 All packed polynomial commitments constrain each shifted coefficient to one radix digit. An
@@ -704,11 +705,10 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │   attestation bundle to `publishCommittee`. Secure-16384 tests prove and verify five
 │   │   │   recursive limbs and one row finalizer for each generation family. The PK test checks four
 │   │   │   identity fields and three outputs. The RLK test checks four identity fields and five
-│   │   │   outputs. Both finalizers bind the checksum-verified leaf VK hash. The measured RLK
-│   │   │   test took 1,393.44 seconds and 16,788,504,576 bytes maximum RSS. The prior equation-wide
-│   │   │   RLK circuit did not complete compilation after more than 31 minutes. Sequential RLK
-│   │   │   compilation measured 512.58 seconds and 26,388,774,912 bytes maximum RSS for the limb.
-│   │   │   The RLK terminal used 57.36 seconds and 8,039,219,200 bytes maximum RSS.
+│   │   │   outputs. Both finalizers bind the checksum-verified leaf VK hash. Both limb circuits
+│   │   │   check the identity reduced modulo X^N + 1, and select their CRS/URS row with
+│   │   │   `select_constant_dot` instead of a runtime table index. Earlier time and memory
+│   │   │   measurements predate these changes and were not repeated.
 │   │   │
 │   │   ├─ On mismatch: publishes CommitmentConsistencyViolation
 │   │   │   → AccusationManager initiates accusation quorum (see Part 5)

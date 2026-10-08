@@ -637,7 +637,10 @@ every section.
   recomputes the accepted-set hash from its canonical party IDs. It binds the outer `NodeFoldV2` and
   `NodesFoldV2` VK slots separately from the embedded legacy `NodeFold` anchor. A `NodeFoldV2` proof
   has four verifier-prefix fields and 86 returned fields. Its 90-field statement takes the session
-  limbs from generation-fold fields 9 and 10. `DkgAggregatorV2` binds the legacy and V2 recursive VK
+  limbs from generation-fold fields 9 and 10. `DkgAggregatorV2` does not verify a C5 proof. It keeps
+  `c5_key_hash` as a pinned public input, and `legacy_key_hash` and `v2_key_hash` still fold it in,
+  so the statement layout and `BfvPkVerifierV2` anchors are unchanged; the anchor attests to no
+  verified proof. `DkgAggregatorV2` binds the legacy and V2 recursive VK
   manifests independently. It must not require corresponding legacy and V2 VK hashes to be equal.
 - **Secure-16384 key publication binds all operational key material:** `dkg_aggregator_v2` computes
   ordered SAFE commitments for all public-key rows and all RLK D0 and D2 rows. It combines these

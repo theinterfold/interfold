@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Verifies `ct1_chunk_main_root` (non-ZK - it covers all four witness groups, u/e1/p2/p1 merged
-//! into one grid) and `ct1_pk_ct_commit` (ZK - it holds raw `pk1is`/`ct1is` witness directly),
+//! into one grid) and `ct1_pk_ct_commit` (ZK - it holds the raw `ct1is` witness and passes the `pk1is` commitment through),
 //! gathering every commitment the ct1 challenge depends on, then derives `gamma`. The transcript
 //! hashes commitments and roots rather than raw coefficients, which is what keeps this circuit
 //! inside the gate budget.

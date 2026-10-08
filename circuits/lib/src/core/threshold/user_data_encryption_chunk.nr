@@ -21,7 +21,7 @@
 //! re-supplies them, re-derives the identical commitments for cross-round binding, and evaluates
 //! at the Fiat-Shamir challenge. Both rounds build the same `Ct0ChunkLeaf`/`Ct1ChunkLeaf` - Round
 //! A additionally calls `check_range_bounds` and `check_padding`, Round B additionally calls
-//! and `chunk_gamma_pow`.
+//! `chunk_gamma_pow`.
 
 use crate::math::commitments::{
     compute_ude_chunk_commitment, compute_ude_chunk_root_commitment,
