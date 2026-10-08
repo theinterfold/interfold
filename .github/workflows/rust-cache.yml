@@ -22,6 +22,10 @@ on:
       - Cargo.lock
       - .github/workflows/rust-cache.yml
       - .github/actions/cache-dependencies/**
+  # Pull requests only read the entry. The daily run restores it, which keeps it from expiring after
+  # seven unused days, and rebuilds it when it is gone.
+  schedule:
+    - cron: '17 4 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -48,6 +52,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
+      # An exact hit means the entry exists and holds what the steps below build, so they are skipped.
       - name: Cache Rust dependencies
         id: cache
         uses: ./.github/actions/cache-dependencies
@@ -76,21 +81,26 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install the dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Compile contracts
+        if: steps.cache.outputs.cache-hit != 'true'
         run: pnpm evm:build
 
       # Unit and integration test binaries.
       - name: Build test targets
+        if: steps.cache.outputs.cache-hit != 'true'
         run: cargo test --no-run
 
       # Doc-tests link against the non-test build of each library.
       - name: Build libraries and binaries
+        if: steps.cache.outputs.cache-hit != 'true'
         run: cargo build
 
       # scripts/build-circuits.ts runs these e3-zk-helpers tools with --release in every ci job that
       # builds or hydrates circuits, zk_prover_e2e included. Built from scratch, they took about two
       # minutes.
       - name: Build the release circuit tools
+        if: steps.cache.outputs.cache-hit != 'true'
         run: cargo build --release -p e3-zk-helpers --bins

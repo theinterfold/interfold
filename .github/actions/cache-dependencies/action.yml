@@ -11,6 +11,11 @@ inputs:
     required: false
     default: target/
 
+outputs:
+  cache-hit:
+    description: Whether an entry with the exact key was restored
+    value: ${{ steps.cache.outputs.cache-hit || steps.restore.outputs.cache-hit }}
+
 runs:
   using: composite
   steps:
@@ -40,6 +45,7 @@ runs:
     # to save the same key, all but one failed to reserve it, and the saved copy took cache space
     # from main's.
     - name: Cache Rust dependencies
+      id: cache
       if: inputs.rust-target-path != 'target/' || github.event_name != 'pull_request'
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
@@ -51,6 +57,7 @@ runs:
         restore-keys: rust-deps-${{ steps.cache-key.outputs.scope }}-${{ steps.cache-key.outputs.policy }}-
 
     - name: Restore Rust dependencies
+      id: restore
       if: inputs.rust-target-path == 'target/' && github.event_name == 'pull_request'
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
