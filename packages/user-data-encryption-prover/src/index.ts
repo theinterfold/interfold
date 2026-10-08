@@ -28,6 +28,10 @@ export type UserDataEncryptionInputs = {
   r2is: NoirCrtPolynomial
   p1is: NoirCrtPolynomial
   p2is: NoirCrtPolynomial
+  /** `commit(pk0is)`; round A passes it through instead of hashing the key. */
+  pk0_commitment: Field
+  /** `commit(pk1is)`; as `pk0_commitment`. */
+  pk1_commitment: Field
 }
 
 export type UserDataEncryptionCircuitBundle = {
@@ -189,7 +193,7 @@ const buildCt0TopLevelInputs = async (
     'noir-recursive-no-zk',
   )
 
-  const roundAPkCt = await prove(api, circuits.ct0PkCtCommit, { pk0is: inputs.pk0is, ct0is: inputs.ct0is }, 'noir-recursive')
+  const roundAPkCt = await prove(api, circuits.ct0PkCtCommit, { pk0_commitment: inputs.pk0_commitment, ct0is: inputs.ct0is }, 'noir-recursive')
   const roundA = await prove(
     api,
     circuits.ct0ChunkGamma,
@@ -341,7 +345,7 @@ const buildCt1TopLevelInputs = async (
     },
     'noir-recursive-no-zk',
   )
-  const roundAPkCt = await prove(api, circuits.ct1PkCtCommit, { pk1is: inputs.pk1is, ct1is: inputs.ct1is }, 'noir-recursive')
+  const roundAPkCt = await prove(api, circuits.ct1PkCtCommit, { pk1_commitment: inputs.pk1_commitment, ct1is: inputs.ct1is }, 'noir-recursive')
   const roundA = await prove(
     api,
     circuits.ct1ChunkGamma,

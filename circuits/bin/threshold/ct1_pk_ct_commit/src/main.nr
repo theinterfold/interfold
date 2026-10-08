@@ -4,29 +4,21 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Round A, ct1 leg: commits both `pk1is` and `ct1is` in one circuit - see `ct0_pk_ct_commit`
-//! for why the two groups share a circuit.
+//! Round A, ct1 leg: commits `ct1is` (pinned to its centered residue) and passes the public-key
+//! commitment through - see `ct0_pk_ct_commit` for why the key is not hashed in round A.
+//! `ct1_eval_pk_ct` recomputes it from `pk1is` and `user_data_encryption_ct1_chunked` asserts the
+//! two rounds agree.
 //!
-//! Each commitment formula MUST stay exactly `compute_multiple_polynomial_commitment_checked` under
-//! `DS_PK_AGGREGATION`/`DS_CIPHERTEXT`. The `user_data_encryption` wrapper combines ct0's and
-//! ct1's pk/ct commitments the same way `pk_aggregation.nr`'s C5 does, so these hashes are a
-//! protocol invariant, not an internal choice.
+//! The ciphertext commitment MUST stay exactly `compute_multiple_polynomial_commitment_checked`
+//! under `DS_CIPHERTEXT`.
 
-use lib::configs::default::threshold::{
-    L, N, QIS, USER_DATA_ENCRYPTION_CHUNKED_BIT_CT, USER_DATA_ENCRYPTION_CHUNKED_BIT_PK,
-};
+use lib::configs::default::threshold::{L, N, QIS, USER_DATA_ENCRYPTION_CHUNKED_BIT_CT};
 use lib::core::threshold::user_data_encryption_chunk::assert_centered_ciphertext;
-use lib::math::commitments::{
-    compute_multiple_polynomial_commitment_checked, DS_CIPHERTEXT, DS_PK_AGGREGATION,
-};
+use lib::math::commitments::{compute_multiple_polynomial_commitment_checked, DS_CIPHERTEXT};
 use lib::math::polynomial::Polynomial;
 
-fn main(pk1is: [Polynomial<N>; L], ct1is: [Polynomial<N>; L]) -> pub (Field, Field) {
+fn main(pk1_commitment: Field, ct1is: [Polynomial<N>; L]) -> pub (Field, Field) {
     assert_centered_ciphertext::<N, L, USER_DATA_ENCRYPTION_CHUNKED_BIT_CT>(ct1is, QIS);
-    let pk1_commitment = compute_multiple_polynomial_commitment_checked::<N, L, USER_DATA_ENCRYPTION_CHUNKED_BIT_PK>(
-        pk1is,
-        DS_PK_AGGREGATION,
-    );
     let ct1_commitment = compute_multiple_polynomial_commitment_checked::<N, L, USER_DATA_ENCRYPTION_CHUNKED_BIT_CT>(
         ct1is,
         DS_CIPHERTEXT,

@@ -115,6 +115,11 @@ pub struct Inputs {
     pub u: Polynomial,
     pub k1: Polynomial,
     pub ciphertext: Vec<u8>,
+    /// `commit(pk0is)` under `DS_PK_AGGREGATION`: round A passes it through instead of hashing
+    /// the key, and round B checks it against `pk0is`.
+    pub pk0_commitment: BigInt,
+    /// `commit(pk1is)`, as `pk0_commitment`.
+    pub pk1_commitment: BigInt,
 }
 
 impl Computation for Configs {
@@ -480,6 +485,10 @@ impl Computation for Inputs {
         let zkp_modulus = get_zkp_modulus();
         e0_mod_q.reduce(&zkp_modulus);
 
+        let pk_bit = Bits::compute(preset, &Bounds::compute(preset, &())?)?.pk_bit;
+        let pk0_commitment = crate::compute_pk_aggregation_pk1_commitment(&pk0is, pk_bit);
+        let pk1_commitment = crate::compute_pk_aggregation_pk1_commitment(&pk1is, pk_bit);
+
         Ok(Inputs {
             pk0is,
             pk1is,
@@ -494,6 +503,8 @@ impl Computation for Inputs {
             u,
             k1,
             ciphertext: ct.to_bytes(),
+            pk0_commitment,
+            pk1_commitment,
         })
     }
 
@@ -528,6 +539,8 @@ impl Computation for Inputs {
             "r2is": r2is,
             "p1is": p1is,
             "p2is": p2is,
+            "pk0_commitment": self.pk0_commitment.to_string(),
+            "pk1_commitment": self.pk1_commitment.to_string(),
         });
 
         Ok(json)
