@@ -35,10 +35,21 @@ share_computation chunk grid (l-BFV)
 -------------------------------------
 ************************************/
 
-pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = 512;
-pub global SHARE_COMPUTATION_N_CHUNKS: u32 = 32;
-pub global SHARE_COMPUTATION_CHUNKS_PER_BATCH: u32 = 4;
-pub global SHARE_COMPUTATION_N_BATCHES: u32 = 8;
+pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = if crate::configs::committee::active::N_PARTIES <= 4 {
+    4096
+} else if crate::configs::committee::active::N_PARTIES <= 12 {
+    1024
+} else {
+    512
+};
+pub global SHARE_COMPUTATION_N_CHUNKS: u32 = N / SHARE_COMPUTATION_CHUNK_SIZE;
+pub global SHARE_COMPUTATION_CHUNKS_PER_BATCH: u32 = if SHARE_COMPUTATION_N_CHUNKS < 4 {
+    SHARE_COMPUTATION_N_CHUNKS
+} else {
+    4
+};
+pub global SHARE_COMPUTATION_N_BATCHES: u32 =
+    SHARE_COMPUTATION_N_CHUNKS / SHARE_COMPUTATION_CHUNKS_PER_BATCH;
 
 /************************************
 -------------------------------------

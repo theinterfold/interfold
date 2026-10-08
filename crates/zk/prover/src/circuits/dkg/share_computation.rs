@@ -23,7 +23,7 @@ use rayon::prelude::*;
 use serde_json::Value;
 use std::time::Instant;
 
-pub use crate::circuits::aggregation::c2_chunk_config::DEFAULT_C2_CHUNK_SIZE;
+pub use crate::circuits::aggregation::c2_chunk_config::{c2_chunk_size, DEFAULT_C2_CHUNK_SIZE};
 
 /// The trBFV path's single-proof C2: one `sk_share_computation` or `e_sm_share_computation`
 /// proof per dealer. The l-BFV path proves C2 in chunks instead
@@ -52,9 +52,13 @@ impl Provable for ShareComputationCircuit {
     }
 }
 
-fn validate_c2_chunk_layout(degree: usize, chunk_size: usize) -> Result<(usize, usize), ZkError> {
+fn validate_c2_chunk_layout(
+    degree: usize,
+    n_parties: usize,
+    chunk_size: usize,
+) -> Result<(usize, usize), ZkError> {
     let layout = C2ChunkLayout::from_degree_chunk_size(degree, chunk_size)?;
-    let compiled = C2ChunkLayout::compiled(degree)?;
+    let compiled = C2ChunkLayout::compiled(degree, n_parties)?;
     if layout.chunk_count != compiled.chunk_count {
         return Err(ZkError::InvalidInput(format!(
             "C2 chunk size {chunk_size} produces {} chunks, but the selected artifacts require {}",
@@ -121,12 +125,13 @@ pub fn prove_chunked_share_computation(
         data,
         e3_id,
         artifacts_dir,
-        DEFAULT_C2_CHUNK_SIZE.min(
+        c2_chunk_size(
             preset
                 .threshold_counterpart()
                 .unwrap_or(preset)
                 .metadata()
                 .degree,
+            data.n_parties as usize,
         ),
     )
 }
@@ -144,7 +149,8 @@ pub fn prove_chunked_share_computation_with_chunk_size(
         .unwrap_or(preset)
         .metadata()
         .degree;
-    let (chunk_count, _batch_count) = validate_c2_chunk_layout(degree, chunk_size)?;
+    let (chunk_count, _batch_count) =
+        validate_c2_chunk_layout(degree, data.n_parties as usize, chunk_size)?;
     let inputs = Inputs::compute(preset, data)
         .map_err(|e| ZkError::InputsGenerationFailed(e.to_string()))?;
     let base_json = inputs
@@ -272,6 +278,7 @@ pub fn prove_chunked_share_computation_with_chunk_size(
         &chunks,
         chunk_count,
         degree,
+        data.n_parties as usize,
         e3_id,
         artifacts_dir,
     )?;
@@ -297,6 +304,13 @@ mod tests {
 
     #[test]
     fn rejects_chunk_size_with_a_different_compiled_chunk_count() {
-        assert!(validate_c2_chunk_layout(8192, 256).is_err());
+        assert!(validate_c2_chunk_layout(8192, 3, 256).is_err());
+    }
+
+    #[test]
+    fn secure_16384_accepts_only_the_committee_chunk_size() {
+        assert!(validate_c2_chunk_layout(16384, 3, 4096).is_ok());
+        assert!(validate_c2_chunk_layout(16384, 3, 512).is_err());
+        assert!(validate_c2_chunk_layout(16384, 19, 512).is_ok());
     }
 }

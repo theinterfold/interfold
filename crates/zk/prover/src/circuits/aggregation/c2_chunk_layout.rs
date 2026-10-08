@@ -10,9 +10,7 @@
 //! Runtime code must not re-derive `chunk_count`, `chunks_per_batch`, or
 //! `batch_count` from independent constants; use [`C2ChunkLayout`] instead.
 
-use crate::circuits::aggregation::c2_chunk_config::{
-    DEFAULT_C2_CHUNKS_PER_BATCH, DEFAULT_C2_CHUNK_SIZE,
-};
+use crate::circuits::aggregation::c2_chunk_config::{c2_chunk_size, DEFAULT_C2_CHUNKS_PER_BATCH};
 use crate::error::ZkError;
 
 /// The complete C2 chunk layout implied by a compiled artifact set.
@@ -31,20 +29,21 @@ pub struct C2ChunkLayout {
 }
 
 impl C2ChunkLayout {
-    /// Builds the layout for the compiled default chunk size, capped at the polynomial degree.
-    pub fn compiled(degree: usize) -> Result<Self, ZkError> {
-        Self::from_degree_chunk_size(degree, DEFAULT_C2_CHUNK_SIZE.min(degree))
+    /// Builds the layout the compiled artifacts use for this degree and committee size.
+    pub fn compiled(degree: usize, n_parties: usize) -> Result<Self, ZkError> {
+        Self::from_degree_chunk_size(degree, c2_chunk_size(degree, n_parties))
     }
 
-    /// Builds a layout with the compiled `chunks_per_batch` rule: a degree that
-    /// fits in a single chunk uses one batch; larger degrees use the compiled
-    /// constant batch width.
+    /// Builds a layout with the compiled `chunks_per_batch` rule: up to the
+    /// compiled batch width, every chunk goes in one batch; beyond it, batches
+    /// use that width.
     pub fn from_degree_chunk_size(degree: usize, chunk_size: usize) -> Result<Self, ZkError> {
-        let chunks_per_batch = if degree <= chunk_size {
-            1
+        let chunk_count = if chunk_size == 0 {
+            0
         } else {
-            DEFAULT_C2_CHUNKS_PER_BATCH
+            degree / chunk_size
         };
+        let chunks_per_batch = chunk_count.clamp(1, DEFAULT_C2_CHUNKS_PER_BATCH);
         Self::new(degree, chunk_size, chunks_per_batch)
     }
 
@@ -93,7 +92,7 @@ mod tests {
 
     #[test]
     fn insecure_compiled_layout_is_one_chunk_one_batch() {
-        let layout = C2ChunkLayout::compiled(128).unwrap();
+        let layout = C2ChunkLayout::compiled(128, 3).unwrap();
         assert_eq!(
             layout,
             C2ChunkLayout {
@@ -108,7 +107,7 @@ mod tests {
 
     #[test]
     fn secure_compiled_layout_is_sixteen_chunks_four_batches() {
-        let layout = C2ChunkLayout::compiled(8192).unwrap();
+        let layout = C2ChunkLayout::compiled(8192, 3).unwrap();
         assert_eq!(layout.chunk_count, 16);
         assert_eq!(layout.chunks_per_batch, 4);
         assert_eq!(layout.batch_count, 4);

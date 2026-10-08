@@ -36,9 +36,14 @@ share_computation chunk grid (l-BFV)
 ************************************/
 
 pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = 128;
-pub global SHARE_COMPUTATION_N_CHUNKS: u32 = 1;
-pub global SHARE_COMPUTATION_CHUNKS_PER_BATCH: u32 = 1;
-pub global SHARE_COMPUTATION_N_BATCHES: u32 = 1;
+pub global SHARE_COMPUTATION_N_CHUNKS: u32 = N / SHARE_COMPUTATION_CHUNK_SIZE;
+pub global SHARE_COMPUTATION_CHUNKS_PER_BATCH: u32 = if SHARE_COMPUTATION_N_CHUNKS < 4 {
+    SHARE_COMPUTATION_N_CHUNKS
+} else {
+    4
+};
+pub global SHARE_COMPUTATION_N_BATCHES: u32 =
+    SHARE_COMPUTATION_N_CHUNKS / SHARE_COMPUTATION_CHUNKS_PER_BATCH;
 
 /************************************
 -------------------------------------
