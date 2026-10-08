@@ -19,7 +19,7 @@
 /// - BFV and Threshold BFV parameter sets are mutually consistent
 
 use lib::configs::default::{N_PARTIES, T};
-use lib::configs::secure::dkg::{
+use lib::configs::secure_8192::dkg::{
     L as DKG_L, L_THRESHOLD, N as DKG_N, PARITY_MATRIX, PLAINTEXT_MODULUS as DKG_PLAINTEXT_MODULUS,
     Q_MOD_T as DKG_Q_MOD_T, Q_MOD_T_CENTERED as DKG_Q_MOD_T_CENTERED, QIS as DKG_QIS, QIS_THRESHOLD,
     SHARE_ENCRYPTION_ALPHA, SHARE_ENCRYPTION_BETA, SHARE_ENCRYPTION_BIT_Q0, SHARE_ENCRYPTION_BIT_Q1,
@@ -31,7 +31,7 @@ use lib::configs::secure::dkg::{
     SHARE_ENCRYPTION_T_POW_BIT, SHARE_ENCRYPTION_U_BOUND,
 };
 
-use lib::configs::secure::threshold::{
+use lib::configs::secure_8192::threshold::{
     // Structural parameters
     N as THRESHOLD_N, L as THRESHOLD_L, PARAMS_SEARCH_Z as N_CIPHERTEXTS,
     // Moduli

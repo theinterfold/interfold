@@ -17,9 +17,7 @@ import { isPresetCommitteeSupported } from './circuit-constants'
 import {
   findArtifactRevision,
   RELEASE_REQUIRED_PAIRS,
-  refreshChecksums,
   requiredArtifactMarkers,
-  validateArtifactChecksums,
   validateArtifactSet,
   validateReleaseArtifacts,
 } from './circuit-artifacts'
