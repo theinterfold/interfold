@@ -14,7 +14,7 @@ use crate::server::{
     data_availability::{AvailabilityService, AvailableInputReference},
     models::{CensusMode, CreditMode, CurrentRound, CustomParams, E3Crisp, TokenHolder},
     program_server_request::run_compute,
-    repo::{CrispE3Repository, CurrentRoundRepository, InputSnapshot},
+    repo::{CrispE3Repository, CurrentRoundRepository, InputSnapshot, UNKNOWN_SNAPSHOT},
     rpc,
     token_holders::{build_tree, compute_token_holder_hashes},
     CONFIG,
@@ -565,8 +565,8 @@ async fn handle_e3_requested<S: DataStore>(
         e3.requester.to_string(),
         voting_end_time,
         input_deadline,
-        // Zero records an unknown snapshot, which the retry pass reads again.
-        snapshot.unwrap_or(0),
+        // The retry pass reads a snapshot that is not known yet.
+        snapshot.unwrap_or(UNKNOWN_SNAPSHOT),
     )
     .await?;
 
@@ -1265,7 +1265,7 @@ async fn settle_pending_discovery<S: DataStore>(
     // A round registered without its snapshot reads it here, from the request time on the E3.
     let snapshot = match (stored, round.snapshot_block) {
         (Some((_, snapshot)), _) => snapshot,
-        (None, 0) => {
+        (None, 0 | UNKNOWN_SNAPSHOT) => {
             let e3 = repo
                 .try_get_e3()
                 .await?

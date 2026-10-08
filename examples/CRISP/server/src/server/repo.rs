@@ -1071,14 +1071,18 @@ impl<S: DataStore> CrispE3Repository<S> {
     }
 }
 
+/// A stored snapshot that the server has not read yet: the round registered before the census
+/// token's clock could be read, and the retry pass reads it.
+pub const UNKNOWN_SNAPSHOT: u64 = u64::MAX;
+
 /// The census snapshot, in the census token's clock. A round stored before the snapshot was
-/// persisted, or registered without it (`stored_snapshot_block` is 0), falls back to the request
-/// time minus one.
+/// persisted (`stored_snapshot_block` is 0) falls back to the request time minus one, its clock
+/// then. A snapshot that is not known yet is served as 0, never as a time in another clock.
 fn snapshot_block(request_block: u64, stored_snapshot_block: u64) -> u64 {
-    if stored_snapshot_block == 0 {
-        request_block.saturating_sub(1)
-    } else {
-        stored_snapshot_block
+    match stored_snapshot_block {
+        0 => request_block.saturating_sub(1),
+        UNKNOWN_SNAPSHOT => 0,
+        stored => stored,
     }
 }
 
@@ -1236,6 +1240,8 @@ mod tests {
         assert_eq!(snapshot_block(100, 99), 99);
         assert_eq!(snapshot_block(100, 0), 99);
         assert_eq!(snapshot_block(0, 0), 0);
+        // A snapshot the server has not read yet is not served as the request time.
+        assert_eq!(snapshot_block(100, super::UNKNOWN_SNAPSHOT), 0);
     }
 
     #[tokio::test]
