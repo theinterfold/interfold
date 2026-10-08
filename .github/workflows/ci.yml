@@ -30,6 +30,12 @@ env:
   HARDHAT_VAR_INFURA_API_KEY: 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'
   PRIVATE_KEY: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
   RUST_BACKTRACE: 1
+  # Debug and test builds keep only the line tables, which backtraces need, not the full debug
+  # information that only a debugger reads. The full information made the root target directory, and
+  # every cache restore and save of it, several GB larger. .github/actions/cache-dependencies puts
+  # both values in the cache key.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 # packages: write is granted per-job to the two image builds that can push
 # (workflow_dispatch from main); everything else only needs to read the repo.

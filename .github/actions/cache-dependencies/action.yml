@@ -30,12 +30,33 @@ runs:
 
         echo "scope=$scope" >> "$GITHUB_OUTPUT"
 
+        # Artifacts built by another compiler or with other debug-information settings are useless, so
+        # the key and the restore prefix both name them.
+        toolchain="${RUST_TOOLCHAIN:?Set RUST_TOOLCHAIN to the toolchain that builds the target}"
+        echo "policy=rustc-${toolchain}-dev-${CARGO_PROFILE_DEV_DEBUG:-default}-test-${CARGO_PROFILE_TEST_DEBUG:-default}" >> "$GITHUB_OUTPUT"
+
+    # .github/workflows/rust-cache.yml writes the root target cache on main, so pull requests only
+    # restore it. When a pull request changed Cargo.lock, each of its Rust jobs compressed several GB
+    # to save the same key, all but one failed to reserve it, and the saved copy took cache space
+    # from main's.
     - name: Cache Rust dependencies
+      if: inputs.rust-target-path != 'target/' || github.event_name != 'pull_request'
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: |
           ~/.cargo/registry
           ~/.cargo/git
           ${{ inputs.rust-target-path }}
-        key: rust-deps-${{ steps.cache-key.outputs.scope }}-${{ hashFiles(inputs.cargo-lock-path) }}
-        restore-keys: rust-deps-${{ steps.cache-key.outputs.scope }}-
+        key: rust-deps-${{ steps.cache-key.outputs.scope }}-${{ steps.cache-key.outputs.policy }}-${{ hashFiles(inputs.cargo-lock-path) }}
+        restore-keys: rust-deps-${{ steps.cache-key.outputs.scope }}-${{ steps.cache-key.outputs.policy }}-
+
+    - name: Restore Rust dependencies
+      if: inputs.rust-target-path == 'target/' && github.event_name == 'pull_request'
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          ${{ inputs.rust-target-path }}
+        key: rust-deps-${{ steps.cache-key.outputs.scope }}-${{ steps.cache-key.outputs.policy }}-${{ hashFiles(inputs.cargo-lock-path) }}
+        restore-keys: rust-deps-${{ steps.cache-key.outputs.scope }}-${{ steps.cache-key.outputs.policy }}-

@@ -5,12 +5,14 @@ name: rust-cache
 # main, and the first run of every pull request compiled the whole workspace from scratch.
 #
 # This job builds what the `ci` Rust jobs compile and saves it on main under the same key as
-# `.github/actions/cache-dependencies`. A pull request with the same Cargo.lock restores it by exact
-# key and does not save its own copy.
+# `.github/actions/cache-dependencies`. Pull requests only restore the root target cache: this job is
+# its one writer.
 #
-# The key changes only with Cargo.lock, so this runs when Cargo.lock changes. Workspace crates
-# compiled from an older main recompile incrementally; dependencies, the bulk of the build, do not.
-# Keep RUST_TOOLCHAIN equal to the value in ci.yml: artifacts from another rustc are not reusable.
+# The key changes with Cargo.lock, the toolchain and the debug-information settings, so this runs
+# when Cargo.lock or the cache configuration changes. Workspace crates compiled from an older main
+# recompile incrementally; dependencies, the bulk of the build, do not. Keep RUST_TOOLCHAIN and the
+# CARGO_PROFILE_* values equal to those in ci.yml: artifacts built with other values are not
+# reusable.
 
 on:
   push:
@@ -32,6 +34,12 @@ permissions:
 env:
   NODE_VERSION: 22
   RUST_TOOLCHAIN: 1.91.1
+  # Debug and test builds keep only the line tables, which backtraces need, not the full debug
+  # information that only a debugger reads. The full information made the root target directory, and
+  # every cache restore and save of it, several GB larger. .github/actions/cache-dependencies puts
+  # both values in the cache key.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 jobs:
   warm:
