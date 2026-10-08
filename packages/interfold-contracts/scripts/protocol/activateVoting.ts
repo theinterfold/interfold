@@ -4,9 +4,10 @@ import { deploymentPath, readJson, writeJson } from "./files";
 import type { ProtocolDeployment } from "./types";
 import {
   deployedAddress,
-  hasBondedDelegation,
   loadConfig,
+  readExcludedAccounts,
   requireContract,
+  sameAccounts,
 } from "./values";
 
 /**
@@ -17,8 +18,10 @@ import {
  * the registry is only initialized by the governance batch that `--action deploy` writes. Running this
  * before that batch executes fails loudly rather than producing an adapter bound to nothing.
  *
- * A recorded adapter from before bonded delegation is refused, not reused. Replacing it moves the
- * address that governance and CRISP rounds read, so the operator clears the record on purpose.
+ * A recorded adapter is reused only when it excludes exactly `bondedVotesExcludedAccounts`. An
+ * adapter from before the exclusion list, or one with a different list, is refused, not reused.
+ * Replacing it moves the address that governance and CRISP rounds read, so the operator clears the
+ * record on purpose.
  *
  * Nothing here needs a Safe transaction: `BondedVotes` has no owner and no privileged functions.
  */
@@ -60,17 +63,26 @@ export async function actionActivateVoting(): Promise<void> {
     );
   }
 
+  const excludedAccounts = config.bondedVotesExcludedAccounts ?? [];
+
   if (deployment.bondedVotes) {
     await requireContract(
       ethers.provider,
       deployment.bondedVotes,
       "bondedVotes",
     );
-    if (!(await hasBondedDelegation(ethers.provider, deployment.bondedVotes))) {
+    const deployed = await readExcludedAccounts(
+      ethers.provider,
+      deployment.bondedVotes,
+    );
+    if (!deployed || !sameAccounts(deployed, excludedAccounts)) {
       throw new Error(
-        `BondedVotes at ${deployment.bondedVotes} predates bonded delegation. To replace it, ` +
-          `remove bondedVotes from ${deploymentPath(config)} and run this action again, ` +
-          "then point the governance plugin and new CRISP rounds at the new address.",
+        `BondedVotes at ${deployment.bondedVotes} ` +
+          (deployed
+            ? `excludes [${deployed.join(", ")}], not [${excludedAccounts.join(", ")}]. `
+            : "predates the excluded-account list. ") +
+          `To replace it, remove bondedVotes from ${deploymentPath(config)} and run this action ` +
+          "again, then point the governance plugin and new CRISP rounds at the new address.",
       );
     }
     console.log(`BondedVotes already deployed at ${deployment.bondedVotes}`);
@@ -86,6 +98,7 @@ export async function actionActivateVoting(): Promise<void> {
     config.fold,
     votesSource,
     deployment.bondedCheckpoints,
+    excludedAccounts,
   );
   await bondedVotes.waitForDeployment();
   deployment.bondedVotes = await deployedAddress(bondedVotes);
@@ -98,6 +111,7 @@ Bonded voting activated
   Votes source:      ${votesSource}${
     config.escrowVotesAdapter ? " (locked FOLD only)" : " (wallet-held FOLD)"
   }
+  Excluded:          ${excludedAccounts.length ? excludedAccounts.join(", ") : "(none)"}
 
 Point the governance plugin at BondedVotes as its voting token.
 `);

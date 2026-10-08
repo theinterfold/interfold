@@ -6,7 +6,12 @@ import { deploymentPath, readJson } from "./files";
 import { currentNodeRelease } from "./nodeRelease";
 import { assertVrfSubscription, requireRandomnessConfig } from "./randomness";
 import type { ProtocolDeployment } from "./types";
-import { hasBondedDelegation, loadConfig, requireContract } from "./values";
+import {
+  loadConfig,
+  readExcludedAccounts,
+  requireContract,
+  sameAccounts,
+} from "./values";
 
 function assertEqual(label: string, actual: unknown, expected: unknown): void {
   if (String(actual).toLowerCase() !== String(expected).toLowerCase()) {
@@ -352,12 +357,28 @@ export async function actionValidate(): Promise<void> {
         deployment.bondingRegistryProxy,
       ],
     );
-    if (await hasBondedDelegation(ethers.provider, deployment.bondedVotes)) {
-      console.log("  ok bondedVotes.bondedDelegation");
-    } else {
-      console.log(
-        "  -- bondedVotes predates bonded delegation (replace it with --action activate-voting)",
+    const excluded = await readExcludedAccounts(
+      ethers.provider,
+      deployment.bondedVotes,
+    );
+    const expectedExcluded = config.bondedVotesExcludedAccounts ?? [];
+    // An adapter from before the list excludes nobody. That is a failure only when the config
+    // excludes someone, because those accounts still vote through it.
+    if (!excluded && expectedExcluded.length > 0) {
+      throw new Error(
+        `bondedVotes predates the excluded-account list, so [${expectedExcluded.join(", ")}] ` +
+          "still vote through it. Replace it with --action activate-voting.",
       );
+    } else if (!excluded) {
+      console.log(
+        "  -- bondedVotes predates the excluded-account list (replace it with --action activate-voting)",
+      );
+    } else if (!sameAccounts(excluded, expectedExcluded)) {
+      throw new Error(
+        `bondedVotes.excludedAccounts: expected [${expectedExcluded.join(", ")}], got [${excluded.join(", ")}]`,
+      );
+    } else {
+      console.log("  ok bondedVotes.excludedAccounts");
     }
   } else {
     console.log("  -- bondedVotes not deployed yet (--action activate-voting)");

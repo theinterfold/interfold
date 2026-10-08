@@ -72,6 +72,7 @@ describe("BondedVotes", function () {
       // Votes source == the token: wallet-held FOLD votes, the original behaviour.
       await ciphernodeBondToken.getAddress(),
       await checkpoints.getAddress(),
+      [],
     ])) as unknown as BondedVotes;
 
     const bond = async (amount: bigint) => {
@@ -155,6 +156,61 @@ describe("BondedVotes", function () {
       const { settledVotes } = await loadFixture(setup);
 
       expect(await settledVotes(ethers.ZeroAddress)).to.equal(0n);
+    });
+  });
+
+  /// The treasury Safes of the Interfold Foundation and Gnosis Guild hold FOLD but have no say in
+  /// governance. Their weight counts nowhere: not at the Safe, and not at a bonded delegate.
+  describe("excluded accounts", function () {
+    async function excludedSetup() {
+      const base = await setup();
+      const excluded = (await ethers.deployContract("BondedVotes", [
+        await base.ciphernodeBondToken.getAddress(),
+        await base.ciphernodeBondToken.getAddress(),
+        await base.checkpoints.getAddress(),
+        [base.bondOwnerAddress],
+      ])) as unknown as BondedVotes;
+      return { ...base, excluded };
+    }
+
+    it("gives an excluded account no votes and no balance, and leaves others alone", async function () {
+      const { excluded, bond, bondOwnerAddress, otherHolderAddress } =
+        await loadFixture(excludedSetup);
+
+      await bond(BOND);
+      await time.increase(1);
+      const timepoint = (await time.latest()) - 1;
+
+      expect(await excluded.getPastVotes(bondOwnerAddress, timepoint)).to.equal(
+        0n,
+      );
+      expect(await excluded.getVotes(bondOwnerAddress)).to.equal(0n);
+      // Aragon admits members and proposal creators by `balanceOf` as well as by votes.
+      expect(await excluded.balanceOf(bondOwnerAddress)).to.equal(0n);
+      expect(
+        await excluded.getPastVotes(otherHolderAddress, timepoint),
+      ).to.equal(MINTED);
+    });
+
+    it("stops an excluded account from giving or receiving bonded weight", async function () {
+      const {
+        excluded,
+        bondOwner,
+        bondOwnerAddress,
+        otherHolder,
+        otherHolderAddress,
+      } = await loadFixture(excludedSetup);
+
+      await expect(
+        excluded.connect(bondOwner).delegateBonded(otherHolderAddress),
+      )
+        .to.be.revertedWithCustomError(excluded, "ExcludedAccount")
+        .withArgs(bondOwnerAddress);
+      await expect(
+        excluded.connect(otherHolder).delegateBonded(bondOwnerAddress),
+      )
+        .to.be.revertedWithCustomError(excluded, "ExcludedAccount")
+        .withArgs(bondOwnerAddress);
     });
   });
 
@@ -870,7 +926,12 @@ describe("BondedVotes", function () {
       const factory = await ethers.getContractFactory("BondedVotes");
 
       await expect(
-        factory.deploy(tokenAddress, tokenAddress, await foreign.getAddress()),
+        factory.deploy(
+          tokenAddress,
+          tokenAddress,
+          await foreign.getAddress(),
+          [],
+        ),
       )
         .to.be.revertedWithCustomError(factory, "TokenMismatch")
         .withArgs(await signer.getAddress(), tokenAddress);
@@ -1260,6 +1321,7 @@ describe("BondedVotes", function () {
         foldAddress,
         await adapter.getAddress(),
         await checkpoints.getAddress(),
+        [],
       ])) as unknown as BondedVotes;
 
       return { ...base, escrow, adapter, veBondedVotes, foldAddress };
@@ -1457,6 +1519,7 @@ describe("BondedVotes", function () {
           foldAddress,
           await foreignAdapter.getAddress(),
           await checkpoints.getAddress(),
+          [],
         ]),
       ).to.be.revert(ethers);
     });
@@ -1473,6 +1536,7 @@ describe("BondedVotes", function () {
           foldAddress,
           await adapter.getAddress(),
           await checkpoints.getAddress(),
+          [],
         ]),
       ).to.be.revert(ethers);
     });
@@ -1627,6 +1691,7 @@ describe("BondedVotes", function () {
                 locklessAddress,
               ])
             ).getAddress(),
+            [],
           ]),
         ).to.be.revertedWithCustomError(
           veBondedVotes,
@@ -1644,6 +1709,7 @@ describe("BondedVotes", function () {
                 foldAddress,
               ])
             ).getAddress(),
+            [],
           ]),
         ).to.not.be.revert(ethers);
       });
@@ -1664,6 +1730,7 @@ describe("BondedVotes", function () {
                 locklessAddress,
               ])
             ).getAddress(),
+            [],
           ]),
         ).to.not.be.revert(ethers);
       });

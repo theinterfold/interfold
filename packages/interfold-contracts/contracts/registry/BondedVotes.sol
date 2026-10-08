@@ -51,9 +51,9 @@ interface IVotingEscrow {
  * unable to help meet it.
  *
  * This contract restores that weight by reading both sources at the same timepoint. It holds no
- * privileges, and its only state is the bonded delegation below, which owners and delegates set
- * for themselves. It reads the token and the registry and writes neither, so it can be deployed,
- * replaced or ignored without touching either.
+ * privileges. Its state is the excluded accounts, fixed at construction, and the bonded delegation
+ * below, which owners and delegates set for themselves. It reads the token and the registry and
+ * writes neither, so it can be deployed, replaced or ignored without touching either.
  *
  * TWO TOKEN REFERENCES, ON PURPOSE. `token` is FOLD: it supplies the metadata and, critically,
  * the quorum DENOMINATOR. `votesSource` supplies the per-account NUMERATOR. They are separate
@@ -104,6 +104,16 @@ interface IVotingEscrow {
  *   - Both directions are checkpointed together on the token's clock. At every timepoint an
  *     owner's bonded weight counts at the owner or at exactly one delegate, and a later change
  *     never moves the weight for a timepoint that has already settled.
+ *
+ * EXCLUDED ACCOUNTS. The constructor takes a fixed list of accounts that have no voting power
+ * here, such as the treasury Safes of the Interfold Foundation and Gnosis Guild. {getPastVotes},
+ * {getVotes} and {balanceOf} return zero for them, and they can neither give nor receive bonded
+ * weight, so their bonded and vesting-locked FOLD counts at no account. The list cannot change
+ * after deployment. This contract cannot see delegation inside the votes source: FOLD that an
+ * excluded account delegates on the token, or escrowed FOLD that it delegates on the escrow,
+ * still counts at that delegate, and FOLD delegated to an excluded account there counts nowhere.
+ * The denominator is not changed, so the FOLD of an excluded
+ * account stays in {getPastTotalSupply}.
  */
 contract BondedVotes is IERC5805 {
     using Checkpoints for Checkpoints.Trace208;
@@ -142,6 +152,12 @@ contract BondedVotes is IERC5805 {
     mapping(address delegatee => Checkpoints.Trace208[MAX_BONDED_OWNERS])
         private _bondedOwners;
 
+    /// @notice Whether `account` has no voting power here. Set at construction only.
+    mapping(address account => bool) public isExcluded;
+
+    /// @dev The accounts in {isExcluded}, in constructor order, so a deployment can be checked.
+    address[] private _excludedAccounts;
+
     /// @notice Thrown when a constructor argument is the zero address.
     error ZeroAddress();
 
@@ -172,6 +188,9 @@ contract BondedVotes is IERC5805 {
     /// @notice Thrown when {dropBonded} names an owner that the caller does not represent.
     error NotBondedDelegate(address owner, address delegatee);
 
+    /// @notice Thrown when an excluded account would give or receive bonded weight.
+    error ExcludedAccount(address account);
+
     /// @notice `owner` asked `delegatee` to represent its bonded weight, or withdrew its request
     /// when `delegatee` is zero.
     event BondedDelegationRequested(
@@ -195,11 +214,13 @@ contract BondedVotes is IERC5805 {
      * @param _votesSource Where per-account voting power is read. Pass `_token` itself to count
      * wallet-held FOLD, or an escrow IVotes adapter to count only locked FOLD.
      * @param _checkpoints The bonded-history contract.
+     * @param excludedAccounts_ Accounts that have no voting power here. Duplicates are ignored.
      */
     constructor(
         IVotes _token,
         IVotes _votesSource,
-        IBondedCheckpoints _checkpoints
+        IBondedCheckpoints _checkpoints,
+        address[] memory excludedAccounts_
     ) {
         if (address(_token) == address(0)) revert ZeroAddress();
         if (address(_votesSource) == address(0)) revert ZeroAddress();
@@ -238,6 +259,18 @@ contract BondedVotes is IERC5805 {
         escrow = _bindVotesSource(_token, _votesSource, tokenClock);
         checkpoints = _checkpoints;
         registry = boundRegistry;
+        _exclude(excludedAccounts_);
+    }
+
+    /// @dev Records the accounts that have no voting power here. Called by the constructor only.
+    function _exclude(address[] memory accounts) private {
+        for (uint256 i = 0; i < accounts.length; ++i) {
+            address account = accounts[i];
+            if (account == address(0)) revert ZeroAddress();
+            if (isExcluded[account]) continue;
+            isExcluded[account] = true;
+            _excludedAccounts.push(account);
+        }
     }
 
     /// @dev Checks a votes source may be summed with this token's history, and resolves the
@@ -304,17 +337,24 @@ contract BondedVotes is IERC5805 {
         return IERC5805(address(token)).CLOCK_MODE();
     }
 
+    /// @notice The accounts that have no voting power here.
+    /// @return The excluded accounts, in constructor order.
+    function excludedAccounts() external view returns (address[] memory) {
+        return _excludedAccounts;
+    }
+
     /// @inheritdoc IVotes
     /// @dev The numerator: whatever the primary source attributes to the account, plus its own
     /// bonded weight unless a delegate represents it, plus the bonded weight of each owner that it
     /// represents. Bonded weight is the bonded FOLD and, under an escrow votes source, the
     /// vesting-locked FOLD that the owner cannot escrow. Everything is FOLD-denominated and read at
-    /// the same timepoint.
+    /// the same timepoint. Zero for an excluded account.
     function getPastVotes(
         address account,
         uint256 timepoint
     ) external view returns (uint256) {
         uint48 key = _settled(timepoint);
+        if (isExcluded[account]) return 0;
         uint256 votes = votesSource.getPastVotes(account, timepoint);
 
         if (_bondedDelegates[account].upperLookupRecent(key) == 0) {
@@ -421,8 +461,10 @@ contract BondedVotes is IERC5805 {
     /// @dev Every half reads the present. Pairing a current wallet balance with
     /// `getPastBonded(account, clock() - 1)` would sum two different instants: a claim or a slash
     /// in this block would leave the bonded half stale and high, so the total could exceed what
-    /// the owner holds — and, summed across owners, exceed total supply.
+    /// the owner holds — and, summed across owners, exceed total supply. Zero for an excluded
+    /// account.
     function getVotes(address account) external view returns (uint256) {
+        if (isExcluded[account]) return 0;
         uint256 votes = votesSource.getVotes(account);
 
         if (_bondedDelegates[account].latest() == 0) {
@@ -465,10 +507,13 @@ contract BondedVotes is IERC5805 {
     /// @dev Ends the caller's current delegation at once, so a change of delegate never leaves the
     /// weight with the old delegate while the new one decides. Zero, or the caller's own address,
     /// withdraws the request and keeps the weight with the caller. A request for the delegate that
-    /// already represents the caller changes nothing.
+    /// already represents the caller changes nothing. Reverts with {ExcludedAccount} when the
+    /// caller or `delegatee` is excluded, so excluded bonded weight never counts at a delegate.
     /// @param delegatee The account that is to represent the caller's bonded weight.
     function delegateBonded(address delegatee) external {
+        if (isExcluded[msg.sender]) revert ExcludedAccount(msg.sender);
         if (delegatee == msg.sender) delegatee = address(0);
+        if (isExcluded[delegatee]) revert ExcludedAccount(delegatee);
         address current = bondedDelegate(msg.sender);
         if (delegatee != address(0) && delegatee == current) return;
 
@@ -587,9 +632,13 @@ contract BondedVotes is IERC5805 {
     /// addresses would place the same tokens twice and push the summed balances above total
     /// supply — which is exactly what any holder-percentage view divides by. What remains for the
     /// registry is genuine surplus it holds on its own account.
+    ///
+    /// Zero for an excluded account. Aragon's `TokenVoting` reads `balanceOf` to admit members and
+    /// proposal creators, so a non-zero balance would give an excluded account governance power.
     /// @param account The account to read.
     /// @return Attributable wallet balance plus bonded total.
     function balanceOf(address account) external view returns (uint256) {
+        if (isExcluded[account]) return 0;
         uint256 held = IERC20Metadata(address(token)).balanceOf(account);
 
         if (account == registry) {

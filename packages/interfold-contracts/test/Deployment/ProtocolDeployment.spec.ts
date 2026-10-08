@@ -35,7 +35,10 @@ import type {
   ProtocolDeployment,
   VrfSortitionUpgradePlan,
 } from "../../scripts/protocol/types";
-import { hasBondedDelegation, loadConfig } from "../../scripts/protocol/values";
+import {
+  loadConfig,
+  readExcludedAccounts,
+} from "../../scripts/protocol/values";
 import { requiredActiveOperatorsForSecureCrisp } from "../../scripts/upgrade/resumeSecureCrisp";
 import { BondingRegistry__factory as BondingRegistryFactory } from "../../types";
 
@@ -512,37 +515,39 @@ describe("Protocol deployment", function () {
     expect(calls).to.equal(2);
   });
 
-  /// `activate-voting` and the deploy scripts reuse a recorded `BondedVotes` only when this probe
-  /// passes. An adapter from before bonded delegation takes the same constructor arguments, so its
-  /// code is the only thing that tells the two apart.
-  it("tells a BondedVotes with bonded delegation from older code", async function () {
+  /// `activate-voting` and the deploy scripts reuse a recorded `BondedVotes` only when the accounts
+  /// that it excludes match the config. An older adapter can take the same token, votes source and
+  /// history, so its code is the only thing that tells the two apart.
+  it("reads the excluded accounts of a BondedVotes, and none from older code", async function () {
     const token = await ethers.deployContract("MockVotesToken");
     const history = await ethers.deployContract("MockBondedCheckpointsStub", [
       await token.getAddress(),
     ]);
+    const excluded = ethersLib.Wallet.createRandom().address;
     const adapter = await ethers.deployContract("BondedVotes", [
       await token.getAddress(),
       await token.getAddress(),
       await history.getAddress(),
+      [excluded, excluded],
     ]);
 
     expect(
-      await hasBondedDelegation(ethers.provider, await adapter.getAddress()),
-    ).to.equal(true);
-    // Like an adapter from before bonded delegation, the stub has no `bondedDelegate` and no
+      await readExcludedAccounts(ethers.provider, await adapter.getAddress()),
+    ).to.deep.equal([excluded]);
+    // Like an adapter from before the exclusion list, the stub has no `excludedAccounts` and no
     // fallback, so the call reverts with no data.
     expect(
-      await hasBondedDelegation(ethers.provider, await history.getAddress()),
-    ).to.equal(false);
+      await readExcludedAccounts(ethers.provider, await history.getAddress()),
+    ).to.equal(undefined);
     expect(
-      await hasBondedDelegation(
+      await readExcludedAccounts(
         ethers.provider,
         ethersLib.Wallet.createRandom().address,
       ),
-    ).to.equal(false);
+    ).to.equal(undefined);
   });
 
-  it("rejects a bonded-delegation probe that the RPC cannot answer", async function () {
+  it("rejects an excluded-account probe that the RPC cannot answer", async function () {
     const provider = {
       call: async () => {
         throw new Error("RPC unavailable");
@@ -550,7 +555,7 @@ describe("Protocol deployment", function () {
     } as unknown as ethersLib.Provider;
 
     await expect(
-      hasBondedDelegation(provider, ethersLib.ZeroAddress),
+      readExcludedAccounts(provider, ethersLib.ZeroAddress),
     ).to.be.rejectedWith("RPC unavailable");
   });
 

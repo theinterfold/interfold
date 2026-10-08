@@ -9,7 +9,7 @@ import {
   BondedVotes,
   BondedVotes__factory as BondedVotesFactory,
 } from "../../types";
-import { hasBondedDelegation } from "../protocol/values";
+import { readExcludedAccounts, sameAccounts } from "../protocol/values";
 import {
   getDeploymentChain,
   readDeploymentArgs,
@@ -30,6 +30,8 @@ export interface BondedVotesArgs {
   votesSource?: string;
   /** The bonded-history contract to read alongside the votes source. */
   checkpoints: string;
+  /** Accounts that have no voting power in the adapter. Defaults to none. */
+  excludedAccounts?: string[];
   hre: HardhatRuntimeEnvironment;
 }
 
@@ -47,6 +49,7 @@ export const deployAndSaveBondedVotes = async ({
   token,
   votesSource,
   checkpoints,
+  excludedAccounts = [],
   hre,
 }: BondedVotesArgs): Promise<{ bondedVotes: BondedVotes }> => {
   const resolvedVotesSource = votesSource ?? token;
@@ -55,14 +58,20 @@ export const deployAndSaveBondedVotes = async ({
   const chain = getDeploymentChain(hre);
 
   const preDeployedArgs = readDeploymentArgs("BondedVotes", chain);
-  // All three references are immutable, so a record for a different triple cannot be reused. A
-  // record from before bonded delegation has the same triple, so the code is checked too.
-  if (
+  // All references and the excluded accounts are immutable, so a record for different arguments
+  // cannot be reused. A record from before the exclusion list can have the same three references,
+  // so the code is read too.
+  const recorded =
     preDeployedArgs?.address &&
     preDeployedArgs?.constructorArgs?.token === token &&
     preDeployedArgs?.constructorArgs?.votesSource === resolvedVotesSource &&
-    preDeployedArgs?.constructorArgs?.checkpoints === checkpoints &&
-    (await hasBondedDelegation(ethers.provider, preDeployedArgs.address))
+    preDeployedArgs?.constructorArgs?.checkpoints === checkpoints
+      ? await readExcludedAccounts(ethers.provider, preDeployedArgs.address)
+      : undefined;
+  if (
+    preDeployedArgs?.address &&
+    recorded &&
+    sameAccounts(recorded, excludedAccounts)
   ) {
     return {
       bondedVotes: BondedVotesFactory.connect(preDeployedArgs.address, signer),
@@ -74,6 +83,7 @@ export const deployAndSaveBondedVotes = async ({
     token,
     resolvedVotesSource,
     checkpoints,
+    excludedAccounts,
   );
   await bondedVotes.waitForDeployment();
 
@@ -84,6 +94,7 @@ export const deployAndSaveBondedVotes = async ({
         token,
         votesSource: resolvedVotesSource,
         checkpoints,
+        excludedAccounts,
       },
       blockNumber: await ethers.provider.getBlockNumber(),
       address,

@@ -67,6 +67,11 @@ export interface ProtocolConfigFile {
    * Omit to count wallet-held FOLD, which is the original behaviour.
    */
   escrowVotesAdapter?: string;
+  /**
+   * Accounts that have no voting power in `BondedVotes`, such as the treasury Safes. Fixed at
+   * construction, so a change needs a new `BondedVotes`. Omit for none.
+   */
+  bondedVotesExcludedAccounts?: string[];
   bondingRegistryProxy: string;
   bondingRegistryProxyAdmin: string;
   feeToken: string;

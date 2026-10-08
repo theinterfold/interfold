@@ -231,6 +231,7 @@ async function appendBondedVotingTxs(
     config.fold,
     config.escrowVotesAdapter ?? config.fold,
     bondedCheckpoints,
+    config.bondedVotesExcludedAccounts ?? [],
   );
   await votes.waitForDeployment();
   const bondedVotes = await deployedAddress(votes);

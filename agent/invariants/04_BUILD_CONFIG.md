@@ -61,12 +61,11 @@ every section.
   source commit, lockfile and artifact digests, OpenVM application commitments, worker identity
   validation, and the deployed protocol, receipt, and Halo2 verifiers to one record. The generator
   reports `complete: false` with the unresolved fields rather than emitting a partial record that
-  reads as verified. An artifact SHA-256 is **not** an application commitment or receipt identity.
-  A complete record does not establish source reproducibility; retain independent rebuild evidence.
-  Procedure:
-  `docs/pages/build/e3-program/verify-compute-provider.mdx`. **Gap:** the release workflow does not
-  generate or attach this manifest (`.github/workflows/releases.yml`); a maintainer runs
-  `pnpm provenance:manifest` by hand.
+  reads as verified. An artifact SHA-256 is **not** an application commitment or receipt identity. A
+  complete record does not establish source reproducibility; retain independent rebuild evidence.
+  Procedure: `docs/pages/build/e3-program/verify-compute-provider.mdx`. **Gap:** the release
+  workflow does not generate or attach this manifest (`.github/workflows/releases.yml`); a
+  maintainer runs `pnpm provenance:manifest` by hand.
 - Upgradeable-contract storage baselines are committed and CI-gated (missing baselines, compiler
   drift, layout incompatibility, bad gap consumption all fail); baseline creation is an explicit
   maintainer command. — INDEX concern #27
@@ -79,9 +78,8 @@ every section.
   `BondingRegistry`, `CiphernodeRegistryOwnable`, and the canonical `insecure-512/minimum`
   aggregator verifiers. Every deployed verifier variant must fit, but CI does not measure the other
   variants. — `scripts/checkContractSize.ts`; INDEX concern #22
-- BFV circuit-verifier and OpenVM receipt-verifier constructors require deployed verifier
-  contracts. BFV circuit wrappers also require nonzero recursive VK hashes. — INDEX concerns #21,
-  Z-15
+- BFV circuit-verifier and OpenVM receipt-verifier constructors require deployed verifier contracts.
+  BFV circuit wrappers also require nonzero recursive VK hashes. — INDEX concerns #21, Z-15
 - CLI secrets enter through **stdin or hidden prompts**, never argv or the environment. Wallet keys
   are never stored in plaintext. `password set`, `wallet set`, and `ciphernode setup` reject
   secret-value options and name the stdin or prompt alternative. Repository callers pipe secrets
@@ -113,9 +111,11 @@ every section.
   be built until that batch has executed. `protocol/validate` reads back
   `bonding.bondedCheckpoints()` and `bondedCheckpoints.registry()`, and adds `bondedVotes.token()`,
   `bondedVotes.checkpoints()` and `bondedVotes.registry()` once the adapter exists. Those read-backs
-  cannot tell an adapter from before bonded delegation from a current one, because both take the
-  same constructor arguments. `hasBondedDelegation` probes the code instead: `activate-voting`
-  refuses such a recorded adapter, `validate` prints a `--` line for it, and
+  cannot tell an adapter from before the excluded-account list from a current one, because both can
+  have the same token, votes source and history. `readExcludedAccounts` probes the code instead:
+  `activate-voting` reuses a recorded adapter only when its excluded accounts equal
+  `bondedVotesExcludedAccounts`, `validate` fails on a different list and on an older adapter when
+  the config excludes any account (otherwise it prints a `--` line for an older adapter), and
   `deployAndSaveBondedVotes` deploys a replacement. Upgrading an existing deployment through
   `upgrade/safeProxyUpgrade` deploys and attaches the pair when none is attached yet, and appends a
   `resyncBondedCheckpoint` call for each `bondedResyncOwners` entry — attaching does not backfill,

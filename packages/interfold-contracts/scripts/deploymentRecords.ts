@@ -255,6 +255,7 @@ export function syncProtocolDeploymentRecords(
           token: config.fold,
           votesSource: config.escrowVotesAdapter ?? config.fold,
           checkpoints: deployment.bondedCheckpoints,
+          excludedAccounts: config.bondedVotesExcludedAccounts ?? [],
         },
       },
       "BondedVotes",
