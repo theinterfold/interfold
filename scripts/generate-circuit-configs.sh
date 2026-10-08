@@ -159,9 +159,15 @@ for preset in "${SELECT_PRESETS[@]}"; do
             echo "  → $preset/$committee/$circuit_path  (zk_cli --circuit $zk_circuit --preset $zk_preset --committee $committee)"
             if "${cmd[@]}"; then
                 if [[ "$circuit_path" == "dkg/sk_share_computation_chunk" || "$circuit_path" == "dkg/esm_share_computation_chunk" ]]; then
+                    # Mirrors e3_zk_helpers::circuits::dkg::share_computation::c2_chunk_size.
                     chunk_size=512
                     if [[ "$preset" == "insecure" ]]; then
                         chunk_size=128
+                    elif [[ "$preset" == "secure-16384" ]]; then
+                        case "$committee" in
+                            minimum) chunk_size=4096 ;;
+                            micro) chunk_size=1024 ;;
+                        esac
                     fi
                     mv "$out_dir/Prover.toml" "$out_dir/Prover.full.toml"
                     python3 "$REPO_ROOT/circuits/benchmarks/scripts/extract_share_computation_chunk.py" \

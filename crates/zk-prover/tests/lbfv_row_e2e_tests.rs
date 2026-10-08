@@ -27,7 +27,8 @@ use e3_zk_helpers::threshold::pk_generation::{
 use e3_zk_helpers::threshold::rlk_aggregation::{RlkAggregationCircuit, RlkAggregationCircuitData};
 use e3_zk_helpers::{CiphernodesCommitteeSize, CircuitComputation, Computation};
 use e3_zk_prover::{
-    load_staged_lbfv_pk_generation_limb_vk_hash, prove_lbfv_pk_generation_row, Provable, ZkProver,
+    c2_chunk_size, load_staged_lbfv_pk_generation_limb_vk_hash, prove_lbfv_pk_generation_row,
+    Provable, ZkProver,
 };
 use num_bigint::BigInt;
 
@@ -133,7 +134,7 @@ async fn secure_lbfv_row_circuits_prove_verify_and_expose_exact_commitments() {
             compute_sc_sk_secret_root_commitment(
                 &generation_sample.sk,
                 generation_bits.sk_bit,
-                512,
+                c2_chunk_size(preset.metadata().degree, committee.n),
             ),
             compute_lbfv_pk_row_commitment(
                 generation_sample.row_index,
