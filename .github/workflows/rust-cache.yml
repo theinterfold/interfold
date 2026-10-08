@@ -44,6 +44,9 @@ env:
   # both values in the cache key.
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
   CARGO_PROFILE_TEST_DEBUG: line-tables-only
+  # Every ci job rebuilds the workspace crates from scratch after its checkout, so incremental data
+  # only costs time: on a 12-thread host that rebuild took 185 s without it and 426 s with it.
+  CARGO_INCREMENTAL: 0
 
 jobs:
   warm:
@@ -104,3 +107,18 @@ jobs:
       - name: Build the release circuit tools
         if: steps.cache.outputs.cache-hit != 'true'
         run: cargo build --release -p e3-zk-helpers --bins
+
+      # A checkout gives the workspace sources new modification times, so every ci job rebuilds the
+      # workspace crates and relinks their test binaries, and reuses only the dependencies' artifacts.
+      # The workspace outputs and incremental data were 16 of the 20 GB that the entry unpacked to,
+      # and restoring the entry took up to four minutes per job. What is left is about 3.7 GB.
+      - name: Keep only the dependencies' artifacts
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          packages=()
+          for package in $(cargo metadata --no-deps --format-version 1 | jq -r '.packages[].name'); do
+            packages+=(-p "$package")
+          done
+          cargo clean "${packages[@]}"
+          cargo clean --release "${packages[@]}"
+          rm -rf target/debug/incremental target/release/incremental
