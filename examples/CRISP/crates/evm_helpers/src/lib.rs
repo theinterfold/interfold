@@ -558,7 +558,12 @@ impl CRISPContract<CRISPWriteProvider> {
         let provider = self.provider.as_ref();
         let contract = CRISPProgram::new(self.contract_address, provider);
         let accepted = contract
-            .verify(e3_id, ciphertext_output_hash, ciphertext_commitment, proof.clone())
+            .verify(
+                e3_id,
+                ciphertext_output_hash,
+                ciphertext_commitment,
+                proof.clone(),
+            )
             .call()
             .await?;
         eyre::ensure!(accepted, "CRISP rejected the aggregate ciphertext proof");

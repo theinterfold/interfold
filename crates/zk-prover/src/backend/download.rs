@@ -1219,7 +1219,10 @@ mod tests {
         let result = unpinned
             .install_circuits_archive_for_configurations(&archive_path, &configurations, false)
             .await;
-        assert!(matches!(result, Err(ZkError::ChecksumMissing(_))), "{result:?}");
+        assert!(
+            matches!(result, Err(ZkError::ChecksumMissing(_))),
+            "{result:?}"
+        );
 
         let other = pinned_to(hex::encode(Sha256::digest(b"another archive")), &temp);
         let result = other
