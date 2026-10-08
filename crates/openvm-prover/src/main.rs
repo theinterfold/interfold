@@ -279,8 +279,8 @@ fn absolute(path: &Path) -> Result<PathBuf> {
         .map_err(|error| eyre::eyre!("Cannot resolve {}: {error}", path.display()))
 }
 
-/// Writes the configuration for the keys `prepare` made and the artifacts `cargo openvm setup`
-/// downloaded.
+/// Writes the configuration for the keys `prepare` made and the artifacts that
+/// `cargo openvm setup --evm` downloaded.
 fn write_config(paths: &[PathBuf]) -> Result<()> {
     ensure!(
         paths.len() == 6,

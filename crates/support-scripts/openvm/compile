@@ -44,8 +44,9 @@ if ! "${CARGO_OPENVM[@]}" --version >/dev/null 2>&1; then
   exit 1
 fi
 if [ ! -f "$SETUP/halo2.pk" ] || [ ! -d "$SETUP/params" ]; then
-  echo "No Halo2 proving key and parameters in $SETUP. Run \`cargo openvm setup\`, or set" \
-    "program.openvm.setup_dir to where they are." >&2
+  echo "No Halo2 proving key and parameters in $SETUP. Run \`cargo openvm setup --evm\`" \
+    "(add --download for OpenVM's prebuilt key and verifier), or set program.openvm.setup_dir" \
+    "to where they are." >&2
   exit 1
 fi
 
