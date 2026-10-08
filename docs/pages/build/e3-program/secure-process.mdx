@@ -239,6 +239,12 @@ Other limits:
 
 - BFV arithmetic is modulo the plaintext modulus. With parameter set `0` the modulus is 100, so 60 +
   50 decrypts to 10.
+- Each preset has an addition budget, `z` (`SEARCH_Z` in `crates/fhe-params/src/constants.rs`). The
+  ciphernodes make the smudging noise of their decryption shares large enough for an output of at
+  most `z` fresh ciphertexts added together. `z` is 100,000 for parameter set `2` and 1,024 for
+  parameter set `0`. With a larger sum, the smudging noise protects the secret key shares with less
+  statistical security than the preset specifies. A product with a plaintext also increases the
+  noise, and `z` does not count it.
 - The processor returns `Vec<u8>`, not a `Result`. An `unwrap` that fails panics. Inside the zkVM a
   panic stops the guest, and the E3 gets no output.
 - When `select` returns no inputs, `Ciphertext::zero` has no components. The output commitment then
