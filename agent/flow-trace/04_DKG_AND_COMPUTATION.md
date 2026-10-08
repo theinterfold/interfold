@@ -411,9 +411,11 @@ and `dkg_aggregator::assert_selected_c0_c3_links` binds that export to the recip
 node's own recipient slot is exempt because its exported key comes directly from C0.
 
 The chunked C2 path keeps the same signed proof multiplicity. For each C2a/C2b request, Rust
-generates one type-bound recursive proof per chunk. The default chunk size is the smaller of 512
-coefficients and the preset polynomial degree. The insecure degree-128 preset therefore uses 128
-coefficients per chunk. The `--chunk-size` option accepts any nonzero divisor of the preset
+generates one type-bound recursive proof per chunk. The default chunk size is
+`c2_chunk_size(degree, n_parties)`. At degree 16384 it depends on the committee: 4096 coefficients
+for up to 4 parties, 1024 for up to 12, and 512 above. Other degrees use the smaller of 512 and the
+degree, so the insecure degree-128 preset uses 128 coefficients per chunk. A batch holds up to four
+chunks. The `--chunk-size` option accepts any nonzero divisor of the preset
 polynomial degree for generated circuit configuration. The production multithread path selects the
 preset default chunk size. Rust groups the chunk proofs into fixed recursive batches and verifies
 all batches in a type-bound terminal circuit. The terminal circuits reconstruct a root commitment
@@ -426,8 +428,8 @@ computation), C3 (share encryption), and C4 (share decryption) witness computati
 generated `configs.nr` values (`SHARE_COMPUTATION_CHUNK_SIZE` / `SHARE_COMPUTATION_N_CHUNKS`), so
 the witness always matches the circuit parameters the artifacts were generated against. The
 generated `configs.nr` `N` and `L` values come from the same parameter object that drives the
-witness computation. The compiled circuits and committed `configs.nr` defaults use 128 coefficients
-for insecure and 512 for the secure presets. A non-default `--chunk-size` produces artifacts that
+witness computation. The committed `configs.nr` writes the chunk size as an expression over the
+active committee's `N_PARTIES`, so the compiled circuits follow the same rule. A non-default `--chunk-size` produces artifacts that
 are valid only if the C2/C3/C4 circuits are recompiled against the generated `configs.nr`.
 
 All packed polynomial commitments constrain each shifted coefficient to one radix digit. An
@@ -625,15 +627,19 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   ├─ NOTE: Production C1 still proves one summation-only public-key share per party. The
 │   │   │   `lbfv_pk_generation_limb` circuit proves one CRT limb of one fixed public-key row. The
 │   │   │   `lbfv_pk_generation` terminal verifies all `L` limb proofs in canonical order. It
-│   │   │   reconstructs the unchanged whole-row PK commitment and exposes the PK leaf VK hash.
+│   │   │   commits the row as a hash of the verified limb commitments
+│   │   │   (`compute_lbfv_pk_row_commitment`) and exposes the PK leaf VK hash. The row takes no
+│   │   │   coefficient witness; an opener recomputes the checked limb commitments.
 │   │   │   The `lbfv_pk_aggregation` circuit
-│   │   │   aggregates exactly `H` generation-bound rows against the selected fixed CRS row. Both
+│   │   │   aggregates exactly `H` generation-bound rows. It uses the generated commitment of the
+│   │   │   fixed CRS row (`LBFV_CRS_ROW_COMMITMENTS`) instead of hashing the row. Both
 │   │   │   aggregation circuits bind the proof session, aggregator party, accepted-party-set hash,
 │   │   │   and row. The legacy C5 ABI remains unchanged. Remote contribution collection verifies
 │   │   │   the generation rows. The separate V2 recursive family consumes these proofs.
 │   │   │   RLK generation uses one reusable `rlk_generation_limb` circuit for each CRT limb. Its
-│   │   │   row finalizer verifies exactly `L` ZK leaf proofs in canonical limb order, reconstructs
-│   │   │   the unchanged full-row D0/D2 commitments, and exposes the bound leaf VK hash at the
+│   │   │   row finalizer verifies exactly `L` ZK leaf proofs in canonical limb order, commits D0 and
+│   │   │   D2 as hashes of the limb commitments (`compute_rlk_row_commitment_from_limbs`), and
+│   │   │   exposes the bound leaf VK hash at the
 │   │   │   public-statement tail. `CircuitName::RlkGeneration`, `CircuitName::RlkAggregation`, and
 │   │   │   `CircuitName::LbfvPkGeneration` use appended discriminants 27, 28, and 29.
 │   │   │   `CircuitName::LbfvPkAggregation` and `CircuitName::RlkGenerationLimb` use appended
@@ -681,15 +687,16 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │   commitments match the fixed-shape row statements.
 │   │   │   `lbfv_generation_fold` verifies five ordered PK/RLK pairs and binds both leaf VK hashes.
 │   │   │   `node_fold_v2` verifies a
-│   │   │   legacy `NodeFold` proof, C1, and the terminal generation fold. It links each l-BFV SK
-│   │   │   commitment to C1 and returns the legacy node statement as a prefix. `nodes_fold_v2`
+│   │   │   legacy `NodeFold` proof and the terminal generation fold. The legacy fold exports C1's
+│   │   │   SK root; `node_fold_v2` requires the generation SK commitment to equal it and returns
+│   │   │   the legacy node statement as a prefix. `nodes_fold_v2`
 │   │   │   folds exactly H parties in ascending order. `lbfv_aggregation_fold` verifies five
 │   │   │   ordered aggregation pairs.
-│   │   │   `dkg_aggregator_v2` verifies those folds plus legacy C5 and compares every generation
-│   │   │   commitment. It recomputes the accepted-set hash from the folded canonical party IDs.
-│   │   │   A NodeFoldV2 public statement contains four public-prefix fields and an 85-field return,
-│   │   │   for 89 fields in total. NodesFoldV2 preserves that full statement for each of H parties;
-│   │   │   its secure-16384/minimum accumulator statement therefore contains 184 fields.
+│   │   │   `dkg_aggregator_v2` verifies those folds and compares every generation commitment. It
+│   │   │   keeps `c5_key_hash` as a pinned public input but does not verify C5. It recomputes the accepted-set hash from the folded canonical party IDs.
+│   │   │   A NodeFoldV2 public statement contains four public-prefix fields and an 86-field return,
+│   │   │   for 90 fields in total. NodesFoldV2 preserves that full statement for each of H parties;
+│   │   │   its secure-16384/minimum accumulator statement therefore contains 186 fields.
 │   │   │   Rust recursive request dispatch, the local document-to-node-fold handoff, row aggregation,
 │   │   │   and operational key storage are wired. The active aggregator persists and redrives a
 │   │   │   secure-16384 `LbfvPublicKeyAggregated` publication intent. The registry writer adapts the
@@ -1387,7 +1394,9 @@ Each ciphertext leg uses these stages:
 1. Round A proves two ZK chunk leaves. The leaves range-check all private coefficients and output
    one commitment for each polynomial group.
 2. A non-ZK root verifies both leaves under one leaf VK and computes the polynomial roots.
-3. A separate ZK circuit commits the public-key and ciphertext limbs.
+3. A separate ZK circuit range-checks the ciphertext limbs to their centered residues and commits
+   them. It passes the public-key commitment through without hashing the key; step 7 binds it to
+   the key that Round B evaluates.
 4. The `*_chunk_gamma` circuit verifies the root and commitment proofs. It derives the Fiat-Shamir
    challenge from their commitments.
 5. Round B proves two ZK evaluation leaves at that challenge. A non-ZK root verifies the leaves,

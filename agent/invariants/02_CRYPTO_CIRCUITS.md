@@ -629,14 +629,14 @@ every section.
   `BfvPkVerifier` checks these values against deployment-time anchors before it calls the Honk
   verifier. — `dkg_aggregator`, `BfvPkVerifier`
 - **Secure-16384 recursive families are versioned:** `node_fold_v2` verifies a legacy `NodeFold`
-  proof, C1, and the terminal generation fold. It links the l-BFV SK commitment to C1 and preserves
-  the legacy node statement as a prefix. `dkg_aggregator_v2` preserves the legacy DKG statement as a
+  proof and the terminal generation fold. It requires the l-BFV SK commitment to equal the C1 SK
+  root that the legacy fold exports, and preserves the legacy node statement as a prefix. `dkg_aggregator_v2` preserves the legacy DKG statement as a
   prefix and appends the l-BFV statement. Its V2 VK manifest binds the generation and aggregation
   folds, both kernels, both row circuits, both limb circuits, `node_fold_v2`, and both
   `nodes_fold_v2` circuits. Legacy recursive circuits and ABIs remain unchanged. The V2 DKG circuit
   recomputes the accepted-set hash from its canonical party IDs. It binds the outer `NodeFoldV2` and
   `NodesFoldV2` VK slots separately from the embedded legacy `NodeFold` anchor. A `NodeFoldV2` proof
-  has four verifier-prefix fields and 85 returned fields. Its 89-field statement takes the session
+  has four verifier-prefix fields and 86 returned fields. Its 90-field statement takes the session
   limbs from generation-fold fields 9 and 10. `DkgAggregatorV2` binds the legacy and V2 recursive VK
   manifests independently. It must not require corresponding legacy and V2 VK hashes to be equal.
 - **Secure-16384 key publication binds all operational key material:** `dkg_aggregator_v2` computes
@@ -672,8 +672,9 @@ every section.
   proof whose public limb VK hash differs from the checksum-verified staged artifact.
 - **l-BFV generation rows use limb proofs:** each PK or RLK terminal verifies exactly `L` recursive
   limb proofs in canonical order. Every limb binds the proof session, party, row, limb index, shared
-  secret commitments, and its public polynomial commitments. The terminal reconstructs the unchanged
-  whole-row commitments and exposes the leaf VK hash. PK and RLK leaf VK hashes are separate trusted
+  secret commitments, and its public polynomial commitments. The terminal commits the row as a hash of
+  the verified limb commitments and exposes the leaf VK hash. Aggregation opens a row by recomputing
+  its checked limb commitments, which carries the limbs' centered bounds. PK and RLK leaf VK hashes are separate trusted
   inputs to the generation fold and separate entries in the V2 VK manifest.
 - **l-BFV recursive row folds are bounded:** each generation and aggregation kernel accepts row 0.
   Each fold accepts only the next row. `node_fold_v2` and `dkg_aggregator_v2` require terminal
