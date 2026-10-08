@@ -12,6 +12,10 @@
   },
   "fold": "0xE172e9B6cfBeeB5593bDcE3f077356FDb33af904",
   "escrowVotesAdapter": "0x8f141B4D294d39e7D1530916A3eD65B3970C6FEc",
+  "bondedVotesExcludedAccounts": [
+    "0x5429D8c7fD14023f3c414126F94BbE25A05fC018",
+    "0x12BEEF35025841EFccb77D6EE40df86400Fdb4bB"
+  ],
   "bondingRegistryProxy": "0x0ec90465095C21830BEcED07e032809A2Bd2915F",
   "bondingRegistryProxyAdmin": "0xf1511Fc32abf7Bd3a3213ddCF08C07259b53972b",
   "feeToken": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",

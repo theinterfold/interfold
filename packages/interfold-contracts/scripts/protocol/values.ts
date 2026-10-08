@@ -61,31 +61,83 @@ export function isMissingFunctionError(error: unknown): boolean {
   );
 }
 
-const bondedDelegateCall = new ethersLib.Interface([
-  "function bondedDelegate(address owner) view returns (address)",
-]).encodeFunctionData("bondedDelegate", [ZERO]);
+const excludedAccountsInterface = new ethersLib.Interface([
+  "function excludedAccounts() view returns (address[])",
+]);
+const excludedAccountsCall =
+  excludedAccountsInterface.encodeFunctionData("excludedAccounts");
 
 /**
- * Whether the `BondedVotes` at `target` has bonded delegation.
+ * The accounts that the `BondedVotes` at `target` excludes from voting, or `undefined` when its
+ * code predates the exclusion list.
  *
- * An adapter from before bonded delegation takes the same constructor arguments, so a deployment
- * record cannot tell the two apart. That adapter has no `bondedDelegate` function. Any failure
- * other than a missing function says nothing about the adapter, and is thrown.
+ * An older adapter can have the same token, votes source and history, so a deployment record cannot
+ * tell it from a current one. That adapter has no `excludedAccounts` function. Any failure other
+ * than a missing function says nothing about the adapter, and is thrown.
  */
-export async function hasBondedDelegation(
+export async function readExcludedAccounts(
   provider: ethersLib.Provider,
   target: string,
-): Promise<boolean> {
+): Promise<string[] | undefined> {
+  let result: string;
   try {
-    const result = await provider.call({
-      to: target,
-      data: bondedDelegateCall,
-    });
-    return result !== "0x";
+    result = await provider.call({ to: target, data: excludedAccountsCall });
   } catch (error) {
-    if (isMissingFunctionError(error)) return false;
+    if (isMissingFunctionError(error)) return undefined;
     throw error;
   }
+  if (result === "0x") return undefined;
+  const [accounts] = excludedAccountsInterface.decodeFunctionResult(
+    "excludedAccounts",
+    result,
+  );
+  return (accounts as string[]).map((account) => ethersLib.getAddress(account));
+}
+
+/** Whether two account lists hold the same accounts, ignoring order, case and duplicates. */
+export function sameAccounts(
+  a: readonly string[],
+  b: readonly string[],
+): boolean {
+  const left = new Set(a.map((account) => account.toLowerCase()));
+  const right = new Set(b.map((account) => account.toLowerCase()));
+  return (
+    left.size === right.size && [...left].every((account) => right.has(account))
+  );
+}
+
+/**
+ * Checks the accounts that the `BondedVotes` at `target` excludes against `expected`, the
+ * configured `bondedVotesExcludedAccounts`. `activate-voting` and `validate` both decide with it.
+ *
+ * Throws when the adapter excludes other accounts. Also throws when its code predates the list and
+ * `expected` names an account, because that account can still vote through it. Code from before
+ * the list excludes nobody, so with nothing configured it is out of date but not wrong: for it, this
+ * returns the reason and the replacement steps. Returns `undefined` when the adapter excludes
+ * exactly `expected`.
+ */
+export async function checkExcludedAccounts(
+  provider: ethersLib.Provider,
+  target: string,
+  expected: readonly string[],
+  deploymentFile: string,
+): Promise<string | undefined> {
+  const deployed = await readExcludedAccounts(provider, target);
+  if (deployed && sameAccounts(deployed, expected)) return undefined;
+
+  const replace =
+    `To replace it, remove bondedVotes from ${deploymentFile} and run --action activate-voting. ` +
+    "Then point the governance plugin and new CRISP rounds at the new address.";
+  if (!deployed && expected.length === 0) {
+    return `BondedVotes at ${target} predates the excluded-account list. ${replace}`;
+  }
+  throw new Error(
+    `BondedVotes at ${target} ` +
+      (deployed
+        ? `excludes [${deployed.join(", ")}], not [${expected.join(", ")}]. `
+        : `predates the excluded-account list, so [${expected.join(", ")}] can still vote through it. `) +
+      replace,
+  );
 }
 
 export async function deployedAddress(contract: {
@@ -357,6 +409,25 @@ function validateConfig(config: ProtocolConfigFile): void {
     config.escrowVotesAdapter,
     "escrowVotesAdapter",
   );
+  if (
+    config.bondedVotesExcludedAccounts !== undefined &&
+    !Array.isArray(config.bondedVotesExcludedAccounts)
+  ) {
+    throw new Error(
+      "bondedVotesExcludedAccounts must be an array of addresses",
+    );
+  }
+  config.bondedVotesExcludedAccounts = (
+    config.bondedVotesExcludedAccounts ?? []
+  ).map((account, i) => {
+    const checked = address(account, `bondedVotesExcludedAccounts[${i}]`);
+    if (checked === ZERO) {
+      throw new Error(
+        `bondedVotesExcludedAccounts[${i}] must not be the zero address`,
+      );
+    }
+    return checked;
+  });
   config.bondingRegistryProxy = address(
     config.bondingRegistryProxy,
     "bondingRegistryProxy",

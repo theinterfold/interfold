@@ -75,6 +75,18 @@ every section.
   round silently drops the delegated weight. Delegations live in the adapter, so a replacement
   adapter starts with none. — `BondedVotes.sol`;
   `examples/CRISP/server/src/server/token_holders/etherscan.rs`; `flow-trace/02`
+- **An excluded account has no voting power and no bonded delegation.** `BondedVotes` fixes its
+  excluded accounts at construction (on mainnet, the Interfold Foundation and Gnosis Guild Safes,
+  from `bondedVotesExcludedAccounts`). `getPastVotes`, `getVotes` and `balanceOf` return zero for
+  them; `balanceOf` too, because Aragon's `TokenVoting` admits members and proposal creators by
+  balance. `delegateBonded` reverts `ExcludedAccount` when the caller or the delegate is excluded,
+  so an excluded owner's bonded weight is never linked to a delegate and counts at no account. Any
+  new way to link an owner to a delegate must keep that check. Delegation inside the votes source is
+  out of reach: FOLD that an excluded account delegates on the token or the escrow still counts at
+  that delegate, and FOLD that another holder delegates to an excluded account there counts at no
+  account. The exclusion follows the address, not the FOLD: FOLD that an excluded account transfers,
+  and a bond whose ownership it transfers, count at the new holder. Exclusion only lowers the
+  numerator, so the denominator stays the token's supply. — `BondedVotes.sol`; `flow-trace/02`
 - **Escrowed and bonded FOLD cannot overlap; vesting-locked and bonded do, and must be netted.**
   Escrowing custodies the token in the escrow and bonding custodies it in the registry, so no token
   can be in both. Both were transferred rather than burned, so both are still inside the token's
@@ -242,9 +254,8 @@ every section.
   same release source for that historical activation. OpenVM requires a separate paused, drained
   migration with an identity derived from the new guest, VM configuration, and Halo2 verifier; the
   RISC Zero activation scripts must not activate it. Requests remain paused until the activation
-  validator succeeds and enough
-  matching release-ready nodes are online. — `scripts/upgrade/secureCrisp.ts`;
-  `scripts/upgrade/validateSecureCrisp.ts`; `flow-trace/07`
+  validator succeeds and enough matching release-ready nodes are online. —
+  `scripts/upgrade/secureCrisp.ts`; `scripts/upgrade/validateSecureCrisp.ts`; `flow-trace/07`
 - Sortition score must be byte-identical on- and off-chain:
   `score = keccak256(abi.encodePacked(operator, ticketNumber, e3Id, seed))` with `seed` as a
   `uint256`, where `seed = keccak256(abi.encode(randomWord, chainid, registry, e3Id, requestId))`.

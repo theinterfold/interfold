@@ -35,7 +35,11 @@ import type {
   ProtocolDeployment,
   VrfSortitionUpgradePlan,
 } from "../../scripts/protocol/types";
-import { hasBondedDelegation, loadConfig } from "../../scripts/protocol/values";
+import {
+  checkExcludedAccounts,
+  loadConfig,
+  readExcludedAccounts,
+} from "../../scripts/protocol/values";
 import { requiredActiveOperatorsForSecureCrisp } from "../../scripts/upgrade/resumeSecureCrisp";
 import { BondingRegistry__factory as BondingRegistryFactory } from "../../types";
 
@@ -512,10 +516,10 @@ describe("Protocol deployment", function () {
     expect(calls).to.equal(2);
   });
 
-  /// `activate-voting` and the deploy scripts reuse a recorded `BondedVotes` only when this probe
-  /// passes. An adapter from before bonded delegation takes the same constructor arguments, so its
-  /// code is the only thing that tells the two apart.
-  it("tells a BondedVotes with bonded delegation from older code", async function () {
+  /// A `BondedVotes` that excludes `accounts`, and a contract with no `excludedAccounts` function and
+  /// no fallback. The call to that contract reverts with no data, as it does on a `BondedVotes` from
+  /// before the excluded-account list.
+  async function deployExcludingAdapter(accounts: string[]) {
     const token = await ethers.deployContract("MockVotesToken");
     const history = await ethers.deployContract("MockBondedCheckpointsStub", [
       await token.getAddress(),
@@ -524,25 +528,72 @@ describe("Protocol deployment", function () {
       await token.getAddress(),
       await token.getAddress(),
       await history.getAddress(),
+      accounts,
+    ]);
+    return {
+      current: await adapter.getAddress(),
+      older: await history.getAddress(),
+    };
+  }
+
+  /// `activate-voting` and the deploy scripts reuse a recorded `BondedVotes` only when the accounts
+  /// that it excludes match the config. An older adapter can take the same token, votes source and
+  /// history, so its code is the only thing that tells the two apart.
+  it("reads the excluded accounts of a BondedVotes, and none from older code", async function () {
+    const excluded = ethersLib.Wallet.createRandom().address;
+    const { current, older } = await deployExcludingAdapter([
+      excluded,
+      excluded,
     ]);
 
+    expect(await readExcludedAccounts(ethers.provider, current)).to.deep.equal([
+      excluded,
+    ]);
+    expect(await readExcludedAccounts(ethers.provider, older)).to.equal(
+      undefined,
+    );
     expect(
-      await hasBondedDelegation(ethers.provider, await adapter.getAddress()),
-    ).to.equal(true);
-    // Like an adapter from before bonded delegation, the stub has no `bondedDelegate` and no
-    // fallback, so the call reverts with no data.
-    expect(
-      await hasBondedDelegation(ethers.provider, await history.getAddress()),
-    ).to.equal(false);
-    expect(
-      await hasBondedDelegation(
+      await readExcludedAccounts(
         ethers.provider,
         ethersLib.Wallet.createRandom().address,
       ),
-    ).to.equal(false);
+    ).to.equal(undefined);
   });
 
-  it("rejects a bonded-delegation probe that the RPC cannot answer", async function () {
+  /// `activate-voting` reuses and `validate` passes a recorded `BondedVotes` with this decision. On
+  /// mainnet the config names the treasury Safes, so older code would let them keep voting.
+  it("accepts a BondedVotes only when it excludes the configured accounts", async function () {
+    const [first, second] = [
+      ethersLib.Wallet.createRandom().address,
+      ethersLib.Wallet.createRandom().address,
+    ];
+    const { current, older } = await deployExcludingAdapter([first, second]);
+    const check = (target: string, expected: string[]) =>
+      checkExcludedAccounts(
+        ethers.provider,
+        target,
+        expected,
+        "test.deployment.json",
+      );
+
+    // Order, case and repeats do not matter.
+    expect(
+      await check(current, [second, first.toLowerCase(), second]),
+    ).to.equal(undefined);
+    await expect(check(current, [first])).to.be.rejectedWith(`not [${first}]`);
+    // `loadConfig` reads an omitted list as an empty one.
+    await expect(check(current, [])).to.be.rejectedWith("not []");
+    await expect(check(older, [first])).to.be.rejectedWith(
+      `[${first}] can still vote through it`,
+    );
+    // Older code excludes nobody, as configured. `validate` reports it and passes, and
+    // `activate-voting` refuses to reuse it.
+    expect(await check(older, [])).to.match(
+      /predates the excluded-account list/,
+    );
+  });
+
+  it("rejects an excluded-account probe that the RPC cannot answer", async function () {
     const provider = {
       call: async () => {
         throw new Error("RPC unavailable");
@@ -550,7 +601,7 @@ describe("Protocol deployment", function () {
     } as unknown as ethersLib.Provider;
 
     await expect(
-      hasBondedDelegation(provider, ethersLib.ZeroAddress),
+      readExcludedAccounts(provider, ethersLib.ZeroAddress),
     ).to.be.rejectedWith("RPC unavailable");
   });
 

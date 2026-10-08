@@ -552,7 +552,7 @@ Two contracts restore that weight:
 | `registry/BondedVotes`       | `IERC5805` that sums a primary vote source and bonded FOLD at the same timepoint, and moves an owner's bonded weight to one accepted delegate. |
 
 ```text
-BondedVotes.getPastVotes(account, t)              ← the NUMERATOR
+BondedVotes.getPastVotes(account, t)              ← the NUMERATOR; 0 for an excluded account
 │
 ├─ votesSource.getPastVotes(account, t)           ← either the token or an escrow adapter
 │    ├─ votesSource == token   → wallet-held FOLD (needs delegation)
@@ -580,6 +580,19 @@ source. Bonded and locked FOLD were both transferred, not burned, so both are al
 to remove, and reading the escrow's supply instead would omit the bonded half entirely and let
 participation exceed 100%. Escrowed and bonded FOLD cannot overlap, because escrowing custodies the
 token in the escrow and bonding custodies it in the registry.
+
+`BondedVotes` takes a fixed list of excluded accounts at construction (`excludedAccounts()`,
+`isExcluded(account)`). On mainnet the list is the Interfold Foundation Safe and the Gnosis Guild
+Safe, set in `bondedVotesExcludedAccounts` of the protocol config. `getPastVotes`, `getVotes` and
+`balanceOf` return zero for an excluded account. `balanceOf` is included because Aragon's
+`TokenVoting` admits members and proposal creators by balance as well as by votes. An excluded
+account cannot give or receive bonded weight: `delegateBonded` reverts `ExcludedAccount` when the
+caller or the delegate is excluded, so its bonded and vesting-locked FOLD counts at no account.
+`BondedVotes` cannot see delegation inside the votes source, so wallet FOLD that an excluded account
+delegates on the token, or escrowed FOLD that it delegates on the escrow, still counts at that
+delegate. In the other direction, FOLD that another holder delegates to an excluded account on the
+token or the escrow counts at no account. The denominator is not changed: the FOLD of an excluded
+account stays in `getPastTotalSupply`.
 
 ### Vesting-locked FOLD
 
@@ -724,12 +737,16 @@ no bond and no escrow position, so the CRISP census reads this event to find it.
 candidates, and `getPastVotes` at the snapshot then keeps or drops each one. File:
 `examples/CRISP/server/src/server/token_holders/etherscan.rs`.
 
-Delegations live in the adapter. A replacement `BondedVotes`, for a new era or for an adapter from
-before bonded delegation, starts with none, so owners must delegate again. An adapter from before
-bonded delegation has the same constructor arguments as a current one, so `--action activate-voting`
-refuses a recorded one rather than reporting it as deployed, `--action validate` prints a `--` line
-for it, and `deployAndSaveBondedVotes` deploys a replacement. All three use `hasBondedDelegation`.
-Files: `scripts/protocol/activateVoting.ts`, `scripts/protocol/validate.ts`,
+Delegations live in the adapter. A replacement `BondedVotes`, for a new era or for an older adapter,
+starts with none, so owners must delegate again. An adapter from before the excluded-account list
+can have the same token, votes source and history as a current one. `checkExcludedAccounts` decides
+for both actions: `--action activate-voting` reuses a recorded adapter only when
+`readExcludedAccounts` returns the configured `bondedVotesExcludedAccounts`. It refuses an older
+adapter or a different list rather than reporting it as deployed. `--action validate` runs this
+check after all other checks. It fails on a different list, and on an older adapter when the config
+excludes any account; with no exclusions it prints a `--` line for an older adapter. Each message
+names the replacement steps. `deployAndSaveBondedVotes` deploys a replacement. Files:
+`scripts/protocol/activateVoting.ts`, `scripts/protocol/validate.ts`,
 `scripts/deployAndSave/bondedVotes.ts`, `scripts/protocol/values.ts`.
 
 ## Activation Thresholds Summary
