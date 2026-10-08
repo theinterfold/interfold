@@ -18,5 +18,6 @@ else
 fi
 
 echo "TEST E2E SCRIPT STARTING..."
-# The client starts only after the ciphernodes are running and registered.
-pnpm concurrently -krs command-1 ./scripts/dev.sh "wait-on tcp:3000 file:./.interfold/ready && ${PLAYWRIGHT_CMD}"
+# The client starts only after the ciphernodes are running and registered, which takes about 3
+# minutes in CI. A start that takes 15 minutes fails here, not at the CI job's timeout.
+pnpm concurrently -krs command-1 ./scripts/dev.sh "wait-on --timeout 900000 tcp:3000 file:./.interfold/ready && ${PLAYWRIGHT_CMD}"

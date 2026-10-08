@@ -14,7 +14,13 @@ heading "Start the EVM node"
 launch_evm
 launch_mock_data_availability
 
-until curl -sf -X POST http://localhost:8545 -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' > /dev/null; do
+# anvil answers within seconds. A node that never answers fails here, not at the CI job's timeout.
+evm_deadline=$((SECONDS + 120))
+until curl -sf --max-time 5 -X POST http://localhost:8545 -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' > /dev/null; do
+  if (( SECONDS >= evm_deadline )); then
+    echo "The EVM node at localhost:8545 did not answer within 120 seconds" >&2
+    exit 1
+  fi
   sleep 1
 done
 

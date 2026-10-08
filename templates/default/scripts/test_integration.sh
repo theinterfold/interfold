@@ -58,12 +58,14 @@ failed_message() {
   exit 1
 }
 
+# The test waits at most 10 minutes for the nodes, the EVM node and the program server to start, which
+# take about 2 minutes in CI, and at most 5 seconds for one health request.
 (pnpm concurrently \
   --names "TEST,EVM,MINE,CIPHER,SERVER,PROGRAM" \
   --prefix-colors "blue,cyan,gray,magenta,yellow,green" \
   --kill-others \
   --success command-TEST \
-  "wait-on file:/tmp/interfold_ciphernodes_ready tcp:localhost:8545 http://localhost:13151/health && export \$(interfold print-env --chain localhost) && pnpm vitest run ./tests/integration.spec.ts" \
+  "wait-on --timeout 600000 --httpTimeout 5000 file:/tmp/interfold_ciphernodes_ready tcp:localhost:8545 http://localhost:13151/health && export \$(interfold print-env --chain localhost) && pnpm vitest run ./tests/integration.spec.ts" \
   "anvil --host 0.0.0.0 --chain-id 31337 --block-time 1  --mnemonic 'test test test test test test test test test test test junk' --silent" \
   "wait-on tcp:localhost:8545 && node ./scripts/anvil-automine.mjs" \
   "pnpm dev:ciphernodes" \
