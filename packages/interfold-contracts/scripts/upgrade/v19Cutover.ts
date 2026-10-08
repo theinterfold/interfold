@@ -252,7 +252,6 @@ export function readOpenVmIdentity(file: string): OpenVmGuestIdentity {
   return identity;
 }
 
-/** The CRISP contracts that the batch wires, from the CRISP deployment record. */
 /** The CRISP contracts that the CRISP deployment recorded for `network`. */
 function readCrispRecord(
   network: string,
@@ -277,6 +276,7 @@ function readCrispRecord(
   return deployment;
 }
 
+/** The CRISP contracts that the batch wires, from the CRISP deployment record. */
 export function resolveOpenVmCrisp(
   network = networkName(),
   record?: string,
