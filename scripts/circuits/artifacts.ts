@@ -8,7 +8,7 @@
 import { execFileSync, execSync } from 'child_process'
 import { createHash } from 'crypto'
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
-import { join, relative, resolve } from 'path'
+import { join, relative, resolve, sep } from 'path'
 import type { CircuitCommittee, CircuitPreset } from './circuit-constants'
 import requiredArtifacts from '../crates/zk-prover/required-artifacts.json'
 import requiredLbfvArtifacts from '../crates/zk-prover/required-artifacts-lbfv.json'

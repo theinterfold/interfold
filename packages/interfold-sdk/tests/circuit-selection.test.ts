@@ -18,8 +18,10 @@ vi.mock('node:fs', async () => {
 describe('SDK circuit selection', () => {
   it('uses v5 configuration IDs and routes secure requests to slot 2', () => {
     expect(ParamSet.Secure8192).toBe(2)
-    expect(cryptoConfigIdForParamSet(ParamSet.Insecure64)).toBe('0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9')
-    expect(cryptoConfigIdForParamSet(ParamSet.Secure8192)).toBe('0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa')
+    expect(ParamSet.Secure16384).toBe(3)
+    expect(cryptoConfigIdForParamSet(ParamSet.Insecure)).toBe('0x353ab90c0ebe9c13e1b9c2048539b7c2872f3eb12a9f1957f31410aa4bf44718')
+    expect(cryptoConfigIdForParamSet(ParamSet.Secure8192)).toBe('0x5ebb3432396f21cd97fca47e006b9dd38c021bf2902d3e555cf74cb91b28e44e')
+    expect(cryptoConfigIdForParamSet(ParamSet.Secure16384)).toBe('0x9c5c09ac7421582c4407c7e6ad923b8f9126aa708957c2575760fb0a38153655')
     expect(() => cryptoConfigIdForParamSet(1)).toThrow('Unsupported BFV parameter set: 1')
   })
 

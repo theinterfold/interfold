@@ -7,9 +7,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import {
   RELEASE_REQUIRED_PAIRS,
-  refreshChecksums,
   requiredArtifactMarkers,
-  validateArtifactChecksums,
   validateArtifactSet,
   validateReleaseArtifacts,
 } from './circuit-artifacts'
