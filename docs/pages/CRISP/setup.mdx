@@ -29,7 +29,7 @@ repository. Run all `pnpm` commands on this page from `examples/CRISP`.
 | [Foundry](https://getfoundry.sh)                                | Any                                         | `anvil`, the local chain that `scripts/dev.sh` starts          |
 | [`yq`](https://github.com/mikefarah/yq)                         | Any                                         | `scripts/dev_cipher.sh` reads node addresses from the config   |
 | [`nargo`](https://noir-lang.org/docs/installation)              | `v1.0.0-beta.26` (`NOIR_TOOLCHAIN` in CI)   | Circuit builds in `pnpm dev:setup` and `pnpm compile:circuits` |
-| [`bb`](https://barretenberg.aztec.network/docs/getting_started) | 5.1.0 (`crates/zk-prover/versions.json`)    | Verification keys and generated verifiers                      |
+| [`bb`](https://barretenberg.aztec.network/docs/getting_started) | 5.2.0 (`crates/zk-prover/versions.json`)    | Verification keys and generated verifiers                      |
 | Python 3                                                        | Any                                         | `scripts/compile_circuits.sh` patches the generated verifiers  |
 | A browser wallet, for example [MetaMask](https://metamask.io)   | Any                                         | The client                                                     |
 | `cargo-openvm` v2.0.2                                           | v2.0.2                                      | Only for real OpenVM proofs (`CRISP_REAL_PROOFS=1`)            |

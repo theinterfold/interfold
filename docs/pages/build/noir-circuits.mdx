@@ -131,13 +131,20 @@ A circuit build needs two tools: `nargo` compiles Noir, and `bb` (Barretenberg) 
 keys, proofs, and Solidity verifiers. Use the pinned versions. Artifacts from other versions do not
 match the prover or the committed verifiers.
 
+This table describes repository source builds. Released binaries keep the versions pinned at their
+release.
+
 | Component                            | Version                  | Pinned in                                                                                                          |
 | ------------------------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
 | `nargo`                              | `1.0.0-beta.26`          | `NOIR_TOOLCHAIN` in `.github/workflows/ci.yml`. The Noir crates in `crates/zk-prover/Cargo.toml` use the same tag. |
-| `bb`                                 | `5.1.0`                  | `required_bb_version` in `crates/zk-prover/versions.json`, and `BB_VERSION` in `ci.yml`                            |
-| Circuit release archive              | `0.18.0`                 | `required_circuits_version` in `crates/zk-prover/versions.json`                                                    |
-| `bb_proof_verification` (Noir)       | `v5.1.0`                 | The `Nargo.toml` of each package that verifies a proof                                                             |
-| `@aztec/bb.js`, `@noir-lang/noir_js` | `5.1.0`, `1.0.0-beta.26` | `packages/interfold-sdk/package.json`                                                                              |
+| `bb`                                 | `5.2.0`                  | `required_bb_version` in `crates/zk-prover/versions.json`, and `BB_VERSION` in `ci.yml`                            |
+| Circuit artifacts for source builds  | Build from this checkout | `pnpm build:circuits`                                                                                              |
+| `bb_proof_verification` (Noir)       | `v5.2.0`                 | The `Nargo.toml` of each package that verifies a proof                                                             |
+| `@aztec/bb.js`, `@noir-lang/noir_js` | `5.2.0`, `1.0.0-beta.26` | `packages/interfold-sdk/package.json`                                                                              |
+
+For a source build, compile the circuits from the same checkout. `interfold noir setup` installs the
+CLI's release archive; it does not compile the checkout. Do not reuse an archive built with a
+different toolchain. A release needs a matching archive before nodes can use it.
 
 <Steps>
 
@@ -156,8 +163,11 @@ current shell.
 
 ### Install bb
 
-Run `interfold noir setup`. It downloads `bb` 5.1.0, checks it against the checksum in
-`versions.json`, and installs the circuit release archive:
+For this checkout, install the binary for your platform from the
+[Barretenberg 5.2.0 release](https://github.com/AztecProtocol/aztec-packages/releases/tag/v5.2.0).
+
+For a released node, run `interfold noir setup`. It downloads the CLI's pinned `bb`, checks it
+against the checksum in `versions.json`, and installs that release's circuit archive:
 
 ```bash
 interfold noir setup
@@ -168,8 +178,8 @@ and `version.json`. With a config file, it uses `.interfold/noir` next to that f
 
 ### Put bb on your PATH
 
-The repository scripts call `bb` from your `PATH`. The CLI does not add its copy to your `PATH`. Add
-it, or install `bb` from the Barretenberg release as CI does:
+The repository scripts call `bb` from your `PATH`. For a source build, add the directory with the
+5.2.0 binary. To use the copy installed by a matching released CLI, add its directory:
 
 ```bash
 export PATH="$HOME/.interfold/noir/bin:$PATH"
@@ -182,7 +192,7 @@ nargo --version
 bb --version
 ```
 
-`nargo` reports `1.0.0-beta.26`. `bb` reports `5.1.0`.
+For source builds, `nargo` reports `1.0.0-beta.26` and `bb` reports `5.2.0`.
 
 </Steps>
 
@@ -198,7 +208,7 @@ bb --version
 | `interfold noir setup --force`                   | Downloads `bb` and the circuit archive again.                                                                                                                |
 | `interfold noir setup --circuits-archive <PATH>` | Installs the circuits from a local release archive instead of the download.                                                                                  |
 
-The circuit archive comes from the GitHub release `v0.18.0` (`circuits-0.18.0.tar.gz`). The node
+The circuit archive comes from the GitHub release pinned in `required_circuits_version`. The node
 selects the artifact directory from the BFV parameter set and the committee size of each E3.
 
 ## Build the circuits in the repository
