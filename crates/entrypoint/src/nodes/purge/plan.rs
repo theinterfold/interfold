@@ -219,16 +219,17 @@ impl Planner {
                 location,
                 records,
             } => {
-                let in_folder = |node: &&NodeFacts| {
-                    node.key_file.parent() == Some(location.resolved.as_path())
-                };
+                let in_folder =
+                    |node: &&NodeFacts| node.key_file.parent() == Some(location.resolved.as_path());
                 // A key file in the folder with a record is checked through the store that the
                 // record names, before the store of a node folder of the same name. A configured
                 // node's key file in the folder does not cover the other key files there.
                 for (key_file, recorded) in records {
-                    let configured = facts.nodes.iter().filter(in_folder).any(|node| {
-                        node.key_file.file_name() == key_file.file_name()
-                    });
+                    let configured = facts
+                        .nodes
+                        .iter()
+                        .filter(in_folder)
+                        .any(|node| node.key_file.file_name() == key_file.file_name());
                     if !configured {
                         self.add_recorded(recorded, name, true);
                     }

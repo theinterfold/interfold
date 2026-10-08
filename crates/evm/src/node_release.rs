@@ -171,10 +171,7 @@ where
         )
         .nonce(current_nonce);
     let gas = call.estimate_gas().await?;
-    let pending = call
-        .gas(acknowledgment_gas_limit(gas))
-        .send()
-        .await?;
+    let pending = call.gas(acknowledgment_gas_limit(gas)).send().await?;
     drop(_nonce_guard);
     let receipt = pending.get_receipt().await?;
     require_successful_receipt("acknowledge ciphernode release", &receipt)?;

@@ -149,7 +149,9 @@ async fn census_snapshot(params: &CustomParams, request_time: u64, e3_id: &str) 
             .map_err(|error| anyhow::anyhow!("{error:#}"))
     })
     .await
-    .inspect_err(|error| warn!("[e3_id={e3_id}] Failed to read the census token's clock: {error:#}"))
+    .inspect_err(|error| {
+        warn!("[e3_id={e3_id}] Failed to read the census token's clock: {error:#}")
+    })
     .ok()
 }
 
@@ -1758,12 +1760,15 @@ mod stored_divisor_tests {
             .unwrap();
 
         // The first read reverts; the slot is set before the retry 2 s later.
-        let (deadline, _) = tokio::join!(read_commitment_deadline(&crisp, U256::from(1), "1"), async {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            node.anvil_set_storage_at(program, U256::ZERO, B256::with_last_byte(77))
-                .await
-                .unwrap()
-        });
+        let (deadline, _) = tokio::join!(
+            read_commitment_deadline(&crisp, U256::from(1), "1"),
+            async {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                node.anvil_set_storage_at(program, U256::ZERO, B256::with_last_byte(77))
+                    .await
+                    .unwrap()
+            }
+        );
         assert_eq!(deadline.unwrap(), 77);
     }
 }

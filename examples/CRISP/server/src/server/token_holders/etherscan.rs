@@ -1095,7 +1095,9 @@ mod tests {
             .timestamp;
         // Blocks 1, 2 and 3; the request is mined in block 3.
         for offset in [100, 200, 300] {
-            node.anvil_set_next_block_timestamp(start + offset).await.unwrap();
+            node.anvil_set_next_block_timestamp(start + offset)
+                .await
+                .unwrap();
             node.evm_mine(None).await.unwrap();
         }
         let request_time = start + 300;
@@ -1115,10 +1117,17 @@ mod tests {
 
         let rpc = anvil.endpoint();
         assert_eq!(
-            token_snapshot(&rpc, timestamp_token, request_time).await.unwrap(),
+            token_snapshot(&rpc, timestamp_token, request_time)
+                .await
+                .unwrap(),
             request_time - 1
         );
-        assert_eq!(token_snapshot(&rpc, block_token, request_time).await.unwrap(), 2);
+        assert_eq!(
+            token_snapshot(&rpc, block_token, request_time)
+                .await
+                .unwrap(),
+            2
+        );
     }
 
     fn mocked(responses: &Asserter) -> DynProvider {
