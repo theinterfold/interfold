@@ -568,6 +568,7 @@ impl EtherscanClient {
 
     /// Token holders that each get a constant voting credit.
     ///
+    /// `snapshot` is the round's timepoint in the census token's clock units (`token_snapshot`).
     /// A bonded-votes adapter emits no transfer logs, so its candidates are checked with
     /// `getPastVotes` at the snapshot before the credit is assigned. Plain tokens keep the
     /// transfer-log census, which also supports tokens without IVotes. Eligibility there rests on
@@ -575,7 +576,7 @@ impl EtherscanClient {
     pub async fn get_token_holders_with_constant_balance(
         &self,
         token_address: Address,
-        snapshot_timepoint: u64,
+        snapshot: u64,
         rpc_url: &str,
         balance: U256,
     ) -> Result<Vec<TokenHolder>> {
@@ -585,17 +586,14 @@ impl EtherscanClient {
         let sources = resolve_voting_power_sources(&provider, token_address)
             .await
             .context("Failed to resolve voting-power sources")?;
-        let snapshot_block = block_at_or_before(&provider, snapshot_timepoint)
-            .await
-            .context("Failed to resolve snapshot timepoint to a block")?;
-        // `getPastVotes` takes the adapter's own clock units.
-        let adapter_timepoint = match sources.registry {
-            Some(_) => Some(match get_clock_mode(&provider, token_address).await? {
-                ClockMode::Timestamp => snapshot_timepoint,
-                ClockMode::BlockNumber => snapshot_block,
-            }),
-            None => None,
+        let snapshot_block = match get_clock_mode(&provider, token_address).await? {
+            ClockMode::BlockNumber => snapshot,
+            ClockMode::Timestamp => block_at_or_before(&provider, snapshot)
+                .await
+                .context("Failed to resolve snapshot timepoint to a block")?,
         };
+        // `getPastVotes` takes the adapter's own clock units, which the snapshot is in.
+        let adapter_timepoint = sources.registry.map(|_| snapshot);
         let candidates = self
             .discover_candidates(token_address, &sources, snapshot_block)
             .await?;
@@ -693,6 +691,20 @@ async fn get_clock_mode(provider: &DynProvider, token: Address) -> Result<ClockM
         Some(mode) if mode.contains("mode=timestamp") => ClockMode::Timestamp,
         _ => ClockMode::BlockNumber,
     })
+}
+
+/// The timepoint one tick before a request, in the token's ERC-6372 clock: the timepoint at which
+/// `CRISPProgram` reads voting power (`_previousTimepoint`), and the one clients read balances at.
+/// `request_time` is the request's `block.timestamp`, which `Interfold.request` records. A token
+/// without `CLOCK_MODE()` counts blocks, as `_previousTimepoint` does without `clock()`.
+pub async fn token_snapshot(rpc_url: &str, token: Address, request_time: u64) -> Result<u64> {
+    let provider = rpc::http_provider(rpc_url)?;
+    let before = request_time.saturating_sub(1);
+    match get_clock_mode(&provider, token).await? {
+        ClockMode::Timestamp => Ok(before),
+        // The request's block is the first with a timestamp past `before`.
+        ClockMode::BlockNumber => block_at_or_before(&provider, before).await,
+    }
 }
 
 /// The highest block mined at or before an EIP-6372 timestamp timepoint.
@@ -1064,6 +1076,49 @@ mod tests {
             bonded_delegates_from_logs(&logs),
             HashSet::from([first, second])
         );
+    }
+
+    /// The census snapshot is in the token's clock: one second before the request for a
+    /// timestamp-clock token, the block before the request's block for a block-number token.
+    #[tokio::test]
+    async fn the_census_snapshot_is_in_the_tokens_clock() {
+        use alloy::providers::ext::AnvilApi;
+
+        let anvil = alloy::node_bindings::Anvil::new().try_spawn().unwrap();
+        let node = ProviderBuilder::new().connect_http(anvil.endpoint_url());
+        let start = node
+            .get_block_by_number(BlockNumberOrTag::Latest)
+            .await
+            .unwrap()
+            .unwrap()
+            .header
+            .timestamp;
+        // Blocks 1, 2 and 3; the request is mined in block 3.
+        for offset in [100, 200, 300] {
+            node.anvil_set_next_block_timestamp(start + offset).await.unwrap();
+            node.evm_mine(None).await.unwrap();
+        }
+        let request_time = start + 300;
+
+        // Answers every call with the ABI string "mode=timestamp".
+        let timestamp_token = Address::repeat_byte(1);
+        node.anvil_set_code(
+            timestamp_token,
+            alloy::primitives::bytes!(
+                "6020600052600e6020527f6d6f64653d74696d657374616d7000000000000000000000000000000000000060405260606000f3"
+            ),
+        )
+        .await
+        .unwrap();
+        // No `CLOCK_MODE()`: the token counts blocks.
+        let block_token = Address::repeat_byte(2);
+
+        let rpc = anvil.endpoint();
+        assert_eq!(
+            token_snapshot(&rpc, timestamp_token, request_time).await.unwrap(),
+            request_time - 1
+        );
+        assert_eq!(token_snapshot(&rpc, block_token, request_time).await.unwrap(), 2);
     }
 
     fn mocked(responses: &Asserter) -> DynProvider {

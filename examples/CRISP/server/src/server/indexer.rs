@@ -8,7 +8,7 @@ use super::supervise;
 use crate::server::log_repo::{LogRepository, StoredLog};
 use crate::server::models::e3_id_to_u256;
 use crate::server::token_holders::{
-    get_mock_token_holders, try_fetch_requester_census, EtherscanClient,
+    get_mock_token_holders, token_snapshot, try_fetch_requester_census, EtherscanClient,
 };
 use crate::server::{
     data_availability::{AvailabilityService, AvailableInputReference},
@@ -135,6 +135,48 @@ fn stage_ends_input_retrieval(stage: &E3Stage) -> bool {
     )
 }
 
+/// The census timepoint of a round without a stored snapshot, in its token's clock, or `None` when
+/// the token's clock cannot be read. A requester census reads no token, and a local chain uses
+/// mocked holders: both keep the request time minus one.
+async fn census_snapshot(params: &CustomParams, request_time: u64, e3_id: &str) -> Option<u64> {
+    if params.census_mode == CensusMode::ByRequester || CONFIG.is_local_chain() {
+        return Some(request_time.saturating_sub(1));
+    }
+    let token: Address = params.token_address.parse().ok()?;
+    call_with_retry_attempts("token_snapshot", &[], E3_VISIBLE_ATTEMPTS, || async {
+        token_snapshot(&CONFIG.http_rpc_url, token, request_time)
+            .await
+            .map_err(|error| anyhow::anyhow!("{error:#}"))
+    })
+    .await
+    .inspect_err(|error| warn!("[e3_id={e3_id}] Failed to read the census token's clock: {error:#}"))
+    .ok()
+}
+
+/// Read the round's input commitment deadline. `CRISPProgram` reads it from the E3, so a node that
+/// lacks the request block reverts with `E3DoesNotExist`, as `getE3` does, and the read is retried
+/// the same way.
+async fn read_commitment_deadline(
+    crisp: &CRISPContract<CRISPReadProvider>,
+    e3_id: U256,
+    label: &str,
+) -> eyre::Result<u64> {
+    // 0xcd6f4a4f = E3DoesNotExist()
+    call_with_retry_attempts(
+        "input_commitment_deadline",
+        &["0xcd6f4a4f"],
+        E3_VISIBLE_ATTEMPTS,
+        || async {
+            within(READ_TIMEOUT, crisp.input_commitment_deadline(e3_id))
+                .await
+                .map_err(|error| anyhow::anyhow!("{error:#}"))
+        },
+    )
+    .await
+    .map_err(report)
+    .with_context(|| format!("[e3_id={label}] Failed to read the input commitment deadline"))
+}
+
 /// Read the divisor and snapshot `CRISPProgram` stored for a CUSTOM-credit round, or `None` after
 /// `E3_VISIBLE_ATTEMPTS`. The contract never stores a zero divisor for such a round, so a zero read
 /// is a node that lacks the request block, and it is retried like a failed read.
@@ -179,13 +221,14 @@ async fn read_stored_scale(
 /// The `E3Requested` handler and the retry pass for a round registered without a census share this
 /// function, so both refuse the same lists. `stored` is the divisor and snapshot of a CUSTOM-credit
 /// round, or `None` for a CONSTANT-credit round. A CUSTOM-credit census is read at that snapshot,
-/// not at `snapshot_timepoint`: the divisor bounds the census sum only at the timepoint whose
-/// supply sized it. Off a local chain, a CUSTOM-credit round without them fails discovery.
+/// not at `snapshot`: the divisor bounds the census sum only at the timepoint whose supply sized
+/// it. `snapshot` is in the token's clock (`token_snapshot`). Off a local chain, a CUSTOM-credit
+/// round without them fails discovery.
 async fn discover_holders(
     e3_id: &str,
     params: &CustomParams,
     requester: Address,
-    snapshot_timepoint: u64,
+    snapshot: u64,
     stored: Option<(U256, u64)>,
 ) -> eyre::Result<Vec<TokenHolder>> {
     let credits = match (params.credit_mode, params.credits.as_deref()) {
@@ -247,7 +290,7 @@ async fn discover_holders(
                 client
                     .get_token_holders_with_constant_balance(
                         token_address,
-                        snapshot_timepoint,
+                        snapshot,
                         &CONFIG.http_rpc_url,
                         credits,
                     )
@@ -445,19 +488,11 @@ async fn handle_e3_requested<S: DataStore>(
 
     let input_deadline = e3.inputWindow[1].saturating_to::<u64>();
     let crisp = crisp_read().await?;
-    let voting_end_time = within(READ_TIMEOUT, crisp.input_commitment_deadline(event.e3Id))
-        .await
-        .with_context(|| format!("[e3_id={e3_id}] Failed to read the input commitment deadline"))?;
+    let voting_end_time = read_commitment_deadline(&crisp, event.e3Id, &e3_id).await?;
 
-    // The census is built one tick before the request, as the request timepoint itself is not
-    // final when the E3 is requested. `requestBlock` is a timestamp, not a block height: the
-    // ticket token runs an EIP-6372 `mode=timestamp` clock, and `Interfold.request` assigns
-    // `block.timestamp` to match the checkpoints it is compared against.
-    let snapshot_timepoint = event
-        .e3
-        .requestBlock
-        .saturating_to::<u64>()
-        .saturating_sub(1);
+    // `requestBlock` is a timestamp, not a block height: `Interfold.request` assigns
+    // `block.timestamp`. The census is read one tick before it, in the census token's clock.
+    let request_time = event.e3.requestBlock.saturating_to::<u64>();
 
     // An on-chain census is not an eligibility input: `_eligibility` reads each voter's power with
     // `getPastVotes` when the input is published and never reads `merkleRoot`, so no root is
@@ -487,25 +522,30 @@ async fn handle_e3_requested<S: DataStore>(
              units the contract may not use."
         );
     }
+    // The snapshot that clients read balances at, and that the census is read at.
+    let snapshot = match stored {
+        Some((_, snapshot)) => Some(snapshot),
+        None => census_snapshot(&custom_params, request_time, &e3_id).await,
+    };
+    let snapshot_unavailable = snapshot.is_none() && !divisor_unavailable;
 
-    let discovery = if divisor_unavailable {
-        Ok(Vec::new())
-    } else {
-        discover_holders(
-            &e3_id,
-            &custom_params,
-            e3.requester,
-            snapshot_timepoint,
-            stored,
-        )
-        .await
+    let discovery = match snapshot {
+        Some(snapshot) if !divisor_unavailable => {
+            discover_holders(&e3_id, &custom_params, e3.requester, snapshot, stored).await
+        }
+        _ => Ok(Vec::new()),
     };
     let (mut token_holders, discovery_failed) =
         holders_or_owed(&e3_id, is_onchain_census, discovery);
 
     // `discover_holders` refuses an empty census-tree list. An empty on-chain list costs mask cover
     // and nothing else, so the round goes ahead.
-    if is_onchain_census && token_holders.is_empty() && !divisor_unavailable && !discovery_failed {
+    if is_onchain_census
+        && token_holders.is_empty()
+        && !divisor_unavailable
+        && !snapshot_unavailable
+        && !discovery_failed
+    {
         warn!(
             "[e3_id={e3_id}] CensusMode::Onchain discovery found no holders for {}. The round is \
              recorded and votable, but clients have no mask targets to draw from.",
@@ -523,14 +563,16 @@ async fn handle_e3_requested<S: DataStore>(
         e3.requester.to_string(),
         voting_end_time,
         input_deadline,
-        snapshot_timepoint,
+        // Zero records an unknown snapshot, which the retry pass reads again.
+        snapshot.unwrap_or(0),
     )
     .await?;
 
     // Store the census, or record the debt so `retry_pending_discovery` settles it later. The
-    // debt covers a discovery skipped for want of a divisor and one that ran and failed. The event
+    // debt covers a discovery skipped for want of a divisor or a snapshot and one that ran and
+    // failed. The event
     // is not replayed once the cursor passes it, so nothing else would retry.
-    let owed = divisor_unavailable || discovery_failed;
+    let owed = divisor_unavailable || snapshot_unavailable || discovery_failed;
     let root_leaves = store_census(&mut repo, token_holders, is_onchain_census, owed).await?;
 
     CurrentRoundRepository::new(store)
@@ -1218,8 +1260,24 @@ async fn settle_pending_discovery<S: DataStore>(
         .requester
         .parse()
         .context("Invalid stored requester address")?;
-    let mut holders =
-        discover_holders(e3_id, &params, requester, round.snapshot_block, stored).await?;
+    // A round registered without its snapshot reads it here, from the request time on the E3.
+    let snapshot = match (stored, round.snapshot_block) {
+        (Some((_, snapshot)), _) => snapshot,
+        (None, 0) => {
+            let e3 = repo
+                .try_get_e3()
+                .await?
+                .ok_or_else(|| eyre!("[e3_id={e3_id}] The E3 is not indexed yet"))?;
+            census_snapshot(&params, e3.request_block, e3_id)
+                .await
+                .ok_or_else(|| eyre!("[e3_id={e3_id}] The census token's clock is unreadable"))?
+        }
+        (None, snapshot) => snapshot,
+    };
+    if snapshot != round.snapshot_block {
+        repo.set_snapshot_block(snapshot).await?;
+    }
+    let mut holders = discover_holders(e3_id, &params, requester, snapshot, stored).await?;
     let count = holders.len();
     order_token_holders(&mut holders);
     if round.census_mode != CensusMode::Onchain {
@@ -1649,7 +1707,7 @@ mod e3_request_tests {
 
 #[cfg(test)]
 mod stored_divisor_tests {
-    use super::read_stored_scale;
+    use super::{read_commitment_deadline, read_stored_scale};
     use alloy::primitives::{bytes, Address, B256, U256};
     use alloy::providers::{ext::AnvilApi, ProviderBuilder};
     use evm_helpers::CRISPContractFactory;
@@ -1679,6 +1737,34 @@ mod stored_divisor_tests {
                 .unwrap()
         });
         assert_eq!(stored, Some((U256::from(5), 5)));
+    }
+
+    /// A node that lacks the request block reverts the deadline read with `E3DoesNotExist`. The
+    /// read is retried; an error here drops the round.
+    #[tokio::test]
+    async fn a_deadline_read_on_a_lagging_node_is_retried() {
+        let anvil = alloy::node_bindings::Anvil::new().try_spawn().unwrap();
+        let node = ProviderBuilder::new().connect_http(anvil.endpoint_url());
+        let program = Address::repeat_byte(1);
+        // Reverts with E3DoesNotExist() while slot 0 is zero, then returns slot 0.
+        node.anvil_set_code(
+            program,
+            bytes!("6000548060175763cd6f4a4f60e01b60005260046000fd5b60005260206000f3"),
+        )
+        .await
+        .unwrap();
+        let crisp = CRISPContractFactory::create_read(&anvil.endpoint(), &program.to_string())
+            .await
+            .unwrap();
+
+        // The first read reverts; the slot is set before the retry 2 s later.
+        let (deadline, _) = tokio::join!(read_commitment_deadline(&crisp, U256::from(1), "1"), async {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            node.anvil_set_storage_at(program, U256::ZERO, B256::with_last_byte(77))
+                .await
+                .unwrap()
+        });
+        assert_eq!(deadline.unwrap(), 77);
     }
 }
 

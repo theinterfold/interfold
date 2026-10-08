@@ -252,7 +252,8 @@ pub struct E3StateLite {
     pub end_time: u64,
     /// The EIP-6372 timepoint (timestamp) the E3 was requested at
     pub start_block: u64,
-    /// The EIP-6372 timepoint (timestamp) the census was built at. Named for a block
+    /// The census snapshot: one tick before the request, in the census token's EIP-6372 clock
+    /// (a timestamp or a block number), as `CRISPProgram` reads voting power. Named for a block
     /// height for backwards compatibility with stored rounds and the web API.
     pub snapshot_block: u64,
 
@@ -333,9 +334,10 @@ pub struct E3Crisp {
     pub num_options: String,
     pub credit_mode: CreditMode,
     pub credits: Option<String>,
-    /// The EIP-6372 timepoint (timestamp) the census was built at. Defaults to 0 for
-    /// rounds stored before this field existed, which is resolved when the round state
-    /// is read. Named for a block height for backwards compatibility.
+    /// The census snapshot, in the census token's EIP-6372 clock. 0 for rounds stored before
+    /// this field existed or registered before the token's clock could be read; the round state
+    /// then serves the request time minus one. Named for a block height for backwards
+    /// compatibility.
     #[serde(default)]
     pub snapshot_block: u64,
     /// Defaults to `Token` for rounds stored before this field existed, which is what they

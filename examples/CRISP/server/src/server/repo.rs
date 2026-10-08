@@ -680,7 +680,7 @@ impl<S: DataStore> CrispE3Repository<S> {
     /// The indexer's E3 record, or `None` when the round has none yet. Read straight from the
     /// store because `E3Repository::get_e3` folds the missing case into an error string. The key
     /// mirrors `E3Repository::e3_key`.
-    async fn try_get_e3(&self) -> Result<Option<InterfoldE3>> {
+    pub async fn try_get_e3(&self) -> Result<Option<InterfoldE3>> {
         let key = format!("_e3:{}", self.e3_id);
         self.store
             .get(&key)
@@ -1037,6 +1037,15 @@ impl<S: DataStore> CrispE3Repository<S> {
     }
 
     /// Record whether holder discovery is still owed for this round.
+    /// Record the census snapshot of a round that registered without it.
+    pub async fn set_snapshot_block(&mut self, snapshot: u64) -> Result<()> {
+        self.update_crisp("set the census snapshot", |round| {
+            round.snapshot_block = snapshot
+        })
+        .await?;
+        Ok(())
+    }
+
     pub async fn set_discovery_pending(&mut self, pending: bool) -> Result<()> {
         self.update_crisp("set discovery_pending", |round| {
             round.discovery_pending = pending
@@ -1062,8 +1071,9 @@ impl<S: DataStore> CrispE3Repository<S> {
     }
 }
 
-/// The block the census was built at. A round stored before the snapshot block was persisted
-/// (`stored_snapshot_block` is 0) falls back to the block before the request.
+/// The census snapshot, in the census token's clock. A round stored before the snapshot was
+/// persisted, or registered without it (`stored_snapshot_block` is 0), falls back to the request
+/// time minus one.
 fn snapshot_block(request_block: u64, stored_snapshot_block: u64) -> u64 {
     if stored_snapshot_block == 0 {
         request_block.saturating_sub(1)
