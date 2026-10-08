@@ -38,20 +38,20 @@ One bond owner can fund several operator keys. `totalBonded(owner)` returns the 
 FOLD of that owner across all its operators. A committee takes at most one operator from each bond
 owner (see [Committee limits](#committee-limits-for-each-bond-owner)).
 
-| Function (`BondingRegistry`)                  | Caller                     | CLI command                                  |
-| --------------------------------------------- | -------------------------- | -------------------------------------------- |
-| `setBondOwner(bondOwner)`                     | Operator key               | `ciphernode set-bond-owner`                  |
-| `proposeBondOwner(operator, newOwner)`        | Current bond owner         | `ciphernode propose-bond-owner`              |
-| `acceptBondOwner(operator)`                   | Proposed bond owner        | `ciphernode accept-bond-owner`               |
-| `bondCiphernodeFor(operator, amount)`         | Bond owner                 | `ciphernode bond ... bond`                   |
-| `registerOperatorFor(operator)`               | Bond owner                 | `ciphernode register`, `ciphernode activate` |
-| `addTicketBalanceFor(operator, amount)`       | Bond owner                 | `ciphernode tickets ... buy`                 |
-| `removeTicketBalanceFor(operator, amount)`    | Bond owner                 | `ciphernode tickets ... burn`                |
-| `unbondCiphernodeFor(operator, amount)`       | Bond owner                 | `ciphernode bond ... unbond`                 |
-| `deregisterOperatorFor(operator)`             | Bond owner or operator key | `ciphernode deregister`                      |
-| `claimExitsFor(operator, maxTicket, 0)`       | Anyone                     | `ciphernode bond ... claim --max-bond 0`     |
-| `claimExitsFor(operator, maxTicket, maxBond)` | Bond owner                 | `ciphernode bond ... claim`                  |
-| `refreshOperatorStatus(operator)`             | Anyone                     | None. Use `cast send`.                       |
+| Function (`BondingRegistry`)                  | Caller                     | CLI command                              |
+| --------------------------------------------- | -------------------------- | ---------------------------------------- |
+| `setBondOwner(bondOwner)`                     | Operator key               | `ciphernode set-bond-owner`              |
+| `proposeBondOwner(operator, newOwner)`        | Current bond owner         | `ciphernode propose-bond-owner`          |
+| `acceptBondOwner(operator)`                   | Proposed bond owner        | `ciphernode accept-bond-owner`           |
+| `bondCiphernodeFor(operator, amount)`         | Bond owner                 | `ciphernode bond ... bond`               |
+| `registerOperatorFor(operator)`               | Bond owner                 | `ciphernode register`                    |
+| `addTicketBalanceFor(operator, amount)`       | Bond owner                 | `ciphernode tickets ... buy`             |
+| `removeTicketBalanceFor(operator, amount)`    | Bond owner                 | `ciphernode tickets ... burn`            |
+| `unbondCiphernodeFor(operator, amount)`       | Bond owner                 | `ciphernode bond ... unbond`             |
+| `deregisterOperatorFor(operator)`             | Bond owner or operator key | `ciphernode deregister`                  |
+| `claimExitsFor(operator, maxTicket, 0)`       | Anyone                     | `ciphernode bond ... claim --max-bond 0` |
+| `claimExitsFor(operator, maxTicket, maxBond)` | Bond owner                 | `ciphernode bond ... claim`              |
+| `refreshOperatorStatus(operator)`             | Anyone                     | `ciphernode activate`                    |
 
 A call from the wrong wallet reverts with `NotBondOwner(caller, operator)`.
 
@@ -345,8 +345,9 @@ cast send "$BONDING" "refreshOperatorStatus(address)" 0xOPERATOR \
 
 The call reverts with `NotRegistered()` for an operator that is not registered.
 `refreshOperatorStatuses(address[])` refreshes a batch, and it reverts when one operator in the list
-is not registered. The CLI has no command for these calls. A node start also refreshes a registered
-operator that is not active, because its release acknowledgment calls `refreshOperatorStatus`.
+is not registered. `ciphernode activate` refreshes one operator; the CLI has no command for a batch.
+A node start also refreshes a registered operator that is not active, because its release
+acknowledgment calls `refreshOperatorStatus`.
 
 ## Committee limits for each bond owner
 

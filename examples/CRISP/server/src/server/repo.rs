@@ -1036,7 +1036,6 @@ impl<S: DataStore> CrispE3Repository<S> {
             .map(|e3_crisp| e3_crisp.eligible_addresses))
     }
 
-    /// Record whether holder discovery is still owed for this round.
     /// Record the census snapshot of a round that registered without it.
     pub async fn set_snapshot_block(&mut self, snapshot: u64) -> Result<()> {
         self.update_crisp("set the census snapshot", |round| {
@@ -1046,6 +1045,7 @@ impl<S: DataStore> CrispE3Repository<S> {
         Ok(())
     }
 
+    /// Record whether holder discovery is still owed for this round.
     pub async fn set_discovery_pending(&mut self, pending: bool) -> Result<()> {
         self.update_crisp("set discovery_pending", |round| {
             round.discovery_pending = pending

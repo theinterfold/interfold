@@ -280,7 +280,7 @@ fn absolute(path: &Path) -> Result<PathBuf> {
 }
 
 /// Writes the configuration for the keys `prepare` made and the artifacts that
-/// `cargo openvm setup --evm` downloaded.
+/// `cargo openvm setup --evm` produced (generated, or prebuilt with `--download`).
 fn write_config(paths: &[PathBuf]) -> Result<()> {
     ensure!(
         paths.len() == 6,

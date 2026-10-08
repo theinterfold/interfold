@@ -20,9 +20,9 @@ a dealer signature. Their event-log records, recovery inputs, and DHT payloads a
 the unsigned layout. Protocol version 8 and node generation 2 are the release cutover values.
 This change requires drain-and-resync; it has no layout migration.
 
-The fhe.rs v0.4.1 upgrade set `protocol_version` to 7, and the secure parameter set of #2195
-(circuit version `interfold-bfv-v5`) sets it to 8, so a 0.19.0 test build cannot pass the release
-check of the cutover. The fhe.rs smudging bound and BFV validation rules
+The cutover requires `protocol_version` 8, which the secure parameter set and circuit version
+`interfold-bfv-v5` need; a 0.19.0 test build reports 7 and fails the release check of the cutover.
+The fhe.rs smudging bound and BFV validation rules
 change the DKG and proof inputs. Its non-centered plaintext scale also changes the CRISP ballot
 check and its circuit artifacts. Drain active E3s and install matching circuit artifacts and
 verifier routes before requests resume. Both parameter sets use the circuit ID domain
@@ -204,8 +204,8 @@ online and mutually reachable.
 
 ## v0.19 cutover on mainnet
 
-The secure-CRISP builder ran the v0.18 activation. It reads the RISC Zero CRISP program, so it
-cannot prepare the v0.19 cutover, which moves the circuits to `interfold-bfv-v5`, adds secure
+`upgrade:secure-crisp` reads the RISC Zero CRISP program, so it cannot prepare the v0.19 cutover,
+which moves the circuits to `interfold-bfv-v5`, adds secure
 parameter set 2 and wires the OpenVM CRISP program. With requests paused and every E3 and committee
 drained, `upgrade:v19` (`scripts/upgrade/v19Cutover.ts prepare`) deploys the Interfold
 implementation with its libraries and the BFV verifier routes, then writes one governance batch:
