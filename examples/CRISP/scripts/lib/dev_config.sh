@@ -56,7 +56,8 @@ load_crisp_dev_config() {
   export E3_NODES__CN5__SKIP_PROOF_AGGREGATION="$CRISP_SKIP_PROOF_AGGREGATION"
 
   # Local development runs the unproved development runner against a verifier that accepts every
-  # receipt, on the isolated local chain only. CRISP_REAL_PROOFS=1 uses the OpenVM worker configured
+  # receipt. The deployment allows that verifier on the isolated local chain, and on Sepolia only with
+  # ALLOW_SEPOLIA_UNPROVED_COMPUTE=true. CRISP_REAL_PROOFS=1 uses the OpenVM worker configured
   # under program.openvm and deploys the real receipt verifier instead.
   CRISP_REAL_PROOFS="${CRISP_REAL_PROOFS:-0}"
   if [[ "$CRISP_REAL_PROOFS" == "1" ]]; then

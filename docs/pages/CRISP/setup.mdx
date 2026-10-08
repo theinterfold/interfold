@@ -142,7 +142,9 @@ includes these contracts:
 - `MockOpenVmReceiptVerifier` (with `CRISP_UNPROVED_TEST=1`, which the local scripts set unless
   `CRISP_REAL_PROOFS=1`), `MockVotingToken`, and `MockCrispDataAvailabilityVerifier`. With
   `CRISP_REAL_PROOFS=1`, the deployment instead deploys the OpenVM receipt verifier for the guest
-  that `interfold program compile` built.
+  that `interfold program compile` built. On Sepolia, `CRISP_UNPROVED_TEST=1` deploys the mock
+  verifier only with `ALLOW_SEPOLIA_UNPROVED_COMPUTE=true`. On every other chain, the deployment
+  refuses `CRISP_UNPROVED_TEST=1`.
 
 After the deployment, the script writes the new contract addresses into three files. You do not copy
 addresses by hand:
