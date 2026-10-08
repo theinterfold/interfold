@@ -209,8 +209,9 @@ The public key and decryption proofs use real verifiers:
 | BfvPkVerifierRouter         | `0x6ED58e59D2576d13BA6aDC847FeF42A31D75490d` | 11873230     |
 | BfvDecryptionVerifierRouter | `0x056a612851061f22341C08781a1Fc8f292AB1657` | 11873231     |
 
-The Sepolia deployment has no ciphertext verifier for BFV, so a BFV request reverts with
-`InvalidEncryptionScheme`. The owner sets this verifier with `setCiphertextVerifier`.
+The ciphertext verifier for BFV is `OpenVmBfvCiphertextVerifier`. It wraps
+`MockOpenVmReceiptVerifier`, which accepts every receipt, so Sepolia does not verify compute proofs.
+[Contracts & Addresses](/reference/contracts#sepolia) lists both addresses.
 
   </Tabs.Tab>
 </Tabs>

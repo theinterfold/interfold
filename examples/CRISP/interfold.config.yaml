@@ -63,8 +63,8 @@ chains:
       rpc_url: "https://turing-rpc.avail.so/rpc"
     contracts:
       e3_program:
-        address: "0x9Dc6edB343A89a25dC8bEF324F721Cca78E86AFD"
-        deploy_block: 11862791
+        address: "0xA9894A39061EC33f8550a2B63A66Be59fb9fa443"
+        deploy_block: 11873424
       interfold:
         address: "0xBD5B6D1aDA9e0eB248B678469C9Cd6a63507E42b"
         deploy_block: 11873232

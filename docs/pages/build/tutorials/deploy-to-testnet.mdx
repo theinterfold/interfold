@@ -20,10 +20,11 @@ register it, and your server and client use the testnet.
 
 <Callout type='warning'>
   Do not submit real private data on Sepolia. The `insecure-512` preset is not secure. The public
-  key, decryption, and DKG verifiers of the Sepolia deployment check the proofs. The deployment has
-  no ciphertext verifier for BFV. See [Check the protocol ciphertext
-  verifier](#check-the-protocol-ciphertext-verifier). The test contracts are `MockUSDC`, the
-  `Faucet`, and `MockE3Program`. The manifest marks Sepolia with `mocks: true`.
+  key, decryption, and DKG verifiers of the Sepolia deployment check the proofs. The ciphertext
+  verifier wraps `MockOpenVmReceiptVerifier`, which accepts every receipt. See [Check the protocol
+  ciphertext verifier](#check-the-protocol-ciphertext-verifier). The test contracts are `MockUSDC`,
+  the `Faucet`, `MockE3Program`, and `MockOpenVmReceiptVerifier`. The manifest marks Sepolia with
+  `mocks: true`.
 </Callout>
 
 <Callout type='warning'>
@@ -52,6 +53,7 @@ These addresses come from `deployments/manifest.json` (chain ID 11155111), excep
 | `BondedVotes`                  | `0x1C721DE6a736054DBE7E8fcE99A68b76D4f603fb` | 11873269     | Voting power of locked and bonded FOLD                      |
 | `BfvPkVerifierRouter`          | `0x6ED58e59D2576d13BA6aDC847FeF42A31D75490d` | 11873230     | Verifies the committee public key proofs                    |
 | `BfvDecryptionVerifierRouter`  | `0x056a612851061f22341C08781a1Fc8f292AB1657` | 11873231     | Verifies the decryption proofs                              |
+| `OpenVmBfvCiphertextVerifier`  | `0x0bA8834bc023696CE027c9B7B06aB42E9A7F0592` | 11873416     | Ciphertext verifier for BFV. It wraps a mock.               |
 | `MockE3Program`                | `0x449D73B60f930c7c50a50147046065C4D255B60b` | 11873232     | Test E3 program. The deployment registers it.               |
 | `Faucet`                       | `0x1B4340A65BB669267BF5DE37385B139987C3F09c` | 11873271     | Test faucet. It sends 1000 FOLD and 1000 USDC               |
 
@@ -63,12 +65,12 @@ as the ticket collateral.
 Locally, `pnpm dev:all` deploys its own Interfold contracts, and the deployer owns them. On Sepolia,
 the Interfold team owns the protocol contracts. This changes four steps of the local flow.
 
-| Step                         | Local (`pnpm dev:all`)                                                     | Sepolia                                                                                            |
-| ---------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Program registration         | `deployTemplate` calls `registerE3Program`.                                | `registerE3Program` is `onlyOwner`. The owner of the Interfold contract must call it.              |
-| Protocol ciphertext verifier | `deployTemplate` calls `setCiphertextVerifier` with your receipt identity. | `setCiphertextVerifier` is `onlyOwner`. The Sepolia deployment has no ciphertext verifier for BFV. |
-| Data availability            | The coordination server stores the output (`mode: mock_http`).             | Ciphernodes read the output from Avail (`mode: avail`).                                            |
-| Ciphernodes                  | Five local nodes from `scripts/dev_ciphernodes.sh`.                        | The nodes of registered operators. Sortition needs enough of them for the committee size.          |
+| Step                         | Local (`pnpm dev:all`)                                                     | Sepolia                                                                                   |
+| ---------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Program registration         | `deployTemplate` calls `registerE3Program`.                                | `registerE3Program` is `onlyOwner`. The owner of the Interfold contract must call it.     |
+| Protocol ciphertext verifier | `deployTemplate` calls `setCiphertextVerifier` with your receipt identity. | `setCiphertextVerifier` is `onlyOwner`. The Sepolia verifier accepts every receipt.       |
+| Data availability            | The coordination server stores the output (`mode: mock_http`).             | Ciphernodes read the output from Avail (`mode: avail`).                                   |
+| Ciphernodes                  | Five local nodes from `scripts/dev_ciphernodes.sh`.                        | The nodes of registered operators. Sortition needs enough of them for the committee size. |
 
 The first two rows mean that you cannot run `deployTemplate` on Sepolia unchanged. The owner-only
 calls revert for any other signer. The last two rows decide if an E3 of your program can complete.
@@ -277,15 +279,31 @@ with `E3ProgramNotAllowed`.
 
 ### Check the protocol ciphertext verifier
 
-Every output proof must pass the ciphertext verifier that the owner set for BFV. When no verifier
-exists for BFV, a BFV request reverts with `InvalidEncryptionScheme`. Read the verifier address:
+Every output proof must pass the ciphertext verifier that the owner set for BFV. On Sepolia, this is
+`OpenVmBfvCiphertextVerifier` at `0x0bA8834bc023696CE027c9B7B06aB42E9A7F0592`. It wraps
+`MockOpenVmReceiptVerifier` at `0x00A49042e0550a272ED393dd324749c18C0c8e62`, which accepts every
+receipt. Read the verifier address:
 
 ```bash
 cast call $INTERFOLD_ADDRESS "getCiphertextVerifier(bytes32)(address)" $(cast keccak "fhe.rs:BFV") --rpc-url $RPC_URL
 ```
 
-The Sepolia deployment has no ciphertext verifier for BFV, so the command returns the zero address.
-Until the owner sets a verifier, you cannot run an E3 of your program on Sepolia.
+Read the receipt identity and the receipt verifier of that address:
+
+```bash
+cast call <verifier address> "imageId()(bytes32)" --rpc-url $RPC_URL
+cast call <verifier address> "openVmVerifier()(address)" --rpc-url $RPC_URL
+```
+
+The verifier records a receipt identity, but the mock receipt verifier does not check the seal
+against it. The verifier decodes the proof envelope,
+`abi.encode(bytes seal, bytes32 paramsHash, bytes32 inputRoot)`, and requires the parameter hash of
+the E3. Thus an OpenVM proof passes the protocol check on Sepolia when its parameter hash matches,
+and so does a development-runner proof. Your program must still pass `MyProgram.verify`, which
+checks the OpenVM receipt for real.
+
+Do not rely on this behavior on mainnet. A non-mock ciphertext verifier checks every proof against
+its pinned identity.
 
 The receipt verifier in your program affects only `MyProgram.verify`. It does not affect the
 protocol verifier. The Interfold contract copies the current verifier into each E3 at request time,
@@ -415,10 +433,10 @@ await sdk.onInterfoldEvent(InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED, (event
 | `packages/interfold-contracts` | `pnpm run deploy --network <name>`                                                     | Deploys the protocol contracts (`scripts/run.ts`, `deployInterfold`). This is for the protocol owner.                          |
 | `packages/crisp-contracts`     | `pnpm deploy:contracts --network sepolia`                                              | Deploys CRISP and its verifiers, and wires them only when the signer owns the Interfold contract.                              |
 
-The Sepolia deployment has these test contracts: `MockUSDC`, the `Faucet`, and `MockE3Program`. The
-public key, decryption, and DKG verifiers are real. `deployInterfold` can still deploy mock
-contracts on chain ID 11155111. On other chains it refuses mocks unless
-`ALLOW_MOCKS_ON_PRODUCTION=true` is set.
+The Sepolia deployment has these test contracts: `MockUSDC`, the `Faucet`, `MockE3Program`, and
+`MockOpenVmReceiptVerifier`. The public key, decryption, and DKG verifiers are real.
+`deployInterfold` can still deploy mock contracts on chain ID 11155111. On other chains it refuses
+mocks unless `ALLOW_MOCKS_ON_PRODUCTION=true` is set.
 
 ## Troubleshooting
 

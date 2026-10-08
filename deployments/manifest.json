@@ -106,6 +106,10 @@
         "BfvPkVerifierRouter": {
           "address": "0x6ED58e59D2576d13BA6aDC847FeF42A31D75490d",
           "deploy_block": 11873230
+        },
+        "OpenVmBfvCiphertextVerifier": {
+          "address": "0x0bA8834bc023696CE027c9B7B06aB42E9A7F0592",
+          "deploy_block": 11873416
         }
       }
     }
