@@ -28,6 +28,7 @@ use e3_events::{CircuitName, Proof};
 use e3_fhe_params::BfvPreset;
 use e3_zk_helpers::computation::DkgInputType;
 use e3_zk_helpers::dkg::share_encryption::{ShareEncryptionCircuit, ShareEncryptionCircuitData};
+use e3_zk_helpers::threshold::decrypted_shares_aggregation::MAX_MSG_NON_ZERO_COEFFS;
 use e3_zk_helpers::threshold::share_decryption::{
     ShareDecryptionCircuit, ShareDecryptionCircuitData,
 };
@@ -346,7 +347,7 @@ fn assert_final_c6_tree_binding(
         "1".into(),
         "2".into(),
     ];
-    c7_public.extend(vec!["0".to_owned(); 100]);
+    c7_public.extend(vec!["0".to_owned(); MAX_MSG_NON_ZERO_COEFFS]);
     let c7 = substitute_proof(
         prover,
         CircuitName::DecryptedSharesAggregation,
