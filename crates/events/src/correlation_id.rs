@@ -154,16 +154,16 @@ mod tests {
     /// reservation that is not a number stops the start instead of being ignored.
     #[test]
     fn a_fresh_folder_gets_a_reservation_and_a_broken_one_stops_the_start() {
-        let dir = std::env::temp_dir().join(format!(
-            "correlation-ids-{}-{}",
-            std::process::id(),
-            CorrelationId::new().id
-        ));
+        // The tests share the counter, and the restart test can raise it at any time: compare the
+        // reservation with an ID issued before it.
+        let issued = CorrelationId::new().id;
+        let dir =
+            std::env::temp_dir().join(format!("correlation-ids-{}-{}", std::process::id(), issued));
         let path = dir.join("node").join("correlation-ids");
 
         reserve_correlation_ids(&path).unwrap();
         let recorded: usize = fs::read_to_string(&path).unwrap().trim().parse().unwrap();
-        assert!(recorded > CorrelationId::new().id);
+        assert!(recorded > issued);
 
         fs::write(&path, "not a number").unwrap();
         assert!(reserve_correlation_ids(&path).is_err());
