@@ -19,8 +19,9 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 /// The next ID of this process. IDs persist in the event log, and a restarted node replays them
-/// next to the IDs it issues again, so each boot starts above every ID that an earlier boot can
-/// have issued: at the current time in microseconds, which no boot outruns one ID at a time.
+/// next to the IDs it issues again, so each boot starts at the current time in microseconds, which
+/// no boot outruns one ID at a time. That is above every ID of an earlier boot unless the clock
+/// moved back by more than the time since that boot started.
 fn next_correlation_id() -> &'static AtomicUsize {
     static NEXT: OnceLock<AtomicUsize> = OnceLock::new();
     NEXT.get_or_init(|| {
