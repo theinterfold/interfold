@@ -6,10 +6,7 @@
 
 //! Bind a legacy NodeFold proof to the terminal secure-16384 generation fold.
 
-use bb_proof_verification::{
-    UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
-    verify_honk_proof_non_zk,
-};
+use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use lib::math::commitments::compute_vk_hash;
 
 pub use lib::configs::default::threshold::L as LBFV_ROWS;
@@ -95,13 +92,13 @@ fn build_public_statement(
     out
 }
 
+/// C1 itself is not re-verified here: the legacy node fold already verifies it, exports its sk
+/// secret root, and `c1_key_hash` is pinned to the legacy fold's C1 VK. Binding the generation
+/// fold to that exported root is what ties the l-BFV key to the DKG shares' secret.
 fn main(
     node_fold_vk: UltraHonkVerificationKey,
     node_fold_proof: UltraHonkProof,
     node_fold_public: [Field; NODE_FOLD_PUBLIC_LEN],
-    c1_vk: UltraHonkVerificationKey,
-    c1_proof: UltraHonkZKProof,
-    c1_public: [Field; 3],
     generation_vk: UltraHonkVerificationKey,
     generation_proof: UltraHonkProof,
     generation_public: [Field; GENERATION_FOLD_PUBLIC_LEN],
@@ -116,7 +113,6 @@ fn main(
         node_fold_public,
         node_fold_key_hash,
     );
-    verify_honk_proof(c1_vk, c1_proof, c1_public, c1_key_hash);
     verify_honk_proof_non_zk(
         generation_vk,
         generation_proof,
@@ -126,12 +122,11 @@ fn main(
 
     assert(node_fold_public[0] == party_id);
     assert_bridge_c1_key_hash(node_fold_public, c1_key_hash);
-    assert_same_sk_as_legacy_fold(node_fold_public, c1_public[0]);
     assert(generation_public[GF_ACC_VK_IDX] == generation_key_hash);
     assert(generation_public[GF_ROW_INDEX_IDX] == (LBFV_ROWS - 1) as Field);
     assert(generation_public[GF_EXPECTED_FOLD_IDX] == generation_key_hash);
     assert(generation_public[GF_PARTY_ID_IDX] == party_id);
-    assert(generation_public[GF_SK_COMMITMENT_IDX] == c1_public[0]);
+    assert_same_sk_as_legacy_fold(node_fold_public, generation_public[GF_SK_COMMITMENT_IDX]);
 
     let generation_manifest = compute_generation_manifest(generation_key_hash, generation_public);
 

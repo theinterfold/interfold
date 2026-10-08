@@ -18,7 +18,7 @@ use lib::math::commitments::{
 };
 
 pub global CHUNK_COMMITMENT_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
-pub global BATCH_RETURN_LEN: u32 = 2 + (CHUNKS_PER_BATCH * CHUNK_COMMITMENT_LEN);
+pub global BATCH_RETURN_LEN: u32 = CHUNKS_PER_BATCH * CHUNK_COMMITMENT_LEN;
 pub global BATCH_PUBLIC_LEN: u32 = 2 + BATCH_RETURN_LEN;
 pub global C2_PUBLIC_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
 pub global C2_FINALIZED_PUBLIC_LEN: u32 = C2_PUBLIC_LEN + 2;
@@ -43,12 +43,11 @@ fn main(
             batch_key_hash,
         );
         assert(batch_public_inputs[batch_idx][1] == batch_idx as Field);
-        assert(batch_public_inputs[batch_idx][2] == batch_idx as Field);
         assert(batch_public_inputs[batch_idx][0] == batch_public_inputs[0][0]);
 
         for chunk_in_batch in 0..CHUNKS_PER_BATCH {
             let chunk_idx = batch_idx * CHUNKS_PER_BATCH + chunk_in_batch;
-            let start = 4 + chunk_in_batch * CHUNK_COMMITMENT_LEN;
+            let start = 2 + chunk_in_batch * CHUNK_COMMITMENT_LEN;
             secret_chunks[chunk_idx] = batch_public_inputs[batch_idx][start];
             for slot in 0..(N_PARTIES * L_THRESHOLD) {
                 share_chunks[slot][chunk_idx] = batch_public_inputs[batch_idx][start + 1 + slot];

@@ -673,6 +673,17 @@ pub fn compute_pk_aggregation_commitment(
     BigInt::from_bytes_le(num_bigint::Sign::Plus, &commitment_bytes)
 }
 
+/// The `pk1` half of [`compute_pk_aggregation_commitment`].
+///
+/// On the l-BFV path `pk1` is a fixed CRS row, so this value is a per-row constant. The config
+/// generator emits it as `LBFV_CRS_ROW_COMMITMENTS`, and the aggregation circuit uses the constant
+/// instead of hashing the row in-circuit.
+pub fn compute_pk_aggregation_pk1_commitment(pk1: &CrtPolynomial, bit_pk: u32) -> BigInt {
+    let payload = flatten(Vec::new(), &pk1.limbs, bit_pk);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_PK_AGGREGATION, io)[0])
+}
+
 /// Commit to the complete ordered l-BFV public-key row set.
 pub fn compute_lbfv_public_key_commitment(row_commitments: &[BigInt]) -> BigInt {
     let mut payload = vec![Field::from(1u64), Field::from(row_commitments.len() as u64)];

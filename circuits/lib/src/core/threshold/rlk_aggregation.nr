@@ -123,10 +123,10 @@ impl<let N: u32, let H: u32, let L: u32, let BIT_D: u32> RlkAggregation<N, H, L,
         let h_half_qi: Field = H as Field * half_qi;
         let offset: Field = H as Field * q_l;
 
+        // Only the aggregate needs a range check. Each party's d0/d2 is opened with checked digits
+        // from rlk_generation's commitment, which pins it to the centered values that circuit
+        // bounded (as in C5).
         agg[basis_idx].range_check_2bounds::<BIT_D>(half_qi, half_qi);
-        for party_idx in 0..H {
-            values[party_idx][basis_idx].range_check_2bounds::<BIT_D>(half_qi, half_qi);
-        }
 
         for coeff_idx in 0..N {
             let mut sum_shifted: Field = 0;

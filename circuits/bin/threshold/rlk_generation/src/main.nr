@@ -6,9 +6,7 @@
 
 use bb_proof_verification::{UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof};
 use lib::configs::default::N_PARTIES;
-use lib::configs::default::threshold::{
-    GADGET_DIM, L, N, RLK_GENERATION_BIT_D, RLK_GENERATION_CONFIGS,
-};
+use lib::configs::default::threshold::{GADGET_DIM, L, N, RLK_GENERATION_BIT_D};
 use lib::core::threshold::lbfv_proof_domain::{LbfvProofSession, validate_generation_statement};
 use lib::math::commitments::{
     compute_rlk_d0_commitment, compute_rlk_d2_commitment, compute_rlk_limb_d0_commitment,
@@ -38,9 +36,6 @@ fn main(
     );
 
     for limb_index in 0..L {
-        let d_bound = (RLK_GENERATION_CONFIGS.qis[limb_index] - 1) / 2;
-        d0[limb_index].range_check_2bounds::<RLK_GENERATION_BIT_D>(d_bound, d_bound);
-        d2[limb_index].range_check_2bounds::<RLK_GENERATION_BIT_D>(d_bound, d_bound);
         verify_honk_proof(
             limb_vk,
             limb_proofs[limb_index],
@@ -57,6 +52,8 @@ fn main(
         assert(limb_public_inputs[limb_index][6] == limb_public_inputs[0][6]);
         assert(limb_public_inputs[limb_index][7] == limb_public_inputs[0][7]);
         assert(limb_public_inputs[limb_index][8] == limb_public_inputs[0][8]);
+        // The limb range-checks d0/d2 to the centered residue and commits them with checked
+        // digits, so this opening is unique and carries that bound; no second range check.
         assert(
             compute_rlk_limb_d0_commitment::<N, RLK_GENERATION_BIT_D>(
                 row_index,

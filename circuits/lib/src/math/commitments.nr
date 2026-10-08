@@ -644,6 +644,19 @@ pub fn compute_pk_aggregation_commitment<let N: u32, let L: u32, let BIT_PK: u32
     compute_commitment(inputs, DS_PK_AGGREGATION)
 }
 
+/// [`compute_pk_aggregation_commitment`] with the `pk1` half supplied as its commitment.
+///
+/// On the l-BFV path `pk1` is a fixed CRS row, so its commitment is a generated per-row constant
+/// (`LBFV_CRS_ROW_COMMITMENTS`) and hashing the row in-circuit is wasted work. The result equals
+/// `compute_pk_aggregation_commitment(pk0, row)` exactly.
+pub fn compute_pk_aggregation_commitment_with_pk1_commitment<let N: u32, let L: u32, let BIT_PK: u32>(
+    pk0: [Polynomial<N>; L],
+    commit_pk1: Field,
+) -> Field {
+    let commit_pk0 = compute_multiple_polynomial_commitment::<N, L, BIT_PK>(pk0, DS_PK_AGGREGATION);
+    compute_commitment([commit_pk0, commit_pk1].as_vector(), DS_PK_AGGREGATION)
+}
+
 /// Commit to the complete ordered l-BFV public-key row set.
 pub fn compute_lbfv_public_key_commitment<let ROWS: u32>(row_commitments: [Field; ROWS]) -> Field {
     let mut payload = [1, ROWS as Field].as_vector();
