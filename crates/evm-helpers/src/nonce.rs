@@ -32,9 +32,20 @@ const NONCE_RESERVATION: Duration = Duration::from_secs(120);
 /// request stops without an answer, this limit releases the lock for the other senders.
 const SEND_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// The nonces that this process sent, with their send times, by account.
-static SENT_NONCES: Mutex<BTreeMap<Address, BTreeMap<u64, Instant>>> =
-    Mutex::const_new(BTreeMap::new());
+type Reservations = BTreeMap<(u64, Address), BTreeMap<u64, Instant>>;
+
+/// The nonces that this process sent, with their send times, by chain and account.
+static SENT_NONCES: Mutex<Reservations> = Mutex::const_new(BTreeMap::new());
+
+/// The reservations of one account on one chain. A signer that sends on two chains has an
+/// independent nonce sequence on each, so one chain's reservations must not move the other's.
+fn account_reservations(
+    sent: &mut Reservations,
+    chain_id: u64,
+    from: Address,
+) -> &mut BTreeMap<u64, Instant> {
+    sent.entry((chain_id, from)).or_default()
+}
 
 /// Send `call` from `from` with the next free nonce of that account.
 ///
@@ -66,7 +77,7 @@ where
         let fees = call.provider.estimate_eip1559_fees().await?;
         let chain_id = call.provider.get_chain_id().await?;
         let pending = call.provider.get_transaction_count(from).pending().await?;
-        let account = sent.entry(from).or_default();
+        let account = account_reservations(&mut sent, chain_id, from);
         let nonce = next_free_nonce(account, pending, Instant::now());
         // Reserve the nonce before the broadcast. If the send stops during the broadcast, the node
         // can hold the transaction, and the reservation keeps later sends off its nonce.
@@ -127,6 +138,22 @@ fn next_free_nonce(sent: &mut BTreeMap<u64, Instant>, pending: u64, now: Instant
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One signer on two chains: a reservation on one chain does not move the other chain's nonce.
+    #[test]
+    fn keeps_the_reservations_of_each_chain_apart() {
+        let now = Instant::now();
+        let signer = Address::repeat_byte(7);
+        let mut sent = Reservations::new();
+        let mainnet = account_reservations(&mut sent, 1, signer);
+        let nonce = next_free_nonce(mainnet, 0, now);
+        mainnet.insert(nonce, now);
+        assert_eq!(nonce, 0);
+        let sepolia = account_reservations(&mut sent, 11_155_111, signer);
+        assert_eq!(next_free_nonce(sepolia, 0, now), 0);
+        let mainnet = account_reservations(&mut sent, 1, signer);
+        assert_eq!(next_free_nonce(mainnet, 0, now), 1);
+    }
 
     /// A reservation keeps a nonce that the RPC does not count yet out of the next send.
     #[test]
