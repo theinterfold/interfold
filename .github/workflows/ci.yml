@@ -92,6 +92,11 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
+              # The OpenVM worker is a workspace of its own, and no cargo build reads the image
+              # files. The `openvm_worker` and `docker` filters select their jobs.
+              - '!crates/openvm-prover/**'
+              - '!crates/Dockerfile'
+              - '!crates/support/**'
               - '!**/*.md'
               - '!**/*.mdx'
             # The OpenVM worker is a cargo workspace of its own, built against the OpenVM SDK.
@@ -130,8 +135,13 @@ jobs:
               # path a hand-edited manifest never runs the drift check and
               # reaches the release assets stale.
               - 'deployments/**'
+              # SecureCrispArtifacts.spec.ts reads the CRISP image ID from this directory.
+              - 'crates/support/contracts/**'
               - '!**/*.md'
               - '!**/*.mdx'
+            # `pnpm check:bindings` in rust_unit_tests runs this script.
+            bindings:
+              - 'scripts/check-cli-bindings.ts'
             # The `circuits` and `verifiers` filters are in .github/filters/circuits.yml, because
             # .husky/pre-push reads them too. The next step evaluates that file.
             # What the e2e reads: everything in CRISP except the unit test directories
@@ -227,10 +237,14 @@ jobs:
               - 'tests/integration/test.sh'
               - '!**/*.md'
               - '!**/*.mdx'
+            # Both images build from the repository root, so the root .dockerignore decides their
+            # context. The ciphernode image runs the entrypoint script.
             docker:
               - 'crates/Dockerfile'
+              - 'crates/ciphernode-entrypoint.sh'
               - 'crates/support/Dockerfile'
               - 'crates/support/**'
+              - '.dockerignore'
               - '!**/*.md'
               - '!**/*.mdx'
             # Only the workflow, its path filters, and the local actions that it runs. Other
@@ -268,6 +282,7 @@ jobs:
         run: |
           RUST="${{ steps.filter.outputs.rust }}"
           CONTRACTS="${{ steps.filter.outputs.contracts }}"
+          BINDINGS="${{ steps.filter.outputs.bindings }}"
           CIRCUITS="${{ steps.circuit_filter.outputs.circuits }}"
           VERIFIERS="${{ steps.circuit_filter.outputs.verifiers }}"
           CIRCUIT_BUILD="${{ steps.filter.outputs.circuit_build }}"
@@ -291,7 +306,7 @@ jobs:
 
           any() { for v in "$@"; do [ "$v" = "true" ] && echo "true" && return; done; echo "false"; }
 
-          echo "rust_unit_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "rust_unit_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $BINDINGS $CI $TOOLING)" >> $GITHUB_OUTPUT
           echo "rust_integration_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
           echo "ciphernode_e2e=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI $TOOLING)" >> $GITHUB_OUTPUT
           echo "build_sdk=$(any $FORCE $RUST $CONTRACTS $SDK $REACT $INTEGRATION $CIRCUITS $CI $TEMPLATES $TOOLING)" >> $GITHUB_OUTPUT
