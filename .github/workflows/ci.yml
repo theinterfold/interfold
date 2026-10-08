@@ -417,6 +417,10 @@ jobs:
       actions: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          # Keeps the token out of .git/config, where install and build scripts could read it and use
+          # this job's actions: write. The cancel step gets the token on its own.
+          persist-credentials: false
 
       - name: Cache Rust dependencies
         uses: ./.github/actions/cache-dependencies
@@ -849,6 +853,10 @@ jobs:
     steps:
       - name: 'Check out the repo'
         uses: 'actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10' # v6
+        with:
+          # Keeps the token out of .git/config, where install and build scripts could read it and use
+          # this job's actions: write. The cancel step gets the token on its own.
+          persist-credentials: false
 
       - name: pnpm-setup
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
@@ -1093,6 +1101,9 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
+          # Keeps the token out of .git/config, where install and build scripts could read it and use
+          # this job's actions: write. The cancel step gets the token on its own.
+          persist-credentials: false
           submodules: recursive
 
       - name: Cache Rust dependencies
@@ -1445,6 +1456,10 @@ jobs:
       actions: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          # Keeps the token out of .git/config, where install and build scripts could read it and use
+          # this job's actions: write. The cancel step gets the token on its own.
+          persist-credentials: false
 
       - name: Install Nargo
         uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
@@ -1477,6 +1492,9 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
+          # Keeps the token out of .git/config, where install and build scripts could read it and use
+          # this job's actions: write. The cancel step gets the token on its own.
+          persist-credentials: false
           submodules: recursive
 
       - name: Install Nargo
