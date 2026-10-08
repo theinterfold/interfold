@@ -20,7 +20,9 @@ use e3_zk_helpers::threshold::lbfv_proof_domain::lbfv_proof_session;
 use e3_zk_helpers::threshold::rlk_generation::{RlkGenerationCircuitData, RlkGenerationConfigs};
 use e3_zk_helpers::{CiphernodesCommitteeSize, Computation};
 use e3_zk_prover::test_utils::load_vk_artifacts;
-use e3_zk_prover::{finalize_rlk_generation_row, prove_rlk_generation_row, ZkProver};
+use e3_zk_prover::{
+    c2_chunk_size, finalize_rlk_generation_row, prove_rlk_generation_row, ZkProver,
+};
 use num_bigint::{BigInt, Sign};
 use std::time::Instant;
 
@@ -127,7 +129,11 @@ async fn secure_rlk_limbs_finalize_one_row() {
         BigInt::from(session.session_id_lo),
         BigInt::from(row.party_id),
         BigInt::from(row.row_index),
-        compute_sc_sk_secret_root_commitment(&row.sk, configs.bits.sk_bit, 512),
+        compute_sc_sk_secret_root_commitment(
+            &row.sk,
+            configs.bits.sk_bit,
+            c2_chunk_size(preset.metadata().degree, committee.n),
+        ),
         compute_rlk_r_commitment(&row.r, configs.bits.r_bit),
         compute_rlk_d0_commitment(row.row_index, &row.d0, configs.bits.d_bit),
         compute_rlk_d2_commitment(row.row_index, &row.d2, configs.bits.d_bit),
