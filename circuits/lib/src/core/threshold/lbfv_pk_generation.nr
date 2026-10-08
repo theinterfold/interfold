@@ -9,19 +9,22 @@ use crate::math::commitments::{
     compute_lbfv_pk_limb_eek_commitment, compute_sc_sk_secret_root_from_polynomial,
 };
 use crate::math::helpers::flatten_checked;
-use crate::math::polynomial::{negacyclic_kernel, Polynomial};
+use crate::math::polynomial::{negacyclic_kernel, Polynomial, select_constant_dot};
 
 /// Prove one CRT limb of one l-BFV public-key row.
 ///
 /// The limb checks the identity **reduced modulo `X^N + 1`**, over the integers:
 ///   `pk0 == -(a * sk mod X^N + 1) + eek + q_i * r`
 /// which is the relation C1 checks per modulus, here for one row and one limb.
-pub struct LbfvPkGenerationLimb<let N: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_R: u32, let BIT_PK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
+///
+/// `a` is entry `[row_index][limb_index]` of the compile-time CRS table `crs`. The table is never
+/// indexed at runtime: see `select_constant_dot`.
+pub struct LbfvPkGenerationLimb<let N: u32, let L: u32, let ROWS: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_R: u32, let BIT_PK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
     eek_bound: Field,
     sk_bound: Field,
     r_bound: Field,
     qi: Field,
-    a: Polynomial<N>,
+    crs: [[Polynomial<N>; L]; ROWS],
     row_index: u32,
     limb_index: u32,
     eek: Polynomial<N>,
@@ -30,13 +33,13 @@ pub struct LbfvPkGenerationLimb<let N: u32, let BIT_EEK: u32, let BIT_SK: u32, l
     pk0: Polynomial<N>,
 }
 
-impl<let N: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_R: u32, let BIT_PK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> LbfvPkGenerationLimb<N, BIT_EEK, BIT_SK, BIT_R, BIT_PK, N_CHUNKS, CHUNK_SIZE> {
+impl<let N: u32, let L: u32, let ROWS: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_R: u32, let BIT_PK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> LbfvPkGenerationLimb<N, L, ROWS, BIT_EEK, BIT_SK, BIT_R, BIT_PK, N_CHUNKS, CHUNK_SIZE> {
     pub fn new(
         eek_bound: Field,
         sk_bound: Field,
         r_bound: Field,
         qi: Field,
-        a: Polynomial<N>,
+        crs: [[Polynomial<N>; L]; ROWS],
         row_index: u32,
         limb_index: u32,
         eek: Polynomial<N>,
@@ -49,7 +52,7 @@ impl<let N: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_R: u32, let BIT_PK: 
             sk_bound,
             r_bound,
             qi,
-            a,
+            crs,
             row_index,
             limb_index,
             eek,
@@ -97,6 +100,9 @@ impl<let N: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_R: u32, let BIT_PK: 
     }
 
     /// Absorbs every value the identity reads before deriving `gamma`.
+    ///
+    /// The CRS row is not absorbed: it is a compile-time constant selected by `row_index` and
+    /// `limb_index`, which open the payload.
     fn generate_challenge(
         self,
         sk_commitment: Field,
@@ -104,7 +110,6 @@ impl<let N: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_R: u32, let BIT_PK: 
         pk_limb_commitment: Field,
     ) -> Field {
         let mut payload = [self.row_index as Field, self.limb_index as Field].as_vector();
-        payload = flatten_checked::<_, _, BIT_PK>(payload, [self.a]);
         payload = flatten_checked::<_, _, BIT_EEK>(payload, [self.eek]);
         payload = payload.push_back(sk_commitment);
         payload = payload.push_back(eek_commitment);
@@ -129,7 +134,8 @@ impl<let N: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_R: u32, let BIT_PK: 
                 - self.qi * self.r.coefficients[j];
         }
         assert(
-            Polynomial::new(residual).eval(gamma) == -self.a.dot(kernel),
+            Polynomial::new(residual).eval(gamma)
+                == -select_constant_dot(self.crs, self.row_index, self.limb_index, kernel),
             "Public key equation failed",
         );
     }
@@ -140,7 +146,8 @@ impl<let N: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_R: u32, let BIT_PK: 
 // `-(a * sk mod X^4 + 1) + eek = [67, -87, 52, 29]`, so `r = [-1, 1, -1, 0]` brings it to the
 // centered `pk0 = [-30, 10, -45, 29]`.
 // Bounds: eek = 3, sk = 1, r = ((4 + 2) * 48 + 3) / 97 = 3, pk0 = 48.
-type TestLimb = LbfvPkGenerationLimb<4, 2, 1, 2, 6, 1, 4>;
+// A one-row, one-limb CRS table holds the test's `a`.
+type TestLimb = LbfvPkGenerationLimb<4, 1, 1, 2, 1, 2, 6, 1, 4>;
 
 fn test_limb(
     a: [Field; 4],
@@ -154,7 +161,7 @@ fn test_limb(
         1,
         3,
         97,
-        Polynomial::new(a),
+        [[Polynomial::new(a)]],
         0,
         0,
         Polynomial::new(eek),

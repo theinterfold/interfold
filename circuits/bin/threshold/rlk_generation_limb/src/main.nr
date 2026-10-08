@@ -38,7 +38,7 @@ fn main(
     );
     assert(limb_index < L, "limb_index out of range");
 
-    let circuit: RlkGenerationLimb<N, RLK_GENERATION_BIT_R, RLK_GENERATION_BIT_SK, RLK_GENERATION_BIT_E0, RLK_GENERATION_BIT_E2, RLK_GENERATION_BIT_RD0, RLK_GENERATION_BIT_RD2, RLK_GENERATION_BIT_D, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE> = RlkGenerationLimb::new(
+    let circuit: RlkGenerationLimb<N, L, GADGET_DIM, RLK_GENERATION_BIT_R, RLK_GENERATION_BIT_SK, RLK_GENERATION_BIT_E0, RLK_GENERATION_BIT_E2, RLK_GENERATION_BIT_RD0, RLK_GENERATION_BIT_RD2, RLK_GENERATION_BIT_D, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE> = RlkGenerationLimb::new(
         RLK_GENERATION_CONFIGS.r_bound,
         RLK_GENERATION_CONFIGS.sk_bound,
         RLK_GENERATION_CONFIGS.e0_bound,
@@ -46,8 +46,8 @@ fn main(
         RLK_GENERATION_CONFIGS.rd0_bounds[limb_index],
         RLK_GENERATION_CONFIGS.rd2_bounds[limb_index],
         RLK_GENERATION_CONFIGS.qis[limb_index],
-        LBFV_URS_GADGET_ROWS[row_index][limb_index],
-        LBFV_CRS_GADGET_ROWS[row_index][limb_index],
+        LBFV_URS_GADGET_ROWS,
+        LBFV_CRS_GADGET_ROWS,
         row_index,
         limb_index,
         sk,
