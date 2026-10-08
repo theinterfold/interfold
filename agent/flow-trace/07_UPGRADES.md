@@ -105,6 +105,13 @@ instead. A node-generation cutover changes committee eligibility but does not is
 Prepare with `upgrade:node-release --action prepare --mandatory`. After operators restart, use
 `upgrade:node-release --action resume` to build the checked resume transaction.
 
+A node sends its acknowledgment with twice the estimated gas. The acknowledgment refreshes the
+operator, which writes the bonding registry's activity checkpoints at `block.timestamp`. The
+estimate runs at the latest block's timestamp: when that block wrote the same checkpoints, as
+another operator's acknowledgment does, the estimate overwrites them while the mined transaction
+appends new ones (about 40k gas more on a mainnet fork). The CLI sends its transactions the same
+way.
+
 ## Contract or protocol upgrade
 
 Increase `protocol_version`. Pause and drain first. One governance proposal must upgrade the

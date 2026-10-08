@@ -43,6 +43,16 @@ fn validate_release_policy(policy: ReleasePolicy) -> Result<()> {
     Ok(())
 }
 
+/// The acknowledgment refreshes the operator, which writes the bonding registry's activity
+/// checkpoints at `block.timestamp`. The estimate runs at the latest block's timestamp: when that
+/// block wrote the same checkpoints, as another operator's acknowledgment does, the estimate
+/// overwrites them while the mined transaction appends new ones and needs about 40k more gas.
+const ACKNOWLEDGMENT_GAS_MULTIPLIER: u64 = 2;
+
+fn acknowledgment_gas_limit(estimate: u64) -> u64 {
+    estimate.saturating_mul(ACKNOWLEDGMENT_GAS_MULTIPLIER)
+}
+
 /// Read the SlashingManager that Interfold calls. `Ok(None)` means that Interfold has no
 /// SlashingManager yet, as before deployment wiring sets one.
 pub async fn fetch_slashing_manager<P: Provider + Clone>(
@@ -153,13 +163,16 @@ where
         .get_transaction_count(operator)
         .pending()
         .await?;
-    let pending = controller
+    let call = controller
         .acknowledgeNodeRelease(
             release_id,
             release.protocol_version,
             release.node_generation,
         )
-        .nonce(current_nonce)
+        .nonce(current_nonce);
+    let gas = call.estimate_gas().await?;
+    let pending = call
+        .gas(acknowledgment_gas_limit(gas))
         .send()
         .await?;
     drop(_nonce_guard);
