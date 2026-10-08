@@ -33,7 +33,8 @@ function escapeRegularExpression(value) {
 
 function changelogForVersion(changelog, version) {
   const lines = changelog.split('\n')
-  const start = new RegExp(`^#+ \\[?v?${escapeRegularExpression(version)}\\]?`)
+  // The lookahead keeps `0.19.0` from matching the heading of `0.19.0-test.2`.
+  const start = new RegExp(`^#+ \\[?v?${escapeRegularExpression(version)}(?![0-9A-Za-z.+-])`)
   const nextVersion = /^#+ \[?v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?/
   const startIndex = lines.findIndex((line) => start.test(line))
 
@@ -46,6 +47,35 @@ function changelogForVersion(changelog, version) {
     .slice(startIndex + 1, endIndex < 0 ? undefined : endIndex)
     .join('\n')
     .trim()
+}
+
+/**
+ * The changelog of a release. auto-changelog compares each tag with the tag before it, so the
+ * section of a stable version lists only the changes since its last pre-release. A stable release
+ * also lists the sections of its pre-releases, which its users never installed.
+ */
+export function changelogForRelease(changelog, version) {
+  const versions = [version]
+  if (!version.includes('-')) {
+    const prerelease = new RegExp(`^#+ \\[?v?(${escapeRegularExpression(version)}-[0-9A-Za-z.-]+)`)
+    for (const line of changelog.split('\n')) {
+      const match = prerelease.exec(line)
+      if (match) versions.push(match[1])
+    }
+  }
+  const sections = versions
+    .map((name) => ({ name, text: changelogForVersion(changelog, name) }))
+    .filter((section) => section.text)
+  if (sections.length <= 1) {
+    return sections[0]?.text ?? ''
+  }
+  return sections.map((section) => `#### v${section.name}\n\n${section.text}`).join('\n\n')
+}
+
+/** The upgrade note of a release, from `scripts/release/notes/<version>.md`, if there is one. */
+function upgradeNote(version, rootDir) {
+  const path = join(rootDir, 'scripts', 'release', 'notes', `${version}.md`)
+  return existsSync(path) ? readFileSync(path, 'utf8').trim() : ''
 }
 
 function checksum(path) {
@@ -71,7 +101,8 @@ function copyArchives(distDir, assetsDir) {
 function releaseNotes(options, requiredAssets, assetsDir, rootDir) {
   const { candidateSha, circuitSourceHash, isPrerelease, version } = options
   const changelogPath = join(rootDir, 'CHANGELOG.md')
-  const changelog = existsSync(changelogPath) ? changelogForVersion(readFileSync(changelogPath, 'utf8'), version) : ''
+  const changelog = existsSync(changelogPath) ? changelogForRelease(readFileSync(changelogPath, 'utf8'), version) : ''
+  const upgrade = upgradeNote(version, rootDir)
   const npmTag = releaseChannel(version)
   const warning = isPrerelease
     ? '> **This is a pre-release version.**\n> Pre-release versions can contain bugs and breaking changes.\n\n'
@@ -85,7 +116,7 @@ function releaseNotes(options, requiredAssets, assetsDir, rootDir) {
 
 Candidate commit: \`${candidateSha}\`
 
-${warning}### What Changed
+${warning}${upgrade ? `### Upgrade\n\n${upgrade}\n\n` : ''}### What Changed
 
 ${changelog || 'See CHANGELOG.md for details.'}
 
