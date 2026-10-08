@@ -264,15 +264,18 @@ before the inner command (`bond`, `unbond`, `claim`, `buy`, or `burn`). The
 | `ciphernode tickets [--operator <a>] buy --amount <collateral>`              | Bond owner                                | Approves the collateral if needed, then deposits it.     |
 | `ciphernode tickets [--operator <a>] burn --amount <tFOLD>`                  | Bond owner                                | Burns tFOLD and queues the collateral for exit.          |
 | `ciphernode register [--operator <a>]`                                       | Bond owner                                | Registers the operator.                                  |
-| `ciphernode activate [--operator <a>]`                                       | Bond owner                                | Sends the same `registerOperatorFor` call as `register`. |
+| `ciphernode activate [--operator <a>]`                                       | Any wallet                                | Refreshes the status of a registered operator.           |
 | `ciphernode deactivate [--operator <a>] [--tickets <n>] [--bond <n>]`        | Bond owner                                | Burns tickets and unbonds FOLD without a deregistration. |
 | `ciphernode deregister [--operator <a>]`                                     | Bond owner or operator key                | Deregisters the operator and queues all collateral.      |
 | `ciphernode status [--operator <a>]`                                         | Any                                       | Prints the on-chain status.                              |
 
 ### Activate and deactivate
 
-`activate` is the same call as `register`. Use it to register an operator again after a full exit.
-It reverts with `AlreadyRegistered` when the operator is still registered.
+`activate` sends `refreshOperatorStatus` for a registered operator. The contract recomputes the
+active status from the registration, the release acknowledgment, bans, the bond and the tickets.
+Use it after a requirement changed or after the release was acknowledged from another process.
+`activate` does not register: for an operator that is not registered it stops and points to
+`register`. To register an operator again after a full exit, use `register`.
 
 `deactivate` needs `--tickets`, `--bond`, or both. It calls `removeTicketBalanceFor` for the ticket
 amount and `unbondCiphernodeFor` for the bond amount. `--tickets` is a tFOLD amount, not a ticket

@@ -202,9 +202,13 @@ that no supervisor, for example a service manager or a container restart policy,
 ## Docker and DAppNode
 
 For a Docker installation, the `.interfold` directory is next to the configuration file in the
-mounted volume. Stop the container, then copy the complete volume. The Docker entrypoint sets the
-password and the operator key from the credentials secret at each start. Use the same credentials
-secret on the new server.
+mounted volume. A node that started from an image before 0.19.0 without a volume at
+`/home/ciphernode/.config/interfold` keeps its state inside the container instead. Copy that state
+onto the volume first, as
+[Move state from an earlier image](/operate/running#move-state-from-an-earlier-image) describes,
+because removing the container deletes it. Then stop the container and copy the complete volume.
+The Docker entrypoint sets the password and the operator key from the credentials secret when the
+volume has none. Use the same credentials secret on the new server.
 
 The DAppNode package keeps its configuration and its `.interfold` directory in the `/data` volume.
 The package declares a backup named `ciphernode-data` for this volume. Use the same credentials file
