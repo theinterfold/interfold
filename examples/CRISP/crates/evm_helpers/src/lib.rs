@@ -20,7 +20,7 @@ use alloy::{
     sol,
     transports::RpcError,
 };
-use e3_evm_helpers::nonce::send_with_next_nonce;
+use e3_evm_helpers::{contracts::Interfold, nonce::send_with_next_nonce};
 use eyre::Result;
 use std::sync::Arc;
 
@@ -101,6 +101,24 @@ sol! {
     contract CiphernodeRegistryTiming {
         function randomnessRequestTimeout() external view returns (uint256);
         function sortitionSubmissionWindow() external view returns (uint256);
+    }
+
+    #[sol(rpc)]
+    contract InterfoldCiphertextVerifiers {
+        function getCiphertextVerifier(bytes32 encryptionSchemeId) external view returns (address);
+    }
+
+    #[sol(rpc)]
+    contract CiphertextVerifier {
+        function verify(
+            uint256 e3Id,
+            bytes32 encryptionSchemeId,
+            bytes32 paramsHash,
+            bytes32 committeePublicKey,
+            bytes32 ciphertextOutputHash,
+            bytes32 ciphertextCommitment,
+            bytes proof
+        ) external view returns (bool);
     }
 
     #[sol(rpc)]
@@ -524,9 +542,12 @@ impl CRISPContract<CRISPWriteProvider> {
 
     /// Check the aggregate ciphertext and its compute proof before paying to publish it to DA.
     ///
-    /// This calls the same CRISP verifier that Interfold calls after the availability receipt is
-    /// ready. The earlier check prevents an unauthenticated or malformed webhook from spending
-    /// the server's Avail balance on bytes that can never be accepted on Ethereum.
+    /// Interfold accepts the output only if the E3's ciphertext verifier and CRISP both accept the
+    /// proof, after the availability receipt is ready. This runs both checks first, so that an
+    /// unauthenticated or malformed webhook cannot spend the server's Avail balance on bytes that
+    /// can never be accepted on Ethereum. Interfold freezes the E3's verifier at request time;
+    /// governance changes a scheme's verifier only with requests paused and drained, so the
+    /// scheme's current verifier is the E3's.
     pub async fn validate_compute_output(
         &self,
         e3_id: U256,
@@ -534,12 +555,38 @@ impl CRISPContract<CRISPWriteProvider> {
         ciphertext_commitment: B256,
         proof: Bytes,
     ) -> Result<()> {
-        let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
+        let provider = self.provider.as_ref();
+        let contract = CRISPProgram::new(self.contract_address, provider);
         let accepted = contract
-            .verify(e3_id, ciphertext_output_hash, ciphertext_commitment, proof)
+            .verify(e3_id, ciphertext_output_hash, ciphertext_commitment, proof.clone())
             .call()
             .await?;
         eyre::ensure!(accepted, "CRISP rejected the aggregate ciphertext proof");
+
+        let interfold_address = contract.interfold().call().await?;
+        let interfold = Interfold::new(interfold_address, provider);
+        let e3 = interfold.getE3(e3_id).call().await?;
+        let params = interfold.paramSetRegistry(e3.paramSet).call().await?;
+        let verifier = InterfoldCiphertextVerifiers::new(interfold_address, provider)
+            .getCiphertextVerifier(e3.encryptionSchemeId)
+            .call()
+            .await?;
+        let accepted = CiphertextVerifier::new(verifier, provider)
+            .verify(
+                e3_id,
+                e3.encryptionSchemeId,
+                alloy::primitives::keccak256(&params),
+                e3.committeePublicKey,
+                ciphertext_output_hash,
+                ciphertext_commitment,
+                proof,
+            )
+            .call()
+            .await?;
+        eyre::ensure!(
+            accepted,
+            "the E3's ciphertext verifier rejected the aggregate ciphertext proof"
+        );
         Ok(())
     }
 
@@ -692,6 +739,69 @@ impl CRISPContractFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// CRISP accepts the aggregate proof and the E3's ciphertext verifier rejects it: Interfold
+    /// would refuse the output, so the server must refuse before it pays for availability.
+    #[tokio::test]
+    async fn an_output_that_the_e3_verifier_rejects_is_refused() {
+        use alloy::{sol_types::SolCall, transports::mock::Asserter};
+        use e3_evm_helpers::contracts::{CommitteeSize, E3};
+
+        let asserter = Asserter::new();
+        let provider = ProviderBuilder::new()
+            .wallet(EthereumWallet::from(PrivateKeySigner::random()))
+            .connect_mocked_client(asserter.clone());
+        let crisp = CRISPContract {
+            provider: Arc::new(provider),
+            contract_address: Address::repeat_byte(1),
+        };
+        let e3 = E3 {
+            seed: U256::ZERO,
+            committeeSize: CommitteeSize::Minimum,
+            requestBlock: U256::ZERO,
+            inputWindow: [U256::ZERO; 2],
+            encryptionSchemeId: B256::repeat_byte(2),
+            e3Program: Address::repeat_byte(1),
+            paramSet: 2,
+            customParams: Bytes::new(),
+            decryptionVerifier: Address::ZERO,
+            pkVerifier: Address::ZERO,
+            committeePublicKey: B256::repeat_byte(3),
+            ciphertextOutput: B256::ZERO,
+            plaintextOutput: Bytes::new(),
+            requester: Address::ZERO,
+            ciphertextCommitment: B256::ZERO,
+        };
+        for protocol_accepts in [false, true] {
+            let push = |data: Vec<u8>| asserter.push_success(&Bytes::from(data));
+            push(CRISPProgram::verifyCall::abi_encode_returns(&true));
+            push(CRISPProgram::interfoldCall::abi_encode_returns(
+                &Address::repeat_byte(4),
+            ));
+            push(Interfold::getE3Call::abi_encode_returns(&e3));
+            push(Interfold::paramSetRegistryCall::abi_encode_returns(
+                &Bytes::from_static(b"params"),
+            ));
+            push(
+                InterfoldCiphertextVerifiers::getCiphertextVerifierCall::abi_encode_returns(
+                    &Address::repeat_byte(5),
+                ),
+            );
+            push(CiphertextVerifier::verifyCall::abi_encode_returns(
+                &protocol_accepts,
+            ));
+
+            let result = crisp
+                .validate_compute_output(U256::from(1), B256::ZERO, B256::ZERO, Bytes::new())
+                .await;
+            if protocol_accepts {
+                result.unwrap();
+            } else {
+                let error = result.unwrap_err().to_string();
+                assert!(error.contains("ciphertext verifier rejected"), "{error}");
+            }
+        }
+    }
 
     #[test]
     fn compatibility_schedule_includes_every_committee_setup_window() {
