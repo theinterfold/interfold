@@ -234,6 +234,36 @@ test('every pair regenerates all of its C1/C2 bounds, array bounds included', ()
   }
 })
 
+test('every pair source hash tracks the pinned nargo and bb versions', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'interfold-toolchain-hash-'))
+  const cargo = (tag: string) => `[dependencies]\nnargo = { git = "https://github.com/noir-lang/noir", tag = "${tag}" }\n`
+  const versions = (bb: string) => JSON.stringify({ required_bb_version: bb, required_circuits_version: '0.0.0' })
+  try {
+    mkdirSync(join(dir, 'crates', 'zk-prover'), { recursive: true })
+    writeFileSync(join(dir, 'crates', 'zk-prover', 'Cargo.toml'), cargo('v1.0.0'))
+    writeFileSync(join(dir, 'crates', 'zk-prover', 'versions.json'), versions('5.0.0'))
+    const builder = new NoirCircuitBuilder(dir)
+    for (const [preset, committee] of RELEASE_REQUIRED_PAIRS) {
+      const original = builder.computeSourceHash(preset, committee)
+      writeFileSync(join(dir, 'crates', 'zk-prover', 'versions.json'), versions('5.0.1'))
+      assert.notEqual(builder.computeSourceHash(preset, committee), original, `${preset}/${committee}: bb`)
+      writeFileSync(join(dir, 'crates', 'zk-prover', 'versions.json'), versions('5.0.0'))
+      writeFileSync(join(dir, 'crates', 'zk-prover', 'Cargo.toml'), cargo('v1.0.1'))
+      assert.notEqual(builder.computeSourceHash(preset, committee), original, `${preset}/${committee}: nargo`)
+      writeFileSync(join(dir, 'crates', 'zk-prover', 'Cargo.toml'), cargo('v1.0.0'))
+      // A release that changes only the circuit version keeps the artifacts current.
+      writeFileSync(
+        join(dir, 'crates', 'zk-prover', 'versions.json'),
+        JSON.stringify({ required_bb_version: '5.0.0', required_circuits_version: '9.9.9' }),
+      )
+      assert.equal(builder.computeSourceHash(preset, committee), original)
+      writeFileSync(join(dir, 'crates', 'zk-prover', 'versions.json'), versions('5.0.0'))
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('every pair source hash tracks shared Noir sources and dependency pins', () => {
   const dir = mkdtempSync(join(tmpdir(), 'interfold-shared-noir-hash-'))
   const sources = [
