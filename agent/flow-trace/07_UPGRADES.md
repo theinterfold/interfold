@@ -17,10 +17,12 @@ within the same protocol version.
 The v0.19 DKG message layout requires storage schema 8, threshold-keyshare recovery schema 8, gossip
 wire major 5, and sync wire major 4. Both `ThresholdShareCreated` and `DecryptionKeyShared` include
 a dealer signature. Their event-log records, recovery inputs, and DHT payloads are incompatible with
-the unsigned layout. Protocol version 7 and node generation 2 remain the release cutover values.
+the unsigned layout. Protocol version 8 and node generation 2 are the release cutover values.
 This change requires drain-and-resync; it has no layout migration.
 
-The fhe.rs v0.4.1 upgrade sets `protocol_version` to 7. Its smudging bound and BFV validation rules
+The fhe.rs v0.4.1 upgrade set `protocol_version` to 7, and the secure parameter set of #2195
+(circuit version `interfold-bfv-v5`) sets it to 8, so a 0.19.0 test build cannot pass the release
+check of the cutover. The fhe.rs smudging bound and BFV validation rules
 change the DKG and proof inputs. Its non-centered plaintext scale also changes the CRISP ballot
 check and its circuit artifacts. Drain active E3s and install matching circuit artifacts and
 verifier routes before requests resume. Both parameter sets use the circuit ID domain
@@ -30,10 +32,10 @@ changes its application commitments, so rebuild the guest, regenerate its keys a
 record, and deploy matching receipt verifiers before such a change serves a live program.
 
 The mainnet `paramSetRegistry(1)` contains the previous secure parameters and cannot be changed.
-Version 7 uses parameter-set index 2 for the new secure tuple. Keep index 1 intact for old E3
+Version 8 uses parameter-set index 2 for the new secure tuple. Keep index 1 intact for old E3
 records. While requests are paused and all E3s have drained, register index 2 in the same governance
-batch that installs the version-7 implementation and verifier routes. Validate the registered bytes
-against the new secure tuple before requests resume. Version-7 ciphernodes and request clients
+batch that installs the version-8 implementation and verifier routes. Validate the registered bytes
+against the new secure tuple before requests resume. Version-8 ciphernodes and request clients
 reject index 1. The indexer reads current index-0 and index-2 public keys with local v5 parameters.
 For historical index-0 and index-1 public-key events, it reads the append-only registry bytes and
 checks their v1 configuration ID against the request before it validates the key.
@@ -129,7 +131,7 @@ On a testnet, a fresh protocol, CRISP, and DAO stack is an acceptable alternativ
 upgrade. It must still pass the same route and verification-key validation before it accepts an E3.
 The old and new stacks must use separate addresses so clients cannot silently combine them.
 
-The BFV circuits use `interfold-bfv-v5` with compiled `protocol_version = 7` and
+The BFV circuits use `interfold-bfv-v5` with compiled `protocol_version = 8` and
 `node_generation = 2`. The configuration ID binds this circuit version even when BFV parameters stay
 unchanged. The builder generates both precomputed IDs. Runtime readers, CRISP intake, request
 tooling, and the SDK use the same IDs and reject v1 through v4 requests. The indexer also accepts
