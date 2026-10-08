@@ -74,6 +74,36 @@ function refreshChecksums(dir: string): void {
   )
 }
 
+/**
+ * Check `checksums.json` as a node's installer does (`crates/zk-prover/src/backend/download.rs`):
+ * sha256, at least one file, plain relative paths, every listed file present with its digest, and
+ * every artifact listed. Build stamps and the root manifests need no entry.
+ */
+export function validateChecksums(dir: string): void {
+  const manifestPath = join(dir, 'checksums.json')
+  if (!existsSync(manifestPath)) throw new Error('checksums.json is missing')
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { algorithm?: string; files?: Record<string, string> }
+  if (manifest.algorithm !== 'sha256') throw new Error('checksums.json must use sha256')
+  const files = Object.entries(manifest.files ?? {})
+  if (files.length === 0) throw new Error('checksums.json lists no files')
+  const listed = new Set<string>()
+  for (const [file, digest] of files) {
+    if (file.startsWith('/') || file.split('/').some((part) => part === '' || part === '.' || part === '..')) {
+      throw new Error(`checksums.json lists an invalid path: ${file}`)
+    }
+    const path = join(dir, file)
+    if (!existsSync(path) || !statSync(path).isFile()) throw new Error(`checksums.json lists a missing file: ${file}`)
+    const actual = createHash('sha256').update(readFileSync(path)).digest('hex')
+    if (actual !== digest) throw new Error(`checksums.json has the wrong digest for ${file}`)
+    listed.add(file)
+  }
+  for (const file of artifactFiles(dir)) {
+    if (!file.endsWith('.build-stamp.json') && !listed.has(file)) {
+      throw new Error(`checksums.json does not list ${file}`)
+    }
+  }
+}
+
 function stampFiles(dir: string): string[] {
   const stamps: string[] = []
   for (const file of artifactFiles(dir)) {
@@ -335,12 +365,13 @@ async function verifyRelease() {
   try {
     validateSourceHash(DIST, expectedHash)
     validateArtifactSet(DIST)
+    validateChecksums(DIST)
   } catch (error: any) {
     console.error(`❌ ${error.message}`)
     process.exit(1)
   }
 
-  console.log(`✅ circuit-artifacts verified (SOURCE_HASH=${expectedHash}, required chain artifacts present)`)
+  console.log(`✅ circuit-artifacts verified (SOURCE_HASH=${expectedHash}, required chain artifacts present and checksummed)`)
 }
 
 if (require.main === module) {

@@ -19,6 +19,7 @@ import {
   RELEASE_REQUIRED_PAIRS,
   requiredArtifactMarkers,
   validateArtifactSet,
+  validateChecksums,
   validateReleaseArtifacts,
 } from './circuit-artifacts'
 
@@ -69,6 +70,36 @@ test('checksums command covers exactly the staged circuit configurations', () =>
       manifest.files['insecure-512/minimum/default/dkg/pk/pk.vk'],
       '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
     )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('release verification refuses the checksum manifests that a node refuses', () => {
+  const dir = makeCompleteMatrix()
+  try {
+    execFileSync('pnpm', ['tsx', 'scripts/circuit-artifacts.ts', 'checksums', '--dir', dir])
+    validateChecksums(dir)
+    const manifestPath = join(dir, 'checksums.json')
+    const manifest = readFileSync(manifestPath, 'utf8')
+    const [first] = Object.keys(JSON.parse(manifest).files).filter((file) => !file.endsWith('.build-stamp.json'))
+    const edit = (change: (files: Record<string, string>) => void) => {
+      const parsed = JSON.parse(manifest)
+      change(parsed.files)
+      writeFileSync(manifestPath, JSON.stringify(parsed))
+    }
+
+    edit((files) => delete files[first])
+    assert.throws(() => validateChecksums(dir), /does not list/)
+    edit((files) => (files[first] = '0'.repeat(64)))
+    assert.throws(() => validateChecksums(dir), /wrong digest/)
+    edit((files) => (files['../outside'] = files[first]))
+    assert.throws(() => validateChecksums(dir), /invalid path/)
+    edit((files) => (files['insecure-512/minimum/absent.json'] = files[first]))
+    assert.throws(() => validateChecksums(dir), /missing file/)
+    edit(() => {})
+    unlinkSync(manifestPath)
+    assert.throws(() => validateChecksums(dir), /checksums.json is missing/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
