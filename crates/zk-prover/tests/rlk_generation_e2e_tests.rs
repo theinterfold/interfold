@@ -129,8 +129,8 @@ async fn secure_rlk_limbs_finalize_one_row() {
         BigInt::from(row.row_index),
         compute_sc_sk_secret_root_commitment(&row.sk, configs.bits.sk_bit, 512),
         compute_rlk_r_commitment(&row.r, configs.bits.r_bit),
-        compute_rlk_d0_commitment(&row.d0, configs.bits.d_bit),
-        compute_rlk_d2_commitment(&row.d2, configs.bits.d_bit),
+        compute_rlk_d0_commitment(row.row_index, &row.d0, configs.bits.d_bit),
+        compute_rlk_d2_commitment(row.row_index, &row.d2, configs.bits.d_bit),
         BigInt::from_bytes_be(Sign::Plus, &limb_vk_hash),
     ];
     assert_eq!(actual, expected);

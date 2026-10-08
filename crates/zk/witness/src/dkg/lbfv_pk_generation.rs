@@ -42,7 +42,6 @@ struct LbfvPkGenerationFinalizerInput {
     limb_proofs: Vec<Vec<String>>,
     limb_public_inputs: Vec<Vec<String>>,
     limb_key_hash: String,
-    pk0: serde_json::Value,
 }
 
 /// Recursive limb proofs and their terminal public-key row proof.
@@ -325,7 +324,6 @@ pub fn finalize_lbfv_pk_generation_row(
         limb_proofs: proof_fields,
         limb_public_inputs: public_inputs,
         limb_key_hash: limb_vk.key_hash,
-        pk0: serde_json::Value::Array(crt_polynomial_to_toml_json(&row.pk0_share)),
     };
 
     prove_recursive_circuit(

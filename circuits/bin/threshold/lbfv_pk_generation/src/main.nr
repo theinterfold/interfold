@@ -6,12 +6,9 @@
 
 use bb_proof_verification::{UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof};
 use lib::configs::default::N_PARTIES;
-use lib::configs::default::threshold::{GADGET_DIM, L, N, PK_GENERATION_BIT_PK};
+use lib::configs::default::threshold::{GADGET_DIM, L};
 use lib::core::threshold::lbfv_proof_domain::{LbfvProofSession, validate_generation_statement};
-use lib::math::commitments::{
-    compute_lbfv_pk_limb_commitment, compute_threshold_pk_commitment_checked,
-};
-use lib::math::polynomial::Polynomial;
+use lib::math::commitments::compute_lbfv_pk_row_commitment_from_limbs;
 
 pub global LBFV_PK_LIMB_PUBLIC_LEN: u32 = 8;
 
@@ -25,7 +22,6 @@ fn main(
     limb_proofs: [UltraHonkZKProof; L],
     limb_public_inputs: [[Field; LBFV_PK_LIMB_PUBLIC_LEN]; L],
     limb_key_hash: Field,
-    pk0: [Polynomial<N>; L],
 ) -> pub (Field, Field, Field) {
     validate_generation_statement::<N_PARTIES, GADGET_DIM>(
         LbfvProofSession { session_id_hi, session_id_lo },
@@ -48,16 +44,13 @@ fn main(
         assert(limb_public_inputs[limb_index][4] == limb_index as Field);
         assert(limb_public_inputs[limb_index][5] == limb_public_inputs[0][5]);
         assert(limb_public_inputs[limb_index][6] == limb_public_inputs[0][6]);
-        assert(
-            compute_lbfv_pk_limb_commitment::<N, PK_GENERATION_BIT_PK>(
-                row_index,
-                limb_index,
-                pk0[limb_index],
-            )
-                == limb_public_inputs[limb_index][7],
-        );
     }
 
-    let pk_commitment = compute_threshold_pk_commitment_checked::<N, L, PK_GENERATION_BIT_PK>(pk0);
+    // Committed through the verified limb commitments; see `compute_lbfv_pk_row_commitment`.
+    let mut pk_limbs: [Field; L] = [0; L];
+    for limb_index in 0..L {
+        pk_limbs[limb_index] = limb_public_inputs[limb_index][7];
+    }
+    let pk_commitment = compute_lbfv_pk_row_commitment_from_limbs(row_index, pk_limbs);
     (limb_public_inputs[0][5], pk_commitment, limb_key_hash)
 }

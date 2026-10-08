@@ -11,7 +11,7 @@ use crate::threshold::lbfv_proof_domain::{
     validate_lbfv_generation_party_id,
 };
 use crate::{
-    bigint_1d_to_json_values, compute_modulus_bit, compute_threshold_pk_commitment,
+    bigint_1d_to_json_values, compute_lbfv_pk_row_commitment, compute_modulus_bit,
     crt_polynomial_to_toml_json, Artifacts, CiphernodesCommittee, Circuit, CircuitCodegen,
     CircuitComputation, CircuitsErrors, CodegenConfigs, CodegenToml, Computation,
 };
@@ -158,8 +158,11 @@ impl Computation for LbfvPkAggregationInputs {
 
         for share in &data.shares {
             let (_, pk0_row) = adapter.share_row_components(data.row_index, share)?;
-            expected_pk_generation_commitments
-                .push(compute_threshold_pk_commitment(&pk0_row, bit_pk));
+            expected_pk_generation_commitments.push(compute_lbfv_pk_row_commitment(
+                data.row_index,
+                &pk0_row,
+                bit_pk,
+            ));
             pk0.push(pk0_row);
         }
         let pk0_agg = aggregate_rows(&pk0, params.moduli(), params.degree())?;
@@ -370,7 +373,11 @@ mod tests {
         for party in 0..committee.h {
             assert_eq!(
                 inputs.expected_pk_generation_commitments[party],
-                compute_threshold_pk_commitment(&inputs.pk0[party], configs.bits.pk_bit)
+                compute_lbfv_pk_row_commitment(
+                    inputs.row_index,
+                    &inputs.pk0[party],
+                    configs.bits.pk_bit
+                )
             );
         }
         assert_ne!(

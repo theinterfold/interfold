@@ -62,5 +62,5 @@ fn main(
         d2_agg,
     );
 
-    rlk_aggregation.execute()
+    rlk_aggregation.execute(row_index)
 }
