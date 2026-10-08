@@ -405,7 +405,6 @@ jobs:
     # `lib` legs each build the tests and run half of them. The checks that read the whole tree run in
     # the first one.
     strategy:
-      fail-fast: false
       matrix:
         include:
           - suite: lib
@@ -415,6 +414,7 @@ jobs:
           - suite: doc
     permissions:
       contents: read
+      actions: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
@@ -498,6 +498,12 @@ jobs:
         if: matrix.suite == 'doc'
         run: pnpm rust:test:slashing
 
+      - name: Cancel workflow on failure
+        if: failure()
+        run: gh run cancel ${{ github.run_id }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   rust_integration_tests:
     needs: [detect_changes, integration_prebuild]
     if: needs.detect_changes.outputs.rust_integration_tests == 'true'
@@ -509,7 +515,6 @@ jobs:
     # legs. The `integration` leg runs the other integration targets in skip-aggregation mode;
     # the CLI e2e jobs already drive a full E3 in that mode.
     strategy:
-      fail-fast: false
       matrix:
         leg: [integration, offline-party, standby-node]
     steps:
@@ -840,6 +845,7 @@ jobs:
       'test_contracts') || 'ubuntu-latest' }}
     permissions:
       contents: read
+      actions: write
     steps:
       - name: 'Check out the repo'
         uses: 'actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10' # v6
@@ -886,6 +892,12 @@ jobs:
         run: |
           echo "## Test results" >> $GITHUB_STEP_SUMMARY
           echo "✅ Passed" >> $GITHUB_STEP_SUMMARY
+
+      - name: Cancel workflow on failure
+        if: failure()
+        run: gh run cancel ${{ github.run_id }}
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   test_net:
     needs: [detect_changes]
@@ -1077,6 +1089,7 @@ jobs:
       labels: [enclave-ci-runner]
     permissions:
       contents: read
+      actions: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -1102,6 +1115,12 @@ jobs:
           name: interfold-binary
           path: ~/.cargo/bin/interfold
           retention-days: 1
+
+      - name: Cancel workflow on failure
+        if: failure()
+        run: gh run cancel ${{ github.run_id }}
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   crisp_unit_circuits:
     needs: [detect_changes]
@@ -1423,6 +1442,7 @@ jobs:
       'noir_checks') || 'ubuntu-latest' }}
     permissions:
       contents: read
+      actions: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
@@ -1437,6 +1457,12 @@ jobs:
       - name: Test Noir circuits
         run: ./scripts/test-circuits.sh
 
+      - name: Cancel workflow on failure
+        if: failure()
+        run: gh run cancel ${{ github.run_id }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   build_circuits:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.build_circuits == 'true'
@@ -1447,6 +1473,7 @@ jobs:
       'build_circuits') || 'ubuntu-latest' }}
     permissions:
       contents: read
+      actions: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -1546,6 +1573,12 @@ jobs:
           insecure-512 minimum
           EOF
 
+      - name: Cancel workflow on failure
+        if: failure()
+        run: gh run cancel ${{ github.run_id }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   # Proves with the published circuit set for this tree's SOURCE_HASH, which is also what
   # `build_circuits` used to hand over: it pulled and hydrated the published set before uploading.
   # Pulling here removes the wait for `build_circuits`, which still compiles from source and checks
@@ -1560,7 +1593,6 @@ jobs:
       github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}-{3}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
       'zk_prover_e2e', matrix.leg) || 'ubuntu-latest' }}
     strategy:
-      fail-fast: false
       matrix:
         leg: [suites, node-fold]
     steps:
