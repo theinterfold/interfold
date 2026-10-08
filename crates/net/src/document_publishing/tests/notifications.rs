@@ -533,6 +533,93 @@ async fn a_forged_notification_does_not_block_the_correct_one() -> Result<()> {
     Ok(())
 }
 
+/// A copy of the correct notification with a later expiry and a time beyond the clock-drift
+/// allowance arrives during the first fetch. The retry must still deliver the document under the
+/// correct notification: the node cannot publish a document at the copy's time.
+#[actix::test]
+async fn a_notification_beyond_the_drift_allowance_does_not_replace_the_correct_one() -> Result<()>
+{
+    let (_guard, bus, _net_cmd_tx, mut commands, net_events, _, history, _, publisher) =
+        setup_test()?;
+    let e3_id = E3id::new("drift", 1);
+    let value = EventConversionService::encryption_key_to_request(EncryptionKeyCreated {
+        e3_id: e3_id.clone(),
+        key: Arc::new(EncryptionKey::new(1, ArcBytes::from_bytes(b"public key"))),
+        external: false,
+    })?
+    .expect("local key should produce a document")
+    .value;
+    let key = ContentHash::from_content(&value);
+    bus.publish_without_context(CiphernodeSelected {
+        e3_id: e3_id.clone(),
+        threshold_m: 2,
+        threshold_n: 3,
+        ..CiphernodeSelected::default()
+    })?;
+    publisher.send(PublisherBarrier).await?;
+    let genuine = DocumentPublishedNotification {
+        key: key.clone(),
+        meta: DocumentMeta::new(
+            e3_id.clone(),
+            DocumentKind::TrBFV,
+            vec![],
+            Some(Utc::now() + chrono::Duration::hours(1)),
+        ),
+        ts: 101,
+    };
+    let late = DocumentPublishedNotification {
+        meta: DocumentMeta::new(
+            e3_id.clone(),
+            DocumentKind::TrBFV,
+            vec![],
+            Some(Utc::now() + chrono::Duration::hours(2)),
+        ),
+        ts: u128::MAX,
+        ..genuine.clone()
+    };
+
+    publisher.send(genuine.clone()).await?;
+    let Some(NetCommand::DhtGetRecord { correlation_id, .. }) =
+        timeout(Duration::from_secs(1), commands.recv()).await?
+    else {
+        bail!("expected a fetch for the correct notification");
+    };
+    publisher.send(late).await?;
+    net_events.send(NetEvent::DhtGetRecordError {
+        correlation_id,
+        error: GetRecordError::Timeout {
+            key: RecordKey::new(&key.0),
+        },
+    })?;
+    // The publisher announces again after the retry delay, which starts the due retry.
+    sleep(
+        crate::domain::document_publishing::RETRY_INTERVAL.mul_f64(1.1)
+            + Duration::from_millis(100),
+    )
+    .await;
+    publisher.send(genuine).await?;
+    let Some(NetCommand::DhtGetRecord { correlation_id, .. }) =
+        timeout(Duration::from_secs(2), commands.recv()).await?
+    else {
+        bail!("expected the retry of the fetch");
+    };
+    net_events.send(NetEvent::DhtGetRecordSucceeded {
+        key: key.clone(),
+        correlation_id,
+        value: value.clone(),
+    })?;
+    sleep(Duration::from_millis(200)).await;
+
+    let events = history.send(GetEvents::new()).await?;
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event.get_data(), InterfoldEventData::DocumentReceived(_))),
+        "the retry must deliver the document under the correct notification"
+    );
+    Ok(())
+}
+
 /// A peer can answer a fetch with another valid document. The node must not accept a document
 /// for a key that it did not ask for.
 #[actix::test]
