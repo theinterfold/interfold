@@ -190,9 +190,13 @@ toolchains: `cargo-openvm` v2.0.2, its guest toolchain, and the guest's `Cargo.l
   That control belongs to [governance](/governance).
 - **Program values.** The protocol verifier and each program contract keep separate values. The
   procedure above reads both.
-- **Local mocks.** With `TEMPLATE_UNPROVED_TEST=1` (or `CRISP_UNPROVED_TEST=1`) on the local chain,
-  the deploy uses `MockOpenVmReceiptVerifier`, which accepts every seal, and the dev runner returns
-  a placeholder seal. Such an E3 proves nothing about the computation.
+- **Unproved mocks.** With `TEMPLATE_UNPROVED_TEST=1` on the local chain, the template deploys
+  `MockOpenVmReceiptVerifier`. With `CRISP_UNPROVED_TEST=1`, CRISP deploys it on the local chain,
+  and on Sepolia when `ALLOW_SEPOLIA_UNPROVED_COMPUTE=true` is also set. This verifier accepts every
+  seal, and the dev runner returns a placeholder seal. Such an E3 proves nothing about the
+  computation. To detect the mock, call `imageId()` on the receipt verifier. The mock returns
+  `keccak256("INTERFOLD_LOCAL_UNPROVED_TEST")`. A real `OpenVmReceiptVerifier` returns the identity
+  of its guest.
 - **Audit.** The compute path and the OpenVM verifier integration are not audited.
 
 ## Next steps
