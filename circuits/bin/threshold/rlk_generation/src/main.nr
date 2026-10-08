@@ -6,13 +6,9 @@
 
 use bb_proof_verification::{UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof};
 use lib::configs::default::N_PARTIES;
-use lib::configs::default::threshold::{GADGET_DIM, L, N, RLK_GENERATION_BIT_D};
+use lib::configs::default::threshold::{GADGET_DIM, L};
 use lib::core::threshold::lbfv_proof_domain::{LbfvProofSession, validate_generation_statement};
-use lib::math::commitments::{
-    compute_rlk_d0_commitment, compute_rlk_d2_commitment, compute_rlk_limb_d0_commitment,
-    compute_rlk_limb_d2_commitment,
-};
-use lib::math::polynomial::Polynomial;
+use lib::math::commitments::compute_rlk_row_commitment_from_limbs;
 
 pub global RLK_LIMB_PUBLIC_LEN: u32 = 11;
 
@@ -26,8 +22,6 @@ fn main(
     limb_proofs: [UltraHonkZKProof; L],
     limb_public_inputs: [[Field; RLK_LIMB_PUBLIC_LEN]; L],
     limb_key_hash: Field,
-    d0: [Polynomial<N>; L],
-    d2: [Polynomial<N>; L],
 ) -> pub (Field, Field, Field, Field, Field) {
     validate_generation_statement::<N_PARTIES, GADGET_DIM>(
         LbfvProofSession { session_id_hi, session_id_lo },
@@ -52,28 +46,19 @@ fn main(
         assert(limb_public_inputs[limb_index][6] == limb_public_inputs[0][6]);
         assert(limb_public_inputs[limb_index][7] == limb_public_inputs[0][7]);
         assert(limb_public_inputs[limb_index][8] == limb_public_inputs[0][8]);
-        // The limb range-checks d0/d2 to the centered residue and commits them with checked
-        // digits, so this opening is unique and carries that bound; no second range check.
-        assert(
-            compute_rlk_limb_d0_commitment::<N, RLK_GENERATION_BIT_D>(
-                row_index,
-                limb_index,
-                d0[limb_index],
-            )
-                == limb_public_inputs[limb_index][9],
-        );
-        assert(
-            compute_rlk_limb_d2_commitment::<N, RLK_GENERATION_BIT_D>(
-                row_index,
-                limb_index,
-                d2[limb_index],
-            )
-                == limb_public_inputs[limb_index][10],
-        );
     }
 
-    let d0_commitment = compute_rlk_d0_commitment::<N, L, RLK_GENERATION_BIT_D>(d0);
-    let d2_commitment = compute_rlk_d2_commitment::<N, L, RLK_GENERATION_BIT_D>(d2);
+    // The row commits through its verified limb commitments rather than re-hashing d0/d2. An
+    // opener recomputes the limb commitments (checked digits), which pins the coefficients the
+    // limbs range-checked.
+    let mut d0_limbs: [Field; L] = [0; L];
+    let mut d2_limbs: [Field; L] = [0; L];
+    for limb_index in 0..L {
+        d0_limbs[limb_index] = limb_public_inputs[limb_index][9];
+        d2_limbs[limb_index] = limb_public_inputs[limb_index][10];
+    }
+    let d0_commitment = compute_rlk_row_commitment_from_limbs(2, row_index, d0_limbs);
+    let d2_commitment = compute_rlk_row_commitment_from_limbs(3, row_index, d2_limbs);
 
     (
         limb_public_inputs[0][5], limb_public_inputs[0][6], d0_commitment, d2_commitment,

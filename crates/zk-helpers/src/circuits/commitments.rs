@@ -398,6 +398,36 @@ pub fn compute_lbfv_pk_limb_commitment(
     field_to_bigint(compute_commitments(payload, DS_PK_GENERATION_LIMB_V1, io)[0])
 }
 
+/// Row commitment over the per-limb `pk0` commitments of one l-BFV public-key row. Mirrors the
+/// Noir `compute_lbfv_pk_row_commitment_from_limbs`.
+pub fn compute_lbfv_pk_row_commitment_from_limbs(
+    row_index: u32,
+    limb_commitments: &[BigInt],
+) -> BigInt {
+    let mut payload = vec![
+        Field::from(2u64),
+        Field::from(row_index as u64),
+        Field::from(limb_commitments.len() as u64),
+    ];
+    payload.extend(limb_commitments.iter().map(field_from_bigint));
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_PK_GENERATION_LIMB_V1, io)[0])
+}
+
+/// l-BFV public-key row commitment through its limb commitments. Use this, not
+/// [`compute_threshold_pk_commitment`], for l-BFV row commitments.
+pub fn compute_lbfv_pk_row_commitment(row_index: u32, pk0: &CrtPolynomial, bit_pk: u32) -> BigInt {
+    let limbs = pk0
+        .limbs
+        .iter()
+        .enumerate()
+        .map(|(limb, polynomial)| {
+            compute_lbfv_pk_limb_commitment(row_index, limb as u32, polynomial, bit_pk)
+        })
+        .collect::<Vec<_>>();
+    compute_lbfv_pk_row_commitment_from_limbs(row_index, &limbs)
+}
+
 /// Compute the pk_commitment for a serialized `PublicKeyShare`, matching what the C1 circuit outputs.
 ///
 /// Deserializes the keyshare, extracts the pk0 polynomial, and hashes it
@@ -732,20 +762,48 @@ pub fn compute_rlk_r_commitment(r: &Polynomial, bit_r: u32) -> BigInt {
     field_to_bigint(compute_commitments(payload, DS_RLK_GENERATION, io)[0])
 }
 
-/// Compute the RLK generation commitment for one `d0` row.
-pub fn compute_rlk_d0_commitment(d0: &CrtPolynomial, bit_d: u32) -> BigInt {
-    let mut payload = vec![Field::from(1u64)];
-    payload = flatten(payload, &d0.limbs, bit_d);
+/// Row commitment over the per-limb commitments of one RLK row component. Mirrors the Noir
+/// `compute_rlk_row_commitment_from_limbs` (`kind_tag` 2 = d0, 3 = d2).
+pub fn compute_rlk_row_commitment_from_limbs(
+    kind_tag: u64,
+    row_index: u32,
+    limb_commitments: &[BigInt],
+) -> BigInt {
+    let mut payload = vec![
+        Field::from(3u64),
+        Field::from(kind_tag),
+        Field::from(row_index as u64),
+        Field::from(limb_commitments.len() as u64),
+    ];
+    payload.extend(limb_commitments.iter().map(field_from_bigint));
     let io = [0x80000000 | payload.len() as u32, 1];
     field_to_bigint(compute_commitments(payload, DS_RLK_GENERATION, io)[0])
 }
 
-/// Compute the RLK generation commitment for one `d2` row.
-pub fn compute_rlk_d2_commitment(d2: &CrtPolynomial, bit_d: u32) -> BigInt {
-    let mut payload = vec![Field::from(2u64)];
-    payload = flatten(payload, &d2.limbs, bit_d);
-    let io = [0x80000000 | payload.len() as u32, 1];
-    field_to_bigint(compute_commitments(payload, DS_RLK_GENERATION, io)[0])
+/// Compute the RLK generation commitment for one `d0` row, through its limb commitments.
+pub fn compute_rlk_d0_commitment(row_index: u32, d0: &CrtPolynomial, bit_d: u32) -> BigInt {
+    let limbs = d0
+        .limbs
+        .iter()
+        .enumerate()
+        .map(|(limb, polynomial)| {
+            compute_rlk_limb_d0_commitment(row_index, limb as u32, polynomial, bit_d)
+        })
+        .collect::<Vec<_>>();
+    compute_rlk_row_commitment_from_limbs(2, row_index, &limbs)
+}
+
+/// Compute the RLK generation commitment for one `d2` row, through its limb commitments.
+pub fn compute_rlk_d2_commitment(row_index: u32, d2: &CrtPolynomial, bit_d: u32) -> BigInt {
+    let limbs = d2
+        .limbs
+        .iter()
+        .enumerate()
+        .map(|(limb, polynomial)| {
+            compute_rlk_limb_d2_commitment(row_index, limb as u32, polynomial, bit_d)
+        })
+        .collect::<Vec<_>>();
+    compute_rlk_row_commitment_from_limbs(3, row_index, &limbs)
 }
 
 fn compute_rlk_shared_limb_commitment(
@@ -897,7 +955,8 @@ fn validate_lbfv_serialized_share_commitments_with_adapters(
 
     for row in 0..row_count {
         let (_, pk0) = public_key_adapter.share_row_components(row as u32, &public_key_share)?;
-        let actual_pk = bigint_commitment_to_b256(compute_threshold_pk_commitment(&pk0, bit))?;
+        let actual_pk =
+            bigint_commitment_to_b256(compute_lbfv_pk_row_commitment(row as u32, &pk0, bit))?;
         let expected_pk = extract_commitment(
             &pk_layout,
             public_key_row_signals[row],
@@ -913,8 +972,8 @@ fn validate_lbfv_serialized_share_commitments_with_adapters(
         pk_generation_commitments.push(actual_pk);
 
         let (d0, d2) = rlk_adapter.share_row_components(row as u32, &rlk_share)?;
-        let actual_d0 = bigint_commitment_to_b256(compute_rlk_d0_commitment(&d0, bit))?;
-        let actual_d2 = bigint_commitment_to_b256(compute_rlk_d2_commitment(&d2, bit))?;
+        let actual_d0 = bigint_commitment_to_b256(compute_rlk_d0_commitment(row as u32, &d0, bit))?;
+        let actual_d2 = bigint_commitment_to_b256(compute_rlk_d2_commitment(row as u32, &d2, bit))?;
         let expected_d0 = extract_commitment(
             &rlk_layout,
             rlk_row_signals[row],
@@ -1387,14 +1446,16 @@ mod tests {
             let (_, pk0) =
                 public_key_adapter.share_row_components(row as u32, &public_key_share)?;
             let pk_commitment =
-                bigint_commitment_to_b256(compute_threshold_pk_commitment(&pk0, bit))?;
+                bigint_commitment_to_b256(compute_lbfv_pk_row_commitment(row as u32, &pk0, bit))?;
             public_key_row_signals[row]
                 [pk_commitment_field * FIELD_BYTE_LEN..(pk_commitment_field + 1) * FIELD_BYTE_LEN]
                 .copy_from_slice(pk_commitment.as_slice());
 
             let (d0, d2) = rlk_adapter.share_row_components(row as u32, &rlk_share)?;
-            let d0_commitment = bigint_commitment_to_b256(compute_rlk_d0_commitment(&d0, bit))?;
-            let d2_commitment = bigint_commitment_to_b256(compute_rlk_d2_commitment(&d2, bit))?;
+            let d0_commitment =
+                bigint_commitment_to_b256(compute_rlk_d0_commitment(row as u32, &d0, bit))?;
+            let d2_commitment =
+                bigint_commitment_to_b256(compute_rlk_d2_commitment(row as u32, &d2, bit))?;
             rlk_row_signals[row]
                 [d0_commitment_field * FIELD_BYTE_LEN..(d0_commitment_field + 1) * FIELD_BYTE_LEN]
                 .copy_from_slice(d0_commitment.as_slice());
@@ -1591,17 +1652,31 @@ mod tests {
             expected_r
         );
 
-        let d0_payload = flatten(vec![Field::from(1u64)], &component.limbs, bit_d);
+        // Rows commit through their limb commitments.
+        let d0_limbs = component
+            .limbs
+            .iter()
+            .enumerate()
+            .map(|(limb, polynomial)| {
+                compute_rlk_limb_d0_commitment(0, limb as u32, polynomial, bit_d)
+            })
+            .collect::<Vec<_>>();
+        let mut d0_payload = vec![
+            Field::from(3u64),
+            Field::from(2u64),
+            Field::from(0u64),
+            Field::from(d0_limbs.len() as u64),
+        ];
+        d0_payload.extend(d0_limbs.iter().map(field_from_bigint));
         let d0_io = [0x80000000 | d0_payload.len() as u32, 1];
         let expected_d0 =
             field_to_bigint(compute_commitments(d0_payload, DS_RLK_GENERATION, d0_io)[0]);
-        assert_eq!(compute_rlk_d0_commitment(&component, bit_d), expected_d0);
-
-        let d2_payload = flatten(vec![Field::from(2u64)], &component.limbs, bit_d);
-        let d2_io = [0x80000000 | d2_payload.len() as u32, 1];
-        let expected_d2 =
-            field_to_bigint(compute_commitments(d2_payload, DS_RLK_GENERATION, d2_io)[0]);
-        assert_eq!(compute_rlk_d2_commitment(&component, bit_d), expected_d2);
+        assert_eq!(compute_rlk_d0_commitment(0, &component, bit_d), expected_d0);
+        assert_ne!(
+            compute_rlk_d2_commitment(0, &component, bit_d),
+            expected_d0,
+            "d0 and d2 row commitments must be domain-separated"
+        );
 
         let aggregate_payload = flatten(Vec::new(), &component.limbs, bit_d);
         let aggregate_io = [0x80000000 | aggregate_payload.len() as u32, 1];
@@ -1612,7 +1687,6 @@ mod tests {
             compute_rlk_aggregation_commitment(&component, bit_d),
             expected_aggregate
         );
-        assert_ne!(expected_d0, expected_d2);
     }
 
     #[test]

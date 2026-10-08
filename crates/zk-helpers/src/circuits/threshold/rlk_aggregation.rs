@@ -164,8 +164,8 @@ impl Computation for RlkAggregationInputs {
 
         for share in &data.shares {
             let (d0_row, d2_row) = adapter.share_row_components(data.row_index, share)?;
-            expected_d0_commitments.push(compute_rlk_d0_commitment(&d0_row, bit_d));
-            expected_d2_commitments.push(compute_rlk_d2_commitment(&d2_row, bit_d));
+            expected_d0_commitments.push(compute_rlk_d0_commitment(data.row_index, &d0_row, bit_d));
+            expected_d2_commitments.push(compute_rlk_d2_commitment(data.row_index, &d2_row, bit_d));
             d0.push(d0_row);
             d2.push(d2_row);
         }
@@ -407,11 +407,11 @@ mod tests {
         for party in 0..committee.h {
             assert_eq!(
                 inputs.expected_d0_commitments[party],
-                compute_rlk_d0_commitment(&inputs.d0[party], configs.bits.d_bit)
+                compute_rlk_d0_commitment(inputs.row_index, &inputs.d0[party], configs.bits.d_bit)
             );
             assert_eq!(
                 inputs.expected_d2_commitments[party],
-                compute_rlk_d2_commitment(&inputs.d2[party], configs.bits.d_bit)
+                compute_rlk_d2_commitment(inputs.row_index, &inputs.d2[party], configs.bits.d_bit)
             );
         }
         assert_ne!(

@@ -42,8 +42,6 @@ struct RlkGenerationFinalizerInput {
     limb_proofs: Vec<Vec<String>>,
     limb_public_inputs: Vec<Vec<String>>,
     limb_key_hash: String,
-    d0: serde_json::Value,
-    d2: serde_json::Value,
 }
 
 /// Recursive limb proofs and their terminal RLK row proof.
@@ -333,8 +331,6 @@ pub fn finalize_rlk_generation_row(
         limb_proofs: proof_fields,
         limb_public_inputs: public_inputs,
         limb_key_hash: limb_vk.key_hash,
-        d0: serde_json::Value::Array(crt_polynomial_to_toml_json(&row.d0)),
-        d2: serde_json::Value::Array(crt_polynomial_to_toml_json(&row.d2)),
     };
 
     prove_recursive_circuit(

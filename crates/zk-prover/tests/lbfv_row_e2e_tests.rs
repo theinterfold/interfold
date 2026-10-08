@@ -14,8 +14,8 @@ use e3_events::{CircuitName, CircuitVariant, Proof};
 use e3_fhe_params::BfvPreset;
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_helpers::circuits::commitments::{
-    compute_pk_aggregation_commitment, compute_rlk_aggregation_commitment,
-    compute_sc_sk_secret_root_commitment, compute_threshold_pk_commitment,
+    compute_lbfv_pk_row_commitment, compute_pk_aggregation_commitment,
+    compute_rlk_aggregation_commitment, compute_sc_sk_secret_root_commitment,
 };
 use e3_zk_helpers::threshold::lbfv_pk_aggregation::{
     LbfvPkAggregationCircuit, LbfvPkAggregationCircuitData,
@@ -135,7 +135,11 @@ async fn secure_lbfv_row_circuits_prove_verify_and_expose_exact_commitments() {
                 generation_bits.sk_bit,
                 512,
             ),
-            compute_threshold_pk_commitment(&generation_sample.pk0_share, generation_bits.pk_bit),
+            compute_lbfv_pk_row_commitment(
+                generation_sample.row_index,
+                &generation_sample.pk0_share,
+                generation_bits.pk_bit,
+            ),
             BigInt::from_bytes_be(num_bigint::Sign::Plus, &limb_vk_hash),
         ],
     );

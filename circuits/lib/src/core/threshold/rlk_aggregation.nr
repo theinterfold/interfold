@@ -90,15 +90,15 @@ impl<let N: u32, let H: u32, let L: u32, let BIT_D: u32> RlkAggregation<N, H, L,
 
     /// Verifies that each honest party's d0/d2 hashes to its expected
     /// commitment from RLK generation.
-    fn verify_commitments(self) {
+    fn verify_commitments(self, row_index: u32) {
         for i in 0..H {
             assert(
-                compute_rlk_d0_commitment::<N, L, BIT_D>(self.d0[i])
+                compute_rlk_d0_commitment::<N, L, BIT_D>(row_index, self.d0[i])
                     == self.expected_d0_commitments[i],
                 "RLK d0 commitment mismatch",
             );
             assert(
-                compute_rlk_d2_commitment::<N, L, BIT_D>(self.d2[i])
+                compute_rlk_d2_commitment::<N, L, BIT_D>(row_index, self.d2[i])
                     == self.expected_d2_commitments[i],
                 "RLK d2 commitment mismatch",
             );
@@ -142,9 +142,12 @@ impl<let N: u32, let H: u32, let L: u32, let BIT_D: u32> RlkAggregation<N, H, L,
     }
 
     /// Returns `(commit(d0_agg), commit(d2_agg))` for downstream consumption.
-    pub fn execute(self) -> (Field, Field) {
+    ///
+    /// `row_index` must be the statement's range-checked row: the row commitments it opens are
+    /// bound to it through each limb commitment.
+    pub fn execute(self, row_index: u32) -> (Field, Field) {
         // Step 1: Bind each party's d0/d2 to its RLK generation commitment.
-        self.verify_commitments();
+        self.verify_commitments(row_index);
 
         // Step 2: Check `d0_agg`/`d2_agg` are the mod-q_l sum of party limbs.
         for basis_idx in 0..L {

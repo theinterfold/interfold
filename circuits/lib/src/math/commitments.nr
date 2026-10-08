@@ -305,6 +305,32 @@ pub fn compute_lbfv_pk_limb_eek_commitment<let N: u32, let BIT_EEK: u32>(
     compute_commitment(payload, DS_PK_GENERATION_LIMB_V1)
 }
 
+/// Row commitment over the per-limb `pk0` commitments of one l-BFV public-key row. Same design as
+/// [`compute_rlk_row_commitment_from_limbs`]; the leading `2` keeps it apart from the limb payload,
+/// which starts `1, 1`.
+pub fn compute_lbfv_pk_row_commitment_from_limbs<let L: u32>(
+    row_index: u32,
+    limb_commitments: [Field; L],
+) -> Field {
+    let mut payload = [2, row_index as Field, L as Field].as_vector();
+    for l in 0..L {
+        payload = payload.push_back(limb_commitments[l]);
+    }
+    compute_commitment(payload, DS_PK_GENERATION_LIMB_V1)
+}
+
+/// l-BFV public-key row commitment, opened from the coefficients.
+pub fn compute_lbfv_pk_row_commitment<let N: u32, let L: u32, let BIT_PK: u32>(
+    row_index: u32,
+    pk0: [Polynomial<N>; L],
+) -> Field {
+    let mut limbs: [Field; L] = [0; L];
+    for l in 0..L {
+        limbs[l] = compute_lbfv_pk_limb_commitment::<N, BIT_PK>(row_index, l, pk0[l]);
+    }
+    compute_lbfv_pk_row_commitment_from_limbs(row_index, limbs)
+}
+
 pub fn compute_lbfv_pk_limb_commitment<let N: u32, let BIT_PK: u32>(
     row_index: u32,
     limb_index: u32,
@@ -713,20 +739,47 @@ pub fn compute_rlk_r_commitment<let N: u32, let BIT_R: u32>(r: Polynomial<N>) ->
     compute_commitment(payload, DS_RLK_GENERATION)
 }
 
-/// l-BFV RLK generation (new circuit, row-level): commitment to one row's `d0`.
-pub fn compute_rlk_d0_commitment<let N: u32, let L: u32, let BIT_D: u32>(
-    d0: [Polynomial<N>; L],
+/// Row commitment over the per-limb commitments of one RLK row component (`kind_tag` 2 = d0,
+/// 3 = d2, matching the limb tags).
+///
+/// The row is committed through its limbs, not its coefficients: the row circuit already holds
+/// every limb commitment as a verified public input, so it binds the row without re-hashing the
+/// `L * N` coefficients. Anyone opening the row recomputes the limb commitments, which pack with
+/// checked digits, so the opening is unique and carries the limb circuit's centered bound.
+pub fn compute_rlk_row_commitment_from_limbs<let L: u32>(
+    kind_tag: Field,
+    row_index: u32,
+    limb_commitments: [Field; L],
 ) -> Field {
-    let payload = multiple_polynomial_payload_checked::<N, L, BIT_D>([1].as_vector(), d0);
+    let mut payload = [3, kind_tag, row_index as Field, L as Field].as_vector();
+    for l in 0..L {
+        payload = payload.push_back(limb_commitments[l]);
+    }
     compute_commitment(payload, DS_RLK_GENERATION)
 }
 
-/// l-BFV RLK generation (new circuit, row-level): commitment to one row's `d2`.
+/// l-BFV RLK row commitment to one row's `d0`, opened from the coefficients.
+pub fn compute_rlk_d0_commitment<let N: u32, let L: u32, let BIT_D: u32>(
+    row_index: u32,
+    d0: [Polynomial<N>; L],
+) -> Field {
+    let mut limbs: [Field; L] = [0; L];
+    for l in 0..L {
+        limbs[l] = compute_rlk_limb_d0_commitment::<N, BIT_D>(row_index, l, d0[l]);
+    }
+    compute_rlk_row_commitment_from_limbs(2, row_index, limbs)
+}
+
+/// l-BFV RLK row commitment to one row's `d2`, opened from the coefficients.
 pub fn compute_rlk_d2_commitment<let N: u32, let L: u32, let BIT_D: u32>(
+    row_index: u32,
     d2: [Polynomial<N>; L],
 ) -> Field {
-    let payload = multiple_polynomial_payload_checked::<N, L, BIT_D>([2].as_vector(), d2);
-    compute_commitment(payload, DS_RLK_GENERATION)
+    let mut limbs: [Field; L] = [0; L];
+    for l in 0..L {
+        limbs[l] = compute_rlk_limb_d2_commitment::<N, BIT_D>(row_index, l, d2[l]);
+    }
+    compute_rlk_row_commitment_from_limbs(3, row_index, limbs)
 }
 
 fn compute_rlk_shared_limb_commitment<let N: u32, let BIT: u32>(
