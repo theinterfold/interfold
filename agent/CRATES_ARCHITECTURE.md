@@ -788,7 +788,9 @@ stateDiagram-v2
 
 `E3LifecycleService` enforces monotonic progress and freezes terminal states. `E3Router` creates and
 tears down per-request actor contexts. Duplicate and late terminal observations are classified
-before forwarding; side effects are enabled only after recovery. The diagram shows the normal
+before forwarding; side effects are enabled only after recovery. For a completed E3, the router
+ignores chain events and late peer messages, such as decryption shares past the threshold, but
+reports a local event as an error. The diagram shows the normal
 progression: the lifecycle observer also accepts a forward jump to a later stage, while reporting a
 lower-stage observation as a regression without changing its tracked stage.
 

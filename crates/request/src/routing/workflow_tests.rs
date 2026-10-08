@@ -85,6 +85,19 @@ fn canonical_evm_history_for_completed_request_is_ignored() {
 }
 
 #[test]
+fn late_peer_message_for_completed_request_is_ignored() {
+    let id = e3id();
+    let mut completed = HashSet::new();
+    completed.insert(id.clone());
+    let msg = with_e3_id("late-decryption-share", id).with_source(EventSource::Net);
+
+    assert_eq!(
+        RequestRouter::route(&msg, &completed),
+        RoutingDecision::Ignore
+    );
+}
+
+#[test]
 fn settlement_receipt_is_not_routed_to_completed_context() {
     let id = e3id();
     let mut completed = HashSet::new();

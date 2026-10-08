@@ -31,7 +31,7 @@ pub enum RoutingDecision {
     Broadcast,
     /// The event carries no `e3_id` and should be ignored.
     Ignore,
-    /// The event targets a request that has already completed; this is an error.
+    /// A local event targets a request that has already completed; this is an error.
     AlreadyCompleted(E3id),
     /// A network event targets an E3 that was not admitted by canonical chain state.
     UnadmittedNetworkEvent(E3id),
@@ -132,8 +132,9 @@ impl RequestRouter {
             if is_late_terminal {
                 return RoutingDecision::Ignore;
             }
-            // Duplicate or overlapping EVM history cannot reopen a completed local context.
-            if msg.source() == EventSource::Evm {
+            // Duplicate or overlapping EVM history cannot reopen a completed local context. A late
+            // peer message cannot either: a decryption share past the threshold, or a re-send.
+            if matches!(msg.source(), EventSource::Evm | EventSource::Net) {
                 return RoutingDecision::Ignore;
             }
             return RoutingDecision::AlreadyCompleted(e3_id);
