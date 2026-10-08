@@ -1333,6 +1333,25 @@ fn historical_sync_rejects_non_forwardable_remote_events() {
         .contains("non-forwardable event type TestEvent"));
 }
 
+/// A peer's store records its own events as `Local`, and its history response carries that
+/// source. The node takes every event of a peer's history as a network event.
+#[test]
+fn a_peer_history_reaches_the_node_as_network_events() {
+    let served = local_forwardable_event("1234").clone_unsequenced();
+    assert_eq!(served.source(), EventSource::Local);
+
+    let events = validate_historical_events(
+        &AggregateHistory::new(served.aggregate_id(), 0, Default::default()),
+        vec![served],
+        &NetworkPolicy::local_unrestricted(),
+        u128::MAX,
+    )
+    .unwrap();
+
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].source(), EventSource::Net);
+}
+
 #[test]
 fn historical_sync_rejects_events_from_another_aggregate() {
     let event = remote_unsequenced(local_forwardable_event("1234"));

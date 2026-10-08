@@ -418,7 +418,12 @@ pub(in crate::actors::net_sync_manager) fn validate_historical_events(
         }
         network.validate_event(event)?;
     }
-    Ok(events)
+    // Events from a peer's history are the network's, whatever source the peer's store recorded.
+    // Only this node's own replay keeps `Local`.
+    Ok(events
+        .into_iter()
+        .map(|event| event.with_source(e3_events::EventSource::Net))
+        .collect())
 }
 
 pub(in crate::actors::net_sync_manager) fn eligible_sync_cursor(
