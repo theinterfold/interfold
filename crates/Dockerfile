@@ -24,9 +24,11 @@ ENV CARGO_INCREMENTAL=1
 ENV RUSTC_FORCE_INCREMENTAL=1
 ENV CARGO_BUILD_JOBS=8
 
-# Install deps
-RUN apt-get update && apt-get install -y --no-install-recommends jq protobuf-compiler
-RUN wget https://github.com/argotorg/solidity/releases/download/v0.8.27/solc-static-linux \
+# Install deps. Each download has a deadline, so a stalled mirror fails the build instead of holding
+# it until the CI job's timeout.
+RUN timeout 600 apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update \
+    && timeout 600 apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends jq protobuf-compiler
+RUN timeout 300 wget -q --timeout=30 --tries=5 https://github.com/argotorg/solidity/releases/download/v0.8.27/solc-static-linux \
     && chmod +x solc-static-linux \
     && mv solc-static-linux /usr/local/bin/solc \
     && solc --version

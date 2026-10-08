@@ -1273,7 +1273,9 @@ jobs:
 
       - name: Install yq
         run: |
-          sudo wget -q --timeout=30 --tries=5 -O- https://github.com/mikefarah/yq/releases/download/v4.45.1/yq_linux_amd64.tar.gz | sudo tar xz -C /usr/local/bin --transform='s|yq_linux_amd64|yq|' --no-same-owner
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 120 \
+            https://github.com/mikefarah/yq/releases/download/v4.45.1/yq_linux_amd64.tar.gz |
+            sudo tar xz -C /usr/local/bin --transform='s|yq_linux_amd64|yq|' --no-same-owner
 
       - name: Install dependencies
         working-directory: .

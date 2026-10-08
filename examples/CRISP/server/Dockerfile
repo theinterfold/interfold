@@ -6,12 +6,14 @@ FROM rust:${RUST_VERSION}-slim-bookworm AS base-dev
 
 ENV CARGO_HOME=/usr/local/cargo
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+# Each download has a deadline, so a stalled mirror fails the build instead of holding it until the
+# CI job's timeout.
+RUN timeout 600 apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update && \
+    timeout 600 apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
     jq pkg-config libssl-dev curl wget ca-certificates protobuf-compiler && \
     rm -rf /var/lib/apt/lists/*
 
-RUN wget https://github.com/argotorg/solidity/releases/download/v0.8.27/solc-static-linux \
+RUN timeout 300 wget -q --timeout=30 --tries=5 https://github.com/argotorg/solidity/releases/download/v0.8.27/solc-static-linux \
     && chmod +x solc-static-linux \
     && mv solc-static-linux /usr/local/bin/solc \
     && solc --version
