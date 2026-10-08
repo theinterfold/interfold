@@ -30,8 +30,8 @@ hex-encoded round.
 
 - Rust 1.91.1, and `cargo-openvm` v2.0.2 with its guest toolchain:
   `cargo install --locked --git https://github.com/openvm-org/openvm.git --tag v2.0.2 cargo-openvm`.
-- The Halo2 proving key, KZG parameters and EVM verifier from `cargo openvm setup --evm`, in `~/.openvm`
-  by default. Verify their provenance and checksums before use.
+- The Halo2 proving key, KZG parameters and EVM verifier from `cargo openvm setup --evm`, in
+  `~/.openvm` by default. Verify their provenance and checksums before use.
 - For a GPU: the CUDA toolkit and driver, and `nvcc` on `PATH` when building the CUDA worker.
 
 ## Build the workers

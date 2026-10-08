@@ -39,9 +39,7 @@ import {
   loadConfig,
   requireContract,
 } from "../protocol/values";
-import {
-  PRODUCTION_BFV_CONFIG,
-} from "../utils";
+import { PRODUCTION_BFV_CONFIG } from "../utils";
 import {
   equalAddress,
   equalValue,

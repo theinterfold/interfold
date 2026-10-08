@@ -63,9 +63,7 @@ export function changelogForRelease(changelog, version) {
       if (match) versions.push(match[1])
     }
   }
-  const sections = versions
-    .map((name) => ({ name, text: changelogForVersion(changelog, name) }))
-    .filter((section) => section.text)
+  const sections = versions.map((name) => ({ name, text: changelogForVersion(changelog, name) })).filter((section) => section.text)
   if (sections.length <= 1) {
     return sections[0]?.text ?? ''
   }

@@ -95,18 +95,17 @@ every section.
 - Archive pins ship with the binary; neither the archive nor its download endpoint supplies the
   expected digest at runtime. The 0.18.0 pin comes from the published GitHub asset digest. Local
   archive installation requires the same pin unless the operator passes `--allow-unpinned-archive`,
-  as CI does for a candidate build; a missing pin then fails closed too. Release
-  packaging supplies `E3_CIRCUITS_ARCHIVE_SHA256` before binary and ciphernode image compilation.
-  `build.rs` validates the digest, and `ZkConfig::default` binds it to the crate version. Other pins
-  remain in `versions.json`. The workflow retains the same archive bytes for publication.
-  `SOURCE_HASH` identifies circuit sources, not archive bytes, and cannot replace this check.
+  as CI does for a candidate build; a missing pin then fails closed too. Release packaging supplies
+  `E3_CIRCUITS_ARCHIVE_SHA256` before binary and ciphernode image compilation. `build.rs` validates
+  the digest, and `ZkConfig::default` binds it to the crate version. Other pins remain in
+  `versions.json`. The workflow retains the same archive bytes for publication. `SOURCE_HASH`
+  identifies circuit sources, not archive bytes, and cannot replace this check.
 - Artifact identity must cover every source that compiles into an artifact. `computeSourceHash`
   (`scripts/build-circuits.ts`) includes shared Noir logic, the library entry point and dependency
   manifest, shared configuration constants, and the pinned toolchain: nargo at the Noir tag of the
-  prover crates and bb at `required_bb_version`. The build refuses a nargo or bb of another
-  version. It normalizes the active preset selector because each pair already identifies its preset.
-  A library-only change invalidates every affected pair. Rebuild and push those pairs before
-  release.
+  prover crates and bb at `required_bb_version`. The build refuses a nargo or bb of another version.
+  It normalizes the active preset selector because each pair already identifies its preset. A
+  library-only change invalidates every affected pair. Rebuild and push those pairs before release.
 - The pair source hash ignores generated C1/C2 bound values and includes the Rust sources that
   generate them, without their `#[cfg(test)]` modules. Switching the active committee or editing a
   test module must not change another pair's source hash.

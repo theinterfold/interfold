@@ -196,7 +196,10 @@ export function buildV19CutoverTransactions(
   }
   txs.push(
     call("setPkVerifier", [BFV_SCHEME_ID, decisions.pkVerifier]),
-    call("setDecryptionVerifier", [BFV_SCHEME_ID, decisions.decryptionVerifier]),
+    call("setDecryptionVerifier", [
+      BFV_SCHEME_ID,
+      decisions.decryptionVerifier,
+    ]),
   );
   if (decisions.ciphertextVerifier) {
     txs.push(
@@ -400,7 +403,9 @@ export async function checkOpenVmCrisp(
       expected.appVmCommit,
       "OpenVM VM commitment",
     );
-    const halo2 = String(await read(receiptVerifier, receiptInterface, "verifier"));
+    const halo2 = String(
+      await read(receiptVerifier, receiptInterface, "verifier"),
+    );
     equalValue(
       ethersLib.keccak256(await provider.getCode(halo2)),
       expected.halo2RuntimeCodeHash,
@@ -526,7 +531,10 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
     ? readOpenVmIdentity(arg("openvm-identity")!)
     : undefined;
 
-  const interfold = await ethers.getContractAt("Interfold", deployment.interfold);
+  const interfold = await ethers.getContractAt(
+    "Interfold",
+    deployment.interfold,
+  );
   const registry = await ethers.getContractAt(
     "CiphernodeRegistryOwnable",
     deployment.ciphernodeRegistry,
@@ -552,7 +560,10 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
   await requireDrainedAndPaused(interfold, registry);
 
   // A stale record would make the plan describe a different upgrade than the one executed.
-  const liveImplementation = await proxyImplementation(ethers, deployment.interfold);
+  const liveImplementation = await proxyImplementation(
+    ethers,
+    deployment.interfold,
+  );
   if (
     liveImplementation.toLowerCase() !==
     deployment.interfoldImplementation.toLowerCase()
@@ -820,7 +831,10 @@ export async function validateV19Cutover(): Promise<V19CutoverPlan> {
   ) {
     throw new Error("The cutover plan belongs to another deployment");
   }
-  const interfold = await ethers.getContractAt("Interfold", plan.interfoldProxy);
+  const interfold = await ethers.getContractAt(
+    "Interfold",
+    plan.interfoldProxy,
+  );
   const registry = await ethers.getContractAt(
     "CiphernodeRegistryOwnable",
     plan.registryProxy,
@@ -930,7 +944,8 @@ export async function validateV19Cutover(): Promise<V19CutoverPlan> {
     deployment.bfvVerifierRoutes = plan.bfvVerifierRoutes;
     const first = plan.bfvVerifierRoutes[0];
     deployment.dkgAggregatorVerifier = first.dkgAggregatorVerifier;
-    deployment.decryptionAggregatorVerifier = first.decryptionAggregatorVerifier;
+    deployment.decryptionAggregatorVerifier =
+      first.decryptionAggregatorVerifier;
     deployment.verifierZkTranscriptLib = first.verifierZkTranscriptLib;
     deployment.dkgVerifierRelationsLib = first.dkgVerifierRelationsLib;
     deployment.decryptionVerifierRelationsLib =
@@ -1002,7 +1017,10 @@ export async function prepareV19Resume(): Promise<void> {
   const plan = await validateV19Cutover();
   const { ethers } = await connect();
   const { config, deployment } = loadContext();
-  const interfold = await ethers.getContractAt("Interfold", deployment.interfold);
+  const interfold = await ethers.getContractAt(
+    "Interfold",
+    deployment.interfold,
+  );
   if (!(await interfold.requestsPaused())) {
     throw new Error("Requests are already open");
   }
@@ -1068,13 +1086,16 @@ v0.19 resume prepared
 
 const LOG_WINDOW = 2_000;
 const REFRESH_BATCH = 20;
-const CIPHERNODE_ADDED = ethersLib.id("CiphernodeAdded(address,uint256,uint256,uint256)");
+const CIPHERNODE_ADDED = ethersLib.id(
+  "CiphernodeAdded(address,uint256,uint256,uint256)",
+);
 
 /** The registry's deploy block in `deployed_contracts.json`, where the operator history starts. */
 function registryDeployBlock(network: string): number | undefined {
   const file = path.resolve(protocolDir, "..", "..", "deployed_contracts.json");
   if (!fs.existsSync(file)) return undefined;
-  const records = readJson<Record<string, Record<string, { blockNumber?: number }>>>(file);
+  const records =
+    readJson<Record<string, Record<string, { blockNumber?: number }>>>(file);
   const block = records[network]?.CiphernodeRegistryOwnable?.blockNumber;
   return typeof block === "number" ? block : undefined;
 }
@@ -1102,7 +1123,9 @@ async function addedOperators(
           toBlock: end,
         });
         for (const log of logs) {
-          operators.add(ethersLib.getAddress(ethersLib.dataSlice(log.topics[1], 12)));
+          operators.add(
+            ethersLib.getAddress(ethersLib.dataSlice(log.topics[1], 12)),
+          );
         }
         break;
       } catch (error) {
@@ -1124,7 +1147,9 @@ export async function refreshV19Operators(): Promise<void> {
     deployment.bondingRegistryProxy,
     sender,
   );
-  const fromBlock = Number(arg("from-block") ?? registryDeployBlock(networkName()) ?? 0);
+  const fromBlock = Number(
+    arg("from-block") ?? registryDeployBlock(networkName()) ?? 0,
+  );
   const logProviders = (arg("log-rpc") ?? "")
     .split(",")
     .map((url) => url.trim())
@@ -1157,7 +1182,9 @@ export async function refreshV19Operators(): Promise<void> {
     // The estimate runs at the latest block's timestamp, where a checkpoint written in that block
     // is overwritten; the transaction lands later and appends one, which costs more.
     const gas = await bonding.refreshOperatorStatuses.estimateGas(batch);
-    await (await bonding.refreshOperatorStatuses(batch, { gasLimit: gas * 2n })).wait();
+    await (
+      await bonding.refreshOperatorStatuses(batch, { gasLimit: gas * 2n })
+    ).wait();
   }
   console.log(`
 v0.19 operator statuses refreshed
@@ -1190,7 +1217,9 @@ if (
             ? prepareV19Cutover
             : undefined;
   if (!run) {
-    console.error("Usage: v19Cutover.ts prepare|validate|refresh|resume [options]");
+    console.error(
+      "Usage: v19Cutover.ts prepare|validate|refresh|resume [options]",
+    );
     process.exitCode = 1;
   } else {
     run().catch((error) => {

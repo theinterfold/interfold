@@ -58,7 +58,9 @@ function names(txs: { to: string; data: string }[]): string[] {
 describe("v0.19 cutover", function () {
   it("orders the batch: upgrade first, register before bind, release policy last", function () {
     const txs = buildV19CutoverTransactions(decisions());
-    const upgradeAndCall = ethersLib.id("upgradeAndCall(address,address,bytes)").slice(0, 10);
+    const upgradeAndCall = ethersLib
+      .id("upgradeAndCall(address,address,bytes)")
+      .slice(0, 10);
     const bindInterfold = ethersLib.id("bindInterfold(address)").slice(0, 10);
     expect(names(txs)).to.deep.equal([
       upgradeAndCall,

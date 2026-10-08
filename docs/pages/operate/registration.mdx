@@ -272,8 +272,8 @@ before the inner command (`bond`, `unbond`, `claim`, `buy`, or `burn`). The
 ### Activate and deactivate
 
 `activate` sends `refreshOperatorStatus` for a registered operator. The contract recomputes the
-active status from the registration, the release acknowledgment, bans, the bond and the tickets.
-Use it after a requirement changed or after the release was acknowledged from another process.
+active status from the registration, the release acknowledgment, bans, the bond and the tickets. Use
+it after a requirement changed or after the release was acknowledged from another process.
 `activate` does not register: for an operator that is not registered it stops and points to
 `register`. To register an operator again after a full exit, use `register`.
 
