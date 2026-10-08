@@ -227,7 +227,6 @@ describe('CRISPProgram input tree (e2e)', function () {
 
     const [, , , , rootAfterFirst, votesAfterFirst] = await crispProgram.getRoundData(round)
     expect(votesAfterFirst).to.equal(1n)
-    expect(await crispProgram.getSlotIndex(round, address)).to.equal(0n)
 
     // A third party masks over the slot. No signature is checked on this path.
     const mask = await buildMaskOver(ballot.encryptedVote, 0)

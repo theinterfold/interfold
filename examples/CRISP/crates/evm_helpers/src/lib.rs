@@ -7,7 +7,7 @@
 use alloy::{
     eips::{BlockId, BlockNumberOrTag},
     network::{Ethereum, EthereumWallet},
-    primitives::{Address, Bytes, B256, I256, U256},
+    primitives::{Address, Bytes, B256, U256},
     providers::{
         fillers::{
             BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
@@ -35,7 +35,6 @@ sol! {
     #[sol(rpc)]
     contract CRISPProgram {
         function setMerkleRoot(uint256 e3_id, uint256 _root) external;
-        function getSlotIndex(uint256 e3_id, address slot_address) external view returns (int256);
         function publishInput(uint256 e3_id, bytes data) external;
         function finalizeInput(
             uint256 e3Id,
@@ -614,27 +613,6 @@ impl CRISPContract<CRISPReadProvider> {
         let round = contract.getRoundData(e3_id).call().await?;
 
         Ok(round.numberOfVotes.to::<u64>())
-    }
-
-    /// Get the slot index from a given slot address.
-    /// Returns `None` when the slot is empty (contract returns -1).
-    pub async fn get_slot_index_from_address(
-        &self,
-        e3_id: U256,
-        slot_address: Address,
-    ) -> Result<Option<u64>> {
-        let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
-
-        match contract.getSlotIndex(e3_id, slot_address).call().await {
-            Ok(slot_index) => {
-                if slot_index < I256::ZERO {
-                    Ok(None)
-                } else {
-                    Ok(Some(slot_index.as_u64()))
-                }
-            }
-            Err(e) => Err(eyre::eyre!("Failed to get slot index: {}", e)),
-        }
     }
 
     /// Read the CRISP-specific voter cutoff. The Interfold input deadline remains later so

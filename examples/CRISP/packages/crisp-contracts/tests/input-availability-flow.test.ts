@@ -101,6 +101,31 @@ describe('CRISP input availability flow', function () {
     )
   })
 
+  it('refuses a byte-identical resubmission and a second finalization of one input', async function () {
+    const { program, e3Id } = await openRound()
+    const ballot = await input(program, e3Id)
+    const id = await program.inputId(e3Id, ballot.encryptedVoteHash, ballot.encryptedVoteCommitment, ballot.slotAddress, 0)
+    const finalizeArgs = [e3Id, ballot.slotAddress, ballot.encryptedVoteCommitment, ballot.encryptedVoteHash, 0, ballot.ciphertext] as const
+
+    await (await program.publishInput(e3Id, ballot.commitmentPayload)).wait()
+    // A replay would append a second leaf and spend the round's input limit.
+    await expect(program.publishInput(e3Id, ballot.commitmentPayload))
+      .to.be.revertedWithCustomError(program, 'InputAlreadyCommitted')
+      .withArgs(id)
+
+    await (await program.finalizeInput(...finalizeArgs)).wait()
+    await expect(program.finalizeInput(...finalizeArgs))
+      .to.be.revertedWithCustomError(program, 'InputNotCommitted')
+      .withArgs(id)
+    // Finalization does not reopen the input to a resubmission.
+    await expect(program.publishInput(e3Id, ballot.commitmentPayload))
+      .to.be.revertedWithCustomError(program, 'InputAlreadyCommitted')
+      .withArgs(id)
+
+    expect((await program.getRoundData(e3Id)).numberOfVotes).to.equal(1n)
+    expect(await program.pendingInputCount(e3Id)).to.equal(0n)
+  })
+
   it('verifies ballot proofs against the round committee key, not a caller-supplied key', async function () {
     const { program, mockInterfold, mockHonk, e3Id } = await openRound()
     const verifier = await ethers.getContractAt('MockHonkVerifier', await mockHonk.getAddress())
@@ -124,7 +149,6 @@ describe('CRISP input availability flow', function () {
 
     expect((await program.getRoundData(e3Id)).numberOfVotes).to.equal(2n)
     expect(await program.pendingInputCount(e3Id)).to.equal(2n)
-    expect(await program.getSlotIndex(e3Id, slot)).to.equal(1n)
     expect(await program.inputCommitmentOf(e3Id, slot, 0)).to.equal(first.encryptedVoteCommitment)
     expect(await program.inputCommitmentOf(e3Id, slot, 1)).to.equal(second.encryptedVoteCommitment)
 

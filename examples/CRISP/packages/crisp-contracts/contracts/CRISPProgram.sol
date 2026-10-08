@@ -77,18 +77,18 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     ONCHAIN
   }
 
-  /// @notice Progress of one proof-bound input while its ciphertext becomes available.
-  enum InputStatus {
-    NONE,
-    COMMITTED,
-    PUBLISHED
+  /// @notice State of one proof-bound input while its ciphertext becomes available.
+  struct InputRecord {
+    /// @notice Reserved tree index plus one. Zero means no proof was accepted for this input.
+    uint40 indexPlusOne;
+    /// @notice Whether the ciphertext has a verified data-availability receipt.
+    bool published;
   }
 
   /// @notice Struct to store all data related to a voting round
   struct RoundData {
     uint256 merkleRoot;
     bytes32 paramsHash;
-    mapping(address slot => uint40 index) voteSlots;
     /// @notice The proven ciphertext commitment of every input, keyed by slot and tree index.
     /// @dev Keyed by both so a parent lookup for the wrong slot returns zero and is refused: it
     /// costs no more storage than a single-key map and removes a separate same-slot check.
@@ -101,24 +101,19 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     /// input is provably its owner voting again. With the history, an entry like that is simply
     /// never extended: the next input names the same parent, and masking continues.
     mapping(address slot => mapping(uint40 index => bytes32 commitment)) inputCommitment;
-    /// @notice Leaves already reserved in this round's input tree.
-    /// @dev A replay guard, not a uniqueness requirement on ballots. The proof constrains the
-    /// commitment, not who submits it, so anyone who observes a committed input can resubmit the
-    /// identical calldata: the proof still verifies and {_processVote} appends again. The tally
-    /// does not change — the replay names the same parent as the original, which is no longer the
-    /// head, so the Secure Process drops it — but every append counts toward `inputLimit`, so
-    /// enough replays reach the limit and every later input reverts, denying the round.
+    /// @notice Every accepted input proof, keyed by {inputId}.
+    /// @dev The key binds every value needed to reproduce the input leaf, so a receipt can publish
+    /// only the exact tuple whose Noir proof was accepted in the first transaction.
     ///
-    /// Keyed by the leaf rather than the proof because the leaf is exactly what an append adds.
-    /// Two genuinely distinct inputs differ in bytes, commitment, slot or parent, so they differ
-    /// here; only a byte-identical resubmission collides.
-    mapping(uint256 leaf => bool) appendedLeaf;
-    /// @notice Proofs accepted before their ciphertexts receive a verified DA receipt.
-    /// @dev The key binds every value needed to reproduce the final input leaf. A receipt can
-    /// publish only the exact tuple whose Noir proof was accepted in the first transaction.
-    mapping(bytes32 inputId => InputStatus status) inputStatus;
-    /// @notice Reserved tree index plus one for every accepted input proof.
-    mapping(bytes32 inputId => uint40 indexPlusOne) inputIndexPlusOne;
+    /// Also the replay guard. The proof constrains the commitment, not who submits it, so anyone
+    /// who observes a committed input can resubmit the identical calldata and the proof still
+    /// verifies. The tally would not change — the replay names the same parent as the original,
+    /// which is no longer the head, so the Secure Process drops it — but every append counts toward
+    /// `inputLimit`, so enough replays would reach the limit and deny the round. In one round the
+    /// identifier and the leaf derive from the same tuple, so refusing a known identifier refuses
+    /// exactly the byte-identical resubmissions: two genuinely distinct inputs differ in bytes,
+    /// commitment, slot or parent.
+    mapping(bytes32 inputId => InputRecord) inputs;
     /// @notice Inputs whose proof is accepted but whose Avail receipt is not yet verified.
     uint40 pendingInputCount;
     LazyIMTData votes;
@@ -262,8 +257,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   /// absent. Name no parent instead when there is nothing to extend.
   error UnknownParentInput(uint40 parentIndex);
 
-  /// @notice Thrown when an input identical to one already published is submitted again.
-  error InputAlreadyPublished(uint256 leaf);
   error InputAlreadyCommitted(bytes32 inputId);
   error InputNotCommitted(bytes32 inputId);
   error InvalidInputAvailabilityAttestation();
@@ -473,9 +466,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   function votingPowerOf(uint256 e3Id, address slot) external view returns (uint256) {
     RoundData storage round = e3Data[e3Id];
     if (round.censusMode != CensusMode.ONCHAIN) return 0;
-    if (round.creditMode == CreditMode.CONSTANT) return round.credits;
-
-    return IVotesToken(round.token).getPastVotes(slot, round.snapshot) / round.votingPowerDivisor;
+    return _ballotPower(round, IVotesToken(round.token).getPastVotes(slot, round.snapshot));
   }
 
   /// @notice The census source a round was requested with.
@@ -501,11 +492,12 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     // Interfold stores the provisional E3 and its selected program before it calls `validate`.
     // Read that record and refuse an E3 that Interfold assigned to a different program. Without
     // this check the owner can create parallel CRISP round state for another program's E3.
-    _requireAssignedE3(e3Id);
+    E3 memory e3 = interfold.getE3(e3Id);
+    if (address(e3.e3Program) != address(this)) revert E3NotAssignedToProgram(e3Id);
 
     // Delegated to its own frame: `validate` is close to the stack limit.
     _initRound(e3Id, customParams, abi.decode(e3ProgramParams, (BfvParameters)).plaintextModulus);
-    _validateInputTiming(e3Id);
+    _validateInputTiming(e3Id, e3);
 
     e3Data[e3Id].paramsHash = keccak256(e3ProgramParams);
 
@@ -524,21 +516,18 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
       interfaceId == type(IERC165).interfaceId;
   }
 
-  /// @notice Refuse an E3 that Interfold did not assign to this program.
-  /// @dev Interfold records the provisional E3 and its selected program before it calls
-  /// `validate`, so the assignment is readable at initialization time.
-  /// @param e3Id The E3 to check.
-  function _requireAssignedE3(uint256 e3Id) internal view {
-    if (address(interfold.getE3(e3Id).e3Program) != address(this)) revert E3NotAssignedToProgram(e3Id);
-  }
-
   /// @notice Return the earliest voting start under the current committee timeouts.
   /// @dev The E3 request snapshots these settings. Callers should add time for their transaction
   /// to be mined when they choose a fixed start date.
   function earliestVotingStart() external view returns (uint256) {
-    IInterfold.E3TimeoutConfig memory timeouts = interfold.getTimeoutConfig();
+    return block.timestamp + _committeeReservation(interfold.getTimeoutConfig());
+  }
+
+  /// @notice The worst-case time from an E3 request to its published committee key.
+  /// @param timeouts The timeout configuration to apply.
+  function _committeeReservation(IInterfold.E3TimeoutConfig memory timeouts) internal view returns (uint256) {
     ICiphernodeRegistry registry = IInterfoldRegistryView(address(interfold)).ciphernodeRegistry();
-    return block.timestamp + registry.randomnessRequestTimeout() + registry.sortitionSubmissionWindow() + timeouts.dkgWindow;
+    return registry.randomnessRequestTimeout() + registry.sortitionSubmissionWindow() + timeouts.dkgWindow;
   }
 
   /// @notice Refuse a round that starts before the worst-case key deadline, ends before one hour
@@ -546,22 +535,14 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   /// @dev Interfold stores the E3 and its timeout snapshot before calling {validate}. Read those
   /// exact values instead of duplicating deployment-time settings. A zero finalization window is
   /// the synchronous local mock and keeps its short test rounds.
-  function _validateInputTiming(uint256 e3Id) internal view {
+  function _validateInputTiming(uint256 e3Id, E3 memory e3) internal view {
     if (availabilityFinalizationWindow == 0) return;
 
-    E3 memory e3 = interfold.getE3(e3Id);
     IInterfold.E3TimeoutConfig memory timeouts = interfold.getE3TimeoutConfig(e3Id);
-    ICiphernodeRegistry registry = IInterfoldRegistryView(address(interfold)).ciphernodeRegistry();
-    uint256 latestKeyAt = e3.requestBlock + registry.randomnessRequestTimeout() + registry.sortitionSubmissionWindow() + timeouts.dkgWindow;
-    if (e3.inputWindow[0] < latestKeyAt) {
-      revert VotingStartsBeforeKeyDeadline(e3Id, latestKeyAt, e3.inputWindow[0]);
-    }
+    uint256 latestKeyAt = e3.requestBlock + _committeeReservation(timeouts);
     uint256 votingStartsAt = e3.inputWindow[0];
-    uint256 duration = e3.inputWindow[1] - e3.inputWindow[0];
-    if (duration <= availabilityFinalizationWindow) {
-      revert InputWindowTooShort(e3Id, duration, availabilityFinalizationWindow + 1);
-    }
-    uint256 commitmentDeadline = e3.inputWindow[1] - availabilityFinalizationWindow;
+    if (votingStartsAt < latestKeyAt) revert VotingStartsBeforeKeyDeadline(e3Id, latestKeyAt, votingStartsAt);
+    uint256 commitmentDeadline = _commitmentDeadline(e3Id, e3);
     if (commitmentDeadline < votingStartsAt + MIN_VOTING_DURATION) {
       revert VotingWindowTooShort(e3Id, votingStartsAt, commitmentDeadline, MIN_VOTING_DURATION);
     }
@@ -600,24 +581,20 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     // ballot at all. Reject at request time rather than stranding a round nobody can vote in.
     if (numOptions < 2 || numOptions > MAX_VOTE_OPTIONS) revert InvalidNumOptions();
     if (rawCensusMode > uint256(type(CensusMode).max)) revert InvalidCensusMode();
+    CensusMode censusMode = CensusMode(rawCensusMode);
 
     // Rejected here rather than by the coordinator, so a combination that can never work costs
     // nothing: this reverts in the same transaction that requests the E3, before any fee is paid.
-    if (CensusMode(rawCensusMode) == CensusMode.BY_REQUESTER && creditMode != CreditMode.CONSTANT) {
+    // For the same reason {_tokenSnapshot} refuses an ONCHAIN round without a votes token.
+    if (censusMode == CensusMode.BY_REQUESTER && creditMode != CreditMode.CONSTANT) {
       revert CensusModeRequiresConstantCredits();
-    }
-
-    // ONCHAIN reads every voter's power from this token, so a round without one accepts no ballot
-    // at all. Same reasoning as the numOptions bound: fail before the fee is paid.
-    if (CensusMode(rawCensusMode) == CensusMode.ONCHAIN && token == address(0)) {
-      revert CensusModeRequiresToken();
     }
 
     // An ONCHAIN round hands `credits` to the circuit as the voting-power bound, so zero credits
     // bound every ballot to zero: only a mask would be accepted, and the round would tally
     // nothing. Checked for ONCHAIN only — the Merkle modes take the bound from the census leaf,
     // where `credits` never reaches the circuit and the contract has nothing to check.
-    if (CensusMode(rawCensusMode) == CensusMode.ONCHAIN && creditMode == CreditMode.CONSTANT && credits == 0) {
+    if (censusMode == CensusMode.ONCHAIN && creditMode == CreditMode.CONSTANT && credits == 0) {
       revert InvalidCredits();
     }
 
@@ -627,7 +604,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     // we want to save the credit mode so it can be verified on chain by everyone
     round.creditMode = creditMode;
     // recorded so anyone can verify which electorate the round was requested against
-    round.censusMode = CensusMode(rawCensusMode);
+    round.censusMode = censusMode;
     round.token = token;
     round.minVotingPower = minVotingPower;
     round.credits = credits;
@@ -747,11 +724,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     if (block.timestamp >= availabilityAttestationExpiresAt) {
       revert InputAvailabilityAttestationExpired(availabilityAttestationExpiresAt);
     }
-    _verifyInputProof(e3Id, e3, noirProof, slotAddress, encryptedVoteCommitment, encryptedVoteHash, parentIndexPlusOne);
-
-    bytes32 id = inputId(e3Id, encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
-    RoundData storage round = e3Data[e3Id];
-    if (round.inputStatus[id] != InputStatus.NONE) revert InputAlreadyCommitted(id);
+    bytes32 id = _verifyInputProof(e3Id, e3, noirProof, slotAddress, encryptedVoteCommitment, encryptedVoteHash, parentIndexPlusOne);
     if (
       ECDSA.recover(inputAvailabilityDigest(e3Id, id, availabilityAttestationExpiresAt), availabilityAttestation) != inputAvailabilitySigner
     ) {
@@ -760,10 +733,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
 
     // Reserve the leaf and index now, not after VectorX finalizes. A later vote or mask can then
     // name this input as its parent instead of every pending input competing as a first write.
-    uint40 voteIndex = _processVote(e3Id, slotAddress, encryptedVoteCommitment, encryptedVoteHash, parentIndexPlusOne);
-    round.inputStatus[id] = InputStatus.COMMITTED;
-    round.inputIndexPlusOne[id] = voteIndex + 1;
-    round.pendingInputCount++;
+    uint40 voteIndex = _processVote(e3Id, id, slotAddress, encryptedVoteCommitment, encryptedVoteHash, parentIndexPlusOne);
 
     emit InputCommitted(e3Id, id, slotAddress, encryptedVoteCommitment, encryptedVoteHash, parentIndexPlusOne, voteIndex);
   }
@@ -783,20 +753,14 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     _finalizationE3(e3Id);
 
     bytes32 id = inputId(e3Id, encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
-    RoundData storage round = e3Data[e3Id];
-    if (round.inputStatus[id] != InputStatus.COMMITTED) revert InputNotCommitted(id);
+    InputRecord storage input = e3Data[e3Id].inputs[id];
+    if (input.indexPlusOne == 0 || input.published) revert InputNotCommitted(id);
 
-    IDataAvailabilityVerifier.DataReference memory availabilityReceipt = dataAvailabilityVerifier.verifyDataAvailability(
-      encryptedVoteHash,
-      availabilityProof
-    );
-    if (availabilityReceipt.contentHash != encryptedVoteHash) {
-      revert DataAvailabilityHashMismatch(encryptedVoteHash, availabilityReceipt.contentHash);
-    }
+    IDataAvailabilityVerifier.DataReference memory availabilityReceipt = _verifyAvailability(encryptedVoteHash, availabilityProof);
 
-    round.inputStatus[id] = InputStatus.PUBLISHED;
-    round.pendingInputCount--;
-    uint40 voteIndex = round.inputIndexPlusOne[id] - 1;
+    input.published = true;
+    e3Data[e3Id].pendingInputCount--;
+    uint40 voteIndex = input.indexPlusOne - 1;
 
     emit InputPublished(
       e3Id,
@@ -829,8 +793,14 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   /// @notice Last timestamp before which a new input proof can be committed.
   /// @dev The deadline is exclusive. At the exact timestamp, the reserved finalization tail has
   /// started and no new proof is accepted.
-  function inputCommitmentDeadline(uint256 e3Id) public view returns (uint256 deadline) {
-    E3 memory e3 = interfold.getE3(e3Id);
+  function inputCommitmentDeadline(uint256 e3Id) external view returns (uint256) {
+    return _commitmentDeadline(e3Id, interfold.getE3(e3Id));
+  }
+
+  /// @notice The commitment deadline of an E3 whose record is already loaded.
+  /// @dev Refuses an input window no longer than the finalization tail, which leaves no time to
+  /// commit an input.
+  function _commitmentDeadline(uint256 e3Id, E3 memory e3) internal view returns (uint256) {
     uint256 duration = e3.inputWindow[1] - e3.inputWindow[0];
     if (duration <= availabilityFinalizationWindow) {
       revert InputWindowTooShort(e3Id, duration, availabilityFinalizationWindow + 1);
@@ -852,7 +822,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
 
   function _commitmentE3(uint256 e3Id) internal view returns (E3 memory e3) {
     e3 = _keyPublishedE3(e3Id);
-    uint256 deadline = inputCommitmentDeadline(e3Id);
+    uint256 deadline = _commitmentDeadline(e3Id, e3);
     if (block.timestamp >= deadline) {
       revert InputCommitmentDeadlinePassed(e3Id, deadline);
     }
@@ -877,20 +847,18 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     bytes32 encryptedVoteCommitment,
     bytes32 encryptedVoteHash,
     uint40 parentIndexPlusOne
-  ) internal view {
+  ) internal view returns (bytes32 id) {
+    RoundData storage round = e3Data[e3Id];
     // Every reserved leaf, pending or finalized, counts toward the limit.
-    uint256 limit = e3Data[e3Id].inputLimit;
-    if (e3Data[e3Id].votes.numberOfLeaves >= limit) revert InputLimitReached(e3Id, limit);
+    if (round.votes.numberOfLeaves >= round.inputLimit) revert InputLimitReached(e3Id, round.inputLimit);
 
     // A zero content hash matches an Avail padding leaf. Refuse it on every proof path so that
     // no committed input can later finalize against data that no party published, and so that
     // `validateInputProof` cannot accept a statement that `publishInput` rejects.
     if (encryptedVoteHash == bytes32(0)) revert ZeroEncryptedVoteHash();
 
-    uint256 leaf = inputLeaf(encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
-    if (e3Data[e3Id].appendedLeaf[leaf]) revert InputAlreadyPublished(leaf);
-    bytes32 id = inputId(e3Id, encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
-    if (e3Data[e3Id].inputStatus[id] != InputStatus.NONE) revert InputAlreadyCommitted(id);
+    id = inputId(e3Id, encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
+    if (round.inputs[id].indexPlusOne != 0) revert InputAlreadyCommitted(id);
 
     (bytes32 eligibility, IHonkVerifier verifier) = _eligibility(e3Id, slotAddress);
     bytes32 parentCommitment = _parentCommitment(e3Id, slotAddress, parentIndexPlusOne);
@@ -906,7 +874,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     noirPublicInputs[3] = bytes32(uint256(uint160(slotAddress)));
     noirPublicInputs[4] = eligibility;
     noirPublicInputs[5] = bytes32(uint256(parentIndexPlusOne == 0 ? 1 : 0));
-    noirPublicInputs[6] = bytes32(e3Data[e3Id].numOptions);
+    noirPublicInputs[6] = bytes32(round.numOptions);
     noirPublicInputs[7] = encryptedVoteCommitment;
     noirPublicInputs[8] = e3.committeePublicKey;
 
@@ -966,9 +934,17 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     uint256 threshold = round.minVotingPower == 0 ? 1 : round.minVotingPower;
     if (rawPower < threshold) revert SlotNotEligible();
 
-    // CONSTANT gives every eligible slot the same credits; CUSTOM scales raw power by the divisor from {_initCredits}.
-    if (round.creditMode == CreditMode.CONSTANT) return (bytes32(round.credits), onchainHonkVerifier);
-    return (bytes32(rawPower / round.votingPowerDivisor), onchainHonkVerifier);
+    return (bytes32(_ballotPower(round, rawPower)), onchainHonkVerifier);
+  }
+
+  /// @notice Convert raw token voting power to the weight a ballot may carry in an ONCHAIN round.
+  /// @dev CONSTANT gives every eligible slot the same credits; CUSTOM divides raw power by the
+  /// divisor from {_initCredits}.
+  /// @param round The round.
+  /// @param rawPower The slot's voting power at the round snapshot, in the token's own units.
+  /// @return The voting power in ballot units.
+  function _ballotPower(RoundData storage round, uint256 rawPower) internal view returns (uint256) {
+    return round.creditMode == CreditMode.CONSTANT ? round.credits : rawPower / round.votingPowerDivisor;
   }
 
   /// @notice The last finalized timepoint of a token, in its ERC-6372 clock units.
@@ -1002,20 +978,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     for (uint256 o = 0; o < numOptions; o++) {
       for (uint256 j = 0; j < 8; j++) votes[o] |= uint256(uint8(output[o * 8 + j])) << (j * 8);
     }
-  }
-
-  /// @notice The index of the last input committed to a slot.
-  /// @dev The last one *committed*, which is not always the one that holds the slot. This contract
-  /// cannot tell whether an input's bytes deserialize to the ciphertext its commitment describes,
-  /// so the entry at this index may be one the Secure Process will never select. A client naming a
-  /// parent must resolve the chain — from the available bytes, or from the CRISP server's
-  /// `state/previous-ciphertext` — rather than reading it from here.
-  /// @param e3Id The E3 program ID
-  /// @param slotAddress The slot address
-  /// @return The index of the last committed input, or -1 if the slot is empty
-  function getSlotIndex(uint256 e3Id, address slotAddress) external view returns (int40) {
-    uint40 storedIndexPlusOne = e3Data[e3Id].voteSlots[slotAddress];
-    return int40(storedIndexPlusOne) - 1;
   }
 
   /// @notice The commitment this contract recorded for one entry of a slot.
@@ -1068,15 +1030,25 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     bytes32 expectedContentHash,
     bytes calldata proof
   ) external view returns (IDataAvailabilityVerifier.DataReference memory receipt) {
+    receipt = _verifyAvailability(expectedContentHash, proof);
+  }
+
+  /// @notice Verify a data-availability receipt and require it to name the expected content.
+  function _verifyAvailability(
+    bytes32 expectedContentHash,
+    bytes calldata proof
+  ) internal view returns (IDataAvailabilityVerifier.DataReference memory receipt) {
     receipt = dataAvailabilityVerifier.verifyDataAvailability(expectedContentHash, proof);
     if (receipt.contentHash != expectedContentHash) {
       revert DataAvailabilityHashMismatch(expectedContentHash, receipt.contentHash);
     }
   }
 
-  /// @notice Record one input: append its leaf and remember its commitment for later parents.
+  /// @notice Record one accepted input: append its leaf, remember its commitment for later
+  /// parents, and mark it pending until its availability receipt arrives.
   function _processVote(
     uint256 e3Id,
+    bytes32 id,
     address slotAddress,
     bytes32 encryptedVoteCommitment,
     bytes32 encryptedVoteHash,
@@ -1088,19 +1060,12 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     // the mask path needs no signature — replace the bytes of a vote that was already counted,
     // erasing it. Appending leaves the earlier entry in the tree, so the Secure Process can fall
     // back to it when a later entry is unusable, and nothing is lost.
-    uint256 leaf = inputLeaf(encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
-
-    // Refuse a byte-identical resubmission. Without this the tree is a free growth surface for
-    // anyone replaying a committed input, and the round dies at tree capacity rather than at the
-    // input deadline.
-    if (round.appendedLeaf[leaf]) revert InputAlreadyPublished(leaf);
-    round.appendedLeaf[leaf] = true;
-
     voteIndex = round.votes.numberOfLeaves;
-    round.votes._insert(leaf);
+    round.votes._insert(inputLeaf(encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne));
 
-    round.voteSlots[slotAddress] = voteIndex + 1;
     round.inputCommitment[slotAddress][voteIndex] = encryptedVoteCommitment;
+    round.inputs[id].indexPlusOne = voteIndex + 1;
+    round.pendingInputCount++;
   }
 
   /// @notice Builds the input tree leaf for one committed input.
@@ -1161,7 +1126,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     uint40 parentIndexPlusOne
   ) external view returns (bool) {
     bytes32 id = inputId(e3Id, encryptedVoteHash, commitment, slotAddress, parentIndexPlusOne);
-    return e3Data[e3Id].inputStatus[id] != InputStatus.NONE;
+    return e3Data[e3Id].inputs[id].indexPlusOne != 0;
   }
 
   /// @notice Whether this exact input has a verified data-availability receipt.
@@ -1175,6 +1140,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     uint40 parentIndexPlusOne
   ) external view returns (bool) {
     bytes32 id = inputId(e3Id, encryptedVoteHash, commitment, slotAddress, parentIndexPlusOne);
-    return e3Data[e3Id].inputStatus[id] == InputStatus.PUBLISHED;
+    return e3Data[e3Id].inputs[id].published;
   }
 }
