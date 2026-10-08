@@ -500,7 +500,11 @@ fn verify_share_decryption_bounds() {
         // d = ct0 + (ct1 * sk mod X^N + 1) + e_sm + q * r: the negacyclic product of n terms with
         // both operands centered, plus d, ct0 and e_sm. Same expression the unreduced r1 bound used,
         // so the reduced quotient is no wider.
-        let expected_r: u128 = (qi_bound * qi_bound * n + 4 * qi_bound) / qi;
+        //
+        // `qi_bound^2 * n` overflows u128 for 60-bit moduli, so the square is divided by q_i first.
+        // With qi_bound^2 = a * q_i + b, the bound is n * a + (n * b + 4 * qi_bound) / q_i exactly.
+        let square: u128 = qi_bound * qi_bound;
+        let expected_r: u128 = n * (square / qi) + (n * (square % qi) + 4 * qi_bound) / qi;
         assert(
             THRESHOLD_SHARE_DECRYPTION_R_BOUNDS[i] as u128 == expected_r,
             "SHARE_DECRYPTION_R_BOUNDS mismatch",

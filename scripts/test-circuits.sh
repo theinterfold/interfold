@@ -19,6 +19,10 @@ trap restore_active_config EXIT
 (cd "$REPO_ROOT/circuits/lib" && nargo test)
 (cd "$REPO_ROOT/circuits/bin/recursive_aggregation/decryption_aggregator" && nargo test)
 
+# The config circuit re-derives the committed secure parameters and bounds for the committed
+# committee. It runs before the loop below rewrites the committee selection.
+(cd "$REPO_ROOT/circuits/bin/config" && nargo execute)
+
 # The dkg_aggregator and node_fold tests read only H, N_PARTIES, and L_THRESHOLD, and the preset
 # changes only L_THRESHOLD (insecure 2, secure 3). These pairs run each committee once and cover
 # both values.
