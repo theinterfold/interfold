@@ -239,6 +239,16 @@ pub struct CRISPContract<P = CRISPWriteProvider> {
 const CIPHERTEXT_VERIFIER_STORAGE: B256 =
     alloy::primitives::b256!("fc399dd26441dab88259cd69fffcf8b5f96dd87f2db63f29285d86101a4d1500");
 
+/// The storage slot of `requests[e3Id]`: the mapping is the second field of the layout, and the
+/// slot of a mapping value is `keccak256(abi.encode(key, mapping slot))`.
+fn request_config_slot(e3_id: U256) -> U256 {
+    let requests = U256::from_be_bytes(CIPHERTEXT_VERIFIER_STORAGE.0) + U256::from(1);
+    let mut key = [0u8; 64];
+    key[..32].copy_from_slice(&e3_id.to_be_bytes::<32>());
+    key[32..].copy_from_slice(&requests.to_be_bytes::<32>());
+    U256::from_be_bytes(alloy::primitives::keccak256(key).0)
+}
+
 /// The ciphertext verifier and parameter hash that Interfold froze for an E3 at request time:
 /// `requests[e3Id]`, the second field of `CiphertextVerifierStorage.Layout`. Interfold has no getter
 /// for them, and the scheme's current verifier can differ after a rotation.
@@ -247,11 +257,7 @@ async fn frozen_ciphertext_verifier<P: Provider>(
     interfold: Address,
     e3_id: U256,
 ) -> Result<(Address, B256)> {
-    let requests = U256::from_be_bytes(CIPHERTEXT_VERIFIER_STORAGE.0) + U256::from(1);
-    let mut key = [0u8; 64];
-    key[..32].copy_from_slice(&e3_id.to_be_bytes::<32>());
-    key[32..].copy_from_slice(&requests.to_be_bytes::<32>());
-    let slot = U256::from_be_bytes(alloy::primitives::keccak256(key).0);
+    let slot = request_config_slot(e3_id);
     let verifier = provider.get_storage_at(interfold, slot).await?;
     let params_hash = provider
         .get_storage_at(interfold, slot + U256::from(1))
@@ -837,6 +843,29 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The slot of `requests[e3Id]`, against `cast index uint256 <e3Id> <namespace + 1>`.
+    #[test]
+    fn the_request_config_slot_is_the_mapping_slot() {
+        assert_eq!(
+            request_config_slot(U256::from(1)),
+            U256::from_be_bytes(
+                alloy::primitives::b256!(
+                    "16fd55b120c97b5773cf45474582700e3b7605a07ad4413eb32f632619891086"
+                )
+                .0
+            )
+        );
+        assert_eq!(
+            request_config_slot(U256::from(0x123456789abcdef_u64)),
+            U256::from_be_bytes(
+                alloy::primitives::b256!(
+                    "d1103c916f8d949d5cd03237419b6690836eed54753a486eeba88b2994307705"
+                )
+                .0
+            )
+        );
     }
 
     /// The storage location is the ERC-7201 slot of Interfold's ciphertext-verifier namespace.
