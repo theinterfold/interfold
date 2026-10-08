@@ -18,6 +18,9 @@ what CRISP does in `examples/CRISP/circuits` and `packages/crisp-contracts`.
 At the end, you have two Noir circuits, a generated Solidity verifier, and a `publishInput` that
 rejects an input without a valid proof.
 
+This tutorial targets Interfold `v0.18.0` and its toolchain. For source builds from another
+checkout, use that checkout's matching SDK, circuits, and [toolchain pins](/build/noir-circuits).
+
 **Prerequisites:**
 
 - A project from the default template. See
@@ -441,7 +444,7 @@ Before you use it, do these two things:
 1. Copy the five compiled JSON files (`user_data_encryption_ct0`, `user_data_encryption_ct1`,
    `user_data_encryption`, `binary_input`, and `binary_input_fold`) into `client/src/circuits`.
 2. Add `@aztec/bb.js` `5.1.0` and `@noir-lang/noir_js` `1.0.0-beta.26` to `client/package.json`.
-   These are the versions that `@interfold/sdk` uses.
+   These are the versions that `@interfold/sdk` uses in release `0.18.0`.
 
 ```ts filename="client/src/utils/prove-input.ts"
 import { Barretenberg, UltraHonkBackend } from '@aztec/bb.js'

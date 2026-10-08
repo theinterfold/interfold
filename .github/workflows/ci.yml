@@ -25,7 +25,7 @@ env:
   NODE_VERSION: 22
   RUST_TOOLCHAIN: 1.91.1
   NOIR_TOOLCHAIN: v1.0.0-beta.26
-  BB_VERSION: 5.1.0
+  BB_VERSION: 5.2.0
   HARDHAT_VAR_MNEMONIC: 'test test test test test test test test test test test junk'
   HARDHAT_VAR_INFURA_API_KEY: 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'
   PRIVATE_KEY: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'

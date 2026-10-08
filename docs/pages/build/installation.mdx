@@ -52,12 +52,16 @@ Some tools are necessary only for specific tasks.
 | [tmux](https://github.com/tmux/tmux/wiki/Installing) | `pnpm dev:all --tmux`, which opens each process in its own tmux pane.                                                                                                        |
 | [Noir](https://noir-lang.org/docs) (`nargo`)         | Only to write your own circuits. The repository CI uses `v1.0.0-beta.26`. See [Noir circuits](/build/noir-circuits).                                                         |
 
-You do not install these components yourself:
+For a released node, the setup commands install these components:
 
-- **Barretenberg (`bb`) and the protocol circuits.** `interfold noir setup` downloads `bb` 5.1.0 and
-  the circuits for release 0.18.0. The template scripts run this command for you.
+- **Barretenberg (`bb`) and the protocol circuits.** `interfold noir setup` downloads the versions
+  pinned in the CLI. Source builds pin `bb` 5.2.0. The template scripts run this command for you.
 - **The OpenVM guest toolchain.** `cargo-openvm` installs the toolchain it needs. The local scripts
   run in dev mode by default, so they do not use OpenVM.
+
+Source builds need circuits rebuilt from the same checkout. This checkout pins `bb` 5.2.0, but its
+release archive is not yet updated. Do not use an older cached archive with the new `bb`.
+See [the source toolchain instructions](/build/noir-circuits#toolchain).
 
 <Callout type='info'>
   When you run `cargo` in a folder that has a `rust-toolchain.toml` file, `rustup` uses the Rust

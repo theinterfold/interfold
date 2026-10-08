@@ -338,8 +338,8 @@ importers:
   examples/CRISP/packages/crisp-sdk:
     dependencies:
       '@aztec/bb.js':
-        specifier: 5.1.0
-        version: 5.1.0
+        specifier: 5.2.0
+        version: 5.2.0
       '@crisp-e3/zk-inputs':
         specifier: workspace:*
         version: link:../crisp-zk-inputs
@@ -713,8 +713,8 @@ importers:
   packages/interfold-sdk:
     dependencies:
       '@aztec/bb.js':
-        specifier: 5.1.0
-        version: 5.1.0
+        specifier: 5.2.0
+        version: 5.2.0
       '@interfold/contracts':
         specifier: workspace:*
         version: link:../interfold-contracts
@@ -997,8 +997,8 @@ packages:
   '@arbitrum/nitro-contracts@3.0.0':
     resolution: {integrity: sha512-7VzNW9TxvrX9iONDDsi7AZlEUPa6z+cjBkB4Mxlnog9VQZAapRC3CdRXyUzHnBYmUhRzyNJdyxkWPw59QGcLmA==}
 
-  '@aztec/bb.js@5.1.0':
-    resolution: {integrity: sha512-bNpeyTz7baK2jZ9gN5gEn6GsOU8ueuGWbgUML/6kHhvwAgx/SsN9XY4tRS202dZM+8aOadwJ4crn6PIq20J4tw==}
+  '@aztec/bb.js@5.2.0':
+    resolution: {integrity: sha512-XQRbl6TfHg7xXwf4b3cNSggtwsIxl2z2/zV49/Ahxa1Nc1D7x05NY0QL5mYSRdOJlGKZ3TUTH48lDWAwJSVulg==}
     hasBin: true
 
   '@babel/code-frame@7.27.1':
@@ -10954,7 +10954,7 @@ snapshots:
       patch-package: 6.5.1
       solady: 0.0.182
 
-  '@aztec/bb.js@5.1.0':
+  '@aztec/bb.js@5.2.0':
     dependencies:
       comlink: 4.4.2
       commander: 12.1.0

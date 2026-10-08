@@ -54,11 +54,14 @@ every section.
 ### Noir / Barretenberg compatibility
 
 - Treat Nargo, the Rust Noir crates, witness serialization, Barretenberg, circuit release archives,
-  verification keys, and generated Solidity verifiers as one compatibility unit. The current unit is
-  Nargo and Rust Noir `1.0.0-beta.26` with Barretenberg `5.1.0`. The same pins also appear in the
-  SDK's `@noir-lang/noir_js` and `@aztec/bb.js`. No script checks that these pins agree. —
-  `.github/workflows/ci.yml` and `releases.yml`; `crates/zk-prover/versions.json`;
-  `crates/zk-prover/Cargo.toml`; `packages/interfold-sdk/package.json`
+  verification keys, and generated Solidity verifiers as one compatibility unit. The current
+  source-build unit is Nargo and Rust Noir `1.0.0-beta.26` with Barretenberg `5.2.0`. The same pins
+  also appear in the SDK's `@noir-lang/noir_js` and `@aztec/bb.js`. No script checks that these pins
+  agree. — `.github/workflows/ci.yml` and `releases.yml`; `crates/zk-prover/versions.json`;
+  `crates/zk-prover/Cargo.toml`; `packages/interfold-sdk/package.json` **Gap:** The source pins use
+  Barretenberg `5.2.0`, but `required_circuits_version` still names `0.19.0-test.2`. Do not
+  distribute this source build with that older archive. A release needs a new matching archive and a
+  version-bound digest; an existing cache can otherwise update only Barretenberg.
 - Rust-generated witnesses must use `WitnessStack::serialize()`. Do not serialize a witness stack
   with `bincode`; Barretenberg 5 accepts the beta.26 MessagePack format markers, not the legacy
   marker. — `crates/zk-prover/src/witness.rs`
