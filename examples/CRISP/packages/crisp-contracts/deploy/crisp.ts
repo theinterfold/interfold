@@ -48,8 +48,9 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
   }
   // USE_MOCKS deploys a mock voting token and selects the mock data-availability verifier, unless
   // MOCK_DATA_AVAILABILITY=false keeps Avail. It never mocks the compute verifier: only
-  // CRISP_UNPROVED_TEST=1 does, on the local chain. Ciphernodes read every input of a chain through
-  // one data-availability source.
+  // CRISP_UNPROVED_TEST=1 does, on the local chain, or on Sepolia with
+  // ALLOW_SEPOLIA_UNPROVED_COMPUTE=true. Ciphernodes read every input of a chain through one
+  // data-availability source.
   const rawMockDataAvailability = process.env.MOCK_DATA_AVAILABILITY?.trim().toLowerCase()
   if (rawMockDataAvailability && rawMockDataAvailability !== 'true' && rawMockDataAvailability !== 'false') {
     throw new Error("MOCK_DATA_AVAILABILITY must be 'true', 'false', or unset")
@@ -321,16 +322,33 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
 /**
  * Deploy the receipt binding for an explicitly configured OpenVM Halo2 verifier.
  *
- * `CRISP_UNPROVED_TEST=1` deploys a verifier that accepts every receipt instead. It exists for local
- * development and the CRISP end-to-end test, which run the unproved development runner, and it is
- * refused on every chain except the isolated local one. `USE_MOCKS` never selects it.
+ * `CRISP_UNPROVED_TEST=1` deploys a verifier that accepts every receipt instead. It serves the CRISP
+ * end-to-end test and local development, which run the unproved development runner. It is allowed
+ * on the isolated local chain (chain ID 31337) and on Sepolia (chain ID 11155111), and Sepolia also
+ * needs `ALLOW_SEPOLIA_UNPROVED_COMPUTE=true`. Every other chain, mainnet included, refuses it.
+ * `USE_MOCKS` never selects it.
  */
 export const deployVerifier = async (connectedEthers?: any): Promise<string> => {
   const ethers = connectedEthers ?? (await hre.network.connect()).ethers
   const chain = getDeploymentChain(hre)
   if (process.env.CRISP_UNPROVED_TEST === '1') {
-    if ((await ethers.provider.getNetwork()).chainId !== 31337n) {
-      throw new Error('CRISP_UNPROVED_TEST requires the isolated local chain (chain ID 31337)')
+    const chainId = (await ethers.provider.getNetwork()).chainId
+    const rawSepoliaUnproved = process.env.ALLOW_SEPOLIA_UNPROVED_COMPUTE?.trim().toLowerCase()
+    if (rawSepoliaUnproved && rawSepoliaUnproved !== 'true' && rawSepoliaUnproved !== 'false') {
+      throw new Error("ALLOW_SEPOLIA_UNPROVED_COMPUTE must be 'true', 'false', or unset")
+    }
+    const sepoliaUnprovedAcknowledged = rawSepoliaUnproved === 'true'
+    if (chainId === 11155111n) {
+      if (!sepoliaUnprovedAcknowledged) {
+        throw new Error(
+          'CRISP_UNPROVED_TEST=1 on Sepolia (chain ID 11155111) requires ALLOW_SEPOLIA_UNPROVED_COMPUTE=true. This acknowledgment means the deployment accepts every compute receipt without proof verification.',
+        )
+      }
+      console.warn(
+        'WARNING: CRISP_UNPROVED_TEST=1 deploys MockOpenVmReceiptVerifier on Sepolia. Compute proofs are not verified on this deployment.',
+      )
+    } else if (chainId !== 31337n) {
+      throw new Error('CRISP_UNPROVED_TEST requires the isolated local chain (chain ID 31337) or Sepolia (chain ID 11155111)')
     }
     const mock = await ethers.deployContract('MockOpenVmReceiptVerifier')
     await mock.waitForDeployment()

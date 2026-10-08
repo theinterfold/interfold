@@ -63,7 +63,12 @@ CUDA GPU proves on it when the CUDA worker is configured; any other machine prov
 The CRISP deployment reads the receipt identity `interfold program compile` wrote, unless
 `OPENVM_APP_EXE_COMMIT`, `OPENVM_APP_VM_COMMIT`, and either `OPENVM_VERIFIER_ARTIFACT` with
 `OPENVM_VERIFIER_SHA256` or `OPENVM_HALO2_VERIFIER` with `OPENVM_HALO2_RUNTIME_CODE_HASH` are set.
-Outside `CRISP_UNPROVED_TEST=1` on the local chain, it never selects a mock compute verifier.
+Outside `CRISP_UNPROVED_TEST=1`, it never selects a mock compute verifier. `CRISP_UNPROVED_TEST=1`
+deploys `MockOpenVmReceiptVerifier`, which accepts every receipt. It works on the local chain (chain
+ID 31337), and on Sepolia (chain ID 11155111) only with `ALLOW_SEPOLIA_UNPROVED_COMPUTE=true`. Every
+other chain, mainnet included, refuses it. A Sepolia deployment with this verifier does not verify
+compute proofs. It runs `e3-support-scripts-dev`, the unproved development runner, instead of the
+OpenVM service.
 
 ## Quick Start
 
@@ -187,8 +192,9 @@ server:
    earlier RISC Zero backend. `USE_MOCKS=true` deploys the mock voting token and selects the mock
    data-availability verifier, unless `MOCK_DATA_AVAILABILITY=false` keeps Avail. It does not
    select a compute mock: every network except the isolated local chain deploys the real OpenVM
-   receipt verifier. Ciphernodes read all inputs on a chain from one data-availability source, so
-   keep Avail on a shared network.
+   receipt verifier, unless `CRISP_UNPROVED_TEST=1` and `ALLOW_SEPOLIA_UNPROVED_COMPUTE=true` opt in
+   to the unproved verifier on Sepolia. Ciphernodes read all inputs on a chain from one
+   data-availability source, so keep Avail on a shared network.
 5. Schedule voting after the current on-chain committee setup budget. The server reads that bound
    from `CRISPProgram.earliestVotingStart()` and adds `VOTING_START_BUFFER_SECONDS` for transaction
    mining. `E3_DURATION` starts at that fixed voting time; it covers voting plus the VectorX
