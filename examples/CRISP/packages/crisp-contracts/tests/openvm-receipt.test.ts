@@ -152,7 +152,8 @@ describe('OpenVM receipt verifier (call oracle, not proof verification)', () => 
       word(55),
       word(66),
       word(77),
-      ethers.keccak256('0x'),
+      // `validate` stores the hash of `e3ProgramParams`, the BFV parameter blob that `MockInterfold` passes.
+      ethers.keccak256(await controller.e3ProgramParams()),
       '0x2098f5fb9e239eab3ceac3f27b81e481dc3124d55ffed523a839ee8446b64864',
     ]
     await verifier.setExpectedCall(journalDigest(words), proofData, exeCommit, vmCommit)
