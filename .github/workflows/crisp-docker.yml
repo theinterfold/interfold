@@ -92,6 +92,8 @@ jobs:
           context: .
           file: ${{ env.DOCKERFILE_PATH }}
           push: ${{ github.event_name != 'pull_request' }}
+          # Pull requests load the image for the smoke test.
+          load: ${{ github.event_name == 'pull_request' }}
           tags: |
             ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
             ${{ github.ref == 'refs/heads/main' && format('{0}:latest', env.IMAGE_NAME) || '' }}
@@ -102,3 +104,18 @@ jobs:
           cache-from: |
             type=gha,scope=crisp-server
           cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=max,scope=crisp-server' || '' }}
+
+      # The server answers an unknown command with its usage. That answer shows that the image runs
+      # its binary with the libraries that the runtime image provides.
+      - name: Smoke-test the image
+        if: github.event_name == 'pull_request'
+        env:
+          IMAGE: ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+        run: |
+          if output=$(timeout 60 docker run --rm "$IMAGE" --help 2>&1); then
+            echo "$output"
+            echo "The server accepted an unknown command" >&2
+            exit 1
+          fi
+          echo "$output"
+          grep -q 'usage: server' <<<"$output"
