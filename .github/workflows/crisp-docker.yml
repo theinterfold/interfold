@@ -88,14 +88,13 @@ jobs:
       - name: Prepare .dockerignore
         run: cp examples/CRISP/server/.dockerignore .dockerignore
 
+      # Loaded for the smoke test, which runs before the image is published.
       - name: Build image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ${{ env.DOCKERFILE_PATH }}
-          push: ${{ github.event_name != 'pull_request' }}
-          # Pull requests load the image for the smoke test.
-          load: ${{ github.event_name == 'pull_request' }}
+          load: true
           tags: |
             ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
             ${{ github.ref == 'refs/heads/main' && format('{0}:latest', env.IMAGE_NAME) || '' }}
@@ -107,10 +106,10 @@ jobs:
             type=gha,scope=crisp-server
           cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=max,scope=crisp-server' || '' }}
 
-      # The server answers an unknown command with its usage. That answer shows that the image runs
-      # its binary with the libraries that the runtime image provides.
+      # The server answers an unknown command with its usage, which shows that the image runs its
+      # binary with the libraries that the runtime image provides. Starting the server needs an RPC
+      # endpoint and deployed contracts; crisp_e2e in ci.yml runs that.
       - name: Smoke-test the image
-        if: github.event_name == 'pull_request'
         env:
           IMAGE: ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
         run: |
@@ -121,3 +120,19 @@ jobs:
           fi
           echo "$output"
           grep -q 'usage: server' <<<"$output"
+
+      # The builder still holds every layer of the build above, so this only uploads it.
+      - name: Push image
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ env.DOCKERFILE_PATH }}
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+            ${{ github.ref == 'refs/heads/main' && format('{0}:latest', env.IMAGE_NAME) || '' }}
+          build-args: |
+            SKIP_SOLIDITY=1
+          cache-from: |
+            type=gha,scope=crisp-server

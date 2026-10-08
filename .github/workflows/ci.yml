@@ -692,14 +692,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Loaded for the smoke test, which runs before the image is published.
       - name: Build image
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           file: ${{ env.SUPPORT_DOCKERFILE_PATH }}
-          push: ${{ github.ref == 'refs/heads/main' }}
-          # A run that does not publish the image loads it for the smoke test.
-          load: ${{ github.ref != 'refs/heads/main' }}
+          load: true
           tags: ${{ steps.tags.outputs.tags }}
           cache-from: |
             type=gha,scope=e3-support
@@ -708,20 +707,45 @@ jobs:
           # readable only by reruns of that pull request.
           cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=max,scope=e3-support' || '' }}
 
-      # Without a worker, the service stops at its configuration check. Reaching that check shows
-      # that the image runs its binary.
+      # Starts the service with a stub worker that passes its configuration check, then asks for its
+      # health: the image's command and environment, the worker launch and the HTTP server.
       - name: Smoke-test the image
-        if: github.ref != 'refs/heads/main'
         env:
           IMAGE: ${{ steps.tags.outputs.image }}
         run: |
-          if output=$(timeout 60 docker run --rm "$IMAGE" 2>&1); then
-            echo "$output"
-            echo "The service started without a worker" >&2
-            exit 1
-          fi
-          echo "$output"
-          grep -q 'Set OPENVM_PROVER_CONFIG' <<<"$output"
+          fixtures="${RUNNER_TEMP}/openvm-smoke"
+          mkdir -p "$fixtures"
+          printf '#!/bin/sh\nexit 0\n' > "$fixtures/worker"
+          echo '{}' > "$fixtures/worker.json"
+          chmod 755 "$fixtures" "$fixtures/worker"
+          chmod 644 "$fixtures/worker.json"
+          docker run -d --name openvm-smoke -p 127.0.0.1:13151:13151 -v "${fixtures}:/fixtures:ro" \
+            -e OPENVM_PROVER_BIN=/fixtures/worker -e OPENVM_PROVER_CONFIG=/fixtures/worker.json "$IMAGE"
+          for _ in $(seq 60); do
+            if curl -sf --max-time 5 http://127.0.0.1:13151/health; then
+              echo
+              docker rm -f openvm-smoke > /dev/null
+              exit 0
+            fi
+            [ "$(docker inspect -f '{{.State.Running}}' openvm-smoke)" = true ] || break
+            sleep 1
+          done
+          docker logs openvm-smoke
+          docker rm -f openvm-smoke > /dev/null
+          echo "The service did not answer its health check" >&2
+          exit 1
+
+      # The builder still holds every layer of the build above, so this only uploads it.
+      - name: Push image
+        if: github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: .
+          file: ${{ env.SUPPORT_DOCKERFILE_PATH }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: |
+            type=gha,scope=e3-support
 
   build_ciphernode_image:
     needs: [detect_changes]
@@ -761,14 +785,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Loaded for the smoke test, which runs before the image is published.
       - name: Build ciphernode image
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           file: ${{ env.CIPHERNODE_DOCKERFILE_PATH }}
-          push: ${{ github.ref == 'refs/heads/main' }}
-          # A run that does not publish the image loads it for the smoke test.
-          load: ${{ github.ref != 'refs/heads/main' }}
+          load: true
           tags: ${{ steps.tags.outputs.tags }}
           cache-from: |
             type=gha,scope=ciphernode
@@ -780,14 +803,30 @@ jobs:
       # The entrypoint reads the config file and resolves the node's state paths with the binary
       # before it runs the command. An empty config file is a valid config.
       - name: Smoke-test the ciphernode image
-        if: github.ref != 'refs/heads/main'
         env:
           IMAGE: ${{ steps.tags.outputs.image }}
         run: |
           config="${RUNNER_TEMP}/ciphernode-config.yaml"
           : > "$config"
           chmod 644 "$config"
-          timeout 60 docker run --rm -v "${config}:/home/ciphernode/.config/interfold/config.yaml:ro" "$IMAGE" --version
+          status=0
+          output=$(timeout 60 docker run --rm -v "${config}:/home/ciphernode/.config/interfold/config.yaml:ro" "$IMAGE" --version 2>&1) ||
+            status=$?
+          echo "$output"
+          [ "$status" -eq 0 ]
+          grep -Eq '^interfold [0-9]+\.[0-9]+\.[0-9]+' <<<"$output"
+
+      # The builder still holds every layer of the build above, so this only uploads it.
+      - name: Push ciphernode image
+        if: github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: .
+          file: ${{ env.CIPHERNODE_DOCKERFILE_PATH }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: |
+            type=gha,scope=ciphernode
 
   test_contracts:
     needs: [detect_changes]
