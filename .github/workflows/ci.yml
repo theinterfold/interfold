@@ -392,15 +392,24 @@ jobs:
     timeout-minutes: 30
     runs-on:
       ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}-{3}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'rust_unit_tests', matrix.suite) || 'ubuntu-latest' }}
+      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}-{3}{4}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
+      'rust_unit_tests', matrix.suite, matrix.partition) || 'ubuntu-latest' }}
     # Library tests link cfg(test) builds. Doc-tests and the separate test targets link the plain
     # libraries, so they run together in the `doc` leg. The legs share no compiled crates, and each
     # leg builds its kind once.
+    #
+    # Running the 1,900 library tests took about 8 minutes after about 5 minutes of compiling, so two
+    # `lib` legs each build the tests and run half of them. The checks that read the whole tree run in
+    # the first one.
     strategy:
       fail-fast: false
       matrix:
-        suite: [lib, doc]
+        include:
+          - suite: lib
+            partition: 1
+          - suite: lib
+            partition: 2
+          - suite: doc
     permissions:
       contents: read
     steps:
@@ -435,19 +444,19 @@ jobs:
         run: 'pnpm install --frozen-lockfile'
 
       - name: Checking code format rust
-        if: matrix.suite == 'lib'
+        if: matrix.suite == 'lib' && matrix.partition == 1
         run: pnpm rust:lint
 
       # The Agent Harness workflow runs the same script on every pull request.
       - name: Check repository invariants
-        if: matrix.suite == 'lib' && github.event_name != 'pull_request'
+        if: matrix.suite == 'lib' && matrix.partition == 1 && github.event_name != 'pull_request'
         run: pnpm check:invariants
 
       - name: Compile contracts for ABI catalog tests
         run: pnpm evm:build
 
       - name: Check the committed contract artifacts against the build
-        if: matrix.suite == 'lib'
+        if: matrix.suite == 'lib' && matrix.partition == 1
         run: pnpm check:bindings
 
       - name: Install cargo-nextest
@@ -459,7 +468,7 @@ jobs:
       # the step took the sum of every crate's tests rather than the slowest crate's.
       - name: Run library tests
         if: matrix.suite == 'lib'
-        run: cargo nextest run --lib
+        run: cargo nextest run --lib --partition hash:${{ matrix.partition }}/2
 
       - name: Run doc-tests
         if: matrix.suite == 'doc'
