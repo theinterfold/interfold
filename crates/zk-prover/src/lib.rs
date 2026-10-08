@@ -54,8 +54,9 @@ pub use circuits::aggregation::v2::{
     prove_nodes_fold_v2_step_for_preset,
 };
 pub use circuits::dkg::share_computation::{
-    prove_chunked_share_computation, prove_chunked_share_computation_with_chunk_size,
-    ChunkedShareComputationProofs, DEFAULT_C2_CHUNK_SIZE,
+    c2_chunk_size, prove_chunked_share_computation,
+    prove_chunked_share_computation_with_chunk_size, ChunkedShareComputationProofs,
+    DEFAULT_C2_CHUNK_SIZE,
 };
 pub use circuits::threshold::lbfv_pk_generation::{
     finalize_lbfv_pk_generation_row, load_staged_lbfv_pk_generation_limb_vk_hash,

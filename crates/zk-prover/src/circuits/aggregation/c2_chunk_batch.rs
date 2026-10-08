@@ -46,6 +46,7 @@ pub fn generate_c2_chunk_batches(
     chunk_proofs: &[Proof],
     chunk_count: usize,
     degree: usize,
+    n_parties: usize,
     e3_id: &str,
     artifacts_dir: &str,
 ) -> Result<Vec<Proof>, ZkError> {
@@ -55,7 +56,7 @@ pub fn generate_c2_chunk_batches(
             chunk_proofs.len()
         )));
     }
-    let layout = C2ChunkLayout::compiled(degree)?;
+    let layout = C2ChunkLayout::compiled(degree, n_parties)?;
     if chunk_count != layout.chunk_count {
         return Err(ZkError::InvalidInput(format!(
             "C2 chunk count {chunk_count} does not match compiled artifact count {}",
@@ -216,11 +217,14 @@ mod tests {
 
     #[test]
     fn uses_one_batch_chunk_for_insecure_degree() {
-        assert_eq!(C2ChunkLayout::compiled(512).unwrap().chunks_per_batch, 1);
+        assert_eq!(C2ChunkLayout::compiled(512, 3).unwrap().chunks_per_batch, 1);
     }
 
     #[test]
     fn uses_four_batch_chunks_for_secure_degree() {
-        assert_eq!(C2ChunkLayout::compiled(8192).unwrap().chunks_per_batch, 4);
+        assert_eq!(
+            C2ChunkLayout::compiled(8192, 3).unwrap().chunks_per_batch,
+            4
+        );
     }
 }

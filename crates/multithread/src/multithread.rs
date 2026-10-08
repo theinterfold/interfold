@@ -90,7 +90,7 @@ use e3_zk_helpers::threshold::rlk_aggregation::{RlkAggregationCircuit, RlkAggreg
 use e3_zk_helpers::threshold::rlk_generation::{RlkGenerationAdapter, RlkGenerationCircuitData};
 use e3_zk_helpers::CiphernodesCommittee;
 use e3_zk_helpers::CiphernodesCommitteeSize;
-use e3_zk_prover::DEFAULT_C2_CHUNK_SIZE;
+use e3_zk_prover::c2_chunk_size;
 use e3_zk_prover::{
     generate_nodes_fold_step, load_staged_lbfv_pk_generation_limb_vk_hash,
     load_staged_rlk_generation_limb_vk_hash, prove_chunked_share_computation,
@@ -115,14 +115,14 @@ use rand_chacha::ChaCha20Rng;
 use tracing::{debug, error, info, warn};
 use zeroize::{Zeroize, Zeroizing};
 
-fn c2_chunk_size_for_preset(preset: BfvPreset) -> usize {
-    match preset {
-        BfvPreset::InsecureThreshold
-        | BfvPreset::InsecureThresholdLbfv
-        | BfvPreset::InsecureDkg
-        | BfvPreset::InsecureDkgLbfv => 128,
-        _ => DEFAULT_C2_CHUNK_SIZE,
-    }
+/// The compiled C2 chunk size for a preset and committee; see `e3_zk_prover::c2_chunk_size`.
+fn c2_chunk_size_for(preset: BfvPreset, n_parties: usize) -> usize {
+    let degree = preset
+        .threshold_counterpart()
+        .unwrap_or(preset)
+        .metadata()
+        .degree;
+    c2_chunk_size(degree, n_parties)
 }
 
 use crate::effect_gate::ComputeEffectGate;
@@ -2222,7 +2222,7 @@ fn handle_share_computation_proof(
         parity_matrix,
         n_parties: committee.n as u32,
         threshold: committee.threshold as u32,
-        chunk_size: c2_chunk_size_for_preset(req.params_preset) as u32,
+        chunk_size: c2_chunk_size_for(req.params_preset, committee.n) as u32,
     };
 
     let bb_work = zk_bb_work_id(&request);
@@ -2490,7 +2490,7 @@ fn handle_share_encryption_proof(
         dkg_input_type: req.dkg_input_type,
         party_idx,
         mod_idx,
-        chunk_size: c2_chunk_size_for_preset(req.params_preset) as u32,
+        chunk_size: c2_chunk_size_for(req.params_preset, committee_val.n) as u32,
         committee: committee_val,
     };
 
@@ -2658,7 +2658,7 @@ fn handle_dkg_share_decryption_proof(
         recipient_party_id: req.recipient_party_id,
         own_plaintext_share,
         dkg_input_type: req.dkg_input_type,
-        chunk_size: c2_chunk_size_for_preset(req.params_preset) as u32,
+        chunk_size: c2_chunk_size_for(req.params_preset, req.committee_size.values().n) as u32,
         committee: req.committee_size.values(),
     };
 

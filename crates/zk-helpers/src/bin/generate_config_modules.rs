@@ -196,17 +196,42 @@ fn smudging_b_enc_value(preset: BfvPreset) -> Result<BigUint> {
     Ok(error_sampler_bound(threshold_params.get_error1_variance()))
 }
 
-/// The C2 chunking for a polynomial degree, matching `c2_chunk_layout::C2ChunkLayout::compiled`.
-fn c2_chunking(degree: u32) -> (u32, u32, u32, u32) {
-    let chunk_size = DEFAULT_C2_CHUNK_SIZE.min(degree);
-    let n_chunks = degree / chunk_size;
-    let chunks_per_batch = if degree <= DEFAULT_C2_CHUNK_SIZE {
-        1
+/// Numeric value of the `SHARE_COMPUTATION_CHUNK_SIZE` expression for one committee size.
+fn c2_chunk_size_for_committee(degree: u32, n_parties: u32) -> u32 {
+    let size = if degree >= 16384 {
+        if n_parties <= 4 {
+            4096
+        } else if n_parties <= 12 {
+            1024
+        } else {
+            DEFAULT_C2_CHUNK_SIZE
+        }
     } else {
-        DEFAULT_C2_CHUNKS_PER_BATCH
+        DEFAULT_C2_CHUNK_SIZE
     };
-    let n_batches = n_chunks / chunks_per_batch;
-    (chunk_size, n_chunks, chunks_per_batch, n_batches)
+    size.min(degree)
+}
+
+/// The C2 chunk grid as Noir global expressions, matching `c2_chunk_layout::C2ChunkLayout::compiled`
+/// and `c2_chunk_config::c2_chunk_size`.
+///
+/// At degree 16384 the chunk size depends on the committee (the leaf cost grows with
+/// `chunk_size * n_parties`), so it is written as an expression over the active committee's
+/// `N_PARTIES`; the committee is chosen when the circuits are built. Other degrees use fixed values.
+fn c2_chunking(degree: u32) -> (String, String, String, String) {
+    let chunk_size = if degree >= 16384 {
+        "if crate::configs::committee::active::N_PARTIES <= 4 {\n    4096\n} else if crate::configs::committee::active::N_PARTIES <= 12 {\n    1024\n} else {\n    512\n}".to_string()
+    } else {
+        DEFAULT_C2_CHUNK_SIZE.min(degree).to_string()
+    };
+    (
+        chunk_size,
+        "N / SHARE_COMPUTATION_CHUNK_SIZE".to_string(),
+        format!(
+            "if SHARE_COMPUTATION_N_CHUNKS < {DEFAULT_C2_CHUNKS_PER_BATCH} {{\n    SHARE_COMPUTATION_N_CHUNKS\n}} else {{\n    {DEFAULT_C2_CHUNKS_PER_BATCH}\n}}"
+        ),
+        "SHARE_COMPUTATION_N_CHUNKS / SHARE_COMPUTATION_CHUNKS_PER_BATCH".to_string(),
+    )
 }
 
 /// Serializes the deterministic CRP the same way `crp_matrix_constant_string` does, but
@@ -699,7 +724,8 @@ fn render_dkg(preset: BfvPreset) -> Result<String> {
             &sc_bits,
             committee.n,
             committee.threshold,
-            chunk_size as usize,
+            // Only feeds the two chunk globals excluded below; the chunk-grid section owns them.
+            c2_chunk_size_for_committee(dkg_pk.n as u32, committee.n as u32) as usize,
         )
         .context("share_computation codegen failed")?,
         "SHARE_COMPUTATION",
