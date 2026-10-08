@@ -11,7 +11,7 @@
 //! The challenge is derived in this circuit, after every witness polynomial is committed, so a
 //! second round re-supplying the witness is not needed. `pk0_commitment` and `ct0_commitment` are
 //! taken as values and output: `ct0_eval_chunk_identity` equates the first with the hash of the
-//! `pk0is` that `ct0_eval_pk_ct` evaluates, and `user_data_encryption_ct0_chunked` equates the
+//! `pk0is` it evaluates, and `user_data_encryption_ct0_chunked` equates the
 //! second with the hash of the range-checked `ct0is` that `ct0_pk_ct_commit` evaluates. Both are
 //! binding commitments, so `pk0is` and `ct0is` are fixed before the challenge as well.
 

@@ -44,12 +44,10 @@ const parseOptions = (): Options => {
 const CIRCUIT_NAMES = {
   ct0ChunkMain: 'ct0_chunk_main',
   ct0PkCtCommit: 'ct0_pk_ct_commit',
-  ct0EvalPkCt: 'ct0_eval_pk_ct',
   ct0EvalChunkIdentity: 'ct0_eval_chunk_identity',
   userDataEncryptionCt0: 'user_data_encryption_ct0',
   ct1ChunkMain: 'ct1_chunk_main',
   ct1PkCtCommit: 'ct1_pk_ct_commit',
-  ct1EvalPkCt: 'ct1_eval_pk_ct',
   ct1EvalChunkIdentity: 'ct1_eval_chunk_identity',
   userDataEncryptionCt1: 'user_data_encryption_ct1',
 } as const

@@ -14,8 +14,8 @@
 //!
 //! The leaf range-checks and commits the witness, derives the challenge from those commitments and
 //! the public-key and ciphertext commitments, and evaluates at it. The product
-//! `pk * u mod X^N + 1` is evaluated in `ct*_eval_pk_ct` through `negacyclic_kernel`, so it never
-//! enters a witness.
+//! `pk * u mod X^N + 1` is evaluated in `ct*_eval_chunk_identity` through `negacyclic_kernel`, so
+//! it never enters a witness.
 
 use crate::math::commitments::{
     compute_ude_chunk_commitment, compute_ude_chunk_root_commitment,
@@ -107,7 +107,7 @@ impl<let CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_K
     }
 
     /// Every coefficient is range-checked here and nowhere else; the commitments below pin any
-    /// later opening (such as `u` in `ct*_eval_pk_ct`) to these bounded values.
+    /// later opening (such as `u` in `ct*_eval_chunk_identity`) to these bounded values.
     pub fn check_range_bounds(self) {
         self.u_chunk.range_check_2bounds::<BIT_U>(self.configs.u_bound, self.configs.u_bound);
         self.e0_chunk.range_check_2bounds::<BIT_E0>(self.configs.e0_bound, self.configs.e0_bound);
@@ -305,21 +305,18 @@ pub fn ct1_chunk_roots(
 /// `verify_honk_proof` only proves that a proof verifies under a VK with the given key hash. A key
 /// hash that no layer compares to an expected value lets a prover use any circuit with the same
 /// public-input shape - for example a leaf without its range checks. The identity circuit outputs
-/// its leaf's and pk circuit's key hashes, and the top-level circuit calls this function with them,
-/// the identity circuit's own key hash and the ciphertext circuit's. The wrapper then folds the
+/// its leaf's key hash, and the top-level circuit calls this function with it, the identity
+/// circuit's own key hash and the ciphertext circuit's. The wrapper then folds the
 /// result into `compute_ude_vk_chain`, and the verifier compares that value to a deployment anchor.
 ///
 /// The order is part of the anchor. Keep it identical in any off-chain code that computes the
-/// expected value: identity, leaf, pk, ct.
+/// expected value: identity, leaf, ct.
 pub fn compute_ude_vk_manifest(
     identity_key_hash: Field,
     leaf_key_hash: Field,
-    pk_key_hash: Field,
     ct_key_hash: Field,
 ) -> Field {
-    compute_vk_hash(
-        [identity_key_hash, leaf_key_hash, pk_key_hash, ct_key_hash].as_vector(),
-    )
+    compute_vk_hash([identity_key_hash, leaf_key_hash, ct_key_hash].as_vector())
 }
 
 /// The complete VK chain for one ciphertext leg: the top-level circuit's key hash, then the
@@ -423,13 +420,12 @@ fn test_chunk_roots_agree_on_u_across_legs() {
 /// tree can be swapped for another with the same public-input shape.
 #[test]
 fn test_ude_vk_manifest_depends_on_every_key_hash_in_order() {
-    let base = compute_ude_vk_manifest(1, 2, 3, 4);
-    assert(base == compute_vk_hash([1, 2, 3, 4].as_vector()));
-    assert(compute_ude_vk_manifest(9, 2, 3, 4) != base);
-    assert(compute_ude_vk_manifest(1, 9, 3, 4) != base);
-    assert(compute_ude_vk_manifest(1, 2, 9, 4) != base);
-    assert(compute_ude_vk_manifest(1, 2, 3, 9) != base);
-    assert(compute_ude_vk_manifest(2, 1, 3, 4) != base);
+    let base = compute_ude_vk_manifest(1, 2, 3);
+    assert(base == compute_vk_hash([1, 2, 3].as_vector()));
+    assert(compute_ude_vk_manifest(9, 2, 3) != base);
+    assert(compute_ude_vk_manifest(1, 9, 3) != base);
+    assert(compute_ude_vk_manifest(1, 2, 9) != base);
+    assert(compute_ude_vk_manifest(2, 1, 3) != base);
     assert(compute_ude_vk_chain(10, 11) == compute_vk_hash([10, 11].as_vector()));
 }
 

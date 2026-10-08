@@ -41,12 +41,10 @@ export type UserDataEncryptionInputs = {
 export type UserDataEncryptionCircuitBundle = {
   ct0ChunkMain: CompiledCircuit
   ct0PkCtCommit: CompiledCircuit
-  ct0EvalPkCt: CompiledCircuit
   ct0EvalChunkIdentity: CompiledCircuit
   userDataEncryptionCt0: CompiledCircuit
   ct1ChunkMain: CompiledCircuit
   ct1PkCtCommit: CompiledCircuit
-  ct1EvalPkCt: CompiledCircuit
   ct1EvalChunkIdentity: CompiledCircuit
   userDataEncryptionCt1: CompiledCircuit
 }
@@ -124,11 +122,11 @@ const assertShape = (inputs: UserDataEncryptionInputs): { n: number; l: number }
 
 const leafProof = (proof: RecursiveProof) => proofToFields(proof.proof)
 
-// Each leg is five proofs. The leaf range-checks and commits the witness, derives the challenge
+// Each leg is four proofs. The leaf range-checks and commits the witness, derives the challenge
 // from those commitments and the pk/ct commitments, and evaluates at it. The ciphertext circuit
-// commits and evaluates `ct`; the pk circuit commits `pk` and evaluates `pk * u mod X^N + 1`. The
-// identity circuit verifies the leaf and the pk circuit; the top-level circuit verifies the
-// identity and ciphertext proofs and checks the batched identity.
+// commits and evaluates `ct`. The identity circuit verifies the leaf, opens `pk` and `u` against
+// its commitments and evaluates `pk * u mod X^N + 1`; the top-level circuit verifies the identity
+// and ciphertext proofs and checks the batched identity.
 
 const buildCt0TopLevelInputs = async (
   api: Barretenberg,
@@ -152,7 +150,6 @@ const buildCt0TopLevelInputs = async (
   )
   const gamma = leaf.publicInputs[6]
   const ciphertext = await prove(api, circuits.ct0PkCtCommit, { ct0is: inputs.ct0is, gamma }, 'noir-recursive')
-  const publicKey = await prove(api, circuits.ct0EvalPkCt, { pk0is: inputs.pk0is, u: inputs.u, gamma }, 'noir-recursive')
   const identity = await prove(
     api,
     circuits.ct0EvalChunkIdentity,
@@ -161,14 +158,12 @@ const buildCt0TopLevelInputs = async (
       leaf_key_hash: leaf.vkHash,
       leaf_proof: leafProof(leaf),
       leaf_public_inputs: leaf.publicInputs,
-      pk_vk: publicKey.vkAsFields,
-      pk_key_hash: publicKey.vkHash,
-      pk_proof: leafProof(publicKey),
-      pk_public_inputs: publicKey.publicInputs,
+      pk0is: inputs.pk0is,
+      u: inputs.u,
     },
-    'noir-recursive-no-zk',
+    'noir-recursive',
   )
-  if (identity.publicInputs.length !== 9 + l) throw new Error('ct0 identity proof has an unexpected public-input count.')
+  if (identity.publicInputs.length !== 8 + l) throw new Error('ct0 identity proof has an unexpected public-input count.')
 
   return {
     identity_vk: identity.vkAsFields,
@@ -204,7 +199,6 @@ const buildCt1TopLevelInputs = async (
   )
   const gamma = leaf.publicInputs[5]
   const ciphertext = await prove(api, circuits.ct1PkCtCommit, { ct1is: inputs.ct1is, gamma }, 'noir-recursive')
-  const publicKey = await prove(api, circuits.ct1EvalPkCt, { pk1is: inputs.pk1is, u: inputs.u, gamma }, 'noir-recursive')
   const identity = await prove(
     api,
     circuits.ct1EvalChunkIdentity,
@@ -213,14 +207,12 @@ const buildCt1TopLevelInputs = async (
       leaf_key_hash: leaf.vkHash,
       leaf_proof: leafProof(leaf),
       leaf_public_inputs: leaf.publicInputs,
-      pk_vk: publicKey.vkAsFields,
-      pk_key_hash: publicKey.vkHash,
-      pk_proof: leafProof(publicKey),
-      pk_public_inputs: publicKey.publicInputs,
+      pk1is: inputs.pk1is,
+      u: inputs.u,
     },
-    'noir-recursive-no-zk',
+    'noir-recursive',
   )
-  if (identity.publicInputs.length !== 9 + l) throw new Error('ct1 identity proof has an unexpected public-input count.')
+  if (identity.publicInputs.length !== 8 + l) throw new Error('ct1 identity proof has an unexpected public-input count.')
 
   return {
     identity_vk: identity.vkAsFields,

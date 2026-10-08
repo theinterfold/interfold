@@ -9,12 +9,10 @@ import type { CompiledCircuit } from '@noir-lang/noir_js'
 export type UserDataEncryptionProofBundle = {
   ct0ChunkMain: CompiledCircuit
   ct0PkCtCommit: CompiledCircuit
-  ct0EvalPkCt: CompiledCircuit
   ct0EvalChunkIdentity: CompiledCircuit
   userDataEncryptionCt0: CompiledCircuit
   ct1ChunkMain: CompiledCircuit
   ct1PkCtCommit: CompiledCircuit
-  ct1EvalPkCt: CompiledCircuit
   ct1EvalChunkIdentity: CompiledCircuit
   userDataEncryptionCt1: CompiledCircuit
   userDataEncryption: CompiledCircuit
