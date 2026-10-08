@@ -166,8 +166,8 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   /// vote proof fails. Must stay aligned with the SDK constant of the same name.
   uint256 constant MAX_VOTE_OPTIONS = 10;
   /// @notice The most inputs any round accepts.
-  /// @dev Every input (vote, update, mask) adds one fresh ciphertext to the tally sum. The BFV
-  /// parameters stay correct for a fixed number of additions (`SEARCH_Z` in
+  /// @dev Every input (vote, update, mask) adds at most one fresh ciphertext to the tally sum. The
+  /// BFV parameters stay correct for a fixed number of additions (`SEARCH_Z` in
   /// `crates/fhe-params/src/constants.rs`); every secure parameter set CRISP runs on must allow at
   /// least this many. The insecure-512 test preset allows fewer.
   uint256 public constant MAX_INPUTS_PER_ROUND = 100_000;

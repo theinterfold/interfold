@@ -574,18 +574,19 @@ every section.
   the committee decrypts it modulo the plaintext modulus `t` of the round's BFV parameters.
   `CRISPProgram.validate` must read `t` from `e3ProgramParams`, not from a constant, and size the
   round so that no total reaches `t`. A CONSTANT-credit round must refuse `credits >= t` and accept
-  at most `(t - 1) / credits` inputs, capped at `MAX_INPUTS_PER_ROUND`. Each input adds one fresh
-  ciphertext to the decrypted sum, so every secure preset must be searched with `SEARCH_Z` of at
-  least `MAX_INPUTS_PER_ROUND`. A CUSTOM-credit round must record a divisor of at least
-  `getPastTotalSupply(snapshot) / t + 1`, which bounds the totals only while the past votes of all
-  accounts sum to at most the past supply. ERC20Votes meets this. `BondedVotes` with an escrow votes
-  source does not guarantee it (`01_PROTOCOL_ONCHAIN.md`). Every input counts toward the limit,
-  including updates and masks, on both `publishInput` and `validateInputProof`. A census-tree round
-  also relies on the coordinator writing `credits` or the scaled voting power at the snapshot into
-  each leaf. For a CUSTOM-credit round, the server reads that power at `snapshotOf(e3Id)`, in the
-  clock units of the token. If the server cannot read the power of a voter, it posts no root until a
-  retry pass reads every voter. A change to the tally format, the credit modes, or the parameter
-  sets needs a new bound. — `flow-trace/04`
+  at most `(t - 1) / credits` inputs, capped at `MAX_INPUTS_PER_ROUND`. Each input adds at most one
+  fresh ciphertext to the decrypted sum. A mask adds its ciphertext to the one already in the slot,
+  so the count follows the inputs, not the slots. Every secure preset must therefore be searched
+  with `SEARCH_Z` of at least `MAX_INPUTS_PER_ROUND`. A CUSTOM-credit round must record a divisor of
+  at least `getPastTotalSupply(snapshot) / t + 1`, which bounds the totals only while the past votes
+  of all accounts sum to at most the past supply. ERC20Votes meets this. `BondedVotes` with an
+  escrow votes source does not guarantee it (`01_PROTOCOL_ONCHAIN.md`). Every input counts toward
+  the limit, including updates and masks, on both `publishInput` and `validateInputProof`. A
+  census-tree round also relies on the coordinator writing `credits` or the scaled voting power at
+  the snapshot into each leaf. For a CUSTOM-credit round, the server reads that power at
+  `snapshotOf(e3Id)`, in the clock units of the token. If the server cannot read the power of a
+  voter, it posts no root until a retry pass reads every voter. A change to the tally format, the
+  credit modes, or the parameter sets needs a new bound. — `flow-trace/04`
 - **CRISP constrains every coefficient of the ballot plaintext, at the real BFV degree.** The
   witness generator reverses the message over the full degree, so option `o` is `k1[D - 1 - o]`.
   `check_coefficient_values_with_balance` must decode each option weight from that coefficient,

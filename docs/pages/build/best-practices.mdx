@@ -63,7 +63,8 @@ checklist.
 - **Keep each E3 inside the addition budget of its preset.** The ciphernodes make the smudging noise
   large enough for at most `z` fresh ciphertexts added together. `z` is 100,000 for secure-8192 and
   1,024 for insecure-512. Interfold does not count inputs, so limit them in `publishInput`.
-  `CRISPProgram` stops at 100,000 inputs with `InputLimitReached`. See
+  `CRISPProgram` stops at 100,000 inputs with `InputLimitReached`, a limit that fits the secure-8192
+  budget but not the insecure-512 budget. See
   [Limits on the computation](/build/e3-program/secure-process#limits-on-the-computation).
 - **Bind each ciphertext to its commitment.** The template program inserts the commitment into its
   input tree without a proof of the binding. A comment in `MyProgram.sol` states that production

@@ -283,15 +283,15 @@ identifies source inputs and is not an archive digest.
 
 Other circuit commands:
 
-| Command                                                        | What it does                                                                                                                                                          |
-| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm build:circuits --dry-run`                                | Lists the circuits that a build compiles, and stops.                                                                                                                  |
-| `pnpm build:circuits --group dkg --skip-vk`                    | Compiles one group and skips the verification keys.                                                                                                                   |
-| `pnpm build:circuits hash`                                     | Prints the source hash that identifies a build.                                                                                                                       |
-| `pnpm build:circuits sync-config --preset <p> --committee <c>` | Updates `utils.ts` and `ActiveCryptoConfig.sol` only. It does not compile.                                                                                            |
-| `pnpm check:committee`                                         | Checks that the committee and BFV values agree across Noir, Rust, TypeScript, and Solidity.                                                                           |
-| `pnpm noir:lint` (`scripts/lint-circuits.sh`)                  | Runs `nargo fmt --check` and `nargo check` on the library and each package. It exits with success if `nargo` is missing.                                              |
-| `pnpm noir:test` (`scripts/test-circuits.sh`)                  | Runs `nargo test` on `circuits/lib` and `decryption_aggregator`, then `nargo execute` on `bin/config`, then the `dkg_aggregator` tests for each preset and committee. |
+| Command                                                        | What it does                                                                                                                                                                                 |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm build:circuits --dry-run`                                | Lists the circuits that a build compiles, and stops.                                                                                                                                         |
+| `pnpm build:circuits --group dkg --skip-vk`                    | Compiles one group and skips the verification keys.                                                                                                                                          |
+| `pnpm build:circuits hash`                                     | Prints the source hash that identifies a build.                                                                                                                                              |
+| `pnpm build:circuits sync-config --preset <p> --committee <c>` | Updates `utils.ts` and `ActiveCryptoConfig.sol` only. It does not compile.                                                                                                                   |
+| `pnpm check:committee`                                         | Checks that the committee and BFV values agree across Noir, Rust, TypeScript, and Solidity.                                                                                                  |
+| `pnpm noir:lint` (`scripts/lint-circuits.sh`)                  | Runs `nargo fmt --check` and `nargo check` on the library and each package. It exits with success if `nargo` is missing.                                                                     |
+| `pnpm noir:test` (`scripts/test-circuits.sh`)                  | Runs `nargo test` on `circuits/lib` and `decryption_aggregator`, then `nargo execute` on `bin/config`, then the `dkg_aggregator` and `node_fold` tests for three preset and committee pairs. |
 
 To make sample inputs for one circuit, use the `zk_cli` generator. Its `--committee` value must
 match the active committee of the library:
