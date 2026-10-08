@@ -319,24 +319,26 @@ class VersionBumper {
   private updateLockFiles(): void {
     console.log('\n🔒 Updating lock files...')
 
-    // Update Cargo.lock
-    try {
-      execSync('cargo update --workspace', {
-        cwd: this.rootDir,
-        stdio: 'pipe',
-      })
-      execSync('cargo update --workspace', {
-        cwd: `${this.rootDir}/examples/CRISP`,
-        stdio: 'pipe',
-      })
-      execSync('cargo update --workspace', {
-        cwd: `${this.rootDir}/templates/default`,
-        stdio: 'pipe',
-      })
-      console.log('   ✓ Cargo.lock updated')
-    } catch {
-      console.warn('   ⚠️  Could not update Cargo.lock')
+    // Each Cargo workspace whose lock file records the versions of the Interfold crates. The OpenVM
+    // guests are separate workspaces. A `--locked` guest build fails when their lock files are stale.
+    const cargoWorkspaces = ['.', 'examples/CRISP', 'examples/CRISP/guest', 'templates/default', 'templates/default/guest']
+    const failedWorkspaces: string[] = []
+    for (const workspace of cargoWorkspaces) {
+      try {
+        execSync('cargo update --workspace', {
+          cwd: join(this.rootDir, workspace),
+          stdio: 'pipe',
+        })
+      } catch (error) {
+        const stderr = error instanceof Error && 'stderr' in error && error.stderr != null ? String(error.stderr).trim() : ''
+        console.error(`   ✗ Could not update ${workspace}/Cargo.lock${stderr ? `: ${stderr}` : ''}`)
+        failedWorkspaces.push(workspace)
+      }
     }
+    if (failedWorkspaces.length > 0) {
+      throw new Error(`Could not update the Cargo.lock of: ${failedWorkspaces.join(', ')}`)
+    }
+    console.log('   ✓ Cargo.lock updated')
 
     // Detect and update the appropriate Node.js lock file
     const pnpmLockPath = join(this.rootDir, 'pnpm-lock.yaml')
