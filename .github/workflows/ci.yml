@@ -721,19 +721,18 @@ jobs:
           chmod 644 "$fixtures/worker.json"
           docker run -d --name openvm-smoke -p 127.0.0.1:13151:13151 -v "${fixtures}:/fixtures:ro" \
             -e OPENVM_PROVER_BIN=/fixtures/worker -e OPENVM_PROVER_CONFIG=/fixtures/worker.json "$IMAGE"
-          for _ in $(seq 60); do
-            if curl -sf --max-time 5 http://127.0.0.1:13151/health; then
-              echo
+          deadline=$((SECONDS + 60))
+          until curl -sf --max-time 5 http://127.0.0.1:13151/health; do
+            if (( SECONDS >= deadline )) || [ "$(docker inspect -f '{{.State.Running}}' openvm-smoke)" != true ]; then
+              docker logs openvm-smoke
               docker rm -f openvm-smoke > /dev/null
-              exit 0
+              echo "The service did not answer its health check within 60 seconds" >&2
+              exit 1
             fi
-            [ "$(docker inspect -f '{{.State.Running}}' openvm-smoke)" = true ] || break
             sleep 1
           done
-          docker logs openvm-smoke
+          echo
           docker rm -f openvm-smoke > /dev/null
-          echo "The service did not answer its health check" >&2
-          exit 1
 
       # The builder still holds every layer of the build above, so this only uploads it.
       - name: Push image
@@ -948,7 +947,7 @@ jobs:
       - name: Install Barretenberg (bb)
         if: steps.cache-integration-bb.outputs.cache-hit != 'true'
         run: |
-          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 \
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 --retry-max-time 600 \
             "https://github.com/AztecProtocol/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
           mkdir -p bb_extract && tar -xzf bb.tar.gz -C bb_extract
           BB_BIN=$(find bb_extract -name bb -type f | head -n 1)
@@ -1313,9 +1312,10 @@ jobs:
 
       - name: Install yq
         run: |
+          archive="${RUNNER_TEMP}/yq.tar.gz"
           curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 120 \
-            https://github.com/mikefarah/yq/releases/download/v4.45.1/yq_linux_amd64.tar.gz |
-            sudo tar xz -C /usr/local/bin --transform='s|yq_linux_amd64|yq|' --no-same-owner
+            --retry-max-time 300 https://github.com/mikefarah/yq/releases/download/v4.45.1/yq_linux_amd64.tar.gz -o "$archive"
+          sudo tar xzf "$archive" -C /usr/local/bin --transform='s|yq_linux_amd64|yq|' --no-same-owner
 
       - name: Install dependencies
         working-directory: .
@@ -1377,7 +1377,7 @@ jobs:
       - name: Install Barretenberg (bb)
         if: steps.cache-bb.outputs.cache-hit != 'true'
         run: |
-          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 \
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 --retry-max-time 600 \
             "https://github.com/AztecProtocol/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
           mkdir -p bb_extract && tar -xzf bb.tar.gz -C bb_extract
           BB_BIN=$(find bb_extract -name bb -type f | head -n 1)
@@ -1467,7 +1467,7 @@ jobs:
       - name: Install Barretenberg (bb)
         if: steps.cache-bb.outputs.cache-hit != 'true'
         run: |
-          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 \
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 --retry-max-time 600 \
             "https://github.com/AztecProtocol/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
           mkdir -p bb_extract && tar -xzf bb.tar.gz -C bb_extract
           BB_BIN=$(find bb_extract -name bb -type f | head -n 1)
@@ -1589,7 +1589,7 @@ jobs:
       - name: Install Barretenberg (bb)
         if: steps.cache-bb.outputs.cache-hit != 'true'
         run: |
-          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 \
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 --retry-max-time 600 \
             "https://github.com/AztecProtocol/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
           mkdir -p bb_extract && tar -xzf bb.tar.gz -C bb_extract
           BB_BIN=$(find bb_extract -name bb -type f | head -n 1)
@@ -1769,7 +1769,7 @@ jobs:
       - name: Install cargo-openvm
         run: |
           archive="${RUNNER_TEMP}/cargo-openvm.tar.gz"
-          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 \
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 --retry-max-time 600 \
             https://github.com/openvm-org/openvm/releases/download/v2.0.2/cargo-openvm-v2.0.2-x86_64-unknown-linux-gnu.tar.gz \
             -o "${archive}"
           echo "c2a1d63a96c093a4969c799f3021fb991b0c51f56b53f26e3468d2d13676de2f  ${archive}" | sha256sum --check
@@ -2035,7 +2035,7 @@ jobs:
       - name: Install Barretenberg (bb)
         if: steps.cache-bb.outputs.cache-hit != 'true'
         run: |
-          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 \
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 --retry-max-time 600 \
             "https://github.com/AztecProtocol/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
           mkdir -p bb_extract && tar -xzf bb.tar.gz -C bb_extract
           BB_BIN=$(find bb_extract -name bb -type f | head -n 1)

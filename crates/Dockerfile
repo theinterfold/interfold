@@ -135,7 +135,9 @@ RUN if [ -n "$E3_CIRCUITS_ARCHIVE_SHA256" ]; then \
 FROM debian:stable-slim
 
 # Install runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends iptables dnsutils iputils-ping ca-certificates jq && \
+RUN timeout 600 apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update && \
+    timeout 600 apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
+    iptables dnsutils iputils-ping ca-certificates jq && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
