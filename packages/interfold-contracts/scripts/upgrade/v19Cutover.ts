@@ -740,7 +740,7 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
     nodeReleasePolicyUpdated,
     cryptoConfigId: PRODUCTION_BFV_CONFIG.configId,
     paramSet: SECURE_PARAM_SET,
-    paramSetRegistered: registeredParams === "0x",
+    paramSetRegisteredByBatch: registeredParams === "0x",
     pkVerifier: routes.pkVerifier,
     decryptionVerifier: routes.decryptionVerifier,
     bfvVerifierRoutes: routes.bfvVerifierRoutes,
@@ -787,6 +787,9 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
       ? repoRelativePath(safeBuilderFile)
       : undefined,
   };
+  // The plan records the contracts that this run deployed, so it is written before the proposal
+  // can fail.
+  writeJson(planPath(config), plan);
   if (hasFlag("propose-safe")) {
     plan.safeProposal = config.governance
       ? await proposeSafeBatch(
@@ -795,8 +798,8 @@ export async function prepareV19Cutover(): Promise<V19CutoverPlan> {
           config.governance.proposerSafe,
         )
       : await proposeSafeBatch(config, txs);
+    writeJson(planPath(config), plan);
   }
-  writeJson(planPath(config), plan);
 
   console.log(`
 v0.19 cutover prepared
@@ -804,7 +807,7 @@ v0.19 cutover prepared
   PK verifier router:       ${plan.pkVerifier}
   decryption router:        ${plan.decryptionVerifier}
   BFV routes:               ${plan.bfvVerifierRoutes.length}
-  parameter set ${plan.paramSet}:          ${plan.paramSetRegistered ? "registered by the batch" : "already registered"}
+  parameter set ${plan.paramSet}:          ${plan.paramSetRegisteredByBatch ? "registered by the batch" : "already registered"}
   CRISP program:            ${plan.crispProgram} (image ${plan.crispImageId})
   ciphertext verifier:      ${plan.ciphertextVerifier}
   retired E3 programs:      ${plan.retiredE3Programs.join(", ") || "none"}
