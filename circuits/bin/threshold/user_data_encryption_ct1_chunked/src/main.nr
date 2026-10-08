@@ -4,67 +4,70 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Top-level ct1 (P3). Same two-round shape as `user_data_encryption_ct0_chunked`, over ct1's
-//! witness (`u`/`e1`/`p1is`): `ct1_chunk_main` and `ct1_pk_ct_commit` feed `ct1_chunk_gamma`;
-//! `ct1_eval_chunk_main` and `ct1_eval_pk_ct` feed `ct1_eval_chunk_identity`, which checks the
-//! identity reduced modulo `X^N + 1`.
-//!
-//! This circuit verifies both round proofs, checks their commitments, gamma and batching
-//! coefficients agree, and folds the four child key hashes and its own two into the leg's VK
-//! manifest (see `user_data_encryption_ct0_chunked`).
+//! Top-level ct1 (P3). Same five-proof shape as `user_data_encryption_ct0_chunked`, over ct1's
+//! witness (`u`/`e1`/`p1is`): the leaf, `ct1_pk_ct_commit`, `ct1_eval_pk_ct`,
+//! `ct1_eval_chunk_identity`, and this circuit, which verifies the identity and ciphertext proofs,
+//! requires the ciphertext circuit's commitment and challenge to be the leaf's, checks the batched
+//! identity `sum_i b_i * ct1[i](gamma) == rhs`, and folds the leg's key hashes into its VK
+//! manifest.
 //!
 //! Outputs: `vk_manifest`, `pk1_commitment`, `ct1_commitment`, `u_root`.
 
-use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
-use lib::configs::default::threshold::L;
-use lib::core::threshold::user_data_encryption_chunk::{
-    compute_ude_vk_manifest, UDE_ROUND_CHILD_KEY_HASHES,
+use bb_proof_verification::{
+    UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
+    verify_honk_proof_non_zk,
 };
+use lib::configs::default::threshold::L;
+use lib::core::threshold::user_data_encryption_chunk::compute_ude_vk_manifest;
 
-// Both rounds share one output layout: leaf and pk/ct key hashes, pk1 and ct1 commitments, u/e1/p1 roots, gamma, then
-// the batching coefficients.
-global ROUND_LEN: u32 = 8 + L;
+// Identity outputs: leaf and pk key hashes, pk1 and ct1 commitments, u/e1/p1 roots, gamma,
+// batching[L], the batched right-hand side.
+global IDENTITY_LEN: u32 = 9 + L;
+global LEAF_KEY_HASH: u32 = 0;
+global PK_KEY_HASH: u32 = 1;
 global PK1: u32 = 2;
 global CT1: u32 = 3;
 global U: u32 = 4;
-global E1: u32 = 5;
-global P1: u32 = 6;
 global GAMMA: u32 = 7;
 global BATCHING: u32 = 8;
+global RHS: u32 = 8 + L;
+// Ciphertext circuit public inputs: gamma, ct1 commitment, ct1(gamma)[L].
+global CT_LEN: u32 = 2 + L;
 
 fn main(
-    a_vk: UltraHonkVerificationKey,
-    a_key_hash: Field,
-    a_proof: UltraHonkProof,
-    a_public_inputs: [Field; ROUND_LEN],
-    b_vk: UltraHonkVerificationKey,
-    b_key_hash: Field,
-    b_proof: UltraHonkProof,
-    b_public_inputs: [Field; ROUND_LEN],
+    identity_vk: UltraHonkVerificationKey,
+    identity_key_hash: Field,
+    identity_proof: UltraHonkProof,
+    identity_public_inputs: [Field; IDENTITY_LEN],
+    ct_vk: UltraHonkVerificationKey,
+    ct_key_hash: Field,
+    ct_proof: UltraHonkZKProof,
+    ct_public_inputs: [Field; CT_LEN],
 ) -> pub (Field, Field, Field, Field) {
-    verify_honk_proof_non_zk(a_vk, a_proof, a_public_inputs, a_key_hash);
-    verify_honk_proof_non_zk(b_vk, b_proof, b_public_inputs, b_key_hash);
+    verify_honk_proof_non_zk(
+        identity_vk,
+        identity_proof,
+        identity_public_inputs,
+        identity_key_hash,
+    );
+    verify_honk_proof(ct_vk, ct_proof, ct_public_inputs, ct_key_hash);
 
-    let a = a_public_inputs;
-    let b = b_public_inputs;
+    let id = identity_public_inputs;
+    assert(ct_public_inputs[0] == id[GAMMA], "gamma mismatch between leaf and ciphertext");
+    assert(ct_public_inputs[1] == id[CT1], "ct1_commitment mismatch between leaf and ciphertext");
 
-    assert(a[PK1] == b[PK1], "pk1_commitment mismatch between rounds");
-    assert(a[CT1] == b[CT1], "ct1_commitment mismatch between rounds");
-    assert(a[U] == b[U], "u root mismatch between rounds");
-    assert(a[E1] == b[E1], "e1 root mismatch between rounds");
-    assert(a[P1] == b[P1], "p1 root mismatch between rounds");
-    assert(a[GAMMA] == b[GAMMA], "gamma mismatch between rounds");
+    let mut lhs = 0;
     for i in 0..L {
-        assert(a[BATCHING + i] == b[BATCHING + i], "batching-coefficient mismatch between rounds");
+        lhs += ct_public_inputs[2 + i] * id[BATCHING + i];
     }
+    assert(lhs == id[RHS], "ct1 encryption check failed");
 
-    let mut a_children: [Field; UDE_ROUND_CHILD_KEY_HASHES] = [0; UDE_ROUND_CHILD_KEY_HASHES];
-    let mut b_children: [Field; UDE_ROUND_CHILD_KEY_HASHES] = [0; UDE_ROUND_CHILD_KEY_HASHES];
-    for i in 0..UDE_ROUND_CHILD_KEY_HASHES {
-        a_children[i] = a[i];
-        b_children[i] = b[i];
-    }
-    let vk_manifest = compute_ude_vk_manifest(a_key_hash, a_children, b_key_hash, b_children);
+    let vk_manifest = compute_ude_vk_manifest(
+        identity_key_hash,
+        id[LEAF_KEY_HASH],
+        id[PK_KEY_HASH],
+        ct_key_hash,
+    );
 
-    (vk_manifest, a[PK1], a[CT1], a[U])
+    (vk_manifest, id[PK1], id[CT1], id[U])
 }

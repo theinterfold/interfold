@@ -4,65 +4,56 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Verifies the Round B ct1 leaf and `ct1_eval_pk_ct` (both ZK), then checks the reduced ct1
-//! identity at `gamma` for every CRT limb, batched with the Round A coefficients:
-//!   `ct1[i] == (pk1[i] * u mod X^N + 1) + e1 + q_i * p1[i]`.
-//! Every term has `N` coefficients and is bounded; see `ct0_eval_chunk_identity`.
+//! Verifies the ct1 leaf and `ct1_eval_pk_ct` (both ZK), binds the public key and `u` the second
+//! one used to the first one's challenge, and evaluates the batched right-hand side of the reduced
+//! ct1 identity: `sum_i b_i * ((pk1[i] * u mod X^N + 1) + e1 + q_i * p1[i])` at `gamma`.
+//! `user_data_encryption_ct1_chunked` compares it with the batched ciphertext evaluation.
 
 use bb_proof_verification::{UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof};
-use lib::configs::default::threshold::{L, N, QIS};
-use lib::core::threshold::user_data_encryption_chunk::ct1_chunk_roots;
+use lib::configs::default::threshold::{L, QIS};
 
-global LEAF_LEN: u32 = 5 + L;
-global PK_CT_LEN: u32 = 4 + (2 * L);
+// Leaf outputs: pk1 and ct1 commitments, u/e1/p1 roots, gamma, batching[L], e1(gamma),
+// p1i(gamma)[L].
+global LEAF_LEN: u32 = 7 + (2 * L);
+global LEAF_PK1: u32 = 0;
+global LEAF_CT1: u32 = 1;
+global LEAF_U_ROOT: u32 = 2;
+global LEAF_GAMMA: u32 = 5;
+global LEAF_BATCHING: u32 = 6;
+global LEAF_E1_AT: u32 = 6 + L;
+global LEAF_P1_AT: u32 = 7 + L;
+// pk circuit public inputs: gamma, pk1 commitment, pk1u(gamma)[L], u root.
+global PK_LEN: u32 = 3 + L;
 
 fn main(
     leaf_vk: UltraHonkVerificationKey,
     leaf_key_hash: Field,
     leaf_proof: UltraHonkZKProof,
     leaf_public_inputs: [Field; LEAF_LEN],
-    pk_ct_vk: UltraHonkVerificationKey,
-    pk_ct_key_hash: Field,
-    pk_ct_proof: UltraHonkZKProof,
-    pk_ct_public_inputs: [Field; PK_CT_LEN],
-    ct1_batching_coeffs: [Field; L],
-) -> pub (Field, Field, Field, Field, Field, Field, Field, Field, [Field; L]) {
+    pk_vk: UltraHonkVerificationKey,
+    pk_key_hash: Field,
+    pk_proof: UltraHonkZKProof,
+    pk_public_inputs: [Field; PK_LEN],
+) -> pub (Field, Field, Field, Field, Field, Field, Field, Field, [Field; L], Field) {
     verify_honk_proof(leaf_vk, leaf_proof, leaf_public_inputs, leaf_key_hash);
-    verify_honk_proof(pk_ct_vk, pk_ct_proof, pk_ct_public_inputs, pk_ct_key_hash);
+    verify_honk_proof(pk_vk, pk_proof, pk_public_inputs, pk_key_hash);
 
-    // Leaf public inputs: gamma, then (u, e1, p1) commitments, e1(gamma), p1i(gamma).
-    let gamma = leaf_public_inputs[0];
-    assert(gamma == pk_ct_public_inputs[0], "gamma mismatch");
+    let leaf = leaf_public_inputs;
+    let gamma = leaf[LEAF_GAMMA];
+    assert(pk_public_inputs[0] == gamma, "gamma mismatch");
+    assert(pk_public_inputs[1] == leaf[LEAF_PK1], "pk1 commitment mismatch");
+    assert(pk_public_inputs[2 + L] == leaf[LEAF_U_ROOT], "u root mismatch");
 
-    let (u_root, e1_root, p1_root) = ct1_chunk_roots(
-        N,
-        N,
-        [leaf_public_inputs[1]],
-        [leaf_public_inputs[2]],
-        [leaf_public_inputs[3]],
-    );
-    let e1_at_gamma = leaf_public_inputs[4];
-
-    // pk/ct public inputs: gamma, pk1 commitment, pk1u(gamma)[L], ct1 commitment, ct1(gamma)[L],
-    // u root. The `u` that `ct1_eval_pk_ct` reduced against must be the leaf's.
-    let pk1_commitment = pk_ct_public_inputs[1];
-    let ct1_commitment = pk_ct_public_inputs[2 + L];
-    assert(pk_ct_public_inputs[3 + (2 * L)] == u_root, "u root mismatch");
-
-    let mut sum = (0, 0);
+    let mut batching: [Field; L] = [0; L];
+    let mut rhs = 0;
     for i in 0..L {
-        let mut ct1_rhs = pk_ct_public_inputs[2 + i] + e1_at_gamma;
-        ct1_rhs += leaf_public_inputs[5 + i] * QIS[i];
-
-        let ct1_lhs = pk_ct_public_inputs[3 + L + i];
-        let gamma_i = ct1_batching_coeffs[i];
-
-        sum = (sum.0 + ct1_lhs * gamma_i, sum.1 + ct1_rhs * gamma_i);
+        batching[i] = leaf[LEAF_BATCHING + i];
+        let ct1_rhs = pk_public_inputs[2 + i] + leaf[LEAF_E1_AT] + leaf[LEAF_P1_AT + i] * QIS[i];
+        rhs += ct1_rhs * batching[i];
     }
-    assert(sum.0 == sum.1, "ct1 encryption check failed");
 
     (
-        leaf_key_hash, pk_ct_key_hash, pk1_commitment, ct1_commitment, u_root, e1_root, p1_root,
-        gamma, ct1_batching_coeffs,
+        leaf_key_hash, pk_key_hash, leaf[LEAF_PK1], leaf[LEAF_CT1], leaf[LEAF_U_ROOT], leaf[3],
+        leaf[4], gamma, batching, rhs,
     )
 }

@@ -1116,6 +1116,14 @@ pub fn compute_recursive_aggregation_commitment(payload: Vec<Field>) -> BigInt {
 ///
 /// # Returns
 /// A `BigInt` representing the commitment hash value
+/// The commitment to one ciphertext component (`ct0` or `ct1`) under `DS_CIPHERTEXT`, as the Noir
+/// `compute_multiple_polynomial_commitment::<N, L, BIT_CT>(ct, DS_CIPHERTEXT)` computes it.
+pub fn compute_ciphertext_component_commitment(ct: &CrtPolynomial, bit_ct: u32) -> BigInt {
+    let payload = flatten(Vec::new(), &ct.limbs, bit_ct);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_CIPHERTEXT, io)[0])
+}
+
 pub fn compute_ciphertext_commitment(
     ct0: &CrtPolynomial,
     ct1: &CrtPolynomial,

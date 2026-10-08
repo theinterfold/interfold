@@ -47,10 +47,14 @@ export interface ChunkedCircuitInputs {
   r1is: PolynomialInput[]
   p1is: PolynomialInput[]
   pk_commitment: string
-  /** `commit(pk0is)`, passed through by round A of the ct0 tree. */
+  /** `commit(pk0is)`, hashed into the ct0 leaf's challenge. */
   pk0_commitment: string
-  /** `commit(pk1is)`, passed through by round A of the ct1 tree. */
+  /** `commit(pk1is)`, hashed into the ct1 leaf's challenge. */
   pk1_commitment: string
+  /** `commit(ct0is)`, hashed into the ct0 leaf's challenge. */
+  ct0_commitment: string
+  /** `commit(ct1is)`, hashed into the ct1 leaf's challenge. */
+  ct1_commitment: string
 }
 
 /**

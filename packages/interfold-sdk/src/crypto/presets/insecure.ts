@@ -9,15 +9,11 @@ import type { UserDataEncryptionProofBundle } from './types'
 
 import ct0ChunkMain from '../../../circuits/dist/insecure/ct0_chunk_main.json'
 import ct0PkCtCommit from '../../../circuits/dist/insecure/ct0_pk_ct_commit.json'
-import ct0ChunkGamma from '../../../circuits/dist/insecure/ct0_chunk_gamma.json'
-import ct0EvalChunkMain from '../../../circuits/dist/insecure/ct0_eval_chunk_main.json'
 import ct0EvalPkCt from '../../../circuits/dist/insecure/ct0_eval_pk_ct.json'
 import ct0EvalChunkIdentity from '../../../circuits/dist/insecure/ct0_eval_chunk_identity.json'
 import userDataEncryptionCt0 from '../../../circuits/dist/insecure/user_data_encryption_ct0_chunked.json'
 import ct1ChunkMain from '../../../circuits/dist/insecure/ct1_chunk_main.json'
 import ct1PkCtCommit from '../../../circuits/dist/insecure/ct1_pk_ct_commit.json'
-import ct1ChunkGamma from '../../../circuits/dist/insecure/ct1_chunk_gamma.json'
-import ct1EvalChunkMain from '../../../circuits/dist/insecure/ct1_eval_chunk_main.json'
 import ct1EvalPkCt from '../../../circuits/dist/insecure/ct1_eval_pk_ct.json'
 import ct1EvalChunkIdentity from '../../../circuits/dist/insecure/ct1_eval_chunk_identity.json'
 import userDataEncryptionCt1 from '../../../circuits/dist/insecure/user_data_encryption_ct1_chunked.json'
@@ -26,15 +22,11 @@ import userDataEncryption from '../../../circuits/dist/insecure/user_data_encryp
 export const insecureProofBundle: UserDataEncryptionProofBundle = {
   ct0ChunkMain: ct0ChunkMain as CompiledCircuit,
   ct0PkCtCommit: ct0PkCtCommit as CompiledCircuit,
-  ct0ChunkGamma: ct0ChunkGamma as CompiledCircuit,
-  ct0EvalChunkMain: ct0EvalChunkMain as CompiledCircuit,
   ct0EvalPkCt: ct0EvalPkCt as CompiledCircuit,
   ct0EvalChunkIdentity: ct0EvalChunkIdentity as CompiledCircuit,
   userDataEncryptionCt0: userDataEncryptionCt0 as CompiledCircuit,
   ct1ChunkMain: ct1ChunkMain as CompiledCircuit,
   ct1PkCtCommit: ct1PkCtCommit as CompiledCircuit,
-  ct1ChunkGamma: ct1ChunkGamma as CompiledCircuit,
-  ct1EvalChunkMain: ct1EvalChunkMain as CompiledCircuit,
   ct1EvalPkCt: ct1EvalPkCt as CompiledCircuit,
   ct1EvalChunkIdentity: ct1EvalChunkIdentity as CompiledCircuit,
   userDataEncryptionCt1: userDataEncryptionCt1 as CompiledCircuit,

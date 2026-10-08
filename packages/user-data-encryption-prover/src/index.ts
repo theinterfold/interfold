@@ -32,20 +32,20 @@ export type UserDataEncryptionInputs = {
   pk0_commitment: Field
   /** `commit(pk1is)`; as `pk0_commitment`. */
   pk1_commitment: Field
+  /** `commit(ct0is)`; the leaf hashes it into the challenge before the ciphertext circuit runs. */
+  ct0_commitment: Field
+  /** `commit(ct1is)`; as `ct0_commitment`. */
+  ct1_commitment: Field
 }
 
 export type UserDataEncryptionCircuitBundle = {
   ct0ChunkMain: CompiledCircuit
   ct0PkCtCommit: CompiledCircuit
-  ct0ChunkGamma: CompiledCircuit
-  ct0EvalChunkMain: CompiledCircuit
   ct0EvalPkCt: CompiledCircuit
   ct0EvalChunkIdentity: CompiledCircuit
   userDataEncryptionCt0: CompiledCircuit
   ct1ChunkMain: CompiledCircuit
   ct1PkCtCommit: CompiledCircuit
-  ct1ChunkGamma: CompiledCircuit
-  ct1EvalChunkMain: CompiledCircuit
   ct1EvalPkCt: CompiledCircuit
   ct1EvalChunkIdentity: CompiledCircuit
   userDataEncryptionCt1: CompiledCircuit
@@ -124,11 +124,11 @@ const assertShape = (inputs: UserDataEncryptionInputs): { n: number; l: number }
 
 const leafProof = (proof: RecursiveProof) => proofToFields(proof.proof)
 
-// Each leg runs two rounds with one ZK leaf per round. Round A: the leaf range-checks and commits
-// the witness, `*_pk_ct_commit` commits the ciphertext, and `*_chunk_gamma` verifies both and
-// derives the challenge. Round B: the leaf re-derives the commitments and evaluates at gamma,
-// `*_eval_pk_ct` evaluates the ciphertext and the reduced `pk * u` product, and
-// `*_eval_chunk_identity` verifies both and checks the identity.
+// Each leg is five proofs. The leaf range-checks and commits the witness, derives the challenge
+// from those commitments and the pk/ct commitments, and evaluates at it. The ciphertext circuit
+// commits and evaluates `ct`; the pk circuit commits `pk` and evaluates `pk * u mod X^N + 1`. The
+// identity circuit verifies the leaf and the pk circuit; the top-level circuit verifies the
+// identity and ciphertext proofs and checks the batched identity.
 
 const buildCt0TopLevelInputs = async (
   api: Barretenberg,
@@ -136,72 +136,49 @@ const buildCt0TopLevelInputs = async (
   inputs: UserDataEncryptionInputs,
   l: number,
 ): Promise<NoirInputMap> => {
-  const witness = { u: inputs.u, e0: inputs.e0, k1: inputs.k1, r1is: inputs.r1is }
-
-  // Leaf outputs: u, e0, k1, r1 commitments.
-  const roundALeaf = await prove(api, circuits.ct0ChunkMain, witness, 'noir-recursive')
-  const roundAPkCt = await prove(
+  // Leaf outputs: pk0/ct0 commitments, k1/u/e0/r1 roots, gammas[L], k1(gamma), e0(gamma), r1(gamma)[L].
+  const leaf = await prove(
     api,
-    circuits.ct0PkCtCommit,
-    { pk0_commitment: inputs.pk0_commitment, ct0is: inputs.ct0is },
-    'noir-recursive',
-  )
-  // Round outputs: leaf and pk/ct key hashes, pk0 and ct0 commitments, k1/u/e0/r1 roots, gammas[L].
-  const roundA = await prove(
-    api,
-    circuits.ct0ChunkGamma,
+    circuits.ct0ChunkMain,
     {
-      leaf_vk: roundALeaf.vkAsFields,
-      leaf_key_hash: roundALeaf.vkHash,
-      leaf_proof: leafProof(roundALeaf),
-      u_commit: roundALeaf.publicInputs[0],
-      e0_commit: roundALeaf.publicInputs[1],
-      k1_commit: roundALeaf.publicInputs[2],
-      r1_commit: roundALeaf.publicInputs[3],
-      pk_ct_vk: roundAPkCt.vkAsFields,
-      pk_ct_key_hash: roundAPkCt.vkHash,
-      pk_ct_proof: leafProof(roundAPkCt),
-      pk0_commitment: roundAPkCt.publicInputs[0],
-      ct0_commitment: roundAPkCt.publicInputs[1],
+      u: inputs.u,
+      e0: inputs.e0,
+      k1: inputs.k1,
+      r1is: inputs.r1is,
+      pk0_commitment: inputs.pk0_commitment,
+      ct0_commitment: inputs.ct0_commitment,
     },
-    'noir-recursive-no-zk',
-  )
-
-  const batching = roundA.publicInputs.slice(8, 8 + l)
-  const gamma = batching[0]
-  const roundBLeaf = await prove(api, circuits.ct0EvalChunkMain, { ...witness, gamma }, 'noir-recursive')
-  const roundBPkCt = await prove(
-    api,
-    circuits.ct0EvalPkCt,
-    { pk0is: inputs.pk0is, ct0is: inputs.ct0is, u: inputs.u, gamma },
     'noir-recursive',
   )
-  const roundB = await prove(
+  const gamma = leaf.publicInputs[6]
+  const ciphertext = await prove(api, circuits.ct0PkCtCommit, { ct0is: inputs.ct0is, gamma }, 'noir-recursive')
+  const publicKey = await prove(api, circuits.ct0EvalPkCt, { pk0is: inputs.pk0is, u: inputs.u, gamma }, 'noir-recursive')
+  const identity = await prove(
     api,
     circuits.ct0EvalChunkIdentity,
     {
-      leaf_vk: roundBLeaf.vkAsFields,
-      leaf_key_hash: roundBLeaf.vkHash,
-      leaf_proof: leafProof(roundBLeaf),
-      leaf_public_inputs: roundBLeaf.publicInputs,
-      pk_ct_vk: roundBPkCt.vkAsFields,
-      pk_ct_key_hash: roundBPkCt.vkHash,
-      pk_ct_proof: leafProof(roundBPkCt),
-      pk_ct_public_inputs: roundBPkCt.publicInputs,
-      ct0_batching_coeffs: batching,
+      leaf_vk: leaf.vkAsFields,
+      leaf_key_hash: leaf.vkHash,
+      leaf_proof: leafProof(leaf),
+      leaf_public_inputs: leaf.publicInputs,
+      pk_vk: publicKey.vkAsFields,
+      pk_key_hash: publicKey.vkHash,
+      pk_proof: leafProof(publicKey),
+      pk_public_inputs: publicKey.publicInputs,
     },
     'noir-recursive-no-zk',
   )
+  if (identity.publicInputs.length !== 9 + l) throw new Error('ct0 identity proof has an unexpected public-input count.')
 
   return {
-    a_vk: roundA.vkAsFields,
-    a_key_hash: roundA.vkHash,
-    a_proof: leafProof(roundA),
-    a_public_inputs: roundA.publicInputs,
-    b_vk: roundB.vkAsFields,
-    b_key_hash: roundB.vkHash,
-    b_proof: leafProof(roundB),
-    b_public_inputs: roundB.publicInputs,
+    identity_vk: identity.vkAsFields,
+    identity_key_hash: identity.vkHash,
+    identity_proof: leafProof(identity),
+    identity_public_inputs: identity.publicInputs,
+    ct_vk: ciphertext.vkAsFields,
+    ct_key_hash: ciphertext.vkHash,
+    ct_proof: leafProof(ciphertext),
+    ct_public_inputs: ciphertext.publicInputs,
     k1: inputs.k1,
   }
 }
@@ -212,71 +189,48 @@ const buildCt1TopLevelInputs = async (
   inputs: UserDataEncryptionInputs,
   l: number,
 ): Promise<NoirInputMap> => {
-  const witness = { u: inputs.u, e1: inputs.e1, p1is: inputs.p1is }
-
-  // Leaf outputs: u, e1, p1 commitments.
-  const roundALeaf = await prove(api, circuits.ct1ChunkMain, witness, 'noir-recursive')
-  const roundAPkCt = await prove(
+  // Leaf outputs: pk1/ct1 commitments, u/e1/p1 roots, gamma, batching[L], e1(gamma), p1(gamma)[L].
+  const leaf = await prove(
     api,
-    circuits.ct1PkCtCommit,
-    { pk1_commitment: inputs.pk1_commitment, ct1is: inputs.ct1is },
-    'noir-recursive',
-  )
-  // Round outputs: leaf and pk/ct key hashes, pk1 and ct1 commitments, u/e1/p1 roots, gamma,
-  // batching[L].
-  const roundA = await prove(
-    api,
-    circuits.ct1ChunkGamma,
+    circuits.ct1ChunkMain,
     {
-      leaf_vk: roundALeaf.vkAsFields,
-      leaf_key_hash: roundALeaf.vkHash,
-      leaf_proof: leafProof(roundALeaf),
-      u_commit: roundALeaf.publicInputs[0],
-      e1_commit: roundALeaf.publicInputs[1],
-      p1_commit: roundALeaf.publicInputs[2],
-      pk_ct_vk: roundAPkCt.vkAsFields,
-      pk_ct_key_hash: roundAPkCt.vkHash,
-      pk_ct_proof: leafProof(roundAPkCt),
-      pk1_commitment: roundAPkCt.publicInputs[0],
-      ct1_commitment: roundAPkCt.publicInputs[1],
+      u: inputs.u,
+      e1: inputs.e1,
+      p1is: inputs.p1is,
+      pk1_commitment: inputs.pk1_commitment,
+      ct1_commitment: inputs.ct1_commitment,
     },
-    'noir-recursive-no-zk',
-  )
-
-  const gamma = roundA.publicInputs[7]
-  const roundBLeaf = await prove(api, circuits.ct1EvalChunkMain, { ...witness, gamma }, 'noir-recursive')
-  const roundBPkCt = await prove(
-    api,
-    circuits.ct1EvalPkCt,
-    { pk1is: inputs.pk1is, ct1is: inputs.ct1is, u: inputs.u, gamma },
     'noir-recursive',
   )
-  const roundB = await prove(
+  const gamma = leaf.publicInputs[5]
+  const ciphertext = await prove(api, circuits.ct1PkCtCommit, { ct1is: inputs.ct1is, gamma }, 'noir-recursive')
+  const publicKey = await prove(api, circuits.ct1EvalPkCt, { pk1is: inputs.pk1is, u: inputs.u, gamma }, 'noir-recursive')
+  const identity = await prove(
     api,
     circuits.ct1EvalChunkIdentity,
     {
-      leaf_vk: roundBLeaf.vkAsFields,
-      leaf_key_hash: roundBLeaf.vkHash,
-      leaf_proof: leafProof(roundBLeaf),
-      leaf_public_inputs: roundBLeaf.publicInputs,
-      pk_ct_vk: roundBPkCt.vkAsFields,
-      pk_ct_key_hash: roundBPkCt.vkHash,
-      pk_ct_proof: leafProof(roundBPkCt),
-      pk_ct_public_inputs: roundBPkCt.publicInputs,
-      ct1_batching_coeffs: roundA.publicInputs.slice(8, 8 + l),
+      leaf_vk: leaf.vkAsFields,
+      leaf_key_hash: leaf.vkHash,
+      leaf_proof: leafProof(leaf),
+      leaf_public_inputs: leaf.publicInputs,
+      pk_vk: publicKey.vkAsFields,
+      pk_key_hash: publicKey.vkHash,
+      pk_proof: leafProof(publicKey),
+      pk_public_inputs: publicKey.publicInputs,
     },
     'noir-recursive-no-zk',
   )
+  if (identity.publicInputs.length !== 9 + l) throw new Error('ct1 identity proof has an unexpected public-input count.')
 
   return {
-    a_vk: roundA.vkAsFields,
-    a_key_hash: roundA.vkHash,
-    a_proof: leafProof(roundA),
-    a_public_inputs: roundA.publicInputs,
-    b_vk: roundB.vkAsFields,
-    b_key_hash: roundB.vkHash,
-    b_proof: leafProof(roundB),
-    b_public_inputs: roundB.publicInputs,
+    identity_vk: identity.vkAsFields,
+    identity_key_hash: identity.vkHash,
+    identity_proof: leafProof(identity),
+    identity_public_inputs: identity.publicInputs,
+    ct_vk: ciphertext.vkAsFields,
+    ct_key_hash: ciphertext.vkHash,
+    ct_proof: leafProof(ciphertext),
+    ct_public_inputs: ciphertext.publicInputs,
   }
 }
 

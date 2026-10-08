@@ -117,6 +117,11 @@ pub struct Inputs {
     pub pk0_commitment: BigInt,
     /// `commit(pk1is)`, as `pk0_commitment`.
     pub pk1_commitment: BigInt,
+    /// `commit(ct0is)` under `DS_CIPHERTEXT`. The leaf hashes it into the challenge before the
+    /// ciphertext circuit, which needs that challenge, can be proved.
+    pub ct0_commitment: BigInt,
+    /// `commit(ct1is)`, as `ct0_commitment`.
+    pub ct1_commitment: BigInt,
 }
 
 impl Computation for Configs {
@@ -434,9 +439,11 @@ impl Computation for Inputs {
         let zkp_modulus = get_zkp_modulus();
         e0_mod_q.reduce(&zkp_modulus);
 
-        let pk_bit = Bits::compute(preset, &Bounds::compute(preset, &())?)?.pk_bit;
-        let pk0_commitment = crate::compute_pk_aggregation_pk1_commitment(&pk0is, pk_bit);
-        let pk1_commitment = crate::compute_pk_aggregation_pk1_commitment(&pk1is, pk_bit);
+        let bits = Bits::compute(preset, &Bounds::compute(preset, &())?)?;
+        let pk0_commitment = crate::compute_pk_aggregation_pk1_commitment(&pk0is, bits.pk_bit);
+        let pk1_commitment = crate::compute_pk_aggregation_pk1_commitment(&pk1is, bits.pk_bit);
+        let ct0_commitment = crate::compute_ciphertext_component_commitment(&ct0is, bits.ct_bit);
+        let ct1_commitment = crate::compute_ciphertext_component_commitment(&ct1is, bits.ct_bit);
 
         Ok(Inputs {
             pk0is,
@@ -452,6 +459,8 @@ impl Computation for Inputs {
             ciphertext: ct.to_bytes(),
             pk0_commitment,
             pk1_commitment,
+            ct0_commitment,
+            ct1_commitment,
         })
     }
 
@@ -484,6 +493,8 @@ impl Computation for Inputs {
             "p1is": p1is,
             "pk0_commitment": self.pk0_commitment.to_string(),
             "pk1_commitment": self.pk1_commitment.to_string(),
+            "ct0_commitment": self.ct0_commitment.to_string(),
+            "ct1_commitment": self.ct1_commitment.to_string(),
         });
 
         Ok(json)

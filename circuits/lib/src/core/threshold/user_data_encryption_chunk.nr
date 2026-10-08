@@ -6,17 +6,16 @@
 
 //! User-data encryption, coefficient-level chunk leaves (P3).
 //!
-//! Each ciphertext leg (ct0, ct1) is proved in two rounds over one leaf per round. The leg's
-//! identity is checked reduced modulo `X^N + 1`, so it has no cyclotomic quotient and its
-//! modulus-switch quotient (`r1is` / `p1is`) has `N` coefficients; the whole witness fits one
-//! browser leaf. This module holds the leaf logic, so the checks that protect the protocol live
-//! somewhere `nargo test` can reach them and read their bounds from one generated `Configs`.
+//! Each ciphertext leg (ct0, ct1) is checked reduced modulo `X^N + 1`, so it has no cyclotomic
+//! quotient and its modulus-switch quotient (`r1is` / `p1is`) has `N` coefficients; the whole
+//! witness fits one browser leaf. This module holds the leaf logic, so the checks that protect the
+//! protocol live somewhere `nargo test` can reach them and read their bounds from one generated
+//! `Configs`.
 //!
-//! Round A range-checks the witness and commits each polynomial; Round B re-supplies it,
-//! re-derives the identical commitments for cross-round binding, and evaluates at the Fiat-Shamir
-//! challenge. Both rounds build the same `Ct0ChunkLeaf`/`Ct1ChunkLeaf`; only Round A calls
-//! `check_range_bounds`. The product `pk * u mod X^N + 1` is evaluated in `ct*_eval_pk_ct`
-//! through `negacyclic_kernel`, so it never enters a witness.
+//! The leaf range-checks and commits the witness, derives the challenge from those commitments and
+//! the public-key and ciphertext commitments, and evaluates at it. The product
+//! `pk * u mod X^N + 1` is evaluated in `ct*_eval_pk_ct` through `negacyclic_kernel`, so it never
+//! enters a witness.
 
 use crate::math::commitments::{
     compute_ude_chunk_commitment, compute_ude_chunk_root_commitment,
@@ -107,8 +106,8 @@ impl<let CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_K
         Ct0ChunkLeaf { configs, chunk_idx, n, u_chunk, e0_chunk, k1_chunk, r1is_chunk }
     }
 
-    /// Round A only. Every coefficient is range-checked here and nowhere else; Round B re-derives
-    /// the same checked commitments, which pins its witness to these bounded values.
+    /// Every coefficient is range-checked here and nowhere else; the commitments below pin any
+    /// later opening (such as `u` in `ct*_eval_pk_ct`) to these bounded values.
     pub fn check_range_bounds(self) {
         self.u_chunk.range_check_2bounds::<BIT_U>(self.configs.u_bound, self.configs.u_bound);
         self.e0_chunk.range_check_2bounds::<BIT_E0>(self.configs.e0_bound, self.configs.e0_bound);
@@ -128,9 +127,8 @@ impl<let CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_K
     /// cross-checks ct0's and ct1's `u` commitment directly, and `k1`'s survives into ct0's final
     /// output tuple, so both must stay independently recoverable.
     ///
-    /// Returns `(u, e0, k1, r1)`. Both rounds call this and the top-level circuit asserts the
-    /// resulting roots match - that equality is what stops a prover from range-checking one
-    /// witness in Round A and evaluating a different one in Round B.
+    /// Returns `(u, e0, k1, r1)`, computed from the same witness the leaf range-checks and
+    /// evaluates.
     pub fn commitments(self) -> (Field, Field, Field, Field) {
         let u_commit = compute_ude_chunk_commitment::<CHUNK_SIZE, BIT_U>(
             UDE_KIND_U,
@@ -183,7 +181,7 @@ impl<let CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, let BIT_E1: u32, let BIT_P
         Ct1ChunkLeaf { configs, chunk_idx, n, u_chunk, e1_chunk, p1is_chunk }
     }
 
-    /// Round A only; see `Ct0ChunkLeaf::check_range_bounds`.
+    /// See `Ct0ChunkLeaf::check_range_bounds`.
     pub fn check_range_bounds(self) {
         self.u_chunk.range_check_2bounds::<BIT_U>(self.configs.u_bound, self.configs.u_bound);
         self.e1_chunk.range_check_2bounds::<BIT_E1>(self.configs.e1_bound, self.configs.e1_bound);
@@ -301,38 +299,27 @@ pub fn ct1_chunk_roots(
     (u_root, e1_root, p1_root)
 }
 
-/// Number of child key hashes each round circuit (`*_chunk_gamma` and `*_eval_chunk_identity`)
-/// puts first in its outputs, in the order leaf, pk/ct.
-pub global UDE_ROUND_CHILD_KEY_HASHES: u32 = 2;
-
 /// The VK manifest for one ciphertext leg: the key hash of every circuit below the top-level
 /// circuit, as one value.
 ///
 /// `verify_honk_proof` only proves that a proof verifies under a VK with the given key hash. A key
 /// hash that no layer compares to an expected value lets a prover use any circuit with the same
-/// public-input shape - for example a leaf without its range checks. Each round circuit therefore
-/// outputs its children's key hashes, and the top-level circuit calls this function with them. The
-/// wrapper then folds the result into `compute_ude_vk_chain`, and the verifier compares that value
-/// to a deployment anchor.
+/// public-input shape - for example a leaf without its range checks. The identity circuit outputs
+/// its leaf's and pk circuit's key hashes, and the top-level circuit calls this function with them,
+/// the identity circuit's own key hash and the ciphertext circuit's. The wrapper then folds the
+/// result into `compute_ude_vk_chain`, and the verifier compares that value to a deployment anchor.
 ///
 /// The order is part of the anchor. Keep it identical in any off-chain code that computes the
-/// expected value: round A key hash, then its leaf and pk/ct key hashes, then the same three values
-/// for round B.
-pub fn compute_ude_vk_manifest<let C: u32>(
-    round_a_key_hash: Field,
-    round_a_children: [Field; C],
-    round_b_key_hash: Field,
-    round_b_children: [Field; C],
+/// expected value: identity, leaf, pk, ct.
+pub fn compute_ude_vk_manifest(
+    identity_key_hash: Field,
+    leaf_key_hash: Field,
+    pk_key_hash: Field,
+    ct_key_hash: Field,
 ) -> Field {
-    let mut payload = [round_a_key_hash].as_vector();
-    for i in 0..C {
-        payload = payload.push_back(round_a_children[i]);
-    }
-    payload = payload.push_back(round_b_key_hash);
-    for i in 0..C {
-        payload = payload.push_back(round_b_children[i]);
-    }
-    compute_vk_hash(payload)
+    compute_vk_hash(
+        [identity_key_hash, leaf_key_hash, pk_key_hash, ct_key_hash].as_vector(),
+    )
 }
 
 /// The complete VK chain for one ciphertext leg: the top-level circuit's key hash, then the
@@ -432,50 +419,18 @@ fn test_chunk_roots_agree_on_u_across_legs() {
     assert(ct1_u_root != ct1_e1_root);
 }
 
-/// Every slot in the manifest must change the result. A slot that does not change it would be a VK
-/// that no anchor could detect a swap of.
+/// Every slot in the manifest must change the result, and the order matters, so no circuit in the
+/// tree can be swapped for another with the same public-input shape.
 #[test]
-fn test_ude_vk_manifest_depends_on_every_key_hash() {
-    let base = compute_ude_vk_manifest(1, [2, 3, 4], 5, [6, 7, 8]);
-
-    assert(compute_ude_vk_manifest(9, [2, 3, 4], 5, [6, 7, 8]) != base);
-    assert(compute_ude_vk_manifest(1, [9, 3, 4], 5, [6, 7, 8]) != base);
-    assert(compute_ude_vk_manifest(1, [2, 9, 4], 5, [6, 7, 8]) != base);
-    assert(compute_ude_vk_manifest(1, [2, 3, 9], 5, [6, 7, 8]) != base);
-    assert(compute_ude_vk_manifest(1, [2, 3, 4], 9, [6, 7, 8]) != base);
-    assert(compute_ude_vk_manifest(1, [2, 3, 4], 5, [9, 7, 8]) != base);
-    assert(compute_ude_vk_manifest(1, [2, 3, 4], 5, [6, 9, 8]) != base);
-    assert(compute_ude_vk_manifest(1, [2, 3, 4], 5, [6, 7, 9]) != base);
-}
-
-/// Swapping round A and round B must change the manifest, so a prover cannot exchange the two
-/// rounds' circuits.
-#[test]
-fn test_ude_vk_manifest_is_ordered() {
-    assert(
-        compute_ude_vk_manifest(1, [2, 3, 4], 5, [6, 7, 8])
-            != compute_ude_vk_manifest(5, [6, 7, 8], 1, [2, 3, 4]),
-    );
-}
-
-/// The manifest is the flat `compute_vk_hash` of its eight slots in the documented order. Off-chain
-/// code reproduces the anchor with this exact layout.
-#[test]
-fn test_ude_vk_manifest_matches_flat_vk_hash() {
-    assert(
-        compute_ude_vk_manifest(1, [2, 3, 4], 5, [6, 7, 8])
-            == compute_vk_hash([1, 2, 3, 4, 5, 6, 7, 8].as_vector()),
-    );
+fn test_ude_vk_manifest_depends_on_every_key_hash_in_order() {
+    let base = compute_ude_vk_manifest(1, 2, 3, 4);
+    assert(base == compute_vk_hash([1, 2, 3, 4].as_vector()));
+    assert(compute_ude_vk_manifest(9, 2, 3, 4) != base);
+    assert(compute_ude_vk_manifest(1, 9, 3, 4) != base);
+    assert(compute_ude_vk_manifest(1, 2, 9, 4) != base);
+    assert(compute_ude_vk_manifest(1, 2, 3, 9) != base);
+    assert(compute_ude_vk_manifest(2, 1, 3, 4) != base);
     assert(compute_ude_vk_chain(10, 11) == compute_vk_hash([10, 11].as_vector()));
-}
-
-/// ct0's two-child manifest is the flat hash of its six slots.
-#[test]
-fn test_ct0_vk_manifest_matches_flat_vk_hash() {
-    assert(
-        compute_ude_vk_manifest(1, [2, 3], 5, [6, 7])
-            == compute_vk_hash([1, 2, 3, 5, 6, 7].as_vector()),
-    );
 }
 
 #[test]
