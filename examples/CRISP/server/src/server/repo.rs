@@ -371,7 +371,7 @@ impl<S: DataStore> CrispE3Repository<S> {
     /// The distinction between "absent" and "broken" only exists here: every caller below that
     /// flattens it into an error loses it, and a handler that cannot tell the two apart has to
     /// answer 500 to a client that asked for a round that was simply never requested.
-    async fn try_get_crisp(&self) -> Result<Option<E3Crisp>> {
+    pub async fn try_get_crisp(&self) -> Result<Option<E3Crisp>> {
         let key = self.crisp_key();
         self.store
             .get::<E3Crisp>(&key)

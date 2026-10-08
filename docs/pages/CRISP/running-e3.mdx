@@ -195,10 +195,11 @@ A stage that misses its deadline makes the E3 fail. See the E3 lifecycle page.
 If a round receives no votes, the server does not request a computation. It logs
 `E3 has no votes to decrypt. Setting status to Finished.` and sets the status to `Finished`.
 
-The server records the program that requested each round. On `PlaintextOutputPublished`, it decodes
-the tally only for a round of the configured `E3_PROGRAM_ADDRESS`, because each `CRISPProgram`
-deployment fixes its own ballot layout. Any other round gets an empty tally and the status
-`Finished`. This applies also to a round that an earlier server release stored.
+The server stores a round only when the program at the configured `E3_PROGRAM_ADDRESS` requested it.
+On `PlaintextOutputPublished`, it decodes the tally only for a stored round of that program, because
+each `CRISPProgram` deployment fixes its own ballot layout. The event changes nothing for a round
+that the server did not store. Any other stored round gets an empty tally and the status `Finished`.
+This applies also to a round that an earlier server release stored.
 
 ### Server log messages
 

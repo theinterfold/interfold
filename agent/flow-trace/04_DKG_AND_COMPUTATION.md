@@ -1928,9 +1928,12 @@ the round only when both records exist. Either handler can complete the activati
 records converge, and deferred checks cover slow live-handler ordering. Duplicate request and
 committee events do not reset the round, replace indexed output, or resubmit an already-matching
 Merkle root. A duplicate request whose holder discovery fails keeps the stored census and owes a
-retry. The shared Interfold contract also emits requests for other E3 programs. The CRISP indexer
-ignores those requests before it creates a round or makes a program-specific RPC call. An old
-program's historical round therefore cannot stop a fresh CRISP backfill.
+retry. The shared Interfold contract also emits requests and plaintext outputs for other E3
+programs. The CRISP indexer ignores those requests before it creates a round or makes a
+program-specific RPC call. Its `PlaintextOutputPublished` handler leaves a round without a CRISP
+record unchanged. An old program's historical round therefore cannot stop a fresh CRISP backfill.
+The handler decodes the tally only for a stored round whose recorded program is the configured one.
+Any other stored round finishes with an empty tally.
 
 Startup rebuilds deadline callbacks for active and expired rounds and releases an interrupted
 compute submission for retry. The compute transition is atomic, and a synchronous program-server

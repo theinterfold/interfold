@@ -1065,16 +1065,24 @@ pub async fn register_ciphertext_output_reference_published(
 
 /// Record the tally that `PlaintextOutputPublished` carries, and finish the round.
 ///
-/// `decode_tally` reads the ballot layout of this server. Each `CRISPProgram` deployment fixes the
-/// layout of its rounds, so the tally of a round that another program requested stays empty. So
-/// does the tally of a round stored without its program, because its layout is unknown.
+/// The Interfold contract emits the event for the rounds of every program. The server stores no
+/// record for a round that another program requested, so the event changes nothing for that round.
+/// `decode_tally` reads the ballot layout of this server, and each `CRISPProgram` deployment fixes
+/// the layout of its rounds. A stored round of another program therefore finishes with an empty
+/// tally. So does a round stored without its program, because its layout is unknown.
 async fn record_plaintext_output<S: DataStore>(
     repo: &mut CrispE3Repository<S>,
     e3_id: &str,
     plaintext_output: &[u8],
     configured_program: Address,
 ) -> eyre::Result<()> {
-    let round = repo.get_crisp().await?;
+    let Some(round) = repo.try_get_crisp().await? else {
+        info!(
+            "[e3_id={}] Ignoring PlaintextOutputPublished for a round without a CRISP record",
+            e3_id
+        );
+        return Ok(());
+    };
     let same_program = round
         .e3_program
         .parse::<Address>()
@@ -2216,7 +2224,8 @@ mod plaintext_output_tests {
 
     /// Each `CRISPProgram` deployment fixes the ballot layout of its rounds, and the server decodes
     /// its own layout only. A round of another program, or a round stored without its program,
-    /// finishes with an empty tally. The server does not read it under the wrong layout.
+    /// finishes with an empty tally. The server does not read it under the wrong layout. A round
+    /// without a record stays without one, and its event does not fail the indexer.
     #[tokio::test]
     async fn only_a_round_of_the_configured_program_gets_a_tally() {
         let configured = Address::repeat_byte(0x11);
@@ -2269,5 +2278,12 @@ mod plaintext_output_tests {
             assert_eq!(round.tally, tally, "round {e3_id}");
             assert_eq!(round.status, "Finished", "round {e3_id}");
         }
+
+        // The server stores no record for a round that another program requested.
+        let mut repo = CrispE3Repository::new(store.clone(), "4");
+        record_plaintext_output(&mut repo, "4", &output, configured)
+            .await
+            .unwrap();
+        assert!(!repo.has_crisp_record().await.unwrap());
     }
 }
