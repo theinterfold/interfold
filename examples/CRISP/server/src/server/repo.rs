@@ -4,27 +4,30 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::server::models::{
-    CustomParams, ExclusionReason, InputSelectionResponse, InputSelectionStatus, TokenHolder,
-};
-
 use super::{
-    database::{generate_emoji, CIPHERTEXT_KEY_PREFIX, INPUT_GENERATION_KEY_PREFIX},
-    models::{CurrentRound, E3Crisp, E3StateLite, WebResultRequest},
+    database::{generate_emoji, store_error, CIPHERTEXT_KEY_PREFIX, INPUT_GENERATION_KEY_PREFIX},
+    models::{
+        CurrentRound, CustomParams, E3Crisp, E3StateLite, ExclusionReason, InputSelectionResponse,
+        InputSelectionStatus, TokenHolder, WebResultRequest,
+    },
 };
 use alloy::primitives::{keccak256, Address};
 use e3_compute_provider::policy::InputRecord;
 use e3_sdk::indexer::{models::E3 as InterfoldE3, DataStore, E3Repository, SharedStore};
 use e3_user_program::policy::chain_head_per_slot;
-use eyre::Result;
+use eyre::{eyre, Result};
 use fhe::bfv::BfvParameters;
 use log::info;
 use num_bigint::BigUint;
-use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::collections::{HashMap, HashSet};
+use std::fmt::Display;
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 
 /// The key prefix of a round record. The round ID follows it.
 pub const CRISP_KEY_PREFIX: &str = "_e3:crisp:";
+
+const CURRENT_ROUND_KEY: &str = "_e3:current_round";
+const ROUND_INDEX_KEY: &str = "_e3:round_index";
 
 /// How many rounds the input cache holds. Voters poll the rounds that are open, which are few.
 const INPUT_CACHE_ROUNDS: usize = 8;
@@ -44,19 +47,16 @@ impl<S: DataStore> CurrentRoundRepository<S> {
     }
 
     pub async fn set_current_round(&mut self, value: CurrentRound) -> Result<()> {
-        let key = self.current_round_key();
         self.store
-            .insert(&key, &value)
+            .insert(CURRENT_ROUND_KEY, &value)
             .await
-            .map_err(|_| eyre::eyre!("Could not set current_round for '{key}'"))?;
-        Ok(())
+            .map_err(store_error("set the current round", CURRENT_ROUND_KEY))
     }
 
     pub async fn record_round(&mut self, e3_id: impl ToString) -> Result<()> {
         let e3_id = e3_id.to_string();
-        let key = self.round_index_key();
         self.store
-            .modify(&key, |index: Option<RoundIndex>| {
+            .modify(ROUND_INDEX_KEY, |index: Option<RoundIndex>| {
                 let mut index = index.unwrap_or_default();
                 if !index.ids.contains(&e3_id) {
                     index.ids.push(e3_id.clone());
@@ -64,66 +64,44 @@ impl<S: DataStore> CurrentRoundRepository<S> {
                 Some(index)
             })
             .await
-            .map_err(|_| eyre::eyre!("Could not record round in '{key}'"))?;
-        Ok(())
+            .map(drop)
+            .map_err(store_error("record the round", ROUND_INDEX_KEY))
     }
 
     pub async fn get_round_ids(&self) -> Result<Vec<String>> {
-        let key = self.round_index_key();
-        let index = self
+        let index: Option<RoundIndex> = self
             .store
-            .get::<RoundIndex>(&key)
+            .get(ROUND_INDEX_KEY)
             .await
-            .map_err(|_| eyre::eyre!("Could not get round index at '{key}'"))?
-            .unwrap_or_default();
-        Ok(index.ids)
+            .map_err(store_error("read the round index", ROUND_INDEX_KEY))?;
+        Ok(index.unwrap_or_default().ids)
     }
 
     pub async fn get_current_round(&self) -> Result<Option<CurrentRound>> {
-        let key = self.current_round_key();
-        let round = self
-            .store
-            .get::<CurrentRound>(&key)
+        self.store
+            .get(CURRENT_ROUND_KEY)
             .await
-            .map_err(|_| eyre::eyre!("Could get e3 at '{key}'"))?;
-
-        Ok(round)
+            .map_err(store_error("read the current round", CURRENT_ROUND_KEY))
     }
 
-    /// Get the current (most recent) round for a specific requester
-    ///
-    /// # Arguments
-    /// * `requester` - The requester address to find the current round for
-    ///
-    /// # Returns
-    /// * The CurrentRound object for the most recent round by this requester, or None if not found
+    /// The most recent round that `requester` requested. An unreadable newer round is an error:
+    /// skipping it could answer with an older round of the same requester.
     pub async fn get_current_round_for_requester(
         &self,
         requester: String,
     ) -> Result<Option<CurrentRound>> {
         for round_id in self.get_round_ids().await?.into_iter().rev() {
-            let crisp_repo = CrispE3Repository::new(self.store.clone(), &round_id);
-
-            if crisp_repo.is_requested_by(&requester).await? {
+            let round = CrispE3Repository::new(self.store.clone(), &round_id);
+            if round.is_requested_by(&requester).await? {
                 return Ok(Some(CurrentRound { id: round_id }));
             }
         }
-
         Ok(None)
-    }
-
-    fn current_round_key(&self) -> String {
-        "_e3:current_round".to_string()
-    }
-
-    fn round_index_key(&self) -> String {
-        "_e3:round_index".to_string()
     }
 }
 
-/// A round's inputs, read in one shot so the four vectors describe the same moment.
-///
-/// Every vector is in on-chain index order and has one entry per ciphertext.
+/// A round's inputs, read in one shot so the vectors describe the same moment. Every vector is in
+/// on-chain index order and has one entry per ciphertext.
 pub struct InputSnapshot {
     /// The published ciphertexts, each paired with its on-chain index.
     pub ciphertexts: Vec<(Vec<u8>, u64)>,
@@ -308,12 +286,14 @@ struct CachedInputs {
 /// The rounds whose inputs this process read, the newest last.
 static INPUT_CACHE: LazyLock<Mutex<Vec<CachedInputs>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 
+/// The cache holds no multi-step invariant, so a poisoned lock is still usable.
+fn cache() -> MutexGuard<'static, Vec<CachedInputs>> {
+    INPUT_CACHE.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// The inputs of round `e3_id` that this process read at `generation`.
 fn cached_inputs(e3_id: &str, generation: &InputGeneration) -> Option<Arc<IndexedInputs>> {
-    let cache = INPUT_CACHE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    cache
+    cache()
         .iter()
         .find(|cached| cached.e3_id == e3_id && cached.generation == *generation)
         .map(|cached| Arc::clone(&cached.inputs))
@@ -321,9 +301,7 @@ fn cached_inputs(e3_id: &str, generation: &InputGeneration) -> Option<Arc<Indexe
 
 /// Keep the inputs of round `e3_id` read at `generation`, in place of an older read of the round.
 fn cache_inputs(e3_id: &str, generation: InputGeneration, inputs: Arc<IndexedInputs>) {
-    let mut cache = INPUT_CACHE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut cache = cache();
     cache.retain(|cached| cached.e3_id != e3_id);
     if cache.len() == INPUT_CACHE_ROUNDS {
         cache.remove(0);
@@ -333,6 +311,31 @@ fn cache_inputs(e3_id: &str, generation: InputGeneration, inputs: Arc<IndexedInp
         generation,
         inputs,
     });
+}
+
+/// Set the value stored for `index`, or add it at the end.
+fn upsert<T>(entries: &mut Vec<(u64, T)>, index: u64, value: T) {
+    match entries.iter_mut().find(|(i, _)| *i == index) {
+        Some(entry) => entry.1 = value,
+        None => entries.push((index, value)),
+    }
+}
+
+fn sorted<T>(mut entries: Vec<(u64, T)>) -> Vec<(u64, T)> {
+    entries.sort_by_key(|(index, _)| *index);
+    entries
+}
+
+fn values<T>(entries: Vec<(u64, T)>) -> Vec<T> {
+    entries.into_iter().map(|(_, value)| value).collect()
+}
+
+fn indexes_of<T>(entries: &[(u64, T)]) -> impl Iterator<Item = u64> + '_ {
+    entries.iter().map(|(index, _)| *index)
+}
+
+fn unindexed(detail: impl Display) -> eyre::Report {
+    eyre!("round {detail}; it is partially indexed or predates the binding, and must be re-indexed")
 }
 
 pub struct CrispE3Repository<S: DataStore> {
@@ -351,41 +354,31 @@ impl<S: DataStore> CrispE3Repository<S> {
     #[cfg(test)]
     async fn set_crisp(&mut self, value: E3Crisp) -> Result<()> {
         // The record is written whole and without a generation, so reads skip the input cache.
-        let generation_key = self.input_generation_key();
-        self.store
-            .modify(&generation_key, |_: Option<InputGeneration>| None)
-            .await
-            .map_err(|_| {
-                eyre::eyre!("Could not clear the input generation at '{generation_key}'")
-            })?;
+        self.update_generation("clear the input generation", |_| None)
+            .await?;
         let key = self.crisp_key();
         self.store
             .insert(&key, &value)
             .await
-            .map_err(|_| eyre::eyre!("Could not store crisp at '{key}'"))?;
-        Ok(())
+            .map_err(store_error("store the round", &key))
     }
 
-    /// The round's CRISP record, or `None` when there is no such round.
-    ///
-    /// The distinction between "absent" and "broken" only exists here: every caller below that
-    /// flattens it into an error loses it, and a handler that cannot tell the two apart has to
-    /// answer 500 to a client that asked for a round that was simply never requested.
+    /// The round's CRISP record, or `None` when there is no such round. Callers that flatten
+    /// "absent" and "broken" into one error would answer a client that asked for a round that was
+    /// never requested with a 500.
     pub async fn try_get_crisp(&self) -> Result<Option<E3Crisp>> {
         let key = self.crisp_key();
         self.store
-            .get::<E3Crisp>(&key)
+            .get(&key)
             .await
-            .map_err(|e| eyre::eyre!("Could get crisp at '{key}' due to error: {e}"))
+            .map_err(store_error("read the round", &key))
     }
 
     /// Whether this server has a record of the round at all.
     ///
-    /// The CRISP record is written when `E3Requested` is indexed; the indexer's `_e3:` record only
-    /// lands after a public-key byte event passes commitment verification. A round can
-    /// therefore have the first record and not the second during DKG or after on-chain
-    /// `KeyPublished`. Without this check, "verified key bytes are pending" reads as "no such
-    /// round".
+    /// The CRISP record is written when `E3Requested` is indexed. The indexer's `_e3:` record lands
+    /// only after a public-key byte event passes commitment verification, so during DKG or after
+    /// an on-chain `KeyPublished` a round can have the first record without the second.
     pub async fn has_crisp_record(&self) -> Result<bool> {
         Ok(self.try_get_crisp().await?.is_some())
     }
@@ -404,12 +397,9 @@ impl<S: DataStore> CrispE3Repository<S> {
     }
 
     pub async fn get_crisp(&self) -> Result<E3Crisp> {
-        let key = self.crisp_key();
-        let e3_crisp = self
-            .try_get_crisp()
+        self.try_get_crisp()
             .await?
-            .ok_or(eyre::eyre!("No data found at {key}"))?;
-        Ok(e3_crisp)
+            .ok_or_else(|| eyre!("No data found at {}", self.crisp_key()))
     }
 
     /// The round's inputs for the slot head and the selection, or `None` when there is no round
@@ -424,10 +414,11 @@ impl<S: DataStore> CrispE3Repository<S> {
         // the record read below holds it. A change that starts later raises `started` for good, so
         // this generation is never settled again and a read cached under it is never served.
         let generation_key = self.input_generation_key();
-        let generation: Option<InputGeneration> =
-            self.store.get(&generation_key).await.map_err(|e| {
-                eyre::eyre!("Could not read the input generation at '{generation_key}': {e}")
-            })?;
+        let generation: Option<InputGeneration> = self
+            .store
+            .get(&generation_key)
+            .await
+            .map_err(store_error("read the input generation", &generation_key))?;
         let settled = generation.filter(|generation| generation.started == generation.finished);
         if let Some(cached) = settled
             .as_ref()
@@ -453,43 +444,24 @@ impl<S: DataStore> CrispE3Repository<S> {
     /// progress. A change that fails after it started leaves the round unsettled, and its inputs
     /// are then read from the store until `settle_input_generation` runs at the next start.
     async fn modify_inputs(&mut self, mut change: impl FnMut(&mut E3Crisp) + Send) -> Result<()> {
-        let generation_key = self.input_generation_key();
-        self.store
-            .modify(&generation_key, |generation: Option<InputGeneration>| {
-                let mut generation = generation.unwrap_or_else(|| InputGeneration {
-                    epoch: format!("{:032x}", rand::random::<u128>()),
-                    started: 0,
-                    finished: 0,
-                });
-                generation.started += 1;
-                Some(generation)
+        self.update_generation("start an input change", |generation| {
+            let mut generation = generation.unwrap_or_else(|| InputGeneration {
+                epoch: format!("{:032x}", rand::random::<u128>()),
+                started: 0,
+                finished: 0,
+            });
+            generation.started = generation.started.saturating_add(1);
+            Some(generation)
+        })
+        .await?;
+        self.update_crisp("update the inputs", &mut change).await?;
+        self.update_generation("finish an input change", |generation| {
+            generation.map(|mut generation| {
+                generation.finished = generation.finished.saturating_add(1);
+                generation
             })
-            .await
-            .map_err(|e| {
-                eyre::eyre!("Could not start a change of the inputs at '{generation_key}': {e}")
-            })?;
-        let key = self.crisp_key();
-        self.store
-            .modify(&key, |round: Option<E3Crisp>| {
-                round.map(|mut round| {
-                    change(&mut round);
-                    round
-                })
-            })
-            .await
-            .map_err(|e| eyre::eyre!("Could not update the inputs at '{key}': {e}"))?;
-        self.store
-            .modify(&generation_key, |generation: Option<InputGeneration>| {
-                generation.map(|mut generation| {
-                    generation.finished += 1;
-                    generation
-                })
-            })
-            .await
-            .map_err(|e| {
-                eyre::eyre!("Could not finish a change of the inputs at '{generation_key}': {e}")
-            })?;
-        Ok(())
+        })
+        .await
     }
 
     /// Count every change of the inputs that started before this start as finished.
@@ -498,40 +470,82 @@ impl<S: DataStore> CrispE3Repository<S> {
     /// then holds what each earlier change wrote, so the generation can settle and the cache can
     /// serve the round again.
     pub async fn settle_input_generation(&mut self) -> Result<()> {
-        let generation_key = self.input_generation_key();
-        self.store
-            .modify(&generation_key, |generation: Option<InputGeneration>| {
-                generation.map(|mut generation| {
-                    generation.finished = generation.started;
-                    generation
-                })
+        self.update_generation("settle the input generation", |generation| {
+            generation.map(|mut generation| {
+                generation.finished = generation.started;
+                generation
             })
-            .await
-            .map_err(|e| {
-                eyre::eyre!("Could not settle the input generation at '{generation_key}': {e}")
-            })?;
-        Ok(())
+        })
+        .await
     }
 
-    /// Start a requested round once. Duplicate committee events do not reset its deadline state.
-    pub async fn try_start_round(&mut self) -> Result<bool> {
-        let key = self.crisp_key();
-        let mut started = false;
-        let now = chrono::Utc::now().timestamp() as u64;
+    async fn update_generation(
+        &mut self,
+        what: &str,
+        f: impl FnMut(Option<InputGeneration>) -> Option<InputGeneration> + Send,
+    ) -> Result<()> {
+        let key = self.input_generation_key();
         self.store
-            .modify(&key, |current: Option<E3Crisp>| {
-                current.map(|mut round| {
-                    if round.status == "Requested" {
-                        round.start_time = now;
-                        round.status = "Active".to_owned();
-                        started = true;
-                    }
+            .modify(&key, f)
+            .await
+            .map(drop)
+            .map_err(store_error(what, &key))
+    }
+
+    /// Apply `f` to the round record in one atomic store operation, and return what `f` returned,
+    /// or `None` when the round has no record, which is left absent.
+    ///
+    /// The store can run `f` more than once, so a caller must derive its result from the record
+    /// that `f` sees and never carry state from an earlier run.
+    async fn update_crisp<R: Send>(
+        &mut self,
+        what: &str,
+        mut f: impl FnMut(&mut E3Crisp) -> R + Send,
+    ) -> Result<Option<R>> {
+        let key = self.crisp_key();
+        let mut result = None;
+        self.store
+            .modify(&key, |round: Option<E3Crisp>| {
+                result = None;
+                round.map(|mut round| {
+                    result = Some(f(&mut round));
                     round
                 })
             })
             .await
-            .map_err(|error| eyre::eyre!("Could not start CRISP round at '{key}': {error}"))?;
-        Ok(started)
+            .map_err(store_error(what, &key))?;
+        Ok(result)
+    }
+
+    /// Move the round from one of the `from` statuses to `to`, and return whether it moved. The
+    /// check and the write are one store operation, so concurrent callers cannot both move it.
+    async fn transition(&mut self, what: &str, from: &[&str], to: &str) -> Result<bool> {
+        let moved = self
+            .update_crisp(what, |round| {
+                let moves = from.contains(&round.status.as_str());
+                if moves {
+                    round.status = to.to_owned();
+                }
+                moves
+            })
+            .await?;
+        Ok(moved.unwrap_or(false))
+    }
+
+    /// Start a requested round once. Duplicate committee events do not reset its deadline state.
+    pub async fn try_start_round(&mut self) -> Result<bool> {
+        let now = chrono::Utc::now().timestamp().max(0) as u64;
+        let started = self
+            .update_crisp("start the round", |round| {
+                let starts = round.status == "Requested";
+                if starts {
+                    round.start_time = now;
+                    round.status = "Active".to_owned();
+                }
+                starts
+            })
+            .await?;
+        Ok(started.unwrap_or(false))
     }
 
     pub async fn insert_ciphertext_input(
@@ -543,15 +557,14 @@ impl<S: DataStore> CrispE3Repository<S> {
         parent_index_plus_one: u64,
         params: &BfvParameters,
     ) -> Result<()> {
-        let key = self.crisp_key();
         // The bytes first, under their content hash, which the round record names in the same
         // update as the other fields of the input. A ballot that replaces another at this index
         // after a reorganization can then never be read with the fields of the other ballot.
         let hash = keccak256(&vote).0;
         self.store_ciphertext(index, hash, &vote).await?;
 
-        // Decided here, once, rather than on every read. An entry's bytes never change, so neither
-        // does the answer. `Err` means the bytes do not deserialize, which is itself unusable.
+        // Decided once here, not on every read: an entry's bytes never change, so neither does the
+        // answer. Bytes that do not deserialize are unusable.
         let usable = e3_bfv_client::client::compute_ct_commitment(
             vote,
             params.degree(),
@@ -560,40 +573,14 @@ impl<S: DataStore> CrispE3Repository<S> {
         )
         .is_ok_and(|recomputed| recomputed == commitment);
 
-        self.modify_inputs(|e| {
-            match e
-                .input_ciphertext_hashes
-                .iter_mut()
-                .find(|(i, _)| *i == index)
-            {
-                Some(existing) => existing.1 = hash,
-                None => e.input_ciphertext_hashes.push((index, hash)),
-            }
-            if let Some(existing) = e.input_commitments.iter_mut().find(|(i, _)| *i == index) {
-                existing.1 = commitment;
-            } else {
-                e.input_commitments.push((index, commitment));
-            }
-            if let Some(existing) = e.input_slots.iter_mut().find(|(i, _)| *i == index) {
-                existing.1 = slot;
-            } else {
-                e.input_slots.push((index, slot));
-            }
-            if let Some(existing) = e.input_parents.iter_mut().find(|(i, _)| *i == index) {
-                existing.1 = parent_index_plus_one;
-            } else {
-                e.input_parents.push((index, parent_index_plus_one));
-            }
-            if let Some(existing) = e.input_usable.iter_mut().find(|(i, _)| *i == index) {
-                existing.1 = usable;
-            } else {
-                e.input_usable.push((index, usable));
-            }
+        self.modify_inputs(|round| {
+            upsert(&mut round.input_ciphertext_hashes, index, hash);
+            upsert(&mut round.input_commitments, index, commitment);
+            upsert(&mut round.input_slots, index, slot);
+            upsert(&mut round.input_parents, index, parent_index_plus_one);
+            upsert(&mut round.input_usable, index, usable);
         })
         .await
-        .map_err(|e| eyre::eyre!("Could not append ciphertext_input for '{key}': {e}"))?;
-
-        Ok(())
     }
 
     /// Move the ciphertexts that an older release kept inside the round record to their own keys.
@@ -603,7 +590,7 @@ impl<S: DataStore> CrispE3Repository<S> {
     /// log and the files of large values that exist when it runs. sled can later write the page of
     /// a moved ballot again into a new file that the sync does not cover, as it can for every large
     /// value that the server stores. An entry without a commitment was indexed before the
-    /// commitments existed. It stays, so that reads still refuse the round (`input_records`).
+    /// commitments existed. It stays, so that reads still refuse the round (`records_of`).
     pub async fn move_inline_ciphertexts(
         &mut self,
         sync: impl FnOnce() -> Result<()>,
@@ -623,7 +610,6 @@ impl<S: DataStore> CrispE3Repository<S> {
             return Ok(());
         }
         sync()?;
-        let key = self.crisp_key();
         let is_moved = |index: &u64| moved.iter().any(|(i, _)| i == index);
         self.modify_inputs(|round| {
             round
@@ -635,10 +621,10 @@ impl<S: DataStore> CrispE3Repository<S> {
             round.input_ciphertext_hashes.extend(moved.iter().copied());
         })
         .await
-        .map_err(|e| eyre::eyre!("Could not clear the inline ciphertexts at '{key}': {e}"))?;
-        Ok(())
     }
 
+    /// Record a requested round. A record that exists stays as it is, so a replayed event does not
+    /// reset a round.
     pub async fn initialize_round(
         &mut self,
         custom_params: CustomParams,
@@ -681,194 +667,112 @@ impl<S: DataStore> CrispE3Repository<S> {
                 current.or_else(|| Some(initial.clone()))
             })
             .await
-            .map_err(|_| eyre::eyre!("Could not initialize round at '{key}'"))?;
-        Ok(())
-    }
-
-    fn get_e3_repo(&self) -> E3Repository<S> {
-        E3Repository::new(self.store.clone(), &self.e3_id)
+            .map(drop)
+            .map_err(store_error("initialize the round", &key))
     }
 
     pub async fn get_e3(&self) -> Result<InterfoldE3> {
-        let e3 = self.get_e3_repo().get_e3().await?;
-        Ok(e3)
+        E3Repository::new(self.store.clone(), &self.e3_id)
+            .get_e3()
+            .await
     }
 
-    /// The indexer's E3 record, or `None` when the round has none yet.
-    ///
-    /// Read straight from the store rather than through `E3Repository::get_e3`, which folds the
-    /// missing case into an error string. The key mirrors `E3Repository::e3_key` — the same
-    /// convention `crisp_key` already follows one level down.
+    /// The indexer's E3 record, or `None` when the round has none yet. Read straight from the
+    /// store because `E3Repository::get_e3` folds the missing case into an error string. The key
+    /// mirrors `E3Repository::e3_key`.
     async fn try_get_e3(&self) -> Result<Option<InterfoldE3>> {
         let key = format!("_e3:{}", self.e3_id);
         self.store
-            .get::<InterfoldE3>(&key)
+            .get(&key)
             .await
-            .map_err(|e| eyre::eyre!("Could get e3 at '{key}' due to error: {e}"))
+            .map_err(store_error("read the E3 record", &key))
     }
 
     /// How many slots hold at least one available, locally indexed entry.
     ///
     /// The closest thing to a participation count the server can give. A mask is
-    /// indistinguishable from a vote by design, so per-slot activity — not "who voted" — is what
-    /// is countable, and a slot with ten entries still counts once.
+    /// indistinguishable from a vote by design, so per-slot activity, not "who voted", is what is
+    /// countable, and a slot with ten entries still counts once.
     pub async fn get_vote_count(&self) -> Result<u64> {
-        let e3_crisp = self.get_crisp().await?;
-        Ok(count_active_slots(&e3_crisp.input_slots))
+        Ok(count_active_slots(&self.get_crisp().await?.input_slots))
     }
 
-    /// The round's current status.
-    ///
-    /// Read by the deadline handler so a retry pass can tell a round it already moved on from. The
-    /// handler runs more than once, and computation is one-shot.
+    /// The round's current status. The deadline handler reads it so a retry pass can tell a round
+    /// that it already moved on, because the handler runs more than once and computation is
+    /// one-shot.
     pub async fn get_status(&self) -> Result<String> {
-        let e3_crisp = self.get_crisp().await?;
-        Ok(e3_crisp.status)
+        Ok(self.get_crisp().await?.status)
     }
 
-    /// Marks a round expired only while it is still waiting for computation.
+    /// Mark a round expired only while it is still waiting for computation.
     ///
     /// Deadline callbacks can overlap. A blind status write can move a round from
     /// `PublishingCiphertext` back to `Expired`, which permits a second compute request.
     pub async fn try_mark_expired(&mut self) -> Result<bool> {
-        let key = self.crisp_key();
-        let mut marked = false;
-        self.store
-            .modify(&key, |e3_obj: Option<E3Crisp>| {
-                e3_obj.map(|mut e| {
-                    if e.status == "Active" || e.status == "Expired" {
-                        e.status = "Expired".to_owned();
-                        marked = true;
-                    }
-                    e
-                })
-            })
+        self.transition("expire the round", &["Active", "Expired"], "Expired")
             .await
-            .map_err(|_| eyre::eyre!("Could not expire round at '{key}'"))?;
-        Ok(marked)
     }
 
-    /// Moves the round to "Computing", but only if nothing has claimed it yet.
+    /// Move the round to "Computing", but only if nothing has claimed it yet, and return whether
+    /// this caller made the transition.
     ///
-    /// Returns whether this caller made the transition. One store operation, because `modify` is a
-    /// read-modify-write under a single write lock: reading the status and writing it back as two
-    /// separate awaits leaves a window where two deadline passes both observe "Expired" and both
-    /// submit `run_compute` concurrently. Restart recovery can submit again because the remote
-    /// response might have been lost; Interfold is the durable idempotency boundary and accepts
-    /// only the first valid ciphertext output.
+    /// One store operation: reading the status and writing it back as two awaits leaves a window
+    /// where two deadline passes both observe "Expired" and both submit `run_compute`. Restart
+    /// recovery can still submit again because the remote response might have been lost. Interfold
+    /// is the durable idempotency boundary and accepts only the first valid ciphertext output.
     pub async fn try_claim_computing(&mut self) -> Result<bool> {
-        let key = self.crisp_key();
-        let mut claimed = false;
-
-        self.store
-            .modify(&key, |e3_obj: Option<E3Crisp>| {
-                e3_obj.map(|mut e| {
-                    if e.status == "Expired" {
-                        e.status = "Computing".to_string();
-                        claimed = true;
-                    }
-                    e
-                })
-            })
+        self.transition("claim the computation", &["Expired"], "Computing")
             .await
-            .map_err(|_| eyre::eyre!("Could not claim computation for '{key}'"))?;
-
-        Ok(claimed)
     }
 
     /// Record that the program server accepted the claimed computation.
     pub async fn mark_compute_submitted(&mut self) -> Result<bool> {
-        let key = self.crisp_key();
-        let mut submitted = false;
-
-        self.store
-            .modify(&key, |e3_obj: Option<E3Crisp>| {
-                e3_obj.map(|mut e| {
-                    if e.status == "Computing" {
-                        e.status = "PublishingCiphertext".to_string();
-                        submitted = true;
-                    }
-                    e
-                })
-            })
-            .await
-            .map_err(|_| eyre::eyre!("Could not record compute submission at '{key}'"))?;
-
-        Ok(submitted)
+        self.transition(
+            "record the compute submission",
+            &["Computing"],
+            "PublishingCiphertext",
+        )
+        .await
     }
 
     /// Release a compute claim when the program server refused the request.
     ///
     /// Only `Computing` can move back. A callback or output event may already have advanced the
-    /// round while the request handler was returning an error. Reverting a later state would start
-    /// a second computation for an output already in progress.
+    /// round while the request handler was returning an error, and reverting a later state would
+    /// start a second computation for an output already in progress.
     pub async fn release_compute_claim(&mut self) -> Result<bool> {
-        let key = self.crisp_key();
-        let mut released = false;
-
-        self.store
-            .modify(&key, |e3_obj: Option<E3Crisp>| {
-                e3_obj.map(|mut e| {
-                    if e.status == "Computing" {
-                        e.status = "Expired".to_owned();
-                        released = true;
-                    }
-                    e
-                })
-            })
+        self.transition("release the computation", &["Computing"], "Expired")
             .await
-            .map_err(|_| eyre::eyre!("Could not release computation for '{key}'"))?;
-
-        Ok(released)
     }
 
     pub async fn update_status(&mut self, value: &str) -> Result<()> {
-        let key = self.crisp_key();
-
-        self.store
-            .modify(&key, |e3_obj: Option<E3Crisp>| {
-                e3_obj.map(|mut e| {
-                    e.status = value.to_string();
-                    e
-                })
-            })
-            .await
-            .map_err(|_| eyre::eyre!("Could not update status for '{key}'"))?;
+        self.update_crisp("update the status", |round| round.status = value.to_owned())
+            .await?;
         Ok(())
     }
 
     pub async fn set_votes(&mut self, votes: Vec<BigUint>) -> Result<()> {
+        let tally: Vec<String> = votes.iter().map(BigUint::to_string).collect();
         info!(
             "set_votes: [{}]",
-            votes
+            tally
                 .iter()
                 .enumerate()
-                .map(|(i, v)| format!("option_{}: {}", i, v))
+                .map(|(i, v)| format!("option_{i}: {v}"))
                 .collect::<Vec<_>>()
                 .join(", ")
         );
-
-        let key = self.crisp_key();
-        self.store
-            .modify(&key, |e3_obj: Option<E3Crisp>| {
-                e3_obj.map(|mut e| {
-                    e.tally = votes.iter().map(|v| v.to_string()).collect();
-                    e
-                })
-            })
-            .await
-            .map_err(|_| eyre::eyre!("Could not set votes for '{key}'"))?;
+        self.update_crisp("set the votes", |round| round.tally = tally.clone())
+            .await?;
         Ok(())
     }
 
     pub async fn get_ciphertext_output(&self) -> Result<Vec<u8>> {
-        let e3 = self.get_e3().await?;
-        Ok(e3.ciphertext_output)
+        Ok(self.get_e3().await?.ciphertext_output)
     }
 
     pub async fn get_committee_public_key(&self) -> Result<Vec<u8>> {
-        let e3 = self.get_e3().await?;
-        Ok(e3.committee_public_key)
+        Ok(self.get_e3().await?.committee_public_key)
     }
 
     /// The round's result, or `None` when the round is not in the store. See
@@ -878,13 +782,14 @@ impl<S: DataStore> CrispE3Repository<S> {
         else {
             return Ok(None);
         };
+        let [option_1_emoji, option_2_emoji] = e3_crisp.emojis;
         Ok(Some(WebResultRequest {
             round_id: e3.id,
             tally: e3_crisp.tally,
-            option_1_emoji: e3_crisp.emojis[0].clone(),
-            option_2_emoji: e3_crisp.emojis[1].clone(),
+            option_1_emoji,
+            option_2_emoji,
             end_time: e3.input_window[1],
-            total_votes: self.get_vote_count().await?,
+            total_votes: count_active_slots(&e3_crisp.input_slots),
             requester: e3_crisp.requester,
         }))
     }
@@ -892,7 +797,7 @@ impl<S: DataStore> CrispE3Repository<S> {
     pub async fn get_e3_state_lite(&self) -> Result<E3StateLite> {
         self.try_get_e3_state_lite()
             .await?
-            .ok_or_else(|| eyre::eyre!("No state stored for round {}", self.e3_id))
+            .ok_or_else(|| eyre!("No state stored for round {}", self.e3_id))
     }
 
     /// The round's public state, or `None` when the round is not in the store.
@@ -934,84 +839,85 @@ impl<S: DataStore> CrispE3Repository<S> {
         }))
     }
 
-    /// Get the input deadline for the current round
     pub async fn get_input_deadline(&self) -> Result<u64> {
-        let e3_crisp = self.get_crisp().await?;
-        Ok(e3_crisp.end_time)
+        Ok(self.get_crisp().await?.end_time)
     }
 
     /// Everything the compute request needs about a round's inputs, in on-chain index order.
     ///
-    /// The per-input fields come from one read of the round record. Four getters would be separate
+    /// The per-input fields come from one read of the round record. Separate getters are separate
     /// `await`s, and an `InputPublished` event can land between them, so a request assembled from
-    /// several reads can pair a ciphertext with another input's commitment or leave the vectors
-    /// different lengths. The Secure Process would then derive a root `CRISPProgram` rejects, and
-    /// nothing would say why. The bytes are read afterwards under the content hash that the record
-    /// names, so they always belong to the fields read with them.
+    /// several reads can pair a ciphertext with another input's commitment. The Secure Process
+    /// would then derive a root `CRISPProgram` rejects, and nothing would say why. The bytes are
+    /// read afterwards under the content hash that the record names, so they belong to the fields
+    /// read with them.
     pub async fn get_input_snapshot(&self) -> Result<InputSnapshot> {
-        let (mut snapshot, hashes) = self.input_records().await?;
+        let (mut snapshot, hashes) = Self::records_of(self.get_crisp().await?)?;
         for ((bytes, index), hash) in snapshot.ciphertexts.iter_mut().zip(hashes) {
             *bytes = self.get_ciphertext(*index, hash).await?;
         }
         Ok(snapshot)
     }
 
-    /// The round's per-input records in on-chain index order, from one read, with empty bytes, and
-    /// the content hash of each input in the same order.
+    /// A round record's per-input records in on-chain index order, with empty ciphertext bytes,
+    /// and the content hash of each input in the same order.
     ///
     /// Event handlers run concurrently, so arrival order is not chain order, and a leaf's position
-    /// in the input tree is its position in these vectors. Sorting here is what keeps the root the
+    /// in the input tree is its position in these vectors. Sorting here keeps the root that the
     /// Secure Process derives equal to the one the contract accumulated.
-    async fn input_records(&self) -> Result<(InputSnapshot, Vec<[u8; 32]>)> {
-        Self::records_of(self.get_crisp().await?)
-    }
-
-    /// `input_records` over a round record that the caller has read.
-    fn records_of(e3_crisp: E3Crisp) -> Result<(InputSnapshot, Vec<[u8; 32]>)> {
+    fn records_of(round: E3Crisp) -> Result<(InputSnapshot, Vec<[u8; 32]>)> {
         // An input indexed before the event carried these fields keeps its ciphertext in the round
         // record (`move_inline_ciphertexts`). Computing over the round would fall back to the
         // pre-binding leaf layout and derive a root `CRISPProgram` rejects, with nothing to explain
         // why. Such a round has to be re-indexed, not computed.
-        let expected = e3_crisp.input_commitments.len();
-        let inline = e3_crisp.ciphertext_inputs.len();
-        Self::require_indexed(expected + inline, expected, "commitments")?;
-        Self::require_indexed(expected, e3_crisp.input_slots.len(), "slots")?;
-        Self::require_indexed(expected, e3_crisp.input_parents.len(), "parents")?;
-        Self::require_indexed(expected, e3_crisp.input_usable.len(), "usability flags")?;
-        let hashes = e3_crisp.input_ciphertext_hashes.len();
-        Self::require_indexed(expected, hashes, "ciphertext hashes")?;
+        let expected = round.input_commitments.len();
+        Self::require_indexed(
+            expected + round.ciphertext_inputs.len(),
+            expected,
+            "commitments",
+        )?;
+        for (field, found) in [
+            ("slots", round.input_slots.len()),
+            ("parents", round.input_parents.len()),
+            ("usability flags", round.input_usable.len()),
+            ("ciphertext hashes", round.input_ciphertext_hashes.len()),
+        ] {
+            Self::require_indexed(expected, found, field)?;
+        }
 
-        let mut commitments = e3_crisp.input_commitments;
-        commitments.sort_by_key(|(index, _)| *index);
-        let mut slots = e3_crisp.input_slots;
-        slots.sort_by_key(|(index, _)| *index);
-        let mut parents = e3_crisp.input_parents;
-        parents.sort_by_key(|(index, _)| *index);
-        let mut usable = e3_crisp.input_usable;
-        usable.sort_by_key(|(index, _)| *index);
-        let mut hashes = e3_crisp.input_ciphertext_hashes;
-        hashes.sort_by_key(|(index, _)| *index);
+        let commitments = sorted(round.input_commitments);
+        let slots = sorted(round.input_slots);
+        let parents = sorted(round.input_parents);
+        let usable = sorted(round.input_usable);
+        let hashes = sorted(round.input_ciphertext_hashes);
+        // Equal counts are not enough: a partial change can leave vectors of one length over
+        // different indexes, which would pair a ciphertext with another input's fields.
+        let aligned = indexes_of(&slots).eq(indexes_of(&commitments))
+            && indexes_of(&parents).eq(indexes_of(&commitments))
+            && indexes_of(&usable).eq(indexes_of(&commitments))
+            && indexes_of(&hashes).eq(indexes_of(&commitments));
+        if !aligned {
+            return Err(unindexed("has per-input records for different indexes"));
+        }
 
         let snapshot = InputSnapshot {
-            ciphertexts: commitments
-                .iter()
-                .map(|(index, _)| (Vec::new(), *index))
+            ciphertexts: indexes_of(&commitments)
+                .map(|index| (Vec::new(), index))
                 .collect(),
-            commitments: commitments.into_iter().map(|(_, value)| value).collect(),
-            slots: slots.into_iter().map(|(_, value)| value).collect(),
-            parents: parents.into_iter().map(|(_, value)| value).collect(),
-            usable: usable.into_iter().map(|(_, value)| value).collect(),
+            commitments: values(commitments),
+            slots: values(slots),
+            parents: values(parents),
+            usable: values(usable),
         };
-        Ok((snapshot, hashes.into_iter().map(|(_, hash)| hash).collect()))
+        Ok((snapshot, values(hashes)))
     }
 
     /// Refuses a round whose per-input records do not line up with its ciphertexts.
     fn require_indexed(expected: usize, found: usize, field: &str) -> Result<()> {
         if expected != found {
-            return Err(eyre::eyre!(
-                "round has {expected} inputs but {found} {field}; it is partially indexed or \
-                 predates the binding, and must be re-indexed"
-            ));
+            return Err(unindexed(format!(
+                "has {expected} inputs but {found} {field}"
+            )));
         }
         Ok(())
     }
@@ -1022,7 +928,7 @@ impl<S: DataStore> CrispE3Repository<S> {
         self.store
             .insert(&key, &hex::encode(bytes))
             .await
-            .map_err(|e| eyre::eyre!("Could not store the ciphertext at '{key}': {e}"))
+            .map_err(store_error("store the ciphertext", &key))
     }
 
     async fn get_ciphertext(&self, index: u64, hash: [u8; 32]) -> Result<Vec<u8>> {
@@ -1031,38 +937,33 @@ impl<S: DataStore> CrispE3Repository<S> {
             .store
             .get(&key)
             .await
-            .map_err(|e| eyre::eyre!("Could not read the ciphertext at '{key}': {e}"))?
-            .ok_or_else(|| eyre::eyre!("the round lists input {index} but '{key}' is empty"))?;
+            .map_err(store_error("read the ciphertext", &key))?
+            .ok_or_else(|| eyre!("the round lists input {index} but '{key}' is empty"))?;
         Ok(hex::decode(bytes)?)
     }
 
     /// The end of a slot's chain of usable entries: the entry a new input must name as its parent.
+    /// `None` when the slot holds nothing usable, which is what a first vote sees.
     ///
     /// Resolved by the Secure Process's own rule (`InputSnapshot::slot_head`), so a client that
-    /// builds on this answer produces an input the tally will take.
+    /// builds on this answer produces an input the tally takes.
     ///
     /// Reads the usability decision rather than recomputing it. Recomputing costs a BFV commitment
-    /// per candidate — about 5ms each, comparable to deserializing a thousand-input round — and
-    /// every voter calls this before every ballot. The decision is made once, when the input is
-    /// indexed, and the round's inputs are read once per input generation (`indexed_inputs`).
-    ///
-    /// `None` when the slot holds nothing usable, which is what a first vote sees.
+    /// per candidate, about 5ms each, and every voter calls this before every ballot. The decision
+    /// is made once, when the input is indexed, and the round's inputs are read once per input
+    /// generation (`indexed_inputs`).
     pub async fn get_slot_head(&self, slot: [u8; 20]) -> Result<Option<(Vec<u8>, u64)>> {
         let inputs = self
             .indexed_inputs()
             .await?
-            .ok_or_else(|| eyre::eyre!("No data found at {}", self.crisp_key()))?;
-        let head = inputs.records.slot_head(inputs.entries_of(slot));
-
+            .ok_or_else(|| eyre!("No data found at {}", self.crisp_key()))?;
+        let Some(position) = inputs.records.slot_head(inputs.entries_of(slot)) else {
+            return Ok(None);
+        };
         // Only the head's bytes: a slot's chain can hold many entries.
-        match head {
-            Some(position) => {
-                let index = inputs.records.ciphertexts[position].1;
-                let bytes = self.get_ciphertext(index, inputs.hashes[position]).await?;
-                Ok(Some((bytes, index)))
-            }
-            None => Ok(None),
-        }
+        let index = inputs.records.ciphertexts[position].1;
+        let bytes = self.get_ciphertext(index, inputs.hashes[position]).await?;
+        Ok(Some((bytes, index)))
     }
 
     /// Where one submitted input stands in the selection of its slot, and the current slot head.
@@ -1090,44 +991,24 @@ impl<S: DataStore> CrispE3Repository<S> {
         )))
     }
 
-    #[allow(dead_code)]
-    pub async fn set_ciphertext_output(&mut self, data: Vec<u8>) -> Result<()> {
-        self.get_e3_repo().set_ciphertext_output(data).await?;
-        Ok(())
-    }
-
     /// Whether the slot holds any committed entry that this server has the bytes for.
     ///
-    /// Deliberately not "has this address voted" — the server cannot know that. Anyone can mask
-    /// any eligible slot, and a mask is indistinguishable from a vote, so activity is the only
+    /// Deliberately not "has this address voted": the server cannot know that. Anyone can mask any
+    /// eligible slot, and a mask is indistinguishable from a vote, so activity is the only
     /// per-slot fact there is.
     ///
     /// Takes parsed slot bytes so address validation stays with the route, where a malformed
-    /// address is client error rather than a storage failure.
+    /// address is a client error and not a storage failure.
     pub async fn slot_has_activity(&self, slot: [u8; 20]) -> Result<bool> {
         let e3_crisp = self.get_crisp().await?;
         Ok(e3_crisp.input_slots.iter().any(|(_, s)| *s == slot))
     }
 
-    #[allow(dead_code)]
-    pub async fn is_finished(&self) -> Result<bool> {
-        let e3 = self.get_crisp().await?;
-        Ok(e3.status == "Finished")
-    }
-
     pub async fn set_token_holder_hashes(&mut self, hashes: Vec<String>) -> Result<()> {
-        let key = self.crisp_key();
-
-        self.store
-            .modify(&key, |e3_obj: Option<E3Crisp>| {
-                e3_obj.map(|mut e| {
-                    e.token_holder_hashes = hashes.clone();
-                    e
-                })
-            })
-            .await
-            .map_err(|_| eyre::eyre!("Could not set token_holder_hashes for '{key}'"))?;
-
+        self.update_crisp("set the token holder hashes", |round| {
+            round.token_holder_hashes = hashes.clone()
+        })
+        .await?;
         Ok(())
     }
 
@@ -1140,41 +1021,28 @@ impl<S: DataStore> CrispE3Repository<S> {
     }
 
     pub async fn set_eligible_addresses(&mut self, holders: Vec<TokenHolder>) -> Result<()> {
-        let key = self.crisp_key();
-
-        self.store
-            .modify(&key, |e3_obj: Option<E3Crisp>| {
-                e3_obj.map(|mut e| {
-                    e.eligible_addresses = holders.clone();
-                    e
-                })
-            })
-            .await
-            .map_err(|_| eyre::eyre!("Could not set eligible_addresses for '{key}'"))?;
+        self.update_crisp("set the eligible addresses", |round| {
+            round.eligible_addresses = holders.clone()
+        })
+        .await?;
         Ok(())
     }
 
     /// `None` when the round is not in the store; an empty vec when it is but has no census yet.
-    /// Record whether holder discovery is still owed for this round.
-    pub async fn set_discovery_pending(&mut self, pending: bool) -> Result<()> {
-        let key = self.crisp_key();
-        self.store
-            .modify(&key, move |current: Option<E3Crisp>| {
-                current.map(|mut e| {
-                    e.discovery_pending = pending;
-                    e
-                })
-            })
-            .await
-            .map_err(|_| eyre::eyre!("Could not set discovery_pending for '{key}'"))?;
-        Ok(())
-    }
-
     pub async fn try_get_eligible_addresses(&self) -> Result<Option<Vec<TokenHolder>>> {
         Ok(self
             .try_get_crisp()
             .await?
             .map(|e3_crisp| e3_crisp.eligible_addresses))
+    }
+
+    /// Record whether holder discovery is still owed for this round.
+    pub async fn set_discovery_pending(&mut self, pending: bool) -> Result<()> {
+        self.update_crisp("set discovery_pending", |round| {
+            round.discovery_pending = pending
+        })
+        .await?;
+        Ok(())
     }
 
     fn crisp_key(&self) -> String {
@@ -1194,12 +1062,8 @@ impl<S: DataStore> CrispE3Repository<S> {
     }
 }
 
-/// The block the census was built at.
-///
-/// Rounds stored before the snapshot block was persisted fall back to the block before
-/// the request, which is what the indexer used to build their census.
-///
-/// `stored_snapshot_block` is the value persisted on the round, 0 when it is missing.
+/// The block the census was built at. A round stored before the snapshot block was persisted
+/// (`stored_snapshot_block` is 0) falls back to the block before the request.
 fn snapshot_block(request_block: u64, stored_snapshot_block: u64) -> u64 {
     if stored_snapshot_block == 0 {
         request_block.saturating_sub(1)
@@ -1208,58 +1072,71 @@ fn snapshot_block(request_block: u64, stored_snapshot_block: u64) -> u64 {
     }
 }
 
-/// How many distinct slots appear in the indexed inputs.
-///
-/// Counts slots rather than entries: a slot's chain can hold a vote plus any number of masks and
-/// updates, and it still represents one participant at most.
+/// How many distinct slots appear in the indexed inputs. A slot's chain can hold a vote plus any
+/// number of masks and updates, and it still represents one participant at most.
 fn count_active_slots(input_slots: &[(u64, [u8; 20])]) -> u64 {
-    let mut slots: Vec<[u8; 20]> = input_slots.iter().map(|(_, slot)| *slot).collect();
-    slots.sort_unstable();
-    slots.dedup();
+    let slots: HashSet<&[u8; 20]> = input_slots.iter().map(|(_, slot)| slot).collect();
     slots.len() as u64
 }
 
 /// Parse a `0x`-prefixed or bare hex address into the slot bytes the indexer stores.
 pub fn parse_slot_address(address: &str) -> Result<[u8; 20]> {
     let bytes = hex::decode(address.strip_prefix("0x").unwrap_or(address))
-        .map_err(|e| eyre::eyre!("'{address}' is not a hex address: {e}"))?;
-    <[u8; 20]>::try_from(bytes).map_err(|_| eyre::eyre!("'{address}' is not 20 bytes of address"))
+        .map_err(|e| eyre!("'{address}' is not a hex address: {e}"))?;
+    <[u8; 20]>::try_from(bytes).map_err(|_| eyre!("'{address}' is not 20 bytes of address"))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        count_active_slots, parse_slot_address, snapshot_block, CrispE3Repository,
-        CurrentRoundRepository, InputGeneration,
-    };
-    use crate::server::database::INPUT_GENERATION_KEY_PREFIX;
+    use super::{parse_slot_address, snapshot_block, CrispE3Repository, CurrentRoundRepository};
     use crate::server::models::{
-        CensusMode, CreditMode, CustomParams, E3Crisp, ExclusionReason, InputSelectionResponse,
-        InputSelectionStatus,
+        test_custom_params, CensusMode, CreditMode, E3Crisp, ExclusionReason,
+        InputSelectionResponse, InputSelectionStatus,
     };
     use alloy::primitives::{keccak256, Address};
     use async_trait::async_trait;
     use e3_fhe_params::{build_bfv_params_from_set_arc, BfvParamSet, BfvPreset};
     use e3_sdk::indexer::{DataStore, InMemoryStore, SharedStore};
+    use fhe::bfv::BfvParameters;
     use serde::{de::DeserializeOwned, Serialize};
     use std::sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicUsize, Ordering},
         Arc,
     };
     use tokio::sync::RwLock;
 
+    fn shared<S: DataStore>(store: S) -> SharedStore<S> {
+        SharedStore::new(Arc::new(RwLock::new(store)))
+    }
+
     fn test_store() -> SharedStore<InMemoryStore> {
-        SharedStore::new(Arc::new(RwLock::new(InMemoryStore::new())))
+        shared(InMemoryStore::new())
     }
 
-    /// A store whose `modify` fails while `failing` is set, as a failed disk write does.
-    struct FailingModify {
-        store: InMemoryStore,
-        failing: Arc<AtomicBool>,
+    fn bfv() -> Arc<BfvParameters> {
+        build_bfv_params_from_set_arc(BfvParamSet::from(BfvPreset::InsecureThreshold512))
+    }
+
+    /// A store whose `modify` calls fail once `passes` runs out, as failed disk writes do.
+    /// `usize::MAX` never fails.
+    struct FaultyStore {
+        inner: InMemoryStore,
+        passes: Arc<AtomicUsize>,
+    }
+
+    impl FaultyStore {
+        fn shared() -> (SharedStore<Self>, Arc<AtomicUsize>) {
+            let passes = Arc::new(AtomicUsize::new(usize::MAX));
+            let store = Self {
+                inner: InMemoryStore::new(),
+                passes: Arc::clone(&passes),
+            };
+            (shared(store), passes)
+        }
     }
 
     #[async_trait]
-    impl DataStore for FailingModify {
+    impl DataStore for FaultyStore {
         type Error = eyre::Error;
 
         async fn insert<T: Serialize + Send + Sync>(
@@ -1267,14 +1144,14 @@ mod tests {
             key: &str,
             value: &T,
         ) -> Result<(), Self::Error> {
-            self.store.insert(key, value).await
+            self.inner.insert(key, value).await
         }
 
         async fn get<T: DeserializeOwned + Send + Sync>(
             &self,
             key: &str,
         ) -> Result<Option<T>, Self::Error> {
-            self.store.get(key).await
+            self.inner.get(key).await
         }
 
         async fn modify<T, F>(&mut self, key: &str, f: F) -> Result<Option<T>, Self::Error>
@@ -1282,51 +1159,14 @@ mod tests {
             T: Serialize + DeserializeOwned + Send + Sync,
             F: FnMut(Option<T>) -> Option<T> + Send,
         {
-            if self.failing.load(Ordering::SeqCst) {
-                return Err(eyre::eyre!("the write failed"));
-            }
-            self.store.modify(key, f).await
-        }
-    }
-
-    /// A store that, while `failing` is set, refuses the write that counts a change of the inputs
-    /// as finished. The change and its start are written, as when the disk fails between them.
-    struct FailingFinish {
-        store: InMemoryStore,
-        failing: Arc<AtomicBool>,
-    }
-
-    #[async_trait]
-    impl DataStore for FailingFinish {
-        type Error = eyre::Error;
-
-        async fn insert<T: Serialize + Send + Sync>(
-            &mut self,
-            key: &str,
-            value: &T,
-        ) -> Result<(), Self::Error> {
-            self.store.insert(key, value).await
-        }
-
-        async fn get<T: DeserializeOwned + Send + Sync>(
-            &self,
-            key: &str,
-        ) -> Result<Option<T>, Self::Error> {
-            self.store.get(key).await
-        }
-
-        async fn modify<T, F>(&mut self, key: &str, f: F) -> Result<Option<T>, Self::Error>
-        where
-            T: Serialize + DeserializeOwned + Send + Sync,
-            F: FnMut(Option<T>) -> Option<T> + Send,
-        {
-            if self.failing.load(Ordering::SeqCst) && key.starts_with(INPUT_GENERATION_KEY_PREFIX) {
-                let current: Option<InputGeneration> = self.store.get(key).await?;
-                if current.is_some_and(|generation| generation.started > generation.finished) {
+            let passes = self.passes.load(Ordering::SeqCst);
+            if passes != usize::MAX {
+                if passes == 0 {
                     return Err(eyre::eyre!("the write failed"));
                 }
+                self.passes.store(passes - 1, Ordering::SeqCst);
             }
-            self.store.modify(key, f).await
+            self.inner.modify(key, f).await
         }
     }
 
@@ -1371,16 +1211,6 @@ mod tests {
     }
 
     #[test]
-    fn counts_each_slot_once_no_matter_how_long_its_chain_is() {
-        let slot_a = [1u8; 20];
-        let slot_b = [2u8; 20];
-        let inputs = vec![(0, slot_a), (1, slot_b), (2, slot_a), (3, slot_a)];
-
-        assert_eq!(count_active_slots(&inputs), 2);
-        assert_eq!(count_active_slots(&[]), 0);
-    }
-
-    #[test]
     fn parses_an_address_with_or_without_prefix() {
         let expected = [0x11u8; 20];
         let bare = "11".repeat(20);
@@ -1392,17 +1222,9 @@ mod tests {
     }
 
     #[test]
-    fn returns_the_stored_snapshot_block() {
+    fn the_snapshot_block_falls_back_to_the_block_before_the_request() {
         assert_eq!(snapshot_block(100, 99), 99);
-    }
-
-    #[test]
-    fn falls_back_to_the_block_before_the_request() {
         assert_eq!(snapshot_block(100, 0), 99);
-    }
-
-    #[test]
-    fn does_not_underflow_on_the_genesis_block() {
         assert_eq!(snapshot_block(0, 0), 0);
     }
 
@@ -1454,21 +1276,13 @@ mod tests {
     async fn requested_event_replay_does_not_reset_round_status() {
         let store = test_store();
         let mut round = CrispE3Repository::new(store, "10");
-        let params = || CustomParams {
-            token_address: "0x0000000000000000000000000000000000000001".to_string(),
-            balance_threshold: "1".to_string(),
-            num_options: "2".to_string(),
-            credit_mode: CreditMode::Constant,
-            credits: Some("1".to_string()),
-            census_mode: CensusMode::Token,
-            voting_power_divisor: "0".to_string(),
-        };
 
+        let requester = || "requester".to_string();
         round
             .initialize_round(
-                params(),
+                test_custom_params(),
                 Address::ZERO,
-                "requester".to_string(),
+                requester(),
                 100,
                 100,
                 1,
@@ -1478,9 +1292,9 @@ mod tests {
         round.update_status("Finished").await.unwrap();
         round
             .initialize_round(
-                params(),
+                test_custom_params(),
                 Address::ZERO,
-                "requester".to_string(),
+                requester(),
                 200,
                 200,
                 2,
@@ -1531,24 +1345,19 @@ mod tests {
     /// ballot reads with them.
     #[tokio::test]
     async fn a_replaced_input_reads_the_new_ballot() {
-        let failing = Arc::new(AtomicBool::new(false));
-        let store = FailingModify {
-            store: InMemoryStore::new(),
-            failing: Arc::clone(&failing),
-        };
-        let store = SharedStore::new(Arc::new(RwLock::new(store)));
+        let (store, passes) = FaultyStore::shared();
         let mut round = CrispE3Repository::new(store, "13");
         round
             .set_crisp(crisp_round("requester", "Active"))
             .await
             .unwrap();
-        let bfv = build_bfv_params_from_set_arc(BfvParamSet::from(BfvPreset::InsecureThreshold512));
+        let bfv = bfv();
         round
             .insert_ciphertext_input(vec![1; 3], 0, [1; 32], [7; 20], 0, &bfv)
             .await
             .unwrap();
 
-        failing.store(true, Ordering::SeqCst);
+        passes.store(0, Ordering::SeqCst);
         let replaced = round
             .insert_ciphertext_input(vec![2; 3], 0, [2; 32], [7; 20], 0, &bfv)
             .await;
@@ -1557,7 +1366,7 @@ mod tests {
         assert_eq!(snapshot.ciphertexts, vec![(vec![1; 3], 0)]);
         assert_eq!(snapshot.commitments, vec![[1; 32]]);
 
-        failing.store(false, Ordering::SeqCst);
+        passes.store(usize::MAX, Ordering::SeqCst);
         round
             .insert_ciphertext_input(vec![2; 3], 0, [2; 32], [7; 20], 0, &bfv)
             .await
@@ -1726,6 +1535,8 @@ mod tests {
             selection_of(&round, ballot).await,
             answer(InputSelectionStatus::Selected, Some(0), Some(1), None)
         );
+        // The two entries share a slot, which counts once.
+        assert_eq!(round.get_vote_count().await.unwrap(), 1);
     }
 
     /// An entry with a lower tree index is not indexed here yet. It can still take the slot or
@@ -1804,28 +1615,45 @@ mod tests {
         );
     }
 
-    /// A read of the round's inputs is kept for its input generation. An input indexed after the
-    /// read changes the generation, so the next read sees the input.
-    #[tokio::test]
-    async fn a_selection_sees_an_input_indexed_after_an_earlier_read() {
-        let mut round = CrispE3Repository::new(test_store(), "14");
+    /// A round with one input in another slot, so that the round has an input generation when it
+    /// is first read.
+    async fn round_with_one_input<S: DataStore>(
+        store: SharedStore<S>,
+        e3_id: &str,
+        bfv: &BfvParameters,
+    ) -> CrispE3Repository<S> {
+        let mut round = CrispE3Repository::new(store, e3_id);
         round
             .set_crisp(crisp_round("requester", "Active"))
             .await
             .unwrap();
-        let bfv = build_bfv_params_from_set_arc(BfvParamSet::from(BfvPreset::InsecureThreshold512));
-        // An input to another slot, so the round has a generation when it is first read.
         round
-            .insert_ciphertext_input(vec![9; 3], 0, [9; 32], [0x88; 20], 0, &bfv)
+            .insert_ciphertext_input(vec![9; 3], 0, [9; 32], [0x88; 20], 0, bfv)
             .await
             .unwrap();
-        let ballot = vec![1; 3];
-        let hash = keccak256(&ballot).0;
-        let before = round
+        round
+    }
+
+    async fn ballot_selection<S: DataStore>(
+        round: &CrispE3Repository<S>,
+        hash: [u8; 32],
+    ) -> InputSelectionResponse {
+        round
             .get_input_selection(SLOT, [1; 32], 0, hash)
             .await
             .unwrap()
-            .unwrap();
+            .unwrap()
+    }
+
+    /// A read of the round's inputs is kept for its input generation. An input indexed after the
+    /// read changes the generation, so the next read sees the input.
+    #[tokio::test]
+    async fn a_selection_sees_an_input_indexed_after_an_earlier_read() {
+        let bfv = bfv();
+        let mut round = round_with_one_input(test_store(), "14", &bfv).await;
+        let ballot = vec![1; 3];
+        let hash = keccak256(&ballot).0;
+        let before = ballot_selection(&round, hash).await;
         assert_eq!(before.status, InputSelectionStatus::NotIndexed);
 
         round
@@ -1834,11 +1662,7 @@ mod tests {
             .unwrap();
         // The bytes are not a ciphertext, so the entry is indexed as unusable.
         assert_eq!(
-            round
-                .get_input_selection(SLOT, [1; 32], 0, hash)
-                .await
-                .unwrap()
-                .unwrap(),
+            ballot_selection(&round, hash).await,
             answer(
                 InputSelectionStatus::Excluded,
                 Some(1),
@@ -1852,60 +1676,31 @@ mod tests {
     /// the store and see the change. The next start settles the generation, and reads still see it.
     #[tokio::test]
     async fn a_change_that_fails_to_finish_is_read_from_the_store() {
-        let failing = Arc::new(AtomicBool::new(false));
-        let store = FailingFinish {
-            store: InMemoryStore::new(),
-            failing: Arc::clone(&failing),
-        };
-        let mut round =
-            CrispE3Repository::new(SharedStore::new(Arc::new(RwLock::new(store))), "15");
-        round
-            .set_crisp(crisp_round("requester", "Active"))
-            .await
-            .unwrap();
-        let bfv = build_bfv_params_from_set_arc(BfvParamSet::from(BfvPreset::InsecureThreshold512));
-        round
-            .insert_ciphertext_input(vec![9; 3], 0, [9; 32], [0x88; 20], 0, &bfv)
-            .await
-            .unwrap();
+        let (store, passes) = FaultyStore::shared();
+        let bfv = bfv();
+        let mut round = round_with_one_input(store, "15", &bfv).await;
         let ballot = vec![1; 3];
         let hash = keccak256(&ballot).0;
-        let before = round
-            .get_input_selection(SLOT, [1; 32], 0, hash)
-            .await
-            .unwrap()
-            .unwrap();
+        let before = ballot_selection(&round, hash).await;
         assert_eq!(before.status, InputSelectionStatus::NotIndexed);
 
-        failing.store(true, Ordering::SeqCst);
+        // A change makes three `modify` calls: it starts, writes the record, and finishes. The
+        // finish fails.
+        passes.store(2, Ordering::SeqCst);
         assert!(round
             .insert_ciphertext_input(ballot, 1, [1; 32], SLOT, 0, &bfv)
             .await
             .is_err());
-        failing.store(false, Ordering::SeqCst);
+        passes.store(usize::MAX, Ordering::SeqCst);
         let indexed = answer(
             InputSelectionStatus::Excluded,
             Some(1),
             None,
             Some(ExclusionReason::Unusable),
         );
-        assert_eq!(
-            round
-                .get_input_selection(SLOT, [1; 32], 0, hash)
-                .await
-                .unwrap()
-                .unwrap(),
-            indexed
-        );
+        assert_eq!(ballot_selection(&round, hash).await, indexed);
 
         round.settle_input_generation().await.unwrap();
-        assert_eq!(
-            round
-                .get_input_selection(SLOT, [1; 32], 0, hash)
-                .await
-                .unwrap()
-                .unwrap(),
-            indexed
-        );
+        assert_eq!(ballot_selection(&round, hash).await, indexed);
     }
 }

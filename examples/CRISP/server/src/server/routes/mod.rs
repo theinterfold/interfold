@@ -12,7 +12,21 @@ mod scan;
 mod state;
 mod voting;
 
-use actix_web::web;
+use actix_web::{http::StatusCode, web, HttpResponse};
+
+use crate::server::models::JsonResponse;
+
+/// A `{"response": message}` body with `status`.
+pub(super) fn json_message(status: StatusCode, message: impl Into<String>) -> HttpResponse {
+    HttpResponse::build(status).json(JsonResponse {
+        response: message.into(),
+    })
+}
+
+/// The 503 that every route returns when the upstream RPC cannot be reached.
+pub(super) fn upstream_unavailable() -> HttpResponse {
+    json_message(StatusCode::SERVICE_UNAVAILABLE, "Upstream RPC unavailable")
+}
 
 pub fn setup_routes(config: &mut web::ServiceConfig) {
     state::setup_routes(config);

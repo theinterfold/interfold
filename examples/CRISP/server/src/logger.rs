@@ -10,6 +10,7 @@ use log::{LevelFilter, Record};
 use std::io::Write;
 use std::path::Path;
 
+/// Log to stdout at `Info`. A second call keeps the logger the first one installed.
 pub fn init_logger() {
     let mut builder = Builder::new();
     builder
@@ -29,5 +30,6 @@ pub fn init_logger() {
                 record.args()
             )
         })
-        .init();
+        .try_init()
+        .ok();
 }

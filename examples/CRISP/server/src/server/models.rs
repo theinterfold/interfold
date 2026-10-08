@@ -93,12 +93,6 @@ pub struct VoteStatusResponse {
     pub round_status: Option<String>,
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Deserialize, Serialize)]
-pub struct RoundCount {
-    pub round_count: u64,
-}
-
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CurrentRound {
     pub id: String,
@@ -207,13 +201,6 @@ pub struct InputSelectionResponse {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct ComputeProviderParams {
-    pub name: String,
-    pub parallel: bool,
-    pub batch_size: u32,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
 pub struct CustomParams {
     pub token_address: String,
     pub balance_threshold: String,
@@ -284,41 +271,6 @@ pub struct E3StateLite {
     /// cannot distinguish an ONCHAIN round and would build a Merkle witness for it, which no
     /// verifier accepts.
     pub census_mode: CensusMode,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct E3 {
-    // Identifiers
-    pub id: String,
-    pub chain_id: u64,
-    pub interfold_address: String,
-
-    // Status-related
-    pub status: String,
-    pub vote_count: u64,
-    pub tally: Vec<String>,
-
-    // Timing-related
-    pub start_time: u64,
-    pub block_start: u64,
-    pub end_time: u64,
-
-    // Parameters
-    pub e3_params: Vec<u8>,
-    pub committee_public_key: Vec<u8>,
-
-    // Outputs
-    pub ciphertext_output: Vec<u8>,
-    pub plaintext_output: Vec<u8>,
-
-    // Emojis
-    pub emojis: [String; 2],
-
-    // Custom Parameters
-    pub custom_params: CustomParams,
-
-    // The address that requested the E3
-    pub requester: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -407,31 +359,15 @@ pub struct E3Crisp {
     pub e3_program: String,
 }
 
-impl From<E3> for WebResultRequest {
-    fn from(e3: E3) -> Self {
-        WebResultRequest {
-            round_id: e3.id,
-            tally: e3.tally,
-            option_1_emoji: e3.emojis[0].clone(),
-            option_2_emoji: e3.emojis[1].clone(),
-            total_votes: e3.vote_count,
-            end_time: e3.end_time,
-            requester: e3.requester,
-        }
-    }
-}
-
-/// Represents a token holder with their address and balance.
-/// Balance is stored as a string to preserve precision for large numbers.
+/// The balance is a decimal string, which keeps large values exact.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct TokenHolder {
     pub address: String,
     pub balance: String,
 }
 
-/// Defines the mode of credit assignment for voters.
-/// - `Constant`: All voters receive the same credit regardless of their token balance.
-/// - `Custom`: Voters receive credit proportional to their token balance, with a specified threshold.
+/// How voter credits are assigned: the same for every voter (`Constant`) or by token balance
+/// (`Custom`).
 #[derive(Debug, PartialEq, Clone, Copy, Serialize_repr, Deserialize_repr)]
 #[repr(u8)]
 pub enum CreditMode {
@@ -483,12 +419,25 @@ impl TryFrom<u64> for CreditMode {
 }
 
 #[cfg(test)]
-mod persisted_round_tests {
-    use super::{CensusMode, CreditMode, E3Crisp};
+pub(crate) fn test_custom_params() -> CustomParams {
+    CustomParams {
+        token_address: "0x0000000000000000000000000000000000000001".to_string(),
+        balance_threshold: "1".to_string(),
+        num_options: "2".to_string(),
+        credit_mode: CreditMode::Constant,
+        credits: Some("1".to_string()),
+        census_mode: CensusMode::Token,
+        voting_power_divisor: "0".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 
     /// A round written before `census_mode` existed. Kept verbatim rather than generated, so a
     /// change to the struct cannot quietly change what "legacy" means. It still carries
-    /// `has_voted`, which the struct no longer has — stored rounds do too, and decoding must
+    /// `has_voted`, which the struct no longer has: stored rounds do too, and decoding must
     /// ignore it rather than refuse the round.
     const LEGACY_ROUND: &str = r#"{
         "emojis": ["a", "b"],
@@ -508,80 +457,49 @@ mod persisted_round_tests {
         "credits": null
     }"#;
 
-    /// `E3Crisp` carries no schema version, and `census_mode` was added with `#[serde(default)]`
-    /// alongside `snapshot_block`, which was added the same way. The default is sound for the only
-    /// population that can lack the field: every stored round predates `Onchain`, so it was a
-    /// token census by construction. This pins that, so a future variant reordering — which would
-    /// silently move the default — fails here instead of at a vote.
+    /// `E3Crisp` carries no schema version. Every stored round predates `Onchain`, so a missing
+    /// `census_mode` is a token census by construction. This pins that default, so a variant
+    /// reordering fails here instead of at a vote. The other defaulted fields must read as empty.
     #[test]
     fn a_round_stored_before_census_mode_reads_as_token() {
         let round: E3Crisp =
             serde_json::from_str(LEGACY_ROUND).expect("legacy round must still decode");
 
         assert_eq!(round.census_mode, CensusMode::Token);
-        assert_eq!(round.snapshot_block, 0);
         assert_eq!(round.credit_mode, CreditMode::Custom);
+        assert_eq!(round.snapshot_block, 0);
+        assert_eq!(round.voting_end_time, 0);
+        assert!(!round.discovery_pending);
+        assert!(round.e3_program.is_empty());
+        assert!(round.ciphertext_inputs.is_empty());
+        assert!(round.input_commitments.is_empty());
+        assert!(round.input_slots.is_empty());
+        assert!(round.input_usable.is_empty());
+        assert!(round.input_parents.is_empty());
+        assert!(round.input_ciphertext_hashes.is_empty());
     }
 
+    /// The values mirror `CRISPProgram.CensusMode`, which the contract range-checks. A drifting
+    /// discriminant routes a round down the wrong census path, and an unknown value must stop the
+    /// round instead of becoming a token vote.
     #[test]
-    fn every_census_mode_round_trips_through_storage() {
-        for mode in [
-            CensusMode::Token,
-            CensusMode::ByRequester,
-            CensusMode::Onchain,
-        ] {
-            let mut round: E3Crisp = serde_json::from_str(LEGACY_ROUND).unwrap();
-            round.census_mode = mode;
-
-            let encoded = serde_json::to_string(&round).unwrap();
-            let decoded: E3Crisp = serde_json::from_str(&encoded).unwrap();
-
-            assert_eq!(decoded.census_mode, mode, "mode did not survive storage");
-        }
-    }
-}
-
-#[cfg(test)]
-mod census_mode_tests {
-    use super::CensusMode;
-
-    #[test]
-    fn unknown_values_are_rejected_rather_than_defaulted() {
-        // A mode the coordinator does not understand must stop the round, not quietly become a
-        // token vote — which is the failure this enum exists to prevent.
-        assert!(CensusMode::try_from(3u64).is_err());
-        assert!(CensusMode::try_from(u64::MAX).is_err());
-    }
-
-    #[test]
-    fn known_values_round_trip() {
-        // Values must match `CRISPProgram.CensusMode`, which the contract range-checks against
-        // `type(CensusMode).max`. A discriminant that drifts from Solidity would route a round
-        // down the wrong census path rather than failing.
+    fn modes_match_the_contract_and_unknown_values_are_rejected() {
         assert_eq!(CensusMode::try_from(0u64).unwrap(), CensusMode::Token);
         assert_eq!(CensusMode::try_from(1u64).unwrap(), CensusMode::ByRequester);
         assert_eq!(CensusMode::try_from(2u64).unwrap(), CensusMode::Onchain);
-    }
-}
+        assert!(CensusMode::try_from(3u64).is_err());
+        assert!(CensusMode::try_from(u64::MAX).is_err());
 
-#[cfg(test)]
-mod e3_id_tests {
-    use super::{canonical_e3_id, e3_id_to_u256};
+        assert_eq!(CreditMode::try_from(0u64).unwrap(), CreditMode::Constant);
+        assert_eq!(CreditMode::try_from(1u64).unwrap(), CreditMode::Custom);
+        assert!(CreditMode::try_from(2u64).is_err());
+    }
 
     #[test]
-    fn accepts_full_width_decimal_ids() {
-        let id: alloy::primitives::U256 =
-            (alloy::primitives::U256::from(1) << 200) + alloy::primitives::U256::from(7);
+    fn e3_ids_are_full_width_decimals() {
+        let id: U256 = (U256::from(1) << 200) + U256::from(7);
         assert_eq!(e3_id_to_u256(&id.to_string()).unwrap(), id);
-    }
-
-    #[test]
-    fn rejects_non_decimal_ids() {
         assert!(e3_id_to_u256("not-an-id").is_err());
-    }
-
-    #[test]
-    fn canonicalizes_padded_decimal_ids() {
         assert_eq!(canonical_e3_id("00042").unwrap(), "42");
     }
 }

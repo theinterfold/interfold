@@ -729,6 +729,27 @@ candidate of new queries; a query can still learn it from another peer, and the 
 the dial. An inbound connection from the peer, and a dial by address without a peer ID, are not held
 back.
 
+The 60-second background retry of a configured address stops when that address connects. After that,
+the configured-peer redial dials each disconnected configured peer with a known identity every 15
+seconds, except an identity-quarantined, rejected, or gossip-backoff peer. The QUIC transport is
+wrapped below the DNS layer (`DialGuard`). It refuses a dial that reaches this node: an address that
+this node listens on, or a loopback or unspecified address, also in IPv4-mapped form, on one of its
+UDP ports. Nodes listen on the same default port, and containers on a default bridge network share
+interface addresses, so such an address can arrive as another peer's address, and libp2p keeps the
+first connection that completes: that address would fail the whole dial to the peer with a peer-ID
+mismatch. On mainnet and Sepolia the node also filters loopback addresses before the swarm reports
+its listeners. An identity that comes from the configuration, or from an admitted connection of the
+configured address, is trusted. Each outbound connection to a trusted identity keeps the concrete
+address of its dial, such as the address that a `/dnsaddr` resolved to, as the configured peer's
+fallback. The configured-peer redial dials the fallback beside the configured address, so a node
+that lost every peer in a local outage reaches its bootstrap peer again without DNS: libp2p builds
+its resolver from the system configuration once, when the node starts. A peer-ID mismatch at the
+fallback drops the address only: the configured address still names the peer, so the node neither
+quarantines nor rebinds it. A rebind after a mismatch at another address drops the fallback and the
+trust, so an identity that another peer's routing data supplied never gets a fallback. A key change
+of an unpinned `/dnsaddr` peer after startup is not followed: the redial names the learned identity,
+and libp2p uses only the TXT records of that identity.
+
 `PlaintextAggregated` is excluded from gossip and historical peer sync. It remains a local durable
 publication intent, and canonical chain observations report completion. The request router rejects a
 network event for an E3 that has no chain-admitted or hydrated context, so peer traffic cannot
@@ -767,7 +788,9 @@ stateDiagram-v2
 
 `E3LifecycleService` enforces monotonic progress and freezes terminal states. `E3Router` creates and
 tears down per-request actor contexts. Duplicate and late terminal observations are classified
-before forwarding; side effects are enabled only after recovery. The diagram shows the normal
+before forwarding; side effects are enabled only after recovery. For a completed E3, the router
+ignores chain events and late peer messages, such as decryption shares past the threshold, but
+reports a local event as an error. The diagram shows the normal
 progression: the lifecycle observer also accepts a forward jump to a later stage, while reporting a
 lower-stage observation as a regression without changing its tracked stage.
 

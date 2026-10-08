@@ -7,15 +7,14 @@
 use super::repo::CRISP_KEY_PREFIX;
 use async_trait::async_trait;
 use e3_sdk::indexer::{DataStore, INDEXER_CURSOR_KEY};
-use log::error;
 use rand::{rng, Rng};
 use serde::{de::DeserializeOwned, Serialize};
 use sled::{Db, Tree};
 use std::{
+    fmt::Display,
     fs::{self, File},
     io::ErrorKind,
     path::{Path, PathBuf},
-    str,
 };
 use thiserror::Error;
 
@@ -37,6 +36,14 @@ pub const CIPHERTEXT_KEY_PREFIX: &str = "_e3:crisp_ciphertext:";
 /// Keys under this prefix hold the input generation of a round, which changes with each indexed
 /// input. The prefix does not start with `CRISP_KEY_PREFIX`, so `round_ids` does not list it.
 pub const INPUT_GENERATION_KEY_PREFIX: &str = "_e3:crisp_inputs:";
+
+/// Maps a store error to an error that names the failed action and the key.
+pub(super) fn store_error<'a, E: Display>(
+    what: &'a str,
+    key: &'a str,
+) -> impl FnOnce(E) -> eyre::Report + 'a {
+    move |error| eyre::eyre!("Could not {what} at '{key}': {error}")
+}
 
 /// The server database.
 ///
@@ -118,8 +125,13 @@ impl SledDB {
 
 /// Sync every regular file in a directory, then the directory itself. sled removes the file of a
 /// large value when a newer file replaces it, so a file that is gone before its sync is skipped.
+/// A missing directory holds no files to sync.
 fn sync_directory(dir: &Path) -> Result<(), DatabaseError> {
-    for entry in fs::read_dir(dir)? {
+    let entries = match fs::read_dir(dir) {
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        entries => entries?,
+    };
+    for entry in entries {
         let synced = entry.and_then(|entry| {
             if entry.file_type()?.is_file() {
                 File::open(entry.path())?.sync_all()
@@ -205,53 +217,73 @@ impl DataStore for SledDB {
         }
     }
 
+    /// A record that does not deserialize, or a result that does not serialize, stays as stored
+    /// and fails the call. Treating it as absent would let `f` overwrite or delete the record.
     async fn modify<T, F>(&mut self, key: &str, mut f: F) -> Result<Option<T>, Self::Error>
     where
         T: Serialize + DeserializeOwned + Send + Sync,
         F: FnMut(Option<T>) -> Option<T> + Send,
     {
-        // Edit in place
-        let result = self.tree(key).update_and_fetch(key, |old_bytes| {
-            let current_value = old_bytes.and_then(|bytes| serde_json::from_slice(bytes).ok());
-            let new_value = f(current_value);
-            new_value.and_then(|val| serde_json::to_vec(&val).ok())
+        let mut failure = None;
+        let result = self.tree(key).update_and_fetch(key, |old| {
+            // sled can run this again after a lost compare-and-swap.
+            failure = None;
+            let current = match old.map(serde_json::from_slice).transpose() {
+                Ok(current) => current,
+                Err(error) => {
+                    failure = Some(error);
+                    return old.map(<[u8]>::to_vec);
+                }
+            };
+            match f(current)
+                .map(|value| serde_json::to_vec(&value))
+                .transpose()
+            {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    failure = Some(error);
+                    old.map(<[u8]>::to_vec)
+                }
+            }
         })?;
-
-        // Deserialize the final result
-        result
+        if let Some(error) = failure {
+            return Err(error.into());
+        }
+        Ok(result
             .map(|bytes| serde_json::from_slice(&bytes))
-            .transpose()
-            .map_err(|e| e.into())
+            .transpose()?)
     }
 }
 
+const EMOJIS: &[&str] = &[
+    "🍇", "🍈", "🍉", "🍊", "🍋", "🍌", "🍍", "🥭", "🍎", "🍏", "🍐", "🍑", "🍒", "🍓", "🫐", "🥝",
+    "🍅", "🫒", "🥥", "🥑", "🍆", "🥔", "🥕", "🌽", "🌶️", "🫑", "🥒", "🥬", "🥦", "🧄", "🧅", "🍄",
+    "🥜", "🫘", "🌰", "🍞", "🥐", "🥖", "🫓", "🥨", "🥯", "🥞", "🧇", "🧀", "🍖", "🍗", "🥩", "🥓",
+    "🍔", "🍟", "🍕", "🌭", "🥪", "🌮", "🌯", "🫔", "🥙", "🧆", "🥚", "🍳", "🥘", "🍲", "🫕", "🥣",
+    "🥗", "🍿", "🧈", "🧂", "🥫", "🍱", "🍘", "🍙", "🍚", "🍛", "🍜", "🍝", "🍠", "🍢", "🍣", "🍤",
+    "🍥", "🥮", "🍡", "🥟", "🥠", "🥡", "🦀", "🦞", "🦐", "🦑", "🦪", "🍦", "🍧", "🍨", "🍩", "🍪",
+    "🎂", "🍰", "🧁", "🥧", "🍫", "🍬", "🍭", "🍮", "🍯", "🍼", "🥛", "☕", "🍵", "🍾", "🍷", "🍸",
+    "🍹", "🍺", "🍻", "🥂", "🥃",
+];
+
+/// Two distinct indexes into `EMOJIS`: `first`, and the entry `1 + offset` places after it,
+/// wrapped. `offset` is below `EMOJIS.len() - 1`, so the second index never equals the first.
+fn distinct_pair(first: usize, offset: usize) -> (usize, usize) {
+    (first, (first + 1 + offset) % EMOJIS.len())
+}
+
 pub fn generate_emoji() -> [String; 2] {
-    let emojis = [
-        "🍇", "🍈", "🍉", "🍊", "🍋", "🍌", "🍍", "🥭", "🍎", "🍏", "🍐", "🍑", "🍒", "🍓", "🫐",
-        "🥝", "🍅", "🫒", "🥥", "🥑", "🍆", "🥔", "🥕", "🌽", "🌶️", "🫑", "🥒", "🥬", "🥦", "🧄",
-        "🧅", "🍄", "🥜", "🫘", "🌰", "🍞", "🥐", "🥖", "🫓", "🥨", "🥯", "🥞", "🧇", "🧀", "🍖",
-        "🍗", "🥩", "🥓", "🍔", "🍟", "🍕", "🌭", "🥪", "🌮", "🌯", "🫔", "🥙", "🧆", "🥚", "🍳",
-        "🥘", "🍲", "🫕", "🥣", "🥗", "🍿", "🧈", "🧂", "🥫", "🍱", "🍘", "🍙", "🍚", "🍛", "🍜",
-        "🍝", "🍠", "🍢", "🍣", "🍤", "🍥", "🥮", "🍡", "🥟", "🥠", "🥡", "🦀", "🦞", "🦐", "🦑",
-        "🦪", "🍦", "🍧", "🍨", "🍩", "🍪", "🎂", "🍰", "🧁", "🥧", "🍫", "🍬", "🍭", "🍮", "🍯",
-        "🍼", "🥛", "☕", "🍵", "🍾", "🍷", "🍸", "🍹", "🍺", "🍻", "🥂", "🥃",
-    ];
-    let mut index1 = rng().random_range(0..emojis.len());
-    let index2 = rng().random_range(0..emojis.len());
-    if index1 == index2 {
-        if index1 == emojis.len() {
-            index1 -= 1;
-        } else {
-            index1 += 1;
-        };
-    };
-    [emojis[index1].to_string(), emojis[index2].to_string()]
+    let mut rng = rng();
+    let first = rng.random_range(0..EMOJIS.len());
+    let offset = rng.random_range(0..EMOJIS.len() - 1);
+    let (first, second) = distinct_pair(first, offset);
+    [EMOJIS[first].to_string(), EMOJIS[second].to_string()]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::server::models::{CensusMode, CreditMode, CustomParams, E3Crisp};
+    use crate::server::models::{test_custom_params, E3Crisp};
     use crate::server::repo::CrispE3Repository;
     use alloy_primitives::Address;
     use e3_fhe_params::{build_bfv_params_from_set_arc, BfvParamSet, BfvPreset};
@@ -290,15 +322,7 @@ mod tests {
         e3_id: &str,
     ) -> CrispE3Repository<SledDB> {
         let mut round = CrispE3Repository::new(store.clone(), e3_id);
-        let params = CustomParams {
-            token_address: "0x0000000000000000000000000000000000000001".to_string(),
-            balance_threshold: "1".to_string(),
-            num_options: "2".to_string(),
-            credit_mode: CreditMode::Constant,
-            credits: Some("1".to_string()),
-            census_mode: CensusMode::Token,
-            voting_power_divisor: "0".to_string(),
-        };
+        let params = test_custom_params();
         round
             .initialize_round(params, Address::ZERO, "requester".to_string(), 100, 100, 1)
             .await
@@ -307,9 +331,9 @@ mod tests {
     }
 
     /// A ballot reaches the disk a fixed number of times: as hex, and again when sled writes its
-    /// page after ten changes. When the ballots and the round record shared a page with the cursor,
-    /// sled wrote them all again for each ten blocks, and each new ballot wrote the earlier ones
-    /// again.
+    /// page after ten changes. The cursor, the round record, and the ballots sit in separate
+    /// trees, so a block never writes a ballot again and a new ballot never writes the earlier
+    /// ones again.
     #[tokio::test]
     async fn disk_use_is_linear_in_ballots_and_flat_in_blocks() {
         const BALLOTS: u64 = 12;
@@ -410,5 +434,36 @@ mod tests {
             "{refused:?}"
         );
         assert!(!Path::new(missing.path()).exists());
+    }
+
+    /// A record that does not parse is not absent: `modify` keeps its bytes and fails, so the
+    /// closure cannot overwrite or delete it.
+    #[tokio::test]
+    async fn modify_keeps_a_record_that_does_not_parse() {
+        let mut db = SledDB::from_db(sled::Config::new().temporary(true).open().unwrap()).unwrap();
+        let key = "_e3:round_index";
+        db.db.insert(key, b"not json".as_slice()).unwrap();
+
+        let modified = db
+            .modify(key, |ids: Option<Vec<u64>>| Some(ids.unwrap_or_default()))
+            .await;
+        assert!(matches!(modified, Err(DatabaseError::Serialization(_))));
+        let kept = db.db.get(key).unwrap().unwrap();
+        assert_eq!(kept.as_ref(), b"not json");
+
+        let deleted = db.modify(key, |_: Option<Vec<u64>>| None).await;
+        assert!(deleted.is_err());
+        assert!(db.db.get(key).unwrap().is_some());
+    }
+
+    #[test]
+    fn the_two_emojis_of_a_round_are_never_the_same_entry() {
+        for first in 0..EMOJIS.len() {
+            for offset in 0..EMOJIS.len() - 1 {
+                let (first, second) = distinct_pair(first, offset);
+                assert_ne!(first, second);
+                assert!(second < EMOJIS.len());
+            }
+        }
     }
 }

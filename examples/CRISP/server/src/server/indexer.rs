@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use super::supervise;
 use crate::server::log_repo::{LogRepository, StoredLog};
 use crate::server::models::e3_id_to_u256;
 use crate::server::token_holders::{
@@ -12,12 +13,13 @@ use crate::server::token_holders::{
 use crate::server::{
     data_availability::{AvailabilityService, AvailableInputReference},
     models::{CensusMode, CreditMode, CurrentRound, CustomParams, E3Crisp, TokenHolder},
-    program_server_request::{run_compute, RoundInputs},
+    program_server_request::run_compute,
     repo::{CrispE3Repository, CurrentRoundRepository, InputSnapshot},
+    rpc,
     token_holders::{build_tree, compute_token_holder_hashes},
     CONFIG,
 };
-use alloy::providers::{Provider, ProviderBuilder};
+use alloy::hex::encode_prefixed;
 use alloy::sol_types::{sol_data, SolType};
 use alloy_primitives::{Address, U256};
 use crisp_utils::decode_tally;
@@ -25,7 +27,10 @@ use e3_fhe_params::decode_bfv_params_arc;
 use e3_sdk::indexer::INDEXER_CURSOR_KEY;
 use e3_sdk::{
     evm_helpers::{
-        contracts::{E3Stage, InterfoldContractFactory, InterfoldRead, ReadWrite},
+        contracts::{
+            E3Stage, InterfoldContract, InterfoldContractFactory, InterfoldRead, ReadOnly,
+            ReadWrite,
+        },
         events::{
             CiphertextOutputPublished, CiphertextOutputReferencePublished,
             CommitteePublicKeyChunkPublished, CommitteePublished, E3Requested,
@@ -36,33 +41,91 @@ use e3_sdk::{
     indexer::{DataStore, IndexerContext, InterfoldIndexer, SharedStore},
 };
 use evm_helpers::{
-    CRISPContract, CRISPContractFactory, CRISPReadProvider, InputCommitted, InputPublished,
+    CRISPContract, CRISPContractFactory, CRISPReadProvider, CRISPWriteProvider, InputCommitted,
+    InputPublished,
 };
-use eyre::Context;
+use eyre::{bail, eyre, Context};
 use log::{error, info, warn};
-use num_bigint::BigUint;
 use std::time::Duration;
-use std::{collections::HashMap, error::Error, sync::Arc, sync::LazyLock};
+use std::{collections::HashMap, fmt::Display, future::Future, sync::Arc, sync::LazyLock};
 use tokio::{sync::Notify, time::sleep};
+
+const REQUESTED: &str = "Requested";
+const ACTIVE: &str = "Active";
+const EXPIRED: &str = "Expired";
+const COMPUTING: &str = "Computing";
+const PUBLISHING_CIPHERTEXT: &str = "PublishingCiphertext";
+const CIPHERTEXT_PUBLISHED: &str = "CiphertextPublished";
+const FINISHED: &str = "Finished";
 
 /// Wakes `retry_pending_discovery` when a round records a missing census.
 static DISCOVERY_OWED: LazyLock<Notify> = LazyLock::new(Notify::new);
 
-type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
-
 /// Attempts of a read that needs the block of an `E3Requested` event: `getE3`, and the stored
 /// divisor of a CUSTOM-credit round.
 ///
-/// The subscription delivers the event when one node has the block. The HTTP provider spreads
-/// reads over nodes that can trail that node by most of a block. Until they have it, `getE3`
-/// reverts with `E3DoesNotExist` and the stored divisor reads as zero. Five attempts wait
-/// 2 + 4 + 8 + 16 = 30 s in total, which covers more than two Sepolia blocks. Nothing retries a
-/// live handler error, so a shorter wait for `getE3` loses the round. A shorter wait for the
-/// divisor defers the census to the retry pass.
+/// The subscription delivers the event when one node has the block, but the HTTP provider spreads
+/// reads over nodes that can trail it by most of a block. Until they catch up, `getE3` reverts
+/// with `E3DoesNotExist` and the stored divisor reads as zero. Five attempts wait
+/// 2 + 4 + 8 + 16 = 30 s, which covers more than two Sepolia blocks. Nothing retries a live
+/// handler error, so a shorter `getE3` wait loses the round. A shorter divisor wait defers the
+/// census to the retry pass.
 const E3_VISIBLE_ATTEMPTS: u32 = 5;
 
-fn is_configured_e3_program(event_program: Address, configured_program: Address) -> bool {
-    event_program == configured_program
+/// Upper bound on one contract read. The CRISP and Interfold contract readers carry their own
+/// HTTP client, so they need this bound; the shared `rpc` providers already have one.
+const READ_TIMEOUT: Duration = rpc::UPSTREAM_TIMEOUT;
+
+/// Upper bound on a `setMerkleRoot` transaction, receipt included.
+const TRANSACTION_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Seconds after the first deadline pass at which the handler runs again.
+///
+/// Each offset is a separate `do_later` registration made when the round starts: `do_later` drops a
+/// callback once it has run, so a handler that failed cannot re-arm itself. The offsets exceed the
+/// indexer wait inside the handler, so two passes do not overlap.
+const DEADLINE_ATTEMPT_OFFSETS: [u64; 4] = [0, 60, 180, 420];
+
+const ROUND_ACTIVATION_RETRY_OFFSETS: [u64; 5] = [1, 5, 30, 120, 600];
+
+/// Store key holding the `INDEX_LOG_CONTRACTS` set of the previous run.
+///
+/// Coverage records outlive the configuration that made them and the store cannot delete. This set
+/// lets a restart tell an address that was indexed continuously from one that is back after a gap,
+/// so the second narrows its coverage claim instead of asserting history nobody fetched.
+const LOG_INDEX_CONFIG_KEY: &str = "_logs:_config";
+
+fn report(error: impl Display) -> eyre::Report {
+    eyre!("{error:#}")
+}
+
+async fn within<T>(
+    limit: Duration,
+    call: impl Future<Output = eyre::Result<T>>,
+) -> eyre::Result<T> {
+    tokio::time::timeout(limit, call)
+        .await
+        .map_err(|_| eyre!("the call did not finish within {limit:?}"))?
+}
+
+fn unix_now() -> u64 {
+    u64::try_from(chrono::Utc::now().timestamp()).unwrap_or(0)
+}
+
+async fn crisp_read() -> eyre::Result<CRISPContract<CRISPReadProvider>> {
+    CRISPContractFactory::create_read(&CONFIG.http_rpc_url, &CONFIG.e3_program_address)
+        .await
+        .context("Failed to create the CRISP contract reader")
+}
+
+async fn crisp_write() -> eyre::Result<CRISPContract<CRISPWriteProvider>> {
+    CRISPContractFactory::create_write(
+        &CONFIG.http_rpc_url,
+        &CONFIG.e3_program_address,
+        &CONFIG.private_key,
+    )
+    .await
+    .context("Failed to create the CRISP contract writer")
 }
 
 fn stage_ends_input_retrieval(stage: &E3Stage) -> bool {
@@ -85,20 +148,21 @@ async fn read_stored_scale(
         &[],
         E3_VISIBLE_ATTEMPTS,
         || async {
-            crisp
-                .stored_voting_power_scale(e3_id)
+            within(READ_TIMEOUT, crisp.stored_voting_power_scale(e3_id))
                 .await
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?
+                .map_err(|error| anyhow::anyhow!("{error:#}"))?
                 .ok_or_else(|| {
-                    anyhow::anyhow!("the provider holds no stored divisor and snapshot for the round")
+                    anyhow::anyhow!(
+                        "the provider holds no stored divisor and snapshot for the round"
+                    )
                 })
         },
     )
     .await
     .inspect_err(|error| {
         warn!(
-            "[e3_id={}] Failed to read the stored voting-power divisor and snapshot after retries: {:#}",
-            label, error
+            "[e3_id={label}] Failed to read the stored voting-power divisor and snapshot after \
+             retries: {error:#}"
         )
     })
     .ok()
@@ -107,164 +171,133 @@ async fn read_stored_scale(
 /// Discover the holders a client draws mask targets from.
 ///
 /// Asked only when the round declared it. Probing every requester and falling back on failure
-/// would turn a broken census provider into a token vote over the wrong electorate, silently:
-/// the round would run, and nothing would error. Checked before the local-network branch because
-/// a declared census is exact on any network, including a devnet where the mock holders would
-/// otherwise be substituted. Etherscan being down carries no eligibility meaning for an on-chain
-/// round: the contract reads power per input, so the only cost is mask cover.
+/// would turn a broken census provider into a token vote over the wrong electorate, silently. A
+/// declared census is checked before the local-network branch because it is exact on any network.
+/// Etherscan being down carries no eligibility meaning for an on-chain round: the contract reads
+/// power per input, so the only cost is mask cover.
 ///
-/// One function for both callers: the `E3Requested` handler and the retry pass for a round that
-/// was registered without a census, because its divisor and snapshot could not be read or its
-/// discovery failed. Both callers therefore refuse the same lists. `stored` is the divisor and
-/// snapshot of a CUSTOM-credit round, or `None` for a CONSTANT-credit round. A CUSTOM-credit census
-/// is read at that snapshot, not at `snapshot_timepoint`: the divisor bounds the census sum only at
-/// the timepoint whose supply sized it. Off a local chain, a CUSTOM-credit round without them fails
-/// discovery.
+/// The `E3Requested` handler and the retry pass for a round registered without a census share this
+/// function, so both refuse the same lists. `stored` is the divisor and snapshot of a CUSTOM-credit
+/// round, or `None` for a CONSTANT-credit round. A CUSTOM-credit census is read at that snapshot,
+/// not at `snapshot_timepoint`: the divisor bounds the census sum only at the timepoint whose
+/// supply sized it. Off a local chain, a CUSTOM-credit round without them fails discovery.
 async fn discover_holders(
     e3_id: &str,
-    custom_params: &CustomParams,
+    params: &CustomParams,
     requester: Address,
-    token_address: Address,
     snapshot_timepoint: u64,
-    balance_threshold: &BigUint,
     stored: Option<(U256, u64)>,
 ) -> eyre::Result<Vec<TokenHolder>> {
-    let holders = if custom_params.census_mode == CensusMode::ByRequester {
-        let credits_str = match custom_params.credit_mode {
-            CreditMode::Constant => custom_params
-                .credits
-                .clone()
-                .expect("credits must be set for Constant mode"),
-            // A requester-supplied census names *who* may vote, not how much each vote
-            // weighs, so it only has meaning when every voter carries the same credits.
-            // `CRISPProgram.validate` rejects this pairing on chain, so reaching it here
-            // means the round was requested against a different program.
-            CreditMode::Custom => {
-                return Err(eyre::eyre!(
-                    "[e3_id={}] CensusMode::ByRequester requires \
-                         CreditMode::Constant; got Custom",
-                    e3_id
-                ))
-            }
+    let credits = match (params.credit_mode, params.credits.as_deref()) {
+        (CreditMode::Constant, Some(credits)) => Some(credits),
+        (CreditMode::Constant, None) => {
+            bail!("[e3_id={e3_id}] a Constant-credit round carries no credits")
+        }
+        (CreditMode::Custom, _) => None,
+    };
+
+    let holders = if params.census_mode == CensusMode::ByRequester {
+        // A requester-supplied census names who may vote, not how much a vote weighs, so it only
+        // means something when every voter carries the same credits. `CRISPProgram.validate`
+        // rejects the other pairing on chain, so reaching it means a different program.
+        let Some(credits) = credits else {
+            bail!(
+                "[e3_id={e3_id}] CensusMode::ByRequester requires CreditMode::Constant; got Custom"
+            )
         };
-
-        info!(
-            "[e3_id={}] Census mode: ByRequester; asking {}",
-            e3_id, requester
-        );
-
+        info!("[e3_id={e3_id}] Census mode: ByRequester; asking {requester}");
         let census = try_fetch_requester_census(requester, e3_id, &CONFIG.http_rpc_url)
             .await
             .ok_or_else(|| {
-                eyre::eyre!(
-                    "[e3_id={}] Round declared CensusMode::ByRequester but \
-                             requester {} returned no census. Refusing to fall back to \
-                             token discovery, which would enfranchise the wrong voters.",
-                    e3_id,
-                    requester
+                eyre!(
+                    "[e3_id={e3_id}] Round declared CensusMode::ByRequester but requester \
+                     {requester} returned no census. Refusing to fall back to token discovery, \
+                     which would enfranchise the wrong voters."
                 )
             })?;
-
         census
             .into_iter()
             .map(|address| TokenHolder {
                 address: address.to_string(),
-                balance: credits_str.clone(),
+                balance: credits.to_string(),
             })
             .collect()
-    } else if matches!(CONFIG.chain_id, 31337 | 1337) {
+    } else if CONFIG.is_local_chain() {
         info!(
-            "[e3_id={}] Using mocked token holders for local network (chain_id: {})",
-            e3_id, CONFIG.chain_id
+            "[e3_id={e3_id}] Using mocked token holders for local network (chain_id: {})",
+            CONFIG.chain_id
         );
-
         // A CONSTANT round carries its credits, as on every other chain. A CUSTOM round gets 1, so
         // ten accounts stay below the plaintext modulus of every preset.
-        get_mock_token_holders(match custom_params.credit_mode {
-            CreditMode::Constant => custom_params
-                .credits
-                .as_deref()
-                .expect("credits must be set for Constant mode"),
-            CreditMode::Custom => "1",
-        })
+        get_mock_token_holders(credits.unwrap_or("1"))
     } else {
         info!(
-            "[e3_id={}] Using Etherscan API for network (chain_id: {})",
-            e3_id, CONFIG.chain_id
+            "[e3_id={e3_id}] Using Etherscan API for network (chain_id: {})",
+            CONFIG.chain_id
         );
-
-        let etherscan_client =
-            EtherscanClient::new(CONFIG.etherscan_api_key.clone(), CONFIG.chain_id);
-
-        match custom_params.credit_mode {
-            CreditMode::Constant => {
-                let credits_str = custom_params
-                    .credits
-                    .clone()
-                    .expect("credits must be set for Constant mode");
-                let credits_u256: alloy_primitives::Uint<256, 4> =
-                    U256::from_str_radix(&credits_str, 10)
-                        .map_err(|e| eyre::eyre!("Failed to parse credits: {}", e))?;
-
-                etherscan_client
+        let token_address: Address = params
+            .token_address
+            .parse()
+            .context("Invalid token address")?;
+        let client = EtherscanClient::new(CONFIG.etherscan_api_key.clone(), CONFIG.chain_id);
+        let discovery = match credits {
+            Some(credits) => {
+                let credits = U256::from_str_radix(credits, 10)
+                    .map_err(|error| eyre!("Failed to parse credits: {error}"))?;
+                client
                     .get_token_holders_with_constant_balance(
                         token_address,
                         snapshot_timepoint,
                         &CONFIG.http_rpc_url,
-                        credits_u256,
+                        credits,
                     )
                     .await
-                    .context("Etherscan token-holder discovery failed")?
             }
-            CreditMode::Custom => {
+            None => {
                 let (divisor, snapshot) = stored.ok_or_else(|| {
-                    eyre::eyre!(
-                        "[e3_id={}] No voting-power divisor and snapshot are known for this \
+                    eyre!(
+                        "[e3_id={e3_id}] No voting-power divisor and snapshot are known for this \
                          CUSTOM-credit round, so the census cannot be built in the units the \
-                         contract reads back.",
-                        e3_id
+                         contract reads back."
                     )
                 })?;
-
-                etherscan_client
+                let threshold =
+                    U256::from_str_radix(&params.balance_threshold, 10).map_err(|error| {
+                        eyre!(
+                            "[e3_id={e3_id}] Failed to convert balance threshold to U256: {error}"
+                        )
+                    })?;
+                client
                     .get_token_holders_with_voting_power(
                         token_address,
                         snapshot,
                         &CONFIG.http_rpc_url,
-                        U256::from_str_radix(&balance_threshold.to_string(), 10).map_err(|e| {
-                            eyre::eyre!(
-                                "[e3_id={}] Failed to convert balance threshold to U256: {}",
-                                e3_id,
-                                e
-                            )
-                        })?,
+                        threshold,
                         divisor,
                     )
                     .await
-                    .context("Etherscan token-holder discovery failed")?
             }
-        }
+        };
+        discovery.context("Etherscan token-holder discovery failed")?
     };
 
     // A census-tree list is the electorate, so an empty one admits no ballot and fails discovery.
     // An on-chain list only indexes mask targets, so the handler warns about an empty one instead.
-    if holders.is_empty() && custom_params.census_mode != CensusMode::Onchain {
-        return Err(eyre::eyre!(
-            "[e3_id={}] No eligible token holders found for token address {}.",
-            e3_id,
-            token_address
-        ));
+    if holders.is_empty() && params.census_mode != CensusMode::Onchain {
+        bail!(
+            "[e3_id={e3_id}] No eligible token holders found for token address {}.",
+            params.token_address
+        );
     }
     Ok(holders)
 }
 
 /// The holders to register a round with, and whether its discovery is still owed.
 ///
-/// A failed discovery never drops the round. The `E3Requested` log is not replayed once the cursor
+/// A failed discovery never drops the round: the `E3Requested` log is not replayed once the cursor
 /// passes it, so the round registers and the retry pass builds the census. The cause is usually
-/// transient: a rate limit, a rejected API key, or a voter whose votes could not be read. An
-/// on-chain round stays votable meanwhile. A new census-tree round takes no ballot until the retry
-/// pass posts its root.
+/// transient (a rate limit, a rejected API key). An on-chain round stays votable meanwhile. A new
+/// census-tree round takes no ballot until the retry pass posts its root.
 fn holders_or_owed(
     e3_id: &str,
     is_onchain_census: bool,
@@ -276,16 +309,13 @@ fn holders_or_owed(
     };
     if is_onchain_census {
         warn!(
-            "[e3_id={}] CensusMode::Onchain holder discovery failed: {:#}. The round is still \
-             recorded and votable — eligibility is read from the token at publish time — but \
-             clients have no mask targets until a retry succeeds.",
-            e3_id, error
+            "[e3_id={e3_id}] CensusMode::Onchain holder discovery failed: {error:#}. The round is \
+             recorded and votable, but clients have no mask targets until a retry succeeds."
         );
     } else {
         warn!(
-            "[e3_id={}] Census discovery failed: {:#}. The round keeps any census it holds, and \
-             a new round takes no ballot until a retry posts its root.",
-            e3_id, error
+            "[e3_id={e3_id}] Census discovery failed: {error:#}. The round keeps any census it \
+             holds, and a new round takes no ballot until a retry posts its root."
         );
     }
     (Vec::new(), true)
@@ -303,322 +333,227 @@ fn order_token_holders(holders: &mut [TokenHolder]) {
 
 /// Post the census root of a Merkle round to `CRISPProgram`, unless that root is already set.
 async fn ensure_merkle_root(e3_id: &str, token_holder_hashes: Vec<String>) -> eyre::Result<()> {
-    let tree = build_tree(token_holder_hashes).with_context(|| "Failed to build tree")?;
+    let tree = build_tree(token_holder_hashes).context("Failed to build tree")?;
     let merkle_root = tree
         .root()
-        .ok_or_else(|| eyre::eyre!("Failed to get merkle root from tree"))?;
-    info!("[e3_id={}] Merkle root: {}", e3_id, merkle_root);
+        .ok_or_else(|| eyre!("Failed to get merkle root from tree"))?;
+    info!("[e3_id={e3_id}] Merkle root: {merkle_root}");
     let merkle_root_bytes = hex::decode(&merkle_root)
-        .with_context(|| format!("[e3_id={}] Merkle root is not valid hex", e3_id))?;
-    let merkle_root_u256 = U256::from_be_slice(&merkle_root_bytes);
+        .with_context(|| format!("[e3_id={e3_id}] Merkle root is not valid hex"))?;
+    let merkle_root = U256::from_be_slice(&merkle_root_bytes);
     let e3_id_u256 = U256::from_str_radix(e3_id, 10)
-        .with_context(|| format!("[e3_id={}] Invalid E3 ID", e3_id))?;
-    info!(
-        "[e3_id={}] Ensuring CRISPProgram Merkle root: {}",
-        e3_id, merkle_root_u256
-    );
-    let contract = CRISPContractFactory::create_write(
-        &CONFIG.http_rpc_url,
-        &CONFIG.e3_program_address,
-        &CONFIG.private_key,
-    )
-    .await
-    .with_context(|| format!("[e3_id={}] Failed to create CRISP contract", e3_id))?;
-    let stored_root = contract.get_merkle_root(e3_id_u256).await?;
-    if stored_root == merkle_root_u256 {
-        info!(
-            "[e3_id={}] Merkle root is already set to the expected value",
-            e3_id
-        );
+        .with_context(|| format!("[e3_id={e3_id}] Invalid E3 ID"))?;
+    info!("[e3_id={e3_id}] Ensuring CRISPProgram Merkle root: {merkle_root}");
+
+    let contract = crisp_write().await?;
+    let stored_root = within(READ_TIMEOUT, contract.get_merkle_root(e3_id_u256)).await?;
+    if stored_root == merkle_root {
+        info!("[e3_id={e3_id}] Merkle root is already set to the expected value");
     } else if stored_root.is_zero() {
-        match contract.set_merkle_root(e3_id_u256, merkle_root_u256).await {
+        match within(
+            TRANSACTION_TIMEOUT,
+            contract.set_merkle_root(e3_id_u256, merkle_root),
+        )
+        .await
+        {
             Ok(receipt) => info!(
-                "[e3_id={}] setMerkleRoot successful. TxHash: {:?}",
-                e3_id, receipt.transaction_hash
+                "[e3_id={e3_id}] setMerkleRoot successful. TxHash: {:?}",
+                receipt.transaction_hash
             ),
             Err(error) => {
-                // A live subscription and its overlap replay can race here. Accept
-                // the losing transaction only when the desired root landed.
-                let root_after_error = contract.get_merkle_root(e3_id_u256).await?;
-                if root_after_error != merkle_root_u256 {
-                    return Err(error).with_context(|| {
-                        format!("[e3_id={}] Failed to call setMerkleRoot", e3_id)
-                    });
+                // A live subscription and its overlap replay can race here. Accept the losing
+                // transaction only when the desired root landed.
+                let landed = within(READ_TIMEOUT, contract.get_merkle_root(e3_id_u256))
+                    .await
+                    .is_ok_and(|root| root == merkle_root);
+                if !landed {
+                    return Err(error)
+                        .with_context(|| format!("[e3_id={e3_id}] Failed to call setMerkleRoot"));
                 }
-                info!(
-                    "[e3_id={}] Merkle root was set by a concurrent handler",
-                    e3_id
-                );
+                info!("[e3_id={e3_id}] Merkle root was set by a concurrent handler");
             }
         }
     } else {
-        return Err(eyre::eyre!(
-            "[e3_id={}] CRISPProgram has a different Merkle root: expected {}, got {}",
-            e3_id,
-            merkle_root_u256,
-            stored_root
-        ));
+        bail!(
+            "[e3_id={e3_id}] CRISPProgram has a different Merkle root: expected {merkle_root}, got {stored_root}"
+        );
     }
     Ok(())
 }
 
-pub async fn register_e3_requested(
-    indexer: InterfoldIndexer<impl DataStore, ReadWrite>,
-) -> Result<InterfoldIndexer<impl DataStore, ReadWrite>> {
-    let configured_program: Address = CONFIG
-        .e3_program_address
-        .parse()
-        .with_context(|| "Invalid configured E3 program address")?;
+async fn handle_e3_requested<S: DataStore>(
+    event: E3Requested,
+    ctx: Arc<IndexerContext<S, ReadWrite>>,
+    configured_program: Address,
+) -> eyre::Result<()> {
+    let e3_id = event.e3Id.to_string();
+    if event.e3.e3Program != configured_program {
+        info!(
+            "[e3_id={e3_id}] Ignoring E3Requested for unrelated program {}",
+            event.e3.e3Program
+        );
+        return Ok(());
+    }
+    info!("[e3_id={e3_id}] E3Requested: {event:?}");
 
-    // E3Requested
-    indexer
-        .add_event_handler(move |event: E3Requested, ctx| {
-            let store = ctx.store();
-            let e3_id = event.e3Id.to_string();
-            let mut repo = CrispE3Repository::new(store.clone(), &e3_id);
+    let store = ctx.store();
+    let mut repo = CrispE3Repository::new(store.clone(), &e3_id);
+    let contract = ctx.contract();
 
-            let contract = ctx.contract();
-            async move {
-                if !is_configured_e3_program(event.e3.e3Program, configured_program) {
-                    info!(
-                        "[e3_id={}] Ignoring E3Requested for unrelated program {}",
-                        e3_id, event.e3.e3Program
-                    );
-                    return Ok(());
-                }
+    // 0xcd6f4a4f = E3DoesNotExist()
+    let e3 = call_with_retry_attempts("get_e3", &["0xcd6f4a4f"], E3_VISIBLE_ATTEMPTS, || async {
+        within(READ_TIMEOUT, contract.get_e3(event.e3Id))
+            .await
+            .map_err(|error| anyhow::anyhow!("{error:#}"))
+    })
+    .await
+    .map_err(report)?;
 
-                info!("[e3_id={}] E3Requested: {:?}", e3_id, event);
+    // The seventh field is the requested voting-power divisor: the contract stores a non-zero
+    // request for a CUSTOM-credit round and computes the minimum divisor for a zero request.
+    type CustomParamsTuple = (
+        sol_data::Address,
+        sol_data::Uint<256>,
+        sol_data::Uint<256>,
+        sol_data::Uint<256>,
+        sol_data::Uint<256>,
+        sol_data::Uint<256>,
+        sol_data::Uint<256>,
+    );
+    let decoded = <CustomParamsTuple as SolType>::abi_decode(&event.e3.customParams)
+        .context("Failed to decode custom params from E3 event")?;
 
-                // 0xcd6f4a4f = E3DoesNotExist()
-                let e3 = call_with_retry_attempts(
-                    "get_e3",
-                    &["0xcd6f4a4f"],
-                    E3_VISIBLE_ATTEMPTS,
-                    || {
-                        let contract = contract.clone();
-                        let event_e3_id = event.e3Id;
-                        async move {
-                            contract
-                                .get_e3(event_e3_id)
-                                .await
-                                .map_err(|e| anyhow::anyhow!("{}", e))
-                        }
-                    },
-                )
-                .await
-                .map_err(|e| eyre::eyre!("{}", e))?;
+    // `saturating_to`, not `to`: these fields are attacker-chosen ABI data and `to::<u64>()`
+    // panics above `u64::MAX`. Clamping lets the `TryFrom` impls reject an unknown mode.
+    let credit_mode = CreditMode::try_from(decoded.3.saturating_to::<u64>())?;
+    let census_mode = CensusMode::try_from(decoded.5.saturating_to::<u64>())?;
+    let credits = match credit_mode {
+        CreditMode::Constant => Some(decoded.4.to_string()),
+        CreditMode::Custom => None,
+    };
+    info!("[e3_id={e3_id}] Credit mode: {credit_mode:?}");
 
-                // Use sol_data types instead of primitives
-                // Seven fields. The seventh is the requested voting-power divisor: the contract
-                // stores a non-zero request for a CUSTOM-credit round, and computes the minimum
-                // divisor for a zero request.
-                type CustomParamsTuple = (
-                    sol_data::Address,
-                    sol_data::Uint<256>,
-                    sol_data::Uint<256>,
-                    sol_data::Uint<256>,
-                    sol_data::Uint<256>,
-                    sol_data::Uint<256>,
-                    sol_data::Uint<256>,
-                );
+    let custom_params = CustomParams {
+        token_address: decoded.0.to_string(),
+        balance_threshold: decoded.1.to_string(),
+        num_options: decoded.2.to_string(),
+        credit_mode,
+        credits,
+        census_mode,
+        voting_power_divisor: decoded.6.to_string(),
+    };
 
-                let decoded = <CustomParamsTuple as SolType>::abi_decode(&event.e3.customParams)
-                    .with_context(|| "Failed to decode custom params from E3 event")?;
+    let input_deadline = e3.inputWindow[1].saturating_to::<u64>();
+    let crisp = crisp_read().await?;
+    let voting_end_time = within(READ_TIMEOUT, crisp.input_commitment_deadline(event.e3Id))
+        .await
+        .with_context(|| format!("[e3_id={e3_id}] Failed to read the input commitment deadline"))?;
 
-                // `saturating_to` rather than `to`: these fields are attacker-chosen ABI data, and
-                // `to::<u64>()` panics on a value above `u64::MAX`. Clamping lets the `TryFrom`
-                // impls reject it as an unknown mode instead.
-                let credit_mode = CreditMode::try_from(decoded.3.saturating_to::<u64>())?;
-                let census_mode = CensusMode::try_from(decoded.5.saturating_to::<u64>())?;
-                let credits = match credit_mode {
-                    CreditMode::Constant => {
-                        info!("[e3_id={}] Credit mode: Constant", e3_id);
-                        Some(decoded.4.to_string())
-                    }
-                    CreditMode::Custom => {
-                        info!("[e3_id={}] Credit mode: Custom", e3_id);
-                        None
-                    }
-                };
+    // The census is built one tick before the request, as the request timepoint itself is not
+    // final when the E3 is requested. `requestBlock` is a timestamp, not a block height: the
+    // ticket token runs an EIP-6372 `mode=timestamp` clock, and `Interfold.request` assigns
+    // `block.timestamp` to match the checkpoints it is compared against.
+    let snapshot_timepoint = event
+        .e3
+        .requestBlock
+        .saturating_to::<u64>()
+        .saturating_sub(1);
 
-                let custom_params = CustomParams {
-                    token_address: decoded.0.to_string(),
-                    balance_threshold: decoded.1.to_string(),
-                    num_options: decoded.2.to_string(),
-                    credit_mode,
-                    credits,
-                    census_mode,
-                    voting_power_divisor: decoded.6.to_string(),
-                };
+    // An on-chain census is not an eligibility input: `_eligibility` reads each voter's power with
+    // `getPastVotes` when the input is published and never reads `merkleRoot`, so no root is
+    // posted. The holder list is still discovered and stored, because a mask is written to someone
+    // else's slot and clients need a list of who holds power to draw targets from. An omission
+    // costs mask cover and cannot enfranchise anyone the contract would refuse. For a Merkle round
+    // the list is the electorate, so an omission disenfranchises.
+    let is_onchain_census = custom_params.census_mode == CensusMode::Onchain;
+    if is_onchain_census {
+        info!("[e3_id={e3_id}] CensusMode::Onchain: discovering holders for mask targets only");
+    }
 
-                let balance_threshold =
-                    BigUint::parse_bytes(custom_params.balance_threshold.as_bytes(), 10)
-                        .ok_or_else(|| eyre::eyre!("Invalid balance threshold"))?;
-                let token_address: Address = custom_params
-                    .token_address
-                    .parse()
-                    .with_context(|| "Invalid token address")?;
+    // Only a CUSTOM-credit round stores a divisor and a snapshot. Without them the census cannot
+    // be built in the units the contract reads back, so the round registers and its discovery
+    // moves to the retry pass. An `Err` here would drop the round: the live listener logs it and
+    // moves on.
+    let stored = if custom_params.credit_mode == CreditMode::Custom {
+        read_stored_scale(&crisp, event.e3Id, &e3_id).await
+    } else {
+        None
+    };
+    let divisor_unavailable = custom_params.credit_mode == CreditMode::Custom && stored.is_none();
+    if divisor_unavailable {
+        warn!(
+            "[e3_id={e3_id}] The stored voting-power divisor and snapshot are unavailable. \
+             Registering the round without holder discovery rather than building a census in \
+             units the contract may not use."
+        );
+    }
 
-                let input_window = [e3.inputWindow[0].to::<u64>(), e3.inputWindow[1].to::<u64>()];
-                let crisp = CRISPContractFactory::create_read(
-                    &CONFIG.http_rpc_url,
-                    &CONFIG.e3_program_address,
-                )
-                .await
-                .with_context(|| "Failed to create CRISP contract reader")?;
-                let voting_end_time = crisp
-                    .input_commitment_deadline(event.e3Id)
-                    .await
-                    .with_context(|| {
-                        format!("[e3_id={e3_id}] Failed to read the input commitment deadline")
-                    })?;
+    let discovery = if divisor_unavailable {
+        Ok(Vec::new())
+    } else {
+        discover_holders(
+            &e3_id,
+            &custom_params,
+            e3.requester,
+            snapshot_timepoint,
+            stored,
+        )
+        .await
+    };
+    let (mut token_holders, discovery_failed) =
+        holders_or_owed(&e3_id, is_onchain_census, discovery);
 
-                // The census is built one tick before the request, as the request timepoint
-                // itself is not final when the E3 is requested.
-                //
-                // `requestBlock` is a timestamp, not a block height — the ticket token runs
-                // an EIP-6372 `mode=timestamp` clock, and `Interfold.request` assigns
-                // `block.timestamp` to match the checkpoints it is compared against. The
-                // name is historical.
-                let snapshot_timepoint = event.e3.requestBlock.to::<u64>().saturating_sub(1);
+    // `discover_holders` refuses an empty census-tree list. An empty on-chain list costs mask cover
+    // and nothing else, so the round goes ahead.
+    if is_onchain_census && token_holders.is_empty() && !divisor_unavailable && !discovery_failed {
+        warn!(
+            "[e3_id={e3_id}] CensusMode::Onchain discovery found no holders for {}. The round is \
+             recorded and votable, but clients have no mask targets to draw from.",
+            custom_params.token_address
+        );
+    }
 
-                // An on-chain census has nothing for the coordinator to build. `CRISPProgram`
-                // reads each voter's power with `getPastVotes` when the input is published, so
-                // there is no holder list to enumerate and no root to post — `setMerkleRoot` is
-                // not just unnecessary here, it is unused: `_eligibility` never reads it in this
-                // mode. The round is still recorded, because the API serves its metadata.
-                // An on-chain census is not an eligibility input: `_eligibility` reads each
-                // voter's power with `getPastVotes` when the input is published and never looks at
-                // `merkleRoot`. The holder list is still discovered and stored, because clients
-                // need somewhere to draw mask targets from — a mask is written to someone else's
-                // slot, so without a list of who holds power there is nobody to mask.
-                //
-                // The distinction matters for what a wrong list can do. For a Merkle round the
-                // list *is* the electorate, so an omission disenfranchises. Here it is an index
-                // over what the chain already decides, so an omission costs mask cover and nothing
-                // else — it can never enfranchise anyone the contract would refuse.
-                let is_onchain_census = custom_params.census_mode == CensusMode::Onchain;
-                if is_onchain_census {
-                    info!(
-                        "[e3_id={}] CensusMode::Onchain — discovering holders for mask targets; \
-                         no merkle root will be posted",
-                        e3_id
-                    );
-                }
+    // The Merkle root must not depend on HashMap iteration order or RPC log order: a retry must
+    // produce the same root from the same snapshot.
+    order_token_holders(&mut token_holders);
 
-                // Only a CUSTOM-credit round stores a divisor and a snapshot. Without them the
-                // census cannot be built in the units the contract reads back, so the round
-                // registers and its discovery is deferred to the retry pass. An `Err` here would
-                // not defer anything: the live listener logs it and moves on, which drops the round.
-                let stored = if custom_params.credit_mode == CreditMode::Custom {
-                    read_stored_scale(&crisp, event.e3Id, &e3_id).await
-                } else {
-                    None
-                };
-                let divisor_unavailable =
-                    custom_params.credit_mode == CreditMode::Custom && stored.is_none();
-                if divisor_unavailable {
-                    warn!(
-                        "[e3_id={}] The stored voting-power divisor and snapshot are unavailable. \
-                         Registering the round without holder discovery rather than building a \
-                         census in units the contract may not use.",
-                        e3_id
-                    );
-                }
+    repo.initialize_round(
+        custom_params,
+        event.e3.e3Program,
+        e3.requester.to_string(),
+        voting_end_time,
+        input_deadline,
+        snapshot_timepoint,
+    )
+    .await?;
 
-                // Get token holders from Etherscan API or mocked data. Lifted into
-                // `discover_holders` so the retry pass for a round registered without a census
-                // runs the same code with the same refusals.
-                let discovery: eyre::Result<Vec<TokenHolder>> = if divisor_unavailable {
-                    Ok(Vec::new())
-                } else {
-                    discover_holders(
-                        &e3_id,
-                        &custom_params,
-                        e3.requester,
-                        token_address,
-                        snapshot_timepoint,
-                        &balance_threshold,
-                        stored,
-                    )
-                    .await
-                };
+    // Store the census, or record the debt so `retry_pending_discovery` settles it later. The
+    // debt covers a discovery skipped for want of a divisor and one that ran and failed. The event
+    // is not replayed once the cursor passes it, so nothing else would retry.
+    let owed = divisor_unavailable || discovery_failed;
+    let root_leaves = store_census(&mut repo, token_holders, is_onchain_census, owed).await?;
 
-                let (mut token_holders, discovery_failed) =
-                    holders_or_owed(&e3_id, is_onchain_census, discovery);
+    CurrentRoundRepository::new(store)
+        .record_round(&e3_id)
+        .await?;
 
-                // `discover_holders` refuses an empty census-tree list. An empty on-chain list
-                // costs mask cover and nothing else, so the round goes ahead.
-                if is_onchain_census
-                    && token_holders.is_empty()
-                    && !divisor_unavailable
-                    && !discovery_failed
-                {
-                    warn!(
-                        "[e3_id={}] CensusMode::Onchain discovery found no holders for {}. The \
-                         round is still recorded and votable — eligibility is read from the token \
-                         at publish time — but clients have no mask targets to draw from.",
-                        e3_id, token_address
-                    );
-                }
+    // Wake the retry task only after `record_round`: it sleeps when nothing is owed, so waking it
+    // before the round is listed lets it find nothing and sleep with the debt unpaid. `notify_one`
+    // keeps a permit, so one task serves every debt.
+    if owed {
+        DISCOVERY_OWED.notify_one();
+    }
 
-                // The Merkle root must not depend on HashMap iteration order or RPC log order.
-                // A retry must produce the same root from the same snapshot.
-                order_token_holders(&mut token_holders);
+    // No leaves for an on-chain census (nothing consults a root) or an owed one (the retry pass
+    // posts its root).
+    if let Some(leaves) = root_leaves {
+        ensure_merkle_root(&e3_id, leaves).await?;
+    }
 
-                // save the e3 details
-                repo.initialize_round(
-                    custom_params,
-                    event.e3.e3Program,
-                    e3.requester.to_string(),
-                    voting_end_time,
-                    input_window[1],
-                    snapshot_timepoint,
-                )
-                .await?;
-
-                // Store the census, or record the debt so `retry_pending_discovery` settles it
-                // later. Two causes of debt:
-                //
-                //   - discovery was SKIPPED for want of a divisor and snapshot, not refused; or
-                //   - discovery RAN and failed, which `holders_or_owed` absorbs to keep the round.
-                //
-                // The event is not replayed once the cursor passes it, so nothing else would
-                // retry. The retry task is woken below, after `record_round`: it scans the round
-                // index and sleeps when nothing is owed, so waking it here could let it run before
-                // this round is listed, find nothing, and sleep with the debt unpaid.
-                let owed = divisor_unavailable || discovery_failed;
-                let root_leaves =
-                    store_census(&mut repo, token_holders, is_onchain_census, owed).await?;
-
-                CurrentRoundRepository::new(store.clone())
-                    .record_round(&e3_id)
-                    .await?;
-
-                // The round is listed, so the retry task can find its debt. Wake the one task
-                // started at registration instead of spawning another: each task rescans every
-                // owed round, so one per debt multiplied the discovery calls.
-                if owed {
-                    DISCOVERY_OWED.notify_one();
-                }
-
-                // No leaves for an on-chain census: `_eligibility` never reads `merkleRoot` in
-                // that mode, so posting one would spend gas to publish a value nothing consults —
-                // and would imply the list gates eligibility when it does not. No leaves for an
-                // owed census either: the retry pass posts its root.
-                if let Some(leaves) = root_leaves {
-                    ensure_merkle_root(&e3_id, leaves).await?;
-                }
-
-                // Committee and request handlers run concurrently for live logs. If the key was
-                // indexed while census preparation was still running, this closes that race.
-                activate_round_if_ready(e3_id.clone(), ctx).await?;
-
-                Ok(())
-            }
-        })
-        .await;
-    Ok(indexer)
+    // Committee and request handlers run concurrently for live logs. If the key was indexed while
+    // census preparation was still running, this closes that race.
+    activate_round_if_ready(&e3_id, &ctx).await?;
+    Ok(())
 }
 
 /// What the indexer holds for a round, measured against what `CRISPProgram` committed.
@@ -631,15 +566,10 @@ enum IndexedInputs {
 
 /// The round's inputs, once the indexer holds every one `CRISPProgram` committed.
 ///
-/// Polls rather than reading once: the deadline callback and the last `InputPublished` handler race,
-/// and the gap is the few seconds it takes one log to be delivered and stored.
-///
-/// Both counts are re-read on every attempt. Re-reading only the chain would compare a moving number
-/// against a fixed one, so the loop could never converge — it would wait out every attempt and then
-/// report the same shortfall it started with, in exactly the race it exists to absorb.
-///
-/// Returns the snapshot the two counts agree on, or the last pair when they never do, so the caller
-/// reports the shortfall rather than looping forever.
+/// Polls because the deadline callback and the last `InputPublished` handler race, and the gap is
+/// the few seconds one log needs to be delivered and stored. Both counts are re-read on every
+/// attempt: re-reading only the chain would compare a moving number against a fixed one and never
+/// converge. Returns the last pair when they never agree, so the caller reports the shortfall.
 async fn wait_for_indexed_inputs<S: DataStore>(
     e3_id: &str,
     repo: &CrispE3Repository<S>,
@@ -647,72 +577,54 @@ async fn wait_for_indexed_inputs<S: DataStore>(
     const ATTEMPTS: u32 = 10;
     const INTERVAL: Duration = Duration::from_secs(3);
 
-    let e3_id_u256 = e3_id_to_u256(e3_id).map_err(|e| eyre::eyre!("{e}"))?;
-    let contract =
-        CRISPContractFactory::create_read(&CONFIG.http_rpc_url, &CONFIG.e3_program_address).await?;
+    let e3_id_u256 = e3_id_to_u256(e3_id).map_err(report)?;
+    let contract = crisp_read().await?;
 
-    for attempt in 0..=ATTEMPTS {
-        let published = contract.get_published_input_count(e3_id_u256).await? as usize;
+    let mut attempt = 0;
+    loop {
+        let published = usize::try_from(
+            within(READ_TIMEOUT, contract.get_published_input_count(e3_id_u256)).await?,
+        )?;
         let snapshot = repo.get_input_snapshot().await?;
         let indexed = snapshot.ciphertexts.len();
 
-        // Equality is required. Fewer entries means that an accepted input is missing. More
-        // entries means that the local index contains data the contract did not accept. Either
-        // case would make the OpenVM input root differ from the contract's root.
+        // Fewer entries means an accepted input is missing. More means the local index holds data
+        // the contract did not accept. Either makes the OpenVM input root differ from the
+        // contract's root, so equality is required.
         if indexed == published {
             return Ok(IndexedInputs::Complete(snapshot));
         }
-
         if attempt == ATTEMPTS {
             return Ok(IndexedInputs::Mismatch { indexed, published });
         }
-
-        info!(
-            "[e3_id={}] waiting for the indexer: {} of {} input(s) stored",
-            e3_id, indexed, published
-        );
+        attempt += 1;
+        info!("[e3_id={e3_id}] waiting for the indexer: {indexed} of {published} input(s) stored");
         sleep(INTERVAL).await;
     }
-
-    unreachable!("the loop returns on its final attempt")
 }
-
-/// When the deadline handler runs again after a round it could not compute.
-///
-/// Each offset is a separate `do_later` registration made when the round starts, rather than the
-/// handler re-arming itself: `do_later` drops a callback once it has run, and a handler that failed
-/// has no way back into the schedule. The offsets are wider than the indexer wait inside the
-/// handler, so two passes do not overlap.
-const DEADLINE_RETRY_OFFSETS: [u64; 3] = [60, 180, 420];
-
-const ROUND_ACTIVATION_RETRY_OFFSETS: [u64; 5] = [1, 5, 30, 120, 600];
 
 fn deadline_attempt_times(expiration: u64, now: u64) -> [u64; 4] {
     let first = expiration.max(now);
-    [
-        first,
-        first.saturating_add(DEADLINE_RETRY_OFFSETS[0]),
-        first.saturating_add(DEADLINE_RETRY_OFFSETS[1]),
-        first.saturating_add(DEADLINE_RETRY_OFFSETS[2]),
-    ]
+    DEADLINE_ATTEMPT_OFFSETS.map(|offset| first.saturating_add(offset))
 }
 
-async fn handle_e3_input_deadline_expiration_logged<S: DataStore>(
-    e3_id: String,
-    store: SharedStore<S>,
-) -> eyre::Result<()> {
+/// One scheduled deadline pass. Failures are logged, not returned: `do_later` drops the callback
+/// either way, and the other offsets retry.
+async fn deadline_pass<S: DataStore>(e3_id: String, store: SharedStore<S>) -> eyre::Result<()> {
     if let Err(error) = handle_e3_input_deadline_expiration(e3_id.clone(), store).await {
-        error!("[e3_id={}] CRISP deadline pass failed: {}", e3_id, error);
+        error!("[e3_id={e3_id}] CRISP deadline pass failed: {error:#}");
     }
     Ok(())
 }
 
+/// Start the round and register its deadline passes, once its record and verified key exist.
+/// Returns whether the round is active.
 async fn activate_round_if_ready<S: DataStore>(
-    e3_id: String,
-    ctx: Arc<IndexerContext<S, ReadWrite>>,
+    e3_id: &str,
+    ctx: &Arc<IndexerContext<S, ReadWrite>>,
 ) -> eyre::Result<bool> {
     let store = ctx.store();
-    let mut repo = CrispE3Repository::new(store.clone(), &e3_id);
+    let mut repo = CrispE3Repository::new(store.clone(), e3_id);
     if !repo.has_crisp_record().await? || !repo.has_indexed_public_key().await? {
         return Ok(false);
     }
@@ -722,22 +634,17 @@ async fn activate_round_if_ready<S: DataStore>(
         return Ok(true);
     }
 
-    let now = chrono::Utc::now().timestamp().max(0) as u64;
-    for at in deadline_attempt_times(expiration, now) {
-        let e3_id = e3_id.clone();
-        ctx.do_later(at, move |_, ctx| {
-            handle_e3_input_deadline_expiration_logged(e3_id.clone(), ctx.store())
-        });
+    for at in deadline_attempt_times(expiration, unix_now()) {
+        let e3_id = e3_id.to_string();
+        ctx.do_later(at, move |_, ctx| deadline_pass(e3_id.clone(), ctx.store()));
     }
 
-    let mut current_round_repo = CurrentRoundRepository::new(store);
-    current_round_repo
-        .set_current_round(CurrentRound { id: e3_id.clone() })
+    CurrentRoundRepository::new(store)
+        .set_current_round(CurrentRound {
+            id: e3_id.to_string(),
+        })
         .await?;
-    info!(
-        "[e3_id={}] Activated CRISP round and registered deadline callbacks",
-        e3_id
-    );
+    info!("[e3_id={e3_id}] Activated CRISP round and registered deadline callbacks");
     Ok(true)
 }
 
@@ -745,17 +652,14 @@ fn schedule_round_activation_retries<S: DataStore>(
     e3_id: &str,
     ctx: &Arc<IndexerContext<S, ReadWrite>>,
 ) {
-    let now = chrono::Utc::now().timestamp().max(0) as u64;
+    let now = unix_now();
     for offset in ROUND_ACTIVATION_RETRY_OFFSETS {
         let e3_id = e3_id.to_string();
         ctx.do_later(now.saturating_add(offset), move |_, ctx| {
             let e3_id = e3_id.clone();
             async move {
-                if let Err(error) = activate_round_if_ready(e3_id.clone(), ctx).await {
-                    error!(
-                        "[e3_id={}] Deferred CRISP round activation failed: {}",
-                        e3_id, error
-                    );
+                if let Err(error) = activate_round_if_ready(&e3_id, &ctx).await {
+                    error!("[e3_id={e3_id}] Deferred CRISP round activation failed: {error:#}");
                 }
                 Ok(())
             }
@@ -763,243 +667,158 @@ fn schedule_round_activation_retries<S: DataStore>(
     }
 }
 
+/// Bring one stored round back into the schedule after a restart.
 async fn restore_round_deadline_callback<S: DataStore>(
     indexer: &InterfoldIndexer<S, ReadWrite>,
-    store: SharedStore<S>,
-    e3_id: String,
+    e3_id: &str,
     now: u64,
-) -> Result<()> {
-    let mut repo = CrispE3Repository::new(store.clone(), &e3_id);
+) -> eyre::Result<()> {
+    let store = indexer.get_store();
+    let mut repo = CrispE3Repository::new(store.clone(), e3_id);
     let mut status = repo.get_status().await?;
     let has_indexed_public_key = repo.has_indexed_public_key().await?;
-    if status == "Active" && !has_indexed_public_key {
-        repo.update_status("Requested").await?;
-        status = "Requested".to_string();
+    if status == ACTIVE && !has_indexed_public_key {
+        repo.update_status(REQUESTED).await?;
+        status = REQUESTED.to_string();
         warn!(
-            "[e3_id={}] Reset an active round to pending because no verified public key is indexed",
-            e3_id
+            "[e3_id={e3_id}] Reset an active round to pending: no verified public key is indexed"
         );
     }
-    if status == "Requested" && has_indexed_public_key && repo.try_start_round().await? {
-        let mut current_round_repo = CurrentRoundRepository::new(store.clone());
-        current_round_repo
-            .set_current_round(CurrentRound { id: e3_id.clone() })
+    if status == REQUESTED && has_indexed_public_key && repo.try_start_round().await? {
+        CurrentRoundRepository::new(store)
+            .set_current_round(CurrentRound {
+                id: e3_id.to_string(),
+            })
             .await?;
-        status = "Active".to_string();
-        info!(
-            "[e3_id={}] Activated a requested round whose verified key was indexed before restart",
-            e3_id
-        );
+        status = ACTIVE.to_string();
+        info!("[e3_id={e3_id}] Activated a requested round whose verified key was indexed earlier");
     }
-    if status == "Computing" || status == "PublishingCiphertext" {
-        // Submission is intentionally at-least-once across the CRISP and program-server process
-        // boundary. A crash can lose the HTTP response or webhook, so keeping this claim would
-        // strand the round. A retry can repeat proof work, but it cannot publish a second result:
-        // Interfold accepts ciphertext output only from KeyPublished, and the callback treats an
+    if matches!(status.as_str(), COMPUTING | PUBLISHING_CIPHERTEXT) {
+        // Submission is at-least-once across the CRISP and program-server process boundary. A
+        // crash can lose the HTTP response or webhook, so keeping this claim would strand the
+        // round. A retry can repeat proof work but cannot publish a second result: Interfold
+        // accepts ciphertext output only from KeyPublished, and the callback treats an
         // already-published output as success.
-        repo.update_status("Expired").await?;
-        status = "Expired".to_string();
-        warn!(
-            "[e3_id={}] Reset an interrupted compute submission so it can be retried",
-            e3_id
-        );
+        repo.update_status(EXPIRED).await?;
+        status = EXPIRED.to_string();
+        warn!("[e3_id={e3_id}] Reset an interrupted compute submission so it can be retried");
     }
-    if status != "Active" && status != "Expired" {
+    if !matches!(status.as_str(), ACTIVE | EXPIRED) {
         return Ok(());
     }
 
     let expiration = repo.get_input_deadline().await?;
     for at in deadline_attempt_times(expiration, now) {
-        let e3_id = e3_id.clone();
-        indexer.schedule_at(at, move |_, ctx| {
-            handle_e3_input_deadline_expiration_logged(e3_id.clone(), ctx.store())
-        });
+        let e3_id = e3_id.to_string();
+        indexer.schedule_at(at, move |_, ctx| deadline_pass(e3_id.clone(), ctx.store()));
     }
-    info!(
-        "[e3_id={}] Restored deadline callbacks for CRISP round in status {}",
-        e3_id, status
-    );
+    info!("[e3_id={e3_id}] Restored deadline callbacks for CRISP round in status {status}");
     Ok(())
 }
 
 async fn restore_round_deadline_callbacks<S: DataStore>(
     indexer: &InterfoldIndexer<S, ReadWrite>,
-) -> Result<()> {
-    let store = indexer.get_store();
-    let round_ids = CurrentRoundRepository::new(store.clone())
+) -> eyre::Result<()> {
+    let round_ids = CurrentRoundRepository::new(indexer.get_store())
         .get_round_ids()
         .await?;
-    let now = chrono::Utc::now().timestamp().max(0) as u64;
-
+    let now = unix_now();
     for e3_id in round_ids {
-        if let Err(error) =
-            restore_round_deadline_callback(indexer, store.clone(), e3_id.clone(), now).await
-        {
-            error!(
-                "[e3_id={}] Could not restore CRISP deadline callbacks: {}",
-                e3_id, error
-            );
+        if let Err(error) = restore_round_deadline_callback(indexer, &e3_id, now).await {
+            error!("[e3_id={e3_id}] Could not restore CRISP deadline callbacks: {error:#}");
         }
     }
-
     Ok(())
 }
 
-/// Store key holding the `INDEX_LOG_CONTRACTS` set as of the previous run.
-///
-/// Coverage records outlive the configuration that created them, and the store has no delete. This
-/// is what lets a restart tell "this address has been indexed continuously" from "this address is
-/// back after a spell of not being indexed", so the second case can narrow its claim instead of
-/// asserting history that was never fetched.
-const LOG_INDEX_CONFIG_KEY: &str = "_logs:_config";
-
-async fn handle_e3_input_deadline_expiration(
+/// Compute a round once its input deadline has passed.
+async fn handle_e3_input_deadline_expiration<S: DataStore>(
     e3_id: String,
-    store: SharedStore<impl DataStore>,
+    store: SharedStore<S>,
 ) -> eyre::Result<()> {
-    let mut repo = CrispE3Repository::new(store.clone(), &e3_id);
-    let e3: e3_sdk::indexer::models::E3 = repo.get_e3().await?;
+    let mut repo = CrispE3Repository::new(store, &e3_id);
+    let e3 = repo.get_e3().await?;
 
-    let crisp =
-        CRISPContractFactory::create_read(&CONFIG.http_rpc_url, &CONFIG.e3_program_address).await?;
-    let pending = crisp
-        .pending_input_count(e3_id_to_u256(&e3_id).map_err(|error| eyre::eyre!(error.to_string()))?)
-        .await?;
+    let pending = within(
+        READ_TIMEOUT,
+        crisp_read()
+            .await?
+            .pending_input_count(e3_id_to_u256(&e3_id).map_err(report)?),
+    )
+    .await?;
     if pending != 0 {
         // The input root already includes these reserved leaves, but Ethereum has not verified
         // their Avail receipts. Starting OpenVM now would waste the proof: CRISPProgram.verify
         // refuses every output until this reaches zero. InputPublished recovery wakes this handler
         // again as each delayed VectorX proof lands.
-        return Err(eyre::eyre!(
-            "[e3_id={}] {} input(s) still await data-availability finalization; refusing to compute",
-            e3_id,
-            pending
-        ));
+        bail!(
+            "[e3_id={e3_id}] {pending} input(s) still await data-availability finalization; refusing to compute"
+        );
     }
 
-    // This transition is atomic. A delayed callback must not move a round from
-    // `PublishingCiphertext` or `CiphertextPublished` back to `Expired` and compute it twice.
+    // Atomic: a delayed callback must not move a round from `PublishingCiphertext` or
+    // `CiphertextPublished` back to `Expired` and compute it twice.
     if !repo.try_mark_expired().await? {
         return Ok(());
     }
     let voter_count = repo.get_vote_count().await?;
 
     // The contract is the authority on how many inputs there are, and this callback can run before
-    // the last committed input is indexed. Computation is one-shot, so starting short would tally
-    // a subset and derive a root the contract rejects — a failure with no other symptom.
-    //
-    // The snapshot comes back from the same call, read once. Assembling the request from separate
-    // reads lets an input event land between them, which pairs a ciphertext with another
-    // input's commitment and derives a root `CRISPProgram` rejects.
+    // the last committed input is indexed. Computation is one-shot, so starting short would tally a
+    // subset and derive a root the contract rejects, with no other symptom. The snapshot comes
+    // back from the same call: assembling the request from separate reads lets an input event land
+    // between them and pairs a ciphertext with another input's commitment.
     let snapshot = match wait_for_indexed_inputs(&e3_id, &repo).await? {
         IndexedInputs::Complete(snapshot) => snapshot,
         IndexedInputs::Mismatch { indexed, published } => {
-            // Leave the round "Expired" and unfinished so a later pass can still compute it. The
-            // retries registered at `DEADLINE_RETRY_OFFSETS` come back to it. Marking it finished
-            // here would either omit an accepted input or tally local data that is not in the
-            // contract's root.
-            return Err(eyre::eyre!(
-                "[e3_id={}] the indexer holds {} input(s), but CRISPProgram accepted {}; \
-                 refusing to compute while the counts differ. A retry pass runs at +{}s from the \
-                 input deadline. If every pass reports this, the index is inconsistent and needs \
-                 attention.",
-                e3_id,
-                indexed,
-                published,
-                DEADLINE_RETRY_OFFSETS
-                    .iter()
-                    .map(|offset| offset.to_string())
-                    .collect::<Vec<_>>()
-                    .join("s, +")
-            ));
+            // The round stays "Expired" and unfinished so a later pass can still compute it.
+            // Marking it finished would omit an accepted input or tally local data that is not in
+            // the contract's root.
+            let retries = DEADLINE_ATTEMPT_OFFSETS[1..]
+                .iter()
+                .map(|offset| format!("+{offset}s"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            bail!(
+                "[e3_id={e3_id}] the indexer holds {indexed} input(s), but CRISPProgram accepted \
+                 {published}; refusing to compute while the counts differ. Retry passes run at \
+                 {retries} from the input deadline. If every pass reports this, the index is \
+                 inconsistent and needs attention."
+            );
         }
     };
-    let votes = snapshot.ciphertexts.clone();
 
-    if voter_count > 0 && votes.is_empty() {
-        return Err(eyre::eyre!(
-            "[e3_id={}] {} active voter slot(s) are recorded, but the input snapshot is empty; \
-             refusing to finish an inconsistent round",
-            e3_id,
-            voter_count
-        ));
-    }
-
-    if !votes.is_empty() {
-        info!(
-            "[e3_id={}] Starting computation for E3 ({} ciphertext input(s), {} voter(s))",
-            e3_id,
-            votes.len(),
-            voter_count
-        );
-        // The local concurrency barrier. Two passes can be inside the indexer wait at once, so the
-        // transition to "Computing" has to decide which one proceeds. It must use one store
-        // operation, not a read followed by a write. Restart recovery remains at-least-once because
-        // the contract, not this process, is the durable idempotency boundary.
-        //
-        // Claimed here rather than before the wait: a pass that gives up on a short index leaves
-        // the round "Expired" so a later pass can still take it, and claiming earlier would pin it
-        // to "Computing" and strand it.
-        if !repo.try_claim_computing().await? {
-            info!(
-                "[e3_id={}] another pass is already computing this round; nothing to do",
-                e3_id
+    if snapshot.ciphertexts.is_empty() {
+        if voter_count > 0 {
+            bail!(
+                "[e3_id={e3_id}] {voter_count} active voter slot(s) are recorded, but the input \
+                 snapshot is empty; refusing to finish an inconsistent round"
             );
+        }
+        info!("[e3_id={e3_id}] E3 has no votes to decrypt. Setting status to Finished.");
+        repo.update_status(FINISHED).await?;
+    } else {
+        info!(
+            "[e3_id={e3_id}] Starting computation for E3 ({} ciphertext input(s), {voter_count} voter(s))",
+            snapshot.ciphertexts.len()
+        );
+        // The local concurrency barrier: two passes can be inside the indexer wait at once, so one
+        // store operation decides which proceeds. Restart recovery stays at-least-once because the
+        // contract, not this process, is the durable idempotency boundary. Claimed after the wait:
+        // a pass that gives up on a short index leaves the round "Expired" for a later pass.
+        if !repo.try_claim_computing().await? {
+            info!("[e3_id={e3_id}] another pass is already computing this round; nothing to do");
             return Ok(());
         }
-
-        let submission = async {
-            let (id, status) = run_compute(
-                &e3_id,
-                e3.chain_id,
-                e3.interfold_address,
-                e3.encryption_scheme_id,
-                e3.committee_public_key_hash,
-                e3.e3_params,
-                RoundInputs {
-                    ciphertexts: snapshot.ciphertexts,
-                    commitments: snapshot.commitments,
-                    slots: snapshot.slots,
-                    parents: snapshot.parents,
-                },
-                format!(
-                    "{}/state/add-result",
-                    CONFIG.interfold_server_url_for_clients()
-                ),
-            )
-            .await
-            .map_err(|e| eyre::eyre!("Error sending run compute request: {e}"))?;
-
-            if id != e3_id {
-                return Err(eyre::eyre!(
-                    "Computation request returned unexpected E3 ID: expected {}, got {}",
-                    e3_id,
-                    id
-                ));
-            }
-
-            if status != "processing" {
-                return Err(eyre::eyre!(
-                    "Computation request failed with status: {}",
-                    status
-                ));
-            }
-
-            Ok::<(), eyre::Report>(())
-        }
-        .await;
-
-        if let Err(submission_error) = submission {
+        if let Err(error) = run_compute(&e3_id, e3, snapshot).await {
             if let Err(release_error) = repo.release_compute_claim().await {
                 error!(
-                    "[e3_id={}] Failed to release compute claim after submission error: {}",
-                    e3_id, release_error
+                    "[e3_id={e3_id}] Failed to release compute claim after submission error: {release_error:#}"
                 );
             }
-            return Err(submission_error.into());
+            return Err(error);
         }
-
-        info!("[e3_id={}] Request Computation for E3", e3_id);
+        info!("[e3_id={e3_id}] Request Computation for E3");
 
         if !repo.mark_compute_submitted().await? {
             let status = repo
@@ -1007,60 +826,12 @@ async fn handle_e3_input_deadline_expiration(
                 .await
                 .unwrap_or_else(|_| "unknown".to_owned());
             warn!(
-                "[e3_id={}] Compute response arrived after the round advanced to {}; leaving that state unchanged",
-                e3_id, status
+                "[e3_id={e3_id}] Compute response arrived after the round advanced to {status}; leaving that state unchanged"
             );
         }
-    } else {
-        info!(
-            "[e3_id={}] E3 has no votes to decrypt. Setting status to Finished.",
-            e3_id
-        );
-        repo.update_status("Finished").await?;
     }
-    info!("[e3_id={}] E3 request handled successfully.", e3_id);
-
+    info!("[e3_id={e3_id}] E3 request handled successfully.");
     Ok(())
-}
-
-pub async fn register_ciphertext_output_published(
-    indexer: InterfoldIndexer<impl DataStore, ReadWrite>,
-) -> Result<InterfoldIndexer<impl DataStore, ReadWrite>> {
-    // CiphertextOutputPublished
-    indexer
-        .add_event_handler(move |event: CiphertextOutputPublished, ctx| {
-            let store = ctx.store();
-            let e3_id = event.e3Id.to_string();
-            let mut repo = CrispE3Repository::new(store, &e3_id);
-            async move {
-                info!("[e3_id={}] Handling CiphertextOutputPublished", e3_id);
-                repo.update_status("CiphertextPublished").await?;
-                Ok(())
-            }
-        })
-        .await;
-    Ok(indexer)
-}
-
-pub async fn register_ciphertext_output_reference_published(
-    indexer: InterfoldIndexer<impl DataStore, ReadWrite>,
-) -> Result<InterfoldIndexer<impl DataStore, ReadWrite>> {
-    indexer
-        .add_event_handler(move |event: CiphertextOutputReferencePublished, ctx| {
-            let store = ctx.store();
-            let e3_id = event.e3Id.to_string();
-            let mut repo = CrispE3Repository::new(store, &e3_id);
-            async move {
-                info!(
-                    "[e3_id={}] Handling CiphertextOutputReferencePublished",
-                    e3_id
-                );
-                repo.update_status("CiphertextPublished").await?;
-                Ok(())
-            }
-        })
-        .await;
-    Ok(indexer)
 }
 
 /// Record the tally that `PlaintextOutputPublished` carries, and finish the round.
@@ -1078,217 +849,105 @@ async fn record_plaintext_output<S: DataStore>(
 ) -> eyre::Result<()> {
     let Some(round) = repo.try_get_crisp().await? else {
         info!(
-            "[e3_id={}] Ignoring PlaintextOutputPublished for a round without a CRISP record",
-            e3_id
+            "[e3_id={e3_id}] Ignoring PlaintextOutputPublished for a round without a CRISP record"
         );
         return Ok(());
     };
     let same_program = round
         .e3_program
         .parse::<Address>()
-        .is_ok_and(|program| is_configured_e3_program(program, configured_program));
+        .is_ok_and(|program| program == configured_program);
 
     if same_program {
         let vote_counts = decode_tally(plaintext_output, round.num_options.parse()?)?;
         for (i, count) in vote_counts.iter().enumerate() {
-            info!("[e3_id={}] Option index: {} votes: {:?}", e3_id, i, count);
+            info!("[e3_id={e3_id}] Option index: {i} votes: {count:?}");
         }
         repo.set_votes(vote_counts).await?;
     } else {
         warn!(
-            "[e3_id={}] Leaving the tally empty: the round's program '{}' is not the configured \
-             program {}, so its ballot layout can differ",
-            e3_id, round.e3_program, configured_program
+            "[e3_id={e3_id}] Leaving the tally empty: the round's program '{}' is not the \
+             configured program {configured_program}, so its ballot layout can differ",
+            round.e3_program
         );
     }
 
-    repo.update_status("Finished").await
-}
-
-pub async fn register_plaintext_output_published(
-    indexer: InterfoldIndexer<impl DataStore, ReadWrite>,
-) -> Result<InterfoldIndexer<impl DataStore, ReadWrite>> {
-    let configured_program: Address = CONFIG
-        .e3_program_address
-        .parse()
-        .with_context(|| "Invalid configured E3 program address")?;
-
-    // PlaintextOutputPublished
-    indexer
-        .add_event_handler(move |event: PlaintextOutputPublished, ctx| {
-            let store = ctx.store();
-            let e3_id = event.e3Id.to_string();
-            let mut repo = CrispE3Repository::new(store, &e3_id);
-            async move {
-                info!("[e3_id={}] Handling PlaintextOutputPublished", e3_id);
-                record_plaintext_output(
-                    &mut repo,
-                    &e3_id,
-                    &event.plaintextOutput,
-                    configured_program,
-                )
-                .await?;
-                Ok(())
-            }
-        })
-        .await;
-    Ok(indexer)
-}
-
-pub async fn register_committee_published(
-    indexer: InterfoldIndexer<impl DataStore, ReadWrite>,
-) -> Result<InterfoldIndexer<impl DataStore, ReadWrite>> {
-    indexer
-        .add_event_handler(move |event: CommitteePublished, ctx| {
-            async move {
-                let e3_id = event.e3Id.to_string();
-                info!("[e3_id={}] Handling CommitteePublished", e3_id);
-
-                if !activate_round_if_ready(e3_id.clone(), ctx.clone()).await? {
-                    warn!(
-                        "[e3_id={}] Committee event arrived, but the verified public key or CRISP request record is unavailable; round remains pending",
-                        e3_id
-                    );
-                    schedule_round_activation_retries(&e3_id, &ctx);
-                }
-
-                Ok(())
-            }
-        })
-        .await;
-    Ok(indexer)
-}
-
-pub async fn register_committee_public_key_chunks(
-    indexer: InterfoldIndexer<impl DataStore, ReadWrite>,
-) -> Result<InterfoldIndexer<impl DataStore, ReadWrite>> {
-    indexer
-        .add_event_handler(
-            move |event: CommitteePublicKeyChunkPublished, ctx| async move {
-                // Do not assume chunks arrive in index order. The normal writer sends them in
-                // order, but the contract deliberately permits a committee member to repair any
-                // missing chunk. Whichever event completes the generic indexer's assembly must be
-                // able to activate the round.
-                let e3_id = event.e3Id.to_string();
-                if !activate_round_if_ready(e3_id.clone(), ctx.clone()).await? {
-                    schedule_round_activation_retries(&e3_id, &ctx);
-                }
-                Ok(())
-            },
-        )
-        .await;
-    Ok(indexer)
-}
-
-pub async fn get_current_timestamp_rpc() -> eyre::Result<u64> {
-    let provider = ProviderBuilder::new().connect(&CONFIG.http_rpc_url).await?;
-    let block = provider
-        .get_block_by_number(alloy::eips::BlockNumberOrTag::Latest)
-        .await?
-        .ok_or_else(|| eyre::eyre!("Latest block not found"))?;
-
-    Ok(block.header.timestamp)
-}
-
-pub async fn register_input_published(
-    indexer: InterfoldIndexer<impl DataStore, ReadWrite>,
-    availability: Arc<AvailabilityService>,
-) -> Result<InterfoldIndexer<impl DataStore, ReadWrite>> {
-    indexer
-        .add_event_handler(move |event: InputPublished, ctx| {
-            let availability = Arc::clone(&availability);
-            let e3_id = event.e3Id.to_string();
-            let store = ctx.store();
-            async move {
-                let reference = AvailableInputReference::from_event(e3_id, &event);
-                availability
-                    .record_input_reference(&reference)
-                    .map_err(|error| eyre::eyre!(error.to_string()))?;
-                match store_available_input(
-                    store.clone(),
-                    Arc::clone(&availability),
-                    reference.clone(),
-                )
-                .await
-                {
-                    Ok(()) => {
-                        let e3_id = reference.e3_id.clone();
-                        tokio::spawn(resume_expired_round(e3_id, store));
-                    }
-                    Err(error) => {
-                        warn!(
-                            "[e3_id={}] Input {} is committed but not retrievable yet: {}",
-                            reference.e3_id, reference.index, error
-                        );
-                    }
-                }
-                Ok(())
-            }
-        })
-        .await;
-    Ok(indexer)
+    repo.update_status(FINISHED).await
 }
 
 /// Index a committed ciphertext immediately when this availability service holds its bytes.
 ///
 /// VectorX finalization can take hours. Reserving the input index on Ethereum preserves CRISP's
 /// parent chain, and this local copy lets a later vote or mask extend that entry during the wait.
-/// Other indexers that do not hold the staged object simply learn it from `InputPublished` later.
-pub async fn register_input_committed(
-    indexer: InterfoldIndexer<impl DataStore, ReadWrite>,
+/// Other indexers that do not hold the staged object learn it from `InputPublished` later.
+async fn handle_input_committed<S: DataStore>(
+    event: InputCommitted,
+    ctx: Arc<IndexerContext<S, ReadWrite>>,
     availability: Arc<AvailabilityService>,
-) -> Result<InterfoldIndexer<impl DataStore, ReadWrite>> {
-    indexer
-        .add_event_handler(move |event: InputCommitted, ctx| {
-            let availability = Arc::clone(&availability);
-            let store = ctx.store();
-            async move {
-                let hash = format!("0x{}", hex::encode(event.encryptedVoteHash));
-                let Some(ciphertext) = availability
-                    .object(&hash)
-                    .map_err(|error| eyre::eyre!(error.to_string()))?
-                else {
-                    // This is normal for a secondary indexer. The verified InputPublished event
-                    // supplies Avail coordinates later; advancing the cursor is safe because no
-                    // unverified bytes are needed for final computation.
-                    return Ok(());
-                };
-                e3_data_availability::verify_retrieved_bytes(
-                    e3_data_availability::DataReference {
-                        content_hash: event.encryptedVoteHash.0,
-                        block_number: 0,
-                        leaf_index: 0,
-                    },
-                    ciphertext.clone(),
-                )
-                .map_err(|error| eyre::eyre!(error.to_string()))?;
-                store_input_bytes(
-                    store,
-                    event.e3Id.to_string(),
-                    ciphertext,
-                    event.index.to::<u64>(),
-                    event.encryptedVoteCommitment.0,
-                    event.slotAddress.into(),
-                    event.parentIndexPlusOne.to::<u64>(),
-                )
-                .await
-                .map_err(|error| eyre::eyre!(error.to_string()))?;
-                Ok::<(), eyre::Report>(())
-            }
-        })
-        .await;
-    Ok(indexer)
+) -> eyre::Result<()> {
+    let hash = encode_prefixed(event.encryptedVoteHash);
+    let Some(ciphertext) = availability.object(&hash).map_err(report)? else {
+        // Normal for a secondary indexer. The verified InputPublished event supplies the Avail
+        // coordinates later, and no unverified bytes are needed for final computation.
+        return Ok(());
+    };
+    let ciphertext = e3_data_availability::verify_retrieved_bytes(
+        e3_data_availability::DataReference {
+            content_hash: event.encryptedVoteHash.0,
+            block_number: 0,
+            leaf_index: 0,
+        },
+        ciphertext,
+    )
+    .map_err(report)?;
+    store_input_bytes(
+        ctx.store(),
+        &event.e3Id.to_string(),
+        ciphertext,
+        u64::try_from(event.index)?,
+        event.encryptedVoteCommitment.0,
+        event.slotAddress.into(),
+        u64::try_from(event.parentIndexPlusOne)?,
+    )
+    .await
+}
+
+async fn handle_input_published<S: DataStore>(
+    event: InputPublished,
+    ctx: Arc<IndexerContext<S, ReadWrite>>,
+    availability: Arc<AvailabilityService>,
+) -> eyre::Result<()> {
+    let reference =
+        AvailableInputReference::from_event(event.e3Id.to_string(), &event).map_err(report)?;
+    availability
+        .record_input_reference(&reference)
+        .map_err(report)?;
+    let store = ctx.store();
+    match store_available_input(store.clone(), &availability, &reference).await {
+        Ok(()) => {
+            tokio::spawn(resume_expired_round(reference.e3_id, store));
+        }
+        // The durable reference stays, and `recover_available_inputs` retries it.
+        Err(error) => warn!(
+            "[e3_id={}] Input {} is committed but not retrievable yet: {error:#}",
+            reference.e3_id, reference.index
+        ),
+    }
+    Ok(())
 }
 
 async fn store_available_input<S: DataStore>(
     store: SharedStore<S>,
-    availability: Arc<AvailabilityService>,
-    reference: AvailableInputReference,
-) -> Result<()> {
-    let ciphertext = availability.retrieve(reference.data_reference()).await?;
+    availability: &AvailabilityService,
+    reference: &AvailableInputReference,
+) -> eyre::Result<()> {
+    let ciphertext = availability
+        .retrieve(reference.data_reference())
+        .await
+        .map_err(report)?;
     store_input_bytes(
         store,
-        reference.e3_id.clone(),
+        &reference.e3_id,
         ciphertext,
         reference.index,
         reference.commitment,
@@ -1296,7 +955,9 @@ async fn store_available_input<S: DataStore>(
         reference.parent_index_plus_one,
     )
     .await?;
-    availability.complete_input_reference(&reference)?;
+    availability
+        .complete_input_reference(reference)
+        .map_err(report)?;
     info!(
         "[e3_id={}] Retrieved input {} from data availability",
         reference.e3_id, reference.index
@@ -1306,14 +967,14 @@ async fn store_available_input<S: DataStore>(
 
 async fn store_input_bytes<S: DataStore>(
     store: SharedStore<S>,
-    e3_id: String,
+    e3_id: &str,
     ciphertext: Vec<u8>,
     index: u64,
     commitment: [u8; 32],
     slot: [u8; 20],
     parent_index_plus_one: u64,
-) -> Result<()> {
-    let mut repo = CrispE3Repository::new(store, &e3_id);
+) -> eyre::Result<()> {
+    let mut repo = CrispE3Repository::new(store, e3_id);
     let e3 = repo.get_e3().await?;
     let params = decode_bfv_params_arc(&e3.e3_params)?;
     repo.insert_ciphertext_input(
@@ -1328,107 +989,89 @@ async fn store_input_bytes<S: DataStore>(
     Ok(())
 }
 
+/// Run the deadline handler for a round whose deadline has passed, after an input arrived late.
 async fn resume_expired_round<S: DataStore>(e3_id: String, store: SharedStore<S>) {
-    let repo = CrispE3Repository::new(store.clone(), &e3_id);
-    let Ok(e3) = repo.get_e3().await else {
-        return;
-    };
-    let Ok(now) = get_current_timestamp_rpc().await else {
-        return;
-    };
-    if now >= e3.input_window[1] {
-        if let Err(error) = handle_e3_input_deadline_expiration(e3_id.clone(), store).await {
-            warn!(
-                "[e3_id={}] Could not resume computation after retrieving an input: {}",
-                e3_id, error
-            );
-        }
+    if let Err(error) = try_resume_expired_round(&e3_id, store).await {
+        warn!("[e3_id={e3_id}] Could not resume computation after retrieving an input: {error:#}");
     }
 }
 
-async fn recover_round_deadlines<S: DataStore>(store: SharedStore<S>) {
-    let ids = match CurrentRoundRepository::new(store.clone())
-        .get_round_ids()
-        .await
-    {
-        Ok(ids) => ids,
-        Err(error) => {
-            warn!("Could not recover CRISP round deadlines: {error}");
-            return;
-        }
-    };
+async fn try_resume_expired_round<S: DataStore>(
+    e3_id: &str,
+    store: SharedStore<S>,
+) -> eyre::Result<()> {
+    let e3 = CrispE3Repository::new(store.clone(), e3_id)
+        .get_e3()
+        .await?;
+    let now = rpc::latest_timestamp(rpc::provider().await?).await?;
+    if now >= e3.input_window[1] {
+        handle_e3_input_deadline_expiration(e3_id.to_string(), store).await?;
+    }
+    Ok(())
+}
 
+/// The input deadline of a round that may still need its deadline pass, if it does.
+async fn deadline_awaiting_pass<S: DataStore>(
+    store: SharedStore<S>,
+    e3_id: &str,
+) -> eyre::Result<Option<u64>> {
+    let repo = CrispE3Repository::new(store, e3_id);
+    if !matches!(
+        repo.get_status().await?.as_str(),
+        REQUESTED | ACTIVE | EXPIRED
+    ) {
+        return Ok(None);
+    }
+    Ok(Some(repo.get_e3().await?.input_window[1]))
+}
+
+/// Fallback for restored block callbacks: one provider and one bounded loop cover every unfinished
+/// round, then the task ends. A failed pass is final here, since the scheduled retries cover it.
+async fn recover_round_deadlines<S: DataStore>(store: SharedStore<S>) -> eyre::Result<()> {
     let mut pending = Vec::new();
-    for e3_id in ids {
-        let repo = CrispE3Repository::new(store.clone(), &e3_id);
-        let Ok(status) = repo.get_status().await else {
-            continue;
-        };
-        if status != "Requested" && status != "Active" && status != "Expired" {
-            continue;
+    for e3_id in CurrentRoundRepository::new(store.clone())
+        .get_round_ids()
+        .await?
+    {
+        match deadline_awaiting_pass(store.clone(), &e3_id).await {
+            Ok(Some(deadline)) => pending.push((e3_id, deadline)),
+            Ok(None) => {}
+            Err(error) => {
+                warn!("[e3_id={e3_id}] Could not read the round for deadline recovery: {error:#}")
+            }
         }
-        let Ok(e3) = repo.get_e3().await else {
-            continue;
-        };
-        pending.push((e3_id, e3.input_window[1]));
     }
     if pending.is_empty() {
-        return;
+        return Ok(());
     }
 
-    // This is a fallback for restored block callbacks, not one perpetual task per historical
-    // round. One provider and one bounded loop cover all unfinished rounds, then the task exits.
-    let provider = match ProviderBuilder::new().connect(&CONFIG.http_rpc_url).await {
-        Ok(provider) => provider,
-        Err(error) => {
-            warn!("Could not connect the CRISP deadline recovery watchdog: {error}");
-            return;
-        }
-    };
+    let provider = rpc::provider().await?;
     while !pending.is_empty() {
-        let head = tokio::time::timeout(
-            Duration::from_secs(15),
-            provider.get_block_by_number(alloy::eips::BlockNumberOrTag::Latest),
-        )
-        .await;
-        let now = match head {
-            Ok(Ok(Some(block))) => block.header.timestamp,
-            Ok(Ok(None)) => {
-                sleep(Duration::from_secs(30)).await;
-                continue;
+        match rpc::latest_timestamp(provider).await {
+            Ok(now) => {
+                let (due, waiting): (Vec<_>, Vec<_>) = pending
+                    .into_iter()
+                    .partition(|(_, deadline)| now >= *deadline);
+                pending = waiting;
+                for (e3_id, _) in due {
+                    if let Err(error) =
+                        handle_e3_input_deadline_expiration(e3_id.clone(), store.clone()).await
+                    {
+                        warn!(
+                            "[e3_id={e3_id}] Recovered deadline handler could not start computation: {error:#}"
+                        );
+                    }
+                }
             }
-            Ok(Err(error)) => {
-                warn!("CRISP deadline recovery could not read the latest block: {error}");
-                sleep(Duration::from_secs(30)).await;
-                continue;
-            }
-            Err(_) => {
-                warn!("CRISP deadline recovery timed out while reading the latest block");
-                sleep(Duration::from_secs(30)).await;
-                continue;
-            }
-        };
-
-        let mut index = 0;
-        while index < pending.len() {
-            if now < pending[index].1 {
-                index += 1;
-                continue;
-            }
-            let (e3_id, _) = pending.swap_remove(index);
-            if let Err(error) =
-                handle_e3_input_deadline_expiration(e3_id.clone(), store.clone()).await
-            {
-                warn!(
-                    "[e3_id={}] Recovered deadline handler could not start computation: {}",
-                    e3_id, error
-                );
+            Err(error) => {
+                warn!("CRISP deadline recovery could not read the latest block: {error:#}")
             }
         }
         if !pending.is_empty() {
             sleep(Duration::from_secs(30)).await;
         }
     }
+    Ok(())
 }
 
 /// What the retry pass does with one round.
@@ -1444,9 +1087,8 @@ enum PendingDiscoveryStep {
 
 fn pending_discovery_step(round: &E3Crisp) -> PendingDiscoveryStep {
     if !round.discovery_pending {
-        return PendingDiscoveryStep::Skip;
-    }
-    if round.status == "Requested" || round.status == "Active" {
+        PendingDiscoveryStep::Skip
+    } else if matches!(round.status.as_str(), REQUESTED | ACTIVE) {
         PendingDiscoveryStep::Retry
     } else {
         PendingDiscoveryStep::Forgive
@@ -1457,9 +1099,8 @@ fn pending_discovery_step(round: &E3Crisp) -> PendingDiscoveryStep {
 ///
 /// Returns the leaf hashes to post as the census root, or `None` when no root is due: the census
 /// is owed, or it is on-chain. An owed census writes no list, so a new round keeps the empty lists
-/// from `initialize_round`. A round whose `E3Requested` arrives again and fails discovery keeps the
-/// census it holds until the retry pass rebuilds it, and a rebuilt Merkle census must match the
-/// posted root.
+/// from `initialize_round`, and a round whose `E3Requested` arrives again keeps the census it holds
+/// until the retry pass rebuilds it. A rebuilt Merkle census must match the posted root.
 async fn store_census<S: DataStore>(
     repo: &mut CrispE3Repository<S>,
     holders: Vec<TokenHolder>,
@@ -1470,16 +1111,15 @@ async fn store_census<S: DataStore>(
         repo.set_discovery_pending(true).await?;
         return Ok(None);
     }
-    // Poseidon hashes exist to build the census tree, and an on-chain census has no tree:
-    // `_eligibility` reads power from the token per input. The addresses are all a client needs
-    // there: a mask is written to someone else's slot, so it needs a list of who holds power, not
-    // a membership proof.
+    // An on-chain census has no tree, and `_eligibility` reads power from the token per input. A
+    // client only needs the addresses: a mask goes to someone else's slot, so it needs a list of
+    // who holds power, not a membership proof.
     let leaves = if is_onchain_census {
         None
     } else {
         Some(
             compute_token_holder_hashes(&holders)
-                .with_context(|| "Failed to compute token holder hashes")?,
+                .context("Failed to compute token holder hashes")?,
         )
     };
     repo.set_eligible_addresses(holders).await?;
@@ -1491,42 +1131,21 @@ async fn store_census<S: DataStore>(
 
 /// Settle holder discovery for rounds that were registered without a census.
 ///
-/// A round carries `discovery_pending` when its census could not be built at `E3Requested`:
-/// either the stored voting-power divisor and snapshot could not be read, or discovery itself
-/// failed. A new round in this state serves no mask targets, and a Merkle one takes no ballot until
-/// this pass posts its root. A round whose `E3Requested` arrives again keeps the census it holds
-/// until this pass rebuilds it. The event is not replayed once the cursor passes it, so this pass
-/// is the only retry. It reads the divisor and snapshot again for each such CUSTOM-credit round
-/// and, when they answer, runs the same discovery the handler would have run. A round that has
-/// ended is dropped from the pass: it takes no more ballots.
+/// A round carries `discovery_pending` when its census could not be built at `E3Requested`: the
+/// stored voting-power divisor and snapshot could not be read, or discovery itself failed. The
+/// event is not replayed once the cursor passes it, so this pass is the only retry. It reads the
+/// divisor again for each such CUSTOM-credit round and, when it answers, runs the discovery the
+/// handler would have run. A round that has ended is dropped from the pass.
 ///
-/// One task for the process, started at registration. It sleeps on `DISCOVERY_OWED` while nothing
-/// is owed. `notify_one` keeps a permit when the task is mid-pass, so debt recorded after the pass
-/// read that round is still picked up.
-async fn retry_pending_discovery<S: DataStore>(store: SharedStore<S>) {
-    let crisp = loop {
-        match CRISPContractFactory::create_read(&CONFIG.http_rpc_url, &CONFIG.e3_program_address)
-            .await
-        {
-            Ok(crisp) => break crisp,
-            Err(error) => {
-                warn!("Could not start the pending-discovery retry reader: {error}");
-                sleep(Duration::from_secs(60)).await;
-            }
-        }
-    };
+/// One task for the process. It sleeps on `DISCOVERY_OWED` while nothing is owed. `notify_one`
+/// keeps a permit when the task is mid-pass, so debt recorded after the pass read that round is
+/// still picked up.
+async fn retry_pending_discovery<S: DataStore>(store: SharedStore<S>) -> eyre::Result<()> {
+    let crisp = crisp_read().await?;
     loop {
-        let ids = match CurrentRoundRepository::new(store.clone())
+        let ids = CurrentRoundRepository::new(store.clone())
             .get_round_ids()
-            .await
-        {
-            Ok(ids) => ids,
-            Err(error) => {
-                warn!("Could not list rounds for pending discovery: {error}");
-                sleep(Duration::from_secs(60)).await;
-                continue;
-            }
-        };
+            .await?;
         let mut owed = 0usize;
         for e3_id in ids {
             let mut repo = CrispE3Repository::new(store.clone(), &e3_id);
@@ -1537,16 +1156,12 @@ async fn retry_pending_discovery<S: DataStore>(store: SharedStore<S>) {
                 PendingDiscoveryStep::Skip => continue,
                 PendingDiscoveryStep::Forgive => {
                     if let Err(error) = repo.set_discovery_pending(false).await {
-                        warn!(
-                            "[e3_id={}] Could not clear pending discovery: {error}",
-                            e3_id
-                        );
+                        warn!("[e3_id={e3_id}] Could not clear pending discovery: {error:#}");
                     }
                     continue;
                 }
-                PendingDiscoveryStep::Retry => {}
+                PendingDiscoveryStep::Retry => owed += 1,
             }
-            owed += 1;
             let Ok(e3_id_value) = e3_id_to_u256(&e3_id) else {
                 continue;
             };
@@ -1561,17 +1176,11 @@ async fn retry_pending_discovery<S: DataStore>(store: SharedStore<S>) {
             };
             match settle_pending_discovery(&mut repo, &e3_id, &round, stored).await {
                 Ok(count) => {
-                    info!(
-                        "[e3_id={}] Pending holder discovery settled with {} holders",
-                        e3_id, count
-                    );
+                    info!("[e3_id={e3_id}] Pending holder discovery settled with {count} holders");
                     owed -= 1;
                 }
                 Err(error) => {
-                    warn!(
-                        "[e3_id={}] Pending holder discovery failed, will retry: {:#}",
-                        e3_id, error
-                    );
+                    warn!("[e3_id={e3_id}] Pending holder discovery failed, will retry: {error:#}")
                 }
             }
         }
@@ -1585,46 +1194,32 @@ async fn retry_pending_discovery<S: DataStore>(store: SharedStore<S>) {
 
 /// Run the discovery a round was owed, store the holders, and clear the debt.
 ///
-/// Returns the holder count. The debt is cleared only after the holders are stored, so a
-/// failure between the two leaves the round owed rather than served an empty census. A Merkle
-/// round also gets its root posted and its leaf hashes stored first.
+/// Returns the holder count. The debt is cleared only after the holders are stored, so a failure
+/// between the two leaves the round owed rather than served an empty census. A Merkle round also
+/// gets its root posted and its leaf hashes stored first.
 async fn settle_pending_discovery<S: DataStore>(
     repo: &mut CrispE3Repository<S>,
     e3_id: &str,
     round: &E3Crisp,
     stored: Option<(U256, u64)>,
 ) -> eyre::Result<usize> {
-    let custom_params = CustomParams {
+    let params = CustomParams {
         token_address: round.token_address.clone(),
         balance_threshold: round.balance_threshold.clone(),
         num_options: round.num_options.clone(),
         credit_mode: round.credit_mode,
         credits: round.credits.clone(),
         census_mode: round.census_mode,
-        // The round does not retain the requested divisor. The stored value passed to
-        // `discover_holders` is the source, and this field is informational.
+        // The round does not retain the requested divisor. `stored` is the source, and this field
+        // is informational.
         voting_power_divisor: "0".to_owned(),
     };
     let requester: Address = round
         .requester
         .parse()
-        .with_context(|| "Invalid stored requester address")?;
-    let token_address: Address = round
-        .token_address
-        .parse()
-        .with_context(|| "Invalid stored token address")?;
-    let balance_threshold = BigUint::parse_bytes(round.balance_threshold.as_bytes(), 10)
-        .ok_or_else(|| eyre::eyre!("Invalid stored balance threshold"))?;
-    let mut holders = discover_holders(
-        e3_id,
-        &custom_params,
-        requester,
-        token_address,
-        round.snapshot_block,
-        &balance_threshold,
-        stored,
-    )
-    .await?;
+        .context("Invalid stored requester address")?;
+    let mut holders =
+        discover_holders(e3_id, &params, requester, round.snapshot_block, stored).await?;
     let count = holders.len();
     order_token_holders(&mut holders);
     if round.census_mode != CensusMode::Onchain {
@@ -1637,79 +1232,64 @@ async fn settle_pending_discovery<S: DataStore>(
     Ok(count)
 }
 
+/// Whether the chain says a round no longer needs its inputs retrieved. An unreadable stage is not
+/// terminal.
+async fn chain_ends_input_retrieval(interfold: &InterfoldContract<ReadOnly>, e3_id: &str) -> bool {
+    let Ok(e3_id) = e3_id_to_u256(e3_id) else {
+        return false;
+    };
+    within(READ_TIMEOUT, interfold.get_e3_stage(e3_id))
+        .await
+        .is_ok_and(|stage| stage_ends_input_retrieval(&stage))
+}
+
+/// Retrieve the inputs whose `InputPublished` reference is stored but whose bytes are not yet
+/// indexed, until the round no longer needs them.
 async fn recover_available_inputs<S: DataStore>(
     store: SharedStore<S>,
     availability: Arc<AvailabilityService>,
-) {
-    let interfold = match InterfoldContractFactory::create_read(
-        &CONFIG.http_rpc_url,
-        &CONFIG.interfold_address,
-    )
-    .await
-    {
-        Ok(interfold) => interfold,
-        Err(error) => {
-            warn!("Could not start the available-input recovery reader: {error}");
-            return;
-        }
-    };
+) -> eyre::Result<()> {
+    let interfold =
+        InterfoldContractFactory::create_read(&CONFIG.http_rpc_url, &CONFIG.interfold_address)
+            .await?;
     loop {
-        let mut terminal_e3s = HashMap::<String, bool>::new();
-        let references = match availability.pending_input_references() {
-            Ok(references) => references,
-            Err(error) => {
-                warn!("Could not scan durable available-input references: {error}");
-                sleep(Duration::from_secs(30)).await;
-                continue;
-            }
-        };
-        for reference in references {
+        let mut chain_terminal = HashMap::<String, bool>::new();
+        for reference in availability.pending_input_references().map_err(report)? {
             let round = CrispE3Repository::new(store.clone(), &reference.e3_id);
-            let status = round.get_status().await.ok();
-            let locally_terminal =
-                matches!(status.as_deref(), Some("CiphertextPublished" | "Finished"));
-            let chain_terminal = if locally_terminal {
-                false
-            } else if let Some(terminal) = terminal_e3s.get(&reference.e3_id) {
-                *terminal
-            } else {
-                let terminal = match e3_id_to_u256(&reference.e3_id) {
-                    Ok(e3_id) => {
-                        tokio::time::timeout(Duration::from_secs(15), interfold.get_e3_stage(e3_id))
-                            .await
-                            .is_ok_and(|result| {
-                                result.as_ref().is_ok_and(stage_ends_input_retrieval)
-                            })
+            let locally_terminal = matches!(
+                round.get_status().await.as_deref(),
+                Ok(CIPHERTEXT_PUBLISHED | FINISHED)
+            );
+            let terminal = locally_terminal
+                || match chain_terminal.get(&reference.e3_id) {
+                    Some(terminal) => *terminal,
+                    None => {
+                        let terminal =
+                            chain_ends_input_retrieval(&interfold, &reference.e3_id).await;
+                        chain_terminal.insert(reference.e3_id.clone(), terminal);
+                        terminal
                     }
-                    Err(_) => false,
                 };
-                terminal_e3s.insert(reference.e3_id.clone(), terminal);
-                terminal
-            };
-            if locally_terminal || chain_terminal {
+            if terminal {
                 if let Err(error) = availability.complete_input_reference(&reference) {
                     warn!(
-                        "[e3_id={}] Could not remove an obsolete input reference: {}",
-                        reference.e3_id, error
+                        "[e3_id={}] Could not remove an obsolete input reference: {error:#}",
+                        reference.e3_id
                     );
                 }
                 continue;
             }
-            match store_available_input(store.clone(), Arc::clone(&availability), reference.clone())
-                .await
-            {
+            match store_available_input(store.clone(), &availability, &reference).await {
+                // The scheduled deadline retries are finite. If Avail or its RPC was down through
+                // all of them, a successful background retrieval must wake computation instead of
+                // leaving a complete round stranded.
                 Ok(()) => {
-                    // The scheduled deadline retries are finite. If Avail or its RPC was down
-                    // through all of them, successful background retrieval must wake computation
-                    // instead of leaving an otherwise complete round stranded forever.
-                    tokio::spawn(resume_expired_round(reference.e3_id.clone(), store.clone()));
+                    tokio::spawn(resume_expired_round(reference.e3_id, store.clone()));
                 }
-                Err(error) => {
-                    warn!(
-                        "[e3_id={}] Input {} retrieval will retry: {}",
-                        reference.e3_id, reference.index, error
-                    );
-                }
+                Err(error) => warn!(
+                    "[e3_id={}] Input {} retrieval will retry: {error:#}",
+                    reference.e3_id, reference.index
+                ),
             }
         }
         sleep(Duration::from_secs(30)).await;
@@ -1718,250 +1298,303 @@ async fn recover_available_inputs<S: DataStore>(
 
 /// Persist every log from a watched contract, so `/chain/logs` can answer from the store.
 ///
-/// Untyped on purpose — see `log_repo`. A failed write IS propagated: the catch-up uses a handler
-/// error to hold the cursor back, and an index that quietly missed a log while the cursor moved
-/// past it answers later queries short while looking authoritative.
-pub async fn register_log_index(
-    indexer: InterfoldIndexer<impl DataStore, ReadWrite>,
-    log_contracts: &[String],
-) -> Result<InterfoldIndexer<impl DataStore, ReadWrite>> {
-    // Lowercased once so the per-log membership test is a plain comparison.
-    let wanted: Vec<String> = log_contracts.iter().map(|a| a.to_lowercase()).collect();
+/// A failed write IS propagated: the catch-up uses a handler error to hold the cursor back, and
+/// an index that quietly missed a log while the cursor moved past it answers later queries short
+/// while looking authoritative.
+async fn index_log<S: DataStore>(
+    log: alloy::rpc::types::Log,
+    ctx: Arc<IndexerContext<S, ReadWrite>>,
+    wanted: Arc<[Address]>,
+) -> eyre::Result<()> {
+    // Watched for the typed handlers is not the same as wanted in the log index: a busy token
+    // emits thousands of transfers nobody queries.
+    if !wanted.contains(&log.address()) {
+        return Ok(());
+    }
+    // A log with no block number or index cannot be placed. Filing it at block 0 would collide
+    // with every other unplaceable log and sit below every coverage record.
+    let (Some(block_number), Some(log_index)) = (log.block_number, log.log_index) else {
+        warn!(
+            "Skipping a log with no block position from {}",
+            log.address()
+        );
+        return Ok(());
+    };
 
-    indexer
-        .add_raw_log_handler(move |log, ctx| {
-            let mut repo = LogRepository::new(ctx.store());
-            let wanted = wanted.clone();
-            async move {
-                // Watched for the typed handlers is not the same as wanted in the log index: a
-                // busy token emits thousands of transfers nobody queries, and retaining them costs
-                // storage and write amplification for nothing.
-                if !wanted.contains(&log.address().to_string().to_lowercase()) {
-                    return Ok(());
-                }
-
-                // A log with no block number or index cannot be placed. `unwrap_or_default()`
-                // filed it at block 0, log 0 — a position that both collides with any other
-                // unplaceable log and sits below every coverage record, so it would be silently
-                // dropped from every query anyway. Skipping it is the same outcome, said out loud.
-                let (Some(block_number), Some(log_index)) = (log.block_number, log.log_index)
-                else {
-                    warn!(
-                        "Skipping a log with no block position from {}",
-                        log.address()
-                    );
-                    return Ok(());
-                };
-
-                let stored = StoredLog {
-                    removed: log.removed,
-                    address: log.address().to_string(),
-                    topics: log.topics().iter().map(|t| t.to_string()).collect(),
-                    data: log.data().data.to_string(),
-                    block_number,
-                    transaction_hash: log.transaction_hash.map(|h| h.to_string()),
-                    log_index,
-                    block_hash: log.block_hash.map(|h| h.to_string()),
-                    transaction_index: log.transaction_index,
-                };
-
-                // Propagated, not logged and dropped. The cursor is a claim that everything below
-                // it has been applied, and `catch_up` relies on a handler error to stop the
-                // cursor advancing past a failed window — swallowing this disarmed exactly that
-                // safety net, and one transient store failure became a permanent hole underneath
-                // an index that still reported the range as covered.
-                repo.append(stored)
-                    .await
-                    .map_err(|e| eyre::eyre!("indexing a log failed: {e}"))?;
-
-                Ok(())
-            }
+    LogRepository::new(ctx.store())
+        .append(StoredLog {
+            removed: log.removed,
+            address: log.address().to_string(),
+            topics: log.topics().iter().map(|t| t.to_string()).collect(),
+            data: log.data().data.to_string(),
+            block_number,
+            transaction_hash: log.transaction_hash.map(|h| h.to_string()),
+            log_index,
+            block_hash: log.block_hash.map(|h| h.to_string()),
+            transaction_index: log.transaction_index,
         })
-        .await;
-    Ok(indexer)
+        .await
+        .context("indexing a log failed")
 }
 
-pub async fn start_indexer(
-    url: &str,
-    contract_address: &str,
-    registry_address: &str,
-    crisp_address: &str,
-    store: SharedStore<impl DataStore>,
-    availability: Arc<AvailabilityService>,
-    private_key: &str,
-    index_start_block: Option<u64>,
-    index_chunk_size: Option<u64>,
-    index_contracts: &[String],
-    index_log_contracts: &[String],
-) -> Result<()> {
-    info!("CRISP: Creating indexer...");
+async fn mark_ciphertext_published<S: DataStore>(
+    e3_id: U256,
+    store: SharedStore<S>,
+    event_name: &str,
+) -> eyre::Result<()> {
+    info!("[e3_id={e3_id}] Handling {event_name}");
+    CrispE3Repository::new(store, e3_id)
+        .update_status(CIPHERTEXT_PUBLISHED)
+        .await
+}
 
-    // The E3 stack, plus whatever the deployment asked to be readable through `/chain/*`. Watching
-    // the extra addresses is what lets their logs be served from the store instead of forwarded
-    // upstream on every request; the typed handlers below dispatch on event signature, so a
-    // contract that emits nothing they recognise simply flows past them into the log index.
-    //
-    // `INDEX_LOG_CONTRACTS` is documented as a subset of `INDEX_CONTRACTS`, but nothing enforces
-    // that, and an entry listed only there would never reach the subscription or the backfill
-    // filter — while coverage was still recorded for it below. Every query for that address then
-    // passed the coverage test and was answered from an empty index: an authoritative empty log
-    // list. Watching the union costs nothing and removes the way to configure that.
-    let mut watched: Vec<&str> = vec![contract_address, registry_address, crisp_address];
-    for address in index_contracts.iter().chain(index_log_contracts.iter()) {
-        if !watched.iter().any(|w| w.eq_ignore_ascii_case(address)) {
-            watched.push(address);
+async fn register_handlers<S: DataStore>(
+    indexer: &InterfoldIndexer<S, ReadWrite>,
+    availability: Arc<AvailabilityService>,
+    log_contracts: &[Address],
+) -> eyre::Result<()> {
+    let configured_program: Address = CONFIG
+        .e3_program_address
+        .parse()
+        .context("Invalid configured E3 program address")?;
+    let wanted: Arc<[Address]> = log_contracts.into();
+
+    indexer
+        .add_event_handler(move |event: E3Requested, ctx| {
+            handle_e3_requested(event, ctx, configured_program)
+        })
+        .await;
+    indexer
+        .add_event_handler(|event: CiphertextOutputPublished, ctx| {
+            mark_ciphertext_published(event.e3Id, ctx.store(), "CiphertextOutputPublished")
+        })
+        .await;
+    indexer
+        .add_event_handler(|event: CiphertextOutputReferencePublished, ctx| {
+            mark_ciphertext_published(
+                event.e3Id,
+                ctx.store(),
+                "CiphertextOutputReferencePublished",
+            )
+        })
+        .await;
+    indexer
+        .add_event_handler(move |event: PlaintextOutputPublished, ctx| async move {
+            let e3_id = event.e3Id.to_string();
+            info!("[e3_id={e3_id}] Handling PlaintextOutputPublished");
+            let mut repo = CrispE3Repository::new(ctx.store(), &e3_id);
+            record_plaintext_output(
+                &mut repo,
+                &e3_id,
+                &event.plaintextOutput,
+                configured_program,
+            )
+            .await
+        })
+        .await;
+    indexer
+        .add_event_handler(|event: CommitteePublished, ctx| async move {
+            let e3_id = event.e3Id.to_string();
+            info!("[e3_id={e3_id}] Handling CommitteePublished");
+            if !activate_round_if_ready(&e3_id, &ctx).await? {
+                warn!(
+                    "[e3_id={e3_id}] Committee event arrived, but the verified public key or CRISP request record is unavailable; round remains pending"
+                );
+                schedule_round_activation_retries(&e3_id, &ctx);
+            }
+            Ok(())
+        })
+        .await;
+    // Chunks can arrive out of index order, because the contract lets a committee member repair
+    // any missing chunk. Whichever event completes the generic indexer's assembly must be able to
+    // activate the round.
+    indexer
+        .add_event_handler(|event: CommitteePublicKeyChunkPublished, ctx| async move {
+            let e3_id = event.e3Id.to_string();
+            if !activate_round_if_ready(&e3_id, &ctx).await? {
+                schedule_round_activation_retries(&e3_id, &ctx);
+            }
+            Ok(())
+        })
+        .await;
+    let committed_availability = Arc::clone(&availability);
+    indexer
+        .add_event_handler(move |event: InputCommitted, ctx| {
+            handle_input_committed(event, ctx, Arc::clone(&committed_availability))
+        })
+        .await;
+    indexer
+        .add_event_handler(move |event: InputPublished, ctx| {
+            handle_input_published(event, ctx, Arc::clone(&availability))
+        })
+        .await;
+    indexer
+        .add_raw_log_handler(move |log, ctx| index_log(log, ctx, Arc::clone(&wanted)))
+        .await;
+    Ok(())
+}
+
+/// Start the tasks that run beside the indexer, each restarted when it fails or panics. They read
+/// and write the store directly, so the indexer does not own them and a restart of the indexer
+/// never duplicates them.
+pub fn spawn_recovery_tasks<S: DataStore>(
+    store: SharedStore<S>,
+    availability: Arc<AvailabilityService>,
+) {
+    tokio::spawn(supervise("available-input recovery", {
+        let store = store.clone();
+        move || recover_available_inputs(store.clone(), Arc::clone(&availability))
+    }));
+    tokio::spawn(supervise("round-deadline recovery", {
+        let store = store.clone();
+        move || recover_round_deadlines(store.clone())
+    }));
+    tokio::spawn(supervise("pending-discovery retry", move || {
+        retry_pending_discovery(store.clone())
+    }));
+}
+
+/// Record where the log index starts for each watched contract, before any log arrives, so a
+/// contract that has emitted nothing yet does not look uncovered forever.
+async fn claim_log_coverage<S: DataStore>(
+    mut store: SharedStore<S>,
+    log_contracts: &[Address],
+    from_block: u64,
+) {
+    // An error here must NOT read as "no previous set": that would mark every address newly added
+    // and narrow its coverage to the current head, discarding the record for history that is still
+    // in the store. On a read failure every record stays as it stands: leaving a claim alone is
+    // recoverable, narrowing one wrongly is not.
+    let previous: Option<Vec<String>> = match store.get(LOG_INDEX_CONFIG_KEY).await {
+        Ok(previous) => Some(previous.unwrap_or_default()),
+        Err(error) => {
+            error!(
+                "Could not read the previous log-index configuration: {error}. Leaving every \
+                 coverage record as it stands this run."
+            );
+            None
+        }
+    };
+
+    let mut repo = LogRepository::new(store.clone());
+    for address in log_contracts {
+        let address = address.to_string();
+        // An unknown previous set counts as already indexed, which only widens a claim by filling
+        // a missing record and never narrows an existing one.
+        let was_indexed = previous.as_ref().is_none_or(|previous| {
+            previous
+                .iter()
+                .any(|entry| entry.eq_ignore_ascii_case(&address))
+        });
+        let recorded = if was_indexed {
+            repo.ensure_coverage_from(&address, from_block).await
+        } else {
+            // Newly added, or back after a removal: claim only from here on.
+            repo.rebase_coverage(&address, from_block)
+                .await
+                .and(repo.ensure_coverage_from(&address, from_block).await)
+        };
+        if let Err(error) = recorded {
+            error!("Could not record log coverage for {address}: {error:#}");
         }
     }
 
-    let recovery_store = store.clone();
-    tokio::spawn(recover_available_inputs(
-        recovery_store,
-        Arc::clone(&availability),
-    ));
-    let crisp_indexer =
-        InterfoldIndexer::new_with_write_contract(url, &watched, store, private_key).await?;
-    info!("CRISP: Indexer registering handlers...");
+    // Only after the comparison above ran. Recording the current set after a failed read would
+    // tell the next run every address was already indexed, so an address added during this run
+    // would never have its stale coverage narrowed.
+    if previous.is_some() {
+        let current: Vec<String> = log_contracts.iter().map(ToString::to_string).collect();
+        if let Err(error) = store.insert(LOG_INDEX_CONFIG_KEY, &current).await {
+            error!("Could not record the log-index configuration: {error}");
+        }
+    }
+}
 
-    let crisp_indexer = register_e3_requested(crisp_indexer).await?;
-    let crisp_indexer = register_ciphertext_output_published(crisp_indexer).await?;
-    let crisp_indexer = register_ciphertext_output_reference_published(crisp_indexer).await?;
-    let crisp_indexer = register_plaintext_output_published(crisp_indexer).await?;
-    let crisp_indexer = register_committee_published(crisp_indexer).await?;
-    let crisp_indexer = register_committee_public_key_chunks(crisp_indexer).await?;
-    let crisp_indexer = register_input_committed(crisp_indexer, Arc::clone(&availability)).await?;
-    let crisp_indexer = register_input_published(crisp_indexer, availability).await?;
-    let crisp_indexer = register_log_index(crisp_indexer, index_log_contracts).await?;
-    tokio::spawn(recover_round_deadlines(crisp_indexer.get_store()));
-    tokio::spawn(retry_pending_discovery(crisp_indexer.get_store()));
+/// Build the indexer, register its handlers, catch up, and listen. A failure anywhere ends the
+/// call, and the supervisor builds a fresh indexer. Only this part is safe to rerun: the
+/// recovery tasks are started once by `spawn_recovery_tasks`.
+pub async fn run_indexer<S: DataStore>(
+    store: SharedStore<S>,
+    availability: Arc<AvailabilityService>,
+) -> eyre::Result<()> {
+    info!("CRISP: Creating indexer...");
+    let log_contracts = CONFIG.index_log_contracts();
+
+    // The E3 stack plus whatever the deployment asked to read through `/chain/*`. Watching those
+    // addresses lets their logs be served from the store instead of forwarded upstream; the typed
+    // handlers dispatch on event signature, so a contract that emits nothing they recognise flows
+    // past them into the log index. `INDEX_LOG_CONTRACTS` should be a subset of `INDEX_CONTRACTS`,
+    // but nothing enforces it, and an address listed only there would get coverage records while
+    // never reaching the subscription: every query for it would then be answered from an empty
+    // index. Watching the union removes that way to misconfigure.
+    let mut watched = vec![
+        CONFIG.interfold_address.clone(),
+        CONFIG.ciphernode_registry_address.clone(),
+        CONFIG.e3_program_address.clone(),
+    ];
+    for address in CONFIG.index_contracts().iter().chain(&log_contracts) {
+        let address = address.to_string();
+        if !watched.iter().any(|w| w.eq_ignore_ascii_case(&address)) {
+            watched.push(address);
+        }
+    }
+    let watched: Vec<&str> = watched.iter().map(String::as_str).collect();
+
+    let indexer = InterfoldIndexer::new_with_write_contract(
+        &CONFIG.ws_rpc_url,
+        &watched,
+        store,
+        &CONFIG.private_key,
+    )
+    .await?;
+    info!("CRISP: Indexer registering handlers...");
+    register_handlers(&indexer, availability, &log_contracts).await?;
     info!("CRISP: Indexer finished registering handlers!");
 
-    // Resolve where indexing will ACTUALLY begin, ONCE, and drive both the backfill configuration
-    // and the coverage claim from that single value.
-    //
-    // Reading it twice was a silent hole. Coverage used to come from `get_head_block_rpc` over the
-    // HTTP URL, while the catch-up read its own head over the WebSocket URL later in startup —
-    // possibly a different node, certainly a later moment. The HTTP read is the lower of the two,
-    // which is the unsafe direction: coverage claimed blocks that indexing then skipped over, and
-    // `ensure_coverage_from` never overwrites, so the wrong bound persisted for the life of the
-    // database.
-    //
-    // Three cases:
-    //
-    //   - A resumed database already carries coverage from its first run, and the cursor may sit
-    //     far above a since-lowered INDEX_START_BLOCK. Re-claiming the lower bound would assert
-    //     history that will never be fetched, so existing coverage is left untouched.
-    //   - INDEX_START_BLOCK set: that is the start, and the catch-up uses the same number.
-    //   - Fresh database, nothing configured: read the head here and PIN the backfill to it, so
-    //     the catch-up cannot resolve a different (later) start than the one claimed below.
-    let store = crisp_indexer.get_store();
-
-    // A read ERROR is not an absent record. `unwrap_or(None)` conflated them, so one transient
-    // store failure made a resumed database look fresh — pinning the coverage claim to the current
-    // head and discarding the record describing everything indexed so far. Propagated instead:
-    // startup is exactly the moment a broken store should be loud, and every later decision here
-    // is derived from this value.
+    // Resolve where indexing begins once, and drive both the backfill and the coverage claim from
+    // that value. Two reads can differ (another node, a later moment), and a coverage claim below
+    // the real start persists for the life of the database, because `ensure_coverage_from` never
+    // overwrites.
+    let store = indexer.get_store();
+    // A read ERROR is not an absent record: treating it as one would make a resumed database look
+    // fresh and pin the claim to the current head.
     let resumed: Option<u64> = store
         .get(INDEXER_CURSOR_KEY)
         .await
-        .map_err(|e| eyre::eyre!("reading the indexer cursor failed: {e}"))?;
-
-    let start_block = match (resumed, index_start_block) {
-        // `ensure_coverage_from` leaves an existing record alone, so this only fills a gap left by
-        // an older database that predates log indexing.
+        .map_err(|error| eyre!("reading the indexer cursor failed: {error}"))?;
+    let start_block = match (resumed, CONFIG.index_start_block) {
+        // A resumed database already carries coverage from its first run, and the cursor may sit
+        // far above a since-lowered INDEX_START_BLOCK. Existing coverage is left alone;
+        // `ensure_coverage_from` only fills the gap an older database left.
         (Some(cursor), _) => Some(cursor.saturating_add(1)),
         (None, Some(configured)) => Some(configured),
-        (None, None) => match crisp_indexer.head_block().await {
+        // A fresh database with nothing configured: pin the backfill to the head read here, so the
+        // catch-up cannot resolve a later start than the one claimed below.
+        (None, None) => match indexer.head_block().await {
             Ok(head) => Some(head),
-            Err(e) => {
-                error!("Could not read the head to pin the index start: {e}");
+            Err(error) => {
+                error!("Could not read the head to pin the index start: {error}");
                 None
             }
         },
     };
 
-    // Close the gap left by every restart and dropped socket before subscribing. On a resumed
-    // database the stored cursor wins regardless of what is passed here; on a fresh one this pins
-    // the start to the very block coverage is about to claim.
-    crisp_indexer.configure_backfill(
+    // On a resumed database the stored cursor wins whatever is passed here.
+    indexer.configure_backfill(
         if resumed.is_some() {
-            index_start_block
+            CONFIG.index_start_block
         } else {
             start_block
         },
-        index_chunk_size,
+        CONFIG.index_chunk_size,
     );
-
-    // Record where the log index starts for each watched contract, before any log arrives, so a
-    // contract that has emitted nothing yet does not look uncovered forever.
-    {
-        if !index_log_contracts.is_empty() {
-            let coverage_from = start_block;
-
-            if let Some(coverage_from) = coverage_from {
-                // The set that was log-indexed on the previous run. An address present now but
-                // absent then was not indexed during the gap, so whatever coverage its earlier
-                // run left behind overstates what is in the store.
-                //
-                // An Err here must NOT read as "no previous set". That would mark every address
-                // newly added and narrow its coverage to the current head — permanently discarding
-                // the record for history that is still sitting in the store, so `/chain/logs`
-                // would stop serving a range it can answer perfectly well. On a read failure the
-                // rebase is skipped entirely: leaving a claim alone is recoverable, narrowing one
-                // wrongly is not.
-                let previous: Option<Vec<String>> = match store.get(LOG_INDEX_CONFIG_KEY).await {
-                    Ok(previous) => Some(previous.unwrap_or_default()),
-                    Err(e) => {
-                        error!(
-                            "Could not read the previous log-index configuration: {e}. Leaving \
-                             every coverage record as it stands this run."
-                        );
-                        None
-                    }
-                };
-
-                let mut repo = LogRepository::new(store.clone());
-                for address in index_log_contracts {
-                    // Unknown previous set ⇒ treated as already indexed, which only ever widens
-                    // what is claimed by filling a missing record, never narrows an existing one.
-                    let was_indexed = previous.as_ref().is_none_or(|previous| {
-                        previous
-                            .iter()
-                            .any(|entry| entry.eq_ignore_ascii_case(address))
-                    });
-
-                    let recorded = if was_indexed {
-                        repo.ensure_coverage_from(address, coverage_from).await
-                    } else {
-                        // Newly added (or re-added after a removal): claim only from here on.
-                        repo.rebase_coverage(address, coverage_from)
-                            .await
-                            .and(repo.ensure_coverage_from(address, coverage_from).await)
-                    };
-
-                    if let Err(e) = recorded {
-                        error!("Could not record log coverage for {address}: {e}");
-                    }
-                }
-
-                // Only when the comparison above actually happened. Recording the current set
-                // after a failed read would tell the NEXT run that every address was already
-                // indexed, so an address genuinely added during this run would never have its
-                // stale coverage narrowed — the read failure would outlive itself.
-                if previous.is_some() {
-                    let mut store = store;
-                    let current: Vec<String> = index_log_contracts.to_vec();
-                    if let Err(e) = store.insert(LOG_INDEX_CONFIG_KEY, &current).await {
-                        error!("Could not record the log-index configuration: {e}");
-                    }
-                }
-            }
-        }
+    if let (false, Some(from_block)) = (log_contracts.is_empty(), start_block) {
+        claim_log_coverage(store, &log_contracts, from_block).await;
     }
 
-    restore_round_deadline_callbacks(&crisp_indexer).await?;
-    crisp_indexer.listen().await?;
-    info!("CRISP: Indexer listen loop has finished!");
-    Ok(())
+    restore_round_deadline_callbacks(&indexer).await?;
+    indexer.listen().await?;
+    bail!("the indexer's listen loop ended")
 }
 
 #[cfg(test)]
@@ -1997,21 +1630,7 @@ mod census_order_tests {
 
 #[cfg(test)]
 mod e3_request_tests {
-    use super::{
-        deadline_attempt_times, is_configured_e3_program, stage_ends_input_retrieval, E3Stage,
-    };
-    use alloy::primitives::Address;
-
-    #[test]
-    fn e3_requests_only_match_the_configured_program() {
-        let configured = Address::repeat_byte(0x11);
-
-        assert!(is_configured_e3_program(configured, configured));
-        assert!(!is_configured_e3_program(
-            Address::repeat_byte(0x22),
-            configured
-        ));
-    }
+    use super::{deadline_attempt_times, stage_ends_input_retrieval, E3Stage};
 
     #[test]
     fn restart_spreads_overdue_deadline_attempts_from_now() {

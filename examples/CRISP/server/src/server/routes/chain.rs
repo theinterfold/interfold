@@ -6,133 +6,70 @@
 
 //! Chain access for clients that have no RPC provider of their own.
 //!
-//! A browser app built on CRISP otherwise needs its own hosted-provider key just to read the
-//! contracts it already talks to through this server. These routes close that gap, and they are
-//! deliberately NOT a general purpose JSON-RPC proxy:
+//! These routes are deliberately NOT a general purpose JSON-RPC proxy:
 //!
 //! - Every method that names an address is checked against an allowlist (`INDEX_CONTRACTS` plus
-//!   the contracts this server is configured against), so the server cannot be turned into free
-//!   RPC for the rest of the chain. The data itself is public — the allowlist bounds cost and
-//!   abuse, not disclosure. The check fails closed in both directions: an unknown parameter shape
-//!   is refused, and so is a request that omits the address a method could have carried (an
-//!   `eth_call` with no `to` is arbitrary EVM execution; an `eth_getLogs` with no `address` is
-//!   every log on the chain). The few methods that name no address at all are bounded by shape
-//!   instead — no full transaction bodies, and a capped `feeHistory`.
-//! - Only reads. There is no path here that can send a transaction; writes stay with the user's
-//!   wallet, which brings its own transport.
-//! - Log queries are windowed server-side, so a caller may ask for the whole history of a contract
-//!   in one request without knowing the provider's `eth_getLogs` range cap. Working around that
-//!   cap in the browser is exactly the chunked-scan code this replaces.
+//!   the contracts this server is configured against), so the server cannot become free RPC for
+//!   the rest of the chain. The data is public; the allowlist bounds cost and abuse, not
+//!   disclosure. The check fails closed: an unknown parameter shape is refused, and so is a
+//!   request that omits the address a method could have carried (an `eth_call` with no `to` is
+//!   arbitrary EVM execution; an `eth_getLogs` with no `address` is every log on the chain). The
+//!   few methods that name no address are bounded by shape instead: a capped `feeHistory`.
+//! - Only reads. No path here can send a transaction; writes stay with the user's wallet.
+//! - Log queries are windowed server-side, so a caller may ask for a contract's whole history in
+//!   one request without knowing the provider's `eth_getLogs` range cap.
+
+mod policy;
 
 use crate::config::CONFIG;
 use crate::server::app_data::AppData;
-use crate::server::models::JsonResponse;
 use crate::server::rate_limit::ChainRateLimiter;
-use crate::server::read_cache;
+use crate::server::read_cache::{self, Counters};
+use crate::server::rpc::{self, HTTP};
 
-use super::scan::upstream_window;
+use super::scan::{
+    coverage_for, covered, unavailable, upstream_failed, upstream_window, window_count, windows,
+    LOG_WINDOW,
+};
+use super::{json_message, upstream_unavailable};
+use policy::{call_cache_key, global_request_is_too_broad, hex_u64, requested_addresses, Scope};
 
+pub(super) use policy::{
+    aggregate3Call, is_allowed, is_log_indexed, parse_address, Multicall3Call3, MULTICALL3,
+};
+
+use actix_web::http::StatusCode;
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use alloy::eips::BlockNumberOrTag;
 use alloy::network::TransactionBuilder;
-use alloy::primitives::{address, Address, Bytes, B256};
-use alloy::providers::{DynProvider, Provider, ProviderBuilder};
-use alloy::rpc::client::RpcClient;
+use alloy::primitives::{Bytes, B256};
+use alloy::providers::Provider;
 use alloy::rpc::types::{Filter, TransactionRequest};
-use alloy::sol;
-use alloy::sol_types::SolCall;
-use alloy::transports::http::Http;
 use log::{error, warn};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::str::FromStr;
 
-/// Upper bound on a single `eth_getLogs` window, matching the indexer's default. The server
-/// splits a caller's range into windows of this size.
-const LOG_WINDOW: u64 = 2_000;
-
-/// Cap on how many calls one `/chain/read` request may batch, so a single request cannot fan out
-/// into unbounded provider load.
+/// Cap on the calls one `/chain/read` request or one JSON-RPC batch may carry. A batch runs
+/// sequentially, so an unbounded one is unbounded upstream load held on a single connection.
 const MAX_BATCH: usize = 64;
 
-/// Cap on how many windows one log query may expand into.
-///
-/// Windowing is what lets a caller ignore the provider's range cap, but it also means a single
-/// request for "genesis to head" would become thousands of sequential upstream calls. Refusing
-/// with a clear bound is better than accepting a request that ties up a connection for minutes:
-/// callers know their contract's deployment block, and asking from there is the intended usage.
+/// Cap on the windows one log query may expand into. A request for "genesis to head" would
+/// otherwise become thousands of sequential upstream calls; callers know their contract's
+/// deployment block and are expected to start there.
 const MAX_LOG_WINDOWS: u64 = 500;
 
-/// Cost charged for `/chain/block-at-timestamp`.
-///
-/// The route bisects over block headers, so it costs about `log2(head)` upstream reads — roughly
-/// 25 on a 20-million-block chain, not the 8 it used to be charged. 32 covers any chain height up
-/// to 2^32 blocks, which is far beyond anything this will run against, and paying a fixed
-/// worst-case avoids a head read just to price the request.
+/// Cost charged for `/chain/block-at-timestamp`. The route bisects over block headers, about
+/// `log2(head)` upstream reads (roughly 25 on a 20-million-block chain). 32 covers any height up
+/// to 2^32 and avoids a head read just to price the request.
 const BLOCK_SEARCH_COST: usize = 32;
-
-/// Cap on how many calls one JSON-RPC batch may carry.
-///
-/// A batch is executed sequentially, so an unbounded array is an unbounded number of upstream
-/// requests held open on one connection — the same fan-out `/chain/read` already bounds.
-const MAX_RPC_BATCH: usize = 64;
-
-/// How long to wait on the upstream provider before giving up.
-///
-/// Without one, reqwest waits forever: a provider that accepts connections and then stalls would
-/// pin a worker per request until the process is restarted.
-const UPSTREAM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
-
-/// One HTTP client for the process, rather than one per request.
-///
-/// `Client` owns a connection pool; building it per call threw the pool away every time and paid
-/// a fresh TLS handshake for each upstream request.
-static HTTP: once_cell::sync::Lazy<reqwest::Client> = once_cell::sync::Lazy::new(|| {
-    reqwest::Client::builder()
-        .timeout(UPSTREAM_TIMEOUT)
-        .build()
-        .expect("building the upstream HTTP client cannot fail with a timeout as its only option")
-});
-
-/// One alloy provider for the process, built on the same timeout-bounded client as [`HTTP`].
-///
-/// Every typed route used to call `ProviderBuilder::new().connect(...)` per request, which threw
-/// away the connection pool each time and — more importantly — inherited no request timeout, so a
-/// provider that accepted a connection and then stalled pinned a worker until restart. The
-/// JSON-RPC forward path was fixed first; these are the rest of them.
-static PROVIDER: tokio::sync::OnceCell<DynProvider> = tokio::sync::OnceCell::const_new();
-
-pub(super) async fn upstream() -> eyre::Result<&'static DynProvider> {
-    PROVIDER
-        .get_or_try_init(|| async {
-            let url: reqwest::Url = CONFIG
-                .http_rpc_url
-                .parse()
-                .map_err(|e| eyre::eyre!("HTTP_RPC_URL is not a valid URL: {e}"))?;
-
-            let transport = Http::with_client(HTTP.clone(), url);
-            Ok(ProviderBuilder::new()
-                .connect_client(RpcClient::new(transport, false))
-                .erased())
-        })
-        .await
-}
-
-/// Whether a range is small enough to serve, given the window size.
-fn windows_for(from: u64, to: u64) -> u64 {
-    if from > to {
-        return 0;
-    }
-    (to - from) / LOG_WINDOW + 1
-}
 
 /// Who to charge a request to.
 ///
-/// `realip_remote_addr` reads `Forwarded` / `X-Forwarded-For` and performs NO trust-proxy check —
-/// it returns whatever the header says. Since both limiters key their per-caller window on this,
-/// trusting it with nothing in front means a caller can present a different address on every
-/// request, mint a fresh window each time, and never be limited at all. So the header is believed
-/// only when the deployment declares a proxy that overwrites it; otherwise the socket peer, which
-/// cannot be forged, is used instead.
+/// `realip_remote_addr` reads `Forwarded` / `X-Forwarded-For` with NO trust-proxy check, so a
+/// caller could present a new address on every request, mint a fresh window each time, and never
+/// be limited. The header is believed only when the deployment declares a proxy that overwrites
+/// it; otherwise the socket peer, which cannot be forged, is used.
 pub(super) fn identify(request: &HttpRequest, trust_proxy_headers: bool) -> String {
     let info = request.connection_info();
     let caller = if trust_proxy_headers {
@@ -143,31 +80,40 @@ pub(super) fn identify(request: &HttpRequest, trust_proxy_headers: bool) -> Stri
     caller.unwrap_or("unknown").to_string()
 }
 
-/// Charge a request against the caller's read window, returning the refusal if it does not fit.
+/// Charge a request against the caller's read window, returning `(caller, cost)` when it does not
+/// fit.
 ///
-/// These routes are cheap per call and unbounded in aggregate: they are the one place in this
-/// server that will make an upstream request for anyone who asks, and the allowlist bounds WHICH
-/// contracts that reaches, not HOW OFTEN. `cost` is in upstream calls, so a batch is charged for
-/// what it will actually cause rather than for being one HTTP request.
+/// These routes are cheap per call and unbounded in aggregate. The allowlist bounds WHICH
+/// contracts they reach, not HOW OFTEN. `cost` is in upstream calls, so a batch is charged for
+/// what it will cause, not for being one HTTP request.
 pub(super) fn admit(
     request: &HttpRequest,
     limiter: &ChainRateLimiter,
     cost: usize,
 ) -> Result<(), (String, usize)> {
     let caller = identify(request, limiter.trusts_proxy_headers());
-
-    match limiter.check_caller_cost(&caller, cost) {
-        Ok(()) => Ok(()),
-        Err(_) => Err((caller, cost)),
-    }
+    limiter
+        .check_caller_cost(&caller, cost)
+        .map_err(|_| (caller, cost))
 }
 
 /// The typed routes' refusal.
 pub(super) fn too_many_requests(caller: &str, cost: usize, route: &str) -> HttpResponse {
     warn!("Rate limit refused {route} from {caller} (cost {cost})");
-    HttpResponse::TooManyRequests().json(JsonResponse {
-        response: "Too many chain reads from this address, slow down".to_string(),
-    })
+    json_message(
+        StatusCode::TOO_MANY_REQUESTS,
+        "Too many chain reads from this address, slow down",
+    )
+}
+
+/// [`admit`], with the typed routes' refusal as the error.
+pub(super) fn charge(
+    request: &HttpRequest,
+    limiter: &ChainRateLimiter,
+    cost: usize,
+    route: &str,
+) -> Result<(), HttpResponse> {
+    admit(request, limiter, cost).map_err(|(caller, cost)| too_many_requests(&caller, cost, route))
 }
 
 pub fn setup_routes(config: &mut web::ServiceConfig) {
@@ -182,43 +128,34 @@ pub fn setup_routes(config: &mut web::ServiceConfig) {
     );
 }
 
-#[derive(Debug, Serialize)]
-pub struct StatsResponse {
-    pub call_hits: u64,
-    pub call_misses: u64,
-    pub head_hits: u64,
-    pub head_misses: u64,
-    pub log_index_hits: u64,
-    pub log_upstream: u64,
+#[derive(Serialize)]
+struct StatsResponse {
+    #[serde(flatten)]
+    counters: Counters,
     /// Upstream requests avoided: every cache hit and every log query the index answered.
-    pub upstream_calls_saved: u64,
+    upstream_calls_saved: u64,
 }
 
-/// How much upstream traffic this server is absorbing.
-///
-/// Exposed because "the indexer saves RPC calls" is a claim that should be checkable against a
-/// running deployment rather than taken on trust.
+/// How much upstream traffic this server absorbs, so "the indexer saves RPC calls" is checkable
+/// against a running deployment.
 async fn stats() -> impl Responder {
-    let counters = read_cache::COUNTERS.read().await;
+    let counters = read_cache::counters();
+    let upstream_calls_saved = counters
+        .call_hits
+        .saturating_add(counters.head_hits)
+        .saturating_add(counters.log_index_hits);
 
     HttpResponse::Ok().json(StatsResponse {
-        call_hits: counters.call_hits,
-        call_misses: counters.call_misses,
-        head_hits: counters.head_hits,
-        head_misses: counters.head_misses,
-        log_index_hits: counters.log_index_hits,
-        log_upstream: counters.log_upstream,
-        upstream_calls_saved: counters.call_hits + counters.head_hits + counters.log_index_hits,
+        counters,
+        upstream_calls_saved,
     })
 }
 
-/// JSON-RPC methods this endpoint will forward.
+/// JSON-RPC methods this endpoint forwards.
 ///
-/// An allowlist rather than a denylist of writes: a new method appearing in a future provider or
-/// client should be unreachable until someone decides it belongs here, and the cost of that
-/// choice is a clear error instead of an unintended capability. Everything here is a read —
-/// notably absent are `eth_sendRawTransaction` and `eth_sendTransaction`, because transactions
-/// are signed and broadcast by the user's own wallet, which brings its own transport.
+/// An allowlist, not a denylist of writes: a method added by a future provider or client stays
+/// unreachable until someone decides it belongs here. Everything listed is a read; transactions
+/// are signed and broadcast by the user's own wallet.
 const ALLOWED_RPC_METHODS: &[&str] = &[
     "eth_call",
     "eth_getLogs",
@@ -240,374 +177,45 @@ const ALLOWED_RPC_METHODS: &[&str] = &[
     "web3_clientVersion",
 ];
 
-#[derive(Debug, Deserialize)]
-pub struct RpcRequest {
-    // `jsonrpc` is accepted and ignored: serde skips unknown fields, and the version is not
-    // something this endpoint varies on.
-    pub id: Option<serde_json::Value>,
-    pub method: String,
+/// `jsonrpc` is not declared: serde skips it, and this endpoint does not vary on the version.
+#[derive(Deserialize)]
+struct RpcRequest {
+    id: Option<Value>,
+    method: String,
     #[serde(default)]
-    pub params: serde_json::Value,
+    params: Value,
 }
 
-fn rpc_error(id: Option<serde_json::Value>, code: i64, message: &str) -> serde_json::Value {
-    serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "error": { "code": code, "message": message },
-    })
+fn rpc_error(id: Option<Value>, code: i64, message: &str) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
 }
 
-/// The cache key for an `eth_call`, or `None` when the shape is not one we can key on.
-///
-/// A call carrying `from`, `value` or a gas field is not keyed: those can change the result, and
-/// a key that ignores them would serve one caller's answer to another.
-fn call_cache_key(params: &serde_json::Value) -> Option<(String, String, Option<u64>)> {
-    // A state override object in the third position lets the caller choose the bytes the node
-    // returns. It is forwarded verbatim, so a key that ignores it would let one caller pick what
-    // every other caller is served for the rest of the block.
-    if params.get(2).is_some_and(|v| !v.is_null()) {
-        return None;
-    }
-
-    let tx = params.get(0)?.as_object()?;
-
-    // An allowlist of the fields the key accounts for, not a denylist of the ones known to break
-    // it: any field this endpoint does not understand may change the result, and a new one
-    // appearing in a future client must not silently become uncounted.
-    if tx
-        .keys()
-        .any(|field| !matches!(field.as_str(), "to" | "data" | "input"))
-    {
-        return None;
-    }
-
-    let address = tx.get("to")?.as_str()?.to_string();
-    let data = tx
-        .get("data")
-        .or_else(|| tx.get("input"))?
-        .as_str()?
-        .to_string();
-
-    let block = match params.get(1) {
-        // Absent or null: `latest` by JSON-RPC default.
-        None | Some(serde_json::Value::Null) => None,
-        Some(serde_json::Value::String(tag)) => match tag.as_str() {
-            "latest" => None,
-            // Anything that is not a plain `latest` or a concrete height (pending, safe,
-            // finalized) is left uncached rather than guessed at.
-            hex if hex.starts_with("0x") => {
-                Some(u64::from_str_radix(hex.trim_start_matches("0x"), 16).ok()?)
-            }
-            _ => return None,
-        },
-        // The EIP-1898 object form (`{"blockNumber":…}` / `{"blockHash":…}`). Reading it with
-        // `as_str` yielded `None`, which is the key for `latest` — so a result the node computed
-        // at an arbitrary historical block was filed as the current one, and any caller could
-        // choose what every other caller saw. Not keyed at all rather than keyed wrongly.
-        Some(_) => return None,
-    };
-
-    Some((address, data, block))
+fn rpc_result(id: Option<Value>, result: impl Into<Value>) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "result": result.into() })
 }
 
-/// Multicall3, at the same address on every chain it is deployed to.
+/// A read-only, allowlisted JSON-RPC endpoint, so a browser client can point a standard Ethereum
+/// library at the CRISP server and drop its hosted-provider key as a configuration change.
 ///
-/// It has to be on the allowlist for the frontends to work at all — viem coalesces independent
-/// `eth_call`s into a single `aggregate3` through it — but it is the one allowlisted address
-/// whose `to` says nothing about what is being read. `aggregate3([{target, callData}])` reaches
-/// ANY contract on the chain behind a `to` the check waves through, which rebuilds the
-/// "allowlist is decorative" hole through a different door. The data is public either way; the
-/// bound this loses is on cost and abuse, and that is the bound this endpoint exists to keep.
-///
-/// So a call to Multicall3 is decoded and its inner `target`s are checked instead.
-pub(super) const MULTICALL3: Address = address!("0xcA11bde05977b3631167028862bE2a173976CA11");
-
-/// How many levels of Multicall3-inside-Multicall3 to unwrap before refusing.
-///
-/// A nested aggregate is a legitimate shape (and cheap to decode), but the recursion has to stop
-/// somewhere: without a cap, a deeply nested payload is unbounded decode work chosen by the
-/// caller. Nothing either frontend sends nests at all.
-const MAX_MULTICALL_DEPTH: usize = 2;
-
-sol! {
-    struct Multicall3Call {
-        address target;
-        bytes callData;
-    }
-
-    struct Multicall3Call3 {
-        address target;
-        bool allowFailure;
-        bytes callData;
-    }
-
-    struct Multicall3Call3Value {
-        address target;
-        bool allowFailure;
-        uint256 value;
-        bytes callData;
-    }
-
-    function aggregate(Multicall3Call[] calls) returns (uint256 blockNumber, bytes[] returnData);
-    function tryAggregate(bool requireSuccess, Multicall3Call[] calls) returns (bytes[] returnData);
-    function blockAndAggregate(Multicall3Call[] calls)
-        returns (uint256 blockNumber, bytes32 blockHash, bytes[] returnData);
-    function tryBlockAndAggregate(bool requireSuccess, Multicall3Call[] calls)
-        returns (uint256 blockNumber, bytes32 blockHash, bytes[] returnData);
-    function aggregate3(Multicall3Call3[] calls) returns (bytes[] returnData);
-    function aggregate3Value(Multicall3Call3Value[] calls) returns (bytes[] returnData);
-}
-
-/// `getEthBalance(address)` — a Multicall3 self-view over public state, with no inner call to
-/// unwrap. Allowed as-is, like `eth_getBalance`.
-const MULTICALL3_GET_ETH_BALANCE: [u8; 4] = [0x4d, 0x23, 0x01, 0xcc];
-
-/// Every contract a call to Multicall3 would actually reach.
-///
-/// Fails closed in the same way as the rest of the check: an unrecognised selector on Multicall3
-/// is refused rather than forwarded, because "we could not tell what this reaches" and "this
-/// reaches nothing" are not the same answer.
-fn multicall3_targets(calldata: &[u8], depth: usize) -> Result<Vec<Address>, &'static str> {
-    if depth > MAX_MULTICALL_DEPTH {
-        return Err("multicall nesting is too deep");
-    }
-
-    let Some(selector) = calldata
-        .get(..4)
-        .and_then(|head| <[u8; 4]>::try_from(head).ok())
-    else {
-        return Err("a call to Multicall3 must carry a function selector");
-    };
-
-    // `getEthBalance` names its address in a plain parameter, and reaches no other contract.
-    if selector == MULTICALL3_GET_ETH_BALANCE {
-        return Ok(Vec::new());
-    }
-
-    let inner: Vec<(Address, Bytes)> = if selector == aggregate3Call::SELECTOR {
-        aggregate3Call::abi_decode(calldata)
-            .map_err(|_| "could not decode this Multicall3 aggregate3 payload")?
-            .calls
-            .into_iter()
-            .map(|call| (call.target, call.callData))
-            .collect()
-    } else if selector == aggregate3ValueCall::SELECTOR {
-        aggregate3ValueCall::abi_decode(calldata)
-            .map_err(|_| "could not decode this Multicall3 aggregate3Value payload")?
-            .calls
-            .into_iter()
-            .map(|call| (call.target, call.callData))
-            .collect()
-    } else if selector == aggregateCall::SELECTOR {
-        aggregateCall::abi_decode(calldata)
-            .map_err(|_| "could not decode this Multicall3 aggregate payload")?
-            .calls
-            .into_iter()
-            .map(|call| (call.target, call.callData))
-            .collect()
-    } else if selector == blockAndAggregateCall::SELECTOR {
-        blockAndAggregateCall::abi_decode(calldata)
-            .map_err(|_| "could not decode this Multicall3 blockAndAggregate payload")?
-            .calls
-            .into_iter()
-            .map(|call| (call.target, call.callData))
-            .collect()
-    } else if selector == tryAggregateCall::SELECTOR {
-        tryAggregateCall::abi_decode(calldata)
-            .map_err(|_| "could not decode this Multicall3 tryAggregate payload")?
-            .calls
-            .into_iter()
-            .map(|call| (call.target, call.callData))
-            .collect()
-    } else if selector == tryBlockAndAggregateCall::SELECTOR {
-        tryBlockAndAggregateCall::abi_decode(calldata)
-            .map_err(|_| "could not decode this Multicall3 tryBlockAndAggregate payload")?
-            .calls
-            .into_iter()
-            .map(|call| (call.target, call.callData))
-            .collect()
-    } else {
-        return Err("this Multicall3 function is not served by this indexer");
-    };
-
-    let mut targets = Vec::with_capacity(inner.len());
-    for (target, call_data) in inner {
-        // A target of Multicall3 itself would pass the allowlist while hiding another call list
-        // behind it — the same bypass one level down.
-        if target == MULTICALL3 {
-            targets.extend(multicall3_targets(&call_data, depth + 1)?);
-        } else {
-            targets.push(target);
-        }
-    }
-
-    Ok(targets)
-}
-
-/// The scope of an `eth_call`/`eth_estimateGas` whose `to` is Multicall3.
-fn multicall3_scope(call: &serde_json::Value) -> Scope {
-    // viem sends `data`; some clients send `input`. Both name the same field of a call object.
-    let Some(hex) = call
-        .get("data")
-        .or_else(|| call.get("input"))
-        .and_then(|value| value.as_str())
-    else {
-        return Scope::Unscoped("a call to Multicall3 must carry call data");
-    };
-
-    let Ok(calldata) = hex::decode(hex.trim().trim_start_matches("0x")) else {
-        return Scope::Unscoped("call data must be hex");
-    };
-
-    match multicall3_targets(&calldata, 0) {
-        Ok(targets) => Scope::Addresses(targets.iter().map(|target| target.to_string()).collect()),
-        Err(reason) => Scope::Unscoped(reason),
-    }
-}
-
-/// Which addresses a call is scoped to, so they can be checked against the allowlist.
-///
-/// The distinction that matters is between a method that carries NO address by construction and
-/// one whose address this function failed to find: the first is a global read that the allowlist
-/// cannot bound at all, the second is an unrecognised shape. Returning an empty vec for both is
-/// what made the allowlist decorative — an `eth_call` with no `to`, or an `eth_getLogs` with no
-/// `address`, skipped the check entirely and was forwarded verbatim.
-enum Scope {
-    /// Check every one of these against the allowlist before forwarding.
-    Addresses(Vec<String>),
-    /// The method takes no address; nothing to check, and nothing this endpoint can bound by
-    /// address either.
-    Global,
-    /// The method should be address-scoped but this request is not. Refuse.
-    Unscoped(&'static str),
-}
-
-/// Pull the address (or addresses) a request is scoped to out of its parameter list.
-///
-/// Fails closed: every method that CAN name an address must name one, and any shape this does not
-/// recognise is a refusal rather than a pass.
-fn requested_addresses(method: &str, params: &serde_json::Value) -> Scope {
-    // `eth_getBalance`, `eth_getTransactionCount`, `eth_getCode` and `eth_getStorageAt` are NOT
-    // allowlist-checked, and must not be: they take an ACCOUNT, and that account is normally the
-    // caller's own EOA — which can never appear on a list of watched CONTRACTS. Gating them broke
-    // every transaction in both apps, because a wallet needs the sender's nonce and gas balance
-    // before it will sign, and connectors call `getCode` on the signer to detect a smart account.
-    //
-    // The allowlist bounds the thing this endpoint is at risk of becoming: a free general-purpose
-    // executor. That risk lives in `eth_call` (arbitrary EVM) and `eth_getLogs` (range scans that
-    // fan out into hundreds of upstream requests), both still checked below. These four are O(1)
-    // point reads of public state with no fan-out, and the read window in `admit` is what bounds
-    // how many of them one caller may ask for.
-    //
-    // They fall through to the `_ => Scope::Global` arm.
-    let field = match method {
-        // An `eth_call` with no `to` is a contract-creation simulation: the caller supplies
-        // initcode that runs arbitrary EVM, which is a read of any contract on the chain by
-        // another name. There is no address to check, so there is nothing to allow.
-        "eth_call" | "eth_estimateGas" => "to",
-        // An absent, null or empty `address` means "every address" to a node. Serving that would
-        // return the whole chain's logs through an endpoint whose stated bound is an allowlist.
-        "eth_getLogs" => "address",
-        _ => return Scope::Global,
-    };
-
-    let Some(first) = params.get(0) else {
-        return Scope::Unscoped("this method requires a filter or call object");
-    };
-
-    // Only the call object's `to`: an `eth_getLogs` naming Multicall3 asks for that contract's own
-    // logs, which is what the allowlist already answers.
-    if field == "to" {
-        if let Some(to) = first.get("to").and_then(|value| value.as_str()) {
-            if parse_address(to) == Some(MULTICALL3) {
-                return multicall3_scope(first);
-            }
-        }
-    }
-
-    match first.get(field) {
-        Some(serde_json::Value::String(one)) => Scope::Addresses(vec![one.clone()]),
-        Some(serde_json::Value::Array(many)) if !many.is_empty() => {
-            let mut addresses = Vec::with_capacity(many.len());
-            for entry in many {
-                match entry.as_str() {
-                    Some(one) => addresses.push(one.to_string()),
-                    None => return Scope::Unscoped("addresses must be strings"),
-                }
-            }
-            Scope::Addresses(addresses)
-        }
-        _ => Scope::Unscoped("this method requires an explicit address"),
-    }
-}
-
-/// Cap on `eth_feeHistory`'s block count, which is otherwise a caller-chosen fan-out.
-const MAX_FEE_HISTORY_BLOCKS: u64 = 128;
-
-/// Reject the shapes of an address-less method that would return an unbounded response.
-///
-/// These methods cannot be bounded by the allowlist — there is no address in them — so the only
-/// remaining lever is refusing the expensive variants. A block request with full transaction
-/// bodies is the largest single response a node will produce, and nothing in this server's
-/// intended use needs one.
-fn global_request_is_too_broad(method: &str, params: &serde_json::Value) -> Option<&'static str> {
-    match method {
-        // Full transaction bodies USED to be refused here, on the grounds that a whole block is
-        // the largest single response a node produces and nothing in this server's intended use
-        // needs one. The second half was wrong: viem's `waitForTransactionReceipt` fetches the
-        // mined block with `includeTransactions: true` to detect a replaced transaction (a
-        // speed-up or a cancel), and no caller can opt out of it. Refusing it broke the
-        // confirmation step of EVERY write once the frontends read through this endpoint — the
-        // transaction landed on chain and the UI reported an invalid-parameter error.
-        //
-        // The cost is bounded without the refusal: it names ONE block, so it is a single large
-        // response rather than a fan-out, and how often a caller may ask is what the read window
-        // in `admit` decides. What is worth bounding here is a method whose size the CALLER
-        // chooses, which is why `feeHistory` keeps its cap.
-        "eth_feeHistory" => {
-            let count = params.get(0).and_then(|v| match v {
-                serde_json::Value::String(hex) => {
-                    u64::from_str_radix(hex.trim_start_matches("0x"), 16).ok()
-                }
-                serde_json::Value::Number(n) => n.as_u64(),
-                _ => None,
-            })?;
-            (count > MAX_FEE_HISTORY_BLOCKS).then_some("feeHistory block count is too large")
-        }
-        _ => None,
-    }
-}
-
-/// A read-only, allowlisted JSON-RPC endpoint.
-///
-/// This exists so a browser client can point a standard Ethereum library at the CRISP server and
-/// keep working, rather than every caller reimplementing its reads against the typed routes below.
-/// The typed routes remain the nicer interface for anything new; this one is what makes dropping a
-/// hosted-provider key a configuration change instead of a rewrite.
-///
-/// `eth_getLogs` is special-cased: the range is split into windows here, so a caller may ask for a
-/// contract's whole history without knowing the upstream provider's cap.
+/// `eth_getLogs` is special-cased: the range is split into windows here.
 async fn rpc(
     request: HttpRequest,
-    body: web::Json<serde_json::Value>,
+    body: web::Json<Value>,
     store: web::Data<AppData>,
     limiter: web::Data<ChainRateLimiter>,
 ) -> impl Responder {
-    // The batch cap is checked BEFORE the window is charged, not after. Charged first, an
-    // oversized batch cost more than the whole window and was refused by the limiter — so the
-    // caller got a 429 instead of the error naming the cap, and a request the server was going to
-    // reject outright still had to be paid for.
+    // The batch cap is checked BEFORE the window is charged: an oversized batch costs more than
+    // the whole window, so charging first would answer with a 429 instead of the error naming the
+    // cap.
     let cost = match body.as_array() {
-        Some(entries) if entries.len() > MAX_RPC_BATCH => {
+        Some(entries) if entries.len() > MAX_BATCH => {
             return HttpResponse::Ok().json(rpc_error(
                 None,
                 -32600,
-                &format!("At most {MAX_RPC_BATCH} calls per batch"),
+                &format!("At most {MAX_BATCH} calls per batch"),
             ));
         }
-        // Charged by batch length: one array of 64 is 64 sequential upstream requests held open
-        // on a single connection.
+        // A batch of N is N sequential upstream requests held open on one connection.
         Some(entries) => entries.len(),
         None => 1,
     };
@@ -620,22 +228,13 @@ async fn rpc(
         ));
     }
 
-    // A JSON-RPC endpoint must accept a batch as a top-level array, and viem sends one whenever
-    // `batch: true` is set — which both of our clients do. Rejecting arrays at the extractor made
-    // every batched request a 400 that no JSON-RPC client knows how to read.
+    // A top-level array is a JSON-RPC batch; viem sends one whenever `batch: true` is set.
     match body.into_inner() {
-        serde_json::Value::Array(entries) => {
-            // An empty batch is an Invalid Request per the spec, not an empty result.
-            if entries.is_empty() {
-                return HttpResponse::Ok().json(rpc_error(
-                    None,
-                    -32600,
-                    "Invalid request: empty batch",
-                ));
-            }
-
-            // The size cap is enforced above, before the read window is charged.
-
+        // An empty batch is an Invalid Request per the spec.
+        Value::Array(entries) if entries.is_empty() => {
+            HttpResponse::Ok().json(rpc_error(None, -32600, "Invalid request: empty batch"))
+        }
+        Value::Array(entries) => {
             let mut responses = Vec::with_capacity(entries.len());
             for entry in entries {
                 responses.push(handle_rpc_call(entry, &store).await);
@@ -646,12 +245,8 @@ async fn rpc(
     }
 }
 
-/// One JSON-RPC call, returning the response object rather than an HTTP response so the batch
-/// path above can collect them.
-async fn handle_rpc_call(
-    entry: serde_json::Value,
-    store: &web::Data<AppData>,
-) -> serde_json::Value {
+/// One JSON-RPC call, as a response object so the batch path can collect them.
+async fn handle_rpc_call(entry: Value, store: &web::Data<AppData>) -> Value {
     let id = entry.get("id").cloned();
 
     let request: RpcRequest = match serde_json::from_value(entry) {
@@ -686,37 +281,28 @@ async fn handle_rpc_call(
         Scope::Unscoped(reason) => {
             return rpc_error(id, -32602, &format!("{}: {reason}", request.method));
         }
+        // Nothing to check by address: the bound has to come from the shape of the request.
         Scope::Global => {
-            // Nothing to check by address, so the bound has to come from the shape of the request
-            // itself: these are the methods that can return an unbounded amount of data.
             if let Some(reason) = global_request_is_too_broad(&request.method, &request.params) {
                 return rpc_error(id, -32602, reason);
             }
         }
     }
 
-    // Constant for the life of the deployment and already in config — asking the provider for it
-    // is pure waste, and viem asks on every client boot.
+    // Constant for the life of the deployment, and viem asks on every client boot.
     if request.method == "eth_chainId" {
-        return serde_json::json!({
-            "jsonrpc": "2.0", "id": id, "result": format!("0x{:x}", CONFIG.chain_id),
-        });
+        return rpc_result(id, format!("0x{:x}", CONFIG.chain_id));
     }
 
     if request.method == "eth_blockNumber" {
         if let Some(number) = read_cache::head_number().await {
-            read_cache::record_head(true).await;
-            return serde_json::json!({
-                "jsonrpc": "2.0", "id": id, "result": format!("0x{:x}", number),
-            });
+            read_cache::record_head(true);
+            return rpc_result(id, format!("0x{number:x}"));
         }
-        read_cache::record_head(false).await;
+        read_cache::record_head(false);
     }
 
-    // Same per-block reasoning as `/chain/read`: this is the path the frontends take, so it is
-    // where the duplication across clients actually happens.
-    let cacheable_call = request.method == "eth_call";
-    let call_key = cacheable_call
+    let call_key = (request.method == "eth_call")
         .then(|| call_cache_key(&request.params))
         .flatten();
     // Read BEFORE the upstream request: if the head moves while it is in flight, the result
@@ -725,35 +311,24 @@ async fn handle_rpc_call(
 
     if let Some((address, data, block)) = &call_key {
         if let Some(hit) = read_cache::call(address, data, *block).await {
-            read_cache::record_call(true).await;
-            return serde_json::json!({
-                "jsonrpc": "2.0", "id": id, "result": hit,
-            });
+            read_cache::record_call(true);
+            return rpc_result(id, hit);
         }
-        read_cache::record_call(false).await;
+        read_cache::record_call(false);
     }
 
-    let client = &*HTTP;
-
-    // Handled separately for two reasons: the index can usually answer it outright, and when it
-    // cannot, forwarding a wide range verbatim would just relay the provider's own range-cap error
-    // back to a caller with no way to know the cap. This is the path the frontends actually take,
-    // so it is where serving from the index matters.
+    // The index can usually answer `eth_getLogs` outright; when it cannot, forwarding a wide range
+    // verbatim would relay the provider's range-cap error to a caller who cannot know the cap.
     if request.method == "eth_getLogs" {
         if let Some(indexed) = logs_from_index(store, &request.params).await {
-            read_cache::record_logs(true).await;
-            return serde_json::json!({
-                "jsonrpc": "2.0", "id": id, "result": indexed,
-            });
+            read_cache::record_logs(true);
+            return rpc_result(id, indexed);
         }
-        read_cache::record_logs(false).await;
+        read_cache::record_logs(false);
 
-        return match forward_windowed_logs(client, &request.params).await {
-            Ok(logs) => serde_json::json!({
-                "jsonrpc": "2.0", "id": id, "result": logs,
-            }),
-            // The range-cap message is the one thing a caller can act on, so it survives rather
-            // than being flattened into a generic upstream failure.
+        return match forward_windowed_logs(&request.params).await {
+            Ok(logs) => rpc_result(id, logs),
+            // The range-cap message is the one thing a caller can act on, so it survives.
             Err(e) => {
                 let message = e.to_string();
                 error!("chain/rpc eth_getLogs: {message}");
@@ -766,369 +341,232 @@ async fn handle_rpc_call(
         };
     }
 
-    let body = serde_json::json!({
+    let body = json!({
         "jsonrpc": "2.0",
-        "id": request.id.clone().unwrap_or(serde_json::json!(1)),
+        "id": request.id.clone().unwrap_or(json!(1)),
         "method": request.method,
         "params": request.params,
     });
 
-    match client.post(&CONFIG.http_rpc_url).json(&body).send().await {
-        Ok(response) => match response.json::<serde_json::Value>().await {
-            Ok(value) => {
-                // Only successful results are cached: an error is about this attempt, not about
-                // the state of the chain at this block.
-                if let (Some((address, data, block)), Some(result)) =
-                    (&call_key, value.get("result").and_then(|r| r.as_str()))
-                {
-                    read_cache::put_call(
-                        address,
-                        data,
-                        *block,
-                        result.to_string(),
-                        issued_at_block,
-                    )
-                    .await;
-                }
-
-                if request.method == "eth_blockNumber" {
-                    if let Some(hex) = value.get("result").and_then(|r| r.as_str()) {
-                        if let Ok(number) = u64::from_str_radix(hex.trim_start_matches("0x"), 16) {
-                            // Only the number is known here. Publishing a timestamp of 0 alongside
-                            // it made `/chain/head` serve an epoch date for the whole TTL, which
-                            // callers compare voting deadlines against.
-                            read_cache::put_block_number(number).await;
-                        }
-                    }
-                }
-
-                value
-            }
-            Err(e) => {
-                error!("chain/rpc: upstream returned invalid JSON: {e}");
-                rpc_error(id, -32000, "Upstream returned invalid JSON")
-            }
-        },
+    let response = match HTTP.post(&CONFIG.http_rpc_url).json(&body).send().await {
+        Ok(response) => response,
         Err(e) => {
-            error!("chain/rpc: upstream request failed: {e}");
-            rpc_error(id, -32000, "Upstream RPC unavailable")
+            error!("chain/rpc: upstream request failed: {}", e.without_url());
+            return rpc_error(id, -32000, "Upstream RPC unavailable");
+        }
+    };
+    let value = match response.json::<Value>().await {
+        Ok(value) => value,
+        Err(e) => {
+            error!(
+                "chain/rpc: upstream returned invalid JSON: {}",
+                e.without_url()
+            );
+            return rpc_error(id, -32000, "Upstream returned invalid JSON");
+        }
+    };
+
+    // Only successful results are cached: an error is about this attempt, not about the chain.
+    if let (Some((address, data, block)), Some(result)) =
+        (&call_key, value.get("result").and_then(Value::as_str))
+    {
+        read_cache::put_call(address, data, *block, result.to_string(), issued_at_block).await;
+    }
+
+    // Only the number is known here. A timestamp of 0 would make `/chain/head` serve an epoch date
+    // that callers compare voting deadlines against.
+    if request.method == "eth_blockNumber" {
+        if let Some(number) = value
+            .get("result")
+            .and_then(Value::as_str)
+            .and_then(hex_u64)
+        {
+            read_cache::put_block_number(number).await;
         }
     }
+
+    value
 }
 
 /// Answer an `eth_getLogs` filter from the log index, or `None` when it cannot be answered there.
 ///
-/// Returns logs in the JSON-RPC wire shape so the caller cannot tell an indexed answer from a
-/// forwarded one — the whole point is that a standard client keeps working either way.
-///
-/// `None` on any doubt: a range that starts before indexing began, or reaches past what has been
-/// applied, must go upstream rather than come back quietly short.
-async fn logs_from_index(
-    store: &web::Data<AppData>,
-    params: &serde_json::Value,
-) -> Option<Vec<serde_json::Value>> {
+/// The answer has the JSON-RPC wire shape, so a caller cannot tell an indexed answer from a
+/// forwarded one. `None` on any doubt sends the query upstream rather than answering short.
+async fn logs_from_index(store: &web::Data<AppData>, params: &Value) -> Option<Vec<Value>> {
     let filter = params.get(0)?;
     let address = filter.get("address")?.as_str()?;
 
-    // `blockHash` is an alternative to `fromBlock`/`toBlock` that names one specific block,
-    // including an orphaned one. The index is keyed by height and has no way to answer it — and
-    // with both range bounds absent the bounds below would default to the indexed head, so this
-    // returned the head block's logs as if they were the requested block's.
+    // `blockHash` names one specific block, possibly an orphaned one. The index is keyed by
+    // height, and with both range bounds absent the bounds below would default to the head and
+    // answer with the head block's logs.
     if filter.get("blockHash").is_some_and(|v| !v.is_null()) {
         return None;
     }
 
-    if !is_log_indexed(address) {
-        return None;
-    }
+    let indexed = coverage_for(store, address).await?;
+    let indexed_head = indexed.1;
 
-    let repo = store.logs();
-    let indexed_from = repo.coverage(address).await.ok()??;
-    let indexed_head = repo.indexed_head().await.ok()??;
-
-    let parse_tag = |value: Option<&serde_json::Value>, fallback: u64| -> Option<u64> {
-        match value.and_then(|v| v.as_str()) {
-            None | Some("latest") | Some("safe") | Some("finalized") => Some(fallback),
-            Some("earliest") => Some(0),
-            // `pending` includes blocks that are not final, which an index built from applied
-            // blocks cannot speak for.
-            Some("pending") => None,
-            // The `0x` prefix is REQUIRED, matching what the upstream path accepts. Stripping an
-            // absent prefix and parsing as hex anyway silently rewrote the range: `"1000"`
-            // (decimal, a common client bug) became block 4096, and if the shifted range happened
-            // to sit inside the covered span, the index answered for blocks the caller never
-            // asked about — as an ordinary result array, with nothing to detect it by.
-            Some(tag) if tag.starts_with("0x") => {
-                u64::from_str_radix(tag.trim_start_matches("0x"), 16).ok()
-            }
-            Some(_) => None,
-        }
+    // `pending` includes blocks an index built from applied blocks cannot speak for. A
+    // non-string bound defaults to the head, as an absent one does.
+    let bound = |value: Option<&Value>| match value.and_then(Value::as_str) {
+        None => Some(indexed_head),
+        Some("pending") => None,
+        Some(_) => range_bound(value, indexed_head),
     };
 
-    // `eth_getLogs` defaults BOTH bounds to `latest`, not to genesis: a filter with no
-    // `fromBlock` is a single-block query. Defaulting it to 0 turned that into a full-history
-    // scan, which is both wrong and expensive.
-    let from = parse_tag(filter.get("fromBlock"), indexed_head)?;
-    let to = parse_tag(filter.get("toBlock"), indexed_head)?;
+    // Both bounds default to `latest`, not genesis: a filter with no `fromBlock` is a
+    // single-block query.
+    let from = bound(filter.get("fromBlock"))?;
+    let to = bound(filter.get("toBlock"))?;
 
-    // Not clamped: a request reaching past what has been applied must go upstream, because the
-    // index would answer it short and look authoritative doing so.
-    if from < indexed_from || to > indexed_head {
+    // Not clamped: a request reaching past what has been applied must go upstream.
+    if !covered(Some(indexed), from, to) {
         return None;
     }
 
-    // Only positional topic filters are served here; `eth_getLogs` also allows an array in a
-    // position to mean "any of these", which the index does not implement. Anything else goes
-    // upstream rather than being answered approximately.
+    // Only positional topic filters are served; an array in a position means "any of these",
+    // which the index does not implement.
     let topics: Vec<Option<String>> = match filter.get("topics") {
         None => Vec::new(),
-        Some(serde_json::Value::Array(entries)) => {
-            let mut parsed = Vec::with_capacity(entries.len());
-            for entry in entries {
-                match entry {
-                    serde_json::Value::Null => parsed.push(None),
-                    serde_json::Value::String(topic) => parsed.push(Some(topic.clone())),
-                    _ => return None,
-                }
-            }
-            parsed
-        }
+        Some(Value::Array(entries)) => entries
+            .iter()
+            .map(|entry| match entry {
+                Value::Null => Some(None),
+                Value::String(topic) => Some(Some(topic.clone())),
+                _ => None,
+            })
+            .collect::<Option<_>>()?,
         Some(_) => return None,
     };
 
-    let found = repo.query(address, from, to, &topics).await.ok()?;
+    let found = store
+        .logs()
+        .query(address, from, to, &topics)
+        .await
+        .map_err(|e| warn!("chain/rpc eth_getLogs: index read failed, going upstream: {e}"))
+        .ok()?;
 
-    // Every field of the mined-log shape, or nothing. `blockHash` and `transactionIndex` were not
-    // stored until recently, so an entry written by an older build cannot be rendered completely —
-    // and a JSON-RPC client is entitled to reject a mined log that omits them. Falling through to
-    // the provider is the honest answer for those; once the range is re-indexed it is served here
-    // again. Emitting the fields as `null` would be the shape of a PENDING log, which is worse
-    // than being slow.
-    let mut entries = Vec::with_capacity(found.len());
-    for log in found {
-        let (Some(block_hash), Some(transaction_index)) = (log.block_hash, log.transaction_index)
-        else {
-            return None;
-        };
+    // Every field of the mined-log shape, or nothing. An entry stored without `blockHash` or
+    // `transactionIndex` cannot be rendered completely, and `null` there is the shape of a PENDING
+    // log. Such a query goes upstream until the range is re-indexed.
+    found
+        .into_iter()
+        .map(|log| {
+            let (block_hash, transaction_index) = (log.block_hash?, log.transaction_index?);
+            Some(json!({
+                "address": log.address,
+                "topics": log.topics,
+                "data": log.data,
+                "blockNumber": format!("0x{:x}", log.block_number),
+                "blockHash": block_hash,
+                "transactionHash": log.transaction_hash,
+                "transactionIndex": format!("0x{transaction_index:x}"),
+                "logIndex": format!("0x{:x}", log.log_index),
+                "removed": false,
+            }))
+        })
+        .collect()
+}
 
-        entries.push(serde_json::json!({
-            "address": log.address,
-            "topics": log.topics,
-            "data": log.data,
-            "blockNumber": format!("0x{:x}", log.block_number),
-            "blockHash": block_hash,
-            "transactionHash": log.transaction_hash,
-            "transactionIndex": format!("0x{transaction_index:x}"),
-            "logIndex": format!("0x{:x}", log.log_index),
-            "removed": false,
-        }));
+/// A log-range bound: a hex number (`0x` required), `earliest`, or a tag that resolves to `head`.
+/// `None` for anything else, so a malformed bound such as a decimal `"1000"` is refused instead of
+/// silently rewritten to a different range.
+fn range_bound(value: Option<&Value>, head: u64) -> Option<u64> {
+    match value {
+        None | Some(Value::Null) => Some(head),
+        Some(Value::String(tag)) => match tag.as_str() {
+            "latest" | "pending" | "safe" | "finalized" => Some(head),
+            "earliest" => Some(0),
+            hex => hex.strip_prefix("0x").and_then(hex_u64),
+        },
+        Some(_) => None,
+    }
+}
+
+/// One `eth_getLogs` call upstream: the `result` array, or an error for a JSON-RPC error.
+async fn fetch_logs(filter: &impl Serialize) -> anyhow::Result<Vec<Value>> {
+    let body = json!({ "jsonrpc": "2.0", "id": 1, "method": "eth_getLogs", "params": [filter] });
+    let send = async {
+        HTTP.post(&CONFIG.http_rpc_url)
+            .json(&body)
+            .send()
+            .await?
+            .json()
+            .await
+    };
+    let mut response: Value = send.await.map_err(reqwest::Error::without_url)?;
+
+    if let Some(error) = response.get("error") {
+        anyhow::bail!("upstream error: {error}");
     }
 
-    Some(entries)
+    Ok(match response.get_mut("result").map(Value::take) {
+        Some(Value::Array(logs)) => logs,
+        _ => Vec::new(),
+    })
 }
 
 /// Run an `eth_getLogs` request as a series of bounded windows and concatenate the results.
-async fn forward_windowed_logs(
-    client: &reqwest::Client,
-    params: &serde_json::Value,
-) -> eyre::Result<Vec<serde_json::Value>> {
-    let filter = params.get(0).cloned().unwrap_or(serde_json::json!({}));
+async fn forward_windowed_logs(params: &Value) -> eyre::Result<Vec<Value>> {
+    let mut filter = params.get(0).cloned().unwrap_or_else(|| json!({}));
 
-    // A `blockHash` filter names one block and is mutually exclusive with a range. Rewriting
-    // `fromBlock`/`toBlock` into it below would produce a request the node rejects, so it is
-    // forwarded as-is in a single call instead.
+    // A `blockHash` filter names one block and excludes a range, so windowing it would produce a
+    // request the node rejects. It is forwarded as-is in a single call.
     if filter.get("blockHash").is_some_and(|v| !v.is_null()) {
-        return forward_logs_verbatim(client, &filter).await;
+        return fetch_logs(&filter).await.map_err(|e| eyre::eyre!("{e:#}"));
     }
 
-    let head = upstream().await?.get_block_number().await?;
+    let head = rpc::provider().await?.get_block_number().await?;
 
-    // Hex block tags, `earliest`/`latest`, or absent — all normalised to numbers so the window
-    // arithmetic below has something to count with. A tag that parses as none of these is an
-    // error rather than a silent fallback: `"fromBlock": "1000"` (decimal, a common client bug)
-    // used to resolve to the head and come back as an empty single-block scan, presented as a
-    // complete answer for the range the caller actually asked for.
-    let resolve = |value: Option<&serde_json::Value>, fallback: u64| -> eyre::Result<u64> {
-        match value {
-            None | Some(serde_json::Value::Null) => Ok(fallback),
-            Some(serde_json::Value::String(tag)) => match tag.as_str() {
-                "latest" | "pending" | "safe" | "finalized" => Ok(fallback),
-                "earliest" => Ok(0),
-                hex if hex.starts_with("0x") => {
-                    u64::from_str_radix(hex.trim_start_matches("0x"), 16)
-                        .map_err(|_| eyre::eyre!("invalid block tag: {tag}"))
-                }
-                other => Err(eyre::eyre!("invalid block tag: {other}")),
-            },
-            Some(other) => Err(eyre::eyre!("invalid block tag: {other}")),
-        }
+    let bound = |key: &str| {
+        let value = filter.get(key);
+        range_bound(value, head).ok_or_else(|| eyre::eyre!("invalid block tag: {value:?}"))
     };
+    let from = bound("fromBlock")?;
+    let to = bound("toBlock")?.min(head);
 
-    // Both bounds default to `latest`, per the JSON-RPC spec.
-    let from = resolve(filter.get("fromBlock"), head)?;
-    let to = resolve(filter.get("toBlock"), head)?.min(head);
-
-    if windows_for(from, to) > MAX_LOG_WINDOWS {
-        return Err(eyre::eyre!(
+    if window_count(from, to) > MAX_LOG_WINDOWS {
+        eyre::bail!(
             "range {from}-{to} is too wide; at most {} blocks per request",
             MAX_LOG_WINDOWS * LOG_WINDOW
-        ));
+        );
     }
 
+    let Some(window) = filter.as_object_mut() else {
+        eyre::bail!("the log filter must be an object");
+    };
+
     let mut all = Vec::new();
-    let mut start = from;
+    for (start, end) in windows(from, to) {
+        window.insert("fromBlock".into(), format!("0x{start:x}").into());
+        window.insert("toBlock".into(), format!("0x{end:x}").into());
 
-    while start <= to {
-        let end = start.saturating_add(LOG_WINDOW - 1).min(to);
-
-        let mut windowed = filter.clone();
-        windowed["fromBlock"] = serde_json::json!(format!("0x{start:x}"));
-        windowed["toBlock"] = serde_json::json!(format!("0x{end:x}"));
-
-        let body = &serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "method": "eth_getLogs", "params": [windowed],
-        });
-
-        let response = upstream_window(|| async move {
-            let response: serde_json::Value = client
-                .post(&CONFIG.http_rpc_url)
-                .json(body)
-                .send()
-                .await?
-                .json()
-                .await?;
-
-            if let Some(err) = response.get("error") {
-                anyhow::bail!("upstream error: {err}");
-            }
-
-            anyhow::Ok(response)
-        })
-        .await?;
-
-        if let Some(serde_json::Value::Array(logs)) = response.get("result") {
-            all.extend(logs.clone());
-        }
-
-        start = end.saturating_add(1);
+        all.extend(upstream_window(|| fetch_logs(&*window)).await?);
     }
 
     Ok(all)
 }
 
-/// Forward one `eth_getLogs` filter unchanged, for the shapes windowing cannot express.
-async fn forward_logs_verbatim(
-    client: &reqwest::Client,
-    filter: &serde_json::Value,
-) -> eyre::Result<Vec<serde_json::Value>> {
-    let body = serde_json::json!({
-        "jsonrpc": "2.0", "id": 1, "method": "eth_getLogs", "params": [filter],
-    });
-
-    let response: serde_json::Value = client
-        .post(&CONFIG.http_rpc_url)
-        .json(&body)
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    if let Some(err) = response.get("error") {
-        return Err(eyre::eyre!("upstream error: {err}"));
-    }
-
-    match response.get("result") {
-        Some(serde_json::Value::Array(logs)) => Ok(logs.clone()),
-        _ => Ok(Vec::new()),
-    }
+#[derive(Serialize)]
+struct HeadResponse {
+    block_number: u64,
+    timestamp: u64,
+    chain_id: u64,
 }
 
-/// Contracts these routes will serve: `INDEX_CONTRACTS` plus the ones this server is itself
-/// configured against.
-///
-/// An empty allowlist denies everything rather than allowing everything: a misconfigured
-/// deployment should fail closed, not silently become an open RPC endpoint.
-///
-/// The server's own contracts are implicit because refusing them is never the intended
-/// configuration — the SDK's `getOnChainRoundData` reads the E3 program this server was deployed
-/// to serve, and requiring the operator to name it a second time in `INDEX_CONTRACTS` turned a
-/// forgotten variable into "the SDK cannot read the round it just told you about".
-pub(super) fn is_allowed(address: &Address) -> bool {
-    let configured = [
-        CONFIG.e3_program_address.as_str(),
-        CONFIG.interfold_address.as_str(),
-        CONFIG.ciphernode_registry_address.as_str(),
-        CONFIG.fee_token_address.as_str(),
-        CONFIG.crisp_voting_token.as_deref().unwrap_or(""),
-    ];
-
-    let listed = CONFIG
-        .index_contracts
-        .as_deref()
-        .unwrap_or("")
-        .split(',')
-        .map(str::trim);
-
-    configured
-        .into_iter()
-        .chain(listed)
-        .filter(|entry| !entry.is_empty())
-        .filter_map(|entry| Address::from_str(entry).ok())
-        .any(|allowed| allowed == *address)
-}
-
-pub(super) fn parse_address(value: &str) -> Option<Address> {
-    Address::from_str(value.trim()).ok()
-}
-
-/// Whether an address's logs are being indexed RIGHT NOW, per the live configuration.
-///
-/// Checked in addition to the stored coverage record, because a coverage record outlives the
-/// configuration that created it: the store has no delete, so removing a contract from
-/// `INDEX_LOG_CONTRACTS` — the documented way to stop paying for a chatty contract's logs — left
-/// its record behind while the cursor kept advancing. Every query then passed the coverage test
-/// and was answered from a frozen index, missing every event since the removal, and by design
-/// indistinguishable from an upstream answer.
-pub(super) fn is_log_indexed(address: &str) -> bool {
-    let Some(address) = parse_address(address) else {
-        return false;
-    };
-
-    CONFIG
-        .index_log_contracts
-        .as_deref()
-        .unwrap_or("")
-        .split(',')
-        .map(str::trim)
-        .filter(|entry| !entry.is_empty())
-        .filter_map(|entry| Address::from_str(entry).ok())
-        .any(|indexed| indexed == address)
-}
-
-#[derive(Debug, Serialize)]
-pub struct HeadResponse {
-    pub block_number: u64,
-    pub timestamp: u64,
-    pub chain_id: u64,
-}
-
-/// The chain head: block number and its timestamp.
-///
-/// Replaces a `useBlockNumber({ watch: true })` poll per hook with one call, and returns the
-/// timestamp alongside so callers deciding whether a voting window has closed do not need a
-/// second round trip for the block.
+/// The chain head: block number and its timestamp, so callers deciding whether a voting window has
+/// closed need no second round trip.
 async fn head(http_request: HttpRequest, limiter: web::Data<ChainRateLimiter>) -> impl Responder {
-    if let Err((caller, cost)) = admit(&http_request, &limiter, 1) {
-        return too_many_requests(&caller, cost, "/chain/head");
+    if let Err(refused) = charge(&http_request, &limiter, 1, "/chain/head") {
+        return refused;
     }
 
-    // The most-polled call in the app by an order of magnitude: several hooks per client watch it
-    // on a timer. Serving a few seconds old head collapses that crowd into one upstream request.
-    // Only a fully-known head is served: an entry learned from `eth_blockNumber` carries no
-    // timestamp, and callers compare voting deadlines against this field.
+    // The most-polled call in the app: serving a few seconds old head collapses many hooks into
+    // one upstream request. Only a fully-known head is served: an entry learned from
+    // `eth_blockNumber` has no timestamp, and callers compare voting deadlines against it.
     if let Some(cached) = read_cache::head().await {
         if let Some(timestamp) = cached.timestamp {
-            read_cache::record_head(true).await;
+            read_cache::record_head(true);
             return HttpResponse::Ok().json(HeadResponse {
                 block_number: cached.block_number,
                 timestamp,
@@ -1136,16 +574,11 @@ async fn head(http_request: HttpRequest, limiter: web::Data<ChainRateLimiter>) -
             });
         }
     }
-    read_cache::record_head(false).await;
+    read_cache::record_head(false);
 
-    let provider = match upstream().await {
-        Ok(p) => p,
-        Err(e) => {
-            error!("chain/head: provider unavailable: {e}");
-            return HttpResponse::ServiceUnavailable().json(JsonResponse {
-                response: "Upstream RPC unavailable".to_string(),
-            });
-        }
+    let provider = match rpc::provider().await {
+        Ok(provider) => provider,
+        Err(e) => return upstream_failed("chain/head: provider unavailable", e),
     };
 
     match provider.get_block_by_number(BlockNumberOrTag::Latest).await {
@@ -1157,129 +590,119 @@ async fn head(http_request: HttpRequest, limiter: web::Data<ChainRateLimiter>) -
                 chain_id: CONFIG.chain_id,
             })
         }
-        Ok(None) => HttpResponse::ServiceUnavailable().json(JsonResponse {
-            response: "Upstream RPC returned no head block".to_string(),
-        }),
-        Err(e) => {
-            error!("chain/head: {e}");
-            HttpResponse::ServiceUnavailable().json(JsonResponse {
-                response: "Upstream RPC unavailable".to_string(),
-            })
-        }
+        Ok(None) => json_message(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Upstream RPC returned no head block",
+        ),
+        Err(e) => upstream_failed("chain/head", e),
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct ReadCall {
-    pub address: String,
-    /// ABI-encoded calldata, hex with or without the `0x` prefix. The caller owns the encoding;
-    /// this route deliberately knows nothing about ABIs so it does not have to be redeployed
-    /// every time a client wants a different view function.
-    pub data: String,
-    /// Optional historical block. Omit for latest.
+#[derive(Deserialize)]
+struct ReadCall {
+    address: String,
+    /// ABI-encoded calldata, hex with or without the `0x` prefix. The caller owns the encoding,
+    /// so a client can use any view function without a redeploy.
+    data: String,
+    /// Historical block; latest when omitted.
     #[serde(default)]
-    pub block_number: Option<u64>,
+    block_number: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct ReadRequest {
-    pub calls: Vec<ReadCall>,
+#[derive(Deserialize)]
+struct ReadRequest {
+    calls: Vec<ReadCall>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct ReadResult {
+#[derive(Serialize)]
+struct ReadResult {
     /// Hex-encoded return data, or null when the call reverted.
-    pub result: Option<String>,
-    /// Revert reason when the call failed, so a caller can tell "reverted" from "returned empty".
-    pub error: Option<String>,
+    result: Option<String>,
+    /// Revert reason, so a caller can tell "reverted" from "returned empty".
+    error: Option<String>,
 }
 
 /// `eth_call` against allowlisted contracts, batched.
 ///
-/// Point reads (a balance, a delegation, a proposal struct) are answered from the chain rather
-/// than from the index on purpose: they are per-user and change constantly, so an indexed copy
-/// would have to mirror every transfer and delegation to stay correct, and a stale answer here is
-/// not a slow UI — it is the wrong balance or a voter wrongly told they are ineligible.
+/// Point reads (a balance, a delegation, a proposal struct) come from the chain, not the index:
+/// they are per-user and change constantly, and a stale answer is the wrong balance or a voter
+/// wrongly told they are ineligible.
 async fn read(
     http_request: HttpRequest,
     request: web::Json<ReadRequest>,
     limiter: web::Data<ChainRateLimiter>,
 ) -> impl Responder {
-    // Capped before charged, for the same reason as `/chain/rpc`: an oversized batch costs more
-    // than the whole window, so charging first turned the error that names the cap into a 429.
+    // Capped before charged, as in `/chain/rpc`.
     if request.calls.len() > MAX_BATCH {
-        return HttpResponse::BadRequest().json(JsonResponse {
-            response: format!("At most {MAX_BATCH} calls per request"),
-        });
+        return json_message(
+            StatusCode::BAD_REQUEST,
+            format!("At most {MAX_BATCH} calls per request"),
+        );
     }
 
-    if let Err((caller, cost)) = admit(&http_request, &limiter, request.calls.len()) {
-        return too_many_requests(&caller, cost, "/chain/read");
+    if let Err(refused) = charge(&http_request, &limiter, request.calls.len(), "/chain/read") {
+        return refused;
     }
 
     if request.calls.is_empty() {
         return HttpResponse::Ok().json(Vec::<ReadResult>::new());
     }
 
-    let provider = match upstream().await {
-        Ok(p) => p,
-        Err(e) => {
-            error!("chain/read: provider unavailable: {e}");
-            return HttpResponse::ServiceUnavailable().json(JsonResponse {
-                response: "Upstream RPC unavailable".to_string(),
-            });
-        }
+    let provider = match rpc::provider().await {
+        Ok(provider) => provider,
+        Err(e) => return upstream_failed("chain/read: provider unavailable", e),
     };
 
-    let mut results = Vec::with_capacity(request.calls.len());
-    let issued_at_block = read_cache::current_latest_block().await;
-
+    // Every call is validated before any is fetched, so a bad call at the end of the batch costs
+    // no upstream request.
+    let mut parsed = Vec::with_capacity(request.calls.len());
     for call in &request.calls {
         let Some(address) = parse_address(&call.address) else {
-            return HttpResponse::BadRequest().json(JsonResponse {
-                response: format!("Invalid address: {}", call.address),
-            });
+            return json_message(
+                StatusCode::BAD_REQUEST,
+                format!("Invalid address: {}", call.address),
+            );
         };
-
         if !is_allowed(&address) {
-            return HttpResponse::Forbidden().json(JsonResponse {
-                response: format!("Address not served by this indexer: {address}"),
-            });
+            return json_message(
+                StatusCode::FORBIDDEN,
+                format!("Address not served by this indexer: {address}"),
+            );
         }
-
         let Ok(data) = Bytes::from_str(call.data.trim()) else {
-            return HttpResponse::BadRequest().json(JsonResponse {
-                response: "Invalid calldata".to_string(),
-            });
+            return json_message(StatusCode::BAD_REQUEST, "Invalid calldata");
         };
+        parsed.push((address, data));
+    }
 
+    let mut results = Vec::with_capacity(parsed.len());
+    let issued_at_block = read_cache::current_latest_block().await;
+
+    for (call, (address, data)) in request.calls.iter().zip(parsed) {
         // Within one block an `eth_call` at `latest` is deterministic, so a repeat is a redundant
-        // question rather than a fresher answer — whoever asked first already paid for it.
+        // question, not a fresher answer.
         if let Some(hit) = read_cache::call(&call.address, &call.data, call.block_number).await {
-            read_cache::record_call(true).await;
+            read_cache::record_call(true);
             results.push(ReadResult {
                 result: Some(hit),
                 error: None,
             });
             continue;
         }
-        read_cache::record_call(false).await;
+        read_cache::record_call(false);
 
-        let tx = TransactionRequest::default()
-            .with_to(address)
-            .with_input(data);
+        let mut pending = provider.call(
+            TransactionRequest::default()
+                .with_to(address)
+                .with_input(data),
+        );
+        if let Some(number) = call.block_number {
+            pending = pending.block(BlockNumberOrTag::Number(number).into());
+        }
 
-        let pending = match call.block_number {
-            Some(number) => provider
-                .call(tx)
-                .block(BlockNumberOrTag::Number(number).into()),
-            None => provider.call(tx),
-        };
-
-        // A revert is reported per call rather than failing the batch: callers routinely probe
-        // functions a contract may not implement (the IVotes and proxy probes both do), and one
-        // expected revert must not discard the other results in the batch.
-        match pending.await {
+        // A revert is reported per call, not as a batch failure: callers probe functions a
+        // contract may not implement, and one expected revert must not discard the other results.
+        results.push(match pending.await {
             Ok(output) => {
                 let encoded = output.to_string();
                 read_cache::put_call(
@@ -1290,184 +713,179 @@ async fn read(
                     issued_at_block,
                 )
                 .await;
-                results.push(ReadResult {
+                ReadResult {
                     result: Some(encoded),
                     error: None,
-                })
+                }
             }
-            Err(e) => results.push(ReadResult {
+            Err(e) => ReadResult {
                 result: None,
                 error: Some(e.to_string()),
-            }),
-        }
+            },
+        });
     }
 
     HttpResponse::Ok().json(results)
 }
 
-#[derive(Debug, Deserialize)]
-pub struct LogsRequest {
-    pub address: String,
-    /// Topic filters, positional. `null` in any position matches anything, mirroring `eth_getLogs`.
+#[derive(Deserialize)]
+struct LogsRequest {
+    address: String,
+    /// Positional topic filters. `null` in any position matches anything, as in `eth_getLogs`.
     #[serde(default)]
-    pub topics: Vec<Option<String>>,
+    topics: Vec<Option<String>>,
     #[serde(default)]
-    pub from_block: Option<u64>,
+    from_block: Option<u64>,
     #[serde(default)]
-    pub to_block: Option<u64>,
+    to_block: Option<u64>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct LogEntry {
-    pub address: String,
-    pub topics: Vec<String>,
-    pub data: String,
-    pub block_number: Option<u64>,
-    pub transaction_hash: Option<String>,
-    pub log_index: Option<u64>,
+#[derive(Serialize)]
+struct LogEntry {
+    address: String,
+    topics: Vec<String>,
+    data: String,
+    block_number: Option<u64>,
+    transaction_hash: Option<String>,
+    log_index: Option<u64>,
 }
 
 /// `eth_getLogs` over an arbitrary range, windowed server-side.
-///
-/// The window is the point: a caller asking for a contract's whole history gets it in one
-/// request, instead of reimplementing range-splitting against whatever cap the provider enforces.
 async fn logs(
     http_request: HttpRequest,
     request: web::Json<LogsRequest>,
     store: web::Data<AppData>,
     limiter: web::Data<ChainRateLimiter>,
 ) -> impl Responder {
-    // Admission happens twice on purpose. This first charge covers the request itself and the
-    // index-served path, which makes no upstream call at all. The windowed upstream scan below is
-    // charged again for the windows it will actually open, once the range is known — a query can
-    // expand to `MAX_LOG_WINDOWS` (500) `eth_getLogs` calls, and charging that as one call left
-    // the per-caller fan-out bound the limiter documents off by up to 500x.
-    if let Err((caller, cost)) = admit(&http_request, &limiter, 1) {
-        return too_many_requests(&caller, cost, "/chain/logs");
+    // Admission happens twice. This charge covers the request and the index-served path, which
+    // makes no upstream call. The upstream scan is charged again for the windows it opens once the
+    // range is known: a query can expand to `MAX_LOG_WINDOWS` calls.
+    if let Err(refused) = charge(&http_request, &limiter, 1, "/chain/logs") {
+        return refused;
     }
 
     let Some(address) = parse_address(&request.address) else {
-        return HttpResponse::BadRequest().json(JsonResponse {
-            response: format!("Invalid address: {}", request.address),
-        });
+        return json_message(
+            StatusCode::BAD_REQUEST,
+            format!("Invalid address: {}", request.address),
+        );
     };
 
     if !is_allowed(&address) {
-        return HttpResponse::Forbidden().json(JsonResponse {
-            response: format!("Address not served by this indexer: {address}"),
-        });
+        return json_message(
+            StatusCode::FORBIDDEN,
+            format!("Address not served by this indexer: {address}"),
+        );
     }
 
-    // Served from the index when it demonstrably covers the range: the indexer watches these
-    // contracts anyway, so the logs are already here and answering locally turns a scan of a
-    // contract's whole history into one read. Coverage is checked at both ends — a range starting
-    // before indexing began, or reaching past what has been applied, would come back short, and a
-    // silently short answer is worse than a slower correct one.
-    let repo = store.logs();
-    if is_log_indexed(&request.address) {
-        if let (Ok(Some(indexed_from)), Ok(Some(indexed_head))) = (
-            repo.coverage(&request.address).await,
-            repo.indexed_head().await,
-        ) {
-            let from = request.from_block.unwrap_or(0);
-            // Compared BEFORE clamping. Clamping first made this test tautological, so a caller
-            // asking past the indexed head got a quietly truncated 200 instead of the upstream
-            // answer.
-            let requested_to = request.to_block.unwrap_or(indexed_head);
+    // Parsed before either source and before the window charge, so the index and the upstream
+    // path refuse the same filters. Refused, not truncated: a log has at most four topics.
+    if request.topics.len() > 4 {
+        return json_message(
+            StatusCode::BAD_REQUEST,
+            "At most 4 topic positions may be filtered",
+        );
+    }
+    let mut topics = Vec::with_capacity(request.topics.len());
+    for (position, topic) in request.topics.iter().enumerate() {
+        match topic
+            .as_deref()
+            .map(|t| B256::from_str(t.trim()))
+            .transpose()
+        {
+            Ok(topic) => topics.push(topic),
+            Err(_) => {
+                return json_message(
+                    StatusCode::BAD_REQUEST,
+                    format!("Invalid topic at position {position}"),
+                )
+            }
+        }
+    }
 
-            if from >= indexed_from && requested_to <= indexed_head {
-                let to = requested_to;
-                let topics: Vec<Option<String>> = request.topics.clone();
-                match repo.query(&request.address, from, to, &topics).await {
-                    Ok(found) => {
-                        read_cache::record_logs(true).await;
-                        return HttpResponse::Ok().json(
-                            found
-                                .into_iter()
-                                .map(|log| LogEntry {
-                                    address: log.address,
-                                    topics: log.topics,
-                                    data: log.data,
-                                    block_number: Some(log.block_number),
-                                    transaction_hash: log.transaction_hash,
-                                    log_index: Some(log.log_index),
-                                })
-                                .collect::<Vec<_>>(),
-                        );
-                    }
-                    Err(e) => error!("chain/logs: index read failed, falling back upstream: {e}"),
+    // Served from the index when it demonstrably covers the whole range: a scan of a contract's
+    // history becomes one read. A silently short answer is worse than a slower correct one.
+    let from = request.from_block.unwrap_or(0);
+    if let Some(indexed) = coverage_for(&store, &request.address).await {
+        // Compared BEFORE clamping, so a caller asking past the indexed head gets the upstream
+        // answer, not a quietly truncated one.
+        let to = request.to_block.unwrap_or(indexed.1);
+
+        if covered(Some(indexed), from, to) {
+            let wanted: Vec<Option<String>> =
+                topics.iter().map(|t| t.map(|h| h.to_string())).collect();
+            match store
+                .logs()
+                .query(&request.address, from, to, &wanted)
+                .await
+            {
+                Ok(found) => {
+                    read_cache::record_logs(true);
+                    return HttpResponse::Ok().json(
+                        found
+                            .into_iter()
+                            .map(|log| LogEntry {
+                                address: log.address,
+                                topics: log.topics,
+                                data: log.data,
+                                block_number: Some(log.block_number),
+                                transaction_hash: log.transaction_hash,
+                                log_index: Some(log.log_index),
+                            })
+                            .collect::<Vec<_>>(),
+                    );
                 }
+                Err(e) => error!("chain/logs: index read failed, falling back upstream: {e}"),
             }
         }
     }
 
     // Reached only when the index could not answer, so the counter reflects real fallthrough.
-    read_cache::record_logs(false).await;
+    read_cache::record_logs(false);
 
-    let provider = match upstream().await {
-        Ok(p) => p,
-        Err(e) => {
-            error!("chain/logs: provider unavailable: {e}");
-            return HttpResponse::ServiceUnavailable().json(JsonResponse {
-                response: "Upstream RPC unavailable".to_string(),
-            });
-        }
+    let provider = match rpc::provider().await {
+        Ok(provider) => provider,
+        Err(e) => return upstream_failed("chain/logs: provider unavailable", e),
     };
 
     let head = match provider.get_block_number().await {
-        Ok(n) => n,
-        Err(e) => {
-            error!("chain/logs: head lookup failed: {e}");
-            return HttpResponse::ServiceUnavailable().json(JsonResponse {
-                response: "Upstream RPC unavailable".to_string(),
-            });
-        }
+        Ok(number) => number,
+        Err(e) => return upstream_failed("chain/logs: head lookup failed", e),
     };
 
-    let from = request.from_block.unwrap_or(0);
     let to = request.to_block.unwrap_or(head).min(head);
 
     if from > to {
         return HttpResponse::Ok().json(Vec::<LogEntry>::new());
     }
 
-    let windows = windows_for(from, to);
+    let count = window_count(from, to);
 
-    if windows > MAX_LOG_WINDOWS {
-        return HttpResponse::BadRequest().json(JsonResponse {
-            response: format!(
+    if count > MAX_LOG_WINDOWS {
+        return json_message(
+            StatusCode::BAD_REQUEST,
+            format!(
                 "Range {from}-{to} is too wide; at most {} blocks per request. Start from the \
                  contract's deployment block.",
                 MAX_LOG_WINDOWS * LOG_WINDOW
             ),
-        });
+        );
     }
 
-    // Now that the range is resolved, charge what this scan will really cost. Checked after the
-    // width cap above, so a range too wide to serve is refused with the message that explains it
-    // rather than with a rate-limit refusal.
-    if let Err((caller, cost)) = admit(&http_request, &limiter, windows as usize) {
-        return too_many_requests(&caller, cost, "/chain/logs (upstream scan)");
-    }
-
-    // Refused, not truncated. A log has at most four topics, so a fifth is a malformed filter —
-    // and `.take(4)` answered it by quietly dropping the extras and returning logs that do not
-    // match what was asked for, as a normal 200. The index path passes the whole vector to
-    // `repo.query`, so the two paths also disagreed on the same request.
-    if request.topics.len() > 4 {
-        return HttpResponse::BadRequest().json(JsonResponse {
-            response: "At most 4 topic positions may be filtered".to_string(),
-        });
+    // Charged after the width cap, so a range too wide to serve is refused with the message that
+    // explains it, not with a rate-limit refusal.
+    if let Err(refused) = charge(
+        &http_request,
+        &limiter,
+        count as usize,
+        "/chain/logs (upstream scan)",
+    ) {
+        return refused;
     }
 
     let mut base = Filter::new().address(address);
-    for (position, topic) in request.topics.iter().enumerate() {
-        let Some(topic) = topic else { continue };
-        let Ok(hash) = B256::from_str(topic.trim()) else {
-            return HttpResponse::BadRequest().json(JsonResponse {
-                response: format!("Invalid topic at position {position}"),
-            });
-        };
+    for (position, topic) in topics.into_iter().enumerate() {
+        let Some(hash) = topic else { continue };
         base = match position {
             0 => base.event_signature(hash),
             1 => base.topic1(hash),
@@ -1477,22 +895,19 @@ async fn logs(
     }
 
     let mut entries: Vec<LogEntry> = Vec::new();
-    let mut start = from;
 
-    while start <= to {
-        let end = start.saturating_add(LOG_WINDOW - 1).min(to);
-
+    for (start, end) in windows(from, to) {
         let filter = &base
             .clone()
             .from_block(BlockNumberOrTag::Number(start))
             .to_block(BlockNumberOrTag::Number(end));
 
-        let window = upstream_window(|| async move {
+        let found = upstream_window(|| async move {
             provider.get_logs(filter).await.map_err(anyhow::Error::from)
         })
         .await;
 
-        match window {
+        match found {
             Ok(found) => entries.extend(found.into_iter().map(|log| LogEntry {
                 address: log.address().to_string(),
                 topics: log.topics().iter().map(|t| t.to_string()).collect(),
@@ -1502,14 +917,13 @@ async fn logs(
                 log_index: log.log_index,
             })),
             Err(e) => {
-                error!("chain/logs: window {start}-{end} failed: {e}");
-                return HttpResponse::ServiceUnavailable().json(JsonResponse {
-                    response: "Upstream RPC rejected a log query".to_string(),
-                });
+                return unavailable(
+                    format_args!("chain/logs: window {start}-{end} failed"),
+                    e,
+                    "Upstream RPC rejected a log query",
+                );
             }
         }
-
-        start = end.saturating_add(1);
     }
 
     entries.sort_by_key(|entry| (entry.block_number, entry.log_index));
@@ -1517,55 +931,48 @@ async fn logs(
     HttpResponse::Ok().json(entries)
 }
 
-#[derive(Debug, Deserialize)]
-pub struct BlockAtTimestampRequest {
-    pub timestamp: u64,
+#[derive(Deserialize)]
+struct BlockAtTimestampRequest {
+    timestamp: u64,
 }
 
-#[derive(Debug, Serialize)]
-pub struct BlockAtTimestampResponse {
-    pub block_number: u64,
-    pub timestamp: u64,
+#[derive(Serialize)]
+struct BlockAtTimestampResponse {
+    block_number: u64,
+    timestamp: u64,
 }
 
-/// The last block at or before a timestamp.
-///
-/// Clients need this to turn a proposal's snapshot timepoint into a block, and the obvious
-/// client-side implementation is a binary search that costs `O(log n)` `eth_getBlockByNumber`
-/// calls per lookup. Doing it here spends those on one connection instead of the browser's.
+/// The last block at or before a timestamp, so clients can turn a proposal's snapshot timepoint
+/// into a block without an `O(log n)` client-side bisection.
 async fn block_at_timestamp(
     http_request: HttpRequest,
     request: web::Json<BlockAtTimestampRequest>,
     limiter: web::Data<ChainRateLimiter>,
 ) -> impl Responder {
-    // A binary search over block headers: see `BLOCK_SEARCH_COST`.
-    if let Err((caller, cost)) = admit(&http_request, &limiter, BLOCK_SEARCH_COST) {
-        return too_many_requests(&caller, cost, "/chain/block-at-timestamp");
+    if let Err(refused) = charge(
+        &http_request,
+        &limiter,
+        BLOCK_SEARCH_COST,
+        "/chain/block-at-timestamp",
+    ) {
+        return refused;
     }
 
-    let provider = match upstream().await {
-        Ok(p) => p,
-        Err(e) => {
-            error!("chain/block-at-timestamp: provider unavailable: {e}");
-            return HttpResponse::ServiceUnavailable().json(JsonResponse {
-                response: "Upstream RPC unavailable".to_string(),
-            });
-        }
+    let provider = match rpc::provider().await {
+        Ok(provider) => provider,
+        Err(e) => return upstream_failed("chain/block-at-timestamp: provider unavailable", e),
     };
 
     let target = request.timestamp;
 
     let head_block = match provider.get_block_by_number(BlockNumberOrTag::Latest).await {
-        Ok(Some(b)) => b,
-        _ => {
-            return HttpResponse::ServiceUnavailable().json(JsonResponse {
-                response: "Upstream RPC unavailable".to_string(),
-            })
-        }
+        Ok(Some(block)) => block,
+        Ok(None) => return upstream_unavailable(),
+        Err(e) => return upstream_failed("chain/block-at-timestamp: head lookup failed", e),
     };
 
-    // A timestamp in the future resolves to the head rather than erroring: callers ask about
-    // windows that have not closed yet, and "the latest block we have" is the honest answer.
+    // A timestamp in the future resolves to the head: callers ask about windows that have not
+    // closed yet, and the latest block is the honest answer.
     if head_block.header.timestamp <= target {
         return HttpResponse::Ok().json(BlockAtTimestampResponse {
             block_number: head_block.header.number,
@@ -1580,32 +987,35 @@ async fn block_at_timestamp(
     while low <= high {
         let mid = low + (high - low) / 2;
 
-        // A failed probe must abort the search, not end it: the bisection has only ruled out half
-        // the range at each step, so whatever `best` holds is a partial answer. Returning it was
-        // a 200 carrying block 0 — and a caller resolving a snapshot timepoint would then read
-        // `getPastVotes(voter, 0)` and report every voter ineligible.
+        // A failed probe aborts the search: the bisection has ruled out only half the range at
+        // each step, so `best` is a partial answer. Returning it once reported block 0 and made a
+        // snapshot lookup read `getPastVotes(voter, 0)` and mark every voter ineligible.
         let block = match provider
             .get_block_by_number(BlockNumberOrTag::Number(mid))
             .await
         {
-            Ok(Some(b)) => b,
+            Ok(Some(block)) => block,
             Ok(None) => {
-                error!("chain/block-at-timestamp: block {mid} missing during bisection");
-                return HttpResponse::ServiceUnavailable().json(JsonResponse {
-                    response: "Upstream RPC could not resolve the timestamp".to_string(),
-                });
+                return unavailable(
+                    "chain/block-at-timestamp",
+                    format_args!("block {mid} missing during bisection"),
+                    "Upstream RPC could not resolve the timestamp",
+                );
             }
             Err(e) => {
-                error!("chain/block-at-timestamp: block {mid} lookup failed: {e}");
-                return HttpResponse::ServiceUnavailable().json(JsonResponse {
-                    response: "Upstream RPC unavailable".to_string(),
-                });
+                return upstream_failed(
+                    format_args!("chain/block-at-timestamp: block {mid} lookup failed"),
+                    e,
+                );
             }
         };
 
         if block.header.timestamp <= target {
             best = Some((block.header.number, block.header.timestamp));
-            low = mid + 1;
+            let Some(next) = mid.checked_add(1) else {
+                break;
+            };
+            low = next;
         } else {
             if mid == 0 {
                 break;
@@ -1614,14 +1024,13 @@ async fn block_at_timestamp(
         }
     }
 
-    // `best` is empty only when even genesis is later than the target — the timestamp predates the
-    // chain, so no block satisfies the request. Answering `block_number: 0, timestamp: 0` invented
-    // a timestamp genesis does not have, and a caller comparing it against a voting window read an
-    // epoch date. There is no honest number here, so say so.
+    // `best` is empty only when even genesis is later than the target. There is no honest block
+    // number to report: `0` with a `0` timestamp reads as an epoch date to a voting-window check.
     let Some((block_number, timestamp)) = best else {
-        return HttpResponse::NotFound().json(JsonResponse {
-            response: "No block exists at or before that timestamp".to_string(),
-        });
+        return json_message(
+            StatusCode::NOT_FOUND,
+            "No block exists at or before that timestamp",
+        );
     };
 
     HttpResponse::Ok().json(BlockAtTimestampResponse {
@@ -1634,108 +1043,10 @@ async fn block_at_timestamp(
 mod tests {
     use super::*;
 
-    fn encoded_aggregate3(targets: &[Address]) -> Vec<u8> {
-        aggregate3Call {
-            calls: targets
-                .iter()
-                .map(|target| Multicall3Call3 {
-                    target: *target,
-                    allowFailure: true,
-                    callData: Bytes::from_static(&[0x70, 0xa0, 0x82, 0x31]),
-                })
-                .collect(),
-        }
-        .abi_encode()
-    }
-
-    #[test]
-    fn aggregate3_reports_every_inner_target() {
-        let one = address!("0x1111111111111111111111111111111111111111");
-        let two = address!("0x2222222222222222222222222222222222222222");
-
-        let targets = multicall3_targets(&encoded_aggregate3(&[one, two]), 0).unwrap();
-
-        assert_eq!(targets, vec![one, two]);
-    }
-
-    #[test]
-    fn nested_multicalls_are_unwrapped_rather_than_waved_through() {
-        let hidden = address!("0x3333333333333333333333333333333333333333");
-
-        let outer = aggregate3Call {
-            calls: vec![Multicall3Call3 {
-                target: MULTICALL3,
-                allowFailure: true,
-                callData: encoded_aggregate3(&[hidden]).into(),
-            }],
-        }
-        .abi_encode();
-
-        assert_eq!(multicall3_targets(&outer, 0).unwrap(), vec![hidden]);
-    }
-
-    #[test]
-    fn nesting_past_the_cap_is_refused() {
-        let mut payload =
-            encoded_aggregate3(&[address!("0x4444444444444444444444444444444444444444")]);
-
-        for _ in 0..=MAX_MULTICALL_DEPTH {
-            payload = aggregate3Call {
-                calls: vec![Multicall3Call3 {
-                    target: MULTICALL3,
-                    allowFailure: true,
-                    callData: payload.into(),
-                }],
-            }
-            .abi_encode();
-        }
-
-        assert!(multicall3_targets(&payload, 0).is_err());
-    }
-
-    #[test]
-    fn other_aggregate_shapes_decode_too() {
-        let one = address!("0x5555555555555555555555555555555555555555");
-
-        let try_aggregate = tryAggregateCall {
-            requireSuccess: false,
-            calls: vec![Multicall3Call {
-                target: one,
-                callData: Bytes::new(),
-            }],
-        }
-        .abi_encode();
-
-        assert_eq!(multicall3_targets(&try_aggregate, 0).unwrap(), vec![one]);
-    }
-
-    #[test]
-    fn get_eth_balance_reaches_no_other_contract() {
-        let call_data = [MULTICALL3_GET_ETH_BALANCE.as_slice(), &[0u8; 32]].concat();
-
-        assert!(multicall3_targets(&call_data, 0).unwrap().is_empty());
-    }
-
-    #[actix_web::test]
-    async fn a_wide_log_scan_is_charged_for_the_windows_it_opens() {
-        // 500 windows is 500 upstream calls; charging it as 1 left the per-caller bound off by
-        // that factor. Two maximal scans should exhaust a 1200-call window.
-        let limiter = ChainRateLimiter::new();
-        let request = actix_web::test::TestRequest::default().to_http_request();
-
-        assert_eq!(
-            windows_for(0, MAX_LOG_WINDOWS * LOG_WINDOW - 1),
-            MAX_LOG_WINDOWS
-        );
-        assert!(admit(&request, &limiter, MAX_LOG_WINDOWS as usize).is_ok());
-        assert!(admit(&request, &limiter, MAX_LOG_WINDOWS as usize).is_ok());
-        assert!(admit(&request, &limiter, MAX_LOG_WINDOWS as usize).is_err());
-    }
-
     #[actix_web::test]
     async fn an_untrusted_forwarded_header_cannot_mint_a_new_identity() {
         // With `trust_proxy_headers` off (the default), two requests from the same socket are the
-        // same caller however they label themselves — otherwise the window bounds nothing.
+        // same caller however they label themselves; otherwise the window bounds nothing.
         let first = actix_web::test::TestRequest::default()
             .peer_addr("10.0.0.1:1111".parse().unwrap())
             .insert_header(("X-Forwarded-For", "1.2.3.4"))
@@ -1747,126 +1058,7 @@ mod tests {
 
         assert_eq!(identify(&first, false), identify(&second, false));
 
-        // And with a trusted proxy in front, the header is what distinguishes them — that is the
-        // whole reason the switch exists.
+        // With a trusted proxy in front, the header is what distinguishes them.
         assert_ne!(identify(&first, true), identify(&second, true));
-    }
-
-    #[test]
-    fn a_block_with_full_transaction_bodies_is_served() {
-        // Exactly the shape viem's `waitForTransactionReceipt` sends while checking whether a
-        // transaction was replaced. Refusing it reported a parameter error for a transaction that
-        // had already been mined.
-        let params = serde_json::json!(["0xb08cfe", true]);
-        assert!(global_request_is_too_broad("eth_getBlockByNumber", &params).is_none());
-        assert!(global_request_is_too_broad("eth_getBlockByHash", &params).is_none());
-    }
-
-    #[test]
-    fn a_caller_chosen_fee_history_range_is_still_capped() {
-        // The bound worth keeping: unlike a block, the caller picks how much work this is.
-        let too_many = serde_json::json!(["0x400", "latest", []]);
-        assert!(global_request_is_too_broad("eth_feeHistory", &too_many).is_some());
-
-        let reasonable = serde_json::json!(["0x8", "latest", []]);
-        assert!(global_request_is_too_broad("eth_feeHistory", &reasonable).is_none());
-    }
-
-    #[test]
-    fn account_reads_are_not_allowlist_checked() {
-        // The caller's own EOA can never be on a list of watched contracts, so gating these was
-        // gating every transaction in both apps.
-        for method in [
-            "eth_getBalance",
-            "eth_getTransactionCount",
-            "eth_getCode",
-            "eth_getStorageAt",
-        ] {
-            let params =
-                serde_json::json!(["0x1111111111111111111111111111111111111111", "latest"]);
-            assert!(
-                matches!(requested_addresses(method, &params), Scope::Global),
-                "{method} must not be address-scoped"
-            );
-        }
-    }
-
-    #[test]
-    fn eth_call_is_still_allowlist_checked() {
-        let params = serde_json::json!([{ "to": "0x1111111111111111111111111111111111111111" }]);
-        assert!(matches!(
-            requested_addresses("eth_call", &params),
-            Scope::Addresses(_)
-        ));
-
-        // ...and an `eth_call` with no `to` is arbitrary EVM, still refused.
-        assert!(matches!(
-            requested_addresses("eth_call", &serde_json::json!([{}])),
-            Scope::Unscoped(_)
-        ));
-    }
-
-    #[actix_web::test]
-    async fn the_read_window_charges_a_batch_per_call_and_eventually_refuses() {
-        let limiter = ChainRateLimiter::new();
-        let request = actix_web::test::TestRequest::default().to_http_request();
-
-        let mut batches = 0;
-        while admit(&request, &limiter, 64).is_ok() {
-            batches += 1;
-            assert!(batches < 1_000, "the read window never closed");
-        }
-
-        // 1200 calls / 64 per batch: a caller gets ~18 full batches a minute, not 1200 of them.
-        assert!(
-            (15..=20).contains(&batches),
-            "unexpected batch budget: {batches}"
-        );
-    }
-
-    #[actix_web::test]
-    async fn one_caller_hitting_the_window_does_not_refuse_another() {
-        let limiter = ChainRateLimiter::new();
-        let hot = actix_web::test::TestRequest::default()
-            .peer_addr("10.0.0.1:1234".parse().unwrap())
-            .to_http_request();
-        let other = actix_web::test::TestRequest::default()
-            .peer_addr("10.0.0.2:1234".parse().unwrap())
-            .to_http_request();
-
-        while admit(&hot, &limiter, 64).is_ok() {}
-
-        assert!(admit(&other, &limiter, 64).is_ok());
-    }
-
-    #[test]
-    fn an_unknown_selector_on_multicall3_is_refused() {
-        assert!(multicall3_targets(&[0xde, 0xad, 0xbe, 0xef], 0).is_err());
-    }
-
-    #[test]
-    fn a_multicall_eth_call_is_scoped_to_its_inner_targets() {
-        let one = address!("0x6666666666666666666666666666666666666666");
-        let params = serde_json::json!([{
-            "to": "0xca11bde05977b3631167028862be2a173976ca11",
-            "data": format!("0x{}", hex::encode(encoded_aggregate3(&[one]))),
-        }]);
-
-        match requested_addresses("eth_call", &params) {
-            Scope::Addresses(addresses) => {
-                assert_eq!(addresses, vec![one.to_string()]);
-            }
-            _ => panic!("a Multicall3 call must be address-scoped"),
-        }
-    }
-
-    #[test]
-    fn a_multicall_eth_call_without_data_is_refused() {
-        let params = serde_json::json!([{ "to": "0xca11bde05977b3631167028862be2a173976ca11" }]);
-
-        assert!(matches!(
-            requested_addresses("eth_call", &params),
-            Scope::Unscoped(_)
-        ));
     }
 }

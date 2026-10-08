@@ -4,30 +4,29 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use std::fmt::Display;
+use std::future::Future;
+
+use actix_web::http::StatusCode;
+use actix_web::{web, HttpRequest, HttpResponse};
+use alloy::primitives::{Address, Bytes, U256};
+use alloy::sol;
+use alloy::sol_types::SolEvent;
+use e3_sdk::evm_helpers::contracts::{InterfoldContract, InterfoldWrite};
+use evm_helpers::CRISPContract;
+use log::{error, info};
+use serde::{Deserialize, Serialize};
+
+use super::scan::{scan_logs, served_address, unavailable, ScanCtx, Target, NOT_INDEXED};
+use super::{chain::charge, json_message};
 use crate::config::CONFIG;
 use crate::deployments;
+use crate::e3_request::{self, ComputeProviderParams};
 use crate::server::app_data::AppData;
-use crate::server::indexer::get_current_timestamp_rpc;
 use crate::server::models::{
-    canonical_e3_id, CTRequest, ComputeProviderParams, JsonResponse, PKRequest, RoundRequest,
-    RoundRequestWithRequester,
+    canonical_e3_id, e3_id_to_u256, CTRequest, PKRequest, RoundRequest, RoundRequestWithRequester,
 };
-
-use super::chain::{admit, is_allowed, parse_address, too_many_requests, upstream};
-use super::scan::{coverage_for, scan_logs, Target};
 use crate::server::rate_limit::ChainRateLimiter;
-
-use actix_web::{web, HttpRequest, HttpResponse, Responder};
-use alloy::primitives::{Address, Bytes, U256};
-use alloy::providers::Provider;
-use alloy::sol;
-use alloy::sol_types::{SolEvent, SolValue};
-use e3_sdk::evm_helpers::contracts::{
-    CommitteeSize, InterfoldContract, InterfoldRead, InterfoldWrite,
-};
-use evm_helpers::CRISPContract;
-use log::{error, info, warn};
-use serde::{Deserialize, Serialize};
 
 pub fn setup_routes(config: &mut web::ServiceConfig) {
     config.service(
@@ -59,154 +58,334 @@ const INPUTS_READ_COST: usize = 4;
 const CENSUS_MODE_TOKEN: u64 = 0;
 const CENSUS_MODE_ONCHAIN: u64 = 2;
 
+/// Serializes `/rounds/request`: two concurrent requests would sign with the same nonce.
+static REQUEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[derive(Debug, Deserialize)]
-pub struct RoundInputsRequest {
-    pub round_id: String,
+struct RoundInputsRequest {
+    round_id: String,
     /// The E3 program that emitted them. Defaults to the configured one; a round created against
     /// a different program names it here.
     #[serde(default)]
-    pub program: Option<String>,
+    program: Option<String>,
     #[serde(default)]
-    pub from_block: Option<u64>,
+    from_block: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct PublishedInput {
-    pub index: String,
-    pub block: u64,
-    pub transaction_hash: Option<String>,
+struct PublishedInput {
+    index: String,
+    block: u64,
+    transaction_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct RoundInputsResponse {
-    pub program: String,
-    pub round_id: String,
-    pub scanned_from: u64,
-    pub scanned_to: u64,
-    pub indexed_head: u64,
-    pub inputs: Vec<PublishedInput>,
+struct RoundInputsResponse {
+    program: String,
+    round_id: String,
+    scanned_from: u64,
+    scanned_to: u64,
+    indexed_head: u64,
+    inputs: Vec<PublishedInput>,
 }
 
 /// When each encrypted ballot landed in a round, for the activity feed.
 ///
-/// `/state/lite` already reports how MANY inputs a round holds, but not when each arrived or in
-/// which transaction, which is what the feed links to — so this is not the same question.
-///
-/// The event holds only the content hash and Avail coordinates. The feed needs only the index,
-/// Ethereum block, and transaction link. Ballots stay indistinguishable: a mask and a vote have
-/// the same event shape.
+/// `/state/lite` reports how many inputs a round holds, not when each arrived or in which
+/// transaction. The event holds only the content hash and Avail coordinates, and a mask and a
+/// vote have the same shape, so ballots stay indistinguishable.
 async fn round_inputs(
     http_request: HttpRequest,
     data: web::Json<RoundInputsRequest>,
     store: web::Data<AppData>,
     limiter: web::Data<ChainRateLimiter>,
-) -> impl Responder {
-    if let Err((caller, cost)) = admit(&http_request, &limiter, INPUTS_READ_COST) {
-        return too_many_requests(&caller, cost, "/rounds/inputs");
+) -> HttpResponse {
+    match read_round_inputs(&http_request, data.into_inner(), &store, &limiter).await {
+        Ok(body) => HttpResponse::Ok().json(body),
+        Err(response) => response,
     }
+}
 
-    let request = data.into_inner();
+async fn read_round_inputs(
+    http_request: &HttpRequest,
+    request: RoundInputsRequest,
+    store: &web::Data<AppData>,
+    limiter: &ChainRateLimiter,
+) -> Result<RoundInputsResponse, HttpResponse> {
+    charge(http_request, limiter, INPUTS_READ_COST, "/rounds/inputs")?;
 
-    let e3_id = match canonical_e3_id(&request.round_id) {
-        Ok(id) => id,
-        Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
-    };
-    let Ok(e3_id_u256) = U256::from_str_radix(&e3_id, 10) else {
-        return HttpResponse::BadRequest().json(JsonResponse {
-            response: format!("Invalid round id: {e3_id}"),
-        });
-    };
-
+    let e3_id = e3_id_to_u256(&request.round_id)
+        .map_err(|e| HttpResponse::BadRequest().body(e.to_string()))?;
     let requested = request
         .program
-        .clone()
-        .unwrap_or_else(|| CONFIG.e3_program_address.clone());
-    let Some(program) = parse_address(&requested) else {
-        return HttpResponse::BadRequest().json(JsonResponse {
-            response: format!("Invalid program address: {requested}"),
-        });
-    };
-
-    if !is_allowed(&program) {
-        return HttpResponse::NotFound().json(JsonResponse {
-            response: format!("Program {program} is not served by this indexer"),
-        });
-    }
-
-    let program_key = program.to_string().to_lowercase();
-    let indexed = coverage_for(&store, &program_key).await;
-    let indexed_head = indexed.map(|(_, head)| head).unwrap_or(0);
-
-    let Some(scan_from) = request.from_block.or(indexed.map(|(from, _)| from)) else {
-        return HttpResponse::BadRequest().json(JsonResponse {
-            response: format!(
-                "from_block is required for {program}: its logs are not indexed here"
-            ),
-        });
-    };
-
-    let provider = match upstream().await {
-        Ok(p) => p,
-        Err(e) => {
-            error!("rounds/inputs: provider unavailable: {e}");
-            return HttpResponse::ServiceUnavailable().json(JsonResponse {
-                response: "Upstream RPC unavailable".to_string(),
-            });
-        }
-    };
-
-    let block = match provider.get_block_number().await {
-        Ok(number) => number,
-        Err(e) => {
-            error!("rounds/inputs: could not read the head: {e}");
-            return HttpResponse::ServiceUnavailable().json(JsonResponse {
-                response: "Upstream RPC unavailable".to_string(),
-            });
-        }
-    };
+        .as_deref()
+        .unwrap_or(&CONFIG.e3_program_address);
+    let program = served_address(requested, "program", "Program")?;
+    let ctx = ScanCtx::open(
+        store,
+        "/rounds/inputs",
+        program,
+        program,
+        request.from_block,
+        NOT_INDEXED,
+    )
+    .await?;
 
     let target = Target {
-        address: program,
-        key: &program_key,
-        topic0: InputPublished::SIGNATURE_HASH,
-        topics: [Some(e3_id_u256.into()), None, None],
-        indexed,
+        topics: [Some(e3_id.into()), None, None],
+        ..ctx.target(InputPublished::SIGNATURE_HASH)
     };
-
-    let logs = match scan_logs(&store, provider, &target, scan_from, block).await {
-        Ok(found) => found,
-        Err(e) => {
-            error!("rounds/inputs: scanning InputPublished failed: {e}");
-            return HttpResponse::ServiceUnavailable().json(JsonResponse {
-                response: "Failed to read the input history".to_string(),
-            });
-        }
-    };
-
-    let mut inputs = Vec::with_capacity(logs.len());
-    for log in logs {
-        let Ok(decoded) = InputPublished::decode_raw_log(log.topics.iter().copied(), &log.data)
-        else {
-            continue;
-        };
-        inputs.push(PublishedInput {
-            index: decoded.index.to_string(),
-            block: log.block_number,
-            transaction_hash: log.transaction_hash,
-        });
-    }
+    let logs = scan_logs(store, ctx.provider, &target, ctx.scan_from, ctx.block)
+        .await
+        .map_err(|e| {
+            unavailable(
+                "rounds/inputs: scanning InputPublished failed",
+                e,
+                "Failed to read the input history",
+            )
+        })?;
 
     // Newest first, as the feed renders them.
-    inputs.reverse();
+    let inputs = logs
+        .into_iter()
+        .rev()
+        .filter_map(|log| {
+            let decoded =
+                InputPublished::decode_raw_log(log.topics.iter().copied(), &log.data).ok()?;
+            Some(PublishedInput {
+                index: decoded.index.to_string(),
+                block: log.block_number,
+                transaction_hash: log.transaction_hash,
+            })
+        })
+        .collect();
 
-    HttpResponse::Ok().json(RoundInputsResponse {
+    Ok(RoundInputsResponse {
         program: program.to_string(),
-        round_id: e3_id,
-        scanned_from: scan_from,
-        scanned_to: block,
-        indexed_head,
+        round_id: e3_id.to_string(),
+        scanned_from: ctx.scan_from,
+        scanned_to: ctx.block,
+        indexed_head: ctx.indexed_head,
         inputs,
     })
+}
+
+/// Compare in time that depends on the lengths only, so the response time does not reveal how
+/// much of a guess matches.
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    let mut difference = left.len() ^ right.len();
+    for i in 0..left.len().max(right.len()) {
+        let l = left.get(i).copied().unwrap_or(0);
+        let r = right.get(i).copied().unwrap_or(0);
+        difference |= usize::from(std::hint::black_box(l ^ r));
+    }
+    difference == 0
+}
+
+fn valid_cron_api_key(configured: Option<&str>, provided: &str) -> bool {
+    matches!(
+        configured,
+        Some(expected) if !expected.trim().is_empty()
+            && constant_time_eq(expected.as_bytes(), provided.as_bytes())
+    )
+}
+
+async fn request_new_round(data: web::Json<RoundRequest>) -> HttpResponse {
+    if !valid_cron_api_key(CONFIG.cron_api_key.as_deref(), &data.cron_api_key) {
+        return json_message(StatusCode::UNAUTHORIZED, "Invalid API key");
+    }
+    if data.token_address.is_empty() {
+        return json_message(StatusCode::BAD_REQUEST, "Token address is required");
+    }
+    if data.balance_threshold.is_empty() {
+        return json_message(StatusCode::BAD_REQUEST, "Balance threshold is required");
+    }
+
+    let self_registry = match deployments::deployed_address(CONFIG.chain_id, "SelfRegistry") {
+        Ok(address) => address,
+        Err(e) => {
+            error!("Failed to read CRISP deployment addresses: {e}");
+            return json_message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to read CRISP deployment configuration",
+            );
+        }
+    };
+    let census_mode = match resolve_request_census_mode(
+        &data.token_address,
+        data.census_mode,
+        self_registry.as_deref(),
+    ) {
+        Ok(mode) => mode,
+        Err(message) => return json_message(StatusCode::BAD_REQUEST, message),
+    };
+
+    let _one_request_at_a_time = REQUEST_LOCK.lock().await;
+    match initialize_crisp_round(&data.token_address, &data.balance_threshold, census_mode).await {
+        Ok(()) => json_message(StatusCode::OK, "New E3 round requested successfully"),
+        Err(e) => {
+            error!("Failed to request new E3 round: {e}");
+            json_message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to request new E3 round: {e}"),
+            )
+        }
+    }
+}
+
+fn resolve_request_census_mode(
+    token_address: &str,
+    requested: Option<u64>,
+    self_registry: Option<&str>,
+) -> Result<u64, String> {
+    let self_registry_requested = self_registry
+        .is_some_and(|address| address.trim().eq_ignore_ascii_case(token_address.trim()));
+
+    match requested {
+        Some(CENSUS_MODE_TOKEN) if self_registry_requested => Err(
+            "SelfRegistry rounds must use census_mode 2 (ONCHAIN). census_mode 0 would try \
+             token-holder discovery and make the round invisible to clients."
+                .to_string(),
+        ),
+        Some(mode @ (CENSUS_MODE_TOKEN | CENSUS_MODE_ONCHAIN)) => Ok(mode),
+        Some(mode) => Err(format!(
+            "Unsupported census mode {mode}: this route can request 0 (TOKEN) or 2 (ONCHAIN)"
+        )),
+        None if self_registry_requested => Ok(CENSUS_MODE_ONCHAIN),
+        None => Ok(CENSUS_MODE_TOKEN),
+    }
+}
+
+async fn get_current_round(
+    data: web::Json<RoundRequestWithRequester>,
+    store: web::Data<AppData>,
+) -> HttpResponse {
+    let result = match data.into_inner().requesters.into_iter().next() {
+        Some(requester) => {
+            store
+                .current_round()
+                .get_current_round_for_requester(requester)
+                .await
+        }
+        None => store.current_round().get_current_round().await,
+    };
+
+    match result {
+        Ok(Some(current_round)) => HttpResponse::Ok().json(current_round),
+        Ok(None) => json_message(StatusCode::NOT_FOUND, "No current round found"),
+        Err(e) => json_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to retrieve current round: {e}"),
+        ),
+    }
+}
+
+/// Read `what` of a round through `read`. The round id is canonicalised: a malformed id is a 400
+/// with the parse error as a plain-text body.
+async fn read_round_bytes<E: Display, Fut: Future<Output = Result<Vec<u8>, E>>>(
+    round_id: &str,
+    what: &str,
+    read: impl FnOnce(String) -> Fut,
+) -> Result<(String, Vec<u8>), HttpResponse> {
+    let e3_id =
+        canonical_e3_id(round_id).map_err(|e| HttpResponse::BadRequest().body(e.to_string()))?;
+    match read(e3_id.clone()).await {
+        Ok(bytes) => Ok((e3_id, bytes)),
+        Err(e) => Err(json_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to retrieve {what}: {e}"),
+        )),
+    }
+}
+
+async fn get_ciphertext(data: web::Json<CTRequest>, store: web::Data<AppData>) -> HttpResponse {
+    let mut request = data.into_inner();
+    let read = |id: String| {
+        let store = store.clone();
+        async move { store.e3(id).get_ciphertext_output().await }
+    };
+    match read_round_bytes(&request.round_id, "ciphertext output", read).await {
+        Ok((round_id, ct_bytes)) => {
+            request.round_id = round_id;
+            request.ct_bytes = ct_bytes;
+            HttpResponse::Ok().json(request)
+        }
+        Err(response) => response,
+    }
+}
+
+async fn get_public_key(data: web::Json<PKRequest>, store: web::Data<AppData>) -> HttpResponse {
+    let mut request = data.into_inner();
+    let read = |id: String| {
+        let store = store.clone();
+        async move { store.e3(id).get_committee_public_key().await }
+    };
+    match read_round_bytes(&request.round_id, "public key", read).await {
+        Ok((round_id, pk_bytes)) => {
+            request.round_id = round_id;
+            request.pk_bytes = pk_bytes;
+            HttpResponse::Ok().json(request)
+        }
+        Err(response) => response,
+    }
+}
+
+/// Request a new CRISP round on-chain.
+///
+/// For an ONCHAIN round `balance_threshold` becomes the round's `minVotingPower` floor in the
+/// token's raw units: `1` for a `SelfRegistry`, whose power is 1 or 0. `census_mode` is the
+/// `CRISPProgram.CensusMode` discriminant, 0 (TOKEN) or 2 (ONCHAIN).
+async fn initialize_crisp_round(
+    token_address: &str,
+    balance_threshold: &str,
+    census_mode: u64,
+) -> eyre::Result<()> {
+    info!(
+        "Starting new CRISP round with token address: {token_address} and balance threshold: {balance_threshold}"
+    );
+
+    let contract = InterfoldContract::new(
+        &CONFIG.http_rpc_url,
+        &CONFIG.private_key,
+        &CONFIG.interfold_address,
+    )
+    .await?;
+    let e3_program: Address = CONFIG.e3_program_address.parse()?;
+    e3_request::ensure_program_enabled(&contract, e3_program).await;
+
+    let custom_params = e3_request::custom_params(
+        token_address.parse()?,
+        U256::from_str_radix(balance_threshold, 10)?,
+        census_mode,
+    );
+    let committee = e3_request::committee(CONFIG.e3_committee_size)?;
+
+    let crisp_program = CRISPContract::new(
+        &CONFIG.http_rpc_url,
+        &CONFIG.private_key,
+        &CONFIG.e3_program_address,
+    )
+    .await?;
+    let input_window = e3_request::voting_window(&crisp_program).await?;
+    let compute_provider_params =
+        Bytes::from(bincode::serialize(&ComputeProviderParams::from_config())?);
+
+    let (receipt, e3_id) = contract
+        .request_e3(
+            committee.size,
+            input_window,
+            e3_program,
+            CONFIG.e3_param_set,
+            compute_provider_params,
+            custom_params,
+        )
+        .await?;
+    info!(
+        "E3 request sent. TxHash: {:?}, E3 ID: {}",
+        receipt.transaction_hash, e3_id
+    );
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -276,341 +455,11 @@ mod tests {
         assert!(!valid_cron_api_key(None, "provided"));
         assert!(!valid_cron_api_key(Some(""), ""));
         assert!(!valid_cron_api_key(Some("configured"), "wrong"));
+        assert!(!valid_cron_api_key(Some("configured"), "config"));
+        assert!(!valid_cron_api_key(
+            Some("configured"),
+            "configured-and-more"
+        ));
         assert!(valid_cron_api_key(Some("configured"), "configured"));
     }
-}
-
-fn valid_cron_api_key(configured: Option<&str>, provided: &str) -> bool {
-    matches!(configured, Some(expected) if !expected.trim().is_empty() && expected == provided)
-}
-
-/// Request a new E3 round
-///
-/// # Arguments
-///
-/// * `data` - The request data containing the cron API key and token address
-///
-/// # Returns
-///
-/// * A JSON response indicating the success of the operation
-async fn request_new_round(data: web::Json<RoundRequest>) -> impl Responder {
-    if !valid_cron_api_key(CONFIG.cron_api_key.as_deref(), &data.cron_api_key) {
-        return HttpResponse::Unauthorized().json(JsonResponse {
-            response: "Invalid API key".to_string(),
-        });
-    }
-
-    if data.token_address.is_empty() {
-        return HttpResponse::BadRequest().json(JsonResponse {
-            response: "Token address is required".to_string(),
-        });
-    }
-
-    if data.balance_threshold.is_empty() {
-        return HttpResponse::BadRequest().json(JsonResponse {
-            response: "Balance threshold is required".to_string(),
-        });
-    }
-
-    let self_registry = match deployments::self_registry_for_chain_id(CONFIG.chain_id) {
-        Ok(address) => address,
-        Err(e) => {
-            error!("Failed to read CRISP deployment addresses: {e}");
-            return HttpResponse::InternalServerError().json(JsonResponse {
-                response: "Failed to read CRISP deployment configuration".to_string(),
-            });
-        }
-    };
-
-    let census_mode = match resolve_request_census_mode(
-        &data.token_address,
-        data.census_mode,
-        self_registry.as_deref(),
-    ) {
-        Ok(mode) => mode,
-        Err(response) => {
-            return HttpResponse::BadRequest().json(JsonResponse { response });
-        }
-    };
-
-    let result =
-        initialize_crisp_round(&data.token_address, &data.balance_threshold, census_mode).await;
-
-    match result {
-        Ok(_) => HttpResponse::Ok().json(JsonResponse {
-            response: "New E3 round requested successfully".to_string(),
-        }),
-        Err(e) => HttpResponse::InternalServerError().json(JsonResponse {
-            response: format!("Failed to request new E3 round: {}", e),
-        }),
-    }
-}
-
-fn same_address(left: &str, right: &str) -> bool {
-    left.trim().eq_ignore_ascii_case(right.trim())
-}
-
-fn is_known_self_registry(token_address: &str, self_registry: Option<&str>) -> bool {
-    self_registry.is_some_and(|address| same_address(token_address, address))
-}
-
-fn resolve_request_census_mode(
-    token_address: &str,
-    requested: Option<u64>,
-    self_registry: Option<&str>,
-) -> Result<u64, String> {
-    let self_registry_requested = is_known_self_registry(token_address, self_registry);
-
-    match requested {
-        Some(CENSUS_MODE_TOKEN) if self_registry_requested => Err(
-            "SelfRegistry rounds must use census_mode 2 (ONCHAIN). census_mode 0 would try \
-             token-holder discovery and make the round invisible to clients."
-                .to_string(),
-        ),
-        Some(mode @ (CENSUS_MODE_TOKEN | CENSUS_MODE_ONCHAIN)) => Ok(mode),
-        Some(mode) => Err(format!(
-            "Unsupported census mode {mode}: this route can request 0 (TOKEN) or 2 (ONCHAIN)"
-        )),
-        None if self_registry_requested => Ok(CENSUS_MODE_ONCHAIN),
-        None => Ok(CENSUS_MODE_TOKEN),
-    }
-}
-
-/// Get the current E3 round
-///
-/// # Returns
-///
-/// * A JSON response containing the current round
-async fn get_current_round(
-    data: web::Json<RoundRequestWithRequester>,
-    store: web::Data<AppData>,
-) -> impl Responder {
-    let incoming = data.into_inner();
-
-    // Get the first requester if any exist
-    // .get(0) returns Option<&String>, so we need to handle that
-    let result = if let Some(requester) = incoming.requesters.first() {
-        // We have a requester, filter by it
-        store
-            .current_round()
-            .get_current_round_for_requester(requester.clone())
-            .await
-    } else {
-        // No requester provided (empty array)
-        store.current_round().get_current_round().await
-    };
-
-    match result {
-        Ok(Some(current_round)) => HttpResponse::Ok().json(current_round),
-        Ok(None) => HttpResponse::NotFound().json(JsonResponse {
-            response: "No current round found".to_string(),
-        }),
-        Err(e) => HttpResponse::InternalServerError().json(JsonResponse {
-            response: format!("Failed to retrieve current round: {}", e),
-        }),
-    }
-}
-
-/// Get the ciphertext for a given round
-///
-/// # Arguments
-///
-/// * `CTRequest` - The request data containing the round ID
-///
-/// # Returns
-///
-/// * A JSON response containing the ciphertext
-async fn get_ciphertext(data: web::Json<CTRequest>, store: web::Data<AppData>) -> impl Responder {
-    let mut incoming = data.into_inner();
-    let e3_id = match canonical_e3_id(&incoming.round_id) {
-        Ok(e3_id) => e3_id,
-        Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
-    };
-    incoming.round_id = e3_id.clone();
-
-    match store.e3(e3_id).get_ciphertext_output().await {
-        Ok(ct_bytes) => {
-            incoming.ct_bytes = ct_bytes;
-            HttpResponse::Ok().json(incoming)
-        }
-        Err(e) => HttpResponse::InternalServerError().json(JsonResponse {
-            response: format!("Failed to retrieve ciphertext output: {}", e),
-        }),
-    }
-}
-
-/// Get the public key for a given round
-///
-/// # Arguments
-///
-/// * `PKRequest` - The request data containing the round ID
-///
-/// # Returns
-///
-/// * A JSON response containing the public key
-async fn get_public_key(data: web::Json<PKRequest>, store: web::Data<AppData>) -> impl Responder {
-    let mut incoming = data.into_inner();
-    let e3_id = match canonical_e3_id(&incoming.round_id) {
-        Ok(e3_id) => e3_id,
-        Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
-    };
-    incoming.round_id = e3_id.clone();
-
-    match store.e3(e3_id).get_committee_public_key().await {
-        Ok(pk_bytes) => {
-            incoming.pk_bytes = pk_bytes;
-            HttpResponse::Ok().json(incoming)
-        }
-        Err(e) => HttpResponse::InternalServerError().json(JsonResponse {
-            response: format!("Failed to retrieve public key: {}", e),
-        }),
-    }
-}
-
-/// Initialize a new CRISP round
-///
-/// Creates a new CRISP round by enabling the E3 program, generating the necessary parameters,
-/// and requesting E3.
-///
-/// # Arguments
-///
-/// * `token_address` - The token contract address
-/// * `balance_threshold` - The balance threshold. For an ONCHAIN round this becomes the round's
-///   `minVotingPower` floor, in the token's raw units — `1` for a `SelfRegistry`, whose power is
-///   1 or 0.
-/// * `census_mode` - The `CRISPProgram.CensusMode` discriminant: 0 (TOKEN) or 2 (ONCHAIN)
-///
-/// # Returns
-///
-/// * A result indicating the success of the operation
-pub async fn initialize_crisp_round(
-    token_address: &str,
-    balance_threshold: &str,
-    census_mode: u64,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    info!(
-        "Starting new CRISP round with token address: {} and balance threshold: {}",
-        token_address, balance_threshold
-    );
-
-    // Continue with the existing E3 initialization
-    let contract = InterfoldContract::new(
-        &CONFIG.http_rpc_url,
-        &CONFIG.private_key,
-        &CONFIG.interfold_address,
-    )
-    .await?;
-    let e3_program: Address = CONFIG.e3_program_address.parse()?;
-
-    // Enable E3 Program
-    info!("Enabling E3 Program...");
-    match contract.is_e3_program_enabled(e3_program).await {
-        Ok(enabled) => {
-            if !enabled {
-                match contract.register_e3_program(e3_program).await {
-                    Ok(res) => println!("E3 Program enabled. TxHash: {:?}", res.transaction_hash),
-                    Err(e) => println!("Error enabling E3 Program: {:?}", e),
-                }
-            } else {
-                info!("E3 Program already enabled");
-            }
-        }
-        Err(e) => error!("Error checking E3 Program enabled: {:?}", e),
-    }
-
-    let token_address: Address = token_address.parse()?;
-    let balance_threshold = U256::from_str_radix(balance_threshold, 10)?;
-
-    // Serialize the custom parameters to bytes.
-    //
-    // This encoded two fields where every consumer reads six, so rounds requested through this
-    // route could never be indexed — `abi_decode` failed on them and the round was dropped. Fixed
-    // here rather than left, because a route that silently produces unusable rounds is worse than
-    // one that does not exist.
-    //
-    // Two options and constant credits of one are the defaults this route always implied. The
-    // census source is the caller's choice between token discovery and the on-chain read; for
-    // ONCHAIN the threshold doubles as the contract's `minVotingPower` floor, which the tuple
-    // position below already carries.
-    let num_options = U256::from(2);
-    let credit_mode = U256::from(0); // Constant
-    let credits = U256::from(1);
-    let census_mode = U256::from(census_mode);
-    // Seventh field: the requested voting-power divisor, which constant credits ignore. Required:
-    // `_initRound` decodes exactly seven fields and reverts a shorter encoding.
-    let voting_power_divisor = U256::from(0);
-    let custom_params_bytes = Bytes::from(
-        (
-            token_address,
-            balance_threshold,
-            num_options,
-            credit_mode,
-            credits,
-            census_mode,
-            voting_power_divisor,
-        )
-            .abi_encode(),
-    );
-
-    info!("Requesting E3...");
-    let committee_size = match CONFIG.e3_committee_size {
-        0 => CommitteeSize::Minimum,
-        1 => CommitteeSize::Micro,
-        2 => CommitteeSize::Small,
-        _ => return Err(format!("Invalid committee size: {}", CONFIG.e3_committee_size).into()),
-    };
-
-    let crisp_program = CRISPContract::new(
-        &CONFIG.http_rpc_url,
-        &CONFIG.private_key,
-        &CONFIG.e3_program_address,
-    )
-    .await?;
-    let avail_window = crisp_program.availability_finalization_window().await?;
-    let current_timestamp = get_current_timestamp_rpc().await?;
-    let base = if avail_window == U256::ZERO {
-        current_timestamp
-    } else {
-        let (timestamp, native) = crisp_program
-            .earliest_voting_start_compatible(current_timestamp)
-            .await?;
-        if !native {
-            warn!("CRISPProgram has no earliestVotingStart(); derived the schedule from Interfold");
-        }
-        timestamp.try_into()?
-    };
-    let window_start = base
-        .checked_add(CONFIG.voting_start_buffer_seconds)
-        .ok_or_else(|| anyhow::anyhow!("voting start overflow"))?;
-    let input_window: [U256; 2] = [
-        U256::from(window_start),
-        U256::from(window_start + CONFIG.e3_duration),
-    ];
-    let param_set = match CONFIG.e3_param_set {
-        0 | 2 => CONFIG.e3_param_set,
-        invalid => return Err(format!("Invalid param set: {}", invalid).into()),
-    };
-    let compute_provider_params = ComputeProviderParams {
-        name: CONFIG.e3_compute_provider_name.clone(),
-        parallel: CONFIG.e3_compute_provider_parallel,
-        batch_size: CONFIG.e3_compute_provider_batch_size,
-    };
-
-    let compute_provider_params = Bytes::from(bincode::serialize(&compute_provider_params)?);
-    let (receipt, e3_id) = contract
-        .request_e3(
-            committee_size,
-            input_window,
-            e3_program,
-            param_set,
-            compute_provider_params,
-            custom_params_bytes,
-        )
-        .await?;
-    info!(
-        "E3 request sent. TxHash: {:?}, E3 ID: {}",
-        receipt.transaction_hash, e3_id
-    );
-
-    Ok(())
 }

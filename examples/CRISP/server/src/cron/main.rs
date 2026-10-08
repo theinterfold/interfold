@@ -11,9 +11,14 @@ use std::net::IpAddr;
 use std::time::Duration;
 use tokio::time::sleep;
 
-const MAX_RETRIES: u8 = 5;
+const MAX_RETRIES: u32 = 5;
+// The server sends the E3 request and waits for its receipt before it answers, so allow for slow
+// inclusion. A request that times out may still create a round, so it is never retried.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const ROUND_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 
-fn invalid_server_url(message: &str) -> std::io::Error {
+fn invalid_input(message: &str) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidInput, message)
 }
 
@@ -26,37 +31,32 @@ fn is_loopback_host(host: &str) -> bool {
 }
 
 fn round_request_url(server_url: &str) -> Result<Url, std::io::Error> {
-    let mut url = Url::parse(server_url.trim()).map_err(|_| {
-        invalid_server_url("INTERFOLD_SERVER_URL must be an absolute HTTP or HTTPS URL")
-    })?;
+    let mut url = Url::parse(server_url.trim())
+        .map_err(|_| invalid_input("INTERFOLD_SERVER_URL must be an absolute HTTP or HTTPS URL"))?;
 
     if !url.username().is_empty() || url.password().is_some() {
-        return Err(invalid_server_url(
+        return Err(invalid_input(
             "INTERFOLD_SERVER_URL must not contain user information",
         ));
     }
     if url.query().is_some() || url.fragment().is_some() {
-        return Err(invalid_server_url(
+        return Err(invalid_input(
             "INTERFOLD_SERVER_URL must not contain a query or fragment",
         ));
     }
 
     let host = url
         .host_str()
-        .ok_or_else(|| invalid_server_url("INTERFOLD_SERVER_URL must contain a host"))?;
+        .ok_or_else(|| invalid_input("INTERFOLD_SERVER_URL must contain a host"))?;
     match url.scheme() {
         "https" => {}
         "http" if is_loopback_host(host) => {}
         "http" => {
-            return Err(invalid_server_url(
+            return Err(invalid_input(
                 "INTERFOLD_SERVER_URL must use HTTPS unless its host is loopback",
             ));
         }
-        _ => {
-            return Err(invalid_server_url(
-                "INTERFOLD_SERVER_URL must use HTTP or HTTPS",
-            ));
-        }
+        _ => return Err(invalid_input("INTERFOLD_SERVER_URL must use HTTP or HTTPS")),
     }
 
     let path = format!("{}/rounds/request", url.path().trim_end_matches('/'));
@@ -64,22 +64,60 @@ fn round_request_url(server_url: &str) -> Result<Url, std::io::Error> {
     Ok(url)
 }
 
+/// Post one round request, retrying with a 2, 4, 8, 16 second backoff. Returns whether the
+/// server accepted it. No failure ends the process: the next round is a day away.
+async fn request_round(client: &Client, url: &Url, cron_api_key: &str) -> bool {
+    for attempt in 1..=MAX_RETRIES {
+        let response = client
+            .post(url.clone())
+            .json(&json!({ "cron_api_key": cron_api_key }))
+            .send()
+            .await;
+        match response {
+            Ok(res) if res.status().is_success() => {
+                println!("Successfully requested new E3 round");
+                return true;
+            }
+            Ok(res) => {
+                let body = res
+                    .text()
+                    .await
+                    .unwrap_or_else(|e| format!("<unreadable response body: {e}>"));
+                println!("Failed to request new E3 round: {body:?}");
+            }
+            // A connect timeout means the POST never reached the server, so it is retried below.
+            Err(e) if e.is_timeout() && !e.is_connect() => {
+                println!(
+                    "Round request timed out; it may still succeed, so it is not retried: {e:?}"
+                );
+                return false;
+            }
+            Err(e) => println!("Error making request: {e:?}"),
+        }
+
+        if attempt < MAX_RETRIES {
+            let backoff = Duration::from_secs(1 << attempt);
+            println!("Retrying in {} seconds...", backoff.as_secs());
+            sleep(backoff).await;
+        }
+    }
+    false
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let cron_api_key = std::env::var("CRON_API_KEY").map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "CRON_API_KEY must be set")
-    })?;
+    let cron_api_key =
+        std::env::var("CRON_API_KEY").map_err(|_| invalid_input("CRON_API_KEY must be set"))?;
     if cron_api_key.trim().is_empty() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "CRON_API_KEY must not be empty",
-        )
-        .into());
+        return Err(invalid_input("CRON_API_KEY must not be empty").into());
     }
     let interfold_server_url = std::env::var("INTERFOLD_SERVER_URL")
         .unwrap_or_else(|_| "http://localhost:4000".to_string());
     let round_request_url = round_request_url(&interfold_server_url)?;
-    let mut client_builder = Client::builder().redirect(reqwest::redirect::Policy::none());
+    let mut client_builder = Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(REQUEST_TIMEOUT)
+        .connect_timeout(CONNECT_TIMEOUT);
     if round_request_url.scheme() == "http" {
         // Keep the loopback-only plaintext exception off environment-configured proxies.
         client_builder = client_builder.no_proxy();
@@ -88,49 +126,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     loop {
         println!("Requesting new E3 round...");
-        let mut retries = 0;
-        let mut success = false;
-
-        while retries < MAX_RETRIES {
-            let response = client
-                .post(round_request_url.clone())
-                .json(&json!({
-                    "cron_api_key": &cron_api_key
-                }))
-                .send()
-                .await;
-
-            match response {
-                Ok(res) => {
-                    if res.status().is_success() {
-                        println!("Successfully requested new E3 round");
-                        success = true;
-                        break;
-                    } else {
-                        println!("Failed to request new E3 round: {:?}", res.text().await?);
-                    }
-                }
-                Err(e) => {
-                    println!("Error making request: {:?}", e);
-                }
-            }
-
-            retries += 1;
-            if retries < MAX_RETRIES {
-                let backoff_time = Duration::from_secs(2u64.pow(retries.into()));
-                println!("Retrying in {} seconds...", backoff_time.as_secs());
-                sleep(backoff_time).await;
-            }
-        }
-
-        if !success {
+        if !request_round(&client, &round_request_url, &cron_api_key).await {
             println!(
-                "Failed to request new E3 round after {} retries. Skipping for now.",
-                MAX_RETRIES
+                "Failed to request new E3 round after {MAX_RETRIES} retries. Skipping for now."
             );
         }
-
-        sleep(Duration::from_secs(24 * 60 * 60)).await;
+        sleep(ROUND_INTERVAL).await;
     }
 }
 

@@ -9,7 +9,7 @@ pub mod hashes;
 pub mod merkle_tree;
 pub mod requester_census;
 
-pub use etherscan::*;
-pub use hashes::*;
-pub use merkle_tree::*;
-pub use requester_census::*;
+pub use etherscan::{get_mock_token_holders, EtherscanClient};
+pub use hashes::compute_token_holder_hashes;
+pub use merkle_tree::build_tree;
+pub use requester_census::try_fetch_requester_census;

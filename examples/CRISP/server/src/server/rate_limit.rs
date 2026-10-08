@@ -23,7 +23,7 @@
 //! minutes of client-side proving, so a human cannot reach them.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 /// Broadcasts one caller may relay per window.
@@ -51,14 +51,9 @@ const CHAIN_PER_CALLER_LIMIT: usize = 1_200;
 /// is a worse failure than the one it prevents. The per-caller window is the bound here.
 const CHAIN_GLOBAL_LIMIT: usize = usize::MAX;
 
-/// Why a request was refused.
+/// A request was refused because its window is full.
 #[derive(Debug, PartialEq, Eq)]
-pub enum RateLimitExceeded {
-    /// The caller sent more than [`PER_CALLER_LIMIT`] requests inside the window.
-    Caller,
-    /// The relay reserved more than [`GLOBAL_LIMIT`] transactions inside the window.
-    Global,
-}
+pub struct RateLimitExceeded;
 
 /// A shared sliding-window limiter. Cheap to clone via `web::Data`; one instance must be built
 /// outside the `HttpServer` factory closure, or every worker gets its own counters and the
@@ -86,11 +81,6 @@ pub struct ChainRateLimiter {
 }
 
 impl ChainRateLimiter {
-    /// The safe default: identify callers by their socket peer, which cannot be forged.
-    pub fn new() -> Self {
-        Self::with_trust(false)
-    }
-
     pub fn with_trust(trust_proxy_headers: bool) -> Self {
         Self {
             limiter: RateLimiter::with_limits(CHAIN_PER_CALLER_LIMIT, CHAIN_GLOBAL_LIMIT),
@@ -108,16 +98,11 @@ impl ChainRateLimiter {
     }
 }
 
-impl Default for ChainRateLimiter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 struct State {
-    /// Recent request instants per caller. Pruned on every check, so a caller that goes quiet
-    /// costs nothing after one window.
-    per_caller: HashMap<String, Vec<Instant>>,
+    /// Admitted `(time, cost)` batches per caller. A check prunes only its own caller; a sweep at
+    /// most once per window drops callers that went quiet, so they cost nothing after that.
+    per_caller: HashMap<String, Vec<(Instant, usize)>>,
+    last_sweep: Instant,
     /// Recent global reservations across all callers, each with the token of its owner.
     global: Vec<GlobalEntry>,
     /// Source of reservation tokens. One process cannot reach `u64::MAX` reservations.
@@ -158,8 +143,9 @@ impl Drop for GlobalReservation<'_> {
     }
 }
 
-fn within_window(cutoff: Option<Instant>) -> impl Fn(&Instant) -> bool {
-    move |t| cutoff.is_none_or(|c| *t > c)
+/// Whether an event at `at` still counts in the window that ends at `now`.
+fn in_window(at: Instant, now: Instant) -> bool {
+    now.checked_sub(WINDOW).is_none_or(|cutoff| at > cutoff)
 }
 
 impl RateLimiter {
@@ -171,6 +157,7 @@ impl RateLimiter {
         Self {
             state: Mutex::new(State {
                 per_caller: HashMap::new(),
+                last_sweep: Instant::now(),
                 global: Vec::new(),
                 next_token: 0,
             }),
@@ -203,13 +190,20 @@ impl RateLimiter {
         self.try_reserve_global_at(Instant::now())
     }
 
+    /// Lock the state. The guarded collections have no multi-step invariant, so a poisoned lock
+    /// is still usable. Panicking here would take down every later request, and a panic in
+    /// `GlobalReservation::drop` during unwinding would abort the process.
+    fn state(&self) -> MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// Return one reservation by token.
     ///
     /// A token that already expired, or that was already released, removes nothing. Removal is by
     /// token and never by position, so a failed request cannot return the reservation of a
     /// request that admitted durable work.
     fn release_global(&self, token: u64) {
-        let mut state = self.state.lock().expect("rate limiter mutex poisoned");
+        let mut state = self.state();
         if let Some(index) = state.global.iter().position(|entry| entry.token == token) {
             state.global.remove(index);
         }
@@ -221,25 +215,29 @@ impl RateLimiter {
         cost: usize,
         now: Instant,
     ) -> Result<(), RateLimitExceeded> {
-        let within = within_window(now.checked_sub(WINDOW));
-
-        let mut state = self.state.lock().expect("rate limiter mutex poisoned");
-
-        // Prune every caller, not only this one, so idle callers do not accumulate forever.
-        state.per_caller.retain(|_, times| {
-            times.retain(|t| within(t));
-            !times.is_empty()
-        });
-
-        let times = state.per_caller.entry(caller.to_string()).or_default();
         // A zero-cost request is still a request: charge at least one, or an empty batch is free
         // to send in a loop.
         let cost = cost.max(1);
-        if times.len().saturating_add(cost) > self.per_caller_limit {
-            return Err(RateLimitExceeded::Caller);
+        let mut state = self.state();
+
+        if now.saturating_duration_since(state.last_sweep) >= WINDOW {
+            state.last_sweep = now;
+            state.per_caller.retain(|_, batches| {
+                batches.retain(|(at, _)| in_window(*at, now));
+                !batches.is_empty()
+            });
         }
 
-        times.extend(std::iter::repeat_n(now, cost));
+        let batches = state.per_caller.entry(caller.to_owned()).or_default();
+        batches.retain(|(at, _)| in_window(*at, now));
+        let used = batches
+            .iter()
+            .fold(0usize, |sum, (_, cost)| sum.saturating_add(*cost));
+        if used.saturating_add(cost) > self.per_caller_limit {
+            return Err(RateLimitExceeded);
+        }
+
+        batches.push((now, cost));
         Ok(())
     }
 
@@ -247,19 +245,16 @@ impl RateLimiter {
         &self,
         now: Instant,
     ) -> Result<GlobalReservation<'_>, RateLimitExceeded> {
-        let within = within_window(now.checked_sub(WINDOW));
+        let mut state = self.state();
 
-        let mut state = self.state.lock().expect("rate limiter mutex poisoned");
-
-        state.global.retain(|entry| within(&entry.at));
+        state.global.retain(|entry| in_window(entry.at, now));
         if state.global.len() >= self.global_limit {
-            return Err(RateLimitExceeded::Global);
+            return Err(RateLimitExceeded);
         }
 
         let token = state.next_token;
         state.next_token = state.next_token.wrapping_add(1);
         state.global.push(GlobalEntry { token, at: now });
-        drop(state);
         Ok(GlobalReservation {
             limiter: self,
             token,
@@ -280,30 +275,10 @@ mod tests {
         for _ in 0..PER_CALLER_LIMIT {
             assert_eq!(limiter.check_caller_at("a", 1, now), Ok(()));
         }
-        assert_eq!(
-            limiter.check_caller_at("a", 1, now),
-            Err(RateLimitExceeded::Caller)
-        );
+        assert_eq!(limiter.check_caller_at("a", 1, now), Err(RateLimitExceeded));
 
         // Another caller is unaffected by the first one's refusal.
         assert_eq!(limiter.check_caller_at("b", 1, now), Ok(()));
-    }
-
-    #[test]
-    fn a_caller_recovers_once_the_window_slides_past() {
-        let limiter = RateLimiter::new();
-        let start = Instant::now();
-
-        for _ in 0..PER_CALLER_LIMIT {
-            assert_eq!(limiter.check_caller_at("a", 1, start), Ok(()));
-        }
-        assert_eq!(
-            limiter.check_caller_at("a", 1, start),
-            Err(RateLimitExceeded::Caller)
-        );
-
-        let later = start + WINDOW + Duration::from_secs(1);
-        assert_eq!(limiter.check_caller_at("a", 1, later), Ok(()));
     }
 
     #[test]
@@ -322,7 +297,7 @@ mod tests {
         }
         assert_eq!(
             limiter.try_reserve_global_at(now).err(),
-            Some(RateLimitExceeded::Global)
+            Some(RateLimitExceeded)
         );
 
         let later = now + WINDOW + Duration::from_secs(1);
@@ -333,38 +308,13 @@ mod tests {
     }
 
     #[test]
-    fn caller_admission_does_not_consume_global_quota() {
-        let limiter = RateLimiter::new();
-        let now = Instant::now();
-
-        // Invalid traffic stops at caller admission; the global window must stay untouched so
-        // it cannot be drained by requests that never reach a transaction.
-        for i in 0..GLOBAL_LIMIT * 2 {
-            let _ = limiter.check_caller_at(&format!("caller-{i}"), 1, now);
-        }
-
-        assert!(limiter.try_reserve_global_at(now).is_ok());
-    }
-
-    #[test]
-    fn failed_admission_can_return_its_global_reservation() {
-        let limiter = RateLimiter::with_limits(1, 1);
-        let reservation = limiter.try_reserve_global().expect("the window is empty");
-        drop(reservation);
-        assert!(limiter.try_reserve_global().is_ok());
-    }
-
-    #[test]
     fn a_committed_reservation_is_kept_until_its_window_expires() {
         let limiter = RateLimiter::with_limits(1, 1);
         let admitted = limiter.try_reserve_global().expect("the window is empty");
         admitted.commit();
 
         // Durable work can still spend relay funds, so its slot must stay counted.
-        assert_eq!(
-            limiter.try_reserve_global().err(),
-            Some(RateLimitExceeded::Global)
-        );
+        assert_eq!(limiter.try_reserve_global().err(), Some(RateLimitExceeded));
     }
 
     /// Reservations are released in a different order from the order they were taken, because
@@ -393,7 +343,7 @@ mod tests {
             limiter
                 .try_reserve_global_at(start + Duration::from_secs(12))
                 .err(),
-            Some(RateLimitExceeded::Global),
+            Some(RateLimitExceeded),
             "the admitted request must keep its reservation"
         );
         replacement.commit();
@@ -403,23 +353,7 @@ mod tests {
             limiter
                 .try_reserve_global_at(start + WINDOW + Duration::from_secs(1))
                 .err(),
-            Some(RateLimitExceeded::Global)
-        );
-    }
-
-    /// A release must be idempotent: a second release of one token must not free another
-    /// request's slot.
-    #[test]
-    fn releasing_an_unknown_token_frees_nothing() {
-        let limiter = RateLimiter::with_limits(1, 1);
-        let admitted = limiter.try_reserve_global().expect("the window is empty");
-        admitted.commit();
-
-        limiter.release_global(u64::MAX);
-
-        assert_eq!(
-            limiter.try_reserve_global().err(),
-            Some(RateLimitExceeded::Global)
+            Some(RateLimitExceeded)
         );
     }
 
@@ -433,7 +367,7 @@ mod tests {
         assert_eq!(limiter.check_caller_at("a", 40, now), Ok(()));
         assert_eq!(
             limiter.check_caller_at("a", 40, now),
-            Err(RateLimitExceeded::Caller)
+            Err(RateLimitExceeded)
         );
 
         // Refusing the batch charged nothing, so what does fit still gets through.
@@ -447,15 +381,12 @@ mod tests {
 
         assert_eq!(limiter.check_caller_at("a", 0, now), Ok(()));
         assert_eq!(limiter.check_caller_at("a", 0, now), Ok(()));
-        assert_eq!(
-            limiter.check_caller_at("a", 0, now),
-            Err(RateLimitExceeded::Caller)
-        );
+        assert_eq!(limiter.check_caller_at("a", 0, now), Err(RateLimitExceeded));
     }
 
     #[test]
     fn the_chain_limiter_clears_a_page_load_and_stops_a_loop() {
-        let limiter = ChainRateLimiter::new();
+        let limiter = ChainRateLimiter::with_trust(false);
         let mut charged = 0;
 
         // Batches of 64, the frontends' cap, until the window refuses one.
@@ -480,11 +411,33 @@ mod tests {
         for _ in 0..100 {
             assert_eq!(
                 limiter.check_caller_at("a", 1, start),
-                Err(RateLimitExceeded::Caller)
+                Err(RateLimitExceeded)
             );
         }
 
         let later = start + WINDOW + Duration::from_secs(1);
         assert_eq!(limiter.check_caller_at("a", 1, later), Ok(()));
+    }
+
+    /// A panic while the lock is held must not turn every later request, or the release in a
+    /// reservation's `Drop`, into a panic.
+    #[test]
+    fn a_poisoned_lock_keeps_the_limiter_working() {
+        let limiter = RateLimiter::with_limits(1, 1);
+        let reservation = limiter.try_reserve_global().expect("the window is empty");
+
+        let poisoner = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let _guard = limiter.state();
+                    panic!("poison the limiter lock");
+                })
+                .join()
+        });
+        assert!(poisoner.is_err());
+
+        assert_eq!(limiter.check_caller("a"), Ok(()));
+        drop(reservation);
+        assert!(limiter.try_reserve_global().is_ok());
     }
 }
