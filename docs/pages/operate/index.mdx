@@ -186,38 +186,40 @@ use.
 
 | Contract                                   | Address                                      | Deploy block |
 | ------------------------------------------ | -------------------------------------------- | ------------ |
-| Interfold                                  | `0xc5DD9418A0aBF15678F974D2348B4be4D3832B54` | 11855915     |
-| CiphernodeRegistry                         | `0xfa0fCE6afd9b59E2Ac69DC53A128ee5835346B5e` | 11855915     |
-| BondingRegistry                            | `0x55Cf62396e1CAE6Fcc380CfE0b4C48103C4a3711` | 11855915     |
-| SlashingManager                            | `0xd467290E57fa84FAE42A737a83B42a6786175d79` | 11855915     |
-| E3RefundManager                            | `0x083F6Ca7e5be9Efd8fE8ACE503abF2F2ff647Cb9` | 11855915     |
-| NodeReleaseRegistry                        | `0x772caB77BFc39690e13dA2995E926Fb090aD034B` | 11855915     |
-| BondedVotes                                | `0x85E5176A8d387BE3B53506DDCbBC8aa9c2156E9F` | 11855958     |
-| InterfoldTicketToken (tFOLD)               | `0x277514D155D61eb51839F33Bd43ad32F4e3F5770` | 11856063     |
-| InterfoldToken (FOLD)                      | `0x278d7c3bC100505bfC38163e23Fe2524E3993e83` | 11855821     |
+| Interfold                                  | `0xBD5B6D1aDA9e0eB248B678469C9Cd6a63507E42b` | 11873232     |
+| CiphernodeRegistry                         | `0xb1E8640CF8D0A927290E3d9E1b01c4899B5225Ef` | 11873232     |
+| BondingRegistry                            | `0x8687bC7C8f055b41aD2C2447c04aCBD76C1075b2` | 11873232     |
+| SlashingManager                            | `0x5F9D21751aA24bc3D67C9B9D6ceEf2b62AAdac6d` | 11873232     |
+| E3RefundManager                            | `0xA60139169a7c901291070A8D57ef4aE816a7fe80` | 11873232     |
+| NodeReleaseRegistry                        | `0xD37c5143cd70EC70714409f2D475904563E20d69` | 11873232     |
+| BondedVotes                                | `0x1C721DE6a736054DBE7E8fcE99A68b76D4f603fb` | 11873269     |
+| InterfoldTicketToken (tFOLD)               | `0x3FBdF3d172866d80c872f165774B7515f6Babb8f` | 11873232     |
+| InterfoldToken (FOLD)                      | `0x3192Ee1FeE48159807058aA78038cf80cB3450Cb` | 11873112     |
 | MockUSDC (fee token and ticket collateral) | `0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B` | 11856062     |
-| Faucet                                     | `0xA7f0A637Af62fA4E0b46E397D1b85E9b4807f019` | 11856142     |
+| Faucet                                     | `0x1B4340A65BB669267BF5DE37385B139987C3F09c` | 11873271     |
+| MockE3Program                              | `0x449D73B60f930c7c50a50147046065C4D255B60b` | 11873232     |
 
 `MockUSDC` is a test USDC with 6 decimals. Anyone can mint it. The `Faucet` sends 1000 FOLD and 1000
-USDC. The Sepolia deployment has one more test component: the ciphertext verifier wraps
-`MockRISC0Verifier`, which accepts every RISC Zero seal.
+USDC. `MockE3Program` is a test E3 program. The deployment registers it as its first E3 program.
 
-The public key and decryption proofs use real verifiers. The ciphertext verifier does not check the
-seal of a compute proof:
+The public key and decryption proofs use real verifiers:
 
 | Contract                    | Address                                      | Deploy block |
 | --------------------------- | -------------------------------------------- | ------------ |
-| BfvPkVerifierRouter         | `0x3Cd2472722cad8D17AEd31869b4353eCd10a0425` | 11855912     |
-| BfvDecryptionVerifierRouter | `0xe52e7d820f3A1c56f952B8D7Ba2FA4100c6999D2` | 11855913     |
-| Risc0BfvCiphertextVerifier  | `0x52569C1D143bA4B423f19904b58A1271756fc991` | 11862783     |
+| BfvPkVerifierRouter         | `0x6ED58e59D2576d13BA6aDC847FeF42A31D75490d` | 11873230     |
+| BfvDecryptionVerifierRouter | `0x056a612851061f22341C08781a1Fc8f292AB1657` | 11873231     |
+
+The ciphertext verifier for BFV is `OpenVmBfvCiphertextVerifier`. It wraps
+`MockOpenVmReceiptVerifier`, which accepts every receipt, so Sepolia does not verify compute proofs.
+[Contracts & Addresses](/reference/contracts#sepolia) lists both addresses.
 
   </Tabs.Tab>
 </Tabs>
 
 `interfold config check` compares your configuration with the manifest of the latest release. For
 each network that the manifest marks with `mocks: true`, it prints a note that proofs are accepted
-without verification. The deployment manifest marks neither Sepolia nor mainnet with `mocks: true`.
-Only the manifest of release v0.18.0 marks both networks, so that release prints the note. See
+without verification. The deployment manifest marks Sepolia with `mocks: true`, because the Sepolia
+deployment records `MockE3Program`. It does not mark mainnet. See
 [Verifiers in use on mainnet](/reference/contracts#verifiers-in-use-on-mainnet).
 
 ## Set up a ciphernode

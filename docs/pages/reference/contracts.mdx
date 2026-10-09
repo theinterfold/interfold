@@ -31,8 +31,8 @@ The manifest has two sections for each network:
 
 Each network entry also has a `chain_id` and a `mocks` flag. The flag is `true` when the network
 uses a mock E3 program or a mock verifier, which accepts proofs without verification. The manifest
-in the repository sets `mocks: false` for Sepolia and for mainnet. The Sepolia flag does not cover
-the mock RISC Zero verifier that the Sepolia ciphertext verifier wraps. See
+in the repository sets `mocks: true` for Sepolia, because the Sepolia deployment records
+`MockE3Program`. It sets `mocks: false` for mainnet. See
 [Verifiers in use on mainnet](#verifiers-in-use-on-mainnet) and
 [Verifiers in use on Sepolia](#verifiers-in-use-on-sepolia).
 
@@ -102,10 +102,10 @@ collateral, call `underlying()` on the `InterfoldTicketToken`.
 ### Verifiers in use on mainnet
 
 <Callout type='info'>
-  OpenVM replaces RISC Zero as the compute proof system for new deployments. The networks on this
-  page keep the RISC Zero ciphertext verifiers listed here until an OpenVM migration deploys an
-  `OpenVmReceiptVerifier` and an `OpenVmBfvCiphertextVerifier` and rebinds the E3 programs. See
-  [Verify the Compute Provider](/build/e3-program/verify-compute-provider).
+  OpenVM replaces RISC Zero as the compute proof system for new deployments. Mainnet keeps the RISC
+  Zero ciphertext verifier listed here until an OpenVM migration deploys an `OpenVmReceiptVerifier`
+  and an `OpenVmBfvCiphertextVerifier` and rebinds the E3 programs. See [Verify the Compute
+  Provider](/build/e3-program/verify-compute-provider).
 </Callout>
 
 The `Interfold` contract stores one verifier of each kind for each encryption scheme. The table
@@ -141,14 +141,14 @@ in use are not mocks.
 ## Sepolia
 
 <Badge tone='testnet'>Testnet</Badge> Ethereum Sepolia, chain ID `11155111`. The public key,
-decryption, and DKG verifiers are real. The ciphertext verifier and CRISP use a mock RISC Zero
-verifier that accepts every seal, and CRISP uses real Avail data availability. `MockUSDC` is the fee
-token. Anyone can mint it.
+decryption, and DKG verifiers are real. The ciphertext verifier and CRISP use
+`MockOpenVmReceiptVerifier`, which accepts every OpenVM receipt, so Sepolia does not verify compute
+proofs. CRISP uses real Avail data availability. `MockUSDC` is the fee token. Anyone can mint it.
 
 <Callout type='warning'>
   E3 requests on Sepolia are paused. `requestsPaused()` on the `Interfold` contract returns `true`,
   and `request` reverts with `RequestsPaused`. The owner of the Interfold contract unpauses requests
-  after operators that run the 0.19.0-test.1 release (`protocol_version` 7, `node_generation` 2)
+  after operators that run the 0.19.0-test.3 release (`protocol_version` 8, `node_generation` 2)
   register.
 </Callout>
 
@@ -156,24 +156,25 @@ token. Anyone can mint it.
 
 | Contract             | Address                                      | Deploy block | Manifest key          | Explorer                                                                                     |
 | -------------------- | -------------------------------------------- | ------------ | --------------------- | -------------------------------------------------------------------------------------------- |
-| Interfold            | `0xc5DD9418A0aBF15678F974D2348B4be4D3832B54` | 11855915     | `interfold`           | [Etherscan](https://sepolia.etherscan.io/address/0xc5DD9418A0aBF15678F974D2348B4be4D3832B54) |
-| CiphernodeRegistry   | `0xfa0fCE6afd9b59E2Ac69DC53A128ee5835346B5e` | 11855915     | `ciphernode_registry` | [Etherscan](https://sepolia.etherscan.io/address/0xfa0fCE6afd9b59E2Ac69DC53A128ee5835346B5e) |
-| BondingRegistry      | `0x55Cf62396e1CAE6Fcc380CfE0b4C48103C4a3711` | 11855915     | `bonding_registry`    | [Etherscan](https://sepolia.etherscan.io/address/0x55Cf62396e1CAE6Fcc380CfE0b4C48103C4a3711) |
-| SlashingManager      | `0xd467290E57fa84FAE42A737a83B42a6786175d79` | 11855915     | `slashing_manager`    | [Etherscan](https://sepolia.etherscan.io/address/0xd467290E57fa84FAE42A737a83B42a6786175d79) |
+| Interfold            | `0xBD5B6D1aDA9e0eB248B678469C9Cd6a63507E42b` | 11873232     | `interfold`           | [Etherscan](https://sepolia.etherscan.io/address/0xBD5B6D1aDA9e0eB248B678469C9Cd6a63507E42b) |
+| CiphernodeRegistry   | `0xb1E8640CF8D0A927290E3d9E1b01c4899B5225Ef` | 11873232     | `ciphernode_registry` | [Etherscan](https://sepolia.etherscan.io/address/0xb1E8640CF8D0A927290E3d9E1b01c4899B5225Ef) |
+| BondingRegistry      | `0x8687bC7C8f055b41aD2C2447c04aCBD76C1075b2` | 11873232     | `bonding_registry`    | [Etherscan](https://sepolia.etherscan.io/address/0x8687bC7C8f055b41aD2C2447c04aCBD76C1075b2) |
+| SlashingManager      | `0x5F9D21751aA24bc3D67C9B9D6ceEf2b62AAdac6d` | 11873232     | `slashing_manager`    | [Etherscan](https://sepolia.etherscan.io/address/0x5F9D21751aA24bc3D67C9B9D6ceEf2b62AAdac6d) |
 | MockUSDC (fee token) | `0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B` | 11856062     | `fee_token`           | [Etherscan](https://sepolia.etherscan.io/address/0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B) |
-| Faucet               | `0xA7f0A637Af62fA4E0b46E397D1b85E9b4807f019` | 11856142     | `faucet`              | [Etherscan](https://sepolia.etherscan.io/address/0xA7f0A637Af62fA4E0b46E397D1b85E9b4807f019) |
+| Faucet               | `0x1B4340A65BB669267BF5DE37385B139987C3F09c` | 11873271     | `faucet`              | [Etherscan](https://sepolia.etherscan.io/address/0x1B4340A65BB669267BF5DE37385B139987C3F09c) |
 
 ### Sepolia reference contracts
 
 | Contract                     | Address                                      | Deploy block | Manifest key                  | Explorer                                                                                     |
 | ---------------------------- | -------------------------------------------- | ------------ | ----------------------------- | -------------------------------------------------------------------------------------------- |
-| InterfoldToken (FOLD)        | `0x278d7c3bC100505bfC38163e23Fe2524E3993e83` | 11855821     | `InterfoldToken`              | [Etherscan](https://sepolia.etherscan.io/address/0x278d7c3bC100505bfC38163e23Fe2524E3993e83) |
-| InterfoldTicketToken (tFOLD) | `0x277514D155D61eb51839F33Bd43ad32F4e3F5770` | 11856063     | `InterfoldTicketToken`        | [Etherscan](https://sepolia.etherscan.io/address/0x277514D155D61eb51839F33Bd43ad32F4e3F5770) |
-| E3RefundManager              | `0x083F6Ca7e5be9Efd8fE8ACE503abF2F2ff647Cb9` | 11855915     | `E3RefundManager`             | [Etherscan](https://sepolia.etherscan.io/address/0x083F6Ca7e5be9Efd8fE8ACE503abF2F2ff647Cb9) |
-| NodeReleaseRegistry          | `0x772caB77BFc39690e13dA2995E926Fb090aD034B` | 11855915     | `NodeReleaseRegistry`         | [Etherscan](https://sepolia.etherscan.io/address/0x772caB77BFc39690e13dA2995E926Fb090aD034B) |
-| BfvDecryptionVerifierRouter  | `0xe52e7d820f3A1c56f952B8D7Ba2FA4100c6999D2` | 11855913     | `BfvDecryptionVerifierRouter` | [Etherscan](https://sepolia.etherscan.io/address/0xe52e7d820f3A1c56f952B8D7Ba2FA4100c6999D2) |
-| BfvPkVerifierRouter          | `0x3Cd2472722cad8D17AEd31869b4353eCd10a0425` | 11855912     | `BfvPkVerifierRouter`         | [Etherscan](https://sepolia.etherscan.io/address/0x3Cd2472722cad8D17AEd31869b4353eCd10a0425) |
-| Risc0BfvCiphertextVerifier   | `0x52569C1D143bA4B423f19904b58A1271756fc991` | 11862783     | `Risc0BfvCiphertextVerifier`  | [Etherscan](https://sepolia.etherscan.io/address/0x52569C1D143bA4B423f19904b58A1271756fc991) |
+| InterfoldToken (FOLD)        | `0x3192Ee1FeE48159807058aA78038cf80cB3450Cb` | 11873112     | `InterfoldToken`              | [Etherscan](https://sepolia.etherscan.io/address/0x3192Ee1FeE48159807058aA78038cf80cB3450Cb) |
+| InterfoldTicketToken (tFOLD) | `0x3FBdF3d172866d80c872f165774B7515f6Babb8f` | 11873232     | `InterfoldTicketToken`        | [Etherscan](https://sepolia.etherscan.io/address/0x3FBdF3d172866d80c872f165774B7515f6Babb8f) |
+| E3RefundManager              | `0xA60139169a7c901291070A8D57ef4aE816a7fe80` | 11873232     | `E3RefundManager`             | [Etherscan](https://sepolia.etherscan.io/address/0xA60139169a7c901291070A8D57ef4aE816a7fe80) |
+| NodeReleaseRegistry          | `0xD37c5143cd70EC70714409f2D475904563E20d69` | 11873232     | `NodeReleaseRegistry`         | [Etherscan](https://sepolia.etherscan.io/address/0xD37c5143cd70EC70714409f2D475904563E20d69) |
+| MockE3Program                | `0x449D73B60f930c7c50a50147046065C4D255B60b` | 11873232     | `MockE3Program`               | [Etherscan](https://sepolia.etherscan.io/address/0x449D73B60f930c7c50a50147046065C4D255B60b) |
+| BfvDecryptionVerifierRouter  | `0x056a612851061f22341C08781a1Fc8f292AB1657` | 11873231     | `BfvDecryptionVerifierRouter` | [Etherscan](https://sepolia.etherscan.io/address/0x056a612851061f22341C08781a1Fc8f292AB1657) |
+| BfvPkVerifierRouter          | `0x6ED58e59D2576d13BA6aDC847FeF42A31D75490d` | 11873230     | `BfvPkVerifierRouter`         | [Etherscan](https://sepolia.etherscan.io/address/0x6ED58e59D2576d13BA6aDC847FeF42A31D75490d) |
+| OpenVmBfvCiphertextVerifier  | `0x0bA8834bc023696CE027c9B7B06aB42E9A7F0592` | 11873416     | `OpenVmBfvCiphertextVerifier` | [Etherscan](https://sepolia.etherscan.io/address/0x0bA8834bc023696CE027c9B7B06aB42E9A7F0592) |
 
 ### Also used on Sepolia
 
@@ -184,20 +185,19 @@ them. The addresses and deploy blocks come from two deployment records. The Inte
 
 | Contract                             | Address                                      | Deploy block | Record    | Explorer                                                                                     |
 | ------------------------------------ | -------------------------------------------- | ------------ | --------- | -------------------------------------------------------------------------------------------- |
-| BondedVotes                          | `0x85E5176A8d387BE3B53506DDCbBC8aa9c2156E9F` | 11855958     | Interfold | [Etherscan](https://sepolia.etherscan.io/address/0x85E5176A8d387BE3B53506DDCbBC8aa9c2156E9F) |
-| BondedCheckpoints                    | `0x3D95CfA8018DB4b5474bfe536702b5DC05eE1444` | 11855915     | Interfold | [Etherscan](https://sepolia.etherscan.io/address/0x3D95CfA8018DB4b5474bfe536702b5DC05eE1444) |
-| ChainlinkVrfRandomnessProvider       | `0x46CD950499b312E53cb73a1D1E12D3541966f823` | 11855915     | Interfold | [Etherscan](https://sepolia.etherscan.io/address/0x46CD950499b312E53cb73a1D1E12D3541966f823) |
-| MockRISC0Verifier                    | `0x254Cef2769D589E36208e9bD2da031A568fa49cD` | 11856523     | CRISP     | [Etherscan](https://sepolia.etherscan.io/address/0x254Cef2769D589E36208e9bD2da031A568fa49cD) |
-| AvailVectorXDataAvailabilityVerifier | `0x099b65d98773c0219467dc00DE11022c2d055Fbc` | 11862790     | CRISP     | [Etherscan](https://sepolia.etherscan.io/address/0x099b65d98773c0219467dc00DE11022c2d055Fbc) |
-| HonkVerifier                         | `0x31319447C60888AC8E144f112615Fb45CCAD9CBa` | 11862786     | CRISP     | [Etherscan](https://sepolia.etherscan.io/address/0x31319447C60888AC8E144f112615Fb45CCAD9CBa) |
-| OnchainHonkVerifier                  | `0x4F209aAd7cD8E5a1d0a577F97C5b76Dd01192322` | 11862789     | CRISP     | [Etherscan](https://sepolia.etherscan.io/address/0x4F209aAd7cD8E5a1d0a577F97C5b76Dd01192322) |
-| CRISPProgram                         | `0x9Dc6edB343A89a25dC8bEF324F721Cca78E86AFD` | 11862791     | CRISP     | [Etherscan](https://sepolia.etherscan.io/address/0x9Dc6edB343A89a25dC8bEF324F721Cca78E86AFD) |
-| MockVotingToken                      | `0xa341D6D045e32dBEc8Bb76149c92302CfAA61aDb` | 11862795     | CRISP     | [Etherscan](https://sepolia.etherscan.io/address/0xa341D6D045e32dBEc8Bb76149c92302CfAA61aDb) |
-| SelfRegistry (CRISP)                 | `0xD6fc1f74C34731b698a9f6C156551704c08F810B` | 11862796     | CRISP     | [Etherscan](https://sepolia.etherscan.io/address/0xD6fc1f74C34731b698a9f6C156551704c08F810B) |
+| BondedVotes                          | `0x1C721DE6a736054DBE7E8fcE99A68b76D4f603fb` | 11873269     | Interfold | [Etherscan](https://sepolia.etherscan.io/address/0x1C721DE6a736054DBE7E8fcE99A68b76D4f603fb) |
+| BondedCheckpoints                    | `0x4b4b85F007c241bD8bf22C951efe0f44D82aE6D1` | 11873232     | Interfold | [Etherscan](https://sepolia.etherscan.io/address/0x4b4b85F007c241bD8bf22C951efe0f44D82aE6D1) |
+| ChainlinkVrfRandomnessProvider       | `0xea5A716afCe9C7a4fD6808ca7b0dB4dEC40A9e1b` | 11873568     | Interfold | [Etherscan](https://sepolia.etherscan.io/address/0xea5A716afCe9C7a4fD6808ca7b0dB4dEC40A9e1b) |
+| MockOpenVmReceiptVerifier            | `0x00A49042e0550a272ED393dd324749c18C0c8e62` | 11873415     | CRISP     | [Etherscan](https://sepolia.etherscan.io/address/0x00A49042e0550a272ED393dd324749c18C0c8e62) |
+| AvailVectorXDataAvailabilityVerifier | `0x6D373da705B443EF76e37cb96275623818c50657` | 11873423     | CRISP     | [Etherscan](https://sepolia.etherscan.io/address/0x6D373da705B443EF76e37cb96275623818c50657) |
+| HonkVerifier                         | `0x3D5d8c688545a3C336D373CC61E501211238226a` | 11873419     | CRISP     | [Etherscan](https://sepolia.etherscan.io/address/0x3D5d8c688545a3C336D373CC61E501211238226a) |
+| OnchainHonkVerifier                  | `0x97508380e92A92f2E02818Ab493539f84d54c66B` | 11873422     | CRISP     | [Etherscan](https://sepolia.etherscan.io/address/0x97508380e92A92f2E02818Ab493539f84d54c66B) |
+| CRISPProgram                         | `0xA9894A39061EC33f8550a2B63A66Be59fb9fa443` | 11873424     | CRISP     | [Etherscan](https://sepolia.etherscan.io/address/0xA9894A39061EC33f8550a2B63A66Be59fb9fa443) |
+| MockVotingToken                      | `0x52c1AB7e5eE4A8f5eA1AD8d00971F2a7a49ae28c` | 11873428     | CRISP     | [Etherscan](https://sepolia.etherscan.io/address/0x52c1AB7e5eE4A8f5eA1AD8d00971F2a7a49ae28c) |
+| SelfRegistry (CRISP)                 | `0x31DE033Af64f9955B729714d49c8bbf3b5F33847` | 11873429     | CRISP     | [Etherscan](https://sepolia.etherscan.io/address/0x31DE033Af64f9955B729714d49c8bbf3b5F33847) |
 
-The CRISP `HonkVerifier` and `OnchainHonkVerifier` on Sepolia come from the circuits of commit
-`8abc2fdb7`, which published `@crisp-e3/sdk` 0.24.0. They verify the ballot proofs of SDK 0.24.0.
-The circuits in this repository are newer. Their ballot proofs do not pass these two verifiers.
+`CRISPProgram` and the two Honk verifiers on Sepolia come from commit `8da77bf52`. Their sources did
+not change after the `@crisp-e3/sdk` 0.25.0 release.
 
 The fee token is `MockUSDC`, a test USDC with 6 decimals. Anyone can call its `mint` function. It is
 also the ticket collateral. To confirm it on-chain, call `feeToken()` on the `Interfold` contract.
@@ -211,22 +211,19 @@ operators.
 
 ### Verifiers in use on Sepolia
 
-Sepolia verifies the public key, decryption, and DKG proofs with real verifiers. It does not verify
-the RISC Zero seal of a ciphertext proof. The `Interfold` contract stores one verifier of each kind
-for each encryption scheme. The table shows the values for the BFV scheme
-(`keccak256("fhe.rs:BFV")`).
+Sepolia verifies the public key, decryption, and DKG proofs with real verifiers. The `Interfold`
+contract stores one verifier of each kind for each encryption scheme. The table shows the values for
+the BFV scheme (`keccak256("fhe.rs:BFV")`).
 
 | Verifier   | Contract                      | Address                                      | Read with                         |
 | ---------- | ----------------------------- | -------------------------------------------- | --------------------------------- |
-| Ciphertext | `Risc0BfvCiphertextVerifier`  | `0x52569C1D143bA4B423f19904b58A1271756fc991` | `getCiphertextVerifier(schemeId)` |
-| Decryption | `BfvDecryptionVerifierRouter` | `0xe52e7d820f3A1c56f952B8D7Ba2FA4100c6999D2` | `getDecryptionVerifier(schemeId)` |
-| Public key | `BfvPkVerifierRouter`         | `0x3Cd2472722cad8D17AEd31869b4353eCd10a0425` | `getPkVerifier(schemeId)`         |
+| Ciphertext | `OpenVmBfvCiphertextVerifier` | `0x0bA8834bc023696CE027c9B7B06aB42E9A7F0592` | `getCiphertextVerifier(schemeId)` |
+| Decryption | `BfvDecryptionVerifierRouter` | `0x056a612851061f22341C08781a1Fc8f292AB1657` | `getDecryptionVerifier(schemeId)` |
+| Public key | `BfvPkVerifierRouter`         | `0x6ED58e59D2576d13BA6aDC847FeF42A31D75490d` | `getPkVerifier(schemeId)`         |
 
-- The ciphertext verifier wraps `MockRISC0Verifier` at `0x254Cef2769D589E36208e9bD2da031A568fa49cD`.
-  The mock verifier accepts every seal. The owner set this verifier for BFV, so every BFV program on
-  Sepolia can publish output with a dev-mode RISC Zero proof. The verifier still records an image
-  ID, but nothing checks the seal against it. Read the wrapped verifier with `risc0Verifier()` and
-  the image ID with `imageId()`.
+- The ciphertext verifier wraps `MockOpenVmReceiptVerifier`, which accepts every receipt. Read the
+  receipt verifier with `openVmVerifier()` and the receipt identity with `imageId()`. The CRISP
+  deployment set this verifier for BFV.
 - Each router has six routes (`routeCount()`, `routeAt(index)`). The routes cover the `insecure-512`
   preset (parameter set 0) and the `secure-8192` preset (parameter set 2), each with the three
   committee sizes. Every route points to a `BfvDecryptionVerifier` or a `BfvPkVerifier` contract.
@@ -263,7 +260,7 @@ flowchart LR
 | Fee token                        | Third-party token on mainnet, `MockUSDC` on Sepolia       | The ERC-20 token that requesters use to pay for an E3. Mainnet uses USDS. Sepolia uses `MockUSDC`, a test token that anyone can mint.                                                                                                                  |
 | OpenVmReceiptVerifier            | `contracts/verifiers/OpenVmReceiptVerifier.sol`           | Verifies the Halo2 EVM proof of an OpenVM guest, bound to one Halo2 verifier, executable commitment, and VM commitment. Its `imageId` is the receipt identity that the ciphertext verifier and the E3 program both name.                               |
 | OpenVmBfvCiphertextVerifier      | `contracts/verifiers/bfv/OpenVmBfvCiphertextVerifier.sol` | The BFV ciphertext verifier for OpenVM. It rebuilds the protocol words of the journal from chain state and calls the receipt verifier.                                                                                                                 |
-| Mock contracts                   | `contracts/test/`                                         | `MockE3Program`, `MockComputeProvider`, and the mock verifiers accept test data without real proof verification. Local chains use them. Sepolia uses `MockUSDC`, the `Faucet`, and `MockRISC0Verifier`.                                                |
+| Mock contracts                   | `contracts/test/`                                         | `MockE3Program`, `MockComputeProvider`, and the mock verifiers accept test data without real proof verification. Local chains use them. Sepolia uses `MockUSDC`, the `Faucet`, `MockE3Program`, and the CRISP `MockOpenVmReceiptVerifier`.             |
 | DeployableMockCiphertextVerifier | `contracts/test/DeployableMockCiphertextVerifier.sol`     | A test verifier that accepts every ciphertext proof. It was the mainnet ciphertext verifier from 19 to 22 August 2026.                                                                                                                                 |
 
 The main entry points are these functions:

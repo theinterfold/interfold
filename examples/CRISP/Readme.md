@@ -171,15 +171,13 @@ Local development uses `DATA_AVAILABILITY_MODE=mock`. The mock keeps the full in
 ciphertext in the CRISP server database and produces a deterministic local receipt. It does not
 model VectorX latency or Avail fees.
 
-Sepolia and Ethereum mainnet use Avail. Sepolia uses a mock RISC Zero verifier, so the CRISP
-contract and the protocol ciphertext verifier on Sepolia accept dev-mode RISC Zero proofs. Ethereum
-mainnet uses real RISC Zero verification. CRISPProgram on Sepolia is
-`0x9Dc6edB343A89a25dC8bEF324F721Cca78E86AFD`, and its Avail data availability verifier is
-`AvailVectorXDataAvailabilityVerifier` (`0x099b65d98773c0219467dc00DE11022c2d055Fbc`). The two Noir
-verifiers of this CRISPProgram come from the circuits of commit `8abc2fdb7`, which published
-`@crisp-e3/sdk` 0.24.0. Thus a Sepolia client must prove with SDK 0.24.0. The circuits in this
-directory are newer, and their ballot proofs do not pass these verifiers. Before starting the CRISP
-server:
+Sepolia and Ethereum mainnet use Avail. On Sepolia, CRISP and the protocol ciphertext verifier use
+`MockOpenVmReceiptVerifier`, which accepts every OpenVM receipt. Ethereum mainnet uses real RISC
+Zero verification. CRISPProgram on Sepolia is `0xA9894A39061EC33f8550a2B63A66Be59fb9fa443`, and its
+Avail data availability verifier is `AvailVectorXDataAvailabilityVerifier`
+(`0x6D373da705B443EF76e37cb96275623818c50657`). Its two Noir verifiers come from the circuits in
+this directory at commit `8da77bf52`. Their sources did not change after `@crisp-e3/sdk` 0.25.0.
+Before starting the CRISP server:
 
 1. Register an Avail App ID for CRISP.
 2. Fund a dedicated Avail account that can pay for every `submit_data` transaction.
@@ -187,14 +185,14 @@ server:
    available and resumes the job after a restart.
 4. Deploy CRISP with `INPUT_AVAILABILITY_SIGNER` set to the Ethereum address derived from the
    server's `PRIVATE_KEY`. On every network, the server `PRIVATE_KEY` must be the key of the signer
-   address that CRISPProgram stores.
-   The current Sepolia deployment used `USE_MOCKS=true MOCK_DATA_AVAILABILITY=false` with the
-   earlier RISC Zero backend. `USE_MOCKS=true` deploys the mock voting token and selects the mock
-   data-availability verifier, unless `MOCK_DATA_AVAILABILITY=false` keeps Avail. It does not
-   select a compute mock: every network except the isolated local chain deploys the real OpenVM
-   receipt verifier, unless `CRISP_UNPROVED_TEST=1` and `ALLOW_SEPOLIA_UNPROVED_COMPUTE=true` opt in
-   to the unproved verifier on Sepolia. Ciphernodes read all inputs on a chain from one
-   data-availability source, so keep Avail on a shared network.
+   address that CRISPProgram stores. The current Sepolia deployment used
+   `CRISP_UNPROVED_TEST=1 ALLOW_SEPOLIA_UNPROVED_COMPUTE=true USE_MOCKS=true MOCK_DATA_AVAILABILITY=false`.
+   `USE_MOCKS=true` deploys the mock voting token and selects the mock data-availability verifier,
+   unless `MOCK_DATA_AVAILABILITY=false` keeps Avail. It does not select a compute mock: every
+   network except the isolated local chain deploys the real OpenVM receipt verifier, unless
+   `CRISP_UNPROVED_TEST=1` and `ALLOW_SEPOLIA_UNPROVED_COMPUTE=true` opt in to the unproved verifier
+   on Sepolia. Ciphernodes read all inputs on a chain from one data-availability source, so keep
+   Avail on a shared network.
 5. Schedule voting after the current on-chain committee setup budget. The server reads that bound
    from `CRISPProgram.earliestVotingStart()` and adds `VOTING_START_BUFFER_SECONDS` for transaction
    mining. `E3_DURATION` starts at that fixed voting time; it covers voting plus the VectorX
