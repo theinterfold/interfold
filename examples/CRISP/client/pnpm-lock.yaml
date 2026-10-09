@@ -17,8 +17,8 @@ importers:
   .:
     dependencies:
       '@crisp-e3/sdk':
-        specifier: 0.25.0
-        version: 0.25.0(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.25.76)
+        specifier: 0.26.0
+        version: 0.26.0(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.25.76)
       '@emotion/babel-plugin':
         specifier: ^11.11.0
         version: 11.13.5
@@ -143,8 +143,8 @@ packages:
     resolution: {integrity: sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw==}
     engines: {node: '>=10'}
 
-  '@aztec/bb.js@5.1.0':
-    resolution: {integrity: sha512-bNpeyTz7baK2jZ9gN5gEn6GsOU8ueuGWbgUML/6kHhvwAgx/SsN9XY4tRS202dZM+8aOadwJ4crn6PIq20J4tw==}
+  '@aztec/bb.js@5.2.0':
+    resolution: {integrity: sha512-XQRbl6TfHg7xXwf4b3cNSggtwsIxl2z2/zV49/Ahxa1Nc1D7x05NY0QL5mYSRdOJlGKZ3TUTH48lDWAwJSVulg==}
     hasBin: true
 
   '@babel/code-frame@7.29.0':
@@ -732,11 +732,11 @@ packages:
   '@coinbase/wallet-sdk@4.3.6':
     resolution: {integrity: sha512-4q8BNG1ViL4mSAAvPAtpwlOs1gpC+67eQtgIwNvT3xyeyFFd+guwkc8bcX5rTmQhXpqnhzC4f0obACbP9CqMSA==}
 
-  '@crisp-e3/sdk@0.25.0':
-    resolution: {integrity: sha512-KyKmWtImwTegaO0YFPbGcFE1m79E1EgVBjh1VNcfwgIivkeXGGzy6I9usN2FqfYYXPKzHCKlMSbestras+Ad3w==}
+  '@crisp-e3/sdk@0.26.0':
+    resolution: {integrity: sha512-n/NnGGzwifiCN1K18pNrVvEgQzWn/akZpf7qEQCo/AaXWZxATO4xaBPFEbOSB750TPfu9v7OzrlbROo1GSuVJw==}
 
-  '@crisp-e3/zk-inputs@0.25.0':
-    resolution: {integrity: sha512-jnM9hXzEGbPrRk3LLH9dj5rJ0ZxP6DmtbXCyxHCv4RqoDm6y4WbJQK2lFE2+4bUQV15fnzqQqR40WXYnpFL7gQ==}
+  '@crisp-e3/zk-inputs@0.26.0':
+    resolution: {integrity: sha512-blAGM7oYpwCqH50iOQMaTRA/NPSll2BU3rAtTCy9LGwPusjjNK3IyNNtlPJaDUPdqCwFvPGUQlQRv+EMElTivA==}
 
   '@ecies/ciphers@0.2.6':
     resolution: {integrity: sha512-patgsRPKGkhhoBjETV4XxD0En4ui5fbX0hzayqI3M8tvNMGUoUvmyYAIWwlxBc1KX5cturfqByYdj5bYGRpN9g==}
@@ -4796,7 +4796,7 @@ snapshots:
 
   '@alloc/quick-lru@5.2.0': {}
 
-  '@aztec/bb.js@5.1.0':
+  '@aztec/bb.js@5.2.0':
     dependencies:
       comlink: 4.4.2
       commander: 12.1.0
@@ -5634,10 +5634,10 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@crisp-e3/sdk@0.25.0(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.25.76)':
+  '@crisp-e3/sdk@0.26.0(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.25.76)':
     dependencies:
-      '@aztec/bb.js': 5.1.0
-      '@crisp-e3/zk-inputs': 0.25.0
+      '@aztec/bb.js': 5.2.0
+      '@crisp-e3/zk-inputs': 0.26.0
       '@noir-lang/noir_js': 1.0.0-beta.26
       '@zk-kit/lean-imt': 2.2.5(bufferutil@4.1.0)(utf-8-validate@5.0.10)
       poseidon-lite: 0.3.0
@@ -5648,7 +5648,7 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@crisp-e3/zk-inputs@0.25.0': {}
+  '@crisp-e3/zk-inputs@0.26.0': {}
 
   '@ecies/ciphers@0.2.6(@noble/ciphers@1.3.0)':
     dependencies:
