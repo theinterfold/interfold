@@ -13,7 +13,7 @@
 #   3. circuits/lib/src/configs/{insecure,secure}/threshold.nr (circuit parameters)
 #   4. circuits/lib/src/configs/committee/active.nr (Noir-side active committee)
 #   5. packages/interfold-contracts/scripts/utils.ts (deployment hashes and committee values)
-#   6. crates/zk-helpers/src/ciphernodes_committee.rs (committee enum values)
+#   6. crates/committee/src/lib.rs (committee enum values)
 #   7. packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol
 #
 # `circuits/bin/.active-preset.json` is only a local hydrated cache. It can point at Sepolia's
@@ -34,7 +34,7 @@ STAMP="circuits/bin/.active-preset.json"
 UTILS_TS="packages/interfold-contracts/scripts/utils.ts"
 PROTOCOL_CONSTANTS_TS="packages/interfold-contracts/scripts/protocol/constants.ts"
 FHE_CONSTANTS_RS="crates/fhe-params/src/constants.rs"
-COMMITTEE_RS="crates/zk-helpers/src/ciphernodes_committee.rs"
+COMMITTEE_RS="crates/committee/src/lib.rs"
 ACTIVE_SOL="packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol"
 TASKS_TS="packages/interfold-contracts/tasks/interfold.ts"
 SDK_UTILS_TS="packages/interfold-sdk/src/utils.ts"
@@ -393,13 +393,13 @@ $COMMITTEE_RS has (N=$rust_n, T=$rust_t, H=$rust_h) for $capitalized"
   fi
 done
 
-# 9. Parity matrices for every committee must match what `generate_parity_matrices` would
+# 9. Parity matrices for every committee must match what `zk-cli parity-matrices` would
 #    write right now. Hand-edits to parity_*.nr would slip past every other check, so verify
 #    them by regenerating into a tempdir and diffing. On-disk files are kept `nargo fmt`-clean
 #    (see `scripts/lint-circuits.sh`), so we format the generator output before comparing.
 #    Skipped when the binary is unavailable (fresh clone before `cargo build`); the build step
 #    will re-emit them anyway.
-GEN_BIN="target/release/generate_parity_matrices"
+GEN_BIN="target/release/zk-cli"
 NOIR_LIB="circuits/lib"
 format_parity_matrices_for_committee() {
   local committee="$1"
@@ -471,7 +471,7 @@ if [[ -x "$GEN_BIN" ]]; then
     done
     for c in minimum micro small; do
       [[ -d "$TMP/$c" ]] || continue
-      "$GEN_BIN" --committee "$c" --output-root "$TMP" >/dev/null
+      "$GEN_BIN" parity-matrices --committee "$c" --output-root "$TMP" >/dev/null
       format_parity_matrices_for_committee "$c" "$TMP"
       for variant in insecure secure; do
         live="circuits/lib/src/configs/committee/$c/parity_${variant}.nr"
@@ -483,7 +483,7 @@ if [[ -x "$GEN_BIN" ]]; then
     done
   fi
 else
-  echo "  (skipping parity-matrix drift check: $GEN_BIN not built. Run \`cargo build -p e3-zk-helpers --bin generate_parity_matrices --release\` to enable.)" >&2
+  echo "  (skipping parity-matrix drift check: $GEN_BIN not built. Run \`pnpm rust:build:zk --release\` to enable.)" >&2
 fi
 
 echo "✓ check:committee: BFV tuples, configuration IDs, all six routes, and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) are consistent across TypeScript, Rust, Noir, and Solidity$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"

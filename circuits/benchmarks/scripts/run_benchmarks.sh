@@ -295,7 +295,7 @@ for CIRCUIT in $RUN_CIRCUITS; do
         echo "Benchmark [$CURRENT/$TOTAL_BENCHMARKS]: ${CIRCUIT} (${MODE}) with ${ORACLE} oracle"
         echo "────────────────────────────────────────────────"
         
-        # Generate Prover.toml (and configs.nr) via zk_cli so nargo execute has witness
+        # Generate Prover.toml via zk-cli generate so nargo execute has witness
         echo "  Generating Prover.toml..."
         if ! BENCHMARK_COMMITTEE="$OUTPUT_COMMITTEE" "${SCRIPT_DIR}/generate_prover_toml.sh" "$CIRCUIT" "$MODE" "$REPO_ROOT" 2>&1; then
             echo "⚠️  Prover.toml generation failed for $CIRCUIT, skipping benchmark"

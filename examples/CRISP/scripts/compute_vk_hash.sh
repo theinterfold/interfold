@@ -23,5 +23,5 @@ for name in crisp crisp_onchain; do
     [[ -f "$f" ]] || { echo "missing $f (run pnpm compile:circuits in examples/CRISP)" >&2; exit 1; }
   done
   printf '%s: ' "$name"
-  (cd "$REPO" && cargo run -q -p e3-zk-helpers --bin compute-vk-hash -- "${VK[@]}")
+  (cd "$REPO" && cargo run --quiet --locked --release -p e3-zk-helpers --bin zk-cli -- vk-hash "${VK[@]}")
 done

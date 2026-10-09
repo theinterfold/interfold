@@ -169,8 +169,9 @@ export function committeeBoundUpdates(rootDir: string, preset: CircuitPreset, co
           '-p',
           'e3-zk-helpers',
           '--bin',
-          'zk_cli',
+          'zk-cli',
           '--',
+          'generate',
           '--circuit',
           source.circuit,
           '--preset',
@@ -409,7 +410,7 @@ class NoirCircuitBuilder {
 
   /**
    * Regenerates `circuits/lib/src/configs/committee/<committee>/parity_{insecure,secure}.nr`
-   * by invoking the Rust `generate_parity_matrices` binary. The Reed-Solomon parity matrix is
+   * by invoking `zk-cli parity-matrices`. The Reed-Solomon parity matrix is
    * a deterministic function of `(N, T, QIS)` — committing the output keeps `nargo check`
    * working standalone, but the build script always overwrites it so a change in committee
    * or BFV preset constants can never silently desync the on-disk literal from what the
@@ -418,7 +419,7 @@ class NoirCircuitBuilder {
   private regenerateParityMatrices(committee: CircuitCommittee): void {
     const libDir = join(this.rootDir, 'circuits', 'lib')
     try {
-      execSync(`cargo run --quiet --release --bin generate_parity_matrices -- --committee ${committee}`, {
+      execSync(`cargo run --quiet --locked --release -p e3-zk-helpers --bin zk-cli -- parity-matrices --committee ${committee}`, {
         cwd: this.rootDir,
         stdio: ['ignore', 'pipe', 'inherit'],
       })
@@ -427,7 +428,7 @@ class NoirCircuitBuilder {
     } catch (err: any) {
       throw new Error(
         `Failed to regenerate parity matrices for committee=${committee}: ${err.message}\n` +
-          `   Try: cargo run --release --bin generate_parity_matrices -- --committee ${committee}`,
+          `   Try: pnpm zk parity-matrices --committee ${committee}`,
       )
     }
   }
@@ -571,8 +572,9 @@ class NoirCircuitBuilder {
             '-p',
             'e3-zk-helpers',
             '--bin',
-            'zk_cli',
+            'zk-cli',
             '--',
+            'generate',
             '--circuit',
             source.circuit,
             '--preset',
@@ -1371,7 +1373,7 @@ library ActiveCryptoConfig {
     const hashes = JSON.parse(
       execFileSync(
         'cargo',
-        ['run', '--quiet', '--locked', '--release', '-p', 'e3-zk-helpers', '--bin', 'compute-vk-hash', '--', '--bfv-tree', pairDir],
+        ['run', '--quiet', '--locked', '--release', '-p', 'e3-zk-helpers', '--bin', 'zk-cli', '--', 'vk-hash', '--bfv-tree', pairDir],
         { cwd: this.rootDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] },
       ),
     ) as Record<string, string>
@@ -1507,6 +1509,8 @@ library ActiveCryptoConfig {
       'circuits/lib/src/core',
       'circuits/lib/src/math',
       'crates/zk-helpers/src',
+      'crates/bfv-math/src',
+      'crates/committee/src',
       'crates/fhe-params/src',
       'crates/fhe/src',
       'crates/polynomial/src',

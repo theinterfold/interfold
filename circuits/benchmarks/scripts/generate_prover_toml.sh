@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# generate_prover_toml.sh - Generates Prover.toml (and configs.nr) for a circuit via zk_cli
+# generate_prover_toml.sh - Generates Prover.toml for a circuit via zk-cli generate
 # Usage: ./generate_prover_toml.sh <circuit_path> <mode> <repo_root>
 #   circuit_path: e.g. "dkg/pk" or "threshold/share_decryption"
 #   mode: "insecure" or "secure"
@@ -47,14 +47,14 @@ fi
 
 OUTPUT_DIR="${REPO_ROOT}/circuits/bin/${CIRCUIT_PATH}"
 
-# Map circuit path to zk_cli --circuit and optional --inputs
+# Map circuit path to zk-cli generate --circuit and optional --inputs
 # DKG circuits that need --inputs: share-computation, share-encryption, share-decryption
-# config has no witness inputs (verifies constants only), so skip zk_cli
+# config has no witness inputs (verifies constants only), so skip generation
 get_zk_args() {
     local path="$1"
     case "$path" in
         config)
-            echo "_no_zk_cli"
+            echo "_no_witness"
             return
             ;;
         dkg/pk)
@@ -114,7 +114,7 @@ ZK_INPUTS="${ZK_ARGS[1]:-}"
 
 cd "$REPO_ROOT"
 
-if [ "$ZK_CIRCUIT" = "_no_zk_cli" ]; then
+if [ "$ZK_CIRCUIT" = "_no_witness" ]; then
     echo "  No Prover.toml needed (config circuit has no witness inputs)"
     # Ensure empty Prover.toml so nargo execute can run
     mkdir -p "$OUTPUT_DIR"
@@ -122,13 +122,13 @@ if [ "$ZK_CIRCUIT" = "_no_zk_cli" ]; then
     exit 0
 fi
 
-CMD=(cargo run -p e3-zk-helpers --bin zk_cli -- --circuit "$ZK_CIRCUIT" --preset "$PRESET" --committee "$COMMITTEE_NAME" --output "$OUTPUT_DIR" --toml --no-configs)
+CMD=(pnpm zk generate --circuit "$ZK_CIRCUIT" --preset "$PRESET" --committee "$COMMITTEE_NAME" --output "$OUTPUT_DIR" --toml --no-configs)
 if [ -n "$ZK_INPUTS" ]; then
     CMD+=(--inputs "$ZK_INPUTS")
 fi
 
-echo "  Generating Prover.toml: zk_cli --circuit $ZK_CIRCUIT --preset $PRESET --committee $COMMITTEE_NAME ${ZK_INPUTS:+--inputs $ZK_INPUTS}"
+echo "  Generating Prover.toml: zk-cli generate --circuit $ZK_CIRCUIT --preset $PRESET --committee $COMMITTEE_NAME ${ZK_INPUTS:+--inputs $ZK_INPUTS}"
 if ! "${CMD[@]}" 2>&1; then
-    echo "Error: zk_cli failed for $CIRCUIT_PATH"
+    echo "Error: zk-cli generate failed for $CIRCUIT_PATH"
     exit 1
 fi

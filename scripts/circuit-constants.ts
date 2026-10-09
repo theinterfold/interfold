@@ -75,7 +75,7 @@ export const ALL_COMMITTEES: CircuitCommittee[] = [CIRCUIT_COMMITTEES.MINIMUM, C
 
 /**
  * `(N, T, H)` per committee. Mirrors `circuits/lib/src/configs/committee/{name}/mod.nr`
- * and Rust `e3_zk_helpers::CiphernodesCommitteeSize::values()`. The build script writes
+ * and Rust `e3_committee::CiphernodesCommitteeSize::values()`. The build script writes
  * `H` and `T` into `packages/interfold-contracts/scripts/utils.ts` so the EVM gas benchmark
  * deploys verifiers with the matching public-input layout.
  */
@@ -94,7 +94,7 @@ export const COMMITTEE_PARAMS: Record<CircuitCommittee, CommitteeParams> = {
 /**
  * Every `(preset, committee)` pair is supported because the parity matrices are now regenerated
  * automatically from the BFV preset's `QIS` and the committee's `(N, T)` by the
- * `generate_parity_matrices` Rust binary, invoked from `scripts/build-circuits.ts` whenever
+ * `zk-cli parity-matrices` command, invoked from `scripts/build-circuits.ts` whenever
  * the committee is set. The matrix files on disk are derived artifacts, not hand-tuned data.
  *
  * This constant is kept for future use (e.g. if a particular pair is ever known-broken at

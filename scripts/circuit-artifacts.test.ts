@@ -216,13 +216,20 @@ test('pair source hash ignores generated bounds but tracks other Noir config', (
     writeFileSync(thresholdPath, threshold(20, '3, 4', 3))
     assert.notEqual(builder.computeSourceHash('insecure-512', 'micro'), originalHash)
 
-    const generatorDir = join(dir, 'crates', 'zk-helpers', 'src')
-    mkdirSync(generatorDir, { recursive: true })
-    const generatorPath = join(generatorDir, 'generator.rs')
-    writeFileSync(generatorPath, 'first')
-    const generatorHash = builder.computeSourceHash('insecure-512', 'micro')
-    writeFileSync(generatorPath, 'second')
-    assert.notEqual(builder.computeSourceHash('insecure-512', 'micro'), generatorHash)
+    for (const owner of ['zk-helpers', 'bfv-math', 'committee', 'polynomial']) {
+      const generatorDir = join(dir, 'crates', owner, 'src')
+      mkdirSync(generatorDir, { recursive: true })
+      const generatorPath = join(generatorDir, 'generator.rs')
+      const production = 'pub fn bound() -> u64 { 7 }\n'
+      const tests = '#[cfg(test)]\nmod tests {\n    fn example() {}\n}\n'
+      writeFileSync(generatorPath, production + tests)
+      const generatorHash = builder.computeSourceHash('insecure-512', 'micro')
+      writeFileSync(generatorPath, production.replace('7', '8') + tests)
+      const changedHash = builder.computeSourceHash('insecure-512', 'micro')
+      assert.notEqual(changedHash, generatorHash, owner)
+      writeFileSync(generatorPath, production.replace('7', '8') + tests.replace('example', 'another_example'))
+      assert.equal(builder.computeSourceHash('insecure-512', 'micro'), changedHash, `${owner} test-only change`)
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

@@ -304,14 +304,14 @@ Other circuit commands:
 | `pnpm noir:lint` (`scripts/lint-circuits.sh`)                  | Runs `nargo fmt --check` and `nargo check` on the library and each package. It exits with success if `nargo` is missing.                                                                     |
 | `pnpm noir:test` (`scripts/test-circuits.sh`)                  | Runs `nargo test` on `circuits/lib` and `decryption_aggregator`, then `nargo execute` on `bin/config`, then the `dkg_aggregator` and `node_fold` tests for three preset and committee pairs. |
 
-To make sample inputs for one circuit, use the `zk_cli` generator. Its `--committee` value must
-match the active committee of the library:
+To make sample inputs for one circuit, use `zk-cli generate`. Its `--committee` value must match the
+active committee of the library:
 
 ```bash
-cargo run -p e3-zk-helpers --bin zk_cli -- --circuit pk-generation --preset insecure --committee minimum --toml
+pnpm zk generate --circuit pk-generation --preset insecure --committee minimum --toml
 ```
 
-`zk_cli --list-circuits` prints the circuit names that it accepts.
+`pnpm zk list` prints the circuit names that it accepts.
 
 ## Generate the Solidity verifiers
 

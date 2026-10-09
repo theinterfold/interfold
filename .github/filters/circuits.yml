@@ -21,6 +21,10 @@ circuits:
 verifiers:
   - 'packages/interfold-contracts/contracts/verifiers/**'
   - 'crates/zk-prover/versions.json'
+  - 'crates/zk-helpers/**'
+  - 'crates/bfv-math/**'
+  - 'crates/committee/**'
+  - 'crates/polynomial/**'
   # generate-verifiers.ts formats the contracts with this prettier config, and with the prettier
   # and prettier-plugin-solidity versions in the lockfile.
   - 'packages/interfold-contracts/.prettierrc.yml'

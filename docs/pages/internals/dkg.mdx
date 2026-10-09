@@ -68,9 +68,8 @@ with Barretenberg (`bb`) as UltraHonk proofs. For the cryptographic specificatio
 
 ## Committee shapes and fault budget
 
-`crates/zk-helpers/src/ciphernodes_committee.rs` defines three committee shapes. The on-chain
-registry stores `threshold` as `[H, N]`. The runtime field `threshold_m` carries T and `threshold_n`
-carries N.
+`crates/committee/src/lib.rs` defines three committee shapes. The on-chain registry stores
+`threshold` as `[H, N]`. The runtime field `threshold_m` carries T and `threshold_n` carries N.
 
 | Committee | N   | T   | H   | Members that can drop before the roster ($N - H$) | Roster members that can drop before decryption ($H - (T + 1)$) |
 | --------- | --- | --- | --- | ------------------------------------------------- | -------------------------------------------------------------- |

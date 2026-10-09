@@ -103,12 +103,12 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: cargo build
 
-      # scripts/build-circuits.ts runs these e3-zk-helpers tools with --release in every ci job that
+      # scripts/build-circuits.ts runs zk-cli with --release in every ci job that
       # builds or hydrates circuits, zk_prover_e2e included. Built from scratch, they took about two
       # minutes.
-      - name: Build the release circuit tools
+      - name: Build the release circuit CLI
         if: steps.cache.outputs.cache-hit != 'true'
-        run: cargo build --release -p e3-zk-helpers --bins
+        run: pnpm rust:build:zk --release
 
       # A checkout gives the workspace sources new modification times, so every ci job rebuilds the
       # workspace crates and relinks their test binaries, and reuses only the dependencies' artifacts.

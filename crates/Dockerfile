@@ -47,9 +47,11 @@ COPY --from=evm-builder /build/packages/interfold-contracts/deployed_contracts.j
 # find crates/* -name "Cargo.toml" -not -path "*/support/*" -printf "COPY %p %p\n" | sed 's|COPY \(.*\) crates/|COPY \1 ./|'
 COPY crates/aggregator/Cargo.toml ./aggregator/Cargo.toml
 COPY crates/bfv-client/Cargo.toml ./bfv-client/Cargo.toml
+COPY crates/bfv-math/Cargo.toml ./bfv-math/Cargo.toml
 COPY crates/cli/Cargo.toml ./cli/Cargo.toml
 COPY crates/ciphernode-builder/Cargo.toml ./ciphernode-builder/Cargo.toml
 COPY crates/compute-provider/Cargo.toml ./compute-provider/Cargo.toml
+COPY crates/committee/Cargo.toml ./committee/Cargo.toml
 COPY crates/committee-hash/Cargo.toml ./committee-hash/Cargo.toml
 COPY crates/config/Cargo.toml ./config/Cargo.toml
 COPY crates/console/Cargo.toml ./console/Cargo.toml
@@ -114,9 +116,8 @@ RUN for d in ./*/ ; do \
     done
 
 # Crates with [[bin]] in Cargo.toml need stub binaries so the first build succeeds
-RUN mkdir -p ./zk-helpers/src/bin && \
-    echo 'fn main() {}' > ./zk-helpers/src/bin/zk_cli.rs && \
-    echo 'fn main() {}' > ./zk-helpers/src/bin/compute_vk_hash.rs
+RUN mkdir -p ./zk-helpers/src/bin/zk_cli && \
+    echo 'fn main() {}' > ./zk-helpers/src/bin/zk_cli/main.rs
 RUN mkdir -p ./fhe-params/src/bin && echo 'fn main() {}' > ./fhe-params/src/bin/search_params.rs
 
 RUN cargo build --locked --release

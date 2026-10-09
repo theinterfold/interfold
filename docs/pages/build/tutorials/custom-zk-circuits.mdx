@@ -190,7 +190,7 @@ Create `circuits/binary_input_fold/src/main.nr`. It follows `examples/CRISP/circ
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use interfold_lib::math::commitments::compute_vk_hash;
 
-/// The hash of the four inner verification keys. Set it from the compute-vk-hash output.
+/// The hash of the four inner verification keys. Set it from the zk-cli vk-hash output.
 pub global EXPECTED_KEY_HASH: Field = 0;
 
 fn main(
@@ -294,7 +294,7 @@ From the root of the Interfold checkout, hash the four key hashes. The order mus
 the fold circuit:
 
 ```bash
-cargo run -q -p e3-zk-helpers --bin compute-vk-hash -- \
+pnpm zk vk-hash \
   circuits/bin/threshold/target/user_data_encryption.vk_recursive_hash \
   <my-e3>/circuits/binary_input/target/binary_input.vk_recursive_hash \
   circuits/bin/threshold/target/user_data_encryption_ct0.vk_recursive_hash \
