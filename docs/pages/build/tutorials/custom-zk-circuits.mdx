@@ -466,8 +466,9 @@ const proofToFields = (proof: Uint8Array): string[] => {
 export async function proveBinaryInput(sdk: InterfoldSDK, value: bigint, publicKey: Uint8Array) {
   const { encryptedData, circuitInputs: c } = await sdk.encryptNumberAndGenInputs(value, publicKey)
 
-  const api = await Barretenberg.new()
-  await api.initSRSChonk(2 ** 21) // the fold circuit needs 2^21 points
+  // The fold circuit needs 2^21 points. In the browser, a later `initSRSChonk` call does not
+  // enlarge the SRS that `new` loads, so pass the size here.
+  const api = await Barretenberg.new({ srsSize: 2 ** 21 })
   const inner = { verifierTarget: 'noir-recursive-no-zk' } as const
 
   const prove = async (circuit: CompiledCircuit, inputs: Record<string, unknown>) => {

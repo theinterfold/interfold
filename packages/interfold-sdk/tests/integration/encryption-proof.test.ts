@@ -2,7 +2,7 @@
 
 import { Barretenberg, UltraHonkBackend, UltraHonkVerifierBackend, type ProofData } from '@aztec/bb.js'
 import { CompiledCircuit, Noir } from '@noir-lang/noir_js'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { bytesToBigInt, createPublicClient, http, toHex, zeroAddress } from 'viem'
 import { hardhat } from 'viem/chains'
 import { InterfoldSDK } from '../../src/interfold-sdk'
@@ -32,7 +32,14 @@ describe('real encryption proof', () => {
     const publicKey = await sdk.generatePublicKey()
     // Reuse one proof for positive and negative checks. Do not regenerate it per assertion.
     const { encryptedData, circuitInputs } = await sdk.encryptVectorAndGenInputs(new BigUint64Array([1n, 2n]), publicKey)
-    proof = await generateProof(circuitInputs)
+    // Prove on WASM, the backend that browsers use: bb.js falls back to WASM in Node when
+    // `BB_BINARY_PATH` names a missing binary. The verifier below keeps the default backend.
+    vi.stubEnv('BB_BINARY_PATH', '/nonexistent/bb')
+    try {
+      proof = await generateProof(circuitInputs)
+    } finally {
+      vi.unstubAllEnvs()
+    }
     publicKeyCommitment = bytesToBigInt(await sdk.computePublicKeyCommitment(publicKey))
     ciphertextCommitment = bytesToBigInt(await sdk.computeCiphertextCommitment(encryptedData))
 
@@ -50,8 +57,7 @@ describe('real encryption proof', () => {
     } as any)
     k1Commitment = BigInt((ct0Outputs as string[])[2])
 
-    api = await Barretenberg.new()
-    await api.initSRSChonk(2 ** 21)
+    api = await Barretenberg.new({ srsSize: 2 ** 21 })
     verificationKey = await new UltraHonkBackend(circuit.bytecode, api).getVerificationKey(options)
     verifier = new UltraHonkVerifierBackend(api)
     innerKeyHashes = []
