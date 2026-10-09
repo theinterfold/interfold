@@ -532,10 +532,10 @@ The provenance command records the OpenVM compute guest. The full reviewer-facin
 
 ### `generate-provenance-manifest.ts`
 
-Records the source commit, lockfile digests, guest configuration, proving artifacts, KZG
-parameters, and application commitments. With `--prover`, it checks the worker's
-configured identity. With an RPC, it checks the protocol-to-receipt binding, application commitments,
-and deployed Halo2 runtime against the checked artifact. These RPC checks do not send transactions.
+Records the source commit, lockfile digests, guest configuration, proving artifacts, KZG parameters,
+and application commitments. With `--prover`, it checks the worker's configured identity. With an
+RPC, it checks the protocol-to-receipt binding, application commitments, and deployed Halo2 runtime
+against the checked artifact. These RPC checks do not send transactions.
 
 ```bash
 pnpm provenance:manifest

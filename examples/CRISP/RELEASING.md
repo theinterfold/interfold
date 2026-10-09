@@ -138,25 +138,42 @@ from the proof's public-input length and VK hash anchors.
 The SDK must also match the round. A `latest` SDK can load either supported preset and should select
 from the E3's on-chain `paramSet`. Pair a `testing` SDK only with `insecure-512` deployments.
 
-For an existing paused mainnet bootstrap deployment, prepare the complete activation batch with:
+For the v0.19 mainnet cutover, pause requests and release every ended committee first. Deploy the
+OpenVM CRISP program from the qualified release source. Record the new program and verifiers in
+`examples/CRISP/packages/crisp-contracts/deployed_contracts.json`.
+
+Prepare the core activation batch with:
 
 ```sh
-pnpm --dir packages/interfold-contracts upgrade:secure-crisp -- --network mainnet
+pnpm --dir packages/interfold-contracts upgrade:v19 -- --network mainnet \
+  --openvm-identity <checked-cutover-identity.json> \
+  --input-availability-signer <production-signer-address>
 ```
 
-The script requires no active E3s or unreleased committees. It upgrades Interfold to the secure
-crypto configuration, deploys all three secure verifier routes and both routers, registers the
-secure BFV parameters, wires the ciphertext verifier, registers CRISP, and binds CRISP. It writes an
-Aragon-wrapped Safe Builder file, raises the required node protocol version, and keeps requests
-paused. Publish a new SemVer ciphernode release from the same source before governance executes the
-batch. After execution, run `upgrade:secure-crisp:validate`, restart the matching ciphernodes, and
-confirm that enough release-ready nodes are online. Generate the checked unpause transaction with:
+The identity file contains `appExeCommit`, `appVmCommit` and `halo2RuntimeCodeHash`. Verify these
+values against the compiled guest and the deployed Halo2 verifier. Use `--config`, `--deployment`
+and `--crisp-deployments` when the operation uses separate deployment records.
+
+The script requires no active E3s or unreleased committees. It deploys the new Interfold
+implementation, all three secure BFV routes and both routers. The unsigned batch installs the v5
+crypto configuration, registers parameter set `2`, connects the OpenVM program and raises the
+release policy to protocol `8` and generation `2`. Requests stay paused.
+
+Publish stable v0.19.0 before governance executes the contract switch. This core batch does not
+replace the DAO's CRISP voting body. Rehearse the complete governance batch, including that body
+replacement and its SPP pointer, before signing.
+
+After execution, run `upgrade:v19:validate -- --network mainnet`. Upgrade the ciphernodes and
+production services. Reset only incompatible node data with the new binary. Refresh all remaining
+operators with `upgrade:v19:refresh -- --network mainnet`, then wait for a later block. Confirm at
+least 19 distinct eligible bond owners and healthy stable-release nodes before preparing resume:
 
 ```sh
-pnpm --dir packages/interfold-contracts upgrade:secure-crisp:resume -- \
+pnpm --dir packages/interfold-contracts upgrade:v19:resume -- \
   --network mainnet --ciphernodes-restarted
 ```
 
-The resume command reruns the complete activation validation and requires 19 release-ready active
-operators before it writes the DAO/Safe transaction. The older CRISP-only governance builder rejects
-mainnet because it cannot install the secure protocol configuration.
+The resume command validates the planned cutover and checks refreshed committee capacity before it
+writes the separate DAO/Safe unpause transaction. It does not verify running process versions;
+operators must check those separately. The historical `upgrade:secure-crisp` commands use RISC Zero
+and cannot prepare this OpenVM cutover.

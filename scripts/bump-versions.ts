@@ -734,7 +734,7 @@ The script will:
 
 After CI passes and the release pull request is merged, update main and run
 \`pnpm release:tag X.Y.Z\`. That command tags only the protected main commit. The release workflow
-runs the complete CI suite for the tagged commit before it publishes any release output.
+checks release builds and publication. It does not rerun the complete test suite.
 `)
 }
 

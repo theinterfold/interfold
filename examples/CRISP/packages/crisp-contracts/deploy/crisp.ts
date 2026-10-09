@@ -55,8 +55,7 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
   if (rawMockDataAvailability && rawMockDataAvailability !== 'true' && rawMockDataAvailability !== 'false') {
     throw new Error("MOCK_DATA_AVAILABILITY must be 'true', 'false', or unset")
   }
-  const useMockDataAvailability =
-    chain === 'localhost' || (rawMockDataAvailability ? rawMockDataAvailability === 'true' : useMocks)
+  const useMockDataAvailability = chain === 'localhost' || (rawMockDataAvailability ? rawMockDataAvailability === 'true' : useMocks)
   if (chain === 'mainnet' && useMockDataAvailability) {
     throw new Error('MOCK_DATA_AVAILABILITY cannot be enabled for a mainnet CRISP deployment')
   }
@@ -359,10 +358,13 @@ export const deployVerifier = async (connectedEthers?: any): Promise<string> => 
   // The identity `interfold program compile` wrote for examples/CRISP, unless OPENVM_* settings name
   // one.
   const crispRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
-  const { receipt: verifier, halo2Verifier, halo2RuntimeCodeHash, appExeCommit, appVmCommit } = await deployOpenVmReceiptVerifier(
-    ethers,
-    compiledOpenVmEnvironment(crispRoot),
-  )
+  const {
+    receipt: verifier,
+    halo2Verifier,
+    halo2RuntimeCodeHash,
+    appExeCommit,
+    appVmCommit,
+  } = await deployOpenVmReceiptVerifier(ethers, compiledOpenVmEnvironment(crispRoot))
   storeDeploymentArgs(
     { address: halo2Verifier, blockNumber: await ethers.provider.getBlockNumber(), bytecodeHash: halo2RuntimeCodeHash },
     'OpenVmHalo2Verifier',

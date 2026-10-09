@@ -59,9 +59,9 @@ For a released node, the setup commands install these components:
 - **The OpenVM guest toolchain.** `cargo-openvm` installs the toolchain it needs. The local scripts
   run in dev mode by default, so they do not use OpenVM.
 
-Source builds need circuits rebuilt from the same checkout. This checkout pins `bb` 5.2.0, but its
-release archive is not yet updated. Do not use an older cached archive with the new `bb`.
-See [the source toolchain instructions](/build/noir-circuits#toolchain).
+Source builds need circuit artifacts that match the checkout and its `bb` 5.2.0 pin. Pull matching
+artifacts with `pnpm store:circuits pull`, or rebuild them. Do not reuse an archive from an older
+toolchain. See [the source toolchain instructions](/build/noir-circuits#toolchain).
 
 <Callout type='info'>
   When you run `cargo` in a folder that has a `rust-toolchain.toml` file, `rustup` uses the Rust

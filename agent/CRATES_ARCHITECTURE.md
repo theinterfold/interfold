@@ -790,9 +790,9 @@ stateDiagram-v2
 tears down per-request actor contexts. Duplicate and late terminal observations are classified
 before forwarding; side effects are enabled only after recovery. For a completed E3, the router
 ignores chain events and late peer messages, such as decryption shares past the threshold, but
-reports a local event as an error. The diagram shows the normal
-progression: the lifecycle observer also accepts a forward jump to a later stage, while reporting a
-lower-stage observation as a regression without changing its tracked stage.
+reports a local event as an error. The diagram shows the normal progression: the lifecycle observer
+also accepts a forward jump to a later stage, while reporting a lower-stage observation as a
+regression without changing its tracked stage.
 
 ## Committee, DKG, aggregation, and decryption
 
@@ -921,13 +921,13 @@ therefore retry, while completed C1-C4 proof work and randomized TrBFV output ar
 Live, a request under a new ID whose result has not reached the gate 10 minutes after it went to the
 worker goes to the worker again, because EventBus fan-out can drop that result, but only when no run
 of it is left in the worker (`RunningJobs`: from the worker's intake, queued ones included, until
-the run ends, counted per correlation ID). A slow proof under
-load therefore runs once. A run that hangs holds back the re-send until it ends; the prover's own
-cap (`bb_timeout_secs`, 12 hours by default) bounds that. The first success answers the waiting IDs
-and later requests. Before replay, a node raises its correlation IDs above the reservation that its
-earlier boot recorded (`correlation-ids` beside the event log), so a replayed response of an earlier
-boot never answers a new request, also after a clock rollback; the gate also takes an outcome only
-for the request of the same E3.
+the run ends, counted per correlation ID). A slow proof under load therefore runs once. A run that
+hangs holds back the re-send until it ends; the prover's own cap (`bb_timeout_secs`, 12 hours by
+default) bounds that. The first success answers the waiting IDs and later requests. Before replay, a
+node raises its correlation IDs above the reservation that its earlier boot recorded
+(`correlation-ids` beside the event log), so a replayed response of an earlier boot never answers a
+new request, also after a clock rollback; the gate also takes an outcome only for the request of the
+same E3.
 
 A restored plaintext recipient can remain dormant while confirmed key authority is missing. It keeps
 the saved actor state and ordered replay inputs, then validates recovery before forwarding them.
