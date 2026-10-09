@@ -302,7 +302,7 @@ function bfvHonkSource(
   config: ActiveBfvConfig,
   contractName: "DkgAggregatorVerifier" | "DecryptionAggregatorVerifier",
 ): string {
-  if (config.preset === "insecure-512" && config.committee === "minimum") {
+  if (config.preset === "insecure-64" && config.committee === "minimum") {
     return `contracts/verifiers/bfv/honk/${contractName}.sol`;
   }
   return `contracts/verifiers/bfv/honk/${config.preset}/${config.committee}/${contractName}.sol`;

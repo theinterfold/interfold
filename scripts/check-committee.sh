@@ -244,7 +244,7 @@ process.stdout.write(`${qModT},${(x % t + t) % t}\n`);
   fi
 }
 
-check_bfv_preset insecure-512 insecure512 insecure_512 insecure
+check_bfv_preset insecure-64 insecure64 insecure_64 insecure
 check_bfv_preset secure-8192 secure8192 secure_8192 secure
 
 # 6. Every chain-supported route in utils.ts must match the Noir committee shape and the
@@ -324,9 +324,9 @@ check_utils_route() {
   fi
 }
 
-check_utils_route INSECURE_MINIMUM insecure-512 minimum 0
-check_utils_route INSECURE_MICRO insecure-512 micro 1
-check_utils_route INSECURE_SMALL insecure-512 small 2
+check_utils_route INSECURE_MINIMUM insecure-64 minimum 0
+check_utils_route INSECURE_MICRO insecure-64 micro 1
+check_utils_route INSECURE_SMALL insecure-64 small 2
 check_utils_route SECURE_MINIMUM secure-8192 minimum 0
 check_utils_route SECURE_MICRO secure-8192 micro 1
 check_utils_route SECURE_SMALL secure-8192 small 2

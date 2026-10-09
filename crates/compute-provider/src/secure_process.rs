@@ -405,7 +405,7 @@ mod tests {
     /// Seven inputs. Input 4 does not deserialize and input 2's published commitment is wrong, so
     /// the policy drops both along with every odd index.
     fn round() -> ComputeInput {
-        let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
+        let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold64).unwrap();
         let mut rng = ChaCha8Rng::seed_from_u64(11);
         let secret_key = SecretKey::random(&params, &mut rng);
         let public_key = PublicKey::new(&secret_key, &mut rng);

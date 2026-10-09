@@ -124,7 +124,7 @@ proofs.
 
 ### Proof count per E3
 
-L is the number of threshold CRT moduli: 2 for `insecure-512` and 3 for `secure-8192`. The current
+L is the number of threshold CRT moduli: 3 for `insecure-64` and for `secure-8192`. The current
 TrBFV code makes one smudging noise share set, so the smudging multiplicity Z is 1.
 
 | Circuit | Count for one node                               | Count for the committee               |
@@ -151,8 +151,8 @@ The protocol uses two different BFV key pairs. They use different parameter sets
 
 | Key            | Preset (`BfvPreset`)                            | Purpose                                                        | Lifetime |
 | -------------- | ----------------------------------------------- | -------------------------------------------------------------- | -------- |
-| Individual key | `InsecureDkg512` or `SecureDkg8192`             | Encrypts the Shamir shares sent to one node. C0 commits to it. | One DKG  |
-| Threshold key  | `InsecureThreshold512` or `SecureThreshold8192` | Data providers encrypt to it. C1 proves each contribution.     | One E3   |
+| Individual key | `InsecureDkg64` or `SecureDkg8192`             | Encrypts the Shamir shares sent to one node. C0 commits to it. | One DKG  |
+| Threshold key  | `InsecureThreshold64` or `SecureThreshold8192` | Data providers encrypt to it. C1 proves each contribution.     | One E3   |
 
 The threshold key uses a common random polynomial (CRP) $a$. Every node derives the same CRP from
 the default seed with `create_deterministic_crp_from_default_seed`. The node encrypts its individual
@@ -707,7 +707,7 @@ strictly increasing, and at most N. The wrapper then checks:
 The Honk verifiers `DkgAggregatorVerifier.sol` and `DecryptionAggregatorVerifier.sol` are generated
 from the recursive VKs of `dkg_aggregator` and `decryption_aggregator` with
 `bb write_solidity_verifier`. The files in
-`packages/interfold-contracts/contracts/verifiers/bfv/honk/` are the `insecure-512` and `minimum`
+`packages/interfold-contracts/contracts/verifiers/bfv/honk/` are the `insecure-64` and `minimum`
 pair. The other pairs are in `honk/<preset>/<committee>/`. A deployment must use the pair that
 matches its preset and committee.
 
@@ -847,14 +847,14 @@ the party at fault.
 ## BFV parameter presets
 
 `crates/fhe-params/src/constants.rs` defines the presets. Version-7 E3 requests use `paramSet` 0 for
-`insecure-512` and 2 for `secure-8192`. Index 1 remains in the registry for older E3s.
+`insecure-64` and 2 for `secure-8192`. Index 1 remains in the registry for older E3s.
 
-| Parameter                                | `insecure-512`                   | `secure-8192` |
+| Parameter                                | `insecure-64`                   | `secure-8192` |
 | ---------------------------------------- | -------------------------------- | ------------- |
-| Ring degree $d$                          | 512                              | 8192          |
-| Threshold CRT moduli L                   | 2                                | 3             |
-| DKG CRT moduli                           | 1                                | 2             |
-| Threshold plaintext modulus $t$          | 100                              | 17000000      |
+| Ring degree $d$                          | 64                               | 8192          |
+| Threshold CRT moduli L                   | 3                                | 3             |
+| DKG CRT moduli                           | 2                                | 2             |
+| Threshold plaintext modulus $t$          | 17000000                         | 17000000      |
 | Statistical security parameter $\lambda$ | 2                                | 45            |
 | Use                                      | Local development and tests only | Production    |
 

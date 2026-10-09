@@ -85,7 +85,7 @@ export const deployInterfold = async (
     throw new Error("Could not read latest block for local TGE timestamp");
   }
 
-  const encodedInsecure = encodeBfvParams(BFV_PARAMS.insecure512);
+  const encodedInsecure = encodeBfvParams(BFV_PARAMS.insecure64);
   const encodedSecure = encodeBfvParams(BFV_PARAMS.secure8192);
 
   const THIRTY_DAYS_IN_SECONDS = 60 * 60 * 24 * 30;
@@ -106,7 +106,7 @@ export const deployInterfold = async (
     process.env.ENABLE_ZK_VERIFICATION === "true" || withZKVerification;
 
   // H-23: refuse to deploy test mocks (MockUSDC / MockE3ProgramHarness) and the
-  // `insecure512` BFV preset on any chain that is not a recognised local /
+  // `insecure64` BFV preset on any chain that is not a recognised local /
   // test network. Override via `ALLOW_MOCKS_ON_PRODUCTION=true` only for
   // explicit dry-runs.
   if (shouldDeployMocks) {
@@ -124,7 +124,7 @@ export const deployInterfold = async (
       process.env.ALLOW_MOCKS_ON_PRODUCTION !== "true"
     ) {
       throw new Error(
-        `Refusing to deploy mocks / insecure512 BFV preset on chainId ${chainId}. ` +
+        `Refusing to deploy mocks / insecure64 BFV preset on chainId ${chainId}. ` +
           `Set ALLOW_MOCKS_ON_PRODUCTION=true to override (H-23).`,
       );
     }

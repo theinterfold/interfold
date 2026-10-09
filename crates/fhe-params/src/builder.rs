@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::constants::{insecure_512, secure_8192};
+use crate::constants::{insecure_64, secure_8192};
 use crate::presets::{BfvParamSet, BfvPreset, PresetError};
 use fhe::bfv::{BfvParameters, BfvParametersBuilder};
 use num_bigint::BigUint;
@@ -14,22 +14,22 @@ pub fn build_pair_for_preset(
     preset: BfvPreset,
 ) -> Result<(Arc<BfvParameters>, Arc<BfvParameters>), PresetError> {
     match preset {
-        BfvPreset::InsecureThreshold512 => {
+        BfvPreset::InsecureThreshold64 => {
             let params_threshold = BfvParametersBuilder::new()
-                .set_degree(insecure_512::DEGREE)
-                .set_plaintext_modulus(insecure_512::threshold::PLAINTEXT_MODULUS)
-                .set_moduli(insecure_512::threshold::MODULI)
+                .set_degree(insecure_64::DEGREE)
+                .set_plaintext_modulus(insecure_64::threshold::PLAINTEXT_MODULUS)
+                .set_moduli(insecure_64::threshold::MODULI)
                 .set_error1_variance(BigUint::from(
-                    insecure_512::threshold::ERROR1_VARIANCE_BIGUINT,
+                    insecure_64::threshold::ERROR1_VARIANCE_BIGUINT,
                 ))
                 .build_arc()
                 .unwrap();
 
             let params_dkg = BfvParametersBuilder::new()
-                .set_degree(insecure_512::DEGREE)
-                .set_plaintext_modulus(insecure_512::dkg::PLAINTEXT_MODULUS)
-                .set_moduli(insecure_512::dkg::MODULI)
-                .set_variance(insecure_512::dkg::VARIANCE as usize)
+                .set_degree(insecure_64::DEGREE)
+                .set_plaintext_modulus(insecure_64::dkg::PLAINTEXT_MODULUS)
+                .set_moduli(insecure_64::dkg::MODULI)
+                .set_variance(insecure_64::dkg::VARIANCE as usize)
                 .build_arc()
                 .unwrap();
 
@@ -145,7 +145,7 @@ pub fn try_build_bfv_params_arc(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::{defaults, insecure_512, secure_8192};
+    use crate::constants::{defaults, insecure_64, secure_8192};
     use crate::presets::BfvPreset;
     use fhe::trbfv::{SmudgingBoundCalculator, SmudgingBoundCalculatorConfig};
     use num_bigint::BigUint;
@@ -154,9 +154,9 @@ mod tests {
     #[test]
     fn test_build_insecure_dkg_params_arc() {
         // Test building Arc<BFV params> using insecure DKG preset constants
-        let degree = insecure_512::DEGREE;
-        let plaintext_modulus = insecure_512::dkg::PLAINTEXT_MODULUS;
-        let moduli = insecure_512::dkg::MODULI;
+        let degree = insecure_64::DEGREE;
+        let plaintext_modulus = insecure_64::dkg::PLAINTEXT_MODULUS;
+        let moduli = insecure_64::dkg::MODULI;
 
         let params = build_bfv_params_arc(degree, plaintext_modulus, moduli, None);
 
@@ -166,7 +166,7 @@ mod tests {
         assert_eq!(params.variance(), defaults::VARIANCE);
         assert_eq!(
             params.get_error1_variance(),
-            &BigUint::from_str(insecure_512::dkg::ERROR1_VARIANCE).unwrap()
+            &BigUint::from_str(insecure_64::dkg::ERROR1_VARIANCE).unwrap()
         );
     }
 
@@ -246,13 +246,13 @@ mod tests {
     #[test]
     fn test_build_insecure_dkg_params_from_set_arc() {
         // Test building Arc from BfvParamSet using insecure DKG preset
-        let preset = BfvPreset::InsecureDkg512;
+        let preset = BfvPreset::InsecureDkg64;
         let param_set = preset.into();
         let params = build_bfv_params_from_set_arc(param_set);
 
-        assert_eq!(params.degree(), insecure_512::DEGREE);
-        assert_eq!(params.plaintext(), insecure_512::dkg::PLAINTEXT_MODULUS);
-        assert_eq!(params.moduli(), insecure_512::dkg::MODULI);
+        assert_eq!(params.degree(), insecure_64::DEGREE);
+        assert_eq!(params.plaintext(), insecure_64::dkg::PLAINTEXT_MODULUS);
+        assert_eq!(params.moduli(), insecure_64::dkg::MODULI);
     }
 
     #[test]

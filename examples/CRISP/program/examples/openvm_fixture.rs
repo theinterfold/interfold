@@ -32,7 +32,7 @@ fn main() -> Result<()> {
     ensure!(args.next().is_none(), "Unexpected arguments");
     ensure!(count >= 1, "Vote count must be at least 1");
     let preset = if insecure {
-        BfvPreset::InsecureThreshold512
+        BfvPreset::InsecureThreshold64
     } else {
         BfvPreset::SecureThreshold8192
     };
@@ -132,7 +132,7 @@ fn main() -> Result<()> {
             .collect::<Vec<_>>(),
     )?;
     let context = json!({
-        "preset": if insecure { "insecure-512" } else { "secure-8192" },
+        "preset": if insecure { "insecure-64" } else { "secure-8192" },
         "param_set": if insecure { 0 } else { 1 }, "inputs": entries,
         "params": format!("0x{}", hex::encode(params_bytes)),
         "public_key_commitment": format!("0x{}", hex::encode(public_key_commitment)),
@@ -149,7 +149,7 @@ fn main() -> Result<()> {
     println!(
         "Generated {count} fresh {} test ballots in {}",
         if insecure {
-            "insecure-512"
+            "insecure-64"
         } else {
             "secure-8192"
         },

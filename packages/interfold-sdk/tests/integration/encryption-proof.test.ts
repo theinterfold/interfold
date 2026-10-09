@@ -15,7 +15,7 @@ const options = { verifierTarget: 'noir-recursive-no-zk' } as const
 const sdk = new InterfoldSDK({
   publicClient: createPublicClient({ chain: hardhat, transport: http() }),
   contracts: { interfold: zeroAddress, ciphernodeRegistry: zeroAddress, feeToken: zeroAddress },
-  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_64',
 })
 
 describe('real encryption proof', () => {

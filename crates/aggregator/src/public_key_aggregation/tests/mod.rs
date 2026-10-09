@@ -84,7 +84,7 @@ async fn build_public_key_aggregator_with_committee(
     E3id,
 )> {
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let aggregator = PublicKeyAggregator::new(
@@ -92,7 +92,7 @@ async fn build_public_key_aggregator_with_committee(
             fhe,
             bus,
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold512,
+            params_preset: BfvPreset::InsecureThreshold64,
             committee_size,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
@@ -226,7 +226,7 @@ fn micro_aggregator(
             fhe,
             bus,
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold512,
+            params_preset: BfvPreset::InsecureThreshold64,
             committee_size: CiphernodesCommitteeSize::Micro,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
@@ -274,7 +274,7 @@ async fn c5_proof_requested(
 #[actix::test]
 async fn demoted_aggregator_finishes_the_c1_verification_it_dispatched() -> Result<()> {
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let (state, threshold_n, _, circuit_h) = verifying_c1_non_square_state(&fhe, &e3_id)?;
@@ -320,7 +320,7 @@ fn booted_micro_aggregator(
             fhe: fhe.clone(),
             bus: bus.clone(),
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold512,
+            params_preset: BfvPreset::InsecureThreshold64,
             committee_size: CiphernodesCommitteeSize::Micro,
             dkg_fold_attestation_context: None,
             recovery,
@@ -338,7 +338,7 @@ fn booted_micro_aggregator(
 async fn demoted_aggregator_resumes_the_c1_verification_it_dispatched_after_restart() -> Result<()>
 {
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let (state, threshold_n, _, circuit_h) = verifying_c1_non_square_state(&fhe, &e3_id)?;
@@ -383,7 +383,7 @@ async fn demoted_aggregator_resumes_the_c1_verification_it_dispatched_after_rest
 #[actix::test]
 async fn a_late_c1_failure_after_key_publication_does_not_fail_the_e3() -> Result<()> {
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let (state, threshold_n, _, _) = verifying_c1_non_square_state(&fhe, &e3_id)?;
@@ -437,7 +437,7 @@ async fn a_late_c1_failure_after_key_publication_does_not_fail_the_e3() -> Resul
 #[actix::test]
 async fn a_c1_failure_after_another_node_published_the_key_does_not_fail_the_e3() -> Result<()> {
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let (state, threshold_n, _, _) = verifying_c1_non_square_state(&fhe, &e3_id)?;
@@ -460,7 +460,7 @@ async fn a_c1_failure_after_another_node_published_the_key_does_not_fail_the_e3(
 #[actix::test]
 async fn a_demoted_aggregator_stops_its_work_once_a_key_is_published() -> Result<()> {
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let mut state = generating_c5_state(CorrelationId::new());
@@ -487,7 +487,7 @@ async fn a_demoted_aggregator_stops_its_work_once_a_key_is_published() -> Result
 #[actix::test]
 async fn standby_ignores_c1_verification_that_it_did_not_dispatch() -> Result<()> {
     let (bus, rng, _seed, params, crp, _errors, _history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let (state, threshold_n, _, circuit_h) = verifying_c1_non_square_state(&fhe, &e3_id)?;
@@ -514,7 +514,7 @@ async fn standby_ignores_c1_verification_that_it_did_not_dispatch() -> Result<()
 #[actix::test]
 async fn demoted_aggregator_resumes_its_key_proof_after_restart() -> Result<()> {
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let mut state = generating_c5_state(CorrelationId::new());
@@ -721,7 +721,7 @@ async fn expelling_a_selected_roster_member_fails_the_dkg_immediately() -> Resul
 #[actix::test]
 async fn standby_retains_dkg_fold_for_failover() -> Result<()> {
     let (bus, rng, _seed, params, crp, _errors, _history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let party_id = 2;
@@ -745,7 +745,7 @@ async fn standby_retains_dkg_fold_for_failover() -> Result<()> {
             fhe,
             bus,
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold512,
+            params_preset: BfvPreset::InsecureThreshold64,
             committee_size: CiphernodesCommitteeSize::Minimum,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),

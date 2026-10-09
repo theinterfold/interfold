@@ -18,10 +18,10 @@ vi.mock('@crisp-e3/sdk', () => ({
   },
 }))
 
-vi.mock('@crisp-e3/sdk/insecure-512', () => ({
+vi.mock('@crisp-e3/sdk/insecure-64', () => ({
   loadCircuits: async () => {
-    sdkState.loads.push('insecure-512')
-    return { preset: 'insecure-512' }
+    sdkState.loads.push('insecure-64')
+    return { preset: 'insecure-64' }
   },
 }))
 
@@ -45,7 +45,7 @@ describe('client ensureCircuits', () => {
     await ensureCircuits(2)
     await ensureCircuits(0)
 
-    expect(sdkState.current).toBe('insecure-512')
-    expect(sdkState.loads).toEqual(['insecure-512', 'secure-8192', 'insecure-512'])
+    expect(sdkState.current).toBe('insecure-64')
+    expect(sdkState.loads).toEqual(['insecure-64', 'secure-8192', 'insecure-64'])
   })
 })

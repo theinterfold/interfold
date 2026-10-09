@@ -106,11 +106,11 @@ committee publishes its public key, the client moves to **Step 3 · Enter Your N
 
 ### Enter two numbers
 
-Enter a **First Number** and a **Second Number**. Keep the sum less than 100. Select **Proceed to
+Enter a **First Number** and a **Second Number**. Keep the sum less than 17,000,000. Select **Proceed to
 Encryption**, then approve the two input transactions in your wallet.
 
-The template uses the `insecure-512` parameter set. Its plaintext modulus is 100, so the result is
-the sum modulo 100. The page shows the time that remains in the input window. You must submit both
+The template uses the `insecure-64` parameter set. Its plaintext modulus is 17,000,000, so the
+result is the sum modulo 17,000,000. The page shows the time that remains in the input window. You must submit both
 numbers before the window closes.
 
 ### Get the result
@@ -181,7 +181,7 @@ The Interfold contract records each E3 in a sequence of stages. Your E3 went thr
 <Lifecycle label="Your E3 on the local chain">
   <Stage title="Requested" actor="Requester" event="E3Requested">
 
-The client requested an E3 with the `minimum` committee size and parameter set `0` (`insecure-512`).
+The client requested an E3 with the `minimum` committee size and parameter set `0` (`insecure-64`).
 
   </Stage>
   <Stage title="CommitteeFinalized" actor="Ciphernodes" event="CommitteeFinalized">
@@ -208,7 +208,7 @@ The committee decrypted the sum with T + 1 = 2 decryption shares. The plaintext 
 
 | Stage                | What happened in the template                                                                                                                                                                                                                                                                         |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Requested`          | The client got a fee quote, approved the fee token, and called the Interfold contract. The request used the `minimum` committee size, parameter set `0` (`insecure-512`), and an input window of 100 seconds that opens 15 seconds after the request. The contract emitted `E3Requested`.             |
+| `Requested`          | The client got a fee quote, approved the fee token, and called the Interfold contract. The request used the `minimum` committee size, parameter set `0` (`insecure-64`), and an input window of 100 seconds that opens 15 seconds after the request. The contract emitted `E3Requested`.             |
 | `CommitteeFinalized` | Sortition selected three of the five ciphernodes. The `minimum` committee has N = 3 and threshold T = 1. The `CHAIN` process supplied the randomness that sortition needs on the local chain. The contract emitted `CommitteeFinalized`.                                                              |
 | `KeyPublished`       | The committee ran distributed key generation (DKG) and published one public key. The client assembled the key from `CommitteePublicKeyChunkPublished` events and checked it against the key commitment. Then it encrypted each number and called `MyProgram.publishInput` twice.                      |
 | `CiphertextReady`    | When the input window closed, the coordination server sent the two ciphertexts to the program server. The program server ran `fhe_processor` and returned the encrypted sum. The coordination server called `publishCiphertextOutput`, and the contract emitted `CiphertextOutputReferencePublished`. |

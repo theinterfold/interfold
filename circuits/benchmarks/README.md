@@ -44,7 +44,7 @@ test, gas-extraction script, and report will all pick it up automatically.
 # 1. Pick the committee. This regenerates committee/active.nr, default/mod.nr,
 #    and patches BFV_DKG_H / BFV_THRESHOLD_T in utils.ts atomically. It also writes
 #    the committee into circuits/bin/.active-preset.json.
-pnpm build:circuits --preset insecure-512 --committee micro
+pnpm build:circuits --preset insecure-64 --committee micro
 
 # 2. (Optional) Verify the four files agree.
 pnpm check:committee
@@ -54,7 +54,7 @@ pnpm check:committee
 ./circuits/benchmarks/run_benchmarks.sh --mode insecure --committee micro
 
 # 4. To go back to minimum, run step 1 again with --committee minimum.
-pnpm build:circuits --preset insecure-512 --committee minimum
+pnpm build:circuits --preset insecure-64 --committee minimum
 ```
 
 **All `(preset, committee)` pairs are supported.** The parity matrices in
@@ -224,7 +224,7 @@ pair (for example, you ran insecure benchmarks after a secure build), the build 
 only pay the full compile once per pair until circuit sources change. Then
 `pnpm generate:verifiers --check --no-compile --preset <preset> --committee <committee>` verifies
 that `dist/circuits/<preset>/<committee>/` is built and `circuits/bin/.active-preset.json` matches
-the benchmark pair (`insecure-512` for `--mode insecure`, `secure-8192` for `--mode secure`). It
+the benchmark pair (`insecure-64` for `--mode insecure`, `secure-8192` for `--mode secure`). It
 also diffs the selected committed Honk Solidity verifiers (`DkgAggregatorVerifier.sol` and
 `DecryptionAggregatorVerifier.sol`) against the current VKs. Gas replay runs after that check. If
 you see a preset, committee, or verifier-drift error, follow the fix recipe printed by the script.

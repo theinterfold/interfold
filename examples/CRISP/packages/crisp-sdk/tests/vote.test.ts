@@ -13,7 +13,7 @@ import { Hex, concat, keccak256, numberToHex, recoverPublicKey } from 'viem'
 import { CRISP_SERVER_URL, ECDSA_PRIVATE_KEY, SLOT_ADDRESS } from './constants'
 import { CrispSDK } from '../src/sdk'
 import { setCircuits } from '../src/circuits'
-import { loadCircuits } from '../src/presets/insecure-512'
+import { loadCircuits } from '../src/presets/insecure-64'
 import { generateTestLeaves } from './helpers'
 
 // Proving needs a preset installed; the BFV-shaped circuits are no longer part of the main entry.

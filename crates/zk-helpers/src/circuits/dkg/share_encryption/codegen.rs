@@ -237,16 +237,16 @@ mod tests {
     #[test]
     fn test_toml_generation_and_structure() {
         let committee = CiphernodesCommitteeSize::Small.values();
-        let sd = BfvPreset::InsecureThreshold512.search_defaults().unwrap();
+        let sd = BfvPreset::InsecureThreshold64.search_defaults().unwrap();
         let sample = ShareEncryptionCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold64,
             committee.clone(),
             DkgInputType::SecretKey,
             sd.z,
         )
         .unwrap();
         let artifacts = ShareEncryptionCircuit
-            .codegen(BfvPreset::InsecureThreshold512, &sample)
+            .codegen(BfvPreset::InsecureThreshold64, &sample)
             .unwrap();
 
         let parsed: toml::Value = artifacts.toml.parse().unwrap();
@@ -259,9 +259,9 @@ mod tests {
     #[test]
     fn test_configs_generation_contains_expected() {
         let committee = CiphernodesCommitteeSize::Small.values();
-        let sd = BfvPreset::InsecureThreshold512.search_defaults().unwrap();
+        let sd = BfvPreset::InsecureThreshold64.search_defaults().unwrap();
         let sample = ShareEncryptionCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold64,
             committee.clone(),
             DkgInputType::SecretKey,
             sd.z,
@@ -269,12 +269,12 @@ mod tests {
         .unwrap();
 
         let artifacts = ShareEncryptionCircuit
-            .codegen(BfvPreset::InsecureThreshold512, &sample)
+            .codegen(BfvPreset::InsecureThreshold64, &sample)
             .unwrap();
 
-        let bounds = Bounds::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
+        let bounds = Bounds::compute(BfvPreset::InsecureThreshold64, &sample).unwrap();
         let bits = crate::circuits::dkg::share_encryption::Bits::compute(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold64,
             &bounds,
         )
         .unwrap();

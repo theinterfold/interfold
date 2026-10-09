@@ -224,7 +224,7 @@ the BFV scheme (`keccak256("fhe.rs:BFV")`).
 - The ciphertext verifier wraps `MockOpenVmReceiptVerifier`, which accepts every receipt. Read the
   receipt verifier with `openVmVerifier()` and the receipt identity with `imageId()`. The CRISP
   deployment set this verifier for BFV.
-- Each router has six routes (`routeCount()`, `routeAt(index)`). The routes cover the `insecure-512`
+- Each router has six routes (`routeCount()`, `routeAt(index)`). The routes cover the `insecure-64`
   preset (parameter set 0) and the `secure-8192` preset (parameter set 2), each with the three
   committee sizes. Every route points to a `BfvDecryptionVerifier` or a `BfvPkVerifier` contract.
 - `sepolia-protocol.deployment.json` records these verifiers. Its `bfvVerifierRoutes` field lists

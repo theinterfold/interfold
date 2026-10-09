@@ -294,7 +294,7 @@ mod tests {
     #[test]
     fn test_input_message_matches_sample() {
         use crate::threshold::decrypted_shares_aggregation::computation::Configs;
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold64;
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample =
             DecryptedSharesAggregationCircuitData::generate_sample(preset, committee).unwrap();

@@ -7,7 +7,7 @@
 
 // Refuse to publish a channel whose artifacts do not match the presets that channel stands for.
 //
-// The testing channel carries only insecure-512 so testnet installs stay small. The production
+// The testing channel carries only insecure-64 so testnet installs stay small. The production
 // channel carries both presets so one client can select the preset from the E3's on-chain param set.
 //
 // The SDK and the contracts package are checked together because they are a matched pair. The SDK
@@ -25,8 +25,8 @@ const CONTRACTS = join(CRISP, 'packages', 'crisp-contracts')
 
 /** Which presets each release channel carries. */
 const CHANNEL_PRESETS = {
-  testing: ['insecure-512'],
-  latest: ['insecure-512', 'secure-8192'],
+  testing: ['insecure-64'],
+  latest: ['insecure-64', 'secure-8192'],
 }
 
 const ALL_PRESETS = [...new Set(Object.values(CHANNEL_PRESETS).flat())]
@@ -35,7 +35,7 @@ const ALL_PRESETS = [...new Set(Object.values(CHANNEL_PRESETS).flat())]
 const VERIFIERS = ['CRISPVerifier.sol', 'CRISPOnchainVerifier.sol']
 
 /** Polynomial degree each preset's circuits carry, used to prove the bundle is what it claims. */
-const EXPECTED_DEGREE = { 'insecure-512': 512, 'secure-8192': 8192 }
+const EXPECTED_DEGREE = { 'insecure-64': 64, 'secure-8192': 8192 }
 
 /** Below this a "built" entry is a stub or a failed inline rather than a real circuit bundle. */
 const MIN_BYTES = 100 * 1024

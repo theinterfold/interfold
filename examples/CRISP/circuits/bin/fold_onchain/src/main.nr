@@ -11,7 +11,7 @@ use interfold_lib::math::commitments::compute_vk_hash;
 /// `examples/CRISP` after changing ct0 / ct1 / user_data_encryption / crisp_onchain (or the lib
 /// preset). Insecure: `lib::configs::default` uses `insecure::*`; secure: uses `secure::*`.
 pub global CRISP_ONCHAIN_FOLD_EXPECTED_KEY_HASH_INSECURE: Field =
-    0x090d43b8bbd50e0840fd14a5918216321b0fc5dc5696da80da7cca2b22614696;
+    0x1ba44ab942a8ace27b50f3609b4912adb384f06561133e31b19caa4b97a70145;
 pub global CRISP_ONCHAIN_FOLD_EXPECTED_KEY_HASH_SECURE: Field =
     0x225abc9d92035e910c9bd0deac6060640ad49b30ed6ef4de6d094397010ebdac;
 

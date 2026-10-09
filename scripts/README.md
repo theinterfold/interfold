@@ -193,7 +193,7 @@ artifacts.
 ### Usage
 
 ```bash
-# Build all circuits (defaults: --preset insecure-512 --committee minimum)
+# Build all circuits (defaults: --preset insecure-64 --committee minimum)
 pnpm build:circuits
 
 # Switch the active committee size (regenerates committee/active.nr,
@@ -201,7 +201,7 @@ pnpm build:circuits
 pnpm build:circuits --committee micro
 
 # Combine preset + committee
-pnpm build:circuits --preset insecure-512 --committee small
+pnpm build:circuits --preset insecure-64 --committee small
 
 # Build only specific group (dkg or threshold)
 pnpm build:circuits --group dkg
@@ -216,7 +216,7 @@ pnpm build:circuits --dry-run
 pnpm build:circuits hash
 
 # Regenerate protocol hashes and config IDs without compiling circuits
-pnpm build:circuits sync-config --preset insecure-512 --committee minimum
+pnpm build:circuits sync-config --preset insecure-64 --committee minimum
 ```
 
 ### Committee sizes
@@ -251,7 +251,7 @@ the generator would produce.
 
 ### Options
 
-- `--preset <name>` - Parameter preset: `insecure-512` (default), `secure-8192`, or `all`
+- `--preset <name>` - Parameter preset: `insecure-64` (default), `secure-8192`, or `all`
 - `--committee <name>` - Committee size: `minimum` (default), `micro`, `small`
 - `--skip-utils-patch` - Skip rewriting committee values and BFV configuration hashes in
   `packages/interfold-contracts/scripts/utils.ts`
@@ -290,9 +290,9 @@ checks this before it publishes binaries or `circuits-<version>.tar.gz`.
 
 ```bash
 # Build or hydrate the required circuit pairs, then push them to the git branch
-pnpm build:circuits --preset insecure-512 --committee minimum
-pnpm build:circuits --preset insecure-512 --committee micro
-pnpm build:circuits --preset insecure-512 --committee small
+pnpm build:circuits --preset insecure-64 --committee minimum
+pnpm build:circuits --preset insecure-64 --committee micro
+pnpm build:circuits --preset insecure-64 --committee small
 pnpm build:circuits --preset secure-8192 --committee minimum
 pnpm build:circuits --preset secure-8192 --committee micro
 pnpm build:circuits --preset secure-8192 --committee small
@@ -336,9 +336,9 @@ Circuits are built locally and stored in a git branch:
 1. **Local**: Build circuits and push to branch
 
 ```bash
-pnpm build:circuits --preset insecure-512 --committee minimum
-pnpm build:circuits --preset insecure-512 --committee micro
-pnpm build:circuits --preset insecure-512 --committee small
+pnpm build:circuits --preset insecure-64 --committee minimum
+pnpm build:circuits --preset insecure-64 --committee micro
+pnpm build:circuits --preset insecure-64 --committee small
 pnpm build:circuits --preset secure-8192 --committee minimum
 pnpm build:circuits --preset secure-8192 --committee micro
 pnpm build:circuits --preset secure-8192 --committee small
@@ -351,7 +351,7 @@ pnpm store:circuits push
 
 The release archive must include:
 
-- `insecure-512/{minimum,micro,small}` for Sepolia and local rehearsals
+- `insecure-64/{minimum,micro,small}` for Sepolia and local rehearsals
 - `secure-8192/{minimum,micro,small}` for Sepolia secure-parameter tests and mainnet committees
 
 Nodes download one archive and select the artifact directory from the E3's on-chain BFV parameter
@@ -363,7 +363,7 @@ set and committee size.
 Noir circuits.
 
 The generated `.sol` files under `packages/interfold-contracts/contracts/verifiers/bfv/honk/` are
-**committed to git**. The root files correspond to `(insecure-512, minimum)`, which is the
+**committed to git**. The root files correspond to `(insecure-64, minimum)`, which is the
 development / CI / benchmark default. Non-canonical pairs are committed under
 `honk/<preset>/<committee>/`. The Honk verifiers bake in the recursive VKs of `dkg_aggregator` /
 `decryption_aggregator`, which are preset- and committee-dependent. Different BFV parameter sets or
@@ -451,13 +451,13 @@ There are two distinct failure modes — the error output tells you which one:
 
 **1. Target preset and committee not built** — the generator refuses up front because
 `dist/circuits/<preset>/<committee>/.build-stamp.json` is missing or reports a different preset. The
-committed verifier root is pinned to `insecure-512/minimum`; non-canonical pairs use their own
+committed verifier root is pinned to `insecure-64/minimum`; non-canonical pairs use their own
 subdirectories under `honk/<preset>/<committee>/`.
 
 To fix:
 
 ```bash
-pnpm build:circuits --preset insecure-512 --committee minimum
+pnpm build:circuits --preset insecure-64 --committee minimum
 # then retry the original command
 ```
 
@@ -471,8 +471,8 @@ the bytes don't match. Typical causes:
 To fix:
 
 1. Verify your `nargo` / `bb` versions match `crates/zk-prover/versions.json`.
-2. Run `pnpm build:circuits --preset insecure-512 --committee minimum`.
-3. Run `pnpm generate:verifiers --preset insecure-512 --committee minimum --write`.
+2. Run `pnpm build:circuits --preset insecure-64 --committee minimum`.
+3. Run `pnpm generate:verifiers --preset insecure-64 --committee minimum --write`.
 4. Run the same build and generate commands for each non-canonical pair.
 5. Commit the resulting diff under `packages/interfold-contracts/contracts/verifiers/bfv/honk/`.
 

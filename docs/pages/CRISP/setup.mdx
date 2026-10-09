@@ -58,7 +58,7 @@ This step is optional. `pnpm dev:setup` copies the example file when `crisp.dev.
 cp crisp.dev.env.example crisp.dev.env
 ```
 
-The default profile uses the `insecure-512` BFV preset and skips DKG proof aggregation. See
+The default profile uses the `insecure-64` BFV preset and skips DKG proof aggregation. See
 [Local profile](#local-profile) for the two settings.
 
 ### Build everything
@@ -173,7 +173,7 @@ of the public networks, see [Contract addresses](/reference/contracts).
 
 | Variable                       | Default        | Values                        | Effect                                                                                                                       |
 | ------------------------------ | -------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `CRISP_BFV_PRESET`             | `insecure-512` | `insecure-512`, `secure-8192` | BFV preset. Sets `E3_PARAM_SET` in `server/.env` to `0` or `2`.                                                              |
+| `CRISP_BFV_PRESET`             | `insecure-64` | `insecure-64`, `secure-8192` | BFV preset. Sets `E3_PARAM_SET` in `server/.env` to `0` or `2`.                                                              |
 | `CRISP_SKIP_PROOF_AGGREGATION` | `true`         | `true`, `false`               | `true`: mock verifiers and no recursive DKG proofs. `false`: real verifiers, recursive circuits, and full proof aggregation. |
 
 After you change `crisp.dev.env`, run `pnpm dev:setup` again, then `pnpm dev:up`. The ciphernodes
@@ -247,7 +247,7 @@ environment (`server/src/config.rs`).
 | `INTERFOLD_ADDRESS`, `E3_PROGRAM_ADDRESS`, `CIPHERNODE_REGISTRY_ADDRESS`, `FEE_TOKEN_ADDRESS`, `CRISP_VOTING_TOKEN` | Written by the deployment                               | Contract addresses                                                                                                                                                               |
 | `E3_DURATION`                                                                                                       | `300` in the example file                               | Length of the input window in seconds. On Avail networks, it includes the finalization tail.                                                                                     |
 | `VOTING_START_BUFFER_SECONDS`                                                                                       | `20` in the example file. Default `120`.                | Time for the request transaction to be mined before the input window starts                                                                                                      |
-| `E3_PARAM_SET`                                                                                                      | `0`                                                     | `0` is `insecure-512`, `2` is `secure-8192`. Ethereum mainnet requires `2`.                                                                                                      |
+| `E3_PARAM_SET`                                                                                                      | `0`                                                     | `0` is `insecure-64`, `2` is `secure-8192`. Ethereum mainnet requires `2`.                                                                                                      |
 | `E3_COMMITTEE_SIZE`                                                                                                 | `0`                                                     | `0` is `minimum` (N = 3, T = 1), `1` is `micro` (N = 9, T = 4), `2` is `small` (N = 19, T = 9)                                                                                   |
 | `E3_COMPUTE_PROVIDER_NAME`, `E3_COMPUTE_PROVIDER_PARALLEL`, `E3_COMPUTE_PROVIDER_BATCH_SIZE`                        | `OpenVM`, `false`, `4`                                  | Compute provider parameters sent with the request. The batch size must be a power of 2.                                                                                          |
 | `DATA_AVAILABILITY_MODE`                                                                                            | `mock`                                                  | `mock` or `avail`. Without a value, the mode is `mock` for chain IDs 31337 and 1337 and `avail` for other chains. `mock` is allowed only on those two chains.                    |
@@ -374,7 +374,7 @@ These scripts are defined in `examples/CRISP/package.json`.
 | `pnpm test:contracts:input-tree`, `pnpm test:contracts:input-tree:poisoned-parent`, `pnpm test:contracts:input-tree:canonical` | The end-to-end input tree test, in full or in parts                                                          |
 | `pnpm test:contracts:ballots:program`, `pnpm test:contracts:ballots:census`                                                    | Ballots against `CRISPProgram`, and ballots in an on-chain census round                                      |
 | `pnpm test:circuits`                                                                                                           | `nargo test` in `circuits/lib`                                                                               |
-| `pnpm test:sdk`                                                                                                                | SDK tests with Vitest. The script first stages the `insecure-512` preset.                                    |
+| `pnpm test:sdk`                                                                                                                | SDK tests with Vitest. The script first stages the `insecure-64` preset.                                    |
 
 ### End-to-end test
 
@@ -454,7 +454,7 @@ ballots are lost.
 | Symptom                                                                                                    | Cause                                                                     | Fix                                                                                            |
 | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | `dev_cipher.sh` prints `ERROR: only <n>/<m> ciphernodes stayed up`                                         | The `interfold` binary does not match the profile, or another node error. | Read the node output above the table. For a missing Cargo feature, run `pnpm dev:setup` again. |
-| `Invalid CRISP_BFV_PRESET` or `Invalid CRISP_SKIP_PROOF_AGGREGATION`                                       | A value in `crisp.dev.env` is not allowed.                                | Use `insecure-512` or `secure-8192`, and `true` or `false`.                                    |
+| `Invalid CRISP_BFV_PRESET` or `Invalid CRISP_SKIP_PROOF_AGGREGATION`                                       | A value in `crisp.dev.env` is not allowed.                                | Use `insecure-64` or `secure-8192`, and `true` or `false`.                                    |
 | The server stops at startup with `DATA_AVAILABILITY_MODE=mock is allowed only on local development chains` | `CHAIN_ID` is not 31337 or 1337 and the mode is `mock`.                   | Set `DATA_AVAILABILITY_MODE=avail` and the Avail settings.                                     |
 | The server stops at startup with `Ethereum mainnet requires E3_PARAM_SET=2 (secure-8192)`                  | `CHAIN_ID=1` with `E3_PARAM_SET=0`.                                       | Set `E3_PARAM_SET=2`.                                                                          |
 | The server stops at startup with `CHAIN_ID (…) does not match the chain of HTTP_RPC_URL (…)`               | `HTTP_RPC_URL` serves a different chain.                                  | Use an RPC for the chain in `CHAIN_ID`, or correct `CHAIN_ID`.                                 |

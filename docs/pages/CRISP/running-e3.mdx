@@ -272,8 +272,8 @@ The plaintext output is a list of polynomial coefficients. The first 50 coeffici
 decrypted tally holds one total for each option. Coefficient `o` is the total weight on option `o`.
 The other coefficients are zero.
 
-The committee decrypts each coefficient modulo the plaintext modulus `t` of the parameter set: 100
-for `insecure-512` and 17,000,000 for `secure-8192`. A total is correct only while it is less than
+The committee decrypts each coefficient modulo the plaintext modulus `t` of the parameter set:
+17,000,000 for `insecure-64` and for `secure-8192`. A total is correct only while it is less than
 `t`. `CRISPProgram.validate` reads `t` from the BFV parameters of the request and sets these limits,
 so that each total stays less than `t`:
 
@@ -286,7 +286,7 @@ Every input counts toward the limit, including a new vote that replaces an earli
 When a round has its maximum number of inputs, `publishInput` reverts with `InputLimitReached`. A
 mask does not need a signature from the voter, so any account can fill the limit with masks. A
 `CONSTANT` round with large `credits` has the smallest limit. The CLI requests `CONSTANT` credits of
-1, so an `insecure-512` round accepts 99 inputs and a `secure-8192` round accepts 100,000.
+1, so a round accepts 100,000 inputs on `insecure-64` and on `secure-8192`.
 
 In a census tree round, the CRISP server writes the voting power of each voter into the census leaf.
 For a `CUSTOM` round, the server reads this voting power at `CRISPProgram.snapshotOf(e3Id)`, the

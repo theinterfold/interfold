@@ -562,7 +562,7 @@ fn reduced_identity_fixture() -> ShareEncryption<4, 1, 6, 6, 1, 1, 1, 3, 3, 3, 3
 
     // t, q_mod_t, qis, k0is, pk_bounds, e0_bound, e1_bound, u_bound, ct0_r, ct1_r, msg_bound,
     // then the scaled-quotient constants. `scaled_quotient` is false here, so this fixture exercises
-    // the direct `k1` path -- the one insecure-512 uses in production.
+    // the direct `k1` path -- the one insecure-64 uses in production.
     let configs: Configs<1> = Configs::new(
         5,
         2,
@@ -720,7 +720,7 @@ fn honest_scaled_quotients() -> [Polynomial<4>; 2] {
 /// The scaled path accepts an honest witness on both legs and both limbs.
 ///
 /// This is the only test that exercises it: every other C3 test runs the direct `k1` path, which is
-/// what insecure-512 uses. Without this the production path would be the untested one.
+/// what insecure-64 uses. Without this the production path would be the untested one.
 #[test]
 fn scaled_quotient_path_accepts_honest_witness() {
     let _ = scaled_fixture(Polynomial::new([0, 0, 0, 2]), honest_scaled_quotients()).execute();

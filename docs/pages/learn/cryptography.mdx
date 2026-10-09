@@ -27,7 +27,7 @@ At the end, you can map each protocol step to its circuit and to its on-chain ve
 
 ## BFV
 
-BFV works in the polynomial ring $R_q = \mathbb{Z}_q[X]/(X^d + 1)$. The degree $d$ is 512 or 8192.
+BFV works in the polynomial ring $R_q = \mathbb{Z}_q[X]/(X^d + 1)$. The degree $d$ is 64 or 8192.
 The ciphertext modulus $q$ is a product of CRT moduli $q_\ell$, and $t$ is the plaintext modulus.
 
 A key pair has a secret key $s$ and a public key $(\mathrm{pk}_0, \mathrm{pk}_1)$. A message $m$
@@ -259,10 +259,10 @@ set for the individual keys. The values come from `crates/fhe-params/src/constan
 
 | Preset         | `paramSet` | Threshold degree | Threshold CRT moduli | Plaintext modulus $t$ | DKG degree | DKG CRT moduli |
 | -------------- | ---------: | ---------------: | -------------------: | --------------------: | ---------: | -------------: |
-| `insecure-512` |          0 |              512 |                    2 |                   100 |        512 |              1 |
+| `insecure-64`  |          0 |               64 |                    3 |            17,000,000 |         64 |              2 |
 | `secure-8192`  |          2 |             8192 |                    3 |            17,000,000 |       8192 |              2 |
 
-`insecure-512` is for development and tests only. The code marks it as not for production. The
+`insecure-64` is for development and tests only. The code marks it as not for production. The
 deployment script refuses to deploy it on a chain that is not a known test or local chain.
 
 ### Presets by chain
@@ -272,8 +272,8 @@ deployment script refuses to deploy it on a chain that is not a known test or lo
 | Chain            | Chain ID    | Presets                       | Committee sizes in the circuit build |
 | ---------------- | ----------- | ----------------------------- | ------------------------------------ |
 | Ethereum mainnet | 1           | `secure-8192`                 | `Minimum`, `Micro`, `Small`          |
-| Sepolia          | 11155111    | `insecure-512`, `secure-8192` | `Minimum`, `Micro`, `Small`          |
-| Local            | 31337, 1337 | `insecure-512`, `secure-8192` | `Minimum`, `Micro`, `Small`          |
+| Sepolia          | 11155111    | `insecure-64`, `secure-8192` | `Minimum`, `Micro`, `Small`          |
+| Local            | 31337, 1337 | `insecure-64`, `secure-8192` | `Minimum`, `Micro`, `Small`          |
 
 Any chain that is not Sepolia or local gets the mainnet rules. The mainnet launch pricing
 configuration sets `minCommitteeSize` to 19. With that value, `getE3Quote` rejects `Minimum` and

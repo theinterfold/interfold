@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn test_configs_generation() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold64;
         let configs = Configs::compute(preset, &()).unwrap();
         let prefix: &str = <DecryptedSharesAggregationCircuit as Circuit>::PREFIX;
 
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn test_codegen_with_sample() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold64;
         let committee = CiphernodesCommitteeSize::Small.values();
         let input =
             DecryptedSharesAggregationCircuitData::generate_sample(preset, committee).unwrap();

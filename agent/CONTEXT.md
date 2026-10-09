@@ -30,7 +30,7 @@ output — every step backed by ZK proofs verified on-chain.
 | Committee    | Ciphernodes serving an E3. Sizes `(N, T, H)`: `minimum` (3,1,2), `micro` (9,4,5), `small` (19,9,14)                             |
 | DKG          | Distributed key generation — joint threshold public key, no party holds the full secret                                         |
 | BFV / TrBFV  | Brakerski–Fan–Vercauteren FHE scheme / its threshold (publicly verifiable) variant                                              |
-| Preset       | BFV parameter set: `insecure-512` (dev/CI default) or `secure-8192`                                                             |
+| Preset       | BFV parameter set: `insecure-64` (dev/CI default) or `secure-8192`                                                             |
 | C0–C7        | ZK circuit IDs across the DKG/decryption pipeline (map below)                                                                   |
 | Sortition    | Random committee selection (`crates/sortition`)                                                                                 |
 | Slashing     | Fault attribution, accusation quorum, commitment consistency (`crates/slashing`)                                                |
@@ -67,7 +67,7 @@ Run from repo root via pnpm scripts — not raw cargo/nargo/hardhat.
 | Test one layer              | `pnpm evm:test` · `pnpm rust:test` · `pnpm sdk:test` · `pnpm noir:test`                                                                            |
 | SDK proof verification      | `pnpm sdk:test:proofs` (prepare circuits, generate one proof, verify bindings and reject tampering)                                                |
 | Prepared SDK proof tests    | `pnpm sdk:test:proofs:prepared` (reuse the current SDK build or prepared circuit set)                                                              |
-| Rust proof integration      | `pnpm rust:test:proofs` (prepared insecure-512/minimum circuits, `nargo`, and `bb`)                                                                |
+| Rust proof integration      | `pnpm rust:test:proofs` (prepared insecure-64/minimum circuits, `nargo`, and `bb`)                                                                |
 | Rust slashing integration   | `pnpm rust:test:slashing` (compiled contract artifacts and `anvil`)                                                                                |
 | Integration tests           | `pnpm test:integration [name]` (`--no-prebuild` to skip binary build)                                                                              |
 | Test runner regressions     | `pnpm test:harnesses`                                                                                                                              |
@@ -88,7 +88,7 @@ a real proof against the compiled verification key and rejects altered public in
 bytes.
 
 Before `pnpm rust:test:proofs` or `pnpm test`, run
-`pnpm build:circuits --preset insecure-512 --committee minimum --skip-if-built`. This prepares one
+`pnpm build:circuits --preset insecure-64 --committee minimum --skip-if-built`. This prepares one
 consistent set of inner and recursive circuits. The recursive VK-substitution tests also require
 pinned `nargo` on PATH to compile substitute circuits. Before `pnpm rust:test:slashing`, run
 `pnpm evm:build`. The named Rust integration suites fail if a required tool or artifact is missing.
@@ -99,7 +99,7 @@ full test command reuses the prepared circuits for SDK proof verification.
 
 Two independent settings select what `pnpm build:circuits` compiles into `circuits/bin/`:
 
-- **Preset** (`--preset insecure-512` [default] | `secure-8192`): the BFV parameter set.
+- **Preset** (`--preset insecure-64` [default] | `secure-8192`): the BFV parameter set.
 - **Committee** (`--committee minimum` [default] | `micro` | `small`): `(N, T, H)` for the
   secret-sharing committee. Mirrors `e3_zk_helpers::CiphernodesCommitteeSize`.
 
@@ -127,7 +127,7 @@ The protocol release can carry more than one circuit artifact set. Current deplo
 matrix:
 
 - Ethereum mainnet supports `secure-8192/minimum`, `secure-8192/micro`, and `secure-8192/small`.
-- Sepolia and local chains support `insecure-512` and `secure-8192` with `minimum`, `micro`, and
+- Sepolia and local chains support `insecure-64` and `secure-8192` with `minimum`, `micro`, and
   `small` committees.
 
 `ActiveCryptoConfig.sol` selects the parameter sets and committee shapes supported by
@@ -211,6 +211,6 @@ persistence · opentelemetry/tracing.
 - **Recursive aggregation** (`circuits/bin/recursive_aggregation/`): fold kernels (`c2ab_fold`,
   `c3_fold`, `c6_fold`, `node_fold`, `nodes_fold`, …) and the top-level `dkg_aggregator` /
   `decryption_aggregator`, which produce the on-chain Honk verifiers. The canonical committed root
-  matches `(insecure-512, minimum)`; other generated pairs live under `honk/<preset>/<committee>/`.
+  matches `(insecure-64, minimum)`; other generated pairs live under `honk/<preset>/<committee>/`.
 - `config` circuit validates preset constants (CRT moduli, bounds, parity matrices). Parity matrices
   are generated by the Rust `generate_parity_matrices` binary — never hand-edit.

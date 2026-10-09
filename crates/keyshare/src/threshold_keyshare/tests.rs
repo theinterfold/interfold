@@ -835,7 +835,7 @@ async fn start_unwritable_actor(
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
-        share_enc_preset: BfvPreset::InsecureDkg512,
+        share_enc_preset: BfvPreset::InsecureDkg64,
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: false,
@@ -971,7 +971,7 @@ async fn build_actor(
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
-        share_enc_preset: BfvPreset::InsecureDkg512,
+        share_enc_preset: BfvPreset::InsecureDkg64,
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: false,
@@ -984,7 +984,7 @@ async fn build_actor(
 
 fn insecure_threshold_params() -> ArcBytes {
     ArcBytes::from_bytes(&encode_bfv_params(
-        &BfvParamSet::from(BfvPreset::InsecureThreshold512).build_arc(),
+        &BfvParamSet::from(BfvPreset::InsecureThreshold64).build_arc(),
     ))
 }
 
@@ -1025,7 +1025,7 @@ async fn start_actor_before_selection_with_recovery(
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
-        share_enc_preset: BfvPreset::InsecureDkg512,
+        share_enc_preset: BfvPreset::InsecureDkg64,
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
@@ -1072,7 +1072,7 @@ async fn keyshare_in_init_over(
         bus,
         cipher,
         state,
-        share_enc_preset: BfvPreset::InsecureDkg512,
+        share_enc_preset: BfvPreset::InsecureDkg64,
         interfold_address: Address::ZERO,
         signer: dealer_signer(0),
         effects_enabled,
@@ -1205,7 +1205,7 @@ async fn a_node_that_lost_its_key_publishes_no_second_one() -> Result<()> {
             bus: bus.clone(),
             cipher: Arc::new(Cipher::from_password("test-password").await?),
             state,
-            share_enc_preset: BfvPreset::InsecureDkg512,
+            share_enc_preset: BfvPreset::InsecureDkg64,
             interfold_address: Address::ZERO,
             signer: dealer_signer(0),
             effects_enabled: false,
@@ -1543,7 +1543,7 @@ async fn a_collection_with_another_key_of_this_node_starts_no_share_generation()
             bus,
             cipher: Arc::new(Cipher::from_password("test-password").await?),
             state,
-            share_enc_preset: BfvPreset::InsecureDkg512,
+            share_enc_preset: BfvPreset::InsecureDkg64,
             interfold_address: Address::ZERO,
             signer: dealer_signer(0),
             effects_enabled: true,
@@ -1709,7 +1709,7 @@ async fn early_threshold_share_batch_is_verified_after_own_shares_exist() -> Res
     let e3_id = E3id::new("early-batch", 1);
     let cipher = Arc::new(Cipher::from_password("test-password").await?);
     let (threshold_params, params) =
-        e3_fhe_params::build_pair_for_preset(BfvPreset::InsecureThreshold512)?;
+        e3_fhe_params::build_pair_for_preset(BfvPreset::InsecureThreshold64)?;
     let l = threshold_params.moduli().len();
     let mut rng = rand::rng();
     let sk = fhe::bfv::SecretKey::random(&params, &mut rng);
@@ -1752,7 +1752,7 @@ async fn early_threshold_share_batch_is_verified_after_own_shares_exist() -> Res
         bus,
         cipher: cipher.clone(),
         state,
-        share_enc_preset: BfvPreset::InsecureDkg512,
+        share_enc_preset: BfvPreset::InsecureDkg64,
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
@@ -1945,7 +1945,7 @@ async fn committee_actor(
         bus: bus.clone(),
         cipher,
         state,
-        share_enc_preset: BfvPreset::InsecureDkg512,
+        share_enc_preset: BfvPreset::InsecureDkg64,
         interfold_address: Address::ZERO,
         signer: signers[0].clone(),
         effects_enabled: false,
@@ -2180,7 +2180,7 @@ async fn retired_share_batch(
         bus: bus.clone(),
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
-        share_enc_preset: BfvPreset::InsecureDkg512,
+        share_enc_preset: BfvPreset::InsecureDkg64,
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
@@ -3473,7 +3473,7 @@ async fn a_saved_failure_is_redriven_before_any_ready_settlement() -> Result<()>
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state: unwritable(state).await,
-        share_enc_preset: BfvPreset::InsecureDkg512,
+        share_enc_preset: BfvPreset::InsecureDkg64,
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: false,
@@ -4172,7 +4172,7 @@ async fn stale_threshold_share_deadline_preserves_decryption(decrypting: bool) -
         own_plaintext_idx: Some(0),
         own_share_raw: Some(current.own_sk_share_raw),
         dkg_input_type: e3_zk_helpers::computation::DkgInputType::SecretKey,
-        params_preset: BfvPreset::InsecureDkg512,
+        params_preset: BfvPreset::InsecureDkg64,
         committee_size: actor.state.try_get()?.committee_size()?,
     };
     let esm_request = DkgShareDecryptionProofRequest {
@@ -4260,7 +4260,7 @@ async fn stale_threshold_share_deadline_preserves_decryption(decrypting: bool) -
         bus: bus.clone(),
         cipher,
         state: repo.load().await?,
-        share_enc_preset: BfvPreset::InsecureDkg512,
+        share_enc_preset: BfvPreset::InsecureDkg64,
         interfold_address: Address::ZERO,
         signer,
         effects_enabled: false,
@@ -4717,7 +4717,7 @@ async fn encryption_deadline_after_publication_intent(restart: bool) -> Result<(
             bus,
             cipher,
             state: repo.load().await?,
-            share_enc_preset: BfvPreset::InsecureDkg512,
+            share_enc_preset: BfvPreset::InsecureDkg64,
             interfold_address: Address::ZERO,
             signer,
             effects_enabled: false,
@@ -4970,7 +4970,7 @@ async fn hydration_restores_canonical_publication_before_c4_deadline() -> Result
                 threshold_m: 1,
                 threshold_n: 3,
                 seed: e3_events::Seed([0; 32]),
-                params_preset: BfvPreset::InsecureThreshold512,
+                params_preset: BfvPreset::InsecureThreshold64,
                 params: insecure_threshold_params(),
                 error_size: ArcBytes::from_bytes(&[]),
             },
@@ -5336,7 +5336,7 @@ async fn a_terminal_event_stops_decryption_redelivery_while_its_cleanup_retries(
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state: unwritable(state.try_get()?).await,
-        share_enc_preset: BfvPreset::InsecureDkg512,
+        share_enc_preset: BfvPreset::InsecureDkg64,
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
@@ -5699,7 +5699,7 @@ async fn canonical_key_fixture(
         AggregateConfig, AggregateId, CommitteePublicKeyChunkPublished, E3Requested, EvmLogObserved,
     };
     use std::{collections::HashMap, time::Duration};
-    let preset = BfvPreset::InsecureThreshold512;
+    let preset = BfvPreset::InsecureThreshold64;
     let params = BfvParamSet::from(preset);
     let pk = e3_bfv_client::client::generate_public_key(
         params.degree,
@@ -5819,7 +5819,7 @@ async fn keyshare_keeps_chain_key_when_network_publication_conflicts() -> Result
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
-        share_enc_preset: BfvPreset::InsecureDkg512,
+        share_enc_preset: BfvPreset::InsecureDkg64,
         interfold_address: Address::repeat_byte(9),
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
@@ -5931,7 +5931,7 @@ async fn keyshare_restart_revalidates_snapshot_public_key_context() -> Result<()
             bus,
             cipher: Arc::new(Cipher::from_password("test-password").await?),
             state: repo.load().await?,
-            share_enc_preset: BfvPreset::InsecureDkg512,
+            share_enc_preset: BfvPreset::InsecureDkg64,
             interfold_address: Address::repeat_byte(9),
             signer: alloy::signers::local::PrivateKeySigner::random(),
             effects_enabled: false,
@@ -6060,7 +6060,7 @@ async fn retained_c6_work_recovers_key_bytes_in_every_decryption_phase() -> Resu
                 bus,
                 cipher: Arc::new(Cipher::from_password("test-password").await?),
                 state: repo.load().await?,
-                share_enc_preset: BfvPreset::InsecureDkg512,
+                share_enc_preset: BfvPreset::InsecureDkg64,
                 interfold_address: Address::repeat_byte(9),
                 signer: alloy::signers::local::PrivateKeySigner::random(),
                 effects_enabled: false,
@@ -6164,7 +6164,7 @@ fn start_decryption_actor(
         bus,
         cipher,
         state,
-        share_enc_preset: BfvPreset::InsecureDkg512,
+        share_enc_preset: BfvPreset::InsecureDkg64,
         interfold_address: Address::repeat_byte(9),
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled,

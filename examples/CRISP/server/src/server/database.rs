@@ -343,7 +343,7 @@ mod tests {
         let disk = sled_db.db.clone();
         let mut store = SharedStore::new(Arc::new(RwLock::new(sled_db)));
         let mut round = requested_round(&store, "1").await;
-        let bfv = build_bfv_params_from_set_arc(BfvParamSet::from(BfvPreset::InsecureThreshold512));
+        let bfv = build_bfv_params_from_set_arc(BfvParamSet::from(BfvPreset::InsecureThreshold64));
         let start = size_on_disk(&disk);
 
         for index in 0..BALLOTS {

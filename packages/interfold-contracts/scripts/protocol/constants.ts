@@ -14,11 +14,11 @@ export const proxyAdminInterface = new ethersLib.Interface([
 ]);
 
 export const BFV_PARAMS = {
-  insecure512: {
-    degree: 512n,
-    plaintextModulus: 100n,
-    moduli: [0xffffee001n, 0xffffc4001n],
-    error1Variance: "3",
+  insecure64: {
+    degree: 64n,
+    plaintextModulus: 17000000n,
+    moduli: [0x0000000007fffd81n, 0x0000000007fff801n, 0x0000000007fff781n],
+    error1Variance: "12617929386",
   },
   secure8192: {
     degree: 8192n,

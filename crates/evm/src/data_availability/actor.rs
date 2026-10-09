@@ -662,7 +662,7 @@ mod tests {
 
     /// Store a complete, valid committee key assembly for each E3.
     fn complete_assemblies(e3_ids: &[&E3id]) -> DataAvailabilityRecoveryState {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold64;
         let params = BfvParamSet::from(preset);
         let public_key = generate_public_key(
             params.degree,
@@ -765,7 +765,7 @@ mod tests {
 
     #[test]
     fn threshold_public_key_is_validated_with_threshold_parameters() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold64;
         let params = BfvParamSet::from(preset);
         let public_key = generate_public_key(
             params.degree,

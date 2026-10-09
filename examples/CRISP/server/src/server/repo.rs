@@ -1128,7 +1128,7 @@ mod tests {
     }
 
     fn bfv() -> Arc<BfvParameters> {
-        build_bfv_params_from_set_arc(BfvParamSet::from(BfvPreset::InsecureThreshold512))
+        build_bfv_params_from_set_arc(BfvParamSet::from(BfvPreset::InsecureThreshold64))
     }
 
     /// A store whose `modify` calls fail once `passes` runs out, as failed disk writes do.

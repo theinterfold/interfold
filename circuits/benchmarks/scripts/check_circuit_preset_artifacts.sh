@@ -2,17 +2,17 @@
 # Verify dist + circuits/bin artifacts exist for a benchmark preset.
 # Exit 0 if ready, 1 if not (prints missing paths on stderr).
 #
-# Usage: ./check_circuit_preset_artifacts.sh <insecure-512|secure-8192> [--committee minimum|micro|small]
+# Usage: ./check_circuit_preset_artifacts.sh <insecure-64|secure-8192> [--committee minimum|micro|small]
 
 set -e
 
 PRESET="${1:-}"
 if [ -z "$PRESET" ]; then
-    echo "Usage: $0 <insecure-512|secure-8192> [--committee minimum|micro|small]" >&2
+    echo "Usage: $0 <insecure-64|secure-8192> [--committee minimum|micro|small]" >&2
     exit 1
 fi
-if [ "$PRESET" != "insecure-512" ] && [ "$PRESET" != "secure-8192" ]; then
-    echo "Error: preset must be insecure-512 or secure-8192" >&2
+if [ "$PRESET" != "insecure-64" ] && [ "$PRESET" != "secure-8192" ]; then
+    echo "Error: preset must be insecure-64 or secure-8192" >&2
     exit 1
 fi
 

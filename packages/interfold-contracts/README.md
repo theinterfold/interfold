@@ -318,7 +318,7 @@ pnpm run hardhat committee:new --network [network]
 
 The task requests the BFV parameter set of the active circuit build
 (`ACTIVE_BFV_PARAM_SET` in `scripts/utils.ts`). To request another set, add
-`--param-set 0` (insecure-512) or `--param-set 2` (secure-8192). The task stops
+`--param-set 0` (insecure-64) or `--param-set 2` (secure-8192). The task stops
 before it sends a transaction when the deployment has not registered that set.
 
 To publish the public key of a committee, run

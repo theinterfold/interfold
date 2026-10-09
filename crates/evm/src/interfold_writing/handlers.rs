@@ -826,7 +826,7 @@ mod tests {
                 pk_commitment: [7; 32],
                 committee: vec![Address::repeat_byte(1); 3],
                 honest_committee: vec![Address::repeat_byte(1); 2],
-                params_preset: BfvPreset::InsecureThreshold512,
+                params_preset: BfvPreset::InsecureThreshold64,
                 committee_size: CiphernodesCommitteeSize::Minimum,
                 interfold_address: contract,
                 sk_agg_commits: vec![],

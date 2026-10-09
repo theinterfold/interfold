@@ -66,8 +66,8 @@ fn rust_reproduces_the_root_the_contract_produced() {
     let entries = fixture["inputs"].as_array().expect("inputs");
     let (ciphertexts, published) = load(entries);
 
-    // The SDK builds ballots under the insecure-512 threshold preset.
-    let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
+    // The SDK builds ballots under the insecure-64 threshold preset.
+    let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold64).unwrap();
     let result = ComputeInput {
         fhe_inputs: FHEInputs {
             ciphertexts,
@@ -101,7 +101,7 @@ fn the_sdk_and_rust_agree_on_the_ciphertext_commitment() {
     let bytes = unhex(entry["encryptedVote"].as_str().unwrap());
     let stored = unhex(entry["commitment"].as_str().unwrap());
 
-    let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
+    let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold64).unwrap();
     let recomputed = e3_bfv_client::client::compute_ct_commitment(
         bytes,
         params.degree(),
@@ -147,7 +147,7 @@ fn rust_selects_the_honest_mask_that_follows_a_poisoned_one() {
     );
 
     let honest_bytes = ciphertexts[honest_index].0.clone();
-    let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
+    let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold64).unwrap();
 
     // The processor records what it was handed, so the selection is observable.
     let result = ComputeInput {
@@ -196,7 +196,7 @@ fn rust_tallies_the_re_vote() {
     let (ciphertexts, published) = load(entries);
 
     let re_vote_bytes = ciphertexts[re_vote_index].0.clone();
-    let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
+    let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold64).unwrap();
 
     // Does the published ciphertext reproduce the commitment the contract stored for it?
     let recomputed = e3_bfv_client::client::compute_ct_commitment(

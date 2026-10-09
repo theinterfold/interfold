@@ -139,7 +139,7 @@ mod tests {
     fn test_generate_secret_key_sample() {
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample = ShareComputationCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold64,
             committee.clone(),
             DkgInputType::SecretKey,
         )
@@ -147,15 +147,21 @@ mod tests {
         assert_eq!(sample.n_parties, committee.n as u32);
         assert_eq!(sample.threshold, committee.threshold as u32);
         assert_eq!(sample.dkg_input_type, DkgInputType::SecretKey);
-        assert_eq!(sample.secret_sss.len(), 2);
-        assert_eq!(sample.secret.limbs.len(), 2);
+        assert_eq!(
+            sample.secret_sss.len(),
+            e3_fhe_params::constants::insecure_64::threshold::MODULI.len()
+        );
+        assert_eq!(
+            sample.secret.limbs.len(),
+            e3_fhe_params::constants::insecure_64::threshold::MODULI.len()
+        );
     }
 
     #[test]
     fn test_generate_smudging_noise_sample() {
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample = ShareComputationCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold64,
             committee.clone(),
             DkgInputType::SmudgingNoise,
         )
@@ -163,7 +169,13 @@ mod tests {
         assert_eq!(sample.n_parties, committee.n as u32);
         assert_eq!(sample.threshold, committee.threshold as u32);
         assert_eq!(sample.dkg_input_type, DkgInputType::SmudgingNoise);
-        assert_eq!(sample.secret_sss.len(), 2);
-        assert_eq!(sample.secret.limbs.len(), 2);
+        assert_eq!(
+            sample.secret_sss.len(),
+            e3_fhe_params::constants::insecure_64::threshold::MODULI.len()
+        );
+        assert_eq!(
+            sample.secret.limbs.len(),
+            e3_fhe_params::constants::insecure_64::threshold::MODULI.len()
+        );
     }
 }

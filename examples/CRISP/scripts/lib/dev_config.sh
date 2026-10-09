@@ -20,18 +20,18 @@ load_crisp_dev_config() {
   source "$cfg"
   set +a
 
-  CRISP_BFV_PRESET="${CRISP_BFV_PRESET:-insecure-512}"
+  CRISP_BFV_PRESET="${CRISP_BFV_PRESET:-insecure-64}"
   CRISP_SKIP_PROOF_AGGREGATION="${CRISP_SKIP_PROOF_AGGREGATION:-true}"
 
   case "$CRISP_BFV_PRESET" in
-    insecure-512)
+    insecure-64)
       CRISP_E3_PARAM_SET=0
       ;;
     secure-8192)
       CRISP_E3_PARAM_SET=2
       ;;
     *)
-      echo "Invalid CRISP_BFV_PRESET='${CRISP_BFV_PRESET}' (use insecure-512 or secure-8192)" >&2
+      echo "Invalid CRISP_BFV_PRESET='${CRISP_BFV_PRESET}' (use insecure-64 or secure-8192)" >&2
       exit 1
       ;;
   esac
@@ -80,7 +80,7 @@ apply_crisp_dev_config_to_server_env() {
     sed -i.bak "s/^E3_PARAM_SET=.*/E3_PARAM_SET=${CRISP_E3_PARAM_SET}/" "$server_env"
     rm -f "${server_env}.bak"
   else
-    printf '\n# 0=InsecureThreshold512, 2=SecureThreshold8192\nE3_PARAM_SET=%s\n' \
+    printf '\n# 0=InsecureThreshold64, 2=SecureThreshold8192\nE3_PARAM_SET=%s\n' \
       "${CRISP_E3_PARAM_SET}" >> "$server_env"
   fi
 }

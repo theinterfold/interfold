@@ -69,7 +69,7 @@ impl VerificationHarness {
                     threshold_m: 1,
                     threshold_n: 3,
                     seed: Seed([0; 32]),
-                    params_preset: BfvPreset::InsecureThreshold512,
+                    params_preset: BfvPreset::InsecureThreshold64,
                     params: ArcBytes::default(),
                     error_size: ArcBytes::default(),
                 },
@@ -84,7 +84,7 @@ impl VerificationHarness {
             1,
             300,
             30,
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold64,
         );
         bus.event_bus().send(EventBusBarrier).await.unwrap();
         bus.publish_without_context(EffectsEnabled::new()).unwrap();
@@ -189,7 +189,7 @@ async fn c0_local_verifier_failures_retry_without_peer_blame() {
         temp.path().join("work"),
     );
     fs::copy(bb, &backend.bb_binary).unwrap();
-    let preset = BfvPreset::InsecureThreshold512;
+    let preset = BfvPreset::InsecureThreshold64;
     let artifacts_dir =
         preset.artifacts_dir_for_committee(CiphernodesCommitteeSize::Minimum.as_str());
     let circuit_dir = backend

@@ -263,7 +263,7 @@ mod tests {
                     committee_n: 0,
                     committee_h: 0,
                     n_moduli: 0,
-                    params_preset: e3_fhe_params::BfvPreset::InsecureThreshold512,
+                    params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
                     committee_size: CiphernodesCommitteeSize::Minimum,
                 },
                 buffer: BTreeMap::new(),
@@ -294,7 +294,7 @@ mod tests {
                 c3_slot_indices_b: Vec::new(),
                 c3_total_slots: 0,
                 party_id: 7,
-                params_preset: e3_fhe_params::BfvPreset::InsecureThreshold512,
+                params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
                 committee_size: CiphernodesCommitteeSize::Minimum,
             }),
             correlation_id,
@@ -355,7 +355,7 @@ mod tests {
                     committee_n: 3,
                     committee_h: 2,
                     n_moduli: 1,
-                    params_preset: e3_fhe_params::BfvPreset::InsecureThreshold512,
+                    params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
                     committee_size: CiphernodesCommitteeSize::Minimum,
                 },
                 buffer: BTreeMap::new(),
@@ -453,7 +453,7 @@ mod tests {
                 committee_n: 0,
                 committee_h: 0,
                 n_moduli: 0,
-                params_preset: e3_fhe_params::BfvPreset::InsecureThreshold512,
+                params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
                 committee_size: CiphernodesCommitteeSize::Minimum,
             },
             test_ctx(DKGRecursiveAggregationComplete {
@@ -544,7 +544,7 @@ mod tests {
             committee_n: 3,
             committee_h: 2,
             n_moduli: 1,
-            params_preset: e3_fhe_params::BfvPreset::InsecureThreshold512,
+            params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
             committee_size: CiphernodesCommitteeSize::Minimum,
         };
         actor.persist_meta(&e3_id, &meta, &ec)?;
@@ -580,7 +580,7 @@ mod tests {
             committee_n: 3,
             committee_h: 2,
             n_moduli: 1,
-            params_preset: e3_fhe_params::BfvPreset::InsecureThreshold512,
+            params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
             committee_size: CiphernodesCommitteeSize::Minimum,
         };
         let mut actor =
@@ -662,7 +662,7 @@ mod tests {
             committee_n: 3,
             committee_h: 2,
             n_moduli: 1,
-            params_preset: e3_fhe_params::BfvPreset::InsecureThreshold512,
+            params_preset: e3_fhe_params::BfvPreset::InsecureThreshold64,
             committee_size: CiphernodesCommitteeSize::Minimum,
         };
         let mut actor =

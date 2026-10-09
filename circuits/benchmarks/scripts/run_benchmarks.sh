@@ -221,7 +221,7 @@ if [ "$SKIP_COMPILE" = false ]; then
     if [ "$MODE" = "secure" ]; then
         PRESET_NAME="secure-8192"
     else
-        PRESET_NAME="insecure-512"
+        PRESET_NAME="insecure-64"
     fi
     ENSURE_ARGS=("$PRESET_NAME" --committee "$OUTPUT_COMMITTEE")
     if [ "$VERBOSE" = true ]; then
@@ -346,7 +346,7 @@ MT_JOBS_JSON="${BENCHMARK_MULTITHREAD_JOBS:-1}"
 load_committee_by_name "$OUTPUT_COMMITTEE" "$REPO_ROOT"
 jq -n \
     --arg mode "$MODE" \
-    --arg preset "$([ "$MODE" = "secure" ] && echo "secure-8192" || echo "insecure-512")" \
+    --arg preset "$([ "$MODE" = "secure" ] && echo "secure-8192" || echo "insecure-64")" \
     --arg committee "$OUTPUT_COMMITTEE" \
     --argjson proof_agg true \
     --argjson multithread_jobs "$MT_JOBS_JSON" \

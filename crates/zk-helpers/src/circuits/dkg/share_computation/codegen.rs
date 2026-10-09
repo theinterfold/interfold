@@ -127,14 +127,14 @@ mod tests {
     fn test_toml_generation_and_structure() {
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample = ShareComputationCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold64,
             committee,
             DkgInputType::SecretKey,
         )
         .unwrap();
 
         let artifacts = ShareComputationCircuit
-            .codegen(BfvPreset::InsecureThreshold512, &sample)
+            .codegen(BfvPreset::InsecureThreshold64, &sample)
             .unwrap();
 
         let parsed: toml::Value = artifacts.toml.parse().unwrap();
@@ -167,14 +167,14 @@ mod tests {
         assert!(configs_path.exists());
 
         let configs_content = std::fs::read_to_string(&configs_path).unwrap();
-        let bounds = Bounds::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
-        let bits = Bits::compute(BfvPreset::InsecureThreshold512, &bounds).unwrap();
+        let bounds = Bounds::compute(BfvPreset::InsecureThreshold64, &sample).unwrap();
+        let bits = Bits::compute(BfvPreset::InsecureThreshold64, &bounds).unwrap();
         let prefix = <ShareComputationCircuit as Circuit>::PREFIX;
 
         assert!(configs_content.contains(
             format!(
                 "N: u32 = {}",
-                BfvPreset::InsecureThreshold512.metadata().degree
+                BfvPreset::InsecureThreshold64.metadata().degree
             )
             .as_str()
         ));

@@ -83,8 +83,9 @@ pub fn fhe_processor(fhe_inputs: FHEProcessorInput<'_>) -> Vec<u8> {
 - `policy()` returns the input policy. The default policy uses every published input.
 
 <Callout type='info'>
-  The template requests E3s with the `insecure-512` parameter set. Its plaintext modulus is 100, so
-  every result is calculated modulo 100. For this tutorial, 2 × (a + b) must be less than 100.
+  The template requests E3s with the `insecure-64` parameter set. Its plaintext modulus is 17,000,000,
+  so every result is calculated modulo 17,000,000. For this tutorial, 2 × (a + b) must be less than
+  17,000,000.
 </Callout>
 
 ## Change the computation

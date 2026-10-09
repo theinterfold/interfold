@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ensure Noir circuit artifacts exist for a benchmark preset (insecure-512 | secure-8192).
+# Ensure Noir circuit artifacts exist for a benchmark preset (insecure-64 | secure-8192).
 #
 # Usage (from repo root):
 #   ./circuits/benchmarks/scripts/ensure_circuit_preset_built.sh <preset> [--committee minimum|micro|small] [--force-build] [--verbose]
@@ -15,7 +15,7 @@ FORCE_BUILD=false
 VERBOSE=false
 
 usage() {
-    echo "Usage: $0 <insecure-512|secure-8192> [--committee minimum|micro|small] [--force-build] [--verbose]"
+    echo "Usage: $0 <insecure-64|secure-8192> [--committee minimum|micro|small] [--force-build] [--verbose]"
 }
 
 require_arg_value() {
@@ -73,8 +73,8 @@ if [ -z "$PRESET" ]; then
     usage
     exit 1
 fi
-if [ "$PRESET" != "insecure-512" ] && [ "$PRESET" != "secure-8192" ]; then
-    echo "Error: preset must be insecure-512 or secure-8192"
+if [ "$PRESET" != "insecure-64" ] && [ "$PRESET" != "secure-8192" ]; then
+    echo "Error: preset must be insecure-64 or secure-8192"
     exit 1
 fi
 

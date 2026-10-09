@@ -232,7 +232,7 @@ every section.
   `e3Id >> 96`. — `Interfold.initialize`; `RegistrySortitionLib.sol`; `flow-trace/03`
 - A request can select only the parameter set and committee shape in `ActiveCryptoConfig.sol`.
   Mainnet supports `secure-8192` with `minimum`, `micro`, and `small` committees. Sepolia and local
-  chains support `insecure-512` and `secure-8192` with `minimum`, `micro`, and `small` committees.
+  chains support `insecure-64` and `secure-8192` with `minimum`, `micro`, and `small` committees.
   Governance cannot enable a different parameter hash, `[H, N]`, or verifier threshold without
   rebuilding the circuits and contracts for that pair. The request supplies the expected
   configuration ID, which binds the scheme, parameter hash, and circuit version; committee size is

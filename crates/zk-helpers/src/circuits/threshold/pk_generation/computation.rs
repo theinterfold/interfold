@@ -451,7 +451,7 @@ mod tests {
 
     #[test]
     fn bounds_compute_rejects_non_canonical_committee_h() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold64;
         let bad = CiphernodesCommittee {
             n: 3,
             h: 8,
@@ -466,7 +466,7 @@ mod tests {
 
     #[test]
     fn bounds_compute_rejects_unknown_threshold_pair() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold64;
         let bad = CiphernodesCommittee {
             n: 5,
             h: 5,
@@ -477,7 +477,7 @@ mod tests {
 
     #[test]
     fn test_bound_and_bits_computation_consistency() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold64;
         use crate::ciphernodes_committee::CiphernodesCommitteeSize;
         let committee = CiphernodesCommitteeSize::Micro.values();
         let bounds = Bounds::compute(preset, &committee).unwrap();

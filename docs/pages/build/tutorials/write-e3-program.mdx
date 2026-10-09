@@ -280,7 +280,7 @@ const requestParams = {
   committeeSize: DEFAULT_E3_CONFIG.committeeSize,
   inputWindow,
   e3Program: contracts.e3Program,
-  paramSet: 0, // ParamSet.Insecure512
+  paramSet: 0, // ParamSet.Insecure64
   computeProviderParams,
 }
 
@@ -344,7 +344,7 @@ A change in one part often needs a change in another part. Check this table afte
 | Input encoding    | `abi.decode(data, (bytes, bytes32))` in `publishInput`        | `encodeAbiParameters` in `client/src/utils/input.ts` and `server/input.ts`        |
 | Input tree leaf   | `inputs[e3Id]._insert(uint256(ciphertextCommitment))`         | `policy()` in `program/src/lib.rs`                                                |
 | Input event       | `InputPublished(e3Id, data, index)`                           | `getContractEvents` in `server/index.ts`                                          |
-| BFV parameter set | `paramSet: 0` in the request                                  | `thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512'` in the SDK config        |
+| BFV parameter set | `paramSet: 0` in the request                                  | `thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_64'` in the SDK config        |
 | Receipt identity  | `guest/` and `program/`, built by `interfold program compile` | The `imageId` in the `MyProgram` constructor and in `OpenVmBfvCiphertextVerifier` |
 
 ## The E3 flow

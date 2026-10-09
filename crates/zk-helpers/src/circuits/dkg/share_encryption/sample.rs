@@ -126,9 +126,9 @@ mod tests {
     #[test]
     fn test_generate_secret_key_sample() {
         let committee = CiphernodesCommitteeSize::Small.values();
-        let sd = BfvPreset::InsecureThreshold512.search_defaults().unwrap();
+        let sd = BfvPreset::InsecureThreshold64.search_defaults().unwrap();
         let sample = ShareEncryptionCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold64,
             committee.clone(),
             DkgInputType::SecretKey,
             sd.z,
@@ -140,29 +140,32 @@ mod tests {
             crate::math::plaintext_poly_u64(&sample.plaintext)
                 .unwrap()
                 .len(),
-            BfvPreset::InsecureThreshold512.metadata().degree
+            BfvPreset::InsecureThreshold64.metadata().degree
         );
         assert_eq!(sample.ciphertext.len(), 2);
         assert_eq!(
             sample.u_rns.coefficients().len(),
-            BfvPreset::InsecureThreshold512.metadata().degree
+            BfvPreset::InsecureThreshold64.metadata().degree
+                * e3_fhe_params::constants::insecure_64::dkg::MODULI.len()
         );
         assert_eq!(
             sample.e0_rns.coefficients().len(),
-            BfvPreset::InsecureThreshold512.metadata().degree
+            BfvPreset::InsecureThreshold64.metadata().degree
+                * e3_fhe_params::constants::insecure_64::dkg::MODULI.len()
         );
         assert_eq!(
             sample.e1_rns.coefficients().len(),
-            BfvPreset::InsecureThreshold512.metadata().degree
+            BfvPreset::InsecureThreshold64.metadata().degree
+                * e3_fhe_params::constants::insecure_64::dkg::MODULI.len()
         );
     }
 
     #[test]
     fn test_generate_smudging_noise_sample() {
         let committee = CiphernodesCommitteeSize::Small.values();
-        let sd = BfvPreset::InsecureThreshold512.search_defaults().unwrap();
+        let sd = BfvPreset::InsecureThreshold64.search_defaults().unwrap();
         let sample = ShareEncryptionCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold64,
             committee,
             DkgInputType::SmudgingNoise,
             sd.z,
@@ -173,15 +176,18 @@ mod tests {
         assert_eq!(sample.ciphertext.len(), 2);
         assert_eq!(
             sample.u_rns.coefficients().len(),
-            BfvPreset::InsecureThreshold512.metadata().degree
+            BfvPreset::InsecureThreshold64.metadata().degree
+                * e3_fhe_params::constants::insecure_64::dkg::MODULI.len()
         );
         assert_eq!(
             sample.e0_rns.coefficients().len(),
-            BfvPreset::InsecureThreshold512.metadata().degree
+            BfvPreset::InsecureThreshold64.metadata().degree
+                * e3_fhe_params::constants::insecure_64::dkg::MODULI.len()
         );
         assert_eq!(
             sample.e1_rns.coefficients().len(),
-            BfvPreset::InsecureThreshold512.metadata().degree
+            BfvPreset::InsecureThreshold64.metadata().degree
+                * e3_fhe_params::constants::insecure_64::dkg::MODULI.len()
         );
     }
 }

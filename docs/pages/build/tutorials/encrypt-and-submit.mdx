@@ -67,7 +67,7 @@ const sdk = InterfoldSDK.create({
   },
   chain: hardhat,
   // Must match paramSet 0, which the request in the next step uses.
-  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_64',
 })
 
 const walletClient = createWalletClient({
@@ -271,7 +271,7 @@ the key.
 
 A program can require a proof that the ciphertext is a valid encryption.
 `sdk.encryptNumberAndGenProof(value, publicKey)` returns `{ encryptedData, proof }`. The circuits in
-the SDK support only the `INSECURE_THRESHOLD_512` preset and the `Minimum` committee. For other
+the SDK support only the `INSECURE_THRESHOLD_64` preset and the `Minimum` committee. For other
 presets, use `encryptNumberAndGenInputs` and your own circuits. See
 [SDK](/build/sdk#encryption-proofs) and [Custom Noir circuits](/build/tutorials/custom-zk-circuits).
 

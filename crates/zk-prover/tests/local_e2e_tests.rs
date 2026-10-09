@@ -157,13 +157,13 @@ async fn setup_share_encryption_e_sm_test() -> Option<(
     &'static str,
 )> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold512;
+    let preset = BfvPreset::InsecureThreshold64;
     let bb = find_bb().await?;
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
     let sd: e3_fhe_params::PresetSearchDefaults =
-        BfvPreset::InsecureThreshold512.search_defaults().unwrap();
+        BfvPreset::InsecureThreshold64.search_defaults().unwrap();
 
     setup_compiled_circuit(&backend, "dkg", "share_encryption").await;
 
@@ -197,7 +197,7 @@ async fn setup_share_computation_sk_test() -> Option<(
     &'static str,
 )> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold512;
+    let preset = BfvPreset::InsecureThreshold64;
     let bb = find_bb().await?;
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
@@ -231,7 +231,7 @@ async fn setup_share_computation_e_sm_test() -> Option<(
     &'static str,
 )> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold512;
+    let preset = BfvPreset::InsecureThreshold64;
     let bb = find_bb().await?;
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
@@ -268,7 +268,7 @@ async fn setup_pk_generation_test() -> Option<(
     &'static str,
 )> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold512;
+    let preset = BfvPreset::InsecureThreshold64;
     let bb = find_bb().await?;
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
@@ -299,7 +299,7 @@ async fn setup_share_decryption_test() -> Option<(
     &'static str,
 )> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold512;
+    let preset = BfvPreset::InsecureThreshold64;
     let bb = find_bb().await?;
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
@@ -330,7 +330,7 @@ async fn setup_c4_c6_e2e_test() -> Option<(
     BfvPreset,
 )> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold512;
+    let preset = BfvPreset::InsecureThreshold64;
     let bb = find_bb().await?;
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
@@ -360,7 +360,7 @@ async fn setup_pk_aggregation_test() -> Option<(
     &'static str,
 )> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold512;
+    let preset = BfvPreset::InsecureThreshold64;
     let bb = find_bb().await?;
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
@@ -391,7 +391,7 @@ async fn setup_decrypted_shares_aggregation_test() -> Option<(
     &'static str,
 )> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold512;
+    let preset = BfvPreset::InsecureThreshold64;
     let bb = find_bb().await?;
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
@@ -421,7 +421,7 @@ async fn setup_pk_test() -> Option<(
     BfvPreset,
     &'static str,
 )> {
-    let preset = BfvPreset::InsecureThreshold512;
+    let preset = BfvPreset::InsecureThreshold64;
     let bb = find_bb().await?;
     let (backend, temp) = setup_test_prover(&bb).await;
 

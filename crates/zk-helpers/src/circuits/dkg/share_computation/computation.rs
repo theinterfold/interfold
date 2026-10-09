@@ -310,13 +310,13 @@ mod tests {
     fn test_bound_and_bits_computation_consistency() {
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample = ShareComputationCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold64,
             committee,
             DkgInputType::SecretKey,
         )
         .unwrap();
-        let bounds = Bounds::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
-        let bits = Bits::compute(BfvPreset::InsecureThreshold512, &bounds).unwrap();
+        let bounds = Bounds::compute(BfvPreset::InsecureThreshold64, &sample).unwrap();
+        let bits = Bits::compute(BfvPreset::InsecureThreshold64, &bounds).unwrap();
         let expected_sk_bits = calculate_bit_width(BigInt::from(bounds.sk_bound.clone()));
 
         assert_eq!(bits.bit_sk_secret, expected_sk_bits);
@@ -326,12 +326,12 @@ mod tests {
     fn test_input_smudging_noise_secret_consistency() {
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample = ShareComputationCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold64,
             committee,
             DkgInputType::SmudgingNoise,
         )
         .unwrap();
-        let inputs = Inputs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
+        let inputs = Inputs::compute(BfvPreset::InsecureThreshold64, &sample).unwrap();
         let degree = inputs.secret_crt.limb(0).coefficients().len();
         let num_moduli = inputs.secret_crt.limbs.len();
         for coeff_idx in 0..degree {

@@ -96,7 +96,7 @@ Keccak-256 hash. The proof must carry the same parameter hash. See
 
 | `paramSet` | Preset                 | Degree | Plaintext modulus | Ciphertext moduli |
 | ---------- | ---------------------- | ------ | ----------------- | ----------------- |
-| `0`        | `InsecureThreshold512` | 512    | 100               | 2                 |
+| `0`        | `InsecureThreshold64` | 64     | 17000000          | 3                 |
 | `2`        | `SecureThreshold8192`  | 8192   | 17000000          | 3                 |
 
 Sources: `BfvPreset::from_on_chain_param_set` in `crates/fhe-params/src/presets.rs` and the preset
@@ -241,7 +241,7 @@ Other limits:
   50 decrypts to 10.
 - Each preset has an addition budget, `z` (`SEARCH_Z` in `crates/fhe-params/src/constants.rs`). The
   ciphernodes make the smudging noise of their decryption shares large enough for an output of at
-  most `z` fresh ciphertexts added together. `z` is 100,000 for parameter set `2` and 1,024 for
+  most `z` fresh ciphertexts added together. `z` is 100,000 for parameter set `2` and for
   parameter set `0`. With a larger sum, the smudging noise protects the secret key shares with less
   statistical security than the preset specifies. A product with a plaintext also increases the
   noise, and `z` does not count it.
@@ -256,7 +256,7 @@ Other limits:
 ## Test the processor
 
 The template includes a unit test in `program/src/lib.rs`. It encrypts 3 and 2 with the
-`InsecureThreshold512` preset, runs `fhe_processor`, decrypts the result, and checks that it is 5.
+`InsecureThreshold64` preset, runs `fhe_processor`, decrypts the result, and checks that it is 5.
 
 1. Open a terminal in the project root.
 2. Run `cargo test -p e3-user-program`.

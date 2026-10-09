@@ -289,16 +289,16 @@ mod tests {
     fn test_bound_and_bits_computation_consistency() {
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample = ShareDecryptionCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold64,
             committee,
             DkgInputType::SecretKey,
         )
         .unwrap();
-        let bounds = Bounds::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
-        let bits = Bits::compute(BfvPreset::InsecureThreshold512, &bounds).unwrap();
+        let bounds = Bounds::compute(BfvPreset::InsecureThreshold64, &sample).unwrap();
+        let bits = Bits::compute(BfvPreset::InsecureThreshold64, &bounds).unwrap();
 
-        let (_, dkg_params) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
-        let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
+        let (_, dkg_params) = build_pair_for_preset(BfvPreset::InsecureThreshold64).unwrap();
+        let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold64).unwrap();
         assert_eq!(bits.msg_bit, compute_msg_bit(&dkg_params));
         assert_eq!(bits.agg_bit, compute_modulus_bit(&threshold_params));
     }
@@ -307,12 +307,12 @@ mod tests {
     fn test_input_decryption_consistency() {
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample = ShareDecryptionCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold64,
             committee,
             DkgInputType::SecretKey,
         )
         .unwrap();
-        let inputs = Inputs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
+        let inputs = Inputs::compute(BfvPreset::InsecureThreshold64, &sample).unwrap();
 
         // Inputs should have one row per honest party
         assert_eq!(
@@ -328,7 +328,7 @@ mod tests {
     #[test]
     fn test_recipient_outside_dealer_set_decrypts_every_row() {
         let committee = CiphernodesCommitteeSize::Small.values();
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold64;
         let (mut sample, dkg_params) = ShareDecryptionCircuitData::generate_sample_with_params(
             preset,
             committee,
@@ -365,7 +365,7 @@ mod tests {
     #[test]
     fn test_commitment_ordering_consistency() {
         let committee = CiphernodesCommitteeSize::Small.values();
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold64;
         let sample =
             ShareDecryptionCircuitData::generate_sample(preset, committee, DkgInputType::SecretKey)
                 .unwrap();

@@ -80,7 +80,7 @@ fn select_benchmark_params() -> BenchmarkParams {
     let preset_subdir = if is_secure_mode {
         "secure-8192"
     } else {
-        "insecure-512"
+        "insecure-64"
     };
 
     let committee = active_committee(preset_subdir);

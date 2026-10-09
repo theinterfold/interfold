@@ -302,7 +302,7 @@ The template ships no `.env` files. The scripts set the environment when they st
 | `VITE_BONDING_REGISTRY_ADDRESS`         | Yes      | `chains[].contracts.bonding_registry`                 |
 | `VITE_FEE_TOKEN_ADDRESS`                | Yes      | `chains[].contracts.fee_token`                        |
 | `VITE_RPC_URL`                          | No       | `chains[].rpc_url`. Default: `http://localhost:8545`. |
-| `VITE_THRESHOLD_BFV_PARAMS_PRESET_NAME` | No       | Default: `INSECURE_THRESHOLD_512`.                    |
+| `VITE_THRESHOLD_BFV_PARAMS_PRESET_NAME` | No       | Default: `INSECURE_THRESHOLD_64`.                    |
 | `VITE_WALLETCONNECT_PROJECT_ID`         | No       | A WalletConnect project ID for ConnectKit.            |
 
 **Coordination server.** `scripts/dev_server.sh` sets `PRIVATE_KEY` (Anvil account 0),
@@ -323,8 +323,8 @@ defaults:
 (default: the Anvil test mnemonic), `PRIVATE_KEY`, `RPC_URL`, and block explorer API keys, for
 example `ETHERSCAN_API_KEY`.
 
-**Dev scripts.** `scripts/lib/dev_config.sh` reads `BFV_PRESET` (`insecure-512` or `secure-8192`,
-default `insecure-512`) and `COMMITTEE` (default `minimum`). These variables have an effect only
+**Dev scripts.** `scripts/lib/dev_config.sh` reads `BFV_PRESET` (`insecure-64` or `secure-8192`,
+default `insecure-64`) and `COMMITTEE` (default `minimum`). These variables have an effect only
 when the template is inside an Interfold repository checkout, where the scripts build the circuits.
 `scripts/anvil-automine.mjs` reads `ANVIL_RPC_URL` (default `http://127.0.0.1:8545`).
 

@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn test_secret_key_serialization() {
-        let params = BfvParamSet::from(BfvPreset::InsecureDkg512).build_arc();
+        let params = BfvParamSet::from(BfvPreset::InsecureDkg64).build_arc();
         let mut rng = rand::rng();
 
         // Generate a secret key
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_encrypt_all_extended_for_share_indices_uses_real_share_rows() {
-        let params = BfvParamSet::from(BfvPreset::InsecureDkg512).build_arc();
+        let params = BfvParamSet::from(BfvPreset::InsecureDkg64).build_arc();
         let mut rng = rand::rng();
 
         let _sk_one = SecretKey::random(&params, &mut rng);

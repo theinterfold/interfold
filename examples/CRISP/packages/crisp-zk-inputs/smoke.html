@@ -17,7 +17,7 @@
         }
 
         // wasm-bindgen Vec<i64> is passed as BigInt64Array (see crisp-sdk encoding.ts).
-        const vote = BigInt64Array.from({ length: 512 }, (_, i) => BigInt(i % 2))
+        const vote = BigInt64Array.from({ length: 64 }, (_, i) => BigInt(i % 2))
         const ciphertext = generator.encryptVote(publicKey, vote)
         if (!(ciphertext instanceof Uint8Array) || ciphertext.length === 0) {
           throw new Error('encryptVote returned empty ciphertext')

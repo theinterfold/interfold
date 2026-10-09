@@ -20,7 +20,7 @@ every section.
   `validateSecureCrisp.ts`) still read it to check those deployments. Never edit it; delete it
   together with those scripts.
 - **Generated verifiers must match the built VKs.** When a pushed branch changes a path in
-  `.github/filters/circuits.yml`, pre-push checks `insecure-512` with the committee in the local
+  `.github/filters/circuits.yml`, pre-push checks `insecure-64` with the committee in the local
   `.active-preset.json` (default `minimum`). The check reads the checked-out tree, so the hook stops
   the push of a branch that differs from HEAD in a path of that file. CI reads the same file to
   start `build_circuits`, which hydrates and compares every supported preset and committee pair. A
@@ -41,7 +41,7 @@ every section.
   installation and release verification require. Each listed pair must be a build pair in
   `scripts/circuit-constants.ts`, and a tooling test checks this. The matrix file is not a
   `SOURCE_HASH` input. CI download fixtures explicitly request the two `minimum` pairs. CI local
-  archive setup selects `insecure-512/minimum` with `--circuits-configuration` and
+  archive setup selects `insecure-64/minimum` with `--circuits-configuration` and
   `--allow-unpinned-archive`. `SOURCE_HASH` includes the shared Noir library, its dependency
   manifest and the pinned nargo and bb versions (see `02_CRYPTO_CIRCUITS.md` §Noir / Barretenberg
   compatibility).
@@ -76,7 +76,7 @@ every section.
   an added, removed or changed function, event or error fails until the regenerated files are
   committed. — `scripts/check-cli-bindings.ts`
 - Contracts CI requires at least 128 bytes below the EIP-170 limit for `Interfold`,
-  `BondingRegistry`, `CiphernodeRegistryOwnable`, and the canonical `insecure-512/minimum`
+  `BondingRegistry`, `CiphernodeRegistryOwnable`, and the canonical `insecure-64/minimum`
   aggregator verifiers. Every deployed verifier variant must fit, but CI does not measure the other
   variants. — `scripts/checkContractSize.ts`; INDEX concern #22
 - BFV circuit-verifier and OpenVM receipt-verifier constructors require deployed verifier contracts.
