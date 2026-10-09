@@ -395,8 +395,8 @@ jobs:
     timeout-minutes: 30
     runs-on:
       ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}-{3}{4}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'rust_unit_tests', matrix.suite, matrix.partition) || 'ubuntu-latest' }}
+      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}-{3}{4}/runner=4cpu-linux-x64/ram=16', github.run_id,
+      github.run_attempt, 'rust_unit_tests', matrix.suite, matrix.partition) || 'ubuntu-latest' }}
     # Library tests link cfg(test) builds. Doc-tests and the separate test targets link the plain
     # libraries, so they run together in the `doc` leg. The legs share no compiled crates, and each
     # leg builds its kind once.

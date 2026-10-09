@@ -37,8 +37,8 @@ every section.
   `SOURCE_HASH` matches the current source tree. A different build at the branch tip must not
   replace it. The release workflow pulls the same way. Release verification checks the source hash,
   every required pair, each pair's build stamp, and `checksums.json` as nodes check it.
-  `crates/zk-prover/supported-configurations.json` owns the release matrix that archive
-  installation and release verification require. Each listed pair must be a build pair in
+  `crates/zk-prover/supported-configurations.json` owns the release matrix that archive installation
+  and release verification require. Each listed pair must be a build pair in
   `scripts/circuit-constants.ts`, and a tooling test checks this. The matrix file is not a
   `SOURCE_HASH` input. CI download fixtures explicitly request the two `minimum` pairs. CI local
   archive setup selects `insecure-512/minimum` with `--circuits-configuration` and

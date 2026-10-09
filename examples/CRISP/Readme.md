@@ -151,10 +151,10 @@ sets `program.dev: false`. The local scripts override that with `E3_PROGRAM__DEV
 
 ### OpenVM configuration
 
-The real-proof compute service uses OpenVM. CRISP's guest is `examples/CRISP/guest`, and its
-service is `.interfold/support/openvm`; both link `program/`, the processor and policy the contract
-agrees with. Follow the [OpenVM guide](../../crates/openvm-prover/README.md) to build the workers,
-then run `interfold program compile` for the guest, keys, identity and service.
+The real-proof compute service uses OpenVM. CRISP's guest is `examples/CRISP/guest`, and its service
+is `.interfold/support/openvm`; both link `program/`, the processor and policy the contract agrees
+with. Follow the [OpenVM guide](../../crates/openvm-prover/README.md) to build the workers, then run
+`interfold program compile` for the guest, keys, identity and service.
 
 Set `program.dev: false` and supply deployment-local `program.openvm.prover_bin` and, on a GPU
 machine, `program.openvm.prover_bin_cuda` paths. Do not put account keys, proving artifacts, or
