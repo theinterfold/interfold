@@ -7,7 +7,7 @@
 //! Polynomial arithmetic implementation.
 
 use crate::fhe_poly::ToPowerBasisPoly;
-use crate::utils::{center, reduce};
+use crate::math::{center, reduce};
 use num_bigint::{BigInt, BigUint, ToBigInt};
 use num_traits::{One, ToPrimitive, Zero};
 use std::fmt;

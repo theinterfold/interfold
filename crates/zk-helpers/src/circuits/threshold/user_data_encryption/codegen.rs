@@ -7,10 +7,10 @@
 //! Code generation for the public-key BFV circuit: Prover.toml and configs.nr.
 
 use crate::circuits::computation::Computation;
+use crate::encoding::join_display;
 use crate::threshold::user_data_encryption::circuit::UserDataEncryptionCircuit;
 use crate::threshold::user_data_encryption::computation::{Configs, Inputs};
 use crate::threshold::user_data_encryption::UserDataEncryptionCircuitData;
-use crate::utils::join_display;
 use crate::Circuit;
 use crate::CircuitCodegen;
 use crate::CircuitsErrors;

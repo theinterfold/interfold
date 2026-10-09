@@ -27,10 +27,14 @@
 
 pub mod crt_polynomial;
 mod fhe_poly;
+pub mod math;
+pub mod negacyclic;
 pub mod polynomial;
-pub mod utils;
+pub mod representation;
 
 pub use crt_polynomial::{CrtPolynomial, CrtPolynomialError};
 pub use fhe_poly::ToPowerBasisPoly;
+pub use math::*;
+pub use negacyclic::fold_negacyclic;
 pub use polynomial::{Polynomial, PolynomialError};
-pub use utils::*;
+pub use representation::{array2_u64_to_bigint, fhe_poly_to_crt_centered};

@@ -7,11 +7,12 @@
 use crate::{Proof, SignedProofPayload};
 use alloy::primitives::Address;
 use derivative::Derivative;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_committee_hash::DecryptionDomainContext;
 use e3_crypto::SensitiveBytes;
 use e3_fhe_params::BfvPreset;
 use e3_utils::utility_types::ArcBytes;
-use e3_zk_helpers::{computation::DkgInputType, CiphernodesCommitteeSize};
+use e3_zk_helpers::computation::DkgInputType;
 use serde::{Deserialize, Serialize};
 
 /// ZK proof generation request variants.

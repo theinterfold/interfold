@@ -6,7 +6,7 @@
 
 //! Shared utilities for the share-computation circuit (e.g. parity matrix).
 
-use crate::utils::bigint_to_field;
+use crate::encoding::bigint_to_field;
 use crate::CircuitsErrors;
 use e3_parity_matrix::build_generator_matrix;
 use e3_parity_matrix::{null_space, ParityMatrix, ParityMatrixConfig};

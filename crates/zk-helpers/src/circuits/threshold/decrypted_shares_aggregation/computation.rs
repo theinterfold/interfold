@@ -6,24 +6,23 @@
 
 //! Bounds, configs, bits, and input computation for the Decryption Share Aggregation TRBFV circuit.
 //!
-//! Uses [`crate::threshold::decrypted_shares_aggregation::utils`] for Q/delta, modular inverses,
-//! Lagrange-at-zero recovery, and scalar CRT reconstruction. Decryption shares are normalized
+//! Uses [`e3_bfv_math`] for Q/delta and modular arithmetic. Decryption shares are normalized
 //! with [`e3_polynomial::CrtPolynomial::reduce`]; all input coefficients are reduced to
 //! [0, zkp_modulus) with [`e3_polynomial::reduce`] inside [`Inputs::compute`].
 
 /// Max message coefficients in the C7 circuit (matches Noir's MAX_MSG_NON_ZERO_COEFFS).
 pub const MAX_MSG_NON_ZERO_COEFFS: usize = 50;
 
-use crate::calculate_bit_width;
 use crate::circuits::commitments::compute_threshold_decryption_share_commitment;
-use crate::compute_q_mod_t;
-use crate::compute_q_mod_t_centered;
-use crate::get_zkp_modulus;
+use crate::encoding::get_zkp_modulus;
 use crate::threshold::decrypted_shares_aggregation::circuit::DecryptedSharesAggregationCircuit;
 use crate::threshold::decrypted_shares_aggregation::circuit::DecryptedSharesAggregationCircuitData;
 use crate::threshold::decrypted_shares_aggregation::utils;
 use crate::CircuitsErrors;
 use crate::{CircuitComputation, Computation};
+use e3_bfv_math::calculate_bit_width;
+use e3_bfv_math::compute_q_mod_t;
+use e3_bfv_math::compute_q_mod_t_centered;
 use e3_fhe_params::build_pair_for_preset;
 use e3_fhe_params::BfvPreset;
 use e3_polynomial::reduce;
@@ -124,9 +123,9 @@ impl Computation for Bounds {
             build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Other(e.to_string()))?;
         let moduli = threshold_params.moduli();
         let t = threshold_params.plaintext();
-        let q = utils::compute_q_product(moduli);
-        let delta = utils::compute_delta(&q, t);
-        let delta_half = utils::compute_delta_half(&delta);
+        let q = e3_bfv_math::compute_q_product(moduli);
+        let delta = e3_bfv_math::compute_delta(&q, t);
+        let delta_half = e3_bfv_math::compute_delta_half(&delta);
         Ok(Bounds { delta, delta_half })
     }
 }
@@ -178,10 +177,10 @@ impl Computation for Configs {
             build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Other(e.to_string()))?;
         let moduli = threshold_params.moduli().to_vec();
         let t = threshold_params.plaintext();
-        let q = utils::compute_q_product(&moduli);
+        let q = e3_bfv_math::compute_q_product(&moduli);
         let q_mod_t = compute_q_mod_t(&q, t);
         let q_mod_t_centered = compute_q_mod_t_centered(&moduli, t);
-        let q_inverse_mod_t = utils::compute_q_inverse_mod_t(&q, t)?;
+        let q_inverse_mod_t = e3_bfv_math::compute_q_inverse_mod_t(&q, t)?;
         let bounds = Bounds::compute(preset, &())?;
         let bits = Bits::compute(preset, &bounds)?;
         Ok(Configs {
@@ -331,9 +330,9 @@ impl Computation for Inputs {
     }
 
     fn to_json(&self) -> serde_json::Result<serde_json::Value> {
-        use crate::bigint_1d_to_json_values;
-        use crate::crt_polynomial_to_toml_json;
-        use crate::polynomial_to_toml_json;
+        use crate::encoding::bigint_1d_to_json_values;
+        use crate::encoding::crt_polynomial_to_toml_json;
+        use crate::encoding::polynomial_to_toml_json;
 
         let decryption_shares_json: Vec<Vec<serde_json::Value>> = self
             .decryption_shares
@@ -359,7 +358,7 @@ impl Computation for Inputs {
 mod tests {
     use super::*;
     use crate::threshold::decrypted_shares_aggregation::DecryptedSharesAggregationCircuitData;
-    use crate::CiphernodesCommitteeSize;
+    use e3_committee::CiphernodesCommitteeSize;
 
     #[test]
     fn test_bounds_and_bits_consistency() {

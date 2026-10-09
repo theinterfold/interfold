@@ -7,6 +7,7 @@
 //! Correlated DKG witness pieces for `node_fold`: [`PkGenerationCircuitData`] plus
 //! [`ShareComputationCircuitData`] built from the same secrets so C1 ↔ C2 commitments align.
 
+use e3_committee::CiphernodesCommittee;
 use e3_fhe_params::build_pair_for_preset;
 use e3_fhe_params::create_deterministic_crp_from_default_seed;
 use e3_fhe_params::BfvPreset;
@@ -18,7 +19,6 @@ use e3_zk_helpers::dkg::share_computation::{
 };
 use e3_zk_helpers::dkg::share_encryption::ShareEncryptionCircuitData;
 use e3_zk_helpers::threshold::pk_generation::PkGenerationCircuitData;
-use e3_zk_helpers::CiphernodesCommittee;
 use e3_zk_helpers::CircuitsErrors;
 use fhe::bfv::Encoding;
 use fhe::bfv::SecretKey;

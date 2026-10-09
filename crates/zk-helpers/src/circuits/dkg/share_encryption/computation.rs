@@ -15,16 +15,17 @@ use crate::circuits::commitments::{
 };
 use crate::dkg::share_encryption::ShareEncryptionCircuit;
 use crate::dkg::share_encryption::ShareEncryptionCircuitData;
-use crate::math::fold_negacyclic;
-use crate::math::{compute_k0is, compute_q_mod_t_centered, plaintext_poly_u64};
-use crate::polynomial_to_toml_json;
-use crate::utils::{compute_modulus_bit, compute_msg_bit};
+use crate::encoding::crt_polynomial_to_toml_json;
+use crate::encoding::polynomial_to_toml_json;
 use crate::CircuitsErrors;
-use crate::{calculate_bit_width, crt_polynomial_to_toml_json};
-use crate::{compute_q_mod_t, compute_q_product};
 use crate::{CircuitComputation, Computation};
+use e3_bfv_math::calculate_bit_width;
+use e3_bfv_math::{compute_k0is, compute_q_mod_t_centered, plaintext_poly_u64};
+use e3_bfv_math::{compute_modulus_bit, compute_msg_bit};
+use e3_bfv_math::{compute_q_mod_t, compute_q_product};
 use e3_fhe_params::build_pair_for_preset;
 use e3_fhe_params::BfvPreset;
+use e3_polynomial::fold_negacyclic;
 use e3_polynomial::CrtPolynomial;
 use e3_polynomial::Polynomial;
 use fhe::bfv::SecretKey;
@@ -199,6 +200,7 @@ pub struct ScaledQuotient {
 
 impl ScaledQuotient {
     /// Derives the constants, or returns `available: false` when the parameter set cannot use them.
+    #[allow(clippy::too_many_arguments)]
     pub fn derive(
         moduli: &[u64],
         t: u64,
@@ -413,7 +415,7 @@ impl Computation for Configs {
 impl Computation for Bits {
     type Preset = BfvPreset;
     type Data = Bounds;
-    type Error = crate::utils::ZkHelpersUtilsError;
+    type Error = crate::encoding::ZkHelpersUtilsError;
 
     fn compute(_: Self::Preset, data: &Self::Data) -> Result<Self, Self::Error> {
         let max_pk_bound = data.pk_bounds.iter().max().unwrap();
@@ -817,8 +819,8 @@ impl Computation for Inputs {
 mod tests {
     use super::*;
 
-    use crate::ciphernodes_committee::CiphernodesCommitteeSize;
     use crate::computation::DkgInputType;
+    use e3_committee::CiphernodesCommitteeSize;
     use e3_fhe_params::BfvPreset;
 
     #[test]
@@ -903,9 +905,9 @@ mod tests {
 #[cfg(test)]
 mod scaled_quotient_tests {
     use super::*;
-    use crate::ciphernodes_committee::CiphernodesCommitteeSize;
     use crate::computation::DkgInputType;
-    use crate::{compute_k0is, compute_q_mod_t, compute_q_product};
+    use e3_bfv_math::{compute_k0is, compute_q_mod_t, compute_q_product};
+    use e3_committee::CiphernodesCommitteeSize;
     use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 
     fn derive_for(preset: BfvPreset) -> (ScaledQuotient, Vec<u64>, u64) {

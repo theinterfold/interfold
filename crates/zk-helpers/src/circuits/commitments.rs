@@ -11,12 +11,12 @@
 //! All functions match the corresponding Noir circuit implementations exactly.
 
 use crate::packing::{flatten, pack_centered_rns_row};
-use crate::utils::compute_safe;
 use ark_bn254::Fr as Field;
 use ark_ff::BigInteger;
 use ark_ff::PrimeField;
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_polynomial::{CrtPolynomial, Polynomial};
+use e3_safe::SafeSponge;
 use fhe::bfv::PublicKey;
 use fhe_math::rq::{Poly, PowerBasis};
 use fhe_traits::DeserializeParametrized;
@@ -161,7 +161,11 @@ pub fn compute_commitments(
     domain_separator: [u8; 64],
     io_pattern: [u32; 2],
 ) -> Vec<Field> {
-    compute_safe(domain_separator, payload, io_pattern)
+    let mut sponge = SafeSponge::start(io_pattern, domain_separator);
+    sponge.absorb(payload);
+    let digests = sponge.squeeze();
+    sponge.finish();
+    digests
 }
 
 /// Combine verification-key hashes with the `VK_HASH` domain separator (SAFE sponge).
@@ -228,11 +232,12 @@ pub fn compute_dkg_pk_commitment_from_public_key_bytes(
         .get(1)
         .ok_or_else(|| crate::CircuitsErrors::Other("PublicKey is missing pk1".to_string()))?;
     let moduli = dkg_params.moduli();
-    let pk0 = crate::math::fhe_poly_to_crt_centered(pk0, moduli)
+    let pk0 = e3_polynomial::fhe_poly_to_crt_centered(pk0, moduli)
         .map_err(|e| crate::CircuitsErrors::Other(format!("pk0 conversion: {e}")))?;
-    let pk1 = crate::math::fhe_poly_to_crt_centered(pk1, moduli)
+    let pk1 = e3_polynomial::fhe_poly_to_crt_centered(pk1, moduli)
         .map_err(|e| crate::CircuitsErrors::Other(format!("pk1 conversion: {e}")))?;
-    let commitment = compute_dkg_pk_commitment(&pk0, &pk1, crate::compute_modulus_bit(&dkg_params));
+    let commitment =
+        compute_dkg_pk_commitment(&pk0, &pk1, e3_bfv_math::compute_modulus_bit(&dkg_params));
 
     let (_, be_bytes) = commitment.to_bytes_be();
     if be_bytes.len() > 32 {
@@ -282,7 +287,7 @@ pub fn compute_pk_commitment_from_keyshare_bytes(
     params: &std::sync::Arc<fhe::bfv::BfvParameters>,
     crp: &fhe::mbfv::CommonRandomPoly,
 ) -> Result<[u8; 32], crate::CircuitsErrors> {
-    let bit_pk = crate::compute_modulus_bit(params);
+    let bit_pk = e3_bfv_math::compute_modulus_bit(params);
     let moduli = params.moduli();
 
     let pk_share = fhe::mbfv::PublicKeyShare::deserialize(keyshare_bytes, params, crp.clone())
@@ -720,7 +725,7 @@ mod tests {
             compute_pk_commitment_from_keyshare_bytes(&ks_bytes, &params, &crp).unwrap();
 
         // Compute commitment manually (same steps as PkAggInputs::compute)
-        let bit_pk = crate::compute_modulus_bit(&params);
+        let bit_pk = e3_bfv_math::compute_modulus_bit(&params);
         let mut pk0 = CrtPolynomial::from_fhe_polynomial(&pk_share.p0_share());
         pk0.reverse();
         pk0.center(params.moduli()).unwrap();

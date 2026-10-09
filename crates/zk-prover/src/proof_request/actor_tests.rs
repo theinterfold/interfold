@@ -7,6 +7,7 @@
 use super::*;
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::Result;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_crypto::SensitiveBytes;
 use e3_events::{
     CircuitName, ComputeRequestErrorKind, ComputeRequestKind, DkgShareDecryptionProofRequest,
@@ -18,7 +19,7 @@ use e3_fhe_params::BfvPreset;
 use e3_test_helpers::get_common_setup;
 use e3_trbfv::{shares::BfvEncryptedShares, TrBFVError, TrBFVFailure};
 use e3_utils::utility_types::ArcBytes;
-use e3_zk_helpers::{computation::DkgInputType, CiphernodesCommitteeSize};
+use e3_zk_helpers::computation::DkgInputType;
 
 fn test_ctx(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {
     EventContext::<Unsequenced>::from(data.into()).sequence(0)
@@ -55,7 +56,7 @@ async fn c0_compute_error_preserves_pending_work_without_failing_the_round() -> 
                 ZkRequest::PkBfv(PkBfvProofRequest::new(
                     ArcBytes::from_bytes(&[1]),
                     e3_fhe_params::BfvPreset::InsecureThreshold512,
-                    e3_zk_helpers::CiphernodesCommitteeSize::Minimum,
+                    e3_committee::CiphernodesCommitteeSize::Minimum,
                 )),
                 correlation_id,
                 e3_id.clone(),
@@ -134,7 +135,7 @@ async fn c0_trbfv_compute_error_preserves_pending_work() -> Result<()> {
                 ZkRequest::PkBfv(PkBfvProofRequest::new(
                     ArcBytes::from_bytes(&[1]),
                     e3_fhe_params::BfvPreset::InsecureThreshold512,
-                    e3_zk_helpers::CiphernodesCommitteeSize::Minimum,
+                    e3_committee::CiphernodesCommitteeSize::Minimum,
                 )),
                 correlation_id,
                 e3_id.clone(),

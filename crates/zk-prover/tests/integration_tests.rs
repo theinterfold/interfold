@@ -12,9 +12,9 @@
 mod common;
 
 use common::test_backend;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_fhe_params::BfvPreset;
 use e3_zk_helpers::circuits::dkg::pk::circuit::{PkCircuit, PkCircuitData};
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_prover::{
     test_utils::get_tempdir, BbTarget, Provable, SetupStatus, ZkBackend, ZkConfig, ZkError,
     ZkProver,

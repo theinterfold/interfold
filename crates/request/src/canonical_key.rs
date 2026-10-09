@@ -4,10 +4,10 @@
 
 use alloy::primitives::{keccak256, Address, B256};
 use anyhow::{ensure, Result};
+use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{E3id, PublicKeyAggregated, ThresholdShareDecryptionProofRequest};
 use e3_fhe_params::{BfvParamSet, BfvPreset};
 use e3_utils::ArcBytes;
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},

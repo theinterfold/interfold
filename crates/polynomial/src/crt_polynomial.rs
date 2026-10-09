@@ -9,8 +9,8 @@
 use std::sync::Arc;
 
 use crate::fhe_poly::ToPowerBasisPoly;
+use crate::math::reduce;
 use crate::polynomial::Polynomial;
-use crate::utils::reduce;
 use fhe_math::rq::traits::TryConvertFrom;
 use fhe_math::rq::{Context, Poly, PowerBasis};
 use num_bigint::BigInt;

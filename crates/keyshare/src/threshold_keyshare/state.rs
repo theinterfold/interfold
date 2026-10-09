@@ -12,6 +12,7 @@
 //! synchronous data and transition logic, which makes it directly unit-testable.
 
 use anyhow::{anyhow, Result};
+use e3_committee::CiphernodesCommitteeSize;
 use e3_committee_hash::DecryptionDomainContext;
 use e3_crypto::SensitiveBytes;
 use e3_events::{
@@ -22,7 +23,6 @@ use e3_trbfv::{
     TrBFVConfig,
 };
 use e3_utils::utility_types::ArcBytes;
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use std::{
     collections::{BTreeSet, HashSet},
     mem,

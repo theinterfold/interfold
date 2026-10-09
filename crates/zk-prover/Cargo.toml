@@ -7,6 +7,7 @@ description = "ZK proof generation for Interfold ciphernodes"
 repository.workspace = true
 
 [dependencies]
+e3-committee.workspace = true
 acir = { git = "https://github.com/noir-lang/noir", tag = "v1.0.0-beta.26" }
 actix.workspace = true
 acvm = { git = "https://github.com/noir-lang/noir", tag = "v1.0.0-beta.26" }

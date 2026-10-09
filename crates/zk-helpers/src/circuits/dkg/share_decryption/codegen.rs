@@ -15,7 +15,7 @@ use crate::circuits::dkg::share_decryption::ShareDecryptionOutput;
 use crate::circuits::{Artifacts, CircuitCodegen, CircuitsErrors, CodegenToml};
 use crate::codegen::CodegenConfigs;
 use crate::computation::Computation;
-use crate::registry::Circuit;
+use crate::metadata::Circuit;
 use e3_fhe_params::BfvPreset;
 
 /// Implementation of [`CircuitCodegen`] for [`ShareDecryptionCircuit`].
@@ -76,10 +76,10 @@ pub global {}_BIT_AGG: u32 = {};
 mod tests {
     use super::*;
 
-    use crate::ciphernodes_committee::CiphernodesCommitteeSize;
     use crate::circuits::dkg::share_decryption::{Configs, ShareDecryptionCircuitData};
     use crate::computation::{Computation, DkgInputType};
     use crate::Circuit;
+    use e3_committee::CiphernodesCommitteeSize;
     use e3_fhe_params::BfvPreset;
 
     #[test]

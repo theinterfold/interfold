@@ -7,6 +7,7 @@ description = "E3 - Interfold Ciphernode Aggregators"
 repository.workspace = true
 
 [dependencies]
+e3-committee = { workspace = true }
 alloy = { workspace = true }
 actix = { workspace = true }
 anyhow = { workspace = true }

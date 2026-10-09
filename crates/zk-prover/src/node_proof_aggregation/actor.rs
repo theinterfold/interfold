@@ -139,12 +139,12 @@ mod tests {
     use super::*;
     use alloy::primitives::Address;
     use anyhow::Result;
+    use e3_committee::CiphernodesCommitteeSize;
     use e3_events::{
         CircuitName, ComputeRequestErrorKind, ComputeRequestKind, Event, GetEvents,
         HistoryCollector, NodeDkgFoldRequest, TakeEvents, Unsequenced, ZkError,
     };
     use e3_test_helpers::get_common_setup;
-    use e3_zk_helpers::CiphernodesCommitteeSize;
     use std::collections::HashSet;
 
     fn test_ctx(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {

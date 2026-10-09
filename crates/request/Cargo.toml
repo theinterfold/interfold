@@ -10,7 +10,7 @@ repository.workspace = true
 alloy.workspace = true
 e3-bfv-client.workspace = true
 e3-committee-hash.workspace = true
-e3-zk-helpers.workspace = true
+e3-committee.workspace = true
 actix = { workspace = true }
 e3-events = { workspace = true }
 e3-fhe-params = { workspace = true }

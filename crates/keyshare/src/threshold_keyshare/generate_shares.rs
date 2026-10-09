@@ -16,6 +16,7 @@
 //! [`ThresholdSharePending`]: e3_events::ThresholdSharePending
 
 use anyhow::{anyhow, bail, Result};
+use e3_committee::CiphernodesCommitteeSize;
 use e3_crypto::{Cipher, SensitiveBytes};
 use e3_events::{
     EncryptionKey, PkGenerationProofRequest, ShareComputationProofRequest,
@@ -25,7 +26,6 @@ use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_trbfv::shares::{BfvEncryptedShares, SharedSecret};
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_helpers::computation::DkgInputType;
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use fhe::bfv::{BfvParameters, PublicKey};
 use fhe_traits::{DeserializeParametrized, Serialize as _};
 use rand::rngs::OsRng;

@@ -8,6 +8,7 @@ use alloy::{
     transports::mock::Asserter,
 };
 use e3_ciphernode_builder::EventSystem;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_data::{Repositories, RepositoriesFactory};
 use e3_events::{
     AggregateConfig, AggregateId, CiphertextOutputPublished, CircuitName, EventSource,
@@ -17,7 +18,6 @@ use e3_events::{
 use e3_fhe_params::BfvPreset;
 use e3_request::canonical_key::CanonicalPublicKey;
 use e3_utils::ArcBytes;
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,

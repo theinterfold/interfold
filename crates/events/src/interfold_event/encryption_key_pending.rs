@@ -6,8 +6,8 @@
 
 use crate::{E3id, EncryptionKey};
 use actix::Message;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_fhe_params::BfvPreset;
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Display};
 use std::sync::Arc;

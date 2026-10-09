@@ -5,6 +5,7 @@
 use super::{dkg_has_ended, validate_received_key};
 use actix::Recipient;
 use anyhow::{ensure, Context, Result};
+use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{
     AggregateId, Committee, CorrelationId, E3id, EncryptionKeyReceived, EventContextAccessors,
     EventContextSeq, EventSource, EventStoreQueryBy, EventStoreQueryResponse, InterfoldEvent,
@@ -12,7 +13,6 @@ use e3_events::{
 };
 use e3_request::E3Meta;
 use e3_utils::actix::channel;
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 

@@ -7,11 +7,11 @@
 //! Code generation for the threshold share decryption circuit: Prover.toml and configs.nr.
 
 use crate::circuits::computation::Computation;
+use crate::encoding::join_display;
 use crate::threshold::share_decryption::computation::Inputs;
 use crate::threshold::share_decryption::{
     Configs, ShareDecryptionCircuit, ShareDecryptionCircuitData,
 };
-use crate::utils::join_display;
 use crate::Circuit;
 use crate::CircuitCodegen;
 use crate::CircuitsErrors;
@@ -105,7 +105,7 @@ mod tests {
     use crate::codegen::write_artifacts;
     use crate::threshold::share_decryption::computation::{Bits, Bounds};
     use crate::threshold::share_decryption::ShareDecryptionCircuitData;
-    use crate::CiphernodesCommitteeSize;
+    use e3_committee::CiphernodesCommitteeSize;
 
     use e3_fhe_params::BfvPreset;
     use tempfile::TempDir;

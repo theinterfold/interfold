@@ -521,6 +521,7 @@ impl Handler<InterfoldEvent> for ComputeEffectGate {
 pub(crate) mod tests {
     use super::*;
     use actix::{Addr, Message, ResponseFuture};
+    use e3_committee::CiphernodesCommitteeSize;
     use e3_events::{
         hlc_factory::HlcFactory, CircuitName, ComputeRequest, ComputeRequestErrorKind,
         ComputeResponseKind, E3RequestComplete, EffectsEnabled, EventBus, EventBusConfig,
@@ -531,7 +532,6 @@ pub(crate) mod tests {
     };
     use e3_fhe_params::BfvPreset;
     use e3_utils::ArcBytes;
-    use e3_zk_helpers::CiphernodesCommitteeSize;
 
     #[derive(Message)]
     #[rtype(result = "Vec<CorrelationId>")]

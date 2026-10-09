@@ -84,7 +84,7 @@ fn select_benchmark_params() -> BenchmarkParams {
     };
 
     let committee = active_committee(preset_subdir);
-    let is_small_committee = committee == e3_zk_helpers::CiphernodesCommitteeSize::Small;
+    let is_small_committee = committee == e3_committee::CiphernodesCommitteeSize::Small;
 
     let collection_timeout_secs = if is_secure_mode && is_small_committee {
         Some((7_200, 46_000, 46_000)) // Small: threshold/dec kept > pubkey_flow
@@ -247,7 +247,7 @@ fn resolve_preset_stamp_path(preset_subdir: &str, committee_str: &str) -> PathBu
 /// Falls back to `Minimum` (and warns) when the stamp is missing or pre-dates the `committee`
 /// field — same default as the build script, so a freshly cloned repo's minimum circuits work
 /// out of the box.
-fn active_committee(_preset_subdir: &str) -> e3_zk_helpers::CiphernodesCommitteeSize {
+fn active_committee(_preset_subdir: &str) -> e3_committee::CiphernodesCommitteeSize {
     use std::str::FromStr;
     // `circuits/bin/.active-preset.json` is written by every build and hydrate. It is the
     // authoritative source under the new per-committee layout because the per-committee dist
@@ -257,7 +257,7 @@ fn active_committee(_preset_subdir: &str) -> e3_zk_helpers::CiphernodesCommittee
         .join("circuits")
         .join("bin")
         .join(".active-preset.json");
-    let fallback = e3_zk_helpers::CiphernodesCommitteeSize::Minimum;
+    let fallback = e3_committee::CiphernodesCommitteeSize::Minimum;
 
     let Ok(raw) = std::fs::read_to_string(&stamp_path) else {
         eprintln!(
@@ -281,7 +281,7 @@ fn active_committee(_preset_subdir: &str) -> e3_zk_helpers::CiphernodesCommittee
         );
         return fallback;
     };
-    e3_zk_helpers::CiphernodesCommitteeSize::from_str(active).unwrap_or_else(|e| {
+    e3_committee::CiphernodesCommitteeSize::from_str(active).unwrap_or_else(|e| {
         panic!(
             "{} has unknown committee=\"{active}\": {e}. \
              Expected minimum|micro|small.",

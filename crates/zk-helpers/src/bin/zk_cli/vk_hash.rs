@@ -13,15 +13,13 @@
 use anyhow::{bail, Context, Result};
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
-use clap::Parser;
+use clap::Args as ClapArgs;
 use e3_zk_helpers::compute_vk_hash;
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Parser)]
-#[command(name = "compute-vk-hash")]
-#[command(about = "Hash N vk_hash files with compute_vk_hash (SAFE / DS_VK_HASH), order preserved")]
-struct Args {
+#[derive(Debug, ClapArgs)]
+pub(super) struct Args {
     /// Paths to 32-byte `vk_hash` files from `bb write_vk ... -o <dir>` (use one dir per circuit).
     #[arg(required_unless_present = "bfv_tree", conflicts_with = "bfv_tree")]
     vk_hash_files: Vec<PathBuf>,
@@ -103,8 +101,7 @@ fn bfv_tree_hashes(root: &std::path::Path) -> Result<(Fr, Fr)> {
     Ok((nodes_tree, c6_tree))
 }
 
-fn main() -> Result<()> {
-    let args = Args::parse();
+pub(super) fn run(args: Args) -> Result<()> {
     if let Some(root) = args.bfv_tree {
         let (nodes_fold, c6_fold) = bfv_tree_hashes(&root)?;
         println!(

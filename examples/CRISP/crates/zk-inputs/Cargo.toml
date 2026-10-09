@@ -7,6 +7,7 @@ repository.workspace = true
 description = "Core logic to pre-compute CRISP ZK inputs."
 
 [dependencies]
+e3-bfv-math = { workspace = true }
 e3-sdk = { workspace = true, default-features = false, features=["bfv"] }
 fhe.workspace = true
 fhe-math.workspace = true
@@ -27,5 +28,4 @@ eyre.workspace = true
 ark-bn254 = "0.5"
 ark-ff = "0.5"
 bincode = "1.3"
-
 

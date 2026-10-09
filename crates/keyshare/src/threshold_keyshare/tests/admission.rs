@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 use super::*;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{
     CommitmentConsistencyCheckComplete, Committee, Die, EventBusBarrier, PartyVerificationResult,
     ResetHistory, VerifyShareDecryptionProofsResponse, VerifyShareProofsResponse, ZkRequest,
     ZkResponse,
 };
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_prover::ShareVerificationActor;
 
 fn signed_proof(e3_id: &E3id, party: u64, proof_type: ProofType) -> SignedProofPayload {

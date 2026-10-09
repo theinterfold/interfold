@@ -6,7 +6,8 @@
 
 //! Error types for circuit and codegen operations.
 
-use crate::utils::ZkHelpersUtilsError;
+use crate::encoding::ZkHelpersUtilsError;
+use e3_bfv_math::BfvMathError;
 use e3_polynomial::CrtPolynomialError;
 use thiserror::Error;
 
@@ -29,4 +30,14 @@ pub enum CircuitsErrors {
     SerdeJson(#[from] serde_json::Error),
     #[error("Unexpected error: {0}")]
     Other(String),
+}
+
+impl From<BfvMathError> for CircuitsErrors {
+    fn from(error: BfvMathError) -> Self {
+        match error {
+            BfvMathError::Fhe(error) => Self::Fhe(error),
+            BfvMathError::Sample(message) => Self::Sample(message),
+            BfvMathError::Other(message) => Self::Other(message),
+        }
+    }
 }

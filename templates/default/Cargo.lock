@@ -1287,13 +1287,35 @@ name = "e3-bfv-client"
 version = "0.19.0-test.3"
 dependencies = [
  "anyhow",
+ "e3-bfv-math",
  "e3-fhe-params",
- "e3-polynomial",
  "e3-zk-helpers",
  "fhe",
  "fhe-traits",
  "rand 0.9.5",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "e3-bfv-math"
+version = "0.19.0-test.3"
+dependencies = [
+ "e3-polynomial",
+ "fhe",
+ "fhe-math",
+ "fhe-traits",
+ "num-bigint 0.5.1",
+ "num-integer",
+ "num-traits",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "e3-committee"
+version = "0.19.0-test.3"
+dependencies = [
+ "anyhow",
+ "serde",
 ]
 
 [[package]]
@@ -1372,7 +1394,9 @@ name = "e3-polynomial"
 version = "0.19.0-test.3"
 dependencies = [
  "fhe-math",
+ "ndarray",
  "num-bigint 0.5.1",
+ "num-integer",
  "num-traits",
  "serde",
  "thiserror 1.0.69",
@@ -1450,6 +1474,8 @@ dependencies = [
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
  "clap",
+ "e3-bfv-math",
+ "e3-committee",
  "e3-fhe-params",
  "e3-parity-matrix",
  "e3-polynomial",
@@ -1461,7 +1487,6 @@ dependencies = [
  "itertools 0.14.0",
  "ndarray",
  "num-bigint 0.5.1",
- "num-integer",
  "num-traits",
  "rand 0.9.5",
  "rayon",

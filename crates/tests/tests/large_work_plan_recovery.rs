@@ -8,6 +8,7 @@ use actix::Actor;
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::{ensure, Result};
 use e3_ciphernode_builder::EventSystem;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_crypto::SensitiveBytes;
 use e3_data::{CommitLogEventLog, DataStore, InMemStore};
 use e3_events::{
@@ -20,7 +21,7 @@ use e3_fhe_params::BfvPreset;
 use e3_keyshare::{ThresholdKeyshareRecoveryPayloads, ThresholdKeyshareRecoveryState};
 use e3_trbfv::shares::BfvEncryptedShares;
 use e3_utils::ArcBytes;
-use e3_zk_helpers::{computation::DkgInputType, CiphernodesCommitteeSize};
+use e3_zk_helpers::computation::DkgInputType;
 use e3_zk_prover::ProofRequestActor;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 

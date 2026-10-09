@@ -9,10 +9,7 @@
 //! committee is set, so the Reed-Solomon parity matrices stay in lockstep with `(N, T)`
 //! and the threshold `QIS` of each preset.
 //!
-//! Usage:
-//!     cargo run --release --bin generate_parity_matrices -- \
-//!         --committee <minimum|micro|small> \
-//!         [--output-root <path-to-circuits/lib/src/configs/committee>]
+//! Run with `pnpm zk parity-matrices --committee <minimum|micro|small>`.
 //!
 //! The Noir literal is produced by
 //! `e3_zk_helpers::circuits::dkg::share_computation::utils::parity_matrix_constant_string`,
@@ -23,17 +20,13 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::Args as ClapArgs;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
-use e3_zk_helpers::ciphernodes_committee::CiphernodesCommitteeSize;
 use e3_zk_helpers::circuits::dkg::share_computation::utils::parity_matrix_constant_string;
 
-#[derive(Parser, Debug)]
-#[command(
-    name = "generate_parity_matrices",
-    about = "Regenerate parity_{insecure,secure}.nr for a committee."
-)]
-struct Args {
+#[derive(ClapArgs, Debug)]
+pub(super) struct Args {
     /// Committee name (`minimum`, `micro`, `small`). Determines `(N, T)`.
     #[arg(long)]
     committee: String,
@@ -109,8 +102,7 @@ pub use crate::configs::{l_module}::threshold::L as L_THRESHOLD;\n\
     )
 }
 
-fn main() -> Result<()> {
-    let args = Args::parse();
+pub(super) fn run(args: Args) -> Result<()> {
     let size = CiphernodesCommitteeSize::from_str(&args.committee)
         .with_context(|| format!("unknown committee: {}", args.committee))?;
     let params = size.values();

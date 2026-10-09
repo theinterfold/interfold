@@ -14,7 +14,7 @@ use crate::circuits::dkg::share_computation::{
 };
 use crate::circuits::{Artifacts, CircuitCodegen, CircuitsErrors, CodegenToml};
 use crate::codegen::CodegenConfigs;
-use crate::registry::Circuit;
+use crate::metadata::Circuit;
 use e3_fhe_params::build_pair_for_preset;
 use e3_fhe_params::BfvPreset;
 
@@ -114,12 +114,12 @@ pub global {}_E_SM_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ciphernodes_committee::CiphernodesCommitteeSize;
     use crate::circuits::computation::Computation;
     use crate::circuits::dkg::share_computation::{Bits, Bounds};
     use crate::codegen::write_artifacts;
     use crate::computation::DkgInputType;
     use crate::Circuit;
+    use e3_committee::CiphernodesCommitteeSize;
     use e3_fhe_params::BfvPreset;
     use tempfile::TempDir;
 

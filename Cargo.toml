@@ -2,8 +2,10 @@
 members = [
   "crates/aggregator",
   "crates/bfv-client",
+  "crates/bfv-math",
   "crates/ciphernode-builder",
   "crates/cli",
+  "crates/committee",
   "crates/committee-hash",
   "crates/compute-provider",
   "crates/config",
@@ -84,6 +86,8 @@ repository = "https://github.com/theinterfold/interfold"
 [workspace.dependencies]
 e3-aggregator = { version = "0.19.0-test.3", path = "./crates/aggregator" }
 e3-bfv-client = { version = "0.19.0-test.3", path = "./crates/bfv-client" }
+e3-bfv-math = { version = "0.19.0-test.3", path = "./crates/bfv-math" }
+e3-committee = { version = "0.19.0-test.3", path = "./crates/committee" }
 e3-config = { version = "0.19.0-test.3", path = "./crates/config" }
 e3-console = { version = "0.19.0-test.3", path = "./crates/console" }
 e3-dashboard = { version = "0.19.0-test.3", path = "./crates/dashboard" }

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 use super::*;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_crypto::SensitiveBytes;
 use e3_events::*;
 use e3_fhe_params::{constants::secure_8192, BfvPreset};
 use e3_trbfv::shares::BfvEncryptedShares;
 use e3_utils::AsBytesSerde;
-use e3_zk_helpers::{computation::DkgInputType, CiphernodesCommitteeSize};
+use e3_zk_helpers::computation::DkgInputType;
 
 const MIB: usize = 1024 * 1024;
 const N: usize = 19;

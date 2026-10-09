@@ -22,6 +22,7 @@ use common::{
     find_bb, require_minimum_circuits, setup_compiled_circuit,
     setup_recursive_aggregation_fold_circuit, setup_test_prover,
 };
+use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{CircuitName, Proof};
 use e3_fhe_params::BfvPreset;
 use e3_zk_helpers::computation::Computation;
@@ -33,7 +34,6 @@ use e3_zk_helpers::dkg::share_computation::{
 use e3_zk_helpers::dkg::share_decryption::{ShareDecryptionCircuit, ShareDecryptionCircuitData};
 use e3_zk_helpers::dkg::share_encryption::ShareEncryptionCircuit;
 use e3_zk_helpers::threshold::pk_generation::PkGenerationCircuit;
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_prover::test_utils::{
     fold_witness_field_strings, fold_witness_input_map, load_vk_artifacts,
 };

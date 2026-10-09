@@ -7,11 +7,12 @@
 use crate::utils::total_expected_for;
 
 use super::*;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_crypto::SensitiveBytes;
 use e3_events::CircuitName;
 use e3_fhe_params::BfvPreset;
 use e3_trbfv::shares::BfvEncryptedShares;
-use e3_zk_helpers::{computation::DkgInputType, CiphernodesCommitteeSize};
+use e3_zk_helpers::computation::DkgInputType;
 
 fn ec() -> EventContext<Sequenced> {
     use e3_events::{InterfoldEventData, TestEvent, Unsequenced};

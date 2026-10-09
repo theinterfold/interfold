@@ -3667,6 +3667,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "e3-bfv-client",
+ "e3-committee",
  "e3-committee-hash",
  "e3-config",
  "e3-data",
@@ -3701,12 +3702,26 @@ name = "e3-bfv-client"
 version = "0.19.0-test.3"
 dependencies = [
  "anyhow",
+ "e3-bfv-math",
  "e3-fhe-params",
- "e3-polynomial",
  "e3-zk-helpers",
  "fhe",
  "fhe-traits",
  "rand 0.9.5",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "e3-bfv-math"
+version = "0.19.0-test.3"
+dependencies = [
+ "e3-polynomial",
+ "fhe",
+ "fhe-math",
+ "fhe-traits",
+ "num-bigint 0.5.1",
+ "num-integer",
+ "num-traits",
  "thiserror 1.0.69",
 ]
 
@@ -3776,7 +3791,6 @@ dependencies = [
  "e3-support-scripts",
  "e3-trbfv",
  "e3-utils",
- "e3-zk-helpers",
  "e3-zk-prover",
  "hex",
  "opentelemetry",
@@ -3799,6 +3813,16 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "zeroize",
+]
+
+[[package]]
+name = "e3-committee"
+version = "0.19.0-test.3"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4021,6 +4045,7 @@ dependencies = [
  "chrono",
  "derivative",
  "e3-ciphernode-builder",
+ "e3-committee",
  "e3-committee-hash",
  "e3-crypto",
  "e3-data",
@@ -4058,6 +4083,7 @@ dependencies = [
  "bloom",
  "e3-bfv-client",
  "e3-ciphernode-builder",
+ "e3-committee",
  "e3-config",
  "e3-crypto",
  "e3-data",
@@ -4212,6 +4238,7 @@ dependencies = [
  "bincode",
  "e3-bfv-client",
  "e3-ciphernode-builder",
+ "e3-committee",
  "e3-committee-hash",
  "e3-config",
  "e3-crypto",
@@ -4272,6 +4299,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "e3-bfv-client",
+ "e3-committee",
  "e3-committee-hash",
  "e3-crypto",
  "e3-data",
@@ -4368,7 +4396,9 @@ dependencies = [
  "bincode",
  "criterion",
  "fhe-math",
+ "ndarray",
  "num-bigint 0.5.1",
+ "num-integer",
  "num-traits",
  "serde",
  "thiserror 1.0.69",
@@ -4403,6 +4433,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "e3-bfv-client",
+ "e3-committee",
  "e3-committee-hash",
  "e3-config",
  "e3-crypto",
@@ -4453,6 +4484,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "chrono",
+ "e3-committee",
  "e3-data",
  "e3-events",
  "e3-fhe-params",
@@ -4570,6 +4602,7 @@ dependencies = [
  "e3-aggregator",
  "e3-bfv-client",
  "e3-ciphernode-builder",
+ "e3-committee",
  "e3-config",
  "e3-crypto",
  "e3-data",
@@ -4688,6 +4721,8 @@ dependencies = [
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
  "clap",
+ "e3-bfv-math",
+ "e3-committee",
  "e3-fhe-params",
  "e3-parity-matrix",
  "e3-polynomial",
@@ -4699,7 +4734,6 @@ dependencies = [
  "itertools 0.14.0",
  "ndarray",
  "num-bigint 0.5.1",
- "num-integer",
  "num-traits",
  "rand 0.9.5",
  "rayon",
@@ -4729,6 +4763,7 @@ dependencies = [
  "directories 5.0.1",
  "e3-bfv-client",
  "e3-ciphernode-builder",
+ "e3-committee",
  "e3-committee-hash",
  "e3-config",
  "e3-crypto",

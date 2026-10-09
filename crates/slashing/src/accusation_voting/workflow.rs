@@ -32,6 +32,7 @@ use alloy::primitives::{keccak256, Address, Bytes, U256};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::signers::SignerSync;
 use alloy::sol_types::SolValue;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{
     AccusationOutcome, AccusationQuorumReached, AccusationVote, CommitmentConsistencyViolation,
     ComputeRequest, ComputeRequestError, ComputeResponse, ComputeResponseKind, CorrelationId, E3id,
@@ -41,7 +42,6 @@ use e3_events::{
     VOTE_TYPEHASH_STR,
 };
 use e3_utils::ArcBytes;
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use tracing::{error, info, warn};
 
 #[path = "state.rs"]

@@ -35,7 +35,6 @@ e3-evm = { workspace = true }
 e3-logger = { workspace = true }
 e3-trbfv = { workspace = true }
 e3-fhe-params = { workspace = true }
-e3-zk-helpers = { workspace = true }
 chrono = { workspace = true }
 e3-init = { workspace = true }
 e3-support-scripts = { workspace = true }

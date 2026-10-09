@@ -24,6 +24,8 @@ use anyhow::Result;
 use e3_crypto::Cipher;
 use e3_events::trap_fut;
 
+use e3_committee::CiphernodesCommittee;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_events::EType;
 use e3_events::{
     BusHandle, ComputeRequest, ComputeRequestError, ComputeRequestErrorKind, ComputeRequestKind,
@@ -72,8 +74,6 @@ use e3_zk_helpers::dkg::share_decryption::{ShareDecryptionCircuit, ShareDecrypti
 use e3_zk_helpers::dkg::share_encryption::{ShareEncryptionCircuit, ShareEncryptionCircuitData};
 use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuit;
 use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuitData;
-use e3_zk_helpers::CiphernodesCommittee;
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_prover::{
     generate_nodes_fold_step, prove_decryption_aggregation_jobs, prove_dkg_aggregation,
     prove_node_dkg_fold, CircuitVariant, DecryptionAggregationJob, DkgAggregationInput,
@@ -310,7 +310,7 @@ mod task_group_tests {
         let proofs = VerifyShareProofsRequest {
             party_proofs: vec![],
             params_preset: e3_fhe_params::BfvPreset::default(),
-            committee_size: e3_zk_helpers::CiphernodesCommitteeSize::Micro,
+            committee_size: e3_committee::CiphernodesCommitteeSize::Micro,
         };
         assert_eq!(
             request_task_group(
@@ -353,7 +353,7 @@ mod task_group_tests {
         let proofs = VerifyShareProofsRequest {
             party_proofs: vec![],
             params_preset: e3_fhe_params::BfvPreset::default(),
-            committee_size: e3_zk_helpers::CiphernodesCommitteeSize::Micro,
+            committee_size: e3_committee::CiphernodesCommitteeSize::Micro,
         };
         let request = |kind| ComputeRequest::zk(kind, CorrelationId::new(), e3_id.clone());
         let event = |data: InterfoldEventData, seq: u64| {
@@ -435,7 +435,7 @@ mod task_group_tests {
             ZkRequest::VerifyShareProofs(VerifyShareProofsRequest {
                 party_proofs: vec![],
                 params_preset: e3_fhe_params::BfvPreset::default(),
-                committee_size: e3_zk_helpers::CiphernodesCommitteeSize::Micro,
+                committee_size: e3_committee::CiphernodesCommitteeSize::Micro,
             }),
             CorrelationId::new(),
             E3id::new("7", 1),
@@ -2204,7 +2204,7 @@ fn handle_decrypted_shares_aggregation_proof(
             .map_err(|e| make_zk_error(&request, format!("plaintext[{}] decode: {:?}", i, e)))?;
 
         // d. Build committee
-        let committee = e3_zk_helpers::CiphernodesCommittee {
+        let committee = e3_committee::CiphernodesCommittee {
             n: req.threshold_n as usize,
             h: num_parties,
             threshold: req.threshold_m as usize,

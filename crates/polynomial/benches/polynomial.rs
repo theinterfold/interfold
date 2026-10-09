@@ -127,12 +127,12 @@ fn benchmark_utility_functions(c: &mut Criterion) {
 
     // Benchmark reduce
     group.bench_function("reduce", |b| {
-        b.iter(|| black_box(e3_polynomial::utils::reduce(&x, &modulus)))
+        b.iter(|| black_box(e3_polynomial::math::reduce(&x, &modulus)))
     });
 
     // Benchmark center
     group.bench_function("center", |b| {
-        b.iter(|| black_box(e3_polynomial::utils::center(&x, &modulus)))
+        b.iter(|| black_box(e3_polynomial::math::center(&x, &modulus)))
     });
 
     // Benchmark range checking
@@ -141,7 +141,7 @@ fn benchmark_utility_functions(c: &mut Criterion) {
 
     group.bench_function("range_check_standard", |b| {
         b.iter(|| {
-            black_box(e3_polynomial::utils::range_check_standard(
+            black_box(e3_polynomial::math::range_check_standard(
                 &coeffs, &bound, &modulus,
             ))
         })

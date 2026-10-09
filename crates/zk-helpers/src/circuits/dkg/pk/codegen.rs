@@ -70,7 +70,7 @@ mod tests {
     use super::*;
     use crate::codegen::write_artifacts;
     use crate::dkg::pk::PkCircuitData;
-    use crate::utils::compute_modulus_bit;
+    use e3_bfv_math::compute_modulus_bit;
 
     use e3_fhe_params::{build_pair_for_preset, BfvPreset};
     use tempfile::TempDir;

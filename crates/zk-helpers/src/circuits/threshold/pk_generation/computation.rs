@@ -9,18 +9,18 @@
 //! [`Configs`], [`Bounds`], [`Bits`], and [`Inputs`] are produced from BFV parameters
 //! and (for input) a public key. They implement [`Computation`] and are used by codegen.
 
-use crate::calculate_bit_width;
-use crate::ciphernodes_committee::CiphernodesCommittee;
-use crate::crt_polynomial_to_toml_json;
-use crate::math::fold_negacyclic;
-use crate::polynomial_to_toml_json;
+use crate::encoding::crt_polynomial_to_toml_json;
+use crate::encoding::polynomial_to_toml_json;
 use crate::threshold::pk_generation::circuit::PkGenerationCircuit;
 use crate::threshold::pk_generation::circuit::PkGenerationCircuitData;
 use crate::threshold::pk_generation::utils::deterministic_crp_crt_polynomial;
 use crate::CircuitsErrors;
 use crate::{CircuitComputation, Computation};
+use e3_bfv_math::calculate_bit_width;
+use e3_committee::CiphernodesCommittee;
 use e3_fhe_params::build_pair_for_preset;
 use e3_fhe_params::BfvPreset;
+use e3_polynomial::fold_negacyclic;
 use e3_polynomial::CrtPolynomial;
 use e3_polynomial::Polynomial;
 use fhe::bfv::SecretKey;
@@ -154,7 +154,7 @@ impl Computation for Bits {
         // matching compute_modulus_bit() used in C5 (pk_aggregation).
         let (threshold_params, _) =
             build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Other(e.to_string()))?;
-        let pk_bit = crate::compute_modulus_bit(&threshold_params);
+        let pk_bit = e3_bfv_math::compute_modulus_bit(&threshold_params);
 
         // One width covers every limb's `r`, so take the widest bound.
         let mut r_bit = 0;
@@ -183,7 +183,7 @@ impl Computation for Bounds {
         let (threshold_params, _) =
             build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Other(e.to_string()))?;
 
-        let committee = crate::ciphernodes_committee::canonical_committee_for_circuit(committee)
+        let committee = crate::committee::canonical_committee_for_circuit(committee)
             .map_err(|e| CircuitsErrors::Other(e.to_string()))?;
         let committee_n = committee.n;
 
@@ -446,7 +446,7 @@ impl Computation for Inputs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CiphernodesCommittee;
+    use e3_committee::CiphernodesCommittee;
     use e3_fhe_params::BfvPreset;
 
     #[test]
@@ -478,14 +478,14 @@ mod tests {
     #[test]
     fn test_bound_and_bits_computation_consistency() {
         let preset = BfvPreset::InsecureThreshold512;
-        use crate::ciphernodes_committee::CiphernodesCommitteeSize;
+        use e3_committee::CiphernodesCommitteeSize;
         let committee = CiphernodesCommitteeSize::Micro.values();
         let bounds = Bounds::compute(preset, &committee).unwrap();
         let bits = Bits::compute(preset, &bounds).unwrap();
 
         // pk_bit uses compute_modulus_bit: (max(qi) - 1) / 2 for centered representation
         let (threshold_params, _) = build_pair_for_preset(preset).unwrap();
-        let expected_bit = crate::compute_modulus_bit(&threshold_params);
+        let expected_bit = e3_bfv_math::compute_modulus_bit(&threshold_params);
 
         assert_eq!(bits.pk_bit, expected_bit);
     }

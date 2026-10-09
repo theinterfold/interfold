@@ -168,6 +168,7 @@ impl ThresholdKeyshareRecoveryPayloads {
 mod tests {
     use super::*;
     use actix::Actor;
+    use e3_committee::CiphernodesCommitteeSize;
     use e3_data::InMemStore;
     use e3_events::{
         E3id, EffectsEnabled, EventConstructorWithTimestamp, EventSource, InterfoldEvent,
@@ -175,7 +176,6 @@ mod tests {
     };
     use e3_trbfv::shares::BfvEncryptedShares;
     use e3_utils::ArcBytes;
-    use e3_zk_helpers::CiphernodesCommitteeSize;
     use std::sync::Arc;
 
     fn context() -> EventContext<Sequenced> {

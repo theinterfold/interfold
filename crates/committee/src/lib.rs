@@ -4,6 +4,8 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+//! Shared committee configurations and canonical honest-party selection.
+
 use std::collections::BTreeSet;
 use std::fmt;
 use std::str::FromStr;
@@ -11,9 +13,7 @@ use std::str::FromStr;
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
-/// @todo this must be integrated inside Ciphernodes & Smart Contract
-/// instead of being a separate type in here. The pvss crate should import this and
-/// the default values that must be used and shared among the whole interfold repository.
+/// Committee sizes in their serialized variant order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CiphernodesCommitteeSize {
     /// Minimum committee size (fast local/testing).
@@ -35,28 +35,32 @@ pub struct CiphernodesCommittee {
 }
 
 impl CiphernodesCommitteeSize {
+    const ALL: [Self; 3] = [Self::Minimum, Self::Micro, Self::Small];
+
     /// Derives the committee size from threshold values (M, N).
     pub fn from_threshold(threshold_m: usize, threshold_n: usize) -> Result<Self> {
-        match (threshold_m, threshold_n) {
-            (1, 3) => Ok(Self::Minimum),
-            (4, 9) => Ok(Self::Micro),
-            (9, 19) => Ok(Self::Small),
-            _ => bail!(
-                "Unknown committee size for threshold ({}, {})",
-                threshold_m,
-                threshold_n
-            ),
+        for size in Self::ALL {
+            let committee = size.values();
+            if (committee.threshold, committee.n) == (threshold_m, threshold_n) {
+                return Ok(size);
+            }
         }
+        bail!(
+            "Unknown committee size for threshold ({}, {})",
+            threshold_m,
+            threshold_n
+        )
     }
 
     /// Derives the committee size from total parties (N) and honest count (H).
     pub fn from_n_h(n: usize, h: usize) -> Result<Self> {
-        match (n, h) {
-            (3, 2) => Ok(Self::Minimum),
-            (9, 5) => Ok(Self::Micro),
-            (19, 14) => Ok(Self::Small),
-            _ => bail!("Unknown committee size for (n={n}, h={h})"),
+        for size in Self::ALL {
+            let committee = size.values();
+            if (committee.n, committee.h) == (n, h) {
+                return Ok(size);
+            }
         }
+        bail!("Unknown committee size for (n={n}, h={h})")
     }
 
     /// Lower-case name as written into `circuits/bin/.active-preset.json` and the
@@ -89,36 +93,6 @@ impl CiphernodesCommitteeSize {
             },
         }
     }
-}
-
-/// Validate `(T, N, H)` against the canonical committee table used by compiled Noir circuits.
-///
-/// Returns the canonical row on success. Callers must pass the same `(threshold_m, threshold_n,
-/// h)` the active `committee/*/mod.nr` was built with — smudging bounds and C1 public IO depend on
-/// `N_PARTIES` (= `n`), not BFV preset degree.
-pub fn canonical_committee_for_circuit(
-    committee: &CiphernodesCommittee,
-) -> Result<CiphernodesCommittee, anyhow::Error> {
-    let expected =
-        CiphernodesCommitteeSize::from_threshold(committee.threshold, committee.n)?.values();
-    if committee.h != expected.h {
-        anyhow::bail!(
-            "committee.h={} does not match canonical h={} for (T={}, N={})",
-            committee.h,
-            expected.h,
-            committee.threshold,
-            committee.n
-        );
-    }
-    if committee.n != expected.n || committee.threshold != expected.threshold {
-        anyhow::bail!(
-            "committee (T={}, N={}, H={}) is not a canonical committee size",
-            committee.threshold,
-            committee.n,
-            committee.h
-        );
-    }
-    Ok(expected)
 }
 
 impl FromStr for CiphernodesCommitteeSize {
@@ -158,31 +132,51 @@ pub fn cap_honest_party_ids(
     ids.into_iter().collect()
 }
 
-/// Merge external honest `party_id`s with `own_party_id`, then [`cap_honest_party_ids`].
-pub fn canonical_honest_party_ids_with_own(
-    committee_h: usize,
-    external_honest_party_ids: impl IntoIterator<Item = u64>,
-    own_party_id: u64,
-) -> BTreeSet<u64> {
-    cap_honest_party_ids(
-        committee_h,
-        external_honest_party_ids
-            .into_iter()
-            .chain(std::iter::once(own_party_id)),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn canonical_committee_for_circuit_accepts_micro_row() {
-        let committee = CiphernodesCommitteeSize::Micro.values();
-        assert_eq!(
-            canonical_committee_for_circuit(&committee).unwrap(),
-            committee
-        );
+    fn committee_configuration_preserves_wire_variants_and_numeric_values() {
+        for (size, name, bytes, (n, h, threshold)) in [
+            (
+                CiphernodesCommitteeSize::Minimum,
+                "Minimum",
+                [0, 0, 0, 0],
+                (3, 2, 1),
+            ),
+            (
+                CiphernodesCommitteeSize::Micro,
+                "Micro",
+                [1, 0, 0, 0],
+                (9, 5, 4),
+            ),
+            (
+                CiphernodesCommitteeSize::Small,
+                "Small",
+                [2, 0, 0, 0],
+                (19, 14, 9),
+            ),
+        ] {
+            assert_eq!(bincode::serialize(&size).unwrap(), bytes);
+            assert_eq!(
+                bincode::deserialize::<CiphernodesCommitteeSize>(&bytes).unwrap(),
+                size
+            );
+            assert_eq!(serde_json::to_value(size).unwrap(), name);
+            let committee = size.values();
+            assert_eq!(
+                (committee.n, committee.h, committee.threshold),
+                (n, h, threshold)
+            );
+            assert_eq!(
+                CiphernodesCommitteeSize::from_threshold(threshold, n).unwrap(),
+                size
+            );
+            assert_eq!(CiphernodesCommitteeSize::from_n_h(n, h).unwrap(), size);
+        }
+        assert!(CiphernodesCommitteeSize::from_threshold(2, 3).is_err());
+        assert!(CiphernodesCommitteeSize::from_n_h(3, 3).is_err());
     }
 
     #[test]
@@ -195,22 +189,10 @@ mod tests {
     fn cap_honest_party_ids_noop_when_at_most_h() {
         let capped = cap_honest_party_ids(8, [2u64, 0, 1]);
         assert_eq!(capped, BTreeSet::from([0, 1, 2]));
-    }
-
-    #[test]
-    fn canonical_with_own_matches_global_lowest_h_when_own_is_high() {
-        // Micro-style: N=9, H=5, all external 0..8 honest, own=8.
-        let external: Vec<u64> = (0..9).collect();
-        let canonical = canonical_honest_party_ids_with_own(5, external, 8);
-        assert_eq!(canonical, BTreeSet::from([0, 1, 2, 3, 4]));
-        assert!(!canonical.contains(&8));
-    }
-
-    #[test]
-    fn canonical_with_own_includes_own_when_in_lowest_h() {
-        let external: Vec<u64> = (0..9).collect();
-        let canonical = canonical_honest_party_ids_with_own(5, external, 4);
-        assert_eq!(canonical, BTreeSet::from([0, 1, 2, 3, 4]));
-        assert!(canonical.contains(&4));
+        assert_eq!(
+            cap_honest_party_ids(2, [7, 2, 2, 1, 7]),
+            BTreeSet::from([1, 2])
+        );
+        assert!(cap_honest_party_ids(0, [1, 2]).is_empty());
     }
 }

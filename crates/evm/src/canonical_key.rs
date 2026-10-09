@@ -8,6 +8,7 @@ use alloy::{
     sol_types::{SolEvent, SolValue},
 };
 use anyhow::{ensure, Context as _, Result};
+use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{
     prelude::*, AggregateId, BusHandle, CommitteePublished, CorrelationId, E3Requested, E3id,
     EventSource, EventStoreQueryBy, EventStoreQueryResponse, InterfoldEvent, InterfoldEventData,
@@ -15,7 +16,6 @@ use e3_events::{
 };
 use e3_request::canonical_key::{CanonicalPublicKey, CanonicalPublicKeys};
 use e3_utils::{actix::channel, ArcBytes};
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use std::collections::{HashMap, HashSet};
 
 use crate::{

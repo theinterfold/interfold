@@ -6,21 +6,12 @@
 
 //! Utilities for Decryption Share Aggregation TRBFV circuit.
 //!
-//! **Generic BFV math** lives in [`crate::math`] and is re-exported here for convenience.
-//! **This module** adds only Shamir + scalar CRT helpers: [`lagrange_recover_at_zero`] and
-//! [`crt_reconstruct`]. Coefficient reduction uses [`e3_polynomial::reduce`] in
-//! [`Inputs::compute`](super::computation::Inputs).
+//! Shamir recovery and scalar CRT reconstruction for decryption-share aggregation.
 
-use crate::math;
 use crate::CircuitsErrors;
-use num_bigint::{BigInt, BigUint};
+use num_bigint::BigInt;
+use num_bigint::BigUint;
 use num_traits::{ToPrimitive, Zero};
-
-// Re-export so callers can use decrypted_shares_aggregation::utils for one-stop.
-pub use math::{
-    compute_delta, compute_delta_half, compute_q_inverse_mod_t, compute_q_mod_t, compute_q_product,
-    compute_t_inv_mod_q, mod_inverse_bigint,
-};
 
 /// Lagrange interpolation at 0: given shares (party_id, value) mod modulus, returns the recovered secret.
 /// Party IDs are 1-based (1, 2, ..., T+1). Formula: f(0) = sum_i y_i * L_i(0) with
@@ -53,7 +44,7 @@ pub fn lagrange_recover_at_zero(
                 let x_j_b = BigInt::from(x_j);
                 let num = BigInt::from(0) - &x_j_b;
                 let den = &x_i_b - &x_j_b;
-                let den_inv = crate::math::mod_inverse_bigint(&den, &m)
+                let den_inv = e3_polynomial::mod_inverse_bigint(&den, &m)
                     .ok_or_else(|| CircuitsErrors::Other("lagrange: den not invertible".into()))?;
                 lambda_i = (&lambda_i * &num % &m * &den_inv % &m + &m) % &m;
             }
@@ -80,14 +71,14 @@ pub fn crt_reconstruct(residues: &[u64], moduli: &[u64]) -> Result<BigUint, Circ
             moduli.len()
         )));
     }
-    let q: BigUint = crate::math::compute_q_product(moduli);
+    let q: BigUint = e3_bfv_math::compute_q_product(moduli);
     let mut result = BigUint::zero();
     for (i, &r_i) in residues.iter().enumerate() {
         let m_i = BigUint::from(moduli[i]);
         let m_i_bigint = BigInt::from(m_i.clone());
         let q_i = &q / &m_i;
         let q_i_bigint = BigInt::from(q_i.clone());
-        let inv = crate::math::mod_inverse_bigint(&q_i_bigint, &m_i_bigint).ok_or_else(|| {
+        let inv = e3_polynomial::mod_inverse_bigint(&q_i_bigint, &m_i_bigint).ok_or_else(|| {
             CircuitsErrors::Other("crt_reconstruct: q_i not invertible mod m_i".into())
         })?;
         let c_i = (BigInt::from(r_i) * &inv) % &m_i_bigint;

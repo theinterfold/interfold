@@ -9,10 +9,10 @@
 use e3_fhe_params::BfvPreset;
 
 use crate::circuits::computation::Computation;
+use crate::encoding::join_display;
 use crate::threshold::pk_aggregation::circuit::PkAggregationCircuit;
 use crate::threshold::pk_aggregation::computation::{Configs, Inputs};
 use crate::threshold::pk_aggregation::PkAggregationCircuitData;
-use crate::utils::join_display;
 use crate::CircuitCodegen;
 use crate::CircuitsErrors;
 use crate::{Artifacts, CodegenToml};
@@ -77,7 +77,7 @@ pub global {}_CONFIGS: PkAggregationConfigs<L> = PkAggregationConfigs::new(QIS);
 mod tests {
     use super::*;
 
-    use crate::CiphernodesCommitteeSize;
+    use e3_committee::CiphernodesCommitteeSize;
 
     #[test]
     fn test_toml_generation_and_structure() {

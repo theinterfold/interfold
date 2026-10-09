@@ -27,7 +27,7 @@ pub struct Artifacts {
 }
 
 /// Trait for circuits that can generate Prover.toml and configs.nr from circuit-specific data.
-pub trait CircuitCodegen: crate::registry::Circuit {
+pub trait CircuitCodegen: crate::metadata::Circuit {
     /// Circuit-specific BFV threshold parameters preset.
     type Preset;
     /// Circuit-specific codegen data (e.g. preset + public key).

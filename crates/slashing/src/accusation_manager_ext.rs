@@ -19,9 +19,9 @@ use alloy::primitives::Address;
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::Result;
 use async_trait::async_trait;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{BusHandle, Committee, E3id, Event, InterfoldEvent, InterfoldEventData};
 use e3_request::{E3Context, E3ContextSnapshot, E3Extension, META_KEY};
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use tracing::{error, info, warn};
 
 /// Convert the compiled polynomial threshold `T` and committee size `N` into

@@ -7,6 +7,7 @@ description = "E3 - BFV client helpers"
 repository.workspace = true
 
 [dependencies]
+e3-bfv-math = { workspace = true }
 anyhow.workspace = true
 e3-fhe-params = { workspace = true }
 e3-zk-helpers = { workspace = true }
@@ -14,7 +15,6 @@ fhe.workspace = true
 fhe-traits.workspace = true
 rand.workspace = true
 thiserror = { workspace = true }
-e3-polynomial = { workspace = true }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(crisp_fhe_optimized)'] }

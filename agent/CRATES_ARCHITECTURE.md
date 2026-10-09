@@ -64,6 +64,7 @@ flowchart TD
         Events[e3-events]
         Config[e3-config]
         FheParams[e3-fhe-params]
+        Committee[e3-committee]
         ZkHelpers[e3-zk-helpers]
         CommitteeHash[e3-committee-hash]
     end
@@ -71,6 +72,7 @@ flowchart TD
     subgraph Foundations[Foundation crates]
         Crypto[e3-crypto]
         Poly[e3-polynomial]
+        BfvMath[e3-bfv-math]
         Matrix[e3-parity-matrix]
         Safe[e3-safe]
         Hamt[e3-hamt]
@@ -126,25 +128,33 @@ flowchart TD
     Aggregator --> Prover
     Aggregator --> Evm
     Aggregator --> CommitteeHash
+    Aggregator --> Committee
     Keyshare --> Fhe
     Keyshare --> Multi
     Keyshare --> Trbfv
+    Keyshare --> Committee
     Slashing --> Request
     Slashing --> ZkHelpers
+    Slashing --> Committee
     Prover --> Slashing
     Prover --> ZkHelpers
+    Prover --> Committee
     Multi --> Prover
     Multi --> Trbfv
+    Multi --> Committee
+    Request --> Committee
     Fhe --> BfvClient
     Trbfv --> BfvClient
     BfvClient --> FheParams
     BfvClient --> Poly
     BfvClient --> ZkHelpers
+    BfvClient --> BfvMath
 
     Evm --> Config
     Evm --> Data
     Evm --> DataAvailability
     Evm --> Events
+    Evm --> Committee
     Net --> Config
     Net --> Data
     Net --> Events
@@ -162,9 +172,13 @@ flowchart TD
     Events --> FheParams
     Events --> Trbfv
     Events --> ZkHelpers
+    Events --> Committee
+    ZkHelpers --> Committee
+    ZkHelpers --> BfvMath
     ZkHelpers --> Poly
     ZkHelpers --> Matrix
     ZkHelpers --> Safe
+    BfvMath --> Poly
     Crypto --> Utils
     Utils --> UtilsDerive
 

@@ -15,8 +15,8 @@ use crate::circuits::dkg::share_encryption::ShareEncryptionOutput;
 use crate::circuits::{Artifacts, CircuitCodegen, CircuitsErrors, CodegenToml};
 use crate::codegen::CodegenConfigs;
 use crate::computation::Computation;
-use crate::registry::Circuit;
-use crate::utils::join_display;
+use crate::encoding::join_display;
+use crate::metadata::Circuit;
 use e3_fhe_params::BfvPreset;
 
 /// Implementation of [`CircuitCodegen`] for [`ShareEncryptionCircuit`].
@@ -231,7 +231,8 @@ mod tests {
     use crate::circuits::dkg::share_encryption::{Bounds, ShareEncryptionCircuitData};
     use crate::computation::Computation;
     use crate::computation::DkgInputType;
-    use crate::{CiphernodesCommitteeSize, Circuit};
+    use crate::Circuit;
+    use e3_committee::CiphernodesCommitteeSize;
     use e3_fhe_params::BfvPreset;
 
     #[test]

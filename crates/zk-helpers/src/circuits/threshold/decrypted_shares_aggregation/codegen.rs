@@ -103,7 +103,7 @@ pub global {}_CONFIGS: DecryptedSharesAggregationConfigs<L> =
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CiphernodesCommitteeSize;
+    use e3_committee::CiphernodesCommitteeSize;
 
     #[test]
     fn test_configs_generation() {

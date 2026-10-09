@@ -42,6 +42,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use actix::{Actor, Addr, AsyncContext, Context, Handler, SpawnHandle};
 use alloy::primitives::{Address, Bytes};
 use alloy::signers::local::PrivateKeySigner;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{
     AccusationVote, BusHandle, CommitmentConsistencyViolation, ComputeRequestError,
     ComputeResponse, E3id, EventPublisher, EventSubscriber, EventType, InterfoldEvent,
@@ -49,7 +50,6 @@ use e3_events::{
     ProofVerificationPassed, TypedEvent,
 };
 use e3_utils::NotifySync;
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use tracing::{error, warn};
 
 pub use crate::workflow::accusation_voting::Clock;

@@ -241,7 +241,8 @@ pub fn compute_ct_commitment_with_params(
 
     #[cfg(crisp_fhe_optimized)]
     if let Some(components) = Ciphertext::power_basis_from_bytes_if_canonical(ct, params)? {
-        use e3_zk_helpers::{commitments, utils::compute_modulus_bit};
+        use e3_bfv_math::compute_modulus_bit;
+        use e3_zk_helpers::commitments;
         if let Some(commitment) = commitments::compute_ciphertext_commitment_from_power_basis(
             &components[0],
             &components[1],

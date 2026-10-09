@@ -1,0 +1,17 @@
+[package]
+name = "e3-bfv-math"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "BFV scaling, plaintext decoding, and coefficient widths"
+repository.workspace = true
+
+[dependencies]
+e3-polynomial = { workspace = true }
+fhe = { workspace = true }
+fhe-math = { workspace = true }
+fhe-traits = { workspace = true }
+num-bigint = { workspace = true }
+num-integer = { workspace = true }
+num-traits = { workspace = true }
+thiserror = { workspace = true }

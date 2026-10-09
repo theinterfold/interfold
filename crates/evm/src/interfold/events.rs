@@ -10,6 +10,7 @@ use crate::contracts::IInterfold;
 use alloy::primitives::{keccak256, LogData, B256};
 use alloy::sol_types::{SolEvent, SolValue};
 use anyhow::{anyhow, Context as _, Result};
+use e3_committee::CiphernodesCommitteeSize;
 use e3_events::E3id;
 use e3_events::InterfoldEventData;
 use e3_events::{
@@ -19,7 +20,6 @@ use e3_events::{
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset};
 use e3_trbfv::helpers::calculate_error_size;
 use e3_utils::ArcBytes;
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use num_bigint::BigUint;
 use tracing::{info, trace, warn};
 

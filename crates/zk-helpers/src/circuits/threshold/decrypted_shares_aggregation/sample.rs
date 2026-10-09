@@ -12,11 +12,9 @@
 
 use crate::circuits::computation::Computation;
 use crate::threshold::decrypted_shares_aggregation::computation::Configs;
+use crate::threshold::decrypted_shares_aggregation::DecryptedSharesAggregationCircuitData;
 use crate::CircuitsErrors;
-use crate::{
-    threshold::decrypted_shares_aggregation::DecryptedSharesAggregationCircuitData,
-    CiphernodesCommittee,
-};
+use e3_committee::CiphernodesCommittee;
 use e3_fhe_params::{build_pair_for_preset, create_deterministic_crp_from_default_seed, BfvPreset};
 use fhe::bfv::{Encoding, Plaintext, PublicKey, SecretKey};
 use fhe::mbfv::{AggregateIter, PublicKeyShare};
@@ -285,8 +283,8 @@ mod tests {
     use crate::{
         computation::Computation,
         threshold::decrypted_shares_aggregation::{DecryptedSharesAggregationCircuitData, Inputs},
-        CiphernodesCommitteeSize,
     };
+    use e3_committee::CiphernodesCommitteeSize;
     use e3_fhe_params::BfvPreset;
     use num_bigint::BigInt;
 

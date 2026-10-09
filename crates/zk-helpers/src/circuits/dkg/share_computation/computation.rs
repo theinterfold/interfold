@@ -10,19 +10,17 @@
 //! and (for input) secret plus shares. Input values are normalized to [0, q_j) per modulus
 //! and then to the ZKP field modulus so the Noir circuit's range check and parity check succeed.
 
-use crate::bigint_3d_to_json_values;
 use crate::circuits::commitments::{
     compute_share_computation_e_sm_commitment, compute_share_computation_sk_commitment,
 };
 use crate::computation::DkgInputType;
 use crate::dkg::share_computation::ShareComputationCircuit;
 use crate::dkg::share_computation::ShareComputationCircuitData;
+use crate::encoding::bigint_3d_to_json_values;
+use crate::encoding::{crt_polynomial_to_toml_json, poly_coefficients_to_toml_json};
 use crate::CircuitsErrors;
-use crate::{
-    calculate_bit_width, compute_modulus_bit, crt_polynomial_to_toml_json,
-    poly_coefficients_to_toml_json,
-};
 use crate::{CircuitComputation, Computation};
+use e3_bfv_math::{calculate_bit_width, compute_modulus_bit};
 use e3_fhe_params::build_pair_for_preset;
 use e3_fhe_params::BfvPreset;
 use e3_polynomial::{reduce, CrtPolynomial};
@@ -127,11 +125,11 @@ impl Computation for Configs {
 impl Computation for Bits {
     type Preset = BfvPreset;
     type Data = Bounds;
-    type Error = crate::utils::ZkHelpersUtilsError;
+    type Error = crate::encoding::ZkHelpersUtilsError;
 
     fn compute(preset: Self::Preset, data: &Self::Data) -> Result<Self, Self::Error> {
         let (threshold_params, _) = build_pair_for_preset(preset)
-            .map_err(|e| crate::utils::ZkHelpersUtilsError::ParseBound(e.to_string()))?;
+            .map_err(|e| crate::encoding::ZkHelpersUtilsError::ParseBound(e.to_string()))?;
 
         let mut bit_share = 0;
         for &qi in threshold_params.moduli() {
@@ -301,9 +299,9 @@ impl Computation for Inputs {
 mod tests {
     use super::*;
 
-    use crate::ciphernodes_committee::CiphernodesCommitteeSize;
     use crate::computation::DkgInputType;
     use crate::dkg::share_computation::ShareComputationCircuitData;
+    use e3_committee::CiphernodesCommitteeSize;
     use e3_fhe_params::BfvPreset;
 
     #[test]

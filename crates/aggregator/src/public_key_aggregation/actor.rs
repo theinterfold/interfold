@@ -11,6 +11,7 @@ use crate::workflow::publickey_aggregation::{
 };
 use actix::prelude::*;
 use anyhow::Result;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_data::Persistable;
 use e3_events::DkgFoldAttestationContext;
 use e3_events::{
@@ -29,7 +30,6 @@ use e3_fhe::{Fhe, GetAggregatePublicKey};
 use e3_fhe_params::BfvPreset;
 use e3_utils::NotifySync;
 use e3_utils::{ArcBytes, MAILBOX_LIMIT};
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use std::{collections::BTreeSet, sync::Arc};
 use tracing::{error, info, warn};
 

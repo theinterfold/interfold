@@ -17,11 +17,11 @@ use crate::repo::CommitmentConsistencyRepositoryFactory;
 use actix::Actor;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_data::{DataStore, RepositoriesFactory};
 use e3_events::{BusHandle, CommitmentLink, Event, InterfoldEvent, InterfoldEventData};
 use e3_fhe_params::BfvPreset;
 use e3_request::{E3Context, E3ContextSnapshot, E3Extension, META_KEY};
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use tracing::{error, info};
 
 type LinksFactory = Box<dyn Fn(BfvPreset) -> Vec<Box<dyn CommitmentLink>> + Send + Sync>;

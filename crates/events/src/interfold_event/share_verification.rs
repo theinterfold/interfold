@@ -14,7 +14,7 @@
 //! when verification finishes, carrying the set of dishonest party IDs.
 
 use crate::{E3id, PartyProofsToVerify, PartyShareDecryptionProofsToVerify};
-use e3_zk_helpers::CiphernodesCommitteeSize;
+use e3_committee::CiphernodesCommitteeSize;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 

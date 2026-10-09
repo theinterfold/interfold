@@ -4,10 +4,21 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Utility functions for polynomial operations.
+//! Modular arithmetic and coefficient range checks.
 
 use num_bigint::BigInt;
+use num_integer::Integer;
 use num_traits::Zero;
+
+/// Return a^{-1} mod m, or None if gcd(a, m) != 1.
+pub fn mod_inverse_bigint(a: &BigInt, m: &BigInt) -> Option<BigInt> {
+    let g = a.extended_gcd(m);
+    if g.gcd != BigInt::from(1) {
+        return None;
+    }
+    let inv = g.x % m;
+    Some(if inv < BigInt::zero() { inv + m } else { inv })
+}
 
 /// Centers a value already in [0, modulus) into the symmetric range (-modulus/2, modulus/2].
 ///

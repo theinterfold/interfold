@@ -723,6 +723,7 @@ mod tests {
             sol_types::SolCall,
             transports::TransportErrorKind,
         };
+        use e3_committee::CiphernodesCommitteeSize;
         use e3_data::{InMemEventLog, InMemSequenceIndex};
         use e3_events::{
             CiphertextOutputPublished, CircuitName, EventBusFanout, EventStore, EventStoreRouter,
@@ -731,7 +732,6 @@ mod tests {
         use e3_fhe_params::BfvPreset;
         use e3_request::canonical_key::CanonicalPublicKey;
         use e3_utils::ArcBytes;
-        use e3_zk_helpers::CiphernodesCommitteeSize;
         use std::sync::{Arc, Mutex};
 
         for authority_after_replay in [false, true] {

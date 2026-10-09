@@ -19,7 +19,7 @@ impl ShareVerificationActor {
         pre_dishonest: BTreeSet<u64>,
         ec: EventContext<Sequenced>,
         params_preset: e3_fhe_params::BfvPreset,
-        committee_size: e3_zk_helpers::CiphernodesCommitteeSize,
+        committee_size: e3_committee::CiphernodesCommitteeSize,
         store_passed_proofs: impl FnOnce(&mut PendingConsistencyCheck, Vec<P>),
     ) {
         let e3_id_str = e3_id.to_string();

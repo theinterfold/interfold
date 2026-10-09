@@ -7,6 +7,7 @@
 use super::*;
 use actix::{Actor, Context, Handler};
 use alloy::signers::local::PrivateKeySigner;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{
     hlc_factory::HlcFactory, ComputeRequestErrorKind, EffectsEnabled, Event, EventBus,
     EventBusBarrier, EventBusConfig, EventPublisher, GetEvents, Proof, ProofPayload, Sequencer,
@@ -14,7 +15,6 @@ use e3_events::{
 };
 use e3_fhe_params::BfvPreset;
 use e3_utils::utility_types::ArcBytes;
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use std::{collections::BTreeSet, time::Duration};
 
 #[derive(Default)]

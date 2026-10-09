@@ -24,6 +24,7 @@ use std::path::PathBuf;
 use common::{
     find_bb, setup_compiled_circuit, setup_recursive_aggregation_fold_circuit, setup_test_prover,
 };
+use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{CircuitName, Proof};
 use e3_fhe_params::BfvPreset;
 use e3_zk_helpers::computation::DkgInputType;
@@ -32,7 +33,6 @@ use e3_zk_helpers::threshold::decrypted_shares_aggregation::MAX_MSG_NON_ZERO_COE
 use e3_zk_helpers::threshold::share_decryption::{
     ShareDecryptionCircuit, ShareDecryptionCircuitData,
 };
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_prover::test_utils::{fold_witness_field_strings, load_vk_artifacts};
 use e3_zk_prover::{
     generate_sequential_c3_fold, generate_sequential_c6_fold, CircuitVariant, Provable, ZkBackend,

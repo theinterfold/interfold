@@ -14,6 +14,7 @@
 //! stashes the C4 requests from the returned plan.
 
 use anyhow::{anyhow, bail, Context, Result};
+use e3_committee::CiphernodesCommitteeSize;
 use e3_crypto::Cipher;
 use e3_events::{DkgShareDecryptionProofRequest, E3id, ThresholdShare};
 use e3_fhe_params::{BfvParamSet, BfvPreset};
@@ -25,7 +26,6 @@ use e3_trbfv::{
 };
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_helpers::computation::DkgInputType;
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 use tracing::{info, warn};

@@ -11,9 +11,8 @@
 
 use std::sync::Arc;
 
-use crate::{
-    threshold::share_decryption::ShareDecryptionCircuitData, CiphernodesCommittee, CircuitsErrors,
-};
+use crate::{threshold::share_decryption::ShareDecryptionCircuitData, CircuitsErrors};
+use e3_committee::CiphernodesCommittee;
 use e3_fhe_params::{build_pair_for_preset, create_deterministic_crp_from_default_seed, BfvPreset};
 use e3_polynomial::CrtPolynomial;
 use fhe::{
@@ -249,7 +248,7 @@ impl ShareDecryptionCircuitData {
 
 #[cfg(test)]
 mod tests {
-    use crate::CiphernodesCommitteeSize;
+    use e3_committee::CiphernodesCommitteeSize;
 
     use super::*;
     use e3_fhe_params::BfvPreset;

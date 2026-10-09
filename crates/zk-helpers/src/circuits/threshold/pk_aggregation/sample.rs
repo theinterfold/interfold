@@ -9,9 +9,8 @@
 //! [`Sample`] produces a random BFV public key shares from H honest parties and the aggregated public key;
 //! the public key shares and aggregated public key are used as input for codegen and tests.
 
-use crate::{
-    threshold::pk_aggregation::PkAggregationCircuitData, CiphernodesCommittee, CircuitsErrors,
-};
+use crate::{threshold::pk_aggregation::PkAggregationCircuitData, CircuitsErrors};
+use e3_committee::CiphernodesCommittee;
 use e3_fhe_params::{build_pair_for_preset, create_deterministic_crp_from_default_seed, BfvPreset};
 use e3_polynomial::CrtPolynomial;
 use fhe::bfv::{PublicKey, SecretKey};
@@ -69,8 +68,8 @@ mod tests {
         computation::Computation,
         threshold::pk_aggregation::computation::Configs,
         threshold::pk_aggregation::{Inputs, PkAggregationCircuitData},
-        CiphernodesCommitteeSize,
     };
+    use e3_committee::CiphernodesCommitteeSize;
 
     use e3_fhe_params::BfvPreset;
 

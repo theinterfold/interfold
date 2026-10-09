@@ -41,7 +41,7 @@ pub trait Computation: Sized {
 }
 
 /// Circuit-specific computation: parameters and input produce bounds, bits, circuit inputs, etc.
-pub trait CircuitComputation: crate::registry::Circuit {
+pub trait CircuitComputation: crate::metadata::Circuit {
     type Preset;
     type Data;
     type Output;

@@ -14,10 +14,9 @@ every section.
 
 - Committee `(N, T, H)` and each complete BFV parameter tuple must stay synchronized.
   `scripts/check-committee.sh` fails when these copies disagree: committee values in
-  `circuits/lib/src/configs/committee/<name>/mod.nr`,
-  `crates/zk-helpers/src/ciphernodes_committee.rs`, `ActiveCryptoConfig.sol`, and
-  `packages/interfold-contracts/scripts/utils.ts`; the threshold BFV tuple in
-  `packages/interfold-contracts/scripts/protocol/constants.ts`,
+  `circuits/lib/src/configs/committee/<name>/mod.nr`, `crates/committee/src/lib.rs`,
+  `ActiveCryptoConfig.sol`, and `packages/interfold-contracts/scripts/utils.ts`; the threshold BFV
+  tuple in `packages/interfold-contracts/scripts/protocol/constants.ts`,
   `crates/fhe-params/src/constants.rs`, and
   `circuits/lib/src/configs/{insecure,secure}/threshold.nr`; and the configuration IDs in
   `utils.ts`, `ActiveCryptoConfig.sol`, `tasks/interfold.ts`, `packages/interfold-sdk/src/utils.ts`,
@@ -40,9 +39,8 @@ every section.
   `protocol/deployContracts.ts`; `BfvPkVerifierRouter.sol`
 - Parity matrices (`parity_{insecure,secure}.nr`) are derived artifacts regenerated from preset
   `QIS` + committee `(N, T)`. Do not hand-edit them. `scripts/check-committee.sh` regenerates and
-  diffs them only when `target/release/generate_parity_matrices` and `nargo` exist; the Agent
-  Harness CI job skips that step. The CI circuits job catches edits to the committed selection
-  through its rebuild diff.
+  diffs them only when `target/release/zk-cli` and `nargo` exist; the Agent Harness CI job skips
+  that step. The CI circuits job catches edits to the committed selection through its rebuild diff.
 - The C1 and C2 bound globals (`PK_GENERATION_*`, `SHARE_COMPUTATION_*`) are derived artifacts of
   the preset and committee. The build regenerates them for the selected pair and replaces each whole
   declaration, array bounds included. It rejects a declaration with its config file's prefix that
@@ -107,8 +105,9 @@ every section.
   It normalizes the active preset selector because each pair already identifies its preset. A
   library-only change invalidates every affected pair. Rebuild and push those pairs before release.
 - The pair source hash ignores generated C1/C2 bound values and includes the Rust sources that
-  generate them, without their `#[cfg(test)]` modules. Switching the active committee or editing a
-  test module must not change another pair's source hash.
+  generate them, including `bfv-math`, `committee`, and `polynomial`, without their `#[cfg(test)]`
+  modules. Switching the active committee or editing a test module must not change another pair's
+  source hash.
 - The source hash reads `Cargo.lock` for external crate pins only: name, version, source, and
   checksum. A workspace version bump or a dependency edit inside the workspace must not make the
   published artifact matrix stale. — `scripts/build-circuits.ts`

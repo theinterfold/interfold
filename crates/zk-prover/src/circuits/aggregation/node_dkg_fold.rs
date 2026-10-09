@@ -17,9 +17,9 @@ use crate::error::ZkError;
 use crate::prover::ZkProver;
 use crate::witness::{CompiledCircuit, WitnessGenerator};
 use alloy::primitives::Address;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{CircuitName, CircuitVariant, Proof};
 use e3_fhe_params::BfvPreset;
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::time::Instant;
@@ -673,7 +673,7 @@ pub fn prove_decryption_aggregation_jobs(
 #[cfg(test)]
 mod tests {
     use super::validate_dkg_aggregation_shape;
-    use e3_zk_helpers::CiphernodesCommitteeSize;
+    use e3_committee::CiphernodesCommitteeSize;
 
     #[test]
     fn dkg_aggregation_accepts_all_canonical_h_of_n_shapes() {

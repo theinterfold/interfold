@@ -25,6 +25,7 @@ use common::{
     extract_field, extract_field_from_end, find_bb, require_minimum_circuits,
     setup_compiled_circuit, setup_test_prover,
 };
+use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{CircuitName, Proof};
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_polynomial::{CrtPolynomial, Polynomial};
@@ -56,7 +57,6 @@ use e3_zk_helpers::threshold::{
         ShareDecryptionCircuitData as ThresholdShareDecryptionCircuitData,
     },
 };
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_helpers::{
     compute_pk_aggregation_commitment, compute_share_computation_sk_commitment,
     compute_threshold_pk_commitment,

@@ -14,6 +14,7 @@ use crate::workflow::threshold_plaintext_aggregation::{
 use actix::prelude::*;
 use alloy::primitives::Address;
 use anyhow::{anyhow, bail, ensure, Result};
+use e3_committee::CiphernodesCommitteeSize;
 use e3_data::Persistable;
 use e3_events::{
     prelude::*, trap, AggregationInputsReady, AggregationPhase, AggregationProofPending,
@@ -34,7 +35,6 @@ use e3_trbfv::{
 };
 use e3_utils::NotifySync;
 use e3_utils::{utility_types::ArcBytes, MAILBOX_LIMIT};
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use tracing::{debug, info, trace, warn};
 
 // Threshold-plaintext aggregation state machine + pure transition logic now live in

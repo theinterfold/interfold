@@ -15,6 +15,7 @@ use std::time::Duration;
 use actix::{Actor, Addr, AsyncContext, Context, Handler, Message, Recipient, SpawnHandle};
 use alloy::primitives::{keccak256, Address, Bytes};
 use alloy::sol_types::SolValue;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{
     BusHandle, Committee, E3id, EncryptionKey, EncryptionKeyCreated, EncryptionKeyReceived,
     EventContext, EventContextAccessors, EventPublisher, EventSubscriber, EventType,
@@ -24,7 +25,6 @@ use e3_events::{
 use e3_fhe_params::BfvPreset;
 use e3_request::E3Meta;
 use e3_utils::NotifySync;
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use tracing::{debug, error, info, warn};
 
 use crate::domain::proof_verification::{dkg_has_ended, validate_received_key};

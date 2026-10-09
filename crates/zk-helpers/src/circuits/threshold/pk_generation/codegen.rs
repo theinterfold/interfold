@@ -9,11 +9,11 @@
 use e3_fhe_params::BfvPreset;
 
 use crate::circuits::computation::Computation;
+use crate::encoding::join_display;
 use crate::threshold::pk_generation::circuit::PkGenerationCircuit;
 use crate::threshold::pk_generation::computation::{Configs, Inputs};
 use crate::threshold::pk_generation::utils::crp_matrix_constant_string;
 use crate::threshold::pk_generation::PkGenerationCircuitData;
-use crate::utils::join_display;
 use crate::CircuitCodegen;
 use crate::CircuitsErrors;
 use crate::{Artifacts, CodegenToml};
@@ -202,7 +202,7 @@ mod tests {
         assert!(configs_path.exists());
 
         let configs_content = std::fs::read_to_string(&configs_path).unwrap();
-        use crate::ciphernodes_committee::CiphernodesCommitteeSize;
+        use e3_committee::CiphernodesCommitteeSize;
         let committee = CiphernodesCommitteeSize::Micro.values();
         let bounds = Bounds::compute(BfvPreset::InsecureThreshold512, &committee).unwrap();
         let bits = Bits::compute(BfvPreset::InsecureThreshold512, &bounds).unwrap();
