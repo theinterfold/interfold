@@ -146,7 +146,6 @@ flowchart TD
     Fhe --> BfvClient
     Trbfv --> BfvClient
     BfvClient --> FheParams
-    BfvClient --> Poly
     BfvClient --> ZkHelpers
     BfvClient --> BfvMath
 
