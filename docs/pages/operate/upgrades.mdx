@@ -315,10 +315,13 @@ nothing. It also refuses while the node holds slash reports that it has not subm
 E3 that is complete, because the chain cannot restore their evidence. That refusal lists each chain
 and the number of its reports. `--allow-active-e3s` overrides both refusals.
 
-A container from an image earlier than v0.19.0 keeps its state inside the container, not on the
+A container from a CLI image earlier than v0.19.0 keeps its state inside the container, not on the
 volume. For such a container, follow
 [Move state from an earlier image](/operate/running#move-state-from-an-earlier-image). It copies the
 state to the volume, and then it resets the state.
+
+The DAppNode package stores its state on the `/data` volume. Keep that volume. Use the one-off
+container commands below instead of the CLI image migration procedure.
 
 <Steps>
 
@@ -363,6 +366,38 @@ Run the reset command:
 ```bash
 interfold node reset-data --name <node> --yes
 ```
+
+For DAppNode, stop the package and back up its complete `/data` volume first. Use the new DAppNode
+image, not the CLI image. Confirm its binary version:
+
+```bash
+docker run --rm --entrypoint interfold <new-dappnode-image> --version
+```
+
+Record the operator address and peer ID before the reset:
+
+```bash
+docker run --rm --volumes-from <stopped-dappnode-container> --workdir /data \
+  --entrypoint interfold <new-dappnode-image> wallet get --config /data/config.yaml
+docker run --rm --volumes-from <stopped-dappnode-container> --workdir /data \
+  --entrypoint interfold <new-dappnode-image> net get-peer-id --config /data/config.yaml
+```
+
+Run the reset against the stopped package's existing mounts:
+
+```bash
+docker run --rm --volumes-from <stopped-dappnode-container> --workdir /data \
+  --entrypoint interfold <new-dappnode-image> \
+  node reset-data --name _default --yes --config /data/config.yaml
+```
+
+The one-off container uses the existing configuration and identity. It does not run the package
+entrypoint or start a node. Do not add `--allow-active-e3s` if the reset refuses.
+
+Run both identity commands again. Compare their results with the values recorded before the reset.
+
+Restart the DAppNode package only after the identity checks pass and the contract cutover is
+complete.
 
 The command reads the encrypted operator key and libp2p keypair, and writes them to a backup file.
 It removes the key/value store and every event-log file (`log.0`, `log.<chain_id>`, and more). Then

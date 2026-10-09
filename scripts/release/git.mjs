@@ -97,7 +97,7 @@ export function tagRelease(versionInput, rootDir = ROOT_DIR) {
   }
 
   console.log(`Pushed ${tag} at ${localSha}.`)
-  console.log('The release workflow will run complete CI before it publishes the release.')
+  console.log('PR CI must pass before tagging. The release workflow checks builds and publication, not the full test suite.')
 }
 
 export function promoteStableTag(candidateSha, environment = process.env, rootDir = ROOT_DIR) {
