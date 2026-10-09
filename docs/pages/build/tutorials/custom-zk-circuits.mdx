@@ -99,7 +99,7 @@ Add a `circuits` directory to the project. The verifier goes in `contracts/verif
 
 ### Write the input circuit
 
-Create `circuits/binary_input/Nargo.toml`. The library at `v0.18.0` uses the `insecure-512` preset,
+Create `circuits/binary_input/Nargo.toml`. The library at `v0.18.0` uses the `insecure-64` preset,
 which the template requests (`paramSet: 0`).
 
 ```toml filename="circuits/binary_input/Nargo.toml"
@@ -283,7 +283,7 @@ mv target/vk_hash target/binary_input.vk_recursive_hash
 ```
 
 <Callout type='info'>
-  The checkout must select `insecure-512` with `minimum`, as the tag does. If you ran `pnpm
+  The checkout must select `insecure-64` with `minimum`, as the tag does. If you ran `pnpm
   build:circuits` for another pair, the user-data-encryption circuits no longer match the library
   that your circuits use.
 </Callout>

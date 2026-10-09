@@ -30,11 +30,11 @@ if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
   (cd "$ROOT_DIR" && pnpm store:circuits pull)
   (cd "$ROOT_DIR" && pnpm store:circuits verify-release)
   (cd "$ROOT_DIR" && pnpm build:circuits \
-    --preset insecure-512 \
+    --preset insecure-64 \
     --committee minimum \
     --hydrate-bin-only \
     --no-clean-targets)
-  for preset in insecure-512 secure-8192; do
+  for preset in insecure-64 secure-8192; do
     mkdir -p "${INTEGRATION_NOIR}/circuits/${preset}"
     cp -R "${ROOT_DIR}/dist/circuits/${preset}/minimum" \
       "${INTEGRATION_NOIR}/circuits/${preset}/"
@@ -48,7 +48,7 @@ if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
 else
   # C5/C7 final aggregation is skipped, but DKG and decryption leaf proofs
   # still execute. Build only those two source groups for the fast CI profile.
-  (cd "$ROOT_DIR" && pnpm build:circuits --preset insecure-512 --group dkg,threshold -o "${INTEGRATION_NOIR}/circuits")
+  (cd "$ROOT_DIR" && pnpm build:circuits --preset insecure-64 --group dkg,threshold -o "${INTEGRATION_NOIR}/circuits")
 fi
 
 if ! command -v jq >/dev/null 2>&1; then

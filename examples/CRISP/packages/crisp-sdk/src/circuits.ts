@@ -7,7 +7,7 @@
 import type { CompiledCircuit } from '@noir-lang/noir_js'
 
 /** BFV parameter sets the circuits can be compiled against. */
-export type CircuitPreset = 'insecure-512' | 'secure-8192'
+export type CircuitPreset = 'insecure-64' | 'secure-8192'
 
 /**
  * The circuits whose ABI is shaped by the BFV degree, and which therefore exist once per preset.
@@ -32,12 +32,12 @@ let registered: CircuitBundle | null = null
  * Install the preset-bound circuits used by `generateProof`.
  *
  * The bundle is not bundled into the main entry point, because the secure-8192 artifacts are more
- * than an order of magnitude larger than the insecure-512 ones. Load the preset selected by the
+ * than an order of magnitude larger than the insecure-64 ones. Load the preset selected by the
  * round from its subpath and register it before proving:
  *
  * ```ts
  * import { setCircuits } from '@crisp-e3/sdk'
- * import { loadCircuits } from '@crisp-e3/sdk/insecure-512'
+ * import { loadCircuits } from '@crisp-e3/sdk/insecure-64'
  *
  * setCircuits(await loadCircuits())
  * ```
@@ -62,7 +62,7 @@ export const registeredPreset = (): CircuitPreset | null => registered?.preset ?
 export const requireCircuits = (): CircuitBundle => {
   if (!registered) {
     throw new Error(
-      'No circuit preset registered. Import `loadCircuits` from "@crisp-e3/sdk/insecure-512" or ' +
+      'No circuit preset registered. Import `loadCircuits` from "@crisp-e3/sdk/insecure-64" or ' +
         '"@crisp-e3/sdk/secure-8192" and pass the result to `setCircuits()` before proving.',
     )
   }

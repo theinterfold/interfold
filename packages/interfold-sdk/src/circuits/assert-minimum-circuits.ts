@@ -90,7 +90,7 @@ async function assertNodeCircuits(): Promise<void> {
     )
   }
 
-  if (active.preset !== 'insecure-512') {
-    throw new SDKError('SDK encryption circuits require the insecure-512 preset.', 'SDK_CIRCUIT_PRESET_MISMATCH')
+  if (active.preset !== 'insecure-64') {
+    throw new SDKError('SDK encryption circuits require the insecure-64 preset.', 'SDK_CIRCUIT_PRESET_MISMATCH')
   }
 }

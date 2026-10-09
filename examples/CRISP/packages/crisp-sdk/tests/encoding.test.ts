@@ -8,7 +8,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import { setCircuits } from '../src/circuits'
 import { getZkInputsGenerator, setZkInputsGeneratorPreset } from '../src/encoding'
-import { loadCircuits } from '../src/presets/insecure-512'
+import { loadCircuits } from '../src/presets/insecure-64'
 
 beforeAll(async () => {
   setCircuits(await loadCircuits())
@@ -24,6 +24,6 @@ describe('ZK inputs generator preset', () => {
     expect(getZkInputsGenerator().getBFVParams().degree).toBe(8192)
 
     setZkInputsGeneratorPreset(null)
-    expect(getZkInputsGenerator().getBFVParams().degree).toBe(512)
+    expect(getZkInputsGenerator().getBFVParams().degree).toBe(64)
   })
 })

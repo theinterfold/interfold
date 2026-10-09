@@ -92,14 +92,23 @@ mod tests {
     fn test_generate_sample() {
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample =
-            PkGenerationCircuitData::generate_sample(BfvPreset::InsecureThreshold512, committee)
+            PkGenerationCircuitData::generate_sample(BfvPreset::InsecureThreshold64, committee)
                 .unwrap();
-        let inputs = Inputs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
-        let bounds = Bounds::compute(BfvPreset::InsecureThreshold512, &sample.committee).unwrap();
+        let inputs = Inputs::compute(BfvPreset::InsecureThreshold64, &sample).unwrap();
+        let bounds = Bounds::compute(BfvPreset::InsecureThreshold64, &sample.committee).unwrap();
 
-        assert_eq!(inputs.pk0is.limbs.len(), 2);
-        assert_eq!(inputs.e_sm.limbs.len(), 2);
-        assert_eq!(inputs.ris.limbs.len(), 2);
+        assert_eq!(
+            inputs.pk0is.limbs.len(),
+            e3_fhe_params::constants::insecure_64::threshold::MODULI.len()
+        );
+        assert_eq!(
+            inputs.e_sm.limbs.len(),
+            e3_fhe_params::constants::insecure_64::threshold::MODULI.len()
+        );
+        assert_eq!(
+            inputs.ris.limbs.len(),
+            e3_fhe_params::constants::insecure_64::threshold::MODULI.len()
+        );
         for coefficient in inputs.eek.coefficients() {
             assert!(
                 coefficient.abs() <= BigInt::from(bounds.eek_bound.clone()),

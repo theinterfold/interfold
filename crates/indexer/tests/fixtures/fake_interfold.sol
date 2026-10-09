@@ -21,7 +21,7 @@ contract FakeInterfold {
 
   function e3CryptoConfigIds(uint256 e3Id) external view returns (bytes32) {
     if (cryptoConfigOverrides[e3Id] != bytes32(0)) return cryptoConfigOverrides[e3Id];
-    return 0x7d3f52af7ad13baa9f34ce2426e980907ffeb86b4b374308e6c590d5d43f9e41;
+    return 0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9;
   }
 
   // Emit InputPublished event with passed test data

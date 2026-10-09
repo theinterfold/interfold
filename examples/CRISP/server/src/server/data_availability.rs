@@ -3538,10 +3538,10 @@ mod tests {
         let (insecure, insecure_config_id) = bfv_parameters_for_param_set(0).unwrap();
         assert_eq!(
             insecure_config_id,
-            "0x7d3f52af7ad13baa9f34ce2426e980907ffeb86b4b374308e6c590d5d43f9e41"
+            "0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9"
                 .parse::<B256>()
                 .unwrap(),
-            "insecure-512 must reproduce ActiveCryptoConfig.INSECURE_CONFIG_ID"
+            "insecure-64 must reproduce ActiveCryptoConfig.INSECURE_CONFIG_ID"
         );
 
         let (_, secure_config_id) = bfv_parameters_for_param_set(2).unwrap();

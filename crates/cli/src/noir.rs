@@ -320,7 +320,7 @@ mod tests {
             "noir",
             "setup",
             "--circuits-configuration",
-            "insecure-512/minimum",
+            "insecure-64/minimum",
         ])
         .is_err());
         let temp = tempfile::tempdir().unwrap();
@@ -329,7 +329,7 @@ mod tests {
             serde_json::from_str(include_str!("../../zk-prover/required-artifacts.json")).unwrap();
         let mut files = BTreeMap::new();
         for artifact in &artifacts {
-            let relative = format!("insecure-512/minimum/{artifact}");
+            let relative = format!("insecure-64/minimum/{artifact}");
             let path = payload.join("circuits").join(&relative);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, b"{}").unwrap();
@@ -408,7 +408,7 @@ mod tests {
 
         let args = [
             args.as_slice(),
-            &["--circuits-configuration", "insecure-512/minimum"],
+            &["--circuits-configuration", "insecure-64/minimum"],
         ]
         .concat();
         let cli = Cli::try_parse_from(args).unwrap();

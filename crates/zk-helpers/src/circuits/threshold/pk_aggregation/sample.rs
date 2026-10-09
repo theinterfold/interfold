@@ -76,7 +76,7 @@ mod tests {
 
     #[test]
     fn test_generate_sample() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold64;
         let committee = CiphernodesCommitteeSize::Small.values();
         let configs = Configs::compute(preset, &()).unwrap();
 

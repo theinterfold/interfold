@@ -560,9 +560,9 @@ jobs:
       - name: Stage source-aligned circuit fixtures
         run: |
           chmod +x .ci-noir/bin/bb
-          test -f .ci-noir/circuits/insecure-512/minimum/default/recursive_aggregation/c2ab_fold/c2ab_fold.json
-          mkdir -p dist/circuits/insecure-512
-          cp -R .ci-noir/circuits/insecure-512/minimum dist/circuits/insecure-512/
+          test -f .ci-noir/circuits/insecure-64/minimum/default/recursive_aggregation/c2ab_fold/c2ab_fold.json
+          mkdir -p dist/circuits/insecure-64
+          cp -R .ci-noir/circuits/insecure-64/minimum dist/circuits/insecure-64/
 
       # A separate test target, so no other step runs it. It fails when a persisted or gossiped
       # layout differs from its fixture. The in-crate locks run with the library tests. Without
@@ -643,7 +643,7 @@ jobs:
 
       - name: Prepare source-aligned circuit archive
         run: |
-          test -f .ci-noir/circuits/insecure-512/minimum/default/dkg/pk/pk.json
+          test -f .ci-noir/circuits/insecure-64/minimum/default/dkg/pk/pk.json
           test -f .ci-noir/circuits/secure-8192/minimum/default/dkg/pk/pk.json
           pnpm tsx scripts/circuit-artifacts.ts checksums --dir .ci-noir/circuits
           mkdir -p "$RUNNER_TEMP/circuit-release"
@@ -1418,14 +1418,14 @@ jobs:
           chmod +x /usr/local/bin/bb
 
       - name: Build interfold circuits
-        run: pnpm build:circuits --preset insecure-512 --committee minimum --skip-if-built
+        run: pnpm build:circuits --preset insecure-64 --committee minimum --skip-if-built
 
       - name: Install and verify candidate circuits
         working-directory: ./examples/CRISP
         run: |
           tar -C "$GITHUB_WORKSPACE/dist" -czf "$RUNNER_TEMP/circuits-candidate.tar.gz" circuits/
           interfold noir setup --circuits-archive "$RUNNER_TEMP/circuits-candidate.tar.gz" \
-            --circuits-configuration insecure-512/minimum --allow-unpinned-archive
+            --circuits-configuration insecure-64/minimum --allow-unpinned-archive
           interfold noir setup
 
       - name: Run Playwright tests
@@ -1583,12 +1583,12 @@ jobs:
               --check \
               --no-compile
           done <<'EOF'
-          insecure-512 micro
-          insecure-512 small
+          insecure-64 micro
+          insecure-64 small
           secure-8192 minimum
           secure-8192 micro
           secure-8192 small
-          insecure-512 minimum
+          insecure-64 minimum
           EOF
 
       - name: Cancel workflow on failure
@@ -1670,8 +1670,8 @@ jobs:
         timeout-minutes: 10
         run: pnpm store:circuits pull
 
-      - name: Hydrate the insecure-512/minimum circuits
-        run: pnpm build:circuits --preset insecure-512 --committee minimum --hydrate-bin-only --no-clean-targets
+      - name: Hydrate the insecure-64/minimum circuits
+        run: pnpm build:circuits --preset insecure-64 --committee minimum --hydrate-bin-only --no-clean-targets
 
       - name: Verify circuit artifacts
         run: |
@@ -2109,14 +2109,14 @@ jobs:
           chmod +x /usr/local/bin/bb
 
       - name: Build interfold circuits
-        run: pnpm build:circuits --preset insecure-512 --committee minimum --skip-if-built
+        run: pnpm build:circuits --preset insecure-64 --committee minimum --skip-if-built
 
       - name: Install and verify candidate circuits
         working-directory: ./templates/default
         run: |
           tar -C "$GITHUB_WORKSPACE/dist" -czf "$RUNNER_TEMP/circuits-candidate.tar.gz" circuits/
           interfold noir setup --circuits-archive "$RUNNER_TEMP/circuits-candidate.tar.gz" \
-            --circuits-configuration insecure-512/minimum --allow-unpinned-archive
+            --circuits-configuration insecure-64/minimum --allow-unpinned-archive
           interfold noir setup
 
       - name: Verify downloaded artifacts

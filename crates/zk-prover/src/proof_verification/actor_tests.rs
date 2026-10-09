@@ -127,7 +127,7 @@ fn signed_c0_key(
 async fn restored_context_dispatches_c0_without_replayed_lifecycle_events() {
     let bus = test_bus();
     let e3_id = E3id::new("7", 31_337);
-    let preset = BfvPreset::InsecureThreshold512;
+    let preset = BfvPreset::InsecureThreshold64;
     let signer = PrivateKeySigner::random();
     let mut committee_members = vec![
         signer.address().to_string(),
@@ -240,7 +240,7 @@ async fn c0_retries_back_off_and_stop_at_completion() {
                 threshold_m: 1,
                 threshold_n: 3,
                 seed: Seed([0; 32]),
-                params_preset: BfvPreset::InsecureThreshold512,
+                params_preset: BfvPreset::InsecureThreshold64,
                 params: ArcBytes::default(),
                 error_size: ArcBytes::default(),
             },
@@ -249,7 +249,7 @@ async fn c0_retries_back_off_and_stop_at_completion() {
     bus.event_bus().send(EventBusBarrier).await.unwrap();
     let input = EncryptionKeyReceived {
         e3_id: e3_id.clone(),
-        key: signed_c0_key(&signer, 0, &e3_id, BfvPreset::InsecureThreshold512),
+        key: signed_c0_key(&signer, 0, &e3_id, BfvPreset::InsecureThreshold64),
     };
     bus.publish_without_context(input).unwrap();
     bus.flush_event_pipeline().await.unwrap();
@@ -296,7 +296,7 @@ impl Handler<recovery::VerificationBarrier> for VerificationRecorder {
 #[actix::test]
 async fn c0_inputs_of_an_e3_whose_dkg_ended_before_startup_are_not_verified() {
     use e3_data::RepositoriesFactory;
-    let preset = BfvPreset::InsecureThreshold512;
+    let preset = BfvPreset::InsecureThreshold64;
     let signer = PrivateKeySigner::random();
     let (failed, active) = (E3id::new("7", 31_337), E3id::new("8", 31_337));
     let committee = Committee::new(vec![signer.address().to_string()]);

@@ -24,7 +24,7 @@ const CRISP = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = resolve(CRISP, '..', '..')
 
 /** Degree the preset's polynomials carry, used to prove the artifact matches its directory. */
-const EXPECTED_DEGREE = { 'insecure-512': 512, 'secure-8192': 8192 }
+const EXPECTED_DEGREE = { 'insecure-64': 64, 'secure-8192': 8192 }
 
 const ARTIFACTS = [
   { name: 'crisp', from: join(CRISP, 'circuits/bin/crisp/target/crisp.json') },
@@ -63,7 +63,7 @@ for (const { name, from } of ARTIFACTS) {
     process.exit(1)
   }
 
-  // A circuit compiled at 512 carries 1023-length arrays too (the ct0/ct1 witnesses), so compare
+  // A circuit compiled at 64 carries 127-length arrays too (the ct0/ct1 witnesses), so compare
   // against the maximum rather than looking the degree up by name.
   const degree = degreeOf(from)
   const expected = EXPECTED_DEGREE[preset]

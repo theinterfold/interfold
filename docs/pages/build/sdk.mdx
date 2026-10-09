@@ -94,7 +94,7 @@ The template client uses the same two plugins in `client/vite.config.ts`.
 | `walletClient`                 | `WalletClient`                 | No       | A viem wallet client with an account. Write calls need it.   |
 | `contracts`                    | `ContractAddresses`            | Yes      | `interfold`, `ciphernodeRegistry`, and `feeToken` addresses. |
 | `chain`                        | `Chain`                        | No       | The viem chain.                                              |
-| `thresholdBfvParamsPresetName` | `ThresholdBfvParamsPresetName` | No       | The BFV preset. The default is `INSECURE_THRESHOLD_512`.     |
+| `thresholdBfvParamsPresetName` | `ThresholdBfvParamsPresetName` | No       | The BFV preset. The default is `INSECURE_THRESHOLD_64`.     |
 
 The constructor throws an `SDKError` with the code `MISSING_PUBLIC_CLIENT`, `INVALID_ADDRESS`, or
 `INVALID_THRESHOLD_BFV_PARAMS_PRESET_NAME` when the configuration is not valid.
@@ -159,7 +159,7 @@ const sdk = InterfoldSDK.create({
     feeToken: FEE_TOKEN_CONTRACT as `0x${string}`,
   },
   chain: hardhat,
-  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_64',
 })
 ```
 
@@ -170,12 +170,12 @@ of the E3.
 
 | Preset name              | `paramSet` | Ring degree | CRT moduli (L) | Use                             |
 | ------------------------ | ---------- | ----------- | -------------- | ------------------------------- |
-| `INSECURE_THRESHOLD_512` | 0          | 512         | 2              | Local development and tests     |
+| `INSECURE_THRESHOLD_64`  | 0          | 64          | 3              | Local development and tests     |
 | `SECURE_THRESHOLD_8192`  | 2          | 8192        | 3              | Production and secure test runs |
 
 The insecure preset has no production security. Use it only for tests.
 `ThresholdBfvParamsPresetNames` lists both names, and `DEFAULT_THRESHOLD_BFV_PARAMS_PRESET_NAME` is
-`INSECURE_THRESHOLD_512`.
+`INSECURE_THRESHOLD_64`.
 
 <Callout type='warning'>
   The SDK does not compare the preset with the `paramSet` of the E3. A mismatch encrypts inputs
@@ -203,7 +203,7 @@ const requestParams = {
   committeeSize: DEFAULT_E3_CONFIG.committeeSize, // CommitteeSize.Minimum
   inputWindow,
   e3Program: E3_PROGRAM_ADDRESS,
-  paramSet: 0, // insecure-512, for local development
+  paramSet: 0, // insecure-64, for local development
   computeProviderParams: encodeComputeProviderParams(DEFAULT_COMPUTE_PROVIDER_PARAMS),
 }
 
@@ -310,7 +310,7 @@ encrypted to it. For the full encrypt and submit flow, see
 ### Encryption proofs
 
 The `*AndGenProof` functions and `generateProof` use circuits that ship in the SDK. The SDK compiles
-them with the `insecure-512` preset and the `minimum` committee
+them with the `insecure-64` preset and the `minimum` committee
 (`packages/interfold-sdk/scripts/compile-circuits.sh`). The proofs target recursive verification
 (`noir-recursive-no-zk`), not a Solidity verifier.
 
@@ -319,7 +319,7 @@ It fails with one of these codes when the stamp does not match:
 
 - `SDK_CIRCUIT_STAMP_MISSING` or `SDK_CIRCUIT_STAMP_INVALID`: the stamp file is missing or broken.
 - `SDK_CIRCUIT_COMMITTEE_MISMATCH`: the circuits are not for the `minimum` committee.
-- `SDK_CIRCUIT_PRESET_MISMATCH`: the circuits are not for `insecure-512`.
+- `SDK_CIRCUIT_PRESET_MISMATCH`: the circuits are not for `insecure-64`.
 
 For another preset, another committee size, or an on-chain verifier, compile your own circuits. Use
 `encryptNumberAndGenInputs` or `encryptVectorAndGenInputs` to get the witness for your prover. See
@@ -541,7 +541,7 @@ export function useTemplateSdk() {
         ciphernodeRegistry: import.meta.env.VITE_REGISTRY_ADDRESS,
         feeToken: import.meta.env.VITE_FEE_TOKEN_ADDRESS,
       },
-      thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512' as const,
+      thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_64' as const,
     }),
     [],
   )

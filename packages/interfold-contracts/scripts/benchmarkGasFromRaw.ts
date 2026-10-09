@@ -24,7 +24,7 @@ import {
   readVkRecursiveHash,
 } from "./utils";
 
-const CANONICAL_BFV_PRESET = "insecure-512";
+const CANONICAL_BFV_PRESET = "insecure-64";
 const CANONICAL_BFV_COMMITTEE: BfvCommittee = "minimum";
 const COMMITTED_HONK_DIR = path.join(
   getRepoRoot(),

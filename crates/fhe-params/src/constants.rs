@@ -9,25 +9,26 @@
 //! This module contains all hardcoded values used in preset definitions.
 //! Centralizing these values makes it easier to maintain and update presets.
 
-/// Insecure preset constants (degree 512) - DO NOT USE IN PRODUCTION
-pub mod insecure_512 {
-    pub const DEGREE: usize = 512;
-    pub const NUM_PARTIES: u128 = 5; // fake - not used in the search default
+/// Insecure preset constants (degree 64) - DO NOT USE IN PRODUCTION
+pub mod insecure_64 {
+    pub const DEGREE: usize = 64;
+    pub const NUM_PARTIES: u128 = 19; // fake - not used in the search default
 
     /// Threshold BFV parameters
     pub mod threshold {
-        pub const PLAINTEXT_MODULUS: u64 = 100;
-        pub const MODULI: &[u64] = &[0xffffee001, 0xffffc4001];
-        pub const ERROR1_VARIANCE: &str = "3";
-        pub const ERROR1_VARIANCE_BIGUINT: u32 = 3;
+        pub const PLAINTEXT_MODULUS: u64 = 17000000;
+        pub const MODULI: &[u64] = &[0x0000000007fffd81, 0x0000000007fff801, 0x0000000007fff781];
+        /// ⌊B_Enc(B_Enc+1)/3⌋ for B_Enc = 194560 (uniform e_1).
+        pub const ERROR1_VARIANCE: &str = "12617929386";
+        pub const ERROR1_VARIANCE_BIGUINT: u64 = 12617929386;
     }
 
     /// DKG parameters
     pub mod dkg {
-        pub const PLAINTEXT_MODULUS: u64 = 0xffffee001;
-        pub const MODULI: &[u64] = &[0x7fffffffe0001];
+        pub const PLAINTEXT_MODULUS: u64 = 134217089;
+        pub const MODULI: &[u64] = &[0x000000001fffba01, 0x000000001fffc081];
         pub const ERROR1_VARIANCE: &str = "10";
-        pub const VARIANCE: u32 = 3;
+        pub const VARIANCE: u32 = 10;
     }
 }
 
@@ -53,7 +54,7 @@ pub mod secure_8192 {
 
 /// Common search defaults shared across presets
 /// Search defaults for the SecureThreshold8192 preset (production scale).
-/// The InsecureThreshold512 preset uses its own smaller values (see `insecure_search_defaults`)
+/// The InsecureThreshold64 preset uses its own smaller values (see `insecure_search_defaults`)
 /// so that the smudging bounds baked into the insecure circuit configs remain valid.
 pub mod search_defaults {
     pub const B: u128 = 20;
@@ -63,15 +64,15 @@ pub mod search_defaults {
     pub const SEARCH_Z: u128 = 100000;
 }
 
-/// Search defaults for the InsecureThreshold512 preset (test-only, small scale).
+/// Search defaults for the InsecureThreshold64 preset (test-only, small scale).
 /// These match the parameters used when `circuits/lib/src/configs/insecure/` was generated,
 /// so the compiled `E_SM_BIT_SECRET` / `SHARE_ENCRYPTION_*` bounds remain consistent at runtime.
 pub mod insecure_search_defaults {
     pub const B: u128 = 20;
     pub const B_CHI: u128 = 1;
-    pub const SEARCH_N: u128 = 7;
-    pub const SEARCH_K: u128 = 131072;
-    pub const SEARCH_Z: u128 = 1024;
+    pub const SEARCH_N: u128 = 19;
+    pub const SEARCH_K: u128 = 17000000;
+    pub const SEARCH_Z: u128 = 100000;
 }
 
 /// Default values for BFV parameters

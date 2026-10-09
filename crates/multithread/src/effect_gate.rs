@@ -1167,7 +1167,7 @@ pub(crate) mod tests {
         use e3_fhe_params::BfvParamSet;
         use e3_request::canonical_key::{CanonicalPublicKey, CanonicalPublicKeys};
         let id = E3id::new("84", 1);
-        let params = BfvParamSet::from(BfvPreset::InsecureThreshold512);
+        let params = BfvParamSet::from(BfvPreset::InsecureThreshold64);
         let bytes = e3_bfv_client::client::generate_public_key(
             params.degree,
             params.plaintext_modulus,
@@ -1186,7 +1186,7 @@ pub(crate) mod tests {
                 Address::repeat_byte(3),
             ],
             honest_committee: vec![Address::repeat_byte(1), Address::repeat_byte(3)],
-            params_preset: BfvPreset::InsecureThreshold512,
+            params_preset: BfvPreset::InsecureThreshold64,
             committee_size: CiphernodesCommitteeSize::Minimum,
             interfold_address: Address::repeat_byte(9),
             sk_agg_commits: vec![],

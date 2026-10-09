@@ -28,7 +28,7 @@ fn prepare_rejects_ambiguous_committee_where_one_signer_owns_multiple_slots() {
         &VerificationKind::PkGenerationProofs,
         "C1",
         Some(&ambiguous_committee),
-        BfvPreset::InsecureDkg512,
+        BfvPreset::InsecureDkg64,
         CiphernodesCommitteeSize::Minimum,
     );
 
@@ -53,7 +53,7 @@ fn prepare_rejects_committee_with_wrong_circuit_dimension() {
         &VerificationKind::PkGenerationProofs,
         "C1",
         Some(&undersized_committee),
-        BfvPreset::InsecureDkg512,
+        BfvPreset::InsecureDkg64,
         CiphernodesCommitteeSize::Minimum,
     );
 

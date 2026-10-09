@@ -217,7 +217,7 @@ Run the build from the repository root. It needs `nargo` and `bb` on your `PATH`
 (the script runs two Rust generators), and the JavaScript dependencies (`pnpm install`).
 
 ```bash
-pnpm build:circuits                                        # insecure-512, minimum
+pnpm build:circuits                                        # insecure-64, minimum
 pnpm build:circuits --preset secure-8192 --committee small
 ```
 
@@ -225,7 +225,7 @@ A build selects one BFV preset and one committee size:
 
 | Option        | Values                               | Default        |
 | ------------- | ------------------------------------ | -------------- |
-| `--preset`    | `insecure-512`, `secure-8192`, `all` | `insecure-512` |
+| `--preset`    | `insecure-64`, `secure-8192`, `all` | `insecure-64` |
 | `--committee` | `minimum`, `micro`, `small`, `all`   | `minimum`      |
 
 | Committee | N   | T   | H   |
@@ -264,7 +264,7 @@ that covers every artifact file. Root manifests, `SOURCE_HASH`, and build stamps
 The installer requires every pair in `crates/zk-prover/supported-configurations.json` by default,
 including for `noir setup --circuits-archive`. The release validator uses the same matrix. For a
 local archive, repeat `--circuits-configuration <PRESET/COMMITTEE>` to select a subset explicitly.
-For example, `--circuits-configuration insecure-512/minimum` selects the development configuration.
+For example, `--circuits-configuration insecure-64/minimum` selects the development configuration.
 Local and CI callers can request a nonempty subset through `download_circuits_for_configurations` or
 `install_circuits_archive_for_configurations`. The required set never depends on archive contents.
 Each required or included pair must contain every artifact in
@@ -317,11 +317,11 @@ cargo run -p e3-zk-helpers --bin zk_cli -- --circuit pk-generation --preset inse
 
 The Honk verifiers for `dkg_aggregator` and `decryption_aggregator` are committed under
 `packages/interfold-contracts/contracts/verifiers/bfv/honk/`. The files at the top of that directory
-are for `insecure-512` with `minimum`. Every other pair has its own directory,
+are for `insecure-64` with `minimum`. Every other pair has its own directory,
 `honk/<preset>/<committee>/`.
 
 ```bash
-pnpm build:circuits --preset insecure-512 --committee minimum
+pnpm build:circuits --preset insecure-64 --committee minimum
 pnpm generate:verifiers        # rewrite the committed verifiers
 pnpm check:verifiers           # compare them with the current keys, write nothing
 ```
@@ -364,7 +364,7 @@ The [custom circuits tutorial](/build/tutorials/custom-zk-circuits) follows thes
 circuit.
 
 The SDK function `generateProof()` proves only the three user-data-encryption circuits. It embeds
-artifacts built for `insecure-512` with `minimum`. See the [SDK](/build/sdk) page.
+artifacts built for `insecure-64` with `minimum`. See the [SDK](/build/sdk) page.
 
 ## Use circuits/lib in another Noir project
 
@@ -385,7 +385,7 @@ use interfold_lib::math::polynomial::Polynomial;
 ```
 
 <Callout type='info'>
-  The library at the tag `v0.18.0` selects `insecure-512` with `minimum`. The build script writes
+  The library at the tag `v0.18.0` selects `insecure-64` with `minimum`. The build script writes
   that selection into the source. For another pair, use a path dependency on a local checkout.
 </Callout>
 

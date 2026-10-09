@@ -536,7 +536,7 @@ mod tests {
         let backend = ZkBackend::new(BBPath::Default(bb_binary), circuits_dir, work_dir);
         let prover = ZkProver::new(&backend);
 
-        let result = prover.generate_proof(CircuitName::PkBfv, b"witness", "e3-1", "insecure-512");
+        let result = prover.generate_proof(CircuitName::PkBfv, b"witness", "e3-1", "insecure-64");
         assert!(matches!(result, Err(ZkError::BbNotInstalled)));
     }
 
@@ -723,7 +723,7 @@ mod tests {
         let circuit = CircuitName::PkBfv;
         for variant in [CircuitVariant::Default, CircuitVariant::Recursive] {
             let circuit_dir = prover
-                .circuits_dir(variant, "insecure-512")
+                .circuits_dir(variant, "insecure-64")
                 .join(circuit.dir_path());
             fs::create_dir_all(&circuit_dir).unwrap();
             fs::write(
@@ -736,7 +736,7 @@ mod tests {
 
         let started = Instant::now();
         let error = prover
-            .generate_proof(CircuitName::PkBfv, b"witness", "e3-1", "insecure-512")
+            .generate_proof(CircuitName::PkBfv, b"witness", "e3-1", "insecure-64")
             .unwrap_err();
 
         let message = format!("{error}");
@@ -752,7 +752,7 @@ mod tests {
         );
         let started = Instant::now();
         let error = prover
-            .verify_proof(&proof, "e3-1", 1, "insecure-512")
+            .verify_proof(&proof, "e3-1", 1, "insecure-64")
             .unwrap_err();
         let message = format!("{error}");
         assert!(message.contains("was killed after"), "{message}");

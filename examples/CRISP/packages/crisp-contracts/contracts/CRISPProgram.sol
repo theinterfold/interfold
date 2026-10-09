@@ -164,7 +164,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   /// @dev Every input (vote, update, mask) adds at most one fresh ciphertext to the tally sum. The
   /// BFV parameters stay correct for a fixed number of additions (`SEARCH_Z` in
   /// `crates/fhe-params/src/constants.rs`); every secure parameter set CRISP runs on must allow at
-  /// least this many. The insecure-512 test preset allows fewer.
+  /// least this many. The insecure-64 test preset allows the same number.
   uint256 public constant MAX_INPUTS_PER_ROUND = 100_000;
   // State variables
   IInterfold public interfold;

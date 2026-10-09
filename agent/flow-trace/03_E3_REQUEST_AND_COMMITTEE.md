@@ -92,7 +92,7 @@ Requester calls: Interfold.request({
 │   │    Mainnet has secure-8192 routes for minimum, micro, and small committees.
 │   │    The launch pricing policy sets `minCommitteeSize = 19`, so only Small can be
 │   │    requested. Minimum and Micro remain configured for a later governance change.
-│   │    Sepolia and local chains support insecure-512 and secure-8192 with all committee sizes.
+│   │    Sepolia and local chains support insecure-64 and secure-8192 with all committee sizes.
 │   │    A different parameter hash, committee shape, or verifier H/T is rejected.
 │   │    CI derives and compares the full BFV tuple across deployment code, Rust, and Noir.
 │   ├─ inputWindow[0] >= block.timestamp (start in future)

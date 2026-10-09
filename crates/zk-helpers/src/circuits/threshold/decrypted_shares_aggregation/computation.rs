@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn test_bounds_and_bits_consistency() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold64;
         let bounds = Bounds::compute(preset, &()).unwrap();
         let bits = Bits::compute(preset, &bounds).unwrap();
 
@@ -376,7 +376,7 @@ mod tests {
 
     #[test]
     fn test_configs_compute() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold64;
         let configs = Configs::compute(preset, &()).unwrap();
 
         assert_eq!(configs.moduli.len(), configs.l);
@@ -385,7 +385,7 @@ mod tests {
 
     #[test]
     fn an_extra_polynomial_or_party_id_is_refused() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold64;
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample =
             DecryptedSharesAggregationCircuitData::generate_sample(preset, committee).unwrap();
@@ -413,7 +413,7 @@ mod tests {
 
     #[test]
     fn test_full_computation_with_sample() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold64;
         let committee = CiphernodesCommitteeSize::Small.values();
         let input =
             DecryptedSharesAggregationCircuitData::generate_sample(preset, committee.clone())

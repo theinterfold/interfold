@@ -55,7 +55,7 @@ contract MockCrispAvailability {
     computeDeadline = deadline;
   }
 
-  /// An insecure-512 round.
+  /// An insecure-64 round.
   function getE3(uint256) external pure returns (E3 memory e3) {}
 
   function getDeadlines(uint256) external view returns (uint256, uint256, uint256) {

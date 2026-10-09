@@ -7,10 +7,10 @@
 import { generateBFVKeys, prepareBallot, finishBallotProof, encodeSolidityProof, destroyBBApi, verifyProof } from '@crisp-e3/sdk'
 import type { ProofData } from '@crisp-e3/sdk'
 import { setCircuits } from '@crisp-e3/sdk'
-import { loadCircuits } from '@crisp-e3/sdk/insecure-512'
+import { loadCircuits } from '@crisp-e3/sdk/insecure-64'
 
 // The BFV-shaped circuits ship as a separate entry point per preset, so proving needs one
-// installed. These tests run against the insecure-512 parameters the contracts are deployed with.
+// installed. These tests run against the insecure-64 parameters the contracts are deployed with.
 before(async () => {
   setCircuits(await loadCircuits())
 })

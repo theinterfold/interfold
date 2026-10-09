@@ -23,9 +23,8 @@ trap restore_active_config EXIT
 # committee. It runs before the loop below rewrites the committee selection.
 (cd "$REPO_ROOT/circuits/bin/config" && nargo execute)
 
-# The dkg_aggregator and node_fold tests read only H, N_PARTIES, and L_THRESHOLD, and the preset
-# changes only L_THRESHOLD (insecure 2, secure 3). These pairs run each committee once and cover
-# both values.
+# The dkg_aggregator and node_fold tests read only H, N_PARTIES, and L_THRESHOLD. Both presets have
+# L_THRESHOLD = 3. These pairs run each committee once and each preset at least once.
 for pair in minimum:insecure micro:secure small:secure; do
   committee="${pair%%:*}"
   preset="${pair##*:}"
@@ -34,12 +33,12 @@ for pair in minimum:insecure micro:secure small:secure; do
     -e "s/committee::(minimum|micro|small)/committee::$committee/g" \
     "$BACKUP_DIR/active.nr" > "$ACTIVE_COMMITTEE"
 
-  preset_name="${preset}-512"
+  preset_name="${preset}-64"
   if [[ "$preset" == "secure" ]]; then
     preset_name="secure-8192"
   fi
   sed -E \
-    -e "s/preset: (insecure-512|secure-8192)/preset: $preset_name/g" \
+    -e "s/preset: (insecure-64|secure-8192)/preset: $preset_name/g" \
     -e "s/super::(insecure|secure)::/super::$preset::/g" \
     "$BACKUP_DIR/default.nr" > "$ACTIVE_PRESET"
   echo "Testing DKG aggregation for $preset_name/$committee"

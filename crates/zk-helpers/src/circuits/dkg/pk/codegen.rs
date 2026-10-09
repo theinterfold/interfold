@@ -77,11 +77,11 @@ mod tests {
 
     #[test]
     fn test_toml_generation_and_structure() {
-        let (_, dkg_params) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
-        let sample = PkCircuitData::generate_sample(BfvPreset::InsecureThreshold512).unwrap();
+        let (_, dkg_params) = build_pair_for_preset(BfvPreset::InsecureThreshold64).unwrap();
+        let sample = PkCircuitData::generate_sample(BfvPreset::InsecureThreshold64).unwrap();
 
         let artifacts = PkCircuit
-            .codegen(BfvPreset::InsecureThreshold512, &sample)
+            .codegen(BfvPreset::InsecureThreshold64, &sample)
             .unwrap();
 
         let parsed: toml::Value = artifacts.toml.parse().unwrap();
@@ -123,7 +123,7 @@ mod tests {
         assert!(configs_content.contains(
             format!(
                 "N: u32 = {}",
-                BfvPreset::InsecureThreshold512
+                BfvPreset::InsecureThreshold64
                     .dkg_counterpart()
                     .unwrap()
                     .metadata()
@@ -134,7 +134,7 @@ mod tests {
         assert!(configs_content.contains(
             format!(
                 "L: u32 = {}",
-                BfvPreset::InsecureThreshold512
+                BfvPreset::InsecureThreshold64
                     .dkg_counterpart()
                     .unwrap()
                     .metadata()

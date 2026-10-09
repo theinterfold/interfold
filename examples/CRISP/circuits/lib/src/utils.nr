@@ -122,9 +122,9 @@ pub fn check_coefficient_zero<let D: u32>(k1: Polynomial<D>, num_options: u32) -
 // Tests build `k1` the way the witness generator does and take `t` and `Q_MOD_T` from the compiled
 // preset, so they hold for any plaintext modulus of at least 100.
 
-/// The degree of the `insecure-512` preset, well above `MAX_OPTIONS`, so the layout is read from
+/// The degree of the `insecure-64` preset, well above `MAX_OPTIONS`, so the layout is read from
 /// the real degree.
-global TEST_DEGREE: u32 = 512;
+global TEST_DEGREE: u32 = 64;
 
 /// The `k1` coefficient the witness generator produces for one message coefficient.
 fn scale(m: u64) -> Field {

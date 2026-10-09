@@ -52,8 +52,8 @@ pub async fn setup_compiled_circuit_for_committee(
         vk_evm_path.display()
     );
 
-    // Tests use insecure params — fixtures go under insecure-512/{committee}/
-    let preset_dir = backend.circuits_dir.join("insecure-512").join(committee);
+    // Tests use insecure params — fixtures go under insecure-64/{committee}/
+    let preset_dir = backend.circuits_dir.join("insecure-64").join(committee);
 
     // Set up the evm variant directory (keccak VK + hash)
     let evm_dir = preset_dir.join("evm").join(group).join(circuit_name);
@@ -137,7 +137,7 @@ pub async fn setup_compiled_circuit_for_committee(
 ///
 /// `pnpm build:circuits` writes `{package}.vk_recursive` (+ `_hash`) under `circuits/bin/recursive_aggregation/<name>/target/`.
 /// [`CircuitName::DkgAggregator`] also gets `{package}.vk` / `.vk_hash` (`bb write_vk -t evm`); when present, they are
-/// copied into `insecure-512/evm/...` for [`CircuitVariant::Evm`] proving.
+/// copied into `insecure-64/evm/...` for [`CircuitVariant::Evm`] proving.
 pub async fn setup_recursive_aggregation_fold_circuit(backend: &ZkBackend, circuit: CircuitName) {
     let pkg = circuit.as_str();
     let target_dir = circuits_build_root()
@@ -162,7 +162,7 @@ pub async fn setup_recursive_aggregation_fold_circuit(backend: &ZkBackend, circu
         vk_recursive_path.display()
     );
 
-    let preset_dir = backend.circuits_dir.join("insecure-512").join("minimum");
+    let preset_dir = backend.circuits_dir.join("insecure-64").join("minimum");
     let default_dir = preset_dir.join("default").join(circuit.group()).join(pkg);
     fs::create_dir_all(&default_dir).await.unwrap();
     fs::copy(&json_path, default_dir.join(format!("{pkg}.json")))

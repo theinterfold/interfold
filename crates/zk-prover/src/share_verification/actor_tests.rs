@@ -84,14 +84,14 @@ async fn local_verifier_error_preserves_pending_work_without_accusing_parties() 
             party_proof_hashes: HashMap::new(),
             party_public_signals: HashMap::new(),
             party_proof_data: HashMap::new(),
-            params_preset: BfvPreset::InsecureThreshold512,
+            params_preset: BfvPreset::InsecureThreshold64,
             committee_size: CiphernodesCommitteeSize::Minimum,
         },
     );
     let request = ComputeRequest::zk(
         ZkRequest::VerifyShareProofs(VerifyShareProofsRequest {
             party_proofs: Vec::new(),
-            params_preset: BfvPreset::InsecureThreshold512,
+            params_preset: BfvPreset::InsecureThreshold64,
             committee_size: CiphernodesCommitteeSize::Minimum,
         }),
         correlation_id,
@@ -154,7 +154,7 @@ async fn restored_committee_authorizes_c6_without_replayed_finalization_event() 
             .collect(),
         decryption_proofs: Vec::new(),
         pre_dishonest: BTreeSet::new(),
-        params_preset: BfvPreset::InsecureThreshold512,
+        params_preset: BfvPreset::InsecureThreshold64,
         committee_size: CiphernodesCommitteeSize::Minimum,
     })
     .expect("publish C6 verification dispatch");
@@ -238,7 +238,7 @@ async fn unauthenticated_share_proofs_do_not_emit_accusations() {
             share_proofs: Vec::new(),
             decryption_proofs: vec![proof],
             pre_dishonest: BTreeSet::new(),
-            params_preset: BfvPreset::InsecureDkg512,
+            params_preset: BfvPreset::InsecureDkg64,
             committee_size: CiphernodesCommitteeSize::Minimum,
         };
         let ec = EventContext::<Unsequenced>::from(InterfoldEventData::from(dispatch(bad.clone())))
@@ -292,7 +292,7 @@ async fn failed_worker_payload_cannot_borrow_a_verified_signer() {
         }],
         decryption_proofs: Vec::new(),
         pre_dishonest: BTreeSet::new(),
-        params_preset: BfvPreset::InsecureDkg512,
+        params_preset: BfvPreset::InsecureDkg64,
         committee_size: CiphernodesCommitteeSize::Minimum,
     };
     let ec =

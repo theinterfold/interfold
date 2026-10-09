@@ -1,7 +1,7 @@
 [
-  ["insecure-512", "minimum"],
-  ["insecure-512", "micro"],
-  ["insecure-512", "small"],
+  ["insecure-64", "minimum"],
+  ["insecure-64", "micro"],
+  ["insecure-64", "small"],
   ["secure-8192", "minimum"],
   ["secure-8192", "micro"],
   ["secure-8192", "small"]

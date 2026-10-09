@@ -576,31 +576,42 @@ mod tests {
 
     #[test]
     fn test_bound_and_bits_computation_consistency() {
-        let bounds = Bounds::compute(BfvPreset::InsecureThreshold512, &()).unwrap();
-        let bits = Bits::compute(BfvPreset::InsecureThreshold512, &bounds).unwrap();
+        let bounds = Bounds::compute(BfvPreset::InsecureThreshold64, &()).unwrap();
+        let bits = Bits::compute(BfvPreset::InsecureThreshold64, &bounds).unwrap();
 
         let max_pk_bound = bounds.pk_bounds.iter().max().unwrap();
         let expected_bits = calculate_bit_width(BigInt::from(max_pk_bound.clone()));
 
-        assert_eq!(max_pk_bound.clone(), BigUint::from(34359701504u64));
+        assert_eq!(
+            max_pk_bound.clone(),
+            BigUint::from(
+                (e3_fhe_params::constants::insecure_64::threshold::MODULI
+                    .iter()
+                    .max()
+                    .unwrap()
+                    - 1)
+                    / 2
+            )
+        );
         assert_eq!(bits.pk_bit, expected_bits);
     }
 
     #[test]
     fn insecure_e0_bound_matches_error1_sampler() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold64;
         let bounds = Bounds::compute(preset, &()).unwrap();
         let bits = Bits::compute(preset, &bounds).unwrap();
 
-        assert_eq!(bounds.e0_bound, BigUint::from(6u32));
+        // B_Enc of the insecure-64 search: ⌊B_Enc(B_Enc+1)/3⌋ is its error1 variance.
+        assert_eq!(bounds.e0_bound, BigUint::from(194560u32));
         assert_eq!(bounds.e1_bound, BigUint::from(20u32));
-        assert_eq!(bits.e0_bit, 3);
+        assert_eq!(bits.e0_bit, 18);
     }
 
     #[test]
     fn encryption_witness_respects_ct0_r_bounds() {
         for preset in [
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold64,
             BfvPreset::SecureThreshold8192,
         ] {
             let sample = UserDataEncryptionCircuitData::generate_sample(preset).unwrap();

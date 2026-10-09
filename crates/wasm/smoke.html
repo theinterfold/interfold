@@ -8,10 +8,10 @@
     <script type="module">
       import initializeWasm from './init_web.js'
 
-      // INSECURE_THRESHOLD_512 (crates/fhe-params/src/constants.rs insecure_512::threshold)
-      const DEGREE = 512
-      const PLAINTEXT_MODULUS = 100n
-      const MODULI = [0xffffee001n, 0xffffc4001n]
+      // INSECURE_THRESHOLD_64 (crates/fhe-params/src/constants.rs insecure_64::threshold)
+      const DEGREE = 64
+      const PLAINTEXT_MODULUS = 17000000n
+      const MODULI = [0x0000000007fffd81n, 0x0000000007fff801n, 0x0000000007fff781n]
 
       try {
         const wasm = await initializeWasm()

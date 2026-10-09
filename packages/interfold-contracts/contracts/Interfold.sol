@@ -687,7 +687,7 @@ contract Interfold is
     }
 
     /// @notice Registers the parameter set compiled into the active circuits.
-    /// @param paramSet The parameter-set index (0 = Insecure512, 2 = Secure8192).
+    /// @param paramSet The parameter-set index (0 = Insecure64, 2 = Secure8192).
     /// @param encodedParams ABI-encoded BFV parameters (degree, plaintext_modulus, moduli[]).
     function setParamSet(
         uint8 paramSet,

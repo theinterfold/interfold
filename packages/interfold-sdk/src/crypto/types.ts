@@ -14,10 +14,10 @@ export interface BfvParams {
   error1Variance: string | undefined
 }
 
-export type ThresholdBfvParamsPresetName = 'INSECURE_THRESHOLD_512' | 'SECURE_THRESHOLD_8192'
+export type ThresholdBfvParamsPresetName = 'INSECURE_THRESHOLD_64' | 'SECURE_THRESHOLD_8192'
 
 export const ThresholdBfvParamsPresetNames = [
-  'INSECURE_THRESHOLD_512',
+  'INSECURE_THRESHOLD_64',
   'SECURE_THRESHOLD_8192',
 ] as const satisfies ReadonlyArray<ThresholdBfvParamsPresetName>
 

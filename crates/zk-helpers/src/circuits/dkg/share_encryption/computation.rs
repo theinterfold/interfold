@@ -823,28 +823,38 @@ mod tests {
 
     #[test]
     fn test_bound_and_bits_computation_consistency() {
-        let sd = BfvPreset::InsecureThreshold512.search_defaults().unwrap();
+        let sd = BfvPreset::InsecureThreshold64.search_defaults().unwrap();
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample = ShareEncryptionCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold64,
             committee,
             DkgInputType::SecretKey,
             sd.z,
         )
         .unwrap();
 
-        let bounds = Bounds::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
-        let bits = Bits::compute(BfvPreset::InsecureThreshold512, &bounds).unwrap();
+        let bounds = Bounds::compute(BfvPreset::InsecureThreshold64, &sample).unwrap();
+        let bits = Bits::compute(BfvPreset::InsecureThreshold64, &bounds).unwrap();
 
         let max_pk_bound = bounds.pk_bounds.iter().max().unwrap();
         let expected_bits = calculate_bit_width(BigInt::from(max_pk_bound.clone()));
 
-        assert_eq!(max_pk_bound.clone(), BigUint::from(1125899906777088u128));
+        assert_eq!(
+            max_pk_bound.clone(),
+            BigUint::from(
+                (e3_fhe_params::constants::insecure_64::dkg::MODULI
+                    .iter()
+                    .max()
+                    .unwrap()
+                    - 1)
+                    / 2
+            )
+        );
         assert_eq!(bits.pk_bit, expected_bits);
         assert_eq!(
             bounds.msg_bound,
             BigUint::from(
-                BfvPreset::InsecureThreshold512
+                BfvPreset::InsecureThreshold64
                     .build_pair()
                     .unwrap()
                     .1
@@ -855,16 +865,16 @@ mod tests {
 
     #[test]
     fn test_input_message_consistency() {
-        let sd = BfvPreset::InsecureThreshold512.search_defaults().unwrap();
+        let sd = BfvPreset::InsecureThreshold64.search_defaults().unwrap();
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample = ShareEncryptionCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold64,
             committee,
             DkgInputType::SecretKey,
             sd.z,
         )
         .unwrap();
-        let inputs = Inputs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
+        let inputs = Inputs::compute(BfvPreset::InsecureThreshold64, &sample).unwrap();
 
         // inputs.message is plaintext coefficients (reversed, as used in circuit)
         let expected_message =
@@ -877,7 +887,7 @@ mod tests {
 
     #[test]
     fn generated_share_encryption_witness_respects_ct0_r_bounds() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold64;
         let sample = ShareEncryptionCircuitData::generate_sample(
             preset,
             CiphernodesCommitteeSize::Minimum.values(),
@@ -940,24 +950,16 @@ mod scaled_quotient_tests {
 
     /// The substitution only holds if both numerators divide exactly. `derive` returns
     /// `available: false` rather than rounding, so re-check the identities on what it produced.
-    #[test]
-    fn secure_identities_hold_exactly() {
-        let (sq, moduli, t) = derive_for(BfvPreset::SecureThreshold8192);
+    fn assert_identities_hold_exactly(preset: BfvPreset) {
+        let (sq, moduli, t) = derive_for(preset);
         assert!(
             sq.available,
-            "secure-8192 should admit the scaled-quotient form"
+            "{preset:?} should admit the scaled-quotient form"
         );
-        assert_eq!(
-            sq.k, 4,
-            "k = 2^(bits(q) - bits(T)) = 4 for this parameter set"
-        );
-
-        let (_, dkg) = build_pair_for_preset(BfvPreset::SecureThreshold8192).unwrap();
         let scale = compute_q_mod_t(&compute_q_product(&moduli), t)
             .to_u64()
             .unwrap();
         let k0is = compute_k0is(&moduli, t).unwrap();
-        let _ = dkg;
 
         let t_big = BigInt::from(t);
         let mut q_prod = BigInt::from(1u32);
@@ -994,17 +996,13 @@ mod scaled_quotient_tests {
         }
     }
 
-    /// `L = 1` makes `DELTA` smaller than `q`, so no `k >= 1` gives a small `SMALL_D`.
-    ///
-    /// The circuit keeps the direct `k1` path for this preset. Insecure-512 is a test parameter
-    /// set, so the fallback costs nothing that matters.
     #[test]
-    fn insecure_is_excluded_rather_than_approximated() {
-        let (sq, moduli, _) = derive_for(BfvPreset::InsecureThreshold512);
-        assert_eq!(moduli.len(), 1, "insecure-512 has a single DKG modulus");
-        assert!(
-            !sq.available,
-            "insecure-512 must fall back, not derive bogus constants"
-        );
+    fn secure_identities_hold_exactly() {
+        assert_identities_hold_exactly(BfvPreset::SecureThreshold8192);
+    }
+
+    #[test]
+    fn insecure_identities_hold_exactly() {
+        assert_identities_hold_exactly(BfvPreset::InsecureThreshold64);
     }
 }

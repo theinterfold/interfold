@@ -128,7 +128,7 @@ to turn the `localhost` chain entry into environment variables:
 | `VITE_E3_PROGRAM_ADDRESS`               | None                     |
 | `VITE_FEE_TOKEN_ADDRESS`                | None                     |
 | `VITE_RPC_URL`                          | `http://localhost:8545`  |
-| `VITE_THRESHOLD_BFV_PARAMS_PRESET_NAME` | `INSECURE_THRESHOLD_512` |
+| `VITE_THRESHOLD_BFV_PARAMS_PRESET_NAME` | `INSECURE_THRESHOLD_64` |
 
 `client/src/main.tsx` also reads `VITE_WALLETCONNECT_PROJECT_ID` for ConnectKit.
 
@@ -221,7 +221,7 @@ it runs a job.
 ### Server steps
 
 1. **Create the SDK.** `createPrivateSDK` calls `InterfoldSDK.create` with `RPC_URL`, `PRIVATE_KEY`,
-   the `hardhat` chain, and the `INSECURE_THRESHOLD_512` preset. It creates the SDK one time.
+   the `hardhat` chain, and the `INSECURE_THRESHOLD_64` preset. It creates the SDK one time.
 2. **Listen for the key.** `setupEventListeners` watches
    `RegistryEventType.COMMITTEE_PUBLIC_KEY_CHUNK_PUBLISHED`. When a key is complete and matches its
    commitment, the server calls `scheduleE3(e3Id)`.
@@ -287,7 +287,7 @@ For SDK error codes, see [SDK](/build/sdk#errors).
 
 The template server is for a local chain. Change these points before you use it on another network:
 
-- `server/index.ts` sets the `hardhat` chain and the `INSECURE_THRESHOLD_512` preset. Set the target
+- `server/index.ts` sets the `hardhat` chain and the `INSECURE_THRESHOLD_64` preset. Set the target
   chain and the preset that matches your `paramSet`.
 - `MyProgram.verifyDataAvailability` accepts the raw bytes as the receipt. Replace it with a real
   data availability verifier, and publish the ciphertext to that layer.

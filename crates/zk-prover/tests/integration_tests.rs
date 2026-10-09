@@ -43,7 +43,7 @@ async fn download_integration_circuits(backend: &ZkBackend) -> Result<(), ZkErro
     if env::var("E3_TEST_CIRCUITS_DOWNLOAD_URL").is_ok() {
         backend
             .download_circuits_for_configurations(&[
-                ("insecure-512", RELEASE_COMMITTEE.as_str()),
+                ("insecure-64", RELEASE_COMMITTEE.as_str()),
                 ("secure-8192", RELEASE_COMMITTEE.as_str()),
             ])
             .await
@@ -118,7 +118,7 @@ async fn test_full_flow_download_circuits_prove_and_verify() {
     assert!(result.is_ok(), "download_circuits failed: {:?}", result);
 
     let presets = [
-        BfvPreset::InsecureThreshold512,
+        BfvPreset::InsecureThreshold64,
         BfvPreset::SecureThreshold8192,
     ];
     for preset in &presets {

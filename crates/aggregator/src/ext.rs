@@ -887,7 +887,7 @@ mod tests {
                 .send(Some(value))
         }
         let (bus, _, seed, _, _, _, _) =
-            e3_test_helpers::get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+            e3_test_helpers::get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
         let selector = CiphernodeSelector::new(
             &bus,
             persist(Default::default()),
@@ -909,7 +909,7 @@ mod tests {
         })
         .start();
         let id = E3id::new("81", 1);
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold64;
         let params = BfvParamSet::from(preset);
         let public_key = generate_public_key(
             params.degree,

@@ -2144,14 +2144,13 @@ appends one entry, and `_verifyInputProof` refuses an input once the round holds
 entries (`InputLimitReached`), on both `publishInput` and `validateInputProof`. The limit is at most
 `MAX_INPUTS_PER_ROUND` (100,000). Every input adds at most one fresh ciphertext to the sum that the
 committee decrypts. Decryption stays correct for `SEARCH_Z` additions, which is 100,000 for
-secure-8192. The insecure-512 test preset is sized for 1,024 additions. A CUSTOM round on it, or a
-CONSTANT round with zero credits, can accept more inputs than that.
+both secure-8192 and insecure-64, so no round accepts more inputs than the presets allow.
 
 A mask needs no voter signature, so any account can fill `inputLimit` with masks (`00_INDEX.md`,
 "Masks can fill the input limit").
 
 **Plaintext modulus bound.** The committee decrypts each tally coefficient modulo the plaintext
-modulus `t` of the round's BFV parameters: 100 for insecure-512 and 17,000,000 for secure-8192. A
+modulus `t` of the round's BFV parameters: 17,000,000 for both insecure-64 and secure-8192. A
 ballot holds one weight in `[0, t)` for each option, so the decrypted tally holds per-option totals:
 coefficient `o` is the total weight on option `o`, exact only while it is below `t`.
 `CRISPProgram.validate` decodes `t` from `e3ProgramParams` (the `BfvParameters` tuple that

@@ -1216,8 +1216,15 @@ mod public_key_chunk_tests {
 
     #[test]
     fn historical_slot_zero_uses_its_original_bytes_and_circuit_version() {
-        let params =
-            encode_bfv_params(&BfvParamSet::from(BfvPreset::InsecureThreshold512).build_arc());
+        // The degree-512 parameter set that slot 0 held before the insecure-64 cutover.
+        let params = (
+            U256::from(512u64),
+            U256::from(100u64),
+            vec![U256::from(0xffffee001u64), U256::from(0xffffc4001u64)],
+            "3".to_string(),
+        )
+            .abi_encode();
+        assert!(decode_bfv_params(&params).is_ok());
         let id = keccak256(
             (
                 keccak256(b"fhe.rs:BFV"),
@@ -1236,16 +1243,18 @@ mod public_key_chunk_tests {
         assert!(request_bfv_params(0, id, Some(&params[..params.len() - 1])).is_err());
         assert!(request_bfv_params(2, id, Some(&params)).is_err());
 
+        let current =
+            encode_bfv_params(&BfvParamSet::from(BfvPreset::InsecureThreshold64).build_arc());
         let current_id = keccak256(
             (
                 keccak256(b"fhe.rs:BFV"),
-                keccak256(&params),
+                keccak256(&current),
                 keccak256(b"interfold-bfv-v5"),
             )
                 .abi_encode(),
         );
-        assert_eq!(request_bfv_params(0, current_id, None).unwrap(), params);
-        assert!(request_bfv_params(1, current_id, Some(&params)).is_err());
+        assert_eq!(request_bfv_params(0, current_id, None).unwrap(), current);
+        assert!(request_bfv_params(1, current_id, Some(&current)).is_err());
     }
 
     #[test]

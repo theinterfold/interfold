@@ -357,7 +357,7 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
     }
 
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold512;
+    let preset = BfvPreset::InsecureThreshold64;
 
     let (backend, temp) = setup_test_prover(&bb).await;
     let prover = ZkProver::new(&backend);

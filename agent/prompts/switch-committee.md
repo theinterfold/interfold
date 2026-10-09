@@ -4,7 +4,7 @@ Tool-neutral body for the switch-committee command/skill. Tool adapters point he
 to change the procedure.
 
 Input: a committee name `minimum` | `micro` | `small`, optionally
-`--preset insecure-512 | secure-8192`. Supported pairs live in `scripts/circuit-constants.ts`.
+`--preset insecure-64 | secure-8192`. Supported pairs live in `scripts/circuit-constants.ts`.
 
 Rules — read `agent/invariants/02_CRYPTO_CIRCUITS.md` §Committee config sync first:
 

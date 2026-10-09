@@ -736,7 +736,7 @@ mod tests {
     }
 
     async fn seed_installation(backend: &ZkBackend) -> Vec<u8> {
-        for configuration in ["insecure-512/minimum", "secure-8192/small"] {
+        for configuration in ["insecure-64/minimum", "secure-8192/small"] {
             write_file(
                 &backend.circuits_dir,
                 &format!("{configuration}/default/dkg/pk/pk.json"),
@@ -758,7 +758,7 @@ mod tests {
 
     fn assert_installation_unchanged(backend: &ZkBackend, version: &[u8]) {
         assert_eq!(fs::read(backend.version_file()).unwrap(), version);
-        for configuration in ["insecure-512/minimum", "secure-8192/small"] {
+        for configuration in ["insecure-64/minimum", "secure-8192/small"] {
             assert_eq!(
                 fs::read(
                     backend
@@ -777,7 +777,7 @@ mod tests {
 
     #[tokio::test]
     async fn download_requires_complete_manifest() {
-        let rel_path = "insecure-512/minimum/default/dkg/pk/pk.vk";
+        let rel_path = "insecure-64/minimum/default/dkg/pk/pk.vk";
         let valid_manifest = fixture_manifest(b"circuit");
         let mut uncovered = valid_manifest.clone();
         uncovered.remove(rel_path);
@@ -835,10 +835,10 @@ mod tests {
     #[tokio::test]
     async fn download_rejects_artifacts_omitted_from_archive_and_manifest() {
         for omitted in [
-            "insecure-512/minimum/default/dkg/pk/pk.vk",
-            "insecure-512/minimum/recursive/threshold/share_decryption/share_decryption.json",
-            "insecure-512/minimum/evm/recursive_aggregation/dkg_aggregator/dkg_aggregator.vk",
-            "insecure-512/minimum/default/recursive_aggregation/c6_fold/c6_fold.vk_tree_hash",
+            "insecure-64/minimum/default/dkg/pk/pk.vk",
+            "insecure-64/minimum/recursive/threshold/share_decryption/share_decryption.json",
+            "insecure-64/minimum/evm/recursive_aggregation/dkg_aggregator/dkg_aggregator.vk",
+            "insecure-64/minimum/default/recursive_aggregation/c6_fold/c6_fold.vk_tree_hash",
         ] {
             let temp = TempDir::new().unwrap();
             let mut backend = test_backend(&temp);
@@ -931,7 +931,7 @@ mod tests {
             fs::read(
                 backend
                     .circuits_dir
-                    .join("insecure-512/minimum/default/dkg/pk/pk.json")
+                    .join("insecure-64/minimum/default/dkg/pk/pk.json")
             )
             .unwrap(),
             b"circuit"
@@ -979,7 +979,7 @@ mod tests {
             fs::read(
                 backend
                     .circuits_dir
-                    .join("insecure-512/minimum/default/dkg/pk/pk.json")
+                    .join("insecure-64/minimum/default/dkg/pk/pk.json")
             )
             .unwrap(),
             b"previous-circuit"
@@ -1086,7 +1086,7 @@ mod tests {
         );
         assert_eq!(fs::read(backend.version_file()).unwrap(), previous_version);
         let recovery_dir = staging_dir.unwrap();
-        for configuration in ["insecure-512/minimum", "secure-8192/small"] {
+        for configuration in ["insecure-64/minimum", "secure-8192/small"] {
             assert_eq!(
                 fs::read(recovery_dir.join(format!(
                     "previous-circuits/{configuration}/default/dkg/pk/pk.json"
@@ -1119,7 +1119,7 @@ mod tests {
         let artifacts = fixture_artifacts();
         let omitted: Vec<&str> = artifacts
             .iter()
-            .filter(|path| !path.starts_with("insecure-512/minimum/"))
+            .filter(|path| !path.starts_with("insecure-64/minimum/"))
             .map(String::as_str)
             .collect();
         for path in &omitted {
@@ -1144,7 +1144,7 @@ mod tests {
         backend
             .install_circuits_archive_for_configurations(
                 &archive_path,
-                &[("insecure-512", "minimum")],
+                &[("insecure-64", "minimum")],
                 true,
             )
             .await
@@ -1164,11 +1164,11 @@ mod tests {
 
         let installed_circuit = backend
             .circuits_dir
-            .join("insecure-512/minimum/default/dkg/pk/pk.json");
+            .join("insecure-64/minimum/default/dkg/pk/pk.json");
         write_file(&backend.circuits_dir, "installed.txt", b"installed");
         write_file(
             &backend.circuits_dir,
-            "insecure-512/minimum/default/dkg/pk/pk.json",
+            "insecure-64/minimum/default/dkg/pk/pk.json",
             b"previous-circuit",
         );
 
@@ -1192,7 +1192,7 @@ mod tests {
         let artifacts = fixture_artifacts();
         let omitted: Vec<&str> = artifacts
             .iter()
-            .filter(|path| !path.starts_with("insecure-512/minimum/"))
+            .filter(|path| !path.starts_with("insecure-64/minimum/"))
             .map(String::as_str)
             .collect();
         for path in &omitted {
@@ -1200,7 +1200,7 @@ mod tests {
         }
         let archive = circuit_archive_with_manifest(b"circuit", Some(manifest), &[], &omitted);
         fs::write(&archive_path, &archive).unwrap();
-        let configurations = [("insecure-512", "minimum")];
+        let configurations = [("insecure-64", "minimum")];
         let pinned_to = |digest: String, dir: &TempDir| {
             let base_dir = dir.path().join("noir");
             ZkBackend::with_config(
@@ -1275,15 +1275,11 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let circuits_dir = temp.path();
         let contents = b"flat";
-        write_file(
-            circuits_dir,
-            "insecure-512/default/dkg/pk/pk.json",
-            contents,
-        );
+        write_file(circuits_dir, "insecure-64/default/dkg/pk/pk.json", contents);
         let hash = sha256_hex(contents);
 
         let path =
-            locate_manifest_artifact(circuits_dir, "insecure-512/default/dkg/pk/pk.json", &hash)
+            locate_manifest_artifact(circuits_dir, "insecure-64/default/dkg/pk/pk.json", &hash)
                 .await
                 .unwrap();
 
@@ -1298,19 +1294,19 @@ mod tests {
         let small = b"small";
         write_file(
             circuits_dir,
-            "insecure-512/minimum/default/dkg/pk/pk.json",
+            "insecure-64/minimum/default/dkg/pk/pk.json",
             minimum,
         );
         write_file(
             circuits_dir,
-            "insecure-512/small/default/dkg/pk/pk.json",
+            "insecure-64/small/default/dkg/pk/pk.json",
             small,
         );
         let small_hash = sha256_hex(small);
 
         let path = locate_manifest_artifact(
             circuits_dir,
-            "insecure-512/default/dkg/pk/pk.json",
+            "insecure-64/default/dkg/pk/pk.json",
             &small_hash,
         )
         .await
@@ -1326,14 +1322,14 @@ mod tests {
         let contents = b"minimum";
         write_file(
             circuits_dir,
-            "insecure-512/minimum/default/dkg/pk/pk.json",
+            "insecure-64/minimum/default/dkg/pk/pk.json",
             contents,
         );
         let hash = sha256_hex(contents);
 
         let path = locate_manifest_artifact(
             circuits_dir,
-            "insecure-512/minimum/default/dkg/pk/pk.json",
+            "insecure-64/minimum/default/dkg/pk/pk.json",
             &hash,
         )
         .await

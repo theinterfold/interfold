@@ -26,7 +26,7 @@ fn signed_proof(e3_id: &E3id, party: u64, proof_type: ProofType) -> SignedProofP
 }
 
 fn authenticated_share(e3_id: &E3id, party: u64) -> ThresholdShareCreated {
-    let rows = BfvPreset::InsecureThreshold512.metadata().num_moduli;
+    let rows = BfvPreset::InsecureThreshold64.metadata().num_moduli;
     ThresholdShareCreated {
         signed_c2a_proof: Some(signed_proof(e3_id, party, ProofType::C2aSkShareComputation)),
         signed_c2b_proof: Some(signed_proof(
@@ -78,7 +78,7 @@ impl AdmissionHarness {
         };
         let (bus, history) = test_bus();
         let cipher = Arc::new(Cipher::from_password("test-password").await?);
-        let rows = vec![vec![1u64]; BfvPreset::InsecureThreshold512.metadata().num_moduli];
+        let rows = vec![vec![1u64]; BfvPreset::InsecureThreshold64.metadata().num_moduli];
         let rows = SensitiveBytes::new(bincode::serialize(&rows)?, &cipher)?;
         let current = AggregatingDecryptionKey {
             own_sk_share_raw: rows.clone(),
@@ -163,7 +163,7 @@ impl AdmissionHarness {
             bus: self.bus.clone(),
             cipher: self.cipher.clone(),
             state,
-            share_enc_preset: BfvPreset::InsecureDkg512,
+            share_enc_preset: BfvPreset::InsecureDkg64,
             interfold_address: Address::ZERO,
             signer: dealer_signer(0),
             effects_enabled: true,
@@ -515,10 +515,10 @@ async fn restarted_micro_batch_survives_its_original_deadline() -> Result<()> {
     for finish_dkg in [true, false] {
         let (h, mut actor) =
             AdmissionHarness::with_committee(true, CiphernodesCommitteeSize::Micro).await?;
-        let params = BfvParamSet::from(BfvPreset::InsecureDkg512).build_arc();
-        let key = generate_bfv_keypair(&BfvPreset::InsecureDkg512, &h.cipher)?;
+        let params = BfvParamSet::from(BfvPreset::InsecureDkg64).build_arc();
+        let key = generate_bfv_keypair(&BfvPreset::InsecureDkg64, &h.cipher)?;
         let pk = PublicKey::from_bytes(&key.pk_bfv, &params)?;
-        let num_moduli = BfvPreset::InsecureThreshold512.metadata().num_moduli;
+        let num_moduli = BfvPreset::InsecureThreshold64.metadata().num_moduli;
         let rows = vec![vec![1u64; params.degree()]; num_moduli];
         let own_rows = SensitiveBytes::new(bincode::serialize(&rows)?, &h.cipher)?;
         let secret =

@@ -24,7 +24,7 @@ every section.
   and `crates/evm-helpers/src/contracts.rs`. Drift means a deployment can register parameters that
   ciphernodes or circuits do not implement. Write the generated values only with
   `pnpm build:circuits` or `pnpm build:circuits sync-config --preset <name> --committee <name>`. The
-  committed generated selection is `insecure-512/minimum`: the CI circuits job rebuilds with the
+  committed generated selection is `insecure-64/minimum`: the CI circuits job rebuilds with the
   defaults and fails on a diff. `circuits/bin/.active-preset.json` is a local cache; a mismatch only
   prints a note. `scripts/circuit-constants.ts` also holds committee values, and the gate does not
   compare it.
@@ -73,7 +73,7 @@ every section.
   release workflow rejects a different value because the ciphernode resolves both the GitHub release
   tag `v{version}` and `circuits-{version}.tar.gz` from this field.
 - A circuit release archive that supports current deployments must include every
-  `insecure-512/{minimum,micro,small}` and `secure-8192/{minimum,micro,small}` pair. Each pair has a
+  `insecure-64/{minimum,micro,small}` and `secure-8192/{minimum,micro,small}` pair. Each pair has a
   build stamp with the exact preset, committee, and source hash. `checksums.json` and `SHA256SUMS`
   must cover the archive artifacts. Nodes select the artifact directory from the E3's on-chain
   parameter set and committee size. `download_circuits` checks the archive SHA-256 against
@@ -297,7 +297,7 @@ every section.
   needs a `should_fail` test in each direction, since nothing else stops it being wrong. —
   `flow-trace/04`
 - **A path gated off for one preset is the path CI exercises least, and usually the one that
-  ships.** C3's scaled quotient is generated-false on insecure-512, which is the default preset and
+  ships.** C3's scaled quotient is generated-false on insecure-64, which is the default preset and
   the only one `rust:test:proofs` and `local_e2e_tests` run. So the production path gets no
   end-to-end proof coverage from them: it needs its own `nargo execute` against a real secure-8192
   witness, plus a unit test that enters the branch. Before C3 added one, every C3 test exercised the
@@ -400,7 +400,7 @@ every section.
   inputs were in `[0, q_l)` "by C2 range checks" for a value C2 never constrained on this path; the
   comment stood in for the missing check. — `flow-trace/04`
 - DKG error terms need no CRT decomposition: `error1_variance <= 16` puts `e0_bound` at
-  `2 * variance` (20 secure, 6 insecure), far below every `q_i / 2`, so the centered residue equals
+  `2 * variance` (20 for both presets), far below every `q_i / 2`, so the centered residue equals
   `e0`. C3 uses `e0` directly. Raising DKG `error1_variance` past 16 switches `Bounds::compute` to
   the uniform branch and breaks that assumption — witness generation asserts it. — `flow-trace/04`
 

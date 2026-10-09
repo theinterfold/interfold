@@ -113,7 +113,7 @@ RAW_DIR="${OUTPUT_DIR}/raw"
 if [ "$MODE" = "secure" ]; then
     PRESET_NAME="secure-8192"
 else
-    PRESET_NAME="insecure-512"
+    PRESET_NAME="insecure-64"
 fi
 
 require_preset_artifacts() {

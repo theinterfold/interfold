@@ -25,10 +25,10 @@ contract MockInterfold {
   /// @dev Defaults to the value the timing tests relied on before it was settable.
   uint256 public mockComputeWindow = 100;
 
-  uint256 constant PLAINTEXT_MODULUS = 100;
+  uint256 constant PLAINTEXT_MODULUS = 17000000;
 
   /// @notice The BFV parameter blob that every request passes to `validate` as `e3ProgramParams`.
-  /// @dev Insecure-512 (degree 512, plaintext modulus 100), the preset the deploy scripts and tests
+  /// @dev Insecure-64 (degree 64, plaintext modulus 17000000), the preset the deploy scripts and tests
   /// run against. A test that needs another plaintext modulus passes `validate` the blob from
   /// {bfvParamsWithPlaintextModulus}.
   bytes public e3ProgramParams = bfvParamsWithPlaintextModulus(PLAINTEXT_MODULUS);
@@ -40,10 +40,11 @@ contract MockInterfold {
 
   /// @notice The blob that `validate` decodes as {BfvParameters}, with the given plaintext modulus.
   function bfvParamsWithPlaintextModulus(uint256 modulus) public pure returns (bytes memory) {
-    uint256[] memory moduli = new uint256[](2);
-    moduli[0] = 0xffffee001;
-    moduli[1] = 0xffffc4001;
-    return abi.encode(BfvParameters({ degree: 512, plaintextModulus: modulus, moduli: moduli, error1Variance: "3" }));
+    uint256[] memory moduli = new uint256[](3);
+    moduli[0] = 0x0000000007fffd81;
+    moduli[1] = 0x0000000007fff801;
+    moduli[2] = 0x0000000007fff781;
+    return abi.encode(BfvParameters({ degree: 64, plaintextModulus: modulus, moduli: moduli, error1Variance: "12617929386" }));
   }
 
   uint256 public nextE3Id;
@@ -101,7 +102,7 @@ contract MockInterfold {
       inputWindow: [uint256(0), uint256(0)],
       encryptionSchemeId: ENCRYPTION_SCHEME_ID,
       e3Program: assignedE3Program,
-      paramSet: 0, // Insecure512
+      paramSet: 0, // Insecure64
       customParams: params,
       decryptionVerifier: IDecryptionVerifier(address(0)),
       pkVerifier: IPkVerifier(address(0)),
@@ -127,7 +128,7 @@ contract MockInterfold {
       inputWindow: [uint256(0), uint256(0)],
       encryptionSchemeId: ENCRYPTION_SCHEME_ID,
       e3Program: assignedE3Program,
-      paramSet: 0, // Insecure512
+      paramSet: 0, // Insecure64
       customParams: abi.encode(address(0), nextE3Id, numOptions, 0, 0, 0, 0),
       decryptionVerifier: IDecryptionVerifier(address(0)),
       pkVerifier: IPkVerifier(address(0)),
@@ -208,7 +209,7 @@ contract MockInterfold {
         inputWindow: inputWindow,
         encryptionSchemeId: ENCRYPTION_SCHEME_ID,
         e3Program: assignee,
-        paramSet: 0, // Insecure512
+        paramSet: 0, // Insecure64
         customParams: abi.encode(address(0), 0, 2, 0, 0, 0, 0),
         decryptionVerifier: IDecryptionVerifier(address(0)),
         pkVerifier: IPkVerifier(address(0)),

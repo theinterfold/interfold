@@ -19,5 +19,5 @@ cargo run -p e3-zk-helpers --bin zk_cli -- --circuit pk-generation --preset inse
 | Flag                 | Description                                                                                           |
 | -------------------- | ----------------------------------------------------------------------------------------------------- |
 | `--circuit <name>`   | Circuit to generate artifacts for                                                                     |
-| `--preset <name>`    | BFV preset: `insecure` (512), `secure` (8192), or aliases `2` / `80`                                  |
+| `--preset <name>`    | BFV preset: `insecure` (64), `secure` (8192), or aliases `2` / `80`                                  |
 | `--committee <name>` | Committee size: `minimum` (default), `micro`, or `small` — must match `circuits/lib` active committee |

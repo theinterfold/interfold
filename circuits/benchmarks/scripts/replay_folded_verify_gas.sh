@@ -113,7 +113,7 @@ echo "  [replay-gas] Running Hardhat benchmarkGasFromRaw.ts (folded proofs)..."
     BENCHMARK_RAW_DIR="$RAW_DIR" \
     BENCHMARK_GAS_OUTPUT="$TMP_GAS_PARTIAL" \
     BENCHMARK_FOLDED_JSON="$TMP_FOLDED" \
-    BENCHMARK_PRESET="${BUILD_PRESET:-insecure-512}" \
+    BENCHMARK_PRESET="${BUILD_PRESET:-insecure-64}" \
     pnpm hardhat run scripts/benchmarkGasFromRaw.ts --network hardhat
 )
 
