@@ -125,18 +125,14 @@ async fn secure_generation_fold_kernel_proves_and_verifies() {
         )
         .expect("matching RLK row");
 
-    let pk_limb_vk = load_vk_artifacts(
+    let pk_vk = load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Recursive, ARTIFACTS_DIR),
-        CircuitName::LbfvPkGenerationLimb,
+        CircuitName::LbfvPkGeneration,
     )
-    .expect("public-key limb VK");
-    let pk_limb_vk_hash: [u8; 32] = hex::decode(pk_limb_vk.key_hash.trim_start_matches("0x"))
-        .expect("public-key limb VK hash")
-        .try_into()
-        .expect("public-key limb VK hash length");
+    .expect("public-key row VK");
     let pk_cache_label = format!(
-        "lbfv_pk_generation_terminal_v7_{}",
-        hex::encode(pk_limb_vk_hash)
+        "lbfv_pk_generation_row_{}",
+        pk_vk.key_hash.trim_start_matches("0x")
     );
     let pk_proof =
         if let Some(cached) = load_cached_proof(CircuitName::LbfvPkGeneration, &pk_cache_label) {
@@ -146,12 +142,10 @@ async fn secure_generation_fold_kernel_proves_and_verifies() {
                 &prover,
                 preset,
                 &pk_data,
-                &pk_limb_vk_hash,
                 "secure-v2-generation-fold",
                 ARTIFACTS_DIR,
             )
-            .expect("PK generation proof")
-            .terminal_proof;
+            .expect("PK generation proof");
             store_cached_proof(&proof, &pk_cache_label);
             proof
         };
@@ -166,35 +160,34 @@ async fn secure_generation_fold_kernel_proves_and_verifies() {
         )
         .expect("PK generation verification"));
 
-    let limb_vk = load_vk_artifacts(
+    let rlk_vk = load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Recursive, ARTIFACTS_DIR),
-        CircuitName::RlkGenerationLimb,
+        CircuitName::RlkGeneration,
     )
-    .expect("RLK limb VK");
-    let limb_vk_hash: [u8; 32] = hex::decode(limb_vk.key_hash.trim_start_matches("0x"))
-        .expect("RLK limb VK hash")
-        .try_into()
-        .expect("RLK limb VK hash length");
-    let rlk_terminal_proof =
-        if let Some(cached) = load_cached_proof(CircuitName::RlkGeneration, "rlk_generation") {
+    .expect("RLK row VK");
+    let rlk_cache_label = format!(
+        "rlk_generation_row_{}",
+        rlk_vk.key_hash.trim_start_matches("0x")
+    );
+    let rlk_proof =
+        if let Some(cached) = load_cached_proof(CircuitName::RlkGeneration, &rlk_cache_label) {
             cached
         } else {
-            let proofs = prove_rlk_generation_row(
+            let proof = prove_rlk_generation_row(
                 &prover,
                 preset,
                 &rlk_data,
-                &limb_vk_hash,
                 "secure-v2-generation-fold",
                 ARTIFACTS_DIR,
             )
             .expect("RLK generation row proof");
-            store_cached_proof(&proofs.terminal_proof, "rlk_generation");
-            proofs.terminal_proof
+            store_cached_proof(&proof, &rlk_cache_label);
+            proof
         };
-    print_measurement("rlk_generation", &rlk_terminal_proof);
+    print_measurement("rlk_generation", &rlk_proof);
     assert!(prover
         .verify_proof_with_variant(
-            &rlk_terminal_proof,
+            &rlk_proof,
             "secure-v2-generation-fold",
             0,
             CircuitVariant::Recursive,
@@ -205,11 +198,9 @@ async fn secure_generation_fold_kernel_proves_and_verifies() {
     let generation_fold = prove_lbfv_generation_fold_step(
         &prover,
         &pk_proof,
-        &rlk_terminal_proof,
+        &rlk_proof,
         None,
         0,
-        &ArcBytes::from_bytes(&pk_limb_vk_hash),
-        &ArcBytes::from_bytes(&limb_vk_hash),
         "secure-v2-generation-fold",
         ARTIFACTS_DIR,
     )

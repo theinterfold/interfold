@@ -22,8 +22,7 @@ use e3_events::{
     DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_fhe_params::build_pair_for_preset;
-use e3_utils::ArcBytes;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::domain::node_dkg_fold::{DkgProofCollectionState, NodeDkgFoldMeta};
 use crate::node_fold_public::extract_node_fold_agg_commits;
@@ -31,7 +30,6 @@ use crate::node_fold_public::extract_node_fold_agg_commits;
 struct LbfvGenerationRows {
     pk_proofs: Vec<Proof>,
     rlk_proofs: Vec<Proof>,
-    trusted_limb_key_hash: ArcBytes,
 }
 /// Actor that collects DKG inner proofs and dispatches a single [`ZkRequest::NodeDkgFold`].
 pub struct NodeProofAggregator {

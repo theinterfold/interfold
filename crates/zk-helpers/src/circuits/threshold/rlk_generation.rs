@@ -15,8 +15,9 @@ use crate::threshold::lbfv_proof_domain::{
 };
 use crate::utils::{validate_crt_shape, verify_crt_shapes};
 use crate::{
-    calculate_bit_width, polynomial_to_toml_json, Artifacts, CiphernodesCommittee, Circuit,
-    CircuitCodegen, CircuitComputation, CircuitsErrors, CodegenConfigs, CodegenToml, Computation,
+    calculate_bit_width, crt_polynomial_to_toml_json, polynomial_to_toml_json, Artifacts,
+    CiphernodesCommittee, Circuit, CircuitCodegen, CircuitComputation, CircuitsErrors,
+    CodegenConfigs, CodegenToml, Computation,
 };
 use e3_committee_hash::LbfvProofDomainContext;
 use e3_fhe_params::{build_pair_for_preset, lbfv_crs_seed, lbfv_urs_seed, BfvPreset};
@@ -28,24 +29,12 @@ use num_bigint::{BigInt, BigUint};
 use std::sync::Arc;
 use zeroize::Zeroize;
 
-/// Recursive finalizer for one l-BFV relinearization-key row.
+/// l-BFV relinearization-key generation for one row, all CRT limbs in one proof.
 #[derive(Debug)]
 pub struct RlkGenerationCircuit;
 
 impl Circuit for RlkGenerationCircuit {
     const NAME: &'static str = "rlk-generation";
-    const PREFIX: &'static str = "RLK_GENERATION";
-    const SUPPORTED_PARAMETER: e3_fhe_params::ParameterType =
-        e3_fhe_params::ParameterType::THRESHOLD;
-    const DKG_INPUT_TYPE: Option<crate::computation::DkgInputType> = None;
-}
-
-/// CRT-limb l-BFV relinearization-key generation circuit.
-#[derive(Debug)]
-pub struct RlkGenerationLimbCircuit;
-
-impl Circuit for RlkGenerationLimbCircuit {
-    const NAME: &'static str = "rlk-generation-limb";
     const PREFIX: &'static str = "RLK_GENERATION";
     const SUPPORTED_PARAMETER: e3_fhe_params::ParameterType =
         e3_fhe_params::ParameterType::THRESHOLD;
@@ -80,55 +69,11 @@ pub struct RlkGenerationCircuitData {
     pub d2: CrtPolynomial,
 }
 
-/// Inputs for one CRT limb of one validated RLK row.
-pub struct RlkGenerationLimbCircuitData {
-    pub row: RlkGenerationCircuitData,
-    pub limb_index: u32,
-}
-
-/// Borrowed prover input for one CRT limb of a validated RLK row.
-pub struct RlkGenerationLimbInput<'a> {
-    pub session_id_hi: u128,
-    pub session_id_lo: u128,
-    pub party_id: u32,
-    pub row_index: u32,
-    pub limb_index: u32,
-    pub sk: &'a Polynomial,
-    pub r: &'a Polynomial,
-    pub e0: &'a Polynomial,
-    pub e2: &'a Polynomial,
-    pub rd0: &'a Polynomial,
-    pub rd2: &'a Polynomial,
-    pub d0: &'a Polynomial,
-    pub d2: &'a Polynomial,
-}
-
-impl RlkGenerationLimbInput<'_> {
-    /// Convert the borrowed limb input to the JSON shape required by the Noir ABI.
-    pub fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
-            "session_id_hi": self.session_id_hi.to_string(),
-            "session_id_lo": self.session_id_lo.to_string(),
-            "party_id": self.party_id,
-            "row_index": self.row_index,
-            "limb_index": self.limb_index,
-            "sk": polynomial_to_toml_json(self.sk),
-            "r": polynomial_to_toml_json(self.r),
-            "e0": polynomial_to_toml_json(self.e0),
-            "e2": polynomial_to_toml_json(self.e2),
-            "rd0": polynomial_to_toml_json(self.rd0),
-            "rd2": polynomial_to_toml_json(self.rd2),
-            "d0": polynomial_to_toml_json(self.d0),
-            "d2": polynomial_to_toml_json(self.d2),
-        })
-    }
-}
-
-/// Complete RLK limb-circuit computation output.
-pub struct RlkGenerationLimbComputationOutput {
+/// Computed values for one RLK row proof.
+pub struct RlkGenerationComputationOutput {
     pub bounds: RlkGenerationBounds,
     pub bits: RlkGenerationBits,
-    pub inputs: RlkGenerationLimbInputs,
+    pub inputs: RlkGenerationInputs,
 }
 
 /// Generated RLK constants for one preset and committee.
@@ -164,35 +109,40 @@ pub struct RlkGenerationBounds {
     pub rd2_bounds: Vec<BigUint>,
 }
 
-/// Prover inputs for one CRT limb of one RLK gadget row.
+/// Prover inputs for one RLK gadget row.
 #[derive(serde::Serialize, serde::Deserialize)]
-pub struct RlkGenerationLimbInputs {
+pub struct RlkGenerationInputs {
     pub session_id_hi: u128,
     pub session_id_lo: u128,
     pub party_id: u32,
     pub row_index: u32,
-    pub limb_index: u32,
     pub sk: Polynomial,
     pub r: Polynomial,
     pub e0: Polynomial,
     pub e2: Polynomial,
-    pub rd0: Polynomial,
-    pub rd2: Polynomial,
-    pub d0: Polynomial,
-    pub d2: Polynomial,
+    /// Per-limb quotients of the reduced `d0` identity, `N` coefficients each.
+    pub rd0: CrtPolynomial,
+    /// Per-limb quotients of the reduced `d2` identity, `N` coefficients each.
+    pub rd2: CrtPolynomial,
+    pub d0: CrtPolynomial,
+    pub d2: CrtPolynomial,
+    /// Fixed URS row `d1` in centered circuit form.
+    pub urs: CrtPolynomial,
+    /// Fixed CRS row `a` in centered circuit form.
+    pub crs: CrtPolynomial,
 }
 
-impl CircuitComputation for RlkGenerationLimbCircuit {
+impl CircuitComputation for RlkGenerationCircuit {
     type Preset = BfvPreset;
-    type Data = RlkGenerationLimbCircuitData;
-    type Output = RlkGenerationLimbComputationOutput;
+    type Data = RlkGenerationCircuitData;
+    type Output = RlkGenerationComputationOutput;
     type Error = CircuitsErrors;
 
     fn compute(preset: Self::Preset, data: &Self::Data) -> Result<Self::Output, Self::Error> {
-        let bounds = RlkGenerationBounds::compute(preset, &data.row.committee)?;
+        let bounds = RlkGenerationBounds::compute(preset, &data.committee)?;
         let bits = RlkGenerationBits::compute(preset, &bounds)?;
-        let inputs = RlkGenerationLimbInputs::compute(preset, data)?;
-        Ok(RlkGenerationLimbComputationOutput {
+        let inputs = RlkGenerationInputs::compute(preset, data)?;
+        Ok(RlkGenerationComputationOutput {
             bounds,
             bits,
             inputs,
@@ -239,7 +189,7 @@ impl Computation for RlkGenerationBounds {
         let sk_bound = pk_bounds.sk_bound;
         let r_bound = sk_bound.clone();
         let error_bound = pk_bounds.eek_bound;
-        // The limb checks, over the integers and per CRT limb,
+        // The circuit checks, over the integers and per CRT limb,
         //   d0 = -(d1 * sk mod X^N + 1) + e0 + delta * r  + q_i * rd0
         //   d2 =  (a  * r  mod X^N + 1) + e2 + delta * sk + q_i * rd2
         // with delta in {0, 1}. With qb = (q_i - 1) / 2 and m = max(sk_bound, r_bound):
@@ -297,38 +247,13 @@ impl Computation for RlkGenerationBits {
     }
 }
 
-impl Computation for RlkGenerationLimbInputs {
+impl Computation for RlkGenerationInputs {
     type Preset = BfvPreset;
-    type Data = RlkGenerationLimbCircuitData;
+    type Data = RlkGenerationCircuitData;
     type Error = CircuitsErrors;
 
     fn compute(preset: Self::Preset, data: &Self::Data) -> Result<Self, Self::Error> {
-        let limbs = derive_rlk_generation_limb_inputs(preset, &data.row)?;
-        let limb_index = usize::try_from(data.limb_index)
-            .map_err(|_| CircuitsErrors::Other("RLK limb index does not fit usize".to_string()))?;
-        let limb = limbs.get(limb_index).ok_or_else(|| {
-            CircuitsErrors::Other(format!(
-                "RLK limb index {} is out of range for {} limbs",
-                data.limb_index,
-                limbs.len()
-            ))
-        })?;
-
-        Ok(Self {
-            session_id_hi: limb.session_id_hi,
-            session_id_lo: limb.session_id_lo,
-            party_id: limb.party_id,
-            row_index: limb.row_index,
-            limb_index: limb.limb_index,
-            sk: limb.sk.clone(),
-            r: limb.r.clone(),
-            e0: limb.e0.clone(),
-            e2: limb.e2.clone(),
-            rd0: limb.rd0.clone(),
-            rd2: limb.rd2.clone(),
-            d0: limb.d0.clone(),
-            d2: limb.d2.clone(),
-        })
+        RlkGenerationAdapter::new(preset)?.row_inputs(data)
     }
 
     fn to_json(&self) -> serde_json::Result<serde_json::Value> {
@@ -337,87 +262,28 @@ impl Computation for RlkGenerationLimbInputs {
             "session_id_lo": self.session_id_lo.to_string(),
             "party_id": self.party_id,
             "row_index": self.row_index,
-            "limb_index": self.limb_index,
             "sk": polynomial_to_toml_json(&self.sk),
             "r": polynomial_to_toml_json(&self.r),
             "e0": polynomial_to_toml_json(&self.e0),
             "e2": polynomial_to_toml_json(&self.e2),
-            "rd0": polynomial_to_toml_json(&self.rd0),
-            "rd2": polynomial_to_toml_json(&self.rd2),
-            "d0": polynomial_to_toml_json(&self.d0),
-            "d2": polynomial_to_toml_json(&self.d2),
+            "rd0": crt_polynomial_to_toml_json(&self.rd0),
+            "rd2": crt_polynomial_to_toml_json(&self.rd2),
+            "d0": crt_polynomial_to_toml_json(&self.d0),
+            "d2": crt_polynomial_to_toml_json(&self.d2),
+            "urs": crt_polynomial_to_toml_json(&self.urs),
+            "crs": crt_polynomial_to_toml_json(&self.crs),
         }))
     }
 }
 
-/// Derive all CRT-limb inputs from one row in canonical limb order.
-pub fn derive_rlk_generation_limb_inputs(
-    preset: BfvPreset,
-    row: &RlkGenerationCircuitData,
-) -> Result<Vec<RlkGenerationLimbInput<'_>>, CircuitsErrors> {
-    let (params, _) =
-        build_pair_for_preset(preset).map_err(|error| CircuitsErrors::Other(error.to_string()))?;
-    validate_lbfv_generation_party_id(row.party_id, &row.committee)?;
-    let session = lbfv_proof_session(row.proof_domain)?;
-    lbfv_crs_seed(preset)
-        .ok_or_else(|| CircuitsErrors::Other(format!("l-BFV CRS is not enabled for {preset:?}")))?;
-    let l = params.moduli().len();
-    let row_index = usize::try_from(row.row_index)
-        .map_err(|_| CircuitsErrors::Other("RLK row index does not fit usize".to_string()))?;
-    if row_index >= l {
-        return Err(CircuitsErrors::Other(format!(
-            "RLK row index {} is out of range for {l} rows",
-            row.row_index
-        )));
-    }
-    let n = params.degree();
-    verify_crt_shapes(&[&row.d0, &row.d2], l, n)
-        .map_err(|error| CircuitsErrors::Other(format!("RLK CRT shape mismatch: {error}")))?;
-    for (name, polynomial) in [("rd0", &row.rd0), ("rd2", &row.rd2)] {
-        validate_crt_shape(polynomial, l, n)
-            .map_err(|error| CircuitsErrors::Other(format!("invalid RLK {name} shape: {error}")))?;
-    }
-    for (name, polynomial) in [
-        ("sk", &row.sk),
-        ("r", &row.r),
-        ("e0", &row.e0),
-        ("e2", &row.e2),
-    ] {
-        if polynomial.coefficients().len() != n {
-            return Err(CircuitsErrors::Other(format!(
-                "RLK {name} has {} coefficients; expected {n}",
-                polynomial.coefficients().len()
-            )));
-        }
-    }
-
-    Ok((0..l)
-        .map(|limb_index| RlkGenerationLimbInput {
-            session_id_hi: session.session_id_hi,
-            session_id_lo: session.session_id_lo,
-            party_id: row.party_id,
-            row_index: row.row_index,
-            limb_index: limb_index as u32,
-            sk: &row.sk,
-            r: &row.r,
-            e0: &row.e0,
-            e2: &row.e2,
-            rd0: row.rd0.limb(limb_index),
-            rd2: row.rd2.limb(limb_index),
-            d0: row.d0.limb(limb_index),
-            d2: row.d2.limb(limb_index),
-        })
-        .collect())
-}
-
-impl CircuitCodegen for RlkGenerationLimbCircuit {
+impl CircuitCodegen for RlkGenerationCircuit {
     type Preset = BfvPreset;
-    type Data = RlkGenerationLimbCircuitData;
+    type Data = RlkGenerationCircuitData;
     type Error = CircuitsErrors;
 
     fn codegen(&self, preset: Self::Preset, data: &Self::Data) -> Result<Artifacts, Self::Error> {
-        let inputs = RlkGenerationLimbInputs::compute(preset, data)?;
-        let configs = RlkGenerationConfigs::compute(preset, &data.row.committee)?;
+        let inputs = RlkGenerationInputs::compute(preset, data)?;
+        let configs = RlkGenerationConfigs::compute(preset, &data.committee)?;
         Ok(Artifacts {
             toml: generate_toml(inputs)?,
             configs: generate_configs(&configs),
@@ -425,8 +291,8 @@ impl CircuitCodegen for RlkGenerationLimbCircuit {
     }
 }
 
-/// Serialize one RLK row limb as `Prover.toml`.
-pub fn generate_toml(inputs: RlkGenerationLimbInputs) -> Result<CodegenToml, CircuitsErrors> {
+/// Serialize one RLK row as `Prover.toml`.
+pub fn generate_toml(inputs: RlkGenerationInputs) -> Result<CodegenToml, CircuitsErrors> {
     Ok(toml::to_string(&inputs.to_json()?)?)
 }
 
@@ -650,6 +516,63 @@ impl RlkGenerationAdapter {
         })
     }
 
+    /// Validate one RLK row and attach the fixed URS and CRS rows the circuit opens.
+    pub fn row_inputs(
+        &self,
+        data: &RlkGenerationCircuitData,
+    ) -> Result<RlkGenerationInputs, CircuitsErrors> {
+        validate_lbfv_generation_party_id(data.party_id, &data.committee)?;
+        let session = lbfv_proof_session(data.proof_domain)?;
+        let l = self.moduli.len();
+        let n = self.degree;
+        let row = usize::try_from(data.row_index)
+            .map_err(|_| CircuitsErrors::Other("RLK row index does not fit usize".to_string()))?;
+        if row >= self.row_count() {
+            return Err(CircuitsErrors::Other(format!(
+                "RLK row index {} is out of range for {} rows",
+                data.row_index,
+                self.row_count()
+            )));
+        }
+        verify_crt_shapes(&[&data.d0, &data.d2], l, n)
+            .map_err(|error| CircuitsErrors::Other(format!("RLK CRT shape mismatch: {error}")))?;
+        for (name, polynomial) in [("rd0", &data.rd0), ("rd2", &data.rd2)] {
+            validate_crt_shape(polynomial, l, n).map_err(|error| {
+                CircuitsErrors::Other(format!("invalid RLK {name} shape: {error}"))
+            })?;
+        }
+        for (name, polynomial) in [
+            ("sk", &data.sk),
+            ("r", &data.r),
+            ("e0", &data.e0),
+            ("e2", &data.e2),
+        ] {
+            if polynomial.coefficients().len() != n {
+                return Err(CircuitsErrors::Other(format!(
+                    "RLK {name} has {} coefficients; expected {n}",
+                    polynomial.coefficients().len()
+                )));
+            }
+        }
+
+        Ok(RlkGenerationInputs {
+            session_id_hi: session.session_id_hi,
+            session_id_lo: session.session_id_lo,
+            party_id: data.party_id,
+            row_index: data.row_index,
+            sk: data.sk.clone(),
+            r: data.r.clone(),
+            e0: data.e0.clone(),
+            e2: data.e2.clone(),
+            rd0: data.rd0.clone(),
+            rd2: data.rd2.clone(),
+            d0: data.d0.clone(),
+            d2: data.d2.clone(),
+            urs: self.d1_rows[row].clone(),
+            crs: self.a_rows[row].clone(),
+        })
+    }
+
     /// The right-hand sides of both reduced identities at one limb, before the `q_i` quotient:
     ///   `-(d1 * sk mod X^N + 1) + e0 + delta * r` and `(a * r mod X^N + 1) + e2 + delta * sk`
     /// where `delta = (row == limb)` is the row's Garner coefficient reduced modulo `q_limb`.
@@ -829,29 +752,6 @@ impl RlkGenerationCircuitData {
     }
 }
 
-impl RlkGenerationLimbCircuitData {
-    /// Generate row zero and limb zero for codegen and prover tests.
-    pub fn generate_sample(
-        preset: BfvPreset,
-        committee: CiphernodesCommittee,
-    ) -> Result<Self, CircuitsErrors> {
-        Self::generate_sample_for_row_and_limb(preset, committee, 0, 0)
-    }
-
-    /// Generate one valid RLK row limb for codegen and prover tests.
-    pub fn generate_sample_for_row_and_limb(
-        preset: BfvPreset,
-        committee: CiphernodesCommittee,
-        row_index: u32,
-        limb_index: u32,
-    ) -> Result<Self, CircuitsErrors> {
-        Ok(Self {
-            row: RlkGenerationCircuitData::generate_sample_for_row(preset, committee, row_index)?,
-            limb_index,
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -910,7 +810,7 @@ mod tests {
                 assert_eq!(data.rd0.limb(i).coefficients().len(), params.degree());
                 assert_eq!(data.rd2.limb(i).coefficients().len(), params.degree());
 
-                // The reduced identities the limb circuit checks, restated with the generic
+                // The reduced identities the circuit checks, restated with the generic
                 // cyclotomic reduction rather than the fold the witness uses. `d0`/`d2` come from
                 // the FHE share, which applies the full Garner coefficient, so this also checks
                 // that `delta` reproduces it modulo q_i.
@@ -945,7 +845,7 @@ mod tests {
         assert!(RlkGenerationAdapter::new(BfvPreset::SecureThreshold8192).is_err());
     }
 
-    /// The limb circuit replaces the row's gadget scalar, the Garner coefficient `g_row`, by
+    /// The circuit replaces the row's gadget scalar, the Garner coefficient `g_row`, by
     /// `delta = (row == limb)`. That is sound only because `g_row` is the CRT unit vector:
     /// `1 mod q_row` and `0 mod q_j` for every other modulus.
     #[test]
@@ -1013,12 +913,10 @@ mod tests {
             polynomial.coefficients().iter().all(|c| c.abs() <= bound)
         };
 
-        for (limb_index, limb) in derive_rlk_generation_limb_inputs(preset, &row)?
-            .iter()
-            .enumerate()
-        {
-            assert!(fits(limb.rd0, &bounds.rd0_bounds[limb_index]));
-            assert!(fits(limb.rd2, &bounds.rd2_bounds[limb_index]));
+        let inputs = RlkGenerationInputs::compute(preset, &row)?;
+        for (limb_index, (rd0, rd2)) in inputs.rd0.limbs.iter().zip(&inputs.rd2.limbs).enumerate() {
+            assert!(fits(rd0, &bounds.rd0_bounds[limb_index]));
+            assert!(fits(rd2, &bounds.rd2_bounds[limb_index]));
         }
         Ok(())
     }
@@ -1036,72 +934,26 @@ mod tests {
     }
 
     #[test]
-    fn limb_toml_contains_only_one_polynomial_per_crt_value() -> Result<(), CircuitsErrors> {
-        let polynomial = Polynomial::new(vec![1.into(), (-1).into()]);
-        let inputs = RlkGenerationLimbInputs {
-            session_id_hi: 1,
-            session_id_lo: 2,
-            party_id: 0,
-            row_index: 2,
-            limb_index: 3,
-            sk: polynomial.clone(),
-            r: polynomial.clone(),
-            e0: polynomial.clone(),
-            e2: polynomial.clone(),
-            rd0: polynomial.clone(),
-            rd2: polynomial.clone(),
-            d0: polynomial.clone(),
-            d2: polynomial,
-        };
+    fn row_inputs_carry_the_fixed_urs_and_crs_rows() -> Result<(), CircuitsErrors> {
+        let preset = BfvPreset::InsecureThresholdLbfv;
+        let committee = CiphernodesCommitteeSize::Minimum.values();
+        let adapter = RlkGenerationAdapter::new(preset)?;
+        let row_index = 1;
+        let mut row =
+            RlkGenerationCircuitData::generate_sample_for_row(preset, committee, row_index)?;
+        let inputs = adapter.row_inputs(&row)?;
+
+        assert_eq!(inputs.row_index, row_index);
+        assert_eq!(inputs.urs, adapter.d1_rows[row_index as usize]);
+        assert_eq!(inputs.crs, adapter.a_rows[row_index as usize]);
+        assert_eq!(inputs.d0, row.d0);
         let toml = generate_toml(inputs)?;
-
-        assert!(toml.contains("row_index = 2"));
-        assert!(toml.contains("limb_index = 3"));
-        assert!(toml.contains("[d0]"));
-        assert!(!toml.contains("[[d0]]"));
-        Ok(())
-    }
-
-    #[test]
-    fn limb_inputs_borrow_one_row_in_canonical_order() -> Result<(), CircuitsErrors> {
-        let preset = BfvPreset::SecureThreshold16384;
-        let metadata = preset.metadata();
-        let polynomial = |degree| Polynomial::new(vec![BigInt::from(0u8); degree]);
-        let crt = |degree| {
-            CrtPolynomial::new(
-                (0..metadata.num_moduli)
-                    .map(|_| polynomial(degree))
-                    .collect(),
-            )
-        };
-        let row = RlkGenerationCircuitData {
-            committee: CiphernodesCommitteeSize::Minimum.values(),
-            proof_domain: sample_lbfv_proof_domain(),
-            party_id: 0,
-            row_index: 0,
-            sk: polynomial(metadata.degree),
-            r: polynomial(metadata.degree),
-            e0: polynomial(metadata.degree),
-            e2: polynomial(metadata.degree),
-            rd0: crt(metadata.degree),
-            rd2: crt(metadata.degree),
-            d0: crt(metadata.degree),
-            d2: crt(metadata.degree),
-        };
-        let limbs = derive_rlk_generation_limb_inputs(preset, &row)?;
-
-        assert_eq!(limbs.len(), metadata.num_moduli);
-        for (limb_index, limb) in limbs.iter().enumerate() {
-            assert_eq!(limb.row_index, row.row_index);
-            assert_eq!(limb.limb_index, limb_index as u32);
-            assert!(std::ptr::eq(limb.sk, &row.sk));
-            assert!(std::ptr::eq(limb.r, &row.r));
-            assert!(std::ptr::eq(limb.e0, &row.e0));
-            assert!(std::ptr::eq(limb.e2, &row.e2));
-            assert!(std::ptr::eq(limb.d0, row.d0.limb(limb_index)));
-            assert!(std::ptr::eq(limb.d2, row.d2.limb(limb_index)));
+        for key in ["rd0", "rd2", "d0", "d2", "urs", "crs"] {
+            assert!(toml.contains(&format!("[[{key}]]")), "missing {key}");
         }
 
+        row.row_index = adapter.row_count() as u32;
+        assert!(adapter.row_inputs(&row).is_err());
         Ok(())
     }
 

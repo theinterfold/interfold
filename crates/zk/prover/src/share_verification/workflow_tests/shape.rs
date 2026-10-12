@@ -85,7 +85,6 @@ fn lbfv_generation_bundle(
                 field(row),
                 field(21),
                 field(30 + row),
-                field(70),
             ],
         ));
     }
@@ -103,7 +102,6 @@ fn lbfv_generation_bundle(
                 field(22),
                 field(40 + row),
                 field(50 + row),
-                field(60),
             ],
         ));
     }

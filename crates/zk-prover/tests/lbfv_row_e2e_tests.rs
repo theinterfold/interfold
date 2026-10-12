@@ -26,16 +26,12 @@ use e3_zk_helpers::threshold::pk_generation::{
 };
 use e3_zk_helpers::threshold::rlk_aggregation::{RlkAggregationCircuit, RlkAggregationCircuitData};
 use e3_zk_helpers::{CiphernodesCommitteeSize, CircuitComputation, Computation};
-use e3_zk_prover::{
-    c2_chunk_size, load_staged_lbfv_pk_generation_limb_vk_hash, prove_lbfv_pk_generation_row,
-    Provable, ZkProver,
-};
+use e3_zk_prover::{c2_chunk_size, prove_lbfv_pk_generation_row, Provable, ZkProver};
 use num_bigint::BigInt;
 
 const ROW_INDEX: u32 = 4;
 const CIRCUITS: &[&str] = &[
     "lbfv_pk_generation",
-    "lbfv_pk_generation_limb",
     "lbfv_pk_aggregation",
     "rlk_aggregation",
 ];
@@ -89,29 +85,14 @@ async fn secure_lbfv_row_circuits_prove_verify_and_expose_exact_commitments() {
             .expect("valid l-BFV public-key generation row");
     let generation_bounds = Bounds::compute(preset, &committee).expect("generation bounds");
     let generation_bits = Bits::compute(preset, &generation_bounds).expect("generation bits");
-    let limb_vk_hash = load_staged_lbfv_pk_generation_limb_vk_hash(&prover, &artifacts_dir)
-        .expect("staged public-key limb VK hash");
-    let generation_proofs = prove_lbfv_pk_generation_row(
+    let generation_proof = prove_lbfv_pk_generation_row(
         &prover,
         preset,
         &generation_sample,
-        &limb_vk_hash,
         "secure-lbfv-pk-generation-row",
         &artifacts_dir,
     )
     .expect("l-BFV public-key generation row proof");
-    for (limb_index, limb_proof) in generation_proofs.limb_proofs.iter().enumerate() {
-        assert!(prover
-            .verify_proof_with_variant(
-                limb_proof,
-                &format!("secure-lbfv-pk-generation-limb-{limb_index}"),
-                0,
-                CircuitVariant::Recursive,
-                &artifacts_dir,
-            )
-            .expect("l-BFV public-key limb verification"));
-    }
-    let generation_proof = generation_proofs.terminal_proof;
     assert_eq!(generation_proof.circuit, CircuitName::LbfvPkGeneration);
     assert!(prover
         .verify_proof_with_variant(
@@ -141,7 +122,6 @@ async fn secure_lbfv_row_circuits_prove_verify_and_expose_exact_commitments() {
                 &generation_sample.pk0_share,
                 generation_bits.pk_bit,
             ),
-            BigInt::from_bytes_be(num_bigint::Sign::Plus, &limb_vk_hash),
         ],
     );
 

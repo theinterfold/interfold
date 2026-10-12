@@ -22,7 +22,7 @@ const ESM_C2_CHUNK_KEY_HASH = ethers.id("v2-esm-c2-chunk");
 const LEGACY_VK_BINDING = Array.from({ length: 16 }, (_, index) =>
   ethers.id(`v2-legacy-vk-${index}`),
 );
-const V2_VK_BINDING = Array.from({ length: 13 }, (_, index) =>
+const V2_VK_BINDING = Array.from({ length: 11 }, (_, index) =>
   ethers.id(`v2-vk-${index}`),
 );
 const SECURE_16384_CONFIG_ID = SECURE_16384_MINIMUM_BFV_CONFIG.configId;
@@ -102,7 +102,7 @@ function publicInputs(
   lbfvRows = 5,
 ): string[] {
   const inputs = Array.from(
-    { length: 49 + 3 * lbfvRows },
+    { length: 47 + 3 * lbfvRows },
     () => ethers.ZeroHash,
   );
   const hash = committeeHash(nodes);
@@ -224,7 +224,7 @@ describe("BfvPkVerifierV2", function () {
       ),
     );
 
-    expect(await verifier.expectedPublicInputsLen()).to.equal(58n);
+    expect(await verifier.expectedPublicInputsLen()).to.equal(56n);
     expect(
       await verifier.verify.staticCall(
         e3Id,

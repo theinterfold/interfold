@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn extracts_minimum_v2_key_envelope_commitment_from_layout() {
-        let mut public_signals = vec![0u8; 64 * 32];
+        let mut public_signals = vec![0u8; 62 * 32];
         let expected = [0xabu8; 32];
         public_signals[29 * 32..30 * 32].copy_from_slice(&expected);
         let proof = Proof::new(
@@ -262,6 +262,6 @@ mod tests {
 
         let err = extract_lbfv_key_envelope_commitment(&proof, 2, 5)
             .expect_err("an incompatible public-signal shape must fail");
-        assert!(err.to_string().contains("expected 2048"));
+        assert!(err.to_string().contains("expected 1984"));
     }
 }

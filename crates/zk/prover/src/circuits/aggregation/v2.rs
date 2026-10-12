@@ -17,19 +17,19 @@ use crate::witness::{CompiledCircuit, WitnessGenerator};
 use alloy::primitives::Address;
 use e3_events::{CircuitName, CircuitVariant, Proof};
 use e3_fhe_params::BfvPreset;
-use e3_utils::utility_types::ArcBytes;
-use e3_zk_helpers::CiphernodesCommitteeSize;
+use e3_zk_helpers::{
+    CiphernodesCommitteeSize, DKG_AGGREGATOR_V2_LEGACY_VK_BINDING_LEN as LEGACY_VK_BINDING_LEN,
+    DKG_AGGREGATOR_V2_VK_BINDING_LEN as V2_VK_BINDING_LEN,
+};
 use serde::Serialize;
 use std::collections::HashSet;
 
-const LEGACY_VK_BINDING_LEN: usize = 16;
-const V2_VK_BINDING_LEN: usize = 13;
 const C1_PUBLIC_FIELDS: usize = 3;
-const LBFV_PK_GENERATION_PUBLIC_FIELDS: usize = 7;
-const RLK_GENERATION_PUBLIC_FIELDS: usize = 9;
+const LBFV_PK_GENERATION_PUBLIC_FIELDS: usize = 6;
+const RLK_GENERATION_PUBLIC_FIELDS: usize = 8;
 
 fn generation_fold_public_fields(row_count: usize) -> usize {
-    14 + (3 * row_count)
+    12 + (3 * row_count)
 }
 
 fn node_fold_public_fields(committee: CiphernodesCommitteeSize, row_count: usize) -> usize {
@@ -91,17 +91,6 @@ fn checked_public_fields(
     Ok(fields)
 }
 
-fn one_field(bytes: &ArcBytes, label: &str) -> Result<String, ZkError> {
-    let fields = bytes_to_field_strings(bytes.as_ref())?;
-    if fields.len() != 1 {
-        return Err(ZkError::InvalidInput(format!(
-            "{label} must contain one field, got {}",
-            fields.len()
-        )));
-    }
-    Ok(fields.into_iter().next().expect("one field was verified"))
-}
-
 fn load_vk(
     prover: &ZkProver,
     variant: CircuitVariant,
@@ -148,8 +137,6 @@ struct GenerationFoldWitness {
     row_index: u32,
     expected_kernel_key_hash: String,
     expected_fold_key_hash: String,
-    trusted_pk_limb_key_hash: String,
-    trusted_rlk_limb_key_hash: String,
 }
 
 fn generation_fold_witness(
@@ -158,8 +145,6 @@ fn generation_fold_witness(
     rlk_proof: &Proof,
     prior_accumulator: Option<&Proof>,
     row_index: u32,
-    trusted_pk_limb_key_hash: &str,
-    trusted_rlk_limb_key_hash: &str,
     row_count: usize,
     artifacts_dir: &str,
 ) -> Result<(CircuitName, GenerationFoldWitness), ZkError> {
@@ -273,8 +258,6 @@ fn generation_fold_witness(
             row_index,
             expected_kernel_key_hash: kernel_vk.key_hash,
             expected_fold_key_hash: fold_vk.key_hash,
-            trusted_pk_limb_key_hash: trusted_pk_limb_key_hash.to_owned(),
-            trusted_rlk_limb_key_hash: trusted_rlk_limb_key_hash.to_owned(),
         },
     ))
 }
@@ -286,8 +269,6 @@ pub fn prove_lbfv_generation_fold_step(
     rlk_proof: &Proof,
     prior_accumulator: Option<&Proof>,
     row_index: u32,
-    trusted_pk_limb_key_hash: &ArcBytes,
-    trusted_rlk_limb_key_hash: &ArcBytes,
     job_id: &str,
     artifacts_dir: &str,
 ) -> Result<Proof, ZkError> {
@@ -297,8 +278,6 @@ pub fn prove_lbfv_generation_fold_step(
         rlk_proof,
         prior_accumulator,
         row_index,
-        trusted_pk_limb_key_hash,
-        trusted_rlk_limb_key_hash,
         BfvPreset::SecureThreshold16384,
         job_id,
         artifacts_dir,
@@ -312,24 +291,16 @@ pub fn prove_lbfv_generation_fold_step_for_preset(
     rlk_proof: &Proof,
     prior_accumulator: Option<&Proof>,
     row_index: u32,
-    trusted_pk_limb_key_hash: &ArcBytes,
-    trusted_rlk_limb_key_hash: &ArcBytes,
     preset: BfvPreset,
     job_id: &str,
     artifacts_dir: &str,
 ) -> Result<Proof, ZkError> {
-    let trusted_pk_limb_key_hash =
-        one_field(trusted_pk_limb_key_hash, "trusted public-key limb VK hash")?;
-    let trusted_rlk_limb_key_hash =
-        one_field(trusted_rlk_limb_key_hash, "trusted RLK limb VK hash")?;
     let (circuit, witness) = generation_fold_witness(
         prover,
         pk_proof,
         rlk_proof,
         prior_accumulator,
         row_index,
-        &trusted_pk_limb_key_hash,
-        &trusted_rlk_limb_key_hash,
         e3_fhe_params::lbfv_row_count(preset).ok_or_else(|| {
             ZkError::InvalidInput("the selected preset does not support l-BFV".into())
         })?,
@@ -924,21 +895,17 @@ fn v2_vk_binding(prover: &ZkProver, artifacts_dir: &str) -> Result<Vec<vk::VkArt
         CircuitName::LbfvGenerationFoldKernel,
         CircuitName::LbfvPkGeneration,
         CircuitName::RlkGeneration,
-        CircuitName::RlkGenerationLimb,
         CircuitName::LbfvAggregationFold,
         CircuitName::LbfvAggregationFoldKernel,
         CircuitName::LbfvPkAggregation,
         CircuitName::RlkAggregation,
-        CircuitName::LbfvPkGenerationLimb,
     ];
     circuits
         .into_iter()
         .map(|circuit| {
             let variant = match circuit {
                 CircuitName::LbfvPkGeneration
-                | CircuitName::LbfvPkGenerationLimb
                 | CircuitName::RlkGeneration
-                | CircuitName::RlkGenerationLimb
                 | CircuitName::LbfvPkAggregation
                 | CircuitName::RlkAggregation => CircuitVariant::Recursive,
                 _ => CircuitVariant::Default,
@@ -1085,6 +1052,7 @@ pub fn prove_dkg_aggregation_v2(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use e3_utils::utility_types::ArcBytes;
 
     fn proof_with_public_fields(circuit: CircuitName, count: usize) -> Proof {
         Proof::new(
@@ -1100,7 +1068,7 @@ mod tests {
         assert_eq!(node_fold_public_fields(committee, 5), 68);
         assert_eq!(node_fold_v2_public_fields(committee, 5), 90);
         assert_eq!(nodes_fold_v2_public_fields(committee, 5), 186);
-        assert_eq!(generation_fold_public_fields(5), 29);
+        assert_eq!(generation_fold_public_fields(5), 27);
         assert_eq!(aggregation_fold_public_fields(2, 5), 57);
         assert_eq!(c5_public_fields(2), 3);
     }

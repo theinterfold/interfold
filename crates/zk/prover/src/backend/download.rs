@@ -25,9 +25,10 @@ const COMMITTEE_SUBDIRS: &[&str] = &["minimum", "micro", "small"];
 /// Circuit artifact variant directories at `{preset}/{committee?}/{variant}/...`.
 const CIRCUIT_VARIANT_DIRS: &[&str] = &["default", "evm", "recursive"];
 
-// Release validation and installation use the same per-configuration inventory.
+// Release validation and installation use the same per-configuration inventory: the circuits
+// that both protocol paths use, plus the circuits of each path that the preset directory serves.
 const REQUIRED_ARTIFACTS: &str = include_str!("../../required-artifacts.json");
-// Preset directories that serve the l-BFV path also need its circuits.
+const REQUIRED_TRBFV_ARTIFACTS: &str = include_str!("../../required-artifacts-trbfv.json");
 const REQUIRED_LBFV_ARTIFACTS: &str = include_str!("../../required-artifacts-lbfv.json");
 
 /// Whether the preset artifact directory `preset_dir` serves an l-BFV preset.
@@ -37,14 +38,26 @@ fn is_lbfv_preset_dir(preset_dir: &str) -> bool {
         .any(|preset| e3_fhe_params::supports_lbfv(*preset) && preset.artifacts_dir() == preset_dir)
 }
 
+/// Whether the preset artifact directory `preset_dir` serves only l-BFV presets (secure-16384).
+fn is_lbfv_only_preset_dir(preset_dir: &str) -> bool {
+    is_lbfv_preset_dir(preset_dir)
+        && e3_fhe_params::BfvPreset::PAIR_PRESETS
+            .iter()
+            .filter(|preset| preset.artifacts_dir() == preset_dir)
+            .all(|preset| e3_fhe_params::supports_lbfv(*preset))
+}
+
 /// The artifacts every pair of `preset_dir` must contain.
 fn required_artifacts(preset_dir: &str) -> Vec<&'static str> {
-    let mut required: Vec<&'static str> = serde_json::from_str(REQUIRED_ARTIFACTS)
-        .expect("invalid required circuit artifact inventory");
+    let inventory = |json: &'static str| -> Vec<&'static str> {
+        serde_json::from_str(json).expect("invalid required circuit artifact inventory")
+    };
+    let mut required = inventory(REQUIRED_ARTIFACTS);
+    if !is_lbfv_only_preset_dir(preset_dir) {
+        required.extend(inventory(REQUIRED_TRBFV_ARTIFACTS));
+    }
     if is_lbfv_preset_dir(preset_dir) {
-        let lbfv: Vec<&'static str> = serde_json::from_str(REQUIRED_LBFV_ARTIFACTS)
-            .expect("invalid required l-BFV circuit artifact inventory");
-        required.extend(lbfv);
+        required.extend(inventory(REQUIRED_LBFV_ARTIFACTS));
     }
     required
 }
@@ -1113,12 +1126,33 @@ mod tests {
     }
 
     #[test]
-    fn only_lbfv_preset_dirs_require_the_lbfv_artifacts() {
-        let trbfv = required_artifacts("secure-8192").len();
-        let lbfv: Vec<&str> = serde_json::from_str(REQUIRED_LBFV_ARTIFACTS).unwrap();
-        assert!(!lbfv.is_empty());
-        assert_eq!(required_artifacts("insecure").len(), trbfv + lbfv.len());
-        assert_eq!(required_artifacts("secure-16384").len(), trbfv + lbfv.len());
+    fn each_preset_dir_requires_the_artifacts_of_the_paths_it_serves() {
+        let inventory =
+            |json: &'static str| -> Vec<&'static str> { serde_json::from_str(json).unwrap() };
+        let shared = inventory(REQUIRED_ARTIFACTS);
+        let trbfv = inventory(REQUIRED_TRBFV_ARTIFACTS);
+        let lbfv = inventory(REQUIRED_LBFV_ARTIFACTS);
+        assert!(!shared.is_empty() && !trbfv.is_empty() && !lbfv.is_empty());
+        let both = [shared.clone(), trbfv.clone(), lbfv.clone()].concat();
+        assert_eq!(required_artifacts("insecure"), both);
+        assert_eq!(
+            required_artifacts("secure-8192"),
+            [shared.clone(), trbfv].concat()
+        );
+        assert_eq!(required_artifacts("secure-16384"), [shared, lbfv].concat());
+        // Secure-16384 proves C7 with the wide circuit only; the bounded C7 does not hold there.
+        let narrow_c7 =
+            "default/threshold/decrypted_shares_aggregation/decrypted_shares_aggregation.json";
+        let wide_c7 =
+            "default/threshold/decrypted_shares_aggregation_wide/decrypted_shares_aggregation_wide.json";
+        assert!(!required_artifacts("secure-16384").contains(&narrow_c7));
+        assert!(required_artifacts("secure-16384").contains(&wide_c7));
+        assert!(required_artifacts("insecure").contains(&narrow_c7));
+        assert_eq!(
+            both.iter().collect::<HashSet<_>>().len(),
+            both.len(),
+            "an artifact is listed in more than one inventory"
+        );
     }
 
     #[test]

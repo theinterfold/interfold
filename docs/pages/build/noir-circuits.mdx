@@ -253,8 +253,10 @@ For each pair, the Rust build owner does these steps (`crates/zk/build`):
 2. It regenerates the parity matrices and the C1 and C2 bounds with the Rust generators.
 3. It updates `packages/interfold-contracts/scripts/utils.ts` and
    `packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol`.
-4. It compiles every package in `bin/dkg`, `bin/threshold`, and `bin/recursive_aggregation` with
-   `nargo compile`.
+4. It compiles the packages in `bin/dkg`, `bin/threshold`, and `bin/recursive_aggregation` with
+   `nargo compile`. `insecure` serves both protocol paths and compiles every package. `secure-8192`
+   serves only the trBFV path and skips the l-BFV circuits. `secure-16384` serves only the l-BFV
+   path and skips the trBFV-only circuits.
 5. It writes verification keys with `bb write_vk`. Each base circuit gets `evm`,
    `noir-recursive-no-zk`, and `noir-recursive` keys. Each fold circuit gets a
    `noir-recursive-no-zk` key, and the two aggregators also get an `evm` key.
@@ -277,8 +279,11 @@ For example, `--circuits-configuration insecure-64/minimum` selects the developm
 Local and CI callers can request a nonempty subset through `download_circuits_for_configurations` or
 `install_circuits_archive_for_configurations`. The required set never depends on archive contents.
 Each required or included pair must contain every artifact in
-`crates/zk/prover/required-artifacts.json`. The release validator and installer share this
-inventory. The manifest must cover each artifact.
+`crates/zk-prover/required-artifacts.json`, which both protocol paths use. A pair that serves the
+trBFV path (`insecure`, `secure-8192`) must also contain every artifact in
+`crates/zk-prover/required-artifacts-trbfv.json`. A pair that serves the l-BFV path (`insecure`,
+`secure-16384`) must also contain every artifact in `crates/zk-prover/required-artifacts-lbfv.json`.
+The release validator and installer share these inventories. The manifest must cover each artifact.
 
 If circuit replacement or the version update fails, the installer attempts rollback and returns the
 original installation error. Each rollback failure logs the source and target paths. If the previous

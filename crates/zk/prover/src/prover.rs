@@ -186,10 +186,6 @@ impl ZkProver {
         self.circuits_dir.join(artifacts_dir).join(variant.as_str())
     }
 
-    pub(crate) fn circuits_root(&self) -> &std::path::Path {
-        &self.circuits_dir
-    }
-
     pub fn resolve_artifacts_dir(&self, preset: BfvPreset, committee: &str) -> String {
         preset.artifacts_dir_for_committee(committee)
     }

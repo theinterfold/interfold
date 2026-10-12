@@ -93,10 +93,17 @@ pub global DS_CLG_PK_GENERATION: [u8; 64] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
-// Domain separator - "CLG_PK_GENERATION_LIMB_V1"
-pub global DS_CLG_PK_GENERATION_LIMB_V1: [u8; 64] = [
-    0x43, 0x4c, 0x47, 0x5f, 0x50, 0x4b, 0x5f, 0x47, 0x45, 0x4e, 0x45, 0x52, 0x41, 0x54, 0x49, 0x4f,
-    0x4e, 0x5f, 0x4c, 0x49, 0x4d, 0x42, 0x5f, 0x56, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+// Domain separator - "CLG_LBFV_RLK_GENERATION_ROW_V1"
+pub global DS_CLG_LBFV_RLK_GENERATION_ROW_V1: [u8; 64] = [
+    0x43, 0x4c, 0x47, 0x5f, 0x4c, 0x42, 0x46, 0x56, 0x5f, 0x52, 0x4c, 0x4b, 0x5f, 0x47, 0x45, 0x4e,
+    0x45, 0x52, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x52, 0x4f, 0x57, 0x5f, 0x56, 0x31, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+// Domain separator - "CLG_LBFV_PK_GENERATION_ROW_V1"
+pub global DS_CLG_LBFV_PK_GENERATION_ROW_V1: [u8; 64] = [
+    0x43, 0x4c, 0x47, 0x5f, 0x4c, 0x42, 0x46, 0x56, 0x5f, 0x50, 0x4b, 0x5f, 0x47, 0x45, 0x4e, 0x45,
+    0x52, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x52, 0x4f, 0x57, 0x5f, 0x56, 0x31, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
@@ -194,13 +201,6 @@ pub global DS_CLG_RLK_GENERATION: [u8; 64] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
-// Domain separator - "CLG_RLK_GENERATION_LIMB_V1"
-pub global DS_CLG_RLK_GENERATION_LIMB_V1: [u8; 64] = [
-    0x43, 0x4c, 0x47, 0x5f, 0x52, 0x4c, 0x4b, 0x5f, 0x47, 0x45, 0x4e, 0x45, 0x52, 0x41, 0x54, 0x49,
-    0x4f, 0x4e, 0x5f, 0x4c, 0x49, 0x4d, 0x42, 0x5f, 0x56, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-];
 
 /// WRAPPERS
 
@@ -289,21 +289,13 @@ pub fn compute_threshold_pk_commitment<let N: u32, let L: u32, let BIT_PK: u32>(
     compute_commitment(payload, DS_PK_GENERATION)
 }
 
-/// L-BFV COMMITMENT HELPERS
-///
-/// The `compute_sc_*`, `compute_ude_*`, `compute_lbfv_*` and `compute_rlk_*` helpers below serve
-/// only the l-BFV path. They pack with checked digits, the semantics `lbfv/chunking` built its
-/// circuits on, so a circuit that opens one of these commitments without its own range check still
-/// opens it injectively. Where a circuit does range-check the values, the digit check is
-/// redundant and can be dropped deliberately as an optimisation.
-pub fn compute_lbfv_pk_limb_eek_commitment<let N: u32, let BIT_EEK: u32>(
-    row_index: u32,
-    eek: Polynomial<N>,
-) -> Field {
-    let mut payload = [1, 0, row_index as Field, N as Field].as_vector();
-    payload = single_polynomial_payload_checked::<N, BIT_EEK>(payload, eek);
-    compute_commitment(payload, DS_PK_GENERATION_LIMB_V1)
-}
+// L-BFV COMMITMENT HELPERS
+//
+// The `compute_sc_*`, `compute_ude_*`, `compute_lbfv_*` and `compute_rlk_*` helpers below serve
+// only the l-BFV path. They pack with checked digits, the semantics `lbfv/chunking` built its
+// circuits on, so a circuit that opens one of these commitments without its own range check still
+// opens it injectively. Where a circuit does range-check the values, the digit check is
+// redundant and can be dropped deliberately as an optimisation.
 
 /// Row commitment over the per-limb `pk0` commitments of one l-BFV public-key row. Same design as
 /// [`compute_rlk_row_commitment_from_limbs`]; the leading `2` keeps it apart from the limb payload,
@@ -316,6 +308,18 @@ pub fn compute_lbfv_pk_row_commitment_from_limbs<let L: u32>(
     for l in 0..L {
         payload = payload.push_back(limb_commitments[l]);
     }
+    compute_commitment(payload, DS_PK_GENERATION_LIMB_V1)
+}
+
+/// [`compute_lbfv_pk_limb_commitment`] for the circuit that **creates** it. Its own centered range
+/// check already keeps every digit in its slot, so plain packing is injective. Same value.
+pub fn compute_lbfv_pk_limb_commitment_bounded<let N: u32, let BIT_PK: u32>(
+    row_index: u32,
+    limb_index: u32,
+    pk0: Polynomial<N>,
+) -> Field {
+    let mut payload = [1, 1, row_index as Field, limb_index as Field, N as Field].as_vector();
+    payload = single_polynomial_payload::<N, BIT_PK>(payload, pk0);
     compute_commitment(payload, DS_PK_GENERATION_LIMB_V1)
 }
 
@@ -711,10 +715,10 @@ pub fn compute_rlk_r_commitment<let N: u32, let BIT_R: u32>(r: Polynomial<N>) ->
 /// Row commitment over the per-limb commitments of one RLK row component (`kind_tag` 2 = d0,
 /// 3 = d2, matching the limb tags).
 ///
-/// The row is committed through its limbs, not its coefficients: the row circuit already holds
-/// every limb commitment as a verified public input, so it binds the row without re-hashing the
-/// `L * N` coefficients. Anyone opening the row recomputes the limb commitments, which pack with
-/// checked digits, so the opening is unique and carries the limb circuit's centered bound.
+/// The row is committed through its limbs, not its coefficients, so `rlk_generation` and
+/// `rlk_aggregation` agree on the value whether they hold the limb commitments or the
+/// coefficients. Anyone opening the row recomputes the limb commitments, which pack with checked
+/// digits, so the opening is unique and carries the row circuit's centered bound.
 pub fn compute_rlk_row_commitment_from_limbs<let L: u32>(
     kind_tag: Field,
     row_index: u32,
@@ -751,16 +755,6 @@ pub fn compute_rlk_d2_commitment<let N: u32, let L: u32, let BIT_D: u32>(
     compute_rlk_row_commitment_from_limbs(3, row_index, limbs)
 }
 
-fn compute_rlk_shared_limb_commitment<let N: u32, let BIT: u32>(
-    kind_tag: Field,
-    row_index: u32,
-    polynomial: Polynomial<N>,
-) -> Field {
-    let mut payload = [1, kind_tag, row_index as Field, N as Field].as_vector();
-    payload = single_polynomial_payload_checked::<N, BIT>(payload, polynomial);
-    compute_commitment(payload, DS_RLK_GENERATION_LIMB_V1)
-}
-
 fn compute_rlk_indexed_limb_commitment<let N: u32, let BIT: u32>(
     kind_tag: Field,
     row_index: u32,
@@ -773,18 +767,36 @@ fn compute_rlk_indexed_limb_commitment<let N: u32, let BIT: u32>(
     compute_commitment(payload, DS_RLK_GENERATION_LIMB_V1)
 }
 
-pub fn compute_rlk_limb_e0_commitment<let N: u32, let BIT_E0: u32>(
+/// [`compute_rlk_indexed_limb_commitment`] for the circuit that **creates** it. Its own centered
+/// range check already keeps every digit in its slot, so plain packing is injective. Same value.
+fn compute_rlk_indexed_limb_commitment_bounded<let N: u32, let BIT: u32>(
+    kind_tag: Field,
     row_index: u32,
-    e0: Polynomial<N>,
+    limb_index: u32,
+    polynomial: Polynomial<N>,
 ) -> Field {
-    compute_rlk_shared_limb_commitment::<N, BIT_E0>(0, row_index, e0)
+    let mut payload =
+        [1, kind_tag, row_index as Field, limb_index as Field, N as Field].as_vector();
+    payload = single_polynomial_payload::<N, BIT>(payload, polynomial);
+    compute_commitment(payload, DS_RLK_GENERATION_LIMB_V1)
 }
 
-pub fn compute_rlk_limb_e2_commitment<let N: u32, let BIT_E2: u32>(
+/// [`compute_rlk_limb_d0_commitment`] for a creator that range-checked `d0`. Same value.
+pub fn compute_rlk_limb_d0_commitment_bounded<let N: u32, let BIT_D: u32>(
     row_index: u32,
-    e2: Polynomial<N>,
+    limb_index: u32,
+    d0: Polynomial<N>,
 ) -> Field {
-    compute_rlk_shared_limb_commitment::<N, BIT_E2>(1, row_index, e2)
+    compute_rlk_indexed_limb_commitment_bounded::<N, BIT_D>(2, row_index, limb_index, d0)
+}
+
+/// [`compute_rlk_limb_d2_commitment`] for a creator that range-checked `d2`. Same value.
+pub fn compute_rlk_limb_d2_commitment_bounded<let N: u32, let BIT_D: u32>(
+    row_index: u32,
+    limb_index: u32,
+    d2: Polynomial<N>,
+) -> Field {
+    compute_rlk_indexed_limb_commitment_bounded::<N, BIT_D>(3, row_index, limb_index, d2)
 }
 
 pub fn compute_rlk_limb_d0_commitment<let N: u32, let BIT_D: u32>(
@@ -857,16 +869,16 @@ pub fn compute_threshold_pk_challenge(payload: [Field]) -> Field {
     compute_commitment(payload, DS_CLG_PK_GENERATION)
 }
 
-pub fn compute_lbfv_pk_limb_challenge(payload: [Field]) -> Field {
-    compute_commitment(payload, DS_CLG_PK_GENERATION_LIMB_V1)
+pub fn compute_lbfv_pk_row_challenge(payload: [Field]) -> Field {
+    compute_commitment(payload, DS_CLG_LBFV_PK_GENERATION_ROW_V1)
 }
 
 pub fn compute_rlk_generation_challenge(payload: [Field]) -> Field {
     compute_commitment(payload, DS_CLG_RLK_GENERATION)
 }
 
-pub fn compute_rlk_limb_challenge(payload: [Field]) -> Field {
-    compute_commitment(payload, DS_CLG_RLK_GENERATION_LIMB_V1)
+pub fn compute_rlk_row_challenge(payload: [Field]) -> Field {
+    compute_commitment(payload, DS_CLG_LBFV_RLK_GENERATION_ROW_V1)
 }
 
 pub fn compute_share_encryption_challenge<let L: u32>(payload: [Field]) -> [Field] {

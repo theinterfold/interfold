@@ -37,7 +37,6 @@ use e3_zk_helpers::threshold::rlk_aggregation::{RlkAggregationCircuit, RlkAggreg
 use e3_zk_helpers::threshold::rlk_generation::RlkGenerationAdapter;
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_prover::{
-    load_staged_lbfv_pk_generation_limb_vk_hash, load_staged_rlk_generation_limb_vk_hash,
     prove_chunked_share_computation, prove_dkg_aggregation_v2, prove_lbfv_aggregation_fold_step,
     prove_lbfv_generation_fold_step, prove_lbfv_pk_generation_row, prove_node_dkg_fold,
     prove_node_dkg_fold_v2, prove_nodes_fold_v2_step, prove_rlk_generation_row, NodeDkgFoldInput,
@@ -252,10 +251,6 @@ fn prove_generation_fold(
 ) -> Proof {
     let generation_adapter = LbfvPkGenerationAdapter::new(preset).expect("l-BFV PK adapter");
     let rlk_adapter = RlkGenerationAdapter::new(preset).expect("RLK adapter");
-    let pk_limb_vk_hash = load_staged_lbfv_pk_generation_limb_vk_hash(prover, artifacts_dir)
-        .expect("staged public-key limb VK hash");
-    let rlk_limb_vk_hash = load_staged_rlk_generation_limb_vk_hash(prover, artifacts_dir)
-        .expect("staged RLK limb VK hash");
 
     let mut accumulator = None;
     for row in 0..LBFV_ROWS {
@@ -274,12 +269,10 @@ fn prove_generation_fold(
             prover,
             preset,
             &pk_data,
-            &pk_limb_vk_hash,
             &format!("{label}-pk-{row}"),
             artifacts_dir,
         )
-        .expect("l-BFV PK row proof")
-        .terminal_proof;
+        .expect("l-BFV PK row proof");
 
         let rlk_data = rlk_adapter
             .row_data(
@@ -292,11 +285,10 @@ fn prove_generation_fold(
                 rlk_witness,
             )
             .expect("RLK row data");
-        let rlk_proofs = prove_rlk_generation_row(
+        let rlk_proof = prove_rlk_generation_row(
             prover,
             preset,
             &rlk_data,
-            &rlk_limb_vk_hash,
             &format!("{label}-rlk-{row}"),
             artifacts_dir,
         )
@@ -305,11 +297,9 @@ fn prove_generation_fold(
         let next = prove_lbfv_generation_fold_step(
             prover,
             &pk_proof,
-            &rlk_proofs.terminal_proof,
+            &rlk_proof,
             accumulator.as_ref(),
             row,
-            &ArcBytes::from_bytes(&pk_limb_vk_hash),
-            &ArcBytes::from_bytes(&rlk_limb_vk_hash),
             &format!("{label}-fold-{row}"),
             artifacts_dir,
         )

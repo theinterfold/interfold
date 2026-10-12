@@ -4,64 +4,61 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use bb_proof_verification::{UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof};
+//! Prove one l-BFV RLK gadget row: both reduced identities of every CRT limb in one proof (see
+//! `RlkGenerationRow`). `urs` and `crs` are opened against `LBFV_URS_ROW_COMMITMENTS[row]` and
+//! `LBFV_CRS_ROW_COMMITMENTS[row]`.
+//!
+//! Outputs: `sk_commitment` (the C1 secret root), `r_commitment`, `d0_commitment`,
+//! `d2_commitment` (the row commitments that `rlk_aggregation` opens).
+
+use lib::configs::default::dkg::{SHARE_COMPUTATION_CHUNK_SIZE, SHARE_COMPUTATION_N_CHUNKS};
 use lib::configs::default::N_PARTIES;
-use lib::configs::default::threshold::{GADGET_DIM, L};
+use lib::configs::default::threshold::{
+    GADGET_DIM, L, LBFV_CRS_ROW_COMMITMENTS, LBFV_URS_ROW_COMMITMENTS, N, PK_AGGREGATION_BIT_PK,
+    RLK_GENERATION_BIT_D, RLK_GENERATION_BIT_E0, RLK_GENERATION_BIT_E2, RLK_GENERATION_BIT_R,
+    RLK_GENERATION_BIT_RD0, RLK_GENERATION_BIT_RD2, RLK_GENERATION_BIT_SK, RLK_GENERATION_CONFIGS,
+};
 use lib::core::threshold::lbfv_proof_domain::{LbfvProofSession, validate_generation_statement};
-use lib::math::commitments::compute_rlk_row_commitment_from_limbs;
+use lib::core::threshold::rlk_generation::RlkGenerationRow;
+use lib::math::polynomial::Polynomial;
 
-pub global RLK_LIMB_PUBLIC_LEN: u32 = 11;
-
-/// Verify all CRT-limb proofs for one RLK row and restore the legacy row commitments.
 fn main(
     session_id_hi: pub Field,
     session_id_lo: pub Field,
     party_id: pub u32,
     row_index: pub u32,
-    limb_vk: UltraHonkVerificationKey,
-    limb_proofs: [UltraHonkZKProof; L],
-    limb_public_inputs: [[Field; RLK_LIMB_PUBLIC_LEN]; L],
-    limb_key_hash: Field,
-) -> pub (Field, Field, Field, Field, Field) {
+    sk: Polynomial<N>,
+    r: Polynomial<N>,
+    e0: Polynomial<N>,
+    e2: Polynomial<N>,
+    rd0: [Polynomial<N>; L],
+    rd2: [Polynomial<N>; L],
+    d0: [Polynomial<N>; L],
+    d2: [Polynomial<N>; L],
+    urs: [Polynomial<N>; L],
+    crs: [Polynomial<N>; L],
+) -> pub (Field, Field, Field, Field) {
     validate_generation_statement::<N_PARTIES, GADGET_DIM>(
         LbfvProofSession { session_id_hi, session_id_lo },
         party_id,
         row_index,
     );
 
-    for limb_index in 0..L {
-        verify_honk_proof(
-            limb_vk,
-            limb_proofs[limb_index],
-            limb_public_inputs[limb_index],
-            limb_key_hash,
-        );
-
-        assert(limb_public_inputs[limb_index][0] == session_id_hi);
-        assert(limb_public_inputs[limb_index][1] == session_id_lo);
-        assert(limb_public_inputs[limb_index][2] == party_id as Field);
-        assert(limb_public_inputs[limb_index][3] == row_index as Field);
-        assert(limb_public_inputs[limb_index][4] == limb_index as Field);
-        assert(limb_public_inputs[limb_index][5] == limb_public_inputs[0][5]);
-        assert(limb_public_inputs[limb_index][6] == limb_public_inputs[0][6]);
-        assert(limb_public_inputs[limb_index][7] == limb_public_inputs[0][7]);
-        assert(limb_public_inputs[limb_index][8] == limb_public_inputs[0][8]);
-    }
-
-    // The row commits through its verified limb commitments rather than re-hashing d0/d2. An
-    // opener recomputes the limb commitments (checked digits), which pins the coefficients the
-    // limbs range-checked.
-    let mut d0_limbs: [Field; L] = [0; L];
-    let mut d2_limbs: [Field; L] = [0; L];
-    for limb_index in 0..L {
-        d0_limbs[limb_index] = limb_public_inputs[limb_index][9];
-        d2_limbs[limb_index] = limb_public_inputs[limb_index][10];
-    }
-    let d0_commitment = compute_rlk_row_commitment_from_limbs(2, row_index, d0_limbs);
-    let d2_commitment = compute_rlk_row_commitment_from_limbs(3, row_index, d2_limbs);
-
-    (
-        limb_public_inputs[0][5], limb_public_inputs[0][6], d0_commitment, d2_commitment,
-        limb_key_hash,
-    )
+    let circuit: RlkGenerationRow<N, L, RLK_GENERATION_BIT_R, RLK_GENERATION_BIT_SK, RLK_GENERATION_BIT_E0, RLK_GENERATION_BIT_E2, RLK_GENERATION_BIT_RD0, RLK_GENERATION_BIT_RD2, RLK_GENERATION_BIT_D, PK_AGGREGATION_BIT_PK, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE> = RlkGenerationRow::new(
+        RLK_GENERATION_CONFIGS,
+        LBFV_URS_ROW_COMMITMENTS[row_index],
+        LBFV_CRS_ROW_COMMITMENTS[row_index],
+        row_index,
+        sk,
+        r,
+        e0,
+        e2,
+        rd0,
+        rd2,
+        d0,
+        d2,
+        urs,
+        crs,
+    );
+    circuit.execute()
 }

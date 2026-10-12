@@ -496,6 +496,8 @@ pub struct LbfvGenerationFoldRequest {
     pub rlk_proof: Proof,
     pub prior_accumulator: Option<Proof>,
     pub row_index: u32,
+    /// Retired: the generation fold binds no limb VK hash. The field keeps the persisted request
+    /// layout; producers send empty bytes and the prover ignores it.
     pub trusted_limb_key_hash: ArcBytes,
     pub params_preset: BfvPreset,
     pub committee_size: CiphernodesCommitteeSize,

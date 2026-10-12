@@ -178,7 +178,8 @@ pub enum CircuitName {
     LbfvPkGeneration = 29,
     /// Row-level threshold l-BFV public-key aggregation proof.
     LbfvPkAggregation = 30,
-    /// One CRT limb of one l-BFV relinearization-key row.
+    /// Retired: the l-BFV relinearization-key row is proved directly by `RlkGeneration`; kept so
+    /// later variants keep their encoding.
     RlkGenerationLimb = 31,
     /// Secure-16384 fold of the five l-BFV generation rows.
     LbfvGenerationFold = 32,
@@ -196,7 +197,8 @@ pub enum CircuitName {
     LbfvAggregationFoldKernel = 38,
     /// Secure-16384 DKG aggregator with l-BFV commitments.
     DkgAggregatorV2 = 39,
-    /// One CRT limb of one l-BFV public-key row.
+    /// Retired: the l-BFV public-key row is proved directly by `LbfvPkGeneration`; kept so later
+    /// variants keep their encoding.
     LbfvPkGenerationLimb = 40,
     /// C1 on the l-BFV path: commits `sk` and `e_sm` as the chunk roots the chunked C2 outputs.
     PkGenerationChunked = 41,
@@ -686,13 +688,12 @@ mod tests {
 
     #[test]
     fn rlk_generation_layout_tracks_row_and_commitments() {
-        let mut signals = vec![0u8; 288];
+        let mut signals = vec![0u8; 256];
         signals[127] = 3;
         signals[128..160].copy_from_slice(&[0x11; 32]);
         signals[160..192].copy_from_slice(&[0x22; 32]);
         signals[192..224].copy_from_slice(&[0x33; 32]);
         signals[224..256].copy_from_slice(&[0x44; 32]);
-        signals[256..288].copy_from_slice(&[0x55; 32]);
         let proof = make_proof(CircuitName::RlkGeneration, &signals);
 
         assert_eq!(proof.extract_input("row_index").unwrap()[31], 3);
@@ -709,37 +710,15 @@ mod tests {
             &*proof.extract_output("d2_commitment").unwrap(),
             &[0x44; 32]
         );
-        assert_eq!(&*proof.extract_output("limb_vk_hash").unwrap(), &[0x55; 32]);
-    }
-
-    #[test]
-    fn rlk_generation_limb_layout_tracks_selectors_and_commitments() {
-        let mut signals = vec![0u8; 352];
-        signals[127] = 3;
-        signals[159] = 4;
-        signals[160..192].copy_from_slice(&[0x11; 32]);
-        signals[320..352].copy_from_slice(&[0x66; 32]);
-        let proof = make_proof(CircuitName::RlkGenerationLimb, &signals);
-
-        assert_eq!(proof.extract_input("row_index").unwrap()[31], 3);
-        assert_eq!(proof.extract_input("limb_index").unwrap()[31], 4);
-        assert_eq!(
-            &*proof.extract_output("sk_commitment").unwrap(),
-            &[0x11; 32]
-        );
-        assert_eq!(
-            &*proof.extract_output("d2_limb_commitment").unwrap(),
-            &[0x66; 32]
-        );
+        assert!(proof.extract_output("limb_vk_hash").is_none());
     }
 
     #[test]
     fn lbfv_pk_generation_layout_tracks_row_and_commitments() {
-        let mut signals = vec![0u8; 224];
+        let mut signals = vec![0u8; 192];
         signals[127] = 2;
         signals[128..160].copy_from_slice(&[0x11; 32]);
         signals[160..192].copy_from_slice(&[0x22; 32]);
-        signals[192..224].copy_from_slice(&[0x33; 32]);
         let proof = make_proof(CircuitName::LbfvPkGeneration, &signals);
 
         assert_eq!(proof.extract_input("row_index").unwrap()[31], 2);
@@ -751,33 +730,7 @@ mod tests {
             &*proof.extract_output("pk_commitment").unwrap(),
             &[0x22; 32]
         );
-        assert_eq!(&*proof.extract_output("limb_vk_hash").unwrap(), &[0x33; 32]);
-    }
-
-    #[test]
-    fn lbfv_pk_generation_limb_layout_tracks_identity_and_commitments() {
-        let mut signals = vec![0u8; 256];
-        signals[127] = 2;
-        signals[159] = 4;
-        signals[160..192].copy_from_slice(&[0x11; 32]);
-        signals[192..224].copy_from_slice(&[0x22; 32]);
-        signals[224..256].copy_from_slice(&[0x33; 32]);
-        let proof = make_proof(CircuitName::LbfvPkGenerationLimb, &signals);
-
-        assert_eq!(proof.extract_input("row_index").unwrap()[31], 2);
-        assert_eq!(proof.extract_input("limb_index").unwrap()[31], 4);
-        assert_eq!(
-            &*proof.extract_output("sk_commitment").unwrap(),
-            &[0x11; 32]
-        );
-        assert_eq!(
-            &*proof.extract_output("eek_commitment").unwrap(),
-            &[0x22; 32]
-        );
-        assert_eq!(
-            &*proof.extract_output("pk_limb_commitment").unwrap(),
-            &[0x33; 32]
-        );
+        assert!(proof.extract_output("limb_vk_hash").is_none());
     }
 
     #[test]

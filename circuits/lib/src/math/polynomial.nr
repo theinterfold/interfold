@@ -106,6 +106,20 @@ impl<let N: u32> Polynomial<N> {
         out
     }
 
+    /// [`Polynomial::dot`] with the same value and gates, but the running sum is made a witness
+    /// every 256 terms. Otherwise the compiler holds the whole sum as one expression of `N`
+    /// products: five secure-16384 dots then need 29.7 GB to compile, against 3.2 GB here.
+    pub fn dot_materialized(self, k: [Field; N]) -> Field {
+        let mut out: Field = 0;
+        for j in 0..N {
+            out += self.coefficients[j] * k[j];
+            if (j + 1) % 256 == 0 {
+                std::as_witness(out);
+            }
+        }
+        out
+    }
+
     pub fn eval(self, x: Field) -> Field {
         let mut result = self.coefficients[0];
 
@@ -245,50 +259,6 @@ fn test_polynomial_eval_zero() {
     let result = poly.eval(x);
 
     assert(result == 0);
-}
-
-/// `table[row][limb].dot(k)` for a compile-time `table` and runtime `row`/`limb`.
-///
-/// Indexing a constant table with a runtime index makes the circuit build a memory table over
-/// every entry (`ROWS * L * N` of them), which dominated the l-BFV limb circuits. Here every entry
-/// is a constant polynomial, so each `dot` is a linear combination of `k` and the selection is
-/// `ROWS * L` multiplications. An out-of-range index would select nothing and silently drop the
-/// term, so the indices are range-checked here rather than left to each caller.
-pub fn select_constant_dot<let N: u32, let L: u32, let ROWS: u32>(
-    table: [[Polynomial<N>; L]; ROWS],
-    row: u32,
-    limb: u32,
-    k: [Field; N],
-) -> Field {
-    assert(row < ROWS, "table row out of range");
-    assert(limb < L, "table limb out of range");
-    let mut out: Field = 0;
-    for r in 0..ROWS {
-        for l in 0..L {
-            let selected = ((row == r) & (limb == l)) as Field;
-            out += selected * table[r][l].dot(k);
-        }
-    }
-    out
-}
-
-#[test]
-fn test_select_constant_dot_picks_the_indexed_entry() {
-    let table = [
-        [Polynomial::new([1, 2]), Polynomial::new([3, 4])],
-        [Polynomial::new([5, 6]), Polynomial::new([7, 8])],
-    ];
-    let k = [10, 100];
-    assert(select_constant_dot(table, 0, 0, k) == 210);
-    assert(select_constant_dot(table, 0, 1, k) == 430);
-    assert(select_constant_dot(table, 1, 0, k) == 650);
-    assert(select_constant_dot(table, 1, 1, k) == 870);
-}
-
-#[test(should_fail_with = "table row out of range")]
-fn test_select_constant_dot_rejects_an_out_of_range_row() {
-    let table = [[Polynomial::new([1, 2])]];
-    let _ = select_constant_dot(table, 1, 0, [10, 100]);
 }
 
 /// Evaluation kernel for `u` modulo `X^N + 1`: `out[j]` is `(X^(N-1-j) * u mod X^N + 1)(x)`.

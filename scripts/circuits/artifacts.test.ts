@@ -14,14 +14,7 @@ import {
 
 const REQUIRED_LBFV_MARKERS = [
   ...['default', 'evm', 'recursive'].flatMap((variant) =>
-    [
-      'lbfv_pk_generation',
-      'lbfv_pk_generation_limb',
-      'lbfv_pk_aggregation',
-      'rlk_generation',
-      'rlk_generation_limb',
-      'rlk_aggregation',
-    ].flatMap((circuit) =>
+    ['lbfv_pk_generation', 'lbfv_pk_aggregation', 'rlk_generation', 'rlk_aggregation'].flatMap((circuit) =>
       ['.json', '.vk', '.vk_hash'].map((extension) =>
         join('secure-16384', 'minimum', variant, 'threshold', circuit, `${circuit}${extension}`),
       ),
@@ -171,14 +164,7 @@ test('hydrate replaces stale targets at the paths used by Nargo', () => {
       workspace: false,
       expectedTarget: join(dir, 'circuits', 'bin', 'recursive_aggregation', 'decryption_aggregator', 'target'),
     },
-    ...[
-      'lbfv_pk_generation',
-      'lbfv_pk_generation_limb',
-      'lbfv_pk_aggregation',
-      'rlk_generation',
-      'rlk_generation_limb',
-      'rlk_aggregation',
-    ].map((name) => ({
+    ...['lbfv_pk_generation', 'lbfv_pk_aggregation', 'rlk_generation', 'rlk_aggregation'].map((name) => ({
       group: 'threshold',
       name,
       workspace: true,
@@ -368,6 +354,18 @@ test('requires l-BFV row artifacts for insecure and secure-16384', () => {
     REQUIRED_LBFV_MARKERS.includes(artifact),
   )
   assert.deepEqual(unsupportedMarkers, [])
+})
+
+test('requires the circuits of each path that a preset serves', () => {
+  const c7 = (preset: string, circuit: string) => join(preset, 'minimum', 'default', 'threshold', circuit, `${circuit}.json`)
+  const requires = (preset: string, circuit: string) => requiredArtifactMarkers(preset, 'minimum').includes(c7(preset, circuit))
+
+  assert.equal(requires('secure-16384', 'decrypted_shares_aggregation'), false)
+  assert.equal(requires('secure-16384', 'decrypted_shares_aggregation_wide'), true)
+  assert.equal(requires('secure-8192', 'decrypted_shares_aggregation'), true)
+  assert.equal(requires('secure-8192', 'decrypted_shares_aggregation_wide'), false)
+  assert.equal(requires('insecure', 'decrypted_shares_aggregation'), true)
+  assert.equal(requires('insecure', 'decrypted_shares_aggregation_wide'), true)
 })
 
 test('rejects every missing insecure and secure-16384 l-BFV row artifact', () => {

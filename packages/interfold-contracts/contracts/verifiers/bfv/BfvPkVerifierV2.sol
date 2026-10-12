@@ -20,10 +20,10 @@ contract BfvPkVerifierV2 is IPkVerifier {
     error InvalidParamSet(uint8 paramSet);
     error InvalidVerificationKeyHash();
 
-    uint256 private constant V2_PUBLIC_INPUTS_FIXED_LEN = 43;
+    uint256 private constant V2_PUBLIC_INPUTS_FIXED_LEN = 41;
 
     uint256 private constant LEGACY_VK_BINDING_LEN = 16;
-    uint256 private constant V2_VK_BINDING_LEN = 13;
+    uint256 private constant V2_VK_BINDING_LEN = 11;
     uint256 private constant V2_PARTY_ID_START = 2;
 
     uint256 private constant LBFV_PROOF_DOMAIN_VERSION = 1;
@@ -60,7 +60,7 @@ contract BfvPkVerifierV2 is IPkVerifier {
     bytes32 public immutable expectedSkC2ChunkKeyHash;
     bytes32 public immutable expectedESmC2ChunkKeyHash;
     bytes32[16] public expectedLegacyVkBinding;
-    bytes32[13] public expectedV2VkBinding;
+    bytes32[11] public expectedV2VkBinding;
 
     constructor(
         address _circuitVerifier,
@@ -73,7 +73,7 @@ contract BfvPkVerifierV2 is IPkVerifier {
         bytes32 _expectedSkC2ChunkKeyHash,
         bytes32 _expectedESmC2ChunkKeyHash,
         bytes32[16] memory _expectedLegacyVkBinding,
-        bytes32[13] memory _expectedV2VkBinding
+        bytes32[11] memory _expectedV2VkBinding
     ) {
         if (_circuitVerifier.code.length == 0) {
             revert InvalidCircuitVerifier(_circuitVerifier);

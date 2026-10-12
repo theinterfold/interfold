@@ -314,11 +314,16 @@ fn render_lbfv(preset: BfvPreset) -> Result<Option<(String, String, String)>> {
         .with_context(|| format!("PkAggregationConfigs::compute({preset:?}) failed"))?
         .bits
         .pk_bit;
-    let crs_row_commitments = lbfv_crt_rows(&threshold_params, crs_seed)?
-        .iter()
-        .map(|row| compute_pk_aggregation_pk1_commitment(row, pk_bit).to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
+    let row_commitments = |seed| -> Result<String> {
+        Ok(lbfv_crt_rows(&threshold_params, seed)?
+            .iter()
+            .map(|row| compute_pk_aggregation_pk1_commitment(row, pk_bit).to_string())
+            .collect::<Vec<_>>()
+            .join(", "))
+    };
+    let crs_row_commitments = row_commitments(crs_seed)?;
+    // `lbfv_pk_generation` and `rlk_generation` open their witness rows against these.
+    let urs_row_commitments = row_commitments(urs_seed)?;
     let slug = preset.noir_config_module();
     let header = format!(
         "{LICENSE}\nuse crate::math::polynomial::Polynomial;\nuse super::super::threshold::{{GADGET_DIM, L, N}};\n"
@@ -330,7 +335,7 @@ fn render_lbfv(preset: BfvPreset) -> Result<Option<(String, String, String)>> {
         "{header}\npub global LBFV_URS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = {urs_rows};\n"
     );
     let module = format!(
-        "{LICENSE}\nuse super::threshold::GADGET_DIM;\n\npub mod crs;\npub mod urs;\n\npub use crate::configs::{slug}::lbfv::crs::LBFV_CRS_GADGET_ROWS;\npub use crate::configs::{slug}::lbfv::urs::LBFV_URS_GADGET_ROWS;\n\n/// `commit(LBFV_CRS_GADGET_ROWS[row])` under `DS_PK_AGGREGATION`, the `pk1` half of C5's output.\npub global LBFV_CRS_ROW_COMMITMENTS: [Field; GADGET_DIM] = [{crs_row_commitments}];\n"
+        "{LICENSE}\nuse super::threshold::GADGET_DIM;\n\npub mod crs;\npub mod urs;\n\npub use crate::configs::{slug}::lbfv::crs::LBFV_CRS_GADGET_ROWS;\npub use crate::configs::{slug}::lbfv::urs::LBFV_URS_GADGET_ROWS;\n\n/// `commit(LBFV_CRS_GADGET_ROWS[row])` under `DS_PK_AGGREGATION`, the `pk1` half of C5's output.\npub global LBFV_CRS_ROW_COMMITMENTS: [Field; GADGET_DIM] = [{crs_row_commitments}];\n\n/// `commit(LBFV_URS_GADGET_ROWS[row])` under the same hash, which `rlk_generation` opens.\npub global LBFV_URS_ROW_COMMITMENTS: [Field; GADGET_DIM] = [{urs_row_commitments}];\n"
     );
 
     Ok(Some((module, crs, urs)))
@@ -484,10 +489,10 @@ pub global PARAMS_SMUDGING_B_ENC: Field = {};
         "pk_generation (CIRCUIT 1 - PUBLIC KEY THRESHOLD BFV)",
         &render_globals(&[&pkgen_globals]),
     );
-    // The l-BFV public-key limb checks the reduced relation for one limb, so its quotient `r`
-    // has `N` coefficients and its own per-limb bound.
+    // The l-BFV public-key row checks the reduced relation per limb, so each quotient `r` has `N`
+    // coefficients and its own per-limb bound.
     let lbfv_pk_section = section(
-        "lbfv_pk_generation_limb (l-BFV PUBLIC KEY LIMB)",
+        "lbfv_pk_generation (l-BFV PUBLIC KEY ROW)",
         &format!(
             "pub global LBFV_PK_GENERATION_BIT_R: u32 = {};
 pub global LBFV_PK_GENERATION_R_BOUNDS: [Field; L] = [{}];",
@@ -501,19 +506,19 @@ pub global LBFV_PK_GENERATION_R_BOUNDS: [Field; L] = [{}];",
         .collect::<Vec<_>>()
         .join(", ");
     let lbfv_rows = if lbfv_enabled {
-        "pub use super::lbfv::{\n    LBFV_CRS_GADGET_ROWS, LBFV_CRS_ROW_COMMITMENTS, LBFV_URS_GADGET_ROWS,\n};"
+        "pub use super::lbfv::{\n    LBFV_CRS_GADGET_ROWS, LBFV_CRS_ROW_COMMITMENTS, LBFV_URS_GADGET_ROWS,\n    LBFV_URS_ROW_COMMITMENTS,\n};"
             .to_string()
     } else {
         let rows = std::iter::repeat("CRP")
             .take(pkgen.l as usize)
             .collect::<Vec<_>>()
             .join(", ");
+        let zeros = std::iter::repeat("0")
+            .take(pkgen.l as usize)
+            .collect::<Vec<_>>()
+            .join(", ");
         format!(
-            "pub global LBFV_CRS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{rows}];\npub global LBFV_URS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{rows}];\n// No l-BFV rows on this preset; `lbfv_pk_aggregation` is never built for it.\npub global LBFV_CRS_ROW_COMMITMENTS: [Field; GADGET_DIM] = [{}];",
-            std::iter::repeat("0")
-                .take(pkgen.l as usize)
-                .collect::<Vec<_>>()
-                .join(", ")
+            "pub global LBFV_CRS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{rows}];\npub global LBFV_URS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{rows}];\n// No l-BFV rows on this preset; the l-BFV circuits are never built for it.\npub global LBFV_CRS_ROW_COMMITMENTS: [Field; GADGET_DIM] = [{zeros}];\npub global LBFV_URS_ROW_COMMITMENTS: [Field; GADGET_DIM] = [{zeros}];",
         )
     };
     let c1_rows_comment = if lbfv_enabled {

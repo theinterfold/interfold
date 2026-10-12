@@ -19,7 +19,7 @@ pub global NODE_FOLD_PUBLIC_LEN: u32 = 15
     );
 pub global NODE_FOLD_V2_APPEND_LEN: u32 = 3 + (3 * LBFV_ROWS);
 pub global NODE_FOLD_V2_PUBLIC_LEN: u32 = NODE_FOLD_PUBLIC_LEN + NODE_FOLD_V2_APPEND_LEN;
-pub global GENERATION_FOLD_PREFIX_LEN: u32 = 9;
+pub global GENERATION_FOLD_PREFIX_LEN: u32 = 7;
 pub global GENERATION_FOLD_PUBLIC_LEN: u32 = GENERATION_FOLD_PREFIX_LEN + 5 + (3 * LBFV_ROWS);
 pub global GF_PK_VK_IDX: u32 = 0;
 pub global GF_RLK_VK_IDX: u32 = 1;
@@ -27,12 +27,10 @@ pub global GF_ACC_VK_IDX: u32 = 2;
 pub global GF_ROW_INDEX_IDX: u32 = 4;
 pub global GF_EXPECTED_KERNEL_IDX: u32 = 5;
 pub global GF_EXPECTED_FOLD_IDX: u32 = 6;
-pub global GF_TRUSTED_PK_LIMB_VK_IDX: u32 = 7;
-pub global GF_TRUSTED_RLK_LIMB_VK_IDX: u32 = 8;
-pub global GF_SESSION_HI_IDX: u32 = 9;
-pub global GF_SESSION_LO_IDX: u32 = 10;
-pub global GF_PARTY_ID_IDX: u32 = 11;
-pub global GF_SK_COMMITMENT_IDX: u32 = 12;
+pub global GF_SESSION_HI_IDX: u32 = 7;
+pub global GF_SESSION_LO_IDX: u32 = 8;
+pub global GF_PARTY_ID_IDX: u32 = 9;
+pub global GF_SK_COMMITMENT_IDX: u32 = 10;
 pub global GF_R_COMMITMENT_IDX: u32 = GF_SK_COMMITMENT_IDX + 1;
 pub global GF_PK_COMMITMENTS_START: u32 = GF_R_COMMITMENT_IDX + 1;
 pub global GF_D0_COMMITMENTS_START: u32 = GF_PK_COMMITMENTS_START + LBFV_ROWS;
@@ -64,8 +62,6 @@ fn compute_generation_manifest(
         generation_public[GF_EXPECTED_KERNEL_IDX],
         generation_public[GF_PK_VK_IDX],
         generation_public[GF_RLK_VK_IDX],
-        generation_public[GF_TRUSTED_RLK_LIMB_VK_IDX],
-        generation_public[GF_TRUSTED_PK_LIMB_VK_IDX],
     ]
         .as_vector())
 }
@@ -157,17 +153,15 @@ fn test_public_statement_projects_generation_session() {
 }
 
 #[test]
-fn test_generation_manifest_uses_canonical_limb_vk_order() {
+fn test_generation_manifest_uses_canonical_vk_order() {
     let mut generation_public: [Field; GENERATION_FOLD_PUBLIC_LEN] =
         [0; GENERATION_FOLD_PUBLIC_LEN];
     generation_public[GF_PK_VK_IDX] = 13;
     generation_public[GF_RLK_VK_IDX] = 14;
     generation_public[GF_EXPECTED_KERNEL_IDX] = 12;
-    generation_public[GF_TRUSTED_PK_LIMB_VK_IDX] = 15;
-    generation_public[GF_TRUSTED_RLK_LIMB_VK_IDX] = 16;
 
     let manifest = compute_generation_manifest(11, generation_public);
-    let expected = compute_vk_hash([11, 12, 13, 14, 16, 15].as_vector());
+    let expected = compute_vk_hash([11, 12, 13, 14].as_vector());
     assert(manifest == expected);
 }
 

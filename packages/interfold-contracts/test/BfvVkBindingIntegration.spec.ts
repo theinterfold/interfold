@@ -108,10 +108,10 @@ const readFoldedArtifactsFromFile = (
 };
 
 const v2DkgLbfvRows = (publicInputs: string[]): 3 | 5 | null => {
-  if (publicInputs.length === 43 + 3 * BFV_DKG_H + 3 * 3) {
+  if (publicInputs.length === 41 + 3 * BFV_DKG_H + 3 * 3) {
     return 3;
   }
-  if (publicInputs.length === 43 + 3 * BFV_DKG_H + 3 * 5) {
+  if (publicInputs.length === 41 + 3 * BFV_DKG_H + 3 * 5) {
     return 5;
   }
   return null;
@@ -215,7 +215,7 @@ function plaintextHashFromPublicInputs(publicInputs: string[]): string {
 describe("BfvVkBindingIntegration", function () {
   it("recognizes the five-row secure-16384 folded DKG layout", function () {
     const secure16384DkgPublicInputs = Array.from(
-      { length: 43 + 3 * BFV_DKG_H + 3 * 5 },
+      { length: 41 + 3 * BFV_DKG_H + 3 * 5 },
       () => ethers.ZeroHash,
     );
 

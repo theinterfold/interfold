@@ -24650,7 +24650,7 @@ pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfig
 
 /************************************
 -------------------------------------
-lbfv_pk_generation_limb (l-BFV PUBLIC KEY LIMB)
+lbfv_pk_generation (l-BFV PUBLIC KEY ROW)
 -------------------------------------
 ************************************/
 
@@ -24670,8 +24670,9 @@ pub global CRP_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP, CRP, CRP];
 // placeholder declarations because their RLK path is disabled.
 pub global LBFV_CRS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP, CRP, CRP];
 pub global LBFV_URS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP, CRP, CRP];
-// No l-BFV rows on this preset; `lbfv_pk_aggregation` is never built for it.
+// No l-BFV rows on this preset; the l-BFV circuits are never built for it.
 pub global LBFV_CRS_ROW_COMMITMENTS: [Field; GADGET_DIM] = [0, 0, 0];
+pub global LBFV_URS_ROW_COMMITMENTS: [Field; GADGET_DIM] = [0, 0, 0];
 
 pub global RLK_GENERATION_BIT_R: u32 = PK_GENERATION_BIT_SK;
 pub global RLK_GENERATION_BIT_SK: u32 = PK_GENERATION_BIT_SK;

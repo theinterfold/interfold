@@ -129,10 +129,9 @@ pub const PK_GENERATION_OUTPUTS: &[OutputField] =
     &[f("sk_commitment"), f("pk_commitment"), f("e_sm_commitment")];
 
 /// l-BFV public-key generation for one gadget row.
-pub const LBFV_PK_GENERATION_OUTPUTS: &[OutputField] =
-    &[f("sk_commitment"), f("pk_commitment"), f("limb_vk_hash")];
+pub const LBFV_PK_GENERATION_OUTPUTS: &[OutputField] = &[f("sk_commitment"), f("pk_commitment")];
 
-/// l-BFV public-key generation for one row and one CRT limb.
+/// Retired l-BFV public-key limb proof; kept for the retired `LbfvPkGenerationLimb` circuit name.
 pub const LBFV_PK_GENERATION_LIMB_OUTPUTS: &[OutputField] = &[
     f("sk_commitment"),
     f("eek_commitment"),
@@ -148,10 +147,9 @@ pub const RLK_GENERATION_OUTPUTS: &[OutputField] = &[
     f("r_commitment"),
     f("d0_commitment"),
     f("d2_commitment"),
-    f("limb_vk_hash"),
 ];
 
-/// l-BFV relinearization-key generation for one row and one CRT limb.
+/// Retired RLK limb proof; kept for the retired `RlkGenerationLimb` circuit name.
 pub const RLK_GENERATION_LIMB_OUTPUTS: &[OutputField] = &[
     f("sk_commitment"),
     f("r_commitment"),
@@ -178,7 +176,7 @@ pub const THRESHOLD_SHARE_DECRYPTION_OUTPUTS: &[OutputField] = &[f("d_commitment
 pub const DKG_AGGREGATOR_V2_LEGACY_VK_BINDING_LEN: usize = 16;
 
 /// Number of V2 recursive verification-key bindings in `dkg_aggregator_v2`.
-pub const DKG_AGGREGATOR_V2_VK_BINDING_LEN: usize = 13;
+pub const DKG_AGGREGATOR_V2_VK_BINDING_LEN: usize = 11;
 
 /// Exact public-signal positions for `dkg_aggregator_v2`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -302,7 +300,7 @@ pub const RLK_GENERATION_INPUTS: &[OutputField] = &[
     f("row_index"),
 ];
 
-/// Public generation domain, row, and CRT-limb identity for an RLK leaf proof.
+/// Public inputs of the retired RLK limb proof.
 pub const RLK_GENERATION_LIMB_INPUTS: &[OutputField] = &[
     f("session_id_hi"),
     f("session_id_lo"),
@@ -319,7 +317,7 @@ pub const LBFV_PK_GENERATION_INPUTS: &[OutputField] = &[
     f("row_index"),
 ];
 
-/// Public generation domain, row, and CRT-limb identity for a public-key leaf proof.
+/// Public inputs of the retired l-BFV public-key limb proof.
 pub const LBFV_PK_GENERATION_LIMB_INPUTS: &[OutputField] = &[
     f("session_id_hi"),
     f("session_id_lo"),
@@ -710,12 +708,12 @@ mod tests {
         assert_eq!(secure_minimum.esm_agg_commitments, 27..29);
         assert_eq!(secure_minimum.key_envelope_commitment, 29);
         assert_eq!(secure_minimum.aggregate_pk_commitments, 36..41);
-        assert_eq!(secure_minimum.v2_vk_binding, 51..64);
-        assert_eq!(secure_minimum.field_count, 64);
+        assert_eq!(secure_minimum.v2_vk_binding, 51..62);
+        assert_eq!(secure_minimum.field_count, 62);
 
         let insecure_micro = DkgAggregatorV2PublicLayout::new(5, 3);
         assert_eq!(insecure_micro.key_envelope_commitment, 38);
-        assert_eq!(insecure_micro.field_count, 67);
+        assert_eq!(insecure_micro.field_count, 65);
     }
 
     /// C7 (`DecryptedSharesAggregation`) has no `-> pub` return values; metadata uses `None`.

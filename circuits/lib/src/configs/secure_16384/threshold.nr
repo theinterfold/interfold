@@ -82005,7 +82005,7 @@ pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfig
 
 /************************************
 -------------------------------------
-lbfv_pk_generation_limb (l-BFV PUBLIC KEY LIMB)
+lbfv_pk_generation (l-BFV PUBLIC KEY ROW)
 -------------------------------------
 ************************************/
 
@@ -82023,7 +82023,9 @@ pub global GADGET_DIM: u32 = L;
 pub global CRP_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP, CRP, CRP, CRP, CRP];
 // l-BFV rows are fixed public randomness for the supported preset. Unsupported presets retain
 // placeholder declarations because their RLK path is disabled.
-pub use super::lbfv::{LBFV_CRS_GADGET_ROWS, LBFV_CRS_ROW_COMMITMENTS, LBFV_URS_GADGET_ROWS};
+pub use super::lbfv::{
+    LBFV_CRS_GADGET_ROWS, LBFV_CRS_ROW_COMMITMENTS, LBFV_URS_GADGET_ROWS, LBFV_URS_ROW_COMMITMENTS,
+};
 
 pub global RLK_GENERATION_BIT_R: u32 = 1;
 pub global RLK_GENERATION_BIT_SK: u32 = 1;

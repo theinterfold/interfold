@@ -21,7 +21,6 @@ impl NodeProofAggregator {
             .or_insert_with(|| LbfvGenerationRows {
                 pk_proofs: Vec::new(),
                 rlk_proofs: Vec::new(),
-                trusted_limb_key_hash: e3_utils::ArcBytes::from_bytes(&[]),
             });
         match msg.document {
             LbfvKeyShareDocument::PublicKeyV1(document) => {
@@ -44,13 +43,6 @@ impl NodeProofAggregator {
                     .into_iter()
                     .map(|signed| signed.payload.proof)
                     .collect();
-                if let Some(proof) = entry.rlk_proofs.first() {
-                    let signals: &[u8] = proof.public_signals.as_ref();
-                    if signals.len() >= 9 * 32 {
-                        entry.trusted_limb_key_hash =
-                            e3_utils::ArcBytes::from_bytes(&signals[8 * 32..9 * 32]);
-                    }
-                }
             }
             LbfvKeyShareDocument::RelinearizationKeyV2(document) => {
                 entry.rlk_proofs = document
@@ -58,20 +50,12 @@ impl NodeProofAggregator {
                     .into_iter()
                     .map(|signed| signed.payload.proof)
                     .collect();
-                if let Some(proof) = entry.rlk_proofs.first() {
-                    let signals: &[u8] = proof.public_signals.as_ref();
-                    if signals.len() >= 9 * 32 {
-                        entry.trusted_limb_key_hash =
-                            e3_utils::ArcBytes::from_bytes(&signals[8 * 32..9 * 32]);
-                    }
-                }
             }
         }
         info!(
-            "NodeProofAggregator: received l-BFV {role:?} document for E3 {e3_id} (pk_rows={}, rlk_rows={}, trusted_limb_hash={})",
+            "NodeProofAggregator: received l-BFV {role:?} document for E3 {e3_id} (pk_rows={}, rlk_rows={})",
             entry.pk_proofs.len(),
             entry.rlk_proofs.len(),
-            !entry.trusted_limb_key_hash.is_empty(),
         );
         self.try_dispatch_node_dkg_fold(&e3_id);
     }
@@ -374,15 +358,11 @@ impl NodeProofAggregator {
             );
             return;
         };
-        if rows.pk_proofs.len() != row_count
-            || rows.rlk_proofs.len() != row_count
-            || rows.trusted_limb_key_hash.is_empty()
-        {
+        if rows.pk_proofs.len() != row_count || rows.rlk_proofs.len() != row_count {
             info!(
-                "NodeProofAggregator: l-BFV generation fold not ready for E3 {e3_id} (pk_rows={}, rlk_rows={}, expected_rows={row_count}, trusted_limb_hash={})",
+                "NodeProofAggregator: l-BFV generation fold not ready for E3 {e3_id} (pk_rows={}, rlk_rows={}, expected_rows={row_count})",
                 rows.pk_proofs.len(),
                 rows.rlk_proofs.len(),
-                !rows.trusted_limb_key_hash.is_empty(),
             );
             return;
         }
@@ -414,7 +394,7 @@ impl NodeProofAggregator {
             rlk_proof: rows.rlk_proofs[next_row as usize].clone(),
             prior_accumulator: prior,
             row_index: next_row,
-            trusted_limb_key_hash: rows.trusted_limb_key_hash.clone(),
+            trusted_limb_key_hash: e3_utils::ArcBytes::from_bytes(&[]),
             params_preset: state.meta.params_preset,
             committee_size: state.meta.committee_size,
         };

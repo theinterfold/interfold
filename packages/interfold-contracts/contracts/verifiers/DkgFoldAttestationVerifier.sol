@@ -269,13 +269,13 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
     function _v2CommitteeParams(
         uint256 publicInputLength
     ) private pure returns (uint256 v2H, uint256 v2N) {
-        if (publicInputLength == 58 || publicInputLength == 64) {
+        if (publicInputLength == 56 || publicInputLength == 62) {
             return (2, 3);
         }
-        if (publicInputLength == 67 || publicInputLength == 73) {
+        if (publicInputLength == 65 || publicInputLength == 71) {
             return (5, 9);
         }
-        if (publicInputLength == 94 || publicInputLength == 100) {
+        if (publicInputLength == 92 || publicInputLength == 98) {
             return (14, 19);
         }
         return (0, 0);

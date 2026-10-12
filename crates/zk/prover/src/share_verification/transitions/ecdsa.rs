@@ -152,8 +152,8 @@ impl ShareVerifier {
         let expected_session =
             split_hash_to_field_limbs(hash_lbfv_proof_session(context.proof_domain));
         let expected_fields = |proof_type| match proof_type {
-            ProofType::LbfvPkGeneration => Some(7),
-            ProofType::RlkGeneration => Some(9),
+            ProofType::LbfvPkGeneration => Some(6),
+            ProofType::RlkGeneration => Some(8),
             ProofType::LbfvPkAggregation => {
                 Some(LbfvPkAggregationPublicLayout::new(committee_h).field_count)
             }

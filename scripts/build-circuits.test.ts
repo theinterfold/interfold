@@ -113,6 +113,33 @@ test('requires complete l-BFV artifacts for supported presets', () => {
   assert.deepEqual(requiredLbfvBinMarkers(root, CIRCUIT_PRESETS.SECURE_8192), [])
 })
 
+test('secure-16384 builds only the circuits of the l-BFV path', () => {
+  const selection = (preset: (typeof CIRCUIT_PRESETS)[keyof typeof CIRCUIT_PRESETS], circuits?: string[]) => {
+    const builder = new NoirCircuitBuilder(undefined, { preset, committee: 'minimum', circuits }) as unknown as {
+      discoverCircuits(): { name: string; group: string }[]
+      circuitsForPreset(circuits: { name: string; group: string }[], preset: string): { name: string; group: string }[]
+    }
+    return builder.circuitsForPreset(builder.discoverCircuits(), preset).map(({ group, name }) => `${group}/${name}`)
+  }
+
+  const secure = selection(CIRCUIT_PRESETS.SECURE_16384)
+  assert.ok(secure.includes('threshold/decrypted_shares_aggregation_wide'))
+  assert.ok(!secure.includes('threshold/decrypted_shares_aggregation'))
+  // `share_decryption` names C6 (both paths) and the trBFV C4.
+  assert.ok(secure.includes('threshold/share_decryption'))
+  assert.ok(!secure.includes('dkg/share_decryption'))
+
+  const insecure = selection(CIRCUIT_PRESETS.INSECURE)
+  assert.ok(insecure.includes('threshold/decrypted_shares_aggregation'))
+  assert.ok(insecure.includes('threshold/decrypted_shares_aggregation_wide'))
+  assert.ok(secure.every((circuit) => insecure.includes(circuit)))
+
+  assert.throws(
+    () => selection(CIRCUIT_PRESETS.SECURE_16384, ['decrypted_shares_aggregation']),
+    /trBFV circuits require preset insecure or secure-8192: decrypted_shares_aggregation/,
+  )
+})
+
 test('source hash covers compile-bearing Noir inputs but ignores active selectors', () => {
   const root = mkdtempSync(join(tmpdir(), 'interfold-source-hash-'))
   const sharedSource = join(root, 'circuits', 'lib', 'src', 'core', 'shared.nr')
@@ -230,14 +257,10 @@ function hydrationFixture(): {
   const pairDir = join(outputDir, CIRCUIT_PRESETS.SECURE_16384, 'minimum')
 
   const secureCircuits = [
-    ...[
-      'lbfv_pk_generation',
-      'lbfv_pk_generation_limb',
-      'lbfv_pk_aggregation',
-      'rlk_generation',
-      'rlk_generation_limb',
-      'rlk_aggregation',
-    ].map((circuit) => [CIRCUIT_GROUPS.THRESHOLD, circuit]),
+    ...['lbfv_pk_generation', 'lbfv_pk_aggregation', 'rlk_generation', 'rlk_aggregation'].map((circuit) => [
+      CIRCUIT_GROUPS.THRESHOLD,
+      circuit,
+    ]),
     ...[
       'lbfv_generation_fold',
       'lbfv_generation_fold_kernel',
@@ -308,7 +331,6 @@ test('hydrates the complete l-BFV family and removes stale target artifacts', ()
       assert.equal(existsSync(marker), true)
     }
     assert.equal(existsSync(join(fixture.root, 'circuits', 'bin', 'threshold', 'target', 'rlk_generation.obsolete')), false)
-    assert.equal(existsSync(join(fixture.root, 'circuits', 'bin', 'threshold', 'target', 'rlk_generation_limb.obsolete')), false)
     assert.equal(JSON.parse(readFileSync(join(fixture.root, 'circuits', 'bin', '.active-preset.json'), 'utf8')).sourceHash, 'source-hash')
   } finally {
     rmSync(fixture.root, { recursive: true, force: true })
