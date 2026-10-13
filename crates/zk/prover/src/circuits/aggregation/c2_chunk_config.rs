@@ -37,8 +37,8 @@ mod tests {
     #[test]
     fn secure_16384_layout_depends_on_the_committee() {
         let minimum = C2ChunkLayout::compiled(16384, 3).unwrap();
-        assert_eq!((minimum.chunk_size, minimum.chunk_count), (4096, 4));
-        assert_eq!((minimum.chunks_per_batch, minimum.batch_count), (4, 1));
+        assert_eq!((minimum.chunk_size, minimum.chunk_count), (8192, 2));
+        assert_eq!((minimum.chunks_per_batch, minimum.batch_count), (2, 1));
         let micro = C2ChunkLayout::compiled(16384, 9).unwrap();
         assert_eq!(
             (micro.chunk_size, micro.chunk_count, micro.batch_count),

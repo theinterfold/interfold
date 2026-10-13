@@ -309,7 +309,8 @@ mod tests {
 
     #[test]
     fn secure_16384_accepts_only_the_committee_chunk_size() {
-        assert!(validate_c2_chunk_layout(16384, 3, 4096).is_ok());
+        assert!(validate_c2_chunk_layout(16384, 3, 8192).is_ok());
+        assert!(validate_c2_chunk_layout(16384, 3, 4096).is_err());
         assert!(validate_c2_chunk_layout(16384, 3, 512).is_err());
         assert!(validate_c2_chunk_layout(16384, 19, 512).is_ok());
     }

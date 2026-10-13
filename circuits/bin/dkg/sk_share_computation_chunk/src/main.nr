@@ -9,10 +9,9 @@ use lib::configs::default::dkg::{
     SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_SK_BIT_SECRET, SHARE_COMPUTATION_SK_CONFIGS,
 };
 use lib::configs::default::{N_PARTIES, T};
-use lib::core::dkg::share_computation::check_range_bounds;
-use lib::core::dkg::share_computation::verify_parity_check;
+use lib::core::dkg::share_computation::{check_range_bounds, verify_parity_check_bounded};
 use lib::math::commitments::{
-    compute_sc_party_share_chunk_commitment, compute_sc_secret_chunk_commitment,
+    compute_sc_party_share_chunk_commitment_bounded, compute_sc_secret_chunk_commitment,
 };
 use lib::math::polynomial::Polynomial;
 
@@ -35,7 +34,7 @@ fn main(
         SHARE_COMPUTATION_SK_CONFIGS.qis,
         y_chunk,
     );
-    verify_parity_check::<SHARE_COMPUTATION_CHUNK_SIZE, L_THRESHOLD, N_PARTIES, T>(
+    verify_parity_check_bounded::<SHARE_COMPUTATION_CHUNK_SIZE, L_THRESHOLD, N_PARTIES, T, SHARE_COMPUTATION_BIT_SHARE>(
         SHARE_COMPUTATION_SK_CONFIGS.qis,
         PARITY_MATRIX,
         y_chunk,
@@ -62,7 +61,7 @@ fn main(
                 reversed_share[SHARE_COMPUTATION_CHUNK_SIZE - 1 - i] =
                     y_chunk[i][mod_idx][party_idx + 1];
             }
-            out[1 + party_idx * L_THRESHOLD + mod_idx] = compute_sc_party_share_chunk_commitment::<SHARE_COMPUTATION_CHUNK_SIZE, SHARE_COMPUTATION_BIT_SHARE>(
+            out[1 + party_idx * L_THRESHOLD + mod_idx] = compute_sc_party_share_chunk_commitment_bounded::<SHARE_COMPUTATION_CHUNK_SIZE, SHARE_COMPUTATION_BIT_SHARE>(
                 party_idx,
                 mod_idx,
                 chunk_idx,

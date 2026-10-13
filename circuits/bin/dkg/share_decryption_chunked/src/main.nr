@@ -10,7 +10,7 @@ use lib::configs::default::dkg::{
 };
 use lib::configs::default::H;
 use lib::core::dkg::share_decryption::ShareDecryption;
-use lib::math::commitments::compute_sc_party_share_root_from_polynomial;
+use lib::math::commitments::compute_sc_party_share_root_from_reversed;
 use lib::math::polynomial::Polynomial;
 
 /// C4 for the l-BFV path: identical to `share_decryption` except that each received share is
@@ -26,8 +26,8 @@ fn main(
     assert(SHARE_DECRYPTION_BIT_MSG == SHARE_COMPUTATION_BIT_SHARE);
     let share_decryption: ShareDecryption<N, L_THRESHOLD, H, SHARE_DECRYPTION_BIT_MSG, SHARE_DECRYPTION_BIT_AGG> =
         ShareDecryption::new(expected_commitments, decrypted_shares);
-    share_decryption.execute_with(QIS_THRESHOLD, |mod_idx, share| {
-        compute_sc_party_share_root_from_polynomial::<N, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE, SHARE_DECRYPTION_BIT_MSG>(
+    share_decryption.execute_in_place_with(QIS_THRESHOLD, |mod_idx, share| {
+        compute_sc_party_share_root_from_reversed::<N, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE, SHARE_DECRYPTION_BIT_MSG>(
             recipient_party_idx,
             mod_idx,
             share,

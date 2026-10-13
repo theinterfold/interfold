@@ -244,6 +244,41 @@ pub fn assert_in_range<let BIT: u32>(v: Field, upper: Field) {
     (upper - 1 - v).assert_max_bit_size::<BIT>();
 }
 
+/// [`flatten`] / [`flatten_checked`] of one `A`-value polynomial whose values are read through
+/// `value_at(i)` instead of an array, so a caller packing a slice or a reordering of a larger
+/// polynomial does not first copy it into a new array. Copying `A` values element by element into
+/// an array and reading them back costs far more compile memory than the gates involved (a
+/// degree-16384 C4 opening: 27.6 GB with its copies, 13.6 GB with one fewer). The carriers equal
+/// `pack::<A, BIT>` / `pack_checked::<A, BIT>` of the values `[value_at(0), ..., value_at(A - 1)]`.
+pub fn flatten_with<let A: u32, let BIT: u32, Env>(
+    mut inputs: [Field],
+    value_at: fn[Env](u32) -> Field,
+    checked: bool,
+) -> [Field] {
+    let (nibble_bits, group) = packing_layout::<BIT>();
+    let base = 2.pow_32(nibble_bits as Field);
+    let radix = 2.pow_32((nibble_bits + 4) as Field);
+    let num_chunks = (A + group - 1) / group;
+    for chunk in 0..num_chunks {
+        let remain = A - (chunk * group);
+        let take = if remain < group { remain } else { group };
+        let mut acc = 0;
+        for i in 0..take {
+            let digit = value_at(chunk * group + i) + base;
+            if checked {
+                // digit < radix = 2^(nibble_bits + 4): the injectivity condition of `pack_checked`.
+                digit.assert_max_bit_size::<((BIT + 3) / 4) * 4 + 4>();
+            }
+            acc = acc * radix + digit;
+        }
+        for _ in 0..(group - take) {
+            acc = acc * radix + base;
+        }
+        inputs = inputs.push_back(acc);
+    }
+    inputs
+}
+
 pub fn compute_safe(domain_separator: [u8; 64], inputs: [Field], io_pattern: [u32; 2]) -> [Field] {
     let mut sponge = SafeSponge::start(io_pattern, domain_separator);
     sponge.absorb(inputs);

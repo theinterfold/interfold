@@ -315,6 +315,53 @@ pub fn verify_parity_check<let N: u32, let L: u32, let N_PARTIES: u32, let T: u3
     }
 }
 
+/// [`verify_parity_check`] for the l-BFV chunk circuits, with the divisibility quotient bounded to
+/// `BIT_SHARE + 8` bits instead of cast to `u64`. Same statement, fewer gates per check.
+///
+/// Shares are range-checked to `[0, q_j)`, `h` entries are reduced mod `q_j`, and the secret column
+/// is pinned near `[0, q_j)` by its checked chunk-commitment opening, so an honest sum is below
+/// `2 * (N_PARTIES + 1) * q_j^2` and its quotient below `2^(BIT_SHARE + 8)` for up to 63 parties.
+/// Soundness does not need that bound to be tight: `quotient * q_j < 2^(BIT_SHARE + 8 + 64)` stays far
+/// below the field prime, so the field equation still implies the integer one.
+pub fn verify_parity_check_bounded<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SHARE: u32>(
+    qis: [Field; L],
+    h: [[[Field; N_PARTIES + 1]; N_PARTIES - T]; L],
+    y: [[[Field; N_PARTIES + 1]; L]; N],
+) {
+    assert(N_PARTIES < 64);
+    for coeff_idx in 0..N {
+        for mod_idx in 0..L {
+            let q_j = ModU64::new(qis[mod_idx] as u64);
+            for row in 0..(N_PARTIES - T) {
+                let mut sum: Field = 0;
+                for col in 0..(N_PARTIES + 1) {
+                    sum = sum + h[mod_idx][row][col] * y[coeff_idx][mod_idx][col];
+                }
+                q_j.assert_zero_mod_bounded::<BIT_SHARE + 8>(sum);
+            }
+        }
+    }
+}
+
+/// The centered representative of a residue `coefficient` modulo `q`: `coefficient` itself, or
+/// `coefficient - q`. The prover supplies the choice; the relation below pins the result to one of
+/// those two values, and the caller's checked commitment opening fixes which one (the opened
+/// commitment carries the canonical centered value).
+pub fn centered_residue(coefficient: Field, q: Field) -> Field {
+    // Safety: the assertion below constrains the hint to `coefficient` or `coefficient - q`.
+    let centered = unsafe { __centered_residue(coefficient, q) };
+    assert((coefficient - centered) * (coefficient - centered - q) == 0);
+    centered
+}
+
+unconstrained fn __centered_residue(coefficient: Field, q: Field) -> Field {
+    if (coefficient as u64) > (((q - 1) / 2) as u64) {
+        coefficient - q
+    } else {
+        coefficient
+    }
+}
+
 /// Commits to shares for each party and modulus.
 ///
 /// Returns `[[Field; L]; N_PARTIES]` where `commitments[party_idx][mod_idx]`
@@ -344,4 +391,27 @@ pub fn commit_to_party_shares<let N: u32, let L: u32, let N_PARTIES: u32, let BI
     }
 
     commitments
+}
+
+/// Shares of the secret 5 over q = 97 on the code `y(x) = 5 + 3x` evaluated at parties 1..=3, with
+/// the parity rows of that code (`y0 - 2*y1 + y2 = 0`, `y1 - 2*y2 + y3 = 0`).
+global TEST_Q: [Field; 1] = [97];
+global TEST_H: [[[Field; 4]; 2]; 1] = [[[1, 95, 1, 0], [0, 1, 95, 1]]];
+
+#[test]
+fn test_parity_check_bounded_accepts_a_codeword() {
+    verify_parity_check_bounded::<1, 1, 3, 1, 7>(TEST_Q, TEST_H, [[[5, 8, 11, 14]]]);
+}
+
+#[test(should_fail_with = "Divisibility check failed")]
+fn test_parity_check_bounded_rejects_a_corrupted_share() {
+    verify_parity_check_bounded::<1, 1, 3, 1, 7>(TEST_Q, TEST_H, [[[5, 8, 12, 14]]]);
+}
+
+#[test]
+fn test_centered_residue_maps_residues_to_the_centered_range() {
+    assert(centered_residue(5, 97) == 5);
+    assert(centered_residue(48, 97) == 48);
+    assert(centered_residue(49, 97) == 49 - 97);
+    assert(centered_residue(96, 97) == -1);
 }

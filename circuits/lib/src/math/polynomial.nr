@@ -120,6 +120,18 @@ impl<let N: u32> Polynomial<N> {
         out
     }
 
+    /// [`Polynomial::dot`] up to degree 8192 and [`Polynomial::dot_materialized`] above it. `N` is
+    /// a compile-time constant, so only one branch is compiled: circuits shared with the trBFV path
+    /// keep their exact bytecode at secure-8192, while degree-16384 builds avoid the compile-memory
+    /// cost of one `N`-term expression (C3, C6: about 30 GB at 16384).
+    pub fn dot_for_degree(self, k: [Field; N]) -> Field {
+        if N > 8192 {
+            self.dot_materialized(k)
+        } else {
+            self.dot(k)
+        }
+    }
+
     pub fn eval(self, x: Field) -> Field {
         let mut result = self.coefficients[0];
 

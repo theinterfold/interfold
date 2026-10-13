@@ -201,7 +201,7 @@ fn smudging_b_enc_value(preset: BfvPreset) -> Result<BigUint> {
 /// `N_PARTIES`; the committee is chosen when the circuits are built. Other degrees use fixed values.
 fn c2_chunking(degree: u32) -> (String, String, String, String) {
     let chunk_size = if degree >= 16384 {
-        "if crate::configs::committee::active::N_PARTIES <= 4 {\n    4096\n} else if crate::configs::committee::active::N_PARTIES <= 12 {\n    1024\n} else {\n    512\n}".to_string()
+        "if crate::configs::committee::active::N_PARTIES <= 4 {\n    8192\n} else if crate::configs::committee::active::N_PARTIES <= 12 {\n    1024\n} else {\n    512\n}".to_string()
     } else {
         DEFAULT_C2_CHUNK_SIZE.min(degree).to_string()
     };

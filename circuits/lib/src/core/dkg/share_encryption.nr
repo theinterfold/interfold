@@ -363,11 +363,11 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
                     - self.configs.qis[i] * self.ct1_r[i].coefficients[j];
             }
             assert(
-                Polynomial::new(ct0_residual).eval(x) == self.pk0is[i].dot(kernel),
+                Polynomial::new(ct0_residual).eval(x) == self.pk0is[i].dot_for_degree(kernel),
                 "ct0 encryption check failed",
             );
             assert(
-                Polynomial::new(ct1_residual).eval(x) == self.pk1is[i].dot(kernel),
+                Polynomial::new(ct1_residual).eval(x) == self.pk1is[i].dot_for_degree(kernel),
                 "ct1 encryption check failed",
             );
         }
@@ -517,31 +517,24 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         let k1_at_gamma = k1.eval(gamma);
 
         for i in 0..L {
-            let pk0is_at_gamma = self.pk0is[i].eval(gamma);
-            let r1i_at_gamma = self.r1is[i].eval(gamma);
-            let r2i_at_gamma = self.r2is[i].eval(gamma);
-
-            // ct0[l] = pk0[l]*u + e0 + k1*k0[l] + r1[l]*q_l + r2[l]*(gamma^N + 1)
-            let mut ct0_rhs = (pk0is_at_gamma * u_at_gamma) + e0_at_gamma;
-            ct0_rhs += k1_at_gamma * self.configs.k0is[i];
-            ct0_rhs += r1i_at_gamma * self.configs.qis[i];
-            ct0_rhs += r2i_at_gamma * cyclo_at_gamma;
-            let ct0_lhs = self.ct0is[i].eval(gamma);
-
-            // ct1[l] = pk1[l]*u + e1 + p2[l]*(gamma^N + 1) + p1[l]*q_l
-            let pk1is_at_gamma = self.pk1is[i].eval(gamma);
-            let p1is_at_gamma = self.p1is[i].eval(gamma);
-            let p2is_at_gamma = self.p2is[i].eval(gamma);
-            let mut ct1_rhs = (pk1is_at_gamma * u_at_gamma) + e1_at_gamma;
-            ct1_rhs += p2is_at_gamma * cyclo_at_gamma;
-            ct1_rhs += p1is_at_gamma * self.configs.qis[i];
-            let ct1_lhs = self.ct1is[i].eval(gamma);
-
-            // Accumulate into batched sum using per-modulus challenge weights
-            let gamma_i = if i == 0 { 1 } else { gammas[i] };
-            sum = (
-                sum.0 + ct0_lhs * gamma_i + ct1_lhs * gammas[i + L],
-                sum.1 + ct0_rhs * gamma_i + ct1_rhs * gammas[i + L],
+            let mut ct0_residual = [0; N];
+            let mut ct1_residual = [0; N];
+            for j in 0..N {
+                ct0_residual[j] = self.ct0is[i].coefficients[j]
+                    - self.e0.coefficients[j]
+                    - self.configs.k0is[i] * k1.coefficients[j]
+                    - self.configs.qis[i] * self.ct0_r[i].coefficients[j];
+                ct1_residual[j] = self.ct1is[i].coefficients[j]
+                    - self.e1.coefficients[j]
+                    - self.configs.qis[i] * self.ct1_r[i].coefficients[j];
+            }
+            assert(
+                Polynomial::new(ct0_residual).eval(x) == self.pk0is[i].dot_for_degree(kernel),
+                "ct0 encryption check failed",
+            );
+            assert(
+                Polynomial::new(ct1_residual).eval(x) == self.pk1is[i].dot_for_degree(kernel),
+                "ct1 encryption check failed",
             );
         }
     }

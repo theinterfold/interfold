@@ -36,7 +36,7 @@ share_computation chunk grid (l-BFV)
 ************************************/
 
 pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = if crate::configs::committee::active::N_PARTIES <= 4 {
-    4096
+    8192
 } else if crate::configs::committee::active::N_PARTIES <= 12 {
     1024
 } else {

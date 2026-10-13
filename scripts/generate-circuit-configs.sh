@@ -165,7 +165,7 @@ for preset in "${SELECT_PRESETS[@]}"; do
                         chunk_size=128
                     elif [[ "$preset" == "secure-16384" ]]; then
                         case "$committee" in
-                            minimum) chunk_size=4096 ;;
+                            minimum) chunk_size=8192 ;;
                             micro) chunk_size=1024 ;;
                         esac
                     fi

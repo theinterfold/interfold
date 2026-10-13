@@ -92,6 +92,22 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32, let
         }
     }
 
+    /// [`Self::verify_commitments_with`] with `open` given each share in its decrypted
+    /// (lowest-degree-first) order, so an opening that can read the share reversed in place does not
+    /// make the circuit build a reversed copy. The l-BFV path opens chunk roots this way
+    /// (`compute_sc_party_share_root_from_reversed`). `open` must still open injectively.
+    fn verify_commitments_in_place_with<Env>(self, open: fn[Env](u32, Polynomial<N>) -> Field) {
+        for party_idx in 0..H {
+            for mod_idx in 0..L {
+                assert(
+                    open(mod_idx, self.decrypted_shares[party_idx][mod_idx])
+                        == self.expected_commitments[party_idx][mod_idx],
+                    "Commitment mismatch",
+                );
+            }
+        }
+    }
+
     /// Aggregates all verified shares by summing coefficient-wise across honest parties.
     ///
     /// For each CRT modulus and each coefficient position, computes:
@@ -149,7 +165,22 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32, let
     ) -> Field {
         // Step 1: Verify decrypted shares match expected C2 commitments, opened injectively.
         self.verify_commitments_with(open);
+        self.aggregate_and_commit(moduli)
+    }
 
+    /// [`Self::execute_with`] with `open` given each share unreversed; see
+    /// [`Self::verify_commitments_in_place_with`].
+    pub fn execute_in_place_with<Env>(
+        self,
+        moduli: [Field; L],
+        open: fn[Env](u32, Polynomial<N>) -> Field,
+    ) -> Field {
+        self.verify_commitments_in_place_with(open);
+        self.aggregate_and_commit(moduli)
+    }
+
+    /// Steps 2-4 of [`Self::execute_with`], after the shares are opened.
+    fn aggregate_and_commit(self, moduli: [Field; L]) -> Field {
         // Step 2: Sum shares coefficient-wise per CRT limb.
         let aggregated = self.compute_aggregated_shares();
 

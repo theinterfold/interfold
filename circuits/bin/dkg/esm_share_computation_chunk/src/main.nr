@@ -9,9 +9,11 @@ use lib::configs::default::dkg::{
     SHARE_COMPUTATION_E_SM_BIT_SECRET, SHARE_COMPUTATION_E_SM_CONFIGS, SHARE_COMPUTATION_N_CHUNKS,
 };
 use lib::configs::default::{N_PARTIES, T};
-use lib::core::dkg::share_computation::{check_range_bounds, verify_parity_check};
+use lib::core::dkg::share_computation::{
+    centered_residue, check_range_bounds, verify_parity_check_bounded,
+};
 use lib::math::commitments::{
-    compute_sc_esm_secret_chunk_commitment, compute_sc_party_share_chunk_commitment,
+    compute_sc_esm_secret_chunk_commitment, compute_sc_party_share_chunk_commitment_bounded,
 };
 use lib::math::polynomial::Polynomial;
 
@@ -34,7 +36,7 @@ fn main(
         SHARE_COMPUTATION_E_SM_CONFIGS.qis,
         y_chunk,
     );
-    verify_parity_check::<SHARE_COMPUTATION_CHUNK_SIZE, L_THRESHOLD, N_PARTIES, T>(
+    verify_parity_check_bounded::<SHARE_COMPUTATION_CHUNK_SIZE, L_THRESHOLD, N_PARTIES, T, SHARE_COMPUTATION_BIT_SHARE>(
         SHARE_COMPUTATION_E_SM_CONFIGS.qis,
         PARITY_MATRIX,
         y_chunk,
@@ -45,17 +47,11 @@ fn main(
         [Polynomial::new([0; SHARE_COMPUTATION_CHUNK_SIZE]); L_THRESHOLD];
     for mod_idx in 0..L_THRESHOLD {
         let q = SHARE_COMPUTATION_E_SM_CONFIGS.qis[mod_idx];
-        let half = (q - 1) / 2;
         let mut coefficients: [Field; SHARE_COMPUTATION_CHUNK_SIZE] =
             [0; SHARE_COMPUTATION_CHUNK_SIZE];
         for i in 0..SHARE_COMPUTATION_CHUNK_SIZE {
-            let coefficient = secret_chunk[mod_idx].coefficients[i];
-            let centered = if (coefficient as u64) > (half as u64) {
-                coefficient - q
-            } else {
-                coefficient
-            };
-            coefficients[SHARE_COMPUTATION_CHUNK_SIZE - 1 - i] = centered;
+            coefficients[SHARE_COMPUTATION_CHUNK_SIZE - 1 - i] =
+                centered_residue(secret_chunk[mod_idx].coefficients[i], q);
         }
         normalized[mod_idx] = Polynomial::new(coefficients);
     }
@@ -74,7 +70,7 @@ fn main(
                 reversed_share[SHARE_COMPUTATION_CHUNK_SIZE - 1 - i] =
                     y_chunk[i][mod_idx][party_idx + 1];
             }
-            out[1 + party_idx * L_THRESHOLD + mod_idx] = compute_sc_party_share_chunk_commitment::<SHARE_COMPUTATION_CHUNK_SIZE, SHARE_COMPUTATION_BIT_SHARE>(
+            out[1 + party_idx * L_THRESHOLD + mod_idx] = compute_sc_party_share_chunk_commitment_bounded::<SHARE_COMPUTATION_CHUNK_SIZE, SHARE_COMPUTATION_BIT_SHARE>(
                 party_idx,
                 mod_idx,
                 chunk_idx,

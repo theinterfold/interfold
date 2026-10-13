@@ -65,7 +65,7 @@ fn main(
     let mut rhs = 0;
     for i in 0..L {
         gammas[i] = leaf[LEAF_GAMMAS + i];
-        let mut ct0_rhs = pk0is[i].dot(kernel) + leaf[LEAF_E0_AT];
+        let mut ct0_rhs = pk0is[i].dot_materialized(kernel) + leaf[LEAF_E0_AT];
         ct0_rhs += leaf[LEAF_K1_AT] * USER_DATA_ENCRYPTION_CHUNKED_K0IS[i];
         ct0_rhs += leaf[LEAF_R1_AT + i] * QIS[i];
         let gamma_i = if i == 0 { 1 } else { gammas[i] };

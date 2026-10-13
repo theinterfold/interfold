@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::math::helpers::{compute_safe, flatten, flatten_checked};
+use crate::math::helpers::{compute_safe, flatten, flatten_checked, flatten_with};
 use crate::math::polynomial::Polynomial;
 
 /// DOMAIN SEPARATORS
@@ -422,6 +422,30 @@ pub fn compute_sc_party_share_chunk_commitment<let CHUNK_SIZE: u32, let BIT: u32
     compute_commitment(payload, DS_SHARE_COMPUTATION_CHUNK)
 }
 
+/// [`compute_sc_party_share_chunk_commitment`] for the chunk circuit that **creates** it. The
+/// circuit range-checks every share to `[0, q)`, which keeps each packed digit in its slot, so plain
+/// packing is injective. Same value.
+pub fn compute_sc_party_share_chunk_commitment_bounded<let CHUNK_SIZE: u32, let BIT: u32>(
+    party_idx: u32,
+    mod_idx: u32,
+    chunk_idx: u32,
+    n: u32,
+    chunk_poly: Polynomial<CHUNK_SIZE>,
+) -> Field {
+    let mut payload = [
+        0,
+        2,
+        party_idx as Field,
+        mod_idx as Field,
+        chunk_idx as Field,
+        n as Field,
+        CHUNK_SIZE as Field,
+    ]
+        .as_vector();
+    payload = single_polynomial_payload::<CHUNK_SIZE, BIT>(payload, chunk_poly);
+    compute_commitment(payload, DS_SHARE_COMPUTATION_CHUNK)
+}
+
 /// Compute the root commitment for secret chunk commitments.
 pub fn compute_sc_secret_chunk_root_commitment(
     kind_tag: Field,
@@ -524,16 +548,15 @@ pub fn compute_sc_sk_secret_root_from_polynomial<let N: u32, let N_CHUNKS: u32, 
     let mut chunks: [Field; N_CHUNKS] = [0; N_CHUNKS];
     for chunk_idx in 0..N_CHUNKS {
         let start = N - ((chunk_idx + 1) * CHUNK_SIZE);
-        let mut coefficients: [Field; CHUNK_SIZE] = [0; CHUNK_SIZE];
-        for offset in 0..CHUNK_SIZE {
-            coefficients[offset] = sk.coefficients[start + offset];
-        }
-        chunks[chunk_idx] = compute_sc_secret_chunk_commitment::<CHUNK_SIZE, BIT>(
-            0,
-            chunk_idx,
-            N,
-            Polynomial::new(coefficients),
+        // `compute_sc_secret_chunk_commitment(0, chunk_idx, N, sk[start..start + CHUNK_SIZE])`,
+        // packed straight from `sk`; see `flatten_with`.
+        let mut payload = [0, 0, chunk_idx as Field, N as Field, CHUNK_SIZE as Field].as_vector();
+        payload = flatten_with::<CHUNK_SIZE, BIT, _>(
+            payload,
+            |offset| sk.coefficients[start + offset],
+            true,
         );
+        chunks[chunk_idx] = compute_commitment(payload, DS_SHARE_COMPUTATION_CHUNK);
     }
     compute_sc_secret_chunk_root_commitment(0, N, CHUNK_SIZE, chunks)
 }
@@ -547,16 +570,16 @@ pub fn compute_sc_esm_secret_root_from_polynomial<let N: u32, let L: u32, let N_
     let mut chunks: [Field; N_CHUNKS] = [0; N_CHUNKS];
     for chunk_idx in 0..N_CHUNKS {
         let start = N - ((chunk_idx + 1) * CHUNK_SIZE);
-        let mut polynomials: [Polynomial<CHUNK_SIZE>; L] = [Polynomial::new([0; CHUNK_SIZE]); L];
-        for mod_idx in 0..L {
-            let mut coefficients: [Field; CHUNK_SIZE] = [0; CHUNK_SIZE];
-            for offset in 0..CHUNK_SIZE {
-                coefficients[offset] = e_sm[mod_idx].coefficients[start + offset];
-            }
-            polynomials[mod_idx] = Polynomial::new(coefficients);
-        }
+        // `compute_sc_esm_secret_chunk_commitment` of each limb's `[start, start + CHUNK_SIZE)`
+        // slice, packed straight from `e_sm`; see `flatten_with`.
         let mut payload = [0, 1, chunk_idx as Field, N as Field, CHUNK_SIZE as Field].as_vector();
-        payload = multiple_polynomial_payload_checked::<CHUNK_SIZE, L, BIT>(payload, polynomials);
+        for mod_idx in 0..L {
+            payload = flatten_with::<CHUNK_SIZE, BIT, _>(
+                payload,
+                |offset| e_sm[mod_idx].coefficients[start + offset],
+                true,
+            );
+        }
         chunks[chunk_idx] = compute_commitment(payload, DS_SHARE_COMPUTATION_CHUNK);
     }
     compute_sc_secret_chunk_root_commitment(1, N, CHUNK_SIZE, chunks)
@@ -573,19 +596,73 @@ pub fn compute_sc_party_share_root_from_polynomial<let N: u32, let N_CHUNKS: u32
     let mut chunks: [Field; N_CHUNKS] = [0; N_CHUNKS];
     for chunk_idx in 0..N_CHUNKS {
         let start = N - ((chunk_idx + 1) * CHUNK_SIZE);
-        let mut coefficients: [Field; CHUNK_SIZE] = [0; CHUNK_SIZE];
-        for offset in 0..CHUNK_SIZE {
-            coefficients[offset] = message.coefficients[start + offset];
-        }
-        chunks[chunk_idx] = compute_sc_party_share_chunk_commitment::<CHUNK_SIZE, BIT>(
+        chunks[chunk_idx] = party_share_chunk_commitment_with::<CHUNK_SIZE, BIT, _>(
             party_idx,
             mod_idx,
             chunk_idx,
             N,
-            Polynomial::new(coefficients),
+            |offset| message.coefficients[start + offset],
         );
     }
     compute_sc_party_share_chunk_root_commitment(party_idx, mod_idx, N, CHUNK_SIZE, chunks)
+}
+
+/// [`compute_sc_party_share_root_from_polynomial`] of the **reversed** `share`, read in place: the
+/// same root C2 commits for a share whose coefficients are lowest-degree-first, without building
+/// the reversed polynomial.
+pub fn compute_sc_party_share_root_from_reversed<let N: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32, let BIT: u32>(
+    party_idx: u32,
+    mod_idx: u32,
+    share: Polynomial<N>,
+) -> Field {
+    // Every coefficient must land in exactly one chunk, or the uncovered ones are never committed.
+    assert(N_CHUNKS * CHUNK_SIZE == N);
+    let mut chunks: [Field; N_CHUNKS] = [0; N_CHUNKS];
+    for chunk_idx in 0..N_CHUNKS {
+        let start = N - ((chunk_idx + 1) * CHUNK_SIZE);
+        chunks[chunk_idx] = party_share_chunk_commitment_with::<CHUNK_SIZE, BIT, _>(
+            party_idx,
+            mod_idx,
+            chunk_idx,
+            N,
+            |offset| share.coefficients[N - 1 - (start + offset)],
+        );
+    }
+    compute_sc_party_share_chunk_root_commitment(party_idx, mod_idx, N, CHUNK_SIZE, chunks)
+}
+
+/// `compute_sc_party_share_chunk_commitment` (checked) of the chunk whose coefficient `i` is
+/// `value_at(i)`.
+fn party_share_chunk_commitment_with<let CHUNK_SIZE: u32, let BIT: u32, Env>(
+    party_idx: u32,
+    mod_idx: u32,
+    chunk_idx: u32,
+    n: u32,
+    value_at: fn[Env](u32) -> Field,
+) -> Field {
+    let mut payload = [
+        0,
+        2,
+        party_idx as Field,
+        mod_idx as Field,
+        chunk_idx as Field,
+        n as Field,
+        CHUNK_SIZE as Field,
+    ]
+        .as_vector();
+    payload = flatten_with::<CHUNK_SIZE, BIT, _>(payload, value_at, true);
+    compute_commitment(payload, DS_SHARE_COMPUTATION_CHUNK)
+}
+
+/// [`compute_share_encryption_commitment_from_message`] for a circuit that **opens** this
+/// commitment rather than creating it (C4). Asserts each packed digit fits its slot, forcing the
+/// opened share to equal the share C2 committed. Same value as the plain helper, so C2 and C3 need
+/// no change.
+pub fn compute_share_encryption_commitment_from_message_checked<let N: u32, let BIT_MSG: u32>(
+    message: Polynomial<N>,
+) -> Field {
+    let payload = single_polynomial_payload_checked::<N, BIT_MSG>([].as_vector(), message);
+    compute_commitment(payload, DS_SHARE_ENCRYPTION)
 }
 
 pub fn compute_aggregated_shares_commitment<let N: u32, let L: u32, let BIT_MSG: u32>(
@@ -925,4 +1002,66 @@ fn test_u_commitment_matches_across_ct0_and_ct1_legs() {
     let other_c1 = compute_ude_chunk_commitment::<2, 8>(UDE_KIND_U, 1, n, other);
     let other_root = compute_ude_chunk_root_commitment(UDE_KIND_U, n, 2, [ct0_c0, other_c1]);
     assert(ct0_u_root != other_root);
+}
+
+/// The chunked roots read their chunks in place (`flatten_with`); they must equal committing each
+/// copied chunk, the form C2's chunk circuits produce.
+#[test]
+fn test_chunked_roots_match_committing_copied_chunks() {
+    let sk = Polynomial::new([1, -1, 0, 1, 0, 0, -1, 1]);
+    let e0 = Polynomial::new([5, -9, 3, 0, 7, -2, 1, 4]);
+    let e1 = Polynomial::new([-3, 2, 8, -6, 0, 1, -7, 9]);
+    let share = Polynomial::new([11, 22, 33, 44, 55, 66, 77, 88]);
+
+    let mut sk_chunks: [Field; 2] = [0; 2];
+    let mut esm_chunks: [Field; 2] = [0; 2];
+    let mut share_chunks: [Field; 2] = [0; 2];
+    for chunk_idx in 0..2 {
+        let start = 8 - ((chunk_idx + 1) * 4);
+        let mut sk_c = [0; 4];
+        let mut e0_c = [0; 4];
+        let mut e1_c = [0; 4];
+        let mut share_c = [0; 4];
+        for offset in 0..4 {
+            sk_c[offset] = sk.coefficients[start + offset];
+            e0_c[offset] = e0.coefficients[start + offset];
+            e1_c[offset] = e1.coefficients[start + offset];
+            share_c[offset] = share.coefficients[start + offset];
+        }
+        sk_chunks[chunk_idx] =
+            compute_sc_secret_chunk_commitment::<4, 2>(0, chunk_idx, 8, Polynomial::new(sk_c));
+        esm_chunks[chunk_idx] = compute_sc_esm_secret_chunk_commitment::<4, 2, 5>(
+            chunk_idx,
+            8,
+            [Polynomial::new(e0_c), Polynomial::new(e1_c)],
+        );
+        share_chunks[chunk_idx] = compute_sc_party_share_chunk_commitment::<4, 7>(
+            1,
+            0,
+            chunk_idx,
+            8,
+            Polynomial::new(share_c),
+        );
+    }
+    assert(
+        compute_sc_sk_secret_root_from_polynomial::<8, 2, 4, 2>(sk)
+            == compute_sc_secret_chunk_root_commitment(0, 8, 4, sk_chunks),
+    );
+    assert(
+        compute_sc_esm_secret_root_from_polynomial::<8, 2, 2, 4, 5>([e0, e1])
+            == compute_sc_secret_chunk_root_commitment(1, 8, 4, esm_chunks),
+    );
+    assert(
+        compute_sc_party_share_root_from_polynomial::<8, 2, 4, 7>(1, 0, share)
+            == compute_sc_party_share_chunk_root_commitment(1, 0, 8, 4, share_chunks),
+    );
+
+    let mut reversed = [0; 8];
+    for i in 0..8 {
+        reversed[7 - i] = share.coefficients[i];
+    }
+    assert(
+        compute_sc_party_share_root_from_reversed::<8, 2, 4, 7>(1, 0, Polynomial::new(reversed))
+            == compute_sc_party_share_root_from_polynomial::<8, 2, 4, 7>(1, 0, share),
+    );
 }

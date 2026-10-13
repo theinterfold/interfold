@@ -331,7 +331,7 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
         }
 
         assert(
-            Polynomial::new(residual).eval(gamma) == self.ct1[basis_idx].dot(kernel),
+            Polynomial::new(residual).eval(gamma) == self.ct1[basis_idx].dot_for_degree(kernel),
             "Decryption share computation failed",
         );
     }

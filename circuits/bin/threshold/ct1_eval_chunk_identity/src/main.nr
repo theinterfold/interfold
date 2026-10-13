@@ -61,7 +61,7 @@ fn main(
     let mut rhs = 0;
     for i in 0..L {
         batching[i] = leaf[LEAF_BATCHING + i];
-        let ct1_rhs = pk1is[i].dot(kernel) + leaf[LEAF_E1_AT] + leaf[LEAF_P1_AT + i] * QIS[i];
+        let ct1_rhs = pk1is[i].dot_materialized(kernel) + leaf[LEAF_E1_AT] + leaf[LEAF_P1_AT + i] * QIS[i];
         rhs += ct1_rhs * batching[i];
     }
 
