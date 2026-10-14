@@ -221,13 +221,13 @@ describe("BFV verifier routers", function () {
     expect(
       await router.verify.staticCall(
         ...context,
-        proofWithAnchors(114, HASH_A, HASH_C),
+        proofWithAnchors(bfvDecExpectedPublicInputsLen(1), HASH_A, HASH_C),
       ),
     ).to.equal(true);
     await expect(
       router.verify.staticCall(
         ...context,
-        proofWithAnchors(114, HASH_A, HASH_B),
+        proofWithAnchors(bfvDecExpectedPublicInputsLen(1), HASH_A, HASH_B),
       ),
     )
       .to.be.revertedWithCustomError(router, "ParamSetRouteMismatch")

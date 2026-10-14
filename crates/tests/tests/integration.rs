@@ -2651,7 +2651,7 @@ async fn test_trbfv_actor() -> Result<()> {
         use alloy::sol_types::SolEvent;
         let proof = e3_evm::encode_zk_proof(dkg_aggregator_proof.as_ref().unwrap())?;
         let observation = e3_evm::ICiphernodeRegistry::CommitteeProofPublished {
-            e3Id: U256::ZERO,
+            e3Id: U256::try_from(e3_id.clone())?,
             nodes: publication_committee_addresses.clone(),
             pkCommitment: publication_pk_commitment.into(),
             proof,
