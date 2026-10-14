@@ -164,15 +164,22 @@ impl ShareDecryptionCircuitData {
             }
         }
 
-        Ok(ShareDecryptionCircuitData {
-            honest_ciphertexts,
-            recipient_party_id: 0,
-            own_plaintext_share,
-            secret_key: dkg_secret_key,
-            dkg_input_type,
-            chunk_size: dkg_params.degree().min(512) as u32,
-            committee,
-        })
+        Ok((
+            ShareDecryptionCircuitData {
+                honest_ciphertexts,
+                recipient_party_id: 0,
+                own_plaintext_share,
+                secret_key: dkg_secret_key,
+                dkg_input_type,
+                // C4 opens the chunk roots C2 committed, so it uses C2's chunk rule.
+                chunk_size: crate::circuits::dkg::share_computation::c2_chunk_size(
+                    threshold_params.degree(),
+                    committee.n,
+                ) as u32,
+                committee,
+            },
+            dkg_params,
+        ))
     }
 }
 

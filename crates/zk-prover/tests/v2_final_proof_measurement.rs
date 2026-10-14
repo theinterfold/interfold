@@ -171,7 +171,8 @@ fn c4_data_for_recipient(
         recipient_party_id: recipient as u64,
         own_plaintext_share,
         dkg_input_type: input_type,
-        chunk_size: 512,
+        // C4 opens the chunk roots C2 committed, so it must use C2's chunk size.
+        chunk_size: e3_zk_prover::c2_chunk_size(inputs[recipient].y.len(), committee.n) as u32,
         committee,
     }
 }
