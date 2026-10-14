@@ -40,11 +40,16 @@ use e3_fhe_params::BfvPreset;
 /// bind `sk` instead ([`lbfv_generation_sk`]), and its C2b chunk leaves bound `e_sm`.
 pub fn default_links(preset: BfvPreset) -> Vec<Box<dyn CommitmentLink>> {
     let l = preset.metadata().num_moduli;
+    let lbfv = e3_fhe_params::is_lbfv_path(preset);
+    // C2's public signals around its share commitments: the l-BFV chunk finalizer has a child VK
+    // hash and the secret root before them and the batch VK hash after; the trBFV single C2 proof
+    // has only its `expected_secret_commitment` before them.
+    let (c2_prefix_fields, c2_suffix_fields) = if lbfv { (2, 1) } else { (1, 0) };
     let mut links: Vec<Box<dyn CommitmentLink>> = vec![
         Box::new(c0_to_c3::C3aToC0PkCommitmentLink),
         Box::new(c0_to_c3::C3bToC0PkCommitmentLink),
     ];
-    if e3_fhe_params::is_lbfv_path(preset) {
+    if lbfv {
         links.push(Box::new(
             lbfv_generation_sk::LbfvPkToRlkGenerationSkCommitmentLink,
         ));
@@ -60,15 +65,17 @@ pub fn default_links(preset: BfvPreset) -> Vec<Box<dyn CommitmentLink>> {
         links.push(Box::new(c1_to_c5::C1ToC5PkCommitmentLink));
     }
     let shared: [Box<dyn CommitmentLink>; 7] = [
-        Box::new(c2_to_c3::C3aToC2aShareEncryptionLink),
-        Box::new(c2_to_c3::C3bToC2bShareEncryptionLink),
+        Box::new(c2_to_c3::C3aToC2aShareEncryptionLink { chunked: lbfv }),
+        Box::new(c2_to_c3::C3bToC2bShareEncryptionLink { chunked: lbfv }),
         Box::new(c2_to_c4::C2aToC4aShareCommitmentLink {
             l,
-            source_prefix_fields: 2,
+            source_prefix_fields: c2_prefix_fields,
+            source_suffix_fields: c2_suffix_fields,
         }),
         Box::new(c2_to_c4::C2bToC4bShareCommitmentLink {
             l,
-            source_prefix_fields: 2,
+            source_prefix_fields: c2_prefix_fields,
+            source_suffix_fields: c2_suffix_fields,
         }),
         Box::new(c6_to_c7::C6ToC7DCommitmentLink),
         Box::new(c4a_to_c6::C4aToC6SkCommitmentLink),

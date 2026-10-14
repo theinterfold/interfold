@@ -41,6 +41,7 @@ fn extract_share_commitments_from_c2() {
     let link = C2aToC4aShareCommitmentLink {
         l: 2,
         source_prefix_fields: 2,
+        source_suffix_fields: 1,
     };
     // C2 with 3 parties × 2 moduli = 6 share commits
     let commits: Vec<[u8; 32]> = (1u8..=6).map(make_field).collect();
@@ -56,6 +57,7 @@ fn extract_skips_secret_commitment() {
     let link = C2aToC4aShareCommitmentLink {
         l: 2,
         source_prefix_fields: 2,
+        source_suffix_fields: 1,
     };
     let c2 = c2_signals(&[make_field(1), make_field(2)]);
     let values = link.extract_source_values(&c2);
@@ -74,6 +76,7 @@ fn consistency_passes_precise_l_way_check() {
     let link = C2aToC4aShareCommitmentLink {
         l,
         source_prefix_fields: 2,
+        source_suffix_fields: 1,
     };
 
     // C2 from sender X=1: 3 parties × 2 moduli
@@ -106,6 +109,7 @@ fn consistency_fails_when_wrong_modulus_commitment() {
     let link = C2aToC4aShareCommitmentLink {
         l,
         source_prefix_fields: 2,
+        source_suffix_fields: 1,
     };
 
     let c2 = c2_signals(&[
@@ -136,6 +140,7 @@ fn consistency_fails_when_wrong_party_slot() {
     let link = C2aToC4aShareCommitmentLink {
         l,
         source_prefix_fields: 2,
+        source_suffix_fields: 1,
     };
 
     let c2 = c2_signals(&[
@@ -159,6 +164,7 @@ fn consistency_does_not_match_aggregated_output() {
     let link = C2aToC4aShareCommitmentLink {
         l,
         source_prefix_fields: 2,
+        source_suffix_fields: 1,
     };
 
     // C2: 1 party × 1 modulus = commit 99
@@ -177,6 +183,7 @@ fn short_or_empty_signals() {
     let link = C2aToC4aShareCommitmentLink {
         l: 2,
         source_prefix_fields: 2,
+        source_suffix_fields: 1,
     };
     assert!(link.extract_source_values(&[0u8; 32]).is_empty());
     assert!(!link.check_consistency(&[], &[0u8; 256], 0, 0));
@@ -189,6 +196,7 @@ fn c2b_to_c4b_variant() {
     let link = C2bToC4bShareCommitmentLink {
         l,
         source_prefix_fields: 2,
+        source_suffix_fields: 1,
     };
     let c2 = c2_signals(&[make_field(7), make_field(8)]);
     let source_values = link.extract_source_values(&c2);
@@ -198,4 +206,21 @@ fn c2b_to_c4b_variant() {
 
     let c4_wrong = c4_signals(&[vec![make_field(7), make_field(9)]], make_field(0));
     assert!(!link.check_consistency(&source_values, &c4_wrong, 0, 0));
+}
+
+/// The trBFV single C2 proof has one prefix field (`expected_secret_commitment`) and no trailing
+/// batch VK hash, so its last share commitment must not be dropped.
+#[test]
+fn trbfv_extraction_keeps_the_last_share_commitment() {
+    let link = C2aToC4aShareCommitmentLink {
+        l: 2,
+        source_prefix_fields: 1,
+        source_suffix_fields: 0,
+    };
+    let mut c2 = make_field(0xFF).to_vec(); // expected_secret_commitment
+    for value in 1u8..=6 {
+        c2.extend_from_slice(&make_field(value));
+    }
+    let values = link.extract_source_values(&c2);
+    assert_eq!(values, (1u8..=6).map(make_field).collect::<Vec<_>>());
 }

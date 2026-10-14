@@ -2742,15 +2742,19 @@ fn handle_verify_share_proofs(
                     };
                 }
 
-                // Bind C2 terminal proofs to their deployment-time VK anchors
-                // before generic proof verification. A failure marks the signed
-                // proof invalid, like any other ZK failure.
+                // Bind l-BFV C2 terminal proofs (the chunk finalizers) to their
+                // deployment-time VK anchors before generic proof verification. A
+                // failure marks the signed proof invalid, like any other ZK failure.
+                // The trBFV C2 is a single proof with no chunk or batch VK to bind,
+                // and trBFV-only presets build no finalizer to load anchors from.
                 let proof_type = signed_proof.payload.proof_type;
-                if matches!(
-                    proof_type,
-                    e3_events::ProofType::C2aSkShareComputation
-                        | e3_events::ProofType::C2bESmShareComputation
-                ) {
+                if e3_fhe_params::is_lbfv_path(req.params_preset)
+                    && matches!(
+                        proof_type,
+                        e3_events::ProofType::C2aSkShareComputation
+                            | e3_events::ProofType::C2bESmShareComputation
+                    )
+                {
                     let anchor_result = C2TerminalAnchors::load(prover, proof_type, &artifacts_dir)
                         .and_then(|anchors| {
                             validate_c2_terminal_proof(

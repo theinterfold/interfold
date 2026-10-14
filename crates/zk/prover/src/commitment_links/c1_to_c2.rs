@@ -14,8 +14,9 @@
 //! - field 1: `pk_commitment`
 //! - field 2: `e_sm_commitment`
 //!
-//! **C2a/C2b** expose the recursive child VK hash at field 0 and the
-//! expected secret root commitment at field 1 (chunk-finalizer proof).
+//! **C2a/C2b** are the trBFV single proofs (these links apply on the trBFV path only; the l-BFV
+//! path proves no C1). Their field 0 is the `expected_secret_commitment` public input, followed by
+//! the share commitments.
 //!
 //! ## Checks
 //!
@@ -62,10 +63,10 @@ impl CommitmentLink for C1ToC2aSkCommitmentLink {
     }
 
     fn check_signals(&self, source_values: &[FieldValue], target_public_signals: &[u8]) -> bool {
-        if source_values.is_empty() || target_public_signals.len() < 2 * FIELD_BYTE_LEN {
+        if source_values.is_empty() || target_public_signals.len() < FIELD_BYTE_LEN {
             return false;
         }
-        target_public_signals[FIELD_BYTE_LEN..2 * FIELD_BYTE_LEN] == source_values[0]
+        target_public_signals[..FIELD_BYTE_LEN] == source_values[0]
     }
 }
 
@@ -100,10 +101,10 @@ impl CommitmentLink for C1ToC2bESmCommitmentLink {
     }
 
     fn check_signals(&self, source_values: &[FieldValue], target_public_signals: &[u8]) -> bool {
-        if source_values.is_empty() || target_public_signals.len() < 2 * FIELD_BYTE_LEN {
+        if source_values.is_empty() || target_public_signals.len() < FIELD_BYTE_LEN {
             return false;
         }
-        target_public_signals[FIELD_BYTE_LEN..2 * FIELD_BYTE_LEN] == source_values[0]
+        target_public_signals[..FIELD_BYTE_LEN] == source_values[0]
     }
 }
 
@@ -124,9 +125,16 @@ mod tests {
                 CiphernodesCommitteeSize::Micro,
                 CiphernodesCommitteeSize::Small,
             ] {
-                let c1 =
-                    threshold::pk_generation::Configs::new(preset, &params, committee).unwrap();
-                let c2 = dkg::share_computation::Configs::new(preset, &params, committee).unwrap();
+                // The SIMD preset's noise budget excludes the Small committee.
+                if preset == BfvPreset::InsecureThresholdSimd
+                    && committee == CiphernodesCommitteeSize::Small
+                {
+                    continue;
+                }
+                let c1 = threshold::pk_generation::Configs::new(preset, &params, committee)
+                    .unwrap_or_else(|e| panic!("C1 {preset:?}/{committee:?}: {e}"));
+                let c2 = dkg::share_computation::Configs::new(preset, &params, committee)
+                    .unwrap_or_else(|e| panic!("C2 {preset:?}/{committee:?}: {e}"));
                 assert_eq!(
                     c1.bits.sk_bit, c2.bits.bit_sk_secret,
                     "{preset:?}/{committee:?}"
@@ -154,10 +162,9 @@ mod tests {
         v
     }
 
-    /// C2 terminal public signals: [child_vk_hash, expected_secret_commitment] + share commitments...
+    /// trBFV C2 public signals: [expected_secret_commitment] + share commitments...
     fn c2_signals(secret_commitment: [u8; 32], share_commitments: &[[u8; 32]]) -> Vec<u8> {
-        let mut v = Vec::with_capacity(64 + share_commitments.len() * 32);
-        v.extend_from_slice(&make_field(0xFE));
+        let mut v = Vec::with_capacity(32 + share_commitments.len() * 32);
         v.extend_from_slice(&secret_commitment);
         for c in share_commitments {
             v.extend_from_slice(c);
@@ -192,12 +199,11 @@ mod tests {
     }
 
     #[test]
-    fn c2a_does_not_match_the_child_vk_field() {
+    fn c2a_does_not_match_a_share_commitment() {
         let link = C1ToC2aSkCommitmentLink;
         let sk = make_field(42);
-        let mut c2 = Vec::new();
-        c2.extend_from_slice(&sk);
-        c2.extend_from_slice(&make_field(99));
+        // The secret commitment is field 0; the sk value only appears as a share commitment.
+        let c2 = c2_signals(make_field(99), &[sk]);
         assert!(!link.check_signals(&[sk], &c2));
     }
 

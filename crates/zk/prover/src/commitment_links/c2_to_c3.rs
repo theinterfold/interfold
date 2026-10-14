@@ -10,11 +10,11 @@
 //! `commit_to_party_shares`. C3 claims `expected_message_commitment` which must
 //! match the commitment C2 produced for the share being encrypted.
 //!
-//! The signed C2 proof is the **inner** terminal proof (SkC2ChunkFinalize /
-//! ESmC2ChunkFinalize, `CircuitVariant::Recursive`). Its public signals layout:
-//!   - field 0: recursive child VK hash (skip)
-//!   - field 1: secret root commitment (skip)
-//!   - fields 2..: share commitments from the chunk finalizer
+//! The signed C2 proof's public signals depend on the protocol path:
+//! - l-BFV: the chunk finalizer (`SkC2ChunkFinalize` / `ESmC2ChunkFinalize`): field 0 the chunk
+//!   VK hash, field 1 the secret root, then the share commitments, then the batch VK hash.
+//! - trBFV: the single C2 proof (`SkShareComputation` / `ESmShareComputation`): field 0 the
+//!   `expected_secret_commitment` public input, then the share commitments.
 //!
 //! Source is C3 (the claimant — it declares what commitment it encrypts).
 //! Target is C2 (the provider — it produced the actual share commitments).
@@ -31,7 +31,10 @@ use e3_zk_config::FIELD_BYTE_LEN;
 
 /// C3a → C2a: SK share encryption `expected_message_commitment` vs SK share
 /// computation per-party share commitment outputs.
-pub struct C3aToC2aShareEncryptionLink;
+pub struct C3aToC2aShareEncryptionLink {
+    /// Whether C2 is the l-BFV chunk finalizer rather than the trBFV single proof.
+    pub chunked: bool,
+}
 
 impl CommitmentLink for C3aToC2aShareEncryptionLink {
     fn name(&self) -> &'static str {
@@ -55,13 +58,16 @@ impl CommitmentLink for C3aToC2aShareEncryptionLink {
     }
 
     fn check_signals(&self, source_values: &[FieldValue], target_public_signals: &[u8]) -> bool {
-        commitment_in_c2_outputs(source_values, target_public_signals)
+        commitment_in_c2_outputs(source_values, target_public_signals, self.chunked)
     }
 }
 
 /// C3b → C2b: E_SM share encryption `expected_message_commitment` vs E_SM share
 /// computation per-party share commitment outputs.
-pub struct C3bToC2bShareEncryptionLink;
+pub struct C3bToC2bShareEncryptionLink {
+    /// Whether C2 is the l-BFV chunk finalizer rather than the trBFV single proof.
+    pub chunked: bool,
+}
 
 impl CommitmentLink for C3bToC2bShareEncryptionLink {
     fn name(&self) -> &'static str {
@@ -85,7 +91,7 @@ impl CommitmentLink for C3bToC2bShareEncryptionLink {
     }
 
     fn check_signals(&self, source_values: &[FieldValue], target_public_signals: &[u8]) -> bool {
-        commitment_in_c2_outputs(source_values, target_public_signals)
+        commitment_in_c2_outputs(source_values, target_public_signals, self.chunked)
     }
 }
 
@@ -104,30 +110,29 @@ fn extract_message_commitment(public_signals: &[u8]) -> Vec<FieldValue> {
     vec![value]
 }
 
-/// Check whether `source_values[0]` (from a C3 proof) appears in the share
-/// commitment section of a C2 inner proof's public signals.
-///
-/// C2 terminal public signals layout:
-///   - field 0:       recursive child VK hash (skipped)
-///   - field 1:       secret root commitment (skipped)
-///   - fields 2..:    per-party share root commitments
+/// Check whether `source_values[0]` (from a C3 proof) appears in the share commitment section of
+/// a C2 proof's public signals: fields `2..len-1` for the l-BFV chunk finalizer (skipping the chunk
+/// VK hash, the secret root and the trailing batch VK hash), fields `1..` for the trBFV single
+/// proof (skipping `expected_secret_commitment`).
 ///
 /// Barretenberg's `noir-recursive` variant sometimes doubles the signal
 /// buffer (448 = 2×224 bytes for a 7-field circuit).  We detect and
 /// deduplicate this before scanning.
-fn commitment_in_c2_outputs(source_values: &[FieldValue], target_public_signals: &[u8]) -> bool {
+fn commitment_in_c2_outputs(
+    source_values: &[FieldValue],
+    target_public_signals: &[u8],
+    chunked: bool,
+) -> bool {
     if source_values.is_empty() {
         return false;
     }
     let expected = &source_values[0];
     let signals = deduplicate(target_public_signals);
-    // Skip the child VK hash and secret root commitment.
-    if signals.len() < 4 * FIELD_BYTE_LEN {
+    let (skip_front, skip_back) = if chunked { (2, 1) } else { (1, 0) };
+    if signals.len() < (skip_front + skip_back + 1) * FIELD_BYTE_LEN {
         return false;
     }
-    // The final field is the batch VK hash. It is part of the recursive VK
-    // manifest, not part of the share commitment section.
-    signals[2 * FIELD_BYTE_LEN..signals.len() - FIELD_BYTE_LEN]
+    signals[skip_front * FIELD_BYTE_LEN..signals.len() - skip_back * FIELD_BYTE_LEN]
         .chunks(FIELD_BYTE_LEN)
         .any(|chunk| chunk == expected.as_slice())
 }
@@ -162,7 +167,7 @@ mod tests {
         v
     }
 
-    /// C2 terminal signals: [child VK hash, secret root] + N share commitments.
+    /// l-BFV C2 terminal signals: [child VK hash, secret root] + N share commitments + batch VK hash.
     fn c2_signals(commitments: &[[u8; 32]]) -> Vec<u8> {
         let mut v = vec![0u8; 96 + commitments.len() * 32];
         v[0..32].copy_from_slice(&make_field(0xFE)); // child VK hash
@@ -175,9 +180,34 @@ mod tests {
         v
     }
 
+    /// trBFV C2 signals: [expected_secret_commitment] + N share commitments.
+    fn trbfv_c2_signals(commitments: &[[u8; 32]]) -> Vec<u8> {
+        let mut v = make_field(0xFF).to_vec();
+        for c in commitments {
+            v.extend_from_slice(c);
+        }
+        v
+    }
+
+    /// On the trBFV path every share commitment counts, including the first and the last: the
+    /// chunked layout's skipped fields hold shares there, and skipping them flagged honest C3
+    /// proofs as inconsistent.
+    #[test]
+    fn trbfv_consistency_matches_the_first_and_last_share() {
+        let link = C3aToC2aShareEncryptionLink { chunked: false };
+        let (first, last) = (make_field(1), make_field(9));
+        let c2 = trbfv_c2_signals(&[first, make_field(2), make_field(3), last]);
+        assert!(link.check_signals(&[first], &c2));
+        assert!(link.check_signals(&[last], &c2));
+        // The secret commitment is not a share commitment.
+        assert!(!link.check_signals(&[make_field(0xFF)], &c2));
+        let link = C3bToC2bShareEncryptionLink { chunked: false };
+        assert!(link.check_signals(&[last], &c2));
+    }
+
     #[test]
     fn extract_message_commitment_from_c3() {
-        let link = C3aToC2aShareEncryptionLink;
+        let link = C3aToC2aShareEncryptionLink { chunked: true };
         let msg = make_field(42);
         let vals = link.extract_source_values(&c3_signals(make_field(99), msg));
         assert_eq!(vals.len(), 1);
@@ -186,7 +216,7 @@ mod tests {
 
     #[test]
     fn consistency_passes_when_commitment_found_in_c2() {
-        let link = C3aToC2aShareEncryptionLink;
+        let link = C3aToC2aShareEncryptionLink { chunked: true };
         let msg = make_field(42);
         let c2 = c2_signals(&[make_field(1), make_field(2), msg, make_field(4)]);
         assert!(link.check_signals(&[msg], &c2));
@@ -194,7 +224,7 @@ mod tests {
 
     #[test]
     fn consistency_fails_when_commitment_absent() {
-        let link = C3aToC2aShareEncryptionLink;
+        let link = C3aToC2aShareEncryptionLink { chunked: true };
         let msg = make_field(42);
         let c2 = c2_signals(&[make_field(1), make_field(2), make_field(3)]);
         assert!(!link.check_signals(&[msg], &c2));
@@ -203,7 +233,7 @@ mod tests {
     #[test]
     fn consistency_ignores_first_field_secret_commitment() {
         // The first two fields are not share commitments and must not be matched.
-        let link = C3aToC2aShareEncryptionLink;
+        let link = C3aToC2aShareEncryptionLink { chunked: true };
         let msg = make_field(0xFF); // same value as the secret_commitment placeholder
         let c2 = c2_signals(&[make_field(1)]); // share commitments don't include 0xFF
         assert!(!link.check_signals(&[msg], &c2));
@@ -211,7 +241,7 @@ mod tests {
 
     #[test]
     fn consistency_ignores_batch_vk_field() {
-        let link = C3aToC2aShareEncryptionLink;
+        let link = C3aToC2aShareEncryptionLink { chunked: true };
         let batch_vk = make_field(0xFD);
         let c2 = c2_signals(&[make_field(1)]);
         assert!(!link.check_signals(&[batch_vk], &c2));
@@ -219,7 +249,7 @@ mod tests {
 
     #[test]
     fn consistency_handles_bb_duplicated_buffer() {
-        let link = C3aToC2aShareEncryptionLink;
+        let link = C3aToC2aShareEncryptionLink { chunked: true };
         let msg = make_field(42);
         let half = c2_signals(&[make_field(1), msg, make_field(3)]);
         // Simulate BB doubling the buffer.
@@ -229,7 +259,7 @@ mod tests {
 
     #[test]
     fn short_or_empty_signals() {
-        let link = C3aToC2aShareEncryptionLink;
+        let link = C3aToC2aShareEncryptionLink { chunked: true };
         assert!(link.extract_source_values(&[]).is_empty());
         assert!(link.extract_source_values(&[0u8; 31]).is_empty());
         assert!(!link.check_signals(&[], &c2_signals(&[make_field(1)])));
@@ -239,7 +269,7 @@ mod tests {
 
     #[test]
     fn c3b_link_works_same_as_c3a() {
-        let link = C3bToC2bShareEncryptionLink;
+        let link = C3bToC2bShareEncryptionLink { chunked: true };
         let msg = make_field(7);
         let c2 = c2_signals(&[make_field(1), msg]);
         assert!(link.check_signals(&[msg], &c2));

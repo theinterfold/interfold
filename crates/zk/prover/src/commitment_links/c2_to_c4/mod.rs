@@ -76,6 +76,9 @@ pub struct C2aToC4aShareCommitmentLink {
     pub l: usize,
     /// Number of non-commitment fields at the start of the C2 terminal proof.
     pub source_prefix_fields: usize,
+    /// Number of non-commitment fields at the end: the batch VK hash of the l-BFV chunk
+    /// finalizer, none for the trBFV single C2 proof.
+    pub source_suffix_fields: usize,
 }
 
 impl CommitmentLink for C2aToC4aShareCommitmentLink {
@@ -96,7 +99,11 @@ impl CommitmentLink for C2aToC4aShareCommitmentLink {
     }
 
     fn extract_source_values(&self, public_signals: &[u8]) -> Vec<FieldValue> {
-        extract_share_commitments(public_signals, self.source_prefix_fields)
+        extract_share_commitments(
+            public_signals,
+            self.source_prefix_fields,
+            self.source_suffix_fields,
+        )
     }
 
     fn check_consistency(
@@ -122,6 +129,9 @@ pub struct C2bToC4bShareCommitmentLink {
     pub l: usize,
     /// Number of non-commitment fields at the start of the C2 terminal proof.
     pub source_prefix_fields: usize,
+    /// Number of non-commitment fields at the end: the batch VK hash of the l-BFV chunk
+    /// finalizer, none for the trBFV single C2 proof.
+    pub source_suffix_fields: usize,
 }
 
 impl CommitmentLink for C2bToC4bShareCommitmentLink {
@@ -142,7 +152,11 @@ impl CommitmentLink for C2bToC4bShareCommitmentLink {
     }
 
     fn extract_source_values(&self, public_signals: &[u8]) -> Vec<FieldValue> {
-        extract_share_commitments(public_signals, self.source_prefix_fields)
+        extract_share_commitments(
+            public_signals,
+            self.source_prefix_fields,
+            self.source_suffix_fields,
+        )
     }
 
     fn check_consistency(
@@ -162,17 +176,22 @@ impl CommitmentLink for C2bToC4bShareCommitmentLink {
     }
 }
 
-/// Extract all share commitments between the explicit C2 terminal prefix and
-/// the trailing batch VK hash.
+/// Extract all share commitments between the explicit C2 prefix and suffix: on the l-BFV path
+/// the chunk finalizer's child VK hash and secret root, then its trailing batch VK hash; on the
+/// trBFV path the single proof's `expected_secret_commitment` and no suffix.
 fn extract_share_commitments(
     public_signals: &[u8],
     source_prefix_fields: usize,
+    source_suffix_fields: usize,
 ) -> Vec<FieldValue> {
     let prefix_bytes = source_prefix_fields.saturating_mul(FIELD_BYTE_LEN);
-    if source_prefix_fields == 0 || public_signals.len() < prefix_bytes + FIELD_BYTE_LEN {
+    let suffix_bytes = source_suffix_fields.saturating_mul(FIELD_BYTE_LEN);
+    if source_prefix_fields == 0
+        || public_signals.len() < prefix_bytes + suffix_bytes + FIELD_BYTE_LEN
+    {
         return vec![];
     }
-    public_signals[prefix_bytes..public_signals.len() - FIELD_BYTE_LEN]
+    public_signals[prefix_bytes..public_signals.len() - suffix_bytes]
         .chunks(FIELD_BYTE_LEN)
         .filter_map(|chunk| {
             if chunk.len() == FIELD_BYTE_LEN {
