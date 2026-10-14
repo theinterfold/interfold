@@ -345,7 +345,7 @@ async fn setup_c3_fold_with_inner_share_encryption() -> Option<(
 }
 
 /// Expected C3 fold slot count when circuits are compiled for the minimum committee (N=3, T=1):
-/// one slot per party and insecure-64 threshold modulus (3 × 3).
+/// one slot per party and threshold limb, and the insecure threshold preset has three limbs.
 const MINIMUM_C3_FOLD_SLOTS: usize = 9;
 /// Expected C6 fold slot count when circuits are compiled for the minimum committee (N=3, T=1).
 const MINIMUM_C6_FOLD_SLOTS: usize = 2;

@@ -603,7 +603,11 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
         );
         slot_indices.push(slot as u32);
     }
-    assert_eq!(slot_indices, vec![2, 3, 4, 5]);
+    // Every slot except party 0's own: `slots_per_party..total_slots`.
+    assert_eq!(
+        slot_indices,
+        (slots_per_party as u32..total_slots as u32).collect::<Vec<_>>()
+    );
 
     let c3a_folded = generate_sequential_c3_fold(
         &prover,
