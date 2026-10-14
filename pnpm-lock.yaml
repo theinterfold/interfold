@@ -774,8 +774,8 @@ importers:
   packages/user-data-encryption-prover:
     dependencies:
       '@aztec/bb.js':
-        specifier: 5.1.0
-        version: 5.1.0
+        specifier: 5.2.0
+        version: 5.2.0
       '@noir-lang/noir_js':
         specifier: 1.0.0-beta.26
         version: 1.0.0-beta.26

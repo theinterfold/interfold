@@ -6,7 +6,7 @@
   "type": "module",
   "exports": "./src/index.ts",
   "dependencies": {
-    "@aztec/bb.js": "5.1.0",
-    "@noir-lang/noir_js": "1.0.0-beta.26"
+    "@aztec-foundation/bb.js": "6.0.0",
+    "@noir-lang/noir_js": "1.0.0-rc.3"
   }
 }
