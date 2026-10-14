@@ -302,3 +302,20 @@ fn test_secure_16384_decode_does_not_wrap_u256() {
 
     assert(decode_coefficient(q_modulus - 1, q_bn, q_half_bn, 1000, 953) == 0);
 }
+
+/// `rounded_decode` forms `t * u + half` and `Q * rounded` in the field, so the decode is unique only
+/// while they stay below the prime. Checked here rather than in the circuit so the bounded C7's
+/// bytecode does not change; secure-16384 fails this bound and builds the wide variant instead.
+#[test]
+fn test_bounded_decode_fits_the_field_in_every_preset_that_builds_it() {
+    assert(
+        crate::configs::insecure::threshold::DECRYPTED_SHARES_AGGREGATION_BIT_Q_TOTAL
+            + crate::configs::insecure::threshold::DECRYPTED_SHARES_AGGREGATION_BIT_T
+            < 253,
+    );
+    assert(
+        crate::configs::secure_8192::threshold::DECRYPTED_SHARES_AGGREGATION_BIT_Q_TOTAL
+            + crate::configs::secure_8192::threshold::DECRYPTED_SHARES_AGGREGATION_BIT_T
+            < 253,
+    );
+}
