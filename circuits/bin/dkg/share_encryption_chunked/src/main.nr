@@ -54,7 +54,7 @@ fn main(
         ct1_r,
         z,
     );
-    share_encryption.execute_with(|message| {
+    share_encryption.execute_with_committed_ciphertext(|message| {
         compute_sc_party_share_root_from_polynomial::<N, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE, SHARE_ENCRYPTION_BIT_MSG>(
             party_idx,
             mod_idx,
