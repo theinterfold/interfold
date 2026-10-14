@@ -16,7 +16,8 @@ use e3_fhe_params::BfvPreset;
 use e3_trbfv::gen_lbfv_key_shares::{GenLbfvKeySharesRequest, GenLbfvKeySharesResponse};
 use e3_trbfv::lbfv_operation::{digest_lbfv_public_artifacts, LbfvOperationId, LbfvOperationKind};
 use e3_utils::utility_types::ArcBytes;
-use e3_zk_config::DkgInputType;
+use e3_zk_helpers::threshold::rlk_aggregation::RlkAggregationComponent;
+use e3_zk_helpers::{computation::DkgInputType, CiphernodesCommitteeSize};
 use serde::{Deserialize, Serialize};
 
 /// ZK proof generation request variants.
@@ -159,7 +160,8 @@ pub struct LbfvPkAggregationProofRequest {
     pub committee_size: CiphernodesCommitteeSize,
 }
 
-/// Request to aggregate exactly H RLK shares for one row.
+/// Request to aggregate one component of exactly H RLK shares for one row. Each row takes one
+/// request per component.
 #[derive(Derivative, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[derivative(Debug)]
 pub struct RlkAggregationProofRequest {
@@ -171,6 +173,7 @@ pub struct RlkAggregationProofRequest {
     /// Serialized shares in canonical party order.
     pub share_bytes: Vec<ArcBytes>,
     pub row_index: u32,
+    pub component: RlkAggregationComponent,
     pub params_preset: BfvPreset,
     pub committee_size: CiphernodesCommitteeSize,
 }
@@ -394,7 +397,10 @@ impl RlkAggregationProofRequest {
         Ok(LbfvOperationId::new(
             hash_lbfv_proof_session(self.proof_domain).0,
             self.aggregator_party_id,
-            LbfvOperationKind::RlkAggregation,
+            match self.component {
+                RlkAggregationComponent::D0 => LbfvOperationKind::RlkD0Aggregation,
+                RlkAggregationComponent::D2 => LbfvOperationKind::RlkD2Aggregation,
+            },
             Some(self.row_index),
             Some(accepted.0),
             Some(digest_lbfv_public_artifacts(
@@ -431,7 +437,8 @@ pub struct DecryptionAggregationJobRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeDkgFoldRequest {
     pub c0_proof: Proof,
-    pub c1_proof: Proof,
+    /// The trBFV C1 proof. The l-BFV node fold takes no C1, so it is `None` there.
+    pub c1_proof: Option<Proof>,
     pub c2a_proof: Proof,
     pub c2b_proof: Proof,
     pub c3a_inner_proofs: Vec<Proof>,
@@ -507,7 +514,6 @@ pub struct LbfvGenerationFoldRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeDkgFoldV2Request {
     pub legacy_node_fold_proof: Proof,
-    pub c1_proof: Proof,
     pub generation_proof: Proof,
     pub party_id: u64,
     pub params_preset: BfvPreset,
@@ -530,7 +536,9 @@ pub struct NodesFoldV2StepRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LbfvAggregationFoldRequest {
     pub pk_proof: Proof,
-    pub rlk_proof: Proof,
+    /// The row's RLK aggregation proofs for components 0 (`d0`) and 1 (`d2`).
+    pub rlk_d0_proof: Proof,
+    pub rlk_d2_proof: Proof,
     pub prior_accumulator: Option<Proof>,
     pub row_index: u32,
     pub params_preset: BfvPreset,
@@ -541,7 +549,6 @@ pub struct LbfvAggregationFoldRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DkgAggregationV2Request {
     pub nodes_fold_proof: Proof,
-    pub c5_proof: Proof,
     pub aggregation_fold_proof: Proof,
     pub party_ids: Vec<u64>,
     pub committee_addresses: Vec<Address>,
@@ -842,12 +849,13 @@ pub struct LbfvPkAggregationProofResponse {
     pub party_ids: Vec<u32>,
 }
 
-/// Row-correlated RLK aggregation proof.
+/// Row- and component-correlated RLK aggregation proof.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RlkAggregationProofResponse {
     pub operation_id: LbfvOperationId,
     pub proof: Proof,
     pub row_index: u32,
+    pub component: RlkAggregationComponent,
     pub party_ids: Vec<u32>,
 }
 
@@ -1231,6 +1239,7 @@ mod serialization_tests {
                 party_ids: vec![0, 1],
                 share_bytes: vec![bytes(&[10]), bytes(&[11])],
                 row_index: 4,
+                component: RlkAggregationComponent::D2,
                 params_preset: BfvPreset::SecureThreshold16384,
                 committee_size: CiphernodesCommitteeSize::Minimum,
             }),
@@ -1269,6 +1278,7 @@ mod serialization_tests {
                 operation_id: operation_id(4),
                 proof: proof(CircuitName::RlkAggregation),
                 row_index: 4,
+                component: RlkAggregationComponent::D2,
                 party_ids: vec![0, 1],
             }),
         ];
@@ -1417,6 +1427,24 @@ mod serialization_tests {
             ZkRequest::LbfvPkAggregation(aggregation).lbfv_operation_id(),
             None
         );
+
+        // The two component requests of one RLK row are distinct operations.
+        let mut rlk = RlkAggregationProofRequest {
+            operation_id: LbfvOperationId([0; 32]),
+            proof_domain,
+            aggregator_party_id: 2,
+            party_ids: vec![0, 2],
+            share_bytes: vec![bytes(&[8]), bytes(&[9])],
+            row_index: 4,
+            component: RlkAggregationComponent::D0,
+            params_preset: BfvPreset::SecureThreshold16384,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+        };
+        rlk.operation_id = rlk.expected_operation_id().unwrap();
+        rlk.validate_operation_id().unwrap();
+        rlk.component = RlkAggregationComponent::D2;
+        assert!(rlk.validate_operation_id().is_err());
+        assert_ne!(rlk.expected_operation_id().unwrap(), rlk.operation_id);
     }
 
     #[test]

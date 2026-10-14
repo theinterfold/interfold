@@ -6,8 +6,7 @@
 
 use crate::core::threshold::pk_aggregation::SUM_BIT_CARRY;
 use crate::math::commitments::{
-    compute_multiple_polynomial_commitment_checked, compute_rlk_d0_commitment,
-    compute_rlk_d2_commitment, DS_RLK_AGGREGATION,
+    compute_multiple_polynomial_commitment, compute_rlk_component_commitment, DS_RLK_AGGREGATION,
 };
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
@@ -24,95 +23,67 @@ impl<let L: u32> Configs<L> {
     }
 }
 
-/// l-BFV relinearization key aggregation for one gadget row (new circuit,
-/// analogous to `pk_aggregation` (C5) but for the RLK's `(d0, d2)` pair).
+/// l-BFV relinearization key aggregation for one component of one gadget row (analogous to
+/// `pk_aggregation` (C5), for the RLK's `d0` or `d2`).
 ///
-/// **Role:** Sum honest parties' `d0`/`d2` row limbs into `d0_agg`/`d2_agg` and
-/// commit each for downstream use (e.g. final RLK assembly / on-chain
-/// verification). `d1`/`a` are not part of this circuit: both are compile-time
-/// constants already pinned by the verification key, so hashing them here would
-/// be redundant - any consumer that needs their values reads them directly
-/// from the same `LBFV_URS_GADGET_ROWS`/`LBFV_CRS_GADGET_ROWS` constants.
+/// **Role:** Sum honest parties' row limbs of one component (`d0` when `component == 0`, `d2` when
+/// `component == 1`) into `agg` and commit it. Each row is proved once per component: the two
+/// components are independent, and one proof per component halves the circuit, which keeps it at
+/// `2^22` instead of `2^23` for secure-16384. `lbfv_aggregation_fold` verifies both proofs of a row
+/// and binds them to components 0 and 1. `d1`/`a` are not part of this circuit: both are
+/// compile-time constants already pinned by the verification key.
 ///
-/// **Consumes:** `commit(d0[h])`/`commit(d2[h])` from RLK generation per honest party `h`.
+/// **Consumes:** `commit(values[h])` from RLK generation per honest party `h`, for this component.
 ///
-/// **Produces:** `(commit(d0_agg), commit(d2_agg))`.
+/// **Produces:** `commit(agg)`, the same value the two-component circuit returned for that
+/// component.
 ///
-/// **Verifies:** For each limb and coefficient, `d0_agg`/`d2_agg` match the
-/// mod-q_l sum of party `d0`/`d2` (centered coefficients) - same technique as
-/// `pk_aggregation`, applied twice.
+/// **Verifies:** For each limb and coefficient, `agg` matches the mod-q_l sum of the parties'
+/// (centered) coefficients -- the `pk_aggregation` technique.
 pub struct RlkAggregation<let N: u32, let H: u32, let L: u32, let BIT_D: u32> {
     /// Circuit parameters including CRT moduli.
     configs: Configs<L>,
 
-    /// Expected commitments to each honest party's `d0` for this row.
-    /// (public witnesses)
-    expected_d0_commitments: [Field; H],
-    /// Expected commitments to each honest party's `d2` for this row.
-    /// (public witnesses)
-    expected_d2_commitments: [Field; H],
+    /// Expected commitments to each honest party's component row (public witnesses).
+    expected_commitments: [Field; H],
 
-    /// Individual `d0` components from H honest parties for this row.
-    /// (committed witnesses)
-    d0: [[Polynomial<N>; L]; H],
-    /// Individual `d2` components from H honest parties for this row.
-    /// (committed witnesses)
-    d2: [[Polynomial<N>; L]; H],
+    /// The component row limbs from `H` honest parties (committed witnesses).
+    values: [[Polynomial<N>; L]; H],
 
-    /// Claimed aggregated `d0` for each CRT basis. Must equal sum(d0[h][l]) mod q_l.
-    /// (committed witness)
-    d0_agg: [Polynomial<N>; L],
-    /// Claimed aggregated `d2` for each CRT basis. Must equal sum(d2[h][l]) mod q_l.
-    /// (committed witness)
-    d2_agg: [Polynomial<N>; L],
+    /// Claimed aggregate for each CRT basis. Must equal `sum(values[h][l]) mod q_l`.
+    agg: [Polynomial<N>; L],
 }
 
 impl<let N: u32, let H: u32, let L: u32, let BIT_D: u32> RlkAggregation<N, H, L, BIT_D> {
     pub fn new(
         configs: Configs<L>,
-        expected_d0_commitments: [Field; H],
-        expected_d2_commitments: [Field; H],
-        d0: [[Polynomial<N>; L]; H],
-        d2: [[Polynomial<N>; L]; H],
-        d0_agg: [Polynomial<N>; L],
-        d2_agg: [Polynomial<N>; L],
-    ) -> Self {
-        RlkAggregation {
-            configs,
-            expected_d0_commitments,
-            expected_d2_commitments,
-            d0,
-            d2,
-            d0_agg,
-            d2_agg,
-        }
-    }
-
-    /// Verifies that each honest party's d0/d2 hashes to its expected
-    /// commitment from RLK generation.
-    fn verify_commitments(self, row_index: u32) {
-        for i in 0..H {
-            assert(
-                compute_rlk_d0_commitment::<N, L, BIT_D>(row_index, self.d0[i])
-                    == self.expected_d0_commitments[i],
-                "RLK d0 commitment mismatch",
-            );
-            assert(
-                compute_rlk_d2_commitment::<N, L, BIT_D>(row_index, self.d2[i])
-                    == self.expected_d2_commitments[i],
-                "RLK d2 commitment mismatch",
-            );
-        }
-    }
-
-    /// Verifies aggregation correctness for one component (d0 or d2) at a given CRT basis.
-    /// Same modular-sum technique as `pk_aggregation::verify_pk_for_basis`.
-    fn verify_sum_for_basis(
-        self,
+        expected_commitments: [Field; H],
         values: [[Polynomial<N>; L]; H],
         agg: [Polynomial<N>; L],
-        basis_idx: u32,
-    ) {
+    ) -> Self {
+        RlkAggregation { configs, expected_commitments, values, agg }
+    }
+
+    /// Verifies that each honest party's component row hashes to its expected commitment from RLK
+    /// generation. The opening packs with checked digits, which pins each coefficient to the
+    /// centered value `rlk_generation` bounded.
+    fn verify_commitments(self, row_index: u32, component: u32) {
+        for i in 0..H {
+            assert(
+                compute_rlk_component_commitment::<N, L, BIT_D>(
+                    component,
+                    row_index,
+                    self.values[i],
+                )
+                    == self.expected_commitments[i],
+                "RLK commitment mismatch",
+            );
+        }
+    }
+
+    /// Verifies aggregation correctness at one CRT basis. Same modular-sum technique as
+    /// `pk_aggregation::verify_pk_for_basis`.
+    fn verify_sum_for_basis(self, basis_idx: u32) {
         // The quotient divided out below is at most (3H + 1) / 2; see SUM_BIT_CARRY.
         assert(H <= 128, "committee exceeds the sum carry bound");
 
@@ -123,48 +94,99 @@ impl<let N: u32, let H: u32, let L: u32, let BIT_D: u32> RlkAggregation<N, H, L,
         let h_half_qi: Field = H as Field * half_qi;
         let offset: Field = H as Field * q_l;
 
-        // Only the aggregate needs a range check. Each party's d0/d2 is opened with checked digits
-        // from rlk_generation's commitment, which pins it to the centered values that circuit
+        // Only the aggregate needs a range check. Each party's limbs are opened with checked digits
+        // from rlk_generation's commitment, which pins them to the centered values that circuit
         // bounded (as in C5).
-        agg[basis_idx].range_check_2bounds::<BIT_D>(half_qi, half_qi);
+        self.agg[basis_idx].range_check_2bounds::<BIT_D>(half_qi, half_qi);
 
         for coeff_idx in 0..N {
             let mut sum_shifted: Field = 0;
             for party_idx in 0..H {
-                sum_shifted =
-                    sum_shifted + values[party_idx][basis_idx].coefficients[coeff_idx] + half_qi;
+                sum_shifted = sum_shifted
+                    + self.values[party_idx][basis_idx].coefficients[coeff_idx]
+                    + half_qi;
             }
             // The quotient is range-checked to SUM_BIT_CARRY bits instead of cast to u64.
             mod_q_l.assert_zero_mod_bounded::<SUM_BIT_CARRY>(
-                sum_shifted + offset - agg[basis_idx].coefficients[coeff_idx] - h_half_qi,
+                sum_shifted + offset - self.agg[basis_idx].coefficients[coeff_idx] - h_half_qi,
             );
         }
     }
 
-    /// Returns `(commit(d0_agg), commit(d2_agg))` for downstream consumption.
+    /// Returns `commit(agg)` for downstream consumption.
     ///
-    /// `row_index` must be the statement's range-checked row: the row commitments it opens are
-    /// bound to it through each limb commitment.
-    pub fn execute(self, row_index: u32) -> (Field, Field) {
-        // Step 1: Bind each party's d0/d2 to its RLK generation commitment.
-        self.verify_commitments(row_index);
+    /// `row_index` must be the statement's range-checked row and `component` the statement's
+    /// component: the row commitments it opens are bound to both through each limb commitment.
+    pub fn execute(self, row_index: u32, component: u32) -> Field {
+        // Step 1: Bind each party's component row to its RLK generation commitment.
+        self.verify_commitments(row_index, component);
 
-        // Step 2: Check `d0_agg`/`d2_agg` are the mod-q_l sum of party limbs.
+        // Step 2: Check `agg` is the mod-q_l sum of party limbs.
         for basis_idx in 0..L {
-            self.verify_sum_for_basis(self.d0, self.d0_agg, basis_idx);
-            self.verify_sum_for_basis(self.d2, self.d2_agg, basis_idx);
+            self.verify_sum_for_basis(basis_idx);
         }
 
-        // Step 3: Commit to d0_agg and d2_agg separately.
-        let d0_agg_commitment = compute_multiple_polynomial_commitment_checked::<N, L, BIT_D>(
-            self.d0_agg,
-            DS_RLK_AGGREGATION,
-        );
-        let d2_agg_commitment = compute_multiple_polynomial_commitment_checked::<N, L, BIT_D>(
-            self.d2_agg,
-            DS_RLK_AGGREGATION,
-        );
-
-        (d0_agg_commitment, d2_agg_commitment)
+        // Step 3: Commit to the aggregate. Step 2 range-checks it to the centered window, so every
+        // digit already fits its slot and plain packing is injective; checked packing would repeat
+        // that bound and give the same value.
+        compute_multiple_polynomial_commitment::<N, L, BIT_D>(self.agg, DS_RLK_AGGREGATION)
     }
+}
+
+/// Two parties, `N = 4`, `L = 2`, `q = [101, 97]`; the first two coefficients wrap by one modulus.
+/// The parties' commitments are made for `commitment_component`.
+fn fixture(commitment_component: u32) -> RlkAggregation<4, 2, 2, 7> {
+    let values = [
+        [Polynomial::new([50, 0 - 50, 10, 0]), Polynomial::new([48, 0 - 48, 5, 7])],
+        [Polynomial::new([50, 0 - 50, 20, 1]), Polynomial::new([48, 0 - 48, 5, 0 - 7])],
+    ];
+    // 100 - 101 = -1, -100 + 101 = 1; 96 - 97 = -1, -96 + 97 = 1.
+    let agg = [Polynomial::new([0 - 1, 1, 30, 1]), Polynomial::new([0 - 1, 1, 10, 0])];
+    let mut commitments = [0; 2];
+    for i in 0..2 {
+        commitments[i] =
+            compute_rlk_component_commitment::<4, 2, 7>(commitment_component, 3, values[i]);
+    }
+    RlkAggregation::new(Configs::new([101, 97]), commitments, values, agg)
+}
+
+#[test]
+fn test_component_commitments_match_the_d0_and_d2_forms() {
+    let values = [Polynomial::new([1, 0 - 2, 3, 0]), Polynomial::new([0 - 4, 5, 0, 6])];
+    assert(
+        compute_rlk_component_commitment::<4, 2, 7>(0, 3, values)
+            == crate::math::commitments::compute_rlk_d0_commitment::<4, 2, 7>(3, values),
+    );
+    assert(
+        compute_rlk_component_commitment::<4, 2, 7>(1, 3, values)
+            == crate::math::commitments::compute_rlk_d2_commitment::<4, 2, 7>(3, values),
+    );
+}
+
+#[test]
+fn test_honest_aggregation_holds_for_both_components() {
+    for component in 0..2 {
+        let circuit = fixture(component);
+        let expected =
+            compute_multiple_polynomial_commitment::<4, 2, 7>(circuit.agg, DS_RLK_AGGREGATION);
+        assert(circuit.execute(3, component) == expected);
+    }
+}
+
+/// A `d2` commitment does not open as `d0`: the component is bound through the kind tag.
+#[test(should_fail_with = "RLK commitment mismatch")]
+fn test_aggregation_rejects_the_other_components_commitments() {
+    let _ = fixture(1).execute(3, 0);
+}
+
+#[test(should_fail_with = "RLK component must be d0 or d2")]
+fn test_aggregation_rejects_an_unknown_component() {
+    let _ = fixture(0).execute(3, 2);
+}
+
+#[test(should_fail_with = "Divisibility check failed")]
+fn test_aggregation_rejects_a_wrong_sum() {
+    let mut circuit = fixture(0);
+    circuit.agg[0].coefficients[2] = 31;
+    let _ = circuit.execute(3, 0);
 }

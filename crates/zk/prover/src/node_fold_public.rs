@@ -6,26 +6,27 @@
 
 //! Public IO layout of the node fold proofs (must stay aligned with the `node_fold`,
 //! `node_fold_chunked` and `node_fold_v2` mains). The trBFV path's [`CircuitName::NodeFold`] ends
-//! with the SK/ESM aggregate commitments. The l-BFV path's [`CircuitName::NodeFoldChunked`] adds
-//! two C2 chunk hashes after the key hash, then C1's sk secret root and a recursive VK manifest
-//! after the commitments, and
+//! with the SK/ESM aggregate commitments. The l-BFV path's [`CircuitName::NodeFoldChunked`] folds
+//! no C1: it drops C1's key hash and public key, adds two C2 chunk hashes after the key hash, and
+//! ends with the C2a secret root and a recursive VK manifest after the commitments.
 //! [`CircuitName::NodeFoldV2`] wraps it behind a prefix.
 
 use crate::circuits::utils::bytes_to_field_strings;
 use crate::error::ZkError;
 use e3_events::{CircuitName, DkgFoldAggCommits, Proof};
 
-const NODE_FOLD_V2_PUBLIC_PREFIX_LEN: usize = 4;
+/// `generation_key_hash`, `node_fold_key_hash`, `party_id`.
+pub const NODE_FOLD_V2_PUBLIC_PREFIX_LEN: usize = 3;
 
 /// Total public field count for `node_fold` at committee size `n`, honest `h`, threshold moduli `l`.
 pub fn node_fold_public_field_count(n: usize, h: usize, l: usize) -> usize {
     11 + n + 2 * (n + h) * l
 }
 
-/// Total public field count for `node_fold_chunked`: `node_fold`'s plus the two C2 chunk hashes,
-/// the C1 sk secret root and the VK manifest.
+/// Total public field count for `node_fold_chunked`: `node_fold`'s without C1's key hash and
+/// public key, plus the two C2 chunk hashes, the C2a secret root and the VK manifest.
 pub fn node_fold_chunked_public_field_count(n: usize, h: usize, l: usize) -> usize {
-    node_fold_public_field_count(n, h, l) + 4
+    node_fold_public_field_count(n, h, l) - 2 + 4
 }
 
 /// Total public field count for the V2 node fold.
@@ -151,7 +152,7 @@ mod tests {
         fields[NODE_FOLD_V2_PUBLIC_PREFIX_LEN][31] = 2;
         fields[NODE_FOLD_V2_PUBLIC_PREFIX_LEN + legacy_field_count - 4] = [0x11; 32];
         fields[NODE_FOLD_V2_PUBLIC_PREFIX_LEN + legacy_field_count - 3] = [0x22; 32];
-        fields[NODE_FOLD_V2_PUBLIC_PREFIX_LEN + legacy_field_count - 2] = [0x55; 32]; // sk root
+        fields[NODE_FOLD_V2_PUBLIC_PREFIX_LEN + legacy_field_count - 2] = [0x55; 32]; // C2a root
         fields[field_count - 3] = [0x33; 32];
         fields[field_count - 2] = [0x44; 32];
 
@@ -181,7 +182,7 @@ mod tests {
         fields[0][31] = 1;
         fields[field_count - 4] = [0x11; 32];
         fields[field_count - 3] = [0x22; 32];
-        fields[field_count - 2] = [0x44; 32]; // C1 sk root
+        fields[field_count - 2] = [0x44; 32]; // C2a secret root
         fields[field_count - 1] = [0x33; 32]; // VK manifest
         let public_signals = fields.into_iter().flatten().collect::<Vec<_>>();
         let proof = Proof::new(
@@ -207,7 +208,8 @@ mod tests {
 
     #[test]
     fn v2_field_count_uses_the_preset_row_count() {
-        assert_eq!(node_fold_v2_public_field_count(3, 2, 3), 64);
-        assert_eq!(node_fold_v2_public_field_count(3, 2, 5), 90);
+        assert_eq!(node_fold_chunked_public_field_count(3, 2, 5), 66);
+        assert_eq!(node_fold_v2_public_field_count(3, 2, 3), 61);
+        assert_eq!(node_fold_v2_public_field_count(3, 2, 5), 87);
     }
 }

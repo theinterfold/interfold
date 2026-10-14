@@ -11,10 +11,11 @@ use e3_committee_hash::LbfvProofDomainContext;
 use e3_events::{CorrelationId, E3id, LbfvKeyShareDocument, LbfvPublicKeyAggregated, Proof};
 use e3_fhe_params::{lbfv_row_count, BfvPreset};
 use e3_utils::ArcBytes;
+use e3_zk_helpers::threshold::rlk_aggregation::RlkAggregationComponent;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const LBFV_AGGREGATION_SCHEMA_VERSION: u32 = 4;
+pub const LBFV_AGGREGATION_SCHEMA_VERSION: u32 = 5;
 pub const LBFV_PUBLICATION_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,9 +158,12 @@ pub struct LbfvAggregationStateV1 {
     pub public_key_documents: BTreeMap<u32, LbfvKeyShareDocument>,
     pub rlk_documents: BTreeMap<u32, LbfvKeyShareDocument>,
     pub public_key_aggregation_proofs: Vec<Option<Proof>>,
-    pub rlk_aggregation_proofs: Vec<Option<Proof>>,
+    /// Indexed by row, then by [`RlkAggregationComponent::index`]: each row has one `d0` and one
+    /// `d2` proof.
+    pub rlk_aggregation_proofs: Vec<[Option<Proof>; 2]>,
     pub public_key_aggregation_correlations: Vec<Option<CorrelationId>>,
-    pub rlk_aggregation_correlations: Vec<Option<CorrelationId>>,
+    /// Indexed like `rlk_aggregation_proofs`.
+    pub rlk_aggregation_correlations: Vec<[Option<CorrelationId>; 2]>,
     pub aggregation_fold_proof: Option<Proof>,
     pub aggregation_fold_correlation: Option<CorrelationId>,
     pub aggregation_fold_completed_rows: u32,
@@ -378,9 +382,9 @@ impl LbfvAggregationStateV1 {
             public_key_documents: BTreeMap::new(),
             rlk_documents: BTreeMap::new(),
             public_key_aggregation_proofs: vec![None; row_count],
-            rlk_aggregation_proofs: vec![None; row_count],
+            rlk_aggregation_proofs: vec![[None, None]; row_count],
             public_key_aggregation_correlations: vec![None; row_count],
-            rlk_aggregation_correlations: vec![None; row_count],
+            rlk_aggregation_correlations: vec![[None, None]; row_count],
             aggregation_fold_proof: None,
             aggregation_fold_correlation: None,
             aggregation_fold_completed_rows: 0,
@@ -484,19 +488,32 @@ impl LbfvAggregationStateV1 {
 
     pub fn record_public_key_proof(&mut self, row: u32, proof: Proof) -> Result<()> {
         self.validate_loaded()?;
-        let row_count = self.row_count()?;
+        let index = row_slot(row, self.row_count()?)?;
+        record_row_proof(&mut self.public_key_aggregation_proofs[index], proof)
+    }
+
+    pub fn record_rlk_proof(
+        &mut self,
+        row: u32,
+        component: RlkAggregationComponent,
+        proof: Proof,
+    ) -> Result<()> {
+        self.validate_loaded()?;
+        let index = row_slot(row, self.row_count()?)?;
         record_row_proof(
-            &mut self.public_key_aggregation_proofs,
-            row,
+            &mut self.rlk_aggregation_proofs[index][component.index() as usize],
             proof,
-            row_count,
         )
     }
 
-    pub fn record_rlk_proof(&mut self, row: u32, proof: Proof) -> Result<()> {
-        self.validate_loaded()?;
-        let row_count = self.row_count()?;
-        record_row_proof(&mut self.rlk_aggregation_proofs, row, proof, row_count)
+    /// The row's RLK aggregation correlation for `component`.
+    pub fn rlk_correlation(
+        &self,
+        row: u32,
+        component: RlkAggregationComponent,
+    ) -> Result<Option<CorrelationId>> {
+        let index = row_slot(row, self.row_count()?)?;
+        Ok(self.rlk_aggregation_correlations[index][component.index() as usize])
     }
 
     pub fn set_public_key_correlation(
@@ -504,22 +521,23 @@ impl LbfvAggregationStateV1 {
         row: u32,
         correlation: CorrelationId,
     ) -> Result<()> {
-        let row_count = self.row_count()?;
+        let index = row_slot(row, self.row_count()?)?;
         set_row_correlation(
-            &mut self.public_key_aggregation_correlations,
-            row,
+            &mut self.public_key_aggregation_correlations[index],
             correlation,
-            row_count,
         )
     }
 
-    pub fn set_rlk_correlation(&mut self, row: u32, correlation: CorrelationId) -> Result<()> {
-        let row_count = self.row_count()?;
+    pub fn set_rlk_correlation(
+        &mut self,
+        row: u32,
+        component: RlkAggregationComponent,
+        correlation: CorrelationId,
+    ) -> Result<()> {
+        let index = row_slot(row, self.row_count()?)?;
         set_row_correlation(
-            &mut self.rlk_aggregation_correlations,
-            row,
+            &mut self.rlk_aggregation_correlations[index][component.index() as usize],
             correlation,
-            row_count,
         )
     }
 
@@ -528,22 +546,23 @@ impl LbfvAggregationStateV1 {
         row: u32,
         correlation: CorrelationId,
     ) -> Result<()> {
-        let row_count = self.row_count()?;
+        let index = row_slot(row, self.row_count()?)?;
         clear_row_correlation(
-            &mut self.public_key_aggregation_correlations,
-            row,
+            &mut self.public_key_aggregation_correlations[index],
             correlation,
-            row_count,
         )
     }
 
-    pub fn clear_rlk_correlation(&mut self, row: u32, correlation: CorrelationId) -> Result<()> {
-        let row_count = self.row_count()?;
+    pub fn clear_rlk_correlation(
+        &mut self,
+        row: u32,
+        component: RlkAggregationComponent,
+        correlation: CorrelationId,
+    ) -> Result<()> {
+        let index = row_slot(row, self.row_count()?)?;
         clear_row_correlation(
-            &mut self.rlk_aggregation_correlations,
-            row,
+            &mut self.rlk_aggregation_correlations[index][component.index() as usize],
             correlation,
-            row_count,
         )
     }
 
@@ -587,7 +606,7 @@ impl LbfvAggregationStateV1 {
 
     pub fn clear_process_correlations(&mut self) {
         self.public_key_aggregation_correlations.fill(None);
-        self.rlk_aggregation_correlations.fill(None);
+        self.rlk_aggregation_correlations.fill([None, None]);
         self.aggregation_fold_correlation = None;
         self.dkg_aggregation_correlation = None;
     }
@@ -701,54 +720,42 @@ impl LbfvAggregationStateV1 {
     }
 }
 
-fn record_row_proof(
-    slots: &mut [Option<Proof>],
-    row: u32,
-    proof: Proof,
-    row_count: usize,
-) -> Result<()> {
+fn row_slot(row: u32, row_count: usize) -> Result<usize> {
     let index = usize::try_from(row)?;
     ensure!(index < row_count, "l-BFV aggregation row is out of range");
-    if let Some(existing) = &slots[index] {
+    Ok(index)
+}
+
+fn record_row_proof(slot: &mut Option<Proof>, proof: Proof) -> Result<()> {
+    if let Some(existing) = slot {
         ensure!(
             existing == &proof,
             "conflicting l-BFV aggregation row proof"
         );
     } else {
-        slots[index] = Some(proof);
+        *slot = Some(proof);
     }
     Ok(())
 }
 
-fn set_row_correlation(
-    slots: &mut [Option<CorrelationId>],
-    row: u32,
-    correlation: CorrelationId,
-    row_count: usize,
-) -> Result<()> {
-    let index = usize::try_from(row)?;
-    ensure!(index < row_count, "l-BFV aggregation row is out of range");
+fn set_row_correlation(slot: &mut Option<CorrelationId>, correlation: CorrelationId) -> Result<()> {
     ensure!(
-        slots[index].is_none() || slots[index] == Some(correlation),
+        slot.is_none() || *slot == Some(correlation),
         "l-BFV aggregation row already has a different correlation"
     );
-    slots[index] = Some(correlation);
+    *slot = Some(correlation);
     Ok(())
 }
 
 fn clear_row_correlation(
-    slots: &mut [Option<CorrelationId>],
-    row: u32,
+    slot: &mut Option<CorrelationId>,
     correlation: CorrelationId,
-    row_count: usize,
 ) -> Result<()> {
-    let index = usize::try_from(row)?;
-    ensure!(index < row_count, "l-BFV aggregation row is out of range");
     ensure!(
-        slots[index] == Some(correlation),
+        *slot == Some(correlation),
         "l-BFV aggregation row correlation is stale"
     );
-    slots[index] = None;
+    *slot = None;
     Ok(())
 }
 
@@ -835,9 +842,9 @@ mod aggregation_tests {
             public_key_documents: state.public_key_documents,
             rlk_documents: state.rlk_documents,
             public_key_aggregation_proofs: state.public_key_aggregation_proofs,
-            rlk_aggregation_proofs: state.rlk_aggregation_proofs,
+            rlk_aggregation_proofs: vec![None; state.rlk_aggregation_proofs.len()],
             public_key_aggregation_correlations: state.public_key_aggregation_correlations,
-            rlk_aggregation_correlations: state.rlk_aggregation_correlations,
+            rlk_aggregation_correlations: vec![None; state.rlk_aggregation_correlations.len()],
             aggregation_fold_proof: state.aggregation_fold_proof,
             aggregation_fold_correlation: state.aggregation_fold_correlation,
             aggregation_fold_completed_rows: state.aggregation_fold_completed_rows,
@@ -858,9 +865,9 @@ mod aggregation_tests {
             public_key_documents: state.public_key_documents,
             rlk_documents: state.rlk_documents,
             public_key_aggregation_proofs: state.public_key_aggregation_proofs,
-            rlk_aggregation_proofs: state.rlk_aggregation_proofs,
+            rlk_aggregation_proofs: vec![None; state.rlk_aggregation_proofs.len()],
             public_key_aggregation_correlations: state.public_key_aggregation_correlations,
-            rlk_aggregation_correlations: state.rlk_aggregation_correlations,
+            rlk_aggregation_correlations: vec![None; state.rlk_aggregation_correlations.len()],
             aggregation_fold_proof: state.aggregation_fold_proof,
             aggregation_fold_correlation: state.aggregation_fold_correlation,
             aggregation_fold_completed_rows: state.aggregation_fold_completed_rows,
@@ -911,10 +918,50 @@ mod aggregation_tests {
     }
 
     #[test]
+    fn rlk_components_of_a_row_are_tracked_independently() {
+        let mut state = aggregation_state();
+        let d0 = CorrelationId::new();
+        let d2 = CorrelationId::new();
+        state
+            .set_rlk_correlation(1, RlkAggregationComponent::D0, d0)
+            .unwrap();
+        state
+            .set_rlk_correlation(1, RlkAggregationComponent::D2, d2)
+            .unwrap();
+        assert!(state
+            .clear_rlk_correlation(1, RlkAggregationComponent::D0, d2)
+            .is_err());
+
+        let proof = |byte| {
+            Proof::new(
+                e3_events::CircuitName::RlkAggregation,
+                ArcBytes::from_bytes(&[byte]),
+                ArcBytes::from_bytes(&[byte]),
+            )
+        };
+        state
+            .record_rlk_proof(1, RlkAggregationComponent::D2, proof(2))
+            .unwrap();
+        state
+            .clear_rlk_correlation(1, RlkAggregationComponent::D2, d2)
+            .unwrap();
+        assert_eq!(state.rlk_aggregation_proofs[1], [None, Some(proof(2))]);
+        assert_eq!(
+            state
+                .rlk_correlation(1, RlkAggregationComponent::D0)
+                .unwrap(),
+            Some(d0)
+        );
+        assert!(state
+            .record_rlk_proof(1, RlkAggregationComponent::D2, proof(3))
+            .is_err());
+    }
+
+    #[test]
     fn failure_is_immutable_and_clears_process_correlations() {
         let mut state = aggregation_state();
         state.public_key_aggregation_correlations[0] = Some(CorrelationId::new());
-        state.rlk_aggregation_correlations[1] = Some(CorrelationId::new());
+        state.rlk_aggregation_correlations[1][1] = Some(CorrelationId::new());
         state.aggregation_fold_correlation = Some(CorrelationId::new());
         state.dkg_aggregation_correlation = Some(CorrelationId::new());
 
@@ -933,6 +980,7 @@ mod aggregation_tests {
         assert!(state
             .rlk_aggregation_correlations
             .iter()
+            .flatten()
             .all(Option::is_none));
         assert!(state.aggregation_fold_correlation.is_none());
         assert!(state.dkg_aggregation_correlation.is_none());

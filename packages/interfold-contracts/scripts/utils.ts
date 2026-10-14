@@ -368,6 +368,36 @@ export function bfvDkgCommitteeHashIndices(h: number): {
   return { hi: 2 + h, lo: 3 + h };
 }
 
+/**
+ * `dkg_aggregator_v2` EVM public-input layout for honest-set size `h` and `rows` l-BFV rows
+ * (matches `BfvPkVerifierV2`): nodes-fold key hash (1), party_ids (h), committee hash limbs (2),
+ * legacy VK binding (15), then the returned legacy key hash, C2a/C2b chunk key hashes (3),
+ * sk/esm agg commits (2h), key envelope commitment, V2 key hash, session limbs (2), aggregator
+ * id, accepted-set limbs (2), aggregate pk/d0/d2 (3 * rows) and the V2 VK binding (11).
+ */
+export function bfvPkV2PublicInputLayout(
+  h: number,
+  rows: number,
+): {
+  length: number;
+  committeeHash: { hi: number; lo: number };
+  legacyVkBindingStart: number;
+  skC2ChunkKeyHash: number;
+  esmC2ChunkKeyHash: number;
+  pkCommitment: number;
+  v2VkBindingStart: number;
+} {
+  return {
+    length: 39 + 3 * h + 3 * rows,
+    committeeHash: { hi: 1 + h, lo: 2 + h },
+    legacyVkBindingStart: 3 + h,
+    skC2ChunkKeyHash: 19 + h,
+    esmC2ChunkKeyHash: 20 + h,
+    pkCommitment: 21 + 3 * h,
+    v2VkBindingStart: 28 + 3 * h + 3 * rows,
+  };
+}
+
 /** `decryption_aggregator` EVM public-input count for BFV threshold `t`. */
 export function bfvDecExpectedPublicInputsLen(threshold: number): number {
   return 61 + 3 * threshold;
@@ -505,12 +535,6 @@ export function getBfvPkVkBindingHashPaths(config?: ActiveBfvConfig) {
     config
       ? path.join(root, `${recursive}/dkg/pk/pk.vk_hash`)
       : local("dkg", "pk"),
-    config
-      ? path.join(
-          root,
-          `${recursive}/threshold/pk_generation_chunked/pk_generation_chunked.vk_hash`,
-        )
-      : local("threshold", "pk_generation_chunked"),
     config
       ? path.join(
           root,
@@ -702,7 +726,6 @@ export interface BfvPkVerifierVkReader {
 /** On-chain `BfvPkVerifierV2` sub-circuit VK immutables (for deploy-time staleness checks). */
 export interface BfvPkVerifierV2VkReader {
   expectedNodesFoldKeyHash(): Promise<string>;
-  expectedC5KeyHash(): Promise<string>;
   expectedSkC2ChunkKeyHash(): Promise<string>;
   expectedESmC2ChunkKeyHash(): Promise<string>;
   expectedLegacyVkBinding(index: bigint): Promise<string>;
@@ -762,7 +785,6 @@ export async function assertBfvPkVerifierV2VkHashes(
     config,
   );
   const pkPaths = getBfvPkSubCircuitVkHashPaths(config);
-  const expectedC5 = readVkRecursiveHash(pkPaths.c5, config);
   const expectedSkC2Chunk = readVkRecursiveHash(pkPaths.skC2Chunk, config);
   const expectedESmC2Chunk = readVkRecursiveHash(pkPaths.esmC2Chunk, config);
   const expectedLegacyVkBinding = getBfvPkVkBindingHashPaths(config).map(
@@ -772,10 +794,9 @@ export async function assertBfvPkVerifierV2VkHashes(
     (filePath) => readVkRecursiveHash(filePath, config),
   );
 
-  const [onChainNodesFold, onChainC5, onChainSkC2Chunk, onChainESmC2Chunk] =
+  const [onChainNodesFold, onChainSkC2Chunk, onChainESmC2Chunk] =
     await Promise.all([
       verifier.expectedNodesFoldKeyHash(),
-      verifier.expectedC5KeyHash(),
       verifier.expectedSkC2ChunkKeyHash(),
       verifier.expectedESmC2ChunkKeyHash(),
     ]);
@@ -794,7 +815,6 @@ export async function assertBfvPkVerifierV2VkHashes(
 
   if (
     onChainNodesFold === expectedNodesFold &&
-    onChainC5 === expectedC5 &&
     onChainSkC2Chunk === expectedSkC2Chunk &&
     onChainESmC2Chunk === expectedESmC2Chunk &&
     onChainLegacyVkBinding.every(
@@ -810,7 +830,6 @@ export async function assertBfvPkVerifierV2VkHashes(
   throw new Error(
     `BfvPkVerifierV2 at ${address} has stale sub-circuit VK immutables. ` +
       `On-chain nodes_fold=${onChainNodesFold} expected=${expectedNodesFold}; ` +
-      `on-chain c5=${onChainC5} expected=${expectedC5}; ` +
       `on-chain sk_c2_chunk=${onChainSkC2Chunk} expected=${expectedSkC2Chunk}; ` +
       `on-chain esm_c2_chunk=${onChainESmC2Chunk} expected=${expectedESmC2Chunk}; ` +
       `legacy or V2 recursive VK binding mismatch at one or more indices. ` +

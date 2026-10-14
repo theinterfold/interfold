@@ -16,10 +16,9 @@ import { ethers, ignition } from "./fixtures/connection";
 
 const abiCoder = ethers.AbiCoder.defaultAbiCoder();
 const NODES_FOLD_KEY_HASH = ethers.id("v2-nodes-fold");
-const C5_KEY_HASH = ethers.id("v2-c5");
 const SK_C2_CHUNK_KEY_HASH = ethers.id("v2-sk-c2-chunk");
 const ESM_C2_CHUNK_KEY_HASH = ethers.id("v2-esm-c2-chunk");
-const LEGACY_VK_BINDING = Array.from({ length: 16 }, (_, index) =>
+const LEGACY_VK_BINDING = Array.from({ length: 15 }, (_, index) =>
   ethers.id(`v2-legacy-vk-${index}`),
 );
 const V2_VK_BINDING = Array.from({ length: 11 }, (_, index) =>
@@ -102,7 +101,7 @@ function publicInputs(
   lbfvRows = 5,
 ): string[] {
   const inputs = Array.from(
-    { length: 47 + 3 * lbfvRows },
+    { length: 45 + 3 * lbfvRows },
     () => ethers.ZeroHash,
   );
   const hash = committeeHash(nodes);
@@ -113,25 +112,20 @@ function publicInputs(
   );
 
   inputs[0] = NODES_FOLD_KEY_HASH;
-  inputs[1] = C5_KEY_HASH;
-  inputs[2] = ethers.toBeHex(0, 32);
-  inputs[3] = ethers.toBeHex(2, 32);
-  inputs[4] = committeeHi;
-  inputs[5] = committeeLo;
-  inputs.splice(6, LEGACY_VK_BINDING.length, ...LEGACY_VK_BINDING);
-  inputs[23] = SK_C2_CHUNK_KEY_HASH;
-  inputs[24] = ESM_C2_CHUNK_KEY_HASH;
-  inputs[29] = pkCommitment;
-  inputs[31] = sessionHi;
-  inputs[32] = sessionLo;
-  inputs[33] = ethers.toBeHex(0, 32);
-  inputs[34] = acceptedHi;
-  inputs[35] = acceptedLo;
-  inputs.splice(
-    36 + 3 * lbfvRows,
-    V2_VK_BINDING.length,
-    ...V2_VK_BINDING,
-  );
+  inputs[1] = ethers.toBeHex(0, 32);
+  inputs[2] = ethers.toBeHex(2, 32);
+  inputs[3] = committeeHi;
+  inputs[4] = committeeLo;
+  inputs.splice(5, LEGACY_VK_BINDING.length, ...LEGACY_VK_BINDING);
+  inputs[21] = SK_C2_CHUNK_KEY_HASH;
+  inputs[22] = ESM_C2_CHUNK_KEY_HASH;
+  inputs[27] = pkCommitment;
+  inputs[29] = sessionHi;
+  inputs[30] = sessionLo;
+  inputs[31] = ethers.toBeHex(0, 32);
+  inputs[32] = acceptedHi;
+  inputs[33] = acceptedLo;
+  inputs.splice(34 + 3 * lbfvRows, V2_VK_BINDING.length, ...V2_VK_BINDING);
   return inputs;
 }
 
@@ -148,7 +142,7 @@ describe("BfvPkVerifierV2", function () {
     expect(await dkgAggregatorV2Verifier.getAddress()).to.be.properAddress;
   });
 
-  async function deployFixture(paramSet = 2) {
+  async function deployFixture(paramSet = 3) {
     const circuit = await ethers.deployContract("MockCircuitVerifier");
     await circuit.waitForDeployment();
     await circuit.setReturnValue(true);
@@ -168,7 +162,6 @@ describe("BfvPkVerifierV2", function () {
       2,
       3,
       NODES_FOLD_KEY_HASH,
-      C5_KEY_HASH,
       SK_C2_CHUNK_KEY_HASH,
       ESM_C2_CHUNK_KEY_HASH,
       LEGACY_VK_BINDING,
@@ -224,7 +217,7 @@ describe("BfvPkVerifierV2", function () {
       ),
     );
 
-    expect(await verifier.expectedPublicInputsLen()).to.equal(56n);
+    expect(await verifier.expectedPublicInputsLen()).to.equal(54n);
     expect(
       await verifier.verify.staticCall(
         e3Id,

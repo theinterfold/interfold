@@ -31,7 +31,6 @@ export default buildModule("BfvPkVerifierV2", (m) => {
     BFV_DKG_H,
     ACTIVE_BFV_COMMITTEE_N,
     readVkRecursiveHash(getBfvV2SubCircuitVkHashPaths().nodesFold),
-    readVkRecursiveHash(pkPaths.c5),
     readVkRecursiveHash(pkPaths.skC2Chunk),
     readVkRecursiveHash(pkPaths.esmC2Chunk),
     getBfvPkVkBindingHashPaths().map((filePath) =>

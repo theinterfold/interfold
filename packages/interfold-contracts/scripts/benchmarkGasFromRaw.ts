@@ -17,6 +17,7 @@ import {
   bfvDecDomainIndices,
   bfvDecPartyColOffsets,
   bfvDkgCommitteeHashIndices,
+  bfvPkV2PublicInputLayout,
   committeeHashFromLimbs,
   getBfvDecryptionSubCircuitVkHashPaths,
   getBfvPkSubCircuitVkHashPaths,
@@ -411,8 +412,8 @@ async function main() {
 
   const benchmarkConfig = resolveBenchmarkConfig(foldedDoc);
   const lbfvRows = benchmarkConfig.preset === "secure-16384" ? 5 : 3;
-  const expectedV2PublicInputs = 41 + 3 * benchmarkConfig.h + 3 * lbfvRows;
-  const useV2Dkg = dkgPublicInputs.length === expectedV2PublicInputs;
+  const v2Layout = bfvPkV2PublicInputLayout(benchmarkConfig.h, lbfvRows);
+  const useV2Dkg = dkgPublicInputs.length === v2Layout.length;
   const expectedNodesFoldKeyHash = readVkRecursiveHash(
     useV2Dkg
       ? getBfvV2SubCircuitVkHashPaths(benchmarkConfig).nodesFold
@@ -420,18 +421,21 @@ async function main() {
     benchmarkConfig,
   );
   const pkPaths = getBfvPkSubCircuitVkHashPaths(benchmarkConfig);
-  const expectedC5KeyHash = readVkRecursiveHash(pkPaths.c5, benchmarkConfig);
-  const expectedSkC2ChunkKeyHash = readVkRecursiveHash(
-    pkPaths.skC2Chunk,
-    benchmarkConfig,
-  );
-  const expectedESmC2ChunkKeyHash = readVkRecursiveHash(
-    pkPaths.esmC2Chunk,
-    benchmarkConfig,
-  );
-  const expectedVkBinding = getBfvPkVkBindingHashPaths(benchmarkConfig).map(
-    (filePath) => readVkRecursiveHash(filePath, benchmarkConfig),
-  );
+  // C5 exists only on the trBFV path; the l-BFV route pins the C2 chunks and VK bindings.
+  const expectedC5KeyHash = useV2Dkg
+    ? undefined
+    : readVkRecursiveHash(pkPaths.c5, benchmarkConfig);
+  const expectedSkC2ChunkKeyHash = useV2Dkg
+    ? readVkRecursiveHash(pkPaths.skC2Chunk, benchmarkConfig)
+    : undefined;
+  const expectedESmC2ChunkKeyHash = useV2Dkg
+    ? readVkRecursiveHash(pkPaths.esmC2Chunk, benchmarkConfig)
+    : undefined;
+  const expectedVkBinding = useV2Dkg
+    ? getBfvPkVkBindingHashPaths(benchmarkConfig).map((filePath) =>
+        readVkRecursiveHash(filePath, benchmarkConfig),
+      )
+    : [];
   const expectedV2VkBinding = useV2Dkg
     ? getBfvV2VkBindingHashPaths(benchmarkConfig).map((filePath) =>
         readVkRecursiveHash(filePath, benchmarkConfig),
@@ -448,19 +452,20 @@ async function main() {
 
   if (
     dkgPublicInputs[0] !== expectedNodesFoldKeyHash ||
-    dkgPublicInputs[1] !== expectedC5KeyHash ||
-    dkgPublicInputs[21 + benchmarkConfig.h] !== expectedSkC2ChunkKeyHash ||
-    dkgPublicInputs[22 + benchmarkConfig.h] !== expectedESmC2ChunkKeyHash ||
-    expectedVkBinding.some(
-      (value, index) =>
-        dkgPublicInputs[4 + benchmarkConfig.h + index] !== value,
-    ) ||
-    (useV2Dkg &&
-      expectedV2VkBinding.some(
-        (value, index) =>
-          dkgPublicInputs[30 + 3 * benchmarkConfig.h + 3 * lbfvRows + index] !==
-          value,
-      ))
+    (useV2Dkg
+      ? dkgPublicInputs[v2Layout.skC2ChunkKeyHash] !==
+          expectedSkC2ChunkKeyHash ||
+        dkgPublicInputs[v2Layout.esmC2ChunkKeyHash] !==
+          expectedESmC2ChunkKeyHash ||
+        expectedVkBinding.some(
+          (value, index) =>
+            dkgPublicInputs[v2Layout.legacyVkBindingStart + index] !== value,
+        ) ||
+        expectedV2VkBinding.some(
+          (value, index) =>
+            dkgPublicInputs[v2Layout.v2VkBindingStart + index] !== value,
+        )
+      : dkgPublicInputs[1] !== expectedC5KeyHash)
   ) {
     throw new Error(
       "DKG aggregator proof public inputs do not match nodes_fold, pk_aggregation, sk_share_computation_chunk, or esm_share_computation_chunk .vk_recursive_hash artifacts",
@@ -502,15 +507,17 @@ async function main() {
     ["bytes", "bytes32[]"],
     [dkgProofHex, dkgPublicInputs],
   );
+  const dkgCommitteeHashIndices = useV2Dkg
+    ? v2Layout.committeeHash
+    : bfvDkgCommitteeHashIndices(benchmarkConfig.h);
   requirePublicInputLen(
     "dkg_aggregator committee_hash",
     dkgPublicInputs,
-    bfvDkgCommitteeHashIndices(benchmarkConfig.h).lo + 1,
+    dkgCommitteeHashIndices.lo + 1,
   );
   const pkCommitment = useV2Dkg
-    ? dkgPublicInputs[23 + 3 * benchmarkConfig.h]
+    ? dkgPublicInputs[v2Layout.pkCommitment]
     : dkgPublicInputs[dkgPublicInputs.length - 1];
-  const dkgCommitteeHashIndices = bfvDkgCommitteeHashIndices(benchmarkConfig.h);
   const dkgCommitteeHash = committeeHashFromLimbs(
     dkgPublicInputs[dkgCommitteeHashIndices.hi],
     dkgPublicInputs[dkgCommitteeHashIndices.lo],
@@ -579,7 +586,6 @@ async function main() {
       benchmarkConfig.h,
       benchmarkConfig.n,
       expectedNodesFoldKeyHash,
-      expectedC5KeyHash,
       expectedSkC2ChunkKeyHash,
       expectedESmC2ChunkKeyHash,
       expectedVkBinding,
@@ -591,7 +597,7 @@ async function main() {
     ).deploy(
       dkgAggAddress,
       expectedNodesFoldKeyHash,
-      expectedC5KeyHash,
+      expectedC5KeyHash!,
       benchmarkConfig.h,
     );
   }

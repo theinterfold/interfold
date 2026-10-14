@@ -5,18 +5,21 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use actix::prelude::*;
-use alloy::{primitives::Address, signers::local::PrivateKeySigner};
+use alloy::primitives::Address;
+use alloy::signers::local::PrivateKeySigner;
 use anyhow::{anyhow, bail, Context, Result};
 use e3_crypto::{Cipher, SensitiveBytes};
 use e3_data::{DurableIntent, Persistable};
 use e3_events::{
-    prelude::*, trap, BusHandle, CiphernodeSelected, CiphertextOutputPublished,
+    prelude::*, trap, AggregationInputsReady, AggregationPhase, AggregatorChanged, BusHandle,
+    CiphernodeSelected, CiphertextOutputPublished, CommitmentRosterSelected,
     CommitteeMemberExcluded, CommitteeMemberExpelled, ComputeRequest, ComputeRequestError,
-    ComputeRequestKind, ComputeResponse, ComputeResponseKind, CorrelationId, DecryptionKeyShared,
-    DecryptionShareProofSigned, DecryptionShareProofsPending, Die, DkgProofSigned,
-    DkgShareDecryptionProofRequest, E3Failed, E3RequestComplete, E3Stage, EType, EncryptionKey,
-    EncryptionKeyCollectionFailed, EncryptionKeyCreated, EncryptionKeyPending, EventContext,
-    FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
+    ComputeRequestErrorKind, ComputeRequestKind, ComputeResponse, ComputeResponseKind,
+    CorrelationId, DecryptionKeyShared, DecryptionShareProofSigned, DecryptionShareProofsPending,
+    Die, DkgCoordination, DkgCoordinationKind, DkgDealer, DkgProofSigned,
+    DkgShareDecryptionProofRequest, E3Failed, E3RequestComplete, E3Stage, E3id, EType,
+    EncryptionKey, EncryptionKeyCollectionFailed, EncryptionKeyCreated, EncryptionKeyPending,
+    EventContext, EventId, FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
     LbfvKeyShareDocumentCreated, LbfvKeyShareManifestPublished, PartyProofsToVerify,
     PartyShareDecryptionProofsToVerify, PkGenerationProofSigned, ProofPayload, ProofType,
     Sequenced, ShareDecryptionProofPending, ShareVerificationComplete, ShareVerificationDispatched,
@@ -65,10 +68,11 @@ use crate::domain::timeout_policy::{
     resolve_threshold_share_schedule, resolve_timeout, DerivedTimeout, DkgTimeoutPhase,
 };
 use crate::domain::{
-    build_decryption_key_plan, build_shares_generated_plan, generate_bfv_keypair,
-    AggregatingDecryptionKey, BfvKeypairMaterial, CollectingEncryptionKeysData, Decrypting,
-    DecryptionKeyPlan, GeneratingDecryptionProof, GeneratingThresholdShareData, KeyshareState,
-    LbfvGenerationStateV1, ProofRequestData, ReadyForDecryption, ReceivedShareProofs,
+    batch_grows, build_decryption_key_plan, build_shares_generated_plan, dealer_identity,
+    dispatch_verifies_batch, generate_bfv_keypair, select_ready_roster, AggregatingDecryptionKey,
+    BfvKeypairMaterial, CollectingEncryptionKeysData, Decrypting, DecryptionKeyPlan,
+    GeneratingDecryptionProof, GeneratingThresholdShareData, KeyshareState, LbfvGenerationStateV1,
+    ProofRequestData, ReadyForDecryption, ReadySummaryGate, ReceivedShareProofs,
     ThresholdKeyshareState,
 };
 
@@ -138,7 +142,12 @@ pub struct ThresholdKeyshareParams {
     pub interfold_address: Address,
     pub recovery: Persistable<ThresholdKeyshareRecoveryState>,
     pub lbfv_generation: Persistable<LbfvGenerationStateV1>,
+    pub recovery_payloads: ThresholdKeyshareRecoveryPayloads,
+    /// Where this node's BFV encryption keypair is recorded.
+    pub bfv_key: DurableIntent<BfvKeyIntent>,
+    pub dkg_timing_reader: DkgTimingReader,
     pub signer: PrivateKeySigner,
+    pub effects_enabled: bool,
 }
 
 pub type DkgTimingFuture = Pin<Box<dyn Future<Output = Result<(u64, u64)>> + Send>>;
@@ -214,7 +223,17 @@ pub struct ThresholdKeyshare {
     share_enc_preset: BfvPreset,
     interfold_address: Address,
     lbfv_generation: Persistable<LbfvGenerationStateV1>,
+    dkg_timing_reader: DkgTimingReader,
     signer: PrivateKeySigner,
+    active_aggregator_party_id: Option<u64>,
+    is_aggregator: bool,
+    effects_enabled: bool,
+    // Derived from canonical events and the lifecycle projection at hydration.
+    canonical_key_published: bool,
+    roster_inputs_ready: bool,
+    roster_proposal_pending: bool,
+    ready_summary: ReadySummaryGate,
+    selection_timing_pending: bool,
     pending: PendingKeyshareWork,
 }
 
@@ -271,7 +290,16 @@ impl ThresholdKeyshare {
             share_enc_preset: params.share_enc_preset,
             interfold_address: params.interfold_address,
             lbfv_generation: params.lbfv_generation,
+            dkg_timing_reader: params.dkg_timing_reader,
             signer: params.signer,
+            active_aggregator_party_id: recovered.active_aggregator_party_id,
+            is_aggregator: recovered.is_aggregator,
+            effects_enabled: params.effects_enabled,
+            canonical_key_published: false,
+            roster_inputs_ready: false,
+            roster_proposal_pending: false,
+            ready_summary: ReadySummaryGate::default(),
+            selection_timing_pending: false,
             pending: PendingKeyshareWork {
                 shares: pending_shares,
                 share_decryption_data,
@@ -314,6 +342,12 @@ impl ThresholdKeyshare {
         })
     }
 
+    /// Whether this E3 proves C1. The l-BFV path proves none, so its `KeyshareCreated` carries
+    /// no C1 proof.
+    pub(in crate::actors::threshold_keyshare) fn proves_c1(&self) -> bool {
+        !e3_fhe_params::is_lbfv_path(self.share_enc_preset)
+    }
+
     fn keyshare_created_fields(
         state: &KeyshareState,
     ) -> Option<(&ArcBytes, &Option<SignedProofPayload>)> {
@@ -333,7 +367,7 @@ impl ThresholdKeyshare {
         let Some((_, signed)) = Self::keyshare_created_fields(&state.state) else {
             return Ok(());
         };
-        if signed.is_none() {
+        if signed.is_none() && self.proves_c1() {
             return Ok(());
         }
         self.pending.keyshare_publish = false;

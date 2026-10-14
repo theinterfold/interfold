@@ -237,9 +237,9 @@ mod tests {
 
     #[test]
     fn extracts_minimum_v2_key_envelope_commitment_from_layout() {
-        let mut public_signals = vec![0u8; 62 * 32];
+        let mut public_signals = vec![0u8; 60 * 32];
         let expected = [0xabu8; 32];
-        public_signals[29 * 32..30 * 32].copy_from_slice(&expected);
+        public_signals[27 * 32..28 * 32].copy_from_slice(&expected);
         let proof = Proof::new(
             CircuitName::DkgAggregatorV2,
             ArcBytes::from_bytes(&[]),
@@ -257,11 +257,11 @@ mod tests {
         let proof = Proof::new(
             CircuitName::DkgAggregatorV2,
             ArcBytes::from_bytes(&[]),
-            ArcBytes::from_bytes(&vec![0u8; 63 * 32]),
+            ArcBytes::from_bytes(&vec![0u8; 61 * 32]),
         );
 
         let err = extract_lbfv_key_envelope_commitment(&proof, 2, 5)
             .expect_err("an incompatible public-signal shape must fail");
-        assert!(err.to_string().contains("expected 1984"));
+        assert!(err.to_string().contains("expected 1920"));
     }
 }

@@ -4,7 +4,8 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Fold ordered l-BFV public-key and RLK aggregation proof pairs.
+//! Fold ordered l-BFV aggregation proofs: per row, one public-key proof and the two RLK
+//! component proofs (`d0`, `d2`).
 
 use bb_proof_verification::{
     UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
@@ -13,8 +14,14 @@ use bb_proof_verification::{
 use lib::configs::default::H;
 
 pub use lib::configs::default::threshold::L as LBFV_ROWS;
+use lib::configs::default::threshold::GADGET_DIM;
 pub global PK_AGGREGATION_PUBLIC_LEN: u32 = 7 + H;
-pub global RLK_AGGREGATION_PUBLIC_LEN: u32 = 8 + (2 * H);
+/// `rlk_aggregation` public IO: identity (5), row, component, `H` expected commitments, and the
+/// aggregate commitment. Each row has two proofs: component 0 (`d0`) and component 1 (`d2`).
+pub global RLK_AGGREGATION_PUBLIC_LEN: u32 = 8 + H;
+pub global RLK_COMPONENT_IDX: u32 = 6;
+pub global RLK_EXPECTED_START: u32 = 7;
+pub global RLK_AGGREGATE_IDX: u32 = 7 + H;
 
 pub global AGGREGATION_FOLD_PREFIX_LEN: u32 = 7;
 pub global AGGREGATION_FOLD_PUBLIC_LEN: u32 =
@@ -42,15 +49,20 @@ pub global ACC_AGGREGATE_D2_START: u32 = ACC_AGGREGATE_D0_START + LBFV_ROWS;
 
 fn assert_aggregation_pair(
     pk_public: [Field; PK_AGGREGATION_PUBLIC_LEN],
-    rlk_public: [Field; RLK_AGGREGATION_PUBLIC_LEN],
+    rlk_d0_public: [Field; RLK_AGGREGATION_PUBLIC_LEN],
+    rlk_d2_public: [Field; RLK_AGGREGATION_PUBLIC_LEN],
     row_index: u32,
 ) {
     assert(row_index < LBFV_ROWS);
     for i in 0..5 {
-        assert(pk_public[i] == rlk_public[i]);
+        assert(pk_public[i] == rlk_d0_public[i]);
+        assert(pk_public[i] == rlk_d2_public[i]);
     }
     assert(pk_public[5] == row_index as Field);
-    assert(rlk_public[5] == row_index as Field);
+    assert(rlk_d0_public[5] == row_index as Field);
+    assert(rlk_d2_public[5] == row_index as Field);
+    assert(rlk_d0_public[RLK_COMPONENT_IDX] == 0);
+    assert(rlk_d2_public[RLK_COMPONENT_IDX] == 1);
 }
 
 fn assert_accumulator_identity(
@@ -69,8 +81,10 @@ fn main(
     pk_proof: UltraHonkZKProof,
     pk_public: [Field; PK_AGGREGATION_PUBLIC_LEN],
     rlk_vk: UltraHonkVerificationKey,
-    rlk_proof: UltraHonkZKProof,
-    rlk_public: [Field; RLK_AGGREGATION_PUBLIC_LEN],
+    rlk_d0_proof: UltraHonkZKProof,
+    rlk_d0_public: [Field; RLK_AGGREGATION_PUBLIC_LEN],
+    rlk_d2_proof: UltraHonkZKProof,
+    rlk_d2_public: [Field; RLK_AGGREGATION_PUBLIC_LEN],
     acc_vk: UltraHonkVerificationKey,
     acc_proof: UltraHonkProof,
     acc_public: [Field; AGGREGATION_FOLD_PUBLIC_LEN],
@@ -82,12 +96,17 @@ fn main(
     expected_kernel_key_hash: pub Field,
     expected_fold_key_hash: pub Field,
     ) -> pub (Field, Field, Field, Field, Field, [[Field; H]; LBFV_ROWS], [[Field; H]; LBFV_ROWS], [[Field; H]; LBFV_ROWS], [Field; LBFV_ROWS], [Field; LBFV_ROWS], [Field; LBFV_ROWS]) {
+    // Coverage is sized by `LBFV_ROWS`; the row circuits accept any `row_index < GADGET_DIM`. The two
+    // agree in every preset, and this keeps rows from going unaggregated if they ever diverge.
+    assert(GADGET_DIM == LBFV_ROWS);
     assert(!is_first_step);
     assert(row_index > 0);
-    assert_aggregation_pair(pk_public, rlk_public, row_index);
+    assert_aggregation_pair(pk_public, rlk_d0_public, rlk_d2_public, row_index);
 
     verify_honk_proof(pk_vk, pk_proof, pk_public, pk_key_hash);
-    verify_honk_proof(rlk_vk, rlk_proof, rlk_public, rlk_key_hash);
+    // Both components are proved by the same circuit, so one key serves both proofs.
+    verify_honk_proof(rlk_vk, rlk_d0_proof, rlk_d0_public, rlk_key_hash);
+    verify_honk_proof(rlk_vk, rlk_d2_proof, rlk_d2_public, rlk_key_hash);
     verify_honk_proof_non_zk(acc_vk, acc_proof, acc_public, acc_key_hash);
 
     assert(acc_public[ACC_PK_VK_IDX] == pk_key_hash);
@@ -128,15 +147,15 @@ fn main(
                 assert(acc_public[ACC_EXPECTED_D0_START + row * H + party] == 0);
                 assert(acc_public[ACC_EXPECTED_D2_START + row * H + party] == 0);
                 expected_pk[row][party] = pk_public[6 + party];
-                expected_d0[row][party] = rlk_public[6 + party];
-                expected_d2[row][party] = rlk_public[6 + H + party];
+                expected_d0[row][party] = rlk_d0_public[RLK_EXPECTED_START + party];
+                expected_d2[row][party] = rlk_d2_public[RLK_EXPECTED_START + party];
             }
             assert(acc_public[ACC_AGGREGATE_PK_START + row] == 0);
             assert(acc_public[ACC_AGGREGATE_D0_START + row] == 0);
             assert(acc_public[ACC_AGGREGATE_D2_START + row] == 0);
             aggregate_pk[row] = pk_public[6 + H];
-            aggregate_d0[row] = rlk_public[6 + (2 * H)];
-            aggregate_d2[row] = rlk_public[7 + (2 * H)];
+            aggregate_d0[row] = rlk_d0_public[RLK_AGGREGATE_IDX];
+            aggregate_d2[row] = rlk_d2_public[RLK_AGGREGATE_IDX];
         } else {
             for party in 0..H {
                 assert(acc_public[ACC_EXPECTED_PK_START + row * H + party] == 0);
@@ -158,14 +177,37 @@ fn main(
 #[test]
 fn test_aggregation_pair_accepts_matching_identity() {
     let pk: [Field; PK_AGGREGATION_PUBLIC_LEN] = [0; PK_AGGREGATION_PUBLIC_LEN];
-    let rlk: [Field; RLK_AGGREGATION_PUBLIC_LEN] = [0; RLK_AGGREGATION_PUBLIC_LEN];
-    assert_aggregation_pair(pk, rlk, 0);
+    let d0: [Field; RLK_AGGREGATION_PUBLIC_LEN] = [0; RLK_AGGREGATION_PUBLIC_LEN];
+    let mut d2: [Field; RLK_AGGREGATION_PUBLIC_LEN] = [0; RLK_AGGREGATION_PUBLIC_LEN];
+    d2[RLK_COMPONENT_IDX] = 1;
+    assert_aggregation_pair(pk, d0, d2, 0);
 }
 
 #[test(should_fail)]
 fn test_aggregation_pair_rejects_wrong_row() {
     let pk: [Field; PK_AGGREGATION_PUBLIC_LEN] = [0; PK_AGGREGATION_PUBLIC_LEN];
-    let mut rlk: [Field; RLK_AGGREGATION_PUBLIC_LEN] = [0; RLK_AGGREGATION_PUBLIC_LEN];
-    rlk[5] = 1;
-    assert_aggregation_pair(pk, rlk, 0);
+    let d0: [Field; RLK_AGGREGATION_PUBLIC_LEN] = [0; RLK_AGGREGATION_PUBLIC_LEN];
+    let mut d2: [Field; RLK_AGGREGATION_PUBLIC_LEN] = [0; RLK_AGGREGATION_PUBLIC_LEN];
+    d2[5] = 1;
+    d2[RLK_COMPONENT_IDX] = 1;
+    assert_aggregation_pair(pk, d0, d2, 0);
+}
+
+#[test(should_fail)]
+fn test_aggregation_pair_rejects_swapped_components() {
+    let pk: [Field; PK_AGGREGATION_PUBLIC_LEN] = [0; PK_AGGREGATION_PUBLIC_LEN];
+    let mut d0: [Field; RLK_AGGREGATION_PUBLIC_LEN] = [0; RLK_AGGREGATION_PUBLIC_LEN];
+    let d2: [Field; RLK_AGGREGATION_PUBLIC_LEN] = [0; RLK_AGGREGATION_PUBLIC_LEN];
+    d0[RLK_COMPONENT_IDX] = 1;
+    assert_aggregation_pair(pk, d0, d2, 0);
+}
+
+#[test(should_fail)]
+fn test_aggregation_pair_rejects_a_d2_proof_from_another_session() {
+    let pk: [Field; PK_AGGREGATION_PUBLIC_LEN] = [0; PK_AGGREGATION_PUBLIC_LEN];
+    let d0: [Field; RLK_AGGREGATION_PUBLIC_LEN] = [0; RLK_AGGREGATION_PUBLIC_LEN];
+    let mut d2: [Field; RLK_AGGREGATION_PUBLIC_LEN] = [0; RLK_AGGREGATION_PUBLIC_LEN];
+    d2[RLK_COMPONENT_IDX] = 1;
+    d2[0] = 9;
+    assert_aggregation_pair(pk, d0, d2, 0);
 }

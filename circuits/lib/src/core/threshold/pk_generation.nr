@@ -154,9 +154,7 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
 
     /// [`Self::execute`] with the `sk` and `e_sm` commitments supplied by the caller.
     ///
-    /// The l-BFV path commits both as chunk roots, because its C2 opens them chunk by chunk
-    /// (`pk_generation_chunked`); everything else, including the soundness checks, is shared. The
-    /// commitments must be created from the range-checked witnesses passed in, which both forms do.
+    /// The commitments must be created from the range-checked witnesses passed in.
     pub fn execute_with<Env1, Env2>(
         self,
         commit_sk: fn[Env1](Polynomial<N>) -> Field,

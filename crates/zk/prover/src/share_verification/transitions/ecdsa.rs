@@ -7,18 +7,11 @@ use alloy::primitives::U256;
 use e3_committee_hash::{
     hash_lbfv_accepted_party_set, hash_lbfv_proof_session, split_hash_to_field_limbs,
 };
-use e3_events::{CircuitName, LbfvVerificationContext};
+use e3_events::LbfvVerificationContext;
+use e3_zk_helpers::threshold::rlk_aggregation::RlkAggregationComponent;
 use e3_zk_helpers::{LbfvPkAggregationPublicLayout, RlkAggregationPublicLayout};
 
 impl ShareVerifier {
-    /// The C1 proof that heads an l-BFV generation bundle: the chunk-root C1 of the l-BFV path.
-    fn has_exact_legacy_c1_shape(signed: &SignedProofPayload) -> bool {
-        signed.payload.proof_type == ProofType::C1PkGeneration
-            && signed.payload.proof.circuit == CircuitName::PkGenerationChunked
-            && signed.payload.proof.public_signals.len()
-                == e3_zk_helpers::PK_GENERATION_OUTPUTS.len() * e3_zk_helpers::FIELD_BYTE_LEN
-    }
-
     fn has_complete_row_family(
         signed_proofs: &[SignedProofPayload],
         expected_type: ProofType,
@@ -33,33 +26,17 @@ impl ShareVerifier {
         })
     }
 
+    /// `rows` proofs of `first`, then `second_count` proofs of `second`.
     fn has_complete_lbfv_bundle(
         signed_proofs: &[SignedProofPayload],
         first: ProofType,
         second: ProofType,
         rows: usize,
+        second_count: usize,
     ) -> bool {
-        signed_proofs.len() == 2 * rows
+        signed_proofs.len() == rows + second_count
             && Self::has_complete_row_family(&signed_proofs[..rows], first, rows)
-            && Self::has_complete_row_family(&signed_proofs[rows..], second, rows)
-    }
-
-    fn has_complete_lbfv_generation_bundle(
-        signed_proofs: &[SignedProofPayload],
-        rows: usize,
-    ) -> bool {
-        signed_proofs.len() == 1 + (2 * rows)
-            && Self::has_exact_legacy_c1_shape(&signed_proofs[0])
-            && Self::has_complete_row_family(
-                &signed_proofs[1..1 + rows],
-                ProofType::LbfvPkGeneration,
-                rows,
-            )
-            && Self::has_complete_row_family(
-                &signed_proofs[1 + rows..],
-                ProofType::RlkGeneration,
-                rows,
-            )
+            && Self::has_complete_row_family(&signed_proofs[rows..], second, second_count)
     }
 
     fn public_field<'a>(
@@ -176,24 +153,18 @@ impl ShareVerifier {
                 if context.aggregation.is_some() {
                     return false;
                 }
-                let Some((c1, lbfv_proofs)) = signed_proofs.split_first() else {
-                    return false;
-                };
-                if lbfv_proofs.len() % 2 != 0 {
+                let lbfv_proofs = signed_proofs;
+                if lbfv_proofs.is_empty() || lbfv_proofs.len() % 2 != 0 {
                     return false;
                 }
                 let rows = lbfv_proofs.len() / 2;
-                if lbfv_proofs.len() != 2 * rows {
-                    return false;
-                }
                 let rlk = &lbfv_proofs[rows..];
-                if !Self::has_exact_legacy_c1_shape(c1) || !exact_lbfv_public_shape(lbfv_proofs) {
+                if !exact_lbfv_public_shape(lbfv_proofs) {
                     return false;
                 }
-                let Some(c1_sk_commitment) = Self::public_field(c1, false, "sk_commitment") else {
-                    return false;
-                };
 
+                // Every PK and RLK row of the party commits one `sk`. C2a's secret root must
+                // equal that commitment; the `lbfv_generation_sk` links check it.
                 lbfv_proofs.iter().all(|signed| {
                     Self::has_authoritative_session(
                         signed,
@@ -209,19 +180,19 @@ impl ShareVerifier {
                     && lbfv_proofs[rows..].iter().enumerate().all(|(row, signed)| {
                         Self::public_u32_equals(signed, "row_index", row as u32)
                     })
-                    && lbfv_proofs.iter().all(|signed| {
-                        Self::public_field(signed, false, "sk_commitment") == Some(c1_sk_commitment)
-                    })
+                    && Self::all_fields_equal(lbfv_proofs, false, "sk_commitment")
                     && Self::all_fields_equal(rlk, false, "r_commitment")
             }
             VerificationKind::LbfvAggregationProofs => {
                 let Some(aggregation) = context.aggregation.as_ref() else {
                     return false;
                 };
-                if signed_proofs.len() % 2 != 0 {
+                // One PK proof and two RLK component proofs per row.
+                let families = 1 + RlkAggregationComponent::ALL.len();
+                if signed_proofs.is_empty() || signed_proofs.len() % families != 0 {
                     return false;
                 }
-                let rows = signed_proofs.len() / 2;
+                let rows = signed_proofs.len() / families;
                 let accepted_party_ids = aggregation
                     .accepted_parties
                     .iter()
@@ -235,7 +206,7 @@ impl ShareVerifier {
                 let accepted_set = split_hash_to_field_limbs(accepted_set_hash);
                 let pk_layout = LbfvPkAggregationPublicLayout::new(committee_h);
                 let rlk_layout = RlkAggregationPublicLayout::new(committee_h);
-                if signed_proofs.len() != 2 * rows || !exact_lbfv_public_shape(signed_proofs) {
+                if !exact_lbfv_public_shape(signed_proofs) {
                     return false;
                 }
 
@@ -266,25 +237,31 @@ impl ShareVerifier {
                                 },
                             )
                     });
-                let rlk_matches = signed_proofs[rows..]
-                    .iter()
-                    .enumerate()
-                    .all(|(row, signed)| {
-                        statement_matches(signed)
-                            && Self::public_u32_equals(signed, "row_index", row as u32)
-                            && aggregation.accepted_parties.iter().enumerate().all(
-                                |(party_position, party)| {
-                                    Self::public_field_at(
-                                        signed,
-                                        rlk_layout.expected_d0_commitments.start + party_position,
-                                    ) == party.rlk_d0_commitments[row].as_slice()
-                                        && Self::public_field_at(
+                let rlk_matches = RlkAggregationComponent::ALL
+                    .into_iter()
+                    .zip(signed_proofs[rows..].chunks(rows))
+                    .all(|(component, family)| {
+                        family.iter().enumerate().all(|(row, signed)| {
+                            statement_matches(signed)
+                                && Self::public_u32_equals(signed, "row_index", row as u32)
+                                && Self::public_u32_equals(signed, "component", component.index())
+                                && aggregation.accepted_parties.iter().enumerate().all(
+                                    |(party_position, party)| {
+                                        let expected = match component {
+                                            RlkAggregationComponent::D0 => {
+                                                &party.rlk_d0_commitments
+                                            }
+                                            RlkAggregationComponent::D2 => {
+                                                &party.rlk_d2_commitments
+                                            }
+                                        };
+                                        Self::public_field_at(
                                             signed,
-                                            rlk_layout.expected_d2_commitments.start
-                                                + party_position,
-                                        ) == party.rlk_d2_commitments[row].as_slice()
-                                },
-                            )
+                                            rlk_layout.expected_commitments.start + party_position,
+                                        ) == expected[row].as_slice()
+                                    },
+                                )
+                        })
                     });
                 pk_matches && rlk_matches
             }
@@ -329,8 +306,10 @@ impl ShareVerifier {
             return false;
         }
         match kind {
+            // The l-BFV path proves no C1.
             VerificationKind::PkGenerationProofs => {
-                signed_proofs.len() == 1
+                !e3_fhe_params::is_lbfv_path(params_preset)
+                    && signed_proofs.len() == 1
                     && signed_proofs[0].payload.proof_type == ProofType::C1PkGeneration
             }
             VerificationKind::ShareProofs => {
@@ -370,7 +349,16 @@ impl ShareVerifier {
                     })
             }
             VerificationKind::LbfvGenerationProofs => e3_fhe_params::lbfv_row_count(params_preset)
-                .is_some_and(|rows| Self::has_complete_lbfv_generation_bundle(signed_proofs, rows)),
+                .is_some_and(|rows| {
+                    Self::has_complete_lbfv_bundle(
+                        signed_proofs,
+                        ProofType::LbfvPkGeneration,
+                        ProofType::RlkGeneration,
+                        rows,
+                        rows,
+                    )
+                }),
+            // Canonical order is the PK rows, then the RLK `d0` rows, then the RLK `d2` rows.
             VerificationKind::LbfvAggregationProofs => e3_fhe_params::lbfv_row_count(params_preset)
                 .is_some_and(|rows| {
                     Self::has_complete_lbfv_bundle(
@@ -378,6 +366,7 @@ impl ShareVerifier {
                         ProofType::LbfvPkAggregation,
                         ProofType::RlkAggregation,
                         rows,
+                        RlkAggregationComponent::ALL.len() * rows,
                     )
                 }),
         }

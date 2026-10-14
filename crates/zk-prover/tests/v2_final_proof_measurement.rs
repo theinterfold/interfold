@@ -16,11 +16,7 @@ use alloy::primitives::Address;
 use common::find_bb;
 use e3_config::BBPath;
 use e3_events::{CircuitName, CircuitVariant, Proof};
-use e3_fhe_params::{
-    build_pair_for_preset, create_deterministic_crp_from_default_seed, lbfv_crs_seed,
-    lbfv_urs_seed, BfvPreset,
-};
-use e3_polynomial::CrtPolynomial;
+use e3_fhe_params::{build_pair_for_preset, lbfv_crs_seed, lbfv_urs_seed, BfvPreset};
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_helpers::computation::{Computation, DkgInputType};
 use e3_zk_helpers::dkg::pk::circuit::{PkCircuit, PkCircuitData};
@@ -31,9 +27,10 @@ use e3_zk_helpers::threshold::lbfv_pk_aggregation::{
     LbfvPkAggregationCircuit, LbfvPkAggregationCircuitData,
 };
 use e3_zk_helpers::threshold::lbfv_proof_domain::sample_lbfv_proof_domain;
-use e3_zk_helpers::threshold::pk_aggregation::{PkAggregationCircuit, PkAggregationCircuitData};
-use e3_zk_helpers::threshold::pk_generation::{LbfvPkGenerationAdapter, PkGenerationCircuit};
-use e3_zk_helpers::threshold::rlk_aggregation::{RlkAggregationCircuit, RlkAggregationCircuitData};
+use e3_zk_helpers::threshold::pk_generation::LbfvPkGenerationAdapter;
+use e3_zk_helpers::threshold::rlk_aggregation::{
+    RlkAggregationCircuit, RlkAggregationCircuitData, RlkAggregationComponent,
+};
 use e3_zk_helpers::threshold::rlk_generation::RlkGenerationAdapter;
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_prover::{
@@ -43,7 +40,6 @@ use e3_zk_prover::{
     Provable, ZkBackend, ZkProver,
 };
 use fhe::bfv::{Ciphertext, CommonRandomPolyVec, PublicKey, SecretKey};
-use fhe::mbfv::{AggregateIter, PublicKeyShare as MbfvPublicKeyShare};
 use fhe::trlbfv::{PublicKeyShare as LbfvPublicKeyShare, RelinKeyShare};
 use num_bigint::BigInt;
 use num_traits::{Signed, ToPrimitive};
@@ -57,8 +53,6 @@ const LBFV_ROWS: u32 = 5;
 
 struct NodeInputs {
     party_id: u64,
-    c1_data: e3_zk_helpers::threshold::pk_generation::PkGenerationCircuitData,
-    c1_proof: Proof,
     c2a_proof: Proof,
     c2b_proof: Proof,
     c3a_inner_proofs: Vec<Proof>,
@@ -71,7 +65,6 @@ struct NodeInputs {
     lbfv_pk_share: LbfvPublicKeyShare,
     rlk_share: RelinKeyShare,
     generation_fold: Proof,
-    mbfv_share: MbfvPublicKeyShare,
 }
 
 fn final_cache_path() -> Option<PathBuf> {
@@ -320,33 +313,22 @@ fn build_node(
     party_id: usize,
     artifacts_dir: &str,
 ) -> NodeInputs {
-    report_phase(&format!("node {party_id} C1 start"));
-    let (c1_data, esi, secret_key, mbfv_share) =
+    // The l-BFV path proves no C1; the sampled key data only correlates the C2 witnesses.
+    let (key_data, esi, secret_key, _) =
         node_fold_witness::pk_generation_sample_with_esi_and_share(preset, committee.clone())
-            .expect("correlated C1 data");
-    let c1_proof = PkGenerationCircuit
-        .prove_with_variant(
-            prover,
-            &preset,
-            &c1_data,
-            &format!("v2-final-c1-{party_id}"),
-            CircuitVariant::Recursive,
-            artifacts_dir,
-        )
-        .expect("C1 proof");
-    report_phase(&format!("node {party_id} C1 complete"));
+            .expect("correlated key data");
 
     let share_sk = node_fold_witness::share_computation_sk_from_pk(
         preset,
         committee.clone(),
-        &c1_data,
+        &key_data,
         &secret_key,
     )
     .expect("correlated C2a data");
     let share_esm = node_fold_witness::share_computation_esm_from_esi(
         preset,
         committee.clone(),
-        &c1_data,
+        &key_data,
         &esi,
     )
     .expect("correlated C2b data");
@@ -440,8 +422,6 @@ fn build_node(
 
     NodeInputs {
         party_id: party_id as u64,
-        c1_data,
-        c1_proof,
         c2a_proof,
         c2b_proof,
         c3a_inner_proofs,
@@ -454,7 +434,6 @@ fn build_node(
         lbfv_pk_share,
         rlk_share,
         generation_fold,
-        mbfv_share,
     }
 }
 
@@ -602,7 +581,7 @@ async fn secure_dkg_aggregator_v2_proves_and_verifies_evm() {
             &prover,
             &NodeDkgFoldInput {
                 c0_proof: &c0_proof,
-                c1_proof: &node.c1_proof,
+                c1_proof: None,
                 c2a_proof: &node.c2a_proof,
                 c2b_proof: &node.c2b_proof,
                 c3a_inner_proofs: &node.c3a_inner_proofs,
@@ -632,7 +611,6 @@ async fn secure_dkg_aggregator_v2_proves_and_verifies_evm() {
             prove_node_dkg_fold_v2(
                 &prover,
                 &legacy.proof,
-                &node.c1_proof,
                 &node.generation_fold,
                 node.party_id,
                 &format!("v2-final-node-v2-{index}"),
@@ -661,37 +639,6 @@ async fn secure_dkg_aggregator_v2_proves_and_verifies_evm() {
     let nodes_fold_v2 = nodes_fold_v2.expect("NodesFoldV2 accumulator");
     report_phase("NodesFoldV2 complete");
 
-    let threshold_params = build_pair_for_preset(preset)
-        .expect("threshold parameters")
-        .0;
-    let c5_public_key: PublicKey = nodes
-        .iter()
-        .map(|node| node.mbfv_share.clone())
-        .aggregate()
-        .expect("C5 aggregate public key");
-    let c5_data = PkAggregationCircuitData {
-        committee: committee.clone(),
-        public_key: c5_public_key,
-        pk0_shares: nodes
-            .iter()
-            .map(|node| node.c1_data.pk0_share.clone())
-            .collect(),
-        a: CrtPolynomial::from_fhe_polynomial(
-            &create_deterministic_crp_from_default_seed(&threshold_params).poly(),
-        ),
-    };
-    let c5_proof = PkAggregationCircuit
-        .prove_with_variant(
-            &prover,
-            &preset,
-            &c5_data,
-            "v2-final-c5",
-            CircuitVariant::Default,
-            artifacts_dir.as_str(),
-        )
-        .expect("C5 proof");
-    report_phase("C5 complete");
-
     let mut aggregation_fold = None;
     for row in 0..LBFV_ROWS {
         report_phase(&format!("aggregation row {row} start"));
@@ -706,14 +653,6 @@ async fn secure_dkg_aggregator_v2_proves_and_verifies_evm() {
                 .map(|node| node.lbfv_pk_share.clone())
                 .collect(),
         };
-        let rlk_data = RlkAggregationCircuitData {
-            committee: committee.clone(),
-            proof_domain: sample_lbfv_proof_domain(),
-            aggregator_party_id: 0,
-            party_ids: (0..committee.h as u32).collect(),
-            row_index: row,
-            shares: nodes.iter().map(|node| node.rlk_share.clone()).collect(),
-        };
         let pk_proof = LbfvPkAggregationCircuit
             .prove_with_variant(
                 &prover,
@@ -724,21 +663,33 @@ async fn secure_dkg_aggregator_v2_proves_and_verifies_evm() {
                 artifacts_dir.as_str(),
             )
             .expect("l-BFV PK aggregation proof");
-        let rlk_proof = RlkAggregationCircuit
-            .prove_with_variant(
-                &prover,
-                &preset,
-                &rlk_data,
-                &format!("v2-final-aggregation-rlk-{row}"),
-                CircuitVariant::Recursive,
-                artifacts_dir.as_str(),
-            )
-            .expect("RLK aggregation proof");
+        let rlk_proofs = RlkAggregationComponent::ALL.map(|component| {
+            let rlk_data = RlkAggregationCircuitData {
+                committee: committee.clone(),
+                proof_domain: sample_lbfv_proof_domain(),
+                aggregator_party_id: 0,
+                party_ids: (0..committee.h as u32).collect(),
+                row_index: row,
+                component,
+                shares: nodes.iter().map(|node| node.rlk_share.clone()).collect(),
+            };
+            RlkAggregationCircuit
+                .prove_with_variant(
+                    &prover,
+                    &preset,
+                    &rlk_data,
+                    &format!("v2-final-aggregation-rlk-{row}-{}", component.index()),
+                    CircuitVariant::Recursive,
+                    artifacts_dir.as_str(),
+                )
+                .expect("RLK aggregation proof")
+        });
         aggregation_fold = Some(
             prove_lbfv_aggregation_fold_step(
                 &prover,
                 &pk_proof,
-                &rlk_proof,
+                &rlk_proofs[0],
+                &rlk_proofs[1],
                 aggregation_fold.as_ref(),
                 row,
                 committee.h,
@@ -761,7 +712,6 @@ async fn secure_dkg_aggregator_v2_proves_and_verifies_evm() {
     let final_proof = prove_dkg_aggregation_v2(
         &prover,
         &nodes_fold_v2,
-        &c5_proof,
         &aggregation_fold,
         &party_ids,
         &committee_addresses,

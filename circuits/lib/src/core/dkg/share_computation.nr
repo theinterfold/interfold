@@ -345,8 +345,8 @@ pub fn verify_parity_check_bounded<let N: u32, let L: u32, let N_PARTIES: u32, l
 
 /// The centered representative of a residue `coefficient` modulo `q`: `coefficient` itself, or
 /// `coefficient - q`. The prover supplies the choice; the relation below pins the result to one of
-/// those two values, and the caller's checked commitment opening fixes which one (the opened
-/// commitment carries the canonical centered value).
+/// those two values, which agree modulo `q`. Callers rely only on that residue class (the l-BFV
+/// C2b leaf ties it to the bounded lifted noise); nothing downstream opens the choice itself.
 pub fn centered_residue(coefficient: Field, q: Field) -> Field {
     // Safety: the assertion below constrains the hint to `coefficient` or `coefficient - q`.
     let centered = unsafe { __centered_residue(coefficient, q) };

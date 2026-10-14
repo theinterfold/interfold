@@ -11,9 +11,10 @@ use lib::configs::default::dkg::L_THRESHOLD;
 use lib::configs::default::{H, N_PARTIES};
 
 pub use lib::configs::default::threshold::L as LBFV_ROWS;
-pub global NODE_FOLD_PUBLIC_LEN: u32 = 15 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
+use lib::configs::default::threshold::GADGET_DIM;
+pub global NODE_FOLD_PUBLIC_LEN: u32 = 13 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
 pub global NODE_FOLD_V2_APPEND_LEN: u32 = 3 + (3 * LBFV_ROWS);
-pub global NODE_FOLD_V2_PREFIX_LEN: u32 = 4;
+pub global NODE_FOLD_V2_PREFIX_LEN: u32 = 3;
 pub global NODE_FOLD_V2_PUBLIC_LEN: u32 =
     NODE_FOLD_V2_PREFIX_LEN + NODE_FOLD_PUBLIC_LEN + NODE_FOLD_V2_APPEND_LEN;
 pub global NODES_FOLD_V2_PREFIX_LEN: u32 = 6;
@@ -39,6 +40,9 @@ fn main(
     expected_kernel_key_hash: pub Field,
     expected_fold_key_hash: pub Field,
 ) -> pub [[Field; NODE_FOLD_V2_PUBLIC_LEN]; H] {
+    // Coverage is sized by `LBFV_ROWS`; the row circuits accept any `row_index < GADGET_DIM`. The two
+    // agree in every preset, and this keeps rows from going unaggregated if they ever diverge.
+    assert(GADGET_DIM == LBFV_ROWS);
     assert(is_first_step);
     assert(slot_index == 0);
     assert(acc_key_hash == expected_kernel_key_hash);

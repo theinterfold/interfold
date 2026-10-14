@@ -347,7 +347,7 @@ pub(crate) mod tests {
     use e3_zk_helpers::circuits::threshold::lbfv_proof_domain::sample_lbfv_proof_domain;
     use e3_zk_helpers::circuits::threshold::pk_generation::LbfvPkGenerationAdapter;
     use e3_zk_helpers::circuits::threshold::rlk_aggregation::{
-        RlkAggregationCircuitData, RlkAggregationInputs,
+        RlkAggregationCircuitData, RlkAggregationComponent, RlkAggregationInputs,
     };
     use e3_zk_helpers::{CiphernodesCommitteeSize, Computation};
     use fhe::aggregate::AggregateIter;
@@ -445,24 +445,28 @@ pub(crate) mod tests {
                     shares: public_key_shares.clone(),
                 },
             )?;
-            let rlk_inputs = RlkAggregationInputs::compute(
-                preset,
-                &RlkAggregationCircuitData {
-                    committee: committee.clone(),
-                    proof_domain: proof_domain.clone(),
-                    aggregator_party_id: 0,
-                    party_ids: party_ids.clone(),
-                    row_index,
-                    shares: rlk_shares.clone(),
-                },
-            )?;
+            let rlk_agg = |component| -> Result<_> {
+                let inputs = RlkAggregationInputs::compute(
+                    preset,
+                    &RlkAggregationCircuitData {
+                        committee: committee.clone(),
+                        proof_domain: proof_domain.clone(),
+                        aggregator_party_id: 0,
+                        party_ids: party_ids.clone(),
+                        row_index,
+                        component,
+                        shares: rlk_shares.clone(),
+                    },
+                )?;
+                Ok(compute_rlk_aggregation_commitment(&inputs.agg, bit))
+            };
             pk_rows.push(compute_pk_aggregation_commitment(
                 &pk_inputs.pk0_agg,
                 &pk_adapter.crs_row(row_index)?,
                 bit,
             ));
-            d0_rows.push(compute_rlk_aggregation_commitment(&rlk_inputs.d0_agg, bit));
-            d2_rows.push(compute_rlk_aggregation_commitment(&rlk_inputs.d2_agg, bit));
+            d0_rows.push(rlk_agg(RlkAggregationComponent::D0)?);
+            d2_rows.push(rlk_agg(RlkAggregationComponent::D2)?);
         }
 
         let expected_public_key = compute_lbfv_public_key_commitment(&pk_rows);
@@ -472,6 +476,66 @@ pub(crate) mod tests {
         assert_eq!(actual.public_key, field_bytes(&expected_public_key)?);
         assert_eq!(actual.relinearization_key, field_bytes(&expected_rlk)?);
         assert_eq!(actual.envelope, field_bytes(&expected_envelope)?);
+        Ok(())
+    }
+
+    /// The user-data-encryption wrapper commits the encryption key as
+    /// `H_PKAGG(commit(pk0), commit(pk1))`. The envelope's encryption key is public-key row 0, so
+    /// that commitment must equal the row-0 `pk_agg_commitment` that `lbfv_pk_aggregation`
+    /// outputs, with the same packing width.
+    #[test]
+    fn encryption_key_commitment_matches_row_zero_aggregation_output() -> Result<()> {
+        use e3_zk_helpers::circuits::threshold::user_data_encryption_chunked::{
+            Bits as UdeBits, Bounds as UdeBounds, Inputs as UdeInputs,
+            UserDataEncryptionCircuitData,
+        };
+        use e3_zk_helpers::compute_pk_aggregation_pk1_commitment;
+        use fhe::bfv::{Encoding, Plaintext};
+        use fhe_traits::FheEncoder;
+
+        let (preset, public_key_shares, _, public_key, rlk) = operational_key_material()?;
+        let encoded = encode_lbfv_key_envelope(&public_key.to_bytes(), &rlk.to_bytes(), preset)?;
+        let (_, encryption_key) = inspect_lbfv_key_envelope(&encoded, preset)?;
+        let (params, _) = build_pair_for_preset(preset)?;
+        let bit = compute_modulus_bit(&params);
+
+        let row_zero = LbfvPkAggregationInputs::compute(
+            preset,
+            &LbfvPkAggregationCircuitData {
+                committee: CiphernodesCommitteeSize::Minimum.values(),
+                proof_domain: sample_lbfv_proof_domain(),
+                aggregator_party_id: 0,
+                party_ids: vec![0, 1],
+                row_index: 0,
+                shares: public_key_shares,
+            },
+        )?;
+        let crs_row_zero = LbfvPkGenerationAdapter::new(preset)?.crs_row(0)?;
+        let aggregation_output =
+            compute_pk_aggregation_commitment(&row_zero.pk0_agg, &crs_row_zero, bit);
+
+        let ude = UdeInputs::compute(
+            preset,
+            &UserDataEncryptionCircuitData {
+                public_key: PublicKey::from_bytes(&encryption_key, &params)?,
+                plaintext: Plaintext::try_encode(&[1u64], Encoding::poly(), &params)?,
+            },
+        )?;
+        let ude_bit = UdeBits::compute(preset, &UdeBounds::compute(preset, &())?)?.pk_bit;
+
+        assert_eq!(ude_bit, bit);
+        assert_eq!(
+            ude.pk0_commitment,
+            compute_pk_aggregation_pk1_commitment(&row_zero.pk0_agg, bit)
+        );
+        assert_eq!(
+            ude.pk1_commitment,
+            compute_pk_aggregation_pk1_commitment(&crs_row_zero, bit)
+        );
+        assert_eq!(
+            compute_pk_aggregation_commitment(&ude.pk0is, &ude.pk1is, ude_bit),
+            aggregation_output
+        );
         Ok(())
     }
 

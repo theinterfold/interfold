@@ -19,6 +19,7 @@ use e3_zk_helpers::computation::{Computation, DkgInputType};
 use e3_zk_helpers::dkg::share_computation::{
     Inputs, ShareComputationCircuit, ShareComputationCircuitData,
 };
+use e3_zk_helpers::poly_coefficients_to_toml_json;
 use rayon::prelude::*;
 use serde_json::Value;
 use std::time::Instant;
@@ -171,6 +172,15 @@ pub fn prove_chunked_share_computation_with_chunk_size(
         )));
     }
 
+    // C2b leaves prove the smudging bound over the integers (C1 carries it on the trBFV path), so
+    // they also take the lifted noise and its CRT quotients, chunked like `y`.
+    let e_sm_lift = match data.dkg_input_type {
+        DkgInputType::SecretKey => None,
+        DkgInputType::SmudgingNoise => Some(inputs.e_sm_lift.as_ref().ok_or_else(|| {
+            ZkError::InputsGenerationFailed("C2b input is missing the lifted e_sm".into())
+        })?),
+    };
+
     let mut step_timings = Vec::new();
     let t_chunks = Instant::now();
     let chunks: Vec<e3_events::Proof> = (0..chunk_count)
@@ -246,6 +256,22 @@ pub fn prove_chunked_share_computation_with_chunk_size(
                 "y_chunk".into(),
                 Value::Array(y[start..start + chunk_size].to_vec()),
             );
+            if let Some((lifted, quotients)) = e_sm_lift {
+                let end = start + chunk_size;
+                chunk_json.insert(
+                    "e_sm_lifted_chunk".into(),
+                    poly_coefficients_to_toml_json(&lifted[start..end]),
+                );
+                chunk_json.insert(
+                    "e_sm_quotients_chunk".into(),
+                    Value::Array(
+                        quotients
+                            .iter()
+                            .map(|limb| poly_coefficients_to_toml_json(&limb[start..end]))
+                            .collect(),
+                    ),
+                );
+            }
             let input_map = inputs_json_to_input_map(&Value::Object(chunk_json))?;
             let circuit_path = prover
                 .circuits_dir(e3_events::CircuitVariant::Recursive, artifacts_dir)

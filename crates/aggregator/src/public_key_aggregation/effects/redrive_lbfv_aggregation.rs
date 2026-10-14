@@ -23,6 +23,7 @@
 //! request produces the accepted response.
 
 use super::super::*;
+use e3_zk_helpers::threshold::rlk_aggregation::RlkAggregationComponent;
 use std::collections::HashSet;
 use std::time::Duration;
 
@@ -139,10 +140,9 @@ impl PublicKeyAggregator {
                 aggregation.public_key_aggregation_correlations[row],
                 LBFV_ROW_CORRELATION_TIMEOUT_SECS,
             );
-            check(
-                aggregation.rlk_aggregation_correlations[row],
-                LBFV_ROW_CORRELATION_TIMEOUT_SECS,
-            );
+            for correlation in aggregation.rlk_aggregation_correlations[row] {
+                check(correlation, LBFV_ROW_CORRELATION_TIMEOUT_SECS);
+            }
         }
         check(
             aggregation.aggregation_fold_correlation,
@@ -179,9 +179,11 @@ impl PublicKeyAggregator {
                     aggregation.clear_public_key_correlation(row, *correlation)?;
                     cleared = true;
                 }
-                if aggregation.rlk_aggregation_correlations[row as usize] == Some(*correlation) {
-                    aggregation.clear_rlk_correlation(row, *correlation)?;
-                    cleared = true;
+                for component in RlkAggregationComponent::ALL {
+                    if aggregation.rlk_correlation(row, component)? == Some(*correlation) {
+                        aggregation.clear_rlk_correlation(row, component, *correlation)?;
+                        cleared = true;
+                    }
                 }
             }
             if aggregation.aggregation_fold_correlation == Some(*correlation) {

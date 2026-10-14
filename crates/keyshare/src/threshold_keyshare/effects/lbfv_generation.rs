@@ -155,28 +155,6 @@ impl ThresholdKeyshare {
         self.try_finalize_lbfv_bundle(ec)
     }
 
-    pub(in crate::actors::threshold_keyshare) fn record_lbfv_c1_proof(
-        &mut self,
-        signed: SignedProofPayload,
-        ec: EventContext<Sequenced>,
-    ) -> Result<()> {
-        if self.main_lbfv_work_failed()? {
-            return Ok(());
-        }
-        if !self.lbfv_generation.has() {
-            return Ok(());
-        }
-        let state = self.lbfv_generation.try_get()?;
-        if state.is_ready() || state.failure.is_some() {
-            return Ok(());
-        }
-        self.lbfv_generation.try_mutate(&ec, |mut state| {
-            state.record_c1_proof(signed)?;
-            Ok(state)
-        })?;
-        self.try_finalize_lbfv_bundle(ec)
-    }
-
     pub(in crate::actors::threshold_keyshare) fn resume_lbfv_generation(
         &mut self,
         ec: EventContext<Sequenced>,

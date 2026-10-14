@@ -67,12 +67,7 @@ fn lbfv_generation_bundle(
     party_id: u32,
 ) -> Vec<SignedProofPayload> {
     let session = split_hash_to_field_limbs(hash_lbfv_proof_session(lbfv_proof_domain(e3_id)));
-    let mut proofs = vec![signed_fields(
-        signer,
-        e3_id,
-        ProofType::C1PkGeneration,
-        vec![field(21), field(90), field(91)],
-    )];
+    let mut proofs = Vec::new();
     for row in 0..ProofType::LBFV_ROW_INSTANCES {
         proofs.push(signed_fields(
             signer,
@@ -136,26 +131,27 @@ fn lbfv_aggregation_bundle(
             ],
         ));
     }
-    for row in 0..ProofType::LBFV_ROW_INSTANCES {
-        proofs.push(signed_fields(
-            signer,
-            e3_id,
-            ProofType::RlkAggregation,
-            vec![
-                field_u128(session.hi),
-                field_u128(session.lo),
-                field(aggregator_party_id),
-                field_u128(accepted.hi),
-                field_u128(accepted.lo),
-                field(row),
-                field(50),
-                field(51),
-                field(60),
-                field(61),
-                field(70 + row),
-                field(80 + row),
-            ],
-        ));
+    // The `d0` rows, then the `d2` rows, each opening that component's generation commitments.
+    for component in 0..2 {
+        for row in 0..ProofType::LBFV_ROW_INSTANCES {
+            proofs.push(signed_fields(
+                signer,
+                e3_id,
+                ProofType::RlkAggregation,
+                vec![
+                    field_u128(session.hi),
+                    field_u128(session.lo),
+                    field(aggregator_party_id),
+                    field_u128(accepted.hi),
+                    field_u128(accepted.lo),
+                    field(row),
+                    field(component),
+                    field(50 + 10 * component),
+                    field(51 + 10 * component),
+                    field(70 + 10 * component + row),
+                ],
+            ));
+        }
     }
     proofs
 }
@@ -191,6 +187,12 @@ fn canonical_shape_rejects_cross_phase_and_singleton_multiplicity() {
         &VerificationKind::PkGenerationProofs,
         &[c1.clone(), c1.clone()],
         BfvPreset::InsecureDkg,
+    ));
+    // The l-BFV path proves no C1.
+    assert!(!ShareVerifier::has_canonical_proof_shape(
+        &VerificationKind::PkGenerationProofs,
+        std::slice::from_ref(&c1),
+        BfvPreset::InsecureThresholdLbfv,
     ));
     assert!(!ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::ThresholdDecryptionProofs,
@@ -351,59 +353,54 @@ fn lbfv_generation_requires_both_canonical_linked_row_families() {
         BfvPreset::SecureThreshold16384,
     ));
 
+    let rows = ProofType::LBFV_ROW_INSTANCES as usize;
     let mut reordered = bundle.clone();
-    reordered.swap(0, 1);
+    reordered.swap(0, rows);
     assert!(!ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::LbfvGenerationProofs,
         &reordered,
         BfvPreset::SecureThreshold16384,
     ));
 
-    let mut duplicate_c1 = bundle.clone();
-    duplicate_c1.insert(1, bundle[0].clone());
+    // A leading C1 proof is not part of the l-BFV generation bundle.
+    let mut with_c1 = bundle.clone();
+    with_c1.insert(0, signed_proof(&signer, &e3, ProofType::C1PkGeneration, 1));
     assert!(!ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::LbfvGenerationProofs,
-        &duplicate_c1,
-        BfvPreset::SecureThreshold16384,
-    ));
-
-    let mut malformed_c1 = bundle.clone();
-    let mut signals = malformed_c1[0].payload.proof.public_signals.extract_bytes();
-    signals.extend_from_slice(&field(92));
-    malformed_c1[0].payload.proof.public_signals = ArcBytes::from_bytes(&signals);
-    assert!(!ShareVerifier::has_canonical_proof_shape(
-        &VerificationKind::LbfvGenerationProofs,
-        &malformed_c1,
+        &with_c1,
         BfvPreset::SecureThreshold16384,
     ));
     assert!(!ShareVerifier::has_valid_lbfv_statements(
         &VerificationKind::LbfvGenerationProofs,
-        &malformed_c1,
+        &with_c1,
         1,
         &e3,
         CiphernodesCommitteeSize::Minimum,
         Some(&context),
     ));
 
-    let mut mismatched_sk = bundle.clone();
-    let mut signals = mismatched_sk[0]
-        .payload
-        .proof
-        .public_signals
-        .extract_bytes();
-    signals[31] ^= 1;
-    mismatched_sk[0].payload.proof.public_signals = ArcBytes::from_bytes(&signals);
-    assert!(!ShareVerifier::has_valid_lbfv_statements(
-        &VerificationKind::LbfvGenerationProofs,
-        &mismatched_sk,
-        1,
-        &e3,
-        CiphernodesCommitteeSize::Minimum,
-        Some(&context),
-    ));
+    // Every PK and RLK row must commit the same `sk`: flip it in one PK row, then in one RLK row.
+    for tampered_row in [2, rows + 3] {
+        let mut mismatched_sk = bundle.clone();
+        let mut signals = mismatched_sk[tampered_row]
+            .payload
+            .proof
+            .public_signals
+            .extract_bytes();
+        signals[4 * e3_zk_helpers::FIELD_BYTE_LEN + 31] ^= 1;
+        mismatched_sk[tampered_row].payload.proof.public_signals = ArcBytes::from_bytes(&signals);
+        assert!(!ShareVerifier::has_valid_lbfv_statements(
+            &VerificationKind::LbfvGenerationProofs,
+            &mismatched_sk,
+            1,
+            &e3,
+            CiphernodesCommitteeSize::Minimum,
+            Some(&context),
+        ));
+    }
 
     let mut mismatched_r = bundle;
-    let rlk = 1 + ProofType::LBFV_ROW_INSTANCES as usize + 4;
+    let rlk = rows + 4;
     let mut signals = mismatched_r[rlk]
         .payload
         .proof
@@ -422,9 +419,9 @@ fn lbfv_generation_requires_both_canonical_linked_row_families() {
 }
 
 #[test]
-fn lbfv_generation_prepares_c1_and_rows_for_one_consistency_decision() {
+fn lbfv_generation_prepares_rows_for_one_consistency_decision() {
     use crate::domain::commitment_links::{
-        c1_to_lbfv::C1ToLbfvPkGenerationSkCommitmentLink, CommitmentLink,
+        lbfv_generation_sk::LbfvPkToRlkGenerationSkCommitmentLink, CommitmentLink,
     };
 
     let signer = signer();
@@ -447,14 +444,15 @@ fn lbfv_generation_prepares_c1_and_rows_for_one_consistency_decision() {
 
     assert_eq!(outcome.consistency_party_data.len(), 1);
     let prepared = &outcome.consistency_party_data[0].proofs;
-    assert_eq!(prepared.len(), 11);
-    assert_eq!(prepared[0].0.proof_type, ProofType::C1PkGeneration);
+    let rows = ProofType::LBFV_ROW_INSTANCES as usize;
+    assert_eq!(prepared.len(), 2 * rows);
 
-    let link = C1ToLbfvPkGenerationSkCommitmentLink;
-    let c1_signals = &prepared[0].1;
-    for (identity, public_signals, _, _) in &prepared[1..=ProofType::LBFV_ROW_INSTANCES as usize] {
-        assert_eq!(identity.proof_type, ProofType::LbfvPkGeneration);
-        assert!(link.check_signals(&link.extract_source_values(public_signals), c1_signals,));
+    let link = LbfvPkToRlkGenerationSkCommitmentLink;
+    for (pk, rlk) in prepared[..rows].iter().zip(&prepared[rows..]) {
+        assert_eq!(pk.0.proof_type, ProofType::LbfvPkGeneration);
+        assert_eq!(rlk.0.proof_type, ProofType::RlkGeneration);
+        assert_eq!(pk.0.instance, rlk.0.instance);
+        assert!(link.check_signals(&link.extract_source_values(&pk.1), &rlk.1));
     }
 }
 
@@ -552,6 +550,31 @@ fn lbfv_aggregation_requires_one_aggregator_and_accepted_set() {
         &e3,
         CiphernodesCommitteeSize::Minimum,
         Some(&context),
+    ));
+
+    // Each RLK family must carry its own component: swapping the `d0` and `d2` proofs of a row
+    // keeps every commitment but binds each to the other component.
+    let rows = ProofType::LBFV_ROW_INSTANCES as usize;
+    assert_eq!(bundle.len(), 3 * rows);
+    let mut swapped_components = bundle.clone();
+    swapped_components.swap(rows + 1, 2 * rows + 1);
+    assert!(ShareVerifier::has_canonical_proof_shape(
+        &VerificationKind::LbfvAggregationProofs,
+        &swapped_components,
+        BfvPreset::SecureThreshold16384,
+    ));
+    assert!(!ShareVerifier::has_valid_lbfv_statements(
+        &VerificationKind::LbfvAggregationProofs,
+        &swapped_components,
+        2,
+        &e3,
+        CiphernodesCommitteeSize::Minimum,
+        Some(&context),
+    ));
+    assert!(!ShareVerifier::has_canonical_proof_shape(
+        &VerificationKind::LbfvAggregationProofs,
+        &bundle[..2 * rows],
+        BfvPreset::SecureThreshold16384,
     ));
 
     let mixed_set = split_hash_to_field_limbs(

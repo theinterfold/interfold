@@ -23,6 +23,7 @@ import {
   bfvDecPartyColOffsets,
   bfvDkgCommitteeHashIndices,
   bfvPkExpectedPublicInputsLen,
+  bfvPkV2PublicInputLayout,
   committeeHashFromLimbs,
   getBfvDecryptionSubCircuitVkHashPaths,
   getBfvPkSubCircuitVkHashPaths,
@@ -108,10 +109,10 @@ const readFoldedArtifactsFromFile = (
 };
 
 const v2DkgLbfvRows = (publicInputs: string[]): 3 | 5 | null => {
-  if (publicInputs.length === 41 + 3 * BFV_DKG_H + 3 * 3) {
+  if (publicInputs.length === bfvPkV2PublicInputLayout(BFV_DKG_H, 3).length) {
     return 3;
   }
-  if (publicInputs.length === 41 + 3 * BFV_DKG_H + 3 * 5) {
+  if (publicInputs.length === bfvPkV2PublicInputLayout(BFV_DKG_H, 5).length) {
     return 5;
   }
   return null;
@@ -134,9 +135,9 @@ const hasExpectedFoldedLayout = (value: FoldedArtifacts): boolean => {
 const isV2DkgLayout = (publicInputs: string[]): boolean =>
   v2DkgLbfvRows(publicInputs) !== null;
 
-const v2DkgVkBindingStart = (publicInputs: string[]): number | null => {
+const v2DkgLayout = (publicInputs: string[]) => {
   const rows = v2DkgLbfvRows(publicInputs);
-  return rows === null ? null : 30 + 3 * BFV_DKG_H + 3 * rows;
+  return rows === null ? null : bfvPkV2PublicInputLayout(BFV_DKG_H, rows);
 };
 
 /** Prefer env override, then current-layout benchmark output, then the committed fixture. */
@@ -170,7 +171,8 @@ const hasCompiledV2VkArtifacts = (): boolean =>
   hasActiveCircuitSelection("secure-16384", "minimum") &&
   [
     getBfvV2SubCircuitVkHashPaths().nodesFold,
-    ...Object.values(getBfvPkSubCircuitVkHashPaths()),
+    getBfvPkSubCircuitVkHashPaths().skC2Chunk,
+    getBfvPkSubCircuitVkHashPaths().esmC2Chunk,
     ...getBfvPkVkBindingHashPaths(),
     ...getBfvV2VkBindingHashPaths(),
   ].every((p) => fs.existsSync(p));
@@ -215,12 +217,14 @@ function plaintextHashFromPublicInputs(publicInputs: string[]): string {
 describe("BfvVkBindingIntegration", function () {
   it("recognizes the five-row secure-16384 folded DKG layout", function () {
     const secure16384DkgPublicInputs = Array.from(
-      { length: 41 + 3 * BFV_DKG_H + 3 * 5 },
+      { length: 39 + 3 * BFV_DKG_H + 3 * 5 },
       () => ethers.ZeroHash,
     );
 
     expect(v2DkgLbfvRows(secure16384DkgPublicInputs)).to.equal(5);
-    expect(v2DkgVkBindingStart(secure16384DkgPublicInputs)).to.equal(51);
+    expect(v2DkgLayout(secure16384DkgPublicInputs)?.v2VkBindingStart).to.equal(
+      28 + 3 * BFV_DKG_H + 3 * 5,
+    );
   });
 
   const deployHonkAndBfv = async () => {
@@ -412,7 +416,6 @@ describe("BfvVkBindingIntegration", function () {
           getBfvV2SubCircuitVkHashPaths().nodesFold,
         );
         const pkPaths = getBfvPkSubCircuitVkHashPaths();
-        const expectedC5KeyHash = readVkRecursiveHash(pkPaths.c5);
         const expectedSkC2ChunkKeyHash = readVkRecursiveHash(pkPaths.skC2Chunk);
         const expectedESmC2ChunkKeyHash = readVkRecursiveHash(
           pkPaths.esmC2Chunk,
@@ -434,7 +437,6 @@ describe("BfvVkBindingIntegration", function () {
             2,
             3,
             expectedNodesFoldKeyHash,
-            expectedC5KeyHash,
             expectedSkC2ChunkKeyHash,
             expectedESmC2ChunkKeyHash,
             legacyVkBinding,
@@ -520,25 +522,29 @@ describe("BfvVkBindingIntegration", function () {
       );
 
       expect(dkgPublicInputs[0]).to.equal(expectedNodesFoldKeyHash);
-      expect(dkgPublicInputs[1]).to.equal(expectedC5KeyHash);
-      // The trBFV aggregator binds every inner VK through the nodes-fold tree anchor above. The
-      // l-BFV aggregator also exposes the legacy binding, the C2 chunk hashes and the V2 binding.
-      if (isV2DkgLayout(dkgPublicInputs)) {
+      // The trBFV aggregator binds every inner VK through the nodes-fold tree anchor above and
+      // pins C5. The l-BFV aggregator has no C5; it exposes the legacy binding, the C2 chunk
+      // hashes and the V2 binding.
+      const v2Layout = v2DkgLayout(dkgPublicInputs);
+      if (v2Layout !== null) {
         expectedVkBinding.forEach((expected, index) => {
-          expect(dkgPublicInputs[4 + BFV_DKG_H + index]).to.equal(expected);
+          expect(
+            dkgPublicInputs[v2Layout.legacyVkBindingStart + index],
+          ).to.equal(expected);
         });
-        expect(dkgPublicInputs[21 + BFV_DKG_H]).to.equal(
+        expect(dkgPublicInputs[v2Layout.skC2ChunkKeyHash]).to.equal(
           expectedSkC2ChunkKeyHash,
         );
-        expect(dkgPublicInputs[22 + BFV_DKG_H]).to.equal(
+        expect(dkgPublicInputs[v2Layout.esmC2ChunkKeyHash]).to.equal(
           expectedESmC2ChunkKeyHash,
         );
-        const v2BindingStart = v2DkgVkBindingStart(dkgPublicInputs)!;
         getBfvV2VkBindingHashPaths().forEach((filePath, index) => {
-          expect(dkgPublicInputs[v2BindingStart + index]).to.equal(
+          expect(dkgPublicInputs[v2Layout.v2VkBindingStart + index]).to.equal(
             readVkRecursiveHash(filePath),
           );
         });
+      } else {
+        expect(dkgPublicInputs[1]).to.equal(expectedC5KeyHash);
       }
       expect(decPublicInputs[0]).to.equal(expectedC6FoldKeyHash);
       expect(decPublicInputs[1]).to.equal(expectedC7KeyHash);

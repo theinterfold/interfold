@@ -19,7 +19,7 @@ use e3_committee_hash::{
 use e3_events::{
     CiphernodeSelected, LbfvKeyShareDocument, LbfvKeyShareDocumentContextV1, LbfvKeyShareManifest,
     LbfvKeyShareManifestV1, LbfvPkGenerationProofRequest, LbfvPkGenerationProofResponse,
-    LbfvPublicKeyShareDocumentV2, LbfvRelinearizationKeyShareDocumentV2, ProofIdentity, ProofType,
+    LbfvPublicKeyShareDocumentV3, LbfvRelinearizationKeyShareDocumentV2, ProofIdentity, ProofType,
     RlkGenerationProofRequest, RlkGenerationProofResponse, SignedLbfvKeyShareManifest,
     SignedProofPayload, ZkRequest,
 };
@@ -29,7 +29,7 @@ use e3_trbfv::{
     lbfv_operation::LbfvOperationId,
 };
 
-pub const LBFV_GENERATION_SCHEMA_VERSION: u32 = 3;
+pub const LBFV_GENERATION_SCHEMA_VERSION: u32 = 4;
 const CIRCUIT_VERSION_LABEL: &[u8] = b"interfold-bfv-v2";
 
 /// Version 1 snapshot for one party's local l-BFV generation workflow.
@@ -40,7 +40,6 @@ pub struct LbfvGenerationStateV1 {
     pub committee: Vec<Address>,
     pub generation_request: Option<GenLbfvKeySharesRequest>,
     pub generation_response: Option<GenLbfvKeySharesResponse>,
-    pub signed_c1_proof: Option<SignedProofPayload>,
     pub signed_pk_row_proofs: BTreeMap<u32, SignedProofPayload>,
     pub signed_rlk_row_proofs: BTreeMap<u32, SignedProofPayload>,
     pub public_key_document: Option<LbfvKeyShareDocument>,
@@ -56,13 +55,12 @@ impl serde::Serialize for LbfvGenerationStateV1 {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("LbfvGenerationStateV1", 13)?;
+        let mut state = serializer.serialize_struct("LbfvGenerationStateV1", 12)?;
         state.serialize_field("schema_version", &self.schema_version)?;
         state.serialize_field("context", &self.context)?;
         state.serialize_field("committee", &self.committee)?;
         state.serialize_field("generation_request", &self.generation_request)?;
         state.serialize_field("generation_response", &self.generation_response)?;
-        state.serialize_field("signed_c1_proof", &self.signed_c1_proof)?;
         state.serialize_field("signed_pk_row_proofs", &self.signed_pk_row_proofs)?;
         state.serialize_field("signed_rlk_row_proofs", &self.signed_rlk_row_proofs)?;
         state.serialize_field("public_key_document", &self.public_key_document)?;
@@ -116,27 +114,12 @@ impl<'de> serde::Deserialize<'de> for LbfvGenerationStateV1 {
                 let generation_response = sequence
                     .next_element()?
                     .ok_or_else(|| A::Error::custom("missing l-BFV generation response"))?;
-                let signed_c1_proof = sequence
-                    .next_element()?
-                    .ok_or_else(|| A::Error::custom("missing l-BFV C1 proof"))?;
-                let signed_pk_row_proofs = if schema_version == 1 {
-                    sequence
-                        .next_element::<BTreeMap<u32, SignedProofPayload>>()?
-                        .ok_or_else(|| A::Error::custom("missing legacy l-BFV PK proofs"))?
-                } else {
-                    sequence
-                        .next_element::<BTreeMap<u32, SignedProofPayload>>()?
-                        .ok_or_else(|| A::Error::custom("missing l-BFV PK proofs"))?
-                };
-                let signed_rlk_row_proofs = if schema_version == 1 {
-                    sequence
-                        .next_element::<BTreeMap<u32, SignedProofPayload>>()?
-                        .ok_or_else(|| A::Error::custom("missing legacy l-BFV RLK proofs"))?
-                } else {
-                    sequence
-                        .next_element::<BTreeMap<u32, SignedProofPayload>>()?
-                        .ok_or_else(|| A::Error::custom("missing l-BFV RLK proofs"))?
-                };
+                let signed_pk_row_proofs = sequence
+                    .next_element::<BTreeMap<u32, SignedProofPayload>>()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV PK proofs"))?;
+                let signed_rlk_row_proofs = sequence
+                    .next_element::<BTreeMap<u32, SignedProofPayload>>()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV RLK proofs"))?;
                 let public_key_document = sequence
                     .next_element()?
                     .ok_or_else(|| A::Error::custom("missing l-BFV public-key document"))?;
@@ -149,20 +132,15 @@ impl<'de> serde::Deserialize<'de> for LbfvGenerationStateV1 {
                 let failure = sequence
                     .next_element()?
                     .ok_or_else(|| A::Error::custom("missing l-BFV failure state"))?;
-                let params_preset = if schema_version == 1 {
-                    BfvPreset::SecureThreshold16384
-                } else {
-                    sequence
-                        .next_element()?
-                        .ok_or_else(|| A::Error::custom("missing l-BFV parameter preset"))?
-                };
+                let params_preset = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV parameter preset"))?;
                 Ok(LbfvGenerationStateV1 {
                     schema_version: LBFV_GENERATION_SCHEMA_VERSION,
                     context,
                     committee,
                     generation_request,
                     generation_response,
-                    signed_c1_proof,
                     signed_pk_row_proofs,
                     signed_rlk_row_proofs,
                     public_key_document,
@@ -182,7 +160,6 @@ impl<'de> serde::Deserialize<'de> for LbfvGenerationStateV1 {
                 "committee",
                 "generation_request",
                 "generation_response",
-                "signed_c1_proof",
                 "signed_pk_row_proofs",
                 "signed_rlk_row_proofs",
                 "public_key_document",
@@ -267,7 +244,6 @@ impl LbfvGenerationStateV1 {
             committee,
             generation_request: None,
             generation_response: None,
-            signed_c1_proof: None,
             signed_pk_row_proofs: BTreeMap::new(),
             signed_rlk_row_proofs: BTreeMap::new(),
             public_key_document: None,
@@ -411,22 +387,6 @@ impl LbfvGenerationStateV1 {
         Ok(true)
     }
 
-    pub fn record_c1_proof(&mut self, signed: SignedProofPayload) -> Result<bool> {
-        if self.is_ready() || self.failure.is_some() {
-            return Ok(false);
-        }
-        self.validate_signed_proof(&signed, ProofType::C1PkGeneration, 0)?;
-        if let Some(existing) = &self.signed_c1_proof {
-            ensure!(
-                existing.payload == signed.payload,
-                "conflicting C1 proof for one l-BFV generation session"
-            );
-            return Ok(false);
-        }
-        self.signed_c1_proof = Some(signed);
-        Ok(true)
-    }
-
     pub fn record_pk_row_proof(
         &mut self,
         response: &LbfvPkGenerationProofResponse,
@@ -535,7 +495,7 @@ impl LbfvGenerationStateV1 {
     }
 
     pub fn build_documents(&self) -> Result<Option<(LbfvKeyShareDocument, LbfvKeyShareDocument)>> {
-        let (Some(response), Some(c1)) = (&self.generation_response, &self.signed_c1_proof) else {
+        let Some(response) = &self.generation_response else {
             return Ok(None);
         };
         let row_count = self.row_count()?;
@@ -546,10 +506,9 @@ impl LbfvGenerationStateV1 {
         }
         let pk_rows = rows_from_map(&self.signed_pk_row_proofs)?;
         let rlk_rows = rows_from_map(&self.signed_rlk_row_proofs)?;
-        let public_key = LbfvKeyShareDocument::PublicKeyV2(LbfvPublicKeyShareDocumentV2 {
+        let public_key = LbfvKeyShareDocument::PublicKeyV3(LbfvPublicKeyShareDocumentV3 {
             context: self.context.clone(),
             share: response.public_key_share_bytes.clone(),
-            signed_c1_proof: c1.clone(),
             signed_row_proofs: pk_rows,
         });
         let relinearization_key =
@@ -795,7 +754,7 @@ mod tests {
             committee: state.committee,
             generation_request: state.generation_request,
             generation_response: state.generation_response,
-            signed_c1_proof: state.signed_c1_proof,
+            signed_c1_proof: None,
             signed_pk_row_proofs: state.signed_pk_row_proofs,
             signed_rlk_row_proofs: state.signed_rlk_row_proofs,
             public_key_document: state.public_key_document,
@@ -931,9 +890,6 @@ mod tests {
             2 * lbfv_row_count(state.params_preset).unwrap()
         );
 
-        let c1 = proof(&state, CircuitName::PkGenerationChunked, 0);
-        let signed_c1 = signed_proof(&state, ProofType::C1PkGeneration, c1);
-        state.record_c1_proof(signed_c1.clone()).unwrap();
         let mut late_pk_row = None;
         let mut late_rlk_row = None;
         for row in 0..lbfv_row_count(state.params_preset).unwrap() as u32 {
@@ -994,7 +950,6 @@ mod tests {
         assert!(state.generation_request.is_none());
         assert!(state.generation_response.is_none());
         assert!(!state.record_generation_response(response).unwrap());
-        assert!(!state.record_c1_proof(signed_c1).unwrap());
         let (response, signed) = late_pk_row.unwrap();
         assert!(!state.record_pk_row_proof(&response, signed).unwrap());
         let (response, signed) = late_rlk_row.unwrap();
@@ -1003,7 +958,7 @@ mod tests {
         let encoded = bincode::serialize(&state).unwrap();
         assert_eq!(
             keccak256(&encoded),
-            "0xfdb31b94986d29c6fc1e34889173082852797c5a87a0bcca2322a32483959467"
+            "0x5c27a1acf0cd2dda8cce9e327b921df850a78bf95f91382330f36d6feba72653"
                 .parse::<B256>()
                 .unwrap()
         );
@@ -1068,20 +1023,6 @@ mod tests {
         state
             .record_generation_response(generation_response(&request))
             .unwrap();
-
-        let c1_proof = proof(&state, CircuitName::PkGenerationChunked, 0);
-        let c1 = signed_proof(&state, ProofType::C1PkGeneration, c1_proof.clone());
-        state.record_c1_proof(c1.clone()).unwrap();
-        let conflicting_c1 = signed_proof(
-            &state,
-            ProofType::C1PkGeneration,
-            Proof::new(
-                CircuitName::PkGenerationChunked,
-                ArcBytes::from_bytes(&[0xbb]),
-                c1_proof.public_signals,
-            ),
-        );
-        assert!(state.record_c1_proof(conflicting_c1).is_err());
 
         let identity = ProofIdentity {
             proof_type: ProofType::LbfvPkGeneration,

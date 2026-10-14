@@ -159,9 +159,8 @@ pub const RLK_GENERATION_LIMB_OUTPUTS: &[OutputField] = &[
     f("d2_limb_commitment"),
 ];
 
-/// l-BFV relinearization-key aggregation for one gadget row.
-pub const RLK_AGGREGATION_OUTPUTS: &[OutputField] =
-    &[f("d0_agg_commitment"), f("d2_agg_commitment")];
+/// l-BFV relinearization-key aggregation for one component (`d0` or `d2`) of one gadget row.
+pub const RLK_AGGREGATION_OUTPUTS: &[OutputField] = &[f("agg_commitment")];
 
 /// C4 — DKG share decryption.
 pub const DKG_SHARE_DECRYPTION_OUTPUTS: &[OutputField] = &[f("commitment")];
@@ -173,7 +172,7 @@ pub const PK_AGGREGATION_OUTPUTS: &[OutputField] = &[f("commitment")];
 pub const THRESHOLD_SHARE_DECRYPTION_OUTPUTS: &[OutputField] = &[f("d_commitment")];
 
 /// Number of legacy recursive verification-key bindings in `dkg_aggregator_v2`.
-pub const DKG_AGGREGATOR_V2_LEGACY_VK_BINDING_LEN: usize = 16;
+pub const DKG_AGGREGATOR_V2_LEGACY_VK_BINDING_LEN: usize = 15;
 
 /// Number of V2 recursive verification-key bindings in `dkg_aggregator_v2`.
 pub const DKG_AGGREGATOR_V2_VK_BINDING_LEN: usize = 11;
@@ -182,7 +181,6 @@ pub const DKG_AGGREGATOR_V2_VK_BINDING_LEN: usize = 11;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DkgAggregatorV2PublicLayout {
     pub nodes_fold_key_hash: usize,
-    pub c5_key_hash: usize,
     pub party_ids: Range<usize>,
     pub committee_hash_hi: usize,
     pub committee_hash_lo: usize,
@@ -209,7 +207,7 @@ pub struct DkgAggregatorV2PublicLayout {
 impl DkgAggregatorV2PublicLayout {
     /// Build the layout for one compiled committee and l-BFV row count.
     pub fn new(committee_h: usize, lbfv_row_count: usize) -> Self {
-        let party_ids = 2..2 + committee_h;
+        let party_ids = 1..1 + committee_h;
         let committee_hash_hi = party_ids.end;
         let committee_hash_lo = committee_hash_hi + 1;
         let legacy_vk_binding =
@@ -238,7 +236,6 @@ impl DkgAggregatorV2PublicLayout {
 
         Self {
             nodes_fold_key_hash: 0,
-            c5_key_hash: 1,
             party_ids,
             committee_hash_hi,
             committee_hash_lo,
@@ -336,7 +333,8 @@ pub const LBFV_PK_AGGREGATION_INPUTS: &[OutputField] = &[
     f("row_index"),
 ];
 
-/// Public domain, accepted party-set hash, and row for RLK aggregation.
+/// Public domain, accepted party-set hash, row, and component (0 = `d0`, 1 = `d2`) for RLK
+/// aggregation.
 pub const RLK_AGGREGATION_INPUTS: &[OutputField] = &[
     f("session_id_hi"),
     f("session_id_lo"),
@@ -344,6 +342,7 @@ pub const RLK_AGGREGATION_INPUTS: &[OutputField] = &[
     f("accepted_party_set_hash_hi"),
     f("accepted_party_set_hash_lo"),
     f("row_index"),
+    f("component"),
 ];
 
 /// Exact field positions for one l-BFV public-key aggregation statement.
@@ -378,7 +377,7 @@ impl LbfvPkAggregationPublicLayout {
     }
 }
 
-/// Exact field positions for one RLK aggregation statement.
+/// Exact field positions for one RLK aggregation statement: one component of one gadget row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RlkAggregationPublicLayout {
     pub session_id_hi: usize,
@@ -387,20 +386,17 @@ pub struct RlkAggregationPublicLayout {
     pub accepted_party_set_hash_hi: usize,
     pub accepted_party_set_hash_lo: usize,
     pub row_index: usize,
-    pub expected_d0_commitments: Range<usize>,
-    pub expected_d2_commitments: Range<usize>,
-    pub d0_agg_commitment: usize,
-    pub d2_agg_commitment: usize,
+    pub component: usize,
+    /// Each accepted party's generation commitment for this row's component.
+    pub expected_commitments: Range<usize>,
+    pub agg_commitment: usize,
     pub field_count: usize,
 }
 
 impl RlkAggregationPublicLayout {
     pub fn new(committee_h: usize) -> Self {
-        let expected_d0_commitments = 6..6 + committee_h;
-        let expected_d2_commitments =
-            expected_d0_commitments.end..expected_d0_commitments.end + committee_h;
-        let d0_agg_commitment = expected_d2_commitments.end;
-        let d2_agg_commitment = d0_agg_commitment + 1;
+        let expected_commitments = 7..7 + committee_h;
+        let agg_commitment = expected_commitments.end;
         Self {
             session_id_hi: 0,
             session_id_lo: 1,
@@ -408,11 +404,10 @@ impl RlkAggregationPublicLayout {
             accepted_party_set_hash_hi: 3,
             accepted_party_set_hash_lo: 4,
             row_index: 5,
-            expected_d0_commitments,
-            expected_d2_commitments,
-            d0_agg_commitment,
-            d2_agg_commitment,
-            field_count: d2_agg_commitment + 1,
+            component: 6,
+            expected_commitments,
+            agg_commitment,
+            field_count: agg_commitment + 1,
         }
     }
 }
@@ -693,27 +688,27 @@ mod tests {
         assert_eq!(pk.field_count, 9);
 
         let rlk = RlkAggregationPublicLayout::new(2);
-        assert_eq!(rlk.expected_d0_commitments, 6..8);
-        assert_eq!(rlk.expected_d2_commitments, 8..10);
-        assert_eq!(rlk.d0_agg_commitment, 10);
-        assert_eq!(rlk.d2_agg_commitment, 11);
-        assert_eq!(rlk.field_count, 12);
+        assert_eq!(rlk.component, RLK_AGGREGATION_INPUTS.len() - 1);
+        assert_eq!(rlk.expected_commitments, 7..9);
+        assert_eq!(rlk.agg_commitment, 9);
+        assert_eq!(rlk.field_count, 10);
     }
 
     #[test]
     fn dkg_aggregator_v2_layout_tracks_dynamic_commitment_position() {
         let secure_minimum = DkgAggregatorV2PublicLayout::new(2, 5);
-        assert_eq!(secure_minimum.party_ids, 2..4);
-        assert_eq!(secure_minimum.sk_agg_commitments, 25..27);
-        assert_eq!(secure_minimum.esm_agg_commitments, 27..29);
-        assert_eq!(secure_minimum.key_envelope_commitment, 29);
-        assert_eq!(secure_minimum.aggregate_pk_commitments, 36..41);
-        assert_eq!(secure_minimum.v2_vk_binding, 51..62);
-        assert_eq!(secure_minimum.field_count, 62);
+        assert_eq!(secure_minimum.party_ids, 1..3);
+        assert_eq!(secure_minimum.legacy_vk_binding, 5..20);
+        assert_eq!(secure_minimum.sk_agg_commitments, 23..25);
+        assert_eq!(secure_minimum.esm_agg_commitments, 25..27);
+        assert_eq!(secure_minimum.key_envelope_commitment, 27);
+        assert_eq!(secure_minimum.aggregate_pk_commitments, 34..39);
+        assert_eq!(secure_minimum.v2_vk_binding, 49..60);
+        assert_eq!(secure_minimum.field_count, 60);
 
         let insecure_micro = DkgAggregatorV2PublicLayout::new(5, 3);
-        assert_eq!(insecure_micro.key_envelope_commitment, 38);
-        assert_eq!(insecure_micro.field_count, 65);
+        assert_eq!(insecure_micro.key_envelope_commitment, 36);
+        assert_eq!(insecure_micro.field_count, 63);
     }
 
     /// C7 (`DecryptedSharesAggregation`) has no `-> pub` return values; metadata uses `None`.

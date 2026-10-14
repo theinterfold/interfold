@@ -16,20 +16,13 @@ contract MockBfvPkVerifierRoute is IBfvPkVerifierRoute {
     uint256 public immutable override h;
     uint256 public immutable override expectedPublicInputsLen;
     bytes32 public immutable override expectedNodesFoldKeyHash;
-    bytes32 public immutable override expectedC5KeyHash;
     bool private immutable result;
     bytes32 private expectedCallHash;
 
-    constructor(
-        uint256 _h,
-        bytes32 _expectedNodesFoldKeyHash,
-        bytes32 _expectedC5KeyHash,
-        bool _result
-    ) {
+    constructor(uint256 _h, bytes32 _expectedNodesFoldKeyHash, bool _result) {
         h = _h;
         expectedPublicInputsLen = (3 * _h) + 24;
         expectedNodesFoldKeyHash = _expectedNodesFoldKeyHash;
-        expectedC5KeyHash = _expectedC5KeyHash;
         result = _result;
     }
 

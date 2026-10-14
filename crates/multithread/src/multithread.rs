@@ -840,6 +840,21 @@ fn ensure_lbfv_preset(
     Ok(())
 }
 
+/// C1 is a trBFV proof: on the l-BFV path the row proofs bind `sk` and the C2b chunk leaves bound
+/// `e_sm`.
+fn ensure_c1_preset(
+    preset: BfvPreset,
+    request: &ComputeRequest,
+) -> Result<(), ComputeRequestError> {
+    if e3_fhe_params::is_lbfv_path(preset) {
+        return Err(make_zk_error(
+            request,
+            format!("the l-BFV path proves no C1; received {preset:?}"),
+        ));
+    }
+    Ok(())
+}
+
 fn validated_row_instance(
     proof_type: e3_events::ProofType,
     proof: &Proof,
@@ -1034,6 +1049,7 @@ fn build_rlk_aggregation_data(
         aggregator_party_id: req.aggregator_party_id,
         party_ids: req.party_ids.clone(),
         row_index: req.row_index,
+        component: req.component,
         shares,
     })
 }
@@ -1227,10 +1243,14 @@ fn handle_rlk_aggregation_proof(
                 request.clone(),
             )
         })?;
-    let row_index = validated_row_instance(
+    // The RLK aggregation instance is `component * row_count + row`.
+    let row_count = e3_fhe_params::lbfv_row_count(req.params_preset)
+        .ok_or_else(|| make_zk_error(&request, "the preset does not support l-BFV".into()))?;
+    let instance = req.component.index() * row_count as u32 + req.row_index;
+    validated_row_instance(
         e3_events::ProofType::RlkAggregation,
         &proof,
-        req.row_index,
+        instance,
         req.params_preset,
         &request,
     )?;
@@ -1238,7 +1258,8 @@ fn handle_rlk_aggregation_proof(
         ZkResponse::RlkAggregation(RlkAggregationProofResponse {
             operation_id: req.operation_id,
             proof,
-            row_index,
+            row_index: req.row_index,
+            component: req.component,
             party_ids: req.party_ids,
         }),
         request.correlation_id,
@@ -1822,7 +1843,7 @@ fn handle_node_dkg_fold_proof(
     let job_id = zk_bb_work_id(&request);
     let input = NodeDkgFoldInput {
         c0_proof: &req.c0_proof,
-        c1_proof: &req.c1_proof,
+        c1_proof: req.c1_proof.as_ref(),
         c2a_proof: &req.c2a_proof,
         c2b_proof: &req.c2b_proof,
         c3a_inner_proofs: &req.c3a_inner_proofs,
@@ -1964,7 +1985,6 @@ fn handle_node_dkg_fold_v2_proof(
     let proof = prove_node_dkg_fold_v2_for_preset(
         prover,
         &req.legacy_node_fold_proof,
-        &req.c1_proof,
         &req.generation_proof,
         req.party_id,
         req.params_preset,
@@ -2041,7 +2061,8 @@ fn handle_lbfv_aggregation_fold_proof(
     let proof = prove_lbfv_aggregation_fold_step_for_preset(
         prover,
         &req.pk_proof,
-        &req.rlk_proof,
+        &req.rlk_d0_proof,
+        &req.rlk_d2_proof,
         req.prior_accumulator.as_ref(),
         req.row_index,
         req.committee_size.values().h,
@@ -2071,7 +2092,6 @@ fn handle_dkg_aggregation_v2_proof(
     let proof = prove_dkg_aggregation_v2(
         prover,
         &req.nodes_fold_proof,
-        &req.c5_proof,
         &req.aggregation_fold_proof,
         &req.party_ids,
         &req.committee_addresses,
@@ -2267,6 +2287,7 @@ fn handle_pk_generation_proof(
     req: PkGenerationProofRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
+    ensure_c1_preset(req.params_preset, &request)?;
     // 1. Build BFV parameters from the threshold preset
     let params = BfvParamSet::from(req.params_preset).build_arc();
 
@@ -2785,6 +2806,7 @@ mod tests {
     use e3_fhe_params::lbfv_crs_seed;
     use e3_trbfv::lbfv_operation::LbfvOperationId;
     use e3_utils::ArcBytes;
+    use e3_zk_helpers::threshold::rlk_aggregation::RlkAggregationComponent;
     use fhe::bfv::CommonRandomPolyVec;
     use fhe_math::rq::traits::TryConvertFrom;
     use fhe_traits::Serialize as FheSerialize;
@@ -2905,6 +2927,29 @@ mod tests {
         assert_eq!(data.shares, sample.shares);
     }
 
+    #[test]
+    fn c1_is_proved_only_on_the_trbfv_path() {
+        let request = |params_preset| {
+            compute_request(ZkRequest::PkGeneration(PkGenerationProofRequest {
+                pk0_share: ArcBytes::from_bytes(&[]),
+                sk: SensitiveBytes::from_encrypted(&[]),
+                eek: SensitiveBytes::from_encrypted(&[]),
+                e_sm: SensitiveBytes::from_encrypted(&[]),
+                params_preset,
+                committee_size: CiphernodesCommitteeSize::Minimum,
+            }))
+        };
+        for preset in [
+            BfvPreset::SecureThreshold16384,
+            BfvPreset::InsecureThresholdLbfv,
+        ] {
+            assert!(ensure_c1_preset(preset, &request(preset)).is_err());
+        }
+        for preset in [BfvPreset::SecureThreshold8192, BfvPreset::InsecureThreshold] {
+            assert!(ensure_c1_preset(preset, &request(preset)).is_ok());
+        }
+    }
+
     #[tokio::test]
     async fn lbfv_builders_reject_unsupported_presets_and_invalid_counts() {
         let cipher = Cipher::from_password("lbfv-row-errors").await.unwrap();
@@ -2941,6 +2986,7 @@ mod tests {
             party_ids: vec![0],
             share_bytes: vec![ArcBytes::from_bytes(&[])],
             row_index: 0,
+            component: RlkAggregationComponent::D0,
             params_preset: BfvPreset::SecureThreshold16384,
             committee_size: CiphernodesCommitteeSize::Minimum,
         };

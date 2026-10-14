@@ -1170,8 +1170,8 @@ pub(crate) mod tests {
     use e3_committee_hash::{hash_committee_addresses, split_hash_to_field_limbs};
     use e3_events::{
         LbfvKeyShareDocument, LbfvKeyShareDocumentContextV1, LbfvKeyShareDocumentFetchFailedV1,
-        LbfvKeyShareManifestV1, LbfvPublicKeyShareDocumentV1,
-        LbfvRelinearizationKeyShareDocumentV1, Proof, ProofPayload, ProofType, SignedProofPayload,
+        LbfvKeyShareManifestV1, LbfvPublicKeyShareDocumentV3,
+        LbfvRelinearizationKeyShareDocumentV2, Proof, ProofPayload, ProofType, SignedProofPayload,
     };
     use e3_utils::ArcBytes;
     use e3_zk_helpers::FIELD_BYTE_LEN;
@@ -1317,21 +1317,21 @@ pub(crate) mod tests {
     ) {
         let context = context(&fixture.state, party_id);
         let signer = &fixture.signers[party_id as usize];
-        let public_key = LbfvKeyShareDocument::PublicKeyV1(LbfvPublicKeyShareDocumentV1 {
+        let row_count = e3_fhe_params::lbfv_row_count(fixture.state.params_preset).unwrap() as u32;
+        let public_key = LbfvKeyShareDocument::PublicKeyV3(LbfvPublicKeyShareDocumentV3 {
             context: context.clone(),
             share: ArcBytes::from_bytes(format!("public-key-{party_id}").as_bytes()),
-            signed_c1_proof: proof(&context, ProofType::C1PkGeneration, 0, signer),
-            signed_row_proofs: std::array::from_fn(|row| {
-                proof(&context, ProofType::LbfvPkGeneration, row as u32, signer)
-            }),
+            signed_row_proofs: (0..row_count)
+                .map(|row| proof(&context, ProofType::LbfvPkGeneration, row, signer))
+                .collect(),
         });
         let relinearization_key =
-            LbfvKeyShareDocument::RelinearizationKeyV1(LbfvRelinearizationKeyShareDocumentV1 {
+            LbfvKeyShareDocument::RelinearizationKeyV2(LbfvRelinearizationKeyShareDocumentV2 {
                 context: context.clone(),
                 share: ArcBytes::from_bytes(format!("relinearization-key-{party_id}").as_bytes()),
-                signed_row_proofs: std::array::from_fn(|row| {
-                    proof(&context, ProofType::RlkGeneration, row as u32, signer)
-                }),
+                signed_row_proofs: (0..row_count)
+                    .map(|row| proof(&context, ProofType::RlkGeneration, row, signer))
+                    .collect(),
             });
         let manifest = SignedLbfvKeyShareManifest::sign(
             LbfvKeyShareManifest::V1(LbfvKeyShareManifestV1 {
@@ -1803,7 +1803,7 @@ pub(crate) mod tests {
         let encoded = bincode::serialize(&state).unwrap();
         assert_eq!(
             keccak256(&encoded),
-            "0xefa25e2d90e2ea9e6d00ceb321c52e03c7a912e0397c8252941ed28b0b0f99d0"
+            "0xe5f4daba1176d11b2fa6ffa0faf08318b163558e9e012b934271a15f69fed95d"
                 .parse::<B256>()
                 .unwrap()
         );

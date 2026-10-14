@@ -528,7 +528,6 @@ async function deployBfvVerifierRoute(
       config.h,
       config.n,
       readVkRecursiveHash(v2SubCircuitPaths.nodesFold, config),
-      readVkRecursiveHash(pkPaths.c5, config),
       readVkRecursiveHash(pkPaths.skC2Chunk, config),
       readVkRecursiveHash(pkPaths.esmC2Chunk, config),
       getBfvPkVkBindingHashPaths(config).map((filePath) =>

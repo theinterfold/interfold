@@ -9,7 +9,9 @@
 // above it consume. The trBFV `node_fold` uses main's VK-tree binding (#2090) instead; moving this
 // path to it is a follow-up. Carries main's recipient-key check (`assert_c3_recipient_keys`).
 
-//! Per-node fold: C0, C1, `c2ab_chunk_fold`, `c3ab_fold`, `c4ab_fold` with same-party assertions.
+//! Per-node fold for the l-BFV path: C0, `c2ab_chunk_fold`, `c3ab_fold`, `c4ab_fold` with same-party
+//! assertions. There is no C1: the l-BFV row proofs carry key generation, and `node_fold_v2` binds
+//! their `sk` commitment to the C2a secret root this fold exports.
 
 use bb_proof_verification::{
     UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
@@ -53,11 +55,11 @@ pub global C3AB_MSG_A_START: u32 = C3AB_PREFIX_LEN + C3_SLOTS;
 pub global C3AB_PK_B_START: u32 = C3AB_PREFIX_LEN + (3 * C3_SLOTS);
 pub global C3AB_MSG_B_START: u32 = C3AB_PREFIX_LEN + (4 * C3_SLOTS);
 
-/// Total public parameters + outputs for `node_fold`.
-pub global NODE_FOLD_PUBLIC_LEN: u32 = 15 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
+/// Total public parameters + outputs for `node_fold_chunked`.
+pub global NODE_FOLD_PUBLIC_LEN: u32 = 13 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
 pub global NODE_VK_MANIFEST_IDX: u32 = NODE_FOLD_PUBLIC_LEN - 1;
-/// C1's sk secret root (`c1_public[0]`), exported so `node_fold_v2` can bind its l-BFV generation
-/// fold to the same secret that this fold's C2a shares commit to.
+/// The C2a secret root (the chunked `sk` root C2a's shares are computed from), exported so
+/// `node_fold_v2` can require the l-BFV generation fold's `sk` commitment to equal it.
 pub global NODE_SK_ROOT_IDX: u32 = NODE_FOLD_PUBLIC_LEN - 2;
 
 /// Constrains the C3 recipient keys that the fold later reduces to one key per recipient.
@@ -95,9 +97,6 @@ fn main(
     c0_vk: UltraHonkVerificationKey,
     c0_proof: UltraHonkZKProof,
     c0_public: [Field; 1],
-    c1_vk: UltraHonkVerificationKey,
-    c1_proof: UltraHonkZKProof,
-    c1_public: [Field; 3],
     c2ab_vk: UltraHonkVerificationKey,
     c2ab_proof: UltraHonkProof,
     c2ab_public: [Field; C2AB_FOLD_PUBLIC_LEN],
@@ -110,30 +109,20 @@ fn main(
     // Bound to sortition slot via `NF_PARTY_ID_IDX` in `dkg_aggregator`; do not rename.
     party_id: pub Field,
     c0_key_hash: pub Field,
-    c1_key_hash: pub Field,
     c2ab_key_hash: pub Field,
     c3ab_key_hash: pub Field,
     c4ab_key_hash: pub Field,
-    ) -> pub (Field, Field, Field, Field, Field, [Field; N_PARTIES], [[Field; L_THRESHOLD]; N_PARTIES], [[Field; L_THRESHOLD]; N_PARTIES], [[Field; L_THRESHOLD]; H], [[Field; L_THRESHOLD]; H], Field, Field, Field, Field) {
+    ) -> pub (Field, Field, Field, Field, [Field; N_PARTIES], [[Field; L_THRESHOLD]; N_PARTIES], [[Field; L_THRESHOLD]; N_PARTIES], [[Field; L_THRESHOLD]; H], [[Field; L_THRESHOLD]; H], Field, Field, Field, Field) {
     verify_honk_proof(c0_vk, c0_proof, c0_public, c0_key_hash);
-    verify_honk_proof(c1_vk, c1_proof, c1_public, c1_key_hash);
     verify_honk_proof_non_zk(c2ab_vk, c2ab_proof, c2ab_public, c2ab_key_hash);
     verify_honk_proof_non_zk(c3ab_vk, c3ab_proof, c3ab_public, c3ab_key_hash);
     verify_honk_proof_non_zk(c4ab_vk, c4ab_proof, c4ab_public, c4ab_key_hash);
 
-    let vk_hashes =
-        [c0_key_hash, c1_key_hash, c2ab_key_hash, c3ab_key_hash, c4ab_key_hash].as_vector();
+    let vk_hashes = [c0_key_hash, c2ab_key_hash, c3ab_key_hash, c4ab_key_hash].as_vector();
     let key_hash = compute_vk_hash(vk_hashes);
 
-    // C0: `commit(pk_dkg)` (DKG key for C3). C1[1]: `commit(pk_trbfv)` (threshold key); not equal to C0.
+    // C0: `commit(pk_dkg)` (DKG key for C3).
     let c0_pk = c0_public[0];
-    let c1_pk = c1_public[1];
-
-    // Same-party C1 to C2: `c2ab_public` lays out two full C2 public vectors after a 5-field
-    // prefix (`C2AB_FOLD_PUBLIC_LEN` = 6 + 2 * `C2_PUBLIC_LEN`). For each inner C2 block, index 0
-    // is the secret root commitment; these equal C1's sk- and e_sm-side public inputs [0] and [2].
-    assert(c1_public[0] == c2ab_public[C2A_INNER_START]);
-    assert(c1_public[2] == c2ab_public[C2B_INNER_START]);
 
     // Same-party C3a and C3b recipient keys, and every limb equal to the exported limb-zero key.
     assert_c3_recipient_keys(party_id, c3ab_public);
@@ -189,7 +178,6 @@ fn main(
     let c4_manifest = compute_vk_hash([c4ab_public[0], c4ab_public[1]].as_vector());
     let vk_manifest = compute_vk_hash([
         c0_key_hash,
-        c1_key_hash,
         c2ab_key_hash,
         c3ab_key_hash,
         c4ab_key_hash,
@@ -200,8 +188,8 @@ fn main(
         .as_vector());
 
     (
-        key_hash, c2ab_public[3], c2ab_public[4], c0_pk, c1_pk, c3_pk, c2a, c2b, c4a_exp, c4b_exp,
-        sk_agg, esm_agg, c1_public[0], vk_manifest,
+        key_hash, c2ab_public[3], c2ab_public[4], c0_pk, c3_pk, c2a, c2b, c4a_exp, c4b_exp, sk_agg,
+        esm_agg, c2ab_public[C2A_INNER_START], vk_manifest,
     )
 }
 

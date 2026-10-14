@@ -5,7 +5,7 @@
 use crate::utils::total_expected_for;
 
 use super::*;
-use e3_events::{LbfvGenerationFoldRequest, NodeDkgFoldV2Request};
+use e3_events::{LbfvGenerationFoldRequest, LbfvKeyShareDocumentRole, NodeDkgFoldV2Request};
 
 impl NodeProofAggregator {
     pub(in crate::actors::node_proof_aggregator) fn handle_lbfv_document(
@@ -22,35 +22,15 @@ impl NodeProofAggregator {
                 pk_proofs: Vec::new(),
                 rlk_proofs: Vec::new(),
             });
-        match msg.document {
-            LbfvKeyShareDocument::PublicKeyV1(document) => {
-                entry.pk_proofs = document
-                    .signed_row_proofs
-                    .into_iter()
-                    .map(|signed| signed.payload.proof)
-                    .collect();
-            }
-            LbfvKeyShareDocument::PublicKeyV2(document) => {
-                entry.pk_proofs = document
-                    .signed_row_proofs
-                    .into_iter()
-                    .map(|signed| signed.payload.proof)
-                    .collect();
-            }
-            LbfvKeyShareDocument::RelinearizationKeyV1(document) => {
-                entry.rlk_proofs = document
-                    .signed_row_proofs
-                    .into_iter()
-                    .map(|signed| signed.payload.proof)
-                    .collect();
-            }
-            LbfvKeyShareDocument::RelinearizationKeyV2(document) => {
-                entry.rlk_proofs = document
-                    .signed_row_proofs
-                    .into_iter()
-                    .map(|signed| signed.payload.proof)
-                    .collect();
-            }
+        let proofs = msg
+            .document
+            .signed_row_proofs()
+            .iter()
+            .map(|signed| signed.payload.proof.clone())
+            .collect();
+        match role {
+            LbfvKeyShareDocumentRole::PublicKey => entry.pk_proofs = proofs,
+            LbfvKeyShareDocumentRole::RelinearizationKey => entry.rlk_proofs = proofs,
         }
         info!(
             "NodeProofAggregator: received l-BFV {role:?} document for E3 {e3_id} (pk_rows={}, rlk_rows={})",
@@ -468,14 +448,6 @@ impl NodeProofAggregator {
     }
 
     fn dispatch_v2_with_legacy_node_fold(&mut self, e3_id: &E3id, legacy_proof: Proof) {
-        let Some(c1_proof) = self
-            .states
-            .get(e3_id)
-            .and_then(|state| state.buffer.get(&1))
-            .cloned()
-        else {
-            return;
-        };
         let Some(state) = self.states.get_mut(e3_id) else {
             return;
         };
@@ -486,7 +458,6 @@ impl NodeProofAggregator {
         let ec = state.last_ec.clone();
         let request = NodeDkgFoldV2Request {
             legacy_node_fold_proof: legacy_proof,
-            c1_proof,
             generation_proof,
             party_id: state.meta.party_id,
             params_preset: state.meta.params_preset,
@@ -525,7 +496,7 @@ impl NodeProofAggregator {
             return;
         }
 
-        let Some(state) = self.states.remove(&e3_id) else {
+        let Some(state) = self.states.get_mut(&e3_id) else {
             error!(
                 "NodeProofAggregator: NodeDkgFold response for unknown E3 {}",
                 e3_id

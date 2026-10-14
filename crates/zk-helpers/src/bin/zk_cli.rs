@@ -52,7 +52,9 @@ use e3_zk_helpers::threshold::pk_generation::{
     LbfvPkGenerationCircuit, LbfvPkGenerationCircuitData, PkGenerationCircuit,
     PkGenerationCircuitData,
 };
-use e3_zk_helpers::threshold::rlk_aggregation::{RlkAggregationCircuit, RlkAggregationCircuitData};
+use e3_zk_helpers::threshold::rlk_aggregation::{
+    RlkAggregationCircuit, RlkAggregationCircuitData, RlkAggregationComponent,
+};
 use e3_zk_helpers::threshold::rlk_generation::{RlkGenerationCircuit, RlkGenerationCircuitData};
 use e3_zk_helpers::threshold::share_decryption::{
     ShareDecryptionCircuit as ThresholdShareDecryptionCircuit,
@@ -427,10 +429,12 @@ fn main() -> Result<()> {
                 circuit.codegen(preset, &sample)?
             }
             name if name == <RlkAggregationCircuit as Circuit>::NAME => {
+                // Both components share one circuit, so a `d0` sample fixes the same artifacts.
                 let sample = RlkAggregationCircuitData::generate_sample_for_row(
                     preset,
                     committee,
                     args.row_index,
+                    RlkAggregationComponent::D0,
                 )?;
 
                 let circuit = RlkAggregationCircuit;

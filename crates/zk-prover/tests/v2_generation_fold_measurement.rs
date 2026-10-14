@@ -18,7 +18,9 @@ use e3_zk_helpers::threshold::lbfv_pk_aggregation::{
     LbfvPkAggregationCircuit, LbfvPkAggregationCircuitData,
 };
 use e3_zk_helpers::threshold::pk_generation::LbfvPkGenerationAdapter;
-use e3_zk_helpers::threshold::rlk_aggregation::{RlkAggregationCircuit, RlkAggregationCircuitData};
+use e3_zk_helpers::threshold::rlk_aggregation::{
+    RlkAggregationCircuit, RlkAggregationCircuitData, RlkAggregationComponent,
+};
 use e3_zk_helpers::threshold::rlk_generation::RlkGenerationAdapter;
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_prover::test_utils::load_vk_artifacts;
@@ -226,9 +228,13 @@ async fn secure_generation_fold_kernel_proves_and_verifies() {
         0,
     )
     .expect("PK aggregation row");
-    let rlk_aggregation_data =
-        RlkAggregationCircuitData::generate_sample_for_row(preset, aggregation_committee, 0)
-            .expect("RLK aggregation row");
+    let mut rlk_aggregation_data = RlkAggregationCircuitData::generate_sample_for_row(
+        preset,
+        aggregation_committee,
+        0,
+        RlkAggregationComponent::D0,
+    )
+    .expect("RLK aggregation row");
 
     let pk_aggregation_proof = if let Some(cached) =
         load_cached_proof(CircuitName::LbfvPkAggregation, "lbfv_pk_aggregation")
@@ -260,8 +266,12 @@ async fn secure_generation_fold_kernel_proves_and_verifies() {
         )
         .expect("PK aggregation verification"));
 
-    let rlk_aggregation_proof =
-        if let Some(cached) = load_cached_proof(CircuitName::RlkAggregation, "rlk_aggregation") {
+    // One proof per RLK component, over the same shares.
+    let mut rlk_aggregation_proofs = Vec::new();
+    for component in RlkAggregationComponent::ALL {
+        rlk_aggregation_data.component = component;
+        let name = format!("rlk_aggregation_{component:?}").to_lowercase();
+        let proof = if let Some(cached) = load_cached_proof(CircuitName::RlkAggregation, &name) {
             cached
         } else {
             let proof = RlkAggregationCircuit
@@ -274,25 +284,28 @@ async fn secure_generation_fold_kernel_proves_and_verifies() {
                     ARTIFACTS_DIR,
                 )
                 .expect("RLK aggregation proof");
-            store_cached_proof(&proof, "rlk_aggregation");
+            store_cached_proof(&proof, &name);
             proof
         };
-    print_measurement("rlk_aggregation", &rlk_aggregation_proof);
-    assert!(RlkAggregationCircuit
-        .verify_with_variant(
-            &prover,
-            &rlk_aggregation_proof,
-            "secure-v2-aggregation-fold",
-            0,
-            CircuitVariant::Recursive,
-            ARTIFACTS_DIR,
-        )
-        .expect("RLK aggregation verification"));
+        print_measurement(&name, &proof);
+        assert!(RlkAggregationCircuit
+            .verify_with_variant(
+                &prover,
+                &proof,
+                "secure-v2-aggregation-fold",
+                0,
+                CircuitVariant::Recursive,
+                ARTIFACTS_DIR,
+            )
+            .expect("RLK aggregation verification"));
+        rlk_aggregation_proofs.push(proof);
+    }
 
     let aggregation_fold = e3_zk_prover::prove_lbfv_aggregation_fold_step(
         &prover,
         &pk_aggregation_proof,
-        &rlk_aggregation_proof,
+        &rlk_aggregation_proofs[0],
+        &rlk_aggregation_proofs[1],
         None,
         0,
         CiphernodesCommitteeSize::Minimum.values().h,

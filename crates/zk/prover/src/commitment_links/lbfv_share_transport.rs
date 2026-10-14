@@ -8,8 +8,8 @@
 
 use anyhow::{ensure, Result};
 use e3_events::{
-    LbfvAcceptedPartyCommitments, LbfvKeyShareDocument, ProofIdentity, ProofType,
-    SignedProofPayload,
+    LbfvAcceptedPartyCommitments, LbfvKeyShareDocument, LbfvKeyShareDocumentRole, ProofIdentity,
+    ProofType, SignedProofPayload,
 };
 use e3_fhe_params::BfvPreset;
 use e3_zk_helpers::validate_lbfv_serialized_share_commitments;
@@ -18,50 +18,26 @@ use e3_zk_helpers::validate_lbfv_serialized_share_commitments;
 ///
 /// The caller must first validate both transport documents. This function does not validate
 /// signatures, verify proofs, or access the DHT.
-pub fn validate_lbfv_key_share_document_commitments(
-    preset: BfvPreset,
-    public_key: &e3_events::LbfvPublicKeyShareDocumentV1,
-    rlk: &e3_events::LbfvRelinearizationKeyShareDocumentV1,
-) -> Result<LbfvAcceptedPartyCommitments> {
-    validate_lbfv_key_share_document_commitments_dynamic(
-        preset,
-        &LbfvKeyShareDocument::PublicKeyV1(public_key.clone()),
-        &LbfvKeyShareDocument::RelinearizationKeyV1(rlk.clone()),
-    )
-}
-
-/// Recompute commitments from either the legacy or dynamic transport shape.
 pub fn validate_lbfv_key_share_document_commitments_dynamic(
     preset: BfvPreset,
     public_key: &LbfvKeyShareDocument,
     rlk: &LbfvKeyShareDocument,
 ) -> Result<LbfvAcceptedPartyCommitments> {
-    let (public_key_context, public_key_share, public_key_proofs) = match public_key {
-        LbfvKeyShareDocument::PublicKeyV1(document) => (
-            &document.context,
-            &document.share,
-            document.signed_row_proofs.as_slice(),
-        ),
-        LbfvKeyShareDocument::PublicKeyV2(document) => (
-            &document.context,
-            &document.share,
-            document.signed_row_proofs.as_slice(),
-        ),
-        _ => anyhow::bail!("l-BFV commitment input has the wrong public-key role"),
-    };
-    let (rlk_context, rlk_share, rlk_proofs) = match rlk {
-        LbfvKeyShareDocument::RelinearizationKeyV1(document) => (
-            &document.context,
-            &document.share,
-            document.signed_row_proofs.as_slice(),
-        ),
-        LbfvKeyShareDocument::RelinearizationKeyV2(document) => (
-            &document.context,
-            &document.share,
-            document.signed_row_proofs.as_slice(),
-        ),
-        _ => anyhow::bail!("l-BFV commitment input has the wrong RLK role"),
-    };
+    ensure!(
+        public_key.role() == LbfvKeyShareDocumentRole::PublicKey,
+        "l-BFV commitment input has the wrong public-key role"
+    );
+    ensure!(
+        rlk.role() == LbfvKeyShareDocumentRole::RelinearizationKey,
+        "l-BFV commitment input has the wrong RLK role"
+    );
+    let (public_key_context, public_key_share, public_key_proofs) = (
+        public_key.context(),
+        public_key.share(),
+        public_key.signed_row_proofs(),
+    );
+    let (rlk_context, rlk_share, rlk_proofs) =
+        (rlk.context(), rlk.share(), rlk.signed_row_proofs());
     ensure!(
         public_key_context == rlk_context,
         "l-BFV PK and RLK document contexts do not match"

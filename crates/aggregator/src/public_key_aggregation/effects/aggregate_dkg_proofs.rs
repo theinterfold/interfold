@@ -7,7 +7,9 @@ use e3_events::DkgAggregationV2Request;
 
 impl PublicKeyAggregator {
     /// Dispatch [`ZkRequest::DkgAggregation`] once C5, all honest NodeFold proofs, and the
-    /// streaming nodes_fold are all ready.
+    /// streaming nodes_fold are all ready. The l-BFV path proves no C5: it dispatches
+    /// [`ZkRequest::DkgAggregationV2`] once the nodes_fold and the l-BFV row aggregation fold are
+    /// ready.
     pub(in crate::actors::publickey_aggregator) fn try_dispatch_dkg_aggregation(
         &mut self,
         ec: &EventContext<Sequenced>,
@@ -201,15 +203,11 @@ impl PublicKeyAggregator {
             party_nodes,
             dkg_node_proofs,
             honest_party_ids,
-            c5_proof_pending,
             nodes_fold_accumulator,
             nodes_fold_completed_slots,
             ..
         }) = self.state.get()
         else {
-            return Ok(());
-        };
-        let Some(c5_proof) = c5_proof_pending else {
             return Ok(());
         };
         let Some(nodes_fold_proof) = nodes_fold_accumulator else {
@@ -268,7 +266,6 @@ impl PublicKeyAggregator {
             ComputeRequest::zk(
                 ZkRequest::DkgAggregationV2(DkgAggregationV2Request {
                     nodes_fold_proof,
-                    c5_proof,
                     aggregation_fold_proof,
                     party_ids,
                     committee_addresses,

@@ -10,11 +10,10 @@ import { ICiphernodeRegistry } from "../../interfaces/ICiphernodeRegistry.sol";
 
 interface IBfvPkVerifierRoute is IPkVerifier {
     function expectedNodesFoldKeyHash() external view returns (bytes32);
-    function expectedC5KeyHash() external view returns (bytes32);
     function expectedPublicInputsLen() external view returns (uint256);
 }
 
-/// @notice Dispatches BFV DKG proofs to the verifier that matches the E3 parameter set and VK anchors.
+/// @notice Dispatches BFV DKG proofs to the verifier that matches the E3 parameter set and nodes-fold VK anchor.
 contract BfvPkVerifierRouter is IPkVerifier {
     error EmptyVerifierRoutes();
     error InvalidRegistry(address registry);
@@ -26,7 +25,6 @@ contract BfvPkVerifierRouter is IPkVerifier {
         IBfvPkVerifierRoute verifier;
         uint256 expectedPublicInputsLen;
         bytes32 expectedNodesFoldKeyHash;
-        bytes32 expectedC5KeyHash;
         uint8 expectedParamSet;
     }
 
@@ -69,7 +67,6 @@ contract BfvPkVerifierRouter is IPkVerifier {
                     verifier: route,
                     expectedPublicInputsLen: route.expectedPublicInputsLen(),
                     expectedNodesFoldKeyHash: route.expectedNodesFoldKeyHash(),
-                    expectedC5KeyHash: route.expectedC5KeyHash(),
                     expectedParamSet: expectedParamSets[i]
                 })
             );
@@ -89,7 +86,6 @@ contract BfvPkVerifierRouter is IPkVerifier {
             address verifier,
             uint256 expectedPublicInputsLen,
             bytes32 expectedNodesFoldKeyHash,
-            bytes32 expectedC5KeyHash,
             uint8 expectedParamSet
         )
     {
@@ -98,7 +94,6 @@ contract BfvPkVerifierRouter is IPkVerifier {
             address(route.verifier),
             route.expectedPublicInputsLen,
             route.expectedNodesFoldKeyHash,
-            route.expectedC5KeyHash,
             route.expectedParamSet
         );
     }
@@ -133,7 +128,7 @@ contract BfvPkVerifierRouter is IPkVerifier {
             (bytes, bytes32[])
         );
 
-        if (publicInputs.length < 2) {
+        if (publicInputs.length == 0) {
             revert InvalidPublicInputsLength();
         }
 
@@ -146,10 +141,7 @@ contract BfvPkVerifierRouter is IPkVerifier {
                 continue;
             }
             lengthMatched = true;
-            if (
-                publicInputs[0] != route.expectedNodesFoldKeyHash ||
-                publicInputs[1] != route.expectedC5KeyHash
-            ) {
+            if (publicInputs[0] != route.expectedNodesFoldKeyHash) {
                 continue;
             }
             anchorsMatched = true;

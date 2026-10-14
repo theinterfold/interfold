@@ -24,8 +24,8 @@ use e3_events::{
     EncryptionKey, EncryptionKeyCreated, GetEvents, HistoryCollector, InterfoldError,
     InterfoldEvent, LbfvKeyShareDocument, LbfvKeyShareDocumentContextV1,
     LbfvKeyShareDocumentFetchFailureClass, LbfvKeyShareDocumentFetchRequested,
-    LbfvKeyShareDocumentFetchRequestedV1, LbfvKeyShareDocumentRole, LbfvPublicKeyShareDocumentV1,
-    LbfvRelinearizationKeyShareDocumentV1, Proof, ProofPayload, ProofType,
+    LbfvKeyShareDocumentFetchRequestedV1, LbfvKeyShareDocumentRole, LbfvPublicKeyShareDocumentV3,
+    LbfvRelinearizationKeyShareDocumentV2, Proof, ProofPayload, ProofType,
     PublishDocumentRequested, SignedProofPayload, TakeEvents,
 };
 use e3_fhe_params::{build_pair_for_preset, lbfv_crs_seed, lbfv_urs_seed, BfvPreset};
@@ -212,21 +212,20 @@ fn lbfv_signed_proof(
 
 fn lbfv_documents() -> (LbfvKeyShareDocument, LbfvKeyShareDocument) {
     let context = lbfv_context();
-    let public_key = LbfvKeyShareDocument::PublicKeyV1(LbfvPublicKeyShareDocumentV1 {
+    let public_key = LbfvKeyShareDocument::PublicKeyV3(LbfvPublicKeyShareDocumentV3 {
         context: context.clone(),
         share: ArcBytes::from_bytes(&lbfv_share_bytes(true, 64)),
-        signed_c1_proof: lbfv_signed_proof(&context, ProofType::C1PkGeneration, 0),
-        signed_row_proofs: std::array::from_fn(|row| {
-            lbfv_signed_proof(&context, ProofType::LbfvPkGeneration, row as u32)
-        }),
+        signed_row_proofs: (0..ProofType::LBFV_ROW_INSTANCES)
+            .map(|row| lbfv_signed_proof(&context, ProofType::LbfvPkGeneration, row))
+            .collect(),
     });
     let relinearization_key =
-        LbfvKeyShareDocument::RelinearizationKeyV1(LbfvRelinearizationKeyShareDocumentV1 {
-            context,
+        LbfvKeyShareDocument::RelinearizationKeyV2(LbfvRelinearizationKeyShareDocumentV2 {
+            context: context.clone(),
             share: ArcBytes::from_bytes(&lbfv_share_bytes(false, 64)),
-            signed_row_proofs: std::array::from_fn(|row| {
-                lbfv_signed_proof(public_key.context(), ProofType::RlkGeneration, row as u32)
-            }),
+            signed_row_proofs: (0..ProofType::LBFV_ROW_INSTANCES)
+                .map(|row| lbfv_signed_proof(&context, ProofType::RlkGeneration, row))
+                .collect(),
         });
     (public_key, relinearization_key)
 }

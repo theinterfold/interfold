@@ -52,6 +52,15 @@ def main():
         "secret_chunk": secret_chunk,
         "y_chunk": witness["y"][:chunk_size],
     }
+    if not circuit_path.endswith("sk_share_computation_chunk"):
+        # The C2b leaves range-check the lifted smudging noise; zk_cli emits it for l-BFV presets.
+        output["e_sm_lifted_chunk"] = {
+            "coefficients": witness["e_sm_lifted"]["coefficients"][:chunk_size]
+        }
+        output["e_sm_quotients_chunk"] = [
+            {"coefficients": row["coefficients"][:chunk_size]}
+            for row in witness["e_sm_quotients"]
+        ]
     with open(output_path, "w", encoding="utf-8") as target:
         for name, value in output.items():
             target.write(f"{name} = {toml_value(value)}\n")

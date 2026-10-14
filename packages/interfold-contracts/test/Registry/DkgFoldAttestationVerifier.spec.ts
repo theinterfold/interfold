@@ -99,13 +99,14 @@ describe("DkgFoldAttestationVerifier", function () {
     expect(esmAggCommits).to.deep.equal(fixture.esmCommits);
   });
 
-  it("does not classify a thirteen-party trBFV statement as V2", async function () {
+  // 3 * 16 + 6 = 54 public inputs, the same length as an insecure l-BFV V2 statement with h = 2.
+  it("does not classify a sixteen-party trBFV statement as V2", async function () {
     const { owner, mockRegistry, verifier } = await loadFixture(setup);
     const signers = await ethers.getSigners();
     const fixture = await buildMockDkgAttestationFixtureData(
-      signers.slice(2, 15),
+      signers.slice(2, 18),
       e3Id,
-      ethers.id(`pk-legacy-h13-${e3Id}`),
+      ethers.id(`pk-legacy-h16-${e3Id}`),
       await verifier.getAddress(),
       await mockRegistry.getAddress(),
     );
@@ -122,7 +123,7 @@ describe("DkgFoldAttestationVerifier", function () {
       fixture.bundle,
     );
 
-    expect(partyIds).to.have.length(13);
+    expect(partyIds).to.have.length(16);
     expect(skAggCommits).to.deep.equal(fixture.skCommits);
     expect(esmAggCommits).to.deep.equal(fixture.esmCommits);
   });

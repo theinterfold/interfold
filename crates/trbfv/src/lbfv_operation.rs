@@ -23,7 +23,10 @@ pub enum LbfvOperationKind {
     PkGeneration = 1,
     RlkGeneration = 2,
     PkAggregation = 3,
-    RlkAggregation = 4,
+    /// RLK aggregation of one row's `d0` component.
+    RlkD0Aggregation = 4,
+    /// RLK aggregation of one row's `d2` component.
+    RlkD2Aggregation = 5,
 }
 
 impl LbfvOperationId {
@@ -98,7 +101,7 @@ mod tests {
         LbfvOperationId::new(
             [1; 32],
             2,
-            LbfvOperationKind::RlkAggregation,
+            LbfvOperationKind::RlkD0Aggregation,
             Some(3),
             Some(ACCEPTED),
             Some(digest_lbfv_public_artifacts([
@@ -130,7 +133,7 @@ mod tests {
             LbfvOperationId::new(
                 [9; 32],
                 2,
-                LbfvOperationKind::RlkAggregation,
+                LbfvOperationKind::RlkD0Aggregation,
                 Some(3),
                 Some(accepted),
                 Some(artifact),
@@ -138,7 +141,7 @@ mod tests {
             LbfvOperationId::new(
                 [1; 32],
                 1,
-                LbfvOperationKind::RlkAggregation,
+                LbfvOperationKind::RlkD0Aggregation,
                 Some(3),
                 Some(accepted),
                 Some(artifact),
@@ -154,7 +157,15 @@ mod tests {
             LbfvOperationId::new(
                 [1; 32],
                 2,
-                LbfvOperationKind::RlkAggregation,
+                LbfvOperationKind::RlkD2Aggregation,
+                Some(3),
+                Some(accepted),
+                Some(artifact),
+            ),
+            LbfvOperationId::new(
+                [1; 32],
+                2,
+                LbfvOperationKind::RlkD0Aggregation,
                 Some(4),
                 Some(accepted),
                 Some(artifact),
@@ -162,7 +173,7 @@ mod tests {
             LbfvOperationId::new(
                 [1; 32],
                 2,
-                LbfvOperationKind::RlkAggregation,
+                LbfvOperationKind::RlkD0Aggregation,
                 Some(3),
                 Some([5; 32]),
                 Some(artifact),
@@ -170,7 +181,7 @@ mod tests {
             LbfvOperationId::new(
                 [1; 32],
                 2,
-                LbfvOperationKind::RlkAggregation,
+                LbfvOperationKind::RlkD0Aggregation,
                 Some(3),
                 Some(accepted),
                 Some(digest_lbfv_public_artifacts([&b"other"[..]])),
@@ -178,7 +189,7 @@ mod tests {
             LbfvOperationId::new(
                 [1; 32],
                 2,
-                LbfvOperationKind::RlkAggregation,
+                LbfvOperationKind::RlkD0Aggregation,
                 None,
                 Some(accepted),
                 Some(artifact),

@@ -26,8 +26,12 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         DkgFoldAttestationLib.Attestation[] attestations;
         DkgFoldAttestationLib.PartySlotBinding[] bindings;
         uint256 h;
+        /// @dev Index of the first party ID: 2 for the trBFV `dkg_aggregator` (after the
+        ///      nodes-fold and C5 key hashes), 1 for `dkg_aggregator_v2` (after the nodes-fold
+        ///      key hash only).
+        uint256 partyIdOffset;
         /// @dev Offset of the SK aggregate commitments after the `h` party IDs: 5 for the trBFV
-        ///      `dkg_aggregator`, 23 for `dkg_aggregator_v2`, whose prefix also carries the
+        ///      `dkg_aggregator`, 21 for `dkg_aggregator_v2`, whose prefix also carries the
         ///      legacy VK binding and the C2 chunk hashes.
         uint256 commitmentOffset;
     }
@@ -70,20 +74,21 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         } catch {
             revert ICiphernodeRegistry.InvalidFoldAttestation();
         }
-        (data.h, data.commitmentOffset) = _honestPartyCount(
+        (data.h, data.partyIdOffset, data.commitmentOffset) = _honestPartyCount(
             registry,
             e3Id,
             data.publicInputs
         );
         // Defense in depth: require the public-inputs `partyId` slots
-        // (`publicInputs[2..2+h]`) to be strictly ascending. The zk circuit
-        // already enforces this, but rejecting duplicates here prevents two
-        // bindings from resolving to the same slot in `_partySlot` (which
-        // would silently overwrite each other in `partyIdsOut` etc.).
+        // (`publicInputs[partyIdOffset..partyIdOffset+h]`) to be strictly
+        // ascending. The zk circuit already enforces this, but rejecting
+        // duplicates here prevents two bindings from resolving to the same slot
+        // in `_partySlot` (which would silently overwrite each other in
+        // `partyIdsOut` etc.).
         for (uint256 k = 1; k < data.h; k++) {
             require(
-                uint256(data.publicInputs[2 + k]) >
-                    uint256(data.publicInputs[2 + k - 1]),
+                uint256(data.publicInputs[data.partyIdOffset + k]) >
+                    uint256(data.publicInputs[data.partyIdOffset + k - 1]),
                 ICiphernodeRegistry.InvalidFoldAttestation()
             );
         }
@@ -202,10 +207,14 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         address registry,
         uint256 e3Id,
         bytes32[] memory publicInputs
-    ) private view returns (uint256 h, uint256 commitmentOffset) {
+    )
+        private
+        view
+        returns (uint256 h, uint256 partyIdOffset, uint256 commitmentOffset)
+    {
         (uint256 v2H, ) = _v2CommitteeParams(publicInputs.length);
         if (v2H > 0 && _isV2Statement(registry, e3Id, publicInputs, v2H)) {
-            return (v2H, 23);
+            return (v2H, 1, 21);
         }
         // trBFV `dkg_aggregator`: 3*h + 6 public inputs.
         require(
@@ -213,6 +222,7 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
             ICiphernodeRegistry.InvalidFoldAttestation()
         );
         h = (publicInputs.length - 6) / 3;
+        partyIdOffset = 2;
         commitmentOffset = 5;
         // Defense in depth: the BFV pk-verifier already rejects `h == 0`, but
         // a zero-honest-party proof would otherwise pass this verifier with no
@@ -229,7 +239,7 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         (, uint256 v2N) = _v2CommitteeParams(publicInputs.length);
         uint256 previous;
         for (uint256 i = 0; i < v2H; ++i) {
-            uint256 partyId = uint256(publicInputs[2 + i]);
+            uint256 partyId = uint256(publicInputs[1 + i]);
             if (partyId >= v2N || (i > 0 && partyId <= previous)) return false;
             previous = partyId;
         }
@@ -238,9 +248,9 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
             e3Id
         );
         if (
-            publicInputs[2 + v2H] !=
+            publicInputs[1 + v2H] !=
                 CommitteeHashLib.hi(committeeHash) ||
-            publicInputs[3 + v2H] !=
+            publicInputs[2 + v2H] !=
                 CommitteeHashLib.lo(committeeHash)
         ) return false;
 
@@ -251,14 +261,14 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         for (uint256 i = 0; i < v2H; ++i) {
             acceptedSetPreimage = bytes.concat(
                 acceptedSetPreimage,
-                abi.encodePacked(uint32(uint256(publicInputs[2 + i])))
+                abi.encodePacked(uint32(uint256(publicInputs[1 + i])))
             );
         }
         bytes32 acceptedSetHash = keccak256(
             acceptedSetPreimage
         );
-        uint256 acceptedSetHiIdx = 28 + (3 * v2H);
-        uint256 acceptedSetLoIdx = 29 + (3 * v2H);
+        uint256 acceptedSetHiIdx = 26 + (3 * v2H);
+        uint256 acceptedSetLoIdx = 27 + (3 * v2H);
         return
             publicInputs[acceptedSetHiIdx] ==
             CommitteeHashLib.hi(acceptedSetHash) &&
@@ -269,13 +279,15 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
     function _v2CommitteeParams(
         uint256 publicInputLength
     ) private pure returns (uint256 v2H, uint256 v2N) {
-        if (publicInputLength == 56 || publicInputLength == 62) {
+        // `dkg_aggregator_v2`: 39 + 3h + 3 * rows, with 3 rows (insecure l-BFV) or 5 rows
+        // (secure-16384).
+        if (publicInputLength == 54 || publicInputLength == 60) {
             return (2, 3);
         }
-        if (publicInputLength == 65 || publicInputLength == 71) {
+        if (publicInputLength == 63 || publicInputLength == 69) {
             return (5, 9);
         }
-        if (publicInputLength == 92 || publicInputLength == 98) {
+        if (publicInputLength == 90 || publicInputLength == 96) {
             return (14, 19);
         }
         return (0, 0);
@@ -330,13 +342,12 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
             ICiphernodeRegistry.InvalidFoldAttestation()
         );
 
-        uint256 partyIdOffset = 2;
         uint256 skOffset = data.commitmentOffset + data.h;
         uint256 esmOffset = data.commitmentOffset + (2 * data.h);
 
         slot = _partySlot(
             data.publicInputs,
-            partyIdOffset,
+            data.partyIdOffset,
             data.h,
             binding.partyId
         );

@@ -865,6 +865,7 @@ pub(crate) mod tests {
                 party_ids: Vec::new(),
                 share_bytes: Vec::new(),
                 row_index: 0,
+                component: e3_zk_helpers::threshold::rlk_aggregation::RlkAggregationComponent::D0,
                 params_preset: preset,
                 committee_size,
             }),

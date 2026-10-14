@@ -11,7 +11,7 @@ pub mod sample;
 pub mod utils;
 
 pub use circuit::{ShareComputationCircuit, ShareComputationCircuitData};
-pub use computation::{Bits, Bounds, Configs, Inputs, ShareComputationOutput};
+pub use computation::{e_sm_crt_lift, Bits, Bounds, Configs, Inputs, ShareComputationOutput};
 pub use sample::SecretShares;
 
 /// Default coefficient count per l-BFV C2 chunk outside degree 16384.

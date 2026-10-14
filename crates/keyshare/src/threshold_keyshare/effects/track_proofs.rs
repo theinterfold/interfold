@@ -23,11 +23,7 @@ impl ThresholdKeyshare {
             msg.party_id, msg.e3_id
         );
 
-        self.store_signed_pk_generation_proof(&ec, msg.signed_proof.clone())?;
-        if let Err(error) = self.record_lbfv_c1_proof(msg.signed_proof, ec.clone()) {
-            error!("Rejected local l-BFV C1 proof: {error}");
-            return self.fail_lbfv_generation(ec);
-        }
+        self.store_signed_pk_generation_proof(&ec, msg.signed_proof)?;
         self.try_finish_deferred_keyshare_publish(ec)?;
 
         Ok(())

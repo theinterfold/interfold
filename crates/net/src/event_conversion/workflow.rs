@@ -289,8 +289,8 @@ mod tests {
     use e3_committee_hash::{hash_lbfv_proof_session, LbfvProofDomainContext};
     use e3_events::{
         E3id, EncryptionKey, LbfvKeyShareDocumentContextV1, LbfvKeyShareDocumentFetchRequestedV1,
-        LbfvKeyShareDocumentRole, LbfvPublicKeyShareDocumentV1,
-        LbfvRelinearizationKeyShareDocumentV1, Proof, ProofPayload, ProofType, SignedProofPayload,
+        LbfvKeyShareDocumentRole, LbfvPublicKeyShareDocumentV3,
+        LbfvRelinearizationKeyShareDocumentV2, Proof, ProofPayload, ProofType, SignedProofPayload,
     };
     use e3_fhe_params::{build_pair_for_preset, lbfv_crs_seed, lbfv_urs_seed, BfvPreset};
     use fhe::bfv::{CommonRandomPolyVec, SecretKey};
@@ -381,13 +381,12 @@ mod tests {
                 .parse()
                 .unwrap();
         let context = lbfv_context();
-        LbfvKeyShareDocument::PublicKeyV1(LbfvPublicKeyShareDocumentV1 {
+        LbfvKeyShareDocument::PublicKeyV3(LbfvPublicKeyShareDocumentV3 {
             context: context.clone(),
             share: ArcBytes::from_bytes(&lbfv_share_bytes(true, preset)),
-            signed_c1_proof: signed_proof(&context, ProofType::C1PkGeneration, 0, &signer),
-            signed_row_proofs: std::array::from_fn(|row| {
-                signed_proof(&context, ProofType::LbfvPkGeneration, row as u32, &signer)
-            }),
+            signed_row_proofs: (0..ProofType::LBFV_ROW_INSTANCES)
+                .map(|row| signed_proof(&context, ProofType::LbfvPkGeneration, row, &signer))
+                .collect(),
         })
     }
 
@@ -397,12 +396,12 @@ mod tests {
                 .parse()
                 .unwrap();
         let context = lbfv_context();
-        LbfvKeyShareDocument::RelinearizationKeyV1(LbfvRelinearizationKeyShareDocumentV1 {
+        LbfvKeyShareDocument::RelinearizationKeyV2(LbfvRelinearizationKeyShareDocumentV2 {
             context: context.clone(),
             share: ArcBytes::from_bytes(&lbfv_share_bytes(false, preset)),
-            signed_row_proofs: std::array::from_fn(|row| {
-                signed_proof(&context, ProofType::RlkGeneration, row as u32, &signer)
-            }),
+            signed_row_proofs: (0..ProofType::LBFV_ROW_INSTANCES)
+                .map(|row| signed_proof(&context, ProofType::RlkGeneration, row, &signer))
+                .collect(),
         })
     }
 
@@ -513,11 +512,11 @@ mod tests {
     #[test]
     fn targeted_lbfv_fetch_rejects_stale_contribution_bytes() {
         let mut document = lbfv_public_key_document(BfvPreset::InsecureThresholdLbfv);
-        let LbfvKeyShareDocument::PublicKeyV1(document) = &mut document else {
+        let LbfvKeyShareDocument::PublicKeyV3(document) = &mut document else {
             unreachable!();
         };
         document.share = ArcBytes::from_bytes(&[7; 64]);
-        let document = LbfvKeyShareDocument::PublicKeyV1(document.clone());
+        let document = LbfvKeyShareDocument::PublicKeyV3(document.clone());
         let bytes = document.to_bytes().unwrap();
         let request = lbfv_fetch_request(&document);
         let error = EventConversionService::decode_lbfv_fetch(&request, &bytes).unwrap_err();
@@ -529,7 +528,7 @@ mod tests {
     #[test]
     fn local_lbfv_publication_rejects_stale_contribution_bytes() {
         let mut document = lbfv_public_key_document(BfvPreset::InsecureThresholdLbfv);
-        let LbfvKeyShareDocument::PublicKeyV1(public_key) = &mut document else {
+        let LbfvKeyShareDocument::PublicKeyV3(public_key) = &mut document else {
             unreachable!();
         };
         public_key.share = ArcBytes::from_bytes(&[7; 64]);

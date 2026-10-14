@@ -200,7 +200,8 @@ pub enum CircuitName {
     /// Retired: the l-BFV public-key row is proved directly by `LbfvPkGeneration`; kept so later
     /// variants keep their encoding.
     LbfvPkGenerationLimb = 40,
-    /// C1 on the l-BFV path: commits `sk` and `e_sm` as the chunk roots the chunked C2 outputs.
+    /// Retired: the l-BFV path proves no C1; the row proofs bind `sk` and the C2b chunk leaves
+    /// bound `e_sm`. Kept so later variants keep their encoding.
     PkGenerationChunked = 41,
     /// C3 on the l-BFV path: commits the share as a chunk root keyed by party and modulus.
     ShareEncryptionChunked = 42,
@@ -734,21 +735,18 @@ mod tests {
     }
 
     #[test]
-    fn rlk_aggregation_layout_tracks_row_and_commitments() {
-        let mut signals = vec![0u8; 384];
+    fn rlk_aggregation_layout_tracks_row_component_and_commitment() {
+        let mut signals = vec![0u8; 320];
         signals[191] = 4;
-        signals[320..352].copy_from_slice(&[0x55; 32]);
-        signals[352..384].copy_from_slice(&[0x66; 32]);
+        signals[223] = 1;
+        signals[288..320].copy_from_slice(&[0x55; 32]);
         let proof = make_proof(CircuitName::RlkAggregation, &signals);
 
         assert_eq!(proof.extract_input("row_index").unwrap()[31], 4);
+        assert_eq!(proof.extract_input("component").unwrap()[31], 1);
         assert_eq!(
-            &*proof.extract_output("d0_agg_commitment").unwrap(),
+            &*proof.extract_output("agg_commitment").unwrap(),
             &[0x55; 32]
-        );
-        assert_eq!(
-            &*proof.extract_output("d2_agg_commitment").unwrap(),
-            &[0x66; 32]
         );
     }
 

@@ -158,7 +158,6 @@ export const deployAndSaveBfvPkVerifierV2 = async (
     getBfvV2SubCircuitVkHashPaths().nodesFold,
   );
   const pkPaths = getBfvPkSubCircuitVkHashPaths();
-  const expectedC5KeyHash = readVkRecursiveHash(pkPaths.c5);
   const expectedSkC2ChunkKeyHash = readVkRecursiveHash(pkPaths.skC2Chunk);
   const expectedESmC2ChunkKeyHash = readVkRecursiveHash(pkPaths.esmC2Chunk);
   const expectedLegacyVkBinding = getBfvPkVkBindingHashPaths().map((filePath) =>
@@ -219,7 +218,6 @@ export const deployAndSaveBfvPkVerifierV2 = async (
     BFV_DKG_H,
     ACTIVE_BFV_COMMITTEE_N,
     expectedNodesFoldKeyHash,
-    expectedC5KeyHash,
     expectedSkC2ChunkKeyHash,
     expectedESmC2ChunkKeyHash,
     expectedLegacyVkBinding,

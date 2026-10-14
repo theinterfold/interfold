@@ -9,6 +9,7 @@ use e3_events::{
     LbfvPkAggregationProofRequest, RlkAggregationProofRequest, ZkRequest,
 };
 use e3_trbfv::lbfv_operation::LbfvOperationId;
+use e3_zk_helpers::threshold::rlk_aggregation::RlkAggregationComponent;
 
 impl PublicKeyAggregator {
     pub(in crate::actors::publickey_aggregator) fn try_dispatch_lbfv_aggregation_rows(
@@ -97,9 +98,15 @@ impl PublicKeyAggregator {
                 requests.push((correlation, ZkRequest::LbfvPkAggregation(request)));
             }
 
-            if state.rlk_aggregation_proofs[row_index as usize].is_none()
-                && state.rlk_aggregation_correlations[row_index as usize].is_none()
-            {
+            // Each row is proved once per RLK component; the two requests are independent, so
+            // the compute pool runs them concurrently.
+            for component in RlkAggregationComponent::ALL {
+                let slot = component.index() as usize;
+                if state.rlk_aggregation_proofs[row_index as usize][slot].is_some()
+                    || state.rlk_aggregation_correlations[row_index as usize][slot].is_some()
+                {
+                    continue;
+                }
                 let mut request = RlkAggregationProofRequest {
                     operation_id: LbfvOperationId([0; 32]),
                     proof_domain: state.proof_domain,
@@ -107,12 +114,13 @@ impl PublicKeyAggregator {
                     party_ids: party_ids.clone(),
                     share_bytes: rlk_shares.clone(),
                     row_index,
+                    component,
                     params_preset: self.params_preset,
                     committee_size: self.committee_size,
                 };
                 request.operation_id = request.expected_operation_id()?;
                 let correlation = CorrelationId::new();
-                state.set_rlk_correlation(row_index, correlation)?;
+                state.set_rlk_correlation(row_index, component, correlation)?;
                 requests.push((correlation, ZkRequest::RlkAggregation(request)));
             }
         }
@@ -176,26 +184,27 @@ impl PublicKeyAggregator {
             }
             ZkResponse::RlkAggregation(response) => {
                 let row = response.row_index;
+                let component = response.component;
                 let index = usize::try_from(row)?;
                 anyhow::ensure!(
                     index < row_count,
                     "l-BFV RLK aggregation row is out of range"
                 );
                 anyhow::ensure!(
-                    state.rlk_aggregation_correlations[index] == Some(correlation),
+                    state.rlk_correlation(row, component)? == Some(correlation),
                     "stale l-BFV RLK aggregation response"
                 );
                 anyhow::ensure!(
                     response.party_ids == state.accepted_party_ids,
                     "l-BFV RLK aggregation party set changed"
                 );
-                let expected = expected_rlk_operation_id(&state, self, row)?;
+                let expected = expected_rlk_operation_id(&state, self, row, component)?;
                 anyhow::ensure!(
                     response.operation_id == expected,
                     "l-BFV RLK aggregation operation ID changed"
                 );
-                state.record_rlk_proof(row, response.proof)?;
-                state.clear_rlk_correlation(row, correlation)?;
+                state.record_rlk_proof(row, component, response.proof)?;
+                state.clear_rlk_correlation(row, component, correlation)?;
             }
             ZkResponse::LbfvAggregationFold(response) => {
                 anyhow::ensure!(
@@ -236,9 +245,13 @@ impl PublicKeyAggregator {
                 state.clear_public_key_correlation(row, correlation)?;
                 matched = true;
             }
-            if state.rlk_aggregation_correlations[index] == Some(correlation) {
-                state.clear_rlk_correlation(row, correlation)?;
-                matched = true;
+            for component in RlkAggregationComponent::ALL {
+                if state.rlk_aggregation_correlations[index][component.index() as usize]
+                    == Some(correlation)
+                {
+                    state.clear_rlk_correlation(row, component, correlation)?;
+                    matched = true;
+                }
             }
         }
         if state.aggregation_fold_correlation == Some(correlation) {
@@ -288,7 +301,7 @@ impl PublicKeyAggregator {
             return Ok(());
         }
         let row = state.aggregation_fold_completed_rows as usize;
-        let (Some(pk_proof), Some(rlk_proof)) = (
+        let (Some(pk_proof), [Some(rlk_d0_proof), Some(rlk_d2_proof)]) = (
             state.public_key_aggregation_proofs[row].clone(),
             state.rlk_aggregation_proofs[row].clone(),
         ) else {
@@ -296,7 +309,8 @@ impl PublicKeyAggregator {
         };
         let request = LbfvAggregationFoldRequest {
             pk_proof,
-            rlk_proof,
+            rlk_d0_proof,
+            rlk_d2_proof,
             prior_accumulator: state.aggregation_fold_proof.clone(),
             row_index: row as u32,
             params_preset: self.params_preset,
@@ -384,12 +398,7 @@ fn document_shares(
                 role(document),
                 "accepted l-BFV party {party_id} has the wrong {name} document role"
             );
-            Ok(match document {
-                LbfvKeyShareDocument::PublicKeyV1(document) => document.share.clone(),
-                LbfvKeyShareDocument::RelinearizationKeyV1(document) => document.share.clone(),
-                LbfvKeyShareDocument::PublicKeyV2(document) => document.share.clone(),
-                LbfvKeyShareDocument::RelinearizationKeyV2(document) => document.share.clone(),
-            })
+            Ok(document.share().clone())
         })
         .collect()
 }
@@ -420,6 +429,7 @@ fn expected_rlk_operation_id(
     state: &LbfvAggregationStateV1,
     actor: &PublicKeyAggregator,
     row_index: u32,
+    component: RlkAggregationComponent,
 ) -> Result<LbfvOperationId> {
     let request = RlkAggregationProofRequest {
         operation_id: LbfvOperationId([0; 32]),
@@ -432,6 +442,7 @@ fn expected_rlk_operation_id(
             "relinearization-key",
         )?,
         row_index,
+        component,
         params_preset: actor.params_preset,
         committee_size: actor.committee_size,
     };

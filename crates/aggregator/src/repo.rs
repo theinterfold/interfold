@@ -9,7 +9,7 @@ use anyhow::{ensure, Result};
 use e3_data::{Repositories, Repository};
 use e3_events::{
     E3id, LbfvKeyShareDocument, LbfvKeyShareDocumentFetchFailed, LbfvKeyShareDocumentReceived,
-    SignedLbfvKeyShareManifest, SignedProofPayload, StoreKeys,
+    SignedLbfvKeyShareManifest, StoreKeys,
 };
 use e3_fhe_params::BfvPreset;
 
@@ -103,7 +103,6 @@ pub trait LbfvContributionRepositoryFactory {
         &self,
         state: &LbfvContributionCollectionStateV1,
         party_id: u32,
-        expected_c1: &SignedProofPayload,
         preset: BfvPreset,
     ) -> Result<(LbfvContributionCollectionStateV1, LbfvBundleAdmission)>;
 
@@ -222,7 +221,6 @@ impl LbfvContributionRepositoryFactory for Repositories {
         &self,
         state: &LbfvContributionCollectionStateV1,
         party_id: u32,
-        expected_c1: &SignedProofPayload,
         preset: BfvPreset,
     ) -> Result<(LbfvContributionCollectionStateV1, LbfvBundleAdmission)> {
         state.validate_loaded()?;
@@ -263,23 +261,6 @@ impl LbfvContributionRepositoryFactory for Repositories {
 
         let validation = (|| {
             manifest.validate_documents_for_preset(&public_key, &rlk, state.params_preset)?;
-            ensure!(
-                public_key.role() == e3_events::LbfvKeyShareDocumentRole::PublicKey,
-                "l-BFV public-key artifact has the wrong role"
-            );
-            ensure!(
-                rlk.role() == e3_events::LbfvKeyShareDocumentRole::RelinearizationKey,
-                "l-BFV relinearization-key artifact has the wrong role"
-            );
-            let document_c1 = match &public_key {
-                LbfvKeyShareDocument::PublicKeyV1(document) => &document.signed_c1_proof,
-                LbfvKeyShareDocument::PublicKeyV2(document) => &document.signed_c1_proof,
-                _ => unreachable!("the public-key role was checked above"),
-            };
-            ensure!(
-                document_c1.payload == expected_c1.payload,
-                "l-BFV document C1 payload does not match KeyshareCreated"
-            );
             e3_zk_prover::validate_lbfv_key_share_document_commitments_dynamic(
                 preset,
                 &public_key,

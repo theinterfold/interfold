@@ -7225,35 +7225,26 @@ async fn restart_redrives_all_missing_lbfv_row_requests() -> Result<()> {
     Ok(())
 }
 
-#[actix::test]
-async fn secure_keyshare_publication_waits_for_the_lbfv_bundle() -> Result<()> {
+/// Start a ready l-BFV keyshare whose state has no C1 proof, because the l-BFV path proves none,
+/// and ask it to publish `KeyshareCreated`.
+async fn lbfv_ready_keyshare_without_c1(
+    lbfv_generation: Option<LbfvGenerationStateV1>,
+) -> Result<(
+    ThresholdKeyshare,
+    Addr<HistoryCollector<InterfoldEvent>>,
+    Repository<ThresholdKeyshareState>,
+    Repository<ThresholdKeyshareRecoveryState>,
+)> {
     let (bus, history) = test_bus();
     let e3_id = E3id::new("42", 1);
-    let mut ready = ready_state();
-    ready.signed_pk_generation_proof = Some(SignedProofPayload::sign(
-        ProofPayload {
-            e3_id: e3_id.clone(),
-            proof_type: ProofType::C1PkGeneration,
-            proof: Proof::new(
-                CircuitName::PkGeneration,
-                ArcBytes::from_bytes(&[1]),
-                ArcBytes::from_bytes(&[]),
-            ),
-        },
-        &test_signer(),
-    )?);
+    let ready = ready_state();
+    assert!(ready.signed_pk_generation_proof.is_none());
     let (state, state_repo) = test_state(&e3_id, KeyshareState::ReadyForDecryption(ready));
     let recovery_store = InMemStore::new(false).start();
     let recovery_repo =
         Repository::<ThresholdKeyshareRecoveryState>::new(DataStore::from_in_mem(&recovery_store));
     let lbfv_store = InMemStore::new(false).start();
     let lbfv_repo = Repository::<LbfvGenerationStateV1>::new(DataStore::from_in_mem(&lbfv_store));
-    let lbfv_state = LbfvGenerationStateV1::from_selection(
-        &secure_selection(&e3_id),
-        Address::repeat_byte(0x11),
-        test_signer().address(),
-        4,
-    )?;
     let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
@@ -7261,7 +7252,9 @@ async fn secure_keyshare_publication_waits_for_the_lbfv_bundle() -> Result<()> {
         share_enc_preset: BfvPreset::SecureDkg16384,
         interfold_address: Address::repeat_byte(0x11),
         recovery: recovery_repo.send(Some(ThresholdKeyshareRecoveryState::default())),
-        lbfv_generation: lbfv_repo.send(Some(lbfv_state)),
+        lbfv_generation: lbfv_repo.send(lbfv_generation),
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
         signer: test_signer(),
     });
     let trigger = InterfoldEvent::<Unsequenced>::new_with_timestamp(
@@ -7275,6 +7268,19 @@ async fn secure_keyshare_publication_waits_for_the_lbfv_bundle() -> Result<()> {
 
     actor.publish_keyshare_created(trigger.get_ctx().clone())?;
     actix::clock::sleep(std::time::Duration::from_millis(25)).await;
+    Ok((actor, history, state_repo, recovery_repo))
+}
+
+#[actix::test]
+async fn secure_keyshare_publication_waits_for_the_lbfv_bundle() -> Result<()> {
+    let lbfv_state = LbfvGenerationStateV1::from_selection(
+        &secure_selection(&E3id::new("42", 1)),
+        Address::repeat_byte(0x11),
+        test_signer().address(),
+        4,
+    )?;
+    let (_actor, history, state_repo, recovery_repo) =
+        lbfv_ready_keyshare_without_c1(Some(lbfv_state)).await?;
 
     assert!(history
         .send(GetEvents::<InterfoldEvent>::new())
@@ -7293,6 +7299,30 @@ async fn secure_keyshare_publication_waits_for_the_lbfv_bundle() -> Result<()> {
             .await?
             .expect("persisted recovery state")
             .keyshare_publish_authorized
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn lbfv_keyshare_publication_does_not_wait_for_a_c1_proof() -> Result<()> {
+    // No l-BFV generation state makes the bundle gate pass, so only the C1 gate can defer.
+    let (_actor, history, state_repo, _) = lbfv_ready_keyshare_without_c1(None).await?;
+
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    let created = events
+        .iter()
+        .find_map(|event| match event.get_data() {
+            InterfoldEventData::KeyshareCreated(created) => Some(created.clone()),
+            _ => None,
+        })
+        .expect("KeyshareCreated without a C1 proof on the l-BFV path");
+    assert!(created.signed_pk_generation_proof.is_none());
+    assert!(
+        state_repo
+            .read()
+            .await?
+            .expect("persisted keyshare state")
+            .keyshare_published
     );
     Ok(())
 }

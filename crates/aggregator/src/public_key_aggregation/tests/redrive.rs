@@ -51,7 +51,7 @@ fn redrive_fixture(
             initial_stage: E3Stage::None,
             effects_enabled: true,
         },
-        test_state(generating_c5_state(CorrelationId::new())),
+        test_state(lbfv_generating_state(CorrelationId::new())),
         Arc::new(FixedClock(now)),
     );
     Ok((aggregator, history, e3_id, proof_domain))
@@ -69,7 +69,9 @@ fn fold_row_zero_ready(
         BfvPreset::SecureThreshold16384,
     )?;
     aggregation.record_public_key_proof(0, dummy_proof(CircuitName::PkAggregation))?;
-    aggregation.record_rlk_proof(0, dummy_proof(CircuitName::PkAggregation))?;
+    for component in e3_zk_helpers::threshold::rlk_aggregation::RlkAggregationComponent::ALL {
+        aggregation.record_rlk_proof(0, component, dummy_proof(CircuitName::PkAggregation))?;
+    }
     if let Some(correlation) = fold_correlation {
         aggregation.set_fold_correlation(correlation)?;
     }
@@ -152,9 +154,9 @@ async fn redrive_leaves_a_fresh_fold_correlation_alone() -> Result<()> {
 async fn v2_dispatch_redrives_a_missing_aggregation_fold() -> Result<()> {
     const NOW: u64 = 10_000;
     let (mut aggregator, history, e3_id, proof_domain) = redrive_fixture(NOW)?;
-    // C5 is signed and the cross-node fold is complete, but the aggregation
-    // fold was never dispatched: the V2 probe must dispatch it first.
-    let mut state = generating_c5_state(CorrelationId::new());
+    // The cross-node fold is complete, but the aggregation fold was never
+    // dispatched: the V2 probe must dispatch it first.
+    let mut state = lbfv_generating_state(CorrelationId::new());
     let PublicKeyAggregatorState::GeneratingC5Proof {
         party_nodes,
         honest_party_ids,
@@ -197,5 +199,77 @@ async fn v2_dispatch_redrives_a_missing_aggregation_fold() -> Result<()> {
     assert!(aggregator
         .lbfv_aggregation_state()?
         .is_some_and(|state| state.dkg_aggregation_correlation.is_none()));
+    Ok(())
+}
+
+#[actix::test]
+async fn v2_dispatch_does_not_wait_for_a_c5_proof() -> Result<()> {
+    const NOW: u64 = 10_000;
+    let (mut aggregator, history, e3_id, proof_domain) = redrive_fixture(NOW)?;
+    // The l-BFV path proves no C5: the final aggregation needs only the cross-node fold and the
+    // complete row aggregation fold.
+    let mut state = lbfv_generating_state(CorrelationId::new());
+    let PublicKeyAggregatorState::GeneratingC5Proof {
+        party_nodes,
+        dkg_node_proofs,
+        honest_party_ids,
+        nodes_fold_accumulator,
+        nodes_fold_completed_slots,
+        dkg_aggregation_correlation,
+        c5_proof_pending,
+        ..
+    } = &mut state
+    else {
+        unreachable!();
+    };
+    assert!(c5_proof_pending.is_none());
+    *dkg_aggregation_correlation = None;
+    for party_id in [0, 1, 2] {
+        party_nodes.insert(party_id, Address::repeat_byte(party_id as u8).to_string());
+    }
+    for party_id in [0, 1] {
+        honest_party_ids.insert(party_id);
+        dkg_node_proofs.insert(party_id, Some(dummy_proof(CircuitName::NodeFoldV2)));
+    }
+    *nodes_fold_accumulator = Some(dummy_proof(CircuitName::NodesFoldV2));
+    *nodes_fold_completed_slots = 2;
+    aggregator.state = test_state(state);
+    let mut aggregation = LbfvAggregationStateV1::new(
+        e3_id.clone(),
+        proof_domain,
+        vec![0, 1],
+        BfvPreset::SecureThreshold16384,
+    )?;
+    for row in 0..aggregation.row_count()? as u32 {
+        aggregation.record_public_key_proof(row, dummy_proof(CircuitName::PkAggregation))?;
+        for component in e3_zk_helpers::threshold::rlk_aggregation::RlkAggregationComponent::ALL {
+            aggregation.record_rlk_proof(
+                row,
+                component,
+                dummy_proof(CircuitName::PkAggregation),
+            )?;
+        }
+        let correlation = CorrelationId::new();
+        aggregation.set_fold_correlation(correlation)?;
+        aggregation.complete_fold(correlation, dummy_proof(CircuitName::NodesFoldV2))?;
+    }
+    aggregation.set_operational_keys(ArcBytes::from_bytes(&[1]), ArcBytes::from_bytes(&[2]))?;
+    aggregator.replace_lbfv_aggregation(test_state(aggregation));
+
+    aggregator.try_dispatch_dkg_aggregation(&test_ctx(EffectsEnabled::new()))?;
+
+    let event = next_event(&history).await?.into_data();
+    assert!(
+        matches!(
+            event,
+            InterfoldEventData::ComputeRequest(request)
+            if matches!(
+                request.request,
+                ComputeRequestKind::Zk(ZkRequest::DkgAggregationV2(ref dkg))
+                if dkg.party_ids == vec![0, 1]
+            )
+        ),
+        "expected DkgAggregationV2 without a C5 proof"
+    );
     Ok(())
 }

@@ -24,7 +24,9 @@ use e3_zk_helpers::threshold::lbfv_proof_domain::lbfv_proof_session;
 use e3_zk_helpers::threshold::pk_generation::{
     Bits, Bounds, LbfvPkGenerationAdapter, LbfvPkGenerationCircuitData,
 };
-use e3_zk_helpers::threshold::rlk_aggregation::{RlkAggregationCircuit, RlkAggregationCircuitData};
+use e3_zk_helpers::threshold::rlk_aggregation::{
+    RlkAggregationCircuit, RlkAggregationCircuitData, RlkAggregationComponent,
+};
 use e3_zk_helpers::{CiphernodesCommitteeSize, CircuitComputation, Computation};
 use e3_zk_prover::{c2_chunk_size, prove_lbfv_pk_generation_row, Provable, ZkProver};
 use num_bigint::BigInt;
@@ -193,63 +195,60 @@ async fn secure_lbfv_row_circuits_prove_verify_and_expose_exact_commitments() {
     ));
     assert_exact_public_signals(&pk_aggregation_proof, &expected_pk_aggregation);
 
-    let rlk_aggregation_sample =
-        RlkAggregationCircuitData::generate_sample_for_row(preset, committee, ROW_INDEX)
-            .expect("valid RLK aggregation row");
-    let rlk_aggregation_output = RlkAggregationCircuit::compute(preset, &rlk_aggregation_sample)
-        .expect("RLK aggregation inputs");
-    let rlk_aggregation_proof = RlkAggregationCircuit
-        .prove_with_variant(
-            &prover,
-            &preset,
-            &rlk_aggregation_sample,
-            "secure-rlk-aggregation-row",
-            CircuitVariant::Recursive,
-            &artifacts_dir,
+    for component in RlkAggregationComponent::ALL {
+        let rlk_aggregation_sample = RlkAggregationCircuitData::generate_sample_for_row(
+            preset,
+            committee.clone(),
+            ROW_INDEX,
+            component,
         )
-        .expect("RLK aggregation proof");
-    assert_eq!(rlk_aggregation_proof.circuit, CircuitName::RlkAggregation);
-    assert!(RlkAggregationCircuit
-        .verify_with_variant(
-            &prover,
-            &rlk_aggregation_proof,
-            "secure-rlk-aggregation-row",
-            0,
-            CircuitVariant::Recursive,
-            &artifacts_dir,
-        )
-        .expect("RLK aggregation verification"));
-    let mut expected_rlk_aggregation = vec![
-        BigInt::from(rlk_aggregation_output.inputs.session_id_hi),
-        BigInt::from(rlk_aggregation_output.inputs.session_id_lo),
-        BigInt::from(rlk_aggregation_output.inputs.aggregator_party_id),
-        BigInt::from(rlk_aggregation_output.inputs.accepted_party_set_hash_hi),
-        BigInt::from(rlk_aggregation_output.inputs.accepted_party_set_hash_lo),
-        BigInt::from(rlk_aggregation_output.inputs.row_index),
-    ];
-    expected_rlk_aggregation.extend(
-        rlk_aggregation_output
-            .inputs
-            .expected_d0_commitments
-            .iter()
-            .cloned(),
-    );
-    expected_rlk_aggregation.extend(
-        rlk_aggregation_output
-            .inputs
-            .expected_d2_commitments
-            .iter()
-            .cloned(),
-    );
-    expected_rlk_aggregation.push(compute_rlk_aggregation_commitment(
-        &rlk_aggregation_output.inputs.d0_agg,
-        rlk_aggregation_output.configs.bits.d_bit,
-    ));
-    expected_rlk_aggregation.push(compute_rlk_aggregation_commitment(
-        &rlk_aggregation_output.inputs.d2_agg,
-        rlk_aggregation_output.configs.bits.d_bit,
-    ));
-    assert_exact_public_signals(&rlk_aggregation_proof, &expected_rlk_aggregation);
+        .expect("valid RLK aggregation row");
+        let rlk_aggregation_output =
+            RlkAggregationCircuit::compute(preset, &rlk_aggregation_sample)
+                .expect("RLK aggregation inputs");
+        let rlk_aggregation_proof = RlkAggregationCircuit
+            .prove_with_variant(
+                &prover,
+                &preset,
+                &rlk_aggregation_sample,
+                "secure-rlk-aggregation-row",
+                CircuitVariant::Recursive,
+                &artifacts_dir,
+            )
+            .expect("RLK aggregation proof");
+        assert_eq!(rlk_aggregation_proof.circuit, CircuitName::RlkAggregation);
+        assert!(RlkAggregationCircuit
+            .verify_with_variant(
+                &prover,
+                &rlk_aggregation_proof,
+                "secure-rlk-aggregation-row",
+                0,
+                CircuitVariant::Recursive,
+                &artifacts_dir,
+            )
+            .expect("RLK aggregation verification"));
+        let mut expected_rlk_aggregation = vec![
+            BigInt::from(rlk_aggregation_output.inputs.session_id_hi),
+            BigInt::from(rlk_aggregation_output.inputs.session_id_lo),
+            BigInt::from(rlk_aggregation_output.inputs.aggregator_party_id),
+            BigInt::from(rlk_aggregation_output.inputs.accepted_party_set_hash_hi),
+            BigInt::from(rlk_aggregation_output.inputs.accepted_party_set_hash_lo),
+            BigInt::from(rlk_aggregation_output.inputs.row_index),
+            BigInt::from(component.index()),
+        ];
+        expected_rlk_aggregation.extend(
+            rlk_aggregation_output
+                .inputs
+                .expected_commitments
+                .iter()
+                .cloned(),
+        );
+        expected_rlk_aggregation.push(compute_rlk_aggregation_commitment(
+            &rlk_aggregation_output.inputs.agg,
+            rlk_aggregation_output.configs.bits.d_bit,
+        ));
+        assert_exact_public_signals(&rlk_aggregation_proof, &expected_rlk_aggregation);
+    }
 
     for e3_id in [
         "secure-lbfv-pk-generation-row",

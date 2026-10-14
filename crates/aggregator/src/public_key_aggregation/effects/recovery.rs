@@ -60,6 +60,45 @@ impl PublicKeyAggregator {
             }
         }
 
+        if matches!(state, PublicKeyAggregatorState::Collecting { .. }) {
+            if let Some(selected) = recovery.selected_roster.as_ref() {
+                self.state.try_mutate(&effects_context, |state| {
+                    PublicKeyAggregation::begin_selected_c1(state, Some(selected))
+                })?;
+                state = self
+                    .state
+                    .get()
+                    .ok_or_else(|| anyhow::anyhow!("public-key aggregation state disappeared"))?;
+                self.publish_inputs_ready(effects_context.clone())?;
+            }
+        }
+
+        // A saved key publication is this node's finished result, whatever its role now: send it
+        // again until the whole key is on chain, so that the registry writer publishes it. The
+        // writer skips a commitment that is already on chain and sends every chunk again.
+        // `CommitteePublished` clears the saved publication.
+        if matches!(state, PublicKeyAggregatorState::Complete { .. }) {
+            // The l-BFV path rebuilds its publication from the persisted l-BFV aggregation state.
+            if self.is_lbfv() {
+                return self.try_publish_complete();
+            }
+            if let Some(publication) = recovery.pending_publication {
+                self.bus
+                    .publish(publication, recovery.last_ec.unwrap_or(effects_context))?;
+            }
+            return Ok(());
+        }
+
+        // The active aggregator resumes any phase. A demoted node resumes only the work that it
+        // started: every phase after C1 verification, and a C1 verification that it dispatched.
+        if !(self.can_run_aggregation_effects()
+            || ((aggregation_started(&state) || self.started_as_aggregator)
+                && self.can_continue_aggregation_effects()))
+        {
+            return Ok(());
+        }
+        self.mark_started_as_aggregator(&effects_context)?;
+
         match state {
             PublicKeyAggregatorState::VerifyingC1 { .. } => {
                 self.continue_c1_verification(effects_context)
@@ -91,7 +130,8 @@ impl PublicKeyAggregator {
                     Ok(state)
                 })?;
 
-                if c5_proof_pending.is_none() {
+                // The l-BFV path proves no C5.
+                if c5_proof_pending.is_none() && !self.is_lbfv() {
                     self.bus.publish(
                         PkAggregationProofPending {
                             e3_id: self.e3_id.clone(),
@@ -126,17 +166,8 @@ impl PublicKeyAggregator {
                 self.try_dispatch_nodes_fold_step(&causal_context)?;
                 self.try_publish_complete()
             }
-            PublicKeyAggregatorState::Complete { .. } => {
-                if self.is_lbfv() {
-                    return self.try_publish_complete();
-                }
-                if let Some(publication) = recovery.pending_publication {
-                    self.bus
-                        .publish(publication, recovery.last_ec.unwrap_or(effects_context))?;
-                }
-                Ok(())
-            }
-            PublicKeyAggregatorState::Collecting { .. } => Ok(()),
+            PublicKeyAggregatorState::Complete { .. }
+            | PublicKeyAggregatorState::Collecting { .. } => Ok(()),
         }
     }
 }

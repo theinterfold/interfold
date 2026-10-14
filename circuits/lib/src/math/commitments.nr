@@ -820,6 +820,24 @@ pub fn compute_rlk_d0_commitment<let N: u32, let L: u32, let BIT_D: u32>(
     compute_rlk_row_commitment_from_limbs(2, row_index, limbs)
 }
 
+/// l-BFV RLK row commitment to one row's `d0` (`component == 0`) or `d2` (`component == 1`),
+/// opened from the coefficients. Equals [`compute_rlk_d0_commitment`] or
+/// [`compute_rlk_d2_commitment`]: the component only selects the kind tag.
+pub fn compute_rlk_component_commitment<let N: u32, let L: u32, let BIT_D: u32>(
+    component: u32,
+    row_index: u32,
+    values: [Polynomial<N>; L],
+) -> Field {
+    assert(component < 2, "RLK component must be d0 or d2");
+    let kind_tag = 2 + component as Field;
+    let mut limbs: [Field; L] = [0; L];
+    for l in 0..L {
+        limbs[l] =
+            compute_rlk_indexed_limb_commitment::<N, BIT_D>(kind_tag, row_index, l, values[l]);
+    }
+    compute_rlk_row_commitment_from_limbs(kind_tag, row_index, limbs)
+}
+
 /// l-BFV RLK row commitment to one row's `d2`, opened from the coefficients.
 pub fn compute_rlk_d2_commitment<let N: u32, let L: u32, let BIT_D: u32>(
     row_index: u32,

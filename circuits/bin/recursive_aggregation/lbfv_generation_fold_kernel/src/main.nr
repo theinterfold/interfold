@@ -11,6 +11,7 @@ use bb_proof_verification::{
 };
 
 pub use lib::configs::default::threshold::L as LBFV_ROWS;
+use lib::configs::default::threshold::GADGET_DIM;
 pub global PK_GENERATION_PUBLIC_LEN: u32 = 6;
 pub global RLK_GENERATION_PUBLIC_LEN: u32 = 8;
 pub global GENERATION_FOLD_PREFIX_LEN: u32 = 7;
@@ -48,6 +49,9 @@ fn main(
     expected_kernel_key_hash: pub Field,
     expected_fold_key_hash: pub Field,
     ) -> pub (Field, Field, Field, Field, Field, [Field; LBFV_ROWS], [Field; LBFV_ROWS], [Field; LBFV_ROWS]) {
+    // Coverage is sized by `LBFV_ROWS`; the row circuits accept any `row_index < GADGET_DIM`. The two
+    // agree in every preset, and this keeps rows from going unaggregated if they ever diverge.
+    assert(GADGET_DIM == LBFV_ROWS);
     assert(is_first_step);
     assert(acc_key_hash == expected_kernel_key_hash);
     assert_generation_pair(pk_public, rlk_public, row_index);

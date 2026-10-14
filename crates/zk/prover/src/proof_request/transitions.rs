@@ -3,6 +3,7 @@
 //! Deterministic C1-C4 dispatch planning and sequence assignment.
 
 use super::*;
+use crate::utils::{proves_c1, C1_SEQ};
 
 /// A single planned threshold (C1/C2/C3) proof request: which proof, its `seq`
 /// index for streaming aggregation, and the [`ZkRequest`] to dispatch.
@@ -15,6 +16,7 @@ pub(crate) struct ThresholdDispatchItem {
 /// Build the deterministic, ordered set of C1/C2/C3 proof requests for a
 /// `ThresholdSharePending` event. Pure: assigns the canonical `seq` indices
 /// (C1=1, C2a=2, C2b=3, C3a[i]=4+i, C3b[j]=4+sk_count+j) and wraps each request.
+/// The l-BFV path proves no C1, so its plan starts at C2a and leaves `seq` 1 unused.
 pub(crate) fn plan_threshold_dispatch(
     proof_request: PkGenerationProofRequest,
     sk_share_computation_request: ShareComputationProofRequest,
@@ -25,11 +27,13 @@ pub(crate) fn plan_threshold_dispatch(
     let sk_enc_count = sk_share_encryption_requests.len();
     let mut items = Vec::with_capacity(3 + sk_enc_count + e_sm_share_encryption_requests.len());
 
-    items.push(ThresholdDispatchItem {
-        kind: ThresholdProofKind::PkGeneration,
-        seq: 1,
-        request: ZkRequest::PkGeneration(proof_request),
-    });
+    if proves_c1(proof_request.params_preset) {
+        items.push(ThresholdDispatchItem {
+            kind: ThresholdProofKind::PkGeneration,
+            seq: C1_SEQ,
+            request: ZkRequest::PkGeneration(proof_request),
+        });
+    }
     items.push(ThresholdDispatchItem {
         kind: ThresholdProofKind::SkShareComputation,
         seq: 2,

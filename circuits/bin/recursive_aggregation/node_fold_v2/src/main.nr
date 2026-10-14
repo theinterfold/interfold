@@ -4,13 +4,14 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Bind a legacy NodeFold proof to the terminal secure-16384 generation fold.
+//! Bind a `node_fold_chunked` proof to the terminal l-BFV generation fold.
 
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use lib::math::commitments::compute_vk_hash;
 
 pub use lib::configs::default::threshold::L as LBFV_ROWS;
-pub global NODE_FOLD_PUBLIC_LEN: u32 = 15
+use lib::configs::default::threshold::GADGET_DIM;
+pub global NODE_FOLD_PUBLIC_LEN: u32 = 13
     + lib::configs::default::N_PARTIES
     + (
         2
@@ -35,22 +36,17 @@ pub global GF_R_COMMITMENT_IDX: u32 = GF_SK_COMMITMENT_IDX + 1;
 pub global GF_PK_COMMITMENTS_START: u32 = GF_R_COMMITMENT_IDX + 1;
 pub global GF_D0_COMMITMENTS_START: u32 = GF_PK_COMMITMENTS_START + LBFV_ROWS;
 pub global GF_D2_COMMITMENTS_START: u32 = GF_D0_COMMITMENTS_START + LBFV_ROWS;
-pub global LEGACY_NODE_FOLD_C1_KEY_HASH_IDX: u32 = 2;
-/// `node_fold_chunked` exports its C1 sk secret root just before the VK manifest.
+/// `node_fold_chunked` exports its C2a secret root just before the VK manifest.
 pub global LEGACY_NODE_FOLD_SK_ROOT_IDX: u32 = NODE_FOLD_PUBLIC_LEN - 2;
 
-fn assert_bridge_c1_key_hash(node_fold_public: [Field; NODE_FOLD_PUBLIC_LEN], c1_key_hash: Field) {
-    assert(node_fold_public[LEGACY_NODE_FOLD_C1_KEY_HASH_IDX] == c1_key_hash);
-}
-
-/// Ties this fold's C1 to the legacy fold's C1. Both C1 proofs share a VK, but without this check
-/// the generation fold could commit to a different secret than the one the DKG shares were dealt
-/// from.
+/// Ties the generation fold's `sk` to the secret the DKG shares were dealt from. The rows
+/// range-check `sk` and all commit the same root; C2a opens that root with injective packing, so
+/// equal roots mean C2a shares exactly the rows' bounded `sk`.
 fn assert_same_sk_as_legacy_fold(
     node_fold_public: [Field; NODE_FOLD_PUBLIC_LEN],
-    c1_sk_root: Field,
+    generation_sk_root: Field,
 ) {
-    assert(node_fold_public[LEGACY_NODE_FOLD_SK_ROOT_IDX] == c1_sk_root);
+    assert(node_fold_public[LEGACY_NODE_FOLD_SK_ROOT_IDX] == generation_sk_root);
 }
 
 fn compute_generation_manifest(
@@ -88,9 +84,8 @@ fn build_public_statement(
     out
 }
 
-/// C1 itself is not re-verified here: the legacy node fold already verifies it, exports its sk
-/// secret root, and `c1_key_hash` is pinned to the legacy fold's C1 VK. Binding the generation
-/// fold to that exported root is what ties the l-BFV key to the DKG shares' secret.
+/// Binding the generation fold to the node fold's exported C2a secret root is what ties the l-BFV
+/// key to the DKG shares' secret.
 fn main(
     node_fold_vk: UltraHonkVerificationKey,
     node_fold_proof: UltraHonkProof,
@@ -100,9 +95,11 @@ fn main(
     generation_public: [Field; GENERATION_FOLD_PUBLIC_LEN],
     generation_key_hash: pub Field,
     node_fold_key_hash: pub Field,
-    c1_key_hash: pub Field,
     party_id: pub Field,
 ) -> pub [Field; NODE_FOLD_V2_PUBLIC_LEN] {
+    // Coverage is sized by `LBFV_ROWS`; the row circuits accept any `row_index < GADGET_DIM`. The two
+    // agree in every preset, and this keeps rows from going unaggregated if they ever diverge.
+    assert(GADGET_DIM == LBFV_ROWS);
     verify_honk_proof_non_zk(
         node_fold_vk,
         node_fold_proof,
@@ -117,7 +114,6 @@ fn main(
     );
 
     assert(node_fold_public[0] == party_id);
-    assert_bridge_c1_key_hash(node_fold_public, c1_key_hash);
     assert(generation_public[GF_ACC_VK_IDX] == generation_key_hash);
     assert(generation_public[GF_ROW_INDEX_IDX] == (LBFV_ROWS - 1) as Field);
     assert(generation_public[GF_EXPECTED_FOLD_IDX] == generation_key_hash);
@@ -166,20 +162,6 @@ fn test_generation_manifest_uses_canonical_vk_order() {
 }
 
 #[test]
-fn test_bridge_c1_key_hash_matches_legacy_node_fold() {
-    let mut node_public: [Field; NODE_FOLD_PUBLIC_LEN] = [0; NODE_FOLD_PUBLIC_LEN];
-    node_public[LEGACY_NODE_FOLD_C1_KEY_HASH_IDX] = 41;
-    assert_bridge_c1_key_hash(node_public, 41);
-}
-
-#[test(should_fail)]
-fn test_bridge_c1_key_hash_rejects_another_vk() {
-    let mut node_public: [Field; NODE_FOLD_PUBLIC_LEN] = [0; NODE_FOLD_PUBLIC_LEN];
-    node_public[LEGACY_NODE_FOLD_C1_KEY_HASH_IDX] = 41;
-    assert_bridge_c1_key_hash(node_public, 42);
-}
-
-#[test]
 fn test_same_sk_as_legacy_fold_accepts_the_shared_root() {
     let mut node_public: [Field; NODE_FOLD_PUBLIC_LEN] = [0; NODE_FOLD_PUBLIC_LEN];
     node_public[LEGACY_NODE_FOLD_SK_ROOT_IDX] = 77;
@@ -187,7 +169,7 @@ fn test_same_sk_as_legacy_fold_accepts_the_shared_root() {
 }
 
 #[test(should_fail)]
-fn test_same_sk_as_legacy_fold_rejects_a_different_c1() {
+fn test_same_sk_as_legacy_fold_rejects_a_different_secret() {
     let mut node_public: [Field; NODE_FOLD_PUBLIC_LEN] = [0; NODE_FOLD_PUBLIC_LEN];
     node_public[LEGACY_NODE_FOLD_SK_ROOT_IDX] = 77;
     assert_same_sk_as_legacy_fold(node_public, 78);

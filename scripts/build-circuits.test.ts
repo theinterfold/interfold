@@ -105,10 +105,10 @@ test('synchronizes and verifies nested l-BFV config modules', () => {
 
 test('requires complete l-BFV artifacts for supported presets', () => {
   const root = '/artifacts'
-  assert.equal(requiredLbfvDistMarkers(root, CIRCUIT_PRESETS.INSECURE).length, 81)
-  assert.equal(requiredLbfvBinMarkers(root, CIRCUIT_PRESETS.INSECURE).length, 68)
-  assert.equal(requiredLbfvDistMarkers(root, CIRCUIT_PRESETS.SECURE_16384).length, 81)
-  assert.equal(requiredLbfvBinMarkers(root, CIRCUIT_PRESETS.SECURE_16384).length, 68)
+  assert.equal(requiredLbfvDistMarkers(root, CIRCUIT_PRESETS.INSECURE).length, 144)
+  assert.equal(requiredLbfvBinMarkers(root, CIRCUIT_PRESETS.INSECURE).length, 121)
+  assert.equal(requiredLbfvDistMarkers(root, CIRCUIT_PRESETS.SECURE_16384).length, 144)
+  assert.equal(requiredLbfvBinMarkers(root, CIRCUIT_PRESETS.SECURE_16384).length, 121)
   assert.deepEqual(requiredLbfvDistMarkers(root, CIRCUIT_PRESETS.SECURE_8192), [])
   assert.deepEqual(requiredLbfvBinMarkers(root, CIRCUIT_PRESETS.SECURE_8192), [])
 })
@@ -128,6 +128,9 @@ test('secure-16384 builds only the circuits of the l-BFV path', () => {
   // `share_decryption` names C6 (both paths) and the trBFV C4.
   assert.ok(secure.includes('threshold/share_decryption'))
   assert.ok(!secure.includes('dkg/share_decryption'))
+  // C5 is trBFV only; the l-BFV path has no C1 or C5.
+  assert.ok(!secure.includes('threshold/pk_aggregation'))
+  assert.ok(!secure.includes('threshold/pk_generation_chunked'))
 
   const insecure = selection(CIRCUIT_PRESETS.INSECURE)
   assert.ok(insecure.includes('threshold/decrypted_shares_aggregation'))
@@ -280,12 +283,7 @@ function hydrationFixture(): {
     mkdirSync(targetDir, { recursive: true })
     writeFileSync(join(targetDir, `${circuit}.obsolete`), 'stale')
   }
-  const thresholdMembers = [
-    'pk_aggregation',
-    ...secureCircuits.filter(([group]) => group === CIRCUIT_GROUPS.THRESHOLD).map(([, circuit]) => circuit),
-  ]
-  mkdirSync(join(bin, CIRCUIT_GROUPS.THRESHOLD, 'pk_aggregation'), { recursive: true })
-  writeFileSync(join(bin, CIRCUIT_GROUPS.THRESHOLD, 'pk_aggregation', 'Nargo.toml'), '[package]\nname = "pk_aggregation"\ntype = "bin"\n')
+  const thresholdMembers = secureCircuits.filter(([group]) => group === CIRCUIT_GROUPS.THRESHOLD).map(([, circuit]) => circuit)
   writeFileSync(
     join(bin, CIRCUIT_GROUPS.THRESHOLD, 'Nargo.toml'),
     `[workspace]\nmembers = [${thresholdMembers.map((member) => `"${member}"`).join(', ')}]\n`,
@@ -293,14 +291,12 @@ function hydrationFixture(): {
 
   writeFiles([
     join(pairDir, 'default', CIRCUIT_GROUPS.DKG, 'pk', 'pk.json'),
-    join(pairDir, 'default', CIRCUIT_GROUPS.THRESHOLD, 'pk_aggregation', 'pk_aggregation.json'),
     join(pairDir, 'default', CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'dkg_aggregator.json'),
     join(pairDir, 'default', CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'dkg_aggregator.vk'),
     join(pairDir, 'default', CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'decryption_aggregator.json'),
     join(pairDir, 'default', CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'decryption_aggregator.vk'),
     ...requiredLbfvDistMarkers(pairDir, CIRCUIT_PRESETS.SECURE_16384),
     join(bin, CIRCUIT_GROUPS.DKG, 'target', 'pk.json'),
-    join(bin, CIRCUIT_GROUPS.THRESHOLD, 'target', 'pk_aggregation.json'),
     join(bin, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'target', 'dkg_aggregator.json'),
     join(bin, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'target', 'dkg_aggregator.vk_recursive'),
     join(bin, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'target', 'decryption_aggregator.json'),

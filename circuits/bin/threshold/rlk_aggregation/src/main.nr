@@ -14,18 +14,14 @@ use lib::core::threshold::lbfv_proof_domain::{
 use lib::core::threshold::rlk_aggregation::RlkAggregation;
 use lib::math::polynomial::Polynomial;
 
-/// l-BFV: this circuit aggregates H honest parties' RLK `(d0, d2)` contributions
-/// for one gadget row, returning `(commit(d0_agg), commit(d2_agg))`. The same
-/// compiled circuit is reused for every row `row_index in 0..GADGET_DIM`.
+/// l-BFV: aggregates `H` honest parties' RLK contributions for one component of one gadget row:
+/// `d0` when `component == 0`, `d2` when `component == 1`. Returns `commit(agg)`. The same
+/// compiled circuit serves every row and both components, so each row takes two proofs;
+/// `lbfv_aggregation_fold` binds them to components 0 and 1.
 ///
-/// `d1`/`a` are not circuit inputs here: both are compile-time constants
-/// pinned by the verification key (same as `pk_generation`/`pk_aggregation`'s
-/// `CRP`), so binding them into this proof's output would be redundant.
-/// `row_index` is a public input and is constrained to the compiled gadget-row range.
-///
-/// TODO: when folding lands, this may be replaced/supplemented by a batched
-/// entry point that loops all GADGET_DIM rows into one proof instead of one
-/// row per invocation.
+/// `d1`/`a` are not circuit inputs here: both are compile-time constants pinned by the verification
+/// key. `row_index` is a public input constrained to the compiled gadget-row range, and `component`
+/// is bound through the kind tag of every commitment the circuit opens.
 fn main(
     session_id_hi: pub Field,
     session_id_lo: pub Field,
@@ -33,13 +29,11 @@ fn main(
     accepted_party_set_hash_hi: pub Field,
     accepted_party_set_hash_lo: pub Field,
     row_index: pub u32,
-    expected_d0_commitments: pub [Field; H],
-    expected_d2_commitments: pub [Field; H],
-    d0: [[Polynomial<N>; L]; H],
-    d2: [[Polynomial<N>; L]; H],
-    d0_agg: [Polynomial<N>; L],
-    d2_agg: [Polynomial<N>; L],
-) -> pub (Field, Field) {
+    component: pub u32,
+    expected_commitments: pub [Field; H],
+    values: [[Polynomial<N>; L]; H],
+    agg: [Polynomial<N>; L],
+) -> pub Field {
     // Opens the d0/d2 commitments rlk_generation made, so the digit widths must agree.
     assert(RLK_AGGREGATION_BIT_D == RLK_GENERATION_BIT_D);
     validate_aggregation_statement::<N_PARTIES, GADGET_DIM>(
@@ -52,15 +46,8 @@ fn main(
         row_index,
     );
 
-    let rlk_aggregation: RlkAggregation<N, H, L, RLK_AGGREGATION_BIT_D> = RlkAggregation::new(
-        RLK_AGGREGATION_CONFIGS,
-        expected_d0_commitments,
-        expected_d2_commitments,
-        d0,
-        d2,
-        d0_agg,
-        d2_agg,
-    );
+    let rlk_aggregation: RlkAggregation<N, H, L, RLK_AGGREGATION_BIT_D> =
+        RlkAggregation::new(RLK_AGGREGATION_CONFIGS, expected_commitments, values, agg);
 
-    rlk_aggregation.execute(row_index)
+    rlk_aggregation.execute(row_index, component)
 }

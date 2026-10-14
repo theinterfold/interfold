@@ -27,10 +27,7 @@ pub use actors::{
     ShareVerificationActor, ZkVerificationOutcome, ZkVerificationRequest, ZkVerificationResponse,
 };
 pub use domain::commitment_links::default_links;
-pub use domain::commitment_links::lbfv_share_transport::{
-    validate_lbfv_key_share_document_commitments,
-    validate_lbfv_key_share_document_commitments_dynamic,
-};
+pub use domain::commitment_links::lbfv_share_transport::validate_lbfv_key_share_document_commitments_dynamic;
 
 pub use backend::{SetupStatus, ZkBackend};
 pub use circuits::aggregation::c2_terminal_validation::{

@@ -6,6 +6,8 @@ use super::super::*;
 
 impl PublicKeyAggregator {
     /// Publish the completed public-key intent for the active protocol path.
+    /// Publish `PublicKeyAggregated` when C5 and the final DkgAggregator proof are ready, or when
+    /// a test-only node deliberately skips recursive aggregation.
     pub(in crate::actors::publickey_aggregator) fn try_publish_complete(&mut self) -> Result<()> {
         if self.is_lbfv() {
             return self.try_publish_lbfv_complete();
@@ -193,7 +195,6 @@ impl PublicKeyAggregator {
             party_nodes,
             honest_party_ids,
             dkg_fold_attestations,
-            c5_proof_pending,
             last_ec,
             ..
         } = state
@@ -216,9 +217,6 @@ impl PublicKeyAggregator {
             return self.mark_lbfv_complete(committee_addresses, honest_committee_addresses, ec);
         }
 
-        if c5_proof_pending.is_none() {
-            return Ok(());
-        }
         let Some(aggregation) = self.lbfv_aggregation_state()? else {
             return Ok(());
         };

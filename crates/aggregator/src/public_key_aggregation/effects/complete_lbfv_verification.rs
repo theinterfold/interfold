@@ -14,17 +14,13 @@ use crate::{
 use e3_data::AutoPersist;
 use std::collections::{BTreeSet, HashMap};
 
-struct LbfvC5Plan {
-    state: PublicKeyAggregatorState,
-    pending: PkAggregationProofPending,
-}
-
-type VerifyingC1Inputs = (
+/// The selected roster's inputs: submissions, `threshold_m`, circuit N, circuit H, and the
+/// finalized committee.
+type SelectedRosterInputs = (
     Vec<(u64, String, ArcBytes)>,
     usize,
     usize,
     usize,
-    Vec<Option<SignedProofPayload>>,
     HashMap<u64, String>,
 );
 
@@ -75,9 +71,8 @@ impl PublicKeyAggregator {
             threshold_m,
             circuit_committee_n,
             circuit_committee_h,
-            c1_proofs,
             canonical_party_nodes,
-        )) = self.verifying_c1_inputs()
+        )) = self.selected_roster_inputs()
         else {
             return;
         };
@@ -96,39 +91,11 @@ impl PublicKeyAggregator {
             self.persist_lbfv_candidate_rejection(collection, dishonest_parties, ec, ctx);
             return;
         }
-        let mut honest_entries = submission_order
+        let honest_entries = submission_order
             .into_iter()
-            .zip(c1_proofs)
-            .filter(|((party_id, _, _), _)| {
-                candidate_ids.contains(party_id) && !dishonest_parties.contains(party_id)
-            })
-            .map(|((party_id, node, keyshare), c1)| (party_id, node, keyshare, c1))
+            .filter(|(party_id, _, _)| candidate_ids.contains(party_id))
+            .map(|(party_id, node, keyshare)| (party_id, node, keyshare, ()))
             .collect::<Vec<_>>();
-        let audit = check_c1_keyshare_commitments(&honest_entries, &self.fhe);
-        for party_id in audit.missing_proof {
-            dishonest_parties.insert(party_id);
-        }
-        for (party_id, signed_proof) in audit.mismatched {
-            dishonest_parties.insert(party_id);
-            if let Ok(faulting_node) = signed_proof.recover_address() {
-                if let Err(error) = self.bus.publish(
-                    SignedProofFailed {
-                        e3_id: self.e3_id.clone(),
-                        faulting_node,
-                        proof_type: ProofType::C1PkGeneration,
-                        signed_payload: signed_proof,
-                    },
-                    ec.clone(),
-                ) {
-                    self.bus.err(EType::PublickeyAggregation, error);
-                }
-            }
-        }
-        honest_entries.retain(|(party_id, _, _, _)| !dishonest_parties.contains(party_id));
-        if !dishonest_parties.is_empty() {
-            self.persist_lbfv_candidate_rejection(collection, dishonest_parties, ec, ctx);
-            return;
-        }
         let selected = PublicKeyAggregation::select_honest_set(
             &self.e3_id,
             honest_entries,
@@ -163,13 +130,12 @@ impl PublicKeyAggregator {
                 return;
             }
         };
-        let plan = match self.build_lbfv_c5_plan(
+        let plan = match self.build_lbfv_generation_plan(
             honest_entries,
             honest_party_ids,
             dishonest_parties,
             circuit_committee_n,
             circuit_committee_h,
-            threshold_m,
             canonical_party_nodes,
             ec.clone(),
         ) {
@@ -195,7 +161,7 @@ impl PublicKeyAggregator {
                     ensure_lbfv_aggregation_sidecar(&repositories, &aggregation_collection).await?;
                 repositories
                     .publickey(&sealed.e3_id)
-                    .write_sync(&plan.state)
+                    .write_sync(&plan)
                     .await?;
                 anyhow::Ok((sealed, aggregation, plan))
             }
@@ -204,7 +170,7 @@ impl PublicKeyAggregator {
                 Ok((sealed, aggregation, plan)) => {
                     actor.replace_lbfv_collection(sealed);
                     actor.replace_lbfv_aggregation(aggregation);
-                    if let Err(error) = actor.publish_committed_lbfv_c5_plan(plan, ec) {
+                    if let Err(error) = actor.apply_committed_lbfv_generation_plan(plan, ec) {
                         actor.bus.err(EType::PublickeyAggregation, error);
                     }
                 }
@@ -233,9 +199,8 @@ impl PublicKeyAggregator {
             threshold_m,
             circuit_committee_n,
             circuit_committee_h,
-            c1_proofs,
             canonical_party_nodes,
-        )) = self.verifying_c1_inputs()
+        )) = self.selected_roster_inputs()
         else {
             return;
         };
@@ -251,9 +216,8 @@ impl PublicKeyAggregator {
             .collect::<BTreeSet<_>>();
         let honest_entries = submission_order
             .into_iter()
-            .zip(c1_proofs)
-            .filter(|((party_id, _, _), _)| accepted_ids.contains(party_id))
-            .map(|((party_id, node, keyshare), c1)| (party_id, node, keyshare, c1))
+            .filter(|(party_id, _, _)| accepted_ids.contains(party_id))
+            .map(|(party_id, node, keyshare)| (party_id, node, keyshare, ()))
             .collect::<Vec<_>>();
         if honest_entries.len() != accepted_ids.len()
             || accepted_ids.len() != circuit_committee_h
@@ -265,13 +229,12 @@ impl PublicKeyAggregator {
             );
             return;
         }
-        let plan = match self.build_lbfv_c5_plan(
+        let plan = match self.build_lbfv_generation_plan(
             honest_entries,
             accepted_ids,
             dishonest_parties,
             circuit_committee_n,
             circuit_committee_h,
-            threshold_m,
             canonical_party_nodes,
             ec.clone(),
         ) {
@@ -288,14 +251,14 @@ impl PublicKeyAggregator {
             async move {
                 let aggregation =
                     ensure_lbfv_aggregation_sidecar(&repositories, &aggregation_collection).await?;
-                repository.write_sync(&plan.state).await?;
+                repository.write_sync(&plan).await?;
                 anyhow::Ok((aggregation, plan))
             }
             .into_actor(self)
             .map(move |result, actor, _| match result {
                 Ok((aggregation, plan)) => {
                     actor.replace_lbfv_aggregation(aggregation);
-                    if let Err(error) = actor.publish_committed_lbfv_c5_plan(plan, ec) {
+                    if let Err(error) = actor.apply_committed_lbfv_generation_plan(plan, ec) {
                         actor.bus.err(EType::PublickeyAggregation, error);
                     }
                 }
@@ -304,13 +267,13 @@ impl PublicKeyAggregator {
         );
     }
 
-    fn verifying_c1_inputs(&self) -> Option<VerifyingC1Inputs> {
+    /// The l-BFV path proves no C1, so it reads only the roster from the `VerifyingC1` state.
+    fn selected_roster_inputs(&self) -> Option<SelectedRosterInputs> {
         let PublicKeyAggregatorState::VerifyingC1 {
             submission_order,
             threshold_m,
             circuit_committee_n,
             circuit_committee_h,
-            c1_proofs,
             canonical_party_nodes,
             ..
         } = self.state.get()?
@@ -322,28 +285,29 @@ impl PublicKeyAggregator {
             threshold_m,
             circuit_committee_n,
             circuit_committee_h,
-            c1_proofs,
             canonical_party_nodes,
         ))
     }
 
+    /// Build the aggregation state for the accepted l-BFV set. The l-BFV path proves no C5: the
+    /// row aggregation proofs and `DkgAggregationV2` carry the key, so `c5_proof_pending` stays
+    /// empty.
     #[allow(clippy::too_many_arguments)]
-    fn build_lbfv_c5_plan(
+    fn build_lbfv_generation_plan(
         &self,
-        mut honest_entries: Vec<(u64, String, ArcBytes, Option<SignedProofPayload>)>,
+        mut honest_entries: Vec<(u64, String, ArcBytes, ())>,
         honest_party_ids: BTreeSet<u64>,
         dishonest_parties: BTreeSet<u64>,
         circuit_committee_n: usize,
         circuit_committee_h: usize,
-        threshold_m: usize,
         canonical_party_nodes: HashMap<u64, String>,
         ec: EventContext<Sequenced>,
-    ) -> Result<LbfvC5Plan> {
+    ) -> Result<PublicKeyAggregatorState> {
         honest_entries.sort_by_key(|(party_id, _, _, _)| *party_id);
         anyhow::ensure!(
             honest_entries.len() == circuit_committee_h
                 && honest_party_ids.len() == circuit_committee_h,
-            "l-BFV C5 plan does not contain exactly H parties"
+            "l-BFV aggregation plan does not contain exactly H parties"
         );
         anyhow::ensure!(
             canonical_party_nodes.len() == circuit_committee_n,
@@ -363,50 +327,33 @@ impl PublicKeyAggregator {
             ArcBytes::from_bytes(&self.fhe.get_aggregate_public_key(GetAggregatePublicKey {
                 keyshares: OrderedSet::from(keyshare_bytes.clone()),
             })?);
-        let pending = PkAggregationProofPending {
-            e3_id: self.e3_id.clone(),
-            proof_request: PkAggregationProofRequest {
-                keyshare_bytes: keyshare_bytes.clone(),
-                aggregated_pk_bytes: public_key.clone(),
-                params_preset: self.params_preset,
-                committee_n: circuit_committee_n,
-                committee_h: circuit_committee_h,
-                committee_threshold: threshold_m,
-            },
-            public_key: public_key.clone(),
-            nodes: nodes.clone(),
-        };
-        Ok(LbfvC5Plan {
-            state: PublicKeyAggregatorState::GeneratingC5Proof {
-                public_key,
-                keyshare_bytes,
-                nodes,
-                party_nodes: canonical_party_nodes,
-                dkg_node_proofs: HashMap::new(),
-                dkg_fold_attestations: HashMap::new(),
-                honest_party_ids,
-                dishonest_parties,
-                circuit_committee_n,
-                circuit_committee_h,
-                dkg_aggregation_correlation: None,
-                dkg_aggregated_proof: None,
-                c5_proof_pending: None,
-                last_ec: Some(ec),
-                nodes_fold_accumulator: None,
-                nodes_fold_completed_slots: 0,
-                nodes_fold_step_correlation: None,
-            },
-            pending,
+        Ok(PublicKeyAggregatorState::GeneratingC5Proof {
+            public_key,
+            keyshare_bytes,
+            nodes,
+            party_nodes: canonical_party_nodes,
+            dkg_node_proofs: HashMap::new(),
+            dkg_fold_attestations: HashMap::new(),
+            honest_party_ids,
+            dishonest_parties,
+            circuit_committee_n,
+            circuit_committee_h,
+            dkg_aggregation_correlation: None,
+            dkg_aggregated_proof: None,
+            c5_proof_pending: None,
+            last_ec: Some(ec),
+            nodes_fold_accumulator: None,
+            nodes_fold_completed_slots: 0,
+            nodes_fold_step_correlation: None,
         })
     }
 
-    fn publish_committed_lbfv_c5_plan(
+    fn apply_committed_lbfv_generation_plan(
         &mut self,
-        plan: LbfvC5Plan,
+        plan: PublicKeyAggregatorState,
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
-        self.state.try_mutate(&ec, |_| Ok(plan.state))?;
-        self.bus.publish(plan.pending, ec.clone())?;
+        self.state.try_mutate(&ec, |_| Ok(plan))?;
         let early = std::mem::take(&mut self.early_dkg_proofs);
         for event in early {
             self.handle_dkg_recursive_aggregation_complete(event)?;

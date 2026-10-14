@@ -70,6 +70,9 @@ impl LbfvKeyShareDocumentContextV1 {
 }
 
 /// Version 1 public-key share document.
+///
+/// It carries a C1 proof, which the l-BFV path no longer proves, so validation rejects it. The
+/// type stays so that the [`LbfvKeyShareDocument`] variant order stays stable.
 #[derive(Derivative, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[derivative(Debug)]
 pub struct LbfvPublicKeyShareDocumentV1 {
@@ -93,10 +96,10 @@ pub struct LbfvRelinearizationKeyShareDocumentV1 {
     pub signed_row_proofs: [SignedProofPayload; LBFV_ROW_COUNT],
 }
 
-/// Dynamic public-key share document.
+/// Dynamic public-key share document with a C1 proof.
 ///
-/// The row count is the number of CRT moduli in the selected preset. The V1
-/// document remains available so nodes can read existing five-row records.
+/// The l-BFV path no longer proves C1, so validation rejects it. The type stays so that the
+/// [`LbfvKeyShareDocument`] variant order stays stable.
 #[derive(Derivative, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[derivative(Debug)]
 pub struct LbfvPublicKeyShareDocumentV2 {
@@ -118,6 +121,19 @@ pub struct LbfvRelinearizationKeyShareDocumentV2 {
     pub signed_row_proofs: Vec<SignedProofPayload>,
 }
 
+/// Dynamic public-key share document.
+///
+/// The row count is the number of CRT moduli in the selected preset. The row proofs bind `sk`,
+/// so the document carries no C1 proof, and row 0 names the signer.
+#[derive(Derivative, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derivative(Debug)]
+pub struct LbfvPublicKeyShareDocumentV3 {
+    pub context: LbfvKeyShareDocumentContextV1,
+    #[derivative(Debug = "ignore")]
+    pub share: ArcBytes,
+    pub signed_row_proofs: Vec<SignedProofPayload>,
+}
+
 /// Content stored in one l-BFV DHT record.
 ///
 /// Bincode encodes variants by order. Append new versions and do not reorder existing variants.
@@ -127,6 +143,7 @@ pub enum LbfvKeyShareDocument {
     RelinearizationKeyV1(LbfvRelinearizationKeyShareDocumentV1),
     PublicKeyV2(LbfvPublicKeyShareDocumentV2),
     RelinearizationKeyV2(LbfvRelinearizationKeyShareDocumentV2),
+    PublicKeyV3(LbfvPublicKeyShareDocumentV3),
 }
 
 impl LbfvKeyShareDocument {
@@ -136,6 +153,7 @@ impl LbfvKeyShareDocument {
             Self::RelinearizationKeyV1(document) => &document.context,
             Self::PublicKeyV2(document) => &document.context,
             Self::RelinearizationKeyV2(document) => &document.context,
+            Self::PublicKeyV3(document) => &document.context,
         }
     }
 
@@ -149,18 +167,36 @@ impl LbfvKeyShareDocument {
             Self::RelinearizationKeyV1(_) => LbfvKeyShareDocumentRole::RelinearizationKey,
             Self::PublicKeyV2(_) => LbfvKeyShareDocumentRole::PublicKey,
             Self::RelinearizationKeyV2(_) => LbfvKeyShareDocumentRole::RelinearizationKey,
+            Self::PublicKeyV3(_) => LbfvKeyShareDocumentRole::PublicKey,
+        }
+    }
+
+    /// Return the serialized key share carried by the document.
+    pub fn share(&self) -> &ArcBytes {
+        match self {
+            Self::PublicKeyV1(document) => &document.share,
+            Self::RelinearizationKeyV1(document) => &document.share,
+            Self::PublicKeyV2(document) => &document.share,
+            Self::RelinearizationKeyV2(document) => &document.share,
+            Self::PublicKeyV3(document) => &document.share,
+        }
+    }
+
+    /// Return the row proofs carried by the document, in row order.
+    pub fn signed_row_proofs(&self) -> &[SignedProofPayload] {
+        match self {
+            Self::PublicKeyV1(document) => &document.signed_row_proofs,
+            Self::RelinearizationKeyV1(document) => &document.signed_row_proofs,
+            Self::PublicKeyV2(document) => &document.signed_row_proofs,
+            Self::RelinearizationKeyV2(document) => &document.signed_row_proofs,
+            Self::PublicKeyV3(document) => &document.signed_row_proofs,
         }
     }
 
     /// Return the number of row proofs carried by the document.
     #[must_use]
     pub fn row_count(&self) -> usize {
-        match self {
-            Self::PublicKeyV1(document) => document.signed_row_proofs.len(),
-            Self::RelinearizationKeyV1(document) => document.signed_row_proofs.len(),
-            Self::PublicKeyV2(document) => document.signed_row_proofs.len(),
-            Self::RelinearizationKeyV2(document) => document.signed_row_proofs.len(),
-        }
+        self.signed_row_proofs().len()
     }
 
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
@@ -185,21 +221,13 @@ impl LbfvKeyShareDocument {
 
     /// Reject contribution bytes from an unsupported fhe.rs wire format.
     pub fn validate_share_codec(&self) -> Result<()> {
-        match self {
-            Self::PublicKeyV1(document) => {
-                e3_trbfv::aggregate_lbfv::validate_lbfv_public_key_share_bytes(&document.share)
+        match self.role() {
+            LbfvKeyShareDocumentRole::PublicKey => {
+                e3_trbfv::aggregate_lbfv::validate_lbfv_public_key_share_bytes(self.share())
             }
-            Self::RelinearizationKeyV1(document) => {
+            LbfvKeyShareDocumentRole::RelinearizationKey => {
                 e3_trbfv::aggregate_lbfv::validate_lbfv_relinearization_key_share_bytes(
-                    &document.share,
-                )
-            }
-            Self::PublicKeyV2(document) => {
-                e3_trbfv::aggregate_lbfv::validate_lbfv_public_key_share_bytes(&document.share)
-            }
-            Self::RelinearizationKeyV2(document) => {
-                e3_trbfv::aggregate_lbfv::validate_lbfv_relinearization_key_share_bytes(
-                    &document.share,
+                    self.share(),
                 )
             }
         }
@@ -208,33 +236,14 @@ impl LbfvKeyShareDocument {
     fn validate_with_row_count(&self, expected_row_count: Option<usize>) -> Result<Address> {
         self.context().validate()?;
         match self {
-            Self::PublicKeyV1(document) => document.validate(expected_row_count),
+            // The l-BFV path proves no C1, so a public-key document that carries one is invalid.
+            Self::PublicKeyV1(_) | Self::PublicKeyV2(_) => Err(anyhow!(
+                "l-BFV public-key document carries a C1 proof, which the l-BFV path does not prove"
+            )),
             Self::RelinearizationKeyV1(document) => document.validate(expected_row_count),
-            Self::PublicKeyV2(document) => document.validate(expected_row_count),
             Self::RelinearizationKeyV2(document) => document.validate(expected_row_count),
+            Self::PublicKeyV3(document) => document.validate(expected_row_count),
         }
-    }
-}
-
-impl LbfvPublicKeyShareDocumentV1 {
-    fn validate(&self, expected_row_count: Option<usize>) -> Result<Address> {
-        ensure!(!self.share.is_empty(), "l-BFV public-key share is empty");
-        let signer = self.context.validate_signed_proof(
-            &self.signed_c1_proof,
-            ProofIdentity {
-                proof_type: ProofType::C1PkGeneration,
-                instance: 0,
-            },
-            None,
-        )?;
-        validate_rows(
-            &self.signed_row_proofs,
-            &self.context,
-            ProofType::LbfvPkGeneration,
-            signer,
-            expected_row_count,
-        )?;
-        Ok(signer)
     }
 }
 
@@ -256,17 +265,14 @@ impl LbfvRelinearizationKeyShareDocumentV1 {
     }
 }
 
-impl LbfvPublicKeyShareDocumentV2 {
+impl LbfvPublicKeyShareDocumentV3 {
     fn validate(&self, expected_row_count: Option<usize>) -> Result<Address> {
         ensure!(!self.share.is_empty(), "l-BFV public-key share is empty");
-        let signer = self.context.validate_signed_proof(
-            &self.signed_c1_proof,
-            ProofIdentity {
-                proof_type: ProofType::C1PkGeneration,
-                instance: 0,
-            },
-            None,
-        )?;
+        let signer = self
+            .signed_row_proofs
+            .first()
+            .ok_or_else(|| anyhow!("l-BFV public-key proof bundle is empty"))?
+            .recover_address()?;
         validate_rows_slice(
             &self.signed_row_proofs,
             &self.context,
@@ -625,32 +631,18 @@ impl SignedLbfvKeyShareManifest {
     ) -> Result<()> {
         let manifest_signer = self.recover_address()?;
         let LbfvKeyShareManifest::V1(manifest) = &self.payload;
-        let (public_key_context, public_key_hash) = match public_key {
-            LbfvKeyShareDocument::PublicKeyV1(document) => {
-                (&document.context, public_key.content_hash()?)
-            }
-            LbfvKeyShareDocument::PublicKeyV2(document) => {
-                (&document.context, public_key.content_hash()?)
-            }
-            _ => {
-                return Err(anyhow!(
-                    "l-BFV manifest public-key record has the wrong document type"
-                ))
-            }
-        };
-        let (relinearization_key_context, relinearization_key_hash) = match relinearization_key {
-            LbfvKeyShareDocument::RelinearizationKeyV1(document) => {
-                (&document.context, relinearization_key.content_hash()?)
-            }
-            LbfvKeyShareDocument::RelinearizationKeyV2(document) => {
-                (&document.context, relinearization_key.content_hash()?)
-            }
-            _ => {
-                return Err(anyhow!(
-                    "l-BFV manifest relinearization-key record has the wrong document type"
-                ))
-            }
-        };
+        ensure!(
+            public_key.role() == LbfvKeyShareDocumentRole::PublicKey,
+            "l-BFV manifest public-key record has the wrong document type"
+        );
+        ensure!(
+            relinearization_key.role() == LbfvKeyShareDocumentRole::RelinearizationKey,
+            "l-BFV manifest relinearization-key record has the wrong document type"
+        );
+        let public_key_context = public_key.context();
+        let public_key_hash = public_key.content_hash()?;
+        let relinearization_key_context = relinearization_key.context();
+        let relinearization_key_hash = relinearization_key.content_hash()?;
 
         ensure!(
             public_key_context == &manifest.context
@@ -881,29 +873,40 @@ mod tests {
         .unwrap()
     }
 
+    fn row_proofs(
+        context: &LbfvKeyShareDocumentContextV1,
+        proof_type: ProofType,
+        row_count: usize,
+        signer: &PrivateKeySigner,
+    ) -> Vec<SignedProofPayload> {
+        (0..row_count)
+            .map(|row| signed_proof(context, proof_type, row as u32, signer))
+            .collect()
+    }
+
     fn documents() -> (PrivateKeySigner, LbfvKeyShareDocument, LbfvKeyShareDocument) {
         let signer = signer();
         let context = context();
-        let public_key = LbfvKeyShareDocument::PublicKeyV1(LbfvPublicKeyShareDocumentV1 {
+        let public_key = LbfvKeyShareDocument::PublicKeyV3(LbfvPublicKeyShareDocumentV3 {
             context: context.clone(),
             share: ArcBytes::from_bytes(b"public key share"),
-            signed_c1_proof: signed_proof(&context, ProofType::C1PkGeneration, 0, &signer),
-            signed_row_proofs: std::array::from_fn(|row| {
-                signed_proof(&context, ProofType::LbfvPkGeneration, row as u32, &signer)
-            }),
+            signed_row_proofs: row_proofs(
+                &context,
+                ProofType::LbfvPkGeneration,
+                LBFV_ROW_COUNT,
+                &signer,
+            ),
         });
         let relinearization_key =
-            LbfvKeyShareDocument::RelinearizationKeyV1(LbfvRelinearizationKeyShareDocumentV1 {
-                context,
+            LbfvKeyShareDocument::RelinearizationKeyV2(LbfvRelinearizationKeyShareDocumentV2 {
+                context: context.clone(),
                 share: ArcBytes::from_bytes(b"relinearization key share"),
-                signed_row_proofs: std::array::from_fn(|row| {
-                    signed_proof(
-                        public_key.context(),
-                        ProofType::RlkGeneration,
-                        row as u32,
-                        &signer,
-                    )
-                }),
+                signed_row_proofs: row_proofs(
+                    &context,
+                    ProofType::RlkGeneration,
+                    LBFV_ROW_COUNT,
+                    &signer,
+                ),
             });
         (signer, public_key, relinearization_key)
     }
@@ -911,13 +914,15 @@ mod tests {
     fn dynamic_public_key_document(row_count: usize) -> LbfvKeyShareDocument {
         let signer = signer();
         let context = context();
-        LbfvKeyShareDocument::PublicKeyV2(LbfvPublicKeyShareDocumentV2 {
+        LbfvKeyShareDocument::PublicKeyV3(LbfvPublicKeyShareDocumentV3 {
             context: context.clone(),
             share: ArcBytes::from_bytes(b"dynamic public key share"),
-            signed_c1_proof: signed_proof(&context, ProofType::C1PkGeneration, 0, &signer),
-            signed_row_proofs: (0..row_count)
-                .map(|row| signed_proof(&context, ProofType::LbfvPkGeneration, row as u32, &signer))
-                .collect(),
+            signed_row_proofs: row_proofs(
+                &context,
+                ProofType::LbfvPkGeneration,
+                row_count,
+                &signer,
+            ),
         })
     }
 
@@ -940,8 +945,8 @@ mod tests {
     #[test]
     fn document_variants_have_append_only_bincode_discriminants() {
         let (signer, public_key, relinearization_key) = documents();
-        assert_eq!(&public_key.to_bytes().unwrap()[..4], &[0, 0, 0, 0]);
-        assert_eq!(&relinearization_key.to_bytes().unwrap()[..4], &[1, 0, 0, 0]);
+        assert_eq!(&public_key.to_bytes().unwrap()[..4], &[4, 0, 0, 0]);
+        assert_eq!(&relinearization_key.to_bytes().unwrap()[..4], &[3, 0, 0, 0]);
         let manifest = signed_manifest(&signer, &public_key, &relinearization_key);
         assert_eq!(
             &bincode::serialize(&manifest.payload).unwrap()[..4],
@@ -974,17 +979,55 @@ mod tests {
     }
 
     #[test]
+    fn public_key_documents_with_a_c1_proof_are_rejected() {
+        let (signer, _, relinearization_key) = documents();
+        let context = context();
+        let c1 = signed_proof(&context, ProofType::C1PkGeneration, 0, &signer);
+        let rows = row_proofs(
+            &context,
+            ProofType::LbfvPkGeneration,
+            LBFV_ROW_COUNT,
+            &signer,
+        );
+        let v1 = LbfvKeyShareDocument::PublicKeyV1(LbfvPublicKeyShareDocumentV1 {
+            context: context.clone(),
+            share: ArcBytes::from_bytes(b"public key share"),
+            signed_c1_proof: c1.clone(),
+            signed_row_proofs: rows.clone().try_into().unwrap(),
+        });
+        let v2 = LbfvKeyShareDocument::PublicKeyV2(LbfvPublicKeyShareDocumentV2 {
+            context,
+            share: ArcBytes::from_bytes(b"public key share"),
+            signed_c1_proof: c1,
+            signed_row_proofs: rows,
+        });
+
+        for (document, discriminant) in [(v1, 0u8), (v2, 2)] {
+            assert_eq!(&document.to_bytes().unwrap()[..4], &[discriminant, 0, 0, 0]);
+            assert!(document
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("C1 proof"));
+            let manifest = signed_manifest(&signer, &document, &relinearization_key);
+            assert!(manifest
+                .validate_documents(&document, &relinearization_key)
+                .is_err());
+        }
+    }
+
+    #[test]
     fn signed_manifest_rejects_changed_document_bytes() {
         let (signer, public_key, relinearization_key) = documents();
         let manifest = signed_manifest(&signer, &public_key, &relinearization_key);
-        let LbfvKeyShareDocument::PublicKeyV1(mut changed) = public_key else {
+        let LbfvKeyShareDocument::PublicKeyV3(mut changed) = public_key else {
             unreachable!();
         };
         changed.share = ArcBytes::from_bytes(b"different public key share");
 
         assert!(manifest
             .validate_documents(
-                &LbfvKeyShareDocument::PublicKeyV1(changed),
+                &LbfvKeyShareDocument::PublicKeyV3(changed),
                 &relinearization_key,
             )
             .unwrap_err()
@@ -995,12 +1038,12 @@ mod tests {
     #[test]
     fn document_rejects_reordered_row_proof() {
         let (_, public_key, _) = documents();
-        let LbfvKeyShareDocument::PublicKeyV1(mut changed) = public_key else {
+        let LbfvKeyShareDocument::PublicKeyV3(mut changed) = public_key else {
             unreachable!();
         };
         changed.signed_row_proofs.swap(0, 1);
 
-        assert!(LbfvKeyShareDocument::PublicKeyV1(changed)
+        assert!(LbfvKeyShareDocument::PublicKeyV3(changed)
             .validate()
             .unwrap_err()
             .to_string()
@@ -1053,42 +1096,42 @@ mod tests {
     #[test]
     fn document_rejects_relabelled_proof_context_and_shape() {
         let (signer, public_key, _) = documents();
-        let LbfvKeyShareDocument::PublicKeyV1(mut wrong_party) = public_key else {
+        let LbfvKeyShareDocument::PublicKeyV3(mut wrong_party) = public_key else {
             unreachable!();
         };
         let mut proof_context = wrong_party.context.clone();
         proof_context.party_id = 0;
         wrong_party.signed_row_proofs[0] =
             signed_proof(&proof_context, ProofType::LbfvPkGeneration, 0, &signer);
-        assert!(LbfvKeyShareDocument::PublicKeyV1(wrong_party)
+        assert!(LbfvKeyShareDocument::PublicKeyV3(wrong_party)
             .validate()
             .unwrap_err()
             .to_string()
             .contains("party ID"));
 
         let (_, public_key, _) = documents();
-        let LbfvKeyShareDocument::PublicKeyV1(mut wrong_session) = public_key else {
+        let LbfvKeyShareDocument::PublicKeyV3(mut wrong_session) = public_key else {
             unreachable!();
         };
         let mut proof_context = wrong_session.context.clone();
         proof_context.proof_session_id = B256::repeat_byte(0x99);
         wrong_session.signed_row_proofs[0] =
             signed_proof(&proof_context, ProofType::LbfvPkGeneration, 0, &signer);
-        assert!(LbfvKeyShareDocument::PublicKeyV1(wrong_session)
+        assert!(LbfvKeyShareDocument::PublicKeyV3(wrong_session)
             .validate()
             .unwrap_err()
             .to_string()
             .contains("proof session"));
 
         let (_, public_key, _) = documents();
-        let LbfvKeyShareDocument::PublicKeyV1(mut wrong_shape) = public_key else {
+        let LbfvKeyShareDocument::PublicKeyV3(mut wrong_shape) = public_key else {
             unreachable!();
         };
         let mut payload = wrong_shape.signed_row_proofs[0].payload.clone();
         let shortened = &payload.proof.public_signals[..payload.proof.public_signals.len() - 32];
         payload.proof.public_signals = ArcBytes::from_bytes(shortened);
         wrong_shape.signed_row_proofs[0] = SignedProofPayload::sign(payload, &signer).unwrap();
-        assert!(LbfvKeyShareDocument::PublicKeyV1(wrong_shape)
+        assert!(LbfvKeyShareDocument::PublicKeyV3(wrong_shape)
             .validate()
             .unwrap_err()
             .to_string()

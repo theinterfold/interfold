@@ -60,7 +60,7 @@ export function encodeMockDkgV2ProofForAttestation(
     throw new Error("V2 attestation fixtures require two honest parties");
   }
   const publicInputs: string[] = Array.from(
-    { length: 41 + 3 * partyIds.length + 3 * lbfvRows },
+    { length: 39 + 3 * partyIds.length + 3 * lbfvRows },
     () => ethers.ZeroHash,
   );
   const toLimbs = (hash: string): [string, string] => {
@@ -83,15 +83,15 @@ export function encodeMockDkgV2ProofForAttestation(
   );
   const [committeeHi, committeeLo] = toLimbs(committeeHash);
   const [acceptedSetHi, acceptedSetLo] = toLimbs(acceptedSetHash);
-  publicInputs[29] = pkCommitment;
-  publicInputs[4] = committeeHi;
-  publicInputs[5] = committeeLo;
-  publicInputs[34] = acceptedSetHi;
-  publicInputs[35] = acceptedSetLo;
+  publicInputs[27] = pkCommitment;
+  publicInputs[3] = committeeHi;
+  publicInputs[4] = committeeLo;
+  publicInputs[32] = acceptedSetHi;
+  publicInputs[33] = acceptedSetLo;
   for (let i = 0; i < partyIds.length; i++) {
-    publicInputs[2 + i] = ethers.zeroPadValue(ethers.toBeHex(partyIds[i]), 32);
-    publicInputs[25 + i] = skCommits[i];
-    publicInputs[27 + i] = esmCommits[i];
+    publicInputs[1 + i] = ethers.zeroPadValue(ethers.toBeHex(partyIds[i]), 32);
+    publicInputs[23 + i] = skCommits[i];
+    publicInputs[25 + i] = esmCommits[i];
   }
   return ethers.AbiCoder.defaultAbiCoder().encode(
     ["bytes", "bytes32[]"],

@@ -95,6 +95,68 @@ pub struct Inputs {
     pub expected_secret_commitment: BigInt,
     /// Which secret type this witness is for (determines which circuit to run).
     pub dkg_input_type: DkgInputType,
+    /// l-BFV smudging noise only: the lifted noise and its CRT quotients (see [`e_sm_crt_lift`]),
+    /// which the C2b chunk leaves range-check. `None` for the secret key and on the trBFV path,
+    /// whose single C2 proof takes no such inputs.
+    #[serde(default)]
+    pub e_sm_lift: Option<(Vec<BigInt>, Vec<Vec<BigInt>>)>,
+}
+
+/// The smudging noise lifted to one integer per coefficient, and the CRT quotient that ties it to
+/// each centered residue: `lifted[i] == center(residue_l[i], q_l) + quotients[l][i] * q_l`.
+///
+/// The l-BFV C2b chunk leaves range-check `lifted` against `e_sm_bound`, the check C1 carries on
+/// the trBFV path. Coefficients are in natural order, the order of `y`. The noise is bounded far
+/// below `Q / 2`, so the centered CRT reconstruction recovers it exactly.
+pub fn e_sm_crt_lift(
+    secret_crt: &CrtPolynomial,
+    moduli: &[u64],
+) -> Result<(Vec<BigInt>, Vec<Vec<BigInt>>), CircuitsErrors> {
+    if secret_crt.limbs.len() != moduli.len() {
+        return Err(CircuitsErrors::Sample(format!(
+            "e_sm has {} CRT limbs; expected {}",
+            secret_crt.limbs.len(),
+            moduli.len()
+        )));
+    }
+    let q_product: BigUint = moduli.iter().map(|&q| BigUint::from(q)).product();
+    let mut basis = Vec::with_capacity(moduli.len());
+    for &q in moduli {
+        let q = BigUint::from(q);
+        let cofactor = &q_product / &q;
+        let inverse = (&cofactor % &q)
+            .modinv(&q)
+            .ok_or_else(|| CircuitsErrors::Sample(format!("CRT moduli are not coprime at {q}")))?;
+        basis.push(BigInt::from(cofactor * inverse));
+    }
+    let q_product = BigInt::from(q_product);
+
+    let degree = secret_crt.limb(0).coefficients().len();
+    let mut lifted = Vec::with_capacity(degree);
+    let mut quotients = vec![Vec::with_capacity(degree); moduli.len()];
+    for coeff_idx in 0..degree {
+        let mut residues = Vec::with_capacity(moduli.len());
+        let mut sum = BigInt::from(0);
+        for (mod_idx, &q) in moduli.iter().enumerate() {
+            let q = BigInt::from(q);
+            let residue = reduce(&secret_crt.limb(mod_idx).coefficients()[coeff_idx], &q);
+            sum += &residue * &basis[mod_idx];
+            residues.push(e3_polynomial::center(&residue, &q));
+        }
+        let value = e3_polynomial::center(&reduce(&sum, &q_product), &q_product);
+        for (mod_idx, &q) in moduli.iter().enumerate() {
+            let q = BigInt::from(q);
+            let difference = &value - &residues[mod_idx];
+            if (&difference % &q) != BigInt::from(0) {
+                return Err(CircuitsErrors::Sample(format!(
+                    "e_sm CRT lift is inconsistent at coefficient {coeff_idx}, limb {mod_idx}"
+                )));
+            }
+            quotients[mod_idx].push(difference / q);
+        }
+        lifted.push(value);
+    }
+    Ok((lifted, quotients))
 }
 
 impl Computation for Configs {
@@ -298,11 +360,18 @@ impl Computation for Inputs {
             }
         };
 
+        let e_sm_lift = if lbfv && data.dkg_input_type == DkgInputType::SmudgingNoise {
+            Some(e_sm_crt_lift(&data.secret, moduli)?)
+        } else {
+            None
+        };
+
         Ok(Inputs {
             secret_crt,
             y,
             expected_secret_commitment,
             dkg_input_type: data.dkg_input_type,
+            e_sm_lift,
         })
     }
 
@@ -328,6 +397,23 @@ impl Computation for Inputs {
         });
 
         json.as_object_mut().unwrap().insert(key.to_string(), value);
+
+        if let Some((lifted, quotients)) = &self.e_sm_lift {
+            let object = json.as_object_mut().unwrap();
+            object.insert(
+                "e_sm_lifted".to_string(),
+                poly_coefficients_to_toml_json(lifted),
+            );
+            object.insert(
+                "e_sm_quotients".to_string(),
+                serde_json::Value::Array(
+                    quotients
+                        .iter()
+                        .map(|limb| poly_coefficients_to_toml_json(limb))
+                        .collect(),
+                ),
+            );
+        }
 
         Ok(json)
     }
@@ -405,6 +491,34 @@ mod tests {
                     secret_coeff, y_secret,
                     "secret consistency: secret_crt[{mod_idx}][{coeff_idx}] must equal y[{coeff_idx}][{mod_idx}][0]"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn e_sm_crt_lift_recovers_bounded_noise() {
+        let preset = BfvPreset::InsecureThreshold;
+        let sample = ShareComputationCircuitData::generate_sample(
+            preset,
+            CiphernodesCommitteeSize::Small.values(),
+            DkgInputType::SmudgingNoise,
+        )
+        .unwrap();
+        let (threshold_params, _) = build_pair_for_preset(preset).unwrap();
+        let moduli = threshold_params.moduli();
+        let bound = BigInt::from(Bounds::compute(preset, &sample).unwrap().e_sm_bound);
+        let (lifted, quotients) = e_sm_crt_lift(&sample.secret, moduli).unwrap();
+
+        assert_eq!(lifted.len(), threshold_params.degree());
+        for (coeff_idx, value) in lifted.iter().enumerate() {
+            assert!(value.magnitude() <= bound.magnitude());
+            for (mod_idx, &q) in moduli.iter().enumerate() {
+                let q = BigInt::from(q);
+                let residue = e3_polynomial::center(
+                    &reduce(&sample.secret.limb(mod_idx).coefficients()[coeff_idx], &q),
+                    &q,
+                );
+                assert_eq!(*value, residue + &quotients[mod_idx][coeff_idx] * q);
             }
         }
     }

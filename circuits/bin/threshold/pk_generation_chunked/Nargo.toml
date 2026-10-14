@@ -1,7 +1,0 @@
-[package]
-name = "pk_generation_chunked"
-type = "bin"
-authors = ["Gnosis Guild / Interfold"]
-
-[dependencies]
-lib = { path = "../../../lib" }
