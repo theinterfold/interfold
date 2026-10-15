@@ -7,5 +7,5 @@
 pub mod aggregation;
 pub(crate) mod dkg;
 mod threshold;
-pub(crate) mod utils;
-pub(crate) mod vk;
+pub mod utils;
+pub mod vk;

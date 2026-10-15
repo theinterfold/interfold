@@ -427,6 +427,26 @@ nodes tree = hash(nodes_fold, nodes_fold_kernel, node_fold, node tree)
 C6 tree    = hash(c6_fold, c6_fold_kernel, C6)
 ```
 
+At the production N=19 (L=3) shape, each of the two C3 arms takes `54` inners
+and `54` slots, and `prove_node_dkg_fold` routes that arm through the
+`c3_fold_batch_merge_m7x` merge instead of the 54-step sequential `c3_fold`
+chain. The merge emits `c3_fold`'s exact `175`-field public layout, so the
+c3ab witness needs no ABI change. Because the merge folds to a different
+circuit than the sequential chain, `c3ab_fold` pins each arm to the VK of the
+circuit that actually produced the arm's final fold proof: `c3a_vk` /
+`c3a_key_hash` and `c3b_vk` / `c3b_key_hash` are in-circuit verify inputs (the
+polymorphic witness pattern), so they read the M7x merge VK at this shape and
+the `c3_fold` VK otherwise. The caller refuses to build the c3ab witness
+unless each arm's final proof names the circuit its arm was routed to
+(`C3FoldBatchMergeM7x` vs `C3Fold`), so a shape or geometry mismatch cannot
+quietly pin `c3ab` against the wrong VK. The tree anchors above are unchanged:
+none of the circuits they hash (`c3_fold`, `c3_fold_kernel`, the C3 leaf,
+`c3ab_fold`, `node_fold`, `nodes_fold`) is touched by this feature, so the
+`C3 / node / nodes` tree values that `dkg_aggregator` and the onchain verifier
+pin remain the same. The M7x merge itself proves internal B-gates and M-tier
+sub-gates, and each one anchors on its own `c3_fold_kernel` genesis the same
+way the sequential chain does.
+
 The builder derives `nodes_fold.vk_tree_hash` and `c6_fold.vk_tree_hash` from each complete artifact
 pair. `dkg_aggregator` requires every folded node row to carry the same node-tree hash. Both final
 aggregators expose their complete tree anchor at public input zero. The immutable wrapper pin comes
