@@ -121,7 +121,7 @@
     "supported": true,
     "refs": [
       "packages/interfold-sdk/src/events/types.ts@13@PlaintextOutputPublished",
-      "packages/interfold-sdk/src/events/event-listener.ts@217@publicClient.watchContractEvent({"
+      "packages/interfold-sdk/src/events/event-listener.ts@218@publicClient.watchContractEvent({"
     ],
     "line_text": ["PLAINTEXT_OUTPUT_PUBLISHED = 'PlaintextOutputPublished',", "const unwatch = this.publicClient.watchContractEvent({"],
     "note": "The SDK defines the PlaintextOutputPublished event type, and its listener watches contract events by event name."
@@ -163,7 +163,7 @@
     "id": "A17",
     "supported": true,
     "refs": [
-      "crates/cli/src/cli.rs@194@start::execute(config, peers, bootstrap)",
+      "crates/cli/src/cli.rs@205@start::execute(config, peers, bootstrap)",
       "crates/cli/src/start.rs@167@e3_entrypoint::start::start::execute(config, bootstrap)"
     ],
     "line_text": [

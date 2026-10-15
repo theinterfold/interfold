@@ -35,9 +35,9 @@ list:
   `lib/FailurePayerLib.sol`
 - `examples/CRISP/**`
 
-Several `Z-` entries in `agent/flow-trace/00_INDEX.md` were remediated by adding
-files that are themselves outside both file lists, so the remediation code did
-not go through the mitigation review either.
+Several `Z-` entries in `docs/architecture/protocol-history.md` were remediated
+by adding files that are themselves outside both file lists, so the remediation
+code did not go through the mitigation review either.
 
 Zenith's own §2.5 Security Note: "it is statistically likely that there are more
 complex bugs still present given the time-boxed nature of this engagement... a

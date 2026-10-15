@@ -81,8 +81,8 @@ aggregation is enabled.
 | `wrapper/dkg/*`                 | —                  | Verifies inner DKG proofs; compresses public inputs                                |
 | `wrapper/threshold/*`           | —                  | Verifies inner threshold proofs; compresses public inputs                          |
 
-Wrapper parameters are documented in
-[`wrapper/README.md`](bin/recursive_aggregation/wrapper/README.md).
+For recursive trust and public-input bindings, see
+[proof statements](../docs/architecture/proof-statements.md#recursive-trust-and-exported-values).
 
 ### Configuration
 
@@ -113,4 +113,4 @@ produces. Install options and CLI flags are on the
 | Cryptographic model (PV-TBFV, phases P1–P4, circuit identifiers C0–C7) | [Cryptography](https://docs.theinterfold.com/learn/cryptography) · [source](../docs/pages/learn/cryptography.mdx)                       |
 | Toolchain, repository layout, `interfold noir`, compilation            | [Noir Circuits](https://docs.theinterfold.com/build/noir-circuits) · [source](../docs/pages/build/noir-circuits.mdx)                    |
 | Rust types (`ProofType`, `CircuitName`)                                | [`signed_proof.rs`](../crates/events/src/interfold_event/signed_proof.rs) · [`proof.rs`](../crates/events/src/interfold_event/proof.rs) |
-| Protocol execution (actors, events, proof ordering)                    | [`agent/flow-trace/04_DKG_AND_COMPUTATION.md`](../agent/flow-trace/04_DKG_AND_COMPUTATION.md)                                           |
+| Protocol execution (actors, events, proof ordering)                    | [DKG](../docs/architecture/dkg.md) and [threshold decryption](../docs/architecture/threshold-decryption.md)                             |

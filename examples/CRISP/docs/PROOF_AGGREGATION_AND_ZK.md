@@ -180,4 +180,4 @@ RPC is running. Harmless for CRISP-on-Anvil.
 
 See also: `packages/interfold-contracts/scripts/deployInterfold.ts`,
 `packages/interfold-contracts/contracts/verifiers/bfv/BfvPkVerifier.sol`, and
-`agent/flow-trace/04_DKG_AND_COMPUTATION.md` for the full DKG publication flow.
+`docs/architecture/dkg.md` for DKG exchange and publication boundaries.

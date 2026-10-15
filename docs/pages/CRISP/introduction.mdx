@@ -130,7 +130,7 @@ power of 1.
 
 Secure BFV ciphertexts are too large for one Ethereum transaction. For this reason, each input goes
 on-chain in two transactions, `publishInput` and `finalizeInput`. The sequence is
-(`agent/flow-trace/08_DATA_AVAILABILITY.md`):
+(`docs/architecture/data-availability.md`):
 
 1. The server validates the Noir proof, stores the exact ciphertext bytes, and signs an availability
    promise. The promise is valid for 10 minutes at most (`INPUT_AVAILABILITY_ATTESTATION_TTL`).

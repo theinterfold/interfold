@@ -92,10 +92,10 @@ def main() -> int:
     if not failures:
         return 0
 
-    print(f"check-invariants: FAILED — {TARGET} escaped test-only containment:")
+    print(f"check-repository: FAILED — {TARGET} escaped test-only containment:")
     for failure in failures:
         print(f"  - {failure}")
-    print("  Production binaries must reject skip_proof_aggregation (agent/invariants/02_CRYPTO_CIRCUITS.md, C-02).")
+    print("  Production binaries must reject skip_proof_aggregation (docs/architecture/proof-statements.md, C-02).")
     return 1
 
 

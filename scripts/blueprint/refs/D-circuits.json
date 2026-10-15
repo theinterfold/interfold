@@ -211,7 +211,7 @@
     "refs": [
       "crates/aggregator/src/public_key_aggregation/state.rs@76@GeneratingC5Proof {",
       "crates/aggregator/src/public_key_aggregation/handlers.rs@189@if !self.can_continue_aggregation_effects() {",
-      "crates/aggregator/src/public_key_aggregation/actor.rs@148@fn can_continue_aggregation_effects",
+      "crates/aggregator/src/public_key_aggregation/actor.rs@146@fn can_continue_aggregation_effects",
       "crates/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@373@Publishing PkAggregationProofPending for C5 proof generation",
       "crates/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@375@PkAggregationProofPending {",
       "crates/zk-prover/src/proof_request/effects/aggregation_proofs.rs@39@ZkRequest::PkAggregation(msg.proof_request)"

@@ -39,6 +39,9 @@ Join the community [Telegram group][telegram].
 
 See [CONTRIBUTING.md][contributing].
 
+Maintainers use [RELEASING.md](RELEASING.md) for shared-workspace releases and
+[domain documentation](docs/architecture/AGENTS.md) for cross-layer contracts and known limits.
+
 ## Development
 
 This section covers the essential commands for setting up and working with the Interfold codebase
@@ -57,9 +60,9 @@ pnpm clean
 
 ### Testing
 
-**⚠️ Important:** Always run tests through pnpm scripts, not directly via `cargo test` or other
-build tools. The pnpm scripts ensure necessary setup steps are executed (e.g., building required
-binaries, setting up test environments) that may be skipped when running tests directly.
+Use the root pnpm scripts for full/layer suites: their setup builds binaries and fixtures that raw
+tool commands can omit. Focused `cargo test -p` and `cargo check -p` are also supported once the
+affected suite's prerequisites are prepared.
 
 #### Test Scripts
 
@@ -89,6 +92,18 @@ The monorepo provides several test scripts for different components:
   artifacts directory.
 
 #### Running Individual Test Suites
+
+Fast `pnpm sdk:test` mocks the prover API boundary; it does not verify a real cryptographic proof.
+The separate `pnpm sdk:test:proofs` suite prepares a proof and rejects tampered proof/public inputs;
+`pnpm sdk:test:proofs:prepared` reuses an already prepared build/circuit set.
+
+Before `pnpm rust:test:proofs` or the full `pnpm test`, prepare the matching insecure-minimum inner
+and recursive circuits with
+`pnpm build:circuits --preset insecure-512 --committee minimum --skip-if-built`. Proof substitution
+tests additionally need pinned nargo on PATH. Before `pnpm rust:test:slashing`, run `pnpm evm:build`
+and provide Anvil. The named proof/slashing suites fail when prerequisites are missing; ordinary
+Rust runs leave these expensive tests ignored. A successful fast suite is not evidence that they
+ran. See [artifact requirements](docs/architecture/circuit-artifacts.md).
 
 ```bash
 # Run only Rust crate tests
@@ -343,55 +358,23 @@ sequenceDiagram
 
 ### Quick Release
 
-```bash
-# On a release branch: update versions, commit, and push the branch.
-pnpm bump:versions 1.0.0
-
-# Open a pull request. Wait for CI, then merge it.
-
-# On an updated and clean main branch: create the release tag.
-git checkout main
-git pull --ff-only
-pnpm release:tag 1.0.0
-```
-
-`bump:versions` never creates a release tag. `release:tag` accepts only the exact `origin/main`
-commit and starts the release workflow.
+[RELEASING.md](RELEASING.md) owns release preparation, qualification, tagging, and publication.
+`pnpm bump:versions` formats, stages, commits, and pushes by default; its dry run is read-only.
+Tagging is a separate command after the release PR merges and qualifies on main.
 
 ### Release Order
 
-1. Create a release branch from current `main`.
-2. Run `pnpm bump:versions X.Y.Z`.
-3. Open a pull request and wait for all required CI jobs.
-4. Merge the release pull request.
-5. Update local `main` with `git pull --ff-only`.
-6. Run `pnpm release:tag X.Y.Z`.
-7. Wait for the Release workflow.
-
-For a dev release, use a pre-release version. Every pre-release publishes to the `dev` channel: the
-npm tag `dev` and the `ciphernode:dev` and `e3-support:dev` images. It does not change `latest`. A
-stable release moves the `dev` images and `interfold update --version dev` to itself too, so they
-are never older than `latest`. The npm tag `dev` changes only with a pre-release.
-
-```bash
-pnpm bump:versions 1.0.0-dev.1
-pnpm release:tag 1.0.0-dev.1
-```
+Follow the [release branch and tag sequence](RELEASING.md#prepare-a-reviewable-release-branch).
+Stable and prerelease publications use different [channels](RELEASING.md#channels-and-recovery);
+neither implies protocol compatibility.
 
 ### What the Release Workflow Requires
 
-The tag workflow does not repeat the repository CI that qualified the merged `main` commit.
-Publication cannot start until these release checks succeed:
-
-- The tag points to a commit in `origin/main`.
-- Linux and Apple Silicon binaries build.
-- The `circuit-artifacts` branch contains the complete source-matched release matrix.
-
-After qualification, the workflow publishes versioned container images and npm packages. A stable
-release also builds the DAppNode package. It then promotes the `dev` container aliases, the `latest`
-aliases for a stable release, and, for a stable release, the `stable` Git tag. The GitHub release is
-the final step. Rust workspace crates are not published to crates.io because the workspace uses
-unreleased git dependencies.
+The tag workflow does not repeat the repository CI that qualified the merged `main` commit. It
+checks protected history, builds binaries, and requires a complete source-matched circuit matrix
+before publication. See
+[publication checks and outputs](RELEASING.md#what-publication-checks-and-produces) for containers,
+npm, DAppNode, and GitHub assets. Rust workspace crates are not published to crates.io.
 
 ## 🏷️ Version Strategy
 
@@ -456,57 +439,20 @@ curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install
 
 ## 📋 Release Checklist
 
-For maintainers doing a release:
-
-- [ ] Ensure all tests pass on `main`
-- [ ] Review commits since last release for proper conventional format
-- [ ] Decide version number (major/minor/patch)
-- [ ] Create a release branch and run `pnpm bump:versions X.Y.Z`
-- [ ] Merge the release pull request only after CI passes
-- [ ] Update local `main` and run `pnpm release:tag X.Y.Z`
-- [ ] Confirm the Release workflow passes before deployment
-- [ ] Verify packages on [npm](https://www.npmjs.com/org/interfold)
-- [ ] Check GitHub release page for binaries and changelog
-- [ ] Announce release (Discord/Twitter/etc)
+Use the [qualification and release procedure](RELEASING.md#qualify-the-change), not a second
+checklist here. After successful publication, verify the packages on
+[npm](https://www.npmjs.com/org/interfold), GitHub binaries, and changelog before announcing or
+deploying the release.
 
 ## 🔧 Script Options
 
-The `bump:versions` script supports several options:
-
-```bash
-# Prepare, commit, and push the release branch
-pnpm bump:versions 1.0.0
-
-# Prepare and commit without pushing the branch
-pnpm bump:versions --no-push 1.0.0
-
-# Skip git operations entirely
-pnpm bump:versions --skip-git 1.0.0
-
-# Dry run - see what would happen
-pnpm bump:versions --dry-run 1.0.0
-
-# Show help
-pnpm bump:versions --help
-
-# Tag the merged release from an updated main branch
-pnpm release:tag 1.0.0
-```
+The [release guide's command table](RELEASING.md#prepare-a-reviewable-release-branch) distinguishes
+dry-run, file-only, local-commit, and push modes. `--skip-git` is not read-only.
 
 ## 🔄 Rollback Procedure
 
-If a release has issues:
-
-1. **Mark as deprecated on npm**:
-
-   ```bash
-   npm deprecate @interfold/sdk@1.0.0 "Critical bug, use 1.0.1"
-   ```
-
-2. **Fix and release a patch**:
-   ```bash
-   pnpm bump:versions 1.0.1
-   ```
+Follow [channels and recovery](RELEASING.md#channels-and-recovery), including the protocol rollback
+decision. Deprecating an npm version does not roll back deployed contracts or node state.
 
 ## 📊 Version History
 

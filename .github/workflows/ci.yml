@@ -455,10 +455,10 @@ jobs:
         if: matrix.suite == 'lib' && matrix.partition == 1
         run: pnpm rust:lint
 
-      # The Agent Harness workflow runs the same script on every pull request.
-      - name: Check repository invariants
+      # The Repository Checks workflow runs the same script on every pull request.
+      - name: Check repository configuration
         if: matrix.suite == 'lib' && matrix.partition == 1 && github.event_name != 'pull_request'
-        run: pnpm check:invariants
+        run: pnpm check:repository
 
       - name: Compile contracts for ABI catalog tests
         run: pnpm evm:build

@@ -97,6 +97,10 @@ All other commands run in the local process.
 
 A command that fails prints the error in red and exits with status `1`.
 
+Command output uses the `e3-console` channel and printer task. Normal completion waits for the
+printer to drain after its senders close; remote commands can collect those lines instead. This is
+not a crash-durable output log, and the channel is unbounded.
+
 ## Install and update
 
 ### Install script

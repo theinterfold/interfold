@@ -135,8 +135,8 @@
     "id": "B12",
     "supported": true,
     "refs": [
-      "crates/aggregator/src/plaintext_aggregation/effects/publish_result.rs@113@let event = PlaintextAggregated {",
-      "crates/aggregator/src/plaintext_aggregation/effects/publish_result.rs@128@self.bus.publish(event, ec.clone())?;"
+      "crates/aggregator/src/plaintext_aggregation/effects/publish_result.rs@111@let event = PlaintextAggregated {",
+      "crates/aggregator/src/plaintext_aggregation/effects/publish_result.rs@126@self.bus.publish(event, ec.clone())?;"
     ],
     "line_text": ["let event = PlaintextAggregated {", "self.bus.publish(event, ec.clone())?;"],
     "note": "ThresholdPlaintextAggregator builds the PlaintextAggregated event and publishes it on the bus."
@@ -267,18 +267,18 @@
     "id": "B21",
     "supported": true,
     "refs": [
-      "crates/ciphernode-builder/src/ciphernode_builder.rs@652@pub async fn build(self) -> anyhow::Result<CiphernodeHandle> {",
-      "crates/ciphernode-builder/src/ciphernode_builder.rs@657@async fn build_inner(mut self) -> anyhow::Result<CiphernodeHandle> {",
-      "crates/ciphernode-builder/src/ciphernode_builder.rs@847@E3LifecycleCoordinator::attach(&bus, store.clone()).await?;",
-      "crates/ciphernode-builder/src/ciphernode_builder.rs@1083@let ciphernode_selector = CiphernodeSelector::attach("
+      "crates/ciphernode-builder/src/builder/startup.rs@96@pub async fn build(self) -> anyhow::Result<CiphernodeHandle> {",
+      "crates/ciphernode-builder/src/builder/startup.rs@101@async fn build_inner(mut self) -> anyhow::Result<CiphernodeHandle> {",
+      "crates/ciphernode-builder/src/builder/startup.rs@418@E3LifecycleCoordinator::attach(bus, storage.store.clone()).await?;",
+      "crates/ciphernode-builder/src/builder/sortition.rs@46@let ciphernode_selector = CiphernodeSelector::attach("
     ],
     "line_text": [
       "pub async fn build(self) -> anyhow::Result<CiphernodeHandle> {",
       "async fn build_inner(mut self) -> anyhow::Result<CiphernodeHandle> {",
-      "E3LifecycleCoordinator::attach(&bus, store.clone()).await?;",
+      "E3LifecycleCoordinator::attach(bus, storage.store.clone()).await?;",
       "let ciphernode_selector = CiphernodeSelector::attach("
     ],
-    "note": "build() calls build_inner, which attaches the lifecycle, sortition, EVM, extension and networking actors to the bus."
+    "note": "build() calls build_inner, which orders storage, recovery, live bus, protocol core, EVM, extensions, networking and sync; the full/bootstrap profile selects the work installed."
   },
   {
     "id": "B22",
@@ -301,10 +301,10 @@
     "id": "B23",
     "supported": true,
     "refs": [
-      "crates/cli/src/cli.rs@193@Commands::Start { peers, bootstrap } => {",
-      "crates/cli/src/cli.rs@194@start::execute(config, peers, bootstrap).await?",
+      "crates/cli/src/cli.rs@204@Commands::Start { peers, bootstrap } => {",
+      "crates/cli/src/cli.rs@205@start::execute(config, peers, bootstrap).await?",
       "crates/cli/src/start.rs@167@let node = e3_entrypoint::start::start::execute(config, bootstrap).await?;",
-      "crates/entrypoint/src/start/start.rs@69@pub async fn execute(config: &AppConfig, bootstrap: bool) -> Result<CiphernodeHandle> {"
+      "crates/entrypoint/src/start/start.rs@70@pub async fn execute(config: &AppConfig, bootstrap: bool) -> Result<CiphernodeHandle> {"
     ],
     "line_text": [
       "Commands::Start { peers, bootstrap } => {",

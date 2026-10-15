@@ -14,10 +14,11 @@ import { MISSING } from './inventory.mjs'
 import { wiring as readWiring } from './wiring.mjs'
 import { generate, actorDiagrams } from '../generate.mjs'
 import { CURATED } from '../curated.mjs'
+import { checkoutRef, documentationURL } from './documentation.mjs'
 
 // Code drift does not stop the build: it uses the new line of a moved reference, drops a broken
 // one, and returns a warning for each. `draft` allows hand-drawn edges without references.
-export function buildData({ draft = false } = {}) {
+export function buildData({ draft = false, sourceRef = process.env.BLUEPRINT_SOURCE_REF || checkoutRef(ROOT) } = {}) {
   const { inv, units, report } = loadData()
   const raw = readWiring(inv)
 
@@ -68,6 +69,7 @@ export function buildData({ draft = false } = {}) {
     ...report.bad.map((r) => `facts/${r.file}, ${r.unit}: ${r.raw} is broken (${r.why}), so the build dropped that fact`),
     ...report.moved.map((r) => `facts/${r.file}, ${r.unit}: ${r.path} line ${r.was} moved to ${r.line}`),
     ...report.unmatched.map((u) => `facts/${u.file}: ${u.id} matches no unit on the map, so the build skipped it`),
+    ...report.documentation.map((d) => `facts/${d.file}, ${d.unit}: ${d.why}`),
   ]
   for (const make of CURATED) {
     const d = make({ units, tag: inv.tag })
@@ -123,6 +125,16 @@ export function buildData({ draft = false } = {}) {
         delete n.drill
       }
 
+  const repository = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).repository?.url
+  let unlinkedDocumentation = false
+  for (const d of Object.values(diagrams))
+    d.documentation = (d.documentation || []).map((doc) => {
+      const href = documentationURL(repository, sourceRef, doc.path)
+      if (!href) unlinkedDocumentation = true
+      return { ...doc, href }
+    })
+  if (unlinkedDocumentation)
+    warnings.push('Documentation links need a GitHub repository URL and source ref; for an exported tree set BLUEPRINT_SOURCE_REF')
   const data = { root: 'system', root_dir: ROOT, tag: inv.tag, diagrams, code }
   return { data, warnings, testRefs, curatedRefs, missing }
 }
@@ -151,7 +163,7 @@ ${extra.nav || ''}    <button id="up" title="Up one level (Esc)">Up</button>
   </nav>
 </header>
 <main id="stage">
-  <div id="head"><div id="dtitle"></div><div id="dsub"></div></div>
+  <div id="head"><div id="dtitle"></div><div id="dsub"></div><div id="documentation"></div></div>
   <svg id="canvas" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Architecture diagram"></svg>
   <div id="tip" hidden></div>
   <aside id="code" hidden></aside>

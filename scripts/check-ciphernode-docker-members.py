@@ -34,7 +34,7 @@ def main() -> int:
     missing = sorted(required_manifests - copied_manifests)
 
     if missing:
-        print("check-invariants: FAILED — crates/Dockerfile omits workspace manifests:")
+        print("check-repository: FAILED — crates/Dockerfile omits workspace manifests:")
         for manifest in missing:
             print(f"  {manifest}")
         print("  Add each manifest to the dependency-cache COPY stage.")

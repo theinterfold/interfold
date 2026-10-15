@@ -1,30 +1,13 @@
-<!-- Keep the PR small and focused. Use Conventional Commits: feat|fix|chore|refactor|docs|test,
-     optional lower-case scope, and ! for breaking changes. Keep the whole header at most 72
-     characters. CI validates the PR title. -->
+## What and why
 
-## What
+<!-- Describe the change and the problem it solves. Link related issues when useful. -->
 
-<!-- One or two sentences: what changes and why. Link the issue if there is one. -->
+## Verification
 
-## Checklist
+<!-- List commands and results, plus checks not run and known risks. -->
 
-- [ ] **Verified at the smallest covering scope** — name the command(s) run
-      (`cargo test -p e3-<crate>` / layer test / `pnpm test:integration <name>`):
-- [ ] **Harness docs** — if this changes contracts, circuits, actor routing, CLI behavior, or any
-      formula: the matching `agent/` doc (flow-trace, `agent/invariants/`, architecture) is updated
-      in this PR, or a commit carries `[skip-doc-sync]` with a reason.
-- [ ] **Invariants** — for a protocol-bearing change: checked the diff against the
-      `agent/invariants/` entries for the touched area; nothing in the meta-invariant list
-      (committee ordering, thresholds, proof multiplicity, hashing, signatures, witness shape, event
-      identity, replay) changes silently.
-- [ ] **Known bugs table** — if this fixes or introduces a protocol concern, the "Verified Bugs &
-      Protocol Concerns" table in `agent/flow-trace/00_INDEX.md` is updated.
-- [ ] **Breaking?** — if yes: `!` in the commit type, and this PR merges only alongside a breaking
-      release.
-- [ ] **Rollout class** — if this touches `SCHEMA_VERSION`, a wire major, a persisted type, an
-      `InterfoldEventData` variant, a contract event or ABI, or `protocol-release.toml`: name the
-      upgrade class (rolling, drain-and-resync, or governance) and the `protocol_version` /
-      `node_generation` decision.
-- [ ] **Review** — a protocol-bearing diff got one invariant review pass
-      (`agent/prompts/invariant-reviewer.md`); the author read any other diff once before opening
-      the PR (`agent/RULES.md` §Review).
+## Compatibility (if applicable)
+
+<!-- Describe effects on deployed contracts/verifiers, stored data, peers, and replay.
+For protocol migrations, record the upgrade class, release-counter decision, and rollback plan.
+See CONTRIBUTING.md#protocol-compatibility. Omit this section when not applicable. -->

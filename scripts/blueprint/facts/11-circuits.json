@@ -3,11 +3,13 @@
   "units": [
     {
       "id": "C0 pk",
+      "documentation": [
+        { "title": "Proof statements", "path": "docs/architecture/proof-statements.md" },
+        { "title": "DKG roles", "path": "docs/architecture/dkg.md" }
+      ],
       "kind": "circuit",
       "path": "circuits/bin/dkg/pk",
       "one_line": "Commits to a ciphernode's DKG BFV public key so later share encryptions can be checked against it.",
-      "explain": "It convinces a verifier that a ciphernode's published DKG key commitment is the hash of the public key it actually uses, both components for every CRT modulus. Each member generates it for its own key, peers verify it on receipt, and node_fold folds it, while C3 checks its share encryption key against this commitment (agent/flow-trace/04). Without it, a member could encrypt shares under a key that nobody committed to.",
-      "analogy": "Like a sealed fingerprint of a public key, published before anyone encrypts to it, so the key cannot be swapped later.",
       "actors": [],
       "consumes": [
         {
@@ -53,16 +55,18 @@
       "depends_on": [],
       "tests": "No #[test] in this package or in lib core/dkg/pk.nr. Lib tests run with nargo test in circuits/lib (see circuits/README.md).",
       "unverified": [
-        "Generator and verifier roles (each member generates; peers verify on receipt) come from agent/flow-trace/04_DKG_AND_COMPUTATION.md, not from the circuit code."
+        "Generator and verifier roles (each member generates; peers verify on receipt) come from docs/architecture/dkg.md, not from the circuit code."
       ]
     },
     {
       "id": "C1 pk_generation",
+      "documentation": [
+        { "title": "Proof statements", "path": "docs/architecture/proof-statements.md" },
+        { "title": "DKG roles", "path": "docs/architecture/dkg.md" }
+      ],
       "kind": "circuit",
       "path": "circuits/bin/threshold/pk_generation",
       "one_line": "Proves a member's threshold public-key contribution was built from its secret key and noise, within bounds.",
-      "explain": "It convinces a verifier that one member's share pk0 of the threshold public key is built from its secret sk, error eek and smudging noise e_sm, all inside their bounds, through pk0 = -(a*sk) + eek + q*r modulo X^N+1 (a is the fixed common reference polynomial), checked at a random challenge point. Each member generates it for itself, the active aggregator verifies the H selected contributions, and node_fold folds them; its three commitments (sk, pk, e_sm) feed C2a, C5 and C2b. Without it, the aggregate public key could not be tied to the members' secrets.",
-      "analogy": "Like a locksmith cutting a key from a secret blank and proving, with a sealed measurement, that the cut fits the lock pattern without showing the blank.",
       "actors": [],
       "consumes": [
         {
@@ -133,16 +137,18 @@
       "depends_on": [],
       "tests": "lib/src/core/threshold/pk_generation.nr has 2 #[test] functions; run nargo test in circuits/lib. This package has none.",
       "unverified": [
-        "Generator and verifier roles (each member generates; the active aggregator verifies the H selected contributions) come from agent/flow-trace/04_DKG_AND_COMPUTATION.md, not from the circuit code."
+        "Generator and verifier roles (each member generates; the active aggregator verifies the H selected contributions) come from docs/architecture/dkg.md, not from the circuit code."
       ]
     },
     {
       "id": "C2a sk_share_computation",
+      "documentation": [
+        { "title": "Proof statements", "path": "docs/architecture/proof-statements.md" },
+        { "title": "DKG roles", "path": "docs/architecture/dkg.md" }
+      ],
       "kind": "circuit",
       "path": "circuits/bin/dkg/sk_share_computation",
       "one_line": "Proves a member's secret-key Shamir shares form a valid degree-T sharing of the secret that C1 committed to.",
-      "explain": "It convinces a verifier that the N_PARTIES Shamir shares of the secret key form a valid degree-T sharing of the committed secret: the share at point zero equals sk, every share is in range, and the parity check holds, so any T+1 shares reconstruct sk. Each member generates it for its own sk, recipients verify it on receipt, and node_fold folds it; C3 proves its encrypted messages match the per-party commitments it returns, and C4 opens them (agent/flow-trace/04). Without it, a dealer could hand out shares that do not reconstruct the key it committed to.",
-      "analogy": "Like a set of marked points that must all lie on one smooth curve, whose height at zero is the secret.",
       "actors": [],
       "consumes": [
         {
@@ -197,16 +203,18 @@
       "depends_on": [],
       "tests": "No #[test] in this package or in lib core/dkg/share_computation.nr; no C2a test found.",
       "unverified": [
-        "Generator and verifier roles (each dealer proves; recipients verify) come from agent/flow-trace/04_DKG_AND_COMPUTATION.md, not from the circuit code."
+        "Generator and verifier roles (each dealer proves; recipients verify) come from docs/architecture/dkg.md, not from the circuit code."
       ]
     },
     {
       "id": "C2b e_sm_share_computation",
+      "documentation": [
+        { "title": "Proof statements", "path": "docs/architecture/proof-statements.md" },
+        { "title": "DKG roles", "path": "docs/architecture/dkg.md" }
+      ],
       "kind": "circuit",
       "path": "circuits/bin/dkg/e_sm_share_computation",
       "one_line": "Proves a member's smudging-noise Shamir shares form a valid degree-T sharing of the noise that C1 committed to.",
-      "explain": "It convinces a verifier that the shares of the smudging noise e_sm, centered per modulus, form a valid degree-T sharing whose value at zero is the noise C1 committed to. The same statement as C2a runs on the noise track, and the aggregated noise is what C6 adds to every decryption share. Each member generates it for its own noise, recipients verify it on receipt, and node_fold folds it (agent/flow-trace/04). Without it, the noise added to decryption shares would not be the one that was committed.",
-      "analogy": "Like a second set of marked points that must lie on one curve, here for a blurring value added to every decryption share.",
       "actors": [],
       "consumes": [
         {
@@ -252,16 +260,18 @@
       "depends_on": [],
       "tests": "No #[test] in this package or in lib core/dkg/share_computation.nr; no C2b test found.",
       "unverified": [
-        "Generator and verifier roles (each dealer proves; recipients verify) come from agent/flow-trace/04_DKG_AND_COMPUTATION.md, not from the circuit code."
+        "Generator and verifier roles (each dealer proves; recipients verify) come from docs/architecture/dkg.md, not from the circuit code."
       ]
     },
     {
       "id": "C3 share_encryption",
+      "documentation": [
+        { "title": "Proof statements", "path": "docs/architecture/proof-statements.md" },
+        { "title": "DKG roles", "path": "docs/architecture/dkg.md" }
+      ],
       "kind": "circuit",
       "path": "circuits/bin/dkg/share_encryption",
       "one_line": "Proves a share ciphertext is a valid BFV encryption, under the recipient's DKG key, of the share committed in C2.",
-      "explain": "It convinces a verifier that the two ciphertext polynomials ct0 and ct1 encrypt exactly the share the sender committed to in C2, under the recipient's DKG public key that C0 committed, using the BFV relations with small noise u, e0 and e1. The sender generates one proof for each other recipient, CRT row and track (C3a for sk shares, C3b for e_sm shares, same binary), recipients verify it on receipt, and c3_fold chains the proofs into node_fold (agent/flow-trace/04). Without it, a sender could send a recipient a share that differs from the one it certified in C2.",
-      "analogy": "Like sealing a share in a box only one recipient can open, with a notarised note that the box holds exactly the share already certified.",
       "actors": [],
       "consumes": [
         {
@@ -366,16 +376,18 @@
       "depends_on": [],
       "tests": "lib/src/core/dkg/share_encryption.nr has 12 #[test] functions; run nargo test in circuits/lib. This package has none.",
       "unverified": [
-        "Generator and verifier roles (the sender proves per recipient; recipients verify) come from agent/flow-trace/04_DKG_AND_COMPUTATION.md, not from the circuit code."
+        "Generator and verifier roles (the sender proves per recipient; recipients verify) come from docs/architecture/dkg.md, not from the circuit code."
       ]
     },
     {
       "id": "C4 share_decryption (dkg)",
+      "documentation": [
+        { "title": "Proof statements", "path": "docs/architecture/proof-statements.md" },
+        { "title": "DKG roster", "path": "docs/architecture/dkg.md" }
+      ],
       "kind": "circuit",
       "path": "circuits/bin/dkg/share_decryption",
-      "one_line": "Proves a member's aggregated key share is the sum of the verified shares from the H honest dealers.",
-      "explain": "It convinces a verifier that the H decrypted shares a member received match the commitments C2 published for those dealers, and that their sum over the honest set, centered per modulus, is the member's aggregate share. Each selected member generates it, once for sk and once for e_sm with the same binary, and c4ab_fold folds the two into node_fold; C6 later opens the aggregate commitment (agent/flow-trace/04). Without it, a member's aggregate key share could be a value no dealer ever committed to.",
-      "analogy": "Like adding up sealed envelopes whose contents were already checked against receipts from earlier, then sealing only the total.",
+      "one_line": "Proves an aggregated key share opens and sums the C2-committed shares from the H selected dealers.",
       "actors": [],
       "consumes": [
         {
@@ -420,16 +432,18 @@
       "depends_on": [],
       "tests": "lib/src/core/dkg/share_decryption.nr has 2 #[test] functions; run nargo test in circuits/lib. This package has none.",
       "unverified": [
-        "Generator role (each selected member proves its own aggregate) comes from agent/flow-trace/04_DKG_AND_COMPUTATION.md, not from the circuit code."
+        "Generator role (each selected member proves its own aggregate) comes from docs/architecture/dkg.md, not from the circuit code."
       ]
     },
     {
       "id": "C5 pk_aggregation",
+      "documentation": [
+        { "title": "Proof statements", "path": "docs/architecture/proof-statements.md" },
+        { "title": "DKG key publication", "path": "docs/architecture/dkg.md" }
+      ],
       "kind": "circuit",
       "path": "circuits/bin/threshold/pk_aggregation",
-      "one_line": "Proves the committee's aggregate threshold public key is the sum, modulo each prime, of the H honest contributions.",
-      "explain": "It convinces a verifier that the aggregate pk0 is, for each CRT modulus and coefficient, the sum of the H honest parties' pk0 contributions reduced modulo that modulus, and that each contribution opens to the commitment C1 published. The active aggregator generates it over the H selected contributions; dkg_aggregator verifies it in-circuit, and the final DKG proof is checked on-chain (agent/flow-trace/04). Without it, the public key used for encryption would not be the sum of the committee's contributions.",
-      "analogy": "Like a clerk totalling sealed receipts from H members, where the posted total must equal the sum after removing whole multiples of a fixed unit.",
+      "one_line": "Proves the aggregate threshold public key sums the H selected contributions modulo each prime.",
       "actors": [],
       "consumes": [
         {
@@ -484,16 +498,18 @@
       "depends_on": [],
       "tests": "lib/src/core/threshold/pk_aggregation.nr has 4 #[test] functions; run nargo test in circuits/lib. This package has none.",
       "unverified": [
-        "The generator (active aggregator) and the on-chain check of the final DKG proof come from agent/flow-trace/04_DKG_AND_COMPUTATION.md; no Solidity source was read."
+        "The generator (active aggregator) and the on-chain check of the final DKG proof come from docs/architecture/dkg.md; no Solidity source was read."
       ]
     },
     {
       "id": "P3 user_data_encryption",
+      "documentation": [
+        { "title": "Encryption proof pipeline", "path": "docs/pages/internals/dkg.mdx" },
+        { "title": "Proof constraints", "path": "docs/architecture/proof-statements.md" }
+      ],
       "kind": "circuit",
       "path": "circuits/bin/threshold/user_data_encryption",
       "one_line": "Proves a user's two-leg BFV ciphertext is valid under the aggregated committee key, with one shared randomness u.",
-      "explain": "The ct0 and ct1 folders each prove one leg of a user's BFV encryption under the aggregated key from C5: ct0 ties pk0, its ciphertext, the scaled message k1 and u, and ct1 ties pk1, its ciphertext and the same u. The wrapper (user_data_encryption) verifies both leg proofs in-circuit and asserts their u commitments match, so one randomness encrypts both legs; the data provider generates the proofs, and the E3 program checks the Noir proof when the input is published (agent/flow-trace/04). Without the shared u check, the two legs could use different randomness and would not form one ciphertext.",
-      "analogy": "Two sealed halves that must carry the same hidden random number: each half is sealed alone, and the check confirms both seals used one number.",
       "actors": [],
       "consumes": [
         {
@@ -598,16 +614,18 @@
       "depends_on": [],
       "tests": "lib ct0 module has 1 #[test] and ct1 has 2 (lib/src/core/threshold/). Run nargo test in circuits/lib. The wrapper has none.",
       "unverified": [
-        "The generator (data provider) and the E3 program's publishInput check come from agent/flow-trace/04_DKG_AND_COMPUTATION.md (Phase 3); no Solidity source was read."
+        "The generator (data provider) and the E3 program's publishInput check come from docs/architecture/encrypted-computation.md; no Solidity source was read."
       ]
     },
     {
       "id": "C6 share_decryption (threshold)",
+      "documentation": [
+        { "title": "Threshold decryption", "path": "docs/architecture/threshold-decryption.md" },
+        { "title": "Proof constraints", "path": "docs/architecture/proof-statements.md" }
+      ],
       "kind": "circuit",
       "path": "circuits/bin/threshold/share_decryption",
       "one_line": "Proves a member's threshold decryption share is computed from the ciphertext, its key share and its smudging share.",
-      "explain": "It convinces a verifier that a member's decryption share d equals ct0 plus ct1 times sk plus the aggregated smudging noise e_sm, modulo q and X^N+1 (checked at a random point), with sk and e_sm the values C4 committed and the ciphertext matching its public commitment. The E3 domain is a public input, which the circuit comments say authorizes this exact E3 context. Each committee member generates its share, the active aggregator verifies the shares, and decryption_aggregator folds the C6 proofs (agent/flow-trace/04).",
-      "analogy": "Like each trustee producing a sealed partial unlock token from their own key piece, with a proof that the token matches both the locked box and that piece.",
       "actors": [],
       "consumes": [
         {
@@ -707,16 +725,18 @@
       "depends_on": [],
       "tests": "lib/src/core/threshold/share_decryption.nr has 7 #[test] functions; run nargo test in circuits/lib. This package has none.",
       "unverified": [
-        "The generator (each committee member) and the verifier (the active aggregator, per share) come from agent/flow-trace/04_DKG_AND_COMPUTATION.md, not from the circuit code."
+        "The generator (each committee member) and the verifier (the active aggregator, per share) come from docs/architecture/threshold-decryption.md, not from the circuit code."
       ]
     },
     {
       "id": "C7 decrypted_shares_aggregation",
+      "documentation": [
+        { "title": "Threshold decryption", "path": "docs/architecture/threshold-decryption.md" },
+        { "title": "Proof constraints", "path": "docs/architecture/proof-statements.md" }
+      ],
       "kind": "circuit",
       "path": "circuits/bin/threshold/decrypted_shares_aggregation",
       "one_line": "Proves the public message is what T+1 verified decryption shares reconstruct by interpolation, CRT recombination and decoding.",
-      "explain": "It convinces a verifier that the public message is exactly what T+1 verified decryption shares reconstruct: each share matches its C6 commitment, the shares are Lagrange-interpolated at zero per CRT modulus, recombined and rounded to the plaintext modulus t, and party IDs are strictly increasing and inside the committee. The active aggregator generates it over the verified shares, and decryption_aggregator checks it together with the folded C6 proofs for the final on-chain check of publishPlaintextOutput (agent/flow-trace/04). Without it, a plaintext could be published that the decryption shares do not produce.",
-      "analogy": "Like reconstructing a value at zero from T+1 marked points on one curve, then reading the result back as text.",
       "actors": [],
       "consumes": [
         {
@@ -776,16 +796,15 @@
       "depends_on": [],
       "tests": "lib/src/core/threshold/decrypted_shares_aggregation.nr has 5 #[test] functions; run nargo test in circuits/lib. This package has none.",
       "unverified": [
-        "The generator (the active aggregator) and the on-chain publishPlaintextOutput check come from agent/flow-trace/04_DKG_AND_COMPUTATION.md; no Solidity source was read."
+        "The generator (the active aggregator) and the on-chain publishPlaintextOutput check come from docs/architecture/threshold-decryption.md; no Solidity source was read."
       ]
     },
     {
       "id": "Recursive aggregation",
+      "documentation": [{ "title": "Recursive proof trust", "path": "docs/architecture/proof-statements.md" }],
       "kind": "circuit",
       "path": "circuits/bin/recursive_aggregation",
       "one_line": "Folds the per-member proofs into two final proofs: one for the DKG committee key and one for each decryption.",
-      "explain": "node_fold checks one member's C0 and C1 proofs, its folded C2, C3 and C4 proofs, and the same-party links between them; nodes_fold chains the H node proofs, c2ab_fold, c3_fold, c3ab_fold, c4ab_fold and c6_fold combine the inner proofs of one kind, and each *_kernel mints the genesis proof that starts its chain. dkg_aggregator verifies nodes_fold and C5, checks the roster order and the C5 links, and exposes the committee key proof; decryption_aggregator verifies c6_fold and C7, checks the E3 domain and the shared ciphertext, and exposes the plaintext proof. The circuit comments say the final EVM proof of each aggregator is what the contract verifies on-chain.",
-      "analogy": "Like a relay of notarised tally sheets: each sheet is checked and stamped into a running total, and only the final total goes to the registry.",
       "actors": [],
       "consumes": [
         {
@@ -969,18 +988,17 @@
       "depends_on": [],
       "tests": "dkg_aggregator has 7 #[test] functions, decryption_aggregator 7 and node_fold 3, all in their main.nr; the other folds have none. circuits/README.md runs nargo test on these packages through scripts/test-circuits.sh.",
       "unverified": [
-        "On-chain verification of the final aggregator proofs is stated in the circuit doc comments and in agent/flow-trace/04_DKG_AND_COMPUTATION.md; no Solidity source was read.",
-        "agent/flow-trace/04 says C7 is checked with ZK, but decryption_aggregator calls verify_honk_proof_non_zk for it (decryption_aggregator/src/main.nr@90).",
+        "On-chain verification of the final aggregator proofs is stated in the circuit doc comments and in docs/architecture/threshold-decryption.md; no Solidity source was read.",
+        "The earlier flow description said C7 is checked with ZK, but decryption_aggregator calls verify_honk_proof_non_zk for it (decryption_aggregator/src/main.nr@90); docs/architecture/proof-statements.md describes the trust boundary rather than that older wrapper wording.",
         "circuits/README.md lists recursive_aggregation/fold and wrapper paths that are not in this snapshot; this unit follows the directory listing."
       ]
     },
     {
       "id": "config",
+      "documentation": [{ "title": "Circuit configuration artifacts", "path": "docs/architecture/circuit-artifacts.md" }],
       "kind": "circuit",
       "path": "circuits/bin/config",
       "one_line": "Pre-deployment check that the secure DKG and threshold preset constants are internally consistent.",
-      "explain": "This circuit takes no inputs and proves nothing about a round: its main asserts the secure presets' CRT products, bound constants, Reed-Solomon parity matrix (zero modulo each prime) and the N and L agreement between the DKG and threshold presets. It is run once per deployment (nargo execute, per circuits/README.md), and its comment says a failed assert panics, which blocks deployment with wrong parameters. It checks the secure presets, not the generated default preset in configs/default.",
-      "analogy": "Like a pre-flight checklist: every reading is recomputed from the spec, and one failed check keeps the aircraft on the ground.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -1011,11 +1029,13 @@
     },
     {
       "id": "Circuit library",
+      "documentation": [
+        { "title": "Proof constraints", "path": "docs/architecture/proof-statements.md" },
+        { "title": "Noir library integration", "path": "docs/pages/build/noir-circuits.mdx" }
+      ],
       "kind": "circuit",
       "path": "circuits/lib",
       "one_line": "Shared Noir package with the math, commitments, presets and core circuit bodies that every bin package imports.",
-      "explain": "Every package under bin/ depends on this library, so field and polynomial arithmetic, the SAFE sponge hash, domain-separated commitments and checked packing are written once. The core modules hold the body of each DKG and threshold circuit, and configs/default selects the preset (this snapshot's generated default is insecure-512). Without it, each binary would repeat these checks and could drift apart.",
-      "analogy": "A shared toolbox of calibrated instruments: each inspector has its own checklist, but the rulers, scales and seals all come from one box.",
       "actors": [],
       "consumes": [],
       "emits": [],

@@ -3,11 +3,13 @@
   "units": [
     {
       "id": "e3-zk-prover",
+      "documentation": [
+        { "title": "Proof statements", "path": "docs/architecture/proof-statements.md" },
+        { "title": "Circuit artifacts", "path": "docs/architecture/circuit-artifacts.md" }
+      ],
       "kind": "crate",
       "path": "crates/zk-prover",
       "one_line": "Turns proof requests into Noir/bb proofs, verifies other nodes' proofs, and folds DKG proofs recursively.",
-      "explain": "Ciphernodes must show that each DKG and decryption message is well formed, and must check the same proofs from peers before using them. A proof request arrives as a bus event; ProofRequestActor sends it on as a ComputeRequest, and the multithread compute actor in crates/multithread builds the witness, runs bb, and returns the proof for signing. Without this crate, peer shares would be accepted unchecked and the folded proofs for on-chain checks would not exist.",
-      "analogy": "Like a certified assay lab: each sample (a request) is measured by one calibrated instrument (bb) following a fixed method file (the compiled circuit), and anyone holding the matching verifying key can re-check the certificate.",
       "actors": [
         {
           "name": "ZkActor",
@@ -328,12 +330,12 @@
         }
       ],
       "depends_on": [
+        "e3-committee",
         "e3-committee-hash",
         "e3-config",
         "e3-data",
         "e3-events",
         "e3-fhe-params",
-        "e3-polynomial",
         "e3-request",
         "e3-slashing",
         "e3-utils",
@@ -351,11 +353,10 @@
     },
     {
       "id": "e3-zk-helpers",
+      "documentation": [{ "title": "Proof statements and witnesses", "path": "docs/architecture/proof-statements.md" }],
       "kind": "crate",
       "path": "crates/zk-helpers",
       "one_line": "Builds the Noir input JSON and output layouts for each ZK circuit from BFV keys, ciphertexts and shares.",
-      "explain": "A ZK circuit can only prove something when its inputs have exactly the shape the Noir code expects. This crate computes those inputs from BFV data (public keys, secret and smudging shares, ciphertexts, decryption shares) by converting polynomials to CRT limbs and serializing them as JSON. Without it, zk-prover would have no witness to prove, and the Noir configs would not match the parameters the nodes run.",
-      "analogy": "Like a prep cook who measures each ingredient into the exact portion on the recipe card, so the oven gets only what it expects.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -452,7 +453,7 @@
           "ref": "crates/zk-helpers/src/circuits/errors.rs@16@pub enum CircuitsErrors"
         }
       ],
-      "depends_on": ["e3-fhe-params", "e3-parity-matrix", "e3-polynomial", "e3-safe"],
+      "depends_on": ["e3-fhe-params", "e3-parity-matrix", "e3-polynomial", "e3-polynomial-fhe", "e3-committee", "e3-safe"],
       "tests": "cargo test -p e3-zk-helpers (in-module #[cfg(test)] tests in each circuit file). The artifact CLI is the e3-zk-artifacts crate in crates/zk/cli.",
       "unverified": [
         "The UserDataEncryption proof path was traced only as far as its input call in crates/bfv-client/src/client.rs:129.",

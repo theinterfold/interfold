@@ -66,14 +66,9 @@ feat(compute-provider): Add Risc Zero compute provider (#123)
 
 ### Conventional Commits: Types
 
-Generally, we want to only use the three primary types defined by the specification:
-
-- `feat:` - This should be the most used type, as most work we are doing in the project are new
-  features. Commits using this type will always show up in the Changelog.
-- `fix:` - When fixing a bug, we should use this type. Commits using this type will always show up
-  in the Changelog.
-- `chore:` - The least used type, these are **not** included in the Changelog unless they are
-  breaking changes. But remain useful for an understandable commit history.
+Use a type that describes the change. The accepted types and title constraints are defined in
+[PR-title validation](.github/workflows/validate-commits.yml). Changelog inclusion is a separate
+release-tool decision.
 
 ### Conventional Commits: Breaking Changes
 
@@ -104,25 +99,11 @@ feat(bfv): improve DKG performance for BFV (#123)
 
 ### Conventional Commits: Automated Validation
 
-We have automated validation in place to ensure commit messages follow the Conventional Commits
-specification:
-
-1. **GitHub Actions**: All pull requests are automatically validated. If any commit messages don't
-   follow the specification, the CI will fail and provide feedback.
-
-2. **Local Git Hook (Optional)**: Developers can optionally enable a local git hook to validate
-   commit messages before they're committed:
-   ```bash
-   # Enable the git hook
-   chmod +x .githooks/commit-msg
-   git config core.hooksPath .githooks
-   ```
-
-If your commit messages don't pass validation, you can fix them using:
-
-- `git commit --amend` to fix the last commit message
-- `git rebase -i HEAD~N` to edit multiple commit messages
-- Squash commits when merging the PR
+GitHub Actions validates the PR title, not each commit message. The PR title becomes the default
+squash-commit title. See [the workflow](.github/workflows/validate-commits.yml) for the exact rules.
+Fix a rejected title by editing the PR title; do not rewrite commit history just to satisfy this
+check. Local checks use Husky (`pnpm prepare`); selecting a different `core.hooksPath` replaces
+those hooks rather than adding to them.
 
 ## Pull Requests
 
@@ -143,10 +124,9 @@ cherry-pick the smaller changes into separate branches for pull requesting.
 
 ### Reviews
 
-For any repository in the Interfold repo, we require code review & approval by **one** contributor
-with edit access before the changes are merged, as enforced by GitHub branch protection.
-Non-breaking pull requests may be merged at any time. Breaking pull requests will only be merged
-alongside a breaking release.
+Team policy requires review and approval by **one** contributor with edit access before merging. Do
+not assume branch protection enforces this policy. Non-breaking pull requests may be merged at any
+time. Breaking pull requests will only be merged alongside a breaking release.
 
 If your Pull Request involves changes in the docs folder, please add the `documentation` flag.
 
@@ -157,6 +137,26 @@ Breaking changes need to be documented. Please ask for help if this is a problem
 Sometimes, we don't merge pull requests with breaking changes immediately upon approval. Since a
 breaking change will require to bump to the next "minor" version, we might want to land some fixes
 in "patch" releases before we begin working on that next breaking version.
+
+### Protocol compatibility
+
+Changes to durable schemas, persisted types, event variants, gossip or sync wire formats, contract
+ABIs/storage, and `crates/config/protocol-release.toml` need an explicit compatibility decision for
+human review. This includes changes associated with `SCHEMA_VERSION`, `GOSSIP_WIRE_MAJOR`, and
+`SYNC_WIRE_MAJOR`; changing a fixture alone does not make old data compatible.
+
+Describe whether the upgrade is rolling, drain-and-resync, or governance. State whether
+`protocol_version` or `node_generation` changes, and explain rollback. Use `!` when operators must
+reset or resync. Check old-data replay, mixed-version peers, and deployed verifier compatibility
+where applicable. Include compatibility-test results and unresolved limits, not only a compile
+result. A migration needs explicit versioning and compatibility tests; cleanup approval does not
+authorize a protocol change.
+
+For cryptographic, circuit, key, or generated-parameter changes, identify the deployed verifier and
+artifact combinations that remain supported. The detailed requirements and known gaps are in
+[domain references](docs/architecture/AGENTS.md); verify relevant claims against their sources.
+Human review decides the rollout; no documentation edit or optional agent review grants deployment
+or publication permission.
 
 ## Merging
 
@@ -235,8 +235,9 @@ Before merging, you should mentally review these questions:
 
 ## Releases
 
-Releases are managed ad-hoc by the Interfold team, we may introduce some automation at some point in
-future.
+Follow [RELEASING.md](RELEASING.md) for release preparation, tagging, artifact publication,
+channels, and recovery. Human review must approve the compatibility and rollout decision before
+publication; the release workflow does not rerun the full test suite or grant deployment permission.
 
 ---
 

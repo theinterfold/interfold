@@ -12,7 +12,7 @@ mod event_size;
 pub(crate) use event_size::event_bytes;
 
 // Sized for N=19, H=14 and four concurrent E3s. See the capacity derivation in
-// agent/flow-trace/03_E3_REQUEST_AND_COMMITTEE.md.
+// docs/architecture/persistence-and-replay.md (Deferred recipients and capacity).
 #[derive(Clone, Copy)]
 pub(crate) struct EventBufferLimits {
     pub per_e3_items: usize,

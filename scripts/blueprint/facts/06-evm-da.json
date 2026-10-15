@@ -3,11 +3,13 @@
   "units": [
     {
       "id": "e3-evm",
+      "documentation": [
+        { "title": "Chain ingestion", "path": "docs/architecture/committee-selection.md" },
+        { "title": "Writer recovery", "path": "docs/architecture/persistence-and-replay.md" }
+      ],
       "kind": "crate",
       "path": "crates/evm",
       "one_line": "Connects the ciphernode to its EVM contracts: decodes chain logs into bus events and submits the node's transactions.",
-      "explain": "Every chain fact the node learns enters through this crate, and every transaction it sends leaves through it. Readers pull logs from RPC providers, decode them with alloy sol! bindings, and hand them to the bus after a historical catch-up from the block cursor saved with the last snapshot (the deploy block on first start). Writers submit tickets, committee keys, plaintext outputs, and slash proposals; without them a node would see committee requests, but its results would never reach the contracts.",
-      "analogy": "A border post: it reads every letter arriving from the chain, sorts each one by the sender's address into the right tray, and carries the node's outgoing letters back.",
       "actors": [
         {
           "name": "EvmReadInterface",
@@ -221,6 +223,16 @@
           "name": "ensure_node_release",
           "what": "startup check: verifies this binary and acknowledges it on INodeReleaseRegistry before the readers start",
           "ref": "crates/evm/src/node_release.rs@71@pub async fn ensure_node_release<P>("
+        },
+        {
+          "name": "ProviderCache",
+          "what": "cached RPC providers and signer, with read-only and write-enabled startup states",
+          "ref": "crates/evm/src/provider_cache.rs@30@pub struct ProviderCache<State = ReadOnly> {"
+        },
+        {
+          "name": "EvmSystemChainBuilder",
+          "what": "registers one chain's contract routes and starts its ingestion gateway",
+          "ref": "crates/evm/src/chain_system.rs@22@pub struct EvmSystemChainBuilder<P> {"
         }
       ],
       "read_first": [
@@ -231,7 +243,7 @@
         },
         {
           "why": "the reader's start block comes from the routing table and the chain's deploy block",
-          "ref": "crates/ciphernode-builder/src/evm_system.rs@174@Filters::from_routing_table(router.get_routing_table(), deploy_block)"
+          "ref": "crates/evm/src/chain_system.rs@124@Filters::from_routing_table(router.get_routing_table(), deploy_block)"
         },
         {
           "why": "restart: the block cursor saved with the snapshot replaces the deploy block",
@@ -261,6 +273,7 @@
         }
       ],
       "depends_on": [
+        "e3-committee",
         "e3-request",
         "e3-bfv-client",
         "e3-config",
@@ -282,11 +295,10 @@
     },
     {
       "id": "e3-data-availability",
+      "documentation": [{ "title": "Data availability", "path": "docs/architecture/data-availability.md" }],
       "kind": "crate",
       "path": "crates/data-availability",
       "one_line": "Content-addressed object transport: publishes bytes to Avail and retrieves them by hash, re-hashing what it reads.",
-      "explain": "Large protocol objects, such as the ciphertext output, stay off chain: Ethereum records only a reference (content hash, Avail block, leaf index) after it verifies a VectorX receipt. A reader fetches the bytes and re-hashes them against that reference, so a faulty RPC cannot substitute other bytes. Ciphernodes only read through this crate; the CRISP example server builds an AvailPublisher and publishes through it.",
-      "analogy": "A sealed-envelope archive: the chain keeps only each envelope's fingerprint and shelf number, and the clerk checks the fingerprint before trusting what comes back.",
       "actors": [],
       "consumes": [],
       "emits": [],

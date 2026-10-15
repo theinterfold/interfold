@@ -308,9 +308,6 @@ already contains the staged preset circuits, so Vercel does not compile Noir cir
 - **`vercel build` in CI:** run from the **repository root** (not `cd examples/CRISP/client` first)
 - Optional Vercel env: `ENABLE_EXPERIMENTAL_COREPACK=1`
 
-Commit `examples/CRISP/client/pnpm-lock.yaml` after dependency bumps
-(`pnpm install --ignore-workspace` in that directory) for reproducible installs.
-
 ## Publishing packages to npm
 
 In order to publish a new version of the CRISP packages to npm, select the release channel:

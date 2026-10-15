@@ -3,11 +3,10 @@
   "units": [
     {
       "id": "interfold-sdk",
+      "documentation": [{ "title": "TypeScript SDK", "path": "docs/pages/build/sdk.mdx" }],
       "kind": "package",
       "path": "packages/interfold-sdk/src",
       "one_line": "TypeScript SDK for dApps: requests E3 rounds, encrypts values to the committee key with proofs, and reads E3 state and events.",
-      "explain": "InterfoldSDK starts a round with requestE3, which sends the Interfold request call, and reads the committee public key from the ciphernode registry. It encrypts values under that key with WASM, and encryptVectorAndGenProof and encryptNumberAndGenProof also return a user-data-encryption proof built with Barretenberg. After compute, publishCiphertextOutput posts the output reference, and event listeners and getE3 read the results.",
-      "analogy": "Like a sealed-envelope kit at a counter: it seals each value with the committee's public lock, files the request with the desk, and reads back the posted result.",
       "actors": [
         {
           "name": "InterfoldSDK",
@@ -21,7 +20,7 @@
         },
         {
           "name": "EventListener",
-          "role": "watches or polls Interfold and registry logs and delivers typed events to callbacks",
+          "role": "delivers typed logs through contract watchers or polling; polling skips watched types and emits fetched ranges in block/log order",
           "ref": "packages/interfold-sdk/src/events/event-listener.ts@34@export class EventListener"
         },
         {
@@ -43,6 +42,11 @@
           "name": "tracked committee-key assemblies, up to 128 E3 IDs by default",
           "where": "memory",
           "ref": "packages/interfold-sdk/src/committee-public-key.ts@13@DEFAULT_MAX_TRACKED_COMMITTEE_KEYS = 128"
+        },
+        {
+          "name": "poll cursor and generation; cursor advances only after the range fetch succeeds, and a restarted loop invalidates the old generation",
+          "where": "memory",
+          "ref": "packages/interfold-sdk/src/events/event-listener.ts@447@private async pollForEvents(generation: number): Promise<void> {"
         }
       ],
       "key_types": [
@@ -77,8 +81,8 @@
           "ref": "packages/interfold-sdk/src/interfold-sdk.ts@159@public async requestE3(params: E3RequestParams): Promise<Hash> {"
         },
         {
-          "why": "the Interfold request transaction that requestE3 sends",
-          "ref": "packages/interfold-sdk/src/contracts/contract-client.ts@155@functionName: 'request'"
+          "why": "polling lifecycle: starts at the current block, then fetches and emits newly observed ranges",
+          "ref": "packages/interfold-sdk/src/events/event-listener.ts@276@public async startPolling(): Promise<void> {"
         },
         {
           "why": "where the committee public key is read, from the ciphernode registry",
@@ -91,20 +95,18 @@
       ],
       "rust_patterns": [],
       "depends_on": [],
-      "tests": "No test files and no package.json under packages/interfold-sdk in this snapshot, so no test command is recorded.",
+      "tests": "Vitest tests in tests/ cover events (including polling), SDK calls, key assembly and proof API selection; run: pnpm --filter @interfold/sdk test. Real-proof integration uses test:proofs and its circuit/toolchain prerequisites.",
       "unverified": [
         "The brief says dApps publish inputs with this SDK. This package has no publish-input method; CRISP's server submits inputs through evm-helpers CRISPContract::publish_input, so that use is not recorded as a fact here.",
-        "The package name @interfold/sdk and its version come from the brief; no package.json is in this snapshot.",
         "The @interfold/wasm functions and the circuits under circuits/bin/threshold/target that this package imports were not read."
       ]
     },
     {
       "id": "crisp-program",
+      "documentation": [{ "title": "CRISP computation and selection", "path": "docs/architecture/encrypted-computation.md" }],
       "kind": "package",
       "path": "examples/CRISP/program",
       "one_line": "The CRISP E3 program: selects each slot's valid ballot chain and adds the selected BFV ciphertexts into one encrypted tally.",
-      "explain": "This is the compute step of a CRISP round: its input policy turns each published entry into a leaf and keeps, per slot, only the current valid head of the parent chain. Its FHE processor adds the selected BFV ciphertexts together without decrypting them, and the OpenVM guest proves that run. The verify call on CRISPProgram later checks that proof against the round's input root, parameter hash, and committee key.",
-      "analogy": "Like a tally clerk who keeps only the latest valid slip from each voter, then adds the sealed envelopes without opening them.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -179,18 +181,19 @@
       "depends_on": ["e3-compute-provider", "e3-fhe-params"],
       "tests": "Integration tests in examples/CRISP/program/tests (input_leaf, selection, secure_process, onchain_root_agreement). Run cargo test from examples/CRISP/program, because the root workspace excludes this directory.",
       "unverified": [
-        "tests/onchain_root_agreement.rs reads packages/crisp-contracts/tests/fixtures/input-tree.json through include_str!, and that fixture is not in this snapshot, so that test target cannot build from it here.",
-        "No examples/CRISP/Cargo.toml is in this snapshot and the root Cargo.toml excludes this directory, so the workspace = true inheritance in the manifest cannot be checked here.",
-        "The OpenVM guest in examples/CRISP/guest, which the README says links this crate, is not in this snapshot."
+        "The generation of packages/crisp-contracts/tests/fixtures/input-tree.json, used by onchain_root_agreement.rs, was not traced.",
+        "The OpenVM guest in examples/CRISP/guest was not traced in this unit."
       ]
     },
     {
       "id": "crisp-program-contract",
+      "documentation": [
+        { "title": "Application verification", "path": "docs/architecture/encrypted-computation.md" },
+        { "title": "Input availability", "path": "docs/architecture/data-availability.md" }
+      ],
       "kind": "contract",
       "path": "examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol",
       "one_line": "Solidity E3 program for CRISP: checks each ballot's Noir proof, logs inputs in a Merkle tree, and verifies the OpenVM compute proof.",
-      "explain": "Interfold calls validate when a round is requested, and publishInput checks a ballot's Noir proof and a signed availability attestation, then reserves a leaf in an append-only tree. finalizeInput records the data-availability receipt for that leaf, and verify accepts the OpenVM compute proof only when no reserved input is still pending. decodeTally then reads the per-option totals from the plaintext output that Interfold stores.",
-      "analogy": "Like a registrar for sealed ballots: each certificate is checked before the envelope is logged under a number, and the count is accepted only when every logged envelope has its receipt.",
       "actors": [
         {
           "name": "CRISPProgram",
@@ -315,19 +318,18 @@
       ],
       "rust_patterns": [],
       "depends_on": [],
-      "tests": "No Solidity test files in this snapshot: contracts/test holds mock verifiers only, and the TypeScript test that generates the Rust fixture is not here, so no test command is recorded.",
+      "tests": "Hardhat tests in packages/crisp-contracts/tests cover census modes, input availability, input leaves, journals and receipts; from examples/CRISP run pnpm test:contracts:unit. Ballot and input-tree scenarios have separate test:contracts:* targets and prerequisites.",
       "unverified": [
-        "The Solidity honk verifier that _verifyInputProof calls is not in this snapshot. Its nine public inputs match the fold circuit's eight pub inputs plus its returned public-key commitment, but which circuit the verifier was generated from is not confirmed here.",
+        "The generation provenance of the Solidity Honk verifiers under contracts/verifiers was not confirmed here.",
         "Only packages/interfold-contracts/contracts/interfaces/IE3Program.sol was read from the base contract package; the other base contracts were not read."
       ]
     },
     {
       "id": "crisp-circuits",
+      "documentation": [{ "title": "Ballot proofs and limits", "path": "docs/architecture/encrypted-computation.md" }],
       "kind": "circuit",
       "path": "examples/CRISP/circuits",
       "one_line": "Noir circuits: the voter proof for an eligible, valid ballot, plus fold circuits that combine it with the encryption proof.",
-      "explain": "The crisp circuit (bin/crisp) proves that the slot is in the census and that the published slot ciphertext comes from the ballot. For a vote it also proves that the option weights fit the balance and that the signature comes from the slot's address. crisp_onchain takes voting power as a public input instead of a Merkle path. The fold circuits verify the crisp proof and the user-data-encryption proof together, check that their commitments match, and return the public-key commitment.",
-      "analogy": "Like a notary who checks sealed slips against the register: the slot must be listed, and a vote's slip must fit the voter's allowance and carry the voter's signature, all without opening the envelope.",
       "actors": [],
       "consumes": [
         {
@@ -415,19 +417,23 @@
       ],
       "rust_patterns": [],
       "depends_on": [],
-      "tests": "Noir #[test] functions in examples/CRISP/circuits/lib/src (for example merkle_tree.nr and ciphertext_addition.nr). The command that runs them is not written in this snapshot.",
+      "tests": "Noir #[test] functions in examples/CRISP/circuits/lib/src (for example merkle_tree.nr and ciphertext_addition.nr); from examples/CRISP run pnpm test:circuits with the pinned Noir toolchain.",
       "unverified": [
         "The interfold_lib constants (N, L, QIS, and the bit widths) come from circuits/lib at the snapshot root, which this unit did not read.",
-        "The CRISP_FOLD_EXPECTED_KEY_HASH values are regenerated by pnpm compute:vk-hash, a script that is not in this snapshot."
+        "The pnpm compute:vk-hash regeneration flow was not traced in this unit."
       ]
     },
     {
       "id": "crisp-server",
+      "documentation": [
+        { "title": "CRISP recovery", "path": "docs/architecture/encrypted-computation.md" },
+        { "title": "DA relay", "path": "docs/architecture/data-availability.md" },
+        { "title": "Census configuration", "path": "docs/pages/CRISP/running-e3.mdx" },
+        { "title": "Server setup", "path": "docs/pages/CRISP/setup.mdx" }
+      ],
       "kind": "package",
       "path": "examples/CRISP/server",
-      "one_line": "Rust CRISP server: requests rounds, relays votes to the chain, indexes Interfold events, asks for compute at the deadline, and records the tally.",
-      "explain": "It drives a CRISP round around the chain: a cron-gated POST /rounds/request calls request_e3 on Interfold, and an indexer records the E3 events in a sled store. POST /voting/broadcast stages each vote as a durable job that sends publishInput, publishes the bytes to the data-availability layer, and then calls finalizeInput; the relay key pays for publishInput unless the job falls back to the voter's wallet. At the input deadline the indexed inputs go to the OpenVM program server, and PlaintextOutputPublished records the decoded tally.",
-      "analogy": "Like a stage manager for a poll: it books the hall with Interfold, logs each sealed ballot as it arrives, passes the ballots to the counting room, and posts the final count.",
+      "one_line": "Rust CRISP server: builds the census, requests rounds, relays votes, indexes Interfold events, asks for compute at the deadline, and records the tally.",
       "actors": [],
       "consumes": [
         {
@@ -499,6 +505,11 @@
           "name": "ComputeProviderParams",
           "what": "compute provider parameters encoded into the E3 request",
           "ref": "examples/CRISP/server/src/e3_request.rs@24@pub struct ComputeProviderParams {"
+        },
+        {
+          "name": "EtherscanClient",
+          "what": "census discovery pages all log ranges and includes wallet, bonded and escrow delegates before checking snapshot voting power",
+          "ref": "examples/CRISP/server/src/server/token_holders/etherscan.rs@210@pub struct EtherscanClient {"
         }
       ],
       "read_first": [
@@ -507,8 +518,8 @@
           "ref": "examples/CRISP/server/src/server/mod.rs@77@pub async fn start()"
         },
         {
-          "why": "route table for rounds, voting, state, and chain",
-          "ref": "examples/CRISP/server/src/server/routes/mod.rs@31@pub fn setup_routes(config: &mut web::ServiceConfig) {"
+          "why": "census candidates include bonded and escrow delegates even without token holdings or a lock position",
+          "ref": "examples/CRISP/server/src/server/token_holders/etherscan.rs@456@async fn discover_candidates("
         },
         {
           "why": "round request: calls request_e3 on Interfold",
@@ -548,6 +559,11 @@
           "pattern": "serde-derive",
           "note": "the program server callback enum derives Serialize and Deserialize",
           "ref": "examples/CRISP/server/src/server/models.rs@21@#[derive(Derivative, Deserialize, Serialize)]"
+        },
+        {
+          "pattern": "async-await",
+          "note": "Etherscan scanning pages to completion and re-reads a boundary block when the page cap is reached; an unpageable single block fails",
+          "ref": "examples/CRISP/server/src/server/token_holders/etherscan.rs@911@async fn scan_logs<F, Fut>(from_block: u64, mut fetch_page: F) -> Result<Vec<Log>>"
         }
       ],
       "depends_on": [
@@ -559,20 +575,18 @@
         "e3-data-availability",
         "e3-evm-helpers"
       ],
-      "tests": "Unit tests (#[test] and #[tokio::test]) are inline in examples/CRISP/server/src, for example in data_availability.rs and indexer.rs. Run cargo test from examples/CRISP/server, because the root workspace excludes this directory.",
+      "tests": "Inline tests in examples/CRISP/server/src cover DA, indexing and token_holders/etherscan.rs census pagination, range boundaries and delegates. Run cargo test from examples/CRISP/server; it is outside the root workspace.",
       "unverified": [
         "The README lists GET for /rounds/current, but routes/rounds.rs registers that path with POST; this unit follows the code.",
-        "No examples/CRISP/Cargo.toml is in this snapshot and the root Cargo.toml excludes this directory, so the workspace = true inheritance in the manifest cannot be checked here.",
-        "The OpenVM program service that receives run_compute is not in this snapshot."
+        "The OpenVM program service that receives run_compute was not traced in this unit."
       ]
     },
     {
       "id": "crisp-crates",
+      "documentation": [{ "title": "CRISP components", "path": "docs/pages/CRISP/introduction.mdx" }],
       "kind": "crate",
       "path": "examples/CRISP/crates",
       "one_line": "Four helper crates: tally decoding, the CRISPProgram contract client, BFV ZK-input generation, and its WASM binding.",
-      "explain": "crisp-utils turns the decrypted tally bytes into per-option totals, and the server calls it when a round finishes. evm-helpers (directory evm_helpers) wraps CRISPProgram calls such as publish_input and finalize_input for the server. zk-inputs builds keys, encrypted votes, and witnesses for the slot relation, and zk-inputs-wasm (package crisp-zk-inputs) exposes that generator to JavaScript.",
-      "analogy": "Like a toolbox at a counting office: one tool reads the final tally slip, one is the phone line to the contract desk, one prepares sealed paperwork, and one is the same paperwork tool packaged for JavaScript.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -639,9 +653,8 @@
       "depends_on": ["e3-sdk", "e3-bfv-client", "e3-evm-helpers", "e3-fhe-params", "e3-zk-helpers", "e3-polynomial"],
       "tests": "crisp-utils and zk-inputs have inline #[test] modules, and evm_helpers has inline tests plus tests/integration.rs. Run cargo test inside each crate directory; these crates are not members of the root workspace.",
       "unverified": [
-        "No Rust crate in this snapshot imports zk-inputs except zk-inputs-wasm, and the JavaScript package that wraps zk-inputs-wasm is not here.",
-        "tests/integration.rs in evm_helpers uses alloy node-bindings as a dev-dependency, which suggests it starts a local node; it was not run.",
-        "No examples/CRISP/Cargo.toml is in this snapshot, so the workspace inheritance in these manifests cannot be checked here."
+        "Callers of zk-inputs beyond zk-inputs-wasm, including its JavaScript wrapper, were not traced.",
+        "tests/integration.rs in evm_helpers uses alloy node-bindings as a dev-dependency, which suggests it starts a local node; it was not run."
       ]
     }
   ]

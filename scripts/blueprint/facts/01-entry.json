@@ -3,30 +3,38 @@
   "units": [
     {
       "id": "e3-cli",
+      "documentation": [
+        { "title": "CLI reference", "path": "docs/pages/reference/cli.mdx" },
+        { "title": "Installation and updates", "path": "docs/pages/build/installation.mdx" }
+      ],
       "kind": "crate",
       "path": "crates/cli",
       "one_line": "The `interfold` binary: parses commands, runs them locally, or forwards the allowed few to a node already running here.",
-      "explain": "The binary is the operator's entry point: it parses the command, loads the config, then either forwards the command to a node already running on this machine or runs it in-process. Only rev (without --features), print-env, net get-peer-id, noir status, ciphernode status, events query and wallet get are forwarded; every other command runs in the calling process. `interfold start` takes the process fence, starts the control server, builds the node through the entrypoint crate, and starts the dashboard when a port is set.",
-      "analogy": "A front desk that passes a request to the manager already on site when one is in, and otherwise handles it at the counter.",
       "actors": [],
       "consumes": [],
       "emits": [],
-      "state": [],
+      "state": [
+        {
+          "name": "installed binary at the resolved current-executable path; update replaces it, uninstall leaves configuration and node data intact",
+          "where": "disk",
+          "ref": "crates/cli/src/update.rs@108@fn installed_binary() -> Result<PathBuf> {"
+        }
+      ],
       "key_types": [
         {
           "name": "Cli",
           "what": "clap parser: global flags (--config, -v, -q, --name, --otel) plus one subcommand",
-          "ref": "crates/cli/src/cli.rs@36@pub struct Cli {"
+          "ref": "crates/cli/src/cli.rs@37@pub struct Cli {"
         },
         {
           "name": "Commands",
-          "what": "every top-level command: start, init, compile, program, nodes, node, ciphernode, password, wallet, noir, net, events, config, faucet, print-env, purge-all, rev",
-          "ref": "crates/cli/src/cli.rs@257@pub enum Commands {"
+          "what": "top-level commands, including node operations, program tooling, update, uninstall and rev",
+          "ref": "crates/cli/src/cli.rs@271@pub enum Commands {"
         },
         {
           "name": "RemoteCommand",
           "what": "the allow-list of commands that a running node accepts over its control port",
-          "ref": "crates/cli/src/cli.rs@420@pub enum RemoteCommand {"
+          "ref": "crates/cli/src/cli.rs@447@pub enum RemoteCommand {"
         },
         {
           "name": "CiphernodeCommands",
@@ -47,46 +55,50 @@
       "read_first": [
         {
           "why": "the entry point: parse, then forward to a running node or run locally",
-          "ref": "crates/cli/src/main.rs@70@pub async fn main() -> Result<()> {"
+          "ref": "crates/cli/src/main.rs@71@pub async fn main() -> Result<()> {"
         },
         {
-          "why": "dispatch: with no config only rev, init, ciphernode setup, noir and start (which runs setup) are allowed",
-          "ref": "crates/cli/src/cli.rs@88@pub async fn execute(self, out: Console"
+          "why": "dispatch, including commands that run without config and start's setup path",
+          "ref": "crates/cli/src/cli.rs@89@pub async fn execute(self, out: Console"
         },
         {
           "why": "the full command list",
-          "ref": "crates/cli/src/cli.rs@257@pub enum Commands {"
+          "ref": "crates/cli/src/cli.rs@271@pub enum Commands {"
         },
         {
           "why": "what interfold start does before the node is built",
           "ref": "crates/cli/src/start.rs@22@pub async fn execute(mut config: AppConfig"
+        },
+        {
+          "why": "update: resolves latest, dev or an explicit release tag, downloads the platform archive and replaces the installed binary",
+          "ref": "crates/cli/src/update.rs@41@pub async fn execute(out: Console, version: Option<String>, node_running: bool) -> Result<()> {"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "derive-macro",
           "note": "clap Parser derive builds the argument parser from the struct",
-          "ref": "crates/cli/src/cli.rs@32@#[derive(Parser, Clone, Debug)]"
+          "ref": "crates/cli/src/cli.rs@33@#[derive(Parser, Clone, Debug)]"
         },
         {
           "pattern": "serde-derive",
           "note": "RemoteCli is serialized to JSON for the control port",
-          "ref": "crates/cli/src/cli.rs@404@#[derive(Clone, Debug, Serialize, Deserialize)]"
+          "ref": "crates/cli/src/cli.rs@431@#[derive(Clone, Debug, Serialize, Deserialize)]"
         },
         {
           "pattern": "enum-match",
           "note": "the main dispatch: one arm per top-level command",
-          "ref": "crates/cli/src/cli.rs@192@match self.command {"
+          "ref": "crates/cli/src/cli.rs@203@match self.command {"
         },
         {
           "pattern": "trait-impl",
           "note": "TryFrom maps a Commands value to the remote allow-list or returns an error",
-          "ref": "crates/cli/src/cli.rs@445@impl TryFrom<Commands> for RemoteCommand {"
+          "ref": "crates/cli/src/cli.rs@472@impl TryFrom<Commands> for RemoteCommand {"
         },
         {
           "pattern": "closure",
           "note": "clap error handler that rejects secret command-line arguments",
-          "ref": "crates/cli/src/main.rs@74@unwrap_or_else(|mut error| {"
+          "ref": "crates/cli/src/main.rs@75@unwrap_or_else(|mut error| {"
         },
         {
           "pattern": "tokio-select",
@@ -98,6 +110,7 @@
         "e3-config",
         "e3-console",
         "e3-ciphernode-builder",
+        "e3-event-system",
         "e3-crypto",
         "e3-dashboard",
         "e3-entrypoint",
@@ -106,23 +119,21 @@
         "e3-logger",
         "e3-trbfv",
         "e3-fhe-params",
-        "e3-zk-helpers",
         "e3-init",
         "e3-support-scripts",
         "e3-daemon-server",
         "e3-utils",
         "e3-zk-prover"
       ],
-      "tests": "Unit tests in src/ (cli.rs, start.rs, rev.rs, helpers/, manifest.rs and others) and tests/cli_secrets.rs; run: cargo test -p e3-cli",
+      "tests": "Unit tests in src/ (cli.rs, start.rs, update.rs, rev.rs, helpers/, manifest.rs and others) and tests/cli_secrets.rs; run: cargo test -p e3-cli",
       "unverified": ["Default control port and log file locations come from e3-config, which was not read."]
     },
     {
       "id": "e3-entrypoint",
+      "documentation": [{ "title": "Running a ciphernode", "path": "docs/pages/operate/running.mdx" }],
       "kind": "crate",
       "path": "crates/entrypoint",
       "one_line": "Operator-side library behind the node commands: starts a node from config, guards its data directory, and runs validation, purge and reset.",
-      "explain": "`start::start::execute` is the production caller of the ciphernode builder: it loads the cipher from the key file, chooses the full or bootstrap settings, and waits for the build under the startup timeout. The rest of the crate holds what the CLI calls around a node: a process fence so one data directory has one live node, a `nodes` process manager that starts one `interfold start` child per configured profile, offline state validation, and purge and reset commands that refuse to delete key-share state for an unfinished E3. Without it the CLI could not start a node or change its state safely.",
-      "analogy": "A site foreman: checks the site is free and the records are in order, hands the blueprint to the builder, and keeps the list of what is on site before anything is demolished.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -178,7 +189,7 @@
       "read_first": [
         {
           "why": "the production startup: builder settings for the full and bootstrap roles",
-          "ref": "crates/entrypoint/src/start/start.rs@69@pub async fn execute(config: &AppConfig, bootstrap: bool)"
+          "ref": "crates/entrypoint/src/start/start.rs@70@pub async fn execute(config: &AppConfig, bootstrap: bool)"
         },
         {
           "why": "the single-instance lock, taken before any store is opened",
@@ -197,12 +208,12 @@
         {
           "pattern": "result-question-mark",
           "note": "startup rejects an unsupported proof-aggregation setting before any work",
-          "ref": "crates/entrypoint/src/start/start.rs@70@validate_proof_aggregation_mode(config.skip_proof_aggregation())?;"
+          "ref": "crates/entrypoint/src/start/start.rs@71@validate_proof_aggregation_mode(config.skip_proof_aggregation())?;"
         },
         {
           "pattern": "anyhow-context",
           "note": "a startup that exceeds its deadline is reported with context",
-          "ref": "crates/entrypoint/src/start/start.rs@28@.with_context(|| format!("
+          "ref": "crates/entrypoint/src/start/start.rs@29@.with_context(|| format!("
         },
         {
           "pattern": "trait-impl",
@@ -224,6 +235,7 @@
         "e3-aggregator",
         "e3-config",
         "e3-ciphernode-builder",
+        "e3-event-system",
         "e3-crypto",
         "e3-data",
         "e3-events",
@@ -245,58 +257,57 @@
     },
     {
       "id": "e3-ciphernode-builder",
+      "documentation": [{ "title": "Startup and recovery", "path": "docs/architecture/persistence-and-replay.md" }],
       "kind": "crate",
       "path": "crates/ciphernode-builder",
-      "one_line": "Composition root that assembles one ciphernode: storage checks, event bus, chain listeners, sortition, protocol extensions, networking and startup sync.",
-      "explain": "`CiphernodeBuilder` collects settings through `with_*` methods, and `build` runs startup in a fixed order: storage schema and role checks, reconciling restored E3 state with the chain, sortition, EVM listeners for each enabled chain, protocol extensions, networking, attaching the request router, then a wait for sync. Protocol extensions (threshold keyshare, aggregation, accusation and consistency checks) are registered on the router only for the roles that are switched on. A bootstrap role refuses keyshare, aggregation, and the full, registry and slashing contract components (it keeps only the Interfold reader), and gets no accusation or consistency extension.",
-      "analogy": "An assembly line where each station is bolted on in a fixed order, and the line does not start until every station has passed its check.",
+      "one_line": "Composition root for full or bootstrap nodes: orders storage preflight, restart recovery, live bus, protocol core, EVM readers, extensions, networking and sync.",
       "actors": [
         {
           "name": "EventBus<InterfoldEvent>",
-          "role": "the node's shared bus: created here, or piped from a source bus",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@626@fn create_local_bus() -> Addr<EventBus<InterfoldEvent>> {"
+          "role": "fresh node-local bus, passed to the event system before storage opens",
+          "ref": "crates/ciphernode-builder/src/builder/startup.rs@104@EventBus::<InterfoldEvent>::new(EventBusConfig { deduplicate: true }).start();"
         },
         {
           "name": "E3LifecycleCoordinator",
           "role": "additive observer that tracks each E3's stage for restart and shutdown",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@847@E3LifecycleCoordinator::attach(&bus, store.clone()).await?;"
+          "ref": "crates/ciphernode-builder/src/builder/startup.rs@418@E3LifecycleCoordinator::attach(bus, storage.store.clone()).await?;"
         },
         {
           "name": "CiphernodeSelector",
           "role": "selection state for this address, attached before Sortition",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@1083@let ciphernode_selector = CiphernodeSelector::attach("
+          "ref": "crates/ciphernode-builder/src/builder/sortition.rs@46@let ciphernode_selector = CiphernodeSelector::attach("
         },
         {
           "name": "Sortition",
           "role": "attached with its backend and stores; the production node uses the score backend",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@1094@let sortition = Sortition::attach(SortitionAttachParams {"
+          "ref": "crates/ciphernode-builder/src/builder/sortition.rs@57@let sortition = Sortition::attach(SortitionAttachParams {"
         },
         {
           "name": "EvmSystemChainBuilder",
-          "role": "per enabled chain: wires contract readers and writers onto the bus",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@1830@let mut system = EvmSystemChainBuilder::new(bus, &provider);"
+          "role": "per enabled chain: assembles the contract-reader ingestion gateway",
+          "ref": "crates/ciphernode-builder/src/builder/evm.rs@141@let mut system = EvmSystemChainBuilder::new(bus, provider);"
         },
         {
           "name": "E3Router",
           "role": "request router: extensions register on it, and it is attached after networking starts",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@1226@let mut e3_builder = E3Router::builder(bus, store.clone())"
+          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@235@Ok(E3Router::builder(bus, storage.store.clone())"
         },
         {
           "name": "ThresholdKeyshareExtension",
-          "role": "registered for the threshold keyshare role, together with its ZK actors",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@1323@ThresholdKeyshareExtension::create("
+          "role": "registered with ZK actors only for the full-node profile",
+          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@77@ThresholdKeyshareExtension::create("
         },
         {
           "name": "Multithread",
-          "role": "prover worker actor, created on demand by the keyshare and aggregation roles",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@1550@Multithread::attach_with_zk("
+          "role": "full-node compute worker, started with the configured pool and ZK backend",
+          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@201@Multithread::attach_with_zk("
         }
       ],
       "consumes": [
         {
           "name": "NetReady",
           "by": "CiphernodeBuilder",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@916@bus.wait_for(EventType::NetReady)"
+          "ref": "crates/ciphernode-builder/src/builder/startup.rs@139@let net_ready = live.bus.wait_for(EventType::NetReady);"
         }
       ],
       "emits": [],
@@ -304,104 +315,104 @@
         {
           "name": "event log at log_file and sled key/value store at db_file (persisted mode)",
           "where": "disk",
-          "ref": "crates/ciphernode-builder/src/event_system.rs@153@pub fn persisted(log_path: PathBuf, sled_path: PathBuf) -> Self {"
+          "ref": "crates/ciphernode-builder/src/builder/mod.rs@166@pub fn with_persistence(mut self, log_path: &PathBuf, kv_path: &PathBuf) -> Self {"
         },
         {
           "name": "correlation-ids file next to the event log",
           "where": "disk",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@710@e3_events::reserve_correlation_ids("
+          "ref": "crates/ciphernode-builder/src/builder/startup.rs@245@e3_events::reserve_correlation_ids(&log_path.with_file_name(\"correlation-ids\"))?;"
         },
         {
           "name": "ingestion heartbeat files, one per chain",
           "where": "disk",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@1139@.map(ingestion_heartbeat_files)"
+          "ref": "crates/ciphernode-builder/src/builder/evm.rs@62@.map(ingestion_heartbeat_files)"
         },
         {
           "name": "in-memory event system (tests and benchmarks)",
           "where": "memory",
-          "ref": "crates/ciphernode-builder/src/event_system.rs@113@pub fn in_mem() -> Self {"
+          "ref": "crates/ciphernode-builder/src/builder/startup.rs@456@EventSystemType::InMem => EventSystem::in_mem(),"
         }
       ],
       "key_types": [
         {
           "name": "CiphernodeBuilder",
           "what": "builder with one field per setting; build() returns the started handle",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@103@pub struct CiphernodeBuilder {"
+          "ref": "crates/ciphernode-builder/src/builder/mod.rs@47@pub struct CiphernodeBuilder {"
         },
         {
           "name": "CiphernodeHandle",
           "what": "what a started node returns: bus, store, eventstore, peer id, status and shutdown",
-          "ref": "crates/ciphernode-builder/src/ciphernode.rs@57@pub struct CiphernodeHandle {"
+          "ref": "crates/ciphernode-builder/src/ciphernode.rs@45@pub struct CiphernodeHandle {"
         },
         {
-          "name": "EventSystem",
-          "what": "store, eventstore, sequencer and bus for one node, persisted or in memory",
-          "ref": "crates/ciphernode-builder/src/event_system.rs@77@pub struct EventSystem {"
+          "name": "NodeProfile",
+          "what": "private full/bootstrap choice; full carries the ZK backend, bootstrap installs no protocol extensions",
+          "ref": "crates/ciphernode-builder/src/builder/mod.rs@80@enum NodeProfile {"
         },
         {
-          "name": "ProviderCache",
+          "name": "ProviderCache (e3-evm)",
           "what": "cached read and write RPC providers and the signer, per chain",
-          "ref": "crates/ciphernode-builder/src/provider_caches.rs@30@pub struct ProviderCache<State = ReadOnly> {"
+          "ref": "crates/evm/src/provider_cache.rs@30@pub struct ProviderCache<State = ReadOnly> {"
         },
         {
-          "name": "ContractComponents",
-          "what": "which contract readers and writers to attach",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@164@pub struct ContractComponents {"
+          "name": "Storage / Restart / Live / Protocol",
+          "what": "private phase outputs passed between the ordered startup steps",
+          "ref": "crates/ciphernode-builder/src/builder/startup.rs@51@pub(super) struct Storage {"
         },
         {
-          "name": "EvmSystemChainBuilder",
+          "name": "EvmSystemChainBuilder (e3-evm)",
           "what": "wires one chain's contract listeners onto the bus",
-          "ref": "crates/ciphernode-builder/src/evm_system.rs@24@pub struct EvmSystemChainBuilder<P> {"
+          "ref": "crates/evm/src/chain_system.rs@22@pub struct EvmSystemChainBuilder<P> {"
         }
       ],
       "read_first": [
         {
           "why": "the function that builds the node; it hands off to build_inner",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@652@pub async fn build(self) -> anyhow::Result<CiphernodeHandle> {"
+          "ref": "crates/ciphernode-builder/src/builder/startup.rs@96@pub async fn build(self) -> anyhow::Result<CiphernodeHandle> {"
         },
         {
           "why": "the ordered startup steps, from storage checks to the sync wait",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@657@async fn build_inner(mut self)"
+          "ref": "crates/ciphernode-builder/src/builder/startup.rs@101@async fn build_inner(mut self)"
         },
         {
           "why": "where protocol extensions are registered, and under which roles",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@1203@async fn setup_extensions("
+          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@40@pub(super) async fn setup_extensions("
         },
         {
           "why": "the production caller, with the settings for a full node",
-          "ref": "crates/entrypoint/src/start/start.rs@120@CiphernodeBuilder::new(rng.clone(), cipher.clone())"
+          "ref": "crates/entrypoint/src/start/start.rs@124@let builder = CiphernodeBuilder::full(rng, cipher, backend)"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "builder-pattern",
           "note": "each with_* method takes self and returns it, so settings chain",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@242@pub fn with_name(mut self, name: &str) -> Self {"
+          "ref": "crates/ciphernode-builder/src/builder/mod.rs@152@pub fn with_name(mut self, name: &str) -> Self {"
         },
         {
-          "pattern": "trait-object-dyn",
-          "note": "each chain's route function is boxed as a dyn RouteFn",
-          "ref": "crates/ciphernode-builder/src/evm_system.rs@21@type RouteFactory = Box<dyn RouteFn>;"
+          "pattern": "let-else",
+          "note": "bootstrap returns the router without installing full-node protocol extensions",
+          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@63@let NodeProfile::Full { zk_backend } = &self.profile else {"
         },
         {
           "pattern": "arc-shared",
           "note": "the cipher is held in an Arc and cloned into the components that need it",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@112@cipher: Arc<Cipher>,"
+          "ref": "crates/ciphernode-builder/src/builder/mod.rs@55@cipher: Arc<Cipher>,"
         },
         {
           "pattern": "enum-match",
-          "note": "the bus mode decides whether the node uses a source bus, a forked bus, or a new one",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@1021@match self.source_bus {"
+          "note": "the profile selects full or bootstrap storage-role fencing",
+          "ref": "crates/ciphernode-builder/src/builder/mod.rs@145@match self.profile {"
         },
         {
           "pattern": "tokio-select",
           "note": "startup waits for sync, EVM gateways and networking, or fails on a fatal storage error",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@956@tokio::select! {"
+          "ref": "crates/ciphernode-builder/src/builder/startup.rs@158@tokio::select! {"
         },
         {
           "pattern": "lifetime",
-          "note": "EvmStartupRecovery borrows the startup state for the duration of one call",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@84@struct EvmStartupRecovery<'a> {"
+          "note": "ChainReaders borrows one chain's bus, config and provider during reader assembly",
+          "ref": "crates/ciphernode-builder/src/builder/evm.rs@32@struct ChainReaders<'a> {"
         }
       ],
       "depends_on": [
@@ -409,10 +420,10 @@
         "e3-crypto",
         "e3-config",
         "e3-data",
+        "e3-event-system",
         "e3-events",
         "e3-evm",
         "e3-fhe",
-        "e3-fhe-params",
         "e3-keyshare",
         "e3-logger",
         "e3-multithread",
@@ -422,21 +433,19 @@
         "e3-request",
         "e3-sortition",
         "e3-sync",
-        "e3-trbfv",
         "e3-utils"
       ],
-      "tests": "Unit tests in src/ (ciphernode.rs, ciphernode_builder.rs, event_system.rs, finalized_lifecycle.rs, recovery.rs); run: cargo test -p e3-ciphernode-builder (the test-helpers feature enables the test overrides)",
+      "tests": "Unit tests in src/ciphernode.rs, finalized_lifecycle.rs, recovery.rs and builder/ (startup, sortition, extensions, EVM and restart); run: cargo test -p e3-ciphernode-builder (the test-helpers feature enables the test overrides)",
       "unverified": [
         "Behaviour inside the extension crates (e3-keyshare, e3-aggregator, e3-request, e3-sync) was not read; only how this crate wires them."
       ]
     },
     {
       "id": "e3-dashboard",
+      "documentation": [{ "title": "Node dashboard", "path": "docs/pages/operate/dashboard.mdx" }],
       "kind": "crate",
       "path": "crates/dashboard",
       "one_line": "Read-only web dashboard for one node: a single-page UI and JSON views built from the node's own event store.",
-      "explain": "`start_dashboard` runs an actix-web server on the node's dashboard port, serving the embedded page and JSON views for the snapshot, E3 traces, protocol events, logs and release updates. `TelemetryProjection` builds those views from the event store, and the release check reads GitHub's public releases API. Without it, an operator sees the node only through the terminal.",
-      "analogy": "A window onto a control room's display board: visitors can read every panel, but the window cannot change what the board shows.",
       "actors": [],
       "consumes": [
         {
@@ -535,7 +544,7 @@
           "ref": "crates/dashboard/src/lib.rs@359@pub async fn start_dashboard(port: u16, state: DashboardState)"
         }
       ],
-      "depends_on": ["e3-ciphernode-builder", "e3-config", "e3-events", "e3-evm", "e3-logger", "e3-net", "e3-utils"],
+      "depends_on": ["e3-event-system", "e3-config", "e3-events", "e3-evm", "e3-logger", "e3-net", "e3-utils"],
       "tests": "Unit tests in src/projection.rs and src/updates.rs; run: cargo test -p e3-dashboard",
       "unverified": [
         "assets/app.js (9175 lines) and app.css were not read, so the UI behaviour is not described.",
@@ -544,11 +553,10 @@
     },
     {
       "id": "e3-daemon-server",
+      "documentation": [{ "title": "CLI control port", "path": "docs/pages/reference/cli.mdx" }],
       "kind": "crate",
       "path": "crates/daemon-server",
       "one_line": "Loopback control channel: a small HTTP server inside a running node that runs forwarded CLI commands, plus the client that sends them.",
-      "explain": "While `interfold start` runs, `start_daemon_server` listens on 127.0.0.1 at the node's control port and answers each HTTP request with the output of one command. Another `interfold` process first probes that port with `connect_daemon`; if a node answers, it posts its command with `run_on_daemon` and prints the reply lines. Without it, a command could not reach the state of a node that is already running.",
-      "analogy": "A switchboard extension inside a building: only callers in the same building (loopback) can reach it, and the office answers with the result.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -606,11 +614,10 @@
     },
     {
       "id": "e3-console",
+      "documentation": [{ "title": "CLI output", "path": "docs/pages/reference/cli.mdx" }],
       "kind": "crate",
       "path": "crates/console",
-      "one_line": "Output sink for CLI commands: each line goes through a channel to a printer task, so output keeps its order and survives exit.",
-      "explain": "Commands that use it call `log!` on a cloneable `Console`, which sends each line into an unbounded channel. A background task prints the lines in order to stdout or writes them to any async writer, and `channel()` lets the daemon collect a remote command's output instead. `flush` drops the sender and waits for the printer to drain, so nothing is lost when the process exits.",
-      "analogy": "A post room: each letter goes into one tray in order, one clerk sends them all out, and the office closes only after the tray is empty.",
+      "one_line": "CLI output channel and printer task, with a drain step for normal completion.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -675,11 +682,10 @@
     },
     {
       "id": "e3-init",
+      "documentation": [{ "title": "Project template", "path": "docs/pages/build/project-template.mdx" }],
       "kind": "crate",
       "path": "crates/init",
       "one_line": "Implements `interfold init`: fetches the project template at the release tag, pins package versions, copies it in, and installs packages.",
-      "explain": "`execute` clones the template repository, by default at this CLI's own release tag, into a temporary folder, then copies it into the project through filters. The filters pin `@interfold/contracts`, `@interfold/react` and `@interfold/sdk` to the versions in that clone and rewrite Interfold crate path dependencies to the template's git commit; separate copy steps add the dev runner and OpenVM scripts to `.interfold/support`. It then runs `pnpm install` unless `--skip-install` is set, so a new project matches the release's contracts, SDK and prover scripts.",
-      "analogy": "A flat-pack kit for this release: it fetches the parts for this version, adjusts the labels to fit, lays them out in the new room, and then runs the assembly step.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -758,11 +764,10 @@
     },
     {
       "id": "e3-fs",
+      "documentation": [{ "title": "Template file operations", "path": "docs/pages/build/project-template.mdx" }],
       "kind": "crate",
       "path": "crates/fs",
       "one_line": "Small async file-system layer over the vfs crate, with a real-disk root and an in-memory root for tests.",
-      "explain": "`Fs` wraps a `vfs` root and implements small async traits for reading, writing, creating directories, copying, finding files by glob, and replacing text in place. `Fs::physical()` roots these at the real file system and `Fs::mem()` at an in-memory tree, so the copier can run in tests without touching disk. Without it, the template copy in `interfold init` would call the disk directly and could not be tested in memory.",
-      "analogy": "A stock room with two doors: the same clerk works in the real warehouse or in a scale model of it, depending on which door is used.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -836,11 +841,10 @@
     },
     {
       "id": "e3-support-scripts",
+      "documentation": [{ "title": "Program runners", "path": "docs/pages/build/e3-program/compute-provider.mdx" }],
       "kind": "crate",
       "path": "crates/support-scripts",
       "one_line": "Runs a project's program scripts: compile and start go to the dev runner or the OpenVM prover, and the cache purge deletes build caches.",
-      "explain": "`program_compile` and `program_start` check the program config, pick a backend, and run its bash script: `dev`, a runner with a mock proof provider from `.interfold/support/dev`, or `openvm`, the OpenVM proving service from `.interfold/support/openvm`. `ProgramSupport` picks the dev backend when the flag or the config says so, and OpenVm otherwise; `program_cache_purge` removes `.interfold/caches`. Without it, `interfold compile`, `interfold program start` and `purge-all` could not run a project's program.",
-      "analogy": "A stage manager who reads the cue sheet, calls the right crew to run their script, and clears the props room when asked.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -910,99 +914,6 @@
         "dev/ and openvm/service/ are separate Cargo projects with their own lock file; their proving code was not traced.",
         "The openvm/compile and openvm/start scripts were not read."
       ]
-    },
-    {
-      "id": "interfoldup",
-      "kind": "crate",
-      "path": "crates/interfoldup",
-      "one_line": "Installer for the interfold CLI: downloads the GitHub release binary that matches this OS and CPU, then installs, updates, or removes it.",
-      "explain": "`interfoldup install` picks a release of theinterfold/interfold (the latest, the newest published one with `dev`, or a given tag), selects the asset whose name contains `interfold-<os>-<arch>`, and unpacks the gzip tarball. It writes the binary to `~/.local/bin`, or to `/usr/local/bin` with `--system`, and warns when that folder is not on PATH. `update` and `uninstall` use the same folders. Without it, an operator would have to find, unpack and place the release binary by hand.",
-      "analogy": "A courier who fetches the build for your machine's OS and CPU from the warehouse, leaves it at your door, and collects the old one when asked.",
-      "actors": [],
-      "consumes": [],
-      "emits": [],
-      "state": [
-        {
-          "name": "the interfold binary, written to ~/.local/bin or /usr/local/bin",
-          "where": "disk",
-          "ref": "crates/interfoldup/src/main.rs@288@let target_path = target_dir.join(BINARY_NAME);"
-        }
-      ],
-      "key_types": [
-        {
-          "name": "GitHubRelease",
-          "what": "release tag and asset list from the GitHub API",
-          "ref": "crates/interfoldup/src/main.rs@66@struct GitHubRelease {"
-        },
-        {
-          "name": "GitHubAsset",
-          "what": "one downloadable file in a release, with its URL",
-          "ref": "crates/interfoldup/src/main.rs@73@struct GitHubAsset {"
-        },
-        {
-          "name": "Platform",
-          "what": "OS and CPU from std::env::consts, accepting linux or macos on x86_64 or aarch64",
-          "ref": "crates/interfoldup/src/main.rs@79@struct Platform {"
-        },
-        {
-          "name": "Installer",
-          "what": "HTTP client plus the install, update and uninstall steps",
-          "ref": "crates/interfoldup/src/main.rs@119@struct Installer {"
-        }
-      ],
-      "read_first": [
-        {
-          "why": "the dispatch on install, update and uninstall",
-          "ref": "crates/interfoldup/src/main.rs@443@async fn main() -> Result<()> {"
-        },
-        {
-          "why": "asset selection, download, unpack and write",
-          "ref": "crates/interfoldup/src/main.rs@248@async fn download_and_install(&self, system: bool, version: Option<&str>)"
-        },
-        {
-          "why": "the asset name rule: interfold-<os>-<arch>",
-          "ref": "crates/interfoldup/src/main.rs@114@fn asset_pattern(&self) -> String {"
-        },
-        {
-          "why": "the install folders for user and system installs",
-          "ref": "crates/interfoldup/src/main.rs@329@fn get_install_dir(&self, system: bool) -> Result<PathBuf> {"
-        }
-      ],
-      "rust_patterns": [
-        {
-          "pattern": "derive-macro",
-          "note": "clap Parser derive for the install, update and uninstall commands",
-          "ref": "crates/interfoldup/src/main.rs@24@#[derive(Parser)]"
-        },
-        {
-          "pattern": "serde-derive",
-          "note": "the release JSON from GitHub is deserialized into typed structs",
-          "ref": "crates/interfoldup/src/main.rs@65@#[derive(Debug, Deserialize)]"
-        },
-        {
-          "pattern": "result-question-mark",
-          "note": "the installer is built, then the command runs, with ?",
-          "ref": "crates/interfoldup/src/main.rs@445@let installer = Installer::new()?;"
-        },
-        {
-          "pattern": "enum-match",
-          "note": "the command enum is matched once, in main",
-          "ref": "crates/interfoldup/src/main.rs@447@match cli.command {"
-        },
-        {
-          "pattern": "closure",
-          "note": "the asset is found by a predicate closure over the release assets",
-          "ref": "crates/interfoldup/src/main.rs@265@.find(|asset| asset.name.contains(&asset_pattern))"
-        },
-        {
-          "pattern": "anyhow-context",
-          "note": "a failure to create the install folder names that step",
-          "ref": "crates/interfoldup/src/main.rs@286@fs::create_dir_all(&target_dir).context("
-        }
-      ],
-      "depends_on": [],
-      "tests": "Unit tests in src/main.rs (mod tests: release selection, tag matching and candidate tags); run: cargo test -p interfoldup",
-      "unverified": ["The tar entry match inside the extraction loop (around main.rs lines 288-320) was not traced line by line."]
     }
   ]
 }

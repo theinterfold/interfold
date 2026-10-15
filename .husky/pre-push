@@ -8,9 +8,8 @@ pnpm lint
 pnpm check:pnpm
 pnpm check:license
 pnpm check:committee
-pnpm check:docs
 pnpm check:addresses
-pnpm check:invariants
+pnpm check:repository
 
 # check:verifiers deletes the aggregation circuits' nargo target directories and recompiles both
 # aggregator circuits. Run it only when a pushed branch changes a path in

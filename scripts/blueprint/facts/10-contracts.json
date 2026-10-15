@@ -3,11 +3,13 @@
   "units": [
     {
       "id": "Interfold",
+      "documentation": [
+        { "title": "Protocol lifecycle", "path": "docs/architecture/protocol-lifecycle.md" },
+        { "title": "Failure settlement", "path": "docs/architecture/failure-settlement.md" }
+      ],
       "kind": "contract",
       "path": "packages/interfold-contracts/contracts/Interfold.sol",
       "one_line": "Main E3 coordinator: takes requests and fees, moves each E3 through its stages, and handles failure, cancellation and pull-payment claims.",
-      "explain": "Interfold owns the E3 lifecycle state. A request escrows the fee, has the E3 program validate it and asks the registry for a committee; registry callbacks then move the E3 to committee finalized and key published, and the ciphertext and plaintext outputs complete it. Rewards, refunds and slashed funds go to InterfoldPricing and E3RefundManager, and payouts are pull claims. Without it no E3 can move from request to output, and no fee is escrowed or paid out.",
-      "analogy": "A job desk with numbered tickets: each E3 gets a ticket and a stage stamp, and only the right desk (registry, slashing manager, requester or a verified proof) can move it on.",
       "actors": [],
       "consumes": [
         { "name": "request", "by": "requester", "ref": "packages/interfold-contracts/contracts/Interfold.sol@290@function request(" },
@@ -185,11 +187,13 @@
     },
     {
       "id": "CiphernodeRegistryOwnable",
+      "documentation": [
+        { "title": "Committee selection", "path": "docs/architecture/committee-selection.md" },
+        { "title": "Committee key publication", "path": "docs/architecture/dkg.md" }
+      ],
       "kind": "contract",
       "path": "packages/interfold-contracts/contracts/registry/CiphernodeRegistryOwnable.sol",
       "one_line": "Committee registry: keeps the ciphernode set, runs ticket-based sortition per E3, and records the committee and its public key.",
-      "explain": "This contract picks the committee for each E3. BondingRegistry adds and removes ciphernodes, enabled nodes submit sortition tickets, and finalizeCommittee keeps the top-ranked nodes once the submission window closes. The registry asks the randomness provider for the seed, records the DKG proof and committee public key, and reports stage changes to Interfold. Without it no E3 gets a committee, and no member can be expelled after a slash.",
-      "analogy": "A lottery drum: each enabled ciphernode drops a numbered ticket in during the window, the drum ranks them by score, and the best-ranked nodes are sealed in as the committee.",
       "actors": [],
       "consumes": [
         {
@@ -349,11 +353,10 @@
     },
     {
       "id": "BondingRegistry",
+      "documentation": [{ "title": "Registration and bonding", "path": "docs/architecture/registration-and-bonding.md" }],
       "kind": "contract",
       "path": "packages/interfold-contracts/contracts/registry/BondingRegistry.sol",
       "one_line": "Operator collateral: registration, ciphernode bond and ticket balances, exit queues, slash execution, bans and reward payout.",
-      "explain": "This is the stake behind a committee seat. An operator registers under a bond owner, posts the ciphernode bond and buys tickets held in InterfoldTicketToken; the registry tells CiphernodeRegistryOwnable when a node is added or removed. Exits wait out a delay in ExitQueueLib, and SlashingManager calls it to slash tickets and bond, reserve funds for routing and set bans. Without it a committee seat has no stake to slash.",
-      "analogy": "A safe-deposit desk: each operator leaves a bond and tickets in a locked box, withdrawals wait out a notice period, and the desk takes a share of the box when the slasher signs an order.",
       "actors": [],
       "consumes": [
         {
@@ -528,11 +531,10 @@
     },
     {
       "id": "BondedVotes",
+      "documentation": [{ "title": "Voting power and historical limits", "path": "docs/architecture/voting-power.md" }],
       "kind": "contract",
       "path": "packages/interfold-contracts/contracts/registry/BondedVotes.sol",
       "one_line": "Governance vote-weight adapter that adds FOLD bonded as an operator to a delegate's voting power, without holding any funds.",
-      "explain": "This is the governance side of the bond, not part of the E3 lifecycle. Bonding moves FOLD into BondingRegistry, which does not delegate it, so this contract adds bonded FOLD to the voting power of the delegate chosen by the bonded holder, reading wallet votes and bonded history at the same timepoint. It holds no tokens or privileges, and its constructor checks that the registry's ciphernode bond token is the same FOLD token. Without it, bonded delegations add no votes.",
-      "analogy": "A proxy register kept next to the shareholder register: it copies the bonded shares as of the same date and credits them to the delegate, without owning any shares itself.",
       "actors": [],
       "consumes": [
         {
@@ -626,11 +628,10 @@
     },
     {
       "id": "SlashingManager",
+      "documentation": [{ "title": "Slashing", "path": "docs/architecture/slashing.md" }],
       "kind": "contract",
       "path": "packages/interfold-contracts/contracts/slashing/SlashingManager.sol",
       "one_line": "Runs the slashing pipeline for E3 committee members: proposals with evidence, appeals, execution against bonds and tickets, and bans.",
-      "explain": "A slash starts as a proposal backed by signed attestation evidence (or a slasher-role proposal), which the accused can appeal and governance can resolve. Execution debits ticket and bond in BondingRegistry, expels the member from the committee, and escrows the seized funds through Interfold to E3RefundManager. Governance also sets slash policies and bans. Without it a faulty committee member cannot be punished or removed.",
-      "analogy": "A disciplinary panel: a complaint needs signed evidence before a case opens, the accused can appeal, and a confirmed ruling debits the account at BondingRegistry and clears the seat.",
       "actors": [],
       "consumes": [
         {
@@ -790,11 +791,10 @@
     },
     {
       "id": "E3RefundManager",
+      "documentation": [{ "title": "Refunds and rewards", "path": "docs/architecture/failure-settlement.md" }],
       "kind": "contract",
       "path": "packages/interfold-contracts/contracts/E3RefundManager.sol",
       "one_line": "Money after an E3 ends: computes requester refunds and honest-node rewards, holds slashed funds, and pays everything out by pull claims.",
-      "explain": "After Interfold snapshots the E3 policy and reward recipients, this contract computes the requester refund and the honest-node amounts (calculateRefund) and holds slashed funds and expulsion state. Every payout is a pull claim: the requester, an honest operator or the treasury withdraws its own balance. Without it a completed or failed E3 has no way to return the fee or pay the committee.",
-      "analogy": "A payroll and refund office: the ledger is closed once per job, each person presents a claim for their own share, and disputed money waits in a holding account until the ruling.",
       "actors": [],
       "consumes": [
         {
@@ -961,11 +961,10 @@
     },
     {
       "id": "InterfoldToken",
+      "documentation": [{ "title": "FOLD assets and locks", "path": "docs/architecture/registration-and-bonding.md" }],
       "kind": "contract",
       "path": "packages/interfold-contracts/contracts/token/InterfoldToken.sol",
       "one_line": "FOLD, the governance and utility ERC-20, with allocation minting, a TGE switch and time-based lock policies on transfers.",
-      "explain": "FOLD is the protocol's governance and utility token. Before the TGE, only the admin and minter can create allocations, and transfers are limited to allowed movements (whitelist and claim source); anyone can call tge() once the auction window and cooldown have passed. Tokens received from the claim source can be locked under lock policies, and bonded FOLD counts toward locked balances through BondingRegistry. Without it there is no FOLD supply, vesting schedule or lock enforcement.",
-      "analogy": "A share register with vesting: shares are issued into named allocations, trading opens on a fixed date, and some shares carry a release schedule that the register checks on every transfer.",
       "actors": [],
       "consumes": [
         {
@@ -1111,11 +1110,10 @@
     },
     {
       "id": "InterfoldTicketToken",
+      "documentation": [{ "title": "Ticket collateral", "path": "docs/architecture/registration-and-bonding.md" }],
       "kind": "contract",
       "path": "packages/interfold-contracts/contracts/token/InterfoldTicketToken.sol",
       "one_line": "tFOLD: a non-transferable ERC20Votes wrapper over a stablecoin that holds operator tickets, moved only by the registry.",
-      "explain": "Operators deposit the stablecoin through BondingRegistry and receive tFOLD tickets, a balance that BondingRegistry checks and slashes. Transfers and approvals between holders are blocked, and only the registry can deposit, withdraw, burn or pay out. Without it the ticket balance behind eligibility and slash payouts has no ledger.",
-      "analogy": "A prepaid meter card: money goes in, a non-transferable balance comes out, and only the utility office (BondingRegistry) can add to it, use it or cash it out.",
       "actors": [],
       "consumes": [
         {
@@ -1231,11 +1229,10 @@
     },
     {
       "id": "ChainlinkVrfRandomnessProvider",
+      "documentation": [{ "title": "VRF and committee selection", "path": "docs/architecture/committee-selection.md" }],
       "kind": "contract",
       "path": "packages/interfold-contracts/contracts/randomness/ChainlinkVrfRandomnessProvider.sol",
       "one_line": "Adapts one Chainlink VRF v2.5 subscription to the ciphernode registry: requests a random seed per E3 and stores the coordinator's reply.",
-      "explain": "The registry asks this contract for a random seed per E3 instead of choosing one. The contract pays the VRF request from its subscription; when the coordinator calls back, the reply is stored, and the registry reads it with getRandomness. The owner can release a request that never got a reply. Without it the registry cannot seed committee selection.",
-      "analogy": "A sealed-envelope lottery: the registry orders one draw per round, the randomness is written once into a sealed reply, and the owner can void a draw that never returned.",
       "actors": [],
       "consumes": [
         {
@@ -1338,11 +1335,10 @@
     },
     {
       "id": "NodeReleaseRegistry",
+      "documentation": [{ "title": "Release admission and upgrades", "path": "docs/architecture/upgrades.md" }],
       "kind": "contract",
       "path": "packages/interfold-contracts/contracts/registry/NodeReleaseRegistry.sol",
       "one_line": "Owner-set required node release (protocol version and generation); operators acknowledge it, and eligibility reads whether they are ready.",
-      "explain": "Governance sets the required protocol version and node generation; each operator records the release it runs with acknowledgeNodeRelease. BondingRegistry eligibility asks isNodeReleaseReady before admitting an operator, and activate (callable only by Interfold) checks the wiring to the current Interfold, BondingRegistry and CiphernodeRegistry before refreshing operator status. Without it no gate ties operators to the required release.",
-      "analogy": "A minimum-version notice board at a checkpoint: the authority posts the required version, each operator signs in with the version they run, and the gate reads the board before admitting them.",
       "actors": [],
       "consumes": [
         {
@@ -1430,11 +1426,13 @@
     },
     {
       "id": "Verifiers",
+      "documentation": [
+        { "title": "Proof verification contracts", "path": "docs/architecture/proof-statements.md" },
+        { "title": "Verifier artifacts", "path": "docs/architecture/circuit-artifacts.md" }
+      ],
       "kind": "contract",
       "path": "packages/interfold-contracts/contracts/verifiers",
       "one_line": "On-chain checks of the BFV DKG and decryption proofs, each delegating the Honk proof check to a generated verifier.",
-      "explain": "BfvPkVerifier checks the DKG aggregator proof behind a committee public key, and BfvDecryptionVerifier checks the decryption aggregator proof behind a plaintext output. Each reads the proof's public inputs (committee hash, party IDs, ciphertext commitment, expected key), checks them against the E3 context and the verifying-key anchors, then calls its generated Honk verifier. The registry (DKG path) and Interfold (plaintext path) call these view checks, and the two routers pick among verifier builds by those anchors. Without them the registry and Interfold cannot accept a committee key or a plaintext output.",
-      "analogy": "A seal inspector at a sealed-envelope desk: the Honk proof is the wax seal, and the inspector also checks the printed names on the envelope against the expected ceremony before accepting it.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -1501,11 +1499,16 @@
     },
     {
       "id": "Interfold libraries",
+      "documentation": [
+        { "title": "Lifecycle", "path": "docs/architecture/protocol-lifecycle.md" },
+        { "title": "Settlement", "path": "docs/architecture/failure-settlement.md" },
+        { "title": "Selection", "path": "docs/architecture/committee-selection.md" },
+        { "title": "Exits", "path": "docs/architecture/registration-and-bonding.md" },
+        { "title": "Slashing", "path": "docs/architecture/slashing.md" }
+      ],
       "kind": "contract",
       "path": "packages/interfold-contracts/contracts/lib",
       "one_line": "Linked library code for Interfold's stage rules and pricing, registry sortition, exit queues and slashing evidence checks.",
-      "explain": "Interfold's stage rules, failure checks and proof checks live in InterfoldLifecycle, and fee quoting, payments and reward credits in InterfoldPricing; InterfoldPricing was split out to stay under the EIP-170 bytecode cap, as its NatSpec says. RegistrySortitionLib holds the ticket ranking, randomness request and committee release checks for CiphernodeRegistryOwnable, ExitQueueLib keeps time-locked exit tranches for BondingRegistry, and SlashingEvidenceLib verifies signed attestation evidence for SlashingManager. Without them the contracts that call these functions have no rules to run.",
-      "analogy": "A shared reference binder that each desk opens for its own rule: the stage desk, the money desk, the sortition desk, the exit desk and the evidence desk each read only their own section.",
       "actors": [],
       "consumes": [
         {
@@ -1658,11 +1661,10 @@
     },
     {
       "id": "Bonding libraries",
+      "documentation": [{ "title": "Bonding capability owners", "path": "docs/architecture/registration-and-bonding.md" }],
       "kind": "contract",
       "path": "packages/interfold-contracts/contracts/lib",
       "one_line": "Delegatecalled pieces of BondingRegistry for registration, asset moves, eligibility, bond ownership, slash locks and admission.",
-      "explain": "BondingRegistry delegates parts of its work to six files: BondingRegistrationLib (register and deregister), BondingAssetLib (exits, reward payouts and exact-amount transfers), BondingEligibilityLib (eligibility history by request boundary), BondingOwnershipLib (bond-owner transfers), BondingSlashingLib (slash locks, bans and committee obligations) and BondingAdmissionLib (admission windows, internal helpers). BondingAssetLib's NatSpec says it keeps bonding-asset checks outside the size-constrained registry. Without them BondingRegistry cannot run its registration, exit, transfer or slash paths.",
-      "analogy": "The back-office departments of a bank: accounts, cash movements, the eligibility ledger, account-holder records, account freezes and new-customer admission, each with its own cabinet, all run for the teller at BondingRegistry.",
       "actors": [],
       "consumes": [
         {

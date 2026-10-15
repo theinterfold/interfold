@@ -17,108 +17,12 @@ refuses to run with pending changes. A failed run keeps the worktree and prints 
 
 ## Version Bumper
 
-`bump-versions.ts` - Bumps the versions of all packages and crates in the project.
+[`RELEASING.md`](../RELEASING.md) owns version-bump flags, candidate qualification, tagging,
+publication, channels, and recovery. The default bumper formats, stages, commits, and pushes the
+current release branch; it does not open a PR or create a release tag. Use `--dry-run` for a
+read-only preview, not a default invocation.
 
-### Usage
-
-```bash
-# Prepare, commit, and push a release branch
-pnpm bump:versions 1.0.0
-
-# Pre-release version (dev channel)
-pnpm bump:versions 1.0.0-dev.1
-
-# Commit locally without pushing the branch
-pnpm bump:versions --no-push 1.0.0
-
-# Manual git operations (just bump versions)
-pnpm bump:versions --skip-git 1.0.0
-
-# Test run (see what would happen)
-pnpm bump:versions --dry-run 1.0.0
-```
-
-### What it does
-
-**By default, the script prepares a release pull request:**
-
-1. **Validates** your working directory is clean (no uncommitted changes)
-2. **Updates versions** across the entire monorepo:
-   - Rust workspace version in root `Cargo.toml`
-   - All npm packages in `packages/` and `crates/wasm`
-   - Root `package.json`
-3. **Updates lock files**:
-   - `Cargo.lock` for Rust dependencies
-   - `pnpm-lock.yaml` for npm dependencies
-4. **Generates changelog** from conventional commits (uses `CHANGELOG.md`)
-5. **Commits** all changes with message: `chore(release): bump version to X.Y.Z`
-6. **Pushes** the release branch to GitHub
-
-### Examples
-
-```bash
-# Prepare and push the release branch
-pnpm bump:versions 1.2.3
-# Open a pull request after this command finishes.
-
-# Pre-release for testing
-pnpm bump:versions 1.2.3-dev.1
-# The later release workflow publishes this version with the npm 'dev' tag and 'dev' images.
-
-# Prepare and commit locally first
-pnpm bump:versions --no-push 1.2.3
-# Review the commit, then push the release branch.
-
-# Just bump versions (old behavior)
-pnpm bump:versions --skip-git 1.2.3
-# Only updates versions, you handle git operations manually
-```
-
-### Options
-
-- `--skip-git` - Skip all git operations (add, commit, push)
-- `--no-push` - Commit locally but do not push the release branch
-- `--dry-run` - Preview what would happen without making any changes
-- `--help` - Show help message
-
-### Prerequisites
-
-- A release branch. The script rejects `main`, `dev`, and detached commits.
-- Clean working directory (no uncommitted changes)
-- Conventional commits for changelog generation
-- Valid semver version format
-
-### After Running
-
-After the release pull request passes CI and is merged, update `main` and create the tag:
-
-```bash
-git checkout main
-git pull --ff-only
-pnpm release:tag X.Y.Z
-```
-
-The tag workflow then:
-
-- Confirms that the tag belongs to `origin/main`.
-- Packages and hashes the source-matched circuit archive before binary and ciphernode image builds.
-- Passes `E3_CIRCUITS_ARCHIVE_SHA256` to those builds, including through the Docker build argument.
-  The ZK prover binds this pin to the crate version and retains the other `versions.json` pins.
-- Checks each binary's `interfold noir status` report against the archive digest before the
-  release-candidate gate passes. The ciphernode image build performs the same check before upload.
-- Publishes versioned containers and npm packages. Moves the `dev` container aliases, and for a
-  stable release also the `latest` aliases.
-- Creates the GitHub release only after every required publication succeeds.
-
-Rust workspace crates are not published because they use unreleased git dependencies.
-
-The support image compiles no CLI or ciphernode. DAppNode copies the checked ciphernode binary.
-Builds without `E3_CIRCUITS_ARCHIVE_SHA256` still work, but an unpinned circuit download fails. Do
-not repack the uploaded circuit archive after compilation: the compiled pin authenticates its exact
-bytes.
-
-The workflow calls the small commands in `release.mjs`. The implementation is split by purpose in
-`scripts/release/`. Run `pnpm test:release` to test tag ancestry, npm retries, assets, and gates.
+`pnpm test:release` tests the tooling without publishing.
 
 ## License Header Checker
 

@@ -5,11 +5,12 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 // The one data loader for the blueprint: the inventory read from the code, plus the plain-English
-// facts in facts/, with every reference checked against the code.
-import { readFileSync, readdirSync, existsSync } from 'node:fs'
+// facts in facts/. Code tokens and documentation targets are checked separately, not proven.
+import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { inventory, ROOT } from './inventory.mjs'
+import { documentationPath } from './documentation.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const BLUEPRINT = resolve(HERE, '..')
@@ -41,7 +42,7 @@ export function checkRef(raw) {
   const L = fileLines(path)
   if (!L) return { status: 'bad', why: 'no such file', raw, path }
   if (!token) return { status: 'bad', why: 'empty token', raw, path }
-  if (/\.md$/.test(path)) return { status: 'bad', why: 'points at docs, not code', raw }
+  if (/\.mdx?$/.test(path)) return { status: 'bad', why: 'points at docs, not code', raw }
   if (Number.isFinite(line) && line >= 1) {
     for (let d = 0; d <= WINDOW; d++) {
       for (const l of [line - d, line + d])
@@ -112,6 +113,13 @@ export function softRef(raw, where, warnings) {
 // ---- facts ----------------------------------------------------------------------------------
 const str = (v) => (typeof v === 'string' ? v.trim() : '')
 
+export function checkDocumentation(raw) {
+  if (!raw || !documentationPath(raw.path) || !str(raw.title)) return { status: 'bad', why: 'expected a docs/ Markdown path and title' }
+  const abs = join(ROOT, raw.path)
+  if (!existsSync(abs) || !statSync(abs).isFile()) return { status: 'bad', why: `no documentation file: ${raw.path}` }
+  return { status: 'ok', path: raw.path, title: str(raw.title) }
+}
+
 function loadFacts(report) {
   const dir = join(BLUEPRINT, 'facts')
   const out = []
@@ -129,8 +137,20 @@ function loadFacts(report) {
   return out
 }
 
+function unitDocumentation(u, report) {
+  const documentation = []
+  const docs = Array.isArray(u.documentation) ? u.documentation : []
+  if (!docs.length) report.documentation.push({ unit: u.id, file: u._file, why: 'missing documentation owner' })
+  for (const doc of docs) {
+    const checked = checkDocumentation(doc)
+    if (checked.status === 'bad') report.documentation.push({ unit: u.id, file: u._file, why: checked.why })
+    else documentation.push({ path: checked.path, title: checked.title })
+  }
+  return documentation
+}
+
 // Replace every `ref` string in a facts unit by a checked reference; drop the bad ones.
-function checkUnit(u, report) {
+function checkUnit(u, report, documentation) {
   const fix = (list) =>
     (Array.isArray(list) ? list : [])
       .map((item) => {
@@ -151,8 +171,7 @@ function checkUnit(u, report) {
       .filter(Boolean)
   return {
     one_line: str(u.one_line),
-    explain: str(u.explain),
-    analogy: str(u.analogy),
+    documentation,
     actors: fix(u.actors),
     consumes: fix(u.consumes),
     emits: fix(u.emits),
@@ -169,7 +188,7 @@ function checkUnit(u, report) {
 
 // ---- merge ----------------------------------------------------------------------------------
 export function loadData() {
-  const report = { files: {}, refs: { ok: 0, moved: 0, bad: 0 }, bad: [], moved: [], unmatched: [] }
+  const report = { files: {}, refs: { ok: 0, moved: 0, bad: 0 }, bad: [], moved: [], unmatched: [], documentation: [] }
   const inv = inventory()
   const units = {}
   const asRef = (s) => {
@@ -228,6 +247,7 @@ export function loadData() {
   const byNorm = new Map()
   for (const u of Object.values(units)) byNorm.set(norm(u.id), byNorm.has(norm(u.id)) ? null : u)
   for (const f of loadFacts(report)) {
+    const documentation = unitDocumentation(f, report)
     const target =
       units[f.id] ||
       byPath.get(
@@ -240,7 +260,7 @@ export function loadData() {
       report.unmatched.push({ id: f.id, path: f.path, file: f._file })
       continue
     }
-    target.facts = checkUnit(f, report)
+    target.facts = checkUnit(f, report, documentation)
   }
   report.units = Object.keys(units).length
   report.withFacts = Object.values(units).filter((u) => u.facts).length

@@ -1,4 +1,0 @@
-interface:
-  display_name: 'ASD-STE100 Technical Writing'
-  short_description: 'Clear, precise technical writing rules'
-  default_prompt: 'Use $asd-ste100 to revise this technical text without changing its meaning.'

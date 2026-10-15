@@ -17,6 +17,7 @@ current branch.
 
 - Click a box with ⧉ to open the diagram inside it.
 - Click a box with `</>`, or an arrow, to read the code behind it.
+- Follow the documentation links below a unit's summary for its domain rules and limits.
 - Press Esc or **Up** to go back one level. Scroll to zoom, and drag to pan.
 - Press `/` to find a box by name.
 
@@ -26,7 +27,7 @@ current branch.
 | -------------------------------------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | The five top diagrams: system, contracts, circuits, ciphernode, apps | `curated.mjs` (hand-drawn)                                    | Each arrow cites code as `path@line@token`. The build uses the new line of a moved reference and drops a broken reference. |
 | Crate, contract, circuit, app and actor diagrams                     | `generate.mjs`, from `lib/inventory.mjs` and `lib/wiring.mjs` | They follow the code.                                                                                                      |
-| Descriptions, state and outputs in the generated diagrams            | `facts/*.json`                                                | The build uses the new line of a moved reference and drops a broken reference.                                             |
+| Short summaries, owner-doc links, state and outputs                  | `facts/*.json`                                                | Code references and documentation targets are checked separately.                                                          |
 | Evidence for the hand-drawn arrows                                   | `refs/*.json`                                                 | The build checks it like the arrows.                                                                                       |
 
 ## Keep it current
@@ -35,6 +36,7 @@ current branch.
 node scripts/blueprint/check.mjs                   # moved and broken references, and crates missing from the map or gone
 node scripts/blueprint/check.mjs --fix             # rewrite the moved line numbers, then check again
 node scripts/blueprint/check.mjs --since v0.19.0   # also list the hand-drawn arrows whose code changed
+node --test scripts/blueprint/documentation.test.mjs # documentation loading, links and navigation
 ```
 
 - The build does not stop when the code changes. It uses the new line of a moved reference, drops a
@@ -44,9 +46,12 @@ node scripts/blueprint/check.mjs --since v0.19.0   # also list the hand-drawn ar
   release, and fix what it reports in a small pull request.
 - The check finds a moved reference again by its token. When the token has other copies in the file,
   the nearest copy can be the wrong line. `--fix` lists those references: read their lines.
-- When you add a crate, add its path under `crates/` (for example `zk/cli`) to `LAYERS` in
-  `lib/inventory.mjs`. When you remove or rename a crate, a contract or a circuit, change it there
-  too, and move or remove its facts in `facts/`. The check lists all of these cases.
+
+Documentation links open the detailed owner documents. They use GitHub source URLs so they also work
+from a local HTML file or a Pages preview. Standalone builds use the checkout branch (commit when
+detached); diff pages use each side's ref. Unpushed files become available at that URL only after
+publication. `BLUEPRINT_SOURCE_REF` can supply the ref when building an exported tree. Reference
+checks establish valid targets/tokens, not semantic correctness or proof verification.
 
 ## Architecture change in a pull request (experimental)
 

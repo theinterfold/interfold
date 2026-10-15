@@ -249,7 +249,7 @@ check_bfv_preset secure-8192 secure8192 secure_8192 secure
 
 # 6. Every chain-supported route in utils.ts must match the Noir committee shape and the
 #    parameter/configuration hashes compiled into ActiveCryptoConfig.sol. Keep this check
-#    dependency-free because the Agent Harness runs it before Node dependencies are installed.
+#    dependency-free because Repository Checks runs it before Node dependencies are installed.
 sol_bytes32() {
   local name="$1"
   grep -A1 -E "bytes32 internal constant $name" "$ACTIVE_SOL" \

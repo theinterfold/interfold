@@ -304,8 +304,8 @@ Other circuit commands:
 | `pnpm noir:lint` (`scripts/lint-circuits.sh`)                  | Runs `nargo fmt --check` and `nargo check` on the library and each package. It exits with success if `nargo` is missing.                                                                     |
 | `pnpm noir:test` (`scripts/test-circuits.sh`)                  | Runs `nargo test` on `circuits/lib` and `decryption_aggregator`, then `nargo execute` on `bin/config`, then the `dkg_aggregator` and `node_fold` tests for three preset and committee pairs. |
 
-To make sample inputs for one circuit, use `zk-artifacts generate`. Its `--committee` value must match the
-active committee of the library:
+To make sample inputs for one circuit, use `zk-artifacts generate`. Its `--committee` value must
+match the active committee of the library:
 
 ```bash
 pnpm zk generate --circuit pk-generation --preset insecure --committee minimum --toml
@@ -414,7 +414,8 @@ The crate `e3-zk-prover` (`crates/zk-prover`) runs the circuits for the cipherno
 
 The event types (`CircuitName`, `ProofType`) are in `crates/events`. The protocol flow that uses
 them is in
-[`agent/flow-trace/04_DKG_AND_COMPUTATION.md`](https://github.com/theinterfold/interfold/blob/main/agent/flow-trace/04_DKG_AND_COMPUTATION.md).
+[proof statements](https://github.com/theinterfold/interfold/blob/main/docs/architecture/proof-statements.md)
+and [DKG](https://github.com/theinterfold/interfold/blob/main/docs/architecture/dkg.md).
 
 ## Add or rename a circuit
 

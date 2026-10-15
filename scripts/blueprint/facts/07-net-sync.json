@@ -3,11 +3,10 @@
   "units": [
     {
       "id": "e3-net",
+      "documentation": [{ "title": "Network delivery", "path": "docs/architecture/network-delivery.md" }],
       "kind": "crate",
       "path": "crates/net",
       "one_line": "The libp2p networking layer: it runs the QUIC swarm and translates between network messages and EventBus events.",
-      "explain": "Peers exchange protocol messages over gossipsub and direct requests, and key-share documents (threshold shares, encryption keys, decryption keys) go into a Kademlia DHT under their content hash while a small gossip notification names each one. Libp2pNetInterface runs the swarm as a tokio task, not an actor, while DocumentPublisher, NetEventTranslator, NetEventBuffer and NetSyncManager are actix actors fed by forwarding tasks from the swarm's event stream, and EventConverter is an actix actor fed by bus subscriptions. Without this crate a node would not receive its committee's DKG and decryption shares, and it could not fetch peer history after a restart.",
-      "analogy": "Like a post office with a notice board and a locker bank: gossip is the notice that says which locker holds a parcel, and the DHT is the lockers that keep large parcels until someone collects them.",
       "actors": [
         {
           "name": "Libp2pNetInterface",
@@ -257,11 +256,10 @@
     },
     {
       "id": "e3-sync",
+      "documentation": [{ "title": "Replay and startup fences", "path": "docs/architecture/persistence-and-replay.md" }],
       "kind": "crate",
       "path": "crates/sync",
       "one_line": "Restart catch-up: checks schema and role markers, replays the event log after snapshot cursors, merges chain and peer history, then re-enables effects.",
-      "explain": "sync_with_net_ready runs before effects are enabled: it checks the schema marker, loads each aggregate's snapshot cursor, replays the EventStore after those cursors, and collects historical EVM events. After NetReady it fetches peer history, sorts both sources by HLC timestamp, and publishes EffectsEnabled, SyncEffect, the merged history and SyncEnded in fenced steps, so per-E3 actors see the same order as an uninterrupted run. Without this sequence a restarted node would miss the events after its snapshot cursors, and the EVM gateway would stay in buffering mode and drop live chain events. The crate has no actix actor of its own: it is async functions that call the EventBus and an EventStore Recipient.",
-      "analogy": "Like a shift handover: the returning engineer checks the badge matches the site, reads the logbook from the last signed entry, asks other crews what happened while away, and only then takes live work.",
       "actors": [],
       "consumes": [
         { "name": "NetReady", "by": "sync_with_net_ready", "ref": "crates/sync/src/sync/service.rs@489@net_ready.await?;" },
@@ -394,7 +392,7 @@
         },
         {
           "why": "The production caller: NetReady is armed before networking starts, then sync runs.",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@958@sync_with_net_ready("
+          "ref": "crates/ciphernode-builder/src/builder/startup.rs@160@sync_with_net_ready("
         },
         {
           "why": "The schema check that runs before any state is written.",

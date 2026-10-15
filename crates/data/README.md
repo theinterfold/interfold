@@ -1,5 +1,15 @@
 # Persistence Patterns
 
+For current cross-layer guarantees and limits, see
+[persistence and replay](../../docs/architecture/persistence-and-replay.md). Repository keys and
+serialized payloads are durable interfaces: a Rust type-compatible change or key rename can still
+need an [upgrade decision](../../docs/architecture/upgrades.md).
+
+Acknowledged sync/batch writes flush before success and reject contextual writes older than the
+persisted aggregate cursor. Ordinary queued writes are not the same acknowledgment boundary. Use
+checked reads where missing data differs from storage/decode failure, especially destructive-command
+preflight. No general external-effect outbox is provided here.
+
 _The way persistence is managed within this codebase has a few elements to it. So here is the story
 as to how this works and why it has been done like this_
 
@@ -121,8 +131,9 @@ the saved state however there are a couple of problems:
 
 ## Enter Persistable
 
-Persistable is a struct that connects a repository and in-memory state. It saves the state to the
-repository after each in-memory mutation.
+Persistable connects a repository and in-memory state. A successful `try_mutate` admits a snapshot
+write before exposing the new memory value, but does not wait for its batch to flush. It schedules
+persistence; it does not itself prove the mutation is durable before a subsequent external effect.
 
 This has several benefits:
 
@@ -141,7 +152,7 @@ let repo:Repository<Vec<String>> = get_repo();
 // Load a persistable object from the repository.
 let persistable:Persistable<Vec<String>> = repo.load().await?;
 
-// If we add a name to the list the list is automatically synced to the database
+// A mutation schedules persistence; it is not a durability acknowledgment.
 persistable.try_mutate(|mut list| {
   list.push("Fred");
   Ok(list)

@@ -53,6 +53,16 @@ examples.
 
 ## To deploy
 
+Deployment commands in this README run from `packages/interfold-contracts`. From
+the repository root, use `pnpm --dir packages/interfold-contracts <command>`.
+Protocol/circuit cutovers additionally follow
+[upgrade policy](../../docs/architecture/upgrades.md), not only a package
+release.
+
+Deploy actions send transactions and write deployment/governance records;
+`--propose-safe` can also submit a proposal. Use the documented
+check/plan/validate actions to review a deployment before authorizing writes.
+
 Phase 1 deploys FOLD plus the CCA sale:
 
 ```sh
@@ -103,7 +113,7 @@ for native payment or juels for LINK. The subscription owner must equal
 `protocolOwner`. Deployment validation checks this balance, and the provider
 checks it again before each request. An underfunded request reverts before the
 protocol accepts the E3 payment. Use a dedicated subscription and monitor its
-balance because the floor does not reserve funds for concurrent requests or
+balance; each unfulfilled draw reserves another floor, but the provider does not
 automatically replenish the subscription. The governance batch accepts provider
 ownership, adds the provider as a subscription consumer, and connects it to the
 Registry. The mainnet configuration requires a 1 ETH floor and waits 64 blocks
@@ -122,12 +132,13 @@ protocol, then run `pnpm upgrade:node-release --action prepare --mandatory`.
 After enough upgraded nodes acknowledge the release, generate the checked
 unpause transaction with `pnpm upgrade:node-release --action resume`.
 
-If a request reaches its randomness deadline without a usable response, the
-Registry clears the active provider. This blocks every new E3 request and stops
-a withholding provider from creating repeated randomness draws. The Registry
-emits `RandomnessCircuitBreakerTripped` for monitoring. Governance must pause
-requests, investigate the subscription or provider, and call
-`setRandomnessProvider` before requests can resume.
+If a request expires without a usable response, the Registry marks the provider
+degraded and emits `RandomnessCircuitBreakerTripped`; it does not let a
+permissionless expiry clear the registry-global provider. Governance
+investigates and can repoint it while requests are paused and all committee
+obligations are released. Nodes must restart to watch a new provider before
+requests resume. See
+[committee randomness](../../docs/architecture/committee-selection.md#unpredictable-immutable-sortition).
 
 Set `protocolOwner` to the contract that owns and configures the protocol. Set
 the optional `safe` field to the same address only when the protocol owner is a
@@ -196,6 +207,34 @@ the six-decimal mock-token values into a release configuration.
 The canonical outputs live under `packages/interfold-contracts/deploy/`. The
 scripts also mirror addresses into `deployed_contracts.json` for older tasks and
 verification.
+
+## Contract addresses
+
+Deploy/upgrade tooling writes records under `deploy/` and mirrors active
+addresses into [`deployed_contracts.json`](deployed_contracts.json). After
+governance replaces or retires a recorded contract, reconcile that mirror
+deliberately; stale mock entries can keep the published network marked
+`mocks: true`. Do not hand-edit the derived manifest or copy address constants
+into another inventory.
+
+From repository root:
+
+```sh
+pnpm --dir packages/interfold-contracts gen:manifest
+pnpm --dir packages/interfold-contracts gen:manifest:check
+pnpm check:addresses
+```
+
+`gen:manifest` **writes**
+[`deployments/manifest.json`](../../deployments/manifest.json); the check
+variant compares without rewriting it. Releases attach this manifest, and
+`interfold config check` fetches it so a compiled node can detect changed
+deployments. It intentionally does not prescribe one application's E3 program.
+`check:addresses` detects stale/unclassified quoted live addresses, not correct
+on-chain wiring; deployment validation and
+[artifact checks](../../docs/architecture/circuit-artifacts.md) still apply.
+[RELEASING.md](../../RELEASING.md) owns when the manifest must enter the release
+candidate.
 
 ## E3 pricing and protocol revenue
 

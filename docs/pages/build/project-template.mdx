@@ -53,6 +53,10 @@ in a parent folder, or in the default configuration folder. In that case, it sto
 
 ## Layout
 
+The template copier uses `e3-fs`, a small async filesystem adapter. Production copying uses the
+physical filesystem; tests can use the same operations over an in-memory root. That test seam does
+not make copying or replacement an atomic filesystem transaction.
+
 <FileTree>
   <FileTree.Folder name='my-first-e3' defaultOpen>
     <FileTree.Folder name='.interfold'>
