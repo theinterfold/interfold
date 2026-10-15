@@ -631,6 +631,115 @@ pub fn compute_sc_party_share_root_from_reversed<let N: u32, let N_CHUNKS: u32, 
     compute_sc_party_share_chunk_root_commitment(party_idx, mod_idx, N, CHUNK_SIZE, chunks)
 }
 
+/// [`compute_sc_party_share_root_from_reversed`] given the share already packed: `carriers[g]` is the
+/// carrier C2 hashed for reversed coefficients `4g..4g + 4`, so chunk `c` absorbs carriers
+/// `start / 4..(start + CHUNK_SIZE) / 4` with `start = N - (c + 1) * CHUNK_SIZE`. Same root, no
+/// per-coefficient work: the carriers are bound by the hash itself, and C2 range-checked every digit
+/// in them when it created the commitment. Requires the 4-slot layout (`BIT` 49..=52).
+pub fn compute_sc_party_share_root_from_carriers<let N: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32>(
+    party_idx: u32,
+    mod_idx: u32,
+    carriers: [Field; N / 4],
+) -> Field {
+    // Every coefficient must land in exactly one chunk, and every chunk must hold whole carriers.
+    assert(N_CHUNKS * CHUNK_SIZE == N);
+    assert(CHUNK_SIZE % 4 == 0);
+    let mut chunks: [Field; N_CHUNKS] = [0; N_CHUNKS];
+    for chunk_idx in 0..N_CHUNKS {
+        let first = (N - ((chunk_idx + 1) * CHUNK_SIZE)) / 4;
+        let mut payload = [
+            0,
+            2,
+            party_idx as Field,
+            mod_idx as Field,
+            chunk_idx as Field,
+            N as Field,
+            CHUNK_SIZE as Field,
+        ]
+            .as_vector();
+        for g in 0..(CHUNK_SIZE / 4) {
+            payload = payload.push_back(carriers[first + g]);
+        }
+        chunks[chunk_idx] = compute_commitment(payload, DS_SHARE_COMPUTATION_CHUNK);
+    }
+    compute_sc_party_share_chunk_root_commitment(party_idx, mod_idx, N, CHUNK_SIZE, chunks)
+}
+
+/// [`compute_aggregated_shares_commitment`] given each limb already packed in the same 4-slot layout
+/// (`carriers[l][g]` holds coefficients `4g..4g + 4` of limb `l`). Same value.
+pub fn compute_aggregated_shares_commitment_from_carriers<let N: u32, let L: u32>(
+    carriers: [[Field; N / 4]; L],
+) -> Field {
+    compute_packed_polynomials_commitment::<N / 4, L>(carriers, DS_AGGREGATED_SHARES)
+}
+
+/// [`compute_multiple_polynomial_commitment`] given every limb already packed in the 4-slot layout
+/// that `multiple_polynomial_payload` builds (`carriers[l][g]` holds coefficients `4g..4g + 4`).
+/// Same value.
+pub fn compute_packed_polynomials_commitment<let N4: u32, let L: u32>(
+    carriers: [[Field; N4]; L],
+    domain_separator: [u8; 64],
+) -> Field {
+    let mut payload: [Field] = [].as_vector();
+    for l in 0..L {
+        for g in 0..N4 {
+            payload = payload.push_back(carriers[l][g]);
+        }
+    }
+    compute_commitment(payload, domain_separator)
+}
+
+/// One limb commitment `H(header || carriers)` of a polynomial already packed in the 4-slot layout.
+fn packed_limb_commitment<let N4: u32>(
+    header: [Field; 5],
+    carriers: [Field; N4],
+    domain_separator: [u8; 64],
+) -> Field {
+    let mut payload = header.as_vector();
+    for g in 0..N4 {
+        payload = payload.push_back(carriers[g]);
+    }
+    compute_commitment(payload, domain_separator)
+}
+
+/// [`compute_lbfv_pk_row_commitment`] given each `pk0` limb as the carriers `lbfv_pk_generation`
+/// packed. Same value. The carriers need no digit check: the hash binds them to the creator's,
+/// whose digits that circuit range-checked to the centred window.
+pub fn compute_lbfv_pk_row_commitment_from_carriers<let N: u32, let L: u32>(
+    row_index: u32,
+    carriers: [[Field; N / 4]; L],
+) -> Field {
+    let mut limbs: [Field; L] = [0; L];
+    for l in 0..L {
+        limbs[l] = packed_limb_commitment::<N / 4>(
+            [1, 1, row_index as Field, l as Field, N as Field],
+            carriers[l],
+            DS_PK_GENERATION_LIMB_V1,
+        );
+    }
+    compute_lbfv_pk_row_commitment_from_limbs(row_index, limbs)
+}
+
+/// [`compute_rlk_component_commitment`] given each limb as the carriers `rlk_generation` packed.
+/// Same value; as for the PK row, the hash carries the creator's digit bounds.
+pub fn compute_rlk_component_commitment_from_carriers<let N: u32, let L: u32>(
+    component: u32,
+    row_index: u32,
+    carriers: [[Field; N / 4]; L],
+) -> Field {
+    assert(component < 2, "RLK component must be d0 or d2");
+    let kind_tag = 2 + component as Field;
+    let mut limbs: [Field; L] = [0; L];
+    for l in 0..L {
+        limbs[l] = packed_limb_commitment::<N / 4>(
+            [1, kind_tag, row_index as Field, l as Field, N as Field],
+            carriers[l],
+            DS_RLK_GENERATION_LIMB_V1,
+        );
+    }
+    compute_rlk_row_commitment_from_limbs(kind_tag, row_index, limbs)
+}
+
 /// `compute_sc_party_share_chunk_commitment` (checked) of the chunk whose coefficient `i` is
 /// `value_at(i)`.
 fn party_share_chunk_commitment_with<let CHUNK_SIZE: u32, let BIT: u32, Env>(

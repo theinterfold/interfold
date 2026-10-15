@@ -8,6 +8,7 @@ pub mod polynomial;
 pub mod safe;
 pub mod helpers;
 pub mod modulo;
+pub mod packed_sum;
 pub mod commitments;
 pub mod recursive_vk;
 pub mod committee_hash;

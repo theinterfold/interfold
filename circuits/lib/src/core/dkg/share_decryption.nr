@@ -5,9 +5,13 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::math::commitments::{
-    compute_aggregated_shares_commitment, compute_sc_party_share_root_from_polynomial,
+    compute_aggregated_shares_commitment, compute_aggregated_shares_commitment_from_carriers,
+    compute_sc_party_share_root_from_carriers, compute_sc_party_share_root_from_reversed,
+    compute_share_encryption_commitment_from_message_checked,
 };
+use crate::math::helpers::{assert_in_range, pack};
 use crate::math::modulo::U128::centered_mod_bounded;
+use crate::math::packed_sum::reduce_packed_sum;
 use crate::math::polynomial::Polynomial;
 
 /// Bits allowed for the carry that [`normalize_aggregated`] divides out.
@@ -32,7 +36,7 @@ pub global AGGREGATION_BIT_CARRY: u32 = 8;
 ///
 /// `BIT_MSG` hashes per-share plaintexts (aligned with C2). `BIT_AGG` hashes the CRT aggregate
 /// (`compute_aggregated_shares_commitment`) and must match threshold C6 `BIT_SK` / `BIT_E_SM`.
-pub struct ShareDecryption<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
+pub struct ShareDecryption<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> {
     /// Expected commitments to the share polynomials, produced in C2a (for C4a) or C2b (for C4b)
     /// via commit_to_party_shares. Organised as [party_idx][mod_idx], covering all H honest
     /// parties and L CRT moduli.
@@ -43,18 +47,14 @@ pub struct ShareDecryption<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32,
     /// Organised as [party_idx][mod_idx].
     /// (secret witnesses)
     decrypted_shares: [[Polynomial<N>; L]; H],
-
-    /// Zero-based recipient party index used in the C2 commitment domain.
-    recipient_party_idx: u32,
 }
 
-impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> ShareDecryption<N, L, H, BIT_MSG, BIT_AGG, N_CHUNKS, CHUNK_SIZE> {
+impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> ShareDecryption<N, L, H, BIT_MSG, BIT_AGG> {
     pub fn new(
         expected_commitments: [[Field; L]; H],
         decrypted_shares: [[Polynomial<N>; L]; H],
-        recipient_party_idx: u32,
     ) -> Self {
-        ShareDecryption { expected_commitments, decrypted_shares, recipient_party_idx }
+        ShareDecryption { expected_commitments, decrypted_shares }
     }
 
     /// Verifies that each decrypted share matches its expected commitment from C2a/C2b.
@@ -239,6 +239,73 @@ fn normalize_aggregated<let N: u32, let L: u32, let BIT_Q: u32, let BIT_CARRY: u
     normalized
 }
 
+/// The l-BFV C4 (C4a / C4b), summing the shares while they are still packed.
+///
+/// [`ShareDecryption`] opens every sender's share coefficient by coefficient: it rebuilds each
+/// packed carrier from `H * L * N` witnessed coefficients and range-checks every digit, so that the
+/// opening is injective. That per-sender work is almost all of C4 at larger committees. Here the
+/// witnesses are the packed carriers themselves: `share_carriers[sender][limb][g]` holds reversed
+/// coefficients `4g..4g + 4` exactly as C2 packed them, digit `v + 2^nib` in radix `R = 2^(nib + 4)`,
+/// where `nib` is `BIT_MSG` rounded up to a nibble (52 at secure-16384, 56 at insecure).
+///
+/// 1. **Opening.** Each sender's carriers are hashed into its C2 chunk root
+///    ([`compute_sc_party_share_root_from_carriers`]). Collision resistance makes them C2's carriers,
+///    and C2 range-checked every digit in them to `[0, q)` when it created the commitment, so they
+///    need no check here.
+/// 2. **Packed sum.** Adding the `H` senders' carriers adds every slot at once. Subtracting
+///    `H * B`, with `B` the packed base offsets, leaves `S = sum_i R^(3 - i) * s_i` where `s_i` is
+///    the slot sum, below `H * q <= R`, so no slot carries into the next.
+/// 3. **Unpack and centre.** Hints `k_i, c_i` with `k_i < 2^K`, `c_i + half in [0, q)` and
+///    `S == sum_i R^(3 - i) * (k_i * q + c_i)`, where `K = nib + 4 - BIT_MSG` makes
+///    `2^K * q <= R`. Each digit `k_i * q + c_i` then lies in a window narrower than one slot, so
+///    two digit vectors meeting the same `S` agree slot by slot from the lowest one up: the digits
+///    are the slot sums `s_i` (whose honest carry is at most `H < 2^K`), and `c_i` is the centred
+///    residue [`normalize_aggregated`] computes. Every term is below `2^241`, far from the field
+///    prime, so the field identity is the integer one.
+/// 4. **Commit.** The aggregate's carrier is `S - q * sum_i R^(3 - i) * k_i + B`, the packing of
+///    the `c_i` that [`compute_aggregated_shares_commitment`] builds, in the same reversed order, so
+///    the output equals the unpacked circuit's.
+///
+/// `BIT_MSG` and `BIT_AGG` must round to the same nibble width with four slots per carrier.
+pub fn packed_share_decryption<let N: u32, let L: u32, let H: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32, let BIT_MSG: u32, let BIT_AGG: u32>(
+    expected_commitments: [[Field; L]; H],
+    share_carriers: [[[Field; N / 4]; L]; H],
+    recipient_party_idx: u32,
+    moduli: [Field; L],
+) -> Field {
+    let nib = ((BIT_MSG + 3) / 4) * 4;
+    // Four slots per carrier, the same layout for the shares and the aggregate.
+    assert(254 / (nib + 4) == 4, "share carriers must hold four slots");
+    assert(((BIT_AGG + 3) / 4) * 4 == nib, "aggregate carriers must match the share layout");
+
+    // Step 1: open every sender's share root from its carriers.
+    for sender in 0..H {
+        for mod_idx in 0..L {
+            assert(
+                compute_sc_party_share_root_from_carriers::<N, N_CHUNKS, CHUNK_SIZE>(
+                    recipient_party_idx,
+                    mod_idx,
+                    share_carriers[sender][mod_idx],
+                )
+                    == expected_commitments[sender][mod_idx],
+                "Commitment mismatch",
+            );
+        }
+    }
+
+    // Steps 2-4: sum the carriers, unpack and centre the slot sums, repack the aggregate.
+    let mut aggregate: [[Field; N / 4]; L] = [[0; N / 4]; L];
+    for mod_idx in 0..L {
+        aggregate[mod_idx] = reduce_packed_sum::<N / 4, H, BIT_MSG, BIT_MSG, _>(
+            |sender, g| share_carriers[sender][mod_idx][g],
+            moduli[mod_idx],
+            false,
+        );
+    }
+
+    compute_aggregated_shares_commitment_from_carriers::<N, L>(aggregate)
+}
+
 /// `normalize_aggregated` must reverse and centre exactly as the two-step version did.
 ///
 /// The replacement changed how the representative is reached, not which one it is: C6 hashes this
@@ -281,4 +348,81 @@ fn test_normalize_aggregated_matches_previous_formula() {
         };
         assert(normalized[0].coefficients[0] == expected);
     }
+}
+
+/// Packs each sender's reversed share the way C2 does (4 slots per carrier) for the packed tests.
+fn packed_test_inputs<let BIT: u32>() -> ([[Field; 2]; 3], [[[Field; 2]; 2]; 3], [[Polynomial<8>; 2]; 3]) {
+    // Three senders, two limbs (q = 101, 97), degree 8; every coefficient a canonical residue, with
+    // slot sums reaching 3 * (q - 1) so the carry and the centred boundary both get exercised.
+    let shares = [
+        [
+            Polynomial::new([0, 50, 51, 100, 7, 99, 1, 100]),
+            Polynomial::new([96, 48, 49, 0, 96, 12, 13, 96]),
+        ],
+        [
+            Polynomial::new([100, 0, 50, 100, 33, 99, 2, 100]),
+            Polynomial::new([96, 48, 0, 1, 96, 40, 41, 96]),
+        ],
+        [
+            Polynomial::new([1, 100, 51, 100, 60, 99, 3, 100]),
+            Polynomial::new([96, 1, 48, 2, 96, 70, 71, 96]),
+        ],
+    ];
+    let mut expected = [[0; 2]; 3];
+    let mut carriers = [[[0; 2]; 2]; 3];
+    for sender in 0..3 {
+        for mod_idx in 0..2 {
+            let share = shares[sender][mod_idx];
+            expected[sender][mod_idx] =
+                compute_sc_party_share_root_from_reversed::<8, 2, 4, BIT>(1, mod_idx, share);
+            let mut reversed = [0; 8];
+            for i in 0..8 {
+                reversed[i] = share.coefficients[7 - i];
+            }
+            let packed = pack::<8, BIT>(reversed);
+            carriers[sender][mod_idx] = [packed[0], packed[1]];
+        }
+    }
+    (expected, carriers, shares)
+}
+
+#[test]
+fn test_packed_share_decryption_matches_the_unpacked_opening() {
+    let (expected, carriers, shares) = packed_test_inputs::<51>();
+    let unpacked = ShareDecryption::<8, 2, 3, 51, 50>::new(expected, shares).execute_in_place_with(
+        [101, 97],
+        |mod_idx, share| {
+            compute_sc_party_share_root_from_reversed::<8, 2, 4, 51>(1, mod_idx, share)
+        },
+    );
+    let packed = packed_share_decryption::<8, 2, 3, 2, 4, 51, 50>(expected, carriers, 1, [101, 97]);
+    assert(packed == unpacked);
+}
+
+#[test(should_fail_with = "Commitment mismatch")]
+fn test_packed_share_decryption_rejects_a_tampered_carrier() {
+    let (expected, mut carriers, _) = packed_test_inputs::<51>();
+    // Move one unit between two slots: same carrier sum, different digits.
+    carriers[0][1][0] += 2.pow_32(56) - 1;
+    let _ = packed_share_decryption::<8, 2, 3, 2, 4, 51, 50>(expected, carriers, 1, [101, 97]);
+}
+
+#[test(should_fail_with = "Commitment mismatch")]
+fn test_packed_share_decryption_rejects_the_wrong_recipient() {
+    let (expected, carriers, _) = packed_test_inputs::<51>();
+    let _ = packed_share_decryption::<8, 2, 3, 2, 4, 51, 50>(expected, carriers, 2, [101, 97]);
+}
+
+#[test]
+fn test_packed_share_decryption_matches_at_the_insecure_layout() {
+    // 56-bit shares round to 56-bit nibbles: 60-bit slots, still four per carrier, 4-bit carries.
+    let (expected, carriers, shares) = packed_test_inputs::<56>();
+    let unpacked = ShareDecryption::<8, 2, 3, 56, 55>::new(expected, shares).execute_in_place_with(
+        [101, 97],
+        |mod_idx, share| {
+            compute_sc_party_share_root_from_reversed::<8, 2, 4, 56>(1, mod_idx, share)
+        },
+    );
+    let packed = packed_share_decryption::<8, 2, 3, 2, 4, 56, 55>(expected, carriers, 1, [101, 97]);
+    assert(packed == unpacked);
 }

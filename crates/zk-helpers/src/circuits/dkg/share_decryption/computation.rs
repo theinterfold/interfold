@@ -24,7 +24,9 @@ use crate::circuits::commitments::{
 };
 use crate::dkg::share_decryption::ShareDecryptionCircuit;
 use crate::dkg::share_decryption::ShareDecryptionCircuitData;
-use crate::math::plaintext_poly_u64;
+use crate::encoding::{
+    bigint_2d_to_json_values, bigint_3d_to_json_values, poly_coefficients_to_toml_json,
+};
 use crate::CircuitsErrors;
 use crate::{bigint_2d_to_json_values, poly_coefficients_to_toml_json};
 use crate::{compute_modulus_bit, compute_msg_bit};
@@ -109,6 +111,11 @@ pub struct Inputs {
     /// Zero-based recipient party index used in the C2 commitment domain. Only the l-BFV path's
     /// `share_decryption_chunked` takes it; the trBFV circuit commits shares without it.
     pub recipient_party_idx: Option<u64>,
+    /// l-BFV only: each share packed exactly as the chunked C2 packed it for its commitment
+    /// (reversed coefficients, four per carrier): [party_idx][mod_idx][carrier_idx]. The l-BFV C4
+    /// takes these instead of `decrypted_shares` and sums them packed.
+    #[serde(default)]
+    pub share_carriers: Option<Vec<Vec<Vec<BigInt>>>>,
 }
 
 impl Computation for Configs {
@@ -193,6 +200,7 @@ impl Computation for Inputs {
 
         let mut expected_commitments: Vec<Vec<BigInt>> = Vec::new();
         let mut decrypted_shares: Vec<Vec<Vec<BigInt>>> = Vec::new();
+        let mut share_carriers: Vec<Vec<Vec<BigInt>>> = Vec::new();
 
         let msg_bit = compute_msg_bit(&dkg_params);
 
@@ -233,6 +241,7 @@ impl Computation for Inputs {
         for slot in data.honest_ciphertexts.iter() {
             let mut party_commitments = Vec::with_capacity(threshold_l);
             let mut party_shares = Vec::with_capacity(threshold_l);
+            let mut party_carriers = Vec::with_capacity(threshold_l);
 
             match slot {
                 Some(party_cts) => {
@@ -255,10 +264,12 @@ impl Computation for Inputs {
                         // Reverse to match C3's reversed commitment convention.
                         let mut reversed_coeffs = share_coeffs.clone();
                         reversed_coeffs.reverse();
-                        party_commitments.push(commit(
-                            mod_idx,
-                            &Polynomial::from_u64_vector(reversed_coeffs),
-                        ));
+                        let reversed = Polynomial::from_u64_vector(reversed_coeffs);
+                        party_commitments.push(commit(mod_idx, &reversed));
+                        if lbfv {
+                            party_carriers
+                                .push(crate::packing::pack_to_bigints(&reversed, msg_bit));
+                        }
                         party_shares.push(
                             share_coeffs
                                 .iter()
@@ -273,10 +284,12 @@ impl Computation for Inputs {
                         // Same reverse-then-commit as the BFV-decrypted branch.
                         let mut reversed_coeffs = share_coeffs.clone();
                         reversed_coeffs.reverse();
-                        party_commitments.push(commit(
-                            mod_idx,
-                            &Polynomial::from_u64_vector(reversed_coeffs),
-                        ));
+                        let reversed = Polynomial::from_u64_vector(reversed_coeffs);
+                        party_commitments.push(commit(mod_idx, &reversed));
+                        if lbfv {
+                            party_carriers
+                                .push(crate::packing::pack_to_bigints(&reversed, msg_bit));
+                        }
                         party_shares.push(
                             share_coeffs
                                 .iter()
@@ -289,12 +302,14 @@ impl Computation for Inputs {
 
             expected_commitments.push(party_commitments);
             decrypted_shares.push(party_shares);
+            share_carriers.push(party_carriers);
         }
 
         Ok(Inputs {
             expected_commitments,
             decrypted_shares,
             recipient_party_idx: lbfv.then_some(data.recipient_party_id),
+            share_carriers: lbfv.then_some(share_carriers),
         })
     }
 
@@ -314,10 +329,17 @@ impl Computation for Inputs {
             })
             .collect::<Vec<_>>();
 
-        let mut json = serde_json::json!({
-            "expected_commitments": expected_commitments,
-            "decrypted_shares": decrypted_shares,
-        });
+        let mut json = match &self.share_carriers {
+            // The l-BFV circuit takes the packed carriers in place of the shares.
+            Some(carriers) => serde_json::json!({
+                "expected_commitments": expected_commitments,
+                "share_carriers": bigint_3d_to_json_values(carriers),
+            }),
+            None => serde_json::json!({
+                "expected_commitments": expected_commitments,
+                "decrypted_shares": decrypted_shares,
+            }),
+        };
         if let Some(recipient_party_idx) = self.recipient_party_idx {
             json["recipient_party_idx"] = serde_json::json!(recipient_party_idx);
         }
