@@ -89,6 +89,18 @@ fn push_step(timings: &mut Vec<FoldProveStepTiming>, step: &str, started: Instan
     });
 }
 
+/// How many C2 chunk leaves are proved at once (`E3_C2_CHUNK_PROOF_CONCURRENCY`, default 2).
+///
+/// Each leaf proof runs its own `bb prove`, which uses every core, so the bound costs little time
+/// while keeping the peak at about two leaf proofs (roughly 9 GB at secure-16384, small committee).
+fn c2_chunk_proof_concurrency() -> usize {
+    std::env::var("E3_C2_CHUNK_PROOF_CONCURRENCY")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&jobs| jobs > 0)
+        .unwrap_or(2)
+}
+
 fn slice_coefficients(
     values: &[Value],
     start: usize,
@@ -183,118 +195,127 @@ pub fn prove_chunked_share_computation_with_chunk_size(
 
     let mut step_timings = Vec::new();
     let t_chunks = Instant::now();
-    let chunks: Vec<e3_events::Proof> = (0..chunk_count)
-        .into_par_iter()
-        .map(|chunk_idx| {
-            let start = chunk_idx * chunk_size;
-            let mut chunk_json = serde_json::Map::new();
-            chunk_json.insert("chunk_idx".into(), Value::from(chunk_idx as u64));
-            let secret_key = match data.dkg_input_type {
-                DkgInputType::SecretKey => "sk_secret",
-                DkgInputType::SmudgingNoise => "e_sm_secret",
-            };
-            let secret = base_json.get(secret_key).ok_or_else(|| {
-                ZkError::SerializationError(format!("C2 input is missing {secret_key}"))
-            })?;
-            let secret_chunk = if data.dkg_input_type == DkgInputType::SecretKey {
-                let coefficients = secret
-                    .as_object()
-                    .and_then(|object| object.get("coefficients"))
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| {
-                        ZkError::SerializationError("SK secret JSON is malformed".into())
+    // Each chunk leaf is a separate `bb prove` that already uses every core, so proving many at once
+    // buys little speed but multiplies memory: at the small committee all 8 secure-16384 leaves at
+    // once exceed a 32 GB node. A small dedicated pool bounds how many run together.
+    let chunk_pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(c2_chunk_proof_concurrency())
+        .build()
+        .map_err(|error| ZkError::ProveFailed(format!("C2 chunk proof pool: {error}")))?;
+    let chunks: Vec<e3_events::Proof> = chunk_pool.install(|| {
+        (0..chunk_count)
+            .into_par_iter()
+            .map(|chunk_idx| {
+                let start = chunk_idx * chunk_size;
+                let mut chunk_json = serde_json::Map::new();
+                chunk_json.insert("chunk_idx".into(), Value::from(chunk_idx as u64));
+                let secret_key = match data.dkg_input_type {
+                    DkgInputType::SecretKey => "sk_secret",
+                    DkgInputType::SmudgingNoise => "e_sm_secret",
+                };
+                let secret = base_json.get(secret_key).ok_or_else(|| {
+                    ZkError::SerializationError(format!("C2 input is missing {secret_key}"))
+                })?;
+                let secret_chunk = if data.dkg_input_type == DkgInputType::SecretKey {
+                    let coefficients = secret
+                        .as_object()
+                        .and_then(|object| object.get("coefficients"))
+                        .and_then(Value::as_array)
+                        .ok_or_else(|| {
+                            ZkError::SerializationError("SK secret JSON is malformed".into())
+                        })?;
+                    Value::Object(
+                        [(
+                            "coefficients".into(),
+                            Value::Array(slice_coefficients(
+                                coefficients,
+                                start,
+                                chunk_size,
+                                "SK secret",
+                            )?),
+                        )]
+                        .into_iter()
+                        .collect(),
+                    )
+                } else {
+                    let limbs = secret.as_array().ok_or_else(|| {
+                        ZkError::SerializationError("ESM secret JSON must contain CRT limbs".into())
                     })?;
-                Value::Object(
-                    [(
-                        "coefficients".into(),
-                        Value::Array(slice_coefficients(
-                            coefficients,
-                            start,
-                            chunk_size,
-                            "SK secret",
-                        )?),
-                    )]
-                    .into_iter()
-                    .collect(),
-                )
-            } else {
-                let limbs = secret.as_array().ok_or_else(|| {
-                    ZkError::SerializationError("ESM secret JSON must contain CRT limbs".into())
-                })?;
-                Value::Array(
-                    limbs
-                        .iter()
-                        .map(|limb| {
-                            let values = limb
-                                .as_object()
-                                .and_then(|object| object.get("coefficients"))
-                                .and_then(Value::as_array)
-                                .ok_or_else(|| {
-                                    ZkError::SerializationError(
-                                        "ESM secret JSON must contain CRT limbs".into(),
-                                    )
-                                })?;
-                            Ok::<Value, ZkError>(Value::Object(
-                                [(
-                                    "coefficients".into(),
-                                    Value::Array(slice_coefficients(
-                                        values,
-                                        start,
-                                        chunk_size,
-                                        "ESM secret limb",
-                                    )?),
-                                )]
-                                .into_iter()
-                                .collect(),
-                            ))
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                )
-            };
-            chunk_json.insert("secret_chunk".into(), secret_chunk);
-            chunk_json.insert(
-                "y_chunk".into(),
-                Value::Array(y[start..start + chunk_size].to_vec()),
-            );
-            if let Some((lifted, quotients)) = e_sm_lift {
-                let end = start + chunk_size;
-                chunk_json.insert(
-                    "e_sm_lifted_chunk".into(),
-                    poly_coefficients_to_toml_json(&lifted[start..end]),
-                );
-                chunk_json.insert(
-                    "e_sm_quotients_chunk".into(),
                     Value::Array(
-                        quotients
+                        limbs
                             .iter()
-                            .map(|limb| poly_coefficients_to_toml_json(&limb[start..end]))
-                            .collect(),
-                    ),
+                            .map(|limb| {
+                                let values = limb
+                                    .as_object()
+                                    .and_then(|object| object.get("coefficients"))
+                                    .and_then(Value::as_array)
+                                    .ok_or_else(|| {
+                                        ZkError::SerializationError(
+                                            "ESM secret JSON must contain CRT limbs".into(),
+                                        )
+                                    })?;
+                                Ok::<Value, ZkError>(Value::Object(
+                                    [(
+                                        "coefficients".into(),
+                                        Value::Array(slice_coefficients(
+                                            values,
+                                            start,
+                                            chunk_size,
+                                            "ESM secret limb",
+                                        )?),
+                                    )]
+                                    .into_iter()
+                                    .collect(),
+                                ))
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
+                    )
+                };
+                chunk_json.insert("secret_chunk".into(), secret_chunk);
+                chunk_json.insert(
+                    "y_chunk".into(),
+                    Value::Array(y[start..start + chunk_size].to_vec()),
                 );
-            }
-            let input_map = inputs_json_to_input_map(&Value::Object(chunk_json))?;
-            let circuit_path = prover
-                .circuits_dir(e3_events::CircuitVariant::Recursive, artifacts_dir)
-                .join(chunk_circuit.dir_path())
-                .join(format!("{}.json", chunk_circuit.as_str()));
-            let compiled = crate::witness::CompiledCircuit::from_file(&circuit_path)?;
-            let witness = crate::witness::WitnessGenerator::new()
-                .generate_witness(&compiled, input_map)
-                .map_err(|error| {
-                    ZkError::WitnessGenerationFailed(format!(
-                        "C2 chunk {chunk_idx} witness: {error}"
-                    ))
-                })?;
-            let proof = prover.generate_proof_with_variant(
-                chunk_circuit,
-                &witness,
-                &format!("{e3_id}-c2-chunk-{chunk_idx}"),
-                e3_events::CircuitVariant::Recursive,
-                artifacts_dir,
-            )?;
-            Ok::<_, ZkError>(proof)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+                if let Some((lifted, quotients)) = e_sm_lift {
+                    let end = start + chunk_size;
+                    chunk_json.insert(
+                        "e_sm_lifted_chunk".into(),
+                        poly_coefficients_to_toml_json(&lifted[start..end]),
+                    );
+                    chunk_json.insert(
+                        "e_sm_quotients_chunk".into(),
+                        Value::Array(
+                            quotients
+                                .iter()
+                                .map(|limb| poly_coefficients_to_toml_json(&limb[start..end]))
+                                .collect(),
+                        ),
+                    );
+                }
+                let input_map = inputs_json_to_input_map(&Value::Object(chunk_json))?;
+                let circuit_path = prover
+                    .circuits_dir(e3_events::CircuitVariant::Recursive, artifacts_dir)
+                    .join(chunk_circuit.dir_path())
+                    .join(format!("{}.json", chunk_circuit.as_str()));
+                let compiled = crate::witness::CompiledCircuit::from_file(&circuit_path)?;
+                let witness = crate::witness::WitnessGenerator::new()
+                    .generate_witness(&compiled, input_map)
+                    .map_err(|error| {
+                        ZkError::WitnessGenerationFailed(format!(
+                            "C2 chunk {chunk_idx} witness: {error}"
+                        ))
+                    })?;
+                let proof = prover.generate_proof_with_variant(
+                    chunk_circuit,
+                    &witness,
+                    &format!("{e3_id}-c2-chunk-{chunk_idx}"),
+                    e3_events::CircuitVariant::Recursive,
+                    artifacts_dir,
+                )?;
+                Ok::<_, ZkError>(proof)
+            })
+            .collect::<Result<Vec<_>, _>>()
+    })?;
     push_step(&mut step_timings, "chunks", t_chunks);
 
     let t_batches = Instant::now();
