@@ -9,11 +9,10 @@ use lib::configs::default::threshold::{
     GADGET_DIM, L, LBFV_CRS_ROW_COMMITMENTS, N, PK_AGGREGATION_BIT_PK, PK_AGGREGATION_CONFIGS,
     PK_GENERATION_BIT_PK,
 };
-use lib::core::threshold::lbfv_pk_aggregation::LbfvPkAggregation;
+use lib::core::threshold::lbfv_pk_aggregation::packed_lbfv_pk_aggregation;
 use lib::core::threshold::lbfv_proof_domain::{
     LbfvAcceptedPartySet, LbfvProofSession, validate_aggregation_statement,
 };
-use lib::math::polynomial::Polynomial;
 
 /// Aggregate one row of `H` threshold l-BFV public-key contributions.
 fn main(
@@ -24,8 +23,7 @@ fn main(
     accepted_party_set_hash_lo: pub Field,
     row_index: pub u32,
     expected_pk_generation_commitments: pub [Field; H],
-    pk0: [[Polynomial<N>; L]; H],
-    pk0_agg: [Polynomial<N>; L],
+    pk0_carriers: [[[Field; N / 4]; L]; H],
 ) -> pub Field {
     // Opens the pk0 commitments lbfv_pk_generation made, so the digit widths must agree.
     assert(PK_AGGREGATION_BIT_PK == PK_GENERATION_BIT_PK);
@@ -38,13 +36,13 @@ fn main(
         },
         row_index,
     );
-    let circuit: LbfvPkAggregation<N, H, L, PK_AGGREGATION_BIT_PK> = LbfvPkAggregation::new(
-        PK_AGGREGATION_CONFIGS,
+    // The parties' pk0 rows arrive as the carriers lbfv_pk_generation packed into their row
+    // commitments; their centred sum is derived in-circuit (see `math::packed_sum`).
+    packed_lbfv_pk_aggregation::<N, H, L, PK_AGGREGATION_BIT_PK>(
+        PK_AGGREGATION_CONFIGS.qis,
         row_index,
         LBFV_CRS_ROW_COMMITMENTS[row_index],
         expected_pk_generation_commitments,
-        pk0,
-        pk0_agg,
-    );
-    circuit.execute()
+        pk0_carriers,
+    )
 }

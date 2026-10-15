@@ -11,8 +11,7 @@ use lib::configs::default::threshold::{
 use lib::core::threshold::lbfv_proof_domain::{
     LbfvAcceptedPartySet, LbfvProofSession, validate_aggregation_statement,
 };
-use lib::core::threshold::rlk_aggregation::RlkAggregation;
-use lib::math::polynomial::Polynomial;
+use lib::core::threshold::rlk_aggregation::packed_rlk_aggregation;
 
 /// l-BFV: aggregates `H` honest parties' RLK contributions for one component of one gadget row:
 /// `d0` when `component == 0`, `d2` when `component == 1`. Returns `commit(agg)`. The same
@@ -31,8 +30,7 @@ fn main(
     row_index: pub u32,
     component: pub u32,
     expected_commitments: pub [Field; H],
-    values: [[Polynomial<N>; L]; H],
-    agg: [Polynomial<N>; L],
+    value_carriers: [[[Field; N / 4]; L]; H],
 ) -> pub Field {
     // Opens the d0/d2 commitments rlk_generation made, so the digit widths must agree.
     assert(RLK_AGGREGATION_BIT_D == RLK_GENERATION_BIT_D);
@@ -46,8 +44,13 @@ fn main(
         row_index,
     );
 
-    let rlk_aggregation: RlkAggregation<N, H, L, RLK_AGGREGATION_BIT_D> =
-        RlkAggregation::new(RLK_AGGREGATION_CONFIGS, expected_commitments, values, agg);
-
-    rlk_aggregation.execute(row_index, component)
+    // The parties' d0 or d2 rows arrive as the carriers rlk_generation packed into their
+    // commitments; their centred sum is derived in-circuit (see `math::packed_sum`).
+    packed_rlk_aggregation::<N, H, L, RLK_AGGREGATION_BIT_D>(
+        RLK_AGGREGATION_CONFIGS.qis,
+        row_index,
+        component,
+        expected_commitments,
+        value_carriers,
+    )
 }

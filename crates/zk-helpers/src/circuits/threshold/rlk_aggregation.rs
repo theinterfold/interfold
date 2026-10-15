@@ -13,8 +13,7 @@ use crate::threshold::lbfv_proof_domain::{
     validate_lbfv_generation_party_id,
 };
 use crate::{
-    bigint_1d_to_json_values, compute_modulus_bit, compute_rlk_d0_commitment,
-    compute_rlk_d2_commitment, crt_polynomial_to_toml_json, Artifacts, CiphernodesCommittee,
+    bigint_1d_to_json_values, compute_rlk_d0_commitment, compute_rlk_d2_commitment, Artifacts,
     Circuit, CircuitCodegen, CircuitComputation, CircuitsErrors, CodegenConfigs, CodegenToml,
     Computation,
 };
@@ -116,6 +115,10 @@ pub struct RlkAggregationInputs {
     pub expected_commitments: Vec<BigInt>,
     pub values: Vec<CrtPolynomial>,
     pub agg: CrtPolynomial,
+    /// Packing width of the parties' row commitments. The circuit takes each party's row as the
+    /// carriers packed at this width and derives `agg` itself.
+    #[serde(default)]
+    pub value_bit: u32,
 }
 
 impl CircuitComputation for RlkAggregationCircuit {
@@ -222,14 +225,25 @@ impl Computation for RlkAggregationInputs {
             expected_commitments,
             values,
             agg,
+            value_bit: bit_d,
         })
     }
 
     fn to_json(&self) -> serde_json::Result<serde_json::Value> {
-        let values = self
+        let value_carriers = self
             .values
             .iter()
-            .map(crt_polynomial_to_toml_json)
+            .map(|row| {
+                row.limbs
+                    .iter()
+                    .map(|limb| {
+                        bigint_1d_to_json_values(&crate::packing::pack_to_bigints(
+                            limb,
+                            self.value_bit,
+                        ))
+                    })
+                    .collect::<Vec<_>>()
+            })
             .collect::<Vec<_>>();
         Ok(serde_json::json!({
             "session_id_hi": self.session_id_hi.to_string(),
@@ -240,8 +254,7 @@ impl Computation for RlkAggregationInputs {
             "row_index": self.row_index,
             "component": self.component,
             "expected_commitments": bigint_1d_to_json_values(&self.expected_commitments),
-            "values": values,
-            "agg": crt_polynomial_to_toml_json(&self.agg),
+            "value_carriers": value_carriers,
         }))
     }
 }
@@ -457,7 +470,9 @@ mod tests {
             ));
             let toml = generate_toml(inputs)?;
             assert!(toml.contains("expected_commitments"));
-            assert!(toml.contains("[[agg]]"));
+            // The circuit takes packed rows and derives the aggregate itself.
+            assert!(toml.contains("value_carriers"));
+            assert!(!toml.contains("[[agg]]"));
         }
         assert_ne!(aggregates[0], aggregates[1]);
         assert!(generate_configs(&configs).contains("RLK_AGGREGATION_CONFIGS"));

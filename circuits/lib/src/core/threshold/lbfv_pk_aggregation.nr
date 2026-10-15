@@ -9,9 +9,13 @@ use crate::configs::default::threshold::{
 };
 use crate::core::threshold::pk_aggregation::{Configs, PkAggregation};
 use crate::math::commitments::{
-    compute_lbfv_pk_row_commitment, compute_multiple_polynomial_commitment,
-    compute_threshold_pk_commitment_checked, DS_PK_AGGREGATION,
+    compute_commitment, compute_lbfv_pk_row_commitment,
+    compute_lbfv_pk_row_commitment_from_carriers, compute_multiple_polynomial_commitment,
+    compute_packed_polynomials_commitment, compute_threshold_pk_commitment_checked,
+    DS_PK_AGGREGATION,
 };
+use crate::math::helpers::pack;
+use crate::math::packed_sum::reduce_packed_sum;
 use crate::math::polynomial::Polynomial;
 
 /// Threshold l-BFV public-key aggregation for one fixed CRS row.
@@ -74,6 +78,42 @@ impl<let N: u32, let H: u32, let L: u32, let BIT_PK: u32> LbfvPkAggregation<N, H
 
 /// The generated row commitments must equal the in-circuit hash of each CRS row, or every l-BFV
 /// aggregation proof would commit to a key that does not match its `pk1`.
+/// [`LbfvPkAggregation::execute`] summing the parties' `pk0` rows while still packed (see
+/// `math::packed_sum`). `pk0_carriers[party][limb]` are the carriers `lbfv_pk_generation` hashed
+/// into the party's row commitment; they open that commitment directly, and the centred aggregate
+/// is derived from their sum, so it needs no witness or range check of its own. Returns the same
+/// commitment as the coefficient-wise circuit.
+pub fn packed_lbfv_pk_aggregation<let N: u32, let H: u32, let L: u32, let BIT_PK: u32>(
+    qis: [Field; L],
+    row_index: u32,
+    crs_row_commitment: Field,
+    expected_pk_generation_commitments: [Field; H],
+    pk0_carriers: [[[Field; N / 4]; L]; H],
+) -> Field {
+    for i in 0..H {
+        assert(
+            compute_lbfv_pk_row_commitment_from_carriers::<N, L>(row_index, pk0_carriers[i])
+                == expected_pk_generation_commitments[i],
+            "PK commitment mismatch",
+        );
+    }
+    // Centred residues fit `BIT_PK` bits of magnitude, so the moduli fit `BIT_PK + 1`.
+    let mut aggregate: [[Field; N / 4]; L] = [[0; N / 4]; L];
+    for l in 0..L {
+        aggregate[l] = reduce_packed_sum::<N / 4, H, BIT_PK, BIT_PK + 1, _>(
+            |party, g| pk0_carriers[party][l][g],
+            qis[l],
+            true,
+        );
+    }
+    let commit_pk0 =
+        compute_packed_polynomials_commitment::<N / 4, L>(aggregate, DS_PK_AGGREGATION);
+    compute_commitment(
+        [commit_pk0, crs_row_commitment].as_vector(),
+        DS_PK_AGGREGATION,
+    )
+}
+
 #[test]
 fn test_generated_crs_row_commitments_match_the_rows() {
     for row in 0..GADGET_DIM {
@@ -154,4 +194,62 @@ fn test_lbfv_aggregation_rejects_c1_form_commitments() {
         pk0_agg,
     );
     let _ = lbfv.execute();
+}
+
+/// Packs each party's limbs the way `lbfv_pk_generation` does at a four-slot width (`BIT = 50`).
+fn packed_fixture_carriers(pk0: [[Polynomial<4>; 2]; 3]) -> [[[Field; 1]; 2]; 3] {
+    let mut carriers = [[[0; 1]; 2]; 3];
+    for i in 0..3 {
+        for l in 0..2 {
+            carriers[i][l] = [pack::<4, 50>(pk0[i][l].coefficients)[0]];
+        }
+    }
+    carriers
+}
+
+/// The coefficient-wise circuit on `fixture_pk0` at the four-slot width, row commitments for
+/// `commitment_row`.
+fn wide_lbfv_fixture(row_index: u32, commitment_row: u32) -> LbfvPkAggregation<4, 3, 2, 50> {
+    let (pk0, pk0_agg) = fixture_pk0();
+    let crp = [Polynomial::new([1, 2, 3, 4]), Polynomial::new([5, 6, 7, 8])];
+    let mut commitments = [0; 3];
+    for i in 0..3 {
+        commitments[i] = compute_lbfv_pk_row_commitment::<4, 2, 50>(commitment_row, pk0[i]);
+    }
+    let crp_commitment = compute_multiple_polynomial_commitment::<4, 2, 50>(crp, DS_PK_AGGREGATION);
+    LbfvPkAggregation::new(
+        Configs::new([101, 97]),
+        row_index,
+        crp_commitment,
+        commitments,
+        pk0,
+        pk0_agg,
+    )
+}
+
+#[test]
+fn test_packed_lbfv_aggregation_matches_the_coefficient_wise_circuit() {
+    let (pk0, _) = fixture_pk0();
+    let circuit = wide_lbfv_fixture(2, 2);
+    let packed = packed_lbfv_pk_aggregation::<4, 3, 2, 50>(
+        [101, 97],
+        2,
+        circuit.crs_row_commitment,
+        circuit.expected_pk_generation_commitments,
+        packed_fixture_carriers(pk0),
+    );
+    assert(packed == circuit.execute());
+}
+
+#[test(should_fail_with = "PK commitment mismatch")]
+fn test_packed_lbfv_aggregation_rejects_another_rows_commitment() {
+    let (pk0, _) = fixture_pk0();
+    let circuit = wide_lbfv_fixture(2, 3);
+    let _ = packed_lbfv_pk_aggregation::<4, 3, 2, 50>(
+        [101, 97],
+        2,
+        circuit.crs_row_commitment,
+        circuit.expected_pk_generation_commitments,
+        packed_fixture_carriers(pk0),
+    );
 }

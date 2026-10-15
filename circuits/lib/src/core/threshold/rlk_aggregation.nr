@@ -6,9 +6,13 @@
 
 use crate::core::threshold::pk_aggregation::SUM_BIT_CARRY;
 use crate::math::commitments::{
-    compute_multiple_polynomial_commitment, compute_rlk_component_commitment, DS_RLK_AGGREGATION,
+    compute_multiple_polynomial_commitment, compute_packed_polynomials_commitment,
+    compute_rlk_component_commitment, compute_rlk_component_commitment_from_carriers,
+    DS_RLK_AGGREGATION,
 };
+use crate::math::helpers::pack;
 use crate::math::modulo::U64::ModU64;
+use crate::math::packed_sum::reduce_packed_sum;
 use crate::math::polynomial::Polynomial;
 
 /// Parameters for l-BFV relinearization key aggregation (new circuit, row-level).
@@ -135,6 +139,40 @@ impl<let N: u32, let H: u32, let L: u32, let BIT_D: u32> RlkAggregation<N, H, L,
 
 /// Two parties, `N = 4`, `L = 2`, `q = [101, 97]`; the first two coefficients wrap by one modulus.
 /// The parties' commitments are made for `commitment_component`.
+/// [`RlkAggregation::execute`] summing the parties' rows while still packed (see
+/// `math::packed_sum`). `value_carriers[party][limb]` are the carriers `rlk_generation` hashed into
+/// the party's d0 or d2 row commitment; the centred aggregate is derived from their sum, so it needs
+/// no witness or range check of its own. Returns the same commitment as the coefficient-wise circuit.
+pub fn packed_rlk_aggregation<let N: u32, let H: u32, let L: u32, let BIT_D: u32>(
+    qis: [Field; L],
+    row_index: u32,
+    component: u32,
+    expected_commitments: [Field; H],
+    value_carriers: [[[Field; N / 4]; L]; H],
+) -> Field {
+    for i in 0..H {
+        assert(
+            compute_rlk_component_commitment_from_carriers::<N, L>(
+                component,
+                row_index,
+                value_carriers[i],
+            )
+                == expected_commitments[i],
+            "RLK commitment mismatch",
+        );
+    }
+    // Centred residues fit `BIT_D` bits of magnitude, so the moduli fit `BIT_D + 1`.
+    let mut aggregate: [[Field; N / 4]; L] = [[0; N / 4]; L];
+    for l in 0..L {
+        aggregate[l] = reduce_packed_sum::<N / 4, H, BIT_D, BIT_D + 1, _>(
+            |party, g| value_carriers[party][l][g],
+            qis[l],
+            true,
+        );
+    }
+    compute_packed_polynomials_commitment::<N / 4, L>(aggregate, DS_RLK_AGGREGATION)
+}
+
 fn fixture(commitment_component: u32) -> RlkAggregation<4, 2, 2, 7> {
     let values = [
         [Polynomial::new([50, 0 - 50, 10, 0]), Polynomial::new([48, 0 - 48, 5, 7])],
@@ -189,4 +227,54 @@ fn test_aggregation_rejects_a_wrong_sum() {
     let mut circuit = fixture(0);
     circuit.agg[0].coefficients[2] = 31;
     let _ = circuit.execute(3, 0);
+}
+
+/// The coefficient-wise circuit on `fixture`'s rows at the four-slot width (`BIT = 50`), plus the
+/// carriers `rlk_generation` would have hashed.
+fn wide_fixture(commitment_component: u32) -> (RlkAggregation<4, 2, 2, 50>, [[[Field; 1]; 2]; 2]) {
+    let narrow = fixture(commitment_component);
+    let mut commitments = [0; 2];
+    let mut carriers = [[[0; 1]; 2]; 2];
+    for i in 0..2 {
+        commitments[i] =
+            compute_rlk_component_commitment::<4, 2, 50>(commitment_component, 3, narrow.values[i]);
+        for l in 0..2 {
+            carriers[i][l] = [pack::<4, 50>(narrow.values[i][l].coefficients)[0]];
+        }
+    }
+    (
+        RlkAggregation::new(
+            Configs::new([101, 97]),
+            commitments,
+            narrow.values,
+            narrow.agg,
+        ), carriers,
+    )
+}
+
+#[test]
+fn test_packed_rlk_aggregation_matches_the_coefficient_wise_circuit() {
+    for component in 0..2 {
+        let (circuit, carriers) = wide_fixture(component);
+        let packed = packed_rlk_aggregation::<4, 2, 2, 50>(
+            [101, 97],
+            3,
+            component,
+            circuit.expected_commitments,
+            carriers,
+        );
+        assert(packed == circuit.execute(3, component));
+    }
+}
+
+#[test(should_fail_with = "RLK commitment mismatch")]
+fn test_packed_rlk_aggregation_rejects_the_other_components_commitments() {
+    let (circuit, carriers) = wide_fixture(1);
+    let _ = packed_rlk_aggregation::<4, 2, 2, 50>(
+        [101, 97],
+        3,
+        0,
+        circuit.expected_commitments,
+        carriers,
+    );
 }
