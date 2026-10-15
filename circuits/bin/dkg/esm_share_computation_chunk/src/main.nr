@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use lib::configs::default::dkg::{
-    L_THRESHOLD, N, PARITY_MATRIX, SHARE_COMPUTATION_BIT_SHARE, SHARE_COMPUTATION_CHUNK_SIZE,
+    L_THRESHOLD, N, SHARE_COMPUTATION_BIT_SHARE, SHARE_COMPUTATION_CHUNK_SIZE,
     SHARE_COMPUTATION_E_SM_BIT_SECRET, SHARE_COMPUTATION_E_SM_CONFIGS, SHARE_COMPUTATION_N_CHUNKS,
 };
 use lib::configs::default::{N_PARTIES, T};
@@ -14,7 +14,7 @@ use lib::configs::default::threshold::{
     PK_GENERATION_E_SM_QUOTIENT_BOUNDS,
 };
 use lib::core::dkg::share_computation::{
-    centered_residue, check_range_bounds, verify_parity_check_bounded,
+    centered_residue, check_range_bounds, verify_shamir_finite_differences,
 };
 use lib::math::commitments::{
     compute_sc_esm_secret_chunk_commitment, compute_sc_party_share_chunk_commitment_bounded,
@@ -78,9 +78,8 @@ fn main(
         SHARE_COMPUTATION_E_SM_CONFIGS.qis,
         y_chunk,
     );
-    verify_parity_check_bounded::<SHARE_COMPUTATION_CHUNK_SIZE, L_THRESHOLD, N_PARTIES, T, SHARE_COMPUTATION_BIT_SHARE>(
+    verify_shamir_finite_differences::<SHARE_COMPUTATION_CHUNK_SIZE, L_THRESHOLD, N_PARTIES, T>(
         SHARE_COMPUTATION_E_SM_CONFIGS.qis,
-        PARITY_MATRIX,
         y_chunk,
     );
 

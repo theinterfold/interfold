@@ -5,8 +5,9 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::math::commitments::{
-    compute_sc_esm_secret_root_from_polynomial, compute_sc_party_share_root_from_polynomial,
-    compute_sc_sk_secret_root_from_polynomial,
+    compute_share_computation_e_sm_commitment_checked,
+    compute_share_computation_sk_commitment_checked,
+    compute_share_encryption_commitment_from_message,
 };
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
@@ -29,10 +30,10 @@ impl<let L: u32> Configs<L> {
 /// 1. secret commitment: verify secret hashes to expected_secret_commitment
 /// 2. secret consistency: y[i][j][0] == sk_secret[i] for all i, j
 /// 3. Range check: shares are in [0, q_j)
-/// 4. Parity check: H[j] * y[i][j]^T == 0 mod q_j for all i, j
+/// 4. Shamir check: y[i][j][0..=N_PARTIES] lie on one polynomial of degree <= T mod q_j
 ///
 /// For SK: sk_secret is the trinary coefficients
-pub struct SecretKeyShareComputation<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32, let BIT_SHARE: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
+pub struct SecretKeyShareComputation<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32, let BIT_SHARE: u32> {
     configs: Configs<L>,
     /// Expected commitment to secret (from C1)
     /// (public witness)
@@ -45,11 +46,6 @@ pub struct SecretKeyShareComputation<let N: u32, let L: u32, let N_PARTIES: u32,
     /// y[i][j][0] = sk_secret[i] = f(0), y[i][j][k] = f(k) for k = 1..N_PARTIES
     /// (secret witnesses)
     y: [[[Field; N_PARTIES + 1]; L]; N],
-    /// Parity check matrices: H[mod_idx][row][col]
-    /// Size per modulus: (N_PARTIES - T) * (N_PARTIES + 1)
-    /// H * y^T = 0 mod q_j
-    /// (public constants)
-    h: [[[Field; N_PARTIES + 1]; N_PARTIES - T]; L],
 }
 
 /// Correct Threshold Smudging Noise Share Computation (Circuit 2b).
@@ -58,10 +54,10 @@ pub struct SecretKeyShareComputation<let N: u32, let L: u32, let N_PARTIES: u32,
 /// 1. secret commitment: verify secret hashes to expected_secret_commitment
 /// 2. secret consistency: y[i][j][0] == e_sm[j][i] for all i, j
 /// 3. Range check: shares are in [0, q_j)
-/// 4. Parity check: H[j] * y[i][j]^T == 0 mod q_j for all i, j
+/// 4. Shamir check: y[i][j][0..=N_PARTIES] lie on one polynomial of degree <= T mod q_j
 ///
 /// For ESM: e_sm[j] is the RNS representation at modulus j
-pub struct SmudgingNoiseShareComputation<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32, let BIT_SHARE: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
+pub struct SmudgingNoiseShareComputation<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32, let BIT_SHARE: u32> {
     configs: Configs<L>,
     /// Expected commitment to secret (from C1)
     /// This is computed from all L RNS polynomials (matching
@@ -73,21 +69,16 @@ pub struct SmudgingNoiseShareComputation<let N: u32, let L: u32, let N_PARTIES: 
     /// Shares: y[coeff_idx][mod_idx][0..N_PARTIES+1]
     /// y[i][j][0] = e_sm[j][i] = f(0), y[i][j][k] = f(k) for k = 1..N_PARTIES
     y: [[[Field; N_PARTIES + 1]; L]; N],
-    /// Parity check matrices: H[mod_idx][row][col]
-    /// Size per modulus: (N_PARTIES - T) * (N_PARTIES + 1)
-    /// H * y^T = 0 mod q_j
-    h: [[[Field; N_PARTIES + 1]; N_PARTIES - T]; L],
 }
 
-impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32, let BIT_SHARE: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> SecretKeyShareComputation<N, L, N_PARTIES, T, BIT_SECRET, BIT_SHARE, N_CHUNKS, CHUNK_SIZE> {
+impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32, let BIT_SHARE: u32> SecretKeyShareComputation<N, L, N_PARTIES, T, BIT_SECRET, BIT_SHARE> {
     pub fn new(
         configs: Configs<L>,
         expected_secret_commitment: Field,
         sk_secret: Polynomial<N>,
         y: [[[Field; N_PARTIES + 1]; L]; N],
-        h: [[[Field; N_PARTIES + 1]; N_PARTIES - T]; L],
     ) -> Self {
-        SecretKeyShareComputation { configs, expected_secret_commitment, sk_secret, y, h }
+        SecretKeyShareComputation { configs, expected_secret_commitment, sk_secret, y }
     }
 
     /// Main verification function
@@ -101,11 +92,11 @@ impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32
         // Step 3: Range checks
         check_range_bounds::<N, L, N_PARTIES, BIT_SHARE>(self.configs.qis, self.y);
 
-        // Step 4: Verify parity check
-        verify_parity_check::<N, L, N_PARTIES, T>(self.configs.qis, self.h, self.y);
+        // Step 4: Verify the shares lie on one degree-T polynomial
+        verify_shamir_finite_differences::<N, L, N_PARTIES, T>(self.configs.qis, self.y);
 
         // Step 5: Commit to shares for each party and modulus
-        commit_to_party_shares::<N, L, N_PARTIES, BIT_SHARE, N_CHUNKS, CHUNK_SIZE>(self.y)
+        commit_to_party_shares::<N, L, N_PARTIES, BIT_SHARE>(self.y)
     }
 
     /// Verifies that secret hashes to expected_secret_commitment.
@@ -127,9 +118,7 @@ impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32
         }
         let reversed_sk = Polynomial::new(reversed_coeffs);
         assert(
-            compute_sc_sk_secret_root_from_polynomial::<N, N_CHUNKS, CHUNK_SIZE, BIT_SECRET>(
-                reversed_sk,
-            )
+            compute_share_computation_sk_commitment_checked::<N, BIT_SECRET>(reversed_sk)
                 == self.expected_secret_commitment,
             "SK commitment mismatch",
         );
@@ -158,15 +147,14 @@ impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32
     }
 }
 
-impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32, let BIT_SHARE: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> SmudgingNoiseShareComputation<N, L, N_PARTIES, T, BIT_SECRET, BIT_SHARE, N_CHUNKS, CHUNK_SIZE> {
+impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32, let BIT_SHARE: u32> SmudgingNoiseShareComputation<N, L, N_PARTIES, T, BIT_SECRET, BIT_SHARE> {
     pub fn new(
         configs: Configs<L>,
         expected_secret_commitment: Field,
         e_sm_secret: [Polynomial<N>; L],
         y: [[[Field; N_PARTIES + 1]; L]; N],
-        h: [[[Field; N_PARTIES + 1]; N_PARTIES - T]; L],
     ) -> Self {
-        SmudgingNoiseShareComputation { configs, expected_secret_commitment, e_sm_secret, y, h }
+        SmudgingNoiseShareComputation { configs, expected_secret_commitment, e_sm_secret, y }
     }
 
     /// Main verification function
@@ -180,11 +168,11 @@ impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32
         // Step 3: Range checks
         check_range_bounds::<N, L, N_PARTIES, BIT_SHARE>(self.configs.qis, self.y);
 
-        // Step 4: Verify parity check
-        verify_parity_check::<N, L, N_PARTIES, T>(self.configs.qis, self.h, self.y);
+        // Step 4: Verify the shares lie on one degree-T polynomial
+        verify_shamir_finite_differences::<N, L, N_PARTIES, T>(self.configs.qis, self.y);
 
         // Step 5: Commit to shares for each party and modulus
-        commit_to_party_shares::<N, L, N_PARTIES, BIT_SHARE, N_CHUNKS, CHUNK_SIZE>(self.y)
+        commit_to_party_shares::<N, L, N_PARTIES, BIT_SHARE>(self.y)
     }
 
     /// Verifies that secret hashes to expected_secret_commitment.
@@ -215,9 +203,7 @@ impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32
             normalized[j] = Polynomial::new(coeffs);
         }
         assert(
-            compute_sc_esm_secret_root_from_polynomial::<N, L, N_CHUNKS, CHUNK_SIZE, BIT_SECRET>(
-                normalized,
-            )
+            compute_share_computation_e_sm_commitment_checked::<N, L, BIT_SECRET>(normalized)
                 == self.expected_secret_commitment,
             "ESM commitment mismatch",
         );
@@ -276,68 +262,57 @@ pub fn check_range_bounds<let N: u32, let L: u32, let N_PARTIES: u32, let BIT_SH
     }
 }
 
-/// Verifies Reed-Solomon parity check: `H[j] * y[i][j]^T == 0 mod q_j` for all i, j.
+/// Verifies that each share vector is a Shamir sharing of degree `T`: for every coefficient `i` and
+/// modulus `j`, the values `y[i][j][0..=N_PARTIES]` (the secret at `x = 0`, party `k` at `x = k`) agree
+/// modulo `q_j` with one polynomial of degree at most `T`.
 ///
-/// This function verifies that for each coefficient i and CRT basis j, the share
-/// vector `y[i][j]` forms a valid Reed-Solomon codeword by satisfying the parity
-/// check equation with the parity check matrix `H[j]`.
+/// The evaluation points are consecutive, so a sequence comes from a degree-`T` polynomial exactly
+/// when its `(T + 1)`-th finite differences vanish. Each check is one window of `T + 2` consecutive
+/// values with the signed binomial weights `(-1)^k * C(T + 1, k)`; the `N_PARTIES - T` windows starting
+/// at `0..N_PARTIES - T` span the same space as the Reed-Solomon parity rows (over `F_{q_j}`, whose
+/// characteristic exceeds `T + 1`). Against a reduced-mod-`q` parity matrix this reads `T + 2` values
+/// per row instead of `N_PARTIES + 1`, and the weights are small integers, so each divisibility
+/// quotient is `T + 3` bits instead of a full `u64`.
 ///
-/// The parity check matrix H[j] has dimensions `(N_PARTIES - T) * (N_PARTIES + 1)`,
-/// and the share vector `y[i][j]` has length `N_PARTIES + 1`. The parity check
-/// ensures that any T+1 shares can correctly reconstruct the secret key via
-/// Lagrange interpolation.
+/// Bounds: the caller range-checks the shares to `[0, q_j)` and pins the secret column below `2 q_j`
+/// in magnitude (each C2 circuit opens it through a checked commitment). The weights sum to
+/// `2^(T + 1)` in absolute value, so a window's integer sum lies in `(-2^(T + 2) q_j, 2^(T + 2) q_j)`;
+/// the offset `2^(T + 2) q_j` makes it non-negative and its quotient below `2^(T + 3)`. Every term stays
+/// far below the field prime, so the field equation `sum + offset == quotient * q_j` is the integer
+/// one, and `q_j` divides the window's finite difference.
 ///
 /// # Panics
-/// The circuit will fail if the parity check doesn't hold for any coefficient,
-/// CRT basis, or parity check row.
-pub fn verify_parity_check<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32>(
+/// The circuit fails if any window's finite difference is non-zero modulo `q_j`.
+pub fn verify_shamir_finite_differences<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32>(
     qis: [Field; L],
-    h: [[[Field; N_PARTIES + 1]; N_PARTIES - T]; L],
     y: [[[Field; N_PARTIES + 1]; L]; N],
 ) {
-    for coeff_idx in 0..N {
-        for mod_idx in 0..L {
-            let q_j = qis[mod_idx];
-
-            // For each row of H, compute dot product with y and verify == 0
-            for row in 0..(N_PARTIES - T) {
-                let mut sum: Field = 0;
-
-                for col in 0..(N_PARTIES + 1) {
-                    sum = sum + h[mod_idx][row][col] * y[coeff_idx][mod_idx][col];
-                }
-
-                // Assert sum divisible by q_j: ~12 gates vs reduce_mod's ~24 gates.
-                // Safe: sum < (N_PARTIES+1)*max(h)*q_j < 2^122 << field prime, no Field wrap.
-                ModU64::new(q_j as u64).assert_zero_mod(sum);
-            }
+    // Keeps 2^(T + 3) * q_j (q_j < 2^64) far below the field prime.
+    assert(T < 120);
+    // Pascal's rule yields the public weights C(T + 1, k) without division.
+    let mut binomial: [Field; T + 2] = [0; T + 2];
+    binomial[0] = 1;
+    for row in 1..(T + 2) {
+        for k in 0..row {
+            let col = row - k;
+            binomial[col] += binomial[col - 1];
         }
     }
-}
-
-/// [`verify_parity_check`] for the l-BFV chunk circuits, with the divisibility quotient bounded to
-/// `BIT_SHARE + 8` bits instead of cast to `u64`. Same statement, fewer gates per check.
-///
-/// Shares are range-checked to `[0, q_j)`, `h` entries are reduced mod `q_j`, and the secret column
-/// is pinned near `[0, q_j)` by its checked chunk-commitment opening, so an honest sum is below
-/// `2 * (N_PARTIES + 1) * q_j^2` and its quotient below `2^(BIT_SHARE + 8)` for up to 63 parties.
-/// Soundness does not need that bound to be tight: `quotient * q_j < 2^(BIT_SHARE + 8 + 64)` stays far
-/// below the field prime, so the field equation still implies the integer one.
-pub fn verify_parity_check_bounded<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SHARE: u32>(
-    qis: [Field; L],
-    h: [[[Field; N_PARTIES + 1]; N_PARTIES - T]; L],
-    y: [[[Field; N_PARTIES + 1]; L]; N],
-) {
-    assert(N_PARTIES < 64);
-    for coeff_idx in 0..N {
-        for mod_idx in 0..L {
-            let q_j = ModU64::new(qis[mod_idx] as u64);
-            for row in 0..(N_PARTIES - T) {
-                let mut sum: Field = 0;
-                for col in 0..(N_PARTIES + 1) {
-                    sum = sum + h[mod_idx][row][col] * y[coeff_idx][mod_idx][col];
+    for mod_idx in 0..L {
+        let q_j = ModU64::new(qis[mod_idx] as u64);
+        let offset = 2.pow_32((T + 2) as Field) * qis[mod_idx];
+        for coeff_idx in 0..N {
+            for start in 0..(N_PARTIES - T) {
+                let mut sum = offset;
+                for k in 0..(T + 2) {
+                    let term = binomial[k] * y[coeff_idx][mod_idx][start + k];
+                    if k % 2 == 0 {
+                        sum += term;
+                    } else {
+                        sum -= term;
+                    }
                 }
-                q_j.assert_zero_mod_bounded::<BIT_SHARE + 8>(sum);
+                q_j.assert_zero_mod_bounded::<T + 3>(sum);
             }
         }
     }
@@ -365,8 +340,8 @@ unconstrained fn __centered_residue(coefficient: Field, q: Field) -> Field {
 /// Commits to shares for each party and modulus.
 ///
 /// Returns `[[Field; L]; N_PARTIES]` where `commitments[party_idx][mod_idx]`
-/// equals the root commitment for the reversed share polynomial.
-pub fn commit_to_party_shares<let N: u32, let L: u32, let N_PARTIES: u32, let BIT_SHARE: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32>(
+/// equals `compute_share_encryption_commitment_from_message(share_polynomial)`.
+pub fn commit_to_party_shares<let N: u32, let L: u32, let N_PARTIES: u32, let BIT_SHARE: u32>(
     y: [[[Field; N_PARTIES + 1]; L]; N],
 ) -> [[Field; L]; N_PARTIES] {
     let mut commitments: [[Field; L]; N_PARTIES] = [[0; L]; N_PARTIES];
@@ -382,30 +357,49 @@ pub fn commit_to_party_shares<let N: u32, let L: u32, let N_PARTIES: u32, let BI
             }
 
             let share_poly = Polynomial::new(share_coeffs);
-            commitments[party_idx][mod_idx] = compute_sc_party_share_root_from_polynomial::<N, N_CHUNKS, CHUNK_SIZE, BIT_SHARE>(
-                party_idx,
-                mod_idx,
-                share_poly,
-            );
+            commitments[party_idx][mod_idx] =
+                compute_share_encryption_commitment_from_message::<N, BIT_SHARE>(share_poly);
         }
     }
 
     commitments
 }
 
-/// Shares of the secret 5 over q = 97 on the code `y(x) = 5 + 3x` evaluated at parties 1..=3, with
-/// the parity rows of that code (`y0 - 2*y1 + y2 = 0`, `y1 - 2*y2 + y3 = 0`).
+/// Shares of the secret 5 over q = 97 on `y(x) = 5 + 3x` at `x = 0..=3` (one coefficient, one modulus).
 global TEST_Q: [Field; 1] = [97];
-global TEST_H: [[[Field; 4]; 2]; 1] = [[[1, 95, 1, 0], [0, 1, 95, 1]]];
 
 #[test]
-fn test_parity_check_bounded_accepts_a_codeword() {
-    verify_parity_check_bounded::<1, 1, 3, 1, 7>(TEST_Q, TEST_H, [[[5, 8, 11, 14]]]);
+fn test_finite_differences_accept_a_degree_one_sharing() {
+    verify_shamir_finite_differences::<1, 1, 3, 1>(TEST_Q, [[[5, 8, 11, 14]]]);
+}
+
+#[test]
+fn test_finite_differences_accept_values_reduced_mod_q() {
+    // y(x) = 60 + 50x + 40x^2 mod 97 at x = 0..=4: 60, 53, 29, 85, 27.
+    verify_shamir_finite_differences::<1, 1, 4, 2>(TEST_Q, [[[60, 53, 29, 85, 27]]]);
+}
+
+#[test]
+fn test_finite_differences_accept_a_negative_secret() {
+    // y(x) = -1 + 2x with the secret as the field element -1 and shares reduced: -1, 1, 3, 5.
+    verify_shamir_finite_differences::<1, 1, 3, 1>(TEST_Q, [[[-1, 1, 3, 5]]]);
 }
 
 #[test(should_fail_with = "Divisibility check failed")]
-fn test_parity_check_bounded_rejects_a_corrupted_share() {
-    verify_parity_check_bounded::<1, 1, 3, 1, 7>(TEST_Q, TEST_H, [[[5, 8, 12, 14]]]);
+fn test_finite_differences_reject_a_corrupted_share() {
+    verify_shamir_finite_differences::<1, 1, 3, 1>(TEST_Q, [[[5, 8, 12, 14]]]);
+}
+
+#[test(should_fail_with = "Divisibility check failed")]
+fn test_finite_differences_reject_a_degree_above_t() {
+    // y(x) = x^2 at x = 0..=3 has degree 2 > T = 1.
+    verify_shamir_finite_differences::<1, 1, 3, 1>(TEST_Q, [[[0, 1, 4, 9]]]);
+}
+
+#[test(should_fail_with = "Divisibility check failed")]
+fn test_finite_differences_reject_a_corrupted_last_share() {
+    // The last window alone covers party N_PARTIES.
+    verify_shamir_finite_differences::<1, 1, 4, 2>(TEST_Q, [[[60, 53, 29, 85, 28]]]);
 }
 
 #[test]
