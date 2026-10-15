@@ -169,10 +169,10 @@ pub fn flatten<let A: u32, let L: u32, let BIT: u32>(
 /// - `A`: number of input values.
 /// - `BIT`: per-value bit bound; rounded up to `nibble_bits` by `packing_layout`.
 ///
-/// ## Range constraint
-/// - `pack` computes `digit = v + base` in the BN254 field, then constrains `digit` to
-///   `[0, radix)`. Values near the field modulus can wrap below `base` and encode negative
-///   coefficients. The constraint applies to the shifted digit, not to the canonical value of `v`.
+/// ## Preconditions / Notes
+/// - Call with the raw coefficients whose magnitudes already satisfy the BIT bound
+///   (as enforced by the upstream range checks); `pack` performs the signed -> unsigned
+///   shift internally via `v + base`.
 /// - `group >= 1` is enforced by `packing_layout::<BIT>()`.
 /// - Padding with `digit = 2^nibble_bits` encodes `zero limb` consistently.
 ///
@@ -200,9 +200,7 @@ pub fn pack<let A: u32, let BIT: u32>(values: [Field; A]) -> [Field] {
         let mut acc = 0;
         for i in 0..take {
             let v = values[chunk * group + i];
-            let digit = v + base;
-            digit.assert_max_bit_size::<((BIT + 3) / 4) * 4 + 4>();
-            acc = acc * radix + digit;
+            acc = acc * radix + (v + base);
         }
 
         // Pad remaining limb slots with the canonical zero-limb `digit = base`.
@@ -273,6 +271,39 @@ pub fn flatten_with<let A: u32, let BIT: u32, Env>(
         }
         for _ in 0..(group - take) {
             acc = acc * radix + base;
+        }
+        inputs = inputs.push_back(acc);
+    }
+    inputs
+}
+
+/// Appends `value_at(0) .. value_at(A - 1)` packed at exactly `W` bits each: `253 / W` digits per
+/// carrier, big-endian, the last carrier padded with zero digits.
+///
+/// Unlike [`pack`] there is no base offset and no headroom nibble, so the caller must already have
+/// constrained every value to `[0, 2^W)` (typically a shifted value whose range check is exactly
+/// that). Then every digit fits its slot and the packing is injective. Carriers hold at most 253
+/// bits, below the field modulus, so they never wrap.
+///
+/// C3's insecure configs set some widths to 0 because they never take the scaled path that packs
+/// them; the branch is a compile-time constant, so those instances are folded away before unrolling.
+pub fn flatten_exact_width<let A: u32, let W: u32, Env>(
+    mut inputs: [Field],
+    value_at: fn[Env](u32) -> Field,
+) -> [Field] {
+    let group = 253 / W;
+    assert(group >= 2, "exact-width packing needs two digits per carrier");
+    let radix = 2.pow_32(W as Field);
+    let num_chunks = (A + group - 1) / group;
+    for chunk in 0..num_chunks {
+        let remain = A - (chunk * group);
+        let take = if remain < group { remain } else { group };
+        let mut acc = 0;
+        for i in 0..take {
+            acc = acc * radix + value_at(chunk * group + i);
+        }
+        for _ in 0..(group - take) {
+            acc = acc * radix;
         }
         inputs = inputs.push_back(acc);
     }
@@ -458,10 +489,37 @@ fn test_pack_determinism() {
     }
 }
 
+/// `pack_checked` must agree with `pack` for in-slot values. The two carry duplicate layout
+/// arithmetic, so if one is changed without the other, a commitment created by a circuit on `pack`
+/// stops matching one opened by a circuit on `pack_checked`. This pins that.
+#[test]
+fn test_pack_checked_matches_pack() {
+    // Mixed signs, and values at the edge of the centred window for BIT = 35 (slot = 2^40).
+    let vals: [Field; 7] = [0, 1, -1, 34359701504, -34359701504, 12345, -6789];
+    let plain = pack::<7, 35>(vals);
+    let checked = pack_checked::<7, 35>(vals);
+    assert(plain.len() == checked.len());
+    for i in 0..plain.len() {
+        assert(plain[i] == checked[i]);
+    }
+}
+
+/// Same, at a width whose chunking leaves a partial final carrier (BIT = 57 -> group 3, 7 values).
+#[test]
+fn test_pack_checked_matches_pack_partial_chunk() {
+    let vals: [Field; 7] = [5, -5, 72057594049265664, -72057594049265664, 1, 0, -1];
+    let plain = pack::<7, 57>(vals);
+    let checked = pack_checked::<7, 57>(vals);
+    assert(plain.len() == checked.len());
+    for i in 0..plain.len() {
+        assert(plain[i] == checked[i]);
+    }
+}
+
 #[test]
 fn test_pack_accepts_valid_signed_and_native_values() {
-    let signed = pack::<3, 4>([-16, 0, 15]);
-    let native = pack::<3, 4>([0, 8, 15]);
+    let signed = pack_checked::<3, 4>([-16, 0, 15]);
+    let native = pack_checked::<3, 4>([0, 8, 15]);
 
     assert(signed.len() == 1);
     assert(native.len() == 1);
@@ -475,7 +533,7 @@ fn test_pack_rejects_lower_digit_carry_collision() {
     let colliding = ((base + 1) * radix) + (base - radix);
     assert(valid == colliding);
 
-    let _ = pack::<2, 4>([1, -radix]);
+    let _ = pack_checked::<2, 4>([1, -radix]);
 }
 
 #[test(should_fail_with = "assert_max_bit_size")]
@@ -486,5 +544,16 @@ fn test_pack_rejects_upper_digit_carry_collision() {
     let colliding = ((base - 1) * radix) + (base + radix);
     assert(valid == colliding);
 
-    let _ = pack::<2, 4>([-1, radix]);
+    let _ = pack_checked::<2, 4>([-1, radix]);
+}
+
+#[test]
+fn test_flatten_exact_width_packs_without_offsets() {
+    // W = 100: two digits per carrier, three values -> two carriers, the second padded.
+    let values = [5, 7, 9];
+    let out = flatten_exact_width::<3, 100, _>([].as_vector(), |i| values[i]);
+    let r = 2.pow_32(100);
+    assert(out.len() == 2);
+    assert(out[0] == 5 * r + 7);
+    assert(out[1] == 9 * r);
 }

@@ -9,7 +9,7 @@ use crate::math::commitments::{
     compute_share_encryption_challenge,
 };
 use crate::math::commitments::{compute_dkg_pk_commitment, compute_dkg_pk_commitment_checked};
-use crate::math::helpers::{assert_in_range, flatten};
+use crate::math::helpers::{assert_in_range, flatten, flatten_exact_width};
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::{negacyclic_kernel, Polynomial};
 
@@ -329,15 +329,37 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         let mut inputs = [self.expected_pk_commitment].as_vector();
 
         inputs = self.absorb_ciphertext(inputs, ct_commitment);
-        inputs = flatten::<_, _, BIT_E0>(inputs, [self.e0]);
-        inputs = flatten::<_, _, BIT_E1>(inputs, [self.e1]);
-        inputs = flatten::<_, _, BIT_U>(inputs, [self.u]);
+
+        // Every value below enters already shifted to the non-negative window its range check pins,
+        // packed at exactly that width (`flatten_exact_width`): `e + bound` and `u + bound` in
+        // `[0, 2^(BIT + 1))` (`check_range_bounds`), `Q0[0] + q0_offset` in `[0, 2^BIT_Q0)`,
+        // `Q0[i] - Q0[0] + q0_diff_offset` in `[0, 2^BIT_Q0_DIFF)` and `ct1_r + q1_offset` in
+        // `[0, 2^BIT_Q1)` (`check_scaled_quotient_bounds`). Each packing is therefore injective, and
+        // `Q0[0]` with the differences determines every `Q0[i]`.
+        let c = self.configs;
+        inputs = flatten_exact_width::<N, BIT_E0 + 1, _>(inputs, |j| {
+            self.e0.coefficients[j] + c.e0_bound
+        });
+        inputs = flatten_exact_width::<N, BIT_E1 + 1, _>(inputs, |j| {
+            self.e1.coefficients[j] + c.e1_bound
+        });
+        inputs =
+            flatten_exact_width::<N, BIT_U + 1, _>(inputs, |j| self.u.coefficients[j] + c.u_bound);
         inputs = inputs.push_back(self.expected_message_commitment);
 
-        // `Q0` is bounded by `check_scaled_quotient_bounds` and `ct1_r` with it, so plain packing is
-        // injective for both.
-        inputs = flatten::<_, _, BIT_Q0>(inputs, q0);
-        inputs = flatten::<_, _, BIT_Q1>(inputs, self.ct1_r);
+        inputs =
+            flatten_exact_width::<N, BIT_Q0, _>(inputs, |j| q0[0].coefficients[j] + c.q0_offset);
+        for i in 1..L {
+            inputs = flatten_exact_width::<N, BIT_Q0_DIFF, _>(
+                inputs,
+                |j| q0[i].coefficients[j] - q0[0].coefficients[j] + c.q0_diff_offset,
+            );
+        }
+        for i in 0..L {
+            inputs = flatten_exact_width::<N, BIT_Q1, _>(inputs, |j| {
+                self.ct1_r[i].coefficients[j] + c.q1_offset
+            });
+        }
 
         inputs
     }
