@@ -425,29 +425,37 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
 
     /// [`Self::execute`] with the message commitment supplied by the caller.
     ///
-    /// The l-BFV path's C2 commits each share as a chunk root keyed by `(party, modulus)`
-    /// (`share_encryption_chunked`); everything else is shared. `message` is range-checked below
-    /// whichever form is used, so creating the commitment needs no checked packing.
+    /// Used by the trBFV `share_encryption`; `message` is range-checked below, so creating its
+    /// commitment needs no checked packing. The l-BFV `share_encryption_chunked` calls
+    /// [`Self::execute_with_committed_ciphertext`] instead.
     pub fn execute_with<Env>(self, commit_message: fn[Env](Polynomial<N>) -> Field) -> Field {
-        self.execute_inner(commit_message, false)
+        self.execute_inner(commit_message, false, false)
     }
 
     /// [`Self::execute_with`] with the ciphertext entering the transcript through the commitment
     /// this circuit outputs rather than as packed limbs (see `absorb_ciphertext`). Used by the
     /// l-BFV `share_encryption_chunked`; the trBFV `share_encryption` keeps its transcript.
+    ///
+    /// `message_bounded_by_opening` skips the message's own `[0, t)` range check. A caller may set it
+    /// only when `commit_message` opens a commitment injectively (checked packing) whose creator
+    /// bounded the message to a sub-window of `[0, t)`, so the bound transfers through the opening.
+    /// The l-BFV caller opens C2's chunk root, whose leaves bound each share to `[0, q_l)`, and
+    /// asserts `q_l <= t`.
     pub fn execute_with_committed_ciphertext<Env>(
         self,
         commit_message: fn[Env](Polynomial<N>) -> Field,
+        message_bounded_by_opening: bool,
     ) -> Field {
-        self.execute_inner(commit_message, true)
+        self.execute_inner(commit_message, true, message_bounded_by_opening)
     }
 
-    /// `absorb_ct_commitment` is a compile-time constant at every call site, so only one transcript
-    /// form is compiled into each circuit.
+    /// `absorb_ct_commitment` and `message_bounded_by_opening` are compile-time constants at every
+    /// call site, so only one transcript form and one message check are compiled into each circuit.
     fn execute_inner<Env>(
         self,
         commit_message: fn[Env](Polynomial<N>) -> Field,
         absorb_ct_commitment: bool,
+        message_bounded_by_opening: bool,
     ) -> Field {
         let ct_commitment = if absorb_ct_commitment {
             Option::some(
@@ -468,7 +476,7 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
 
         // Step 3: Range-check everything the identity reads except the quotients, whose form
         // depends on which path runs.
-        self.check_range_bounds();
+        self.check_range_bounds(!message_bounded_by_opening);
 
         // Steps 4-6. `scaled_quotient` is a generated flag, so this resolves at compile time and the
         // unused branch costs nothing. The scaled form folds `k0 * k1` into the quotient, which drops
@@ -495,14 +503,17 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         }
     }
 
-    /// Performs range checks on all secret witness polynomial coefficients.
-    fn check_range_bounds(self) {
+    /// Performs range checks on all secret witness polynomial coefficients. `check_message` is false
+    /// only where the message's `[0, t)` bound arrives through an injective opening instead.
+    fn check_range_bounds(self, check_message: bool) {
         self.u.range_check_2bounds::<BIT_U>(self.configs.u_bound, self.configs.u_bound);
         self.e0.range_check_2bounds::<BIT_E0>(self.configs.e0_bound, self.configs.e0_bound);
         self.e1.range_check_2bounds::<BIT_E1>(self.configs.e1_bound, self.configs.e1_bound);
 
         // Message should be in [0, t)
-        self.message.range_check_standard::<BIT_MSG>(self.configs.msg_bound);
+        if check_message {
+            self.message.range_check_standard::<BIT_MSG>(self.configs.msg_bound);
+        }
 
         for i in 0..L {
             // The key is bounded by C0 and transferred through the checked opening in
@@ -668,7 +679,7 @@ fn reduced_identity_fixture() -> ShareEncryption<4, 1, 6, 6, 1, 1, 1, 3, 3, 3, 3
 fn largest_plaintext_coefficient_is_accepted() {
     let mut c = reduced_identity_fixture();
     c.message.coefficients[0] = 4;
-    c.check_range_bounds();
+    c.check_range_bounds(true);
 }
 
 /// A plaintext coefficient at `t` is rejected.
@@ -676,7 +687,7 @@ fn largest_plaintext_coefficient_is_accepted() {
 fn plaintext_coefficient_at_t_is_rejected() {
     let mut c = reduced_identity_fixture();
     c.message.coefficients[0] = 5;
-    c.check_range_bounds();
+    c.check_range_bounds(true);
 }
 
 /// C3 bounds each ciphertext component before it creates the commitment.
@@ -684,28 +695,28 @@ fn plaintext_coefficient_at_t_is_rejected() {
 fn ct0_above_centered_bound_is_rejected() {
     let mut c = reduced_identity_fixture();
     c.ct0is[0].coefficients[0] = 49;
-    c.check_range_bounds();
+    c.check_range_bounds(true);
 }
 
 #[test(should_fail)]
 fn ct0_below_centered_bound_is_rejected() {
     let mut c = reduced_identity_fixture();
     c.ct0is[0].coefficients[0] = -49;
-    c.check_range_bounds();
+    c.check_range_bounds(true);
 }
 
 #[test(should_fail)]
 fn ct1_above_centered_bound_is_rejected() {
     let mut c = reduced_identity_fixture();
     c.ct1is[0].coefficients[0] = 49;
-    c.check_range_bounds();
+    c.check_range_bounds(true);
 }
 
 #[test(should_fail)]
 fn ct1_below_centered_bound_is_rejected() {
     let mut c = reduced_identity_fixture();
     c.ct1is[0].coefficients[0] = -49;
-    c.check_range_bounds();
+    c.check_range_bounds(true);
 }
 
 /// Fixture for the scaled-quotient path, at `N = 4`, `L = 2`, `q = [101, 103]`, `t = 13`.
@@ -831,11 +842,11 @@ fn tampered_second_limb_quotient_is_rejected() {
 fn committed_ciphertext_transcript_accepts_honest_witnesses() {
     let message_commitment = |m| compute_share_encryption_commitment_from_message::<4, 3>(m);
     let direct = reduced_identity_fixture();
-    assert(direct.execute_with_committed_ciphertext(message_commitment) == direct.execute());
+    assert(direct.execute_with_committed_ciphertext(message_commitment, false) == direct.execute());
 
     let scaled = scaled_fixture(Polynomial::new([0, 0, 0, 2]), honest_scaled_quotients());
     let scaled_commitment = |m| compute_share_encryption_commitment_from_message::<4, 4>(m);
-    assert(scaled.execute_with_committed_ciphertext(scaled_commitment) == scaled.execute());
+    assert(scaled.execute_with_committed_ciphertext(scaled_commitment, false) == scaled.execute());
 }
 
 /// The commitment stands in for the limbs in the transcript, so the challenge must still move with
@@ -865,7 +876,8 @@ fn committed_ciphertext_rejects_a_tampered_quotient() {
     let mut tampered = honest_scaled_quotients();
     tampered[0].coefficients[1] += 1;
     let c = scaled_fixture(Polynomial::new([0, 0, 0, 2]), tampered);
-    let _ = c.execute_with_committed_ciphertext(|m| {
-        compute_share_encryption_commitment_from_message::<4, 4>(m)
-    });
+    let _ = c.execute_with_committed_ciphertext(
+        |m| compute_share_encryption_commitment_from_message::<4, 4>(m),
+        false,
+    );
 }

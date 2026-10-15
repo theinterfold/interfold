@@ -5,12 +5,12 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use lib::configs::default::dkg::{
-    L, N, PK_BIT_PK, SHARE_COMPUTATION_BIT_SHARE, SHARE_COMPUTATION_CHUNK_SIZE,
-    SHARE_COMPUTATION_N_CHUNKS, SHARE_ENCRYPTION_BIT_CT, SHARE_ENCRYPTION_BIT_E0,
-    SHARE_ENCRYPTION_BIT_E1, SHARE_ENCRYPTION_BIT_MSG, SHARE_ENCRYPTION_BIT_PK,
-    SHARE_ENCRYPTION_BIT_Q0, SHARE_ENCRYPTION_BIT_Q0_DIFF, SHARE_ENCRYPTION_BIT_Q1,
-    SHARE_ENCRYPTION_BIT_U, SHARE_ENCRYPTION_BIT_Z, SHARE_ENCRYPTION_CONFIGS,
-    SHARE_ENCRYPTION_CT0_BIT_R, SHARE_ENCRYPTION_CT1_BIT_R,
+    L, L_THRESHOLD, N, PK_BIT_PK, PLAINTEXT_MODULUS, QIS_THRESHOLD, SHARE_COMPUTATION_BIT_SHARE,
+    SHARE_COMPUTATION_CHUNK_SIZE, SHARE_COMPUTATION_N_CHUNKS, SHARE_ENCRYPTION_BIT_CT,
+    SHARE_ENCRYPTION_BIT_E0, SHARE_ENCRYPTION_BIT_E1, SHARE_ENCRYPTION_BIT_MSG,
+    SHARE_ENCRYPTION_BIT_PK, SHARE_ENCRYPTION_BIT_Q0, SHARE_ENCRYPTION_BIT_Q0_DIFF,
+    SHARE_ENCRYPTION_BIT_Q1, SHARE_ENCRYPTION_BIT_U, SHARE_ENCRYPTION_BIT_Z,
+    SHARE_ENCRYPTION_CONFIGS, SHARE_ENCRYPTION_CT0_BIT_R, SHARE_ENCRYPTION_CT1_BIT_R,
 };
 use lib::core::dkg::share_encryption::ShareEncryption;
 use lib::math::commitments::compute_sc_party_share_root_from_polynomial;
@@ -56,11 +56,20 @@ fn main(
         ct1_r,
         z,
     );
-    share_encryption.execute_with_committed_ciphertext(|message| {
-        compute_sc_party_share_root_from_polynomial::<N, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE, SHARE_ENCRYPTION_BIT_MSG>(
-            party_idx,
-            mod_idx,
-            message,
-        )
-    })
+    // The message is opened as C2's chunk root with checked digits, so it is the share C2 bounded to
+    // `[0, q_l)`. Every threshold modulus is at most `t`, so that bound already gives the `[0, t)`
+    // C3 needs and the message's own range check is skipped.
+    for l in 0..L_THRESHOLD {
+        (PLAINTEXT_MODULUS - QIS_THRESHOLD[l]).assert_max_bit_size::<64>();
+    }
+    share_encryption.execute_with_committed_ciphertext(
+        |message| {
+            compute_sc_party_share_root_from_polynomial::<N, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE, SHARE_ENCRYPTION_BIT_MSG>(
+                party_idx,
+                mod_idx,
+                message,
+            )
+        },
+        true,
+    )
 }
