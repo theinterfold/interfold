@@ -125,6 +125,18 @@ fn select_benchmark_params() -> BenchmarkParams {
         "BENCHMARK_PLAINTEXT_FLOW_TIMEOUT_SECS",
         default_plaintext_flow_timeout,
     );
+    // The share collectors must outlast the flow they serve, or a long run is cut off by the
+    // collector rather than by the flow timeout the caller raised. Keep each collection window at
+    // least as long as the matching flow timeout plus a margin.
+    let collection_timeout_secs = collection_timeout_secs.map(|(enc, threshold, dec_shared)| {
+        let dkg_floor = pubkey_flow_timeout.as_secs() + 1_000;
+        let dec_floor = plaintext_flow_timeout.as_secs() + 1_000;
+        (
+            enc.max(dec_floor),
+            threshold.max(dkg_floor),
+            dec_shared.max(dkg_floor),
+        )
+    });
 
     BenchmarkParams {
         preset_subdir,
