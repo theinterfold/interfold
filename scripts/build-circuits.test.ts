@@ -41,14 +41,16 @@ test('the v2 circuit label changes the insecure configuration ID', () => {
 })
 
 test('does not advertise unsupported secure-16384 committee pairs', () => {
-  assert.doesNotThrow(
-    () =>
-      new NoirCircuitBuilder(undefined, {
-        preset: CIRCUIT_PRESETS.SECURE_16384,
-        committee: CIRCUIT_COMMITTEES.MINIMUM,
-      }),
-  )
-  for (const committee of [CIRCUIT_COMMITTEES.MICRO, CIRCUIT_COMMITTEES.SMALL]) {
+  for (const committee of [CIRCUIT_COMMITTEES.MINIMUM, CIRCUIT_COMMITTEES.SMALL]) {
+    assert.doesNotThrow(
+      () =>
+        new NoirCircuitBuilder(undefined, {
+          preset: CIRCUIT_PRESETS.SECURE_16384,
+          committee,
+        }),
+    )
+  }
+  for (const committee of [CIRCUIT_COMMITTEES.MICRO]) {
     assert.throws(
       () =>
         new NoirCircuitBuilder(undefined, {

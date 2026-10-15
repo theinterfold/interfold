@@ -244,8 +244,9 @@ A build selects one BFV preset and one committee size:
 | `small`   | 19  | 9   | 14  |
 
 N is the committee size, T is the threshold, and H is the number of honest parties that the DKG
-expects. Decryption needs T + 1 shares. The mainnet contracts accept only the secure parameter set.
-Sepolia and local chains accept both sets (`ActiveCryptoConfig.sol`).
+expects. Decryption needs T + 1 shares. The mainnet contracts accept only the secure-8192 parameter
+set. Sepolia and local chains accept all three sets, and accept `secure-16384` only with `minimum`
+or `small` (`ActiveCryptoConfig.sol`).
 
 For each pair, the Rust build owner does these steps (`crates/zk/build`):
 
@@ -318,8 +319,8 @@ Other circuit commands:
 | `pnpm noir:lint` (`scripts/circuits/lint.sh`)                  | Runs `nargo fmt --check` and `nargo check` on the library and each package. It exits with success if `nargo` is missing.                                                                     |
 | `pnpm noir:test` (`scripts/circuits/test.sh`)                  | Runs `nargo test` on `circuits/lib` and `decryption_aggregator`, then `nargo execute` on `bin/config`, then the `dkg_aggregator` and `node_fold` tests for three preset and committee pairs. |
 
-The Rust benchmark runner creates artificial cryptographic material and executes production witness
-preparation directly. Its preset and committee must match the selected artifacts:
+To make sample inputs for one circuit, use `zk-artifacts generate`. Its `--committee` value must
+match the active committee of the library:
 
 ```bash
 pnpm bench:circuits run --mode insecure --committee minimum --circuit threshold/pk_generation --witness-only --leaf-only

@@ -103,9 +103,10 @@ export const SUPPORTED_PRESET_COMMITTEE_PAIRS: ReadonlyArray<{
   preset: CircuitPreset
   committee: CircuitCommittee
 }> = ALL_PRESETS.flatMap((preset) =>
-  ALL_COMMITTEES.filter((committee) => preset !== CIRCUIT_PRESETS.SECURE_16384 || committee === CIRCUIT_COMMITTEES.MINIMUM).map(
-    (committee) => ({ preset, committee }),
-  ),
+  ALL_COMMITTEES.filter(
+    (committee) =>
+      preset !== CIRCUIT_PRESETS.SECURE_16384 || committee === CIRCUIT_COMMITTEES.MINIMUM || committee === CIRCUIT_COMMITTEES.SMALL,
+  ).map((committee) => ({ preset, committee })),
 )
 
 /** Pairs that a released circuit archive must contain for the current deployment matrix. */

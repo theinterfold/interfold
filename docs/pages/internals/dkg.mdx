@@ -706,9 +706,11 @@ strictly increasing, and at most N. The wrapper then checks:
 The Honk verifiers `DkgAggregatorVerifier.sol` and `DecryptionAggregatorVerifier.sol` are generated
 from the recursive VKs of `dkg_aggregator` and `decryption_aggregator` with
 `bb write_solidity_verifier`. The files in
-`packages/interfold-contracts/contracts/verifiers/bfv/honk/` are the `insecure-64` and `minimum`
-pair. The other pairs are in `honk/<preset>/<committee>/`. A deployment must use the pair that
-matches its preset and committee.
+`packages/interfold-contracts/contracts/verifiers/bfv/honk/` are the `insecure` and `minimum` pair.
+The other pairs are in `honk/<preset>/<committee>/`. `secure-16384` supports the `minimum` and
+`small` committees. A deployment must use the pair that matches its preset and committee. A
+production deployment on a non-canonical preset must regenerate the verifiers locally for that
+deployment.
 
 `pnpm generate:verifiers` has two modes. `--check` regenerates in memory and fails on any
 difference. `tests/integration/lib/prebuild.sh` uses it. `--write` overwrites the committed files.

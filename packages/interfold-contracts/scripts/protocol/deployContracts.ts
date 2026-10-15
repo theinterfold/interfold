@@ -318,10 +318,13 @@ function bfvV2HonkSource(config: ActiveBfvConfig): string | undefined {
       ? "contracts/verifiers/bfv/honk/DkgAggregatorV2Verifier.sol"
       : `contracts/verifiers/bfv/honk/insecure/${config.committee}/DkgAggregatorV2Verifier.sol`;
   }
-  if (config.preset !== "secure-16384" || config.committee !== "minimum") {
+  if (
+    config.preset !== "secure-16384" ||
+    (config.committee !== "minimum" && config.committee !== "small")
+  ) {
     return undefined;
   }
-  return "contracts/verifiers/bfv/honk/secure-16384/minimum/DkgAggregatorV2Verifier.sol";
+  return `contracts/verifiers/bfv/honk/secure-16384/${config.committee}/DkgAggregatorV2Verifier.sol`;
 }
 
 async function deployBfvVerifiers(

@@ -626,7 +626,7 @@ describe("Interfold", function () {
       );
     });
 
-    it("rejects secure-16384 with a non-minimum committee", async function () {
+    it("rejects secure-16384 with a committee that has no V2 route", async function () {
       const { interfold, request } = await loadFixture(setup);
       await interfold.setParamSet(2, BFV_PARAMS_SECURE_16384);
       await interfold.setTimeoutConfig({
@@ -635,7 +635,8 @@ describe("Interfold", function () {
       });
       const now = await time.latest();
 
-      for (const committeeSize of [1, 2]) {
+      // Micro has no secure-16384 verifier route; minimum and small do.
+      for (const committeeSize of [1]) {
         await expect(
           interfold.getE3Quote({
             ...request,

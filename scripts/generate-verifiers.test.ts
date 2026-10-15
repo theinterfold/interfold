@@ -27,15 +27,15 @@ function verifierFixture(): { root: string; verifierDir: string } {
 test('defines the exact on-chain verifier inventory for supported pairs', () => {
   const paths = expectedVerifierRelativePaths()
 
-  assert.equal(paths.length, 18)
-  assert.equal(paths.filter((path) => path.endsWith('DkgAggregatorV2Verifier.sol')).length, 4)
+  assert.equal(paths.length, 21)
+  assert.equal(paths.filter((path) => path.endsWith('DkgAggregatorV2Verifier.sol')).length, 5)
   assert.equal(
     paths.some((path) => path.startsWith('secure-16384/micro/')),
     false,
   )
   assert.equal(
     paths.some((path) => path.startsWith('secure-16384/small/')),
-    false,
+    true,
   )
   assert.deepEqual(onChainVerifierCircuits(CIRCUIT_PRESETS.SECURE_16384, CIRCUIT_COMMITTEES.MINIMUM), [
     'dkg_aggregator',
@@ -60,10 +60,10 @@ test('checks the generated Solidity inventory exactly', () => {
     }
     assert.doesNotThrow(() => assertExactVerifierInventory(fixture.root))
 
-    const unexpected = join(fixture.verifierDir, 'secure-16384', 'small', 'DkgAggregatorVerifier.sol')
+    const unexpected = join(fixture.verifierDir, 'secure-16384', 'micro', 'DkgAggregatorVerifier.sol')
     mkdirSync(dirname(unexpected), { recursive: true })
     writeFileSync(unexpected, '// unsupported\n')
-    assert.throws(() => assertExactVerifierInventory(fixture.root), /Unexpected: secure-16384\/small/)
+    assert.throws(() => assertExactVerifierInventory(fixture.root), /Unexpected: secure-16384\/micro/)
   } finally {
     rmSync(fixture.root, { recursive: true, force: true })
   }
@@ -73,13 +73,13 @@ test('prunes only unsupported preset and committee directories', () => {
   const fixture = verifierFixture()
   try {
     const supported = join(fixture.verifierDir, 'secure-16384', 'minimum', 'DkgAggregatorVerifier.sol')
-    const unsupported = join(fixture.verifierDir, 'secure-16384', 'small', 'DkgAggregatorVerifier.sol')
+    const unsupported = join(fixture.verifierDir, 'secure-16384', 'micro', 'DkgAggregatorVerifier.sol')
     for (const output of [supported, unsupported]) {
       mkdirSync(dirname(output), { recursive: true })
       writeFileSync(output, '// verifier\n')
     }
 
-    assert.deepEqual(pruneUnsupportedVerifierDirs(fixture.root), ['secure-16384/small'])
+    assert.deepEqual(pruneUnsupportedVerifierDirs(fixture.root), ['secure-16384/micro'])
     assert.equal(existsSync(supported), true)
     assert.equal(existsSync(unsupported), false)
   } finally {
@@ -90,11 +90,11 @@ test('prunes only unsupported preset and committee directories', () => {
 test('lists unsupported verifier directories without pruning them', () => {
   const fixture = verifierFixture()
   try {
-    const unsupported = join(fixture.verifierDir, 'secure-16384', 'small', 'DkgAggregatorVerifier.sol')
+    const unsupported = join(fixture.verifierDir, 'secure-16384', 'micro', 'DkgAggregatorVerifier.sol')
     mkdirSync(dirname(unsupported), { recursive: true })
     writeFileSync(unsupported, '// unsupported\n')
 
-    assert.deepEqual(unsupportedVerifierDirs(fixture.root), ['secure-16384/small'])
+    assert.deepEqual(unsupportedVerifierDirs(fixture.root), ['secure-16384/micro'])
     assert.equal(existsSync(unsupported), true)
   } finally {
     rmSync(fixture.root, { recursive: true, force: true })
@@ -148,7 +148,7 @@ test('leaves the active selector unchanged when a dist-backed check fails', asyn
 test('all-supported dry runs do not clean or prune verifier outputs', () => {
   const fixture = verifierFixture()
   try {
-    const unsupported = join(fixture.verifierDir, 'secure-16384', 'small', 'DkgAggregatorVerifier.sol')
+    const unsupported = join(fixture.verifierDir, 'secure-16384', 'micro', 'DkgAggregatorVerifier.sol')
     mkdirSync(dirname(unsupported), { recursive: true })
     writeFileSync(unsupported, '// unsupported\n')
 
