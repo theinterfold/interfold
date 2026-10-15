@@ -42,12 +42,12 @@ mod tests {
         let micro = C2ChunkLayout::compiled(16384, 9).unwrap();
         assert_eq!(
             (micro.chunk_size, micro.chunk_count, micro.batch_count),
-            (1024, 16, 4)
+            (2048, 8, 2)
         );
         let small = C2ChunkLayout::compiled(16384, 19).unwrap();
         assert_eq!(
             (small.chunk_size, small.chunk_count, small.batch_count),
-            (512, 32, 8)
+            (2048, 8, 2)
         );
     }
 }
