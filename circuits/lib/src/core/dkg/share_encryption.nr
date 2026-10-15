@@ -8,7 +8,7 @@ use crate::math::commitments::{
     compute_ciphertext_commitment, compute_sc_party_share_root_from_polynomial,
     compute_share_encryption_challenge,
 };
-use crate::math::commitments::compute_dkg_pk_commitment;
+use crate::math::commitments::{compute_dkg_pk_commitment, compute_dkg_pk_commitment_checked};
 use crate::math::helpers::{assert_in_range, flatten};
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::{negacyclic_kernel, Polynomial};
@@ -23,7 +23,8 @@ pub struct Configs<let L: u32> {
     pub qis: [Field; L],
     /// Scaling factors k0[i] satisfying `k0[i] * t == -1 (mod q_i)` for each CRT modulus
     pub k0is: [Field; L],
-    /// Coefficient bounds for public key polynomials per CRT modulus: (q_i - 1) / 2
+    /// Centred bounds per CRT modulus, (q_i - 1) / 2, applied to `ct0is` / `ct1is`. The public key
+    /// has the same bound, but C0 checks it and C3 inherits it through the checked key opening.
     pub pk_bounds: [Field; L],
     /// Coefficient bound for the global error polynomial e0
     pub e0_bound: Field,
@@ -194,10 +195,11 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     /// Verifies that the DKG public key hashes to the expected commitment from C0.
     ///
     /// Ensures the ciphernode encrypted under the same key they committed to in C0,
-    /// preventing key substitution attacks.
+    /// preventing key substitution attacks. The opening is checked (injective), so the key is the
+    /// one C0 range-checked to its centred window; C3 relies on that bound and does not repeat it.
     fn verify_pk_commitment(self) {
         assert(
-            compute_dkg_pk_commitment::<N, L, BIT_PK>(self.pk0is, self.pk1is)
+            compute_dkg_pk_commitment_checked::<N, L, BIT_PK>(self.pk0is, self.pk1is)
                 == self.expected_pk_commitment,
             "Public key commitment mismatch",
         );
@@ -503,14 +505,8 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         self.message.range_check_standard::<BIT_MSG>(self.configs.msg_bound);
 
         for i in 0..L {
-            self.pk0is[i].range_check_2bounds::<BIT_PK>(
-                self.configs.pk_bounds[i],
-                self.configs.pk_bounds[i],
-            );
-            self.pk1is[i].range_check_2bounds::<BIT_PK>(
-                self.configs.pk_bounds[i],
-                self.configs.pk_bounds[i],
-            );
+            // The key is bounded by C0 and transferred through the checked opening in
+            // `verify_pk_commitment`.
 
             // `ct0is` / `ct1is` are centered residues mod `q_i`. The reduced identity is checked at
             // one point, so they need a bound for the field equality to imply the integer one; that

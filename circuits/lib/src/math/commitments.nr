@@ -282,6 +282,20 @@ pub fn compute_dkg_pk_commitment<let N: u32, let L: u32, let BIT_PK: u32>(
     compute_commitment(payload, DS_PK)
 }
 
+/// [`compute_dkg_pk_commitment`] for a circuit that **opens** the DKG key commitment rather than
+/// creating it (C3). C0 range-checks every key coefficient to its centred window before hashing,
+/// so asserting each packed digit fits its slot makes this opening injective and forces the opened
+/// key to be the one C0 bounded. Same value as the plain helper.
+pub fn compute_dkg_pk_commitment_checked<let N: u32, let L: u32, let BIT_PK: u32>(
+    pk0: [Polynomial<N>; L],
+    pk1: [Polynomial<N>; L],
+) -> Field {
+    let mut payload = multiple_polynomial_payload_checked::<N, L, BIT_PK>([].as_vector(), pk0);
+    payload = multiple_polynomial_payload_checked::<N, L, BIT_PK>(payload, pk1);
+
+    compute_commitment(payload, DS_PK)
+}
+
 pub fn compute_threshold_pk_commitment<let N: u32, let L: u32, let BIT_PK: u32>(
     pk0: [Polynomial<N>; L],
 ) -> Field {
