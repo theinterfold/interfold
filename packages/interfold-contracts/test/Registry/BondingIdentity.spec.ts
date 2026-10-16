@@ -98,44 +98,95 @@ describe("Bond-owner identity admission", function () {
     expect(await eligible(ctx, ctx.operators[1], snapshot)).to.equal(false);
   });
 
-  it("keeps earlier eligibility after expiry and removes expired owners on capacity refresh", async function () {
+  it("fails capacity closed after expiry and rebuilds distinct owners through refreshes", async function () {
     const ctx = await loadFixture(setup);
+    const b = ctx.bondingRegistry;
+    const sharedOwner = await ctx.operators[0].getAddress();
+    const transferred = await ctx.operators[1].getAddress();
+    await b.connect(ctx.operators[1]).proposeBondOwner(transferred, sharedOwner);
+    await b.connect(ctx.operators[0]).acceptBondOwner(transferred);
     const { expiresAt } = await verify(
       ctx,
       ctx.operators[0],
       (await time.latest()) + 100,
     );
-    await ctx.bondingRegistry.setIdentityPolicy(
-      await ctx.identityRegistry.getAddress(),
-      true,
-    );
+    await verify(ctx, ctx.operators[2]);
+    await b.setIdentityPolicy(await ctx.identityRegistry.getAddress(), true);
     await refresh(ctx);
     const snapshot = await time.latest();
-    expect(await capacity(ctx)).to.equal(1);
+    expect(await capacity(ctx)).to.equal(2);
     await time.increaseTo(expiresAt);
     expect(await eligible(ctx, ctx.operators[0])).to.equal(true);
+    expect(await capacity(ctx)).to.equal(2);
     await time.increase(1);
+    const expiredAt = await time.latest();
     expect(await eligible(ctx, ctx.operators[0])).to.equal(false);
     expect(await eligible(ctx, ctx.operators[0], snapshot)).to.equal(true);
-    await refresh(ctx);
     expect(await capacity(ctx)).to.equal(0);
+    expect(await capacity(ctx, snapshot)).to.equal(2);
+    const remaining = await ctx.operators[2].getAddress();
+    await b.connect(ctx.newOwner).refreshOperatorStatus(remaining);
+    expect(await capacity(ctx)).to.equal(1);
+    await b.connect(ctx.newOwner).refreshOperatorStatus(remaining);
+    expect(await capacity(ctx)).to.equal(1);
+    await refresh(ctx);
+    expect(await capacity(ctx)).to.equal(1);
+    expect(await capacity(ctx, snapshot)).to.equal(2);
+    expect(await capacity(ctx, expiredAt)).to.equal(0);
   });
 
-  it("keeps earlier eligibility after revocation and removes revoked owners on capacity refresh", async function () {
+  it("fails capacity closed after revocation and rebuilds only verified owners", async function () {
     const ctx = await loadFixture(setup);
     const { id } = await verify(ctx);
+    await verify(ctx, ctx.operators[1]);
+    await verify(ctx, ctx.operators[2]);
     await ctx.bondingRegistry.setIdentityPolicy(
       await ctx.identityRegistry.getAddress(),
       true,
     );
     await refresh(ctx);
     const snapshot = await time.latest();
-    expect(await capacity(ctx)).to.equal(1);
+    expect(await capacity(ctx)).to.equal(3);
     await ctx.identityRegistry.revoke(id);
+    const revokedAt = await time.latest();
     expect(await eligible(ctx, ctx.operators[0])).to.equal(false);
     expect(await eligible(ctx, ctx.operators[0], snapshot)).to.equal(true);
-    await refresh(ctx);
     expect(await capacity(ctx)).to.equal(0);
+    expect(await capacity(ctx, snapshot)).to.equal(3);
+    await ctx.bondingRegistry
+      .connect(ctx.newOwner)
+      .refreshOperatorStatus(await ctx.operators[1].getAddress());
+    expect(await capacity(ctx)).to.equal(1);
+    await refresh(ctx);
+    expect(await capacity(ctx)).to.equal(2);
+    expect(await capacity(ctx, snapshot)).to.equal(3);
+    expect(await capacity(ctx, revokedAt)).to.equal(0);
+  });
+
+  it("records a verified transfer's earlier expiry before another status refresh", async function () {
+    const ctx = await loadFixture(setup);
+    const b = ctx.bondingRegistry;
+    for (const operator of ctx.operators) await verify(ctx, operator);
+    const { expiresAt } = await verify(
+      ctx,
+      ctx.newOwner,
+      (await time.latest()) + 100,
+    );
+    await b.setIdentityPolicy(await ctx.identityRegistry.getAddress(), true);
+    await refresh(ctx);
+    const operator = ctx.operators[0];
+    const address = await operator.getAddress();
+    await b.connect(operator).proposeBondOwner(address, ctx.newOwner.address);
+    await b.connect(ctx.newOwner).acceptBondOwner(address);
+    const snapshot = await time.latest();
+    expect(await capacity(ctx)).to.equal(3);
+    await time.increaseTo(expiresAt + 1);
+    const expiredAt = await time.latest();
+    expect(await capacity(ctx)).to.equal(0);
+    expect(await capacity(ctx, snapshot)).to.equal(3);
+    await refresh(ctx);
+    expect(await capacity(ctx)).to.equal(2);
+    expect(await capacity(ctx, expiredAt)).to.equal(0);
   });
 
   it("uses historical ownership and drops capacity when a verified owner transfers to an unverified owner", async function () {
@@ -189,7 +240,7 @@ describe("Bond-owner identity admission", function () {
     expect(await capacity(ctx)).to.equal(3);
   });
 
-  it("refuses a required policy without a deployed registry", async function () {
+  it("refuses a required policy without a callable identity registry", async function () {
     const ctx = await loadFixture(setup);
     const b = ctx.bondingRegistry;
     for (const registry of [ethers.ZeroAddress, ctx.newOwner.address]) {
@@ -197,6 +248,11 @@ describe("Bond-owner identity admission", function () {
         .to.be.revertedWithCustomError(b, "InvalidIdentityRegistry")
         .withArgs(registry);
     }
+    await expect(b.setIdentityPolicy(await ctx.verifier.getAddress(), true)).to.be
+      .reverted;
+    expect((await b.identityPolicyAt(await time.latest())).required).to.equal(
+      false,
+    );
     await expect(b.setIdentityPolicy(ethers.ZeroAddress, false)).not.to.be
       .reverted;
   });

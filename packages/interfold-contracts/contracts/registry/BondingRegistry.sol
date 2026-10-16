@@ -36,6 +36,9 @@ import {
     BondingAdmissionStorage
 } from "../storage/BondingAdmissionStorage.sol";
 import {
+    BondingIdentityStorage
+} from "../storage/BondingIdentityStorage.sol";
+import {
     BondOwnerHistoryStorage
 } from "../storage/BondOwnerHistoryStorage.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
@@ -57,6 +60,7 @@ contract BondingRegistry is
     IBondingAdmission,
     IBondingIdentity,
     BondingAdmissionStorage,
+    BondingIdentityStorage,
     BondOwnerHistoryStorage,
     BondingEligibilityStorage,
     BondingSlashingStorage,
