@@ -79,7 +79,10 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 │      At the threshold-share cutoff, a node that has at least H−1 external shares
 │      starts verification from that snapshot and keeps the collector open. Later
 │      shares extend the verified dealer set until all N−1 arrive or the on-chain
-│      DKG deadline expires.
+│      DKG deadline expires. The node reaches this cutoff early when every dealer
+│      that it still waits for had no C0 key when its key collection closed: this
+│      node dealt such a dealer no share, so the two never list each other as
+│      Ready, and no roster holds both.
 ```
 
 ### Step 2: C0 Proof Generation → EncryptionKeyCreated
@@ -484,7 +487,9 @@ ThresholdShareCollector collects this recipient's shares from the other N−1 pa
 ├─ When local key calculation completes or the keyshare actor stops:
 │   └─ Stop the threshold-share collector and its cutoff and deadline timers
 │
-├─ At the 75% soft cutoff:
+├─ At the 75% soft cutoff, or earlier when every missing dealer had no C0 key at the key
+│  cutoff (the keys that this node recorded count as present; after a restart, the rebuilt
+│  collector gets the same set):
 │   ├─ With at least H−1 external shares:
 │   │    send AllThresholdSharesCollected with the available snapshot
 │   │    and keep collecting later shares

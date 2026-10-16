@@ -79,7 +79,68 @@ impl ThresholdKeyshare {
         for event in self.recovery_payloads.shares().values() {
             addr.try_send(event.clone())?;
         }
+        self.send_dealers_without_key(&addr);
         Ok(addr)
+    }
+
+    /// Tell the threshold-share collector which dealers had no C0 key when key collection closed.
+    /// This only ends the collector's wait early, so a failure never stops the DKG: a collector
+    /// that already completed has stopped, and one that misses the message waits for the soft
+    /// cutoff.
+    pub(super) fn send_dealers_without_key(&self, collector: &Addr<ThresholdShareCollector>) {
+        let party_ids = match self.dealers_without_key() {
+            Ok(Some(party_ids)) if !party_ids.is_empty() => party_ids,
+            Ok(_) => return,
+            Err(error) => {
+                warn!(%error, "Could not find the dealers without a C0 key");
+                return;
+            }
+        };
+        match collector.try_send(DealersWithoutKey { party_ids }) {
+            Ok(()) | Err(SendError::Closed(_)) => {}
+            Err(error) => warn!(
+                %error,
+                "Could not send the dealers without a C0 key to the threshold-share collector"
+            ),
+        }
+    }
+
+    /// Committee parties without a C0 key, or `None` while key collection is open. Every key that
+    /// this node recorded counts as present, so a key that arrived after the cutoff never marks
+    /// its dealer as keyless.
+    fn dealers_without_key(&self) -> Result<Option<HashSet<u64>>> {
+        let state = self.state.try_get()?;
+        let mut keyed: HashSet<u64> = self
+            .recovery
+            .try_get()?
+            .encryption_keys
+            .keys()
+            .copied()
+            .collect();
+        match &state.state {
+            KeyshareState::GeneratingThresholdShare(data) => {
+                keyed.extend(
+                    data.collected_encryption_keys
+                        .iter()
+                        .map(|key| key.party_id),
+                );
+            }
+            KeyshareState::AggregatingDecryptionKey(_) => {}
+            _ => return Ok(None),
+        }
+        // Key collection always holds this node's own key. Without it, the record is incomplete.
+        if !keyed.contains(&state.party_id) {
+            return Ok(None);
+        }
+        Ok(Some(
+            (0..state.threshold_n)
+                .filter(|party_id| {
+                    *party_id != state.party_id
+                        && !keyed.contains(party_id)
+                        && !state.expelled_parties.contains(party_id)
+                })
+                .collect(),
+        ))
     }
 
     pub(in crate::actors::threshold_keyshare) fn stop_threshold_share_collector(

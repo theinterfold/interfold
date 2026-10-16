@@ -63,6 +63,9 @@ pub(crate) struct ThresholdShareCollection {
     shares: HashMap<PartyId, Arc<ThresholdShare>>,
     share_proofs: HashMap<PartyId, ReceivedShareProofs>,
     phase: CollectionPhase,
+    /// Dealers whose C0 key this node did not have when key collection closed. This node dealt
+    /// such a party no share, so the two can never list each other as Ready.
+    dealers_without_key: HashSet<PartyId>,
 }
 
 impl ThresholdShareCollection {
@@ -75,11 +78,23 @@ impl ThresholdShareCollection {
             shares: HashMap::new(),
             share_proofs: HashMap::new(),
             phase: CollectionPhase::Collecting,
+            dealers_without_key: HashSet::new(),
         }
     }
 
     pub fn is_collecting(&self) -> bool {
         matches!(self.phase, CollectionPhase::Collecting)
+    }
+
+    pub fn set_dealers_without_key(&mut self, party_ids: HashSet<PartyId>) {
+        self.dealers_without_key = party_ids;
+    }
+
+    /// True while collection waits only for dealers that had no C0 key at the key cutoff.
+    pub fn waits_only_for_dealers_without_key(&self) -> bool {
+        self.is_collecting()
+            && !self.todo.is_empty()
+            && self.todo.is_subset(&self.dealers_without_key)
     }
 
     pub fn receive(
