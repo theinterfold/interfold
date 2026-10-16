@@ -94,6 +94,7 @@ async fn eligibility_source_time_survives_delayed_ingestion_and_snapshot_replay(
                 ciphernode_selector: selector,
                 address: "0x1".into(),
                 submitted_e3s: Default::default(),
+                finished_e3s: Default::default(),
             })
             .start(),
             repository,

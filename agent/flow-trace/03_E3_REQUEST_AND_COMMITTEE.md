@@ -706,6 +706,9 @@ CiphernodeRegistrySolReader decodes SortitionCommitteeFinalized
 │   ├─ Reconciles the provisional reservation with the finalized N-node committee
 │   │   → A selected node keeps its existing reservation without a second increment
 │   │   → A node outside the final committee releases its provisional reservation
+│   │   → Reserves nothing for an E3 that already had a terminal event, because the startup
+│   │     chain sync can deliver the finalization after it; startup releases the slots of
+│   │     E3s that the lifecycle projection records as terminal
 │   └─ Stores finalized committee as a `Committee` struct in persistent map
 │       → Provides O(1) address→party_id lookup for later expulsion handling
 │       → `CommitteeFinalized` is normalized into ascending address order before storage

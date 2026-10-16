@@ -186,6 +186,7 @@ fn start_sortition(bus: &BusHandle) -> Addr<Sortition> {
         ciphernode_selector: selector,
         address: "node-1".to_string(),
         submitted_e3s: Default::default(),
+        finished_e3s: Default::default(),
     })
     .start()
 }

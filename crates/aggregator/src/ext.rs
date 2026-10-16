@@ -906,6 +906,7 @@ mod tests {
             ciphernode_selector: selector,
             address: "node".into(),
             submitted_e3s: Default::default(),
+            finished_e3s: Default::default(),
         })
         .start();
         let id = E3id::new("81", 1);

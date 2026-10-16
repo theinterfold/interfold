@@ -21,15 +21,23 @@ impl Handler<TypedEvent<CommitteeFinalized>> for Sortition {
                 "Storing finalized committee"
             );
 
-            self.node_state.try_mutate(&ec, |mut state_map| {
-                NodeRegistry::reconcile_committee_jobs(
-                    &mut state_map,
-                    &msg.e3_id,
-                    &msg.committee,
-                    "CommitteeFinalized",
+            if self.finished_e3s.contains(&msg.e3_id) {
+                // No later terminal event would release this reservation.
+                info!(
+                    e3_id = %msg.e3_id,
+                    "Reserved no capacity for the committee of a finished E3"
                 );
-                Ok(state_map)
-            })?;
+            } else {
+                self.node_state.try_mutate(&ec, |mut state_map| {
+                    NodeRegistry::reconcile_committee_jobs(
+                        &mut state_map,
+                        &msg.e3_id,
+                        &msg.committee,
+                        "CommitteeFinalized",
+                    );
+                    Ok(state_map)
+                })?;
+            }
             self.finalized_committees
                 .try_mutate(&ec, |mut committees| {
                     committees.insert(msg.e3_id.clone(), Committee::new(msg.committee.clone()));
