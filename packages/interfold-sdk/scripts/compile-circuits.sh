@@ -16,17 +16,18 @@ esac
 TARGET="${REPO_ROOT}/circuits/bin/threshold/target"
 DIST="${SCRIPT_DIR}/../circuits/dist"
 PRESETS=(secure-8192 secure-16384 insecure)
-ARTIFACTS=(
+# The proof tree: the prover also imports each one's recursive key (`<circuit>.vk.json`).
+TREE_ARTIFACTS=(
   ct0_chunk_main
   ct0_pk_ct_commit
   ct0_eval_chunk_identity
   ct1_chunk_main
   ct1_pk_ct_commit
   ct1_eval_chunk_identity
-  user_data_encryption_chunked
   user_data_encryption_ct0_chunked
   user_data_encryption_ct1_chunked
 )
+ARTIFACTS=("${TREE_ARTIFACTS[@]}" user_data_encryption_chunked)
 
 rm -rf "${DIST}"
 for PRESET in "${PRESETS[@]}"; do
@@ -46,7 +47,6 @@ for PRESET in "${PRESETS[@]}"; do
     --committee "${BUILD_COMMITTEE}" \
     --group threshold \
     "${CIRCUIT_ARGS[@]}" \
-    --skip-vk \
     --skip-checksums \
     --no-clean-targets
 
@@ -54,6 +54,11 @@ for PRESET in "${PRESETS[@]}"; do
   mkdir -p "${PRESET_DIST}"
   for CIRCUIT in "${ARTIFACTS[@]}"; do
     cp "${TARGET}/${CIRCUIT}.json" "${PRESET_DIST}/${CIRCUIT}.json"
+  done
+  # The build writes the key next to the bytecode it just compiled and deletes it on each recompile,
+  # so a missing key fails here instead of shipping one from an older build.
+  for CIRCUIT in "${TREE_ARTIFACTS[@]}"; do
+    cp "${TARGET}/${CIRCUIT}.vk_recursive.json" "${PRESET_DIST}/${CIRCUIT}.vk.json"
   done
 
   case "${PRESET}" in

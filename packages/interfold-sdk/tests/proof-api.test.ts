@@ -17,16 +17,23 @@ const sdk = new InterfoldSDK({
 
 describe('proof API forwarding', () => {
   let publicKey: Uint8Array
-  let expectedKeyInputs: Pick<CircuitInputs, 'pk0is' | 'pk1is'>
+  let expectedKeyInputs: Pick<CircuitInputs, 'pk0is'>
   let encodeCoefficient: (value: bigint) => bigint
+  let encodeRawCoefficient: (value: bigint) => bigint
   const proof = { proof: new Uint8Array([1, 2, 3]), publicInputs: ['0x01'] }
 
   beforeAll(async () => {
     publicKey = await sdk.generatePublicKey()
     expectedKeyInputs = (await sdk.encryptNumberAndGenInputs(1n, publicKey)).circuitInputs
     const params = await sdk.getThresholdBfvParamsSet()
+    const fieldModulus = 21888242871839275222246405745257275088548364400416034343698204186575808495617n
     const qModT = params.moduli.reduce((product, modulus) => product * modulus, 1n) % params.plaintextModulus
-    encodeCoefficient = (value) => (qModT * value) % params.plaintextModulus
+    encodeRawCoefficient = (value) => (qModT * value) % params.plaintextModulus
+    encodeCoefficient = (value) => {
+      const residue = (qModT * value) % params.plaintextModulus
+      const centered = residue > params.plaintextModulus / 2n ? residue - params.plaintextModulus : residue
+      return (centered + fieldModulus) % fieldModulus
+    }
   })
 
   beforeEach(() => {
@@ -42,10 +49,11 @@ describe('proof API forwarding', () => {
     expect(generateProof).toHaveBeenCalledOnce()
     const [inputs] = vi.mocked(generateProof).mock.calls[0]
     expect(inputs.pk0is).toEqual(expectedKeyInputs.pk0is)
-    expect(inputs.pk1is).toEqual(expectedKeyInputs.pk1is)
+    // The circuit hard-codes the CRS as pk1, so the key's second component is not an input.
+    expect(inputs).not.toHaveProperty('pk1is')
     const expectedPlaintext = Array<bigint>(64).fill(0n)
     expectedPlaintext[63] = encodeCoefficient(1n)
-    if (kind === 'vector') expectedPlaintext[62] = encodeCoefficient(2n)
+    if (kind === 'vector') expectedPlaintext[62] = encodeRawCoefficient(2n)
     expect(inputs.k1.coefficients.map(BigInt)).toEqual(expectedPlaintext)
     expect(inputs.ct0is).toHaveLength(3)
     expect(inputs.ct1is).toHaveLength(3)

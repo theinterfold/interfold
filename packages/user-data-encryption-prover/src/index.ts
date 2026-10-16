@@ -38,22 +38,36 @@ export type UserDataEncryptionInputs = {
   ct1_commitment: Field
 }
 
-export type UserDataEncryptionCircuitBundle = {
-  ct0ChunkMain: CompiledCircuit
-  ct0PkCtCommit: CompiledCircuit
-  ct0EvalChunkIdentity: CompiledCircuit
-  userDataEncryptionCt0: CompiledCircuit
-  ct1ChunkMain: CompiledCircuit
-  ct1PkCtCommit: CompiledCircuit
-  ct1EvalChunkIdentity: CompiledCircuit
-  userDataEncryptionCt1: CompiledCircuit
-}
+export type UserDataEncryptionCircuitName =
+  | 'ct0ChunkMain'
+  | 'ct0PkCtCommit'
+  | 'ct0EvalChunkIdentity'
+  | 'userDataEncryptionCt0'
+  | 'ct1ChunkMain'
+  | 'ct1PkCtCommit'
+  | 'ct1EvalChunkIdentity'
+  | 'userDataEncryptionCt1'
 
-export type RecursiveProof = {
-  proof: Uint8Array
-  publicInputs: Field[]
+/** A circuit's recursive verification key, as bb.js `generateRecursiveProofArtifacts` returns it. */
+export type RecursiveVk = {
   vkAsFields: Field[]
   vkHash: Field
+}
+
+export type UserDataEncryptionCircuitBundle = Record<UserDataEncryptionCircuitName, CompiledCircuit> & {
+  /**
+   * Keys written with the bytecode (`<circuit>.vk_recursive.json` from `build:circuits`). bb.js
+   * rebuilds the whole circuit to return a key, so each shipped key saves one circuit build per
+   * encryption. A circuit without a key falls back to that rebuild. bb 5.2.0 writes the same key
+   * for `noir-recursive` and `noir-recursive-no-zk`, so one file serves both targets. A key that
+   * does not match the bytecode cannot forge anything: the parent proof fails to verify.
+   */
+  vks?: Partial<Record<UserDataEncryptionCircuitName, RecursiveVk>>
+}
+
+export type RecursiveProof = RecursiveVk & {
+  proof: Uint8Array
+  publicInputs: Field[]
 }
 
 export type UserDataEncryptionProofTree = {
@@ -81,13 +95,17 @@ const execute = async (circuit: CompiledCircuit, inputs: NoirInputMap): Promise<
 
 const prove = async (
   api: Barretenberg,
-  circuit: CompiledCircuit,
+  circuits: UserDataEncryptionCircuitBundle,
+  name: UserDataEncryptionCircuitName,
   inputs: NoirInputMap,
   verifierTarget: RecursiveTarget,
 ): Promise<RecursiveProof> => {
+  const circuit = circuits[name]
   const witness = await execute(circuit, inputs)
   const backend = new UltraHonkBackend(circuit.bytecode, api)
   const { proof, publicInputs } = await backend.generateProof(witness, { verifierTarget })
+  const shipped = circuits.vks?.[name]
+  if (shipped) return { proof, publicInputs, vkAsFields: shipped.vkAsFields, vkHash: shipped.vkHash }
   const artifacts = await backend.generateRecursiveProofArtifacts(proof, publicInputs.length, { verifierTarget })
   return { proof, publicInputs, vkAsFields: artifacts.vkAsFields, vkHash: artifacts.vkHash }
 }
@@ -137,7 +155,8 @@ const buildCt0TopLevelInputs = async (
   // Leaf outputs: pk0/ct0 commitments, k1/u/e0/r1 roots, gammas[L], k1(gamma), e0(gamma), r1(gamma)[L].
   const leaf = await prove(
     api,
-    circuits.ct0ChunkMain,
+    circuits,
+    'ct0ChunkMain',
     {
       u: inputs.u,
       e0: inputs.e0,
@@ -149,10 +168,11 @@ const buildCt0TopLevelInputs = async (
     'noir-recursive',
   )
   const gamma = leaf.publicInputs[6]
-  const ciphertext = await prove(api, circuits.ct0PkCtCommit, { ct0is: inputs.ct0is, gamma }, 'noir-recursive')
+  const ciphertext = await prove(api, circuits, 'ct0PkCtCommit', { ct0is: inputs.ct0is, gamma }, 'noir-recursive')
   const identity = await prove(
     api,
-    circuits.ct0EvalChunkIdentity,
+    circuits,
+    'ct0EvalChunkIdentity',
     {
       leaf_vk: leaf.vkAsFields,
       leaf_key_hash: leaf.vkHash,
@@ -187,7 +207,8 @@ const buildCt1TopLevelInputs = async (
   // Leaf outputs: pk1/ct1 commitments, u/e1/p1 roots, gamma, batching[L], e1(gamma), p1(gamma)[L].
   const leaf = await prove(
     api,
-    circuits.ct1ChunkMain,
+    circuits,
+    'ct1ChunkMain',
     {
       u: inputs.u,
       e1: inputs.e1,
@@ -198,10 +219,11 @@ const buildCt1TopLevelInputs = async (
     'noir-recursive',
   )
   const gamma = leaf.publicInputs[5]
-  const ciphertext = await prove(api, circuits.ct1PkCtCommit, { ct1is: inputs.ct1is, gamma }, 'noir-recursive')
+  const ciphertext = await prove(api, circuits, 'ct1PkCtCommit', { ct1is: inputs.ct1is, gamma }, 'noir-recursive')
   const identity = await prove(
     api,
-    circuits.ct1EvalChunkIdentity,
+    circuits,
+    'ct1EvalChunkIdentity',
     {
       leaf_vk: leaf.vkAsFields,
       leaf_key_hash: leaf.vkHash,
@@ -245,7 +267,7 @@ export const proveUserDataEncryptionTree = async (
   inputs: UserDataEncryptionInputs,
 ): Promise<UserDataEncryptionProofTree> => {
   const topLevelInputs = await buildUserDataEncryptionTopLevelInputs(api, circuits, inputs)
-  const ct0 = await prove(api, circuits.userDataEncryptionCt0, topLevelInputs.ct0, 'noir-recursive')
-  const ct1 = await prove(api, circuits.userDataEncryptionCt1, topLevelInputs.ct1, 'noir-recursive-no-zk')
+  const ct0 = await prove(api, circuits, 'userDataEncryptionCt0', topLevelInputs.ct0, 'noir-recursive')
+  const ct1 = await prove(api, circuits, 'userDataEncryptionCt1', topLevelInputs.ct1, 'noir-recursive-no-zk')
   return { ct0, ct1 }
 }
