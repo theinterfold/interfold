@@ -2796,10 +2796,253 @@ fn handle_verify_share_proofs(
                             recovered_address: None,
                         };
                     }
-                })
-            })
+                }
+            }
+            PartyVerificationResult {
+                sender_party_id: sender,
+                all_verified: true,
+                failed_signed_payload: None,
+                recovered_address: None,
+            }
+        })
+        .collect();
+
+    Ok(ComputeResponse::zk(
+        ZkResponse::VerifyShareProofs(VerifyShareProofsResponse { party_results }),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
+fn handle_verify_share_decryption_proofs(
+    prover: &ZkProver,
+    req: VerifyShareDecryptionProofsRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    let e3_id_str = request.e3_id.to_string();
+    let artifacts_dir =
+        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+
+    // ECDSA validation (signature recovery, signer consistency, e3_id match)
+    // is handled by ShareVerificationActor before dispatching to multithread.
+    // This function performs ZK-only proof verification.
+    let mut party_results = Vec::with_capacity(req.party_proofs.len());
+    for party in req.party_proofs {
+        let sender = party.sender_party_id;
+
+        // Guard: an empty ESM proof list would make verification vacuously true.
+        if party.signed_e_sm_decryption_proofs.is_empty() {
+            party_results.push(PartyVerificationResult {
+                sender_party_id: sender,
+                all_verified: false,
+                failed_signed_payload: None,
+                recovered_address: None,
+            });
+            continue;
+        }
+
+        let all_signed: Vec<&e3_events::SignedProofPayload> =
+            std::iter::once(&party.signed_sk_decryption_proof)
+                .chain(party.signed_e_sm_decryption_proofs.iter())
+                .collect();
+        let mut party_result = PartyVerificationResult {
+            sender_party_id: sender,
+            all_verified: true,
+            failed_signed_payload: None,
+            recovered_address: None,
+        };
+
+        for signed_proof in all_signed {
+            let expected_circuits = signed_proof.payload.proof_type.circuit_names();
+            if !expected_circuits.contains(&signed_proof.payload.proof.circuit) {
+                info!(
+                    "C4 circuit mismatch for party {}: expected {:?}, got {:?}",
+                    sender, expected_circuits, signed_proof.payload.proof.circuit
+                );
+                party_result.all_verified = false;
+                party_result.failed_signed_payload = Some(signed_proof.clone());
+                break;
+            }
+
+            let proof = &signed_proof.payload.proof;
+            match prover.verify_proof(proof, &e3_id_str, sender, &artifacts_dir) {
+                Ok(true) => {}
+                Ok(false) => {
+                    info!(
+                        "C4 ZK proof verification failed for party {} ({:?})",
+                        sender, signed_proof.payload.proof_type
+                    );
+                    party_result.all_verified = false;
+                    party_result.failed_signed_payload = Some(signed_proof.clone());
+                    break;
+                }
+                Err(error) => {
+                    return Err(ComputeRequestError::new(
+                        ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(format!(
+                            "C4 verifier process failed for party {sender} ({:?}): {error}",
+                            signed_proof.payload.proof_type
+                        ))),
+                        request.clone(),
+                    ));
+                }
+            }
+        }
+        party_results.push(party_result);
+    }
+
+    Ok(ComputeResponse::zk(
+        ZkResponse::VerifyShareDecryptionProofs(VerifyShareDecryptionProofsResponse {
+            party_results,
+        }),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
+/// The committee C7 is proven against: the canonical row for `(threshold_m, threshold_n)`.
+///
+/// Its `h` is the DKG's honest-party count, which the circuits are compiled with. The decryption
+/// shares C7 combines number `threshold_m + 1`, which equals `h` only at the minimum committee, so
+/// the share count cannot stand in for `h`.
+fn c7_committee(
+    threshold_m: usize,
+    threshold_n: usize,
+) -> anyhow::Result<e3_committee::CiphernodesCommittee> {
+    Ok(e3_committee::CiphernodesCommitteeSize::from_threshold(threshold_m, threshold_n)?.values())
+}
+
+#[cfg(test)]
+mod c7_committee_tests {
+    use super::c7_committee;
+    use e3_committee::CiphernodesCommitteeSize;
+
+    /// At the small committee `t + 1 = 10` shares are combined while `h = 14`; C7 still gets `h = 14`.
+    #[test]
+    fn c7_uses_the_canonical_h_not_the_share_count() {
+        for size in [
+            CiphernodesCommitteeSize::Minimum,
+            CiphernodesCommitteeSize::Micro,
+            CiphernodesCommitteeSize::Small,
+        ] {
+            let canonical = size.values();
+            assert_eq!(
+                c7_committee(canonical.threshold, canonical.n).unwrap(),
+                canonical
+            );
+        }
+        let small = CiphernodesCommitteeSize::Small.values();
+        assert_ne!(small.h, small.threshold + 1);
+    }
+}
+
+fn handle_decrypted_shares_aggregation_proof(
+    prover: &ZkProver,
+    mut req: DecryptedSharesAggregationProofRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    // 1. Build threshold BFV parameters from preset
+    let (threshold_params, _dkg_params) = build_pair_for_preset(req.params_preset)
+        .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {}", e)))?;
+
+    // 2. Sort d_share_polys by party ID — the Noir circuit requires
+    //    party_ids in strictly increasing order for Lagrange sign computation.
+    req.d_share_polys.sort_by_key(|(id, _)| *id);
+
+    // 3. The circuit expects exactly threshold + 1 shares for Lagrange interpolation.
+    //    We may have more honest parties than needed, so take the first threshold + 1.
+    let required = req.threshold_m as usize + 1;
+    if req.d_share_polys.len() > required {
+        req.d_share_polys.truncate(required);
+    }
+
+    // 4. Determine dimensions
+    let num_indices = req.plaintext.len();
+
+    for (party_id, shares) in &req.d_share_polys {
+        if shares.len() < num_indices {
+            return Err(make_zk_error(
+                &request,
+                format!(
+                    "party {} has {} shares but {} expected",
+                    party_id,
+                    shares.len(),
+                    num_indices
+                ),
+            ));
         }
     }
+
+    let mut proofs = Vec::with_capacity(num_indices);
+
+    // 4. For each ciphertext index, build circuit data and generate proof
+    for i in 0..num_indices {
+        // a. Extract per-party shares for index i, deserialize to Poly
+        let d_share_polys: Vec<fhe_math::rq::Poly<PowerBasis>> = req
+            .d_share_polys
+            .iter()
+            .map(|(_, shares)| try_poly_pb_from_bytes(&shares[i], &threshold_params))
+            .collect::<std::result::Result<_, _>>()
+            .map_err(|e| {
+                make_zk_error(&request, format!("d_share_polys[{}] deserialize: {}", i, e))
+            })?;
+
+        // b. Get party IDs (convert 0-based to 1-based for circuit)
+        let reconstructing_parties: Vec<usize> = req
+            .d_share_polys
+            .iter()
+            .map(|(id, _)| (*id as usize) + 1)
+            .collect();
+
+        // c. Decode plaintext at index i to Vec<u64>
+        let message_vec = e3_bfv_client::decode_bytes_to_vec_u64(&req.plaintext[i].extract_bytes())
+            .map_err(|e| make_zk_error(&request, format!("plaintext[{}] decode: {:?}", i, e)))?;
+
+        // d. The canonical committee row the circuits were compiled for.
+        let committee = c7_committee(req.threshold_m as usize, req.threshold_n as usize)
+            .map_err(|e| make_zk_error(&request, format!("committee: {}", e)))?;
+
+        // e. C7 uses noir-recursive-no-zk (non-ZK recursive); it is verified inside
+        // `DecryptionAggregator` via `verify_honk_proof_non_zk`. The EVM-facing proof for on-chain
+        // is `CircuitName::DecryptionAggregator`.
+        let circuit_data = DecryptedSharesAggregationCircuitData {
+            committee,
+            d_share_polys,
+            reconstructing_parties,
+            message_vec,
+        };
+
+        let circuit = DecryptedSharesAggregationCircuit;
+        let idx_work_id = format!("{}_c7_{}", zk_bb_work_id(&request), i);
+        let artifacts_dir = req
+            .params_preset
+            .artifacts_dir_for_committee(req.committee_size.as_str());
+        let proof = circuit
+            .prove_with_variant(
+                prover,
+                &req.params_preset,
+                &circuit_data,
+                &idx_work_id,
+                CircuitVariant::Default,
+                &artifacts_dir,
+            )
+            .map_err(|e| {
+                ComputeRequestError::new(
+                    ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(format!(
+                        "C7 proof[{}]: {}",
+                        i, e
+                    ))),
+                    request.clone(),
+                )
+            })?;
+        proofs.push(proof);
+    }
+
+    // 5. Return response
+    Ok(ComputeResponse::zk(
+        ZkResponse::DecryptedSharesAggregation(DecryptedSharesAggregationProofResponse { proofs }),
+        request.correlation_id,
+        request.e3_id,
+    ))
 }
 
 #[cfg(test)]
