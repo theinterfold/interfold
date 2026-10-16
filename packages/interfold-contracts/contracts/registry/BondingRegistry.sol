@@ -35,9 +35,7 @@ import { IBondingIdentity } from "../interfaces/IBondingIdentity.sol";
 import {
     BondingAdmissionStorage
 } from "../storage/BondingAdmissionStorage.sol";
-import {
-    BondingIdentityStorage
-} from "../storage/BondingIdentityStorage.sol";
+import { BondingIdentityStorage } from "../storage/BondingIdentityStorage.sol";
 import {
     BondOwnerHistoryStorage
 } from "../storage/BondOwnerHistoryStorage.sol";

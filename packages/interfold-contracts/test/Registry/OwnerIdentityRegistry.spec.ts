@@ -45,7 +45,9 @@ describe("OwnerIdentityRegistry", function () {
       "IdentityRegistered",
     );
     await time.increaseTo(expiresAt);
-    expect(await registry.isVerifiedAt(alice.address, expiresAt)).to.equal(true);
+    expect(await registry.isVerifiedAt(alice.address, expiresAt)).to.equal(
+      true,
+    );
     await time.increase(1);
     expect(
       await registry.isVerifiedAt(alice.address, await time.latest()),
@@ -81,7 +83,8 @@ describe("OwnerIdentityRegistry", function () {
   });
 
   it("keeps identifiers reserved through replacement, expiry, and revocation", async function () {
-    const { alice, bob, verifier, registry, expiresAt } = await loadFixture(setup);
+    const { alice, bob, verifier, registry, expiresAt } =
+      await loadFixture(setup);
     await registry.connect(alice).register("0x");
     await verifier.setResult(alice.address, NEW_ID, expiresAt + 1000);
     await registry.connect(alice).register("0x");
@@ -109,7 +112,8 @@ describe("OwnerIdentityRegistry", function () {
   });
 
   it("revokes from the current timestamp and keeps the identifier reserved", async function () {
-    const { alice, bob, verifier, registry, expiresAt } = await loadFixture(setup);
+    const { alice, bob, verifier, registry, expiresAt } =
+      await loadFixture(setup);
     await registry.connect(alice).register("0x");
     const snapshot = await time.latest();
     expect(await registry.revocationCountAt(snapshot)).to.equal(0);
@@ -158,10 +162,12 @@ describe("OwnerIdentityRegistry", function () {
   it("restricts verifier changes and revocation to governance and preserves existing credentials when verification is disabled", async function () {
     const { alice, registry } = await loadFixture(setup);
     await registry.connect(alice).register("0x");
-    await expect(registry.connect(alice).setVerifier(ethers.ZeroAddress))
-      .to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
-    await expect(registry.connect(alice).revoke(ID))
-      .to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
+    await expect(
+      registry.connect(alice).setVerifier(ethers.ZeroAddress),
+    ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
+    await expect(
+      registry.connect(alice).revoke(ID),
+    ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
     await expect(registry.revoke(NEW_ID))
       .to.be.revertedWithCustomError(registry, "UnknownIdentity")
       .withArgs(NEW_ID);
@@ -172,8 +178,9 @@ describe("OwnerIdentityRegistry", function () {
     expect(
       await registry.isVerifiedAt(alice.address, await time.latest()),
     ).to.equal(true);
-    await expect(registry.connect(alice).register("0x"))
-      .to.be.revertedWithCustomError(registry, "VerifierNotSet");
+    await expect(
+      registry.connect(alice).register("0x"),
+    ).to.be.revertedWithCustomError(registry, "VerifierNotSet");
   });
 
   it("accepts an unset initial verifier and uses two-step governance transfer", async function () {
@@ -182,8 +189,9 @@ describe("OwnerIdentityRegistry", function () {
       governance.address,
       ethers.ZeroAddress,
     ]);
-    await expect(registry.connect(alice).register("0x"))
-      .to.be.revertedWithCustomError(registry, "VerifierNotSet");
+    await expect(
+      registry.connect(alice).register("0x"),
+    ).to.be.revertedWithCustomError(registry, "VerifierNotSet");
     await registry.transferOwnership(alice.address);
     expect(await registry.owner()).to.equal(governance.address);
     await registry.connect(alice).acceptOwnership();

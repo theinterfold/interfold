@@ -263,7 +263,8 @@ library BondingEligibilityLib {
         if (!BondingAdmissionLib.allows(operator, timepoint, policy))
             return false;
         if (policy.admissionsPaused) {
-            BondingEligibilityStorage.EligibilityLayout storage state = _layout();
+            BondingEligibilityStorage.EligibilityLayout
+                storage state = _layout();
             uint208 version = state.configurationVersions.upperLookupRecent(
                 policy.pauseTimepoint
             );
@@ -271,7 +272,8 @@ library BondingEligibilityLib {
                 version == 0 ||
                 state.operatorActiveVersions[operator].upperLookupRecent(
                     policy.pauseTimepoint
-                ) != version
+                ) !=
+                version
             ) return false;
         }
         return BondingIdentityLib.allows(operator, timepoint);

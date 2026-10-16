@@ -9,7 +9,9 @@ import {
 } from "@openzeppelin/contracts/utils/structs/Checkpoints.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import { IBondingIdentity } from "../interfaces/IBondingIdentity.sol";
-import { IOwnerIdentityRegistry } from "../interfaces/IOwnerIdentityRegistry.sol";
+import {
+    IOwnerIdentityRegistry
+} from "../interfaces/IOwnerIdentityRegistry.sol";
 
 /// @notice Maintains a conservative count of active bond owners for request admission.
 library BondOwnerCapacityLib {
@@ -56,7 +58,8 @@ library BondOwnerCapacityLib {
     /// @dev An unchanged legacy operator enters the count on its first status refresh.
     function sync(address operator, address owner, bool active) internal {
         BondOwnerHistoryStorage.OwnerHistoryLayout storage state = layout();
-        IBondingIdentity.IdentityPolicy memory policy = _prepareIdentityCapacity();
+        IBondingIdentity.IdentityPolicy
+            memory policy = _prepareIdentityCapacity();
         BondOwnerHistoryStorage.CountedOperator storage counted = state
             .countedOperators[operator];
         address previous = counted.version == state.capacityVersion
@@ -73,7 +76,8 @@ library BondOwnerCapacityLib {
     /// @dev Transfers cannot enroll unrefreshed or inactive operators into the count.
     function transfer(address operator, address owner) internal {
         BondOwnerHistoryStorage.OwnerHistoryLayout storage state = layout();
-        IBondingIdentity.IdentityPolicy memory policy = _prepareIdentityCapacity();
+        IBondingIdentity.IdentityPolicy
+            memory policy = _prepareIdentityCapacity();
         BondOwnerHistoryStorage.CountedOperator storage counted = state
             .countedOperators[operator];
         if (
@@ -123,7 +127,9 @@ library BondOwnerCapacityLib {
         private
         returns (IBondingIdentity.IdentityPolicy memory policy)
     {
-        policy = IBondingIdentity(address(this)).identityPolicyAt(block.timestamp);
+        policy = IBondingIdentity(address(this)).identityPolicyAt(
+            block.timestamp
+        );
         if (
             layout().capacityVersion == 0 ||
             !_identityCapacityIsFresh(policy, block.timestamp)
@@ -138,8 +144,11 @@ library BondOwnerCapacityLib {
         BondOwnerHistoryStorage.OwnerHistoryLayout storage state = layout();
         uint48 key = SafeCast.toUint48(timepoint);
         return
-            timepoint <= state.capacityIdentityExpiries.upperLookupRecent(key) &&
-            IOwnerIdentityRegistry(policy.registry).revocationCountAt(timepoint) ==
+            timepoint <=
+            state.capacityIdentityExpiries.upperLookupRecent(key) &&
+            IOwnerIdentityRegistry(policy.registry).revocationCountAt(
+                timepoint
+            ) ==
             state.capacityRevocationCounts.upperLookupRecent(key);
     }
 
@@ -148,9 +157,8 @@ library BondOwnerCapacityLib {
         address owner
     ) private {
         if (!policy.required || owner == address(0)) return;
-        (, uint48 expiresAt) = IOwnerIdentityRegistry(policy.registry).identityOf(
-            owner
-        );
+        (, uint48 expiresAt) = IOwnerIdentityRegistry(policy.registry)
+            .identityOf(owner);
         BondOwnerHistoryStorage.OwnerHistoryLayout storage state = layout();
         if (expiresAt < state.capacityIdentityExpiries.latest())
             state.capacityIdentityExpiries.push(

@@ -59,13 +59,11 @@ library BondingOwnershipLib {
             uint208(uint160(newOwner))
         );
         BondingAdmissionLib.start(operator);
-        bool allowed =
-            BondingAdmissionLib.allows(
-                operator,
-                block.timestamp,
-                BondingAdmissionLib.policyAt(block.timestamp)
-            ) &&
-            BondingIdentityLib.allows(operator, block.timestamp);
+        bool allowed = BondingAdmissionLib.allows(
+            operator,
+            block.timestamp,
+            BondingAdmissionLib.policyAt(block.timestamp)
+        ) && BondingIdentityLib.allows(operator, block.timestamp);
         BondOwnerCapacityLib.transfer(
             operator,
             allowed ? newOwner : address(0)

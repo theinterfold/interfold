@@ -12,7 +12,9 @@ import {
 } from "@openzeppelin/contracts/utils/structs/Checkpoints.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import { IIdentityVerifier } from "../interfaces/IIdentityVerifier.sol";
-import { IOwnerIdentityRegistry } from "../interfaces/IOwnerIdentityRegistry.sol";
+import {
+    IOwnerIdentityRegistry
+} from "../interfaces/IOwnerIdentityRegistry.sol";
 
 /// @notice Reserves uniqueness identifiers and checkpoints each owner's credential expiry.
 contract OwnerIdentityRegistry is IOwnerIdentityRegistry, Ownable2Step {
@@ -24,7 +26,9 @@ contract OwnerIdentityRegistry is IOwnerIdentityRegistry, Ownable2Step {
     }
 
     address public override verifier;
-    mapping(bytes32 identityId => address owner) public override ownerOfIdentity;
+    mapping(bytes32 identityId => address owner)
+        public
+        override ownerOfIdentity;
     mapping(bytes32 identityId => bool revoked) private _revoked;
     mapping(address owner => Identity identity) private _identities;
     mapping(address owner => Checkpoints.Trace208 history) private _history;
@@ -62,7 +66,10 @@ contract OwnerIdentityRegistry is IOwnerIdentityRegistry, Ownable2Step {
         // Keep every reservation so a replaced credential cannot verify another owner.
         ownerOfIdentity[identityId] = msg.sender;
         _identities[msg.sender] = Identity(identityId, expiresAt);
-        _history[msg.sender].push(SafeCast.toUint48(block.timestamp), expiresAt);
+        _history[msg.sender].push(
+            SafeCast.toUint48(block.timestamp),
+            expiresAt
+        );
         emit IdentityRegistered(msg.sender, identityId, expiresAt);
     }
 
@@ -102,8 +109,11 @@ contract OwnerIdentityRegistry is IOwnerIdentityRegistry, Ownable2Step {
         return (identity.identityId, identity.expiresAt);
     }
 
-    function revocationCountAt(uint256 timepoint) external view returns (uint256) {
-        return _revocationCounts.upperLookupRecent(SafeCast.toUint48(timepoint));
+    function revocationCountAt(
+        uint256 timepoint
+    ) external view returns (uint256) {
+        return
+            _revocationCounts.upperLookupRecent(SafeCast.toUint48(timepoint));
     }
 
     function _setVerifier(address newVerifier) private {

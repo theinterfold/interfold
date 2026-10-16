@@ -13,16 +13,20 @@ const { loadFixture, time } = networkHelpers;
 async function setup() {
   const ctx = await deployInterfoldSystem({ submissionWindow: 600 });
   const verifier = await ethers.deployContract("MockIdentityVerifier");
-  const identityRegistry = await ethers.deployContract("OwnerIdentityRegistry", [
-    await ctx.owner.getAddress(),
-    await verifier.getAddress(),
-  ]);
+  const identityRegistry = await ethers.deployContract(
+    "OwnerIdentityRegistry",
+    [await ctx.owner.getAddress(), await verifier.getAddress()],
+  );
   const signers = await ethers.getSigners();
   return { ...ctx, verifier, identityRegistry, newOwner: signers[11] };
 }
 type Context = Awaited<ReturnType<typeof setup>>;
 
-async function verify(ctx: Context, owner = ctx.operators[0], expiresAt?: number) {
+async function verify(
+  ctx: Context,
+  owner = ctx.operators[0],
+  expiresAt?: number,
+) {
   const address = await owner.getAddress();
   const id = ethers.id(address);
   const expiry = expiresAt ?? (await time.latest()) + 10_000;
@@ -48,7 +52,9 @@ async function refresh(ctx: Context) {
 }
 
 async function capacity(ctx: Context, at?: number) {
-  return ctx.bondingRegistry.committeeOwnerCapacity(at ?? (await time.latest()));
+  return ctx.bondingRegistry.committeeOwnerCapacity(
+    at ?? (await time.latest()),
+  );
 }
 
 describe("Bond-owner identity admission", function () {
@@ -103,7 +109,9 @@ describe("Bond-owner identity admission", function () {
     const b = ctx.bondingRegistry;
     const sharedOwner = await ctx.operators[0].getAddress();
     const transferred = await ctx.operators[1].getAddress();
-    await b.connect(ctx.operators[1]).proposeBondOwner(transferred, sharedOwner);
+    await b
+      .connect(ctx.operators[1])
+      .proposeBondOwner(transferred, sharedOwner);
     await b.connect(ctx.operators[0]).acceptBondOwner(transferred);
     const { expiresAt } = await verify(
       ctx,
@@ -202,7 +210,9 @@ describe("Bond-owner identity admission", function () {
     await b.connect(operator).proposeBondOwner(address, ctx.newOwner.address);
     await b.connect(ctx.newOwner).acceptBondOwner(address);
     const changed = await time.latest();
-    expect(await b.bondOwnerAt(address, changed)).to.equal(ctx.newOwner.address);
+    expect(await b.bondOwnerAt(address, changed)).to.equal(
+      ctx.newOwner.address,
+    );
     expect(await eligible(ctx, operator, before)).to.equal(true);
     expect(await eligible(ctx, operator, changed)).to.equal(false);
     expect(await capacity(ctx)).to.equal(0);
@@ -248,8 +258,8 @@ describe("Bond-owner identity admission", function () {
         .to.be.revertedWithCustomError(b, "InvalidIdentityRegistry")
         .withArgs(registry);
     }
-    await expect(b.setIdentityPolicy(await ctx.verifier.getAddress(), true)).to.be
-      .reverted;
+    await expect(b.setIdentityPolicy(await ctx.verifier.getAddress(), true)).to
+      .be.reverted;
     expect((await b.identityPolicyAt(await time.latest())).required).to.equal(
       false,
     );
