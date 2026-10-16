@@ -19,5 +19,7 @@ abstract contract BondOwnerHistoryStorage {
         mapping(address operator => CountedOperator counted) countedOperators;
         Checkpoints.Trace208 activeOwnerCounts;
         uint256 capacityVersion;
+        Checkpoints.Trace208 capacityIdentityExpiries;
+        Checkpoints.Trace208 capacityRevocationCounts;
     }
 }

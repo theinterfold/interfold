@@ -40,6 +40,10 @@ describe("OwnerIdentityRegistry", function () {
     expect(await registry.isVerifiedAt(alice.address, registeredAt)).to.equal(
       true,
     );
+    await expect(registry.connect(alice).register("0x1234")).not.to.emit(
+      registry,
+      "IdentityRegistered",
+    );
     await time.increaseTo(expiresAt);
     expect(await registry.isVerifiedAt(alice.address, expiresAt)).to.equal(true);
     await time.increase(1);
@@ -51,10 +55,15 @@ describe("OwnerIdentityRegistry", function () {
     );
   });
 
-  it("renews without making an expired historical interval valid", async function () {
+  it("rejects a shorter replacement and renews without filling an expired historical interval", async function () {
     const { alice, verifier, registry, expiresAt } = await loadFixture(setup);
     await registry.connect(alice).register("0x");
     const first = await time.latest();
+    await verifier.setResult(alice.address, NEW_ID, expiresAt - 1);
+    await expect(registry.connect(alice).register("0x"))
+      .to.be.revertedWithCustomError(registry, "IdentityExpiryReduced")
+      .withArgs(expiresAt, expiresAt - 1);
+    expect(await registry.ownerOfIdentity(NEW_ID)).to.equal(ethers.ZeroAddress);
     await time.increaseTo(expiresAt + 1);
     await verifier.setResult(alice.address, ID, expiresAt + 1000);
     await registry.connect(alice).register("0x");
@@ -103,9 +112,13 @@ describe("OwnerIdentityRegistry", function () {
     const { alice, bob, verifier, registry, expiresAt } = await loadFixture(setup);
     await registry.connect(alice).register("0x");
     const snapshot = await time.latest();
+    expect(await registry.revocationCountAt(snapshot)).to.equal(0);
     await expect(registry.revoke(ID))
       .to.emit(registry, "IdentityRevoked")
       .withArgs(alice.address, ID);
+    const revokedAt = await time.latest();
+    expect(await registry.revocationCountAt(revokedAt)).to.equal(1);
+    expect(await registry.revocationCountAt(snapshot)).to.equal(0);
     expect(await registry.identityOf(alice.address)).to.deep.equal([
       ethers.ZeroHash,
       0n,
@@ -121,12 +134,16 @@ describe("OwnerIdentityRegistry", function () {
         .to.be.revertedWithCustomError(registry, "IdentityIsRevoked")
         .withArgs(ID);
     }
-    await verifier.setResult(alice.address, NEW_ID, expiresAt + 1000);
+    await verifier.setResult(alice.address, NEW_ID, expiresAt - 1);
     await registry.connect(alice).register("0x");
     expect(await registry.ownerOfIdentity(ID)).to.equal(alice.address);
     expect(
       await registry.isVerifiedAt(alice.address, await time.latest()),
     ).to.equal(true);
+    await registry.revoke(NEW_ID);
+    expect(await registry.revocationCountAt(await time.latest())).to.equal(2);
+    expect(await registry.revocationCountAt(revokedAt)).to.equal(1);
+    expect(await registry.revocationCountAt(snapshot)).to.equal(0);
   });
 
   it("rejects expired evidence without reserving its identifier", async function () {

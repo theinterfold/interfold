@@ -28,6 +28,7 @@ contract OwnerIdentityRegistry is IOwnerIdentityRegistry, Ownable2Step {
     mapping(bytes32 identityId => bool revoked) private _revoked;
     mapping(address owner => Identity identity) private _identities;
     mapping(address owner => Checkpoints.Trace208 history) private _history;
+    Checkpoints.Trace208 private _revocationCounts;
 
     constructor(
         address initialOwner,
@@ -51,6 +52,13 @@ contract OwnerIdentityRegistry is IOwnerIdentityRegistry, Ownable2Step {
         if (reservedOwner != address(0) && reservedOwner != msg.sender)
             revert IdentityInUse(identityId, reservedOwner);
 
+        Identity storage current = _identities[msg.sender];
+        // Keep counted expiry bounds valid until a revocation invalidates capacity.
+        if (expiresAt < current.expiresAt)
+            revert IdentityExpiryReduced(current.expiresAt, expiresAt);
+        if (current.identityId == identityId && current.expiresAt == expiresAt)
+            return (identityId, expiresAt);
+
         // Keep every reservation so a replaced credential cannot verify another owner.
         ownerOfIdentity[identityId] = msg.sender;
         _identities[msg.sender] = Identity(identityId, expiresAt);
@@ -62,6 +70,10 @@ contract OwnerIdentityRegistry is IOwnerIdentityRegistry, Ownable2Step {
         address identityOwner = ownerOfIdentity[identityId];
         if (identityOwner == address(0)) revert UnknownIdentity(identityId);
         _revoked[identityId] = true;
+        _revocationCounts.push(
+            SafeCast.toUint48(block.timestamp),
+            _revocationCounts.latest() + 1
+        );
         if (_identities[identityOwner].identityId == identityId) {
             delete _identities[identityOwner];
             _history[identityOwner].push(SafeCast.toUint48(block.timestamp), 0);
@@ -88,6 +100,10 @@ contract OwnerIdentityRegistry is IOwnerIdentityRegistry, Ownable2Step {
     ) external view returns (bytes32 identityId, uint48 expiresAt) {
         Identity storage identity = _identities[identityOwner];
         return (identity.identityId, identity.expiresAt);
+    }
+
+    function revocationCountAt(uint256 timepoint) external view returns (uint256) {
+        return _revocationCounts.upperLookupRecent(SafeCast.toUint48(timepoint));
     }
 
     function _setVerifier(address newVerifier) private {

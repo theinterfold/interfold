@@ -21,10 +21,12 @@ interface IOwnerIdentityRegistry {
     error IdentityInUse(bytes32 identityId, address owner);
     error IdentityIsRevoked(bytes32 identityId);
     error IdentityExpired(bytes32 identityId, uint48 expiresAt);
+    error IdentityExpiryReduced(uint48 currentExpiry, uint48 expiresAt);
     error UnknownIdentity(bytes32 identityId);
 
     /// @notice Registers or renews the caller's credential through the configured verifier.
-    /// @dev The caller is the bond owner. A Safe owner calls this from the Safe.
+    /// @dev The caller is the bond owner. A Safe owner calls this from the Safe. A replacement
+    ///      cannot reduce the current expiry; governance must revoke first to invalidate capacity.
     function register(
         bytes calldata evidence
     ) external returns (bytes32 identityId, uint48 expiresAt);
@@ -43,6 +45,9 @@ interface IOwnerIdentityRegistry {
         address owner,
         uint256 timepoint
     ) external view returns (bool);
+
+    /// @notice The number of governance revocations at a timestamp, used to invalidate capacity.
+    function revocationCountAt(uint256 timepoint) external view returns (uint256);
 
     /// @notice The owner's current identifier and expiry; zero values when it has none.
     function identityOf(

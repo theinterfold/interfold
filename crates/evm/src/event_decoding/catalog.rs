@@ -286,6 +286,11 @@ const BONDING_REGISTRY: &[EvmEventDefinition] = &[
         "EligibilityConfigurationVersionUpdated(uint256)",
         None,
     ),
+    EvmEventDefinition::new(
+        "IdentityPolicyUpdated",
+        "IdentityPolicyUpdated(uint48,address,bool)",
+        None,
+    ),
     EvmEventDefinition::new("Initialized", "Initialized(uint64)", None),
     EvmEventDefinition::new(
         "CiphernodeBondUpdated",
