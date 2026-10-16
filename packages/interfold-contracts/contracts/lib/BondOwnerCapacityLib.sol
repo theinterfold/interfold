@@ -12,6 +12,7 @@ import { IBondingIdentity } from "../interfaces/IBondingIdentity.sol";
 import {
     IOwnerIdentityRegistry
 } from "../interfaces/IOwnerIdentityRegistry.sol";
+import { BondingIdentityLib } from "./BondingIdentityLib.sol";
 
 /// @notice Maintains a conservative count of active bond owners for request admission.
 library BondOwnerCapacityLib {
@@ -40,9 +41,10 @@ library BondOwnerCapacityLib {
         state.activeOwnerCounts.push(timepoint, 0);
         // An empty capacity version has no counted credential that can expire.
         state.capacityIdentityExpiries.push(timepoint, type(uint48).max);
-        IBondingIdentity.IdentityPolicy memory policy = IBondingIdentity(
-            address(this)
-        ).identityPolicyAt(timepoint);
+        // Read storage, not address(this): the initializer runs inside the proxy constructor,
+        // where the proxy has no code yet.
+        IBondingIdentity.IdentityPolicy memory policy = BondingIdentityLib
+            .policyAt(timepoint);
         state.capacityRevocationCounts.push(
             timepoint,
             policy.required
@@ -113,9 +115,8 @@ library BondOwnerCapacityLib {
     }
 
     function countAt(uint256 timepoint) internal view returns (uint256) {
-        IBondingIdentity.IdentityPolicy memory policy = IBondingIdentity(
-            address(this)
-        ).identityPolicyAt(timepoint);
+        IBondingIdentity.IdentityPolicy memory policy = BondingIdentityLib
+            .policyAt(timepoint);
         if (!_identityCapacityIsFresh(policy, timepoint)) return 0;
         return
             layout().activeOwnerCounts.upperLookupRecent(
@@ -127,9 +128,7 @@ library BondOwnerCapacityLib {
         private
         returns (IBondingIdentity.IdentityPolicy memory policy)
     {
-        policy = IBondingIdentity(address(this)).identityPolicyAt(
-            block.timestamp
-        );
+        policy = BondingIdentityLib.policyAt(block.timestamp);
         if (
             layout().capacityVersion == 0 ||
             !_identityCapacityIsFresh(policy, block.timestamp)
