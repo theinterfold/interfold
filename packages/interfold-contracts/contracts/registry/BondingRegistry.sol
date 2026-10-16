@@ -31,6 +31,7 @@ import { ExitQueueLib } from "../lib/ExitQueueLib.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { IBondOwnerHistory } from "../interfaces/IBondOwnerHistory.sol";
 import { IBondingAdmission } from "../interfaces/IBondingAdmission.sol";
+import { IBondingIdentity } from "../interfaces/IBondingIdentity.sol";
 import {
     BondingAdmissionStorage
 } from "../storage/BondingAdmissionStorage.sol";
@@ -54,6 +55,7 @@ contract BondingRegistry is
     IBondingRegistry,
     IBondOwnerHistory,
     IBondingAdmission,
+    IBondingIdentity,
     BondingAdmissionStorage,
     BondOwnerHistoryStorage,
     BondingEligibilityStorage,
@@ -390,6 +392,21 @@ contract BondingRegistry is
         uint256 timepoint
     ) external view returns (AdmissionPolicy memory) {
         return BondingEligibilityLib.admissionPolicyAt(timepoint);
+    }
+
+    /// @inheritdoc IBondingIdentity
+    function setIdentityPolicy(
+        address identityRegistry,
+        bool required
+    ) external onlyOwner {
+        BondingEligibilityLib.setIdentityPolicy(identityRegistry, required);
+    }
+
+    /// @inheritdoc IBondingIdentity
+    function identityPolicyAt(
+        uint256 timepoint
+    ) external view returns (IdentityPolicy memory) {
+        return BondingEligibilityLib.identityPolicyAt(timepoint);
     }
 
     /// @inheritdoc IBondingRegistry
@@ -1485,7 +1502,8 @@ contract BondingRegistry is
     ////////////////////////////////////////////////////////////
 
     /// @notice ERC-165 interface detection. Advertises
-    ///         {IBondingRegistry}, {IBondOwnerHistory}, {IBondingAdmission}, and {IERC165}.
+    ///         {IBondingRegistry}, {IBondOwnerHistory}, {IBondingAdmission},
+    ///         {IBondingIdentity}, and {IERC165}.
     function supportsInterface(
         bytes4 interfaceId
     ) external pure virtual returns (bool) {
@@ -1493,6 +1511,7 @@ contract BondingRegistry is
             interfaceId == type(IBondingRegistry).interfaceId ||
             interfaceId == type(IBondOwnerHistory).interfaceId ||
             interfaceId == type(IBondingAdmission).interfaceId ||
+            interfaceId == type(IBondingIdentity).interfaceId ||
             interfaceId == type(IERC165).interfaceId;
     }
 
