@@ -89,7 +89,7 @@ pub global {prefix}_E0_QUOTIENT_BOUNDS: [Field; L] = [{e0_quotient_bounds}];
 
 /************************************
 -------------------------------------
-user_data_encryption_ct0 (CIRCUIT A - CT0 ENCRYPTION)
+user_data_encryption: ct0 leg
 -------------------------------------
 ************************************/
 
@@ -108,7 +108,7 @@ pub global {prefix}_CT0_CONFIGS: UserDataEncryptionCt0Configs<N, L> = UserDataEn
 
 /************************************
 -------------------------------------
-user_data_encryption_ct1 (CIRCUIT B - CT1 ENCRYPTION)
+user_data_encryption: ct1 leg
 -------------------------------------
 ************************************/
 

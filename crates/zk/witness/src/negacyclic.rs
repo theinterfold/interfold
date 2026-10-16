@@ -266,5 +266,4 @@ mod tests {
         let full = Polynomial::new(vec![BigInt::from(5); n]);
         assert!(ntt_negacyclic_mul(&short, &full, n).is_none());
     }
-
 }

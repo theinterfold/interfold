@@ -107,7 +107,8 @@ fn assert_terminal_vk_rejected(
 
 #[tokio::test]
 async fn chunked_c2_chain_rejects_artifact_vk_substitution() {
-    let preset = BfvPreset::InsecureThreshold;
+    // Chunked C2 is the l-BFV path; the trBFV path proves C2 in one proof.
+    let preset = BfvPreset::InsecureThresholdLbfv;
     let Some(bb) = find_bb().await else {
         println!("skipping: bb not found");
         return;

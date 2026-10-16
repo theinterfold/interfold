@@ -607,7 +607,7 @@ pub global RLK_AGGREGATION_CONFIGS: RlkAggregationConfigs<L> = RlkAggregationCon
         &render_globals(&[&pkagg_globals]),
     );
     let udec_section = section(
-        "user_data_encryption, user_data_encryption_ct0, user_data_encryption_ct1 (trBFV)",
+        "user_data_encryption (trBFV)",
         &render_globals(&[&udec_globals]),
     );
     // Chunk grid of the l-BFV ct0/ct1 pipeline: not a cryptographic parameter, just how the

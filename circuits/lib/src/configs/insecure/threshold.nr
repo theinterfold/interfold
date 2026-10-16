@@ -519,7 +519,7 @@ pub global PK_AGGREGATION_CONFIGS: PkAggregationConfigs<L> = PkAggregationConfig
 
 /************************************
 -------------------------------------
-user_data_encryption, user_data_encryption_ct0, user_data_encryption_ct1 (trBFV)
+user_data_encryption (trBFV)
 -------------------------------------
 ************************************/
 
