@@ -258,13 +258,13 @@ describe("Bond-owner identity admission", function () {
         .to.be.revertedWithCustomError(b, "InvalidIdentityRegistry")
         .withArgs(registry);
     }
-    await expect(b.setIdentityPolicy(await ctx.verifier.getAddress(), true)).to
-      .be.reverted;
+    await expect(
+      b.setIdentityPolicy(await ctx.verifier.getAddress(), true),
+    ).to.be.revert(ethers);
     expect((await b.identityPolicyAt(await time.latest())).required).to.equal(
       false,
     );
-    await expect(b.setIdentityPolicy(ethers.ZeroAddress, false)).not.to.be
-      .reverted;
+    await b.setIdentityPolicy(ethers.ZeroAddress, false);
   });
 
   it("still applies the cooldown to a verified owner", async function () {
