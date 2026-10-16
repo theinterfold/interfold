@@ -17,7 +17,10 @@ use alloy::{
 };
 use anyhow::{ensure, Context, Result};
 use e3_config::current_node_release;
-use e3_utils::require_successful_receipt;
+use e3_utils::{
+    require_successful_receipt, retry_with_backoff, to_retry, RPC_RETRY_ATTEMPTS,
+    RPC_RETRY_FIRST_DELAY_MS,
+};
 use tracing::info;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,7 +80,6 @@ pub async fn ensure_node_release<P>(
 where
     P: Provider + WalletProvider + Clone + 'static,
 {
-    let operator = provider.provider().default_signer_address();
     let interfold = IInterfold::new(interfold_address, provider.provider());
     let (controller_address, configured_bonding, configured_ciphernode_registry) =
         tokio::try_join!(
@@ -106,13 +108,11 @@ where
     let (
         required_protocol_version,
         required_node_generation,
-        acknowledged_release,
         controller_bonding,
         controller_ciphernode_registry,
     ) = tokio::try_join!(
         async { controller.requiredProtocolVersion().call().await },
         async { controller.requiredNodeGeneration().call().await },
-        async { controller.operatorNodeRelease(operator).call().await },
         async { controller.bondingRegistry().call().await },
         async { controller.ciphernodeRegistry().call().await },
     )?;
@@ -132,11 +132,49 @@ where
         )
     })?;
 
+    acknowledge_release_with_retry(&provider, controller_address, bonding_address).await
+}
+
+/// Acknowledge this release on chain unless the operator already has. A failed read or transaction
+/// does not stop the node at once: each attempt reads the acknowledged release and operator status
+/// again, so an attempt after a mined acknowledgment sends nothing when the operator is active or
+/// not registered.
+async fn acknowledge_release_with_retry<P>(
+    provider: &EthProvider<P>,
+    controller_address: Address,
+    bonding_address: Address,
+) -> Result<()>
+where
+    P: Provider + WalletProvider + Clone + 'static,
+{
+    retry_with_backoff(
+        move || async move {
+            acknowledge_release(provider, controller_address, bonding_address)
+                .await
+                .map_err(to_retry)
+        },
+        RPC_RETRY_ATTEMPTS,
+        RPC_RETRY_FIRST_DELAY_MS,
+    )
+    .await
+}
+
+async fn acknowledge_release<P>(
+    provider: &EthProvider<P>,
+    controller_address: Address,
+    bonding_address: Address,
+) -> Result<()>
+where
+    P: Provider + WalletProvider + Clone + 'static,
+{
+    let operator = provider.provider().default_signer_address();
+    let controller = INodeReleaseRegistry::new(controller_address, provider.provider());
     let bonding = IBondingRegistry::new(bonding_address, provider.provider());
-    let (registered, active) = tokio::try_join!(
-        async { bonding.isRegistered(operator).call().await },
-        async { bonding.isActive(operator).call().await },
-    )?;
+    let release = current_node_release();
+    let release_id = release.release_id();
+    let acknowledged_release = controller.operatorNodeRelease(operator).call().await?;
+    let registered = bonding.isRegistered(operator).call().await?;
+    let active = bonding.isActive(operator).call().await?;
     if acknowledged_release.releaseId == release_id
         && acknowledged_release.protocolVersion == release.protocol_version
         && acknowledged_release.nodeGeneration == release.node_generation
@@ -157,7 +195,7 @@ where
         node_generation = release.node_generation,
         "Acknowledging ciphernode release"
     );
-    let _nonce_guard = transaction_nonce_guard(&provider).await;
+    let _nonce_guard = transaction_nonce_guard(provider).await;
     let current_nonce = provider
         .provider()
         .get_transaction_count(operator)
@@ -217,6 +255,42 @@ mod tests {
             ..base
         })
         .is_err());
+    }
+
+    /// A failed read does not stop the node at startup: the next attempt reads the acknowledged
+    /// release again, finds it current and sends nothing.
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_release_read_is_retried() -> Result<()> {
+        use alloy::{
+            network::EthereumWallet, primitives::Bytes, providers::ProviderBuilder,
+            signers::local::PrivateKeySigner, sol_types::SolValue, transports::mock::Asserter,
+        };
+
+        let asserter = Asserter::new();
+        asserter.push_success(&"0x1");
+        let provider = EthProvider::new(
+            ProviderBuilder::new()
+                .wallet(EthereumWallet::from(PrivateKeySigner::random()))
+                .connect_mocked_client(asserter.clone()),
+        )
+        .await?;
+        let release = current_node_release();
+        asserter.push_failure_msg("connection reset");
+        asserter.push_success(&Bytes::from(
+            INodeReleaseRegistry::OperatorNodeRelease {
+                releaseId: release.release_id(),
+                protocolVersion: release.protocol_version,
+                nodeGeneration: release.node_generation,
+            }
+            .abi_encode(),
+        ));
+        // Not registered, so the acknowledged release is enough.
+        asserter.push_success(&Bytes::from(false.abi_encode()));
+        asserter.push_success(&Bytes::from(false.abi_encode()));
+
+        acknowledge_release_with_retry(&provider, Address::ZERO, Address::ZERO).await?;
+        assert!(asserter.read_q().is_empty());
+        Ok(())
     }
 
     #[tokio::test]

@@ -18,8 +18,10 @@ the code does not meet yet.
 
 - Before EVM readers and protocol actors start, each enabled ciphernode chain reads the
   governance-selected `NodeReleaseRegistry`, verifies that the compiled compatibility values meet
-  the required policy, and acknowledges its exact release ID and values on-chain. A missing
-  controller or stale protocol/generation is a startup error. — `e3_evm::node_release`;
+  the required policy, and acknowledges its exact release ID and values on-chain. The acknowledgment
+  gets three attempts, and each one reads the acknowledged release and operator status first, so a
+  retry after a mined acknowledgment sends nothing when the operator is active or not registered. A
+  missing controller or stale protocol/generation is a startup error. — `e3_evm::node_release`;
   `flow-trace/07`
 - `protocol_version` covers incompatible contracts, events, cryptography, and protocol behavior. It
   is part of the gossip topic, the Identify string, and the Kademlia and sync protocol names, and a
