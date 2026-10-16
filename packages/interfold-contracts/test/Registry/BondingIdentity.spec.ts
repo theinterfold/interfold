@@ -6,6 +6,7 @@
 import { expect } from "chai";
 import type { Signer } from "ethers";
 
+import type { OwnerIdentityRegistry } from "../../types";
 import { deployInterfoldSystem, ethers, networkHelpers } from "../fixtures";
 
 const { loadFixture, time } = networkHelpers;
@@ -13,10 +14,10 @@ const { loadFixture, time } = networkHelpers;
 async function setup() {
   const ctx = await deployInterfoldSystem({ submissionWindow: 600 });
   const verifier = await ethers.deployContract("MockIdentityVerifier");
-  const identityRegistry = await ethers.deployContract(
+  const identityRegistry = (await ethers.deployContract(
     "OwnerIdentityRegistry",
     [await ctx.owner.getAddress(), await verifier.getAddress()],
-  );
+  )) as unknown as OwnerIdentityRegistry;
   const signers = await ethers.getSigners();
   return { ...ctx, verifier, identityRegistry, newOwner: signers[11] };
 }

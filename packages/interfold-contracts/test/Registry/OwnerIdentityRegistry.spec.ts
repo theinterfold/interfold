@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { expect } from "chai";
 
+import type { OwnerIdentityRegistry } from "../../types";
 import { ethers, networkHelpers } from "../fixtures";
 
 const { loadFixture, time } = networkHelpers;
@@ -14,10 +15,10 @@ const NEW_ID = ethers.id("renewed-document");
 async function setup() {
   const [governance, alice, bob] = await ethers.getSigners();
   const verifier = await ethers.deployContract("MockIdentityVerifier");
-  const registry = await ethers.deployContract("OwnerIdentityRegistry", [
+  const registry = (await ethers.deployContract("OwnerIdentityRegistry", [
     governance.address,
     await verifier.getAddress(),
-  ]);
+  ])) as unknown as OwnerIdentityRegistry;
   const expiresAt = (await time.latest()) + 100;
   await verifier.setResult(alice.address, ID, expiresAt);
   return { governance, alice, bob, verifier, registry, expiresAt };
@@ -185,10 +186,10 @@ describe("OwnerIdentityRegistry", function () {
 
   it("accepts an unset initial verifier and uses two-step governance transfer", async function () {
     const { governance, alice } = await loadFixture(setup);
-    const registry = await ethers.deployContract("OwnerIdentityRegistry", [
+    const registry = (await ethers.deployContract("OwnerIdentityRegistry", [
       governance.address,
       ethers.ZeroAddress,
-    ]);
+    ])) as unknown as OwnerIdentityRegistry;
     await expect(
       registry.connect(alice).register("0x"),
     ).to.be.revertedWithCustomError(registry, "VerifierNotSet");
