@@ -120,8 +120,8 @@ transactions: `publishCommittee` with the DKG proof and `publishPlaintextOutput`
 proof.
 
 The on-chain proof check protects both transactions, so the caller does not need special rights. If
-the expected result does not appear on-chain within 10 minutes, the next eligible member takes the
-role.
+the expected result does not appear on-chain within 10 minutes (40 minutes for the committee public
+key), the next eligible member takes the role.
 
 ### Compute provider
 

@@ -72,15 +72,30 @@ impl AggregatorFailoverState {
 #[derive(Debug, Clone, Copy)]
 pub struct FailoverPolicy {
     timeout: Duration,
+    public_key_timeout: Duration,
 }
 
 impl FailoverPolicy {
+    /// One budget for every phase.
     pub fn new(timeout: Duration) -> Self {
-        Self { timeout }
+        Self {
+            timeout,
+            public_key_timeout: timeout,
+        }
     }
 
-    pub fn timeout(&self) -> Duration {
-        self.timeout
+    /// The public-key phase also waits for the node fold proof of every roster member, which can
+    /// take longer than the other phases' budget.
+    pub fn with_public_key_timeout(mut self, timeout: Duration) -> Self {
+        self.public_key_timeout = timeout;
+        self
+    }
+
+    pub fn timeout(&self, phase: AggregatorPhase) -> Duration {
+        match phase {
+            AggregatorPhase::PublicKey => self.public_key_timeout,
+            _ => self.timeout,
+        }
     }
 }
 
@@ -145,7 +160,7 @@ pub fn reconcile_phase(
         AggregatorFailoverRound {
             phase,
             active_party_id: None,
-            deadline_unix_secs: now_unix_secs.saturating_add(policy.timeout().as_secs()),
+            deadline_unix_secs: now_unix_secs.saturating_add(policy.timeout(phase).as_secs()),
             exhausted: false,
         },
     );
@@ -167,7 +182,7 @@ pub fn reconcile_active_party(
         return;
     }
     round.active_party_id = active_party_id;
-    round.deadline_unix_secs = now_unix_secs.saturating_add(policy.timeout().as_secs());
+    round.deadline_unix_secs = now_unix_secs.saturating_add(policy.timeout(round.phase).as_secs());
     round.exhausted = false;
 }
 
@@ -231,7 +246,8 @@ pub fn apply_due_timeout(
     }
     if let Some(round) = state.rounds.get_mut(e3_id) {
         round.active_party_id = Some(promote_to);
-        round.deadline_unix_secs = now_unix_secs.saturating_add(policy.timeout().as_secs());
+        round.deadline_unix_secs =
+            now_unix_secs.saturating_add(policy.timeout(round.phase).as_secs());
     }
 
     FailoverDecision::Promote {
@@ -255,6 +271,50 @@ mod tests {
 
     fn committee() -> Committee {
         Committee::new(vec!["0xa".into(), "0xb".into(), "0xc".into()])
+    }
+
+    /// The public-key phase waits for node fold proofs, so its budget can be longer than the
+    /// other phases' budget, also after a promotion.
+    #[test]
+    fn the_public_key_phase_has_its_own_budget() {
+        let policy = FailoverPolicy::new(Duration::from_secs(60))
+            .with_public_key_timeout(Duration::from_secs(240));
+        let mut state = AggregatorFailoverState::default();
+        let id = e3_id();
+
+        reconcile_phase(
+            &mut state,
+            &id,
+            Some(AggregatorPhase::PublicKey),
+            1_000,
+            &policy,
+        );
+        assert_eq!(state.rounds[&id].deadline_unix_secs, 1_240);
+        reconcile_active_party(&mut state, &id, Some(0), 1_100, &policy);
+        assert_eq!(state.rounds[&id].deadline_unix_secs, 1_340);
+        let decision = apply_due_timeout(
+            &mut state,
+            &id,
+            ExpectedFailoverDeadline {
+                phase: AggregatorPhase::PublicKey,
+                unix_secs: 1_340,
+            },
+            1_340,
+            &policy,
+            &committee(),
+            &[],
+        );
+        assert!(matches!(decision, FailoverDecision::Promote { .. }));
+        assert_eq!(state.rounds[&id].deadline_unix_secs, 1_580);
+
+        reconcile_phase(
+            &mut state,
+            &id,
+            Some(AggregatorPhase::Plaintext),
+            2_000,
+            &policy,
+        );
+        assert_eq!(state.rounds[&id].deadline_unix_secs, 2_060);
     }
 
     #[test]

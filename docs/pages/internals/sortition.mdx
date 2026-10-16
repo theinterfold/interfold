@@ -458,11 +458,13 @@ timeout. `CiphernodeSelector` publishes `AggregatorChanged` with the active part
 | `PublicKey`                | Aggregate the roster key shares, prove C5, and call `publishCommittee`.         |
 | `Plaintext`                | Aggregate T + 1 decryption shares, prove C7, and call `publishPlaintextOutput`. |
 
-Each phase has a 10-minute budget (`AGGREGATOR_PROGRESS_TIMEOUT`). The budget starts only when the
-phase inputs are durable, which `AggregationInputsReady` reports. If the active party does not make
-progress in time, every node promotes the next eligible party in address order. The deadline and the
-phase-local skip set survive a restart. Protocol progress clears the skip set. When the last
-eligible party times out, it stays active so that late recovery is still possible.
+The `DkgRoster` and `Plaintext` phases have a 10-minute budget (`AGGREGATOR_PROGRESS_TIMEOUT`). The
+`PublicKey` phase has 40 minutes (`PUBLIC_KEY_PROGRESS_TIMEOUT`), because its publication also waits
+for the node fold proof of every roster member. The budget starts only when the phase inputs are
+durable, which `AggregationInputsReady` reports. If the active party does not make progress in time,
+every node promotes the next eligible party in address order. The deadline and the phase-local skip
+set survive a restart. Protocol progress clears the skip set. When the last eligible party times
+out, it stays active so that late recovery is still possible.
 
 `publishCommittee` and `publishPlaintextOutput` are permissionless on-chain. The runtime sends them
 only from the active aggregator. The contract checks the proofs and accepts one result.

@@ -877,7 +877,8 @@ phase.
   │
   ├─ When every member of the accepted H roster has submitted a keyshare:
 │   │   → Persist VerifyingC1 before publishing AggregationInputsReady(PublicKey)
-│   │   → CiphernodeSelector starts the 10-minute failover budget only now
+│   │   → CiphernodeSelector starts the 40-minute failover budget only now: C5 also
+│   │     waits for every roster member's node fold proof, about 12 minutes each at N = 19
 │   │
 │   ├─ Only the active aggregator starts C1 verification and later proof/compute effects
 │   │   → A promoted standby resumes from its persisted phase; it does not need a RAM buffer

@@ -726,7 +726,9 @@ CiphernodeRegistrySolReader decodes SortitionCommitteeFinalized
 │   │     is_aggregator = (my node has the lowest eligible party_id in the
 │   │                      address-sorted finalized committee)
 │   │   }
-│   │   Persists an absolute 10-minute deadline while a public-key result is pending
+│   │   Later persists an absolute failover deadline: 10 minutes from
+│   │   AggregationInputsReady(DkgRoster), then 40 minutes from
+│   │   AggregationInputsReady(PublicKey) while a public-key result is pending
 │   └─ If NO: does nothing for this E3
 │
 └─ KeyshareCreatedFilterBuffer:
@@ -810,10 +812,10 @@ A ready committee must finalize at or before its absolute DKG deadline.
 4. **Active aggregator selection**: `CiphernodeSelector` derives `AggregatorChanged` from the
    finalized committee, enriched exclusion events, and its durable phase-local timeout state. The
    active aggregator is the lowest eligible `party_id` in the address-sorted runtime committee. When
-   the expected chain result is absent for 10 minutes, every node promotes the next party in that
-   order. The same phase keeps its absolute deadline across restart. Canonical phase progress clears
-   the local unresponsive set. The final eligible party remains active after all standby budgets
-   expire.
+   the expected chain result is absent for 10 minutes (40 minutes for the public key, which waits
+   for node fold proofs), every node promotes the next party in that order. The same phase keeps its
+   absolute deadline across restart. Canonical phase progress clears the local unresponsive set. The
+   final eligible party remains active after all standby budgets expire.
 
 5. **Permissionless finalization**: Anyone can call `finalizeCommittee()` after the submission
    deadline and through the absolute DKG deadline. Delayed finalization reduces the remaining DKG
