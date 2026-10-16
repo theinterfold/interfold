@@ -7,6 +7,7 @@
 use anyhow::{anyhow, Result};
 use e3_fhe_params::{try_build_bfv_params_arc, BfvParamSet, BfvPreset};
 use e3_zk_helpers::circuits::threshold::user_data_encryption::circuit::UserDataEncryptionCircuitData;
+use e3_zk_helpers::circuits::threshold::user_data_encryption::utils::public_key_on_protocol_crs;
 use e3_zk_helpers::circuits::threshold::user_data_encryption::Inputs as UserDataEncryptionInputs;
 use e3_zk_helpers::circuits::threshold::user_data_encryption_chunked::circuit::UserDataEncryptionCircuitData as ChunkedUserDataEncryptionCircuitData;
 use e3_zk_helpers::circuits::threshold::user_data_encryption_chunked::Inputs as ChunkedUserDataEncryptionInputs;
@@ -226,7 +227,9 @@ pub fn generate_public_key(
     // Generate keys.
     let mut rng = rng();
     let sk = SecretKey::random(&params, &mut rng);
-    let pk = PublicKey::new(&sk, &mut rng);
+    // On the protocol CRS, as committee keys are: user-data encryption proofs need that `a`.
+    let pk = public_key_on_protocol_crs(&params, &sk, &mut rng)
+        .map_err(|e| anyhow!("Failed to build public key: {e}"))?;
 
     Ok(pk.to_bytes())
 }
@@ -490,7 +493,7 @@ mod tests {
 
     #[test]
     fn test_bfv_encrypt_a64() {
-        use fhe::bfv::{Ciphertext, PublicKey, SecretKey};
+        use fhe::bfv::{Ciphertext, SecretKey};
         use fhe_traits::{DeserializeParametrized, FheDecrypter, Serialize};
 
         let param_set: BfvParamSet = DEFAULT_BFV_PRESET.into();
@@ -500,7 +503,7 @@ mod tests {
         let moduli = param_set.moduli;
         let mut rng = rng();
         let sk = SecretKey::random(&params, &mut rng);
-        let pk = PublicKey::new(&sk, &mut rng);
+        let pk = public_key_on_protocol_crs(&params, &sk, &mut rng).unwrap();
 
         let num = [1u64];
         let encrypted_data =
@@ -515,7 +518,7 @@ mod tests {
 
     #[test]
     fn test_bfv_encrypt_v64() {
-        use fhe::bfv::{Ciphertext, PublicKey, SecretKey};
+        use fhe::bfv::{Ciphertext, SecretKey};
         use fhe_traits::{DeserializeParametrized, FheDecrypter, Serialize};
 
         let param_set: BfvParamSet = DEFAULT_BFV_PRESET.into();
@@ -525,7 +528,7 @@ mod tests {
         let moduli = param_set.moduli;
         let mut rng = rng();
         let sk = SecretKey::random(&params, &mut rng);
-        let pk = PublicKey::new(&sk, &mut rng);
+        let pk = public_key_on_protocol_crs(&params, &sk, &mut rng).unwrap();
 
         let num = vec![1, 2];
         let encrypted_data = bfv_encrypt(
@@ -547,7 +550,7 @@ mod tests {
 
     #[test]
     fn test_bfv_verifiable_encrypt_a64() {
-        use fhe::bfv::{Ciphertext, PublicKey, SecretKey};
+        use fhe::bfv::{Ciphertext, SecretKey};
         use fhe_traits::{DeserializeParametrized, FheDecrypter, Serialize};
 
         let param_set: BfvParamSet = DEFAULT_BFV_PRESET.into();
@@ -557,7 +560,7 @@ mod tests {
         let moduli = param_set.moduli;
         let mut rng = rand::rng();
         let sk = SecretKey::random(&params, &mut rng);
-        let pk = PublicKey::new(&sk, &mut rng);
+        let pk = public_key_on_protocol_crs(&params, &sk, &mut rng).unwrap();
 
         let num = [1u64];
         let encrypted_data = bfv_verifiable_encrypt(
@@ -578,7 +581,7 @@ mod tests {
 
     #[test]
     fn test_bfv_verifiable_encrypt_v64() {
-        use fhe::bfv::{Ciphertext, PublicKey, SecretKey};
+        use fhe::bfv::{Ciphertext, SecretKey};
         use fhe_traits::{DeserializeParametrized, FheDecrypter, Serialize};
 
         let param_set: BfvParamSet = DEFAULT_BFV_PRESET.into();
@@ -588,7 +591,7 @@ mod tests {
         let moduli = param_set.moduli;
         let mut rng = rand::rng();
         let sk = SecretKey::random(&params, &mut rng);
-        let pk = PublicKey::new(&sk, &mut rng);
+        let pk = public_key_on_protocol_crs(&params, &sk, &mut rng).unwrap();
 
         let num = vec![1, 2];
         let encrypted_data = bfv_verifiable_encrypt(

@@ -4,46 +4,40 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
-use lib::math::commitments::{compute_commitment, DS_CIPHERTEXT, DS_PK_AGGREGATION};
+use lib::configs::default::threshold::{
+    CRP, L, N, USER_DATA_ENCRYPTION_BIT_CT, USER_DATA_ENCRYPTION_BIT_E0,
+    USER_DATA_ENCRYPTION_BIT_E1, USER_DATA_ENCRYPTION_BIT_K, USER_DATA_ENCRYPTION_BIT_PK,
+    USER_DATA_ENCRYPTION_BIT_U, USER_DATA_ENCRYPTION_CT0_BIT_R, USER_DATA_ENCRYPTION_CT0_CONFIGS,
+    USER_DATA_ENCRYPTION_CT1_BIT_R, USER_DATA_ENCRYPTION_CT1_CONFIGS,
+};
+use lib::core::threshold::user_data_encryption;
+use lib::core::threshold::user_data_encryption_ct0::UserDataEncryptionCt0;
+use lib::core::threshold::user_data_encryption_ct1::UserDataEncryptionCt1;
+use lib::math::polynomial::Polynomial;
 
+/// User-data encryption (P3): proves both legs of one BFV encryption in a single circuit.
+///
+/// Both legs read the one `u` witness below (see `user_data_encryption::execute`), which replaces
+/// the separate ct0 / ct1 proofs and the fold that checked their `u` commitments were equal. `pk1`
+/// is the circuit-constant CRS, as in C5. Returns `(pk_commitment, ct_commitment, k1_commitment)`,
+/// the values the fold returned.
 fn main(
-    // P3: ct0 inner proof.
-    ct0_verification_key: UltraHonkVerificationKey,
-    ct0_proof: UltraHonkProof,
-    ct0_public_inputs: [Field; 4], // pk0_commitment, ct0_commitment, k1_commitment, u_commitment
-    ct0_key_hash: pub Field,
-    // P3: ct1 inner proof.
-    ct1_verification_key: UltraHonkVerificationKey,
-    ct1_proof: UltraHonkProof,
-    ct1_public_inputs: [Field; 3], // pk1_commitment, ct1_commitment, u_commitment
-    ct1_key_hash: pub Field,
+    pk0is: [Polynomial<N>; L],
+    ct0is: [Polynomial<N>; L],
+    ct1is: [Polynomial<N>; L],
+    u: Polynomial<N>,
+    e0: Polynomial<N>,
+    e1: Polynomial<N>,
+    k1: Polynomial<N>,
+    // ct0's and ct1's reduction quotients.
+    r: [Polynomial<N>; L],
+    r_ct1: [Polynomial<N>; L],
 ) -> pub (Field, Field, Field) {
-    verify_honk_proof_non_zk(
-        ct0_verification_key,
-        ct0_proof,
-        ct0_public_inputs,
-        ct0_key_hash,
-    );
-    verify_honk_proof_non_zk(
-        ct1_verification_key,
-        ct1_proof,
-        ct1_public_inputs,
-        ct1_key_hash,
-    );
+    let ct0: UserDataEncryptionCt0<N, L, USER_DATA_ENCRYPTION_BIT_PK, USER_DATA_ENCRYPTION_BIT_CT, USER_DATA_ENCRYPTION_BIT_U, USER_DATA_ENCRYPTION_BIT_E0, USER_DATA_ENCRYPTION_BIT_K, USER_DATA_ENCRYPTION_CT0_BIT_R> =
+        UserDataEncryptionCt0::new(USER_DATA_ENCRYPTION_CT0_CONFIGS, pk0is, ct0is, u, e0, k1, r);
 
-    // Verify that the u_commitment from the ct0 proof is the same as the u_commitment from the ct1 proof.
-    assert(ct0_public_inputs[3] == ct1_public_inputs[2]);
+    let ct1: UserDataEncryptionCt1<N, L, USER_DATA_ENCRYPTION_BIT_PK, USER_DATA_ENCRYPTION_BIT_CT, USER_DATA_ENCRYPTION_BIT_U, USER_DATA_ENCRYPTION_BIT_E1, USER_DATA_ENCRYPTION_CT1_BIT_R> =
+        UserDataEncryptionCt1::new(USER_DATA_ENCRYPTION_CT1_CONFIGS, CRP, ct1is, u, e1, r_ct1);
 
-    // Compute the ct commitment.
-    let ct_inputs = [ct0_public_inputs[1], ct1_public_inputs[1]].as_vector();
-    let ct_commitment = compute_commitment(ct_inputs, DS_CIPHERTEXT);
-
-    // Threshold PK aggregation commitment (pk0 and pk1 limbs).
-    let pk_inputs = [ct0_public_inputs[0], ct1_public_inputs[0]].as_vector();
-    let pk_commitment = compute_commitment(pk_inputs, DS_PK_AGGREGATION);
-
-    let k1_commitment = ct0_public_inputs[2];
-
-    (pk_commitment, ct_commitment, k1_commitment)
+    user_data_encryption::execute(ct0, ct1)
 }

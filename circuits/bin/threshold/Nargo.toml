@@ -7,8 +7,6 @@ members = [
     "rlk_generation",
     "rlk_aggregation",
     "user_data_encryption",
-    "user_data_encryption_ct0",
-    "user_data_encryption_ct1",
     "user_data_encryption_chunked",
     "user_data_encryption_ct0_chunked",
     "user_data_encryption_ct1_chunked",
@@ -20,4 +18,5 @@ members = [
     "ct1_eval_chunk_identity",
     "share_decryption",
     "decrypted_shares_aggregation",
+    "decrypted_shares_aggregation_wide",
 ]

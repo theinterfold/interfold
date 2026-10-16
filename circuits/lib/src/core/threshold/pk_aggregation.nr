@@ -90,8 +90,9 @@ impl<let N: u32, let H: u32, let L: u32, let BIT_PK: u32> PkAggregation<N, H, L,
     /// equal the coefficients C1 committed and already bounded. `pk0_agg` is opened from nothing:
     /// `verify_pk_for_basis` pins it only modulo `q_l`, so `pk0_agg + k * q_l` satisfies the sum for
     /// any `k`, and the packing slot alone would admit `k` of order a hundred. A non-canonical
-    /// aggregate breaks honest encryption downstream, because `user_data_encryption_ct0` does not
-    /// bound `pk0is` and its `r1` bounds were derived for a centered key.
+    /// aggregate breaks honest encryption downstream: `user_data_encryption_ct0` opens `pk0is` with
+    /// checked digits and takes its exact bound from this one, and its `r` bounds were derived for
+    /// a centered key.
     fn verify_pk_ranges(self) {
         for basis_idx in 0..L {
             let bound: Field = (self.configs.qis[basis_idx] - 1) / 2;

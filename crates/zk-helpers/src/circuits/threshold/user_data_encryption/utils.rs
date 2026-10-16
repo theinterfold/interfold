@@ -4,10 +4,30 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::math::fhe_poly_to_crt_centered;
-use crate::utils::{compute_modulus_bit, ZkHelpersUtilsError};
+use crate::encoding::{fhe_poly_to_crt_centered, ZkHelpersUtilsError};
+use e3_fhe_params::create_deterministic_crp_from_default_seed;
+use e3_fhe_params::utils::compute_modulus_bit;
 use e3_polynomial::{CrtPolynomial, CrtPolynomialError};
-use fhe::bfv::{BfvParameters, Ciphertext, PublicKey};
+use e3_polynomial_fhe::FromFhePolynomial as _;
+use fhe::bfv::{BfvParameters, Ciphertext, PublicKey, SecretKey};
+use fhe::mbfv::{Aggregate as _, PublicKeyShare};
+use rand::{CryptoRng, RngCore};
+use std::sync::Arc;
+
+/// A BFV public key built on the protocol CRS: `(-a * s + e, a)` with `a` the default-seed CRP,
+/// the shape every committee key has.
+///
+/// ct1 hard-codes that `a` as `pk1`, as C5 does, so user-data encryption proofs can only be made
+/// for keys like this one. Key generators for tests, demos and local runs use it instead of
+/// `PublicKey::new`, whose `a` is random.
+pub fn public_key_on_protocol_crs<R: RngCore + CryptoRng>(
+    params: &Arc<BfvParameters>,
+    secret_key: &SecretKey,
+    rng: &mut R,
+) -> Result<PublicKey, fhe::Error> {
+    let crp = create_deterministic_crp_from_default_seed(params);
+    PublicKey::from_shares(vec![PublicKeyShare::new(secret_key, crp, rng)?])
+}
 
 /// Converts a BFV ciphertext to Greco format.
 ///

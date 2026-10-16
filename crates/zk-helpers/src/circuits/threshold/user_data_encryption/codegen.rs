@@ -194,12 +194,9 @@ mod tests {
             .get("pk0is")
             .and_then(|value| value.as_array())
             .unwrap();
-        let pk1is = parsed
-            .get("pk1is")
-            .and_then(|value| value.as_array())
-            .unwrap();
         assert!(!pk0is.is_empty());
-        assert!(!pk1is.is_empty());
+        // ct1 hard-codes the CRS as `pk1`, so it is not an input.
+        assert!(parsed.get("pk1is").is_none());
 
         let temp_dir = TempDir::new().unwrap();
         write_artifacts(
@@ -214,10 +211,9 @@ mod tests {
 
         let content = std::fs::read_to_string(&output_path).unwrap();
         assert!(content.contains("pk0is"));
-        assert!(content.contains("pk1is"));
+        assert!(!content.contains("pk1is"));
 
         assert!(artifacts.toml.contains("[[pk0is]]"));
-        assert!(artifacts.toml.contains("[[pk1is]]"));
 
         let configs_path = temp_dir.path().join("configs.nr");
         assert!(configs_path.exists());

@@ -260,6 +260,51 @@ impl<let N: u32> Polynomial<N> {
             self.coefficients[i].assert_max_bit_size::<BIT>();
         }
     }
+
+    /// Constrains every coefficient to the signed window `[-2^BIT, 2^BIT)` with one bit-size
+    /// assertion, `c + 2^BIT < 2^(BIT + 1)`.
+    ///
+    /// For a value that only has to stay small, not exact: a quotient whose identity already pins it
+    /// once every other term is exactly bounded needs no more than to rule out field wrap-around.
+    pub fn range_check_signed_power_of_two<let BIT: u32>(self) {
+        let shift = 2.pow_32(BIT as Field);
+        for i in 0..self.coefficients.len() {
+            (self.coefficients[i] + shift).assert_max_bit_size::<BIT + 1>();
+        }
+    }
+
+    /// Constrains every coefficient to `{-1, 0, 1}`: `c^3 = c` has exactly those three roots.
+    pub fn assert_ternary(self) {
+        for i in 0..self.coefficients.len() {
+            let c = self.coefficients[i];
+            assert(c * c * c == c, "coefficient is not ternary");
+        }
+    }
+}
+
+#[test]
+fn test_signed_power_of_two_window_accepts_its_edges() {
+    Polynomial::new([-8, 7, 0, -1]).range_check_signed_power_of_two::<3>();
+}
+
+#[test(should_fail)]
+fn test_signed_power_of_two_window_rejects_below() {
+    Polynomial::new([-9, 0, 0, 0]).range_check_signed_power_of_two::<3>();
+}
+
+#[test(should_fail)]
+fn test_signed_power_of_two_window_rejects_above() {
+    Polynomial::new([8, 0, 0, 0]).range_check_signed_power_of_two::<3>();
+}
+
+#[test]
+fn test_ternary_accepts_minus_one_zero_one() {
+    Polynomial::new([-1, 0, 1, 1]).assert_ternary();
+}
+
+#[test(should_fail)]
+fn test_ternary_rejects_two() {
+    Polynomial::new([0, 2, 0, 0]).assert_ternary();
 }
 
 #[test]

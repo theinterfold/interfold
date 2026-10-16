@@ -9,11 +9,12 @@
 //! [`Sample`] produces a random BFV key pair and plaintext; the public key and plaintext are used as input
 //! for codegen and tests.
 
+use crate::threshold::user_data_encryption::utils::public_key_on_protocol_crs;
 use crate::{
     threshold::user_data_encryption::circuit::UserDataEncryptionCircuitData, CircuitsErrors,
 };
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
-use fhe::bfv::{Encoding, Plaintext, PublicKey, SecretKey};
+use fhe::bfv::{Encoding, Plaintext, SecretKey};
 use fhe_traits::FheEncoder;
 
 impl UserDataEncryptionCircuitData {
@@ -25,8 +26,10 @@ impl UserDataEncryptionCircuitData {
 
         let mut rng = rand::rng();
 
+        // Built on the default-seed CRP, as committee keys are: ct1 hard-codes it as `pk1`.
         let secret_key = SecretKey::random(&threshold_params, &mut rng);
-        let public_key = PublicKey::new(&secret_key, &mut rng);
+        let public_key = public_key_on_protocol_crs(&threshold_params, &secret_key, &mut rng)
+            .map_err(|e| CircuitsErrors::Sample(format!("Failed to build public key: {:?}", e)))?;
 
         let plaintext = Plaintext::try_encode(&[1u64], Encoding::poly(), &threshold_params)
             .map_err(|e| CircuitsErrors::Sample(format!("Failed to encode plaintext: {:?}", e)))?;
