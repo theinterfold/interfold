@@ -210,8 +210,8 @@ Split rows are deterministic:
   coefficients. Secure presets use 512 coefficients.
 - `C3a` and `C3b` both map to `dkg/share_encryption` benchmark output.
 - `C4a` and `C4b` both map to `dkg/share_decryption` benchmark output.
-- The P3 benchmark first generates the recursive child proofs. It then benchmarks the top-level
-  `user_data_encryption_ct0` and `user_data_encryption_ct1` circuits with those proofs.
+- The P3 benchmark proves the one `threshold/user_data_encryption` circuit, which proves the ct0 and
+  ct1 legs together. `zk_cli --circuit user-data-encryption` generates its witness.
 
 ## Gas measurement source
 

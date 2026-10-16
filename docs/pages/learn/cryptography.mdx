@@ -156,12 +156,12 @@ Publicly verifiable threshold BFV (PV-TBFV) adds a ZK proof to each sensitive st
 the proofs without the private values. The DKG part is publicly verifiable DKG (PVDKG). The steps
 form four phases:
 
-| Phase                      | What happens                                                       | Circuits                                                                   |
-| -------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------- |
-| P1: Key generation         | Members make keys and shares, encrypt the shares, and decrypt them | C0, C1, C2a, C2b, C3a, C3b, C4a, C4b                                       |
-| P2: Public key aggregation | The aggregator adds the H roster contributions into one key        | C5                                                                         |
-| P3: User encryption        | A data provider proves that an input is a valid BFV encryption     | `user_data_encryption_ct0`, `_ct1`, and the `user_data_encryption` wrapper |
-| P4: Threshold decryption   | Members make decryption shares, and the aggregator combines T + 1  | C6, C7                                                                     |
+| Phase                      | What happens                                                       | Circuits                                                                                      |
+| -------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| P1: Key generation         | Members make keys and shares, encrypt the shares, and decrypt them | C0, C1, C2a, C2b, C3a, C3b, C4a, C4b                                                          |
+| P2: Public key aggregation | The aggregator adds the H roster contributions into one key        | C5                                                                                            |
+| P3: User encryption        | A data provider proves that an input is a valid BFV encryption     | `user_data_encryption` (trBFV keys) or the `user_data_encryption_chunked` family (l-BFV keys) |
+| P4: Threshold decryption   | Members make decryption shares, and the aggregator combines T + 1  | C6, C7                                                                                        |
 
 The FHE computation runs between P3 and P4. The compute provider proves it with its own proof system
 (the OpenVM zkVM in the current code), not with these circuits.

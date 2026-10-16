@@ -45,7 +45,8 @@ flowchart LR
 | `dkg/share_decryption`                       | C4        | Decrypt and aggregate                                                                                                            |
 | `threshold/pk_generation`                    | C1        | TrBFV contribution                                                                                                               |
 | `threshold/pk_aggregation`                   | C5        | Aggregate pk shares                                                                                                              |
-| `threshold/user_data_encryption_ct0` / `ct1` | P3        | User encryption legs                                                                                                             |
+| `threshold/user_data_encryption`             | P3        | trBFV user encryption: runs both legs over one `u` and returns the pk, ct and k1 commitments                                     |
+| `threshold/user_data_encryption_ct0` / `ct1` | P3        | User encryption legs (lib modules; no standalone binaries)                                                                       |
 | `threshold/share_decryption`                 | C6        | Threshold decryption share                                                                                                       |
 | `threshold/decrypted_shares_aggregation`     | C7        | Final plaintext                                                                                                                  |
 

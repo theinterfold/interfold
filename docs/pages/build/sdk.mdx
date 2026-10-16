@@ -350,7 +350,21 @@ feed them to your own prover instead of `generateProof()`.
 Secure artifacts may ship in the SDK in a later release. Until they do, treat your own compiled
 circuits as the supported path for production.
 
-## Modular submodule imports
+The circuit depends on the key type of the preset. For a trBFV preset (`SECURE_THRESHOLD_8192`), the
+SDK proves one circuit, `user_data_encryption`, which proves both ciphertext legs. Its public inputs
+are `pk_commitment`, `ct_commitment`, and `k1_commitment`. For an l-BFV preset
+(`INSECURE_THRESHOLD_LBFV`, `SECURE_THRESHOLD_16384`), the SDK proves the chunked proof tree and the
+`user_data_encryption_chunked` wrapper.
+
+<Callout type='warning'>
+  A `noir-recursive-no-zk` proof is not zero knowledge. It can show information about the private
+  witness. For `user_data_encryption`, that witness includes the plaintext `k1` and the randomness
+  `u`. Do not publish this proof. Keep it on the client, verify it inside your own circuit, and
+  publish only the proof of your circuit.
+</Callout>
+
+In Node.js, `generateProof` checks the circuit stamp file (`.active-preset.json`) when it finds one.
+It fails with one of these codes when the stamp does not match:
 
 The SDK is organized into three submodules (`contracts`, `events`, `crypto`) that can be imported
 independently for tree-shaking:
