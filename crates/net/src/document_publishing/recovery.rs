@@ -7,13 +7,13 @@ use super::{
     MAX_RECEIVED_DOCUMENTS,
 };
 use crate::domain::closed_e3s::record_closed_e3;
-use crate::domain::{EventConversionService, RestorableDocuments};
+use crate::domain::{EventConversionService, LogPosition, RestorableDocuments};
 use actix::Recipient;
 use anyhow::{ensure, Context, Result};
 use e3_events::{
-    AggregateId, CorrelationId, E3Stage, E3id, Event, EventContextAccessors, EventContextSeq,
-    EventSource, EventStoreQueryBy, EventStoreQueryResponse, InterfoldEvent, InterfoldEventData,
-    PublishDocumentRequested, SeqAgg,
+    AggregateId, CorrelationId, DocumentReceived, E3Stage, E3id, Event, EventContextAccessors,
+    EventContextSeq, EventSource, EventStoreQueryBy, EventStoreQueryResponse, InterfoldEvent,
+    InterfoldEventData, PublishDocumentRequested, SeqAgg,
 };
 use e3_utils::actix::channel;
 use std::collections::hash_map::Entry;
@@ -174,7 +174,11 @@ pub async fn recover_document_state(
                         received.len() <= MAX_RECEIVED_DOCUMENTS,
                         "received-document cache exceeds recovery limit"
                     );
-                    restorable.push(document.clone(), now);
+                    let position = LogPosition {
+                        aggregate_id,
+                        seq: event.seq(),
+                    };
+                    restorable.push(document.clone(), Some(position), now);
                 }
                 InterfoldEventData::E3StageChanged(change)
                     if event.source() == EventSource::Evm
@@ -209,13 +213,36 @@ pub async fn recover_document_state(
         received,
         restorable,
         closed_e3s: closed,
+        document_log: Some(eventstore.clone()),
     })
+}
+
+/// Read a received document of `e3_id` at `position` in the event log.
+pub(super) async fn read_logged_document(
+    eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+    position: LogPosition,
+    e3_id: &E3id,
+) -> Result<DocumentReceived> {
+    let events = read_page(eventstore, position.aggregate_id, position.seq, 1).await?;
+    match events.first().map(|event| (event.seq(), event.get_data())) {
+        Some((seq, InterfoldEventData::DocumentReceived(document)))
+            if seq == position.seq && &document.meta.e3_id == e3_id =>
+        {
+            Ok(document.clone())
+        }
+        _ => anyhow::bail!(
+            "the event log has no received document of E3 {e3_id} at {}:{}",
+            position.aggregate_id,
+            position.seq
+        ),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::event_conversion::ReceivableDocument;
+    use crate::domain::RestoreEntry;
     use actix::Actor;
     use e3_ciphernode_builder::{EventStoreAddrs, EventSystem};
     use e3_events::{
@@ -288,10 +315,10 @@ mod tests {
             .contains(&(e3_id.clone(), ContentHash::from_content(&value))));
         assert_eq!(
             recovered.restorable.pop(chrono::Utc::now()),
-            Some(DocumentReceived {
+            Some(RestoreEntry::Loaded(DocumentReceived {
                 meta: request.meta.clone(),
                 value: value.clone(),
-            })
+            }))
         );
 
         append(

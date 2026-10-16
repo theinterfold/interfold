@@ -28,6 +28,8 @@ impl Handler<InterfoldEvent> for DocumentPublisher {
                 for id in &ids {
                     self.start_publication(id, ctx);
                 }
+                // The chain history has closed the E3s that ended while the node was offline.
+                self.restorable.select(chrono::Utc::now());
                 self.restore_next_received_document(ctx);
             }
             InterfoldEventData::PublishDocumentRequested(data) => {
@@ -49,7 +51,12 @@ impl Handler<InterfoldEvent> for DocumentPublisher {
                         && !self.publishing_enabled
                         && !self.closed_e3s.contains(&data.meta.e3_id)
                     {
-                        self.restorable.push(data, chrono::Utc::now());
+                        let position = LogPosition {
+                            aggregate_id: ec.aggregate_id(),
+                            seq: ec.seq(),
+                        };
+                        self.restorable
+                            .push(data, Some(position), chrono::Utc::now());
                     }
                 } else {
                     self.bus.err(

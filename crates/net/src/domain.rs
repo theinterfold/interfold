@@ -40,7 +40,7 @@ pub(crate) mod wire;
 
 pub use document_publishing::{
     datetime_to_instant_from_now, Cleanup, CleanupQueue, DocumentPublishingService, FetchQueue,
-    PublicationSchedule, RestorableDocuments, WaitingFetch,
+    LogPosition, PublicationSchedule, RestorableDocuments, RestoreEntry, WaitingFetch,
 };
 pub use event_conversion::{EventConversionService, IncomingDocument};
 pub use event_translation::EventTranslationService;
