@@ -47,7 +47,9 @@ interface IOwnerIdentityRegistry {
     ) external view returns (bool);
 
     /// @notice The number of governance revocations at a timestamp, used to invalidate capacity.
-    function revocationCountAt(uint256 timepoint) external view returns (uint256);
+    function revocationCountAt(
+        uint256 timepoint
+    ) external view returns (uint256);
 
     /// @notice The owner's current identifier and expiry; zero values when it has none.
     function identityOf(
@@ -55,7 +57,9 @@ interface IOwnerIdentityRegistry {
     ) external view returns (bytes32 identityId, uint48 expiresAt);
 
     /// @notice The owner that holds `identityId`; the zero address when it is unused.
-    function ownerOfIdentity(bytes32 identityId) external view returns (address);
+    function ownerOfIdentity(
+        bytes32 identityId
+    ) external view returns (address);
 
     function verifier() external view returns (address);
 }

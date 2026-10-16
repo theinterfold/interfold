@@ -11,10 +11,10 @@ import {
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import { IBondingIdentity } from "../interfaces/IBondingIdentity.sol";
 import { IBondOwnerHistory } from "../interfaces/IBondOwnerHistory.sol";
-import { IOwnerIdentityRegistry } from "../interfaces/IOwnerIdentityRegistry.sol";
 import {
-    BondingIdentityStorage
-} from "../storage/BondingIdentityStorage.sol";
+    IOwnerIdentityRegistry
+} from "../interfaces/IOwnerIdentityRegistry.sol";
+import { BondingIdentityStorage } from "../storage/BondingIdentityStorage.sol";
 import { BondOwnerCapacityLib } from "./BondOwnerCapacityLib.sol";
 
 /// @notice Applies an independent identity policy to historical bond owners.
@@ -70,7 +70,11 @@ library BondingIdentityLib {
         uint48 timepoint = SafeCast.toUint48(block.timestamp);
         state.policyVersions.push(timepoint, version + 1);
         BondOwnerCapacityLib.reset();
-        emit IBondingIdentity.IdentityPolicyUpdated(timepoint, registry, required);
+        emit IBondingIdentity.IdentityPolicyUpdated(
+            timepoint,
+            registry,
+            required
+        );
     }
 
     function allows(

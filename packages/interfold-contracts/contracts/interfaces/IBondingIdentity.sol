@@ -12,7 +12,11 @@ interface IBondingIdentity {
         bool required;
     }
 
-    event IdentityPolicyUpdated(uint48 timepoint, address registry, bool required);
+    event IdentityPolicyUpdated(
+        uint48 timepoint,
+        address registry,
+        bool required
+    );
 
     /// @notice A required policy needs a deployed registry; a call to an empty address would make
     ///         every eligibility check revert.
