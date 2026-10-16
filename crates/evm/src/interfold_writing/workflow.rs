@@ -13,7 +13,7 @@
 use alloy::primitives::{Address, U256};
 use e3_events::{CircuitName, E3Stage, E3id, PlaintextAggregated, Proof};
 use e3_request::canonical_key::CanonicalPublicKeys;
-use e3_utils::utility_types::ArcBytes;
+use e3_utils::{backoff_delay, utility_types::ArcBytes};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -120,30 +120,32 @@ pub(crate) fn failure_watch_party_id(stage: &E3Stage, party_id: Option<u64>) -> 
     }
 }
 
-const BLOCKED_SETTLEMENT_FIRST_DELAY: Duration = Duration::from_secs(30);
-const BLOCKED_SETTLEMENT_MAX_DELAY: Duration = Duration::from_secs(30 * 60);
+const FAILURE_RETRY_FIRST_DELAY: Duration = Duration::from_secs(30);
+const FAILURE_RETRY_MAX_DELAY: Duration = Duration::from_secs(30 * 60);
 
-/// Per-E3 retry delays for a failure settlement that the refund manager still blocks.
+/// Per-E3 retry delays in the failure path: for a settlement that the refund manager still
+/// blocks, and for a failed chain read or transaction.
 ///
-/// The first delay is 30 s. Each blocked attempt doubles the next delay, up to 30 min. The
-/// chain decides when settlement opens, so this state is process-local: after a restart the
-/// node reads the chain again from the first delay.
+/// The first delay is 30 s. Each further attempt doubles the delay, up to 30 min, plus up to 10 %
+/// jitter (`backoff_delay`). The chain decides when settlement opens, so this state is
+/// process-local: after a restart the node reads the chain again from the first delay.
 #[derive(Debug, Default)]
-pub(crate) struct BlockedSettlementBackoff {
+pub(crate) struct FailureRetryBackoff {
     attempts: HashMap<E3id, u32>,
 }
 
-impl BlockedSettlementBackoff {
-    /// Record a blocked attempt. Return the delay before the next attempt, and `true` when the
-    /// E3 has no earlier blocked attempt since the last `clear`.
+impl FailureRetryBackoff {
+    /// Record an attempt that must be tried again. Return the delay before the next attempt, and
+    /// `true` when the E3 has no earlier attempt since the last `clear`.
     pub(crate) fn record(&mut self, e3_id: &E3id) -> (Duration, bool) {
         let attempts = self.attempts.entry(e3_id.clone()).or_insert(0);
         let first = *attempts == 0;
-        let factor = 1_u32.checked_shl(*attempts).unwrap_or(u32::MAX);
-        let delay = BLOCKED_SETTLEMENT_FIRST_DELAY
-            .saturating_mul(factor)
-            .min(BLOCKED_SETTLEMENT_MAX_DELAY);
         *attempts = attempts.saturating_add(1);
+        let delay = backoff_delay(
+            FAILURE_RETRY_FIRST_DELAY,
+            *attempts,
+            FAILURE_RETRY_MAX_DELAY,
+        );
         (delay, first)
     }
 
@@ -256,46 +258,50 @@ mod tests {
         );
     }
 
-    #[test]
-    fn blocked_settlement_backs_off_from_thirty_seconds_to_thirty_minutes() {
-        let e3_id = E3id::new("9", 1);
-        let mut backoff = BlockedSettlementBackoff::default();
-
-        let delays: Vec<(u64, bool)> = (0..9)
-            .map(|_| {
-                let (delay, first) = backoff.record(&e3_id);
-                (delay.as_secs(), first)
-            })
-            .collect();
-        assert_eq!(
-            delays,
-            vec![
-                (30, true),
-                (60, false),
-                (120, false),
-                (240, false),
-                (480, false),
-                (960, false),
-                (1800, false),
-                (1800, false),
-                (1800, false),
-            ]
-        );
+    /// A delay within the 10 % jitter above `secs`.
+    fn about(delay: Duration, secs: u64) -> bool {
+        let expected = Duration::from_secs(secs);
+        delay >= expected && delay <= expected.mul_f64(1.1)
     }
 
     #[test]
-    fn blocked_settlement_backoff_is_per_e3_and_resets_when_cleared() {
+    fn failure_retries_back_off_from_thirty_seconds_to_thirty_minutes() {
+        let e3_id = E3id::new("9", 1);
+        let mut backoff = FailureRetryBackoff::default();
+
+        for (secs, first) in [
+            (30, true),
+            (60, false),
+            (120, false),
+            (240, false),
+            (480, false),
+            (960, false),
+            (1800, false),
+            (1800, false),
+            (1800, false),
+        ] {
+            let (delay, is_first) = backoff.record(&e3_id);
+            assert!(about(delay, secs), "{delay:?} is not about {secs} s");
+            assert_eq!(is_first, first);
+        }
+    }
+
+    #[test]
+    fn failure_retry_backoff_is_per_e3_and_resets_when_cleared() {
         let first_e3 = E3id::new("9", 1);
         let second_e3 = E3id::new("10", 1);
-        let mut backoff = BlockedSettlementBackoff::default();
+        let mut backoff = FailureRetryBackoff::default();
 
         backoff.record(&first_e3);
         backoff.record(&first_e3);
-        assert_eq!(backoff.record(&second_e3), (Duration::from_secs(30), true));
+        let (delay, first) = backoff.record(&second_e3);
+        assert!(about(delay, 30) && first);
 
         backoff.clear(&first_e3);
-        assert_eq!(backoff.record(&first_e3), (Duration::from_secs(30), true));
-        assert_eq!(backoff.record(&second_e3), (Duration::from_secs(60), false));
+        let (delay, first) = backoff.record(&first_e3);
+        assert!(about(delay, 30) && first);
+        let (delay, first) = backoff.record(&second_e3);
+        assert!(about(delay, 60) && !first);
     }
 
     #[test]

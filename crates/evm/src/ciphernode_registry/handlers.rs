@@ -7,7 +7,7 @@ use super::*;
 use e3_events::EventSource;
 use std::collections::HashMap;
 
-const PUBLICATION_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
+use crate::helpers::PUBLICATION_RETRY_DELAY;
 
 fn update_request_registry(
     registries: &mut HashMap<E3id, Address>,

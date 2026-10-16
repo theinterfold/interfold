@@ -168,7 +168,9 @@ the decoded revert data of the call; an RPC error whose text contains a selector
 failure. Before it takes the transaction nonce guard, the writer simulates the call with `eth_call`.
 If the simulation reverts with `SettlementBlocked` (see step 0 below), the writer does not emit
 `InterfoldError`. It retries that E3 after 30 s and doubles the delay after each blocked attempt, up
-to 30 min. This backoff is process-local; a restart starts again at 30 s.
+to 30 min. A failed read or transaction in the failure path (stage discovery, the failure deadline
+read, `markE3Failed` and `processE3Failure`) backs off the same way, with a separate count per E3
+that a successful call resets. These backoffs are process-local; a restart starts again at 30 s.
 
 ```text
 Anyone calls: Interfold.processE3Failure(e3Id)

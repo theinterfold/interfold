@@ -9,8 +9,7 @@
 use crate::contracts::{ICiphernodeRegistry, IInterfold};
 use crate::domain::error_decoder::format_evm_error;
 use crate::domain::plaintext_publication::{
-    failure_watch_delay, failure_watch_party_id, BlockedSettlementBackoff,
-    FailureStageDiscoveryGate,
+    failure_watch_delay, failure_watch_party_id, FailureRetryBackoff, FailureStageDiscoveryGate,
 };
 use crate::domain::plaintext_publication::{
     plaintext_has_canonical_domain, validate_plaintext_output,
@@ -64,7 +63,9 @@ pub struct InterfoldSolWriter<P> {
     failure_timers: HashMap<E3id, SpawnHandle>,
     failure_stage_discoveries: FailureStageDiscoveryGate,
     failure_settlements: ReplaySubmissionGate<E3id, ()>,
-    blocked_settlements: BlockedSettlementBackoff,
+    blocked_settlements: FailureRetryBackoff,
+    /// Consecutive failed chain reads or transactions in the failure path of each E3.
+    failure_errors: FailureRetryBackoff,
 }
 
 impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
@@ -123,7 +124,8 @@ impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
             failure_timers: HashMap::new(),
             failure_stage_discoveries: FailureStageDiscoveryGate::default(),
             failure_settlements,
-            blocked_settlements: BlockedSettlementBackoff::default(),
+            blocked_settlements: FailureRetryBackoff::default(),
+            failure_errors: FailureRetryBackoff::default(),
         })
     }
 

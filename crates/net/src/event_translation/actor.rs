@@ -15,7 +15,7 @@ use e3_events::{
     prelude::*, trap, BusHandle, CorrelationId, EType, EventContextAccessors, EventId, EventSource,
     EventType, InterfoldEvent,
 };
-use e3_utils::MAILBOX_LIMIT;
+use e3_utils::{backoff_delay, MAILBOX_LIMIT};
 use std::{
     collections::HashMap,
     time::{Duration, Instant},
@@ -38,7 +38,9 @@ pub struct NetEventTranslator {
 }
 
 const MAX_GOSSIP_PUBLISH_ATTEMPTS: u8 = 3;
+/// The first wait before a transient publish failure is tried again. Later waits double.
 const GOSSIP_RETRY_DELAY: Duration = Duration::from_secs(2);
+const MAX_GOSSIP_RETRY_DELAY: Duration = Duration::from_secs(30);
 const MAX_NO_PEER_PUBLISH_ATTEMPTS: u8 = 20;
 const NO_PEER_RETRY_DELAY: Duration = Duration::from_secs(30);
 const GOSSIP_PUBLISH_RESULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -227,7 +229,7 @@ impl NetEventTranslator {
         let Some(pending) = self.pending.remove(&correlation_id) else {
             return;
         };
-        let retry = retry_policy(&failure);
+        let retry = retry_policy(&failure, pending.attempt);
         if let Some((_, delay)) = retry.filter(|(max, _)| pending.attempt < *max) {
             warn!(
                 attempt = pending.attempt,
@@ -322,14 +324,16 @@ fn wait_failure(error: &anyhow::Error) -> GossipPublishFailure {
     }
 }
 
-fn retry_policy(failure: &GossipPublishFailure) -> Option<(u8, Duration)> {
+/// The attempt limit and the wait after failed attempt `attempt` (counted from 1).
+fn retry_policy(failure: &GossipPublishFailure, attempt: u8) -> Option<(u8, Duration)> {
     match failure {
         GossipPublishFailure::NoPeersSubscribed => {
             Some((MAX_NO_PEER_PUBLISH_ATTEMPTS, NO_PEER_RETRY_DELAY))
         }
-        GossipPublishFailure::Transient(_) => {
-            Some((MAX_GOSSIP_PUBLISH_ATTEMPTS, GOSSIP_RETRY_DELAY))
-        }
+        GossipPublishFailure::Transient(_) => Some((
+            MAX_GOSSIP_PUBLISH_ATTEMPTS,
+            backoff_delay(GOSSIP_RETRY_DELAY, attempt.into(), MAX_GOSSIP_RETRY_DELAY),
+        )),
         GossipPublishFailure::Permanent(_) => None,
     }
 }
@@ -576,15 +580,30 @@ mod tests {
     #[test]
     fn no_peer_failures_use_the_long_join_window() {
         assert_eq!(
-            retry_policy(&GossipPublishFailure::NoPeersSubscribed),
+            retry_policy(&GossipPublishFailure::NoPeersSubscribed, 1),
             Some((MAX_NO_PEER_PUBLISH_ATTEMPTS, NO_PEER_RETRY_DELAY))
         );
+    }
+
+    /// A transient failure waits 2 s after the first attempt and twice as long after the second.
+    #[test]
+    fn transient_publish_failures_back_off() {
+        let transient = GossipPublishFailure::transient("timed out");
+        for (attempt, secs) in [(1, 2), (2, 4)] {
+            let (max, delay) = retry_policy(&transient, attempt).expect("retried");
+            assert_eq!(max, MAX_GOSSIP_PUBLISH_ATTEMPTS);
+            let expected = Duration::from_secs(secs);
+            assert!(
+                delay >= expected && delay <= expected.mul_f64(1.1),
+                "{delay:?}"
+            );
+        }
     }
 
     #[test]
     fn permanent_publish_failures_are_not_retried() {
         assert_eq!(
-            retry_policy(&GossipPublishFailure::permanent("invalid payload")),
+            retry_policy(&GossipPublishFailure::permanent("invalid payload"), 1),
             None
         );
     }
