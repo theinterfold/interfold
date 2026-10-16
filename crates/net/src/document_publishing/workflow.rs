@@ -12,11 +12,10 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use e3_events::{AggregateId, DocumentReceived, E3id, PartyId};
-use e3_utils::ArcBytes;
+use e3_utils::{backoff_delay, ArcBytes};
 use libp2p::PeerId;
 
 use crate::{
-    backoff::backoff_delay,
     events::{DocumentPublishedNotification, NetCommand},
     ContentHash,
 };

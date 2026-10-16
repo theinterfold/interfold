@@ -31,7 +31,7 @@ use libp2p::{
     Multiaddr, PeerId,
 };
 
-use crate::backoff::backoff_delay;
+use e3_utils::backoff_delay;
 
 /// How long a connected peer may stay without a gossip subscription.
 pub(crate) const GOSSIP_SUBSCRIPTION_GRACE: Duration = Duration::from_secs(30);

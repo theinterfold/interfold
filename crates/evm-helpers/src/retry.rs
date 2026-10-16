@@ -4,12 +4,12 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use e3_utils::{retry_with_backoff, should_retry_error, RetryError};
+use e3_utils::{
+    retry_with_backoff, should_retry_error, RetryError, RPC_RETRY_ATTEMPTS,
+    RPC_RETRY_FIRST_DELAY_MS,
+};
 use std::future::Future;
 use tracing::{info, warn};
-
-const RETRY_MAX_ATTEMPTS: u32 = 3;
-const RETRY_INITIAL_DELAY_MS: u64 = 2000;
 
 pub async fn call_with_retry<F, Fut, T>(
     operation_name: &str,
@@ -23,7 +23,7 @@ where
     call_with_retry_attempts(
         operation_name,
         retry_on_errors,
-        RETRY_MAX_ATTEMPTS,
+        RPC_RETRY_ATTEMPTS,
         operation_fn,
     )
     .await
@@ -69,7 +69,7 @@ where
     retry_decoded(
         operation_name,
         retry_on_errors,
-        RETRY_MAX_ATTEMPTS,
+        RPC_RETRY_ATTEMPTS,
         operation_fn,
         decode_error,
     )
@@ -122,7 +122,7 @@ where
             }
         },
         max_attempts,
-        RETRY_INITIAL_DELAY_MS,
+        RPC_RETRY_FIRST_DELAY_MS,
     )
     .await
 }

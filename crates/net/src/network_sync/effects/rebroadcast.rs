@@ -3,9 +3,9 @@
 //! Re-gossip this node's forwardable in-flight artifacts after restart.
 
 use super::*;
-use crate::backoff::backoff_delay;
 use crate::domain::closed_e3s::record_closed_e3;
 use e3_events::E3id;
+use e3_utils::backoff_delay;
 
 impl NetSyncManager {
     /// Keep re-sending this node's latest DKG Ready or Roster message until key publication or the

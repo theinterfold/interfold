@@ -5,7 +5,6 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 mod actors;
-mod backoff;
 mod cid;
 mod command_responses;
 mod dial_guard;

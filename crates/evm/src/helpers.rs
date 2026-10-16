@@ -39,7 +39,10 @@ use e3_config::{chain_config::ChainConfig, RpcAuth, RPC};
 use e3_crypto::Cipher;
 use e3_data::Repository;
 use e3_events::Proof;
-use e3_utils::{retry_with_backoff, should_retry_error, RetryError};
+use e3_utils::{
+    retry_with_backoff, should_retry_error, RetryError, RPC_RETRY_ATTEMPTS,
+    RPC_RETRY_FIRST_DELAY_MS,
+};
 use std::{
     collections::HashMap,
     env,
@@ -358,9 +361,6 @@ where
     Ok(block.header.timestamp)
 }
 
-const TX_RETRY_MAX_ATTEMPTS: u32 = 3;
-const TX_RETRY_INITIAL_DELAY_MS: u64 = 2000;
-
 pub async fn send_tx_with_retry<F, Fut>(
     operation_name: &str,
     retry_on_errors: &[&str],
@@ -401,8 +401,8 @@ where
                 }
             }
         },
-        TX_RETRY_MAX_ATTEMPTS,
-        TX_RETRY_INITIAL_DELAY_MS,
+        RPC_RETRY_ATTEMPTS,
+        RPC_RETRY_FIRST_DELAY_MS,
     )
     .await
 }
