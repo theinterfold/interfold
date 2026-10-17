@@ -861,7 +861,7 @@
       ],
       "tests": "cargo test -p e3-multithread. Tests: pool.rs (cfg(test) at line 290: group cancellation, Rayon panics), multithread.rs (from line 273: task-group cancellation, request lifetime, retry delays and warning limits), effect_gate.rs (line 520: replay, dedupe and redrive cases) and memory.rs (line 134: admission arithmetic).",
       "unverified": [
-        "The ZK prover (ZkProver) lives in crates/zk-prover and was not read; the proof side is described only from the dispatch in multithread.rs.",
+        "The ZK prover (ZkProver) lives in crates/zk/prover and was not read; the proof side is described only from the dispatch in multithread.rs.",
         "The memory constants (memory.rs:19 and memory.rs:22) are values in code; their effect on a real host was not measured.",
         "The thread counts and job limits are set in crates/ciphernode-builder (ciphernode_builder.rs:477-483); the builder was checked only at the call sites."
       ]
@@ -977,7 +977,7 @@
       ],
       "depends_on": ["e3-bfv-client", "e3-fhe-params", "e3-crypto", "e3-utils"],
       "tests": "cargo test -p e3-trbfv. tests/integration.rs (test_trbfv_isolation, line 30) runs a 5-party, threshold-2 round through share generation, decryption shares and threshold decryption. Unit tests: shares/bfv_encrypted.rs (lines 257 and 276) and trbfv_request.rs (lines 217 and 232).",
-      "unverified": ["The circuits that prove these steps live in crates/zk-helpers and crates/zk-prover and were not read here."]
+      "unverified": ["The circuits that prove these steps live in crates/zk-helpers and crates/zk/prover and were not read here."]
     },
     {
       "id": "e3-bfv-client",

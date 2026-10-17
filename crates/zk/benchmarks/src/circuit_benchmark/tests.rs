@@ -57,7 +57,7 @@ fn unmeasured_and_failed_stages_are_distinct_and_calldata_uses_actual_bytes() {
 #[test]
 fn ude_projection_preserves_ct1_quotient_name_and_rejects_missing_material() {
     let mut document: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../../crates/zk-prover/tests/fixtures/dummy.json"
+        "../../../../../crates/zk/prover/tests/fixtures/dummy.json"
     ))
     .unwrap();
     document["abi"]["parameters"] = serde_json::json!([{ "name": "r_ct1", "type": { "kind": "field" }, "visibility": "private" }]);
@@ -249,13 +249,13 @@ fn config_loader_binds_the_compiled_digest_and_pair_not_the_active_stamp() {
     let compiled = directory.join("validate_secure_configs.json");
     fs::write(
         &compiled,
-        include_str!("../../../../../crates/zk-prover/tests/fixtures/dummy.json"),
+        include_str!("../../../../../crates/zk/prover/tests/fixtures/dummy.json"),
     )
     .unwrap();
     let stale = directory.join("config.json");
     fs::write(&stale, b"unrelated stale config artifact").unwrap();
     let document: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../../crates/zk-prover/tests/fixtures/dummy.json"
+        "../../../../../crates/zk/prover/tests/fixtures/dummy.json"
     ))
     .unwrap();
     let stamp = serde_json::json!({"schema_version":1,"preset":"secure-8192","committee":"minimum","compiled_sha256":artifacts::digest(&compiled).unwrap(),"compiler_version":document["noir_version"],"sourceHash":"original-config-sources","source_origin":"fresh_local_noir_compile","vk_sha256":{}});
@@ -311,7 +311,7 @@ fn config_loader_binds_the_compiled_digest_and_pair_not_the_active_stamp() {
     assert!(load("secure-8192/minimum", true).is_ok());
     fs::write(
         &compiled,
-        include_str!("../../../../../crates/zk-prover/tests/fixtures/dummy.json")
+        include_str!("../../../../../crates/zk/prover/tests/fixtures/dummy.json")
             .replace("2159294962516643373", "2159294962516643374"),
     )
     .unwrap();

@@ -104,7 +104,7 @@ talks to other ciphernodes over libp2p, and sends transactions. Its main parts a
 | `ThresholdKeyshare`            | `crates/keyshare`   | Run DKG and compute decryption shares for one E3                     |
 | `PublicKeyAggregator`          | `crates/aggregator` | Aggregate the public key and the DKG proofs                          |
 | `ThresholdPlaintextAggregator` | `crates/aggregator` | Combine decryption shares and fold the decryption proofs             |
-| Proof actors                   | `crates/zk-prover`  | Generate and verify ZK proofs with Barretenberg (`bb`)               |
+| Proof actors                   | `crates/zk/prover`  | Generate and verify ZK proofs with Barretenberg (`bb`)               |
 | `AccusationManager`            | `crates/slashing`   | Start an accusation after a failed proof and collect committee votes |
 | Network                        | `crates/net`        | libp2p gossip between ciphernodes                                    |
 | Storage                        | `crates/data`       | sled storage and event replay after a restart                        |

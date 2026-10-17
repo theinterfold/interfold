@@ -41,13 +41,13 @@ pub(crate) fn write_pins(root: &Path) {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     write(
         root,
-        "crates/zk-prover/Cargo.toml",
-        fs::read_to_string(repo.join("crates/zk-prover/Cargo.toml")).unwrap(),
+        "crates/zk/prover/Cargo.toml",
+        fs::read_to_string(repo.join("crates/zk/prover/Cargo.toml")).unwrap(),
     );
     write(
         root,
-        "crates/zk-prover/versions.json",
-        fs::read_to_string(repo.join("crates/zk-prover/versions.json")).unwrap(),
+        "crates/zk/prover/versions.json",
+        fs::read_to_string(repo.join("crates/zk/prover/versions.json")).unwrap(),
     );
 }
 
@@ -225,7 +225,7 @@ fn full_build_probes_pinned_tools_before_any_artifact_write() {
     assert!(execute(root, &request())
         .unwrap_err()
         .to_string()
-        .contains("crates/zk-prover/Cargo.toml"));
+        .contains("crates/zk/prover/Cargo.toml"));
     assert_eq!(snapshot(root), before, "tool failure changed live files");
 }
 
@@ -409,12 +409,12 @@ fn source_identity_tracks_external_pins_and_pinned_tools() {
     write(root, "crates/zk/build/Cargo.toml", manifest);
     write(
         root,
-        "crates/zk-prover/Cargo.toml",
+        "crates/zk/prover/Cargo.toml",
         "nargo = { git = \"https://github.com/noir-lang/noir\", tag = \"v1.0.0-beta.26\" }\n",
     );
     write(
         root,
-        "crates/zk-prover/versions.json",
+        "crates/zk/prover/versions.json",
         r#"{"required_bb_version":"5.2.0","required_circuits_version":"0.19.0"}"#,
     );
     let hash = || identity::source_hash(root, &opts, Some("insecure-64"), Some("minimum")).unwrap();
@@ -447,24 +447,24 @@ fn source_identity_tracks_external_pins_and_pinned_tools() {
     write(root, "Cargo.lock", lock);
     write(
         root,
-        "crates/zk-prover/versions.json",
+        "crates/zk/prover/versions.json",
         r#"{"required_bb_version":"5.2.0","required_circuits_version":"9.9.9"}"#,
     );
     assert_eq!(hash(), before);
     write(
         root,
-        "crates/zk-prover/versions.json",
+        "crates/zk/prover/versions.json",
         r#"{"required_bb_version":"5.2.1"}"#,
     );
     assert_ne!(hash(), before);
     write(
         root,
-        "crates/zk-prover/versions.json",
+        "crates/zk/prover/versions.json",
         r#"{"required_bb_version":"5.2.0"}"#,
     );
     write(
         root,
-        "crates/zk-prover/Cargo.toml",
+        "crates/zk/prover/Cargo.toml",
         "nargo = { git = \"https://github.com/noir-lang/noir\", tag = \"v1.0.0-beta.27\" }\n",
     );
     assert_ne!(hash(), before);

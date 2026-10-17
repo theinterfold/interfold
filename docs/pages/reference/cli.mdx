@@ -372,7 +372,7 @@ The detached supervisor does not receive the `--otel` flag. Set `otel` in the co
 
 Manages the Noir prover tools that the node uses to make zero-knowledge proofs: the Barretenberg
 binary (`bb`) and the compiled circuits. The required versions come from
-`crates/zk-prover/versions.json`. For release 0.18.0, they are `bb` 5.1.0 and circuits 0.18.0.
+`crates/zk/prover/versions.json`. For release 0.18.0, they are `bb` 5.1.0 and circuits 0.18.0.
 
 | Subcommand    | Flags                                                                                                                                                                                                                                                                                                                                                                                      | Purpose                                                                                                             |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
@@ -384,7 +384,7 @@ to `~/.interfold/noir`. A custom `bb` from `custom_bb` or `E3_CUSTOM_BB` replace
 one.
 
 Circuit downloads require an archive SHA-256 compiled in for the required version from
-`crates/zk-prover/versions.json` or the release build input. `noir status` reports the required
+`crates/zk/prover/versions.json` or the release build input. `noir status` reports the required
 version and this pin. The installer checks this digest before extraction. It then requires a
 nonempty `checksums.json` that covers every artifact file and verifies each entry. The archive must
 contain the full supported preset/committee matrix and the complete artifact inventory used by

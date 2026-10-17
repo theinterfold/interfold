@@ -114,7 +114,7 @@
     "id": "B10",
     "supported": false,
     "refs": [
-      "crates/zk-prover/src/proof_request/effects/decryption_share_proofs.rs@139@DecryptionshareCreated {",
+      "crates/zk/prover/src/proof_request/effects/decryption_share_proofs.rs@139@DecryptionshareCreated {",
       "crates/keyshare/src/threshold_keyshare/effects/create_decryption_share.rs@259@let event = ShareDecryptionProofPending {",
       "crates/keyshare/src/threshold_keyshare/effects/create_decryption_share.rs@102@let event = ComputeRequest::trbfv("
     ],
@@ -175,10 +175,10 @@
     "id": "B15",
     "supported": true,
     "refs": [
-      "crates/zk-prover/src/proof_request/handlers.rs@134@impl Handler<TypedEvent<ShareDecryptionProofPending>> for ProofRequestActor {",
-      "crates/zk-prover/src/proof_request/effects/signing.rs@80@match SignedProofPayload::sign(payload, &self.signer) {",
-      "crates/zk-prover/src/proof_request/effects/aggregation_proofs.rs@84@PkAggregationProofSigned {",
-      "crates/zk-prover/src/proof_request/effects/decryption_share_proofs.rs@139@DecryptionshareCreated {"
+      "crates/zk/prover/src/proof_request/handlers.rs@134@impl Handler<TypedEvent<ShareDecryptionProofPending>> for ProofRequestActor {",
+      "crates/zk/prover/src/proof_request/effects/signing.rs@80@match SignedProofPayload::sign(payload, &self.signer) {",
+      "crates/zk/prover/src/proof_request/effects/aggregation_proofs.rs@84@PkAggregationProofSigned {",
+      "crates/zk/prover/src/proof_request/effects/decryption_share_proofs.rs@139@DecryptionshareCreated {"
     ],
     "line_text": [
       "impl Handler<TypedEvent<ShareDecryptionProofPending>> for ProofRequestActor {",

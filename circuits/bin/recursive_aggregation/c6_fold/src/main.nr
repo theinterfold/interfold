@@ -6,7 +6,7 @@
 
 //! Sequential C6 fold: one inner ZK `ThresholdShareDecryption` proof per step, chained with the
 //! previous accumulator (`c6_fold` non-ZK proof, or a fixed genesis proof from `c6_fold_kernel` on
-//! the first step; see `crates/zk-prover` and `c6_fold_kernel`).
+//! the first step; see `crates/zk/prover` and `c6_fold_kernel`).
 
 use bb_proof_verification::{
     UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,

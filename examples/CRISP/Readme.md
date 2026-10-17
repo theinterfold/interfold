@@ -52,7 +52,7 @@ Before getting started, ensure you have installed:
   [`bb`](https://barretenberg.aztec.network/docs/getting_started). Install the versions CI pins,
   since other versions may not compile the circuits:
   - `nargo`: `noirup -v v1.0.0-beta.26` (`NOIR_TOOLCHAIN` in `.github/workflows/ci.yml`)
-  - `bb`: version and per-platform checksums live in `crates/zk-prover/versions.json`
+  - `bb`: version and per-platform checksums live in `crates/zk/prover/versions.json`
 
 Local development runs the unproved development runner unless `CRISP_REAL_PROOFS=1` (see
 `crisp.dev.env.example`). Real proofs use OpenVM: build the workers, configure `program.openvm` in

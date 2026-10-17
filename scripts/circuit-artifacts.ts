@@ -10,8 +10,8 @@ import { createHash } from 'crypto'
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
 import { join, relative, resolve } from 'path'
 import type { CircuitCommittee, CircuitPreset } from './circuit-constants'
-import requiredArtifacts from '../crates/zk-prover/required-artifacts.json'
-import supportedConfigurations from '../crates/zk-prover/supported-configurations.json'
+import requiredArtifacts from '../crates/zk/prover/required-artifacts.json'
+import supportedConfigurations from '../crates/zk/prover/supported-configurations.json'
 
 const BRANCH = 'circuit-artifacts'
 const ROOT = resolve(__dirname, '..')
@@ -75,7 +75,7 @@ function refreshChecksums(dir: string): void {
 }
 
 /**
- * Check `checksums.json` as a node's installer does (`crates/zk-prover/src/backend/download.rs`):
+ * Check `checksums.json` as a node's installer does (`crates/zk/prover/src/backend/download.rs`):
  * sha256, at least one file, plain relative paths, every listed file present with its digest, and
  * every artifact listed. Build stamps and the root manifests need no entry.
  */

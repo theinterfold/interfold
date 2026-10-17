@@ -147,7 +147,7 @@ struct SlashingArtifacts {
 
 fn read_artifact(subpath: &str) -> ContractArtifact {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../packages/interfold-contracts/artifacts/contracts")
+        .join("../../../packages/interfold-contracts/artifacts/contracts")
         .join(subpath);
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|error| {
         panic!(

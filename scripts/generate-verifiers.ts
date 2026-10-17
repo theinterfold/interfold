@@ -286,7 +286,7 @@ class VerifierGenerator {
             `     - You ran 'pnpm build:circuits' against a different Noir/bb version, or\n` +
             `     - A circuit / VK changed without regenerating the committed Solidity files.\n` +
             `\n   To fix:\n` +
-            `     1. Verify your Noir/bb versions match (see crates/zk-prover/versions.json).\n` +
+            `     1. Verify your Noir/bb versions match (see crates/zk/prover/versions.json).\n` +
             `     2. Run 'pnpm build:circuits --preset insecure-64' (or the relevant preset).\n` +
             `     3. Run 'pnpm generate:verifiers --write' (or omit --check) to refresh the\n` +
             `        committed .sol files, then commit the diff.\n`,

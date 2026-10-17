@@ -136,8 +136,8 @@ release.
 
 | Component                            | Version                  | Pinned in                                                                                                          |
 | ------------------------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| `nargo`                              | `1.0.0-beta.26`          | `NOIR_TOOLCHAIN` in `.github/workflows/ci.yml`. The Noir crates in `crates/zk-prover/Cargo.toml` use the same tag. |
-| `bb`                                 | `5.2.0`                  | `required_bb_version` in `crates/zk-prover/versions.json`, and `BB_VERSION` in `ci.yml`                            |
+| `nargo`                              | `1.0.0-beta.26`          | `NOIR_TOOLCHAIN` in `.github/workflows/ci.yml`. The Noir crates in `crates/zk/prover/Cargo.toml` use the same tag. |
+| `bb`                                 | `5.2.0`                  | `required_bb_version` in `crates/zk/prover/versions.json`, and `BB_VERSION` in `ci.yml`                            |
 | Circuit artifacts for source builds  | Build from this checkout | `pnpm build:circuits`                                                                                              |
 | `bb_proof_verification` (Noir)       | `v5.2.0`                 | The `Nargo.toml` of each package that verifies a proof                                                             |
 | `@aztec/bb.js`, `@noir-lang/noir_js` | `5.2.0`, `1.0.0-beta.26` | `packages/interfold-sdk/package.json`                                                                              |
@@ -255,20 +255,20 @@ For each pair, the Rust build owner does these steps (`crates/zk/build`):
 The build records the active pair in `circuits/bin/.active-preset.json`.
 
 Downloaded release archives must match the SHA-256 compiled into the binary for their version. The
-binary includes pins from `crates/zk-prover/versions.json` (`circuits_checksums`) and the release
+binary includes pins from `crates/zk/prover/versions.json` (`circuits_checksums`) and the release
 build input. The installer checks it before extraction, then requires a nonempty internal manifest
 that covers every artifact file. Root manifests, `SOURCE_HASH`, and build stamps are metadata.
 `noir setup --circuits-archive` requires the same pin for a local archive. Add
 `--allow-unpinned-archive` to install another archive, such as a local build.
 
-The installer requires every pair in `crates/zk-prover/supported-configurations.json` by default,
+The installer requires every pair in `crates/zk/prover/supported-configurations.json` by default,
 including for `noir setup --circuits-archive`. The release validator uses the same matrix. For a
 local archive, repeat `--circuits-configuration <PRESET/COMMITTEE>` to select a subset explicitly.
 For example, `--circuits-configuration insecure-64/minimum` selects the development configuration.
 Local and CI callers can request a nonempty subset through `download_circuits_for_configurations` or
 `install_circuits_archive_for_configurations`. The required set never depends on archive contents.
 Each required or included pair must contain every artifact in
-`crates/zk-prover/required-artifacts.json`. The release validator and installer share this
+`crates/zk/prover/required-artifacts.json`. The release validator and installer share this
 inventory. The manifest must cover each artifact.
 
 If circuit replacement or the version update fails, the installer attempts rollback and returns the
@@ -404,7 +404,7 @@ The library itself depends on `poseidon` `v0.3.0` and `keccak256` `v0.1.2` from 
 
 ## Rust integration
 
-The crate `e3-zk-prover` (`crates/zk-prover`) runs the circuits for the ciphernode.
+The crate `e3-zk-prover` (`crates/zk/prover`) runs the circuits for the ciphernode.
 
 | Item                                                                    | Role                                                                                                                                         |
 | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |

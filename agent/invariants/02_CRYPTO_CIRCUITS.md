@@ -1,6 +1,6 @@
 # Invariants — Cryptography / circuits
 
-Scope: `circuits/`, `crates/zk-prover`, `crates/zk/{config,witness}`, `crates/trbfv`,
+Scope: `circuits/`, `crates/zk/prover`, `crates/zk/{config,witness}`, `crates/trbfv`,
 `crates/fhe-params`, the BFV and OpenVM receipt verifier contracts, `crates/compute-provider`, and
 the CRISP example. Committee config sync, Noir/Barretenberg compatibility, DKG and threshold
 structure, proof binding and domain separation, and E3 program input rules.
@@ -56,15 +56,15 @@ every section.
   verification keys, and generated Solidity verifiers as one compatibility unit. The current
   source-build unit is Nargo and Rust Noir `1.0.0-beta.26` with Barretenberg `5.2.0`. The same pins
   also appear in the SDK's `@noir-lang/noir_js` and `@aztec/bb.js`. No script checks that these pins
-  agree. — `.github/workflows/ci.yml` and `releases.yml`; `crates/zk-prover/versions.json`;
-  `crates/zk-prover/Cargo.toml`; `packages/interfold-sdk/package.json`. A release must bind its
+  agree. — `.github/workflows/ci.yml` and `releases.yml`; `crates/zk/prover/versions.json`;
+  `crates/zk/prover/Cargo.toml`; `packages/interfold-sdk/package.json`. A release must bind its
   archive to matching source artifacts and a version-bound digest.
   `pnpm store:circuits verify-release` checks all six supported preset/committee pairs before
   archive publication. An archive from an older toolchain is not compatible merely because its file
   checksum is valid.
 - Rust-generated witnesses must use `WitnessStack::serialize()`. Do not serialize a witness stack
   with `bincode`; Barretenberg 5 accepts the beta.26 MessagePack format markers, not the legacy
-  marker. — `crates/zk-prover/src/witness.rs`
+  marker. — `crates/zk/prover/src/witness.rs`
 - Circuit tool version parsing belongs to `zk/build/src/toolchain.rs`. The build library and Rust
   benchmark use the same pinned Noir tag and exact-version predicate. The benchmark verifies the
   selected artifact digests and records the published source stamp; a local Rust refactor does not
@@ -97,18 +97,18 @@ every section.
   `ZkConfig::circuits_checksums[required_circuits_version]` before extraction. Missing pins fail
   closed. Both download and local archive installation require a nonempty SHA-256 `checksums.json`,
   verify each entry, and reject uncovered artifact files before replacement. Download and local
-  archive installation require every pair in `crates/zk-prover/supported-configurations.json` by
+  archive installation require every pair in `crates/zk/prover/supported-configurations.json` by
   default. Release tooling uses the same matrix. A local or CI caller can request a nonempty subset
   through `download_circuits_for_configurations` or `install_circuits_archive_for_configurations`.
   The CLI accepts repeated `--circuits-configuration` options only with `--circuits-archive`.
   Required pairs never depend on archive contents. Each required or included pair must contain every
-  path in `crates/zk-prover/required-artifacts.json`, with a verified manifest entry. The release
+  path in `crates/zk/prover/required-artifacts.json`, with a verified manifest entry. The release
   tooling's `requiredArtifactMarkers` uses that same inventory. Root manifests, `SOURCE_HASH`, and
   build stamps are metadata, not required prover artifacts. Validation failure preserves the
   installed circuits and `version.json`. Installation errors trigger best-effort rollback and remain
   the returned error even if rollback fails. Each rollback failure logs its source and target paths.
   If restoration of the previous circuits fails, the installer retains the staging directory and
-  logs its path for recovery. — `crates/zk-prover/src/backend/download.rs`
+  logs its path for recovery. — `crates/zk/prover/src/backend/download.rs`
 - Archive pins ship with the binary; neither the archive nor its download endpoint supplies the
   expected digest at runtime. The 0.18.0 pin comes from the published GitHub asset digest. Local
   archive installation requires the same pin unless the operator passes `--allow-unpinned-archive`,
@@ -231,7 +231,7 @@ every section.
   `crates/fhe-params/src/presets.rs`; `ActiveCryptoConfig.sol`
 - The local C1, C2a, C2b, and every C3a and C3b proof must complete and be signed before any
   `ThresholdShareCreated` is published. C4 through C7 belong to later phases. —
-  `crates/zk-prover/src/proof_request/effects/publish_threshold_shares.rs`; `flow-trace/04`
+  `crates/zk/prover/src/proof_request/effects/publish_threshold_shares.rs`; `flow-trace/04`
 - The compiled runtime plaintext width is exactly 50 u64 coefficients: `MAX_MSG_NON_ZERO_COEFFS` in
   Noir (`configs/default/mod.nr`, written by `pnpm build:circuits`) and in `zk/config`, and
   `MESSAGE_COEFFS_COUNT` in `BfvDecryptionVerifier.sol`. **Gap:** no gate compares these copies.

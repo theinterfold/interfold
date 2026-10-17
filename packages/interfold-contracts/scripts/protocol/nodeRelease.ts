@@ -51,7 +51,7 @@ export function requiresNodeReleasePolicyUpdate(
 export function requiredCircuitsVersion(): string {
   const root = getRepoRoot();
   const versions = JSON.parse(
-    fs.readFileSync(path.join(root, "crates/zk-prover/versions.json"), "utf8"),
+    fs.readFileSync(path.join(root, "crates/zk/prover/versions.json"), "utf8"),
   ) as { required_circuits_version?: string };
   if (!versions.required_circuits_version) {
     throw new Error("Required circuit version is missing");

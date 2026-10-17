@@ -57,7 +57,7 @@ export const LAYERS = {
     'zk/cli',
   ],
   clients: ['program-server', 'compute-provider', 'sdk', 'indexer', 'evm-helpers', 'wasm', 'openvm-host', 'openvm-types', 'openvm-prover'],
-  workflows: ['request', 'sortition', 'keyshare', 'aggregator', 'slashing', 'zk-prover', 'fhe', 'multithread', 'trbfv', 'bfv-client'],
+  workflows: ['request', 'sortition', 'keyshare', 'aggregator', 'slashing', 'zk/prover', 'fhe', 'multithread', 'trbfv', 'bfv-client'],
   adapters: ['evm', 'net', 'sync', 'data', 'data-availability', 'logger'],
   vocabulary: ['events', 'config', 'fhe-params', 'zk-helpers', 'committee', 'committee-hash'],
   foundations: ['crypto', 'polynomial', 'polynomial/fhe-adapter', 'parity-matrix', 'safe', 'hamt', 'utils', 'utils-derive'],

@@ -233,7 +233,7 @@ pub(crate) fn validate_active(root: &Path, cfg: &Configuration) -> Result<serde_
         bail!("Artifact manifest must use sha256");
     }
     let required: Vec<String> = serde_json::from_slice(&fs::read(
-        root.join("crates/zk-prover/required-artifacts.json"),
+        root.join("crates/zk/prover/required-artifacts.json"),
     )?)?;
     for artifact in required {
         let relative = format!("{}/{committee}/{artifact}", cfg.preset);

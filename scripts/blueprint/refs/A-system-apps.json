@@ -210,7 +210,7 @@
   {
     "id": "A21",
     "supported": false,
-    "refs": ["crates/zk-prover/src/prover.rs@104@StdCommand::new(bb)", "crates/zk-prover/src/witness.rs@59@execute_program("],
+    "refs": ["crates/zk/prover/src/prover.rs@104@StdCommand::new(bb)", "crates/zk/prover/src/witness.rs@59@execute_program("],
     "line_text": ["let mut child = StdCommand::new(bb)", "execute_program("],
     "note": "bb runs as a spawned child process, but nargo is a linked Rust library called in-process (witness.rs line 59), not a child process."
   },

@@ -32,7 +32,7 @@
         {
           "name": "ProofRequestActor (e3-zk-prover, outside this crate)",
           "role": "produces the proofs for these steps and publishes EncryptionKeyCreated, ThresholdShareCreated, DecryptionKeyShared and DecryptionshareCreated",
-          "ref": "crates/zk-prover/src/proof_request/actor.rs@67@pub struct ProofRequestActor {"
+          "ref": "crates/zk/prover/src/proof_request/actor.rs@67@pub struct ProofRequestActor {"
         }
       ],
       "consumes": [

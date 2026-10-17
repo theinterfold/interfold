@@ -13,11 +13,11 @@ use std::{
 };
 
 pub fn toolchain(root: &Path) -> Result<(String, String)> {
-    let manifest_path = root.join("crates/zk-prover/Cargo.toml");
+    let manifest_path = root.join("crates/zk/prover/Cargo.toml");
     let manifest = fs::read_to_string(&manifest_path)
         .with_context(|| format!("Read pinned prover manifest {}", manifest_path.display()))?;
     let tag = crate::pinned_noir_version(&manifest)?;
-    let versions_path = root.join("crates/zk-prover/versions.json");
+    let versions_path = root.join("crates/zk/prover/versions.json");
     let versions: serde_json::Value = serde_json::from_slice(
         &fs::read(&versions_path)
             .with_context(|| format!("Read pinned tool versions {}", versions_path.display()))?,
@@ -276,8 +276,8 @@ pub fn source_hash_with_updates(
     ] {
         hash_dir(&root.join(path), &mut hash, "", false, updates)?;
     }
-    if root.join("crates/zk-prover/Cargo.toml").exists()
-        && root.join("crates/zk-prover/versions.json").exists()
+    if root.join("crates/zk/prover/Cargo.toml").exists()
+        && root.join("crates/zk/prover/versions.json").exists()
     {
         let (nargo, bb) = toolchain(root)?;
         hash.update(format!("toolchain:nargo {nargo} bb {bb}\n"));

@@ -417,7 +417,7 @@ class VersionBumper {
    * Pin the circuit archive downloaded by this ciphernode release.
    */
   private bumpCircuitArchiveVersion(): void {
-    const versionsPath = join(this.rootDir, 'crates/zk-prover/versions.json')
+    const versionsPath = join(this.rootDir, 'crates/zk/prover/versions.json')
     const versions = JSON.parse(readFileSync(versionsPath, 'utf-8'))
     versions.required_circuits_version = this.newVersion
     writeFileSync(versionsPath, JSON.stringify(versions, null, 2) + '\n')

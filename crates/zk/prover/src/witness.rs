@@ -138,7 +138,7 @@ mod tests {
         use fhe::bfv::Ciphertext;
         use fhe_math::rq::{Poly, PowerBasis};
         use num_bigint::BigInt;
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../circuits/bin");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../circuits/bin");
         let active: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(root.join(".active-preset.json")).unwrap(),
         )

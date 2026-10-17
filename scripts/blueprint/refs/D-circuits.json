@@ -21,7 +21,7 @@
       "circuits/bin/recursive_aggregation/c3_fold_kernel/src/main.nr@36@verify_honk_proof(inner_vk, inner_proof, c3_public_inputs",
       "circuits/bin/recursive_aggregation/c3ab_fold/src/main.nr@36@verify_honk_proof_non_zk(c3a_vk, c3a_proof",
       "circuits/bin/recursive_aggregation/c3ab_fold/src/main.nr@37@verify_honk_proof_non_zk(c3b_vk, c3b_proof",
-      "crates/zk-prover/src/circuits/aggregation/c3_accumulator.rs@125@if proof.circuit != CircuitName::ShareEncryption {"
+      "crates/zk/prover/src/circuits/aggregation/c3_accumulator.rs@125@if proof.circuit != CircuitName::ShareEncryption {"
     ],
     "line_text": [
       "verify_honk_proof(inner_vk, inner_proof, c3_public_inputs, inner_key_hash);",
@@ -53,7 +53,7 @@
       "circuits/bin/recursive_aggregation/c6_fold/src/main.nr@43@verify_honk_proof(inner_vk, inner_proof, c6_public_inputs",
       "circuits/bin/recursive_aggregation/c6_fold/src/main.nr@52@verify_honk_proof_non_zk(acc_vk, acc_proof",
       "circuits/bin/recursive_aggregation/c6_fold_kernel/src/main.nr@40@verify_honk_proof(inner_vk, inner_proof, c6_public_inputs",
-      "crates/zk-prover/src/circuits/aggregation/c6_accumulator.rs@120@if proof.circuit != CircuitName::ThresholdShareDecryption {"
+      "crates/zk/prover/src/circuits/aggregation/c6_accumulator.rs@120@if proof.circuit != CircuitName::ThresholdShareDecryption {"
     ],
     "line_text": [
       "verify_honk_proof(inner_vk, inner_proof, c6_public_inputs, inner_key_hash);",
@@ -184,14 +184,14 @@
     "id": "D13",
     "supported": true,
     "refs": [
-      "crates/zk-prover/src/proof_request/effects/dkg_proofs.rs@25@ZkRequest::PkBfv(PkBfvProofRequest::new(",
-      "crates/zk-prover/src/proof_request/transitions.rs@31@ZkRequest::PkGeneration(proof_request)",
-      "crates/zk-prover/src/proof_request/transitions.rs@36@ZkRequest::ShareComputation(sk_share_computation_request)",
-      "crates/zk-prover/src/proof_request/transitions.rs@41@ZkRequest::ShareComputation(e_sm_share_computation_request)",
-      "crates/zk-prover/src/proof_request/transitions.rs@52@ZkRequest::ShareEncryption(req)",
-      "crates/zk-prover/src/proof_request/transitions.rs@65@ZkRequest::ShareEncryption(req)",
-      "crates/zk-prover/src/proof_request/transitions.rs@91@ZkRequest::DkgShareDecryption(sk_request)",
-      "crates/zk-prover/src/proof_request/transitions.rs@97@ZkRequest::DkgShareDecryption(esm_req)"
+      "crates/zk/prover/src/proof_request/effects/dkg_proofs.rs@25@ZkRequest::PkBfv(PkBfvProofRequest::new(",
+      "crates/zk/prover/src/proof_request/transitions.rs@31@ZkRequest::PkGeneration(proof_request)",
+      "crates/zk/prover/src/proof_request/transitions.rs@36@ZkRequest::ShareComputation(sk_share_computation_request)",
+      "crates/zk/prover/src/proof_request/transitions.rs@41@ZkRequest::ShareComputation(e_sm_share_computation_request)",
+      "crates/zk/prover/src/proof_request/transitions.rs@52@ZkRequest::ShareEncryption(req)",
+      "crates/zk/prover/src/proof_request/transitions.rs@65@ZkRequest::ShareEncryption(req)",
+      "crates/zk/prover/src/proof_request/transitions.rs@91@ZkRequest::DkgShareDecryption(sk_request)",
+      "crates/zk/prover/src/proof_request/transitions.rs@97@ZkRequest::DkgShareDecryption(esm_req)"
     ],
     "line_text": [
       "ZkRequest::PkBfv(PkBfvProofRequest::new(",
@@ -214,7 +214,7 @@
       "crates/aggregator/src/public_key_aggregation/actor.rs@148@fn can_continue_aggregation_effects",
       "crates/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@373@Publishing PkAggregationProofPending for C5 proof generation",
       "crates/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@375@PkAggregationProofPending {",
-      "crates/zk-prover/src/proof_request/effects/aggregation_proofs.rs@39@ZkRequest::PkAggregation(msg.proof_request)"
+      "crates/zk/prover/src/proof_request/effects/aggregation_proofs.rs@39@ZkRequest::PkAggregation(msg.proof_request)"
     ],
     "line_text": [
       "GeneratingC5Proof {",
@@ -234,7 +234,7 @@
       "crates/aggregator/src/plaintext_aggregation/effects/prove_plaintext.rs@20@DecryptedSharesAggregationProofRequest {",
       "crates/aggregator/src/plaintext_aggregation/handlers.rs@193@if !self.can_continue_aggregation_effects() {",
       "crates/aggregator/src/plaintext_aggregation/workflow.rs@38@GeneratingC7Proof",
-      "crates/zk-prover/src/proof_request/effects/aggregation_proofs.rs@135@ZkRequest::DecryptedSharesAggregation(msg.proof_request)"
+      "crates/zk/prover/src/proof_request/effects/aggregation_proofs.rs@135@ZkRequest::DecryptedSharesAggregation(msg.proof_request)"
     ],
     "line_text": [
       "AggregationProofPending {",
@@ -249,8 +249,8 @@
     "id": "D16",
     "supported": true,
     "refs": [
-      "crates/zk-prover/src/proof_request/effects/decryption_share_proofs.rs@66@Requesting C6 ThresholdShareDecryption proof for E3",
-      "crates/zk-prover/src/proof_request/effects/decryption_share_proofs.rs@71@ZkRequest::ThresholdShareDecryption(msg.proof_request)"
+      "crates/zk/prover/src/proof_request/effects/decryption_share_proofs.rs@66@Requesting C6 ThresholdShareDecryption proof for E3",
+      "crates/zk/prover/src/proof_request/effects/decryption_share_proofs.rs@71@ZkRequest::ThresholdShareDecryption(msg.proof_request)"
     ],
     "line_text": ["\"Requesting C6 ThresholdShareDecryption proof for E3 {}\",", "ZkRequest::ThresholdShareDecryption(msg.proof_request),"],
     "note": "Each member's proof-request actor dispatches the C6 ThresholdShareDecryption proof on its ShareDecryptionProofPending, which is the proof for its own decryption share."

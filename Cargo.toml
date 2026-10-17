@@ -54,7 +54,7 @@ members = [
   "crates/zk/witness",
   "crates/zk/samples",
   "crates/zk/benchmarks",
-  "crates/zk-prover",
+  "crates/zk/prover",
 ]
 exclude = [
   "examples/CRISP",
@@ -135,7 +135,7 @@ e3-utils = { version = "0.19.0", path = "./crates/utils" }
 e3-utils-derive = { version = "0.19.0", path = "./crates/utils-derive" }
 e3-safe = { version = "0.19.0", path = "./crates/safe" }
 e3-slashing = { version = "0.19.0", path = "./crates/slashing" }
-e3-zk-prover = { version = "0.19.0", path = "./crates/zk-prover" }
+e3-zk-prover = { version = "0.19.0", path = "./crates/zk/prover" }
 e3-zk-config = { version = "0.19.0", path = "./crates/zk/config" }
 e3-zk-build = { path = "./crates/zk/build" }
 e3-zk-witness = { version = "0.19.0", path = "./crates/zk/witness" }

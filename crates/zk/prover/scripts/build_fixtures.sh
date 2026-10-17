@@ -38,9 +38,9 @@ if (( ${#missing_artifacts[@]} > 0 )); then
 fi
 
 # Keep the integration-test fixture in sync with the current Noir serialization format.
-dummy_package="./crates/zk-prover/tests/fixtures/dummy"
+dummy_package="./crates/zk/prover/tests/fixtures/dummy"
 dummy_artifact="$dummy_package/target/dummy.json"
-fixture="./crates/zk-prover/tests/fixtures/dummy.json"
+fixture="./crates/zk/prover/tests/fixtures/dummy.json"
 normalize_compiled_circuit_paths() {
   # Noir emits machine-local absolute paths in file_map; keep fixtures stable.
   jq '
@@ -50,8 +50,8 @@ normalize_compiled_circuit_paths() {
           .path |= (
             if test("^/") and test("circuits/") then
               sub("^.*?circuits/"; "circuits/")
-            elif test("^/") and test("crates/zk-prover/tests/fixtures/dummy/") then
-              sub("^.*?crates/zk-prover/tests/fixtures/dummy/"; "crates/zk-prover/tests/fixtures/dummy/")
+            elif test("^/") and test("crates/zk/prover/tests/fixtures/dummy/") then
+              sub("^.*?crates/zk/prover/tests/fixtures/dummy/"; "crates/zk/prover/tests/fixtures/dummy/")
             else .
             end
           )

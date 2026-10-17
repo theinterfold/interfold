@@ -87,10 +87,10 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 
 ### Step 2: C0 Proof Generation → EncryptionKeyCreated
 
-**Actor:** `ProofRequestActor` (`crates/zk-prover/src/proof_request/actor.rs`)
+**Actor:** `ProofRequestActor` (`crates/zk/prover/src/proof_request/actor.rs`)
 
 **Deterministic workflow:** pending proof state and canonical dispatch sequence planning live in
-`crates/zk-prover/src/proof_request/{state,workflow,transitions}.rs`; `handlers.rs` owns mailbox
+`crates/zk/prover/src/proof_request/{state,workflow,transitions}.rs`; `handlers.rs` owns mailbox
 entry and the semantic files below `effects/` own correlation, signing, and compute dispatch.
 
 ```
@@ -229,7 +229,7 @@ Workers build each circuit's concrete `Configs` from their existing BFV paramete
 it through `Provable::Config` to witness preparation. C6 and C7 reuse the configuration across
 ciphertext indices. Constructors check the supported ring, CRT basis, and sampler profile.
 C3 and user-data encryption share the configuration's `k0is` with bounds and rendering.
-File: crates/zk/config/src/parameters.rs; crates/zk-prover/src/traits.rs;
+File: crates/zk/config/src/parameters.rs; crates/zk/prover/src/traits.rs;
 crates/multithread/src/multithread.rs
 
 User-data encryption prepares witnesses from an exact typed ciphertext and its encryption
@@ -545,10 +545,10 @@ ThresholdShareCollector collects this recipient's shares from the other N−1 pa
 
 ### Step 6a: C2/C3 Share Proof Verification
 
-**Actor:** `ShareVerificationActor` (`crates/zk-prover/src/share_verification/actor.rs`)
+**Actor:** `ShareVerificationActor` (`crates/zk/prover/src/share_verification/actor.rs`)
 
 **Deterministic workflow:** signature/slot validation, replay normalization, consistency filtering,
-and result tallying live in `crates/zk-prover/src/share_verification/{state,workflow}.rs`. The
+and result tallying live in `crates/zk/prover/src/share_verification/{state,workflow}.rs`. The
 capability's `handlers.rs` owns mailbox entry and its semantic effect files own correlation state
 and publish returned decisions.
 
@@ -1316,7 +1316,7 @@ it releases compute work or reuses a response.
 File: `crates/request/src/canonical_key.rs`, `crates/evm/src/canonical_key.rs`,
 `crates/keyshare/src/threshold_keyshare/effects/recovery.rs` (key admission),
 `crates/keyshare/src/threshold_keyshare/validation.rs`, `crates/aggregator/src/ext.rs`,
-`crates/zk-prover/src/proof_request/effects/decryption_share_proofs.rs`,
+`crates/zk/prover/src/proof_request/effects/decryption_share_proofs.rs`,
 `crates/multithread/src/effect_gate.rs`.
 
 Before proof verification, the BFV wrapper requires every public input to use its canonical BN254

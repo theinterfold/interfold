@@ -59,9 +59,9 @@ export function validateReleaseVersion(versionInput, rootDir = ROOT_DIR) {
   }
 
   requireEqual(
-    readJson(rootDir, 'crates/zk-prover/versions.json').required_circuits_version,
+    readJson(rootDir, 'crates/zk/prover/versions.json').required_circuits_version,
     version,
-    'crates/zk-prover/versions.json required_circuits_version',
+    'crates/zk/prover/versions.json required_circuits_version',
   )
 
   if (version.includes('-')) {

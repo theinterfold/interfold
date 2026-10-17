@@ -49,7 +49,7 @@ the code does not meet yet.
   before pending verification. Share verification checks proof signatures, party slots, E3 IDs, and
   circuits before a party counts as honest. Most message types lack an explicit schema version. —
   `ARCHITECTURE.md`; `crates/net/src/network_sync/wire.rs`;
-  `crates/zk-prover/src/share_verification/`
+  `crates/zk/prover/src/share_verification/`
 
 ### Durability, persistence, replay
 
@@ -315,7 +315,7 @@ the code does not meet yet.
   ended before startup. Recovered and replayed C0 inputs dispatch only after `EffectsEnabled`;
   document deduplication cannot erase unresolved verification work. Local failures retry with a
   delay that doubles from 5 to 60 seconds. `E3RequestComplete` cancels the retries. —
-  `crates/zk-prover/src/proof_verification/recovery.rs`; `flow-trace/06`
+  `crates/zk/prover/src/proof_verification/recovery.rs`; `flow-trace/06`
 - Sortition delays, committee-finalization timers, and slash submissions persist their semantic
   inputs before effects run. Restart re-arms them only after `EffectsEnabled`; an additive migration
   may backfill a missing versioned record but must not replace an existing one. — INDEX concern #46

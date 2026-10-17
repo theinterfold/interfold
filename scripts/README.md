@@ -313,7 +313,7 @@ Noir circuits or regenerate verification keys.
 
 `circuit-artifacts.ts` - Push/pull pre-built circuit artifacts via git branch.
 
-`crates/zk-prover/versions.json` pins the circuit archive that a released ciphernode downloads. Its
+`crates/zk/prover/versions.json` pins the circuit archive that a released ciphernode downloads. Its
 `required_circuits_version` must equal the release tag without the `v` prefix. The release workflow
 checks this before it publishes binaries or `circuits-<version>.tar.gz`.
 
@@ -504,12 +504,12 @@ pnpm build:circuits --preset insecure-64 --committee minimum
 the bytes don't match. Typical causes:
 
 - You ran `pnpm build:circuits` against a different Noir/bb version than the one that produced the
-  committed verifiers (see `crates/zk-prover/versions.json` for the pinned versions).
+  committed verifiers (see `crates/zk/prover/versions.json` for the pinned versions).
 - A circuit was changed without regenerating the committed Solidity files.
 
 To fix:
 
-1. Verify your `nargo` / `bb` versions match `crates/zk-prover/versions.json`.
+1. Verify your `nargo` / `bb` versions match `crates/zk/prover/versions.json`.
 2. Run `pnpm build:circuits --preset insecure-64 --committee minimum`.
 3. Run `pnpm generate:verifiers --preset insecure-64 --committee minimum --write`.
 4. Run the same build and generate commands for each non-canonical pair.

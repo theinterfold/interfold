@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 INTEGRATION_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 INTEGRATION_NOIR="${INTEGRATION_DIR}/.interfold/noir"
-VERSIONS_JSON="${ROOT_DIR}/crates/zk-prover/versions.json"
+VERSIONS_JSON="${ROOT_DIR}/crates/zk/prover/versions.json"
 
 echo ""
 echo "PREBUILDING BINARIES..."

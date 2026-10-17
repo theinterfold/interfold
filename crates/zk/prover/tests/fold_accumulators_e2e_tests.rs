@@ -44,12 +44,12 @@ use serde_json::json;
 
 fn c3_fold_json_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../circuits/bin/recursive_aggregation/c3_fold/target/c3_fold.json")
+        .join("../../../circuits/bin/recursive_aggregation/c3_fold/target/c3_fold.json")
 }
 
 fn c6_fold_json_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.json")
+        .join("../../../circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.json")
 }
 
 /// Reads `C3_SLOTS` from the compiled `c3_fold` ABI (`acc_public_inputs` length is `5 + 3 * C3_SLOTS`).

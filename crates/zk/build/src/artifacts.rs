@@ -653,7 +653,7 @@ mod tests {
             );
         }
         // A repeated sync must not invoke even a version probe, or rewrite formatted files.
-        fs::remove_dir_all(root.join("crates/zk-prover")).unwrap();
+        fs::remove_dir_all(root.join("crates/zk/prover")).unwrap();
         let before = crate::tests::snapshot(root);
         let mut selection = configuration::prepare_selection(
             root,
@@ -691,7 +691,7 @@ mod tests {
         }
         // A BB pin failure must precede publication of a different generated selection.
         fs::write(
-            root.join("crates/zk-prover/versions.json"),
+            root.join("crates/zk/prover/versions.json"),
             r#"{"required_bb_version":"0.0.0-preflight-invalid"}"#,
         )
         .unwrap();
@@ -784,12 +784,12 @@ mod tests {
         // Cache reuse and non-release hydration need neither compiler nor BB probes. Invalid pins
         // make an accidental probe fail without changing process-wide environment variables.
         fs::write(
-            root.join("crates/zk-prover/Cargo.toml"),
+            root.join("crates/zk/prover/Cargo.toml"),
             "nargo = { git = \"https://github.com/noir-lang/noir\", tag = \"v0.0.0-invalid\" }\n",
         )
         .unwrap();
         fs::write(
-            root.join("crates/zk-prover/versions.json"),
+            root.join("crates/zk/prover/versions.json"),
             r#"{"required_bb_version":"0.0.0-invalid"}"#,
         )
         .unwrap();

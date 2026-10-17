@@ -33,7 +33,7 @@
   "file_map": {
     "52": {
       "source": "// SPDX-License-Identifier: LGPL-3.0-only\n//\n// This file is provided WITHOUT ANY WARRANTY;\n// without even the implied warranty of MERCHANTABILITY\n// or FITNESS FOR A PARTICULAR PURPOSE.\n\npub fn main(x: Field, y: Field, _sum: pub Field) {\n    assert(x + y == _sum);\n}\n",
-      "path": "crates/zk-prover/tests/fixtures/dummy/src/main.nr",
+      "path": "crates/zk/prover/tests/fixtures/dummy/src/main.nr",
       "function_locations": [
         {
           "start": 238,

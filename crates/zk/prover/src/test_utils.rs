@@ -34,6 +34,8 @@ pub fn get_tempdir() -> Result<TempDir> {
         .unwrap()
         .parent()
         .unwrap()
+        .parent()
+        .unwrap()
         .join("target")
         .join("tmp");
     fs::create_dir_all(tmp.clone())?;

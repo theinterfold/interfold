@@ -240,7 +240,7 @@ impl AccusationManager {
     ///
     /// Delegates to [`AccusationVoting::vote_digest`]. Exposed `pub` so the
     /// Anvil parity test in
-    /// `crates/zk-prover/tests/slashing_integration_tests.rs` can sign votes
+    /// `crates/zk/prover/tests/slashing_integration_tests.rs` can sign votes
     /// through the **same** code path the production actor uses.
     pub fn vote_digest(vote: &AccusationVote, verifying_contract: Address) -> [u8; 32] {
         AccusationVoting::vote_digest(vote, verifying_contract)

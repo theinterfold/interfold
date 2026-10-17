@@ -42,7 +42,7 @@ every section.
   artifact source hash in the active stamp. It does not rewrite the archived stamp.
   `--skip-if-built` still requires a matching source hash. The release workflow pulls with a source
   match. Release verification checks the source hash, every required pair, each pair's build stamp,
-  and `checksums.json` as nodes check it. `crates/zk-prover/supported-configurations.json` owns the
+  and `checksums.json` as nodes check it. `crates/zk/prover/supported-configurations.json` owns the
   release matrix that archive installation and release verification require. Each listed pair must
   be allowed by `scripts/circuit-build-pairs.json`, and a tooling test checks this subset contract.
   The Rust builder and TypeScript tooling read this shared build policy. Wildcard build selections
@@ -56,7 +56,7 @@ every section.
 - Network circuit installation requires a version-bound archive SHA-256 compiled into the binary.
   `download-circuits` in `.github/workflows/releases.yml` hashes the exact archive that it uploads.
   Binary and ciphernode image builds depend on that job and pass `E3_CIRCUITS_ARCHIVE_SHA256` to
-  `crates/zk-prover/build.rs`, including through the Docker build argument. `ZkConfig::default`
+  `crates/zk/prover/build.rs`, including through the Docker build argument. `ZkConfig::default`
   binds this pin to `CARGO_PKG_VERSION` and retains the other pins from `versions.json`. Builds
   without this input work, but downloads for unpinned versions fail before network access. Each
   binary build checks the pin reported by `noir status` before the release-candidate gate can pass.

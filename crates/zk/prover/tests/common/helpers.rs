@@ -18,6 +18,7 @@ fn circuits_build_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
+        .join("..")
         .join("circuits")
         .join("bin")
 }

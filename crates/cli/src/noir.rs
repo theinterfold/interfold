@@ -326,7 +326,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let payload = temp.path().join("payload");
         let artifacts: Vec<&str> =
-            serde_json::from_str(include_str!("../../zk-prover/required-artifacts.json")).unwrap();
+            serde_json::from_str(include_str!("../../zk/prover/required-artifacts.json")).unwrap();
         let mut files = BTreeMap::new();
         for artifact in &artifacts {
             let relative = format!("insecure-64/minimum/{artifact}");

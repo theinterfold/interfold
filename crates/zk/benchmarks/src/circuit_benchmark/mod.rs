@@ -306,7 +306,7 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<()> {
             artifacts::validate_pair(&artifact_root, preset_name, committee_name)?
         };
     let noir_pin = e3_zk_build::pinned_noir_version(&fs::read_to_string(
-        root.join("crates/zk-prover/Cargo.toml"),
+        root.join("crates/zk/prover/Cargo.toml"),
     )?)?;
     let bb_version = run(Command::new(prover.bb_binary()).arg("--version"))?;
     if !e3_zk_build::reports_version(&bb_version, &backend.config.required_bb_version) {
