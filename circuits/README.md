@@ -95,7 +95,7 @@ Wrapper parameters are documented in
 From the repository root:
 
 ```bash
-pnpm tsx scripts/build-circuits.ts   # compile circuits, verification keys, artifacts
+pnpm build:circuits   # compile circuits, verification keys, artifacts
 ./scripts/lint-circuits.sh           # nargo fmt --check; nargo check (skipped if nargo absent)
 ./scripts/test-circuits.sh           # nargo test: lib, decryption_aggregator, dkg_aggregator and node_fold (3 preset/committee pairs); nargo execute: config
 ```

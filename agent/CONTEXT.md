@@ -46,7 +46,7 @@ output — every step backed by ZK proofs verified on-chain.
 | `crates/`            | Rust workspace (~46 crates, prefix `e3-`): CLI, actors, crypto, TrBFV, networking (libp2p), EVM, ZK proving, persistence                                                            |
 | `packages/`          | npm packages (prefix `@interfold/`): `interfold-contracts` (Hardhat Solidity + Honk verifiers), `interfold-sdk`, `interfold-react`, `interfold-mcp`, `interfold-config`, dashboards |
 | `circuits/`          | Noir circuits: `lib/` (shared package), `bin/dkg/`, `bin/threshold/`, `bin/recursive_aggregation/`                                                                                  |
-| `scripts/`           | Build/check tooling (`build-circuits.ts`, `check-committee.sh`, verifier generation, release bump)                                                                                  |
+| `scripts/`           | Check tooling (`check-committee.sh`), verifier generation, artifact publication, release bump                                                                                       |
 | `tests/integration/` | End-to-end integration tests (`pnpm test:integration [name]`)                                                                                                                       |
 | `agent/`             | This harness: rules, context, invariants, architecture, flow-trace                                                                                                                  |
 | `docs/`              | Nextra docs site; `deploy/`, `dappnode/` deployment; `examples/`, `templates/` scaffolding                                                                                          |
@@ -54,11 +54,6 @@ output — every step backed by ZK proofs verified on-chain.
 Notable crates: `events` (event taxonomy, `CircuitName`, `ProofType`), `zk-prover` (`versions.json`
 pins nargo/bb), `zk/config`, `zk/witness`, `trbfv`, `keyshare`, `aggregator`, `sortition`,
 `slashing`, `evm`, `net`, `data` (sled persistence), `sync`, `cli`.
-
-Static circuit configuration and public layouts belong to `zk/config`; witness preparation and
-canonical JSON encoding belong to `zk/witness`. Their tests use the unpublished `zk/samples` crate
-through dev dependencies. `pnpm check:invariants` enforces the sample dependency boundary.
-The artifact CLI still uses `zk-helpers`.
 
 ## Key commands
 
@@ -68,8 +63,10 @@ Run from repo root via pnpm scripts — not raw cargo/nargo/hardhat.
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Install / build all         | `pnpm i` · `pnpm build`                                                                                                                            |
 | Build Rust                  | `pnpm rust:build` (cargo `--locked --release`; prebuilds EVM fixtures)                                                                             |
-| Build ZK artifact CLI       | `pnpm rust:build:zk [--release]` (no EVM fixture prebuild)                                                                                         |
-| ZK artifact CLI             | `pnpm zk list\|generate\|vk-hash\|parity-matrices`                                                                                                 |
+| Build circuit tooling       | `pnpm rust:build:circuits` (unpublished Rust build crate; no EVM prebuild)                                                                         |
+| Test circuit build owner    | `pnpm test:circuit-build`                                                                                                                          |
+| Build ZK artifact CLI       | `pnpm rust:build:zk [--release]` (legacy benchmark inputs)                                                                                          |
+| ZK artifact CLI             | `pnpm zk list\|generate\|vk-hash\|parity-matrices`                                                                                                  |
 | Rust formatting / Clippy    | `pnpm rust:format` · `pnpm rust:lint` · `pnpm rust:clippy [-- -D warnings]`                                                                        |
 | Test everything             | `pnpm test` (EVM, Rust, required proof/slashing suites, SDK, Noir)                                                                                 |
 | Test one layer              | `pnpm evm:test` · `pnpm rust:test` · `pnpm sdk:test` · `pnpm noir:test`                                                                            |
@@ -111,7 +108,7 @@ Two independent settings select what `pnpm build:circuits` compiles into `circui
 - **Committee** (`--committee minimum` [default] | `micro` | `small`): `(N, T, H)` for the
   secret-sharing committee. Mirrors `e3_committee::CiphernodesCommitteeSize`.
 
-`scripts/build-circuits.ts` writes the selection. Never hand-edit the values that it writes:
+`crates/zk/build` writes the selection. Never hand-edit its generated values:
 
 | File                                                                | What the build script writes                                          |
 | ------------------------------------------------------------------- | --------------------------------------------------------------------- |
@@ -122,12 +119,17 @@ Two independent settings select what `pnpm build:circuits` compiles into `circui
 
 `scripts/check-committee.sh` (`pnpm check:committee`, pre-push and the Agent Harness CI workflow)
 compares the BFV tuples, committee values, and configuration IDs across TypeScript, Rust, Noir, and
-Solidity. The file list is at the top of the script. It regenerates and compares the parity matrices
-only when `target/release/zk-artifacts` is executable and `nargo` is on PATH. A different
-`.active-preset.json` only prints a note. Always switch with
-`pnpm build:circuits --committee <name>`. Supported `(preset, committee)` pairs live in
-`scripts/circuit-constants.ts`. See `scripts/README.md#circuit-builder` and
-`circuits/benchmarks/README.md` for the full recipe.
+Solidity. The file list is at the top of the script. With `nargo` on PATH, it invokes
+`pnpm build:circuits check --committee all`. The Rust owner formats an isolated library copy and
+compares its generated parity files. It does not swap live files. A different `.active-preset.json`
+only prints a note. Always switch with `pnpm build:circuits --committee <name>`. Supported
+`(preset, committee)` pairs live in `scripts/circuit-build-pairs.json`, which both Rust and
+TypeScript build tooling read. See `scripts/README.md#circuit-builder` and
+`circuits/benchmarks/README.md` for the full recipes.
+
+Non-release CI and full-proof integration tests use `pnpm store:circuits pull --latest` and
+`--hydrate-bin-only`. Hydration accepts a source-hash mismatch and records the artifact hash, not
+the local source hash. Release pulls and `verify-release` remain source-bound.
 
 ## Chain-Specific BFV Config
 
@@ -220,5 +222,10 @@ persistence · opentelemetry/tracing.
   `c3_fold`, `c6_fold`, `node_fold`, `nodes_fold`, …) and the top-level `dkg_aggregator` /
   `decryption_aggregator`, which produce the on-chain Honk verifiers. The canonical committed root
   matches `(insecure-64, minimum)`; other generated pairs live under `honk/<preset>/<committee>/`.
-- `config` circuit validates preset constants (CRT moduli, bounds, parity matrices). Parity matrices
-  are generated by `zk-artifacts parity-matrices` — never hand-edit.
+- `config` validates preset constants (CRT moduli, bounds, parity matrices). The Rust configuration
+  example generates parity files through the configuration library. Never hand-edit them.
+- Static configuration and public layouts belong to `zk/config`; preparation and JSON encoding
+  belong to `zk/witness`. The unpublished `zk/samples` owns samples; every consumer uses dev
+  dependencies. `pnpm check:invariants` enforces this boundary.
+- Benchmark shells still use the legacy TypeScript builder and artifact CLI. The root build
+  command uses `zk/build`.

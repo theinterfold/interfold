@@ -156,10 +156,10 @@ fn main(
 ```
 
 The input `k1` is the plaintext polynomial scaled to `[q * m]_t` (`k1 = [q*m]_t` in
-`crates/zk-helpers/src/circuits/threshold/user_data_encryption/computation.rs`). For each option,
-CRISP's `check_coefficient_values_with_balance` proves that the coefficient in `k1` is a weight in
-`[0, t)` scaled the same way. The two commitment functions are the ones that `user_data_encryption`
-uses, so equal inputs give equal outputs.
+`crates/zk/witness/src/threshold/user_data_encryption.rs`). For each option, CRISP's
+`check_coefficient_values_with_balance` proves that the coefficient in `k1` is a weight in `[0, t)`
+scaled the same way. The two commitment functions are the ones that `user_data_encryption` uses, so
+equal inputs give equal outputs.
 
 Check the circuit:
 
@@ -190,7 +190,7 @@ Create `circuits/binary_input_fold/src/main.nr`. It follows `examples/CRISP/circ
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use interfold_lib::math::commitments::compute_vk_hash;
 
-/// The hash of the four inner verification keys. Set it from the zk-artifacts vk-hash output.
+/// The ordered SAFE hash of the four canonical inner verification-key hashes.
 pub global EXPECTED_KEY_HASH: Field = 0;
 
 fn main(
@@ -290,19 +290,19 @@ mv target/vk_hash target/binary_input.vk_recursive_hash
 
 ### Pin the key hash
 
-From the root of the Interfold checkout, hash the four key hashes. The order must match the order in
-the fold circuit:
+Call `e3_zk_witness::compute_vk_hash` from your Rust artifact build hook. Load each key hash as a
+canonical BN254 field value: exactly 32 bytes, big-endian, in `[0, p)`. Reject invalid values; do
+not reduce them modulo the field. Preserve this order:
 
-```bash
-pnpm zk vk-hash \
-  circuits/bin/threshold/target/user_data_encryption.vk_recursive_hash \
-  <my-e3>/circuits/binary_input/target/binary_input.vk_recursive_hash \
-  circuits/bin/threshold/target/user_data_encryption_ct0.vk_recursive_hash \
-  circuits/bin/threshold/target/user_data_encryption_ct1.vk_recursive_hash
-```
+1. `user_data_encryption.vk_recursive_hash`
+2. `binary_input.vk_recursive_hash`
+3. `user_data_encryption_ct0.vk_recursive_hash`
+4. `user_data_encryption_ct1.vk_recursive_hash`
 
-The tool prints one field value as 32-byte hexadecimal. Set `EXPECTED_KEY_HASH` in
-`circuits/binary_input_fold/src/main.nr` to this value. Then compile the fold:
+The repository build owner implements strict loading in `crates/zk/build/src/vk_tree.rs`. Its
+`sync_crisp` hook applies the same ordered hash to the bundled CRISP stacks. For your custom
+circuit, write the computed field value to `EXPECTED_KEY_HASH` in
+`circuits/binary_input_fold/src/main.nr`. Then compile the fold:
 
 ```bash
 cd circuits/binary_input_fold && nargo compile

@@ -287,7 +287,7 @@ jobs:
       - name: Pull circuit artifacts
         id: pull
         run: |
-          SOURCE_HASH=$(pnpm tsx scripts/build-circuits.ts hash)
+          SOURCE_HASH=$(pnpm --silent build:circuits hash)
           echo "source_hash=$SOURCE_HASH" >> "$GITHUB_OUTPUT"
 
           if ! git fetch origin circuit-artifacts; then

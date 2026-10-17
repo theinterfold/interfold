@@ -46,7 +46,7 @@ if ! (cd "$INTERFOLD_CIRCUITS/bin/threshold/user_data_encryption" && nargo compi
 fi
 
 # Inner recursive proofs use noir-recursive-no-zk; fold's compute_vk_hash chain reads
-# `{name}.vk_recursive_hash` in each package target/ (same layout as interfold `scripts/build-circuits.ts`).
+# `{name}.vk_recursive_hash` in each package target/ (the Rust build owner's target layout).
 THRESHOLD_TARGET="${INTERFOLD_CIRCUITS}/bin/threshold/target"
 echo "Writing noir-recursive-no-zk VKs (user_data_encryption)..."
 for name in user_data_encryption_ct0 user_data_encryption_ct1 user_data_encryption; do

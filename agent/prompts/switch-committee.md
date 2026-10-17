@@ -4,7 +4,8 @@ Tool-neutral body for the switch-committee command/skill. Tool adapters point he
 to change the procedure.
 
 Input: a committee name `minimum` | `micro` | `small`, optionally
-`--preset insecure-64 | secure-8192`. Supported pairs live in `scripts/circuit-constants.ts`.
+`--preset insecure-64 | secure-8192`. Supported build pairs live in
+`scripts/circuit-build-pairs.json`.
 
 Rules — read `agent/invariants/02_CRYPTO_CIRCUITS.md` §Committee config sync first:
 
@@ -19,7 +20,7 @@ Rules — read `agent/invariants/02_CRYPTO_CIRCUITS.md` §Committee config sync 
    `BfvDecryptionVerifier`) have an `(H, T)`-specific public-input layout; each supported preset and
    committee pair has committed verifier artifacts. A deployment whose verifier mappings or routers
    already support the pair needs no redeployment. Otherwise, register matching verifiers, and
-   deploy any missing wrappers or replacement routers first; `crates/zk-helpers`
+   deploy any missing wrappers or replacement routers first; `crates/zk/config`
    `CiphernodesCommitteeSize` must agree (`check:committee` covers this).
 5. If artifacts are needed without a local rebuild, `pnpm store:circuits pull` fetches the cached
    ones from the `circuit-artifacts` branch.

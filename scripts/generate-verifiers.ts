@@ -13,9 +13,8 @@
  *
  *   - `--check` (default for test/benchmark flows): regenerate in memory and
  *     diff against the committed files. Exits non-zero on drift without
- *     touching the working tree. Used by `prebuild.sh`, `extract_crisp_verify_gas.sh`,
- *     `replay_folded_verify_gas.sh` so accidental drift fails loudly instead
- *     of silently rewriting committed contracts mid-test.
+ *     touching the working tree. Integration prebuild and CI use this mode so
+ *     verifier drift fails instead of rewriting committed contracts mid-test.
  *
  *   - `--write` (default for manual runs): regenerate and overwrite the
  *     committed `.sol` files. Use this when you intentionally bump circuits.

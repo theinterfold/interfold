@@ -1,0 +1,29 @@
+[package]
+name = "e3-zk-build"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Repository circuit builds, artifact staging, and generated configuration"
+publish = false
+
+[dependencies]
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+anyhow.workspace = true
+ark-bn254.workspace = true
+ark-ff.workspace = true
+chrono.workspace = true
+clap.workspace = true
+e3-committee.workspace = true
+e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
+e3-zk-config.workspace = true
+e3-zk-witness.workspace = true
+fhe.workspace = true
+hex.workspace = true
+regex.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+toml.workspace = true

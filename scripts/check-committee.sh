@@ -78,8 +78,7 @@ if [[ -z "${UTILS_H:-}" || -z "${UTILS_T:-}" ]]; then
   fail "could not parse BFV_DKG_H / BFV_THRESHOLD_T from $UTILS_TS"
 fi
 
-# 3. Expected (H, T) for the active committee — parsed from the leaf `mod.nr` (same source
-#    as `load_default_committee.sh`; avoids duplicating numbers in this script).
+# 3. Read expected (H, T) from the active committee's leaf module; do not copy its numbers.
 COMMITTEE_MOD="circuits/lib/src/configs/committee/${ACTIVE_COMMITTEE}/mod.nr"
 if [[ ! -f "$COMMITTEE_MOD" ]]; then
   fail "missing $COMMITTEE_MOD (no Noir module for committee '$ACTIVE_COMMITTEE')"
@@ -350,7 +349,7 @@ EXPECTED_MAINNET_ROUTES="SECURE_SMALL_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_
 
 # 7. Optional local-cache note (when circuits have been built locally).
 if [[ -f "$STAMP" ]]; then
-  # Older stamps (written before build-circuits.ts learned about committees) lack the field.
+  # A stamp without a committee field cannot identify the artifact pair.
   STAMP_COMMITTEE=$(grep -oE '"committee"\s*:\s*"[a-z]+"' "$STAMP" 2>/dev/null | grep -oE '"[a-z]+"$' | tr -d '"' || true)
   if [[ -n "${STAMP_COMMITTEE:-}" ]]; then
     if [[ "$STAMP_COMMITTEE" != "$ACTIVE_COMMITTEE" ]]; then
@@ -393,97 +392,12 @@ $COMMITTEE_RS has (N=$rust_n, T=$rust_t, H=$rust_h) for $capitalized"
   fi
 done
 
-# 9. Parity matrices for every committee must match what `zk-artifacts parity-matrices` would
-#    write right now. Hand-edits to parity_*.nr would slip past every other check, so verify
-#    them by regenerating into a tempdir and diffing. On-disk files are kept `nargo fmt`-clean
-#    (see `scripts/lint-circuits.sh`), so we format the generator output before comparing.
-#    Skipped when the binary is unavailable (fresh clone before `cargo build`); the build step
-#    will re-emit them anyway.
-GEN_BIN="target/release/zk-artifacts"
-NOIR_LIB="circuits/lib"
-format_parity_matrices_for_committee() {
-  local committee="$1"
-  local tmp="$2"
-  local variant live fresh backup formatted
-  local -a swapped_live=()
-  local -a swapped_backup=()
-
-  _restore_swapped_parity_live() {
-    local i
-    for i in "${!swapped_live[@]}"; do
-      if [[ -f "${swapped_backup[$i]}" ]]; then
-        cp "${swapped_backup[$i]}" "${swapped_live[$i]}"
-      fi
-    done
-  }
-
-  trap '_restore_swapped_parity_live' ERR
-
-  for variant in insecure secure; do
-    live="$NOIR_LIB/src/configs/committee/$committee/parity_${variant}.nr"
-    fresh="$tmp/$committee/parity_${variant}.nr"
-    [[ -f "$live" && -f "$fresh" ]] || continue
-    backup="$tmp/$committee/parity_${variant}.live.bak"
-    formatted="$tmp/$committee/parity_${variant}.formatted.nr"
-    cp "$live" "$backup"
-    cp "$fresh" "$live"
-    swapped_live+=("$live")
-    swapped_backup+=("$backup")
-  done
-
-  if ((${#swapped_live[@]} == 0)); then
-    trap - ERR
-    return 0
-  fi
-
-  if ! (cd "$NOIR_LIB" && nargo fmt) >/dev/null; then
-    _restore_swapped_parity_live
-    trap - ERR
-    return 1
-  fi
-
-  for variant in insecure secure; do
-    live="$NOIR_LIB/src/configs/committee/$committee/parity_${variant}.nr"
-    fresh="$tmp/$committee/parity_${variant}.nr"
-    backup="$tmp/$committee/parity_${variant}.live.bak"
-    formatted="$tmp/$committee/parity_${variant}.formatted.nr"
-    [[ -f "$backup" ]] || continue
-    cp "$live" "$formatted"
-    cp "$backup" "$live"
-    cp "$formatted" "$fresh"
-  done
-
-  trap - ERR
-}
-
-if [[ -x "$GEN_BIN" ]]; then
-  if ! command -v nargo >/dev/null 2>&1; then
-    echo "  (skipping parity-matrix drift check: nargo not found. Install nargo to enable formatted parity comparison.)" >&2
-  else
-    RAN_PARITY_CHECK=true
-    TMP=$(mktemp -d)
-    trap 'rm -rf "$TMP"' EXIT
-    # Mirror the committee dir layout so the bin can write into <tmp>/<committee>/.
-    for c in minimum micro small; do
-      if [[ -d "circuits/lib/src/configs/committee/$c" ]]; then
-        mkdir -p "$TMP/$c"
-      fi
-    done
-    for c in minimum micro small; do
-      [[ -d "$TMP/$c" ]] || continue
-      "$GEN_BIN" parity-matrices --committee "$c" --output-root "$TMP" >/dev/null
-      format_parity_matrices_for_committee "$c" "$TMP"
-      for variant in insecure secure; do
-        live="circuits/lib/src/configs/committee/$c/parity_${variant}.nr"
-        fresh="$TMP/$c/parity_${variant}.nr"
-        if [[ -f "$live" && -f "$fresh" ]] && ! diff -q "$live" "$fresh" >/dev/null; then
-          fail "$live drift vs generator output. Run: pnpm build:circuits --committee $c"
-        fi
-      done
-    done
-  fi
+# 9. The Rust build owner renders and formats a temporary library copy, without swapping live files.
+if command -v nargo >/dev/null 2>&1; then
+  pnpm --silent build:circuits check --committee all || fail "generated committee configuration differs from the Rust build owner"
+  RAN_PARITY_CHECK=true
 else
-  echo "  (skipping parity-matrix drift check: $GEN_BIN not built. Run \`pnpm rust:build:zk --release\` to enable.)" >&2
+  echo "  (skipping generated committee check: nargo not found.)" >&2
 fi
 
 echo "✓ check:committee: BFV tuples, configuration IDs, all six routes, and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) are consistent across TypeScript, Rust, Noir, and Solidity$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"

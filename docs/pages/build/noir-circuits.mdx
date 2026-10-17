@@ -238,7 +238,7 @@ N is the committee size, T is the threshold, and H is the number of honest parti
 expects. Decryption needs T + 1 shares. The mainnet contracts accept only the secure parameter set.
 Sepolia and local chains accept both sets (`ActiveCryptoConfig.sol`).
 
-For each pair, the build does these steps (`scripts/build-circuits.ts`):
+For each pair, the Rust build owner does these steps (`crates/zk/build`):
 
 1. It writes `configs/default/mod.nr` and `configs/committee/active.nr` for the pair.
 2. It regenerates the parity matrices and the C1 and C2 bounds with the Rust generators.

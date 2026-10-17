@@ -38,17 +38,17 @@ every section.
   router is used, a new router and new `setPkVerifier` / `setDecryptionVerifier` calls. —
   `protocol/deployContracts.ts`; `BfvPkVerifierRouter.sol`
 - Parity matrices (`parity_{insecure,secure}.nr`) are derived artifacts regenerated from preset
-  `QIS` + committee `(N, T)`. Do not hand-edit them. `scripts/check-committee.sh` regenerates and
-  diffs them only when `target/release/zk-artifacts` and `nargo` exist; the Agent Harness CI job
-  skips that step. The CI circuits job catches edits to the committed selection through its rebuild
-  diff.
+  `QIS` + committee `(N, T)`. Do not hand-edit them. With `nargo` available,
+  `scripts/check-committee.sh` calls `pnpm build:circuits check --committee all`. The Rust example
+  renders and formats an isolated library copy, then compares the generated files without swapping
+  live files. The CI circuits job also checks the committed selection through its rebuild diff.
 - The C1 and C2 bound globals (`PK_GENERATION_*`, `SHARE_COMPUTATION_*`) are derived artifacts of
   the preset and committee. The build regenerates them for the selected pair and replaces each whole
   declaration, array bounds included. It rejects a declaration with its config file's prefix that
   the generator does not emit, because the pair source hash ignores those declarations. The C1
   `e_sm` quotient bounds grow with the committee, so an array kept from another committee makes
   honest C1 proofs fail. The committed configs hold the `minimum` values. —
-  `scripts/build-circuits.ts` (`committeeBoundUpdates`); `scripts/circuit-artifacts.test.ts`
+  `crates/zk/build/src/configuration.rs` (`bound_updates`); `crates/zk/build/src/tests.rs`
 
 ### Noir / Barretenberg compatibility
 
@@ -65,6 +65,8 @@ every section.
 - Rust-generated witnesses must use `WitnessStack::serialize()`. Do not serialize a witness stack
   with `bincode`; Barretenberg 5 accepts the beta.26 MessagePack format markers, not the legacy
   marker. — `crates/zk-prover/src/witness.rs`
+- Circuit tool version parsing belongs to `zk/build/src/toolchain.rs`. The build library checks the
+  pinned Noir tag and exact tool versions.
 - Rebuild and publish circuit archives with the pinned Nargo version before changing
   `required_circuits_version`. Regenerate all dependent verification keys and Solidity verifiers
   with the pinned Barretenberg version. A release archive from an older serialization format can
@@ -100,19 +102,21 @@ every section.
   the digest, and `ZkConfig::default` binds it to the crate version. Other pins remain in
   `versions.json`. The workflow retains the same archive bytes for publication. `SOURCE_HASH`
   identifies circuit sources, not archive bytes, and cannot replace this check.
-- Artifact identity must cover every source that compiles into an artifact. `computeSourceHash`
-  (`scripts/build-circuits.ts`) includes shared Noir logic, the library entry point and dependency
-  manifest, shared configuration constants, and the pinned toolchain: nargo at the Noir tag of the
-  prover crates and bb at `required_bb_version`. The build refuses a nargo or bb of another version.
-  It normalizes the active preset selector because each pair already identifies its preset. A
-  library-only change invalidates every affected pair. Rebuild and push those pairs before release.
+- Artifact identity must cover every source that compiles into an artifact. `source_hash`
+  (`crates/zk/build/src/identity.rs`) includes shared Noir logic, the library entry point and
+  dependency manifest, shared configuration constants, and the pinned toolchain: nargo at the Noir
+  tag of the prover crates and bb at `required_bb_version`. The build refuses a nargo or bb of
+  another version. It normalizes the active preset selector because each pair already identifies its
+  preset. A library-only change invalidates every affected pair. Rebuild and push those pairs before
+  release.
 - The pair source hash ignores generated C1/C2 bound values and includes the Rust sources that
-  generate them, including `zk/cli`, `fhe-params`, `committee`, `polynomial/src`, and
-  `polynomial/fhe-adapter/src`, without their `#[cfg(test)]` modules. Switching the active committee
-  or editing a test module must not change another pair's source hash.
+  generate them, including `zk/build/src` and its templates, `fhe-params`, `committee`,
+  `polynomial/src`, and `polynomial/fhe-adapter/src`, without their `#[cfg(test)]` modules or the
+  build crate's separate test suite. Switching the active committee or editing a test module must
+  not change another pair's source hash.
 - The source hash reads `Cargo.lock` for external crate pins only: name, version, source, and
   checksum. A workspace version bump or a dependency edit inside the workspace must not make the
-  published artifact matrix stale. — `scripts/build-circuits.ts`
+  published artifact matrix stale. — `crates/zk/build/src/identity.rs`
 - Restamp published artifacts only when the branch records the source hash that the current tree
   produced under the previous hash scheme. Artifacts from another tree need a rebuild. —
   `scripts/circuit-artifacts.ts`
@@ -200,7 +204,7 @@ every section.
   sampler-specific encryption error bounds. The C1/C2 Noir bit widths must use the same bounds as
   the Rust sampler for each preset and committee. Regenerate them with `pnpm build:circuits`;
   rebuild the matching verifier artifacts before deploying a protocol-version-8 node. —
-  `flow-trace/04`; `scripts/build-circuits.ts`
+  `flow-trace/04`; `crates/zk/build/src/configuration.rs`
 - fhe.rs v0.4.1 passes plaintext-scaled ballot coefficients as non-centered residues. Both CRISP
   vote circuits decode each ballot weight against `Q_MOD_T`, rather than `Q_MOD_T_CENTERED`. —
   `examples/CRISP/circuits/lib/src/utils.nr`
@@ -338,13 +342,13 @@ every section.
   tightening. Before porting any part of that branch, check whether the code it replaces was
   introduced by a finding on this branch: `git log -S` on the deleted identifier answers it. Only
   the negacyclic reduction was taken for C1. — `flow-trace/04`
-- **Renaming a generated config global needs the declaration seeded by hand first.**
-  `build-circuits.ts` splices `pub global NAME: ...;` into `configs/{secure,insecure}/*.nr` **by
-  name**. It throws `Missing NAME` if the target does not already declare a generated global, and it
-  throws `NAME ... is not generated` if the target keeps a prefixed global that the generator no
-  longer emits. So a rename is: edit both config files to declare the new name, drop the old, then
-  run codegen to fill the authoritative value. `sync-config` does not regenerate bounds at all — it
-  only switches the active preset. — `flow-trace/04`
+- **Renaming a generated config global needs the declaration seeded by hand first.** The Rust build
+  owner splices `pub global NAME: ...;` into `configs/{secure,insecure}/*.nr` **by name**. It throws
+  `Missing NAME` if the target does not already declare a generated global, and it throws
+  `NAME ... is not generated` if the target keeps a prefixed global that the generator no longer
+  emits. So a rename is: edit both config files to declare the new name, drop the old, then run
+  codegen to fill the authoritative value. `sync-config` does not regenerate bounds at all — it only
+  writes protocol TS/Solidity constants. — `flow-trace/04`
 - **A circuit-size change must be measured at every committee size before it is called a win.** Cost
   splits into a part that scales with the committee (`H*L*N` work, such as per-share commitment
   openings) and a part that does not (`L*N` work, such as the aggregate's normalisation). A change
@@ -579,9 +583,11 @@ every section.
   publish its ballot alone and drop the slot's vote
   (`a_second_opening_of_the_parent_cannot_erase_the_slot`). The fold circuits pin the ballot
   circuits through `CRISP_FOLD_EXPECTED_KEY_HASH_*` and `CRISP_ONCHAIN_FOLD_EXPECTED_KEY_HASH_*`, so
-  a change to either ballot circuit must regenerate those constants (`pnpm compute:vk-hash`, both
-  presets) and the generated verifiers; a deployed `CRISPProgram` keeps the circuit its verifier was
-  built from. — `flow-trace/04`
+  a change to either ballot circuit must regenerate those constants
+  (`pnpm build:circuits sync-crisp` from the repository root, for both presets) and the generated
+  verifiers. The build hook strictly loads 32-byte big-endian field hashes and preserves UDE,
+  ballot, ct0, ct1 order. A deployed `CRISPProgram` keeps the circuit its verifier was built from. —
+  `flow-trace/04`
 - **CRISPProgram keeps every option total below the plaintext modulus.** A ballot holds one weight
   for each option, so coefficient `o` of the decrypted tally is the total weight on option `o`, and
   the committee decrypts it modulo the plaintext modulus `t` of the round's BFV parameters.

@@ -16,18 +16,16 @@ echo "FINISHED PREBUILDING BINARIES"
 echo ""
 
 echo ""
-echo "BUILDING SOURCE-ALIGNED ZK CIRCUITS..."
+echo "PREPARING ZK CIRCUITS..."
 echo ""
 
-# The ciphernode always generates leaf proofs, even when recursive aggregation
-# is skipped. Never let integration tests combine current Rust witnesses with
-# a stale circuit ABI.
+# The ciphernode generates leaf proofs even when recursive aggregation is skipped.
+# Full-proof runs reuse published artifacts; other runs compile their selected circuits.
 rm -rf "${INTEGRATION_NOIR}/circuits"
 mkdir -p "${INTEGRATION_NOIR}/circuits" "${INTEGRATION_NOIR}/bin"
 
 if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
-  # Full-proof tests use the newest published matrix. Its SOURCE_HASH is not checked against this
-  # tree until the circuit drift workflow is designed.
+  # Full-proof tests use published artifacts without requiring a local source-hash match.
   (cd "$ROOT_DIR" && pnpm store:circuits pull --latest)
   (cd "$ROOT_DIR" && pnpm build:circuits \
     --preset insecure-64 \

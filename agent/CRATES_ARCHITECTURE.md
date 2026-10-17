@@ -60,6 +60,8 @@ flowchart TD
         Logger[e3-logger]
     end
 
+    CircuitBuild[e3-zk-build unpublished tool] --> ZkConfig
+    CircuitBuild --> ZkWitness
     ZkArtifacts[e3-zk-artifacts] --> ZkHelpers
     ZkArtifacts --> FheParams
     ZkArtifacts --> Committee
@@ -236,8 +238,14 @@ reconstruct native FHE inputs locally, without a production reverse-conversion A
 The unpublished `e3-zk-samples` crate owns artificial BFV samples. It depends normally on
 configuration, witness preparation, and FHE libraries. Witness and prover tests use it through dev
 dependencies; those edges do not enter runtime builds.
-`scripts/check-cargo-feature-containment.py` enforces the boundary. The artifact CLI still uses
-`e3-zk-helpers` for its generated configuration and sample inputs.
+`scripts/check-cargo-feature-containment.py` enforces the boundary. Benchmark shells still use the
+legacy artifact CLI and `e3-zk-helpers`.
+
+The unpublished `e3-zk-build` crate owns repository circuit building. Its private modules render
+static configuration, stage artifacts, and compute source identity. It depends normally on config,
+witness hashing, and process tooling, but not on samples or runtime orchestration. The configuration
+library does not depend on the build tool or witness. `crates/zk/build/templates/` owns the `.in` source templates of the generated
+Solidity and Noir selection files.
 
 The resulting workflow/actor/effect separation is module-level rather than a clean crate boundary.
 On disk, those roles are grouped by protocol capability; the labels in this diagram describe

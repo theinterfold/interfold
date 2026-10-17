@@ -125,7 +125,8 @@ jobs:
               - 'crates/parity-matrix/**'
               - 'crates/polynomial/**'
               - 'crates/safe/**'
-              - 'crates/zk-helpers/**'
+              - 'crates/zk/config/**'
+              - 'crates/zk/witness/**'
               # The programs inherit dependencies from their project workspace, and the native
               # fixture builds in CRISP's.
               - 'examples/CRISP/Cargo.toml'
@@ -273,7 +274,7 @@ jobs:
               - 'pnpm-workspace.yaml'
             # Inputs of build_circuits that the `circuits` and `verifiers` filters do not list: the
             # circuit artifact store and its test (`store:circuits`, `test:circuit-tooling`), and
-            # the BFV parameters. build-circuits.ts derives the generated constants in
+            # the BFV parameters. The Rust circuit builder derives the generated constants in
             # ActiveCryptoConfig.sol and utils.ts from them, and hashes their file into SOURCE_HASH.
             # check:verifiers reads none of these files, so they stay out of
             # .github/filters/circuits.yml, which also starts check:verifiers in pre-push.
@@ -1550,7 +1551,7 @@ jobs:
             packages/interfold-contracts/scripts/utils.ts
 
       - name: Test circuit artifact validation and verifier selection
-        run: pnpm test:circuit-tooling
+        run: pnpm test:circuit-build && pnpm test:circuit-tooling
 
       # The generated verifier contracts must match the freshly built verification keys. A drift
       # means the deployed verifier accepts a different circuit from the one in this tree.
@@ -1567,9 +1568,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-  # Proves with the newest published circuit set. The published set is not checked against this
-  # tree's SOURCE_HASH until the circuit drift workflow is designed. The proof suites run in two
-  # legs; the correlated node test alone sets the floor.
+  # Proves with the newest published circuit set without a local SOURCE_HASH match.
+  # Source builds still compile and check their selected pair. Releases verify the complete matrix.
+  # The proof suites run in two legs; the correlated node test alone sets the floor.
   zk_prover_e2e:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.zk == 'true'
@@ -1633,7 +1634,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Takes the branch tip without a SOURCE_HASH match.
+      # Non-release proof suites reuse the published branch tip.
       - name: Pull the published circuits
         timeout-minutes: 10
         run: pnpm store:circuits pull --latest
@@ -1952,8 +1953,7 @@ jobs:
         with:
           toolchain: ${{ env.NOIR_TOOLCHAIN }}
 
-      # The preset build runs the root circuit tools (scripts/build-circuits.ts), which took about two
-      # and a half of this step's six minutes when built from scratch. rust-cache.yml warms them.
+      # rust-cache.yml warms the Rust circuit builder's dependencies.
       - name: Cache Rust dependencies
         uses: ./.github/actions/cache-dependencies
 

@@ -25,7 +25,8 @@ and CRISP serialize that ciphertext only at their output boundaries. The ct0 quo
 lifted `e0` correction; ct1 retains its separate `r_ct1` JSON key.
 
 The normal dependency points from witness to config. Config does not depend on witness or samples.
-Noir execution and proving belong to `e3-zk-prover`.
+Noir execution and proving belong to `e3-zk-prover`. Artifact file writes belong to the unpublished
+`e3-zk-build` crate.
 
 `dkg/<circuit>.rs` and `threshold/<circuit>.rs` keep each circuit's data, preparation, and encoding
 together. C0 accepts a `PublicKey` directly instead of a one-field data wrapper.

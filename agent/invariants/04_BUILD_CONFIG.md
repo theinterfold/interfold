@@ -23,28 +23,33 @@ every section.
   `.github/filters/circuits.yml`, pre-push checks `insecure-64` with the committee in the local
   `.active-preset.json` (default `minimum`). The check reads the checked-out tree, so the hook stops
   the push of a branch that differs from HEAD in a path of that file. CI reads the same file to
-  start `build_circuits`, which hydrates and compares every supported preset and committee pair. A
-  drift means a deployed verifier accepts a different circuit from the tree.
+  start `build_circuits`, which compiles and checks the selected default pair. Releases verify the
+  complete supported matrix. A drift means a deployed verifier accepts a different circuit from the
+  tree.
 - Complete artifact pairs include `nodes_fold.vk_tree_hash` and `c6_fold.vk_tree_hash`. The builder
   derives them from the recursive leaf VKs and non-ZK fold VKs after a complete build with keys.
   Every other build (a `--group` or `--circuit` subset, `--skip-vk`, or a failed circuit) removes
   both files from the pair and from `circuits/bin/`, because an old anchor can hash a key that the
   build replaced. Hydration copies both files into `circuits/bin/`. Build-cache markers and release
   validation require both files. Deployment uses them as public-input-zero pins and retains the
-  separate C5/C7 VK pins. — `scripts/build-circuits.ts`; `scripts/circuit-artifacts.ts`;
+  separate C5/C7 VK pins. — `crates/zk/build/src/artifacts.rs`; `scripts/circuit-artifacts.ts`;
   `scripts/utils.ts`
 - `pnpm store:circuits pull` selects the newest first-parent `circuit-artifacts` commit whose
   `SOURCE_HASH` matches the current source tree. A different build at the branch tip must not
-  replace it. The release workflow pulls the same way. Release verification checks the source hash,
-  every required pair, each pair's build stamp, and `checksums.json` as nodes check it. CI and the
-  integration tests use `pull --latest` (the branch tip, no `SOURCE_HASH` match), and
-  `--hydrate-bin-only` does not check the stamp's source hash, until the circuit drift workflow is
-  designed (#2249). Only the release workflow enforces the source match.
-  `crates/zk-prover/supported-configurations.json` owns the release matrix that archive installation
-  and release verification require. Each listed pair must be a build pair in
-  `scripts/circuit-constants.ts`, and a tooling test checks this. The matrix file is not a
-  `SOURCE_HASH` input. CI download fixtures explicitly request the two `minimum` pairs. CI local
-  archive setup selects `insecure-64/minimum` with `--circuits-configuration` and
+  replace it. `--latest` selects the branch tip without a match; non-release CI and full-proof
+  integration tests use this option. `--hydrate-bin-only` accepts a stamped pair with its required
+  artifact markers even when its source hash differs. It prints the mismatch and records the
+  artifact source hash in the active stamp. It does not rewrite the archived stamp.
+  `--skip-if-built` still requires a matching source hash. The release workflow pulls with a source
+  match. Release verification checks the source hash, every required pair, each pair's build stamp,
+  and `checksums.json` as nodes check it. `crates/zk-prover/supported-configurations.json` owns the
+  release matrix that archive installation and release verification require. Each listed pair must
+  be allowed by `scripts/circuit-build-pairs.json`, and a tooling test checks this subset contract.
+  The Rust builder and TypeScript tooling read this shared build policy. Wildcard build selections
+  filter its entries in manifest order; they do not create a Cartesian product. An unsupported
+  explicit pair fails before tools run or files change. The release matrix is not a `SOURCE_HASH`
+  input; the shared build policy is. CI download fixtures explicitly request the two `minimum`
+  pairs. CI local archive setup selects `insecure-64/minimum` with `--circuits-configuration` and
   `--allow-unpinned-archive`. `SOURCE_HASH` includes the shared Noir library, its dependency
   manifest and the pinned nargo and bb versions (see `02_CRYPTO_CIRCUITS.md` §Noir / Barretenberg
   compatibility).
