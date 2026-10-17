@@ -13,7 +13,7 @@
 use alloy::primitives::Address;
 use e3_events::{E3Stage, E3id, EncryptionKeyReceived, Proof, ProofType, SignedProofPayload};
 use e3_fhe_params::BfvPreset;
-use e3_zk_helpers::compute_dkg_pk_commitment_from_public_key_bytes;
+use e3_zk_witness::compute_dkg_pk_commitment_from_public_key_bytes;
 
 /// A validated external key, ready to be queued for ZK verification.
 #[derive(Debug)]

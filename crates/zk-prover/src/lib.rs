@@ -38,10 +38,18 @@ pub use circuits::aggregation::node_dkg_fold::{
 pub use circuits::aggregation::nodes_fold_accumulator::{
     generate_nodes_fold_step, generate_sequential_nodes_fold,
 };
+pub use circuits::dkg::pk::PkCircuit;
+pub use circuits::dkg::share_computation::ShareComputationCircuit;
+pub use circuits::dkg::share_decryption::ShareDecryptionCircuit as DkgShareDecryptionCircuit;
+pub use circuits::dkg::share_encryption::ShareEncryptionCircuit;
+pub use circuits::threshold::decrypted_shares_aggregation::DecryptedSharesAggregationCircuit;
+pub use circuits::threshold::pk_aggregation::PkAggregationCircuit;
+pub use circuits::threshold::pk_generation::PkGenerationCircuit;
+pub use circuits::threshold::share_decryption::ShareDecryptionCircuit as ThresholdShareDecryptionCircuit;
+pub use circuits::utils::inputs_json_to_input_map;
 pub use config::{verify_checksum, BbTarget, CircuitInfo, VersionInfo, ZkConfig};
 pub use dkg_attestation_bundle::encode_dkg_attestation_bundle;
 pub use e3_events::CircuitVariant;
-pub use e3_zk_helpers::circuits::dkg::pk::circuit::PkCircuit;
 pub use error::ZkError;
 pub use node_fold_public::extract_node_fold_agg_commits;
 pub use prover::ZkProver;

@@ -580,9 +580,10 @@ E3RefundManager.sol   Interfold.sol   lib/ExitQueueLib.sol
 lib/InterfoldPricing.sol   registry/BondingRegistry.sol   registry/CiphernodeRegistryOwnable.sol
 ```
 
-Outside both file lists: `crates/compute-provider` and the RISC Zero guest, `crates/zk-helpers`,
-`verifiers/bfv/Risc0BfvCiphertextVerifier.sol`, `lib/InterfoldLifecycle.sol`,
-`lib/Risc0ComputeProof.sol`, `lib/FailurePayerLib.sol`, and `examples/CRISP/**`.
+Outside both file lists: `crates/compute-provider` and the RISC Zero guest,
+`crates/zk/{config,witness}`, `verifiers/bfv/Risc0BfvCiphertextVerifier.sol`,
+`lib/InterfoldLifecycle.sol`, `lib/Risc0ComputeProof.sol`, `lib/FailurePayerLib.sol`, and
+`examples/CRISP/**`.
 
 Two consequences worth holding onto:
 

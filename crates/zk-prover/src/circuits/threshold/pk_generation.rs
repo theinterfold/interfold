@@ -6,16 +6,27 @@
 
 use crate::traits::Provable;
 use e3_events::CircuitName;
-use e3_fhe_params::BfvPreset;
-use e3_zk_helpers::circuits::threshold::pk_generation::circuit::{
-    PkGenerationCircuit, PkGenerationCircuitData,
-};
-use e3_zk_helpers::circuits::threshold::pk_generation::computation::Inputs;
+use e3_zk_witness::threshold::pk_generation::Inputs;
+use e3_zk_witness::threshold::pk_generation::PkGenerationCircuitData;
+
+use crate::ZkError;
+
+#[derive(Debug)]
+pub struct PkGenerationCircuit;
 
 impl Provable for PkGenerationCircuit {
-    type Params = BfvPreset;
+    fn build_inputs(
+        &self,
+        config: &Self::Config,
+        input: &Self::Input,
+    ) -> Result<noirc_abi::InputMap, ZkError> {
+        let inputs = Inputs::compute(config, input)
+            .map_err(|e| ZkError::InputsGenerationFailed(e.to_string()))?;
+        crate::circuits::utils::inputs_json_to_input_map(&inputs.to_json())
+    }
+
+    type Config = e3_zk_config::threshold::pk_generation::Configs;
     type Input = PkGenerationCircuitData;
-    type Inputs = Inputs;
 
     fn circuit(&self) -> CircuitName {
         CircuitName::PkGeneration

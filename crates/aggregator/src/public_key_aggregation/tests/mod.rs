@@ -152,7 +152,7 @@ fn verifying_c1_non_square_state(
             let sk = SecretKey::random(&fhe.params, &mut rng);
             let pk_share = PublicKeyShare::new(&sk, fhe.crp.clone(), &mut rng)?;
             let ks_bytes = ArcBytes::from_bytes(&pk_share.to_bytes());
-            let commitment = e3_zk_helpers::compute_pk_commitment_from_keyshare_bytes(
+            let commitment = e3_zk_witness::compute_pk_commitment_from_keyshare_bytes(
                 &ks_bytes,
                 &fhe.params,
                 &fhe.crp,

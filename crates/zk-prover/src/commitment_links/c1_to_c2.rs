@@ -30,7 +30,7 @@
 
 use super::{CommitmentLink, FieldValue, LinkScope};
 use e3_events::{CircuitName, ProofType};
-use e3_zk_helpers::FIELD_BYTE_LEN;
+use e3_zk_config::FIELD_BYTE_LEN;
 
 /// C1 → C2a: `sk_commitment` from PkGeneration must match C2a's `expected_secret_commitment`.
 pub struct C1ToC2aSkCommitmentLink;
@@ -111,6 +111,34 @@ impl CommitmentLink for C1ToC2bESmCommitmentLink {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn c1_c2_commitment_widths_agree_for_every_supported_pair() {
+        use e3_committee::CiphernodesCommitteeSize;
+        use e3_fhe_params::BfvPreset;
+        use e3_zk_config::{dkg, threshold};
+
+        for preset in BfvPreset::PAIR_PRESETS {
+            let (params, _) = preset.build_pair().unwrap();
+            for committee in [
+                CiphernodesCommitteeSize::Minimum,
+                CiphernodesCommitteeSize::Micro,
+                CiphernodesCommitteeSize::Small,
+            ] {
+                let c1 =
+                    threshold::pk_generation::Configs::new(preset, &params, committee).unwrap();
+                let c2 = dkg::share_computation::Configs::new(preset, &params, committee).unwrap();
+                assert_eq!(
+                    c1.bits.sk_bit, c2.bits.bit_sk_secret,
+                    "{preset:?}/{committee:?}"
+                );
+                assert_eq!(
+                    c1.bits.e_sm_bit, c2.bits.bit_e_sm_secret,
+                    "{preset:?}/{committee:?}"
+                );
+            }
+        }
+    }
 
     fn make_field(val: u8) -> [u8; 32] {
         let mut f = [0u8; 32];

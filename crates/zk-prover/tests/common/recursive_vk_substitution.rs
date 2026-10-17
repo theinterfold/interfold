@@ -30,7 +30,7 @@ pub fn vk_hash(keys: &[String]) -> String {
         .iter()
         .map(|key| Fr::from_be_bytes_mod_order(&hex::decode(key.trim_start_matches("0x")).unwrap()))
         .collect();
-    let bytes = e3_zk_helpers::compute_vk_hash(keys)
+    let bytes = e3_zk_witness::compute_vk_hash(keys)
         .into_bigint()
         .to_bytes_be();
     format!("0x{:0>64}", hex::encode(bytes))

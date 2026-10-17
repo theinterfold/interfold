@@ -40,7 +40,8 @@ e3-openvm-types = { path = "../../crates/openvm-types" }
 e3-data-availability = { path = "../../crates/data-availability" }
 e3-program-server = { path = "../../crates/program-server" }
 e3-bfv-client = { path = "../../crates/bfv-client" }
-e3-zk-helpers = { path = "../../crates/zk-helpers" }
+e3-zk-config = { path = "../../crates/zk/config" }
+e3-zk-witness = { path = "../../crates/zk/witness" }
 e3-fhe-params = { path = "../../crates/fhe-params" }
 e3-evm-helpers = { path = "../../crates/evm-helpers" }
 e3-sdk = { path = "../../crates/sdk", default-features = false }

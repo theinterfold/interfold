@@ -4299,12 +4299,12 @@ async fn stale_threshold_share_deadline_preserves_decryption(decrypting: bool) -
         num_moduli: 1,
         own_plaintext_idx: Some(0),
         own_share_raw: Some(current.own_sk_share_raw),
-        dkg_input_type: e3_zk_helpers::computation::DkgInputType::SecretKey,
+        dkg_input_type: e3_zk_config::DkgInputType::SecretKey,
         params_preset: BfvPreset::InsecureDkg64,
         committee_size: actor.state.try_get()?.committee_size()?,
     };
     let esm_request = DkgShareDecryptionProofRequest {
-        dkg_input_type: e3_zk_helpers::computation::DkgInputType::SmudgingNoise,
+        dkg_input_type: e3_zk_config::DkgInputType::SmudgingNoise,
         own_share_raw: Some(current.own_esi_shares_raw[0].clone()),
         ..sk_request.clone()
     };

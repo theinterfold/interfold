@@ -20,8 +20,9 @@ reconstruction. For Small, C7 requires 10 shares, not the 14 shares required by 
 
 User-data encryption separates encryption from preparation. `Inputs::compute` takes the exact typed
 ciphertext and its `EncryptionIntermediates`; repeated preparation from the same material is
-deterministic. `encrypt_and_prepare` encrypts once and returns `(Ciphertext, Inputs)`. The ct0
-quotient includes the lifted `e0` correction; ct1 retains its separate `r_ct1` JSON key.
+deterministic. `encrypt_and_prepare` encrypts once and returns `(Ciphertext, Inputs)`. BFV-client
+and CRISP serialize that ciphertext only at their output boundaries. The ct0 quotient includes the
+lifted `e0` correction; ct1 retains its separate `r_ct1` JSON key.
 
 The normal dependency points from witness to config. Config does not depend on witness or samples.
 Noir execution and proving belong to `e3-zk-prover`.

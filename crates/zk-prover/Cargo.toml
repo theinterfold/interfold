@@ -27,7 +27,8 @@ e3-fhe-params.workspace = true
 e3-request.workspace = true
 e3-slashing.workspace = true
 e3-utils.workspace = true
-e3-zk-helpers.workspace = true
+e3-zk-config.workspace = true
+e3-zk-witness.workspace = true
 fhe.workspace = true
 flate2 = "1"
 futures-util.workspace = true
@@ -50,6 +51,7 @@ tracing.workspace = true
 walkdir = "2.5"
 
 [dev-dependencies]
+e3-zk-samples.workspace = true
 num-integer.workspace = true
 e3-polynomial.workspace = true
 e3-polynomial-fhe.workspace = true

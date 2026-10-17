@@ -31,7 +31,7 @@ async fn c1_result_waits_for_replayed_inputs() -> Result<()> {
         let secret_key = SecretKey::random(&fhe.params, &mut share_rng);
         let public_key_share = PublicKeyShare::new(&secret_key, fhe.crp.clone(), &mut share_rng)?;
         let keyshare = ArcBytes::from_bytes(&public_key_share.to_bytes());
-        let commitment = e3_zk_helpers::compute_pk_commitment_from_keyshare_bytes(
+        let commitment = e3_zk_witness::compute_pk_commitment_from_keyshare_bytes(
             &keyshare,
             &fhe.params,
             &fhe.crp,

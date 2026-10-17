@@ -11,10 +11,9 @@
 use crate::ciphertext_addition::CiphertextAdditionWitness;
 use e3_fhe_params::build_bfv_params_arc;
 use e3_fhe_params::{default_param_set, BfvParamSet, BfvPreset};
-use e3_zk_helpers::circuits::threshold::user_data_encryption::circuit::UserDataEncryptionCircuit;
-use e3_zk_helpers::circuits::threshold::user_data_encryption::circuit::UserDataEncryptionCircuitData;
-use e3_zk_helpers::CircuitComputation;
-use e3_zk_helpers::Computation;
+use e3_zk_config::threshold::user_data_encryption::Configs as EncryptionConfig;
+use e3_zk_witness::threshold::user_data_encryption::encrypt_and_prepare;
+use e3_zk_witness::threshold::user_data_encryption::UserDataEncryptionCircuitData;
 use eyre::{Context, Result};
 use fhe::bfv::BfvParameters;
 use fhe::bfv::Ciphertext;
@@ -31,7 +30,7 @@ mod utils;
 
 pub struct ZKInputsGenerator {
     bfv_params: Arc<BfvParameters>,
-    bfv_preset: BfvPreset,
+    encryption_config: EncryptionConfig,
 }
 
 impl ZKInputsGenerator {
@@ -70,8 +69,8 @@ impl ZKInputsGenerator {
         let bfv_params =
             build_bfv_params_arc(degree, plaintext_modulus, moduli, canonical_variance);
         Ok(Self {
+            encryption_config: EncryptionConfig::new(&bfv_params)?,
             bfv_params,
-            bfv_preset,
         })
     }
 
@@ -183,19 +182,13 @@ impl ZKInputsGenerator {
         let pt = Plaintext::try_encode(&vote, Encoding::poly(), &self.bfv_params)
             .with_context(|| "Failed to encode plaintext")?;
 
-        let user_data_encryption_computation_output = UserDataEncryptionCircuit::compute(
-            self.bfv_preset,
+        let (ct, user_data_encryption_inputs) = encrypt_and_prepare(
+            &self.encryption_config,
             &UserDataEncryptionCircuitData {
                 public_key: pk,
                 plaintext: pt,
             },
         )?;
-
-        let ct = Ciphertext::from_bytes(
-            &user_data_encryption_computation_output.inputs.ciphertext,
-            &self.bfv_params,
-        )
-        .with_context(|| "Failed to deserialize ciphertext")?;
 
         let previous_ct = previous_ciphertext
             .map(|bytes| {
@@ -222,8 +215,7 @@ impl ZKInputsGenerator {
         .with_context(|| "Failed to compute ciphertext addition inputs")?;
 
         let ciphertext_addition_witness_json = ciphertext_addition_inputs.to_json()?;
-        let user_data_encryption_witness_json =
-            user_data_encryption_computation_output.inputs.to_json()?;
+        let user_data_encryption_witness_json = user_data_encryption_inputs.to_json();
         let inputs_json = utils::merge_json_objects(
             ciphertext_addition_witness_json,
             user_data_encryption_witness_json,

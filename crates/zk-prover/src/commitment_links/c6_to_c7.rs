@@ -26,7 +26,7 @@
 //! ## Caveat
 //!
 //! The Rust constant `MAX_MSG_NON_ZERO_COEFFS` (imported from
-//! `e3_zk_helpers::circuits::threshold::decrypted_shares_aggregation`) must match the **compiled**
+//! `e3_zk_witness::threshold::decrypted_shares_aggregation`) must match the **compiled**
 //! C7 Noir circuit (same value as `Polynomial<MAX_MSG_NON_ZERO_COEFFS>` /
 //! `lib::configs::default::MAX_MSG_NON_ZERO_COEFFS` for that artifact). If you ever ship multiple C7
 //! builds with different message widths, verifying or linking against the wrong artifact will make
@@ -35,8 +35,8 @@
 
 use super::{CommitmentLink, FieldValue, LinkScope};
 use e3_events::{CircuitName, ProofType};
-use e3_zk_helpers::circuits::threshold::decrypted_shares_aggregation::MAX_MSG_NON_ZERO_COEFFS;
-use e3_zk_helpers::FIELD_BYTE_LEN;
+use e3_zk_config::FIELD_BYTE_LEN;
+use e3_zk_config::MAX_MSG_NON_ZERO_COEFFS;
 
 /// C6 → C7 `d_commitment` consistency link.
 pub struct C6ToC7DCommitmentLink;

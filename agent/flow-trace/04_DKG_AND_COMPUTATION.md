@@ -225,6 +225,20 @@ These values bind the C1-C7 witness dimensions and the on-chain BFV parameter ha
 tuple for historical requests. C3 share encryption and user-data encryption use non-centered `k1`
 residues in `[0, t - 1]`; the Rust witness, Noir equation, and quotient bounds must agree.
 
+Workers build each circuit's concrete `Configs` from their existing BFV parameter owner and pass
+it through `Provable::Config` to witness preparation. C6 and C7 reuse the configuration across
+ciphertext indices. Constructors check the supported ring, CRT basis, and sampler profile.
+C3 and user-data encryption share the configuration's `k0is` with bounds and rendering.
+File: crates/zk/config/src/parameters.rs; crates/zk-prover/src/traits.rs;
+crates/multithread/src/multithread.rs
+
+User-data encryption prepares witnesses from an exact typed ciphertext and its encryption
+intermediates. `encrypt_and_prepare` encrypts once and returns `(Ciphertext, Inputs)`; BFV-client
+and CRISP serialize the ciphertext at their output boundaries. The ct0 reduction quotient includes
+the difference between lifted `e0` and its centered CRT residue. `to_json` preserves the canonical
+Noir fields, including separate `r` and `r_ct1` quotients.
+File: crates/zk/witness/src/threshold/user_data_encryption.rs
+
 ```
 ThresholdKeyshare receives AllEncryptionKeysCollected
 │
@@ -1193,12 +1207,12 @@ each leaf keeps its global position, so the root does not depend on the schedule
 
 The SAFE ciphertext commitment covers `c[0]` and `c[1]` only, matching the Noir circuit.
 `bfv_ciphertext_to_greco` rejects any ciphertext whose component count is not exactly two
-(`crates/zk-helpers/src/circuits/threshold/user_data_encryption/utils.rs`). Without that check a
-ciphertext padded with a third polynomial commits to the same value as its two-component prefix, so
-the input root and the output commitment stay identical while threshold decryption rejects the
-padded output — `ShareManager` requires exactly two components. The round would then fail as a
-`DecryptionTimeout`, which `FailurePayerLib` bills to the ciphernodes. Seed-compressed ciphertexts
-are unaffected: `TryConvertFrom` expands the seed into `c[1]` before the converter sees it.
+(`crates/zk/witness/src/threshold/user_data_encryption.rs`). Without that check a ciphertext padded
+with a third polynomial commits to the same value as its two-component prefix, so the input root and
+the output commitment stay identical while threshold decryption rejects the padded output —
+`ShareManager` requires exactly two components. The round would then fail as a `DecryptionTimeout`,
+which `FailurePayerLib` bills to the ciphernodes. Seed-compressed ciphertexts are unaffected:
+`TryConvertFrom` expands the seed into `c[1]` before the converter sees it.
 
 ```
 Compute provider runs computation on encrypted data:
@@ -1494,6 +1508,12 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │   │   │   )
 │   │   │   → Circuit: DecryptedSharesAggregation (C7)
 │   │   │   → Proves plaintext was correctly reconstructed from T+1 shares
+│   │   │   → Host preparation checks the canonical committee, exactly T+1 shares, ordered
+│   │   │     one-based IDs, and level-zero contexts. It reads native ascending prefixes and
+│   │   │     pads the message; Noir performs interpolation and CRT reconstruction.
+│   │   │     C6/C7 preparation and commitments use config.max_msg_non_zero_coeffs.
+│   │   │     The default is 50; another width requires matching compiled artifacts and consumers.
+│   │   │     File: crates/zk/witness/src/threshold/decrypted_shares_aggregation.rs
 │   │   ├─ ZkActor generates proof(s) via bb binary
 │   │   ├─ Deduplicates the exact request; a replacement batch invalidates old worker correlations
 │   │   ├─ Signs each C7 proof (one per ciphertext index)

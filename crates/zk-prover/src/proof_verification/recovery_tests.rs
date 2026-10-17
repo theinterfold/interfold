@@ -6,7 +6,6 @@ use crate::{PkCircuit, Provable, ZkBackend, ZkProver};
 use e3_config::BBPath;
 use e3_events::{E3RequestComplete, HistoryCollector};
 use e3_slashing::AccusationManager;
-use e3_zk_helpers::circuits::dkg::pk::circuit::PkCircuitData;
 use std::fs;
 use std::path::PathBuf;
 
@@ -200,11 +199,12 @@ async fn c0_local_verifier_failures_retry_without_peer_blame() {
     fs::copy(artifacts.join("pk.json"), circuit_dir.join("pk.json")).unwrap();
     let vk = circuit_dir.join("pk.vk");
     fs::copy(artifacts.join("pk.vk_noir"), &vk).unwrap();
-    let sample = PkCircuitData::generate_sample(preset).unwrap();
-    let pk = sample.public_key.to_bytes();
+    let config = e3_zk_config::dkg::pk::Configs::for_preset(preset).unwrap();
+    let sample = e3_zk_samples::dkg::pk::generate(&config.params).unwrap();
+    let pk = sample.to_bytes();
     let prover = ZkProver::new(&backend);
     let proof = PkCircuit
-        .prove(&prover, &preset, &sample, "c0-recovery", &artifacts_dir)
+        .prove(&prover, &config, &sample, "c0-recovery", &artifacts_dir)
         .unwrap();
     let signer = PrivateKeySigner::random();
 
@@ -261,8 +261,8 @@ async fn c0_local_verifier_failures_retry_without_peer_blame() {
         harness.complete(&e3_id).await;
     }
 
-    let other_sample = PkCircuitData::generate_sample(preset).unwrap();
-    let other_pk = other_sample.public_key.to_bytes();
+    let other_sample = e3_zk_samples::dkg::pk::generate(&config.params).unwrap();
+    let other_pk = other_sample.to_bytes();
     let commitment = compute_dkg_pk_commitment_from_public_key_bytes(&other_pk, preset).unwrap();
     let invalid_proof = Proof::new(
         proof.circuit,

@@ -19,7 +19,7 @@ use e3_fhe_params::BfvPreset;
 use e3_test_helpers::get_common_setup;
 use e3_trbfv::{shares::BfvEncryptedShares, TrBFVError, TrBFVFailure};
 use e3_utils::utility_types::ArcBytes;
-use e3_zk_helpers::computation::DkgInputType;
+use e3_zk_config::DkgInputType;
 
 fn test_ctx(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {
     EventContext::<Unsequenced>::from(data.into()).sequence(0)

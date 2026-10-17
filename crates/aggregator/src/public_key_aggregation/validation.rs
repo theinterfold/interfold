@@ -113,7 +113,7 @@ pub(crate) fn check_c1_keyshare_commitments(
             missing_proof.push(*party_id);
             continue;
         };
-        let ok = match e3_zk_helpers::compute_pk_commitment_from_keyshare_bytes(
+        let ok = match e3_zk_witness::compute_pk_commitment_from_keyshare_bytes(
             ks,
             &fhe.params,
             &fhe.crp,

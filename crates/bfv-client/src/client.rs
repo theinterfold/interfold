@@ -6,9 +6,8 @@
 
 use anyhow::{anyhow, Result};
 use e3_fhe_params::{try_build_bfv_params_arc, BfvParamSet, BfvPreset};
-use e3_zk_helpers::circuits::threshold::user_data_encryption::circuit::UserDataEncryptionCircuitData;
-use e3_zk_helpers::circuits::threshold::user_data_encryption::Inputs as UserDataEncryptionInputs;
-use e3_zk_helpers::circuits::Computation;
+use e3_zk_witness::threshold::user_data_encryption::encrypt_and_prepare;
+use e3_zk_witness::threshold::user_data_encryption::UserDataEncryptionCircuitData;
 use fhe::bfv::{BfvParameters, Ciphertext, Encoding, Plaintext, PublicKey, SecretKey};
 use fhe::Error as FheError;
 use fhe_traits::{DeserializeParametrized, FheEncoder, FheEncrypter, Serialize};
@@ -126,16 +125,17 @@ where
     let plaintext = Plaintext::try_encode(&data, Encoding::poly(), &params)
         .map_err(|e: FheError| anyhow!("Error encoding plaintext: {}", e))?;
 
-    let inputs = UserDataEncryptionInputs::compute(
-        preset,
+    let config = e3_zk_config::threshold::user_data_encryption::Configs::new(&params)?;
+    let (ciphertext, inputs) = encrypt_and_prepare(
+        &config,
         &UserDataEncryptionCircuitData {
             public_key: pk,
             plaintext,
         },
     )?;
 
-    let encrypted_data = inputs.ciphertext.clone();
-    let circuit_inputs = inputs.to_json()?.to_string();
+    let encrypted_data = ciphertext.to_bytes();
+    let circuit_inputs = inputs.to_json().to_string();
 
     Ok(VerifiableEncryptionResult {
         encrypted_data,
@@ -173,7 +173,7 @@ pub fn compute_pk_commitment(
     plaintext_modulus: u64,
     moduli: Vec<u64>,
 ) -> Result<[u8; 32]> {
-    use e3_zk_helpers::circuits::threshold::user_data_encryption::utils::compute_public_key_commitment;
+    use e3_zk_witness::threshold::user_data_encryption::compute_public_key_commitment;
 
     let params = build_client_params(degree, plaintext_modulus, &moduli, None)?;
 
@@ -201,7 +201,7 @@ pub fn validate_pk_commitment(
     plaintext_modulus: u64,
     moduli: Vec<u64>,
 ) -> Result<()> {
-    use e3_zk_helpers::circuits::threshold::user_data_encryption::utils::compute_public_key_commitment;
+    use e3_zk_witness::threshold::user_data_encryption::compute_public_key_commitment;
 
     let params = build_client_params(degree, plaintext_modulus, &moduli, None)?;
     let decoded = PublicKey::from_bytes(public_key, &params)
@@ -237,12 +237,12 @@ pub fn compute_ct_commitment_with_params(
     ct: &[u8],
     params: &Arc<BfvParameters>,
 ) -> Result<[u8; 32]> {
-    use e3_zk_helpers::circuits::threshold::user_data_encryption::utils::compute_ciphertext_commitment;
+    use e3_zk_witness::threshold::user_data_encryption::compute_ciphertext_commitment;
 
     #[cfg(crisp_fhe_optimized)]
     if let Some(components) = Ciphertext::power_basis_from_bytes_if_canonical(ct, params)? {
         use e3_fhe_params::utils::compute_modulus_bit;
-        use e3_zk_helpers::commitments;
+        use e3_zk_witness::commitments;
         if let Some(commitment) = commitments::compute_ciphertext_commitment_from_power_basis(
             &components[0],
             &components[1],

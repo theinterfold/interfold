@@ -65,7 +65,7 @@
 
 use super::{CommitmentLink, FieldValue, LinkScope};
 use e3_events::ProofType;
-use e3_zk_helpers::FIELD_BYTE_LEN;
+use e3_zk_config::FIELD_BYTE_LEN;
 
 /// C2a (SkShareComputation) → C4a (SkShareDecryption) commitment link.
 pub struct C2aToC4aShareCommitmentLink {

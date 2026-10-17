@@ -4,32 +4,26 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use std::fmt::Display;
-
-use crate::circuits::utils::inputs_json_to_input_map;
 use crate::error::ZkError;
 use crate::prover::ZkProver;
 use crate::witness::{CompiledCircuit, WitnessGenerator};
 use e3_events::{CircuitName, CircuitVariant, Proof};
-use e3_zk_helpers::Computation;
 use noirc_abi::InputMap;
 
 /// Trait for types that can generate ZK proofs.
 ///
-/// Implementors specify the circuit, params, and input types.
-/// `build_inputs`, `prove`, and `verify` use default implementations
-/// that compute the inputs via [`Computation::compute`] and serialize via
-/// [`Computation::to_json`].
+/// Implementors specify the circuit, config, and input types.
+/// Each family adapter prepares its witness with one circuit-specific configuration.
+/// The shared proof methods execute Noir and invoke the prover backend.
 pub trait Provable: Send + Sync {
-    type Params: Send + Sync + Clone;
+    type Config: Send + Sync + Clone;
     type Input: Send + Sync;
-    type Inputs;
 
     fn circuit(&self) -> CircuitName;
 
-    /// Override this to select a circuit variant based on params and input.
+    /// Override this to select a circuit variant based on config and input.
     /// Default just returns the standard circuit name.
-    fn resolve_circuit_name(&self, _params: &Self::Params, _input: &Self::Input) -> CircuitName {
+    fn resolve_circuit_name(&self, _config: &Self::Config, _input: &Self::Input) -> CircuitName {
         self.circuit()
     }
 
@@ -37,36 +31,20 @@ pub trait Provable: Send + Sync {
         vec![self.circuit()]
     }
 
-    fn build_inputs(&self, params: &Self::Params, input: &Self::Input) -> Result<InputMap, ZkError>
-    where
-        Self::Inputs: Computation<Preset = Self::Params, Data = Self::Input> + serde::Serialize,
-        <Self::Inputs as Computation>::Error: Display,
-    {
-        let inputs = Self::Inputs::compute(params.clone(), input)
-            .map_err(|e| ZkError::InputsGenerationFailed(e.to_string()))?;
-
-        let json = inputs
-            .to_json()
-            .map_err(|e| ZkError::SerializationError(e.to_string()))?;
-
-        inputs_json_to_input_map(&json)
-    }
+    fn build_inputs(&self, config: &Self::Config, input: &Self::Input)
+        -> Result<InputMap, ZkError>;
 
     fn prove(
         &self,
         prover: &ZkProver,
-        params: &Self::Params,
+        config: &Self::Config,
         input: &Self::Input,
         e3_id: &str,
         artifacts_dir: &str,
-    ) -> Result<Proof, ZkError>
-    where
-        Self::Inputs: Computation<Preset = Self::Params, Data = Self::Input> + serde::Serialize,
-        <Self::Inputs as Computation>::Error: Display,
-    {
+    ) -> Result<Proof, ZkError> {
         self.prove_with_variant(
             prover,
-            params,
+            config,
             input,
             e3_id,
             CircuitVariant::Recursive,
@@ -77,19 +55,15 @@ pub trait Provable: Send + Sync {
     fn prove_with_variant(
         &self,
         prover: &ZkProver,
-        params: &Self::Params,
+        config: &Self::Config,
         input: &Self::Input,
         e3_id: &str,
         variant: CircuitVariant,
         artifacts_dir: &str,
-    ) -> Result<Proof, ZkError>
-    where
-        Self::Inputs: Computation<Preset = Self::Params, Data = Self::Input> + serde::Serialize,
-        <Self::Inputs as Computation>::Error: Display,
-    {
-        let inputs = self.build_inputs(params, input)?;
+    ) -> Result<Proof, ZkError> {
+        let inputs = self.build_inputs(config, input)?;
 
-        let resolved_name = self.resolve_circuit_name(params, input);
+        let resolved_name = self.resolve_circuit_name(config, input);
         let circuit_path = prover
             .circuits_dir(variant, artifacts_dir)
             .join(resolved_name.dir_path())

@@ -8,13 +8,7 @@ guide and [`RULES.md`](RULES.md). The actor-by-actor refactor findings are summa
 
 ## Dependency layers
 
-`e3-zk-config` owns static BFV configuration and public-input layouts. `e3-zk-witness` depends on
-config and owns input preparation, commitments, and canonical JSON encoding. Their tests use the
-unpublished `e3-zk-samples` crate through dev dependencies. The sample crate depends normally on
-config, witness, and FHE libraries. `scripts/check-cargo-feature-containment.py` enforces this
-boundary. Runtime and artifact CLI consumers still depend on `e3-zk-helpers`.
-
-All 48 workspace packages are shown below. Arrows point from a dependent crate to a direct
+The diagram groups workspace packages by role. Arrows point from a dependent crate to a direct
 dependency; the diagram keeps representative production edges rather than reproducing every Cargo
 edge, while the groups record each crate's current primary responsibility. Test-only edges are kept
 in the validation group. Several protocol crates still import concrete infrastructure types; that
@@ -69,13 +63,20 @@ flowchart TD
     ZkArtifacts[e3-zk-artifacts] --> ZkHelpers
     ZkArtifacts --> FheParams
     ZkArtifacts --> Committee
+    ZkHelpers[e3-zk-helpers] --> Committee
+    ZkHelpers --> FheParams
+    ZkHelpers --> Poly
+    ZkHelpers --> PolyFhe
+    ZkHelpers --> Matrix
+    ZkHelpers --> Safe
 
     subgraph Vocabulary[Protocol vocabulary and deterministic rules]
         Events[e3-events]
         Config[e3-config]
         FheParams[e3-fhe-params]
         Committee[e3-committee]
-        ZkHelpers[e3-zk-helpers]
+        ZkConfig[e3-zk-config]
+        ZkWitness[e3-zk-witness]
         CommitteeHash[e3-committee-hash]
     end
 
@@ -91,6 +92,7 @@ flowchart TD
     end
 
     subgraph Validation[Workspace validation]
+        ZkSamples[e3-zk-samples]
         TestHelpers[e3-test-helpers]
         Tests[e3-tests]
         LayoutLock[e3-layout-lock]
@@ -147,10 +149,10 @@ flowchart TD
     Keyshare --> Trbfv
     Keyshare --> Committee
     Slashing --> Request
-    Slashing --> ZkHelpers
     Slashing --> Committee
     Prover --> Slashing
-    Prover --> ZkHelpers
+    Prover --> ZkConfig
+    Prover --> ZkWitness
     Prover --> Committee
     Multi --> Prover
     Multi --> Trbfv
@@ -159,7 +161,8 @@ flowchart TD
     Fhe --> BfvClient
     Trbfv --> BfvClient
     BfvClient --> FheParams
-    BfvClient --> ZkHelpers
+    BfvClient --> ZkConfig
+    BfvClient --> ZkWitness
 
     Evm --> Config
     Evm --> Data
@@ -185,14 +188,21 @@ flowchart TD
     Events --> Crypto
     Events --> FheParams
     Events --> Trbfv
-    Events --> ZkHelpers
+    Events --> ZkConfig
     Events --> Committee
-    ZkHelpers --> Committee
-    ZkHelpers --> FheParams
-    ZkHelpers --> Poly
-    ZkHelpers --> PolyFhe
-    ZkHelpers --> Matrix
-    ZkHelpers --> Safe
+    ZkConfig --> Committee
+    ZkConfig --> FheParams
+    ZkConfig --> Poly
+    ZkConfig --> PolyFhe
+    ZkConfig --> Matrix
+    ZkWitness --> ZkConfig
+    ZkWitness --> Committee
+    ZkWitness --> FheParams
+    ZkWitness --> Poly
+    ZkWitness --> PolyFhe
+    ZkWitness --> Safe
+    ZkSamples --> ZkConfig
+    ZkSamples --> ZkWitness
     PolyFhe --> Poly
     Crypto --> Utils
     Utils --> UtilsDerive
@@ -218,9 +228,16 @@ and are not papered over with empty port traits.
 `crates/polynomial` is the `e3-polynomial` package. `Polynomial` owns exact integer coefficient
 arithmetic and transforms; `CrtPolynomial` routes transforms to its ordered residue limbs. The child
 FHE adapter is a separate root-workspace member and reads native ascending coefficients. The ZK
-helper layer owns crate-private negacyclic folding, witness reversal/centering, packing, and JSON
-encoding. Prover test fixtures reconstruct native FHE inputs locally, without a production
-reverse-conversion API in the adapter.
+configuration owner is `e3-zk-config`; witness preparation receives its concrete configuration.
+`e3-zk-witness` owns crate-private negacyclic product shaping and folding, witness
+reversal/centering, private commitment packing, and canonical JSON encoding. Prover test fixtures
+reconstruct native FHE inputs locally, without a production reverse-conversion API in the adapter.
+
+The unpublished `e3-zk-samples` crate owns artificial BFV samples. It depends normally on
+configuration, witness preparation, and FHE libraries. Witness and prover tests use it through dev
+dependencies; those edges do not enter runtime builds.
+`scripts/check-cargo-feature-containment.py` enforces the boundary. The artifact CLI still uses
+`e3-zk-helpers` for its generated configuration and sample inputs.
 
 The resulting workflow/actor/effect separation is module-level rather than a clean crate boundary.
 On disk, those roles are grouped by protocol capability; the labels in this diagram describe

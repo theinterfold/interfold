@@ -231,7 +231,7 @@ pub async fn setup_test_prover(bb: &PathBuf) -> (ZkBackend, TempDir) {
     (backend, temp)
 }
 
-/// Reads `circuits/bin/.active-preset.json` (written by `scripts/build-circuits.ts`) and
+/// Reads `circuits/bin/.active-preset.json` (written by `pnpm build:circuits`) and
 /// returns the `committee` field, normalised to lower-case (e.g. `"minimum"`, `"micro"`).
 /// Returns `None` when the stamp is absent or malformed — callers must treat that as a
 /// "circuits not built yet" condition rather than as a specific committee.

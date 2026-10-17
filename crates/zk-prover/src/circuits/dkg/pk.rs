@@ -6,14 +6,27 @@
 
 use crate::traits::Provable;
 use e3_events::CircuitName;
-use e3_fhe_params::BfvPreset;
-use e3_zk_helpers::circuits::dkg::pk::circuit::{PkCircuit, PkCircuitData};
-use e3_zk_helpers::circuits::dkg::pk::computation::Inputs;
+use e3_zk_witness::dkg::pk::Inputs;
+use fhe::bfv::PublicKey;
+
+use crate::ZkError;
+
+#[derive(Debug)]
+pub struct PkCircuit;
 
 impl Provable for PkCircuit {
-    type Params = BfvPreset;
-    type Input = PkCircuitData;
-    type Inputs = Inputs;
+    fn build_inputs(
+        &self,
+        config: &Self::Config,
+        input: &Self::Input,
+    ) -> Result<noirc_abi::InputMap, ZkError> {
+        let inputs = Inputs::compute(config, input)
+            .map_err(|e| ZkError::InputsGenerationFailed(e.to_string()))?;
+        crate::circuits::utils::inputs_json_to_input_map(&inputs.to_json())
+    }
+
+    type Config = e3_zk_config::dkg::pk::Configs;
+    type Input = PublicKey;
 
     fn circuit(&self) -> CircuitName {
         CircuitName::PkBfv

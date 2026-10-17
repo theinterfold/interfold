@@ -22,7 +22,8 @@ e3-crypto = { workspace = true }
 e3-events = { workspace = true }
 e3-polynomial = { workspace = true }
 e3-polynomial-fhe = { workspace = true }
-e3-zk-helpers = { workspace = true }
+e3-zk-config = { workspace = true }
+e3-zk-witness = { workspace = true }
 e3-utils = { workspace = true }
 e3-zk-prover = { workspace = true }
 fhe = { workspace = true }

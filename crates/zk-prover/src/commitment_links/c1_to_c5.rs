@@ -24,7 +24,7 @@
 
 use super::{CommitmentLink, FieldValue, LinkScope};
 use e3_events::{CircuitName, ProofType};
-use e3_zk_helpers::FIELD_BYTE_LEN;
+use e3_zk_config::FIELD_BYTE_LEN;
 
 /// C1 → C5 pk_commitment consistency link.
 pub struct C1ToC5PkCommitmentLink;

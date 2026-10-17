@@ -231,7 +231,7 @@ indices, and the parameters.
 | Ciphertext times ciphertext                   | Three components. The output commitment rejects it. |
 
 The output commitment accepts only a ciphertext with exactly two components
-(`bfv_ciphertext_to_greco` in `crates/zk-helpers`). A ciphertext product in fhe.rs has three
+(`bfv_ciphertext_to_greco` in `crates/zk/witness`). A ciphertext product in fhe.rs has three
 components. The Interfold does not publish a relinearization key, so the run then stops with
 `ComputeError::OutputCommitment`.
 

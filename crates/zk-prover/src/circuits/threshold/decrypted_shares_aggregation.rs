@@ -6,16 +6,27 @@
 
 use crate::traits::Provable;
 use e3_events::CircuitName;
-use e3_fhe_params::BfvPreset;
-use e3_zk_helpers::circuits::threshold::decrypted_shares_aggregation::circuit::{
-    DecryptedSharesAggregationCircuit, DecryptedSharesAggregationCircuitData,
-};
-use e3_zk_helpers::circuits::threshold::decrypted_shares_aggregation::computation::Inputs;
+use e3_zk_witness::threshold::decrypted_shares_aggregation::DecryptedSharesAggregationCircuitData;
+use e3_zk_witness::threshold::decrypted_shares_aggregation::Inputs;
+
+use crate::ZkError;
+
+#[derive(Debug)]
+pub struct DecryptedSharesAggregationCircuit;
 
 impl Provable for DecryptedSharesAggregationCircuit {
-    type Params = BfvPreset;
+    fn build_inputs(
+        &self,
+        config: &Self::Config,
+        input: &Self::Input,
+    ) -> Result<noirc_abi::InputMap, ZkError> {
+        let inputs = Inputs::compute(config, input)
+            .map_err(|e| ZkError::InputsGenerationFailed(e.to_string()))?;
+        crate::circuits::utils::inputs_json_to_input_map(&inputs.to_json())
+    }
+
+    type Config = e3_zk_config::threshold::decrypted_shares_aggregation::Configs;
     type Input = DecryptedSharesAggregationCircuitData;
-    type Inputs = Inputs;
 
     fn circuit(&self) -> CircuitName {
         CircuitName::DecryptedSharesAggregation

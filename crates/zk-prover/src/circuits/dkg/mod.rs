@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE
 
-mod pk;
+pub(crate) mod pk;
 pub(crate) mod share_computation;
-mod share_decryption;
-mod share_encryption;
+pub(crate) mod share_decryption;
+pub(crate) mod share_encryption;

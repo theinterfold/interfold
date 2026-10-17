@@ -7,7 +7,7 @@
 //! Fold **accumulators** integration tests: sequential [`generate_sequential_c3_fold`] /
 //! [`generate_sequential_c6_fold`] (prove + [`ZkProver::verify_fold_proof`]) with the slot count read
 //! from the compiled `c3_fold` / `c6_fold` ABI and artifacts staged under [`CircuitVariant::Default`]
-//! (`noir-recursive-no-zk` VKs — see `scripts/build-circuits.ts`).
+//! (`noir-recursive-no-zk` VKs — see `crates/zk/build`).
 //!
 //! The node-fold pipeline ([`CircuitName::C2abFold`] … [`CircuitName::NodeFold`]) is proven in
 //! `node_fold_correlated_e2e_tests.rs`.
@@ -27,17 +27,18 @@ use common::{
 use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{CircuitName, Proof};
 use e3_fhe_params::BfvPreset;
-use e3_zk_helpers::computation::DkgInputType;
-use e3_zk_helpers::dkg::share_encryption::{ShareEncryptionCircuit, ShareEncryptionCircuitData};
-use e3_zk_helpers::threshold::decrypted_shares_aggregation::MAX_MSG_NON_ZERO_COEFFS;
-use e3_zk_helpers::threshold::share_decryption::{
-    ShareDecryptionCircuit, ShareDecryptionCircuitData,
-};
+use e3_zk_config::DkgInputType;
+use e3_zk_config::MAX_MSG_NON_ZERO_COEFFS;
 use e3_zk_prover::test_utils::{fold_witness_field_strings, load_vk_artifacts};
 use e3_zk_prover::{
     generate_sequential_c3_fold, generate_sequential_c6_fold, CircuitVariant, Provable, ZkBackend,
     ZkProver,
 };
+use e3_zk_prover::{
+    ShareEncryptionCircuit, ThresholdShareDecryptionCircuit as ShareDecryptionCircuit,
+};
+use e3_zk_witness::dkg::share_encryption::ShareEncryptionCircuitData;
+use e3_zk_witness::threshold::share_decryption::ShareDecryptionCircuitData;
 use recursive_vk_substitution::{assert_fold_rejected, fields, substitute_proof, vk_hash, witness};
 use serde_json::json;
 
@@ -132,14 +133,19 @@ async fn setup_c3_fold_with_inner_share_encryption() -> Option<(
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C3Fold).await;
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C3FoldKernel).await;
 
-    let sample_a = ShareEncryptionCircuitData::generate_sample(
+    let (threshold_params, dkg_params) = preset.build_pair().ok()?;
+    let sample_a = e3_zk_samples::dkg::share_encryption::generate(
+        &threshold_params,
+        &dkg_params,
         preset,
         committee.clone(),
         DkgInputType::SecretKey,
         sd.z,
     )
     .ok()?;
-    let sample_b = ShareEncryptionCircuitData::generate_sample(
+    let sample_b = e3_zk_samples::dkg::share_encryption::generate(
+        &threshold_params,
+        &dkg_params,
         preset,
         committee,
         DkgInputType::SecretKey,
@@ -493,7 +499,7 @@ async fn c3_fold_sequential_proves_and_verifies() {
     let inner_a = circuit
         .prove_with_variant(
             &prover,
-            &preset,
+            &e3_zk_config::dkg::share_encryption::Configs::for_preset(preset).unwrap(),
             &sample_a,
             inner_e3_a,
             CircuitVariant::Recursive,
@@ -505,7 +511,7 @@ async fn c3_fold_sequential_proves_and_verifies() {
     let inner_b = circuit
         .prove_with_variant(
             &prover,
-            &preset,
+            &e3_zk_config::dkg::share_encryption::Configs::for_preset(preset).unwrap(),
             &sample_b,
             inner_e3_b,
             CircuitVariant::Recursive,
@@ -572,8 +578,12 @@ async fn setup_c6_fold_with_inner_threshold_share_decryption() -> Option<(
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C6FoldKernel).await;
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::DecryptionAggregator).await;
 
-    let sample_a = ShareDecryptionCircuitData::generate_sample(preset, committee.clone()).ok()?;
-    let sample_b = ShareDecryptionCircuitData::generate_sample(preset, committee).ok()?;
+    let (params, _) = preset.build_pair().ok()?;
+    let sample_a =
+        e3_zk_samples::threshold::share_decryption::generate(&params, preset, committee.clone())
+            .ok()?;
+    let sample_b =
+        e3_zk_samples::threshold::share_decryption::generate(&params, preset, committee).ok()?;
     let prover = ZkProver::new(&backend);
 
     Some((
@@ -612,7 +622,7 @@ async fn c6_fold_sequential_proves_and_verifies() {
     let inner_a = circuit
         .prove_with_variant(
             &prover,
-            &preset,
+            &e3_zk_config::threshold::share_decryption::Configs::for_preset(preset).unwrap(),
             &sample_a,
             inner_e3_a,
             CircuitVariant::Recursive,
@@ -624,7 +634,7 @@ async fn c6_fold_sequential_proves_and_verifies() {
     let inner_b = circuit
         .prove_with_variant(
             &prover,
-            &preset,
+            &e3_zk_config::threshold::share_decryption::Configs::for_preset(preset).unwrap(),
             &sample_b,
             inner_e3_b,
             CircuitVariant::Recursive,

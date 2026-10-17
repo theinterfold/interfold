@@ -7,8 +7,8 @@
 use e3_fhe_params::utils::compute_modulus_bit;
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use e3_polynomial_fhe::FromFhePolynomial as _;
-use e3_zk_helpers::commitments::compute_ciphertext_commitment;
-use e3_zk_helpers::encoding::crt_polynomial_to_toml_json;
+use e3_zk_witness::commitments::compute_ciphertext_commitment;
+use e3_zk_witness::encoding::crt_polynomial_to_toml_json;
 use eyre::{Context, Result};
 use fhe::bfv::BfvParameters;
 use fhe::bfv::Ciphertext;

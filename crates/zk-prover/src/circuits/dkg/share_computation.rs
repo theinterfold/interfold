@@ -6,18 +6,29 @@
 
 use crate::traits::Provable;
 use e3_events::CircuitName;
-use e3_fhe_params::BfvPreset;
-use e3_zk_helpers::computation::DkgInputType;
-use e3_zk_helpers::dkg::share_computation::{
-    Inputs, ShareComputationCircuit, ShareComputationCircuitData,
-};
+use e3_zk_config::DkgInputType;
+use e3_zk_witness::dkg::share_computation::{Inputs, ShareComputationCircuitData};
+
+use crate::ZkError;
+
+#[derive(Debug)]
+pub struct ShareComputationCircuit;
 
 impl Provable for ShareComputationCircuit {
-    type Params = BfvPreset;
-    type Input = ShareComputationCircuitData;
-    type Inputs = Inputs;
+    fn build_inputs(
+        &self,
+        config: &Self::Config,
+        input: &Self::Input,
+    ) -> Result<noirc_abi::InputMap, ZkError> {
+        let inputs = Inputs::compute(config, input)
+            .map_err(|e| ZkError::InputsGenerationFailed(e.to_string()))?;
+        crate::circuits::utils::inputs_json_to_input_map(&inputs.to_json())
+    }
 
-    fn resolve_circuit_name(&self, _params: &Self::Params, input: &Self::Input) -> CircuitName {
+    type Config = e3_zk_config::dkg::share_computation::Configs;
+    type Input = ShareComputationCircuitData;
+
+    fn resolve_circuit_name(&self, _config: &Self::Config, input: &Self::Input) -> CircuitName {
         match input.dkg_input_type {
             DkgInputType::SecretKey => CircuitName::SkShareComputation,
             DkgInputType::SmudgingNoise => CircuitName::ESmShareComputation,

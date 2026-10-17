@@ -14,7 +14,7 @@ use e3_events::{
 };
 use e3_fhe_params::build_pair_for_preset;
 use e3_utils::utility_types::ArcBytes;
-use e3_zk_helpers::compute_dkg_pk_commitment_from_public_key_bytes;
+use e3_zk_witness::compute_dkg_pk_commitment_from_public_key_bytes;
 use fhe::bfv::{PublicKey, SecretKey};
 use fhe_traits::Serialize;
 use tokio::sync::mpsc;

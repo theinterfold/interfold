@@ -14,7 +14,7 @@ mod common;
 use common::test_backend;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_fhe_params::BfvPreset;
-use e3_zk_helpers::circuits::dkg::pk::circuit::{PkCircuit, PkCircuitData};
+use e3_zk_prover::PkCircuit;
 use e3_zk_prover::{
     test_utils::get_tempdir, BbTarget, Provable, SetupStatus, ZkBackend, ZkConfig, ZkError,
     ZkProver,
@@ -148,11 +148,12 @@ async fn test_full_flow_download_circuits_prove_and_verify() {
     let prover = ZkProver::new(&backend);
     for preset in presets {
         let artifacts_dir = preset.artifacts_dir_for_committee(RELEASE_COMMITTEE.as_str());
-        let sample =
-            PkCircuitData::generate_sample(preset).expect("sample data generation should succeed");
+        let config = e3_zk_config::dkg::pk::Configs::for_preset(preset).unwrap();
+        let sample = e3_zk_samples::dkg::pk::generate(&config.params)
+            .expect("sample data generation should succeed");
         let e3_id = format!("integration-test-full-flow-{}", preset.artifacts_dir());
         let proof = PkCircuit
-            .prove(&prover, &preset, &sample, &e3_id, &artifacts_dir)
+            .prove(&prover, &config, &sample, &e3_id, &artifacts_dir)
             .expect("proof generation should succeed");
 
         assert!(!proof.data.is_empty(), "proof data should not be empty");

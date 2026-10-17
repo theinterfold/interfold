@@ -1,9 +1,9 @@
 # Invariants — Cryptography / circuits
 
-Scope: `circuits/`, `crates/zk-prover`, `crates/zk-helpers`, `crates/trbfv`, `crates/fhe-params`,
-the BFV and OpenVM receipt verifier contracts, `crates/compute-provider`, and the CRISP example.
-Committee config sync, Noir/Barretenberg compatibility, DKG and threshold structure, proof binding
-and domain separation, and E3 program input rules.
+Scope: `circuits/`, `crates/zk-prover`, `crates/zk/{config,witness}`, `crates/trbfv`,
+`crates/fhe-params`, the BFV and OpenVM receipt verifier contracts, `crates/compute-provider`, and
+the CRISP example. Committee config sync, Noir/Barretenberg compatibility, DKG and threshold
+structure, proof binding and domain separation, and E3 program input rules.
 
 Read `00_INDEX.md` first: it carries the meta-invariants and the open-issues list that apply to
 every section.
@@ -127,7 +127,10 @@ every section.
 
 - SK splits into N shares; exactly **T+1** shares feed the recursive decryption proof. The C7 input
   computation (`Inputs::compute` in `decrypted_shares_aggregation`) refuses any other count of
-  shares or party IDs, so an oversized witness cannot be built. — `flow-trace/04`
+  shares or party IDs, so an oversized witness cannot be built. — `flow-trace/04` It derives T from
+  the canonical configuration, not an H value supplied by raw input. Small uses T+1=10 for C7 and
+  H=14 for C5. Host C7 preparation checks ordered one-based IDs and level-zero contexts, but Noir
+  owns interpolation and CRT reconstruction.
 - Runtime `party_id` derives from the finalized committee normalized by ascending address and is
   zero-indexed. DKG circuit party IDs and fold-attestation slots use the same zero-based index. Only
   decryption uses one-based Shamir coordinates, `party_id + 1`, which must be strictly increasing;
@@ -203,16 +206,16 @@ every section.
   `examples/CRISP/circuits/lib/src/utils.nr`
 - The C3 and user-data-encryption `k1` witnesses use non-centered residues in `[0, t - 1]`. Their
   Noir equations and asymmetric quotient bounds must match the Rust witnesses. —
-  `circuits/lib/src/core/dkg/share_encryption.nr`; `crates/zk-helpers/src/circuits/`
+  `circuits/lib/src/core/dkg/share_encryption.nr`; `crates/zk/witness/src/dkg/share_encryption.rs`
 - Mainnet secure parameter-set index 1 contains the old tuple. Version 8 registers the new tuple at
   index 2 and must not reinterpret old index-1 E3s as version-8 secure requests. — `flow-trace/07`;
   `crates/fhe-params/src/presets.rs`; `ActiveCryptoConfig.sol`
 - The local C1, C2a, C2b, and every C3a and C3b proof must complete and be signed before any
   `ThresholdShareCreated` is published. C4 through C7 belong to later phases. —
   `crates/zk-prover/src/proof_request/effects/publish_threshold_shares.rs`; `flow-trace/04`
-- The decrypted plaintext is exactly 50 u64 coefficients in every layer: `MAX_MSG_NON_ZERO_COEFFS`
-  in Noir (`configs/default/mod.nr`, written by `scripts/build-circuits.ts`) and in `zk-helpers`,
-  and `MESSAGE_COEFFS_COUNT` in `BfvDecryptionVerifier.sol`. **Gap:** no gate compares these copies.
+- The compiled runtime plaintext width is exactly 50 u64 coefficients: `MAX_MSG_NON_ZERO_COEFFS` in
+  Noir (`configs/default/mod.nr`, written by `pnpm build:circuits`) and in `zk/config`, and
+  `MESSAGE_COEFFS_COUNT` in `BfvDecryptionVerifier.sol`. **Gap:** no gate compares these copies.
 - A CRT consistency equation of the form `lifted[j] == limb[i][j] + quotient[i][j] * q_i` constrains
   nothing on its own: `q_i` is invertible modulo the proof-system prime, so every limb admits a
   quotient that satisfies it. It binds the witnesses only when the lifted value, the limbs **and**
@@ -248,7 +251,10 @@ every section.
 - C7 derives `u` through bounded interpolation and `garner_reconstruct`; it accepts neither
   `u_global` nor CRT reconstruction quotients as witnesses. `reduce_mod_bounded` and
   `inv_mod_bounded` constrain every reduction and inverse hint used by that path. The rounded decode
-  constrains its own quotient and remainder. — `flow-trace/04`
+  constrains its own quotient and remainder. — `flow-trace/04` C6 and C7 prepare and commit to the
+  same native ascending prefix selected by `config.max_msg_non_zero_coeffs`. The host default
+  remains 50. A nondefault host width requires matching compiled ABIs and public-input consumers;
+  changing a host field alone cannot change the compiled width.
 - **`ModU128::reduce_mod` does not pin its remainder; use `reduce_mod_bounded` for anything a prover
   controls.** It asserts `n == q * quotient + remainder` with `remainder < q` but never bounds the
   quotient, and the equation is over the field — so a prover picks any `remainder` in `[0, q)` and
@@ -402,8 +408,8 @@ every section.
   comment stood in for the missing check. — `flow-trace/04`
 - DKG error terms need no CRT decomposition: `error1_variance <= 16` puts `e0_bound` at
   `2 * variance` (20 for both presets), far below every `q_i / 2`, so the centered residue equals
-  `e0`. C3 uses `e0` directly. Raising DKG `error1_variance` past 16 switches `Bounds::compute` to
-  the uniform branch and breaks that assumption — witness generation asserts it. — `flow-trace/04`
+  `e0`. C3 uses `e0` directly. Raising DKG `error1_variance` past 16 switches `Bounds::new` to the
+  uniform branch and breaks that assumption — witness generation asserts it. — `flow-trace/04`
 
 ### Proof binding / domain separation (audit-fix invariants — do not regress)
 
@@ -452,8 +458,8 @@ every section.
   a decryption duty by itself. — `flow-trace/04`; INDEX Z-15
 - **The compute path carries no external audit.** Neither Zenith protocol audit (2026-08-17, six
   Solidity files; 2026-09-08, a scoped review of 14 Solidity files) covered Rust, the OpenVM guest
-  and prover, `crates/compute-provider`, `crates/zk-helpers`, or the OpenVM receipt verifiers
-  (`OpenVmBfvCiphertextVerifier.sol`, `OpenVmReceiptVerifier.sol`). Treat changes there as
+  and prover, `crates/compute-provider`, `crates/zk/{config,witness}`, or the OpenVM receipt
+  verifiers (`OpenVmBfvCiphertextVerifier.sol`, `OpenVmReceiptVerifier.sol`). Treat changes there as
   unaudited. — `packages/interfold-contracts/audits/README.md`
 - **A Secure Process derives its input root; it never receives it.** `ComputeInput` holds
   `fhe_inputs` and per-input `published` data, never a root, and `ComputeInput::process` derives one

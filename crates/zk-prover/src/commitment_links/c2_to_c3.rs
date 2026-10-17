@@ -25,7 +25,7 @@
 
 use super::{CommitmentLink, FieldValue, LinkScope};
 use e3_events::{CircuitName, ProofType};
-use e3_zk_helpers::FIELD_BYTE_LEN;
+use e3_zk_config::FIELD_BYTE_LEN;
 
 /// C3a → C2a: SK share encryption `expected_message_commitment` vs SK share
 /// computation per-party share commitment outputs.

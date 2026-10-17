@@ -4,12 +4,8 @@
 
 use super::*;
 use e3_polynomial_fhe::FromFhePolynomial as _;
-use e3_zk_helpers::{
-    circuits::commitments::compute_threshold_decryption_share_commitment,
-    circuits::threshold::decrypted_shares_aggregation::MAX_MSG_NON_ZERO_COEFFS,
-    threshold::share_decryption::{Bits, Bounds},
-    Computation,
-};
+use e3_zk_config::{threshold::share_decryption::Configs, MAX_MSG_NON_ZERO_COEFFS};
+use e3_zk_witness::compute_threshold_decryption_share_commitment;
 use fhe::bfv::BfvParameters;
 use std::sync::Arc;
 use tracing::warn;
@@ -23,10 +19,10 @@ impl C6ShareVerifier {
     pub(crate) fn new(preset: BfvPreset) -> Result<Self> {
         let (params, _) = e3_fhe_params::build_pair_for_preset(preset)?;
         // Use the same bit-width calculation as C6 code generation.
-        let bits = Bits::compute(preset, &Bounds::compute(preset, &())?)?;
+        let config = Configs::new(&params)?;
         Ok(Self {
             params,
-            d_native_bit: bits.d_native_bit,
+            d_native_bit: config.bits.d_native_bit,
         })
     }
 

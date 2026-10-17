@@ -38,7 +38,7 @@ e3-bfv-client = { workspace = true }
 e3-fhe-params = { workspace = true }
 e3-utils = { workspace = true }
 e3-zk-prover = { workspace = true }
-e3-zk-helpers = { workspace = true }
+e3-zk-config = { workspace = true }
 fhe-traits = { workspace = true }
 fhe-util = { workspace = true }
 fhe = { workspace = true }

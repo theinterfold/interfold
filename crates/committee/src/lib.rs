@@ -63,7 +63,7 @@ impl CiphernodesCommitteeSize {
     }
 
     /// Lower-case name as written into `circuits/bin/.active-preset.json` and the
-    /// `--committee` flag of `scripts/build-circuits.ts`. Use this for stamp/env cross-checks.
+    /// `--committee` flag of `pnpm build:circuits`. Use this for stamp/env cross-checks.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Minimum => "minimum",

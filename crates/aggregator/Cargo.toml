@@ -26,7 +26,8 @@ e3-bfv-client = { workspace = true }
 e3-committee-hash = { workspace = true }
 e3-request = { workspace = true }
 e3-sortition = {  workspace = true }
-e3-zk-helpers = { workspace = true }
+e3-zk-config = { workspace = true }
+e3-zk-witness = { workspace = true }
 e3-utils = { workspace = true }
 e3-zk-prover = { workspace = true }
 serde = { workspace = true }

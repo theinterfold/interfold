@@ -29,7 +29,7 @@ list:
 
 - `crates/compute-provider` and the RISC Zero guest — the Secure Process and its
   input binding
-- `crates/zk-helpers` — the SAFE ciphertext commitment
+- `crates/zk/witness` — the SAFE ciphertext commitment
 - `contracts/verifiers/bfv/Risc0BfvCiphertextVerifier.sol`
 - `contracts/lib/InterfoldLifecycle.sol`, `lib/Risc0ComputeProof.sol`,
   `lib/FailurePayerLib.sol`

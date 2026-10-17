@@ -13,7 +13,8 @@ fhe-math.workspace = true
 fhe-traits.workspace = true
 e3-bfv-client = { workspace = true }
 e3-fhe-params = { workspace = true }
-e3-zk-helpers = { workspace = true }
+e3-zk-config = { workspace = true }
+e3-zk-witness = { workspace = true }
 e3-polynomial = { workspace = true, features = ["serde"] }
 e3-polynomial-fhe = { workspace = true }
 serde.workspace = true

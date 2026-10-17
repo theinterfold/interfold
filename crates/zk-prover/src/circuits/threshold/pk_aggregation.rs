@@ -6,16 +6,27 @@
 
 use crate::traits::Provable;
 use e3_events::CircuitName;
-use e3_fhe_params::BfvPreset;
-use e3_zk_helpers::circuits::threshold::pk_aggregation::circuit::{
-    PkAggregationCircuit, PkAggregationCircuitData,
-};
-use e3_zk_helpers::circuits::threshold::pk_aggregation::computation::Inputs;
+use e3_zk_witness::threshold::pk_aggregation::Inputs;
+use e3_zk_witness::threshold::pk_aggregation::PkAggregationCircuitData;
+
+use crate::ZkError;
+
+#[derive(Debug)]
+pub struct PkAggregationCircuit;
 
 impl Provable for PkAggregationCircuit {
-    type Params = BfvPreset;
+    fn build_inputs(
+        &self,
+        config: &Self::Config,
+        input: &Self::Input,
+    ) -> Result<noirc_abi::InputMap, ZkError> {
+        let inputs = Inputs::compute(config, input)
+            .map_err(|e| ZkError::InputsGenerationFailed(e.to_string()))?;
+        crate::circuits::utils::inputs_json_to_input_map(&inputs.to_json())
+    }
+
+    type Config = e3_zk_config::threshold::pk_aggregation::Configs;
     type Input = PkAggregationCircuitData;
-    type Inputs = Inputs;
 
     fn circuit(&self) -> CircuitName {
         CircuitName::PkAggregation
