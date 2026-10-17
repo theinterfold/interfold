@@ -158,6 +158,13 @@ impl PublicKeyAggregator {
             return Ok(());
         }
         let row_count = state.row_count()?;
+        // A response whose correlation is no longer the current one answers a request that the
+        // redrive re-published or a failover superseded. Its replacement produces the accepted
+        // response, so the late one is expected: ignore it instead of raising an error.
+        let late = |kind: &str| {
+            info!(e3_id = %self.e3_id, kind, "Ignoring a late l-BFV aggregation response for a superseded request");
+            Ok(())
+        };
         match response {
             ZkResponse::LbfvPkAggregation(response) => {
                 let row = response.row_index;
@@ -166,10 +173,9 @@ impl PublicKeyAggregator {
                     index < row_count,
                     "l-BFV PK aggregation row is out of range"
                 );
-                anyhow::ensure!(
-                    state.public_key_aggregation_correlations[index] == Some(correlation),
-                    "stale l-BFV PK aggregation response"
-                );
+                if state.public_key_aggregation_correlations[index] != Some(correlation) {
+                    return late("PK aggregation");
+                }
                 anyhow::ensure!(
                     response.party_ids == state.accepted_party_ids,
                     "l-BFV PK aggregation party set changed"
@@ -190,10 +196,9 @@ impl PublicKeyAggregator {
                     index < row_count,
                     "l-BFV RLK aggregation row is out of range"
                 );
-                anyhow::ensure!(
-                    state.rlk_correlation(row, component)? == Some(correlation),
-                    "stale l-BFV RLK aggregation response"
-                );
+                if state.rlk_correlation(row, component)? != Some(correlation) {
+                    return late("RLK aggregation");
+                }
                 anyhow::ensure!(
                     response.party_ids == state.accepted_party_ids,
                     "l-BFV RLK aggregation party set changed"
@@ -207,10 +212,9 @@ impl PublicKeyAggregator {
                 state.clear_rlk_correlation(row, component, correlation)?;
             }
             ZkResponse::LbfvAggregationFold(response) => {
-                anyhow::ensure!(
-                    state.aggregation_fold_correlation == Some(correlation),
-                    "stale l-BFV aggregation fold response"
-                );
+                if state.aggregation_fold_correlation != Some(correlation) {
+                    return late("aggregation fold");
+                }
                 state.complete_fold(correlation, response.proof)?;
             }
             _ => return Ok(()),

@@ -298,6 +298,12 @@ impl PublicKeyAggregator {
         if aggregation.is_failed() {
             return Ok(());
         }
+        // A late response for a request the redrive re-published or a failover superseded: the
+        // replacement produces the accepted proof, so this is expected and not an error.
+        if aggregation.dkg_aggregation_correlation != Some(correlation) {
+            info!(e3_id = %self.e3_id, "Ignoring a late l-BFV DKG aggregation response for a superseded request");
+            return Ok(());
+        }
         aggregation.complete_dkg(correlation, proof)?;
         self.set_lbfv_aggregation(aggregation, ec)?;
         self.try_publish_complete()
