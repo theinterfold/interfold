@@ -62,7 +62,12 @@ for (const preset of PRESETS) {
   // and ActiveCryptoConfig.sol, which a bare `nargo compile` would leave describing the old one.
   // `--skip-vk`: compile_circuits.sh writes every key that CRISP uses. The `bb` that the SDK's
   // scripts find is @aztec/bb.js's, which reports a nightly version that the builder refuses.
-  run('pnpm', ['build:circuits', '--preset', preset, '--group', 'threshold', '--skip-vk'], REPO)
+  // This partial build must not replace a complete node artifact pair in dist/circuits.
+  run(
+    'pnpm',
+    ['build:circuits', '--preset', preset, '--group', 'threshold', '--skip-vk', '--output', join(CRISP, 'circuits/dist/threshold-build')],
+    REPO,
+  )
 
   // Compiles the CRISP circuits and writes the generated Solidity verifiers into
   // packages/crisp-contracts/contracts/verifiers/<preset>/. It recompiles the threshold circuits on

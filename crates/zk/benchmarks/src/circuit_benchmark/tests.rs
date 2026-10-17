@@ -207,6 +207,66 @@ fn replay_rejects_bad_proofs_and_wrong_configuration_before_evm_execution() {
 }
 
 #[test]
+fn gas_setup_failure_stops_before_protocol_proving_and_keeps_its_own_measurement() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let output = root.join("output");
+    for directory in [
+        "scripts",
+        "circuits/bin",
+        "dist/circuits/secure-8192/minimum",
+        "crates/zk/prover",
+        "output",
+    ] {
+        fs::create_dir_all(root.join(directory)).unwrap();
+    }
+    write_json(
+        &root.join("scripts/circuit-build-pairs.json"),
+        &serde_json::json!([["secure-8192", "minimum"]]),
+    )
+    .unwrap();
+    let stamp = serde_json::json!({"preset":"secure-8192","committee":"minimum","sourceHash":"transport-fixture"});
+    write_json(&root.join("circuits/bin/.active-preset.json"), &stamp).unwrap();
+    write_json(
+        &root.join("dist/circuits/secure-8192/minimum/.build-stamp.json"),
+        &stamp,
+    )
+    .unwrap();
+    write_json(
+        &root.join("dist/circuits/checksums.json"),
+        &serde_json::json!({"algorithm":"sha256","files":{}}),
+    )
+    .unwrap();
+    write_json(
+        &root.join("crates/zk/prover/required-artifacts.json"),
+        &serde_json::json!([]),
+    )
+    .unwrap();
+    write_json(&root.join("package.json"), &serde_json::json!({"scripts":{"bench:crisp:prepare":"node -e \"require('fs').writeFileSync('setup-started', ''); process.exit(17)\""}})).unwrap();
+    let cfg = protocol::Configuration {
+        mode: "secure".into(),
+        preset: "secure-8192".into(),
+        committee: e3_committee::CiphernodesCommitteeSize::Minimum,
+        jobs: 1,
+        bb_binary: Some(root.join("bb")),
+    };
+    assert!(protocol::collect(root, &output, &cfg, true, None, None).is_err());
+    assert!(
+        root.join("setup-started").exists(),
+        "gas must prepare CRISP before protocol proving"
+    );
+    assert!(!output.join("integration.log").exists());
+    let result = protocol::read_json(&output.join("protocol_results.json")).unwrap();
+    assert_eq!(result["complete"], false);
+    assert_eq!(result["crisp_setup"]["measurement"]["success"], false);
+    assert!(result["crisp_setup"]["measurement"]["time_seconds"].is_number());
+    assert!(result["integration"]["measurement"]["time_seconds"].is_null());
+    assert!(result["verify_gas"]["user"].is_null());
+    assert!(result["crisp"]["error"].is_null());
+    assert!(result["replay"]["error"].is_null());
+}
+
+#[test]
 fn integration_launcher_delivers_full_proof_controls_and_structured_export_paths() {
     use std::os::unix::fs::PermissionsExt;
     let temp = tempfile::tempdir().unwrap();

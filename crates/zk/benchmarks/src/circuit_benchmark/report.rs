@@ -491,7 +491,7 @@ fn artifact_table(out: &mut String, data: &Data) -> Result<()> {
     if !data.gas["user_preset"].is_null() {
         *out += &format!("\nΠ_user gas uses the exported CRISP preset `{}`, independently of the DKG/decryption preset.\n", scalar(&data.gas["user_preset"]));
     }
-    for key in ["integration", "crisp", "replay"] {
+    for key in ["integration", "crisp_setup", "crisp", "replay"] {
         if !data.gas[key]["error"].is_null() {
             *out += &format!("\n{key} failed: {}\n", scalar(&data.gas[key]["error"]));
         }

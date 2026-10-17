@@ -21,6 +21,7 @@
     "rust:build:circuits": "cargo build --locked -p e3-zk-build",
     "test:circuit-build": "cargo test --locked -p e3-zk-build",
     "bench:circuits": "cargo run --locked --release -p e3-zk-benchmarks --",
+    "bench:crisp:prepare": "node scripts/prepare-crisp-gas.mjs",
     "test:circuit-bench": "cargo test --locked -p e3-zk-benchmarks",
     "generate:verifiers": "tsx scripts/generate-verifiers.ts --circuits dkg_aggregator,decryption_aggregator",
     "store:circuits": "tsx scripts/circuit-artifacts.ts",

@@ -320,6 +320,7 @@ struct Results {
     user_preset: Option<String>,
     artifacts: BTreeMap<String, ArtifactMeasures>,
     integration: Outcome,
+    crisp_setup: Outcome,
     crisp: Outcome,
     replay: Outcome,
     error: Option<String>,
@@ -346,6 +347,7 @@ pub(crate) fn collect(
         user_preset: None,
         artifacts: BTreeMap::new(),
         integration: Outcome::pending(),
+        crisp_setup: Outcome::pending(),
         crisp: Outcome::pending(),
         replay: Outcome::pending(),
         error: None,
@@ -353,6 +355,19 @@ pub(crate) fn collect(
     };
     let result = (|| -> Result<()> {
         results.artifact_stamp = validate_active(root, cfg)?;
+        if gas && existing.is_none() {
+            results.crisp_setup.execute(
+                Command::new("pnpm")
+                    .arg("bench:crisp:prepare")
+                    .current_dir(root),
+                &output.join("crisp-setup.log"),
+            )?;
+            let restored = validate_active(root, cfg);
+            if let Err(error) = &restored {
+                results.crisp_setup.export_failure(error);
+            }
+            results.artifact_stamp = restored?;
+        }
         let document = if let Some(document) = existing {
             document.clone()
         } else {
@@ -462,6 +477,7 @@ pub(crate) fn collect(
     })();
     if let Err(error) = &result {
         if results.integration.error.is_none()
+            && results.crisp_setup.error.is_none()
             && results.replay.error.is_none()
             && results.crisp.error.is_none()
         {

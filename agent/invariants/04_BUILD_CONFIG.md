@@ -34,6 +34,13 @@ every section.
   validation require both files. Deployment uses them as public-input-zero pins and retains the
   separate C5/C7 VK pins. — `crates/zk/build/src/artifacts.rs`; `scripts/circuit-artifacts.ts`;
   `scripts/utils.ts`
+- CRISP's partial threshold build writes to `examples/CRISP/circuits/dist/threshold-build`, not the
+  complete node archive in `dist/circuits`. `pnpm bench:crisp:prepare` builds the gas test's WASM
+  and SDK dependencies, restores the selected node pair through the canonical builder even after a
+  build failure, then compiles the contracts and TypeScript tasks. Gas collection runs this setup
+  before protocol proving and measures it separately from verifier gas. —
+  `examples/CRISP/scripts/build-presets.mjs`; `scripts/prepare-crisp-gas.mjs`;
+  `crates/zk/benchmarks/src/circuit_benchmark/protocol.rs`
 - `pnpm store:circuits pull` selects the newest first-parent `circuit-artifacts` commit whose
   `SOURCE_HASH` matches the current source tree. A different build at the branch tip must not
   replace it. `--latest` selects the branch tip without a match; non-release CI and full-proof
