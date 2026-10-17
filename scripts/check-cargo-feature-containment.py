@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-only
-"""Check that the proof-skip Cargo feature cannot enter a production build."""
+"""Keep proof skipping and artificial ZK samples out of production dependencies."""
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -21,6 +22,13 @@ except ModuleNotFoundError:  # tomllib is stdlib only from Python 3.11
 TARGET = "test-only-skip-proof-aggregation"
 ROOT = Path(__file__).resolve().parent.parent
 ALLOWED_ENABLER = Path("crates/tests/Cargo.toml")
+SAMPLES = "e3-zk-samples"
+# Unpublished development-tool crates that link samples as a normal dependency because
+# their executable itself, not only their tests, prepares artificial material.
+SAMPLES_RUNTIME_OWNERS = {
+    Path("crates/zk/benchmarks/Cargo.toml"): "e3-zk-benchmarks",
+}
+BENCHMARK_OWNER = "e3-zk-benchmarks"
 
 
 def reaches_target(features: dict[str, list[str]]) -> bool:
@@ -73,14 +81,41 @@ def enabled_on_dependency(data: dict[str, object]) -> bool:
     return False
 
 
+def production_dependency_tables(data: dict[str, object]) -> list[dict[str, object]]:
+    tables = [
+        data[key]
+        for key in ("dependencies", "build-dependencies")
+        if isinstance(data.get(key), dict)
+    ]
+    for target in data.get("target", {}).values():
+        if isinstance(target, dict):
+            tables.extend(production_dependency_tables(target))
+    return tables
+
+
 def main() -> int:
     failures: list[str] = []
-    manifests = [ROOT / "Cargo.toml", *sorted((ROOT / "crates").rglob("Cargo.toml"))]
-
+    manifest_paths = subprocess.check_output(
+        [
+            "git", "ls-files", "-z", "--cached", "--others", "--exclude-standard",
+            "--", "Cargo.toml", "**/Cargo.toml",
+        ],
+        cwd=ROOT,
+    ).decode().split("\0")
+    manifests = sorted({ROOT / path for path in manifest_paths if path and (ROOT / path).is_file()})
+    manifest_data = {}
     for manifest in manifests:
         with manifest.open("rb") as handle:
-            data = tomllib.load(handle)
+            manifest_data[manifest] = tomllib.load(handle)
+
+    for manifest, data in manifest_data.items():
         relative = manifest.relative_to(ROOT)
+        workspace_dependencies = {}
+        for parent in manifest.parents:
+            workspace = manifest_data.get(parent / "Cargo.toml", {}).get("workspace")
+            if isinstance(workspace, dict):
+                workspace_dependencies = workspace.get("dependencies", {})
+                break
 
         features = data.get("features", {})
         if isinstance(features, dict) and reaches_target(features):
@@ -89,13 +124,38 @@ def main() -> int:
         if relative != ALLOWED_ENABLER and enabled_on_dependency(data):
             failures.append(f"{relative}: enables {TARGET} on a dependency")
 
+        owner = data.get("package", {}).get("name")
+        if owner == SAMPLES and data["package"].get("publish") is not False:
+            failures.append(f"{relative}: {SAMPLES} must remain unpublished")
+        runtime_owner = SAMPLES_RUNTIME_OWNERS.get(relative)
+        for table in production_dependency_tables(data):
+            for name, dependency in table.items():
+                if isinstance(dependency, dict) and dependency.get("workspace"):
+                    dependency = workspace_dependencies.get(name, dependency)
+                package = dependency.get("package", name) if isinstance(dependency, dict) else name
+                if package == SAMPLES and runtime_owner is None:
+                    failures.append(f"{relative}: {SAMPLES} is only allowed in dev-dependencies")
+                if package == BENCHMARK_OWNER:
+                    failures.append(
+                        f"{relative}: {BENCHMARK_OWNER} is a development tool; no package may depend on it"
+                    )
+        if runtime_owner is not None and (
+            owner != runtime_owner or data["package"].get("publish") is not False
+        ):
+            failures.append(
+                f"{relative}: sample runtime use requires the unpublished {runtime_owner} package"
+            )
+
     if not failures:
         return 0
 
-    print(f"check-invariants: FAILED — {TARGET} escaped test-only containment:")
+    print("check-invariants: FAILED — Cargo development-only containment:")
     for failure in failures:
         print(f"  - {failure}")
-    print("  Production binaries must reject skip_proof_aggregation (agent/invariants/02_CRYPTO_CIRCUITS.md, C-02).")
+    print(
+        "  Only crates/tests can enable proof skipping. ZK samples require dev-dependencies,"
+        " except in the unpublished development benchmark owner."
+    )
     return 1
 
 

@@ -19,7 +19,7 @@ Arithmetic uses descending coefficients. Constructors retain input order and pad
 from fhe.rs retains its native ascending order. Callers reverse coefficients explicitly before
 descending-order arithmetic. The optional `serde` feature preserves coefficient and limb shapes.
 
-Circuit-specific reversal, centering, packing, and JSON encoding belong to `e3-zk-helpers`. The
+Circuit-specific reversal, centering, packing, and JSON encoding belong to `e3-zk-witness`. The
 adapter performs no witness encoding and exposes no test-only reverse conversion.
 
 Production consumers are ZK circuit computations, runtime proof-input preparation, raw-share
@@ -30,7 +30,7 @@ Each CRT limb is one residue polynomial for its modulus. The `limbs` field retai
 name, vector order, and coefficient padding. It is not a machine-word representation of one
 coefficient.
 
-The circuit-specific `fold_negacyclic` helper belongs to `e3-zk-helpers`. It is crate-private and
+The circuit-specific `fold_negacyclic` helper belongs to `e3-zk-witness`. It is crate-private and
 requires exactly `2N-1` descending coefficients. Scalar residue and inverse operations use
 `num_integer::Integer::mod_floor` and `num_bigint::BigInt::modinv` directly.
 

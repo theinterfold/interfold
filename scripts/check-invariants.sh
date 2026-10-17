@@ -12,9 +12,11 @@
 #   1. do_send ratchet — `.do_send(` is allowed only for best-effort telemetry
 #      (agent/ARCHITECTURE.md); the call-site count may only go DOWN. Baseline lives in
 #      scripts/invariant-baselines.env.
-#   2. skip-proof feature containment — `test-only-skip-proof-aggregation` must never be
+#   2. Cargo development-only containment — `test-only-skip-proof-aggregation` must never be
 #      a default feature and must only be *enabled* (as a dependency feature) by
-#      crates/tests. Forwarding declarations in [features] sections are fine.
+#      crates/tests. Forwarding declarations in [features] sections are fine. Artificial ZK samples
+#      must stay in dev-dependencies; the unpublished e3-zk-benchmarks development tool is the one
+#      package that may link them as a normal dependency.
 #   3. runtime proof-skip guard — validate_proof_aggregation_mode must exist and be
 #      called in crates/entrypoint (agent/invariants/02_CRYPTO_CIRCUITS.md, C-02).
 #   4. ciphernode Docker workspace coverage — every root workspace crate manifest
@@ -49,7 +51,7 @@ elif ((count < DO_SEND_BASELINE)); then
   echo "  Please ratchet: set DO_SEND_BASELINE=$count in $baseline_file."
 fi
 
-# --- 2. skip-proof feature containment --------------------------------------------
+# --- 2. Cargo development-only containment ----------------------------------------
 # The containment check parses Cargo.toml with tomllib, which is stdlib only from
 # Python 3.11. macOS still ships 3.9 as `python3`, so find an interpreter that has it
 # rather than failing the gate on the environment. The check also falls back to the
@@ -116,6 +118,6 @@ check_compose_shutdown_grace dappnode/docker-compose.yml
 check_compose_shutdown_grace deploy/docker-compose.yml
 
 if ((fail == 0)); then
-  echo "✓ check:invariants: do_send=$count (≤ $DO_SEND_BASELINE), feature containment, runtime guard, Docker coverage, and shutdown grace verified"
+  echo "✓ check:invariants: do_send=$count (≤ $DO_SEND_BASELINE), development-only containment, runtime guard, Docker coverage, and shutdown grace verified"
 fi
 exit "$fail"

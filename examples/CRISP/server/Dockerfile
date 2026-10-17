@@ -95,6 +95,9 @@ COPY crates/utils/Cargo.toml crates/utils/Cargo.toml
 COPY crates/utils-derive/Cargo.toml crates/utils-derive/Cargo.toml
 COPY crates/wasm/Cargo.toml crates/wasm/Cargo.toml
 COPY crates/zk-helpers/Cargo.toml crates/zk-helpers/Cargo.toml
+COPY crates/zk/config/Cargo.toml crates/zk/config/Cargo.toml
+COPY crates/zk/witness/Cargo.toml crates/zk/witness/Cargo.toml
+COPY crates/zk/samples/Cargo.toml crates/zk/samples/Cargo.toml
 
 RUN set -eux; \
     find \

@@ -51,6 +51,9 @@ members = [
   "crates/wasm",
   "crates/zk-helpers",
   "crates/zk/cli",
+  "crates/zk/config",
+  "crates/zk/witness",
+  "crates/zk/samples",
   "crates/zk-prover",
 ]
 exclude = [
@@ -134,6 +137,9 @@ e3-safe = { version = "0.19.0", path = "./crates/safe" }
 e3-slashing = { version = "0.19.0", path = "./crates/slashing" }
 e3-zk-prover = { version = "0.19.0", path = "./crates/zk-prover" }
 e3-zk-helpers = { version = "0.19.0", path = "./crates/zk-helpers" }
+e3-zk-config = { version = "0.19.0", path = "./crates/zk/config" }
+e3-zk-witness = { version = "0.19.0", path = "./crates/zk/witness" }
+e3-zk-samples = { path = "./crates/zk/samples" }
 e3-parity-matrix = { version = "0.19.0", path = "./crates/parity-matrix" }
 
 actix = "=0.13.5"

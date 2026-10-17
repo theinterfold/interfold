@@ -8,6 +8,12 @@ guide and [`RULES.md`](RULES.md). The actor-by-actor refactor findings are summa
 
 ## Dependency layers
 
+`e3-zk-config` owns static BFV configuration and public-input layouts. `e3-zk-witness` depends on
+config and owns input preparation, commitments, and canonical JSON encoding. Their tests use the
+unpublished `e3-zk-samples` crate through dev dependencies. The sample crate depends normally on
+config, witness, and FHE libraries. `scripts/check-cargo-feature-containment.py` enforces this
+boundary. Runtime and artifact CLI consumers still depend on `e3-zk-helpers`.
+
 All 48 workspace packages are shown below. Arrows point from a dependent crate to a direct
 dependency; the diagram keeps representative production edges rather than reproducing every Cargo
 edge, while the groups record each crate's current primary responsibility. Test-only edges are kept

@@ -1,0 +1,25 @@
+[package]
+name = "e3-zk-samples"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Artificial BFV samples for ZK tests and development tools"
+repository.workspace = true
+publish = false
+
+[dependencies]
+e3-zk-witness.workspace = true
+e3-zk-config.workspace = true
+e3-committee.workspace = true
+e3-fhe-params.workspace = true
+e3-polynomial.workspace = true
+e3-polynomial-fhe.workspace = true
+fhe.workspace = true
+fhe-math.workspace = true
+fhe-traits.workspace = true
+ndarray.workspace = true
+num-bigint.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+num-traits.workspace = true

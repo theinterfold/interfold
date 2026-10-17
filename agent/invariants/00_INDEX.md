@@ -7,8 +7,8 @@ treat it as a protocol migration (versioning + compatibility tests), never a sil
 
 Some entries are mechanically enforced and will fail pre-push: committee sync
 (`pnpm check:committee`), harness-doc drift (`pnpm check:docs`), and `pnpm check:invariants` (the
-`do_send` ratchet with its baseline in `scripts/invariant-baselines.env`, skip-proof feature
-containment, the runtime proof-skip guard, ciphernode Docker workspace coverage, and Compose
+`do_send` ratchet with its baseline in `scripts/invariant-baselines.env`, skip-proof feature and ZK
+sample dependency containment, the runtime proof-skip guard, ciphernode Docker workspace coverage, and Compose
 `stop_grace_period` > 60 s). The rest are review-enforced: run the procedure in
 `agent/prompts/invariant-reviewer.md` (Claude `/invariant-review`; the `invariant-review` skill in
 other tools).
@@ -48,6 +48,8 @@ your diff changes, search that section too (`rg -l '<file or symbol>' agent/inva
 | `scripts/`, `crates/*/build.rs`, `.github/workflows/`, `crates/Dockerfile`, root `{Cargo.toml,Cargo.lock,package.json,pnpm-lock.yaml,pnpm-workspace.yaml,rust-toolchain.toml}` | `04_BUILD_CONFIG.md`; also `02` for toolchain pins                                                     |
 | `deploy/`, `dappnode/`                                                                                                                                                         | `03_ACTOR_RUNTIME.md` + `04_BUILD_CONFIG.md`                                                           |
 | committee-sync sources (list below)                                                                                                                                            | `02_CRYPTO_CIRCUITS.md` §Committee config sync                                                         |
+
+Changes under `crates/zk/{config,witness}/` also route to `02_CRYPTO_CIRCUITS.md`.
 
 Committee-sync sources are the files `scripts/check-committee.sh` compares. Some sit under paths
 that route elsewhere, so they need the crypto section in addition to their own row:

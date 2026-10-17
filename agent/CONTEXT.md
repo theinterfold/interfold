@@ -55,6 +55,11 @@ Notable crates: `events` (event taxonomy, `CircuitName`, `ProofType`), `zk-prove
 pins nargo/bb), `zk-helpers`, `trbfv`, `keyshare`, `aggregator`, `sortition`, `slashing`, `evm`,
 `net`, `data` (sled persistence), `sync`, `cli`.
 
+Static circuit configuration and public layouts belong to `zk/config`; witness preparation and
+canonical JSON encoding belong to `zk/witness`. Their tests use the unpublished `zk/samples` crate
+through dev dependencies. `pnpm check:invariants` enforces the sample dependency boundary.
+Runtime and artifact CLI consumers still use `zk-helpers`.
+
 ## Key commands
 
 Run from repo root via pnpm scripts — not raw cargo/nargo/hardhat.

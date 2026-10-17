@@ -97,6 +97,9 @@ COPY crates/utils-derive/Cargo.toml ./utils-derive/Cargo.toml
 COPY crates/wasm/Cargo.toml ./wasm/Cargo.toml
 COPY crates/zk-helpers/Cargo.toml ./zk-helpers/Cargo.toml
 COPY crates/zk/cli/Cargo.toml ./zk/cli/Cargo.toml
+COPY crates/zk/config/Cargo.toml ./zk/config/Cargo.toml
+COPY crates/zk/witness/Cargo.toml ./zk/witness/Cargo.toml
+COPY crates/zk/samples/Cargo.toml ./zk/samples/Cargo.toml
 
 RUN echo 'fn main() { println!("cargo:warning=dependency cache build"); }' > ./entrypoint/build.rs
 RUN echo 'fn main() { println!("cargo:warning=dependency cache build"); }' > ./cli/build.rs
