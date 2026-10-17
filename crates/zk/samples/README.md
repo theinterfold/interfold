@@ -17,6 +17,12 @@ call reuses share-management and noise setup. Each dealer receives fresh noise a
 randomness. C2 uses `N` as its ciphertext count. C3 accepts an explicit count; C4/C6/C7 use the
 preset's `z`, and C1 uses its configured bound.
 
-Consumers use this package through `[dev-dependencies]`. `pnpm check:invariants` enforces this
-boundary, including renamed and target-specific dependencies. No test-support feature exists in
-the production libraries.
+All consumers use this package through `[dev-dependencies]`, with one exception: the
+unpublished development benchmark crate `e3-zk-benchmarks` links it as a normal dependency
+because its executable itself prepares the samples. `pnpm check:invariants` enforces this
+boundary, including renamed and target-specific dependencies, and allows that runtime use only
+for `e3-zk-benchmarks`. No test-support feature exists in the production libraries.
+
+`pnpm bench:circuits` sends these samples through production preparation, Noir execution, and proof
+adapters. `--export-toml` writes debug ABI inputs inside the benchmark run directory. Static
+configuration generation belongs to `pnpm build:circuits`.

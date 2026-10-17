@@ -13,7 +13,8 @@ hydration. `scripts/circuit-build-pairs.json` owns supported build pairs. Releas
 in the separate runtime release matrix. Hydration accepts a different artifact source hash and
 records the original hash. Release validation remains source-bound.
 
-Normal dependency direction stays `build -> witness -> config`; the configuration library does not import build,
+The unpublished `e3-zk-benchmarks` crate uses this crate through a normal dependency. Normal dependency
+direction stays `build -> witness -> config`; the configuration library does not import build,
 witness, samples, or runtime orchestration.
 
 See `scripts/README.md#circuit-builder` for commands and `pnpm test:circuit-build` for focused tests.

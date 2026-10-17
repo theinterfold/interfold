@@ -270,9 +270,8 @@ the generator would produce.
 5. **Generates checksums** (`SHA256SUMS` and `checksums.json`)
 6. **Copies artifacts** to `dist/circuits/`
 
-Generated-file attribution comments retain their byte format. The Rust build owner generates
-configuration, parity, and VK-tree hashes for the root build command. Benchmark shells still call
-the legacy TypeScript builder and artifact CLI.
+Generated-file attribution comments retain their byte format. The Rust example owns generation; no
+TypeScript builder or low-level subprocess generates configuration, parity, or VK-tree hashes.
 
 ### Options
 

@@ -8,6 +8,8 @@ guide and [`RULES.md`](RULES.md). The actor-by-actor refactor findings are summa
 
 ## Dependency layers
 
+`e3-zk-helpers` remains an unused workspace member. No production or development tool depends on it.
+
 The diagram groups workspace packages by role. Arrows point from a dependent crate to a direct
 dependency; the diagram keeps representative production edges rather than reproducing every Cargo
 edge, while the groups record each crate's current primary responsibility. Test-only edges are kept
@@ -62,15 +64,8 @@ flowchart TD
 
     CircuitBuild[e3-zk-build unpublished tool] --> ZkConfig
     CircuitBuild --> ZkWitness
-    ZkArtifacts[e3-zk-artifacts] --> ZkHelpers
-    ZkArtifacts --> FheParams
-    ZkArtifacts --> Committee
-    ZkHelpers[e3-zk-helpers] --> Committee
-    ZkHelpers --> FheParams
-    ZkHelpers --> Poly
-    ZkHelpers --> PolyFhe
-    ZkHelpers --> Matrix
-    ZkHelpers --> Safe
+    CircuitBench[e3-zk-benchmarks unpublished tool] -. development .-> ZkSamples
+    CircuitBench -. development .-> CircuitBuild
 
     subgraph Vocabulary[Protocol vocabulary and deterministic rules]
         Events[e3-events]
@@ -237,14 +232,16 @@ reconstruct native FHE inputs locally, without a production reverse-conversion A
 
 The unpublished `e3-zk-samples` crate owns artificial BFV samples. It depends normally on
 configuration, witness preparation, and FHE libraries. Witness and prover tests use it through dev
-dependencies; those edges do not enter runtime builds.
-`scripts/check-cargo-feature-containment.py` enforces the boundary. Benchmark shells still use the
-legacy artifact CLI and `e3-zk-helpers`.
+dependencies; those edges do not enter runtime builds. The one normal-dependency consumer is the
+unpublished development benchmark crate `e3-zk-benchmarks`, whose executable itself prepares the
+samples. No other package can depend normally on sample support, and no package may depend on the
+benchmark crate. `scripts/check-cargo-feature-containment.py` enforces the boundary.
 
 The unpublished `e3-zk-build` crate owns repository circuit building. Its private modules render
 static configuration, stage artifacts, and compute source identity. It depends normally on config,
 witness hashing, and process tooling, but not on samples or runtime orchestration. The configuration
-library does not depend on the build tool or witness. `crates/zk/build/templates/` owns the `.in` source templates of the generated
+library does not depend on the build tool or witness. The benchmark crate uses the build library
+normally, and `crates/zk/build/templates/` owns the `.in` source templates of the generated
 Solidity and Noir selection files.
 
 The resulting workflow/actor/effect separation is module-level rather than a clean crate boundary.

@@ -50,11 +50,11 @@ members = [
   "crates/utils-derive",
   "crates/wasm",
   "crates/zk-helpers",
-  "crates/zk/cli",
   "crates/zk/config",
   "crates/zk/build",
   "crates/zk/witness",
   "crates/zk/samples",
+  "crates/zk/benchmarks",
   "crates/zk-prover",
 ]
 exclude = [

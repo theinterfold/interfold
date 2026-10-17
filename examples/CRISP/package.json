@@ -32,7 +32,6 @@
     "test": "pnpm test:e2e",
     "test:circuits": "cd circuits/lib && nargo test",
     "compile:circuits": "bash ./scripts/compile_circuits.sh",
-    "compute:vk-hash": "pnpm compile:circuits && bash ./scripts/compute_vk_hash.sh",
     "test:sdk": "pnpm -C packages/crisp-sdk test",
     "build:sdk": "pnpm -C packages/crisp-sdk build",
     "build:presets": "pnpm -C packages/crisp-sdk build:presets",

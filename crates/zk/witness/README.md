@@ -32,5 +32,6 @@ Noir execution and proving belong to `e3-zk-prover`. Artifact file writes belong
 together. C0 accepts a `PublicKey` directly instead of a one-field data wrapper.
 
 Artificial sample constructors belong to the unpublished `e3-zk-samples` crate. Tests use it
-through a dev dependency. The normal dependency graph of this crate excludes sample support.
-Production input types stay here.
+through a dev dependency. The normal dependency graph of this crate excludes sample support. The
+unpublished `e3-zk-benchmarks` crate uses `e3-zk-samples` through a normal dependency. Production input
+types stay here.

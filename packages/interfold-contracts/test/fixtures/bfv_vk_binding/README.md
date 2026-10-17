@@ -3,13 +3,12 @@
 Golden `dkg_aggregator` / `decryption_aggregator` EVM proofs for
 `test/BfvVkBindingIntegration.spec.ts` (insecure minimum preset).
 
-## Automatic refresh
+## Explicit refresh
 
-After an insecure benchmark run that writes
-`circuits/benchmarks/results_insecure_minimum/integration_summary.json`,
-`circuits/benchmarks/scripts/run_benchmarks.sh` calls
-`sync_bfv_vk_binding_fixture.sh` and updates this directory’s
-`folded_artifacts.json`.
+An insecure Rust benchmark run can export `integration_summary.json`. Run
+`sync_bfv_vk_binding_fixture.sh <summary-path>` explicitly to update this
+directory's `folded_artifacts.json`. The benchmark runner does not overwrite
+committed fixtures automatically.
 
 `BfvVkBindingIntegration` also reads `integration_summary.json` directly when
 present, so local `pnpm evm:test` stays aligned even before you commit the

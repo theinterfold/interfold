@@ -65,8 +65,10 @@ Run from repo root via pnpm scripts — not raw cargo/nargo/hardhat.
 | Build Rust                  | `pnpm rust:build` (cargo `--locked --release`; prebuilds EVM fixtures)                                                                             |
 | Build circuit tooling       | `pnpm rust:build:circuits` (unpublished Rust build crate; no EVM prebuild)                                                                         |
 | Test circuit build owner    | `pnpm test:circuit-build`                                                                                                                          |
-| Build ZK artifact CLI       | `pnpm rust:build:zk [--release]` (legacy benchmark inputs)                                                                                          |
-| ZK artifact CLI             | `pnpm zk list\|generate\|vk-hash\|parity-matrices`                                                                                                  |
+| Benchmark circuit leaves    | `pnpm bench:circuits run --leaf-only` (production Rust preparation and Noir execution)                                                             |
+| Test benchmark owner        | `pnpm test:circuit-bench`                                                                                                                          |
+| Protocol / verifier gas     | `pnpm bench:circuits protocol\|gas` (existing integration test and EVM tools; full aggregation)                                                    |
+| Saved replay / report       | `pnpm bench:circuits replay\|report --input <saved-run>`                                                                                           |
 | Rust formatting / Clippy    | `pnpm rust:format` · `pnpm rust:lint` · `pnpm rust:clippy [-- -D warnings]`                                                                        |
 | Test everything             | `pnpm test` (EVM, Rust, required proof/slashing suites, SDK, Noir)                                                                                 |
 | Test one layer              | `pnpm evm:test` · `pnpm rust:test` · `pnpm sdk:test` · `pnpm noir:test`                                                                            |
@@ -125,7 +127,7 @@ compares its generated parity files. It does not swap live files. A different `.
 only prints a note. Always switch with `pnpm build:circuits --committee <name>`. Supported
 `(preset, committee)` pairs live in `scripts/circuit-build-pairs.json`, which both Rust and
 TypeScript build tooling read. See `scripts/README.md#circuit-builder` and
-`circuits/benchmarks/README.md` for the full recipes.
+`crates/zk/benchmarks/README.md` for the full recipes.
 
 Non-release CI and full-proof integration tests use `pnpm store:circuits pull --latest` and
 `--hydrate-bin-only`. Hydration accepts a source-hash mismatch and records the artifact hash, not
@@ -226,6 +228,15 @@ persistence · opentelemetry/tracing.
   example generates parity files through the configuration library. Never hand-edit them.
 - Static configuration and public layouts belong to `zk/config`; preparation and JSON encoding
   belong to `zk/witness`. The unpublished `zk/samples` owns samples; every consumer uses dev
-  dependencies. `pnpm check:invariants` enforces this boundary.
-- Benchmark shells still use the legacy TypeScript builder and artifact CLI. The root build
-  command uses `zk/build`.
+  dependencies except the unpublished `zk/benchmarks` tool, which links samples normally because
+  its executable prepares them. `pnpm check:invariants` enforces this boundary.
+- The unpublished `zk/benchmarks` crate (`crates/zk/benchmarks`) measures production input
+  preparation, Noir execution, and BB
+  adapters separately. Both UDE legs share one encryption and prepared witness. Schema 2 records
+  distinguish these phases from historical `isolated_nargo` measurements. Missing measures are null.
+  The runner reuses checksum-covered artifacts and records their original source stamp. Private
+  `protocol.rs` invokes the existing full-proof integration scenario and verifier tools, then reads
+  structured exports. `replay` uses saved folded proofs only; `report` invokes no tools. `report.rs`
+  reads schema 1 and 2 without relabeling historical timings. It renders phase and job tables,
+  artifact sizes, verifier/calldata gas, provenance, and harness limits. The fixture sync script is
+  the only retained benchmark shell utility, and runs only when explicitly requested.

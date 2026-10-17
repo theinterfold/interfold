@@ -304,14 +304,16 @@ Other circuit commands:
 | `pnpm noir:lint` (`scripts/lint-circuits.sh`)                  | Runs `nargo fmt --check` and `nargo check` on the library and each package. It exits with success if `nargo` is missing.                                                                     |
 | `pnpm noir:test` (`scripts/test-circuits.sh`)                  | Runs `nargo test` on `circuits/lib` and `decryption_aggregator`, then `nargo execute` on `bin/config`, then the `dkg_aggregator` and `node_fold` tests for three preset and committee pairs. |
 
-To make sample inputs for one circuit, use `zk-artifacts generate`. Its `--committee` value must match the
-active committee of the library:
+The Rust benchmark runner creates artificial cryptographic material and executes production witness
+preparation directly. Its preset and committee must match the selected artifacts:
 
 ```bash
-pnpm zk generate --circuit pk-generation --preset insecure --committee minimum --toml
+pnpm bench:circuits run --mode insecure --committee minimum --circuit threshold/pk_generation --witness-only --leaf-only
 ```
 
-`pnpm zk list` prints the circuit names that it accepts.
+Use `--export-toml` only for debug ABI inputs. Samples are not live application inputs.
+`pnpm bench:circuits list` prints the selected leaf cases. The Rust configuration library owns
+static configuration; `pnpm build:circuits sync-preset` writes the selected preset's constants.
 
 ## Generate the Solidity verifiers
 

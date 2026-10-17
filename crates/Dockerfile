@@ -96,11 +96,11 @@ COPY crates/utils/Cargo.toml ./utils/Cargo.toml
 COPY crates/utils-derive/Cargo.toml ./utils-derive/Cargo.toml
 COPY crates/wasm/Cargo.toml ./wasm/Cargo.toml
 COPY crates/zk-helpers/Cargo.toml ./zk-helpers/Cargo.toml
-COPY crates/zk/cli/Cargo.toml ./zk/cli/Cargo.toml
 COPY crates/zk/config/Cargo.toml ./zk/config/Cargo.toml
 COPY crates/zk/build/Cargo.toml ./zk/build/Cargo.toml
 COPY crates/zk/witness/Cargo.toml ./zk/witness/Cargo.toml
 COPY crates/zk/samples/Cargo.toml ./zk/samples/Cargo.toml
+COPY crates/zk/benchmarks/Cargo.toml ./zk/benchmarks/Cargo.toml
 
 RUN echo 'fn main() { println!("cargo:warning=dependency cache build"); }' > ./entrypoint/build.rs
 RUN echo 'fn main() { println!("cargo:warning=dependency cache build"); }' > ./cli/build.rs
@@ -120,8 +120,6 @@ RUN for d in ./*/ ./*/*/ ; do \
     done
 
 # Crates with [[bin]] in Cargo.toml need stub binaries so the first build succeeds
-RUN mkdir -p ./zk/cli/src && \
-    echo 'fn main() {}' > ./zk/cli/src/main.rs
 RUN mkdir -p ./fhe-params/src/bin && echo 'fn main() {}' > ./fhe-params/src/bin/search_params.rs
 # Stub the unpublished build executable for the dependency-cache layer.
 RUN mkdir -p ./zk/build/src && echo 'fn main() {}' > ./zk/build/src/main.rs

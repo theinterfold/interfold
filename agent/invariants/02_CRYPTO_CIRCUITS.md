@@ -65,8 +65,23 @@ every section.
 - Rust-generated witnesses must use `WitnessStack::serialize()`. Do not serialize a witness stack
   with `bincode`; Barretenberg 5 accepts the beta.26 MessagePack format markers, not the legacy
   marker. — `crates/zk-prover/src/witness.rs`
-- Circuit tool version parsing belongs to `zk/build/src/toolchain.rs`. The build library checks the
-  pinned Noir tag and exact tool versions.
+- Circuit tool version parsing belongs to `zk/build/src/toolchain.rs`. The build library and Rust
+  benchmark use the same pinned Noir tag and exact-version predicate. The benchmark verifies the
+  selected artifact digests and records the published source stamp; a local Rust refactor does not
+  force artifact regeneration.
+- Local config benchmark reuse requires artifact-specific provenance that binds the compiled digest,
+  preset, committee, and compiler version. A global active stamp is not evidence for an old config
+  target. Fresh compilation records local source identity; hydrated archive hashes cannot identify
+  that compilation. Config VK reuse also binds the circuit digest and proof variant. The protocol
+  integration child receives the exact BB path that the runner validated, through `E3_CUSTOM_BB`. —
+  `zk/benchmarks/src/circuit_benchmark/{artifacts,protocol}.rs`
+- Benchmark protocol/gas orchestration must preserve the requested active preset and committee, full
+  proof aggregation, actual exported `N/T/H` and participant counts, and the EVM verifier's
+  VK-anchor and public-input checks. Replay uses saved proofs and does not run the integration
+  scenario. Missing or failed verifier measurements remain incomplete; calldata cost is not verifier
+  gas. Reports keep production Rust, historical `isolated_nargo`, integration `wall_clock`, and
+  overlapping `tracked_job_wall` measures separate. —
+  `zk/benchmarks/src/circuit_benchmark/{protocol,report}.rs`
 - Rebuild and publish circuit archives with the pinned Nargo version before changing
   `required_circuits_version`. Regenerate all dependent verification keys and Solidity verifiers
   with the pinned Barretenberg version. A release archive from an older serialization format can
