@@ -308,8 +308,8 @@ pub fn compute_threshold_pk_commitment<let N: u32, let L: u32, let BIT_PK: u32>(
 // The `compute_sc_*`, `compute_ude_*`, `compute_lbfv_*` and `compute_rlk_*` helpers below serve
 // only the l-BFV path. They pack with checked digits, the semantics `lbfv/chunking` built its
 // circuits on, so a circuit that opens one of these commitments without its own range check still
-// opens it injectively. Where a circuit does range-check the values, the digit check is
-// redundant and can be dropped deliberately as an optimisation.
+// opens it injectively. Where the creating circuit range-checks the values, the digit check is
+// redundant: the `*_bounded` variants drop it and compute the same value.
 
 /// Row commitment over the per-limb `pk0` commitments of one l-BFV public-key row. Same design as
 /// [`compute_rlk_row_commitment_from_limbs`]; the leading `2` keeps it apart from the limb payload,
@@ -357,6 +357,26 @@ pub fn compute_lbfv_pk_limb_commitment<let N: u32, let BIT_PK: u32>(
     let mut payload = [1, 1, row_index as Field, limb_index as Field, N as Field].as_vector();
     payload = single_polynomial_payload_checked::<N, BIT_PK>(payload, pk0);
     compute_commitment(payload, DS_PK_GENERATION_LIMB_V1)
+}
+
+/// [`compute_multiple_polynomial_commitment`] for a circuit that **opens** this commitment.
+pub fn compute_multiple_polynomial_commitment_checked<let N: u32, let L: u32, let BIT: u32>(
+    polynomials: [Polynomial<N>; L],
+    domain_separator: [u8; 64],
+) -> Field {
+    let payload = multiple_polynomial_payload_checked::<N, L, BIT>([].as_vector(), polynomials);
+    compute_commitment(payload, domain_separator)
+}
+
+/// [`compute_threshold_pk_commitment`] for a circuit that **opens** this commitment rather than
+/// creating it (C5). Asserts each packed digit fits its slot, which makes the opening unique and so
+/// forces the opened `pk0` to equal the `pk0` C1 committed. Produces the same value as the plain
+/// helper, so C1 needs no change.
+pub fn compute_threshold_pk_commitment_checked<let N: u32, let L: u32, let BIT_PK: u32>(
+    pk0: [Polynomial<N>; L],
+) -> Field {
+    let payload = multiple_polynomial_payload_checked::<N, L, BIT_PK>([].as_vector(), pk0);
+    compute_commitment(payload, DS_PK_GENERATION)
 }
 
 pub fn compute_share_computation_sk_commitment<let N: u32, let BIT_SK: u32>(
@@ -493,36 +513,67 @@ pub global UDE_KIND_CT1_E1: Field = 6;
 pub global UDE_KIND_CT1_P2: Field = 7;
 pub global UDE_KIND_CT1_P1: Field = 8;
 
+/// The leading fields of every user_data_encryption chunk payload. One owner, so the checked and
+/// bounded helpers below cannot drift apart: a leaf creates a commitment with one and a parent opens
+/// it with the other.
+fn ude_chunk_payload_header(kind_tag: Field, chunk_idx: u32, n: u32, chunk_size: u32) -> [Field] {
+    [0, kind_tag, chunk_idx as Field, n as Field, chunk_size as Field].as_vector()
+}
+
 /// Compute a domain-separated commitment for one user_data_encryption chunk (single polynomial:
 /// u, e0, k1, or e1). `kind_tag` is one of the `UDE_KIND_*` constants above.
+///
+/// For a circuit that **opens** the commitment (the identity's `u`, the top level's `k1`): the
+/// checked packing makes the opening unique. The leaf that creates it uses
+/// [`compute_ude_chunk_commitment_bounded`], which gives the same value.
 pub fn compute_ude_chunk_commitment<let CHUNK_SIZE: u32, let BIT: u32>(
     kind_tag: Field,
     chunk_idx: u32,
     n: u32,
     chunk_poly: Polynomial<CHUNK_SIZE>,
 ) -> Field {
-    let mut payload =
-        [0, kind_tag, chunk_idx as Field, n as Field, CHUNK_SIZE as Field].as_vector();
-    payload = single_polynomial_payload_checked::<CHUNK_SIZE, BIT>(payload, chunk_poly);
+    let payload = single_polynomial_payload_checked::<CHUNK_SIZE, BIT>(
+        ude_chunk_payload_header(kind_tag, chunk_idx, n, CHUNK_SIZE),
+        chunk_poly,
+    );
     compute_commitment(payload, DS_USER_DATA_ENCRYPTION_CHUNK)
 }
 
-/// Compute a domain-separated commitment for one user_data_encryption chunk across all CRT
-/// limbs (r1is, r2is, p1is, or p2is). `kind_tag` is one of the `UDE_KIND_*` constants above.
-pub fn compute_ude_multi_chunk_commitment<let CHUNK_SIZE: u32, let L: u32, let BIT: u32>(
+/// [`compute_ude_chunk_commitment`] for the circuit that **creates** the commitment over values it
+/// has range-checked itself (the chunk leaves). Those bounds already keep every packed digit in its
+/// slot, so the per-digit asserts of the checked packing would only repeat them. Same value; a
+/// circuit that opens the commitment must use the checked helper.
+pub fn compute_ude_chunk_commitment_bounded<let CHUNK_SIZE: u32, let BIT: u32>(
+    kind_tag: Field,
+    chunk_idx: u32,
+    n: u32,
+    chunk_poly: Polynomial<CHUNK_SIZE>,
+) -> Field {
+    let payload = single_polynomial_payload::<CHUNK_SIZE, BIT>(
+        ude_chunk_payload_header(kind_tag, chunk_idx, n, CHUNK_SIZE),
+        chunk_poly,
+    );
+    compute_commitment(payload, DS_USER_DATA_ENCRYPTION_CHUNK)
+}
+
+/// Commitment for one user_data_encryption chunk across all CRT limbs (`r1is` or `p1is`), for the
+/// leaf that creates it over range-checked values; see [`compute_ude_chunk_commitment_bounded`].
+/// No circuit opens these commitments, so there is no checked counterpart.
+pub fn compute_ude_multi_chunk_commitment_bounded<let CHUNK_SIZE: u32, let L: u32, let BIT: u32>(
     kind_tag: Field,
     chunk_idx: u32,
     n: u32,
     polynomials: [Polynomial<CHUNK_SIZE>; L],
 ) -> Field {
-    let mut payload =
-        [0, kind_tag, chunk_idx as Field, n as Field, CHUNK_SIZE as Field].as_vector();
-    payload = multiple_polynomial_payload_checked::<CHUNK_SIZE, L, BIT>(payload, polynomials);
+    let payload = multiple_polynomial_payload::<CHUNK_SIZE, L, BIT>(
+        ude_chunk_payload_header(kind_tag, chunk_idx, n, CHUNK_SIZE),
+        polynomials,
+    );
     compute_commitment(payload, DS_USER_DATA_ENCRYPTION_CHUNK)
 }
 
 /// Compute the root commitment for a set of user_data_encryption chunk commitments. Shared by
-/// both `compute_ude_chunk_commitment` and `compute_ude_multi_chunk_commitment` leaves, the same
+/// both single-polynomial and multi-limb chunk commitments, the same
 /// way `compute_sc_secret_chunk_root_commitment` is shared by SK/ESM in the DKG chunk pipeline.
 pub fn compute_ude_chunk_root_commitment(
     kind_tag: Field,
@@ -1204,5 +1255,29 @@ fn test_chunked_roots_match_committing_copied_chunks() {
     assert(
         compute_sc_party_share_root_from_reversed::<8, 2, 4, 7>(1, 0, Polynomial::new(reversed))
             == compute_sc_party_share_root_from_polynomial::<8, 2, 4, 7>(1, 0, share),
+    );
+}
+
+/// A leaf creates its chunk commitments with the bounded helpers and a parent opens them with the
+/// checked ones, so both must give the same value for the same in-range values.
+#[test]
+fn ude_bounded_chunk_commitments_match_the_checked_packing() {
+    let poly = Polynomial::new([3, -5]);
+    assert(
+        compute_ude_chunk_commitment_bounded::<2, 8>(UDE_KIND_U, 1, 4, poly)
+            == compute_ude_chunk_commitment::<2, 8>(UDE_KIND_U, 1, 4, poly),
+    );
+
+    let polys = [Polynomial::new([7, -1]), Polynomial::new([0, 12])];
+    let checked = compute_commitment(
+        multiple_polynomial_payload_checked::<2, 2, 8>(
+            ude_chunk_payload_header(UDE_KIND_CT0_R1, 0, 2, 2),
+            polys,
+        ),
+        DS_USER_DATA_ENCRYPTION_CHUNK,
+    );
+    assert(
+        compute_ude_multi_chunk_commitment_bounded::<2, 2, 8>(UDE_KIND_CT0_R1, 0, 2, polys)
+            == checked,
     );
 }

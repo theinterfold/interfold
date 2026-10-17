@@ -18,9 +18,9 @@
 //! it never enters a witness.
 
 use crate::math::commitments::{
-    compute_ude_chunk_commitment, compute_ude_chunk_root_commitment,
-    compute_ude_multi_chunk_commitment, compute_vk_hash, UDE_KIND_CT0_E0, UDE_KIND_CT0_K1,
-    UDE_KIND_CT0_R1, UDE_KIND_CT1_E1, UDE_KIND_CT1_P1, UDE_KIND_U,
+    compute_ude_chunk_commitment, compute_ude_chunk_commitment_bounded,
+    compute_ude_chunk_root_commitment, compute_ude_multi_chunk_commitment_bounded, compute_vk_hash,
+    UDE_KIND_CT0_E0, UDE_KIND_CT0_K1, UDE_KIND_CT0_R1, UDE_KIND_CT1_E1, UDE_KIND_CT1_P1, UDE_KIND_U,
 };
 use crate::math::polynomial::Polynomial;
 
@@ -108,18 +108,23 @@ impl<let CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_K
 
     /// Every coefficient is range-checked here and nowhere else; the commitments below pin any
     /// later opening (such as `u` in `ct*_eval_chunk_identity`) to these bounded values.
+    ///
+    /// - `u` is ternary: `c^3 = c` has exactly the roots {-1, 0, 1}.
+    /// - `r1` gets the power-of-two window `[-2^BIT_R1, 2^BIT_R1)`, which covers both of its
+    ///   bounds. Every other term of the reduced identity is exactly bounded: `ct0` centered by
+    ///   `ct0_pk_ct_commit`, `pk0` by its checked, anchored opening, `u` ternary, and `e0` and
+    ///   `k1` here. So the integer identity fixes `r1`, and its bound only has to rule out
+    ///   wraparound.
     pub fn check_range_bounds(self) {
-        self.u_chunk.range_check_2bounds::<BIT_U>(self.configs.u_bound, self.configs.u_bound);
+        assert(self.configs.u_bound == 1, "the ternary check needs u_bound == 1");
+        self.u_chunk.assert_ternary();
         self.e0_chunk.range_check_2bounds::<BIT_E0>(self.configs.e0_bound, self.configs.e0_bound);
         self.k1_chunk.range_check_2bounds::<BIT_K>(
             self.configs.k1_up_bound,
             self.configs.k1_low_bound,
         );
         for i in 0..L {
-            self.r1is_chunk[i].range_check_2bounds::<BIT_R1>(
-                self.configs.r1_up_bounds[i],
-                self.configs.r1_low_bounds[i],
-            );
+            self.r1is_chunk[i].range_check_signed_power_of_two::<BIT_R1>();
         }
     }
 
@@ -128,27 +133,28 @@ impl<let CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_K
     /// output tuple, so both must stay independently recoverable.
     ///
     /// Returns `(u, e0, k1, r1)`, computed from the same witness the leaf range-checks and
-    /// evaluates.
+    /// evaluates. The leaf creates these commitments over values `check_range_bounds` bounds, so it
+    /// packs them without per-digit asserts; circuits that open them keep the checked packing.
     pub fn commitments(self) -> (Field, Field, Field, Field) {
-        let u_commit = compute_ude_chunk_commitment::<CHUNK_SIZE, BIT_U>(
+        let u_commit = compute_ude_chunk_commitment_bounded::<CHUNK_SIZE, BIT_U>(
             UDE_KIND_U,
             self.chunk_idx,
             self.n,
             self.u_chunk,
         );
-        let e0_commit = compute_ude_chunk_commitment::<CHUNK_SIZE, BIT_E0>(
+        let e0_commit = compute_ude_chunk_commitment_bounded::<CHUNK_SIZE, BIT_E0>(
             UDE_KIND_CT0_E0,
             self.chunk_idx,
             self.n,
             self.e0_chunk,
         );
-        let k1_commit = compute_ude_chunk_commitment::<CHUNK_SIZE, BIT_K>(
+        let k1_commit = compute_ude_chunk_commitment_bounded::<CHUNK_SIZE, BIT_K>(
             UDE_KIND_CT0_K1,
             self.chunk_idx,
             self.n,
             self.k1_chunk,
         );
-        let r1_commit = compute_ude_multi_chunk_commitment::<CHUNK_SIZE, L, BIT_R1>(
+        let r1_commit = compute_ude_multi_chunk_commitment_bounded::<CHUNK_SIZE, L, BIT_R1>(
             UDE_KIND_CT0_R1,
             self.chunk_idx,
             self.n,
@@ -181,33 +187,33 @@ impl<let CHUNK_SIZE: u32, let L: u32, let BIT_U: u32, let BIT_E1: u32, let BIT_P
         Ct1ChunkLeaf { configs, chunk_idx, n, u_chunk, e1_chunk, p1is_chunk }
     }
 
-    /// See `Ct0ChunkLeaf::check_range_bounds`.
+    /// See `Ct0ChunkLeaf::check_range_bounds`. `p1` gets the window `[-2^BIT_P1, 2^BIT_P1)`:
+    /// `ct1` is centered, `pk1` is the opened CRS row, `u` is ternary and `e1` is exactly bounded,
+    /// so the integer identity fixes `p1`.
     pub fn check_range_bounds(self) {
-        self.u_chunk.range_check_2bounds::<BIT_U>(self.configs.u_bound, self.configs.u_bound);
+        assert(self.configs.u_bound == 1, "the ternary check needs u_bound == 1");
+        self.u_chunk.assert_ternary();
         self.e1_chunk.range_check_2bounds::<BIT_E1>(self.configs.e1_bound, self.configs.e1_bound);
         for i in 0..L {
-            self.p1is_chunk[i].range_check_2bounds::<BIT_P1>(
-                self.configs.p1_bounds[i],
-                self.configs.p1_bounds[i],
-            );
+            self.p1is_chunk[i].range_check_signed_power_of_two::<BIT_P1>();
         }
     }
 
     /// Returns `(u, e1, p1)`, one commitment per polynomial; see `Ct0ChunkLeaf::commitments`.
     pub fn commitments(self) -> (Field, Field, Field) {
-        let u_commit = compute_ude_chunk_commitment::<CHUNK_SIZE, BIT_U>(
+        let u_commit = compute_ude_chunk_commitment_bounded::<CHUNK_SIZE, BIT_U>(
             UDE_KIND_U,
             self.chunk_idx,
             self.n,
             self.u_chunk,
         );
-        let e1_commit = compute_ude_chunk_commitment::<CHUNK_SIZE, BIT_E1>(
+        let e1_commit = compute_ude_chunk_commitment_bounded::<CHUNK_SIZE, BIT_E1>(
             UDE_KIND_CT1_E1,
             self.chunk_idx,
             self.n,
             self.e1_chunk,
         );
-        let p1_commit = compute_ude_multi_chunk_commitment::<CHUNK_SIZE, L, BIT_P1>(
+        let p1_commit = compute_ude_multi_chunk_commitment_bounded::<CHUNK_SIZE, L, BIT_P1>(
             UDE_KIND_CT1_P1,
             self.chunk_idx,
             self.n,
@@ -373,10 +379,54 @@ fn test_ct0_chunk_range_bounds_accepts_in_range_u() {
     test_ct0_leaf([1, 0], [0, 0]).check_range_bounds();
 }
 
-/// `r1` is bounded too: its up bound is 0 in `test_ct0_configs`.
+/// `r1` is checked in the window `[-2^BIT_R1, 2^BIT_R1)`, which is `[-2, 2)` for this leaf
+/// (`BIT_R1 = 1`): both edges pass and the first value past either edge fails.
+#[test]
+fn test_ct0_chunk_range_bounds_accepts_r1_window_edges() {
+    test_ct0_leaf([0, 0], [-2, 1]).check_range_bounds();
+}
+
 #[test(should_fail)]
-fn test_ct0_chunk_range_bounds_rejects_out_of_range_r1() {
-    test_ct0_leaf([0, 0], [1, 0]).check_range_bounds();
+fn test_ct0_chunk_range_bounds_rejects_r1_above_window() {
+    test_ct0_leaf([0, 0], [2, 0]).check_range_bounds();
+}
+
+#[test(should_fail)]
+fn test_ct0_chunk_range_bounds_rejects_r1_below_window() {
+    test_ct0_leaf([0, 0], [-3, 0]).check_range_bounds();
+}
+
+fn test_ct1_leaf(u_coeffs: [Field; 2], p1_coeffs: [Field; 2]) -> Ct1ChunkLeaf<2, 1, 1, 8, 1> {
+    Ct1ChunkLeaf::new(
+        Ct1ChunkConfigs::new(1, 20, [1]),
+        0,
+        2,
+        Polynomial::new(u_coeffs),
+        Polynomial::new([0, 0]),
+        [Polynomial::new(p1_coeffs)],
+    )
+}
+
+/// ct1's `u` is ternary like ct0's, and its `p1` is checked in `[-2^BIT_P1, 2^BIT_P1)`, which is
+/// `[-2, 2)` for this leaf (`BIT_P1 = 1`).
+#[test]
+fn test_ct1_chunk_range_bounds_accept_ternary_u_and_p1_window_edges() {
+    test_ct1_leaf([1, -1], [-2, 1]).check_range_bounds();
+}
+
+#[test(should_fail)]
+fn test_ct1_chunk_range_bounds_reject_non_ternary_u() {
+    test_ct1_leaf([2, 0], [0, 0]).check_range_bounds();
+}
+
+#[test(should_fail)]
+fn test_ct1_chunk_range_bounds_reject_p1_above_window() {
+    test_ct1_leaf([0, 0], [2, 0]).check_range_bounds();
+}
+
+#[test(should_fail)]
+fn test_ct1_chunk_range_bounds_reject_p1_below_window() {
+    test_ct1_leaf([0, 0], [-3, 0]).check_range_bounds();
 }
 
 #[test]

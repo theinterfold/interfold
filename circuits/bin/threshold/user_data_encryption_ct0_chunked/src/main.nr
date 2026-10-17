@@ -16,7 +16,7 @@
 //!   `sum_i gamma_i * ct0[i](gamma) == rhs`.
 //!
 //! Every term of the reduced identity is bounded (ct0 and pk0 centered, u trinary, e0 and k1 by
-//! their leaf bounds, r1 by its reduced bound), so the field equality implies the integer one.
+//! their leaf bounds, r1 by its power-of-two window), so the field equality implies the integer one.
 //!
 //! It also closes VK binding for the leg: it folds the identity, leaf and ciphertext key hashes
 //! into one manifest and outputs it first. The wrapper folds the manifest into the value
