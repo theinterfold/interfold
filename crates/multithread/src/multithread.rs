@@ -1277,8 +1277,17 @@ fn handle_threshold_share_decryption_proof(
     let (threshold_params, _dkg_params) = build_pair_for_preset(req.params_preset)
         .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {}", e)))?;
 
-    // 2. Deserialize aggregated PublicKey
-    let public_key = PublicKey::from_bytes(&req.aggregated_pk_bytes, &threshold_params)
+    // 2. Deserialize aggregated PublicKey. On the l-BFV path the committee key is the key envelope
+    // (it is what the published commitment covers); the ciphertexts are encrypted under its
+    // component-0 encryption key, which the envelope check returns.
+    let encryption_key_bytes = if e3_bfv_client::is_lbfv_key_envelope(&req.aggregated_pk_bytes) {
+        e3_bfv_client::inspect_lbfv_key_envelope(&req.aggregated_pk_bytes, req.params_preset)
+            .map_err(|e| make_zk_error(&request, format!("aggregated_pk envelope: {e:?}")))?
+            .1
+    } else {
+        req.aggregated_pk_bytes.to_vec()
+    };
+    let public_key = PublicKey::from_bytes(&encryption_key_bytes, &threshold_params)
         .map_err(|e| make_zk_error(&request, format!("aggregated_pk deserialize: {:?}", e)))?;
 
     // 3. Decrypt sk_poly_sum → Poly → CrtPolynomial (s)
