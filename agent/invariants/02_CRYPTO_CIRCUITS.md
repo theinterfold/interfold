@@ -198,6 +198,14 @@ every section.
   the Rust sampler for each preset and committee. Regenerate them with `pnpm build:circuits`;
   rebuild the matching verifier artifacts before deploying a protocol-version-8 node. —
   `flow-trace/04`; `scripts/build-circuits.ts`
+- The preset search (`crates/fhe-params/src/search`) uses the same smudging bound
+  `2^(lambda + 1) * degree * B_C` and a lattice-estimator 128-bit ceiling on `log2(q)`
+  (`search::security`). With `mult_depth > 0`, `B_C` is the noise after the multiplications, and
+  the relinearization bound uses the aggregate key error `n * B`, as fhe.rs enforces it. Its CLI defaults reproduce `SecureThreshold8192` and `SecureDkg8192`;
+  `--d 64 --insecure true --min-prime-bits 12` with the insecure search inputs reproduces the
+  insecure pair. `search_reproduces_secure_presets` and `search_reproduces_insecure_presets`
+  compare the search with `constants.rs`, so a preset or bound change must keep them equal. —
+  `crates/fhe-params/src/search/bfv.rs`
 - fhe.rs v0.4.1 passes plaintext-scaled ballot coefficients as non-centered residues. Both CRISP
   vote circuits decode each ballot weight against `Q_MOD_T`, rather than `Q_MOD_T_CENTERED`. —
   `examples/CRISP/circuits/lib/src/utils.nr`

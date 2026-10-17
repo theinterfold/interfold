@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 
 use crate::search::constants::NTT_PRIMES_BY_BITS;
 use crate::search::utils::{log2_big, parse_hex_big};
+use fhe_math::zq::primes::generate_prime;
 
 /// Represents an NTT-friendly prime with precomputed metadata.
 #[derive(Debug, Clone)]
@@ -59,6 +60,33 @@ pub fn build_prime_items() -> Vec<PrimeItem> {
 /// Build prime items for second parameter set (includes 62-bit primes, excludes 61 and 63-bit)
 pub fn build_prime_items_for_second() -> Vec<PrimeItem> {
     build_prime_items_with_filter(|bits| bits == 63 || bits == 61)
+}
+
+/// The `per_bits` largest NTT-friendly primes (p ≡ 1 mod 2d) of each bit-length in
+/// `min_bits..=max_bits`, for ring dimension `d`.
+///
+/// The prime table holds primes ≡ 1 mod 16384 from 40 bits up, so it serves d >= 8192 only.
+/// Smaller (toy) ring dimensions use these primes. fhe-math's `generate_prime` supports 10 to 62
+/// bits.
+pub fn generate_prime_items(d: u64, min_bits: u8, max_bits: u8, per_bits: usize) -> Vec<PrimeItem> {
+    let mut items = Vec::new();
+    for bits in min_bits.max(10)..=max_bits.min(62) {
+        let mut upper_bound = 1u64 << bits;
+        for _ in 0..per_bits {
+            let Some(p) = generate_prime(bits as usize, 2 * d, upper_bound) else {
+                break;
+            };
+            let value = BigUint::from(p);
+            items.push(PrimeItem {
+                bitlen: bits,
+                log2: log2_big(&value),
+                hex: format!("0x{p:016x}"),
+                value,
+            });
+            upper_bound = p;
+        }
+    }
+    items
 }
 
 /// Check whether `p` is NTT-friendly for ring dimension `d`, i.e. `p ≡ 1 (mod 2d)`.

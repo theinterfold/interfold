@@ -52,6 +52,14 @@ pub fn big_shift_pow2(exp: u32) -> BigUint {
     BigUint::one() << exp
 }
 
+/// Variance of the uniform distribution on the 2B+1 integers in [-B, B]: `⌊B(B+1)/3⌋`.
+///
+/// fhe.rs recovers the error bound from this variance, and every preset's `ERROR1_VARIANCE`
+/// uses it. The continuous form B²/3 recovers B - 1.
+pub fn variance_uniform_sym(b: &BigUint) -> BigUint {
+    (b * (b + BigUint::one())) / BigUint::from(3u32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
