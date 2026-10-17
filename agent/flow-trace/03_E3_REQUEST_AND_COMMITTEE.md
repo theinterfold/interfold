@@ -483,6 +483,34 @@ receives live events. The affected E3 can fail at its existing deadline. Teardow
 reservations and failure records. Restart starts with empty queues and failure records. The buffer
 does not read EventStore or recover events before the existing checkpoint.
 
+### Request-router peer events before admission
+
+**Files:** `crates/request/src/routing/unadmitted_inputs.rs`, `crates/request/src/routing/handlers.rs`
+(`UnadmittedNetworkEvent`, `Process`).
+
+A peer event can only contribute to an E3 that the node admitted from chain state or restored from
+a snapshot. When the chain reader lags while gossip is live, peers' first messages for a new E3 can
+arrive before the node sees the request. The router holds such an event in `UnadmittedInputs`, in
+memory, and does not report an error. When the chain event that creates the E3's context arrives,
+the router forwards the held events right after that event, in arrival order, along the normal path:
+each extension's `on_event`, then `forward_message`, so a missing recipient gets them from
+`EventBuffer` before its creation event. A held event keeps its sequence number and identity.
+Teardown drops the E3's held events. The router ignores a peer event of a completed E3.
+
+| Scope  | Items | Accounted bytes |
+| ------ | ----: | --------------: |
+| One E3 |   512 |         128 MiB |
+| Router | 1,024 |         256 MiB |
+
+`event_bytes` accounts each held event. A DKG of 19 parties sends about 160 such events before the
+last party starts. A decryption sends 19 shares of about 0.2 MB each. A full bound drops the oldest
+held event, of the same E3 for the per-E3 bound, and logs a warning. An event larger than the per-E3
+budget is not held.
+
+Startup does not use this path: `NetEventBuffer` holds gossip until `SyncEnded`, after the historical
+chain events. The hold is memory only. A restart between a peer event and its admission drops the
+event, because the router checkpoint is already past it.
+
 ### 2b. CiphernodeSelector Processing
 
 ```

@@ -12,7 +12,10 @@ mod event_buffer;
 mod lifecycle;
 #[path = "routing/workflow.rs"]
 mod routing;
+#[path = "routing/unadmitted_inputs.rs"]
+mod unadmitted_inputs;
 
 pub use event_buffer::*;
 pub use lifecycle::*;
 pub use routing::*;
+pub use unadmitted_inputs::*;

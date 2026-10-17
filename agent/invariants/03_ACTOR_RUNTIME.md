@@ -333,8 +333,10 @@ the code does not meet yet.
   that fails after the startup probe is only logged. — `crates/evm/src/chain_reader/progress.rs`;
   `dappnode/healthcheck.sh`; `flow-trace/03`; `flow-trace/06`
 - A network event cannot create a request context for an unknown E3. Only chain events or restored
-  snapshots admit an E3; peer events can only contribute to an admitted one. —
-  `crates/request/src/routing/workflow.rs`
+  snapshots admit an E3; peer events can only contribute to an admitted one. The router holds a peer
+  event of an unknown E3 in a bounded, memory-only queue and forwards it after the chain event that
+  admits the E3. **Gap:** a restart before that admission drops the held event. —
+  `crates/request/src/routing/workflow.rs`; `crates/request/src/routing/unadmitted_inputs.rs`
 - Identify must not cache peer addresses independently of the filtered Kademlia address path. Each
   compatible Identify exchange for an admitted peer must refresh that peer's filtered Kademlia
   addresses. Keep unique filtered addresses within both limits: 8 addresses and 2 KiB of encoded
