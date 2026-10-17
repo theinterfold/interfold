@@ -5,8 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Sequential fold of `H` per-node `node_fold` proofs (non-ZK), one honest slot per step, chained with
-//! the previous `nodes_fold` non-ZK proof, or a fixed genesis proof from `nodes_fold_kernel` on the
-//! first step (see `crates/zk/prover` and `nodes_fold_kernel`).
+//! the previous accumulator: the `nodes_fold_kernel` proof of the first node on the first step, a
+//! `nodes_fold` non-ZK proof after that (see `crates/zk-prover` and `nodes_fold_kernel`).
 
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use lib::configs::default::dkg::L_THRESHOLD;
@@ -89,13 +89,12 @@ fn main(
 
     let mut out: [[Field; NODE_FOLD_PUBLIC_LEN]; H] = [[0; NODE_FOLD_PUBLIC_LEN]; H];
 
+    // The predecessor's rows carry forward, whether it is the kernel (which holds the chain's first
+    // node, so `is_first_step` only selects its key) or an earlier fold. The new node must land in
+    // an empty slot.
     for i in 0..H {
         let idx = i as u32;
-        if is_first_step {
-            if idx == slot_index {
-                out[i] = node_fold_public_inputs;
-            }
-        } else if idx == slot_index {
+        if idx == slot_index {
             for k in 0..NODE_FOLD_PUBLIC_LEN {
                 assert(
                     acc_public_inputs[NODES_FOLD_PARAM_PUBLIC_LEN + i * NODE_FOLD_PUBLIC_LEN + k]

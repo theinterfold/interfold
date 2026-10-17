@@ -5,8 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::math::commitments::{
-    compute_ciphertext_commitment, compute_sc_party_share_root_from_polynomial,
-    compute_share_encryption_challenge,
+    compute_ciphertext_commitment, compute_share_encryption_challenge,
+    compute_share_encryption_commitment_from_message,
 };
 use crate::math::commitments::{compute_dkg_pk_commitment, compute_dkg_pk_commitment_checked};
 use crate::math::helpers::{assert_in_range, flatten, flatten_exact_width};
@@ -108,11 +108,9 @@ impl<let L: u32> Configs<L> {
 /// **Consumes:** `expected_pk_commitment` (C0); `expected_message_commitment` (C2 sk or C2 e_sm).
 ///
 /// **Produces:** Public `ct_commitment` (hash of ct0/ct1 limbs) for cross-phase binding; witness ct0/ct1 feed C4 off-transcript.
-pub struct ShareEncryption<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_E1: u32, let BIT_MSG: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_P1: u32, let BIT_P2: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
+pub struct ShareEncryption<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_E1: u32, let BIT_MSG: u32, let BIT_CT0_R: u32, let BIT_CT1_R: u32, let BIT_Z: u32, let BIT_Q0: u32, let BIT_Q0_DIFF: u32, let BIT_Q1: u32> {
     /// Circuit parameters
     configs: Configs<L>,
-    party_idx: u32,
-    mod_idx: u32,
     /// Expected commitment to the DKG public key (from C0: pk).
     /// (public witness)
     expected_pk_commitment: Field,
@@ -131,10 +129,9 @@ pub struct ShareEncryption<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: 
     ct1is: [Polynomial<N>; L],
     /// Random ternary polynomial u (secret witness)
     u: Polynomial<N>,
-    /// Error polynomial e0 (secret witness). Unlike ct0's e0, this is never CRT-decomposed:
-    /// `e0_bound` is identical to `e1_bound` at every preset (both tiny - 6..20 depending on
-    /// preset), nowhere near the CRT moduli (~2^50+), so e0 already fits in a single residue
-    /// for every modulus with no reduction needed - same treatment as e1 below.
+    /// Error polynomial e0 (secret witness).
+    /// DKG `e0_bound` (2 * variance) stays far below every `q_i / 2`, so the centered residue of
+    /// e0 at each modulus equals e0. The equations use e0 directly, with no CRT decomposition.
     e0: Polynomial<N>,
     /// Error polynomial e1 (secret witness)
     e1: Polynomial<N>,
@@ -153,13 +150,11 @@ pub struct ShareEncryption<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: 
     z: [Polynomial<N>; 1],
 }
 
-impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_E1: u32, let BIT_MSG: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_P1: u32, let BIT_P2: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> ShareEncryption<N, L, BIT_PK, BIT_CT, BIT_U, BIT_E0, BIT_E1, BIT_MSG, BIT_R1, BIT_R2, BIT_P1, BIT_P2, N_CHUNKS, CHUNK_SIZE> {
+impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_E1: u32, let BIT_MSG: u32, let BIT_CT0_R: u32, let BIT_CT1_R: u32, let BIT_Z: u32, let BIT_Q0: u32, let BIT_Q0_DIFF: u32, let BIT_Q1: u32> ShareEncryption<N, L, BIT_PK, BIT_CT, BIT_U, BIT_E0, BIT_E1, BIT_MSG, BIT_CT0_R, BIT_CT1_R, BIT_Z, BIT_Q0, BIT_Q0_DIFF, BIT_Q1> {
     pub fn new(
         configs: Configs<L>,
         expected_pk_commitment: Field,
         expected_message_commitment: Field,
-        party_idx: u32,
-        mod_idx: u32,
         pk0is: [Polynomial<N>; L],
         pk1is: [Polynomial<N>; L],
         ct0is: [Polynomial<N>; L],
@@ -174,8 +169,6 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     ) -> Self {
         ShareEncryption {
             configs,
-            party_idx,
-            mod_idx,
             expected_pk_commitment,
             expected_message_commitment,
             pk0is,
@@ -296,7 +289,7 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     ///
     /// Each coefficient is transformed as:
     ///   k1[i] = (Q_mod_t * message[i]) mod t
-    /// The core/lbfv plaintext representation keeps this value uncentered.
+    /// The residue stays in [0, t) to match the BFV plaintext encoding.
     fn compute_scaled_message(self) -> Polynomial<N> {
         let t = self.configs.t;
         // t < 2^62 (plaintext modulus); q_mod_t, msg_i < t: all safe for ModU64.
@@ -306,9 +299,7 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
 
         for i in 0..N {
             let msg_i: Field = self.message.coefficients[i];
-            let q_times_m_mod_t = t_mod.mul_mod(q_mod_t, msg_i);
-
-            k1_coeffs[i] = q_times_m_mod_t;
+            k1_coeffs[i] = t_mod.mul_mod(q_mod_t, msg_i);
         }
 
         Polynomial { coefficients: k1_coeffs }
@@ -528,7 +519,10 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     /// Performs range checks on all secret witness polynomial coefficients. `check_message` is false
     /// only where the message's `[0, t)` bound arrives through an injective opening instead.
     fn check_range_bounds(self, check_message: bool) {
-        self.u.range_check_2bounds::<BIT_U>(self.configs.u_bound, self.configs.u_bound);
+        // `u` is ternary: `c^3 = c` has exactly the roots {-1, 0, 1}, so `u + u_bound` still fits the
+        // `BIT_U + 1` bits its transcript packing assumes.
+        assert(self.configs.u_bound == 1, "the ternary check needs u_bound == 1");
+        self.u.assert_ternary();
         self.e0.range_check_2bounds::<BIT_E0>(self.configs.e0_bound, self.configs.e0_bound);
         self.e1.range_check_2bounds::<BIT_E1>(self.configs.e1_bound, self.configs.e1_bound);
 
@@ -583,22 +577,15 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
 
     /// Checks both reduced encryption identities at one transcript-derived challenge point:
     ///
-    /// For each CRT modulus l, checks at the primary challenge point gamma:
-    ///   ct0[l](gamma) = pk0[l](gamma)*u(gamma) + e0(gamma) + k1(gamma)*k0[l] + r1[l](gamma)*q_l + r2[l](gamma)*(gamma^N + 1)
-    ///   ct1[l](gamma) = pk1[l](gamma)*u(gamma) + e1(gamma) + p2[l](gamma)*(gamma^N + 1) + p1[l](gamma)*q_l
+    ///   ct0is = pk0is * u + e0 + k0is * k1 + q_i * ct0_r   (mod X^N + 1)
+    ///   ct1is = pk1is * u + e1            + q_i * ct1_r   (mod X^N + 1)
     ///
     /// `negacyclic_kernel` supplies the reduced products at `x`, so neither product enters the
     /// witness and the cyclotomic quotients are gone with them. One kernel serves all `2 * L`
     /// products, which is where most of the saving comes from.
     fn verify_evaluations(self, gammas: [Field], k1: Polynomial<N>) {
-        let gamma = gammas[0];
-        let cyclo_at_gamma = gamma.pow_32(N as Field) + 1;
-        let u_at_gamma = self.u.eval(gamma);
-        // e0, like e1, is never CRT-decomposed (see the field doc on `e0`) - evaluated once and
-        // reused for every modulus, exactly like e1_at_gamma below.
-        let e0_at_gamma = self.e0.eval(gamma);
-        let e1_at_gamma = self.e1.eval(gamma);
-        let k1_at_gamma = k1.eval(gamma);
+        let x = gammas[0];
+        let kernel = negacyclic_kernel(self.u, x);
 
         for i in 0..L {
             let mut ct0_residual = [0; N];

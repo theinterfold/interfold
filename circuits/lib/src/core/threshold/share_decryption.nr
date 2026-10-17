@@ -8,16 +8,16 @@ use crate::math::commitments::{
     compute_aggregated_shares_commitment_checked, compute_ciphertext_commitment_checked,
     compute_threshold_decryption_share_commitment, compute_threshold_share_decryption_challenge,
 };
-use crate::math::helpers::{flatten, flatten_checked};
+use crate::math::helpers::{assert_in_range, flatten, flatten_checked};
 use crate::math::polynomial::{negacyclic_kernel, Polynomial};
 
 /// Parameters for threshold share decryption (C6).
 pub struct Configs<let L: u32> {
     /// CRT moduli: [q_0, q_1, ..., q_{L-1}]
     pub qis: [Field; L],
-    /// Bounds for the `r` polynomials: the mod-q quotients of the identity reduced modulo
-    /// `X^N + 1`. Reducing the identity makes the cyclotomic quotient's term identically zero, so
-    /// the separate `r2` bound is gone and this one covers what `r1` and `r2` carried between them.
+    /// Honest bounds on the `r` polynomials, the mod-q quotients of the identity reduced modulo
+    /// `X^N + 1`. The circuit does not check against them: it checks the window
+    /// `[-2^BIT_R, 2^BIT_R)`, and `bin/config` checks that the width covers these.
     pub r_bounds: [Field; L],
 }
 
@@ -112,19 +112,19 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
         }
     }
 
-    /// `u` in \([0, q)\); `w` is the matching centered coeff from `d` (reversed+centered layout).
-    /// Uses 64 bits (not `BIT_D`): `u` spans full native mod `q`, which can exceed the packing width
-    /// used for centered `d` coefficients (e.g. insecure preset moduli are ~37 bits).
+    /// `u` is the native residue in \([0, q)\) and `w` the matching centered coefficient of `d`
+    /// (reversed+centered layout); `w` must be `u`'s centered representative.
+    ///
+    /// Proven without a comparison: `u` in `[0, q)`, `w` in `[-half, half]`, and `u - w` in `{0, q}`.
+    /// If `u <= half`, `u - w = q` would put `w` below `-half`, so `w = u`; if `u > half`, `w = u`
+    /// would exceed `half`, so `w = u - q`. `BIT_D_NATIVE` is the bit width of the largest `q - 1`,
+    /// so it covers both ranges.
     fn assert_native_coeff_matches_centered_d(u: Field, w: Field, q: Field) {
         let half = (q - 1) / 2;
-        u.assert_max_bit_size::<64>();
-        (q - 1 - u).assert_max_bit_size::<64>();
-        let centered_from_u = if (u as u128) > (half as u128) {
-            u - q
-        } else {
-            u
-        };
-        assert(centered_from_u == w);
+        assert_in_range::<BIT_D_NATIVE>(u, q);
+        assert_in_range::<BIT_D_NATIVE>(w + half, q);
+        let shift = u - w;
+        assert(shift * (shift - q) == 0, "native coefficient does not match centered d");
     }
 
     /// Bind each `d_native_trunc` coeff to the tail of `d` under `center(mod q)` / reverse layout.
@@ -259,12 +259,14 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
     /// outside its expected bounds.
     fn check_range_bounds(self) {
         for basis_idx in 0..L {
-            // `r` is the only fresh quotient the reduced identity leaves to bound. It can be
-            // negative, so the check is two-sided.
-            self.r[basis_idx].range_check_2bounds::<BIT_R>(
-                self.configs.r_bounds[basis_idx],
-                self.configs.r_bounds[basis_idx],
-            );
+            // `r` is the only fresh quotient the reduced identity leaves to bound. Every other term
+            // is bounded: `ct0`/`ct1`, `sk` and `e_sm` by their checked openings and `d` by its
+            // checked transcript packing. So, given `d`, the integer identity fixes `r`, and its
+            // bound only has to rule out wraparound. `d` itself is pinned to its centered residue
+            // only on the `MAX_MSG_NON_ZERO_COEFFS` tail that C7 reads; elsewhere `d` and `r` can
+            // shift together by multiples of `q`, as they could under the exact bound. The window `[-2^BIT_R, 2^BIT_R)` covers `r_bounds` (`BIT_R`
+            // is their bit width) with one assert per coefficient instead of two.
+            self.r[basis_idx].range_check_signed_power_of_two::<BIT_R>();
         }
     }
 
@@ -561,4 +563,32 @@ fn tampered_quotient_is_rejected() {
         [Polynomial::new([89])],
     );
     let _ = c.execute();
+}
+
+// `assert_native_coeff_matches_centered_d` at q = 97 (half = 48, BIT_D_NATIVE = 7).
+type ConversionCheck = ShareDecryption<4, 2, 1, 8, 8, 8, 8, 8, 7>;
+
+#[test]
+fn native_coefficient_matches_its_centered_representative() {
+    ConversionCheck::assert_native_coeff_matches_centered_d(0, 0, 97);
+    ConversionCheck::assert_native_coeff_matches_centered_d(48, 48, 97);
+    ConversionCheck::assert_native_coeff_matches_centered_d(49, -48, 97);
+    ConversionCheck::assert_native_coeff_matches_centered_d(96, -1, 97);
+}
+
+#[test(should_fail)]
+fn native_coefficient_rejects_the_uncentered_representative() {
+    // `u - w = 0`, but `w = 49` is above `half`.
+    ConversionCheck::assert_native_coeff_matches_centered_d(49, 49, 97);
+}
+
+#[test(should_fail)]
+fn native_coefficient_rejects_a_centered_value_below_the_window() {
+    // `u - w = q`, but `w = -49` is below `-half`.
+    ConversionCheck::assert_native_coeff_matches_centered_d(48, -49, 97);
+}
+
+#[test(should_fail)]
+fn native_coefficient_must_be_below_q() {
+    ConversionCheck::assert_native_coeff_matches_centered_d(97, 0, 97);
 }

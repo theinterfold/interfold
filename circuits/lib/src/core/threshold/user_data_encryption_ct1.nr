@@ -14,7 +14,7 @@ use crate::math::commitments::compute_user_data_encryption_ct1_challenge;
 use crate::math::commitments::DS_CIPHERTEXT;
 use crate::math::commitments::DS_PK_AGGREGATION;
 use crate::math::commitments::DS_USER_DATA_ENCRYPTION_COMMITMENT;
-use crate::math::helpers::flatten;
+use crate::math::helpers::flatten_exact_width;
 use crate::math::polynomial::{negacyclic_kernel, Polynomial};
 
 /// Parameters for user-data encryption ct1 (P3).
@@ -129,10 +129,20 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     ) -> [Field] {
         let mut payload = [pk1_commitment, ct1_commitment, u_commitment].as_vector();
 
-        payload = flatten::<_, _, BIT_E1>(payload, [self.e1]);
-        // `r` replaces `p1is` and `p2is` in the transcript, and it is bounded, so the plain packing
-        // stays injective.
-        payload = flatten::<_, _, BIT_R>(payload, self.r);
+        // `check_range_bounds_except_u` holds `e1 + e1_bound` in `[0, 2 * e1_bound]`, which fits
+        // `BIT_E1 + 1` bits, and `r + 2^BIT_R` in `[0, 2^(BIT_R + 1))`. Packing each at exactly that
+        // width is injective and needs about half the carriers of the nibble-aligned packing.
+        let e1_bound = self.configs.e1_bound;
+        payload = flatten_exact_width::<N, BIT_E1 + 1, _>(payload, |j| {
+            self.e1.coefficients[j] + e1_bound
+        });
+        // `r` replaces `p1is` and `p2is` in the transcript.
+        let shift = 2.pow_32(BIT_R as Field);
+        for i in 0..L {
+            payload = flatten_exact_width::<N, BIT_R + 1, _>(payload, |j| {
+                self.r[i].coefficients[j] + shift
+            });
+        }
 
         compute_user_data_encryption_ct1_challenge::<L>(payload)
     }

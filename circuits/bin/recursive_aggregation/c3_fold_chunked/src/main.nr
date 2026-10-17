@@ -8,9 +8,10 @@
 // public inputs add `party_idx`, `mod_idx`) with lbfv/chunking's VK-manifest binding. The trBFV
 // `c3_fold` uses main's VK-tree binding (#2090); moving this path to it is a follow-up.
 
-//! Sequential C3 fold: one inner ZK `ShareEncryption` proof per step, chained with the previous
-//! accumulator (`c3_fold` non-ZK proof, or a fixed genesis proof from `c3_fold_kernel` on the first
-//! step; see `crates/zk-prover` and `c3_fold_kernel`).
+//! Sequential C3 fold on the l-BFV path: one inner ZK `ShareEncryption` proof per step, chained with
+//! the previous accumulator: the `c3_fold_kernel_chunked` proof of the chain's first leaf on the
+//! first step, a `c3_fold_chunked` non-ZK proof after that (see `crates/zk-prover` and
+//! `c3_fold_kernel_chunked`).
 
 use bb_proof_verification::{
     UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
@@ -82,35 +83,26 @@ fn main(
     let mut out_msg: [Field; C3_SLOTS] = [0; C3_SLOTS];
     let mut out_ct: [Field; C3_SLOTS] = [0; C3_SLOTS];
 
+    // The predecessor's rows carry forward, whether it is the kernel (which holds the chain's first
+    // leaf, already bound to its slot, so `is_first_step` only selects its key) or an earlier fold.
+    // The new leaf must land in an empty slot.
     for i in 0..C3_SLOTS {
         let idx = i as u32;
-        if is_first_step {
-            if idx == slot_index {
-                out_pk[i] = pk_new;
-                out_msg[i] = msg_new;
-                out_ct[i] = ct_new;
-            } else {
-                out_pk[i] = 0;
-                out_msg[i] = 0;
-                out_ct[i] = 0;
-            }
-        } else {
-            let prior_pk = acc_public_inputs[C3_FOLD_PREFIX_LEN + i];
-            let prior_msg = acc_public_inputs[C3_FOLD_PREFIX_LEN + C3_SLOTS + i];
-            let prior_ct = acc_public_inputs[C3_FOLD_PREFIX_LEN + C3_SLOTS + C3_SLOTS + i];
+        let prior_pk = acc_public_inputs[C3_FOLD_PREFIX_LEN + i];
+        let prior_msg = acc_public_inputs[C3_FOLD_PREFIX_LEN + C3_SLOTS + i];
+        let prior_ct = acc_public_inputs[C3_FOLD_PREFIX_LEN + C3_SLOTS + C3_SLOTS + i];
 
-            if idx == slot_index {
-                assert(prior_pk == 0);
-                assert(prior_msg == 0);
-                assert(prior_ct == 0);
-                out_pk[i] = pk_new;
-                out_msg[i] = msg_new;
-                out_ct[i] = ct_new;
-            } else {
-                out_pk[i] = prior_pk;
-                out_msg[i] = prior_msg;
-                out_ct[i] = prior_ct;
-            }
+        if idx == slot_index {
+            assert(prior_pk == 0);
+            assert(prior_msg == 0);
+            assert(prior_ct == 0);
+            out_pk[i] = pk_new;
+            out_msg[i] = msg_new;
+            out_ct[i] = ct_new;
+        } else {
+            out_pk[i] = prior_pk;
+            out_msg[i] = prior_msg;
+            out_ct[i] = prior_ct;
         }
     }
 

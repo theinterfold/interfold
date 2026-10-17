@@ -356,6 +356,7 @@ fn assert_recursive_vk_binding(
     kernel: CircuitName,
     inners: &[Proof],
     folded: &Proof,
+    total_slots: usize,
     artifacts_dir: &str,
 ) {
     let default_dir = prover.circuits_dir(CircuitVariant::Default, artifacts_dir);
@@ -374,6 +375,7 @@ fn assert_recursive_vk_binding(
     } else {
         "c6_public_inputs"
     };
+    // The kernel proves the chain's first leaf at slot 0.
     let mut input = json!({
         "inner_vk": leaf_vk.verification_key,
         "inner_proof": fold_witness_field_strings(&inners[0].data).unwrap(),
@@ -396,8 +398,13 @@ fn assert_recursive_vk_binding(
             artifacts_dir,
         )
         .expect("honest genesis proof");
+
+    // The first fold step adds the second leaf at slot 1 on top of the kernel proof.
     input["acc_proof"] = json!(fold_witness_field_strings(&genesis.data).unwrap());
     input["acc_public_inputs"] = json!(fields(&genesis));
+    input["inner_proof"] = json!(fold_witness_field_strings(&inners[1].data).unwrap());
+    input[public_name] = json!(fields(&inners[1]));
+    input["slot_index"] = json!(1);
     let first_witness = witness(&fold_path, &input).expect("honest first-step witness");
     let first = prover
         .generate_recursive_aggregation_bin_proof(
@@ -407,6 +414,13 @@ fn assert_recursive_vk_binding(
             artifacts_dir,
         )
         .expect("honest first-step proof");
+
+    let mut reused_slot = input.clone();
+    reused_slot["slot_index"] = json!(0);
+    assert!(
+        witness(&fold_path, &reused_slot).is_err(),
+        "the first fold step must not refill the kernel's slot"
+    );
 
     let fake_acc = substitute_proof(
         prover,
@@ -429,51 +443,60 @@ fn assert_recursive_vk_binding(
         "substituted-genesis",
     );
 
-    input["acc_vk"] = json!(fold_vk.verification_key);
-    input["acc_proof"] = json!(fold_witness_field_strings(&first.data).unwrap());
-    input["acc_public_inputs"] = json!(fields(&first));
-    input["inner_proof"] = json!(fold_witness_field_strings(&inners[1].data).unwrap());
-    input[public_name] = json!(fields(&inners[1]));
-    input["is_first_step"] = json!(false);
-    input["slot_index"] = json!(1);
-    witness(&fold_path, &input).expect("honest continuation witness");
+    // With a third slot, a continuation verifies a fold predecessor under the fold key.
+    let mut steps = vec![(input.clone(), 1)];
+    if total_slots >= 3 {
+        let mut continuation = input.clone();
+        continuation["acc_vk"] = json!(fold_vk.verification_key);
+        continuation["acc_proof"] = json!(fold_witness_field_strings(&first.data).unwrap());
+        continuation["acc_public_inputs"] = json!(fields(&first));
+        continuation["inner_proof"] = json!(fold_witness_field_strings(&inners[0].data).unwrap());
+        continuation[public_name] = json!(fields(&inners[0]));
+        continuation["is_first_step"] = json!(false);
+        continuation["slot_index"] = json!(2);
+        witness(&fold_path, &continuation).expect("honest continuation witness");
 
-    let mut fake_prior = input.clone();
-    fake_prior["acc_vk"] = json!(fake_acc.vk);
-    fake_prior["acc_proof"] = json!(fold_witness_field_strings(&fake_acc.proof.data).unwrap());
-    fake_prior["acc_public_inputs"] = json!(fields(&fake_acc.proof));
-    assert_fold_rejected(
-        prover,
-        fold,
-        &fold_path,
-        &fake_prior,
-        artifacts_dir,
-        "substituted-predecessor",
-    );
-
-    let fake_leaf = substitute_proof(
-        prover,
-        inners[1].circuit,
-        CircuitVariant::Recursive,
-        &fields(&inners[1]),
-        None,
-        "leaf",
-    );
-    let mut changed_leaf = input.clone();
-    changed_leaf["inner_vk"] = json!(fake_leaf.vk);
-    changed_leaf["inner_proof"] = json!(fold_witness_field_strings(&fake_leaf.proof.data).unwrap());
-    changed_leaf["inner_key_hash"] = json!(fake_leaf.key_hash);
-    assert!(
-        witness(&fold_path, &changed_leaf).is_err(),
-        "a continuation must retain its predecessor's leaf VK hash"
-    );
-    for key in ["fold_key_hash", "kernel_key_hash"] {
-        let mut changed_key = input.clone();
-        changed_key[key] = json!(fake_acc.key_hash);
-        assert!(
-            witness(&fold_path, &changed_key).is_err(),
-            "a continuation must retain its predecessor's {key}"
+        let mut fake_prior = continuation.clone();
+        fake_prior["acc_vk"] = json!(fake_acc.vk);
+        fake_prior["acc_proof"] = json!(fold_witness_field_strings(&fake_acc.proof.data).unwrap());
+        fake_prior["acc_public_inputs"] = json!(fields(&fake_acc.proof));
+        assert_fold_rejected(
+            prover,
+            fold,
+            &fold_path,
+            &fake_prior,
+            artifacts_dir,
+            "substituted-predecessor",
         );
+        steps.push((continuation, 0));
+    }
+
+    for (step, leaf) in steps {
+        let fake_leaf = substitute_proof(
+            prover,
+            inners[leaf].circuit,
+            CircuitVariant::Recursive,
+            &fields(&inners[leaf]),
+            None,
+            "leaf",
+        );
+        let mut changed_leaf = step.clone();
+        changed_leaf["inner_vk"] = json!(fake_leaf.vk);
+        changed_leaf["inner_proof"] =
+            json!(fold_witness_field_strings(&fake_leaf.proof.data).unwrap());
+        changed_leaf["inner_key_hash"] = json!(fake_leaf.key_hash);
+        assert!(
+            witness(&fold_path, &changed_leaf).is_err(),
+            "a fold step must retain its predecessor's leaf VK hash"
+        );
+        for key in ["fold_key_hash", "kernel_key_hash"] {
+            let mut changed_key = step.clone();
+            changed_key[key] = json!(fake_acc.key_hash);
+            assert!(
+                witness(&fold_path, &changed_key).is_err(),
+                "a fold step must retain its predecessor's {key}"
+            );
+        }
     }
 }
 
@@ -517,6 +540,15 @@ fn assert_final_c6_tree_binding(
         fold_vk.key_hash.clone(),
         kernel_vk.key_hash.clone(),
     ]);
+    // Every fold step checks the predecessor's domain and keeps its rows, the first one included, so
+    // the substituted genesis carries the leaf in slot 0 as a real kernel proof would. Layout: seven
+    // prefix fields, then the sk, e_sm, ct and d columns of `slots` entries each.
+    genesis_public[5] = leaf_public[3].clone();
+    genesis_public[6] = leaf_public[4].clone();
+    let slots = (genesis_public.len() - 7) / 4;
+    for (column, leaf_field) in [0, 1, 2, 5].into_iter().enumerate() {
+        genesis_public[7 + column * slots] = leaf_public[leaf_field].clone();
+    }
     let fake_genesis = substitute_proof(
         prover,
         CircuitName::C6FoldKernel,
@@ -579,21 +611,9 @@ fn assert_final_c6_tree_binding(
         } else {
             json!(kernel_vk.verification_key)
         };
+        // The first fold step fills the second slot on top of the genesis proof.
         step["acc_proof"] = json!(fold_witness_field_strings(&genesis.data).unwrap());
         step["acc_public_inputs"] = json!(fields(&genesis));
-        let first_witness = witness(&fold_path, &step).unwrap();
-        let first = prover
-            .generate_recursive_aggregation_bin_proof(
-                CircuitName::C6Fold,
-                &first_witness,
-                "c6-tree-first",
-                artifacts_dir,
-            )
-            .unwrap();
-        step["acc_vk"] = json!(fold_vk.verification_key);
-        step["acc_proof"] = json!(fold_witness_field_strings(&first.data).unwrap());
-        step["acc_public_inputs"] = json!(fields(&first));
-        step["is_first_step"] = json!(false);
         step["slot_index"] = json!(1);
         let second_witness = witness(&fold_path, &step).unwrap();
         let changed_fold = prover
@@ -730,6 +750,7 @@ async fn c3_fold_sequential_proves_and_verifies() {
         CircuitName::C3FoldKernel,
         &inners,
         &folded,
+        total_slots,
         &artifacts_dir,
     );
 
@@ -853,6 +874,7 @@ async fn c6_fold_sequential_proves_and_verifies() {
         CircuitName::C6FoldKernel,
         &inners,
         &folded,
+        total_slots,
         &artifacts_dir,
     );
     assert_final_c6_tree_binding(&prover, &inners[0], &folded, &artifacts_dir);

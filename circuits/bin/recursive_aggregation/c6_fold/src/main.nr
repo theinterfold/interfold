@@ -5,8 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Sequential C6 fold: one inner ZK `ThresholdShareDecryption` proof per step, chained with the
-//! previous accumulator (`c6_fold` non-ZK proof, or a fixed genesis proof from `c6_fold_kernel` on
-//! the first step; see `crates/zk/prover` and `c6_fold_kernel`).
+//! previous accumulator: the `c6_fold_kernel` proof of the chain's first leaf on the first step, a
+//! `c6_fold` non-ZK proof after that (see `crates/zk-prover` and `c6_fold_kernel`).
 
 use bb_proof_verification::{
     UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
@@ -58,51 +58,39 @@ fn main(
     let domain_lo = c6_public_inputs[4];
     let d_new = c6_public_inputs[5];
 
-    if !is_first_step {
-        assert(acc_public_inputs[5] == domain_hi);
-        assert(acc_public_inputs[6] == domain_lo);
-    }
+    // The kernel records its leaf's domain too, so every step checks it.
+    assert(acc_public_inputs[5] == domain_hi);
+    assert(acc_public_inputs[6] == domain_lo);
 
     let mut out_sk: [Field; T + 1] = [0; T + 1];
     let mut out_esm: [Field; T + 1] = [0; T + 1];
     let mut out_ct: [Field; T + 1] = [0; T + 1];
     let mut out_d: [Field; T + 1] = [0; T + 1];
 
+    // The predecessor's rows carry forward, whether it is the kernel (which holds the chain's first
+    // leaf, so `is_first_step` only selects its key) or an earlier fold. The new leaf must land in
+    // an empty slot.
     for i in 0..(T + 1) {
         let idx = i as u32;
-        if is_first_step {
-            if idx == slot_index {
-                out_sk[i] = sk_new;
-                out_esm[i] = esm_new;
-                out_ct[i] = ct_new;
-                out_d[i] = d_new;
-            } else {
-                out_sk[i] = 0;
-                out_esm[i] = 0;
-                out_ct[i] = 0;
-                out_d[i] = 0;
-            }
-        } else {
-            let prior_sk = acc_public_inputs[C6_FOLD_PREFIX_LEN + i];
-            let prior_esm = acc_public_inputs[C6_FOLD_PREFIX_LEN + (T + 1) + i];
-            let prior_ct = acc_public_inputs[C6_FOLD_PREFIX_LEN + (2 * (T + 1)) + i];
-            let prior_d = acc_public_inputs[C6_FOLD_PREFIX_LEN + (3 * (T + 1)) + i];
+        let prior_sk = acc_public_inputs[C6_FOLD_PREFIX_LEN + i];
+        let prior_esm = acc_public_inputs[C6_FOLD_PREFIX_LEN + (T + 1) + i];
+        let prior_ct = acc_public_inputs[C6_FOLD_PREFIX_LEN + (2 * (T + 1)) + i];
+        let prior_d = acc_public_inputs[C6_FOLD_PREFIX_LEN + (3 * (T + 1)) + i];
 
-            if idx == slot_index {
-                assert(prior_sk == 0);
-                assert(prior_esm == 0);
-                assert(prior_ct == 0);
-                assert(prior_d == 0);
-                out_sk[i] = sk_new;
-                out_esm[i] = esm_new;
-                out_ct[i] = ct_new;
-                out_d[i] = d_new;
-            } else {
-                out_sk[i] = prior_sk;
-                out_esm[i] = prior_esm;
-                out_ct[i] = prior_ct;
-                out_d[i] = prior_d;
-            }
+        if idx == slot_index {
+            assert(prior_sk == 0);
+            assert(prior_esm == 0);
+            assert(prior_ct == 0);
+            assert(prior_d == 0);
+            out_sk[i] = sk_new;
+            out_esm[i] = esm_new;
+            out_ct[i] = ct_new;
+            out_d[i] = d_new;
+        } else {
+            out_sk[i] = prior_sk;
+            out_esm[i] = prior_esm;
+            out_ct[i] = prior_ct;
+            out_d[i] = prior_d;
         }
     }
 

@@ -166,9 +166,10 @@ impl<let N: u32, let L: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, l
     /// `m = max(sk_bound, r_bound)`:
     ///   `|d0|, |d2| <= qb` (checked below), `|d1|, |a| <= qb` (the opened rows are the public,
     ///   centered rows), `|d1 * sk mod X^N + 1|, |a * r mod X^N + 1| <= N * qb * m`,
-    ///   `|e0|, |e2| <= e_bound`, `|delta * r|, |delta * sk| <= m`, `|q_l * rd| <= q_l * rd_bound`.
-    /// `rd_bound = ((N * m + 2) * qb + e_bound + m) / q_l` covers the honest quotient with one
-    /// `qb` of margin. For every supported preset the sum of these magnitudes is below `2^100`,
+    ///   `|e0|, |e2| <= e_bound`, `|delta * r|, |delta * sk| <= m`, `|q_l * rd| <= q_l * 2^BIT_RD`.
+    /// The window `2^BIT_RD` covers `rd_bound = ((N * m + 2) * qb + e_bound + m) / q_l`, the honest
+    /// quotient with one `qb` of margin. For every supported preset the sum of these magnitudes is
+    /// below `2^100`,
     /// far below the BN254 prime, so a coefficient of the reduced difference is zero in the field
     /// only when it is zero over the integers.
     ///
@@ -176,13 +177,19 @@ impl<let N: u32, let L: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, l
     /// `e2`, `rd0`, `rd2`, `d0` and `d2` below is injective.
     fn perform_range_checks(self) {
         let c = self.configs;
-        self.sk.range_check_2bounds::<BIT_SK>(c.sk_bound, c.sk_bound);
-        self.r.range_check_2bounds::<BIT_R>(c.r_bound, c.r_bound);
+        // `sk` and `r` are ternary: `c^3 = c` has exactly the roots {-1, 0, 1}.
+        assert(c.sk_bound == 1, "the ternary check needs sk_bound == 1");
+        assert(c.r_bound == 1, "the ternary check needs r_bound == 1");
+        self.sk.assert_ternary();
+        self.r.assert_ternary();
         self.e0.range_check_2bounds::<BIT_E0>(c.e0_bound, c.e0_bound);
         self.e2.range_check_2bounds::<BIT_E2>(c.e2_bound, c.e2_bound);
         for l in 0..L {
-            self.rd0[l].range_check_2bounds::<BIT_RD0>(c.rd0_bounds[l], c.rd0_bounds[l]);
-            self.rd2[l].range_check_2bounds::<BIT_RD2>(c.rd2_bounds[l], c.rd2_bounds[l]);
+            // Every other term of both identities is exactly bounded, so the integer identities fix
+            // `rd0` and `rd2`; their bounds only have to rule out wraparound. The windows cover
+            // `rd*_bounds` with one assert per coefficient and keep the plain packing injective.
+            self.rd0[l].range_check_signed_power_of_two::<BIT_RD0>();
+            self.rd2[l].range_check_signed_power_of_two::<BIT_RD2>();
             // `rd0`/`rd2` absorb any multiple of `q_l`, so `d0`/`d2` must be pinned to the centered
             // residue for the key limb to have one opening.
             let d_bound = (c.qis[l] - 1) / 2;

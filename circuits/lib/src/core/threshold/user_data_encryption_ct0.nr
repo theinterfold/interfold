@@ -15,7 +15,7 @@ use crate::math::commitments::compute_user_data_encryption_ct0_challenge;
 use crate::math::commitments::DS_CIPHERTEXT;
 use crate::math::commitments::DS_PK_AGGREGATION;
 use crate::math::commitments::DS_USER_DATA_ENCRYPTION_COMMITMENT;
-use crate::math::helpers::flatten;
+use crate::math::helpers::flatten_exact_width;
 use crate::math::polynomial::{negacyclic_kernel, Polynomial};
 
 /// Parameters for user-data encryption ct0 (P3).
@@ -30,8 +30,6 @@ pub struct Configs<let N: u32, let L: u32> {
     pub r_bounds: [Field; L],
     pub k1_low_bound: Field,
     pub k1_up_bound: Field,
-    /// Per-limb bound on the honest `e0_quotients[i]` magnitude - see `check_range_bounds`.
-    pub e0_quotient_bounds: [Field; L],
 }
 
 impl<let N: u32, let L: u32> Configs<N, L> {
@@ -43,20 +41,8 @@ impl<let N: u32, let L: u32> Configs<N, L> {
         r_bounds: [Field; L],
         k1_low_bound: Field,
         k1_up_bound: Field,
-        e0_quotient_bounds: [Field; L],
     ) -> Self {
-        Configs {
-            qis,
-            k0is,
-            e0_bound,
-            u_bound,
-            r1_low_bounds,
-            r1_up_bounds,
-            r2_bounds,
-            k1_low_bound,
-            k1_up_bound,
-            e0_quotient_bounds,
-        }
+        Configs { qis, k0is, e0_bound, u_bound, r_bounds, k1_low_bound, k1_up_bound }
     }
 }
 
@@ -68,7 +54,7 @@ impl<let N: u32, let L: u32> Configs<N, L> {
 /// **Consumes:** Threshold PK from C5 (`pk0is` witness path).
 ///
 /// **Produces:** `(pk0_commitment, ct0_commitment, k1_commitment, u_commitment)` public outputs.
-pub struct UserDataEncryptionCt0<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_K: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_E0_QUOTIENT: u32> {
+pub struct UserDataEncryptionCt0<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_K: u32, let BIT_R: u32> {
     configs: Configs<N, L>,
     /// Aggregated threshold `pk0` limb (from C5).
     pk0is: [Polynomial<N>; L],
@@ -82,7 +68,7 @@ pub struct UserDataEncryptionCt0<let N: u32, let L: u32, let BIT_PK: u32, let BI
     r: [Polynomial<N>; L],
 }
 
-impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_K: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_E0_QUOTIENT: u32> UserDataEncryptionCt0<N, L, BIT_PK, BIT_CT, BIT_U, BIT_E0, BIT_K, BIT_R1, BIT_R2, BIT_E0_QUOTIENT> {
+impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_K: u32, let BIT_R: u32> UserDataEncryptionCt0<N, L, BIT_PK, BIT_CT, BIT_U, BIT_E0, BIT_K, BIT_R> {
 
     pub fn new(
         configs: Configs<N, L>,
@@ -155,10 +141,20 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     ) -> [Field] {
         let mut payload = [pk0_commitment, ct0_commitment, k1_commitment, u_commitment].as_vector();
 
-        payload = flatten::<_, _, BIT_E0>(payload, [self.e0]);
-        // `r` replaces `e0is`, `r1is` and `r2is` in the transcript, and it is bounded, so the plain
-        // packing stays injective.
-        payload = flatten::<_, _, BIT_R>(payload, self.r);
+        // `check_range_bounds` holds `e0 + e0_bound` in `[0, 2 * e0_bound]`, which fits
+        // `BIT_E0 + 1` bits, so packing it at exactly that width is injective.
+        let e0_bound = self.configs.e0_bound;
+        payload = flatten_exact_width::<N, BIT_E0 + 1, _>(payload, |j| {
+            self.e0.coefficients[j] + e0_bound
+        });
+        // `r` replaces `e0is`, `r1is` and `r2is` in the transcript. `check_range_bounds` holds
+        // `r + 2^BIT_R` in `[0, 2^(BIT_R + 1))`, so packing it at exactly that width is injective.
+        let shift = 2.pow_32(BIT_R as Field);
+        for i in 0..L {
+            payload = flatten_exact_width::<N, BIT_R + 1, _>(payload, |j| {
+                self.r[i].coefficients[j] + shift
+            });
+        }
 
         compute_user_data_encryption_ct0_challenge::<L>(payload)
     }
@@ -210,106 +206,24 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     }
 }
 
-// Regression/demonstration tests for the e0_quotients soundness gap: `check_e0_crt_consistency`
-// checks `e0[j] == e0is[i][j] + e0_quotients[i][j] * qis[i]` as an equation in the SNARK's
-// native field F_p, not over Z. Left unconstrained, `e0_quotients` lets a prover pick ANY
-// e0is[i][j] and back-solve `e0_quotients[i][j] = (e0[j] - e0is[i][j]) / qis[i]` (Field division
-// = multiplication by the modular inverse), satisfying the assertion trivially regardless of how
-// implausible the resulting quotient is as an honest CRT decomposition (honest quotients for
-// this preset sit in roughly [-25, 25]; the one constructed below is ~2^40, nowhere close).
-// Since Round B evaluates `e0is` directly (`e0is_at_gamma`, never bounded or committed) into
-// `verify_evaluations`'s RHS, this lets a prover choose an arbitrary `ct0is`, solve
-// `e0is := ct0is - (pk0is*u + k1*k0is + r1i*qi + r2i*cyclo)` at the coefficient level, and pass
-// the whole ct0 circuit with `u`/`e0`/`k1`/`r1is`/`r2is` all honest and in range.
-//
-// The fix range-checks `e0_quotients` in `check_range_bounds` (not in
-// `check_e0_crt_consistency`, which is - and always will be - satisfiable for any e0is by
-// itself; the two checks only close the gap together, matching `execute()`'s call order).
-
-/// Documents that `check_e0_crt_consistency` alone remains, by construction, always
-/// satisfiable for a forged e0is - this is inherent to checking the equation in F_p, not a bug
-/// to fix in that method. It's `check_range_bounds` (tested below) that has to reject the
-/// forgery.
+/// An honest witness satisfies the reduced ct0 identity, with a nonzero `r`.
+///
+/// Worked by hand at `N = 4`, `q = 97`, `k0 = 5`: `pk0 * u mod X^4 + 1` is `[-50, -30, -10, -50]`,
+/// and adding `e0 = [0, 0, 0, 1]` and `k0 * k1 = 5 * [0, 0, 1, 0]` gives `[-50, -30, -5, -49]`. Two
+/// coefficients fall below `-(q-1)/2`, so the centered ciphertext is `[47, -30, -5, 48]` and the
+/// reduction quotient is `r = [1, 0, 0, 1]`.
 #[test]
-fn test_e0_crt_consistency_alone_accepts_arbitrary_e0is() {
-    let honest_e0_coeff: Field = 5;
-    let qis0: Field = 1125899917262849; // real secure_16384 QIS[0], for realism
-    let forged_e0is_coeff: Field = 999999999999; // arbitrary, no honest relation to e0=5
-    let forged_quotient: Field = (honest_e0_coeff - forged_e0is_coeff) / qis0;
-    assert(forged_quotient != 0); // nowhere near the honest [-25, 25] range
+fn honest_reduced_identity_holds() {
+    let pk0 = Polynomial::new([30, 40, -20, 10]);
+    let u = Polynomial::new([0, 1, 0, -1]);
+    let e0 = Polynomial::new([0, 0, 0, 1]);
+    let k1 = Polynomial::new([0, 0, 1, 0]);
+    let ct0 = Polynomial::new([47, -30, -5, 48]);
+    let r = Polynomial::new([1, 0, 0, 1]);
 
-    let configs = test_configs(qis0, 100, 32);
-    let circuit = test_circuit(configs, honest_e0_coeff, forged_e0is_coeff, forged_quotient);
-
-    // The real, unmodified production check - not a reimplementation. It does not panic on a
-    // forged e0is with a back-solved, wildly out-of-range quotient.
-    circuit.check_e0_crt_consistency();
-}
-
-/// Confirms the fix: the same forged witness, but now going through `check_range_bounds` too
-/// (as `execute()` does) - the out-of-range `e0_quotients` gets rejected.
-#[test(should_fail)]
-fn test_check_range_bounds_rejects_out_of_range_e0_quotient() {
-    let honest_e0_coeff: Field = 5;
-    let qis0: Field = 1125899917262849;
-    let forged_e0is_coeff: Field = 999999999999;
-    let forged_quotient: Field = (honest_e0_coeff - forged_e0is_coeff) / qis0;
-
-    let configs = test_configs(qis0, 100, 32);
-    let circuit = test_circuit(configs, honest_e0_coeff, forged_e0is_coeff, forged_quotient);
-
-    circuit.check_range_bounds();
-}
-
-/// Sanity check: an honest quotient (within the configured bound) must still pass
-/// `check_range_bounds`, so the fix doesn't reject legitimate witnesses.
-#[test]
-fn test_check_range_bounds_accepts_honest_e0_quotient() {
-    let honest_e0_coeff: Field = 5;
-    let qis0: Field = 1125899917262849;
-    let honest_e0is_coeff: Field = 5; // same as e0, so the honest quotient is exactly 0
-    let honest_quotient: Field = 0;
-
-    let configs = test_configs(qis0, 100, 32);
-    let circuit = test_circuit(configs, honest_e0_coeff, honest_e0is_coeff, honest_quotient);
-
-    circuit.check_range_bounds();
-}
-
-// e0_bound=100 and BIT_E0=8 (9-bit capacity) comfortably cover the small honest_e0_coeff used
-// above; e0_quotient_bound and BIT_E0_QUOTIENT=6 (7-bit capacity, range_size=2*bound) mirror the
-// real fix's ~32 margin over the ~25.5 honest maximum at the real secure_16384 preset.
-fn test_configs(qis0: Field, e0_bound: Field, e0_quotient_bound: Field) -> Configs<2, 1> {
-    Configs::new(
-        [qis0],
-        [0],
-        e0_bound,
-        0,
-        [0],
-        [0],
-        [0],
-        0,
-        0,
-        [e0_quotient_bound],
-    )
-}
-
-fn test_circuit(
-    configs: Configs<2, 1>,
-    e0_coeff: Field,
-    e0is_coeff: Field,
-    quotient: Field,
-) -> UserDataEncryptionCt0<2, 1, 1, 1, 1, 8, 1, 1, 1, 6> {
-    UserDataEncryptionCt0::new(
-        configs,
-        [Polynomial::new([0, 0])],
-        [Polynomial::new([0, 0])],
-        Polynomial::new([0, 0]),
-        Polynomial::new([e0_coeff, 0]),
-        [Polynomial::new([e0is_coeff, 0])],
-        [Polynomial::new([quotient, 0])],
-        Polynomial::new([0, 0]),
-        [Polynomial::new([0, 0, 0])],
-        [Polynomial::new([0])],
-    )
+    // qis, k0is, e0_bound, u_bound, r_bounds, k1_low_bound, k1_up_bound
+    let configs: Configs<4, 1> = Configs::new([97], [5], 1, 1, [3], 1, 1);
+    let c: UserDataEncryptionCt0<4, 1, 6, 6, 1, 1, 1, 3> =
+        UserDataEncryptionCt0::new(configs, [pk0], [ct0], u, e0, k1, [r]);
+    let _ = c.execute();
 }

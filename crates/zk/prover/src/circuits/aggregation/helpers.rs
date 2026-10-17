@@ -137,6 +137,9 @@ pub fn parse_acc_public_field_strings_flat(
 
 /// Sequential fold driver: applies `step(inner, prior_acc, slot_index)` per inner proof,
 /// threading each step's output as the next step's accumulator.
+///
+/// The first step returns the chain's kernel proof, so a fold proof needs at least two inner
+/// proofs; with one, the chain would end on the kernel.
 pub fn sequential_fold<F>(
     label: &str,
     inner_proofs: &[Proof],
@@ -146,9 +149,10 @@ pub fn sequential_fold<F>(
 where
     F: FnMut(&Proof, Option<&Proof>, u32) -> Result<Proof, ZkError>,
 {
-    if inner_proofs.is_empty() {
+    if inner_proofs.len() < 2 {
         return Err(ZkError::InvalidInput(format!(
-            "{label}: need at least one inner proof"
+            "{label}: need at least two inner proofs, got {}",
+            inner_proofs.len()
         )));
     }
     if inner_proofs.len() != slot_indices.len() {

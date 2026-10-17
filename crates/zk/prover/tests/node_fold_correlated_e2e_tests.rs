@@ -198,35 +198,14 @@ fn assert_final_dkg_tree_binding(
         .unwrap();
     step["acc_proof"] = json!(fold_witness_field_strings(&genesis.data).unwrap());
     step["acc_public_inputs"] = json!(fields(&genesis));
-    let first_witness = witness(&fold_path, &step).unwrap();
-    let first = prover
-        .generate_recursive_aggregation_bin_proof(
-            CircuitName::NodesFold,
-            &first_witness,
-            "dkg-tree-first",
-            artifacts_dir,
-        )
-        .unwrap();
+    // A `nodes_fold`-shaped predecessor under a substituted key.
     let fake_prior = substitute_proof(
         prover,
         CircuitName::NodesFold,
         CircuitVariant::Default,
-        &fields(&first),
+        &fields(&genesis),
         None,
         "dkg-tree-prior",
-    );
-    let mut changed_genesis = step.clone();
-    changed_genesis["acc_vk"] = json!(fake_prior.vk);
-    changed_genesis["acc_proof"] =
-        json!(fold_witness_field_strings(&fake_prior.proof.data).unwrap());
-    changed_genesis["acc_public_inputs"] = json!(fields(&fake_prior.proof));
-    recursive_vk_substitution::assert_fold_rejected(
-        prover,
-        CircuitName::NodesFold,
-        &fold_path,
-        &changed_genesis,
-        artifacts_dir,
-        "nodes-substituted-genesis",
     );
 
     let addresses: Vec<_> = (1..=3)
@@ -245,12 +224,9 @@ fn assert_final_dkg_tree_binding(
             "dkg-tree-node1",
         );
         assert_eq!(second_node.key_hash, first_node.key_hash);
+        // With two slots the first fold step, on top of the kernel proof, is the final one.
         step["inner_proof"] = json!(fold_witness_field_strings(&second_node.proof.data).unwrap());
         step["node_fold_public_inputs"] = json!(fields(&second_node.proof));
-        step["acc_vk"] = json!(fold_vk.verification_key);
-        step["acc_proof"] = json!(fold_witness_field_strings(&first.data).unwrap());
-        step["acc_public_inputs"] = json!(fields(&first));
-        step["is_first_step"] = json!(false);
         step["slot_index"] = json!(1);
         let second_witness = witness(&fold_path, &step).unwrap();
         let folded = prover
@@ -265,25 +241,31 @@ fn assert_final_dkg_tree_binding(
             .verify_fold_proof(&folded, "dkg-tree-second", 0, artifacts_dir)
             .unwrap());
         if !mixed_tree {
-            let mut changed_prior = step.clone();
-            changed_prior["acc_vk"] = json!(fake_prior.vk);
-            changed_prior["acc_proof"] =
+            let mut changed_genesis = step.clone();
+            changed_genesis["acc_vk"] = json!(fake_prior.vk);
+            changed_genesis["acc_proof"] =
                 json!(fold_witness_field_strings(&fake_prior.proof.data).unwrap());
-            changed_prior["acc_public_inputs"] = json!(fields(&fake_prior.proof));
+            changed_genesis["acc_public_inputs"] = json!(fields(&fake_prior.proof));
             recursive_vk_substitution::assert_fold_rejected(
                 prover,
                 CircuitName::NodesFold,
                 &fold_path,
-                &changed_prior,
+                &changed_genesis,
                 artifacts_dir,
-                "nodes-substituted-predecessor",
+                "nodes-substituted-genesis",
+            );
+            let mut reused_slot = step.clone();
+            reused_slot["slot_index"] = json!(0);
+            assert!(
+                witness(&fold_path, &reused_slot).is_err(),
+                "the first nodes_fold step must not refill the kernel's slot"
             );
             for key in ["inner_key_hash", "fold_key_hash", "kernel_key_hash"] {
                 let mut changed_key = step.clone();
                 changed_key[key] = json!(fake_prior.key_hash);
                 assert!(
                     witness(&fold_path, &changed_key).is_err(),
-                    "nodes continuation must retain {key}"
+                    "a nodes_fold step must retain {key}"
                 );
             }
         }

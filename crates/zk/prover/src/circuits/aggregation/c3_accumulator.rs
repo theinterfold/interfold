@@ -4,9 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Sequential C3 fold: each step verifies one inner `ShareEncryption` proof and the accumulator
-//! (`c3_fold` non-ZK proof). The first step proves [`CircuitName::C3FoldKernel`] at runtime to obtain
-//! a valid genesis `UltraHonkProof` (see `circuits/bin/recursive_aggregation/c3_fold_kernel`).
+//! Sequential C3 fold. The first inner `ShareEncryption` proof goes into
+//! [`CircuitName::C3FoldKernel`], whose proof carries that leaf's row and starts the chain (see
+//! `circuits/bin/recursive_aggregation/c3_fold_kernel`). Each later step verifies one more inner
+//! proof and the accumulator: the kernel proof on the first step, a `c3_fold` proof after that.
 //!
 //! Ciphernodes integrate via [`generate_sequential_c3_fold`] only: they supply the full list of C3
 //! inner proofs and slot indices; per-step folding is not exposed outside this crate.
@@ -25,11 +26,11 @@ use serde::Serialize;
 
 /// `total_slots` = N_PARTIES * L_THRESHOLD (one slot per party-modulus pair).
 fn c3_fold_public_input_field_count(total_slots: usize) -> usize {
-    6 + 3 * total_slots
+    5 + 3 * total_slots
 }
 
-/// Public-signal layout of `c3_fold`: 6-field prefix, then 3-field-wide per-slot tail.
-const C3_FOLD_PREFIX_LEN: usize = 6;
+/// Public-signal layout of `c3_fold`: five prefix fields, then three columns of slots.
+const C3_FOLD_PREFIX_LEN: usize = 5;
 const C3_FOLD_SLOT_WIDTH: usize = 3;
 
 struct C3FoldVks {
@@ -57,13 +58,15 @@ impl C3FoldVks {
     }
 }
 
-/// Proves [`CircuitName::C3FoldKernel`] for the same `inner` / `total_slots` as the fold step.
+/// Proves [`CircuitName::C3FoldKernel`] over the chain's first leaf, at that leaf's slot. The proof
+/// carries the leaf's row and is the accumulator the first fold step verifies.
 ///
 /// Uses work dir `job_id` (caller should use a suffix of the fold `e3_id` so jobs stay distinct).
 /// Removes that work dir after the proof is returned.
 fn generate_c3_fold_kernel_genesis_proof(
     prover: &ZkProver,
     inner: &Proof,
+    slot_index: u32,
     total_slots: usize,
     artifacts_dir: &str,
     job_id: &str,
@@ -93,9 +96,10 @@ fn generate_c3_fold_kernel_genesis_proof(
         acc_proof: acc_pf,
         acc_public_inputs: acc_pi,
         inner_key_hash: inner_vk.key_hash,
-        acc_key_hash: kernel_vk.key_hash.clone(),
+        fold_key_hash: fold_vk.key_hash,
+        kernel_key_hash: kernel_vk.key_hash,
         is_first_step: true,
-        slot_index: 0,
+        slot_index,
     };
 
     let circuit_path = prover
@@ -116,6 +120,7 @@ fn generate_c3_fold_kernel_genesis_proof(
         job_id,
         artifacts_dir,
     )?;
+    let _ = prover.cleanup(job_id);
     Ok(proof)
 }
 
@@ -148,17 +153,6 @@ struct C3FoldStepInput {
     kernel_key_hash: String,
     is_first_step: bool,
     slot_index: u32,
-    expected_kernel_key_hash: String,
-    expected_fold_key_hash: String,
-}
-
-fn parse_c3_fold_public_field_strings(proof: &Proof) -> Result<Vec<String>, ZkError> {
-    parse_acc_public_field_strings(
-        proof,
-        CircuitName::C3Fold,
-        C3_FOLD_PREFIX_LEN,
-        C3_FOLD_SLOT_WIDTH,
-    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -172,63 +166,54 @@ fn generate_c3_fold_step_with_vks(
     artifacts_dir: &str,
     vks: &C3FoldVks,
 ) -> Result<Proof, ZkError> {
-    let is_first_step = prior_fold.is_none();
+    // The first leaf goes into the kernel on its own. The kernel proof already carries that leaf's
+    // row, so it is the accumulator the next step verifies; folding the same leaf again on top of
+    // it would only repeat that verification.
+    let Some(prior) = prior_fold else {
+        let kernel_job_id = format!("{e3_id}-c3fold-kernel");
+        return generate_c3_fold_kernel_genesis_proof(
+            prover,
+            inner,
+            slot_index,
+            total_slots,
+            artifacts_dir,
+            &kernel_job_id,
+        );
+    };
+    // A kernel predecessor marks the first fold step, which the circuit verifies with the kernel key.
+    let is_first_step = prior.circuit == CircuitName::C3FoldKernel;
 
     let c3_public_inputs = share_encryption_inner_public_inputs(inner)?;
     let expected_acc_pub = c3_fold_public_input_field_count(total_slots);
 
-    let (acc_vk_fields, acc_proof, acc_public_inputs) = if is_first_step {
-        let kernel_job_id = format!("{e3_id}-c3fold-kernel");
-        let kernel_proof = generate_c3_fold_kernel_genesis_proof(
-            prover,
-            inner,
-            total_slots,
-            artifacts_dir,
-            &kernel_job_id,
-        )?;
-        let acc_pi = bytes_to_field_strings(kernel_proof.public_signals.as_ref())?;
-        if acc_pi.len() != expected_acc_pub {
-            return Err(ZkError::InvalidInput(format!(
-                "c3_fold kernel proof public_inputs field count {} != expected {} (total_slots={})",
-                acc_pi.len(),
-                expected_acc_pub,
-                total_slots
-            )));
-        }
-        (
-            vks.kernel_vk.verification_key.clone(),
-            bytes_to_field_strings(&kernel_proof.data)?,
-            acc_pi,
-        )
+    let acc_pi = parse_acc_public_field_strings(
+        prior,
+        if is_first_step {
+            CircuitName::C3FoldKernel
+        } else {
+            CircuitName::C3Fold
+        },
+        C3_FOLD_PREFIX_LEN,
+        C3_FOLD_SLOT_WIDTH,
+    )?;
+    let prior_slots = (acc_pi.len() - C3_FOLD_PREFIX_LEN) / C3_FOLD_SLOT_WIDTH;
+    if prior_slots != total_slots || acc_pi.len() != expected_acc_pub {
+        return Err(ZkError::InvalidInput(format!(
+            "prior {} has {} public fields ({} slots); expected {} for total_slots={}",
+            prior.circuit,
+            acc_pi.len(),
+            prior_slots,
+            expected_acc_pub,
+            total_slots
+        )));
+    }
+    let acc_vk_fields = if is_first_step {
+        vks.kernel_vk.verification_key.clone()
     } else {
-        let p = prior_fold.expect("prior_fold required when is_first_step is false");
-        let acc_pi = parse_c3_fold_public_field_strings(p)?;
-        let prior_slots = (acc_pi.len() - C3_FOLD_PREFIX_LEN) / C3_FOLD_SLOT_WIDTH;
-        if prior_slots == 0 {
-            return Err(ZkError::InvalidInput(
-                "c3_fold proof implies zero slots".into(),
-            ));
-        }
-        if prior_slots != total_slots {
-            return Err(ZkError::InvalidInput(format!(
-                "prior c3_fold slot count {} != expected {}",
-                prior_slots, total_slots
-            )));
-        }
-        if acc_pi.len() != expected_acc_pub {
-            return Err(ZkError::InvalidInput(format!(
-                "prior c3_fold public field count {} != expected {} for total_slots={}",
-                acc_pi.len(),
-                expected_acc_pub,
-                total_slots
-            )));
-        }
-        (
-            vks.fold_vk.verification_key.clone(),
-            bytes_to_field_strings(&p.data)?,
-            acc_pi,
-        )
+        vks.fold_vk.verification_key.clone()
     };
+    let acc_proof = bytes_to_field_strings(&prior.data)?;
+    let acc_public_inputs = acc_pi;
 
     let full_input = C3FoldStepInput {
         inner_vk: vks.inner_vk.verification_key.clone(),
@@ -242,8 +227,6 @@ fn generate_c3_fold_step_with_vks(
         kernel_key_hash: vks.kernel_vk.key_hash.clone(),
         is_first_step,
         slot_index,
-        expected_kernel_key_hash: vks.kernel_vk.key_hash.clone(),
-        expected_fold_key_hash: vks.fold_vk.key_hash.clone(),
     };
 
     let circuit_path = prover

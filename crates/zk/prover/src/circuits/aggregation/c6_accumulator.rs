@@ -4,9 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Sequential C6 fold: each step verifies one inner `ThresholdShareDecryption` proof and the
-//! accumulator (`c6_fold` non-ZK proof). The first step proves [`CircuitName::C6FoldKernel`] at
-//! runtime to obtain a valid genesis `UltraHonkProof` (see `circuits/bin/recursive_aggregation/c6_fold_kernel`).
+//! Sequential C6 fold. The first inner `ThresholdShareDecryption` proof goes into
+//! [`CircuitName::C6FoldKernel`], whose proof carries that leaf's row and starts the chain (see
+//! `circuits/bin/recursive_aggregation/c6_fold_kernel`). Each later step verifies one more inner
+//! proof and the accumulator: the kernel proof on the first step, a `c6_fold` proof after that.
 
 use crate::circuits::aggregation::helpers::{
     extract_single_field, field_keys, parse_acc_public_field_strings, sequential_fold,
@@ -149,15 +150,6 @@ struct C6FoldStepInput {
     slot_index: u32,
 }
 
-fn parse_c6_fold_public_field_strings(proof: &Proof) -> Result<Vec<String>, ZkError> {
-    parse_acc_public_field_strings(
-        proof,
-        CircuitName::C6Fold,
-        C6_FOLD_PREFIX_LEN,
-        C6_FOLD_SLOT_WIDTH,
-    )
-}
-
 #[allow(clippy::too_many_arguments)]
 fn generate_c6_fold_step_with_vks(
     prover: &ZkProver,
@@ -169,64 +161,54 @@ fn generate_c6_fold_step_with_vks(
     artifacts_dir: &str,
     vks: &C6FoldVks,
 ) -> Result<Proof, ZkError> {
-    let is_first_step = prior_fold.is_none();
-
-    let c6_public_inputs = threshold_share_decryption_inner_public_inputs(inner)?;
-    let expected_acc_pub = c6_fold_public_input_field_count(total_slots);
-
-    let (acc_vk_fields, acc_proof, acc_public_inputs) = if is_first_step {
+    // The first leaf goes into the kernel on its own. The kernel proof already carries that leaf's
+    // row, so it is the accumulator the next step verifies; folding the same leaf again on top of
+    // it would only repeat that verification.
+    let Some(prior) = prior_fold else {
         let kernel_job_id = format!("{e3_id}-c6fold-kernel");
-        let kernel_proof = generate_c6_fold_kernel_genesis_proof(
+        return generate_c6_fold_kernel_genesis_proof(
             prover,
             inner,
             slot_index,
             total_slots,
             artifacts_dir,
             &kernel_job_id,
-        )?;
-        let acc_pi = bytes_to_field_strings(kernel_proof.public_signals.as_ref())?;
-        if acc_pi.len() != expected_acc_pub {
-            return Err(ZkError::InvalidInput(format!(
-                "c6_fold kernel proof public_inputs field count {} != expected {} (total_slots={})",
-                acc_pi.len(),
-                expected_acc_pub,
-                total_slots
-            )));
-        }
-        (
-            vks.kernel_vk.verification_key.clone(),
-            bytes_to_field_strings(&kernel_proof.data)?,
-            acc_pi,
-        )
-    } else {
-        let p = prior_fold.expect("prior_fold required when is_first_step is false");
-        let acc_pi = parse_c6_fold_public_field_strings(p)?;
-        let prior_slots = (acc_pi.len() - C6_FOLD_PREFIX_LEN) / C6_FOLD_SLOT_WIDTH;
-        if prior_slots == 0 {
-            return Err(ZkError::InvalidInput(
-                "c6_fold proof implies zero slots".into(),
-            ));
-        }
-        if prior_slots != total_slots {
-            return Err(ZkError::InvalidInput(format!(
-                "prior c6_fold slot count {} != expected {}",
-                prior_slots, total_slots
-            )));
-        }
-        if acc_pi.len() != expected_acc_pub {
-            return Err(ZkError::InvalidInput(format!(
-                "prior c6_fold public field count {} != expected {} for total_slots={}",
-                acc_pi.len(),
-                expected_acc_pub,
-                total_slots
-            )));
-        }
-        (
-            vks.fold_vk.verification_key.clone(),
-            bytes_to_field_strings(&p.data)?,
-            acc_pi,
-        )
+        );
     };
+    // A kernel predecessor marks the first fold step, which the circuit verifies with the kernel key.
+    let is_first_step = prior.circuit == CircuitName::C6FoldKernel;
+
+    let c6_public_inputs = threshold_share_decryption_inner_public_inputs(inner)?;
+    let expected_acc_pub = c6_fold_public_input_field_count(total_slots);
+
+    let acc_pi = parse_acc_public_field_strings(
+        prior,
+        if is_first_step {
+            CircuitName::C6FoldKernel
+        } else {
+            CircuitName::C6Fold
+        },
+        C6_FOLD_PREFIX_LEN,
+        C6_FOLD_SLOT_WIDTH,
+    )?;
+    let prior_slots = (acc_pi.len() - C6_FOLD_PREFIX_LEN) / C6_FOLD_SLOT_WIDTH;
+    if prior_slots != total_slots || acc_pi.len() != expected_acc_pub {
+        return Err(ZkError::InvalidInput(format!(
+            "prior {} has {} public fields ({} slots); expected {} for total_slots={}",
+            prior.circuit,
+            acc_pi.len(),
+            prior_slots,
+            expected_acc_pub,
+            total_slots
+        )));
+    }
+    let acc_vk_fields = if is_first_step {
+        vks.kernel_vk.verification_key.clone()
+    } else {
+        vks.fold_vk.verification_key.clone()
+    };
+    let acc_proof = bytes_to_field_strings(&prior.data)?;
+    let acc_public_inputs = acc_pi;
 
     let full_input = C6FoldStepInput {
         inner_vk: vks.inner_vk.verification_key.clone(),

@@ -8,9 +8,10 @@
 // public inputs add `party_idx`, `mod_idx`) with lbfv/chunking's VK-manifest binding. The trBFV
 // `c3_fold_kernel` uses main's VK-tree binding (#2090); moving this path to it is a follow-up.
 
-//! Same IO as [`c3_fold`](../c3_fold/src/main.nr) but **only** verifies the inner `ShareEncryption`
-//! proof. Used to mint a fixed genesis `UltraHonkProof` that bootstraps the real `c3_fold` circuit,
-//! which always runs `verify_honk_proof_non_zk` on the accumulator (see `c3_fold`).
+//! Same IO as [`c3_fold_chunked`](../c3_fold_chunked/src/main.nr) but **only** verifies the inner
+//! `ShareEncryption` proof. It proves the chain's first leaf on its own, bound to its slot: its proof
+//! carries that leaf's row and is the accumulator the first `c3_fold_chunked` step verifies (with
+//! `is_first_step`, under this circuit's key).
 
 use bb_proof_verification::{
     UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
@@ -42,7 +43,7 @@ fn main(
     assert(c3_public_inputs[2] == (slot_index / L_THRESHOLD) as Field);
     assert(c3_public_inputs[3] == (slot_index % L_THRESHOLD) as Field);
 
-    // Signature parity with `c3_fold`: kernel mints the genesis accumulator, so acc_* is unused.
+    // Signature parity with `c3_fold_chunked`: the kernel starts the chain, so acc_* is unused.
     let _ = (acc_vk, acc_proof, acc_key_hash, acc_public_inputs, expected_fold_key_hash);
 
     assert(is_first_step);

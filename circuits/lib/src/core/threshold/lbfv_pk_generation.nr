@@ -102,8 +102,9 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_R: u32, 
     /// field equality to imply the integer one. Per coefficient, with `qb = (q_l - 1) / 2`:
     /// `|pk0[l]| <= qb`, `|a[l]| <= qb` (the opened CRS row is the public, centered row),
     /// `|a[l] * sk mod X^N + 1| <= N * qb * sk_bound`, `|eek| <= eek_bound` and
-    /// `|q_l * r[l]| <= q_l * r_bounds[l]`. `r_bounds[l] = ((N * sk_bound + 2) * qb + eek_bound) / q_l`
-    /// covers the honest quotient with one `qb` of margin. For every supported preset the sum of
+    /// `|q_l * r[l]| <= q_l * 2^BIT_R`. The window `2^BIT_R` covers
+    /// `r_bounds[l] = ((N * sk_bound + 2) * qb + eek_bound) / q_l`, the honest quotient with one `qb`
+    /// of margin. For every supported preset the sum of
     /// these magnitudes is below `2^100`, far below the BN254 prime, so a coefficient of the reduced
     /// difference is zero in the field only when it is zero over the integers.
     ///
@@ -111,9 +112,14 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_R: u32, 
     /// `r` and `pk0` below is injective.
     fn perform_range_checks(self) {
         self.eek.range_check_2bounds::<BIT_EEK>(self.eek_bound, self.eek_bound);
-        self.sk.range_check_2bounds::<BIT_SK>(self.sk_bound, self.sk_bound);
+        // The secret key is ternary: `c^3 = c` has exactly the roots {-1, 0, 1}.
+        assert(self.sk_bound == 1, "the ternary check needs sk_bound == 1");
+        self.sk.assert_ternary();
         for l in 0..L {
-            self.r[l].range_check_2bounds::<BIT_R>(self.r_bounds[l], self.r_bounds[l]);
+            // Every other term of the identity is exactly bounded, so the integer identity fixes
+            // `r`; its bound only has to rule out wraparound. The window `[-2^BIT_R, 2^BIT_R)` covers
+            // `r_bounds` with one assert per coefficient, and keeps `r`'s plain packing injective.
+            self.r[l].range_check_signed_power_of_two::<BIT_R>();
             // `r` absorbs any multiple of `q_l`, so `pk0` must be pinned to its centered residue
             // for its commitment to have one opening.
             let pk_bound: Field = (self.qis[l] - 1) / 2;
