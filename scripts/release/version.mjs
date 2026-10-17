@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { ROOT_DIR, fail, readJson } from './core.mjs'
+import { validateDappnodeVersions } from './dappnode.mjs'
 
 const PACKAGE_FILES = [
   'package.json',
@@ -68,26 +69,7 @@ export function validateReleaseVersion(versionInput, rootDir = ROOT_DIR) {
     return version
   }
 
-  const dappnodePackage = readJson(rootDir, 'dappnode/dappnode_package.json')
-  const npmPackage = readJson(rootDir, 'dappnode/package.json')
-  const npmLock = readJson(rootDir, 'dappnode/package-lock.json')
-  const compose = readFileSync(join(rootDir, 'dappnode/docker-compose.yml'), 'utf8')
-  const dockerfile = readFileSync(join(rootDir, 'dappnode/Dockerfile'), 'utf8')
-
-  requireEqual(dappnodePackage.upstreamVersion, version, 'DAppNode upstreamVersion')
-  requireEqual(npmPackage.version, dappnodePackage.version, 'dappnode/package.json')
-  requireEqual(npmLock.version, dappnodePackage.version, 'dappnode/package-lock.json')
-  requireEqual(npmLock.packages[''].version, dappnodePackage.version, 'DAppNode lock root package')
-
-  if (!compose.includes(`UPSTREAM_VERSION: ${version}`)) {
-    fail(`dappnode/docker-compose.yml does not select upstream version ${version}`)
-  }
-  if (!compose.includes(`ciphernode.interfold-ciphernode.public.dappnode.eth:${dappnodePackage.version}`)) {
-    fail(`dappnode/docker-compose.yml does not select wrapper version ${dappnodePackage.version}`)
-  }
-  if (!dockerfile.includes(`ARG UPSTREAM_VERSION=${version}`)) {
-    fail(`dappnode/Dockerfile does not select upstream version ${version}`)
-  }
+  validateDappnodeVersions(rootDir, version)
 
   return version
 }

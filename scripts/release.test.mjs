@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, test } from 'node:test'
@@ -14,9 +14,11 @@ import {
   prepareReleaseAssets,
   promoteStableTag,
   publishNpmPackage,
+  validateReleaseVersion,
   verifyPublications,
   verifyReleaseCandidate,
 } from './release.mjs'
+import { bumpDappnodeVersions, validateDappnodeVersions } from './release/dappnode.mjs'
 
 const temporaryDirectories = []
 
@@ -281,6 +283,28 @@ test('stable release notes list the pre-release changes and the upgrade note', (
 test('release versions use semantic version syntax', () => {
   assert.equal(normalizeVersion('v1.2.3-beta.1'), '1.2.3-beta.1')
   assert.throws(() => normalizeVersion('release-1.2.3'), /not a semantic version/)
+})
+
+test('stable release validates and updates both DAppNode network variants', () => {
+  const version = JSON.parse(readFileSync(join(ROOT_DIR, 'package.json'), 'utf8')).version
+  assert.equal(validateReleaseVersion(version), version)
+
+  const rootDir = temporaryDirectory('interfold-dappnode-versions')
+  mkdirSync(join(rootDir, 'dappnode'))
+  for (const file of ['dappnode_package.json', 'package.json', 'package-lock.json', 'docker-compose.yml', 'Dockerfile', 'package_variants']) {
+    cpSync(join(ROOT_DIR, 'dappnode', file), join(rootDir, 'dappnode', file), { recursive: true })
+  }
+  bumpDappnodeVersions(rootDir, '0.20.0', '0.11.0')
+  assert.doesNotThrow(() => validateDappnodeVersions(rootDir, '0.20.0'))
+  assert.equal(JSON.parse(readFileSync(join(rootDir, 'dappnode/dappnode_package.json'), 'utf8')).version, '0.11.0')
+  for (const network of ['mainnet', 'sepolia']) {
+    const compose = readFileSync(join(rootDir, `dappnode/package_variants/${network}/docker-compose.yml`), 'utf8')
+    assert.ok(compose.includes(`image: 'interfold-ciphernode-${network}.dnp.dappnode.eth:0.11.0'`))
+  }
+
+  const sepoliaCompose = join(rootDir, 'dappnode/package_variants/sepolia/docker-compose.yml')
+  writeFileSync(sepoliaCompose, readFileSync(sepoliaCompose, 'utf8').replace(':0.11.0', ':0.10.0'))
+  assert.throws(() => validateDappnodeVersions(rootDir, '0.20.0'), /sepolia.*0\.11\.0/)
 })
 
 test('release workflow keeps all promotion safeguards', () => {

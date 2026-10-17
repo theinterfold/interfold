@@ -1,0 +1,8 @@
+{
+  "name": "interfold-ciphernode-mainnet.dnp.dappnode.eth",
+  "shortDescription": "Run an Interfold ciphernode on Mainnet",
+  "links": {
+    "Operator Dashboard": "https://dashboard.theinterfold.com/#operator",
+    "Node dashboard": "http://interfold-ciphernode-mainnet.dappnode:8081"
+  }
+}

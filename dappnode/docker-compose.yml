@@ -2,10 +2,11 @@ version: '3.5'
 services:
   ciphernode:
     build:
-      context: .
+      context: '${DAPPNODE_BUILD_CONTEXT:-..}'
+      dockerfile: dappnode/Dockerfile
       args:
         UPSTREAM_VERSION: 0.19.0
-    image: 'ciphernode.interfold-ciphernode.public.dappnode.eth:0.10.0'
+        DAPPNODE_NETWORK: mainnet
     restart: unless-stopped
     # Allow the node's 60-second durability barrier to finish before Docker sends SIGKILL.
     stop_grace_period: 65s
@@ -15,27 +16,14 @@ services:
       - 37173:37173/udp
     environment:
       # Required
-      RPC_URL: ''
+      RPC_URL: 'ws://execution.mainnet.dncore.dappnode:8546'
       AVAIL_RPC_URL: ''
       # Network & node config
-      NETWORK: 'mainnet'
-      CHAIN_ID: '1'
-      NODE_ADDRESS: ''
       QUIC_PORT: '37173'
       PEERS: ''
       LOG_LEVEL: 'info'
       EXTRA_OPTS: ''
-      # Contracts (variants override these)
-      INTERFOLD_CONTRACT: '0x28cF63B459e6218C69EA97ea7D90541cf648c715'
-      CIPHERNODE_REGISTRY_CONTRACT: '0xC927A5B2d8F68697bC28C0670df05178c93df2d7'
-      BONDING_REGISTRY_CONTRACT: '0x0ec90465095C21830BEcED07e032809A2Bd2915F'
-      SLASHING_MANAGER_CONTRACT: '0x753109Ee36Dc65cC178875AddA30C6433e5bEEe4'
-      FEE_TOKEN_CONTRACT: '0xdC035D45d973E3EC169d2276DDab16f1e407384F'
-      INTERFOLD_DEPLOY_BLOCK: '25786382'
-      CIPHERNODE_REGISTRY_DEPLOY_BLOCK: '25786378'
-      BONDING_REGISTRY_DEPLOY_BLOCK: '25473398'
-      SLASHING_MANAGER_DEPLOY_BLOCK: '25998899'
-      FEE_TOKEN_DEPLOY_BLOCK: '20663730'
+      DASHBOARD_ENABLED: 'true'
     security_opt:
       - no-new-privileges:true
     healthcheck:

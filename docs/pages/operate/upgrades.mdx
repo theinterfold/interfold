@@ -378,8 +378,9 @@ Run the reset command:
 interfold node reset-data --name <node> --yes
 ```
 
-For DAppNode, stop the package and back up its complete `/data` volume first. Use the new DAppNode
-image, not the CLI image. Confirm its binary version:
+For DAppNode, stop the package and create a package backup first. The backup includes the
+configuration, encryption password, and durable node state. Use the new DAppNode image for the same
+network. Confirm its binary version:
 
 ```bash
 docker run --rm --entrypoint interfold <new-dappnode-image> --version

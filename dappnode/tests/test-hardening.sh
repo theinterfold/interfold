@@ -3,14 +3,103 @@ set -Eeuo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TEST_ROOT=$(mktemp -d)
-trap 'rm -rf "$TEST_ROOT"' EXIT
-DAPPNODE_VERSION=$(node -p "require('$ROOT_DIR/dappnode_package.json').version")
+RPC_SERVER_PID=""
+cleanup() {
+    if [ -n "$RPC_SERVER_PID" ]; then
+        kill "$RPC_SERVER_PID" 2>/dev/null || true
+        wait "$RPC_SERVER_PID" 2>/dev/null || true
+    fi
+    rm -rf "$TEST_ROOT"
+}
+trap cleanup EXIT
 DAPPNODE_UPSTREAM_VERSION=$(node -p "require('$ROOT_DIR/dappnode_package.json').upstreamVersion")
 
 fail() {
     printf 'FAIL: %s\n' "$1" >&2
     exit 1
 }
+
+# Serve HTTP and WebSocket RPC locally for startup checks.
+python3 - "$TEST_ROOT/rpc-port" <<'RPC_FIXTURE' &
+import base64
+import hashlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+from pathlib import Path
+import struct
+import sys
+
+
+class RpcHandler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        key = self.headers.get("Sec-WebSocket-Key")
+        if not key:
+            self.send_response(404)
+            self.end_headers()
+            return
+        accept = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
+        self.send_response(101)
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", accept)
+        self.end_headers()
+        while True:
+            header = self.rfile.read(2)
+            if not header:
+                return
+            if header[0] & 15 == 8:
+                self.wfile.write(b"\x88\x00")
+                self.wfile.flush()
+                return
+            length = header[1] & 127
+            if length == 126:
+                length = struct.unpack("!H", self.rfile.read(2))[0]
+            elif length == 127:
+                length = struct.unpack("!Q", self.rfile.read(8))[0]
+            mask = self.rfile.read(4)
+            payload = self.rfile.read(length)
+            request = json.loads(bytes(value ^ mask[index % 4] for index, value in enumerate(payload)))
+            response = self.reply(request)
+            self.wfile.write(bytes([129, len(response)]) + response)
+            self.wfile.flush()
+
+    def reply(self, request):
+        if request["method"] == "eth_chainId":
+            result = "0xaa36a7" if self.path == "/sepolia" else "0x1"
+        elif request["method"] == "eth_getCode":
+            result = "0x" if self.path == "/no-contracts" else "0x6000"
+        else:
+            raise ValueError("unexpected JSON-RPC method")
+        return json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}).encode()
+
+    def do_POST(self):
+        if self.path == "/ws-only":
+            self.send_response(404)
+            self.end_headers()
+            return
+        request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        response = self.reply(request)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(response)))
+        self.end_headers()
+        self.wfile.write(response)
+
+
+server = ThreadingHTTPServer(("127.0.0.1", 0), RpcHandler)
+Path(sys.argv[1]).write_text(str(server.server_port))
+server.serve_forever()
+RPC_FIXTURE
+RPC_SERVER_PID=$!
+for attempt in $(seq 1 50); do
+    [ ! -s "$TEST_ROOT/rpc-port" ] || break
+    sleep 0.1
+done
+[ -s "$TEST_ROOT/rpc-port" ] || fail "RPC fixture did not start"
+RPC_FIXTURE_URL="ws://127.0.0.1:$(cat "$TEST_ROOT/rpc-port")"
 
 NODE_SHUTDOWN_DEADLINE_SECS=60
 grace_line="$(grep -oE 'stop_grace_period: [0-9]+s' "$ROOT_DIR/docker-compose.yml" | head -1)"
@@ -81,15 +170,6 @@ write_secrets() {
         '}' > "$path"
 }
 
-write_legacy_secrets() {
-    local path=$1
-    printf '%s\n' '{' \
-        '  "password": "correct horse battery staple",' \
-        '  "private_key": "0x1111111111111111111111111111111111111111111111111111111111111111",' \
-        '  "network_private_key": "0x2222222222222222222222222222222222222222222222222222222222222222"' \
-        '}' > "$path"
-}
-
 run_entrypoint() {
     local case_dir=$1
     shift
@@ -101,27 +181,16 @@ run_entrypoint() {
     env -u ENCRYPTION_PASSWORD -u NETWORK_PRIVATE_KEY -u PRIVATE_KEY \
         PATH="$case_dir/bin:$PATH" \
         CONFIG_DIR="$case_dir/data" \
+        DEPLOYMENT_MANIFEST="$ROOT_DIR/../deployments/manifest.json" \
+        DASHBOARD_ENABLED=false \
+        NETWORK=mainnet \
         CONFIG_FILE="$case_dir/data/config.yaml" \
-        TEMPLATE_FILE="$ROOT_DIR/config.template.yaml" \
         SECRETS_FILE="$case_dir/secrets/secrets.json" \
         PASSWORD_FILE="$case_dir/data/password" \
-        CREDENTIALS_READY_FILE="$case_dir/data/credentials.provisioned" \
         WALLET_FILE="$case_dir/data/wallet" \
         CALL_LOG="$case_dir/calls" \
         ARGV_LOG="$case_dir/argv" \
-        RPC_URL="ws://127.0.0.1:8545" \
-        CHAIN_ID=1 \
-        NODE_ADDRESS="0x3333333333333333333333333333333333333333" \
-        INTERFOLD_CONTRACT="0x4444444444444444444444444444444444444444" \
-        CIPHERNODE_REGISTRY_CONTRACT="0x5555555555555555555555555555555555555555" \
-        BONDING_REGISTRY_CONTRACT="0x6666666666666666666666666666666666666666" \
-        SLASHING_MANAGER_CONTRACT="0x7777777777777777777777777777777777777777" \
-        FEE_TOKEN_CONTRACT="0x8888888888888888888888888888888888888888" \
-        INTERFOLD_DEPLOY_BLOCK=1 \
-        CIPHERNODE_REGISTRY_DEPLOY_BLOCK=2 \
-        BONDING_REGISTRY_DEPLOY_BLOCK=3 \
-        SLASHING_MANAGER_DEPLOY_BLOCK=4 \
-        FEE_TOKEN_DEPLOY_BLOCK=5 \
+        RPC_URL="$RPC_FIXTURE_URL/mainnet" \
         PRIVATE_KEY="${TEST_PRIVATE_KEY:-}" \
         "$@" bash "$ROOT_DIR/entrypoint.sh" > "$case_dir/output" 2>&1
 }
@@ -133,7 +202,7 @@ mkdir -p "$success_dir/secrets"
 write_secrets "$success_dir/secrets/secrets.json"
 run_entrypoint "$success_dir"
 [ ! -e "$success_dir/secrets/secrets.json" ] || fail "successful setup retained plaintext credentials"
-[ "$(tr '\n' ' ' < "$success_dir/calls")" = "password wallet start " ] || fail "unexpected successful command order"
+[ "$(tr '\n' ' ' < "$success_dir/calls")" = "password wallet wallet-get start " ] || fail "unexpected successful command order"
 assert_not_contains "$success_dir/argv" 'correct horse battery staple'
 assert_not_contains "$success_dir/argv" '0x1111111111111111111111111111111111111111111111111111111111111111'
 assert_contains "$success_dir/data/config.yaml" 'autopassword: false'
@@ -141,9 +210,7 @@ assert_contains "$success_dir/data/config.yaml" 'autonetkey: false'
 assert_contains "$success_dir/data/config.yaml" 'autowallet: false'
 assert_contains "$success_dir/data/config.yaml" 'chain_id: 1'
 assert_contains "$success_dir/data/config.yaml" 'slashing_manager:'
-assert_contains "$success_dir/data/config.yaml" '0x7777777777777777777777777777777777777777'
 assert_contains "$success_dir/data/config.yaml" 'fee_token:'
-assert_contains "$success_dir/data/config.yaml" '0x8888888888888888888888888888888888888888'
 assert_contains "$success_dir/data/config.yaml" 'https://avail-rpc.publicnode.com/'
 
 # The pinned Avail client uses HTTP JSON-RPC. Rejecting WebSocket URLs at startup avoids a node
@@ -167,18 +234,17 @@ fi
 assert_contains "$failure_dir/calls" 'wallet'
 assert_not_contains "$failure_dir/calls" 'start'
 [ -e "$failure_dir/secrets/secrets.json" ] || fail "failed setup removed recovery input"
-[ ! -e "$failure_dir/data/credentials.provisioned" ] || fail "failed setup created readiness marker"
 run_entrypoint "$failure_dir"
-[ "$(tr '\n' ' ' < "$failure_dir/calls")" = "wallet-get wallet start " ] \
+[ "$(tr '\n' ' ' < "$failure_dir/calls")" = "wallet-get wallet wallet-get start " ] \
     || fail "wallet retry did not resume incomplete provisioning"
 [ ! -e "$failure_dir/secrets/secrets.json" ] || fail "retried setup did not remove plaintext credentials"
-[ -e "$failure_dir/data/credentials.provisioned" ] || fail "retried setup did not create readiness marker"
 
 # Existing state may only be reused with the password that encrypted it.
 mismatch_dir="$TEST_ROOT/password-mismatch"
 mkdir -p "$mismatch_dir/data" "$mismatch_dir/secrets"
 printf '%s' 'different-password' > "$mismatch_dir/data/password"
 write_secrets "$mismatch_dir/secrets/secrets.json"
+cp "$success_dir/data/config.yaml" "$mismatch_dir/data/config.yaml"
 if run_entrypoint "$mismatch_dir"; then
     fail "mismatched persisted password was accepted"
 fi
@@ -188,20 +254,20 @@ fi
 matching_dir="$TEST_ROOT/password-match"
 mkdir -p "$matching_dir/data" "$matching_dir/secrets"
 printf '%s' 'correct horse battery staple' > "$matching_dir/data/password"
-printf '%s' 'ready' > "$matching_dir/data/credentials.provisioned"
+printf '%s' 'wallet' > "$matching_dir/data/wallet"
 write_secrets "$matching_dir/secrets/secrets.json"
+cp "$success_dir/data/config.yaml" "$matching_dir/data/config.yaml"
 run_entrypoint "$matching_dir"
-[ "$(tr '\n' ' ' < "$matching_dir/calls")" = "start " ] || fail "matching persisted state was re-provisioned"
+[ "$(tr '\n' ' ' < "$matching_dir/calls")" = "wallet-get start " ] || fail "matching persisted state was re-provisioned"
 [ ! -e "$matching_dir/secrets/secrets.json" ] || fail "matching upload was not removed"
 
-# Legacy three-field uploads remain accepted; the wallet command derives the libp2p key
-# atomically from the wallet key and ignores the obsolete separate network key.
-legacy_credentials_dir="$TEST_ROOT/legacy-credentials"
-mkdir -p "$legacy_credentials_dir/secrets"
-write_legacy_secrets "$legacy_credentials_dir/secrets/secrets.json"
-run_entrypoint "$legacy_credentials_dir"
-[ "$(tr '\n' ' ' < "$legacy_credentials_dir/calls")" = "password wallet start " ] \
-    || fail "legacy credential upload was not accepted"
+# A saved wallet read failure must not replace either identity with the uploaded key.
+write_secrets "$matching_dir/secrets/secrets.json"
+if run_entrypoint "$matching_dir" FAIL_ON=wallet-get; then
+    fail "unreadable saved identity was accepted"
+fi
+[ "$(tr '\n' ' ' < "$matching_dir/calls")" = "wallet-get " ] || fail "saved identity read failure re-provisioned credentials"
+[ -e "$matching_dir/secrets/secrets.json" ] || fail "saved identity read failure removed recovery input"
 
 # Malformed or absent first-start credentials fail before invoking Interfold.
 malformed_dir="$TEST_ROOT/malformed"
@@ -224,50 +290,22 @@ restart_dir="$TEST_ROOT/restart"
 mkdir -p "$restart_dir/data"
 printf '%s' 'persisted-password' > "$restart_dir/data/password"
 chmod 400 "$restart_dir/data/password"
-printf '%s' 'ready' > "$restart_dir/data/credentials.provisioned"
+printf '%s' 'wallet' > "$restart_dir/data/wallet"
+cp "$success_dir/data/config.yaml" "$restart_dir/data/config.yaml"
 run_entrypoint "$restart_dir"
-[ "$(tr '\n' ' ' < "$restart_dir/calls")" = "start " ] || fail "persisted restart unexpectedly re-provisioned credentials"
-
-old_restart_dir="$TEST_ROOT/old-restart"
-mkdir -p "$old_restart_dir/data"
-printf '%s' 'persisted-password' > "$old_restart_dir/data/password"
-printf '%s' 'wallet' > "$old_restart_dir/data/wallet"
-run_entrypoint "$old_restart_dir"
-[ "$(tr '\n' ' ' < "$old_restart_dir/calls")" = "wallet-get start " ] \
-    || fail "old complete state was not marked and started"
-[ -e "$old_restart_dir/data/credentials.provisioned" ] || fail "old complete state was not marked ready"
+[ "$(tr '\n' ' ' < "$restart_dir/calls")" = "wallet-get start " ] || fail "persisted restart unexpectedly re-provisioned credentials"
 
 incomplete_restart_dir="$TEST_ROOT/incomplete-restart"
 mkdir -p "$incomplete_restart_dir/data"
 printf '%s' 'persisted-password' > "$incomplete_restart_dir/data/password"
+cp "$success_dir/data/config.yaml" "$incomplete_restart_dir/data/config.yaml"
 if run_entrypoint "$incomplete_restart_dir"; then
     fail "password-only state without upload was accepted"
 fi
 assert_contains "$incomplete_restart_dir/calls" 'wallet-get'
 assert_not_contains "$incomplete_restart_dir/calls" 'start'
 
-# The 0.1.8 state bridge moves the complete custom-config namespace in one
-# rename, preserving the unversioned DB/event log for current releases.
-upgrade_dir="$TEST_ROOT/legacy-upgrade"
-mkdir -p "$upgrade_dir/data/.enclave/config/_default" "$upgrade_dir/data/.enclave/data/_default/db" \
-    "$upgrade_dir/data/.enclave/data/_default/log.0"
-printf '%s' 'persisted-password' > "$upgrade_dir/data/.enclave/config/_default/key"
-printf '%s' 'legacy-state' > "$upgrade_dir/data/.enclave/data/_default/db/sentinel"
-printf '%s' 'wallet' > "$upgrade_dir/data/wallet"
-run_entrypoint "$upgrade_dir" \
-    PASSWORD_FILE="$upgrade_dir/data/.interfold/config/_default/key"
-[ ! -e "$upgrade_dir/data/.enclave" ] || fail "legacy state namespace remained after upgrade"
-assert_contains "$upgrade_dir/data/.interfold/data/_default/db/sentinel" 'legacy-state'
-[ "$(tr '\n' ' ' < "$upgrade_dir/calls")" = "wallet-get start " ] || fail "legacy state upgrade did not start"
-
-ambiguous_dir="$TEST_ROOT/ambiguous-upgrade"
-mkdir -p "$ambiguous_dir/data/.enclave" "$ambiguous_dir/data/.interfold"
-if run_entrypoint "$ambiguous_dir"; then
-    fail "ambiguous legacy/current state was accepted"
-fi
-[ ! -s "$ambiguous_dir/calls" ] || fail "ambiguous state invoked Interfold"
-
-# Legacy secret environment variables are explicitly rejected.
+# Credentials must not be supplied through Docker environment variables.
 legacy_dir="$TEST_ROOT/legacy-env"
 mkdir -p "$legacy_dir/data"
 printf '%s' 'persisted-password' > "$legacy_dir/data/password"
@@ -275,16 +313,96 @@ if TEST_PRIVATE_KEY=legacy run_entrypoint "$legacy_dir"; then
     fail "legacy secret environment variable was accepted"
 fi
 
-# Entrypoint regressions: credential values must never be expanded into CLI
-# flags, even if those legacy flags remain available for interactive users.
-assert_not_contains "$ROOT_DIR/entrypoint.sh" '--password "$password"'
-assert_not_contains "$ROOT_DIR/entrypoint.sh" '--private-key "$private_key"'
-assert_not_contains "$ROOT_DIR/entrypoint.sh" '--net-keypair "$network_private_key"'
+# Passwords may contain ordinary u/0 characters, but never NUL or line breaks.
+for password_case in valid-u0 nul cr lf; do
+    password_dir="$TEST_ROOT/password-$password_case"
+    mkdir -p "$password_dir/secrets"
+    write_secrets "$password_dir/secrets/secrets.json"
+    python3 - "$password_dir/secrets/secrets.json" "$password_case" <<'CHECK'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+credentials = json.loads(path.read_text())
+credentials['password'] = {'valid-u0': 'valid-u0-password', 'nul': 'invalid\x00password', 'cr': 'invalid\rpassword', 'lf': 'invalid\npassword'}[sys.argv[2]]
+path.write_text(json.dumps(credentials))
+CHECK
+    if [ "$password_case" = valid-u0 ]; then
+        run_entrypoint "$password_dir" || fail "valid password containing u/0 was rejected"
+        [ "$(cat "$password_dir/data/password")" = valid-u0-password ] || fail "password was changed during provisioning"
+    else
+        if run_entrypoint "$password_dir"; then
+            fail "password containing a control character was accepted: $password_case"
+        fi
+        [ ! -s "$password_dir/calls" ] || fail "invalid password invoked Interfold"
+    fi
+done
+
+# Presets resolve all deployment fields together and derive the address from the wallet.
+for network in mainnet sepolia; do
+    preset_dir="$TEST_ROOT/preset-$network"
+    mkdir -p "$preset_dir/secrets"
+    write_secrets "$preset_dir/secrets/secrets.json"
+    run_entrypoint "$preset_dir" NETWORK="$network" RPC_URL="$RPC_FIXTURE_URL/$network"
+    python3 - "$preset_dir/data/config.yaml" "$ROOT_DIR/../deployments/manifest.json" "$network" <<'CHECK'
+import json, sys, yaml
+config = yaml.safe_load(open(sys.argv[1]))
+expected = json.load(open(sys.argv[2]))['networks'][sys.argv[3]]
+assert config['chains'][0]['chain_id'] == expected['chain_id']
+for name in ('interfold', 'ciphernode_registry', 'bonding_registry', 'slashing_manager', 'fee_token'):
+    assert config['chains'][0]['contracts'][name] == expected['contracts'][name]
+assert config['node']['address'] == '0x3333333333333333333333333333333333333333'
+CHECK
+done
+
+# Wrong-chain RPCs and missing contracts stop before credential commands or plaintext removal.
+for scenario in wrong-chain no-contracts ws-only; do
+    rpc_dir="$TEST_ROOT/$scenario"
+    mkdir -p "$rpc_dir/secrets"
+    write_secrets "$rpc_dir/secrets/secrets.json"
+    endpoint="$RPC_FIXTURE_URL/$scenario"
+    [ "$scenario" != wrong-chain ] || endpoint="$RPC_FIXTURE_URL/sepolia"
+    if run_entrypoint "$rpc_dir" RPC_URL="$endpoint"; then
+        fail "invalid RPC was accepted: $scenario"
+    fi
+    [ ! -s "$rpc_dir/calls" ] || fail "RPC failure invoked credential commands"
+    [ -e "$rpc_dir/secrets/secrets.json" ] || fail "RPC failure removed recovery input"
+    if [ "$scenario" = ws-only ]; then
+        assert_contains "$rpc_dir/output" 'RPC HTTP transport returned HTTP 404'
+    fi
+done
+
+# A partial backup cannot discard the original network fence.
+missing_config_dir="$TEST_ROOT/missing-saved-config"
+mkdir -p "$missing_config_dir/data"
+printf '%s' 'saved-password' > "$missing_config_dir/data/password"
+if run_entrypoint "$missing_config_dir"; then
+    fail "existing state without its saved configuration was accepted"
+fi
+[ ! -s "$missing_config_dir/calls" ] || fail "incomplete backup invoked credential commands"
+assert_contains "$missing_config_dir/output" 'restore the complete backup'
+
+# A failed network switch leaves the saved configuration and wallet unchanged.
+original_config=$(cksum "$success_dir/data/config.yaml")
+if run_entrypoint "$success_dir" NETWORK=sepolia RPC_URL="$RPC_FIXTURE_URL/sepolia"; then
+    fail "network switch reused existing state"
+fi
+[ "$(cksum "$success_dir/data/config.yaml")" = "$original_config" ] || fail "network rejection replaced saved config"
+[ ! -s "$success_dir/calls" ] || fail "network rejection changed credentials"
+
+# URL credentials remain a scalar and are absent from startup output.
+quoted_dir="$TEST_ROOT/quoted-rpc"
+mkdir -p "$quoted_dir/secrets"
+write_secrets "$quoted_dir/secrets/secrets.json"
+run_entrypoint "$quoted_dir" RPC_URL="ws://user:token'quote@127.0.0.1:$(cat "$TEST_ROOT/rpc-port")/mainnet"
+python3 - "$quoted_dir/data/config.yaml" <<'CHECK'
+import sys, yaml
+config = yaml.safe_load(open(sys.argv[1]))
+assert "token'quote@" in config['chains'][0]['rpc_url']
+CHECK
+assert_not_contains "$quoted_dir/output" "token'quote"
+
 assert_contains "$ROOT_DIR/docker-compose.yml" "UPSTREAM_VERSION: $DAPPNODE_UPSTREAM_VERSION"
-assert_contains "$ROOT_DIR/docker-compose.yml" "ciphernode.interfold-ciphernode.public.dappnode.eth:$DAPPNODE_VERSION"
 assert_contains "$ROOT_DIR/Dockerfile" "ARG UPSTREAM_VERSION=$DAPPNODE_UPSTREAM_VERSION"
-assert_contains "$ROOT_DIR/docker-compose.yml" "INTERFOLD_CONTRACT: '0x28cF63B459e6218C69EA97ea7D90541cf648c715'"
-assert_contains "$ROOT_DIR/docker-compose.yml" "SLASHING_MANAGER_CONTRACT: '0x753109Ee36Dc65cC178875AddA30C6433e5bEEe4'"
 assert_contains "$ROOT_DIR/healthcheck.sh" '/data/.interfold/data/_default/db'
 
 # Health probe regression: require the exact process/config, protected files,

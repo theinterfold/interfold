@@ -1,0 +1,11 @@
+services:
+  ciphernode:
+    image: 'interfold-ciphernode-sepolia.dnp.dappnode.eth:0.10.0'
+    build:
+      args:
+        DAPPNODE_NETWORK: sepolia
+    ports:
+      - 37174:37174/udp
+    environment:
+      RPC_URL: 'ws://execution.sepolia.dncore.dappnode:8546'
+      QUIC_PORT: '37174'

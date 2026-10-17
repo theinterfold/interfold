@@ -47,6 +47,7 @@ pnpm bump:versions --dry-run 1.0.0
    - Rust workspace version in root `Cargo.toml`
    - All npm packages in `packages/` and `crates/wasm`
    - Root `package.json`
+   - Both DAppNode network variants and their shared upstream image pin for stable releases
 3. **Updates lock files**:
    - `Cargo.lock` for Rust dependencies
    - `pnpm-lock.yaml` for npm dependencies
@@ -112,13 +113,14 @@ The tag workflow then:
 
 Rust workspace crates are not published because they use unreleased git dependencies.
 
-The support image compiles no CLI or ciphernode. DAppNode copies the checked ciphernode binary.
+The support image compiles no CLI or ciphernode. Both DAppNode packages extend the pinned ciphernode image.
 Builds without `E3_CIRCUITS_ARCHIVE_SHA256` still work, but an unpinned circuit download fails. Do
 not repack the uploaded circuit archive after compilation: the compiled pin authenticates its exact
 bytes.
 
 The workflow calls the small commands in `release.mjs`. The implementation is split by purpose in
-`scripts/release/`. Run `pnpm test:release` to test tag ancestry, npm retries, assets, and gates.
+`scripts/release/`. `dappnode.mjs` owns DAppNode version updates and validation for both network variants.
+Run `pnpm test:release` to test tag ancestry, npm retries, assets, package versions, and gates.
 
 ## License Header Checker
 

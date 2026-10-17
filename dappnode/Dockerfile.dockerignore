@@ -1,0 +1,10 @@
+**
+!dappnode/
+!dappnode/entrypoint.sh
+!dappnode/healthcheck.sh
+!dappnode/configure.py
+!dappnode/nginx.conf
+!dappnode/rpc-proxy.conf
+!dappnode/starting.html
+!deployments/
+!deployments/manifest.json

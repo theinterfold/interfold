@@ -7,6 +7,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { join, resolve } from 'path'
 import { execFileSync, execSync } from 'child_process'
+import { bumpDappnodeVersions } from './release/dappnode.mjs'
 
 interface PackageJson {
   name: string
@@ -439,43 +440,8 @@ class VersionBumper {
     const packageJson = JSON.parse(readFileSync(packagePath, 'utf-8'))
     const dappNodeVersion = this.nextDappNodeWrapperVersion(packageJson.version, packageJson.upstreamVersion, this.newVersion)
 
-    packageJson.version = dappNodeVersion
-    packageJson.upstreamVersion = this.newVersion
-    writeFileSync(packagePath, JSON.stringify(packageJson, null, 2) + '\n')
-    console.log('   ✓ dappnode_package.json')
-
-    this.updateDappNodeNpmVersion(dappNodeVersion)
-
-    this.replaceInFile(join(this.rootDir, 'dappnode/docker-compose.yml'), [
-      [/UPSTREAM_VERSION: [^\n]+/, `UPSTREAM_VERSION: ${this.newVersion}`],
-      [
-        /image: 'ciphernode\.interfold-ciphernode\.public\.dappnode\.eth:[^']+'/,
-        `image: 'ciphernode.interfold-ciphernode.public.dappnode.eth:${dappNodeVersion}'`,
-      ],
-    ])
-    console.log('   ✓ docker-compose.yml')
-
-    this.replaceInFile(join(this.rootDir, 'dappnode/Dockerfile'), [
-      [/ARG UPSTREAM_VERSION=[^\n]+/, `ARG UPSTREAM_VERSION=${this.newVersion}`],
-    ])
-    console.log('   ✓ Dockerfile')
+    bumpDappnodeVersions(this.rootDir, this.newVersion, dappNodeVersion)
     console.log(`   ✓ wrapper ${dappNodeVersion} uses upstream ${this.newVersion}`)
-  }
-
-  private updateDappNodeNpmVersion(dappNodeVersion: string): void {
-    const npmPackagePath = join(this.rootDir, 'dappnode/package.json')
-    const npmPackageJson = JSON.parse(readFileSync(npmPackagePath, 'utf-8'))
-    npmPackageJson.version = dappNodeVersion
-    writeFileSync(npmPackagePath, JSON.stringify(npmPackageJson, null, 2) + '\n')
-
-    const lockPath = join(this.rootDir, 'dappnode/package-lock.json')
-    const lockJson = JSON.parse(readFileSync(lockPath, 'utf-8'))
-    lockJson.version = dappNodeVersion
-    if (lockJson.packages?.['']) {
-      lockJson.packages[''].version = dappNodeVersion
-    }
-    writeFileSync(lockPath, JSON.stringify(lockJson, null, 2) + '\n')
-    console.log('   ✓ dappnode npm package metadata')
   }
 
   private nextDappNodeWrapperVersion(currentWrapperVersion: string, previousUpstreamVersion: string, nextUpstreamVersion: string): string {
@@ -530,17 +496,6 @@ class VersionBumper {
       return left.minor < right.minor
     }
     return left.patch < right.patch
-  }
-
-  private replaceInFile(filePath: string, replacements: [RegExp, string][]): void {
-    let content = readFileSync(filePath, 'utf-8')
-    for (const [pattern, replacement] of replacements) {
-      if (!pattern.test(content)) {
-        throw new Error(`Could not find pattern ${pattern} in ${filePath}`)
-      }
-      content = content.replace(pattern, replacement)
-    }
-    writeFileSync(filePath, content)
   }
 
   private isPrerelease(): boolean {

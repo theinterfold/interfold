@@ -6,14 +6,13 @@ umask 077
 
 CONFIG_DIR="${CONFIG_DIR:-/data}"
 CONFIG_FILE="${CONFIG_FILE:-$CONFIG_DIR/config.yaml}"
-TEMPLATE_FILE="${TEMPLATE_FILE:-/opt/config.template.yaml}"
-SECRETS_FILE="${SECRETS_FILE:-/run/secrets/secrets.json}"
-LEGACY_STATE_DIR="${LEGACY_STATE_DIR:-$CONFIG_DIR/.enclave}"
+# Wizard uploads must survive container recreation before identity provisioning.
+SECRETS_FILE="${SECRETS_FILE:-$CONFIG_DIR/secrets.json}"
 CURRENT_STATE_DIR="${CURRENT_STATE_DIR:-$CONFIG_DIR/.interfold}"
 # Current Interfold releases resolve a relative `key_file: key` beside a discovered
 # /data/config.yaml to this path for the default node profile.
 PASSWORD_FILE="${PASSWORD_FILE:-$CURRENT_STATE_DIR/config/_default/key}"
-CREDENTIALS_READY_FILE="${CREDENTIALS_READY_FILE:-$(dirname "$PASSWORD_FILE")/credentials.provisioned}"
+CREDENTIALS_READY_FILE="$(dirname "$PASSWORD_FILE")/credentials.provisioned"
 
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$1"; }
 fail() {
@@ -21,99 +20,64 @@ fail() {
     exit 1
 }
 
+if [ -f /opt/package-network ]; then
+    PACKAGE_NETWORK=$(cat /opt/package-network)
+    [ -z "${NETWORK:-}" ] || [ "$NETWORK" = "$PACKAGE_NETWORK" ] \
+        || fail "NETWORK does not match this package; install the package for the required network"
+    export NETWORK="$PACKAGE_NETWORK"
+fi
+
 echo "=========================================="
 echo "  Interfold Ciphernode - ${NETWORK:-mainnet}"
 echo "=========================================="
 
-# Environment variables are visible in Docker/DAppNode metadata. Refuse the
-# legacy secret injection contract instead of silently preferring one source.
+# Docker exposes environment variables in package metadata. Require a file for credentials.
 if [ -n "${ENCRYPTION_PASSWORD:-}" ] || [ -n "${NETWORK_PRIVATE_KEY:-}" ] || [ -n "${PRIVATE_KEY:-}" ]; then
     fail "credential environment variables are unsupported; upload the DAppNode credentials JSON file"
 fi
 
-# Validate RPC URL (required).
-[ -n "${RPC_URL:-}" ] || fail "RPC_URL is required; set it in the DAppNode package configuration"
-[[ "$RPC_URL" =~ ^wss?:// ]] || fail "RPC_URL must be a WebSocket URL (ws:// or wss://)"
-
-require_uint() {
-    local name="$1"
-    local value="${!name:-}"
-    [[ "$value" =~ ^[0-9]+$ ]] || fail "$name must be an integer"
-}
-
-require_address() {
-    local name="$1"
-    local value="${!name:-}"
-    [[ "$value" =~ ^0x[0-9a-fA-F]{40}$ ]] || fail "$name must be a valid Ethereum address"
-}
-
-[ -r "$TEMPLATE_FILE" ] || fail "configuration template is not readable: $TEMPLATE_FILE"
 mkdir -p "$CONFIG_DIR"
+[ ! -L "$CURRENT_STATE_DIR" ] || fail "node data must not be a symbolic link"
+[ ! -e "$CURRENT_STATE_DIR" ] || [ -d "$CURRENT_STATE_DIR" ] || fail "node data path must be a directory"
 
-migrate_legacy_state() {
-    if [ -L "$LEGACY_STATE_DIR" ] || [ -L "$CURRENT_STATE_DIR" ]; then
-        fail "legacy/current state paths must not be symbolic links"
-    fi
-    if [ -e "$LEGACY_STATE_DIR" ] && [ ! -d "$LEGACY_STATE_DIR" ]; then
-        fail "legacy state path is not a directory: $LEGACY_STATE_DIR"
-    fi
-    if [ -e "$CURRENT_STATE_DIR" ] && [ ! -d "$CURRENT_STATE_DIR" ]; then
-        fail "current state path is not a directory: $CURRENT_STATE_DIR"
-    fi
-    if [ -d "$LEGACY_STATE_DIR" ] && [ -e "$CURRENT_STATE_DIR" ]; then
-        fail "both legacy and current state directories exist; refusing an ambiguous upgrade"
-    fi
-    if [ -d "$LEGACY_STATE_DIR" ]; then
-        log "Migrating the v0.1.8 state namespace to the current Interfold state path..."
-        mv -- "$LEGACY_STATE_DIR" "$CURRENT_STATE_DIR" \
-            || fail "could not migrate legacy state into $CURRENT_STATE_DIR"
-    fi
-}
-
-migrate_legacy_state
-
-# Set non-secret defaults.
+# Render a candidate beside the saved config so CLI credential paths stay in /data.
 export NETWORK="${NETWORK:-mainnet}"
 export QUIC_PORT="${QUIC_PORT:-37173}"
-export NODE_ADDRESS="${NODE_ADDRESS:-}"
 export LOG_LEVEL="${LOG_LEVEL:-info}"
-
-# The protocol stores large ciphertexts on Avail. Operators may override the public endpoint, but
-# an enabled Ethereum chain must always render a reader into the ciphernode configuration.
-if [ -z "${AVAIL_RPC_URL:-}" ]; then
-    case "${CHAIN_ID:-}" in
-        1) AVAIL_RPC_URL="https://avail-rpc.publicnode.com/" ;;
-        11155111) AVAIL_RPC_URL="https://turing-rpc.avail.so/rpc" ;;
-        *) fail "AVAIL_RPC_URL is required for chain ${CHAIN_ID:-unknown}" ;;
-    esac
-fi
-export AVAIL_RPC_URL
-[[ "$AVAIL_RPC_URL" =~ ^https?:// ]] || fail "AVAIL_RPC_URL must be an HTTP URL (http:// or https://)"
-
+export DASHBOARD_ENABLED="${DASHBOARD_ENABLED:-false}"
 case "$LOG_LEVEL" in
     info|debug|trace) ;;
     *) fail "LOG_LEVEL must be one of: info, debug, trace" ;;
 esac
+case "$DASHBOARD_ENABLED" in
+    true|false) ;;
+    *) fail "DASHBOARD_ENABLED must be true or false" ;;
+esac
 
-require_uint CHAIN_ID
-require_uint QUIC_PORT
-require_address NODE_ADDRESS
-require_address INTERFOLD_CONTRACT
-require_address CIPHERNODE_REGISTRY_CONTRACT
-require_address BONDING_REGISTRY_CONTRACT
-require_address SLASHING_MANAGER_CONTRACT
-require_address FEE_TOKEN_CONTRACT
-require_uint INTERFOLD_DEPLOY_BLOCK
-require_uint CIPHERNODE_REGISTRY_DEPLOY_BLOCK
-require_uint BONDING_REGISTRY_DEPLOY_BLOCK
-require_uint SLASHING_MANAGER_DEPLOY_BLOCK
-require_uint FEE_TOKEN_DEPLOY_BLOCK
+DERIVED_NODE_ADDRESS=""
+export NODE_ADDRESS=0x0000000000000000000000000000000000000000
+export SAVED_CONFIG_FILE="$CONFIG_FILE"
+[ ! -L "$SAVED_CONFIG_FILE" ] || fail "saved configuration must not be a symbolic link"
+PENDING_CONFIG_FILE=$(mktemp "$SAVED_CONFIG_FILE.pending.XXXXXX")
+export CONFIG_FILE="$PENDING_CONFIG_FILE"
+export CURRENT_STATE_DIR PASSWORD_FILE
+trap 'rm -f "$PENDING_CONFIG_FILE"' EXIT
 
-# Generate config from the fixed template. The 0077 umask keeps RPC
-# credentials in the rendered URL out of group/world-readable files.
-log "Generating configuration..."
-envsubst < "$TEMPLATE_FILE" > "$CONFIG_FILE"
-chmod 600 "$CONFIG_FILE"
+log "Checking network configuration and RPC access..."
+# DAppNode clients use separate HTTP and WebSocket ports. The upstream signer keeps the WS port.
+if [[ "${RPC_URL:-}" =~ ^ws://(execution\.(mainnet|sepolia)\.dncore\.dappnode):8546/?$ ]]; then
+    export RPC_UPSTREAM_HOST="${BASH_REMATCH[1]}"
+    envsubst '$RPC_UPSTREAM_HOST' < /opt/rpc-proxy.conf.template > /tmp/interfold-rpc-proxy.conf
+    nginx -c /tmp/interfold-rpc-proxy.conf \
+        || fail "execution RPC proxy failed to start; check the selected DAppNode execution client"
+    export RPC_URL="ws://127.0.0.1:8550"
+    log "Using the DAppNode execution client."
+fi
+python3 "$(dirname "${BASH_SOURCE[0]}")/configure.py" render || fail "check the package Config settings"
+python3 "$(dirname "${BASH_SOURCE[0]}")/configure.py" check-rpc || fail "check the execution client or RPC_URL in Config"
+# Record the first network before any credential command can create partial state.
+# Existing configurations stay unchanged until provisioning and address checks succeed.
+[ -e "$SAVED_CONFIG_FILE" ] || cp -- "$CONFIG_FILE" "$SAVED_CONFIG_FILE"
 
 validate_secret_file() {
     [ -f "$SECRETS_FILE" ] || fail "credentials path is not a regular file: $SECRETS_FILE"
@@ -126,13 +90,10 @@ validate_secret_file() {
 
     jq -e '
         type == "object" and
-        ((keys | sort == ["password", "private_key"]) or
-            (keys | sort == ["network_private_key", "password", "private_key"])) and
+        (keys | sort == ["password", "private_key"]) and
         (.password | type == "string" and length > 0 and length <= 1024 and
-            test("^[^\\r\\n\\u0000]+$") and . == gsub("^\\s+|\\s+$"; "")) and
-        (.private_key | type == "string" and test("^0x[0-9a-fA-F]{64}$")) and
-        ((has("network_private_key") | not) or
-            (.network_private_key | type == "string" and test("^0x[0-9a-fA-F]{64}$")))
+            (explode | all(. != 0 and . != 10 and . != 13)) and . == gsub("^\\s+|\\s+$"; "")) and
+        (.private_key | type == "string" and test("^0x[0-9a-fA-F]{64}$"))
     ' "$SECRETS_FILE" >/dev/null || fail "credentials file must contain valid password and private_key strings"
 }
 
@@ -143,41 +104,10 @@ validate_persisted_password_file() {
     [ -r "$PASSWORD_FILE" ] || fail "persisted password file is not readable: $PASSWORD_FILE"
 }
 
-validate_credentials_ready_file() {
-    [ -f "$CREDENTIALS_READY_FILE" ] || fail "credential readiness marker is not a regular file: $CREDENTIALS_READY_FILE"
-    [ ! -L "$CREDENTIALS_READY_FILE" ] || fail "credential readiness marker must not be a symbolic link: $CREDENTIALS_READY_FILE"
-    chmod 400 "$CREDENTIALS_READY_FILE" || fail "could not restrict credential readiness marker permissions"
-}
-
-mark_credentials_ready() {
-    mkdir -p "$(dirname "$CREDENTIALS_READY_FILE")"
-    : > "$CREDENTIALS_READY_FILE"
-    chmod 400 "$CREDENTIALS_READY_FILE"
-}
-
-wallet_identity_available() {
-    interfold wallet get --config "$CONFIG_FILE" >/dev/null 2>&1
-}
-
-credentials_are_ready() {
-    if [ -e "$CREDENTIALS_READY_FILE" ]; then
-        validate_credentials_ready_file
-        return 0
-    fi
-
-    if wallet_identity_available; then
-        mark_credentials_ready
-        return 0
-    fi
-
-    return 1
-}
-
 provision_wallet() {
     jq -jr '.private_key, "\n"' "$SECRETS_FILE" \
         | interfold wallet set --private-key-stdin --config "$CONFIG_FILE" \
         || fail "wallet command failed"
-    mark_credentials_ready
 }
 
 configure_credentials() {
@@ -187,41 +117,61 @@ configure_credentials() {
         validate_persisted_password_file
         jq -er '.password' "$SECRETS_FILE" | tr -d '\n' | cmp -s - "$PASSWORD_FILE" \
             || fail "uploaded password does not match the persisted credential key"
-        log "Using the matching persisted encryption password."
-        if ! credentials_are_ready; then
-            log "Encrypted wallet identity is incomplete; retrying wallet provisioning."
+        if ! DERIVED_NODE_ADDRESS=$(interfold wallet get --config "$CONFIG_FILE" 2>/dev/null); then
+            [ ! -e "$CREDENTIALS_READY_FILE" ] || fail "cannot read the saved identity; restore its encrypted backup"
+            log "Completing wallet setup..."
             provision_wallet
         fi
-        rm -f "$SECRETS_FILE"
-        log "Existing encrypted wallet/network identity was preserved."
+        log "Using the saved node identity."
         return
     fi
 
-    log "Provisioning encrypted credentials through stdin..."
+    log "Setting up the node identity..."
     jq -jr '.password, "\n"' "$SECRETS_FILE" \
         | interfold password set --password-stdin --config "$CONFIG_FILE" \
         || fail "password command failed"
     provision_wallet
-
-    # DAppNode copies fileUpload content into this container before startup.
-    # Wallet command derives both Ethereum and libp2p identities. Remove the
-    # combined plaintext upload after both encrypted records are persisted.
-    rm -f "$SECRETS_FILE"
-    log "Credential setup completed."
 }
 
 if [ -e "$SECRETS_FILE" ]; then
     configure_credentials
 elif [ -s "$PASSWORD_FILE" ]; then
-    # Backward-compatible restart/upgrade path: DAppNode file uploads are copied
-    # when configuring a container, while encrypted credentials persist in
-    # /data. If an older complete install predates the readiness marker, stamp it
-    # after the wallet decrypts successfully.
     validate_persisted_password_file
-    credentials_are_ready || fail "credential upload is required to complete wallet provisioning: $SECRETS_FILE"
-    log "No credential upload present; using persisted credential state."
+    log "Using the saved node identity."
 else
     fail "credentials file is required for first startup: $SECRETS_FILE"
+fi
+
+# Verify the saved wallet on every start.
+if [ -z "${DERIVED_NODE_ADDRESS:-}" ]; then
+    DERIVED_NODE_ADDRESS=$(interfold wallet get --config "$CONFIG_FILE") \
+        || fail "cannot read the persisted wallet; restore its encrypted credential backup"
+fi
+[[ "$DERIVED_NODE_ADDRESS" =~ ^0x[0-9a-fA-F]{40}$ ]] || fail "wallet returned an invalid node address"
+[ ! -L "$CREDENTIALS_READY_FILE" ] || fail "credential marker must not be a symbolic link"
+if [ ! -e "$CREDENTIALS_READY_FILE" ]; then
+    : > "$CREDENTIALS_READY_FILE"
+    chmod 400 "$CREDENTIALS_READY_FILE"
+fi
+export NODE_ADDRESS="$DERIVED_NODE_ADDRESS"
+python3 "$(dirname "${BASH_SOURCE[0]}")/configure.py" render || fail "could not save the node configuration"
+chmod 600 "$CONFIG_FILE"
+mv -- "$CONFIG_FILE" "$SAVED_CONFIG_FILE"
+CONFIG_FILE="$SAVED_CONFIG_FILE"
+[ ! -e "$SECRETS_FILE" ] || rm -f "$SECRETS_FILE"
+log "Node address: $NODE_ADDRESS"
+
+if [ "$DASHBOARD_ENABLED" = true ]; then
+    DASHBOARD_HOSTNAME="interfold-ciphernode-${NETWORK}.dappnode"
+    # Bind the proxy to the DAppNode VPN interface without publishing a host port.
+    DASHBOARD_BIND_ADDRESS=$(getent ahostsv4 "$DASHBOARD_HOSTNAME" | awk 'NR == 1 {print $1}') \
+        || fail "DAppNode DNS is unavailable; check the package network"
+    [[ "$DASHBOARD_BIND_ADDRESS" =~ ^172\.33\.[0-9]+\.[0-9]+$ ]] \
+        || fail "dashboard DNS must resolve to the DAppNode core network"
+    export DASHBOARD_BIND_ADDRESS
+    envsubst '$DASHBOARD_BIND_ADDRESS' < /opt/nginx.conf.template > /tmp/interfold-nginx.conf
+    nginx -c /tmp/interfold-nginx.conf || fail "dashboard proxy failed to start"
+    log "Dashboard: http://$DASHBOARD_HOSTNAME:8081 (DAppNode VPN network)"
 fi
 
 # Build CLI args without shell evaluation.

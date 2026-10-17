@@ -56,7 +56,7 @@ every section.
   without this input work, but downloads for unpinned versions fail before network access. Each
   binary build checks the pin reported by `noir status` before the release-candidate gate can pass.
   The ciphernode Docker build checks the same report. The support image compiles no CLI or
-  ciphernode, and DAppNode copies the checked ciphernode image. CI generates a manifest for exactly
+  ciphernode, and both DAppNode packages extend the pinned ciphernode image. CI generates a manifest for exactly
   the staged fixture before packaging and hashing it. — `02_CRYPTO_CIRCUITS.md` §Noir / Barretenberg
   compatibility
 - **Deployment-local OpenVM artifacts are never committed.** Keep executable files, proving keys,

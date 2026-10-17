@@ -380,11 +380,20 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: dappnode/package-lock.json
+      - name: Validate DAppNode package variants
+        run: |
+          npm ci --ignore-scripts --prefix dappnode
+          npm run check --prefix dappnode
       - name: Test DAppNode credentials and health checks
         run: |
           timeout 180 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
-          timeout 180 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y gettext-base
-          bash dappnode/tests/test-hardening.sh
+          timeout 180 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y gettext-base python3-websocket python3-yaml
+          PATH="/usr/bin:$PATH" npm test --prefix dappnode
       - name: Test the ciphernode image state location
         run: bash crates/tests/docker/test-ciphernode-entrypoint.sh
 

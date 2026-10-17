@@ -420,10 +420,10 @@ is synced only for the first append and after segment rollover. The current stor
 version 8. Schema-7 DKG events omit bundle signatures and cannot use the current decoder. Operators
 must use the controlled reset and resync procedure outside active E3 work; see `07_UPGRADES.md`.
 
-For DAppNode installations, package v0.2.3 is the mandatory bridge from the shipped v0.1.8 state. It
-atomically moves the legacy `.enclave` custom-config root to `.interfold`, preserves the encrypted
-operator/libp2p identity, and lets the v0.2.3 binary stamp schema version 1 before later binaries
-enforce the marker. An ambiguous volume containing both roots fails closed.
+The Mainnet and Sepolia DAppNode packages keep separate `/data` volumes. Startup reuses the saved
+operator/libp2p identity under `.interfold` and refuses a configuration for a different network.
+Package startup does not migrate a legacy `.enclave` root or reset protocol state.
+Files: `dappnode/entrypoint.sh`, `dappnode/configure.py`.
 
 ### Restart + Persist State Diagram
 

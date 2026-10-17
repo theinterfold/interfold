@@ -3,6 +3,11 @@
   "version": "0.10.0",
   "private": true,
   "license": "LGPL-3.0-only",
+  "scripts": {
+    "check": "node validate.mjs",
+    "test": "bash tests/test-hardening.sh",
+    "build": "cd .. && DAPPNODE_BUILD_CONTEXT=. dappnode/node_modules/.bin/dappnodesdk build --dir dappnode --arch linux/amd64 --all-variants"
+  },
   "devDependencies": {
     "@dappnode/dappnodesdk": "0.3.53"
   }
