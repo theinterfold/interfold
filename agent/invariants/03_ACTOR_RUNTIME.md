@@ -285,8 +285,10 @@ the code does not meet yet.
   it is left in the worker, so one request runs once at a time. A hung run holds back the re-send
   until the prover's cap ends it. `E3Context::effects_enabled` is false until the router sees
   `EffectsEnabled`, so an extension can start an actor during replay with its effects held; the
-  accusation manager does. **Gap:** a keyshare actor that replay starts still runs with effects on,
-  and its collectors start their deadlines during replay. — `crates/multithread/src/effect_gate.rs`;
+  accusation manager and the threshold keyshare do. While effects are off, the keyshare records its
+  inputs but starts no collector, so no collection deadline can end before replay delivers them;
+  `resume_in_flight_work` builds the collectors at `EffectsEnabled`. —
+  `crates/multithread/src/effect_gate.rs`;
   `crates/events/src/correlation_id.rs`; `crates/request/src/context.rs`; `CRATES_ARCHITECTURE.md`
 - Keyshare coalesces decryption work per phase in each process. Admission of an already-retained
   canonical key is a no-op. Repeated chain observations and resume signals cannot add share

@@ -432,6 +432,11 @@ impl ThresholdKeyshare {
             return Ok(());
         }
 
+        // While startup replays the event log, the share stays recorded: `resume_in_flight_work`
+        // builds the collector with the recorded shares at `EffectsEnabled`.
+        if !self.effects_enabled {
+            return self.dispatch_expanded_threshold_share_batch(msg.get_ctx().clone());
+        }
         info!(
             "Received ThresholdShareCreated from party {} for us (party {}), forwarding to collector!",
             msg.share.party_id, my_party_id
@@ -497,6 +502,11 @@ impl ThresholdKeyshare {
                 sender_party_id = msg.key.party_id,
                 "Ignoring EncryptionKeyCreated after the encryption-key cutoff"
             );
+            return Ok(());
+        }
+        // While startup replays the event log, the key stays recorded: `resume_in_flight_work`
+        // builds the collector at `EffectsEnabled` and sends it every recorded key.
+        if !self.effects_enabled {
             return Ok(());
         }
         info!("Received EncryptionKeyCreated forwarding to encryption key collector!");

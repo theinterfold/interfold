@@ -6755,3 +6755,129 @@ async fn decryption_proof_recovery_coalesces_repeated_resume_triggers() -> Resul
 
 #[path = "tests/admission.rs"]
 mod admission;
+
+/// Replay of a selection that the restored context lacks starts the keyshare before
+/// `EffectsEnabled`. It publishes nothing and starts no collector then, so an encryption-key cutoff
+/// that passes during replay ends nothing. At `EffectsEnabled` the rebuilt collector applies the
+/// cutoff: no peer sent a key, so the DKG fails.
+#[actix::test]
+async fn a_keyshare_that_replay_starts_waits_for_effects() -> Result<()> {
+    let e3_id = E3id::new("replay-started-keyshare", 1);
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let (bus, history) = test_bus();
+    let repositories = Repositories::in_mem();
+    let mut context = E3Context::from_params(E3ContextParams {
+        e3_id: e3_id.clone(),
+        repository: repositories.router().repositories().context(&e3_id),
+        extensions: Arc::new(Vec::new()),
+    });
+    // The router's context before `EffectsEnabled`.
+    context.set_effects_enabled(false);
+    context.set_dependency(
+        META_KEY,
+        E3Meta {
+            threshold_m: 1,
+            threshold_n: 3,
+            seed: e3_events::Seed([0; 32]),
+            params_preset: BfvPreset::InsecureThreshold64,
+            params: insecure_threshold_params(),
+            error_size: ArcBytes::from_bytes(&[]),
+        },
+    );
+    // A 30 s window: the encryption-key cutoff (10%) comes 3 s after the selection.
+    let extension = ThresholdKeyshareExtension::create(
+        &bus,
+        &cipher,
+        &Address::ZERO.to_string(),
+        HashMap::from([(1, Address::ZERO)]),
+        Arc::new(|_| {
+            Box::pin(async {
+                Ok((
+                    crate::domain::timeout_policy::now_unix_secs().saturating_add(30),
+                    30,
+                ))
+            })
+        }),
+        alloy::signers::local::PrivateKeySigner::random(),
+        Default::default(),
+    );
+    let selected = keyshare_event(selection(&e3_id), 1, EventSource::Evm);
+    extension.on_event(&mut context, &selected);
+    let actor = context
+        .get_event_recipient("threshold_keyshare")
+        .cloned()
+        .expect("the selection starts the keyshare");
+    actor.send(selected).await?;
+
+    // The cutoff passes while startup still replays the log.
+    actix::clock::sleep(std::time::Duration::from_secs(4)).await;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(
+        !events.iter().any(|event| matches!(
+            event.get_data(),
+            InterfoldEventData::EncryptionKeyPending(_)
+                | InterfoldEventData::EncryptionKeyCollectionFailed(_)
+                | InterfoldEventData::E3Failed(_)
+        )),
+        "the keyshare acted before EffectsEnabled: {:?}",
+        events
+            .iter()
+            .map(|event| event.event_type())
+            .collect::<Vec<_>>()
+    );
+
+    actor
+        .send(keyshare_event(EffectsEnabled::new(), 2, EventSource::Local))
+        .await?;
+    let repo = context.repositories().threshold_keyshare(&e3_id);
+    let state =
+        wait_for_keyshare_state(&repo, |state| matches!(state, KeyshareState::Failed { .. }))
+            .await?;
+    assert!(
+        matches!(
+            state,
+            KeyshareState::Failed {
+                failed_at_stage: E3Stage::CommitteeFinalized,
+                reason: FailureReason::DKGTimeout,
+            }
+        ),
+        "expected the cutoff to fail the DKG once effects run, got {state:?}"
+    );
+    Ok(())
+}
+
+/// While startup replays the log, a peer's key is recorded but starts no collector, whose deadline
+/// could run out before replay delivers the other recorded keys.
+#[actix::test]
+async fn a_replayed_key_is_recorded_without_a_collector() -> Result<()> {
+    let e3_id = E3id::new("replayed-key", 1);
+    let (parent, _, _, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    let parent = parent.start();
+    // `build_actor` starts with effects off, as during replay.
+    let (mut actor, _, recovery, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    actor
+        .handle_encryption_key_created(TypedEvent::new(peer_key(&e3_id, 1), test_ec(1)), parent)?;
+
+    assert!(actor.encryption_key_collector.is_none());
+    assert!(recovery
+        .read()
+        .await?
+        .expect("recovery state")
+        .encryption_keys
+        .contains_key(&1));
+    Ok(())
+}
