@@ -39,9 +39,10 @@ use e3_utils::utility_types::ArcBytes;
 use e3_utils::{colorize, rand_eth_addr, Color};
 use e3_zk_prover::test_utils::get_tempdir;
 use e3_zk_prover::{VersionInfo, ZkBackend};
-use fhe::bfv::PublicKey;
-use fhe_traits::{DeserializeParametrized, Serialize};
+use fhe::bfv::{Ciphertext, Encoding, Plaintext, PublicKey};
+use fhe_traits::{DeserializeParametrized, FheEncoder, FheEncrypter, Serialize};
 use num_bigint::BigUint;
+use rand::Rng;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -70,6 +71,9 @@ fn resolve_benchmark_preset(
 ) -> (&'static str, BfvPreset) {
     match requested_preset {
         Some("insecure") => ("insecure", DEFAULT_BFV_PRESET),
+        // The insecure parameters on the l-BFV path: same circuit artifacts, l-BFV protocol flow.
+        // `insecure` alone runs trBFV, so this is the fast way to exercise the l-BFV path.
+        Some("insecure-lbfv") => ("insecure", BfvPreset::InsecureThresholdLbfv),
         Some("secure-8192") => ("secure-8192", BfvPreset::SecureThreshold8192),
         Some("secure-16384") => ("secure-16384", BfvPreset::SecureThreshold16384),
         Some(value) => panic!("BENCHMARK_PRESET has unsupported value {value:?}"),
@@ -153,6 +157,16 @@ fn benchmark_preset_override_selects_secure_16384() {
     let (preset_subdir, preset) = resolve_benchmark_preset("secure", Some("secure-16384"));
     assert_eq!(preset_subdir, "secure-16384");
     assert!(matches!(preset, BfvPreset::SecureThreshold16384));
+}
+
+#[test]
+fn insecure_lbfv_override_runs_the_lbfv_path_on_insecure_artifacts() {
+    let (preset_subdir, preset) = resolve_benchmark_preset("insecure", Some("insecure-lbfv"));
+    assert_eq!(preset_subdir, "insecure");
+    assert!(e3_fhe_params::supports_lbfv(preset));
+    assert!(!e3_fhe_params::supports_lbfv(
+        resolve_benchmark_preset("insecure", Some("insecure")).1
+    ));
 }
 
 #[test]
@@ -2341,13 +2355,19 @@ async fn test_trbfv_actor() -> Result<()> {
         "CommitmentConsistencyCheckRequested",
         "CommitmentConsistencyCheckComplete",
     ];
-    // C1 verification checks exactly the accepted H keyshare proofs.
-    active_aggregator_c1_c5.extend(std::iter::repeat_n("ProofVerificationPassed", committee_h));
-    active_aggregator_c1_c5.extend_from_slice(&[
-        "ShareVerificationComplete",
-        "PkAggregationProofPending",
-        "PkAggregationProofSigned",
-    ]);
+    if is_lbfv {
+        // The l-BFV path has no C1 and no C5: the aggregator verifies each party's l-BFV
+        // generation proofs (checked against the roster below) and publishes the key directly.
+        active_aggregator_c1_c5.push("ShareVerificationComplete");
+    } else {
+        // C1 verification checks exactly the accepted H keyshare proofs.
+        active_aggregator_c1_c5.extend(std::iter::repeat_n("ProofVerificationPassed", committee_h));
+        active_aggregator_c1_c5.extend_from_slice(&[
+            "ShareVerificationComplete",
+            "PkAggregationProofPending",
+            "PkAggregationProofSigned",
+        ]);
+    }
 
     // The legacy publication is gossiped to the observer. The l-BFV publication intent remains
     // local to the active aggregator and reaches the registry writer from that node.
@@ -2668,6 +2688,26 @@ async fn test_trbfv_actor() -> Result<()> {
             "publishing party saw {publisher_keyshares} keyshares; expected at least H={committee_h}"
         );
     }
+    if is_lbfv {
+        // In place of C1: every selected party's l-BFV public-key generation proofs passed
+        // verification on the aggregator, and no other party's did.
+        let verified_parties: HashSet<u64> = roster_source
+            .iter()
+            .filter_map(|event| match event.get_data() {
+                InterfoldEventData::ProofVerificationPassed(data)
+                    if data.e3_id == e3_id && data.proof_type == ProofType::LbfvPkGeneration =>
+                {
+                    Some(data.party_id)
+                }
+                _ => None,
+            })
+            .collect();
+        let roster: HashSet<u64> = accepted_rosters[0].iter().copied().collect();
+        assert_eq!(
+            verified_parties, roster,
+            "l-BFV public-key generation proofs must pass for exactly the selected roster"
+        );
+    }
 
     if let Some(secs) = history_wall_seconds_between(
         roster_source,
@@ -2853,21 +2893,61 @@ async fn test_trbfv_actor() -> Result<()> {
 
     println!("Generating inputs this takes some time...");
 
-    // Create the inputs
-    let num_votes_per_voter = 3;
+    // One output ciphertext is decrypted, so the decryption numbers are per ciphertext.
+    //
+    // trBFV is additive only (multiplicative depth 0): the output is the voters' tally.
+    // l-BFV supports three multiplications: one user's ciphertext of a random `v` is squared three
+    // times, each product relinearized with the committee's relinearization key, and must decrypt
+    // to `v^8 mod t`. That is the only end-to-end check of the relinearization key the DKG
+    // produces. A single fresh ciphertext keeps the noise inside the budget the parameters were
+    // searched for (at most `SEARCH_Z` fresh ciphertexts summed before the depth-3 circuit).
+    let num_outputs = 1;
     let num_voters = 30;
-    let (inputs, numbers) = e3_test_helpers::application::generate_ciphertexts(
-        &pubkey,
-        num_voters,
-        num_votes_per_voter,
-    );
-    report.push(("Application CT Gen", app_gen_timer.elapsed()));
+    let plaintext_modulus = params_raw.plaintext();
+    let (outputs, expected_result): (Vec<Arc<Ciphertext>>, Vec<u64>) = if is_lbfv {
+        let envelope = e3_bfv_client::decode_lbfv_key_envelope(&pubkey_bytes)?;
+        let relinearization_key = fhe::trlbfv::LBFVRelinearizationKey::from_bytes(
+            &envelope.relinearization_key,
+            &params_raw,
+        )?;
+        let mut rng = rand::rng();
+        // Draw `v` until `v^8 mod t` is neither 0 nor 1, so a decryption that returns zero or one
+        // cannot pass by accident (for t = 100, any v sharing a factor with t gives v^8 = 0).
+        let pow8 = |x: u64| (0..3).fold(x % plaintext_modulus, |y, _| (y * y) % plaintext_modulus);
+        let v = loop {
+            let candidate = rng.random_range(2..plaintext_modulus);
+            if pow8(candidate) > 1 {
+                break candidate;
+            }
+        };
+        let pt = Plaintext::try_encode(&[v], Encoding::poly(), &params_raw)?;
+        let mut ct = pubkey.try_encrypt(&pt, &mut rng)?;
+        report.push(("Application CT Gen", app_gen_timer.elapsed()));
 
-    let running_app_timer = Instant::now();
-    println!("Running application to generate outputs...");
-    let outputs =
-        e3_test_helpers::application::run_application(&inputs, &pubkey, num_votes_per_voter);
-    report.push(("Running FHE Application", running_app_timer.elapsed()));
+        let running_app_timer = Instant::now();
+        println!("Running the depth-3 application (v^8) on one user ciphertext...");
+        let mut expected = v % plaintext_modulus;
+        for _ in 0..3 {
+            let mut product = &ct * &ct;
+            relinearization_key.relinearizes(&mut product)?;
+            ct = product;
+            expected = (expected * expected) % plaintext_modulus;
+        }
+        report.push(("Running FHE Application", running_app_timer.elapsed()));
+        println!("Encrypted v = {v}; expecting v^8 mod t = {expected}");
+        (vec![Arc::new(ct)], vec![expected])
+    } else {
+        let (inputs, numbers) =
+            e3_test_helpers::application::generate_ciphertexts(&pubkey, num_voters, num_outputs);
+        report.push(("Application CT Gen", app_gen_timer.elapsed()));
+
+        let running_app_timer = Instant::now();
+        println!("Running application to generate outputs...");
+        let outputs = e3_test_helpers::application::run_application(&inputs, &pubkey, num_outputs);
+        report.push(("Running FHE Application", running_app_timer.elapsed()));
+        let expected = numbers.iter().map(|vals| vals[0]).sum::<u64>() % plaintext_modulus;
+        (outputs, vec![expected])
+    };
 
     let publishing_ct_timer = Instant::now();
     println!("Have outputs. Creating ciphertexts...");
@@ -3236,8 +3316,8 @@ async fn test_trbfv_actor() -> Result<()> {
 
     assert_eq!(
         decryption_aggregator_proofs.len(),
-        num_votes_per_voter,
-        "PlaintextAggregated must carry one decryption proof per tally"
+        num_outputs,
+        "PlaintextAggregated must carry one decryption proof per output ciphertext"
     );
 
     let replay_committee = publication_committee_addresses
@@ -3304,19 +3384,10 @@ async fn test_trbfv_actor() -> Result<()> {
 
     let results: Vec<u64> = results.into_iter().map(|r| *r.first().unwrap()).collect();
 
-    // Show summation result (mod plaintext modulus)
-    let plaintext_modulus = params_raw.clone().plaintext();
-    let mut expected_result = [0u64; 3];
-    for vals in &numbers {
-        for j in 0..num_votes_per_voter {
-            expected_result[j] = (expected_result[j] + vals[j]) % plaintext_modulus;
-        }
-    }
-
     assert_eq!(
         results.as_slice(),
         expected_result.as_slice(),
-        "Threshold decryption must return every expected tally"
+        "Threshold decryption must return every expected output"
     );
 
     for (i, (res, exp)) in results.iter().zip(expected_result.iter()).enumerate() {
