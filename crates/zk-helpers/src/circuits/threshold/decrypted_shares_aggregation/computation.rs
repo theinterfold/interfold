@@ -138,11 +138,16 @@ impl Computation for Bits {
         let ctx = threshold_params
             .context_at_level(0)
             .map_err(|e| CircuitsErrors::Other(format!("context_at_level: {:?}", e)))?;
-        let mut d_native_bit = 0u32;
-        for qi in ctx.moduli_operators() {
-            let q = BigInt::from(**qi);
-            d_native_bit = d_native_bit.max(calculate_bit_width(q - 1));
-        }
+        let d_native_bit = compute_native_crt_coeff_bit(threshold_params.moduli());
+        // A residue fits `bits(q_l - 1)`; `d_native_bit` is already that maximum.
+        let q_bit = d_native_bit;
+        // Reduction quotients: the widest reduced input is the interpolation sum, under `H * q^2`,
+        // so its quotient is under `H * q`. Six spare bits cover any committee up to 64 parties.
+        // The Lagrange products are reduced after every factor, so their quotients stay below the
+        // largest party id, which is far below this bound.
+        let k_bit = q_bit + 6;
+        let t_bit = calculate_bit_width(&BigUint::from(threshold_params.plaintext()));
+        let q_total_bit = calculate_bit_width(ctx.modulus());
         Ok(Bits {
             noise_bit,
             d_native_bit,

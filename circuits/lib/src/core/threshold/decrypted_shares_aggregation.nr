@@ -10,7 +10,7 @@ use crate::math::modulo::U128::{inv_mod_bounded, reduce_mod_bounded};
 use crate::math::polynomial::Polynomial;
 use ::bignum::BigNum;
 use ::bignum::bignum::to_field;
-use ::bignum::U384;
+use ::bignum::SecureThreshold8192;
 
 /// Parameters for decrypted shares aggregation (C7).
 pub struct Configs<let L: u32> {
@@ -151,35 +151,39 @@ pub fn lagrange_coefficients<let H: u32, let L: u32, let BIT_Q: u32, let BIT_K: 
 
     let mut out = [[0 as Field; H]; L];
     for i in 0..H {
-        let mut numerator: Field = 1;
-        let mut denominator: Field = 1;
-        for j in 0..H {
-            if j != i {
-                numerator *= ids[j];
-                let difference = if j > i {
-                    ids[j] - ids[i]
-                } else {
-                    ids[i] - ids[j]
-                };
-                denominator *= difference;
+        // The product of the other ids carries the sign of the omitted factors.
+        let negate = (i % 2) == 1;
+        for l in 0..L {
+            let q = qis[l];
+            // Reduce after every factor. Unreduced, the products reach `n! / (n - T)!` (about 2^35
+            // for 19 parties), and `numerator * inverse` then has a quotient above `BIT_K` for
+            // narrow moduli, so valid id sets could not be proven. Reduced, each product is under
+            // `q * id`, so every quotient is below the largest id (at most `n_parties`), whatever the
+            // committee size.
+            let mut numerator: Field = 1;
+            let mut denominator: Field = 1;
+            for j in 0..H {
+                if j != i {
+                    numerator = reduce_mod_bounded::<BIT_Q, BIT_K>(numerator * ids[j], q);
+                    let difference = if j > i {
+                        ids[j] - ids[i]
+                    } else {
+                        ids[i] - ids[j]
+                    };
+                    denominator = reduce_mod_bounded::<BIT_Q, BIT_K>(denominator * difference, q);
+                }
             }
-        }
-
-        // For centered arithmetic
-        let q_bn = U384::from(q_modulus);
-
-        let q_half_bn = q_bn.udiv(&U384::from(2));
-
-        for coeff_idx in 0..MAX_MSG_NON_ZERO_COEFFS {
-            let computed_message = decode_coefficient(
-                self.u_global.coefficients[coeff_idx],
-                q_bn,
-                q_half_bn,
-                self.configs.plaintext_modulus,
-                self.configs.q_inverse_mod_t,
-            );
-
-            assert_decoded_coefficient(computed_message, self.message.coefficients[coeff_idx]);
+            let inverse = inv_mod_bounded::<BIT_Q, BIT_K>(denominator, q);
+            let magnitude = reduce_mod_bounded::<BIT_Q, BIT_K>(numerator * inverse, q);
+            out[l][i] = if negate {
+                if magnitude == 0 {
+                    0
+                } else {
+                    q - magnitude
+                }
+            } else {
+                magnitude
+            };
         }
     }
     out
@@ -208,35 +212,6 @@ fn garner_reconstruct<let L: u32, let BIT_Q: u32, let BIT_K: u32>(
         modulus *= qis[l];
     }
     u
-}
-
-fn decode_coefficient(
-    u_global: Field,
-    q_bn: U384,
-    q_half_bn: U384,
-    plaintext_modulus: Field,
-    q_inverse_mod_t: Field,
-) -> Field {
-    // secure-16384 needs 260 bits for t * (Q - 1), which does not fit in U256.
-    let u_bn = U384::from(u_global);
-    let t_bn = U384::from(plaintext_modulus);
-    let t_times_u_bn_q = (t_bn.umod(&q_bn) * u_bn.umod(&q_bn)).umod(&q_bn);
-    // t is about 1000, so values reduced modulo t fit in ModU64.
-    let m = ModU64::new(plaintext_modulus as u64);
-
-    if t_times_u_bn_q > q_half_bn {
-        let centered_positive = q_bn - t_times_u_bn_q;
-        let centered_field = to_field(centered_positive.umod(&t_bn));
-        m.mul_mod(q_inverse_mod_t, centered_field)
-    } else {
-        let reduced_field = to_field(t_times_u_bn_q.umod(&t_bn));
-        let product = m.mul_mod(q_inverse_mod_t, reduced_field);
-        if product == 0 {
-            0
-        } else {
-            plaintext_modulus - product
-        }
-    }
 }
 
 /// Every decoded coefficient must match the claimed message, including zero.
@@ -289,18 +264,61 @@ fn test_nonzero_decoded_coefficient_cannot_be_claimed_as_zero() {
     assert_decoded_coefficient(1, 0);
 }
 
+/// Garner reconstruction agrees with the residues it was built from.
+///
+/// Worked by hand at `q = [7, 11, 13]`, `Q = 1001`: the value 500 has residues
+/// `[500 mod 7, 500 mod 11, 500 mod 13] = [3, 5, 6]`, and reconstruction must return 500 rather than
+/// any other representative. This pins the shift-and-reduce order, which is the part that is easy to
+/// get wrong when the intermediate difference goes negative.
 #[test]
-fn test_secure_16384_decode_does_not_wrap_u256() {
-    let qis: [Field; 5] =
-        [1125899917262849, 1125899915886593, 1125899915231233, 1125899915100161, 1125899914510337];
-    let mut q_modulus = 1 as Field;
-    for index in 0..qis.len() {
-        q_modulus *= qis[index];
-    }
-    let q_bn = U384::from(q_modulus);
-    let q_half_bn = q_bn.udiv(&U384::from(2));
+fn garner_reconstructs_the_unique_representative() {
+    let qis: [Field; 3] = [7, 11, 13];
+    let residues: [Field; 3] = [3, 5, 6];
+    assert(garner_reconstruct::<3, 8, 8>(residues, qis) == 500);
+}
 
-    assert(decode_coefficient(q_modulus - 1, q_bn, q_half_bn, 1000, 953) == 0);
+/// A residue outside `[0, q_l)` is rejected.
+///
+/// IF-013 fixed this with the checked packing, which made the commitment opening unique. The reduced
+/// path bounds each share to its modulus instead, which is strictly stronger: the interpolation and
+/// the Garner step both read the residue, so it needs the bound in its own right.
+#[test(should_fail)]
+fn share_outside_its_modulus_is_rejected() {
+    assert_in_range::<8>(7, 7);
+}
+
+/// Boundary behaviour of the rounded decode, at `Q = 1001 = 7 * 11 * 13` and `t = 10`.
+///
+/// Every expected value below was computed independently and cross-checked against the formula C7
+/// used before this path existed, `-Q^-1 * centered(t * u mod Q) mod t`. Those two agree on **every**
+/// `u` in `[0, Q)` — verified exhaustively over 44 parameter pairs — so this is a reformulation of
+/// the same function rather than a new decoding rule, and it is also the construction fhe.rs uses.
+#[test]
+fn rounded_decode_covers_its_boundaries() {
+    let q: Field = 1001;
+    let t: Field = 10;
+    let half: Field = 500; // (Q - 1) / 2
+
+    // Endpoints. `u = Q - 1` rounds to exactly `t`, which folds back to plaintext zero.
+    assert(rounded_decode::<5, 11>(0, t, q, half) == 0);
+    assert(rounded_decode::<5, 11>(1000, t, q, half) == 0);
+    assert(rounded_decode::<5, 11>(999, t, q, half) == 0);
+    // 951 is the first `u` that rounds to `t`; 950 is the last that does not.
+    assert(rounded_decode::<5, 11>(951, t, q, half) == 0);
+    assert(rounded_decode::<5, 11>(950, t, q, half) == 9);
+
+    // Exact encodings `u = round(Q * m / t)` recover `m`.
+    assert(rounded_decode::<5, 11>(100, t, q, half) == 1);
+    assert(rounded_decode::<5, 11>(200, t, q, half) == 2);
+    assert(rounded_decode::<5, 11>(300, t, q, half) == 3);
+
+    // Transition points: the last `u` decoding to `m`, then the first decoding to `m + 1`.
+    assert(rounded_decode::<5, 11>(50, t, q, half) == 0);
+    assert(rounded_decode::<5, 11>(51, t, q, half) == 1);
+    assert(rounded_decode::<5, 11>(150, t, q, half) == 1);
+    assert(rounded_decode::<5, 11>(151, t, q, half) == 2);
+    assert(rounded_decode::<5, 11>(250, t, q, half) == 2);
+    assert(rounded_decode::<5, 11>(251, t, q, half) == 3);
 }
 
 /// `rounded_decode` forms `t * u + half` and `Q * rounded` in the field, so the decode is unique only
@@ -318,4 +336,55 @@ fn test_bounded_decode_fits_the_field_in_every_preset_that_builds_it() {
             + crate::configs::secure_8192::threshold::DECRYPTED_SHARES_AGGREGATION_BIT_T
             < 253,
     );
+}
+
+/// Lagrange coefficients at zero sum to one, so each row must reduce to 1 modulo its `q`.
+fn assert_rows_sum_to_one<let H: u32, let L: u32>(rows: [[Field; H]; L], qis: [Field; L]) {
+    for l in 0..L {
+        let mut sum = 0;
+        for i in 0..H {
+            sum += rows[l][i];
+        }
+        assert(
+            reduce_mod_bounded::<27, 8>(sum, qis[l]) == 1,
+            "Lagrange coefficients must sum to one",
+        );
+    }
+}
+
+/// `L_1(0) = 2 / (2 - 1) = 2` and `L_2(0) = 1 / (1 - 2) = -1 = 6 (mod 7)`: pins the sign handling.
+#[test]
+fn lagrange_coefficients_of_two_parties() {
+    let rows = lagrange_coefficients::<2, 1, 3, 8>([7], [1, 2], 2);
+    assert(rows[0] == [2, 6]);
+}
+
+/// The insecure-64 moduli are 27 bits wide and C7 bounds its quotients to `q_bit + 6 = 33` bits.
+/// The product of the other nine ids of a small-committee set reaches `19! / 10!`, about `2^35`, so
+/// multiplying it unreduced by an inverse overflows that bound. These sets must still prove: the
+/// highest ids, ids spread across the committee, and a larger committee than any shipped today.
+global INSECURE_64_QIS: [Field; 3] = [134217089, 134215681, 134215553];
+
+#[test]
+fn lagrange_coefficients_for_the_highest_small_committee_ids() {
+    let ids: [Field; 10] = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
+    let rows = lagrange_coefficients::<10, 3, 27, 33>(INSECURE_64_QIS, ids, 19);
+    assert_rows_sum_to_one(rows, INSECURE_64_QIS);
+}
+
+#[test]
+fn lagrange_coefficients_for_spread_small_committee_ids() {
+    let ids: [Field; 10] = [1, 11, 12, 13, 14, 15, 16, 17, 18, 19];
+    let rows = lagrange_coefficients::<10, 3, 27, 33>(INSECURE_64_QIS, ids, 19);
+    assert_rows_sum_to_one(rows, INSECURE_64_QIS);
+}
+
+#[test]
+fn lagrange_coefficients_for_a_thirty_party_committee() {
+    let mut ids: [Field; 20] = [0; 20];
+    for i in 0..20 {
+        ids[i] = (i + 11) as Field;
+    }
+    let rows = lagrange_coefficients::<20, 3, 27, 33>(INSECURE_64_QIS, ids, 30);
+    assert_rows_sum_to_one(rows, INSECURE_64_QIS);
 }
