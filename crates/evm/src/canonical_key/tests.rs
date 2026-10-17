@@ -47,7 +47,7 @@ fn proof_observation(
 #[actix::test]
 async fn confirmed_observations_admit_publications_in_either_order() -> Result<()> {
     let id = E3id::new("81", 1);
-    let preset = BfvPreset::InsecureThreshold;
+    let preset = BfvPreset::InsecureThreshold64;
     let params = BfvParamSet::from(preset);
     let bytes = e3_bfv_client::client::generate_public_key(
         params.degree,
@@ -283,4 +283,66 @@ async fn terminal_history_preserves_rosters_for_snapshot_hydration() -> Result<(
         .await??;
     assert!(keys.get(&ids[0]).is_none());
     Ok(())
+}
+
+fn field(value: u64) -> B256 {
+    B256::from(U256::from(value).to_be_bytes::<32>())
+}
+
+/// trBFV: `6 + 3h` inputs, party IDs from index 2, commitments from `5 + h`, key commitment last.
+#[test]
+fn trbfv_registry_proof_layout_matches_bfv_pk_verifier() {
+    let h = 2;
+    let commitment = [9u8; 32];
+    let mut inputs = vec![B256::ZERO; 6 + 3 * h];
+    inputs[2] = field(0);
+    inputs[3] = field(2);
+    inputs[5 + h] = B256::repeat_byte(3);
+    inputs[5 + h + 1] = B256::repeat_byte(4);
+    inputs[5 + 2 * h] = B256::repeat_byte(5);
+    inputs[5 + 2 * h + 1] = B256::repeat_byte(6);
+    inputs[5 + 3 * h] = commitment.into();
+    let layout = super::registry_proof_layout(
+        e3_fhe_params::BfvPreset::InsecureThreshold64,
+        h,
+        &inputs,
+        commitment,
+    )
+    .unwrap();
+    assert_eq!(layout.party_ids, vec![0, 2]);
+    assert_eq!(layout.sk_agg_commits, vec![[3u8; 32], [4u8; 32]]);
+    assert_eq!(layout.esm_agg_commits, vec![[5u8; 32], [6u8; 32]]);
+}
+
+/// l-BFV: `39 + 3h + 3 * rows` inputs, party IDs from index 1, commitments from `21 + h`, and the
+/// key-envelope commitment at `21 + 3h`, as `BfvPkVerifierV2` reads them. The trBFV reading used
+/// to reject every l-BFV publication, so no node recovered the key and decryption never started.
+#[test]
+fn lbfv_registry_proof_layout_matches_bfv_pk_verifier_v2() {
+    let preset = e3_fhe_params::BfvPreset::InsecureThresholdLbfv;
+    let rows = e3_fhe_params::lbfv_row_count(preset).unwrap();
+    let h = 2;
+    let commitment = [9u8; 32];
+    let mut inputs = vec![B256::ZERO; 39 + 3 * h + 3 * rows];
+    inputs[1] = field(1);
+    inputs[2] = field(2);
+    inputs[21 + h] = B256::repeat_byte(3);
+    inputs[21 + h + 1] = B256::repeat_byte(4);
+    inputs[21 + 2 * h] = B256::repeat_byte(5);
+    inputs[21 + 2 * h + 1] = B256::repeat_byte(6);
+    inputs[21 + 3 * h] = commitment.into();
+    let layout = super::registry_proof_layout(preset, h, &inputs, commitment).unwrap();
+    assert_eq!(layout.party_ids, vec![1, 2]);
+    assert_eq!(layout.sk_agg_commits, vec![[3u8; 32], [4u8; 32]]);
+    assert_eq!(layout.esm_agg_commits, vec![[5u8; 32], [6u8; 32]]);
+
+    // The commitment must sit at `21 + 3h`, not last.
+    let last = inputs.len() - 1;
+    inputs.swap(21 + 3 * h, last);
+    assert!(super::registry_proof_layout(preset, h, &inputs, commitment).is_err());
+
+    // A trBFV-shaped proof is rejected on the l-BFV path.
+    let mut legacy = vec![B256::ZERO; 6 + 3 * h];
+    legacy[5 + 3 * h] = commitment.into();
+    assert!(super::registry_proof_layout(preset, h, &legacy, commitment).is_err());
 }

@@ -302,20 +302,14 @@ impl CanonicalKeyProjection {
             CiphernodesCommitteeSize::from_threshold(request.threshold_m, request.threshold_n)?;
         let h = committee_size.values().h;
         let (_, inputs) = <(Bytes, Vec<B256>)>::abi_decode_params(proof)?;
-        ensure!(
-            inputs.len() == 6 + 3 * h && inputs.last() == Some(&B256::from(commitment)),
-            "registry proof does not match the key commitment or committee size"
-        );
+        let layout = registry_proof_layout(request.params_preset, h, &inputs, commitment)?;
         ensure!(
             committee.len() == request.threshold_n
                 && committee.iter().all(|node| !node.is_zero())
                 && committee.windows(2).all(|nodes| nodes[0] < nodes[1]),
             "registry committee is not ordered"
         );
-        let party_ids = inputs[2..2 + h]
-            .iter()
-            .map(|id| usize::try_from(U256::from_be_bytes(id.0)))
-            .collect::<Result<Vec<_>, _>>()?;
+        let party_ids = layout.party_ids;
         ensure!(
             party_ids.windows(2).all(|ids| ids[0] < ids[1])
                 && party_ids.iter().all(|id| *id < committee.len()),
@@ -331,8 +325,8 @@ impl CanonicalKeyProjection {
                 params_preset: request.params_preset,
                 committee_size,
                 interfold_address: self.interfold_addresses[&id.chain_id()],
-                sk_agg_commits: inputs[5 + h..5 + 2 * h].iter().map(|v| v.0).collect(),
-                esm_agg_commits: inputs[5 + 2 * h..5 + 3 * h].iter().map(|v| v.0).collect(),
+                sk_agg_commits: layout.sk_agg_commits,
+                esm_agg_commits: layout.esm_agg_commits,
             },
         )
     }
@@ -388,6 +382,56 @@ impl Handler<InterfoldEvent> for CanonicalKeyProjection {
             tracing::warn!(%error, "Rejected inconsistent chain key observation");
         }
     }
+}
+
+/// The fields a canonical key takes from the registry's public-key proof.
+#[derive(Debug, PartialEq, Eq)]
+struct RegistryProofLayout {
+    party_ids: Vec<usize>,
+    sk_agg_commits: Vec<[u8; 32]>,
+    esm_agg_commits: Vec<[u8; 32]>,
+}
+
+/// Read a registry public-key proof's public inputs in the layout its verifier checks on chain.
+///
+/// - trBFV (`DkgAggregator`, `BfvPkVerifier`): `6 + 3h` inputs; party IDs at `[2, 2 + h)`, the
+///   aggregated sk and e_sm commitments at `[5 + h, 5 + 3h)`, the key commitment last.
+/// - l-BFV (`DkgAggregatorV2`, `BfvPkVerifierV2`): `39 + 3h + 3 * rows` inputs; party IDs at
+///   `[1, 1 + h)`, the sk and e_sm commitments at `[21 + h, 21 + 3h)`, the key-envelope
+///   commitment at `21 + 3h`.
+fn registry_proof_layout(
+    preset: e3_fhe_params::BfvPreset,
+    h: usize,
+    inputs: &[B256],
+    commitment: [u8; 32],
+) -> Result<RegistryProofLayout> {
+    let (len, party_start, commits_start, commitment_index) = if e3_fhe_params::is_lbfv_path(preset)
+    {
+        let rows = e3_fhe_params::lbfv_row_count(preset.threshold_counterpart().unwrap_or(preset))
+            .context("l-BFV preset has no row count")?;
+        (39 + 3 * h + 3 * rows, 1, 21 + h, 21 + 3 * h)
+    } else {
+        (6 + 3 * h, 2, 5 + h, 5 + 3 * h)
+    };
+    ensure!(
+        inputs.len() == len && inputs.get(commitment_index) == Some(&B256::from(commitment)),
+        "registry proof does not match the key commitment or committee size"
+    );
+    let party_ids = inputs[party_start..party_start + h]
+        .iter()
+        .map(|id| usize::try_from(U256::from_be_bytes(id.0)))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(RegistryProofLayout {
+        party_ids,
+        sk_agg_commits: inputs[commits_start..commits_start + h]
+            .iter()
+            .map(|v| v.0)
+            .collect(),
+        esm_agg_commits: inputs[commits_start + h..commits_start + 2 * h]
+            .iter()
+            .map(|v| v.0)
+            .collect(),
+    })
 }
 
 #[cfg(test)]
