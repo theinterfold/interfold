@@ -8,8 +8,6 @@ guide and [`RULES.md`](RULES.md). The actor-by-actor refactor findings are summa
 
 ## Dependency layers
 
-`e3-zk-helpers` remains an unused workspace member. No production or development tool depends on it.
-
 The diagram groups workspace packages by role. Arrows point from a dependent crate to a direct
 dependency; the diagram keeps representative production edges rather than reproducing every Cargo
 edge, while the groups record each crate's current primary responsibility. Test-only edges are kept

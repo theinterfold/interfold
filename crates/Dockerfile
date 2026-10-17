@@ -95,7 +95,6 @@ COPY crates/trbfv/Cargo.toml ./trbfv/Cargo.toml
 COPY crates/utils/Cargo.toml ./utils/Cargo.toml
 COPY crates/utils-derive/Cargo.toml ./utils-derive/Cargo.toml
 COPY crates/wasm/Cargo.toml ./wasm/Cargo.toml
-COPY crates/zk-helpers/Cargo.toml ./zk-helpers/Cargo.toml
 COPY crates/zk/config/Cargo.toml ./zk/config/Cargo.toml
 COPY crates/zk/build/Cargo.toml ./zk/build/Cargo.toml
 COPY crates/zk/witness/Cargo.toml ./zk/witness/Cargo.toml
