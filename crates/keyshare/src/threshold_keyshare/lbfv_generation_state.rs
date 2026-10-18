@@ -8,10 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use alloy::{
-    primitives::{keccak256, Address, U256},
-    sol_types::SolValue,
-};
+use alloy::primitives::{Address, U256};
 use anyhow::{anyhow, ensure, Context, Result};
 use e3_committee_hash::{
     hash_lbfv_proof_session, validate_and_hash_finalized_committee, LbfvProofDomainContext,
@@ -30,7 +27,6 @@ use e3_trbfv::{
 };
 
 pub const LBFV_GENERATION_SCHEMA_VERSION: u32 = 4;
-const CIRCUIT_VERSION_LABEL: &[u8] = b"interfold-bfv-v2";
 
 /// Version 1 snapshot for one party's local l-BFV generation workflow.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -211,14 +207,9 @@ impl LbfvGenerationStateV1 {
             .clone()
             .try_into()
             .map_err(|_| anyhow!("l-BFV E3 ID cannot be converted to U256"))?;
-        let crypto_config_id = keccak256(
-            (
-                keccak256(b"fhe.rs:BFV"),
-                keccak256(&*selection.params),
-                keccak256(CIRCUIT_VERSION_LABEL),
-            )
-                .abi_encode(),
-        );
+        // The contract rebuilds the session from `ActiveCryptoConfig.configIdForParamSet`, so this
+        // must be the same configuration ID the E3 request carries.
+        let crypto_config_id = e3_fhe_params::crypto_config_id(&selection.params);
         let proof_domain = LbfvProofDomainContext {
             protocol_version,
             chain_id: selection.e3_id.chain_id(),
@@ -676,7 +667,10 @@ fn rows_from_map(proofs: &BTreeMap<u32, SignedProofPayload>) -> Result<Vec<Signe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::{primitives::B256, signers::local::PrivateKeySigner};
+    use alloy::{
+        primitives::{keccak256, B256},
+        signers::local::PrivateKeySigner,
+    };
     use e3_committee_hash::split_hash_to_field_limbs;
     use e3_crypto::SensitiveBytes;
     use e3_events::{CircuitName, E3id, Proof, ProofPayload, Seed};
@@ -776,6 +770,44 @@ mod tests {
         assert!(error
             .to_string()
             .contains("unsupported l-BFV generation schema version 1"));
+    }
+
+    /// `BfvPkVerifierV2` rebuilds the session with `ActiveCryptoConfig.configIdForParamSet`, so
+    /// the session must use the configuration ID the contract pins for parameter set 3.
+    #[test]
+    fn proof_session_uses_the_on_chain_configuration_id() {
+        let signer = signer();
+        let preset = BfvPreset::SecureThreshold16384;
+        let params =
+            e3_fhe_params::encode_bfv_params(&e3_fhe_params::BfvParamSet::from(preset).build_arc());
+        let state = LbfvGenerationStateV1::from_selection(
+            &CiphernodeSelected {
+                e3_id: E3id::new("7", 31_337),
+                threshold_m: 1,
+                threshold_n: 3,
+                seed: Seed([0; 32]),
+                error_size: ArcBytes::from_bytes(&[1]),
+                params_preset: preset,
+                params: ArcBytes::from_bytes(&params),
+                party_id: 1,
+                committee: vec![
+                    Address::ZERO.to_string(),
+                    signer.address().to_string(),
+                    Address::repeat_byte(0xff).to_string(),
+                ],
+            },
+            Address::repeat_byte(0x11),
+            signer.address(),
+            4,
+        )
+        .unwrap();
+
+        assert_eq!(
+            state.context.proof_domain.crypto_config_id,
+            "0x9b9181e0304e51388d6edd6eb4d5ae9a8593cbdbf28838734d829d09d0701d86"
+                .parse::<B256>()
+                .unwrap()
+        );
     }
 
     #[test]
@@ -958,7 +990,7 @@ mod tests {
         let encoded = bincode::serialize(&state).unwrap();
         assert_eq!(
             keccak256(&encoded),
-            "0x5c27a1acf0cd2dda8cce9e327b921df850a78bf95f91382330f36d6feba72653"
+            "0x8970283fa05b9ee9de5f37586cb8172a3a2a26bef5f71525ec8243e46f3b88b9"
                 .parse::<B256>()
                 .unwrap()
         );

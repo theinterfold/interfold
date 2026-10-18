@@ -7,8 +7,8 @@
 //! Pure translation of `Interfold.sol` logs into `InterfoldEventData`.
 
 use crate::contracts::IInterfold;
-use alloy::primitives::{keccak256, LogData, B256};
-use alloy::sol_types::{SolEvent, SolValue};
+use alloy::primitives::{LogData, B256};
+use alloy::sol_types::SolEvent;
 use anyhow::{anyhow, Context as _, Result};
 use e3_committee::CiphernodesCommitteeSize;
 use e3_events::E3id;
@@ -17,26 +17,13 @@ use e3_events::{
     CiphertextOutputReferencePublished, E3Failed, E3Stage, E3StageChanged, FailureReason,
     InputPublished, PlaintextOutputPublished, RewardClaimed, RewardCredited, RewardsDistributed,
 };
-use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset};
+use e3_fhe_params::{crypto_config_id, encode_bfv_params, BfvParamSet, BfvPreset};
 use e3_trbfv::helpers::calculate_error_size;
 use e3_utils::ArcBytes;
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use tracing::{info, trace, warn};
 
-const CIRCUIT_VERSION_LABEL: &[u8] = b"interfold-bfv-v2";
-
 struct E3RequestedWithChainId(pub IInterfold::E3Requested, pub u64);
-
-fn crypto_config_id(params: &[u8]) -> B256 {
-    keccak256(
-        (
-            keccak256(b"fhe.rs:BFV"),
-            keccak256(params),
-            keccak256(CIRCUIT_VERSION_LABEL),
-        )
-            .abi_encode(),
-    )
-}
 
 impl E3RequestedWithChainId {
     fn try_into_e3_requested(self) -> anyhow::Result<e3_events::E3Requested> {
@@ -463,7 +450,8 @@ pub(crate) fn extractor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::{Address, Bytes, U256};
+    use alloy::primitives::{keccak256, Address, Bytes, U256};
+    use alloy::sol_types::SolValue;
 
     #[test]
     fn contract_stage_and_reason_values_decode_in_declaration_order() {

@@ -22,7 +22,10 @@ pub use builder::{
 };
 pub use crp::{create_deterministic_crp_from_default_seed, create_deterministic_crp_from_seed};
 #[cfg(feature = "abi-encoding")]
-pub use encoding::{decode_bfv_params, decode_bfv_params_arc, encode_bfv_params, EncodingError};
+pub use encoding::{
+    crypto_config_id, crypto_config_id_with_label, decode_bfv_params, decode_bfv_params_arc,
+    encode_bfv_params, EncodingError, CIRCUIT_VERSION_LABEL,
+};
 pub use lbfv::{
     is_lbfv_path, is_supported_lbfv_row_count, lbfv_crs_seed, lbfv_row_count, lbfv_urs_seed,
     supports_lbfv, LBFV_CONSTANTS_VERSION, SECURE_16384_LBFV_CRS_SEED, SECURE_16384_LBFV_URS_SEED,

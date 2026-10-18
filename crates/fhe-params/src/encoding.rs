@@ -155,12 +155,82 @@ pub fn decode_bfv_params_arc(bytes: &[u8]) -> Result<Arc<BfvParameters>, Encodin
     Ok(Arc::new(decode_bfv_params(bytes)?))
 }
 
+/// The circuit identity in every current BFV configuration ID.
+///
+/// It must equal `CIRCUIT_VERSION` in `ActiveCryptoConfig.sol` and `scripts/build-circuits.ts`.
+/// Every crate derives configuration IDs through [`crypto_config_id`], so a version bump changes
+/// one place.
+#[cfg(feature = "abi-encoding")]
+pub const CIRCUIT_VERSION_LABEL: &[u8] = b"interfold-bfv-v5";
+
+/// The on-chain configuration ID for ABI-encoded BFV parameters under the current circuit identity.
+///
+/// The E3 request's `cryptoConfigId` and the l-BFV proof session both use this value, and
+/// `BfvPkVerifierV2` rebuilds the session from `ActiveCryptoConfig.configIdForParamSet`.
+#[cfg(feature = "abi-encoding")]
+pub fn crypto_config_id(encoded_params: &[u8]) -> alloy_primitives::B256 {
+    crypto_config_id_with_label(encoded_params, CIRCUIT_VERSION_LABEL)
+}
+
+/// `keccak256(abi.encode(keccak256("fhe.rs:BFV"), keccak256(params), keccak256(label)))`.
+///
+/// Use [`crypto_config_id`] for current requests; an explicit label is only for historical
+/// configurations.
+#[cfg(feature = "abi-encoding")]
+pub fn crypto_config_id_with_label(
+    encoded_params: &[u8],
+    circuit_version_label: &[u8],
+) -> alloy_primitives::B256 {
+    use alloy_primitives::keccak256;
+    // `abi.encode` of three `bytes32` values is their 96-byte concatenation.
+    let mut preimage = [0u8; 96];
+    preimage[..32].copy_from_slice(keccak256(b"fhe.rs:BFV").as_slice());
+    preimage[32..64].copy_from_slice(keccak256(encoded_params).as_slice());
+    preimage[64..].copy_from_slice(keccak256(circuit_version_label).as_slice());
+    keccak256(preimage)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::constants::{insecure, secure_8192};
     use crate::presets::BfvPreset;
     use std::str::FromStr;
+
+    /// The configuration IDs pinned in `ActiveCryptoConfig.sol`.
+    #[cfg(feature = "abi-encoding")]
+    #[test]
+    fn crypto_config_ids_match_active_crypto_config() {
+        use crate::presets::BfvParamSet;
+        use alloy_primitives::B256;
+
+        for (param_set, expected) in [
+            (
+                0,
+                "0x968e91054be28b2b577ac278284e03274ed46bd5c5064e573290312a2323d495",
+            ),
+            (
+                2,
+                "0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa",
+            ),
+            (
+                3,
+                "0x9b9181e0304e51388d6edd6eb4d5ae9a8593cbdbf28838734d829d09d0701d86",
+            ),
+            (
+                4,
+                "0x968e91054be28b2b577ac278284e03274ed46bd5c5064e573290312a2323d495",
+            ),
+        ] {
+            let preset = BfvPreset::from_on_chain_param_set(param_set).unwrap();
+            let params = encode_bfv_params(&BfvParamSet::from(preset).build_arc());
+            assert_eq!(
+                crypto_config_id(&params),
+                expected.parse::<B256>().unwrap(),
+                "parameter set {param_set}"
+            );
+        }
+    }
 
     #[cfg(feature = "abi-encoding")]
     #[test]

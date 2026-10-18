@@ -34,6 +34,7 @@ STAMP="circuits/bin/.active-preset.json"
 UTILS_TS="packages/interfold-contracts/scripts/utils.ts"
 PROTOCOL_CONSTANTS_TS="packages/interfold-contracts/scripts/protocol/constants.ts"
 FHE_CONSTANTS_RS="crates/fhe-params/src/constants.rs"
+FHE_ENCODING_RS="crates/fhe-params/src/encoding.rs"
 COMMITTEE_RS="crates/committee/src/lib.rs"
 ACTIVE_SOL="packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol"
 TASKS_TS="packages/interfold-contracts/tasks/interfold.ts"
@@ -264,14 +265,18 @@ check_bfv_preset secure-16384 secure16384 secure_16384 secure_16384
 CIRCUIT_VERSION_LABEL=$(grep -E 'bytes32 internal constant CIRCUIT_VERSION = keccak256\("[^\"]+"\);' "$ACTIVE_SOL" \
   | sed -E 's/.*keccak256\("([^\"]+)"\).*/\1/' \
   | head -n1)
-[[ "$CIRCUIT_VERSION_LABEL" == "interfold-bfv-v2" ]] \
-  || fail "$ACTIVE_SOL must use circuit identity interfold-bfv-v2; got ${CIRCUIT_VERSION_LABEL:-missing}"
-grep -Fq 'export const CIRCUIT_VERSION = ethers.id("interfold-bfv-v2");' "$FIXTURE_CONSTANTS_TS" \
-  || fail "$FIXTURE_CONSTANTS_TS must derive configuration IDs from interfold-bfv-v2"
-grep -Fq 'b"interfold-bfv-v2"' "$EVM_EVENTS_RS" \
-  || fail "$EVM_EVENTS_RS must derive configuration IDs from interfold-bfv-v2"
-grep -Fq 'b"interfold-bfv-v2"' "$INDEXER_RS" \
-  || fail "$INDEXER_RS must derive configuration IDs from interfold-bfv-v2"
+[[ "$CIRCUIT_VERSION_LABEL" == "interfold-bfv-v5" ]] \
+  || fail "$ACTIVE_SOL must use circuit identity interfold-bfv-v5; got ${CIRCUIT_VERSION_LABEL:-missing}"
+grep -Fq 'export const CIRCUIT_VERSION = ethers.id("interfold-bfv-v5");' "$FIXTURE_CONSTANTS_TS" \
+  || fail "$FIXTURE_CONSTANTS_TS must derive configuration IDs from interfold-bfv-v5"
+grep -Fq 'pub const CIRCUIT_VERSION_LABEL: &[u8] = b"interfold-bfv-v5";' "$FHE_ENCODING_RS" \
+  || fail "$FHE_ENCODING_RS must define the circuit identity interfold-bfv-v5"
+# Every crate derives configuration IDs through e3_fhe_params::crypto_config_id. A second copy of
+# the label drifts on the next bump; one left at v2 made every l-BFV session miss the contract's.
+OTHER_LABELS=$(grep -rlE 'b"interfold-bfv-v[0-9]+"' crates --include='*.rs' \
+  | grep -vxF "$FHE_ENCODING_RS" | grep -vxF "$EVM_EVENTS_RS" | grep -vxF "$INDEXER_RS" || true)
+[[ -z "$OTHER_LABELS" ]] \
+  || fail "derive configuration IDs with e3_fhe_params::crypto_config_id, not a local label: $OTHER_LABELS"
 
 sol_bytes32() {
   local name="$1"
