@@ -25,6 +25,7 @@ import {
   getBfvV2SubCircuitVkHashPaths,
   getBfvV2VkBindingHashPaths,
   getRepoRoot,
+  localBfvParamSet,
   readVkRecursiveHash,
 } from "./utils";
 
@@ -152,9 +153,16 @@ function readBenchmarkCommittee(foldedArtifact?: unknown): BfvCommittee {
 function resolveBenchmarkConfig(foldedArtifact?: unknown): ActiveBfvConfig {
   const preset = readBenchmarkPreset(foldedArtifact);
   const committee = readBenchmarkCommittee(foldedArtifact);
+  // The insecure artifacts serve parameter sets 0 (trBFV) and 4 (l-BFV); `BFV_PARAM_SET`
+  // chooses between them. Without it, the first match is the trBFV entry.
+  const paramSet = process.env.BFV_PARAM_SET?.trim()
+    ? localBfvParamSet()
+    : undefined;
   const config = TESTNET_BFV_CONFIGS.find(
     (candidate) =>
-      candidate.preset === preset && candidate.committee === committee,
+      candidate.preset === preset &&
+      candidate.committee === committee &&
+      (paramSet === undefined || candidate.paramSet === paramSet),
   );
   if (!config) {
     throw new Error(
