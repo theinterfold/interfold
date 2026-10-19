@@ -13,6 +13,8 @@ const { loadFixture, time } = networkHelpers;
 // ZKPassport encodes version 0.20.0 as three big-endian uint16 values at the start of a bytes32.
 const VERSION = ethers.zeroPadBytes("0x000000140000", 32);
 const OTHER_VERSION = ethers.zeroPadBytes("0x000000130000", 32);
+const OPRF_KEY = ethers.id("OPRF public key hash");
+const OTHER_OPRF_KEY = ethers.id("rotated OPRF public key hash");
 const DOMAIN = "dashboard.theinterfold.com";
 const SCOPE = "interfold-bond-owner";
 const NullifierType = {
@@ -58,6 +60,7 @@ async function setup() {
     DOMAIN,
     SCOPE,
     NullifierType.NON_SALTED,
+    ethers.ZeroHash,
     true,
     PROOF_VALIDITY,
     MAX_VALIDITY,
@@ -92,7 +95,8 @@ function evidence(
   {
     version = VERSION,
     nullifierType = NullifierType.NON_SALTED,
-  }: { version?: string; nullifierType?: number } = {},
+    oprfKeyHash = ethers.ZeroHash,
+  }: { version?: string; nullifierType?: number; oprfKeyHash?: string } = {},
 ) {
   const publicInputs = [
     ethers.id("certificate root"),
@@ -103,7 +107,7 @@ function evidence(
     ethers.id("parameter commitment"),
     ethers.toBeHex(nullifierType, 32),
     DOCUMENT_ID,
-    ethers.ZeroHash,
+    oprfKeyHash,
   ];
   // The caller asks for dev mode, another domain and a long window; none of them may reach
   // ZKPassport's verifier.
@@ -216,6 +220,13 @@ describe("ZKPassportIdentityVerifier", function () {
       args: () => [nullifierType],
     })),
     {
+      name: "a proof that carries an OPRF key",
+      change: async (_ctx, validUntil, proofDate) =>
+        evidence(validUntil, proofDate, { oprfKeyHash: OPRF_KEY }),
+      error: "UnexpectedOPRFKey",
+      args: () => [OPRF_KEY],
+    },
+    {
       name: "a proof without an identifier",
       change: async (ctx, validUntil, proofDate) => {
         await ctx.rootVerifier.setResult(true, ethers.ZeroHash);
@@ -281,6 +292,39 @@ describe("ZKPassportIdentityVerifier", function () {
     });
   }
 
+  it("accepts only the pinned OPRF key in a salted deployment", async function () {
+    const ctx = await loadFixture(setup);
+    const args: unknown[] = [...ctx.verifierArgs];
+    args[4] = NullifierType.SALTED;
+    args[5] = OPRF_KEY;
+    const salted = await ethers.deployContract(
+      "ZKPassportIdentityVerifier",
+      args,
+    );
+    const proofDate = await time.latest();
+    const validUntil = proofDate + 30 * DAY;
+    await proveFor(ctx, ctx.owner.address, validUntil);
+    const options = { nullifierType: NullifierType.SALTED };
+
+    const [identityId] = await salted.verify.staticCall(
+      ctx.owner.address,
+      evidence(validUntil, proofDate, { ...options, oprfKeyHash: OPRF_KEY }),
+    );
+    expect(identityId).to.equal(IDENTITY_ID);
+
+    await expect(
+      salted.verify.staticCall(
+        ctx.owner.address,
+        evidence(validUntil, proofDate, {
+          ...options,
+          oprfKeyHash: OTHER_OPRF_KEY,
+        }),
+      ),
+    )
+      .to.be.revertedWithCustomError(salted, "UnexpectedOPRFKey")
+      .withArgs(OTHER_OPRF_KEY);
+  });
+
   it("refuses a root verifier without code and an unsafe configuration", async function () {
     const ctx = await loadFixture(setup);
     const factory = await ethers.getContractFactory(
@@ -297,8 +341,11 @@ describe("ZKPassportIdentityVerifier", function () {
       [3, ""],
       [4, NullifierType.NON_SALTED_MOCK],
       [4, NullifierType.NONE],
-      [6, 0],
+      // A salted deployment needs ZKPassport's OPRF key; a non-salted one must not have a key.
+      [4, NullifierType.SALTED],
+      [5, OPRF_KEY],
       [7, 0],
+      [8, 0],
     ];
     for (const [index, value] of unsafe) {
       const args: unknown[] = [...ctx.verifierArgs];
