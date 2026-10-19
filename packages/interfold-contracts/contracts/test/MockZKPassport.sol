@@ -42,12 +42,14 @@ contract MockZKPassportRootVerifier is IZKPassportVerifier {
     }
 }
 
-/// @notice Returns configured committed-input answers.
+/// @notice Returns configured committed-input answers. Like ZKPassport's helper, it confirms
+///         FaceMatch only for the mode that the proof used.
 contract MockZKPassportHelper is IZKPassportHelper {
     address private senderAddress;
     uint256 private chainId;
     uint256 private expiryLowerBound;
-    bool private faceMatchVerified = true;
+    IZKPassportVerifier.FaceMatchMode private faceMatchMode =
+        IZKPassportVerifier.FaceMatchMode.STRICT;
 
     function setBinding(address _senderAddress, uint256 _chainId) external {
         senderAddress = _senderAddress;
@@ -58,8 +60,10 @@ contract MockZKPassportHelper is IZKPassportHelper {
         expiryLowerBound = _expiryLowerBound;
     }
 
-    function setFaceMatchVerified(bool _faceMatchVerified) external {
-        faceMatchVerified = _faceMatchVerified;
+    function setFaceMatchMode(
+        IZKPassportVerifier.FaceMatchMode _faceMatchMode
+    ) external {
+        faceMatchMode = _faceMatchMode;
     }
 
     function getBoundData(
@@ -76,10 +80,10 @@ contract MockZKPassportHelper is IZKPassportHelper {
     }
 
     function isFaceMatchVerified(
-        IZKPassportVerifier.FaceMatchMode,
+        IZKPassportVerifier.FaceMatchMode mode,
         IZKPassportVerifier.OS,
         bytes calldata
     ) external view override returns (bool) {
-        return faceMatchVerified;
+        return mode == faceMatchMode;
     }
 }
