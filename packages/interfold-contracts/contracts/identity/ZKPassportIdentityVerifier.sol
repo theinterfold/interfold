@@ -7,11 +7,11 @@ pragma solidity 0.8.28;
 
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import { IIdentityVerifier } from "../../interfaces/IIdentityVerifier.sol";
+import { IIdentityVerifier } from "../interfaces/IIdentityVerifier.sol";
 import {
     IZKPassportHelper,
     IZKPassportVerifier
-} from "../../interfaces/IZKPassportVerifier.sol";
+} from "../interfaces/IZKPassportVerifier.sol";
 
 /// @notice Verifies a bond-owner credential with a ZKPassport proof of a chip document: a passport,
 ///         national ID card or residence permit (ICAO 9303).
@@ -46,20 +46,20 @@ contract ZKPassportIdentityVerifier is IIdentityVerifier {
     error ExpiryNotProven(uint256 validUntil);
     error FaceMatchMissing();
 
-    IZKPassportVerifier public immutable rootVerifier;
+    IZKPassportVerifier public immutable ROOT_VERIFIER;
     /// @notice The only ZKPassport verifier version that this deployment accepts.
-    bytes32 public immutable version;
+    bytes32 public immutable VERSION;
     /// @notice The accepted identifier type: 0 non-salted, 1 salted.
-    uint8 public immutable nullifierType;
+    uint8 public immutable NULLIFIER_TYPE;
     /// @notice The OPRF key hash that a proof must carry: ZKPassport's key for salted proofs, zero
     ///         for non-salted proofs.
-    bytes32 public immutable oprfKeyHash;
-    bool public immutable faceMatchRequired;
+    bytes32 public immutable OPRF_KEY_HASH;
+    bool public immutable FACE_MATCH_REQUIRED;
     /// @notice The maximum age, in seconds, of a proof at verification.
-    uint256 public immutable proofValidity;
+    uint256 public immutable PROOF_VALIDITY;
     /// @notice The longest credential, in seconds after the proof date.
-    uint48 public immutable maxValidity;
-    bytes32 public immutable identityNamespace;
+    uint48 public immutable MAX_VALIDITY;
+    bytes32 public immutable IDENTITY_NAMESPACE;
     string public domain;
     string public scope;
 
@@ -86,16 +86,16 @@ contract ZKPassportIdentityVerifier is IIdentityVerifier {
             _proofValidity == 0 ||
             _maxValidity == 0
         ) revert InvalidConfiguration();
-        rootVerifier = IZKPassportVerifier(_rootVerifier);
-        version = _version;
+        ROOT_VERIFIER = IZKPassportVerifier(_rootVerifier);
+        VERSION = _version;
         domain = _domain;
         scope = _scope;
-        nullifierType = _nullifierType;
-        oprfKeyHash = _oprfKeyHash;
-        faceMatchRequired = _faceMatchRequired;
-        proofValidity = _proofValidity;
-        maxValidity = _maxValidity;
-        identityNamespace = keccak256(
+        NULLIFIER_TYPE = _nullifierType;
+        OPRF_KEY_HASH = _oprfKeyHash;
+        FACE_MATCH_REQUIRED = _faceMatchRequired;
+        PROOF_VALIDITY = _proofValidity;
+        MAX_VALIDITY = _maxValidity;
+        IDENTITY_NAMESPACE = keccak256(
             abi.encode(IDENTITY_TAG, _domain, _scope)
         );
     }
@@ -103,7 +103,7 @@ contract ZKPassportIdentityVerifier is IIdentityVerifier {
     /// @inheritdoc IIdentityVerifier
     /// @dev Evidence is abi.encode(IZKPassportVerifier.ProofVerificationParams, uint256 validUntil).
     ///      `validUntil` is the lower bound of the proof's expiry-date check: the document is valid
-    ///      at least until then. The credential ends at `validUntil`, or `maxValidity` after the
+    ///      at least until then. The credential ends at `validUntil`, or `MAX_VALIDITY` after the
     ///      proof date if that is earlier.
     function verify(
         address owner,
@@ -116,22 +116,44 @@ contract ZKPassportIdentityVerifier is IIdentityVerifier {
                 evidence,
                 (IZKPassportVerifier.ProofVerificationParams, uint256)
             );
-        if (params.version != version)
+        (bytes32 uniqueIdentifier, IZKPassportHelper helper) = _verifyProof(
+            params
+        );
+        _checkCommittedInputs(
+            helper,
+            params.committedInputs,
+            owner,
+            validUntil
+        );
+        uint256 proofDate = uint256(
+            params.proofVerificationData.publicInputs[PROOF_DATE_INDEX]
+        );
+        expiresAt = SafeCast.toUint48(
+            Math.min(validUntil, proofDate + MAX_VALIDITY)
+        );
+        identityId = keccak256(
+            abi.encode(IDENTITY_NAMESPACE, uniqueIdentifier)
+        );
+    }
+
+    /// @dev Verifies the proof under the fixed service configuration, and returns the document's
+    ///      identifier and ZKPassport's helper for the proof's committed inputs.
+    function _verifyProof(
+        IZKPassportVerifier.ProofVerificationParams memory params
+    ) internal returns (bytes32 uniqueIdentifier, IZKPassportHelper helper) {
+        if (params.version != VERSION) {
             revert UnsupportedVersion(params.version);
+        }
         // ZKPassport checks the domain, scope, validity window and dev mode that the caller
         // passes, so the fixed values replace the caller's.
         params.serviceConfig = IZKPassportVerifier.ServiceConfig(
-            proofValidity,
+            PROOF_VALIDITY,
             domain,
             scope,
             false
         );
-
-        (
-            bool verified,
-            bytes32 uniqueIdentifier,
-            IZKPassportHelper helper
-        ) = rootVerifier.verify(params);
+        bool verified;
+        (verified, uniqueIdentifier, helper) = ROOT_VERIFIER.verify(params);
         if (!verified) revert InvalidProof();
 
         bytes32[] memory publicInputs = params
@@ -142,7 +164,7 @@ contract ZKPassportIdentityVerifier is IIdentityVerifier {
         );
         // Salted and non-salted identifiers of one document differ, so accepting both would let
         // one document register two owners.
-        if (proofNullifierType != nullifierType) {
+        if (proofNullifierType != NULLIFIER_TYPE) {
             revert UnexpectedNullifierType(proofNullifierType);
         }
         // A salted identifier depends on the OPRF key, so a second key would give one document a
@@ -150,35 +172,36 @@ contract ZKPassportIdentityVerifier is IIdentityVerifier {
         bytes32 proofOprfKeyHash = publicInputs[
             publicInputs.length - OPRF_KEY_HASH_OFFSET_FROM_END
         ];
-        if (proofOprfKeyHash != oprfKeyHash) {
+        if (proofOprfKeyHash != OPRF_KEY_HASH) {
             revert UnexpectedOPRFKey(proofOprfKeyHash);
         }
         if (uniqueIdentifier == bytes32(0)) revert MissingIdentifier();
+    }
 
+    /// @dev Checks the owner and chain binding, the expiry bound and, when required, strict
+    ///      FaceMatch in the proof's committed inputs.
+    function _checkCommittedInputs(
+        IZKPassportHelper helper,
+        bytes memory committedInputs,
+        address owner,
+        uint256 validUntil
+    ) internal view {
         IZKPassportVerifier.BoundData memory bound = helper.getBoundData(
-            params.committedInputs
+            committedInputs
         );
         if (bound.senderAddress != owner || bound.chainId != block.chainid) {
             revert WrongBinding(bound.senderAddress, bound.chainId);
         }
-        if (
-            !helper.isExpiryDateAfterOrEqual(validUntil, params.committedInputs)
-        ) {
+        if (!helper.isExpiryDateAfterOrEqual(validUntil, committedInputs)) {
             revert ExpiryNotProven(validUntil);
         }
         if (
-            faceMatchRequired &&
+            FACE_MATCH_REQUIRED &&
             !helper.isFaceMatchVerified(
                 IZKPassportVerifier.FaceMatchMode.STRICT,
                 IZKPassportVerifier.OS.ANY,
-                params.committedInputs
+                committedInputs
             )
         ) revert FaceMatchMissing();
-
-        uint256 proofDate = uint256(publicInputs[PROOF_DATE_INDEX]);
-        expiresAt = SafeCast.toUint48(
-            Math.min(validUntil, proofDate + maxValidity)
-        );
-        identityId = keccak256(abi.encode(identityNamespace, uniqueIdentifier));
     }
 }
