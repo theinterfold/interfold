@@ -19,6 +19,7 @@ use bb_proof_verification::{
 };
 use lib::configs::default::dkg::L_THRESHOLD;
 use lib::configs::default::N_PARTIES;
+use lib::math::recursive_vk::predecessor_key_hash;
 
 /// Total slots: one per (party, threshold-modulus) pair.
 pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;
@@ -57,21 +58,20 @@ fn main(
     assert(c3_public_inputs[2] == (slot_index / L_THRESHOLD) as Field);
     assert(c3_public_inputs[3] == (slot_index % L_THRESHOLD) as Field);
 
-    // Bind every fold step to one canonical child VK: the previous accumulator's child VK hash
-    // (public input 0) must equal this step's inner `ShareEncryption` VK hash. This closes the VK
-    // substitution attack where an intermediate step is proven under a noncanonical child VK.
-    assert(acc_public_inputs[ACC_CHILD_VK_IDX] == inner_key_hash);
-
-    if is_first_step {
-        assert(acc_key_hash == expected_kernel_key_hash);
-    } else {
-        assert(acc_key_hash == expected_fold_key_hash);
-        if acc_public_inputs[ACC_IS_FIRST_STEP_IDX] == 1 {
-            assert(acc_public_inputs[ACC_EXPECTED_KERNEL_IDX] == expected_kernel_key_hash);
-        } else {
-            assert(acc_public_inputs[ACC_EXPECTED_FOLD_IDX] == expected_fold_key_hash);
-        }
-    }
+    // The predecessor must declare the same leaf, fold and kernel keys as this step, on every edge.
+    // The terminal fold's declared keys are checked against the canonical ones downstream, so
+    // this carries that check back to the genesis: the chain's first accumulator was verified
+    // under the canonical kernel key, and no other circuit could prefill rows.
+    assert(
+        acc_key_hash
+            == predecessor_key_hash(
+                inner_key_hash,
+                expected_fold_key_hash,
+                expected_kernel_key_hash,
+                is_first_step,
+                prior_keys(acc_public_inputs),
+            ),
+    );
 
     verify_honk_proof_non_zk(acc_vk, acc_proof, acc_public_inputs, acc_key_hash);
 
@@ -107,4 +107,71 @@ fn main(
     }
 
     (out_pk, out_msg, out_ct)
+}
+
+/// The predecessor's declared leaf, fold and kernel keys, in `predecessor_key_hash` order.
+fn prior_keys(acc_public_inputs: [Field; C3_FOLD_PUBLIC_LEN]) -> [Field; 3] {
+    [
+        acc_public_inputs[ACC_CHILD_VK_IDX],
+        acc_public_inputs[ACC_EXPECTED_FOLD_IDX],
+        acc_public_inputs[ACC_EXPECTED_KERNEL_IDX],
+    ]
+}
+
+/// One accumulator prefix: child key, predecessor key, first-step flag, slot, kernel key, fold key.
+fn accumulator(
+    child: Field,
+    kernel: Field,
+    fold: Field,
+    is_first_step: bool,
+) -> [Field; C3_FOLD_PUBLIC_LEN] {
+    let mut acc = [0; C3_FOLD_PUBLIC_LEN];
+    acc[ACC_CHILD_VK_IDX] = child;
+    acc[ACC_IS_FIRST_STEP_IDX] = is_first_step as Field;
+    acc[ACC_EXPECTED_KERNEL_IDX] = kernel;
+    acc[ACC_EXPECTED_FOLD_IDX] = fold;
+    acc
+}
+
+// L, F and K are the canonical leaf, fold and kernel keys; X is any other circuit's key.
+global L: Field = 11;
+global F: Field = 22;
+global K: Field = 33;
+global X: Field = 44;
+
+#[test]
+fn an_honest_chain_selects_the_kernel_then_the_fold_key() {
+    // The kernel publishes the canonical keys; the first step verifies it under K.
+    let kernel = accumulator(L, K, F, true);
+    assert(predecessor_key_hash(L, F, K, true, prior_keys(kernel)) == K);
+    // Later steps verify the previous fold under F.
+    let fold = accumulator(L, K, F, false);
+    assert(predecessor_key_hash(L, F, K, false, prior_keys(fold)) == F);
+}
+
+// The audit's sequence: a genesis from circuit X, a first step A declaring kernel X, a step B
+// carrying X from A, then a step C that declares the canonical K so the chain ends canonical.
+// Before this check, C compared only B's fold key, because B was not a first step.
+#[test(should_fail)]
+fn a_continuation_step_cannot_replace_the_declared_kernel_key() {
+    let b = accumulator(L, X, F, false);
+    let _ = predecessor_key_hash(L, F, K, false, prior_keys(b));
+}
+
+#[test(should_fail)]
+fn a_continuation_after_the_first_step_cannot_replace_the_declared_fold_key() {
+    let a = accumulator(L, K, X, true);
+    let _ = predecessor_key_hash(L, F, K, false, prior_keys(a));
+}
+
+#[test(should_fail)]
+fn a_first_step_rejects_a_genesis_that_declares_another_kernel_key() {
+    let genesis = accumulator(L, X, F, true);
+    let _ = predecessor_key_hash(L, F, K, true, prior_keys(genesis));
+}
+
+#[test(should_fail)]
+fn a_step_rejects_a_predecessor_with_another_leaf_key() {
+    let fold = accumulator(X, K, F, false);
+    let _ = predecessor_key_hash(L, F, K, false, prior_keys(fold));
 }
