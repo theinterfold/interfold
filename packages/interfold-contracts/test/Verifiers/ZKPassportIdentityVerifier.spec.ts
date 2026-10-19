@@ -22,6 +22,7 @@ const NullifierType = {
   SALTED_MOCK: 3,
   NONE: 4,
 } as const;
+const FaceMatchMode = { NONE: 0, REGULAR: 1, STRICT: 2 } as const;
 const DAY = 24 * 60 * 60;
 const PROOF_VALIDITY = 7 * DAY;
 const MAX_VALIDITY = 365 * DAY;
@@ -250,15 +251,20 @@ describe("ZKPassportIdentityVerifier", function () {
       error: "ExpiryNotProven",
       args: (_ctx, validUntil) => [validUntil],
     },
-    {
-      name: "a proof without FaceMatch",
-      change: async (ctx, validUntil, proofDate) => {
-        await ctx.helper.setFaceMatchVerified(false);
+    ...(
+      [
+        ["without FaceMatch", FaceMatchMode.NONE],
+        ["with only regular FaceMatch", FaceMatchMode.REGULAR],
+      ] as const
+    ).map(([label, mode]) => ({
+      name: `a proof ${label}`,
+      change: async (ctx: Context, validUntil: number, proofDate: number) => {
+        await ctx.helper.setFaceMatchMode(mode);
         return evidence(validUntil, proofDate);
       },
       error: "FaceMatchMissing",
       args: () => [],
-    },
+    })),
   ];
 
   for (const { name, change, error, args } of rejections) {
