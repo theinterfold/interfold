@@ -8,7 +8,7 @@
 // Regenerate with `pnpm build:circuits --committee small`.
 //
 // Reed-Solomon parity matrix for the small committee under the
-// insecure (L_THRESHOLD=2) preset. Dimensions: [L_THRESHOLD][N_PARTIES - T][N_PARTIES + 1].
+// insecure (L_THRESHOLD=3) preset. Dimensions: [L_THRESHOLD][N_PARTIES - T][N_PARTIES + 1].
 
 use crate::configs::committee::small::{N_PARTIES, T};
 pub use crate::configs::insecure::threshold::L as L_THRESHOLD;

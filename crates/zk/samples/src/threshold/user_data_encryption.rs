@@ -21,7 +21,7 @@ pub fn generate(
     let mut rng = rand::rng();
 
     let secret_key = SecretKey::random(threshold_params, &mut rng);
-    let public_key = PublicKey::new(&secret_key, &mut rng);
+    let public_key = public_key_on_protocol_crs(threshold_params, &secret_key, &mut rng)?;
 
     let plaintext = Plaintext::try_encode(&[1u64], Encoding::poly(), threshold_params)
         .map_err(|e| WitnessError::Sample(format!("Failed to encode plaintext: {:?}", e)))?;
@@ -56,3 +56,17 @@ mod tests {
         );
     }
 }
+
+pub fn public_key_on_protocol_crs<R: RngCore + CryptoRng>(
+    params: &Arc<BfvParameters>,
+    secret_key: &SecretKey,
+    rng: &mut R,
+) -> Result<PublicKey, fhe::Error> {
+    let crp = create_deterministic_crp_from_default_seed(params);
+    PublicKey::from_shares(vec![PublicKeyShare::new(secret_key, crp, rng)?])
+}
+use e3_fhe_params::create_deterministic_crp_from_default_seed;
+use fhe::mbfv::PublicKeyShare;
+use rand::{CryptoRng, RngCore};
+
+use fhe::aggregate::Aggregate;

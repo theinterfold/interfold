@@ -15,6 +15,7 @@ threshold decryption. Actors, authenticated dealer admission, and timing belong 
 | [`shares/`](src/shares)                                                                                                                                                | Typed encrypted share containers and BFV transport encoding.                                     |
 | [`trbfv_config.rs`](src/trbfv_config.rs), [`trbfv_request.rs`](src/trbfv_request.rs)                                                                                   | Parameter/dimension inputs and worker request/result/error envelopes.                            |
 | [`request_execution.rs`](src/request_execution.rs)                                                                                                                     | Synchronous typed dispatch, RNG access, operation labels and calculation/worker failure mapping. |
+| [`gen_lbfv_key_shares.rs`](src/gen_lbfv_key_shares.rs), [`aggregate_lbfv.rs`](src/aggregate_lbfv.rs), [`lbfv_operation.rs`](src/lbfv_operation.rs)                              | l-BFV key-share generation, aggregation, and operation identifiers.                              |
 | [`tests/integration.rs`](tests/integration.rs)                                                                                                                         | Isolated threshold calculation flow using generated fixtures.                                    |
 
 Workers generate contributions from caller RNG/cipher inputs, recipients assemble their local

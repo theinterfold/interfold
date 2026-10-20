@@ -54,7 +54,15 @@ impl Inputs {
         }
         crate::validation::polynomial("e_sm_lifted", &data.e_sm_lifted, threshold_params.degree())?;
 
+        let n = threshold_params.degree();
+        let l = threshold_params.moduli().len();
         let a = deterministic_crp_crt_polynomial(&threshold_params)?;
+        crate::encoding::verify_crt_shapes(
+            &[&data.pk0_share, &a, &data.eek, &data.e_sm, &data.sk],
+            l,
+            n,
+        )
+        .map_err(|e| WitnessError::Other(format!("C1 CRT shape mismatch: {e}")))?;
 
         let moduli = threshold_params.moduli();
         let n = threshold_params.degree() as u64;
@@ -194,3 +202,5 @@ mod tests {
         assert_eq!(bits.pk_bit, expected_bit);
     }
 }
+mod lbfv;
+pub use lbfv::*;

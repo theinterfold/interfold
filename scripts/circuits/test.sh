@@ -45,16 +45,16 @@ MATRIX_PACKAGES=(
 unlisted=$(cd "$REPO_ROOT/circuits/bin" && grep -rl --include='*.nr' '#\[test' . | sed 's|^\./||' | cut -d/ -f1,2 | sort -u |
   grep -vxF -f <(printf '%s\n' "${ACTIVE_PACKAGES[@]}" "${LBFV_PACKAGES[@]}" "${MATRIX_PACKAGES[@]}") || true)
 if [ -n "$unlisted" ]; then
-  echo "Packages with Noir tests that scripts/test-circuits.sh does not run:" >&2
+  echo "Packages with Noir tests that scripts/circuits/test.sh does not run:" >&2
   echo "$unlisted" >&2
   exit 1
 fi
 
-# select_preset PRESET: point the default config at one preset (insecure, secure_8192, secure_16384).
+# select_preset PRESET: point the default config at one preset (insecure_64, insecure, secure_8192, secure_16384).
 select_preset() {
   sed -E \
-    -e "s/preset: (insecure|secure-8192|secure-16384)/preset: ${1//_/-}/g" \
-    -e "s/super::(insecure|secure_8192|secure_16384)::/super::$1::/g" \
+    -e "s/preset: (insecure-64|insecure-simd|insecure|secure-8192|secure-16384)/preset: ${1//_/-}/g" \
+    -e "s/super::(insecure_64|insecure_simd|insecure|secure_8192|secure_16384)::/super::$1::/g" \
     "$BACKUP_DIR/default.nr" > "$ACTIVE_PRESET"
 }
 
@@ -75,17 +75,14 @@ cp "$BACKUP_DIR/default.nr" "$ACTIVE_PRESET"
 # committee. It runs before the loop below rewrites the committee selection.
 (cd "$REPO_ROOT/circuits/bin/config" && nargo execute)
 
-# The dkg_aggregator and node_fold tests read only H, N_PARTIES, and L_THRESHOLD. Both presets have
-# L_THRESHOLD = 3. These pairs run each committee once and each preset at least once.
-for pair in minimum:insecure micro:secure small:secure; do
-  committee="${pair%%:*}"
-  preset="${pair##*:}"
+# These packages read H, N_PARTIES, and L_THRESHOLD. Cover each committee on both trBFV presets.
+for committee in minimum micro small; do
   sed -E \
     -e "s/committee: (minimum|micro|small)/committee: $committee/g" \
     -e "s/committee::(minimum|micro|small)/committee::$committee/g" \
     "$BACKUP_DIR/active.nr" > "$ACTIVE_COMMITTEE"
 
-  for preset in insecure secure_8192; do
+  for preset in insecure_64 secure_8192; do
     select_preset "$preset"
     echo "Testing DKG aggregation for ${preset//_/-}/$committee"
     # node_fold's recipient-key constraints are indexed by N_PARTIES and L_THRESHOLD, the same

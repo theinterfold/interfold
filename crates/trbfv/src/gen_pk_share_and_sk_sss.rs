@@ -25,6 +25,7 @@ use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 use tracing::info;
+use zeroize::{Zeroize, Zeroizing};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct GenPkShareAndSkSssRequest {
@@ -131,8 +132,12 @@ pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>(
         num_ciphernodes, threshold
     );
     let sk_share = SecretKey::random(&params, rng);
-    let (pk_share, intermediates) =
-        PublicKeyShare::new_with_intermediates(&sk_share, crp.clone(), rng)?;
+    let (pk0_share, _, mut sk_poly, error) =
+        PublicKeyShare::new_extended(&sk_share, crp.clone(), rng)?;
+    sk_poly.zeroize();
+    let error = Zeroizing::new(error);
+    let pk0_share_raw = ArcBytes::from_bytes(&pk0_share.to_bytes());
+    let pk_share = PublicKeyShare::deserialize(&pk0_share_raw, &params, crp)?;
 
     // Generate smudging noise
     let lambda = req.lambda.into_lambda()?;
@@ -147,8 +152,7 @@ pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>(
     let e_sm_rns = Poly::<PowerBasis>::from_bigints(&esi_coeffs, params.context_at_level(0)?)?;
     let e_sm_raw = ArcBytes::from_bytes(&e_sm_rns.deref().to_bytes());
 
-    let pk0_share_raw = ArcBytes::from_bytes(&pk_share.to_bytes());
-    let eek_raw = ArcBytes::from_bytes(&intermediates.error().to_bytes());
+    let eek_raw = ArcBytes::from_bytes(&error.to_bytes());
 
     let share_manager =
         ShareManager::new(num_ciphernodes as usize, threshold as usize, params.clone())?;

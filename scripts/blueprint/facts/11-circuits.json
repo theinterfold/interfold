@@ -48,7 +48,7 @@
         },
         {
           "why": "the commitment: hashes pk0 then pk1 under the DS_PK domain separator",
-          "ref": "circuits/lib/src/math/commitments.nr@275@pub fn compute_dkg_pk_commitment"
+          "ref": "circuits/lib/src/math/commitments.nr@190@pub fn compute_dkg_pk_commitment"
         }
       ],
       "rust_patterns": [],
@@ -468,12 +468,12 @@
         {
           "name": "PkAggregation",
           "what": "the H party pk0 polynomials and the aggregate, checked per CRT basis",
-          "ref": "circuits/lib/src/core/threshold/pk_aggregation.nr@51@pub struct PkAggregation<"
+          "ref": "circuits/lib/src/core/threshold/pk_aggregation.nr@50@pub struct PkAggregation<"
         },
         {
           "name": "Configs",
           "what": "the CRT moduli used by the modular sum checks",
-          "ref": "circuits/lib/src/core/threshold/pk_aggregation.nr@27@pub struct Configs<"
+          "ref": "circuits/lib/src/core/threshold/pk_aggregation.nr@26@pub struct Configs<"
         }
       ],
       "read_first": [
@@ -483,15 +483,15 @@
         },
         {
           "why": "execute: range checks, per-party commitment checks, per-basis sum, then commit",
-          "ref": "circuits/lib/src/core/threshold/pk_aggregation.nr@162@pub fn execute(self) -> Field"
+          "ref": "circuits/lib/src/core/threshold/pk_aggregation.nr@160@pub fn execute(self) -> Field"
         },
         {
           "why": "the modular sum check per CRT basis, with a bounded quotient",
-          "ref": "circuits/lib/src/core/threshold/pk_aggregation.nr@155@mod_q_l.assert_zero_mod_bounded::<SUM_BIT_CARRY>("
+          "ref": "circuits/lib/src/core/threshold/pk_aggregation.nr@153@mod_q_l.assert_zero_mod_bounded::<SUM_BIT_CARRY>("
         },
         {
           "why": "binds each party contribution to its C1 commitment",
-          "ref": "circuits/lib/src/core/threshold/pk_aggregation.nr@114@compute_threshold_pk_commitment_checked::<N, L, BIT_PK>(self.pk0[i])"
+          "ref": "circuits/lib/src/core/threshold/pk_aggregation.nr@112@compute_threshold_pk_commitment_checked::<N, L, BIT_PK>(self.pk0[i])"
         }
       ],
       "rust_patterns": [],
@@ -509,45 +509,73 @@
       ],
       "kind": "circuit",
       "path": "circuits/bin/threshold/user_data_encryption",
-      "one_line": "Proves a user's two-leg BFV ciphertext is valid under the aggregated committee key, with one shared randomness u, in one circuit (trBFV keys).",
-      "explain": "One circuit proves both legs of a user's BFV encryption under the aggregated key from C5. The ct0 leg ties pk0, its ciphertext, the scaled message k1 and u; it bounds u to {-1, 0, 1}, commits it, and opens pk0 with checked packing. The ct1 leg ties the circuit-constant CRS (CRP) as pk1, its ciphertext and the same u, and reuses ct0's u commitment. user_data_encryption::execute asserts that both legs read the same u and returns (pk_commitment, ct_commitment, k1_commitment), the only public values. This circuit serves trBFV keys (secure-8192); l-BFV keys use the chunked user_data_encryption_chunked tree. The data provider generates the proof, and the E3 program checks it when the input is published (agent/flow-trace/04). Without the shared u, the two legs could use different randomness and would not form one ciphertext.",
-      "analogy": "Two halves of one sealed envelope made at the same desk with one hidden random number, checked together in one inspection.",
+      "one_line": "Proves a user's two-leg BFV ciphertext is valid under the aggregated committee key, with one shared randomness u.",
       "actors": [],
       "consumes": [
         {
-          "name": "private: pk0is",
+          "name": "private: ct0_verification_key",
+          "by": "verify_honk_proof_non_zk",
+          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@12@ct0_verification_key: UltraHonkVerificationKey"
+        },
+        {
+          "name": "private: ct0_proof",
+          "by": "verify_honk_proof_non_zk",
+          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@13@ct0_proof: UltraHonkProof"
+        },
+        {
+          "name": "private: ct0_public_inputs",
+          "by": "verify_honk_proof_non_zk",
+          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@14@ct0_public_inputs: [Field; 4]"
+        },
+        {
+          "name": "public: ct0_key_hash",
+          "by": "verify_honk_proof_non_zk",
+          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@15@ct0_key_hash: pub Field"
+        },
+        {
+          "name": "private: ct1_verification_key",
+          "by": "verify_honk_proof_non_zk",
+          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@17@ct1_verification_key: UltraHonkVerificationKey"
+        },
+        {
+          "name": "private: ct1_proof",
+          "by": "verify_honk_proof_non_zk",
+          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@18@ct1_proof: UltraHonkProof"
+        },
+        {
+          "name": "private: ct1_public_inputs",
+          "by": "verify_honk_proof_non_zk",
+          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@19@ct1_public_inputs: [Field; 3]"
+        },
+        {
+          "name": "public: ct1_key_hash",
+          "by": "verify_honk_proof_non_zk",
+          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@20@ct1_key_hash: pub Field"
+        },
+        {
+          "name": "private: pk0is (ct0 leg)",
           "by": "UserDataEncryptionCt0::execute",
-          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@25@pk0is: [Polynomial<N>; L]"
+          "ref": "circuits/bin/threshold/user_data_encryption_ct0/src/main.nr@16@pk0is: [Polynomial<N>; L]"
         },
         {
-          "name": "private: ct0is",
+          "name": "private: ct0is (ct0 leg)",
           "by": "UserDataEncryptionCt0::execute",
-          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@26@ct0is: [Polynomial<N>; L]"
+          "ref": "circuits/bin/threshold/user_data_encryption_ct0/src/main.nr@17@ct0is: [Polynomial<N>; L]"
         },
         {
-          "name": "private: ct1is",
-          "by": "UserDataEncryptionCt1::execute_with_u_commitment",
-          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@27@ct1is: [Polynomial<N>; L]"
-        },
-        {
-          "name": "private: u (shared by both legs)",
-          "by": "user_data_encryption::execute",
-          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@28@u: Polynomial<N>"
-        },
-        {
-          "name": "private: e0, e1",
-          "by": "UserDataEncryptionCt0 / UserDataEncryptionCt1",
-          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@29@e0: Polynomial<N>"
-        },
-        {
-          "name": "private: k1",
+          "name": "private: k1 (ct0 leg)",
           "by": "UserDataEncryptionCt0::execute",
-          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@31@k1: Polynomial<N>"
+          "ref": "circuits/bin/threshold/user_data_encryption_ct0/src/main.nr@20@k1: Polynomial<N>"
         },
         {
-          "name": "private: r, r_ct1 (reduction quotients)",
-          "by": "UserDataEncryptionCt0 / UserDataEncryptionCt1",
-          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@34@r_ct1: [Polynomial<N>; L]"
+          "name": "private: pk1is (ct1 leg)",
+          "by": "UserDataEncryptionCt1::execute",
+          "ref": "circuits/bin/threshold/user_data_encryption_ct1/src/main.nr@15@pk1is: [Polynomial<N>; L]"
+        },
+        {
+          "name": "private: ct1is (ct1 leg)",
+          "by": "UserDataEncryptionCt1::execute",
+          "ref": "circuits/bin/threshold/user_data_encryption_ct1/src/main.nr@16@ct1is: [Polynomial<N>; L]"
         }
       ],
       "emits": [],
@@ -556,35 +584,35 @@
         {
           "name": "UserDataEncryptionCt0",
           "what": "the ct0 leg statement: pk0, ciphertext, k1, u and the reduction quotient",
-          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct0.nr@57@pub struct UserDataEncryptionCt0<"
+          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct0.nr@55@pub struct UserDataEncryptionCt0<"
         },
         {
           "name": "UserDataEncryptionCt1",
-          "what": "the ct1 leg statement: pk1 (the CRS), ciphertext, u and the reduction quotient",
-          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct1.nr@41@pub struct UserDataEncryptionCt1<"
+          "what": "the ct1 leg statement: pk1, ciphertext, u and the reduction quotient",
+          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct1.nr@39@pub struct UserDataEncryptionCt1<"
         }
       ],
       "read_first": [
         {
-          "why": "entry point: builds both legs from one witness, with CRP as pk1",
-          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@24@fn main("
+          "why": "entry point: the wrapper that verifies both leg proofs",
+          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@10@fn main("
         },
         {
-          "why": "the shared-u check and the combined commitments",
-          "ref": "circuits/lib/src/core/threshold/user_data_encryption.nr@25@assert(ct0.u().coefficients == ct1.u().coefficients"
+          "why": "the shared-randomness check between the two legs",
+          "ref": "circuits/bin/threshold/user_data_encryption/src/main.nr@36@assert(ct0_public_inputs[3] == ct1_public_inputs[2]);"
         },
         {
           "why": "the ct0 leg body: range bounds, commitments, then the ciphertext identity",
-          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct0.nr@181@pub fn execute(self) -> (Field, Field, Field, Field)"
+          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct0.nr@164@pub fn execute(self) -> (Field, Field, Field, Field)"
         },
         {
-          "why": "the ct1 leg inside the merged circuit: reuses ct0's u commitment",
-          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct1.nr@192@pub(crate) fn execute_with_u_commitment"
+          "why": "the ct1 leg body",
+          "ref": "circuits/lib/src/core/threshold/user_data_encryption_ct1.nr@139@pub fn execute(self) -> (Field, Field, Field)"
         }
       ],
       "rust_patterns": [],
       "depends_on": [],
-      "tests": "lib user_data_encryption module has 5 #[test] functions, ct0 has 1 and ct1 has 3 (lib/src/core/threshold/). Run nargo test in circuits/lib. The binary has none.",
+      "tests": "lib ct0 module has 1 #[test] and ct1 has 2 (lib/src/core/threshold/). Run nargo test in circuits/lib. The wrapper has none.",
       "unverified": [
         "The generator (data provider) and the E3 program's publishInput check come from docs/architecture/encrypted-computation.md; no Solidity source was read."
       ]
@@ -1035,11 +1063,11 @@
         },
         {
           "why": "the commitment wrapper that every commitment goes through",
-          "ref": "circuits/lib/src/math/commitments.nr@207@pub fn compute_commitment("
+          "ref": "circuits/lib/src/math/commitments.nr@122@pub fn compute_commitment("
         },
         {
           "why": "the negacyclic evaluation kernel used by the BFV identity checks",
-          "ref": "circuits/lib/src/math/polynomial.nr@325@pub fn negacyclic_kernel<"
+          "ref": "circuits/lib/src/math/polynomial.nr@254@pub fn negacyclic_kernel<"
         }
       ],
       "rust_patterns": [],

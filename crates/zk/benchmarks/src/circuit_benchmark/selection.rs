@@ -11,6 +11,7 @@ pub(crate) enum Case {
     Config,
     Ct0,
     Ct1,
+    Ude,
 }
 
 impl Case {
@@ -19,16 +20,24 @@ impl Case {
             "config" => Ok(Self::Config),
             "threshold/user_data_encryption_ct0" => Ok(Self::Ct0),
             "threshold/user_data_encryption_ct1" => Ok(Self::Ct1),
+            "threshold/user_data_encryption" => Ok(Self::Ude),
             _ => [
                 CircuitName::PkBfv,
                 CircuitName::SkShareComputation,
                 CircuitName::ESmShareComputation,
+                CircuitName::SkShareComputationChunk,
+                CircuitName::ESmShareComputationChunk,
                 CircuitName::ShareEncryption,
                 CircuitName::DkgShareDecryption,
                 CircuitName::PkGeneration,
                 CircuitName::PkAggregation,
+                CircuitName::LbfvPkGeneration,
+                CircuitName::LbfvPkAggregation,
+                CircuitName::RlkGeneration,
+                CircuitName::RlkAggregation,
                 CircuitName::ThresholdShareDecryption,
                 CircuitName::DecryptedSharesAggregation,
+                CircuitName::DecryptedSharesAggregationWide,
             ]
             .into_iter()
             .find(|name| name.dir_path() == path)
@@ -42,6 +51,7 @@ impl Case {
             Self::Config => "config".into(),
             Self::Ct0 => "threshold/user_data_encryption_ct0".into(),
             Self::Ct1 => "threshold/user_data_encryption_ct1".into(),
+            Self::Ude => "threshold/user_data_encryption".into(),
         }
     }
     pub fn name(self) -> String {
@@ -62,7 +72,13 @@ pub(crate) fn variant(name: &str) -> Result<CircuitVariant> {
 #[serde(untagged)]
 pub(crate) enum Entry {
     Path(String),
-    Restricted { name: String, modes: Vec<String> },
+    Restricted {
+        name: String,
+        #[serde(default)]
+        modes: Vec<String>,
+        #[serde(default)]
+        presets: Vec<String>,
+    },
 }
 
 #[derive(Deserialize)]
@@ -78,6 +94,23 @@ pub(crate) struct Config {
 
 impl Config {
     pub fn select(&self, mode: &str, filters: &[String]) -> Result<Vec<Case>> {
+        self.select_for_preset(
+            mode,
+            if mode == "secure" {
+                "secure-8192"
+            } else {
+                "insecure-64"
+            },
+            filters,
+        )
+    }
+
+    pub fn select_for_preset(
+        &self,
+        mode: &str,
+        preset: &str,
+        filters: &[String],
+    ) -> Result<Vec<Case>> {
         if self.oracles != ["default"] {
             bail!("The legacy oracle selector has no effect; use --variant with the default oracle entry");
         }
@@ -107,14 +140,34 @@ impl Config {
         }
         let mut selected = Vec::new();
         for entry in &self.circuits {
-            let (path, modes) = match entry {
-                Entry::Path(path) => (path, None),
-                Entry::Restricted { name, modes } => (name, Some(modes)),
+            let (path, modes, presets) = match entry {
+                Entry::Path(path) => (path, &[][..], &[][..]),
+                Entry::Restricted {
+                    name,
+                    modes,
+                    presets,
+                } => (name, modes.as_slice(), presets.as_slice()),
             };
             if !filters.is_empty() && !filters.contains(path) {
                 continue;
             }
-            if modes.is_some_and(|modes| !modes.iter().any(|value| value == mode)) {
+            if (!modes.is_empty() && !modes.iter().any(|value| value == mode))
+                || (!presets.is_empty() && !presets.iter().any(|value| value == preset))
+            {
+                continue;
+            }
+            // The l-BFV-only artifact directories build no trBFV circuits.
+            if matches!(preset, "insecure" | "insecure-simd" | "secure-16384")
+                && matches!(
+                    path.as_str(),
+                    "dkg/share_encryption"
+                        | "dkg/share_decryption"
+                        | "threshold/user_data_encryption"
+                        | "threshold/pk_generation"
+                        | "threshold/pk_aggregation"
+                        | "threshold/decrypted_shares_aggregation"
+                )
+            {
                 continue;
             }
             let case = Case::parse(path)?;

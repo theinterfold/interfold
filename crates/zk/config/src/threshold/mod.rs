@@ -6,10 +6,10 @@
 
 pub mod decrypted_shares_aggregation;
 pub mod lbfv_pk_aggregation;
-pub mod lbfv_proof_domain;
 pub mod pk_aggregation;
 pub mod pk_generation;
 pub mod rlk_aggregation;
 pub mod rlk_generation;
 pub mod share_decryption;
 pub mod user_data_encryption;
+pub mod user_data_encryption_chunked;

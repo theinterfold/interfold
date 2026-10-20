@@ -249,12 +249,14 @@ fn generate_with_params<R: RngCore + CryptoRng>(
 mod tests {
     use super::*;
     use crate::helpers::deserialize_secret_key;
+    use e3_committee::CiphernodesCommitteeSize;
     use e3_fhe_params::{lbfv_crs_seed, lbfv_urs_seed};
     use e3_polynomial::CrtPolynomial;
-    use e3_zk_helpers::circuits::commitments::compute_sc_sk_secret_root_commitment;
-    use e3_zk_helpers::threshold::pk_generation::{Bits, Bounds, LbfvPkGenerationAdapter};
-    use e3_zk_helpers::threshold::rlk_generation::RlkGenerationAdapter;
-    use e3_zk_helpers::{CiphernodesCommitteeSize, Computation};
+    use e3_polynomial_fhe::FromFhePolynomial as _;
+    use e3_zk_config::threshold::pk_generation::Configs;
+    use e3_zk_witness::commitments::compute_sc_sk_secret_root_commitment;
+    use e3_zk_witness::threshold::pk_generation::LbfvPkGenerationAdapter;
+    use e3_zk_witness::threshold::rlk_generation::RlkGenerationAdapter;
     use fhe_math::rq::traits::TryConvertFrom;
     use fhe_traits::{DeserializeParametrized, DeserializeWithContext};
     use rand::SeedableRng;
@@ -295,8 +297,24 @@ mod tests {
     #[tokio::test]
     #[ignore = "secure-16384 key-share generation is a slow cryptographic test"]
     async fn generated_shares_use_the_c1_secret_and_build_all_five_rows() -> Result<()> {
+        check_generated_secure_shares(CiphernodesCommitteeSize::Minimum).await
+    }
+
+    #[tokio::test]
+    #[ignore = "secure-16384 key-share generation is a slow cryptographic test"]
+    async fn generated_micro_shares_build_all_five_rows() -> Result<()> {
+        check_generated_secure_shares(CiphernodesCommitteeSize::Micro).await
+    }
+
+    #[tokio::test]
+    #[ignore = "secure-16384 key-share generation is a slow cryptographic test"]
+    async fn generated_small_shares_build_all_five_rows() -> Result<()> {
+        check_generated_secure_shares(CiphernodesCommitteeSize::Small).await
+    }
+
+    async fn check_generated_secure_shares(committee_size: CiphernodesCommitteeSize) -> Result<()> {
         let preset = BfvPreset::SecureThreshold16384;
-        let committee = CiphernodesCommitteeSize::Minimum.values();
+        let committee = committee_size.values();
         let (params, _) = build_pair_for_preset(preset)?;
         let mut rng = rand::rng();
         let secret_key = SecretKey::random(&params, &mut rng);
@@ -339,19 +357,19 @@ mod tests {
         assert_eq!(response.witness.errors_d0_bytes.len(), 5);
         assert_eq!(response.witness.errors_d2_bytes.len(), 5);
 
-        let pk_adapter = LbfvPkGenerationAdapter::new(preset)?;
+        let config = Configs::new(preset, &params, committee_size)?;
+        let pk_adapter = LbfvPkGenerationAdapter::from_config(&config)?;
         let reconstructed = deserialize_c1_secret_key(&c1_secret_poly.to_bytes(), &params)?;
         assert_eq!(reconstructed.coeffs, secret_key.coeffs);
         let mut c1_secret = CrtPolynomial::from_fhe_polynomial(&c1_secret_poly).limbs[0].clone();
         c1_secret.reverse();
         c1_secret.center(&params.moduli()[0].into());
-        let bounds = Bounds::compute(preset, &committee)?;
-        let bits = Bits::compute(preset, &bounds)?;
+        let bits = &config.bits;
         let c1_commitment = compute_sc_sk_secret_root_commitment(&c1_secret, bits.sk_bit, 512);
         for row_index in 0..5 {
             let row = pk_adapter.row_data(
                 committee.clone(),
-                e3_zk_helpers::threshold::lbfv_proof_domain::sample_lbfv_proof_domain(),
+                e3_zk_samples::lbfv_proof_domain::sample_lbfv_proof_domain(),
                 0,
                 row_index,
                 &reconstructed,
@@ -364,9 +382,14 @@ mod tests {
         }
 
         let witness = decrypt_witness(&response.witness, &cipher, &params)?;
-        let rlk_rows = RlkGenerationAdapter::new(preset)?.all_rows_data(
+        let rlk_config = e3_zk_config::threshold::rlk_generation::RlkGenerationConfigs::new(
+            preset,
+            &params,
+            committee_size,
+        )?;
+        let rlk_rows = RlkGenerationAdapter::from_config(&rlk_config)?.all_rows_data(
             committee,
-            e3_zk_helpers::threshold::lbfv_proof_domain::sample_lbfv_proof_domain(),
+            e3_zk_samples::lbfv_proof_domain::sample_lbfv_proof_domain(),
             0,
             &reconstructed,
             &rlk_share,

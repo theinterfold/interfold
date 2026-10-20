@@ -143,7 +143,7 @@ add_license_header() {
 while IFS= read -r file; do
     # Skip empty lines
     [[ -n "$file" ]] || continue
-    # `git ls-files` includes tracked files that are deleted in the worktree.
+    # A tracked deletion in the current checkout is not a source file to fix.
     [[ -f "$file" ]] || continue
     
     echo -n "Checking: $file"

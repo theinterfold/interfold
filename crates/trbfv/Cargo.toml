@@ -29,10 +29,14 @@ zeroize.workspace = true
 rand.workspace = true
 
 [dev-dependencies]
+e3-committee.workspace = true
+e3-polynomial-fhe.workspace = true
 e3-test-helpers.workspace = true
 e3-fhe.workspace = true
 e3-events.workspace = true
 e3-polynomial = { workspace = true, features = ["serde"] }
-e3-zk-helpers.workspace = true
+e3-zk-config.workspace = true
+e3-zk-witness.workspace = true
+e3-zk-samples.workspace = true
 tracing-subscriber.workspace = true
 tokio.workspace = true

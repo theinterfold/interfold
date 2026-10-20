@@ -87,6 +87,8 @@ impl CiphernodeSelectorState {
 pub struct GetCiphernodeSelectorState;
 
 const AGGREGATOR_PROGRESS_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+// Public-key aggregation includes the per-node recursive folds and needs the full proof budget.
+const PUBLIC_KEY_PROGRESS_TIMEOUT: Duration = AGGREGATOR_PROGRESS_TIMEOUT;
 
 trait Clock: Send + Sync {
     fn now_unix_secs(&self) -> u64;

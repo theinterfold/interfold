@@ -26,7 +26,8 @@ pub const METADATA: CircuitMetadata = CircuitMetadata {
 pub struct Configs {
     pub params: Arc<BfvParameters>,
     pub committee: CiphernodesCommitteeSize,
-    preset: BfvPreset,
+    pub preset: BfvPreset,
+    pub chunk_size: usize,
     pub bits: Bits,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -48,6 +49,10 @@ impl Configs {
             params: threshold_params.clone(),
             committee,
             preset,
+            chunk_size: crate::chunks::c2_chunk_size(
+                threshold_params.degree(),
+                committee.values().n,
+            ),
 
             bits,
         })
@@ -68,12 +73,23 @@ impl Bits {
     }
 }
 impl Configs {
+    pub fn with_chunk_size(mut self, chunk_size: usize) -> Result<Self, ConfigError> {
+        if chunk_size == 0 || !self.params.degree().is_multiple_of(chunk_size) {
+            return Err(ConfigError::Other(format!(
+                "C2 chunk size {chunk_size} must divide polynomial degree {}",
+                self.params.degree()
+            )));
+        }
+        self.chunk_size = chunk_size;
+        Ok(self)
+    }
+
     pub fn render(&self) -> Result<String, ConfigError> {
         let configs = self;
         let preset = self.preset;
         let committee = self.committee;
         let threshold_params = &self.params;
-        let config_name = preset.metadata().security.as_config_str();
+        let config_name = preset.noir_config_module();
         let bits = &configs.bits;
         let committee = committee.values();
         let parity_matrix_str =
@@ -84,6 +100,8 @@ impl Configs {
 pub use crate::configs::{}::threshold::{{L as L_THRESHOLD, QIS as QIS_THRESHOLD}};
 
 pub global N: u32 = {};
+pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = {};
+pub global SHARE_COMPUTATION_N_CHUNKS: u32 = {};
 
 {}
 /************************************
@@ -115,6 +133,8 @@ pub global {}_E_SM_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
 "#,
             config_name,
             configs.params.degree(),
+            configs.chunk_size,
+            configs.params.degree() / configs.chunk_size,
             parity_matrix_str,
             prefix,
             bits.bit_share,

@@ -12,7 +12,7 @@ use e3_events::{
     ProofType, SignedProofPayload,
 };
 use e3_fhe_params::BfvPreset;
-use e3_zk_helpers::validate_lbfv_serialized_share_commitments;
+use e3_zk_witness::validate_lbfv_serialized_share_commitments;
 
 /// Recompute all PK, RLK d0, and RLK d2 row commitments from two documents.
 ///
@@ -99,7 +99,7 @@ mod tests {
     use super::*;
     use e3_events::{E3id, Proof, ProofPayload};
     use e3_utils::ArcBytes;
-    use e3_zk_helpers::FIELD_BYTE_LEN;
+    use e3_zk_witness::FIELD_BYTE_LEN;
 
     fn row_proofs(
         proof_type: ProofType,
@@ -110,7 +110,7 @@ mod tests {
             let field_count = input_layout.field_count().unwrap()
                 + circuit.output_layout().field_count().unwrap();
             let mut public_signals = vec![0u8; field_count * FIELD_BYTE_LEN];
-            let row_index = input_layout.field_index("row_index").unwrap();
+            let row_index = 3; // row_index is the fourth public input.
             public_signals[row_index * FIELD_BYTE_LEN + 28..(row_index + 1) * FIELD_BYTE_LEN]
                 .copy_from_slice(&(row as u32).to_be_bytes());
 

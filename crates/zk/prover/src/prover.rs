@@ -138,22 +138,7 @@ fn next_bb_work_subdir(prefix: &str) -> String {
     format!("{prefix}_{id}")
 }
 
-struct JobDirGuard(PathBuf);
-
-impl Drop for JobDirGuard {
-    fn drop(&mut self) {
-        if let Err(error) = fs::remove_dir_all(&self.0) {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                warn!(
-                    "failed to remove Barretenberg work directory {}: {}",
-                    self.0.display(),
-                    error
-                );
-            }
-        }
-    }
-}
-
+#[derive(Clone)]
 pub struct ZkProver {
     bb_binary: PathBuf,
     circuits_dir: PathBuf,
@@ -308,6 +293,7 @@ impl ZkProver {
             .join(next_bb_work_subdir(&format!("prove_{}", circuit.as_str())));
         let witness_path = job_dir.join("witness.gz");
         let output_dir = job_dir.join("out");
+
         fs::create_dir_all(&job_dir)?;
         let _job_dir_guard = JobDirGuard(job_dir.clone());
 
@@ -559,7 +545,7 @@ mod tests {
         let backend = ZkBackend::new(BBPath::Default(bb_binary), circuits_dir, work_dir);
         let prover = ZkProver::new(&backend);
 
-        let result = prover.generate_proof(CircuitName::PkBfv, b"witness", "e3-1", "insecure");
+        let result = prover.generate_proof(CircuitName::PkBfv, b"witness", "e3-1", "insecure-64");
         assert!(matches!(result, Err(ZkError::BbNotInstalled)));
     }
 

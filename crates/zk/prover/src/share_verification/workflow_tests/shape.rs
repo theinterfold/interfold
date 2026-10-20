@@ -6,14 +6,14 @@
 
 use super::*;
 
-fn field(value: u32) -> [u8; e3_zk_helpers::FIELD_BYTE_LEN] {
-    let mut field = [0u8; e3_zk_helpers::FIELD_BYTE_LEN];
+fn field(value: u32) -> [u8; e3_zk_witness::FIELD_BYTE_LEN] {
+    let mut field = [0u8; e3_zk_witness::FIELD_BYTE_LEN];
     field[28..].copy_from_slice(&value.to_be_bytes());
     field
 }
 
-fn field_u128(value: u128) -> [u8; e3_zk_helpers::FIELD_BYTE_LEN] {
-    let mut field = [0u8; e3_zk_helpers::FIELD_BYTE_LEN];
+fn field_u128(value: u128) -> [u8; e3_zk_witness::FIELD_BYTE_LEN] {
+    let mut field = [0u8; e3_zk_witness::FIELD_BYTE_LEN];
     field[16..].copy_from_slice(&value.to_be_bytes());
     field
 }
@@ -42,7 +42,7 @@ fn signed_fields(
     signer: &alloy::signers::local::PrivateKeySigner,
     e3_id: &E3id,
     proof_type: ProofType,
-    fields: Vec<[u8; e3_zk_helpers::FIELD_BYTE_LEN]>,
+    fields: Vec<[u8; e3_zk_witness::FIELD_BYTE_LEN]>,
 ) -> SignedProofPayload {
     let public_signals = fields.into_iter().flatten().collect::<Vec<_>>();
     SignedProofPayload::sign(
@@ -165,7 +165,7 @@ fn canonical_shape_rejects_cross_phase_and_singleton_multiplicity() {
     assert!(ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::PkGenerationProofs,
         std::slice::from_ref(&c1),
-        BfvPreset::InsecureDkg,
+        BfvPreset::InsecureDkg64,
     ));
     assert!(ShareVerifier::has_valid_lbfv_statements(
         &VerificationKind::PkGenerationProofs,
@@ -186,7 +186,7 @@ fn canonical_shape_rejects_cross_phase_and_singleton_multiplicity() {
     assert!(!ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::PkGenerationProofs,
         &[c1.clone(), c1.clone()],
-        BfvPreset::InsecureDkg,
+        BfvPreset::InsecureDkg64,
     ));
     // The l-BFV path proves no C1.
     assert!(!ShareVerifier::has_canonical_proof_shape(
@@ -197,32 +197,32 @@ fn canonical_shape_rejects_cross_phase_and_singleton_multiplicity() {
     assert!(!ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::ThresholdDecryptionProofs,
         std::slice::from_ref(&c1),
-        BfvPreset::InsecureDkg,
+        BfvPreset::InsecureDkg64,
     ));
     let c6 = signed_proof(&s, &e3, ProofType::C6ThresholdShareDecryption, 9);
     assert!(ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::ThresholdDecryptionProofs,
         std::slice::from_ref(&c6),
-        BfvPreset::InsecureDkg,
+        BfvPreset::InsecureDkg64,
     ));
     assert!(!ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::ThresholdDecryptionProofs,
         &[],
-        BfvPreset::InsecureDkg,
+        BfvPreset::InsecureDkg64,
     ));
 
     let share_bundle = signed_share_bundle(&s, &e3, 3);
     assert!(ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::ShareProofs,
         &share_bundle,
-        BfvPreset::InsecureDkg,
+        BfvPreset::InsecureDkg64,
     ));
     let mut duplicate_c2a = share_bundle.clone();
     duplicate_c2a.insert(1, duplicate_c2a[0].clone());
     assert!(!ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::ShareProofs,
         &duplicate_c2a,
-        BfvPreset::InsecureDkg,
+        BfvPreset::InsecureDkg64,
     ));
 
     let secure_share_bundle = signed_share_bundle(&s, &e3, 3);
@@ -244,26 +244,26 @@ fn canonical_shape_rejects_cross_phase_and_singleton_multiplicity() {
     assert!(ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::DecryptionProofs,
         &c4_bundle,
-        BfvPreset::InsecureDkg,
+        BfvPreset::InsecureDkg64,
     ));
     assert!(!ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::DecryptionProofs,
         &c4_bundle[1..],
-        BfvPreset::InsecureDkg,
+        BfvPreset::InsecureDkg64,
     ));
     let mut extra_c4b = c4_bundle.clone();
     extra_c4b.push(c4_bundle[1].clone());
     assert!(ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::DecryptionProofs,
         &extra_c4b,
-        BfvPreset::InsecureDkg,
+        BfvPreset::InsecureDkg64,
     ));
     let mut wrong_c4_tail = c4_bundle.clone();
     wrong_c4_tail.push(c6);
     assert!(!ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::DecryptionProofs,
         &wrong_c4_tail,
-        BfvPreset::InsecureDkg,
+        BfvPreset::InsecureDkg64,
     ));
 }
 
@@ -275,17 +275,17 @@ fn share_shape_uses_threshold_secret_rows_when_dispatch_carries_dkg_preset() {
     // Production dispatch carries the share-encryption (DKG) preset, but C3 requests are
     // generated from rows of the paired threshold-parameter Shamir secret.
     let insecure_production_bundle = signed_share_bundle(&s, &e3, 3);
-    assert_eq!(BfvPreset::InsecureDkg.metadata().num_moduli, 2);
-    assert_eq!(BfvPreset::InsecureThreshold.metadata().num_moduli, 3);
+    assert_eq!(BfvPreset::InsecureDkg64.metadata().num_moduli, 2);
+    assert_eq!(BfvPreset::InsecureThreshold64.metadata().num_moduli, 3);
     assert!(ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::ShareProofs,
         &insecure_production_bundle,
-        BfvPreset::InsecureDkg,
+        BfvPreset::InsecureDkg64,
     ));
     assert!(!ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::ShareProofs,
         &signed_share_bundle(&s, &e3, 2),
-        BfvPreset::InsecureDkg,
+        BfvPreset::InsecureDkg64,
     ));
 
     let secure_production_bundle = signed_share_bundle(&s, &e3, 3);
@@ -387,7 +387,7 @@ fn lbfv_generation_requires_both_canonical_linked_row_families() {
             .proof
             .public_signals
             .extract_bytes();
-        signals[4 * e3_zk_helpers::FIELD_BYTE_LEN + 31] ^= 1;
+        signals[4 * e3_zk_witness::FIELD_BYTE_LEN + 31] ^= 1;
         mismatched_sk[tampered_row].payload.proof.public_signals = ArcBytes::from_bytes(&signals);
         assert!(!ShareVerifier::has_valid_lbfv_statements(
             &VerificationKind::LbfvGenerationProofs,
@@ -406,7 +406,7 @@ fn lbfv_generation_requires_both_canonical_linked_row_families() {
         .proof
         .public_signals
         .extract_bytes();
-    signals[5 * e3_zk_helpers::FIELD_BYTE_LEN + 31] ^= 1;
+    signals[5 * e3_zk_witness::FIELD_BYTE_LEN + 31] ^= 1;
     mismatched_r[rlk].payload.proof.public_signals = ArcBytes::from_bytes(&signals);
     assert!(!ShareVerifier::has_valid_lbfv_statements(
         &VerificationKind::LbfvGenerationProofs,
@@ -491,7 +491,7 @@ fn lbfv_aggregation_requires_one_aggregator_and_accepted_set() {
         .proof
         .public_signals
         .extract_bytes();
-    signals[3 * e3_zk_helpers::FIELD_BYTE_LEN + 31] ^= 1;
+    signals[3 * e3_zk_witness::FIELD_BYTE_LEN + 31] ^= 1;
     false_set_hash[0].payload.proof.public_signals = ArcBytes::from_bytes(&signals);
     assert!(!ShareVerifier::has_valid_lbfv_statements(
         &VerificationKind::LbfvAggregationProofs,
@@ -541,7 +541,7 @@ fn lbfv_aggregation_requires_one_aggregator_and_accepted_set() {
         .proof
         .public_signals
         .extract_bytes();
-    signals[6 * e3_zk_helpers::FIELD_BYTE_LEN + 31] ^= 1;
+    signals[6 * e3_zk_witness::FIELD_BYTE_LEN + 31] ^= 1;
     mismatched_source[3].payload.proof.public_signals = ArcBytes::from_bytes(&signals);
     assert!(!ShareVerifier::has_valid_lbfv_statements(
         &VerificationKind::LbfvAggregationProofs,
@@ -583,9 +583,9 @@ fn lbfv_aggregation_requires_one_aggregator_and_accepted_set() {
     let mut mixed_pk_rlk_sets = bundle.clone();
     for signed in &mut mixed_pk_rlk_sets[ProofType::LBFV_ROW_INSTANCES as usize..] {
         let mut signals = signed.payload.proof.public_signals.extract_bytes();
-        signals[3 * e3_zk_helpers::FIELD_BYTE_LEN..4 * e3_zk_helpers::FIELD_BYTE_LEN]
+        signals[3 * e3_zk_witness::FIELD_BYTE_LEN..4 * e3_zk_witness::FIELD_BYTE_LEN]
             .copy_from_slice(&field_u128(mixed_set.hi));
-        signals[4 * e3_zk_helpers::FIELD_BYTE_LEN..5 * e3_zk_helpers::FIELD_BYTE_LEN]
+        signals[4 * e3_zk_witness::FIELD_BYTE_LEN..5 * e3_zk_witness::FIELD_BYTE_LEN]
             .copy_from_slice(&field_u128(mixed_set.lo));
         signed.payload.proof.public_signals = ArcBytes::from_bytes(&signals);
     }
@@ -600,7 +600,7 @@ fn lbfv_aggregation_requires_one_aggregator_and_accepted_set() {
 
     let mut truncated = bundle;
     let mut signals = truncated[0].payload.proof.public_signals.extract_bytes();
-    signals.truncate(signals.len() - e3_zk_helpers::FIELD_BYTE_LEN);
+    signals.truncate(signals.len() - e3_zk_witness::FIELD_BYTE_LEN);
     truncated[0].payload.proof.public_signals = ArcBytes::from_bytes(&signals);
     assert!(!ShareVerifier::has_valid_lbfv_statements(
         &VerificationKind::LbfvAggregationProofs,
@@ -633,7 +633,7 @@ fn prepare_excludes_wrong_phase_without_creating_slash_evidence() {
         &VerificationKind::PkGenerationProofs,
         "C1",
         Some(&committee),
-        BfvPreset::InsecureDkg,
+        BfvPreset::InsecureDkg64,
         CiphernodesCommitteeSize::Minimum,
         None,
     );
@@ -659,7 +659,7 @@ fn prepare_collapses_identical_party_replay_and_rejects_conflict() {
         &VerificationKind::PkGenerationProofs,
         "C1",
         Some(&committee),
-        BfvPreset::InsecureDkg,
+        BfvPreset::InsecureDkg64,
         CiphernodesCommitteeSize::Minimum,
         None,
     );
@@ -677,7 +677,7 @@ fn prepare_collapses_identical_party_replay_and_rejects_conflict() {
         &VerificationKind::PkGenerationProofs,
         "C1",
         Some(&committee),
-        BfvPreset::InsecureDkg,
+        BfvPreset::InsecureDkg64,
         CiphernodesCommitteeSize::Minimum,
         None,
     );
@@ -692,12 +692,12 @@ fn prepare_collapses_identical_party_replay_and_rejects_conflict() {
 fn canonical_shape_binds_circuits_to_the_protocol_path() {
     let s = signer();
     let e3 = e3();
-    let rows = BfvPreset::InsecureThreshold.metadata().num_moduli;
+    let rows = BfvPreset::InsecureThreshold64.metadata().num_moduli;
     let trbfv_bundle = signed_share_bundle(&s, &e3, rows);
     assert!(ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::ShareProofs,
         &trbfv_bundle,
-        BfvPreset::InsecureDkg,
+        BfvPreset::InsecureDkg64,
     ));
     assert!(!ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::ShareProofs,
@@ -732,6 +732,6 @@ fn canonical_shape_binds_circuits_to_the_protocol_path() {
     assert!(!ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::ShareProofs,
         &lbfv_bundle,
-        BfvPreset::InsecureDkg,
+        BfvPreset::InsecureDkg64,
     ));
 }

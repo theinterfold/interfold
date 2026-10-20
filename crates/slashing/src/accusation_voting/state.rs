@@ -42,6 +42,7 @@ pub(crate) struct DeferredAccusation {
     pub(super) accused_address: Address,
     pub(super) accused_party_id: u64,
     pub(super) proof_type: ProofType,
+    pub(super) proof_instance: u32,
     pub(super) data_hash: [u8; 32],
     pub(super) forwarded_payload: Option<SignedProofPayload>,
     pub(super) ec: EventContext<Sequenced>,
@@ -66,7 +67,7 @@ pub(crate) const ACCUSATION_VOTES_SNAPSHOT_VERSION: u32 = 1;
 pub(crate) struct AccusationVotesSnapshot {
     pub(super) version: u32,
     pub(super) pending: Vec<SavedAccusation>,
-    pub(super) accused_proofs: Vec<(Address, ProofType)>,
+    pub(super) accused_proofs: Vec<(Address, ProofIdentity)>,
 }
 
 impl Default for AccusationVotesSnapshot {

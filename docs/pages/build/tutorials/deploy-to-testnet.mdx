@@ -19,11 +19,11 @@ program contract. At the end, your program is on Sepolia, the owner of the Inter
 register it, and your server and client use the testnet.
 
 <Callout type='warning'>
-  Do not submit real private data on Sepolia. The `insecure-64` preset is not secure. The public
-  key, decryption, and DKG verifiers of the Sepolia deployment check the proofs. The ciphertext
-  verifier wraps `MockOpenVmReceiptVerifier`, which accepts every receipt. See [Check the protocol
-  ciphertext verifier](#check-the-protocol-ciphertext-verifier). The test contracts are `MockUSDC`,
-  the `Faucet`, `MockE3Program`, and `MockOpenVmReceiptVerifier`. The manifest marks Sepolia with
+  Do not submit real private data on Sepolia. The `insecure` preset is not secure. The public key,
+  decryption, and DKG verifiers of the Sepolia deployment check the proofs. The ciphertext verifier
+  wraps `MockOpenVmReceiptVerifier`, which accepts every receipt. See [Check the protocol ciphertext
+  verifier](#check-the-protocol-ciphertext-verifier). The test contracts are `MockUSDC`, the
+  `Faucet`, `MockE3Program`, and `MockOpenVmReceiptVerifier`. The manifest marks Sepolia with
   `mocks: true`.
 </Callout>
 
@@ -305,15 +305,19 @@ checks the OpenVM receipt for real.
 Do not rely on this behavior on mainnet. A non-mock ciphertext verifier checks every proof against
 its pinned identity.
 
-Sepolia runs the insecure preset. Keep `INSECURE_THRESHOLD` in your SDK initialization, and request
-E3s with `paramSet: 0`:
+The receipt verifier in your program affects only `MyProgram.verify`. It does not affect the
+protocol verifier. The Interfold contract copies the current verifier into each E3 at request time,
+so a later change applies only to new requests. See
+[Verify the Compute Provider](/build/e3-program/verify-compute-provider).
 
-```typescript
-const sdk = new InterfoldSDK({
-  // ... other config
-  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD',
-})
-```
+### Replace the local data-availability check
+
+Sepolia ciphernodes read the output ciphertext from Avail (`data_availability.mode: avail` in the
+Sepolia configurations). They use the block and leaf index that `verifyDataAvailability` returns.
+The template version returns zero for both, so a Sepolia committee cannot read your output.
+
+Delegate the check to `AvailVectorXDataAvailabilityVerifier` from `@interfold/contracts`, as
+`CRISPProgram` does:
 
 ```solidity filename="contracts/MyProgram.sol"
 IDataAvailabilityVerifier public immutable dataAvailabilityVerifier;
@@ -355,7 +359,7 @@ sdkInstance = InterfoldSDK.create({
     feeToken: FEE_TOKEN_CONTRACT as `0x${string}`,
   },
   chain: sepolia,
-  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_64',
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD',
 })
 ```
 
@@ -389,12 +393,12 @@ export $(interfold print-env --vite --chain sepolia)
 pnpm dev
 ```
 
-The client requests E3s with `paramSet: 0`, and the SDK uses `INSECURE_THRESHOLD_64` by default
+The client requests E3s with `paramSet: 0`, and the SDK uses `INSECURE_THRESHOLD` by default
 (`VITE_THRESHOLD_BFV_PARAMS_PRESET_NAME`). Keep the two values in agreement. Sepolia accepts the
-param sets 0 (`insecure-64`) and 2 (`secure-8192`) when registered. Do not submit private data with
-the insecure preset. Version-7 mainnet requests use index 2; index 1 remains for older E3s. The SDK
-does not include secure-8192 proof circuits. Compile matching circuits for secure proofs; see
-[SDK encryption proofs](/build/sdk#encryption-proofs).
+param sets 0 (`insecure`), 2 (`secure-8192`), and 3 (`secure-16384`) when registered. Do not submit
+private data with the insecure preset. Mainnet requests use index 2. Index 1 is retired and remains
+for older E3s. The SDK does not include secure-8192 proof circuits. Compile matching circuits for
+secure proofs; see [SDK encryption proofs](/build/sdk#encryption-proofs).
 
 ### Request an E3
 
@@ -421,12 +425,13 @@ await sdk.onInterfoldEvent(InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED, (event
 
 ## Deploy scripts and tasks
 
-| Issue                       | Possible cause                           | Fix                                                                      |
-| --------------------------- | ---------------------------------------- | ------------------------------------------------------------------------ |
-| E3 request reverts          | Insufficient fee token approval          | Call `sdk.approveFeeToken()` first                                       |
-| Committee never forms       | Not enough active ciphernodes on Sepolia | Check the registry for active operators                                  |
-| Proof generation fails      | Preset mismatch with the SDK's circuits  | The embedded circuits are `insecure`; compile your own for other presets |
-| Decryption produces garbage | BFV preset mismatch                      | Verify both SDK and E3 request use `INSECURE_THRESHOLD` / `paramSet: 0`  |
+| Location                       | Command                                                                                | What it does                                                                                                                   |
+| ------------------------------ | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Template                       | `pnpm dev:all`                                                                         | Runs `scripts/deploy-local.ts` on `localhost`: `deployInterfold(true, false)`, then `deployTemplate()`.                        |
+| Template                       | `pnpm hardhat ciphernode:admin-add --ciphernode-address <address> --network localhost` | Adds a ciphernode with admin privileges. It needs account impersonation (Anvil or Hardhat), so it works only on a local chain. |
+| `packages/interfold-contracts` | `pnpm e3:enable --e3-address <address> --network <name>`                               | Registers an E3 program. The signer must be the owner of the Interfold contract.                                               |
+| `packages/interfold-contracts` | `pnpm run deploy --network <name>`                                                     | Deploys the protocol contracts (`scripts/run.ts`, `deployInterfold`). This is for the protocol owner.                          |
+| CRISP repository               | `pnpm deploy:contracts --network sepolia`                                              | Deploys CRISP and its verifiers, and wires them only when the signer owns the Interfold contract.                              |
 
 Outside the Interfold monorepo, the deploy scripts come from the published `@interfold/contracts`
 package. With `ENABLE_ZK_VERIFICATION=true`, the deploy of the BFV ZK verifiers reads the

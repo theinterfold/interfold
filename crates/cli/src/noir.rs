@@ -327,8 +327,8 @@ mod tests {
         let payload = temp.path().join("payload");
         // A preset directory that serves the trBFV path requires the shared and trBFV inventories.
         let artifacts: Vec<&str> = [
-            include_str!("../../zk-prover/required-artifacts.json"),
-            include_str!("../../zk-prover/required-artifacts-trbfv.json"),
+            include_str!("../../zk/prover/required-artifacts.json"),
+            include_str!("../../zk/prover/required-artifacts-trbfv.json"),
         ]
         .into_iter()
         .flat_map(|json| serde_json::from_str::<Vec<&str>>(json).unwrap())

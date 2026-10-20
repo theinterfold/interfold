@@ -72,35 +72,6 @@ impl CircuitOutputLayout {
         let offset = output_start + idx * FIELD_BYTE_LEN;
         Some(&public_signals[offset..offset + FIELD_BYTE_LEN])
     }
-
-    /// Extract all output fields from raw `public_signals` bytes.
-    ///
-    /// Returns a vec of `(name, &[u8])` pairs in field order.
-    pub fn extract_all<'a>(
-        &self,
-        public_signals: &'a [u8],
-    ) -> Option<Vec<(&'static str, &'a [u8])>> {
-        let fields = match self {
-            CircuitOutputLayout::Fixed { fields } => fields,
-            CircuitOutputLayout::None => return Some(Vec::new()),
-            CircuitOutputLayout::Dynamic => return None,
-        };
-        let total_output_bytes = fields.len() * FIELD_BYTE_LEN;
-        if public_signals.len() < total_output_bytes {
-            return None;
-        }
-        let output_start = public_signals.len() - total_output_bytes;
-        Some(
-            fields
-                .iter()
-                .enumerate()
-                .map(|(i, f)| {
-                    let offset = output_start + i * FIELD_BYTE_LEN;
-                    (f.name, &public_signals[offset..offset + FIELD_BYTE_LEN])
-                })
-                .collect(),
-        )
-    }
 }
 
 /// C6 — Threshold share decryption public inputs.
@@ -425,6 +396,14 @@ pub enum CircuitInputLayout {
 }
 
 impl CircuitInputLayout {
+    /// Position of a named input field at the head of the public signals.
+    pub fn field_index(&self, name: &str) -> Option<usize> {
+        match self {
+            Self::Fixed { fields } => fields.iter().position(|field| field.name == name),
+            Self::None => None,
+        }
+    }
+
     /// Number of fixed input fields, or `None` for void layouts.
     pub fn field_count(&self) -> Option<usize> {
         match self {
@@ -438,11 +417,7 @@ impl CircuitInputLayout {
     /// Input fields sit at the **beginning** of `public_signals`.
     /// This method indexes from the head (offset = idx * FIELD_BYTE_LEN).
     pub fn extract_field<'a>(&self, public_signals: &'a [u8], name: &str) -> Option<&'a [u8]> {
-        let fields = match self {
-            CircuitInputLayout::Fixed { fields } => fields,
-            _ => return None,
-        };
-        let idx = fields.iter().position(|f| f.name == name)?;
+        let idx = self.field_index(name)?;
         let offset = idx * FIELD_BYTE_LEN;
         if public_signals.len() < offset + FIELD_BYTE_LEN {
             return None;
@@ -719,12 +694,12 @@ mod tests {
         assert!(layout.extract_field(&signals, "d_commitment").is_none());
     }
 
-    /// C7: `extract_all` yields no named outputs when the layout is void.
+    /// C7 has no named return fields.
     #[test]
     fn c7_void_output_extract_all_returns_empty() {
         let layout = CircuitOutputLayout::None;
         let signals = vec![0u8; 256];
-        let all = layout.extract_all(&signals).unwrap();
-        assert!(all.is_empty());
+        assert_eq!(layout.field_count(), Some(0));
+        assert!(layout.extract_field(&signals, "commitment").is_none());
     }
 }

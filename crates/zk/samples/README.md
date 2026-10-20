@@ -31,11 +31,11 @@ configuration generation belongs to `pnpm build:circuits`.
 
 ## Map and use
 
-| Location                                     | Responsibility                                                |
-| -------------------------------------------- | ------------------------------------------------------------- |
-| [dkg/](src/dkg), [threshold/](src/threshold) | Artificial per-circuit inputs using production witness types. |
-| [smudging.rs](src/smudging.rs)               | Shared sample noise setup.                                    |
-| [lib.rs](src/lib.rs)                         | Sample module exports.                                        |
+| Location                                           | Responsibility                                                |
+| -------------------------------------------------- | ------------------------------------------------------------- |
+| [dkg/](src/dkg), [threshold/](src/threshold)       | Artificial per-circuit inputs using production witness types. |
+| [Smudging noise](../../fhe-params/src/smudging.rs) | Shared smudging-noise calculation.                            |
+| [lib.rs](src/lib.rs)                               | Sample module exports.                                        |
 
 Add this unpublished crate as a dev-dependency, then call the family's constructor with the same
 parameters/configuration that production preparation consumes. Keep generated secrets local.

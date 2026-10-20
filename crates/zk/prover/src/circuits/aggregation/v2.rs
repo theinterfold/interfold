@@ -18,12 +18,12 @@ use crate::node_fold_public::{
 use crate::prover::ZkProver;
 use crate::witness::{CompiledCircuit, WitnessGenerator};
 use alloy::primitives::Address;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{CircuitName, CircuitVariant, Proof};
 use e3_fhe_params::BfvPreset;
-use e3_zk_helpers::threshold::rlk_aggregation::RlkAggregationComponent;
-use e3_zk_helpers::{
-    CiphernodesCommitteeSize, RlkAggregationPublicLayout,
-    DKG_AGGREGATOR_V2_LEGACY_VK_BINDING_LEN as LEGACY_VK_BINDING_LEN,
+use e3_zk_witness::threshold::rlk_aggregation::RlkAggregationComponent;
+use e3_zk_witness::{
+    RlkAggregationPublicLayout, DKG_AGGREGATOR_V2_LEGACY_VK_BINDING_LEN as LEGACY_VK_BINDING_LEN,
     DKG_AGGREGATOR_V2_VK_BINDING_LEN as V2_VK_BINDING_LEN, FIELD_BYTE_LEN,
 };
 use serde::Serialize;

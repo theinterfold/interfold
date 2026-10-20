@@ -9,7 +9,6 @@ publish = false
 
 [dependencies]
 alloy-primitives.workspace = true
-alloy-sol-types.workspace = true
 anyhow.workspace = true
 ark-bn254.workspace = true
 ark-ff.workspace = true
@@ -17,6 +16,8 @@ chrono.workspace = true
 clap.workspace = true
 e3-committee.workspace = true
 e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
+e3-polynomial.workspace = true
+e3-polynomial-fhe.workspace = true
 e3-zk-config.workspace = true
 e3-zk-witness.workspace = true
 fhe.workspace = true

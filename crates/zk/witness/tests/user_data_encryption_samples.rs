@@ -29,7 +29,7 @@ fn test_bound_and_bits_computation_consistency() {
     assert_eq!(
         max_pk_bound.clone(),
         BigUint::from(
-            (e3_fhe_params::constants::insecure_64::threshold::MODULI
+            (e3_fhe_params::constants::insecure::threshold::MODULI
                 .iter()
                 .max()
                 .unwrap()
@@ -49,26 +49,25 @@ fn insecure_e0_bound_matches_error1_sampler() {
     let bits = Configs::for_preset(preset)
         .map(|config| config.bits)
         .unwrap();
-    // B_Enc of the insecure-64 search: ⌊B_Enc(B_Enc+1)/3⌋ is its error1 variance.
-    assert_eq!(bounds.e0_bound, BigUint::from(194560u32));
+    // B_Enc of the insecure search: ⌊B_Enc(B_Enc+1)/3⌋ is its error1 variance.
+    assert_eq!(bounds.e0_bound, BigUint::from(389120u32));
     assert_eq!(bounds.e1_bound, BigUint::from(20u32));
-    assert_eq!(bits.e0_bit, 18);
+    assert_eq!(bits.e0_bit, 19);
 }
 
 #[test]
 fn exact_encryption_material_is_repeatable_and_closes_both_reduced_identities() {
     use fhe_traits::{FheDecoder, Serialize};
-    for preset in [
-        BfvPreset::InsecureThreshold64,
-        BfvPreset::SecureThreshold8192,
-    ] {
+    for preset in [BfvPreset::InsecureThreshold64, BfvPreset::SecureThreshold8192] {
         let config = Configs::for_preset(preset).unwrap();
         let sample =
             e3_zk_samples::threshold::user_data_encryption::generate(&config.params).unwrap();
-        let (ciphertext, material) = sample
-            .public_key
-            .try_encrypt_with_intermediates(&sample.plaintext, &mut rand::rng())
-            .unwrap();
+        let (ciphertext, material) = e3_zk_witness::encrypt_with_intermediates(
+            &sample.public_key,
+            &sample.plaintext,
+            &mut rand::rng(),
+        )
+        .unwrap();
         let bytes = ciphertext.to_bytes();
         let inputs = Inputs::compute(&config, &sample, &ciphertext, &material).unwrap();
         let again = Inputs::compute(&config, &sample, &ciphertext, &material).unwrap();

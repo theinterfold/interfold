@@ -11,7 +11,7 @@ use e3_committee_hash::LbfvProofDomainContext;
 use e3_events::{CorrelationId, E3id, LbfvKeyShareDocument, LbfvPublicKeyAggregated, Proof};
 use e3_fhe_params::{lbfv_row_count, BfvPreset};
 use e3_utils::ArcBytes;
-use e3_zk_helpers::threshold::rlk_aggregation::RlkAggregationComponent;
+use e3_zk_witness::threshold::rlk_aggregation::RlkAggregationComponent;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

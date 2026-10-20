@@ -70,15 +70,15 @@ fn resolve_benchmark_preset(
     requested_preset: Option<&str>,
 ) -> (&'static str, BfvPreset) {
     match requested_preset {
-        Some("insecure") => ("insecure", DEFAULT_BFV_PRESET),
-        // The insecure parameters on the l-BFV path: same circuit artifacts, l-BFV protocol flow.
-        // `insecure` alone runs trBFV, so this is the fast way to exercise the l-BFV path.
-        Some("insecure-lbfv") => ("insecure", BfvPreset::InsecureThresholdLbfv),
+        Some("insecure-64") => ("insecure-64", DEFAULT_BFV_PRESET),
+        // The insecure l-BFV parameters: their own artifact directory and the l-BFV protocol flow.
+        // `insecure-64` runs trBFV, so this is the fast way to exercise the l-BFV path.
+        Some("insecure" | "insecure-lbfv") => ("insecure", BfvPreset::InsecureThresholdLbfv),
         Some("secure-8192") => ("secure-8192", BfvPreset::SecureThreshold8192),
         Some("secure-16384") => ("secure-16384", BfvPreset::SecureThreshold16384),
         Some(value) => panic!("BENCHMARK_PRESET has unsupported value {value:?}"),
         None if benchmark_mode == "secure" => ("secure-8192", BfvPreset::SecureThreshold8192),
-        None => ("insecure", DEFAULT_BFV_PRESET),
+        None => ("insecure-64", DEFAULT_BFV_PRESET),
     }
 }
 
@@ -87,7 +87,7 @@ fn select_benchmark_params() -> BenchmarkParams {
     let requested_preset = std::env::var("BENCHMARK_PRESET").ok();
     let (preset_subdir, bfv_preset) =
         resolve_benchmark_preset(&benchmark_mode, requested_preset.as_deref());
-    let is_secure_mode = preset_subdir != "insecure";
+    let is_secure_mode = !preset_subdir.starts_with("insecure");
 
     // λ is part of the preset metadata; using a hard-coded value here will mix parameter
     // families and can invalidate noise/security assumptions.
@@ -160,13 +160,17 @@ fn benchmark_preset_override_selects_secure_16384() {
 }
 
 #[test]
-fn insecure_lbfv_override_runs_the_lbfv_path_on_insecure_artifacts() {
-    let (preset_subdir, preset) = resolve_benchmark_preset("insecure", Some("insecure-lbfv"));
+fn insecure_override_runs_the_lbfv_path_and_the_default_runs_trbfv() {
+    let (preset_subdir, preset) = resolve_benchmark_preset("insecure", Some("insecure"));
     assert_eq!(preset_subdir, "insecure");
     assert!(e3_fhe_params::supports_lbfv(preset));
-    assert!(!e3_fhe_params::supports_lbfv(
-        resolve_benchmark_preset("insecure", Some("insecure")).1
-    ));
+    assert_eq!(
+        resolve_benchmark_preset("insecure", Some("insecure-lbfv")),
+        (preset_subdir, preset)
+    );
+    let (default_subdir, default_preset) = resolve_benchmark_preset("insecure", None);
+    assert_eq!(default_subdir, "insecure-64");
+    assert!(!e3_fhe_params::supports_lbfv(default_preset));
 }
 
 #[test]
@@ -174,6 +178,15 @@ fn secure_benchmark_mode_defaults_to_secure_8192() {
     let (preset_subdir, preset) = resolve_benchmark_preset("secure", None);
     assert_eq!(preset_subdir, "secure-8192");
     assert!(matches!(preset, BfvPreset::SecureThreshold8192));
+}
+
+fn benchmark_flow_timeout(name: &str, default: Duration) -> Duration {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|&seconds| seconds > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(default)
 }
 
 /// Registered ciphernodes (excluding the observer collector) for benchmark sortition.
@@ -2780,38 +2793,40 @@ async fn test_trbfv_actor() -> Result<()> {
             .cloned()
             .context("restart identity is missing")?;
         println!("Stopping committee party {restart_party_id} at node index {node_index}");
+        let trigger_pipe = trigger_pipes
+            .lock()
+            .unwrap()
+            .remove(&nodes[node_index].address())
+            .context("restart event pipe is missing")?;
         bus.event_bus()
-            .send(Unsubscribe::new(
-                EventType::All,
-                nodes[node_index].bus().event_bus().clone().recipient(),
-            ))
+            .send(Unsubscribe::new(EventType::All, trigger_pipe))
             .await?;
         nodes
-            .restart_node(node_index, async {
-                let mut builder = CiphernodeBuilder::new(identity.rng, cipher.clone())
-                    .with_history_collector()
-                    .with_shared_taskpool(&task_pool)
-                    .with_multithread_concurrent_jobs(concurrent_jobs)
-                    .with_shared_multithread_report(&multithread_report)
-                    .with_trbfv()
-                    .with_zkproof(zk_backend.clone())
-                    .with_signer(identity.signer)
-                    .with_pubkey_aggregation()
-                    .with_sortition_score()
-                    .with_threshold_plaintext_aggregation()
-                    .with_forked_bus(bus.event_bus())
-                    .with_eventstore_aggregate_config_for_testing(
-                        benchmark_aggregate_config.clone(),
-                    )
-                    .with_dkg_timing_reader_for_testing(dkg_timing_reader.clone())
-                    .with_chains(std::slice::from_ref(&bench_chain_config))
-                    .with_persistence(&identity.log_path, &identity.kv_path)
-                    .with_logging();
-                if !proof_aggregation_enabled {
-                    builder = builder.with_proof_aggregation_disabled_for_testing();
-                }
-                builder.build().await
-            })
+            .restart_node(
+                node_index,
+                Box::pin(async {
+                    let mut builder =
+                        CiphernodeBuilder::full(identity.rng, cipher.clone(), zk_backend.clone())
+                            .with_history_collector()
+                            .with_shared_taskpool(&task_pool)
+                            .with_multithread_concurrent_jobs(concurrent_jobs)
+                            .with_shared_multithread_report(&multithread_report)
+                            .with_signer(identity.signer)
+                            .with_eventstore_aggregate_config_for_testing(
+                                benchmark_aggregate_config.clone(),
+                            )
+                            .with_dkg_timing_reader_for_testing(dkg_timing_reader.clone())
+                            .with_chains(std::slice::from_ref(&bench_chain_config))
+                            .with_persistence(&identity.log_path, &identity.kv_path)
+                            .with_logging();
+                    if !proof_aggregation_enabled {
+                        builder = builder.with_proof_aggregation_disabled_for_testing();
+                    }
+                    let node = builder.build().await?;
+                    connect_trigger(&node);
+                    Ok(node)
+                }),
+            )
             .await?;
         println!("Restarted committee party {restart_party_id} at node index {node_index}");
     }

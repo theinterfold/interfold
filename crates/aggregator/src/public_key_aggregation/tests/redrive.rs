@@ -32,7 +32,7 @@ fn redrive_fixture(
     let e3_id = fixture.state.e3_id.clone();
     let proof_domain = fixture.state.proof_domain;
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
     let aggregator = PublicKeyAggregator::new_with_lbfv_retry_clock(
         PublicKeyAggregatorParams {
             fhe: Arc::new(Fhe::new(params, crp, rng)),
@@ -69,7 +69,7 @@ fn fold_row_zero_ready(
         BfvPreset::SecureThreshold16384,
     )?;
     aggregation.record_public_key_proof(0, dummy_proof(CircuitName::PkAggregation))?;
-    for component in e3_zk_helpers::threshold::rlk_aggregation::RlkAggregationComponent::ALL {
+    for component in e3_zk_witness::threshold::rlk_aggregation::RlkAggregationComponent::ALL {
         aggregation.record_rlk_proof(0, component, dummy_proof(CircuitName::PkAggregation))?;
     }
     if let Some(correlation) = fold_correlation {
@@ -242,7 +242,7 @@ async fn v2_dispatch_does_not_wait_for_a_c5_proof() -> Result<()> {
     )?;
     for row in 0..aggregation.row_count()? as u32 {
         aggregation.record_public_key_proof(row, dummy_proof(CircuitName::PkAggregation))?;
-        for component in e3_zk_helpers::threshold::rlk_aggregation::RlkAggregationComponent::ALL {
+        for component in e3_zk_witness::threshold::rlk_aggregation::RlkAggregationComponent::ALL {
             aggregation.record_rlk_proof(
                 row,
                 component,

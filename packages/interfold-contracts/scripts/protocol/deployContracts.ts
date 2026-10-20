@@ -4,6 +4,7 @@ import {
   ActiveBfvConfig,
   activeBfvConfigForChain,
   bfvConfigsForChain,
+  bfvHonkSource,
   getBfvDecryptionSubCircuitVkHashPaths,
   getBfvPkSubCircuitVkHashPaths,
   getBfvPkVkBindingHashPaths,
@@ -302,31 +303,6 @@ async function deployMockCiphertextVerifier(ethers: any) {
   return deployedAddress(verifier);
 }
 
-function bfvHonkSource(
-  config: ActiveBfvConfig,
-  contractName: "DkgAggregatorVerifier" | "DecryptionAggregatorVerifier",
-): string {
-  if (config.preset === "insecure" && config.committee === "minimum") {
-    return `contracts/verifiers/bfv/honk/${contractName}.sol`;
-  }
-  return `contracts/verifiers/bfv/honk/${config.preset}/${config.committee}/${contractName}.sol`;
-}
-
-function bfvV2HonkSource(config: ActiveBfvConfig): string | undefined {
-  if (config.preset === "insecure") {
-    return config.committee === "minimum"
-      ? "contracts/verifiers/bfv/honk/DkgAggregatorV2Verifier.sol"
-      : `contracts/verifiers/bfv/honk/insecure/${config.committee}/DkgAggregatorV2Verifier.sol`;
-  }
-  if (
-    config.preset !== "secure-16384" ||
-    (config.committee !== "minimum" && config.committee !== "small")
-  ) {
-    return undefined;
-  }
-  return `contracts/verifiers/bfv/honk/secure-16384/${config.committee}/DkgAggregatorV2Verifier.sol`;
-}
-
 async function deployBfvVerifiers(
   ethers: any,
   registry: string,
@@ -431,12 +407,9 @@ async function deployBfvVerifierRoute(
   // The trBFV path (parameter sets 0 and 2) verifies main's `dkg_aggregator`; the l-BFV path
   // (3 and 4) verifies `dkg_aggregator_v2`.
   const lbfv = isLbfvParamSet(config.paramSet);
-  const v2Source = lbfv ? bfvV2HonkSource(config) : undefined;
-  if (lbfv && !v2Source) {
-    throw new Error(
-      `No DkgAggregatorV2Verifier for ${config.preset}/${config.committee}`,
-    );
-  }
+  const v2Source = lbfv
+    ? bfvHonkSource(config, "DkgAggregatorV2Verifier")
+    : undefined;
 
   const zkTranscriptFactory = await ethers.getContractFactory(
     `${dkgSource}:ZKTranscriptLib`,

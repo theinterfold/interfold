@@ -15,6 +15,16 @@ hydration. `scripts/circuits/build-pairs.json` owns supported build pairs. Relea
 in the separate runtime release matrix. Hydration accepts a different artifact source hash and
 records the original hash. Release validation remains source-bound.
 
+Artifact labels are `insecure`, `secure-8192`, and `secure-16384`. The degree-128 `insecure`
+archive serves both insecure protocol presets; `--preset insecure-lbfv` aliases that archive.
+Secure-16384 builds the l-BFV path for minimum, micro, and small committees. Its only legacy tree
+anchor is C6; the V2 DKG verifier binds its complete chunk/row VK genealogy separately.
+
+The shared build-pair policy also generates the deployment configuration declarations, testnet
+routes, and Solidity pair admission. Network admission remains separate: mainnet accepts only
+secure-8192. Runtime release requirements live separately in
+`crates/zk/prover/supported-configurations.json`; adding a build pair alone does not ship artifacts.
+
 The unpublished `e3-zk-benchmarks` crate uses this crate through a normal dependency. Normal dependency
 direction stays `build -> witness -> config`; the configuration library does not import build,
 witness, samples, or runtime orchestration.
@@ -25,6 +35,7 @@ witness, samples, or runtime orchestration.
 | -------- | -------------- |
 | [lib.rs](src/lib.rs), [main.rs](src/main.rs) | Typed Request, policy admission, operations, and CLI parsing. |
 | [configuration.rs](src/configuration.rs) | Shared material, rendering, isolated checks, and configuration synchronization. |
+| [lbfv.rs](src/lbfv.rs), [policy.rs](src/policy.rs) | Deterministic CRS/URS, chunk grids, path selection, and required artifact inventories. |
 | [identity.rs](src/identity.rs), [toolchain.rs](src/toolchain.rs) | Framed source identities, required inputs, and exact tool pins. |
 | [artifacts.rs](src/artifacts.rs), [vk_tree.rs](src/vk_tree.rs) | Discovery, staging, hydration, checksums, and recursive anchors. |
 | [templates/](templates) | Stable generated Solidity and committee selectors. |

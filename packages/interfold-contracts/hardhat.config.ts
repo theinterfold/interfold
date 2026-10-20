@@ -39,6 +39,8 @@ const mnemonic =
   "test test test test test test test test test test test junk";
 const privateKey = process.env.PRIVATE_KEY!;
 const rpcUrl = process.env.RPC_URL ?? "http://localhost:8545";
+// Small committees need 19 operators in addition to owner/requester accounts.
+const localTestAccounts = { count: 32 };
 
 const chainIds = {
   "arbitrum-mainnet": 42161,
@@ -108,6 +110,11 @@ const config: HardhatUserConfig = {
     updateSubmissionWindow,
   ],
   networks: {
+    default: {
+      type: "edr-simulated",
+      chainType: "l1",
+      accounts: localTestAccounts,
+    },
     // Folded integration proofs bind the in-process benchmark to chain ID 1.
     benchmark: {
       chainId: chainIds.mainnet,
@@ -119,6 +126,7 @@ const config: HardhatUserConfig = {
       chainId: chainIds.hardhat,
       type: "edr-simulated",
       chainType: "l1",
+      accounts: localTestAccounts,
       // Honk aggregator verify.staticCall uses ~3–4M gas in normal runs. The 1B limit is
       // artificial Hardhat headroom (not a mainnet constraint) so BfvVkBindingIntegration
       // can set block + tx gas via HONK_VERIFY_GAS_LIMIT / networkHelpers.setBlockGasLimit.

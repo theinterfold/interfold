@@ -262,6 +262,7 @@ async fn only_an_expulsion_removes_a_voter() -> anyhow::Result<()> {
                     accused_address: accused,
                     accused_party_id: 2,
                     proof_type: ProofType::C1PkGeneration,
+                    proof_instance: 0,
                     data_hash: [7; 32],
                     evidence: Default::default(),
                 }

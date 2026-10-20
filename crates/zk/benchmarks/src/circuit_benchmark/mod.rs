@@ -43,6 +43,10 @@ pub(crate) struct Options {
     pub config: Option<PathBuf>,
     #[arg(long)]
     pub mode: Option<String>,
+    /// Protocol preset and artifact directory: insecure-64, insecure, insecure-simd, secure-8192 or
+    /// secure-16384. Defaults to insecure-64 or secure-8192 by mode.
+    #[arg(long)]
+    pub preset: Option<String>,
     #[arg(long)]
     pub committee: Option<String>,
     /// Circuit path. Repeat this option to select several cases.
@@ -211,11 +215,27 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<()> {
         .unwrap_or_else(|| root.join("circuits/benchmarks/config.json"));
     let config: selection::Config = serde_json::from_slice(&fs::read(config_path)?)?;
     let mode = options.mode.as_deref().unwrap_or(&config.mode);
-    let preset = match mode {
-        "insecure" => BfvPreset::InsecureThreshold64,
-        "secure" => BfvPreset::SecureThreshold8192,
-        _ => bail!("Mode must be insecure or secure"),
+    if !matches!(mode, "insecure" | "secure") {
+        bail!("Mode must be insecure or secure");
+    }
+    let requested = options.preset.as_deref().unwrap_or(if mode == "secure" {
+        "secure-8192"
+    } else {
+        "insecure-64"
+    });
+    let (requested, preset) = match requested {
+        "insecure-64" => ("insecure-64", BfvPreset::InsecureThreshold64),
+        "insecure" | "insecure-lbfv" => ("insecure", BfvPreset::InsecureThresholdLbfv),
+        "insecure-simd" => ("insecure-simd", BfvPreset::InsecureThresholdSimd),
+        "secure-8192" => ("secure-8192", BfvPreset::SecureThreshold8192),
+        "secure-16384" => ("secure-16384", BfvPreset::SecureThreshold16384),
+        _ => bail!(
+            "Preset must be insecure-64, insecure, insecure-simd, secure-8192, or secure-16384"
+        ),
     };
+    if requested.starts_with("secure-") != (mode == "secure") {
+        bail!("Preset {requested} disagrees with mode {mode}");
+    }
     let active_path = root.join("circuits/bin/.active-preset.json");
     let active: serde_json::Value = match fs::read(active_path) {
         Ok(bytes) => serde_json::from_slice(&bytes)?,
@@ -230,11 +250,7 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<()> {
         .or_else(|| active["committee"].as_str())
         .context("Specify --committee or prepare an active artifact stamp")?;
     let committee: CiphernodesCommitteeSize = committee_name.parse()?;
-    let preset_name = if mode == "secure" {
-        "secure-8192"
-    } else {
-        "insecure-64"
-    };
+    let preset_name = requested;
     let policy = e3_zk_build::build_pairs(root)?;
     if !policy
         .iter()
@@ -244,7 +260,7 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<()> {
     }
     let variant = selection::variant(&options.variant)?;
     let cases = if matches!(options.command.as_str(), "run" | "list") {
-        config.select(mode, &options.circuit)?
+        config.select_for_preset(mode, preset_name, &options.circuit)?
     } else {
         Vec::new()
     };

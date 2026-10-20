@@ -150,33 +150,44 @@ fn clean_targets(root: &Path, circuits: &[Circuit]) -> Result<()> {
 }
 
 pub fn dist_markers(pair: &Path) -> Vec<PathBuf> {
-    [
-        "default/dkg/pk/pk.json",
-        "default/threshold/pk_aggregation/pk_aggregation.json",
-        "default/recursive_aggregation/dkg_aggregator/dkg_aggregator.json",
-        "default/recursive_aggregation/decryption_aggregator/decryption_aggregator.json",
-        "default/recursive_aggregation/nodes_fold/nodes_fold.vk_tree_hash",
-        "default/recursive_aggregation/c6_fold/c6_fold.vk_tree_hash",
-    ]
-    .iter()
-    .map(|path| pair.join(path))
-    .collect()
+    let preset = pair
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .expect("artifact pair has a preset parent");
+    super::policy::required_artifacts(preset)
+        .iter()
+        .map(|path| pair.join(path))
+        .collect()
 }
 
-fn bin_markers(root: &Path) -> Vec<PathBuf> {
-    [
-        "recursive_aggregation/dkg_aggregator/target/dkg_aggregator.json",
-        "recursive_aggregation/dkg_aggregator/target/dkg_aggregator.vk_recursive",
-        "recursive_aggregation/decryption_aggregator/target/decryption_aggregator.json",
-        "recursive_aggregation/decryption_aggregator/target/decryption_aggregator.vk_recursive",
-        "recursive_aggregation/nodes_fold/target/nodes_fold.vk_tree_hash",
-        "recursive_aggregation/c6_fold/target/c6_fold.vk_tree_hash",
-        "dkg/target/pk.json",
-        "threshold/target/pk_aggregation.json",
-    ]
-    .iter()
-    .map(|path| root.join("circuits/bin").join(path))
-    .collect()
+fn required_bin_markers(root: &Path, preset: &str) -> Vec<PathBuf> {
+    super::policy::required_artifacts(preset)
+        .iter()
+        .map(|relative| {
+            let parts: Vec<_> = relative.split('/').collect();
+            let group = parts[1];
+            let name = parts[2];
+            let (package, suffix) = parts[3].split_once('.').expect("artifact extension");
+            let suffix = match (parts[0], suffix) {
+                ("default", "vk") => "vk_recursive",
+                ("default", "vk_hash") => "vk_recursive_hash",
+                ("recursive", "vk") => "vk_noir",
+                ("recursive", "vk_hash") => "vk_noir_hash",
+                (_, suffix) => suffix,
+            };
+            let group_dir = root.join("circuits/bin").join(group);
+            let workspace = fs::read_to_string(group_dir.join("Nargo.toml"))
+                .ok()
+                .is_some_and(|text| text.contains("[workspace]") && !text.contains("[package]"));
+            let target = if workspace {
+                group_dir.join("target")
+            } else {
+                group_dir.join(name).join("target")
+            };
+            target.join(format!("{package}.{suffix}"))
+        })
+        .collect()
 }
 
 fn read_stamp(path: &Path) -> Result<Option<Stamp>> {
@@ -225,7 +236,9 @@ fn bin_current(root: &Path, preset: &str, committee: &str, hash: &str) -> Result
     Ok(
         read_stamp(&root.join("circuits/bin/.active-preset.json"))?.is_some_and(|stamp| {
             stamp.preset == preset && stamp.committee == committee && stamp.source_hash == hash
-        }) && bin_markers(root).iter().all(|path| path.is_file()),
+        }) && required_bin_markers(root, preset)
+            .iter()
+            .all(|path| path.is_file()),
     )
 }
 
@@ -242,7 +255,16 @@ fn active_stamp(root: &Path, preset: &str, committee: &str, hash: &str) -> Resul
 }
 
 pub fn hydrate(root: &Path, pair: &Path, request: &Request, stamp: &Stamp) -> Result<()> {
-    let circuits = discover(root, request)?;
+    let discovered = discover(root, request)?;
+    let circuits: Vec<_> = discovered
+        .into_iter()
+        .filter(|circuit| {
+            super::policy::enabled(
+                circuit,
+                preset(&stamp.preset).expect("validated stamp preset"),
+            )
+        })
+        .collect();
     clean_targets(root, &circuits)?;
     for circuit in circuits {
         let target = target_dir(root, &circuit)?;
@@ -271,6 +293,7 @@ pub fn hydrate(root: &Path, pair: &Path, request: &Request, stamp: &Stamp) -> Re
                 }
             }
         }
+        recursive_vk_json(&target, &circuit.package)?;
     }
     active_stamp(root, &stamp.preset, &stamp.committee, &stamp.source_hash)
 }
@@ -320,11 +343,16 @@ fn sanitize_paths(path: &Path) -> Result<()> {
 }
 
 pub fn variants(circuit: &Circuit) -> Vec<(&'static str, &'static str, &'static str)> {
-    if circuit.group == "recursive_aggregation" {
+    if circuit.group == "recursive_aggregation"
+        && !matches!(
+            circuit.name.as_str(),
+            "sk_c2_chunk_finalize" | "esm_c2_chunk_finalize"
+        )
+    {
         let mut values = vec![("default", "noir-recursive-no-zk", "vk_recursive")];
         if matches!(
             circuit.name.as_str(),
-            "dkg_aggregator" | "decryption_aggregator"
+            "dkg_aggregator" | "dkg_aggregator_v2" | "decryption_aggregator"
         ) {
             values.push(("evm", "evm", "vk"));
         }
@@ -345,6 +373,10 @@ fn build_circuit(root: &Path, pair: &Path, circuit: &Circuit, skip_vk: bool) -> 
     let compiled = compiled_path(root, circuit)?;
     sanitize_paths(&compiled)?;
     let target = compiled.parent().context("Compiled artifact parent")?;
+    let recursive_json = target.join(format!("{}.vk_recursive.json", circuit.package));
+    if recursive_json.exists() {
+        fs::remove_file(recursive_json)?;
+    }
     let variants = if skip_vk {
         vec![("default", "noir-recursive-no-zk", "vk_recursive")]
     } else {
@@ -387,8 +419,30 @@ fn build_circuit(root: &Path, pair: &Path, circuit: &Circuit, skip_vk: bool) -> 
             fs::copy(source, dist.join(format!("{}.{file}", circuit.package)))?;
         }
     }
+    if !skip_vk {
+        recursive_vk_json(target, &circuit.package)?;
+    }
     println!("Built {}/{}", circuit.group, circuit.name);
     Ok(())
+}
+
+fn recursive_vk_json(target: &Path, package: &str) -> Result<()> {
+    let vk = target.join(format!("{package}.vk_recursive"));
+    let hash = target.join(format!("{package}.vk_recursive_hash"));
+    if !vk.is_file() || !hash.is_file() {
+        return Ok(());
+    }
+    let bytes = fs::read(&vk)?;
+    let fields: Vec<_> = bytes
+        .chunks(32)
+        .map(|field| format!("0x{}", hex::encode(field)))
+        .collect();
+    write_json(
+        &target.join(format!("{package}.vk_recursive.json")),
+        &serde_json::json!({
+            "vkAsFields": fields, "vkHash": format!("0x{}", hex::encode(fs::read(hash)?))
+        }),
+    )
 }
 
 pub fn refresh_anchors(root: &Path, pair: &Path, complete: bool) -> Result<()> {
@@ -408,7 +462,16 @@ pub fn refresh_anchors(root: &Path, pair: &Path, complete: bool) -> Result<()> {
         }
     }
     if complete {
-        for (name, bytes) in vk_tree::hashes(pair)? {
+        let decryption_only = pair
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == "secure-16384");
+        let hashes = if decryption_only {
+            vec![("c6_fold", vk_tree::decryption_hash(pair)?)]
+        } else {
+            vk_tree::hashes(pair)?.to_vec()
+        };
+        for (name, bytes) in hashes {
             for directory in [
                 pair.join("default/recursive_aggregation").join(name),
                 root.join("circuits/bin/recursive_aggregation")
@@ -478,8 +541,23 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
     }
     // A dry run only reads the selection; it needs no tools and writes nothing.
     if request.dry_run {
-        for circuit in circuits {
-            println!("{}/{}", circuit.group, circuit.name);
+        for pair in &pairs {
+            let preset = preset(&pair[0])?;
+            for circuit in &circuits {
+                if super::policy::enabled(circuit, preset) {
+                    println!(
+                        "{}/{} ({}/{})",
+                        circuit.group, circuit.name, pair[0], pair[1]
+                    );
+                } else if !request.circuits.is_empty() {
+                    bail!(
+                        "Circuit {}/{} is not supported for {}",
+                        circuit.group,
+                        circuit.name,
+                        pair[0]
+                    );
+                }
+            }
         }
         return Ok(());
     }
@@ -492,6 +570,18 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
         let committee = selected[1].as_str();
         let pair = output.join(preset_name).join(committee);
         let result = (|| -> Result<()> {
+            let circuits: Vec<_> = circuits
+                .iter()
+                .filter(|circuit| {
+                    super::policy::enabled(circuit, preset(preset_name).expect("validated preset"))
+                })
+                .collect();
+            if circuits.len() == 0 {
+                bail!("No circuits enabled for {preset_name}");
+            }
+            if !request.circuits.is_empty() && circuits.len() != request.circuits.len() {
+                bail!("Circuit selection is not supported for {preset_name}");
+            }
             let mut selection = configuration::prepare_selection(
                 root,
                 preset(preset_name)?,
@@ -532,11 +622,12 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
                 remove_dir(&pair)?;
             }
             if !request.no_clean_targets {
-                clean_targets(root, &circuits)?;
+                clean_targets(root, &discover(root, request)?)?;
             }
             fs::create_dir_all(&pair)?;
+            refresh_anchors(root, &pair, false)?;
             let mut failures = Vec::new();
-            for circuit in &circuits {
+            for circuit in circuits {
                 match build_circuit(root, &pair, circuit, request.skip_vk) {
                     Ok(()) => built += 1,
                     Err(error) => {
@@ -558,8 +649,11 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
                 source_hash: hash.clone(),
                 built_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             };
-            write_json(&pair.join(".build-stamp.json"), &stamp)?;
-            active_stamp(root, preset_name, committee, &hash)
+            if request.groups.is_complete() && request.circuits.is_empty() {
+                write_json(&pair.join(".build-stamp.json"), &stamp)?;
+                active_stamp(root, preset_name, committee, &hash)?;
+            }
+            Ok(())
         })();
         if let Err(error) = result {
             errors.push(format!("{preset_name}/{committee}: {error:#}"));
@@ -588,7 +682,7 @@ mod tests {
     fn request() -> Request {
         Request {
             operation: super::super::Operation::Build,
-            preset: super::super::PresetSelection::Single(BfvPreset::InsecureThreshold64),
+            preset: super::super::PresetSelection::Single(BfvPreset::InsecureThreshold),
             committee: super::super::CommitteeSelection::Single(
                 e3_committee::CiphernodesCommitteeSize::Minimum,
             ),
@@ -617,7 +711,7 @@ mod tests {
         fs::create_dir_all(root.join("scripts")).unwrap();
         fs::write(
             root.join("scripts/circuits/build-pairs.json"),
-            r#"[["insecure-64","minimum"],["secure-8192","minimum"]]"#,
+            r#"[["insecure","minimum"],["secure-8192","minimum"]]"#,
         )
         .unwrap();
         copy_tree(
@@ -631,7 +725,7 @@ mod tests {
         fs::copy(repo.join(utils), root.join(utils)).unwrap();
         let mut selection = configuration::prepare_selection(
             root,
-            e3_fhe_params::BfvPreset::InsecureThreshold64,
+            e3_fhe_params::BfvPreset::InsecureThreshold,
             e3_committee::CiphernodesCommitteeSize::Minimum,
             false,
         )
@@ -641,22 +735,28 @@ mod tests {
         for relative in [
             "circuits/lib/src/configs/committee/active.nr",
             "circuits/lib/src/configs/committee/minimum/parity_insecure.nr",
-            "circuits/lib/src/configs/committee/minimum/parity_secure.nr",
+            "circuits/lib/src/configs/committee/minimum/parity_secure_8192.nr",
             "circuits/lib/src/configs/insecure/dkg.nr",
             "circuits/lib/src/configs/insecure/threshold.nr",
         ] {
-            assert_eq!(
-                fs::read(root.join(relative)).unwrap(),
-                fs::read(repo.join(relative)).unwrap(),
-                "generated bytes for {relative}"
-            );
+            let generated =
+                configuration::declarations(&fs::read_to_string(root.join(relative)).unwrap());
+            let committed =
+                configuration::declarations(&fs::read_to_string(repo.join(relative)).unwrap());
+            for (name, declaration) in generated {
+                assert_eq!(
+                    configuration::compact(&declaration),
+                    configuration::compact(&committed[&name]),
+                    "generated {relative}::{name}"
+                );
+            }
         }
         // A repeated sync must not invoke even a version probe, or rewrite formatted files.
         fs::remove_dir_all(root.join("crates/zk/prover")).unwrap();
         let before = crate::tests::snapshot(root);
         let mut selection = configuration::prepare_selection(
             root,
-            BfvPreset::InsecureThreshold64,
+            BfvPreset::InsecureThreshold,
             e3_committee::CiphernodesCommitteeSize::Minimum,
             false,
         )
@@ -666,7 +766,7 @@ mod tests {
         assert_eq!(crate::tests::snapshot(root), before);
         crate::tests::write_pins(root);
 
-        let pair = root.join("dist/circuits/insecure-64/minimum");
+        let pair = root.join("dist/circuits/insecure/minimum");
         for (group, name) in [("dkg", "pk"), ("threshold", "pk_generation")] {
             let path = root.join("circuits/bin").join(group).join(name);
             fs::create_dir_all(path.join("src")).unwrap();
@@ -769,9 +869,9 @@ mod tests {
         let manifest: serde_json::Value =
             serde_json::from_slice(&fs::read(root.join("dist/circuits/checksums.json")).unwrap())
                 .unwrap();
-        assert_eq!(manifest["files"].as_object().unwrap().len(), 33);
+        assert_eq!(manifest["files"].as_object().unwrap().len(), 35);
         let hash =
-            identity::source_hash(root, &request(), Some("insecure-64"), Some("minimum")).unwrap();
+            identity::source_hash(root, &request(), Some("insecure"), Some("minimum")).unwrap();
         let built_stamp = read_stamp(&pair.join(".build-stamp.json"))
             .unwrap()
             .unwrap();
@@ -792,22 +892,25 @@ mod tests {
             r#"{"required_bb_version":"0.0.0-invalid"}"#,
         )
         .unwrap();
-        for marker in dist_markers(&pair).into_iter().chain(bin_markers(root)) {
+        for marker in dist_markers(&pair)
+            .into_iter()
+            .chain(required_bin_markers(root, "insecure"))
+        {
             if !marker.exists() {
                 fs::create_dir_all(marker.parent().unwrap()).unwrap();
                 fs::write(marker, "published marker").unwrap();
             }
         }
         let hash =
-            identity::source_hash(root, &request(), Some("insecure-64"), Some("minimum")).unwrap();
+            identity::source_hash(root, &request(), Some("insecure"), Some("minimum")).unwrap();
         let mut stamp = Stamp {
-            preset: "insecure-64".into(),
+            preset: "insecure".into(),
             committee: "minimum".into(),
             source_hash: hash.clone(),
             built_at: "published-time".into(),
         };
         write_json(&pair.join(".build-stamp.json"), &stamp).unwrap();
-        active_stamp(root, "insecure-64", "minimum", &hash).unwrap();
+        active_stamp(root, "insecure", "minimum", &hash).unwrap();
         let mut reuse = request();
         reuse.skip_if_built = true;
         let before = crate::tests::snapshot(root);

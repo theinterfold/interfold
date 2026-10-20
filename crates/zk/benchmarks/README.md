@@ -27,14 +27,18 @@ pnpm bench:circuits list --mode insecure --committee minimum
 pnpm bench:circuits run --mode insecure --committee minimum --circuit dkg/pk --leaf-only
 pnpm bench:circuits protocol --mode insecure --committee minimum --multithread-jobs 2
 pnpm bench:circuits gas --mode insecure --committee minimum
+pnpm bench:circuits list --mode insecure --preset insecure --committee minimum
+pnpm bench:circuits list --mode secure --preset secure-16384 --committee small
 pnpm bench:circuits replay --input <saved-run-or-summary> --output <new-directory>
 pnpm bench:circuits report --input <saved-run> [--output <new-report.md>]
 pnpm test:circuit-bench
 ```
 
-`circuits/benchmarks/config.json` selects the leaf cases and their permitted modes; unknown or
-mode-restricted selections fail. Historical result directories and that config stay under
-`circuits/benchmarks/`.
+`circuits/benchmarks/config.json` selects the leaf cases and their permitted modes/presets; unknown
+or restricted selections fail. The insecure mode runs `insecure-64` (trBFV) by default. `--preset`
+selects `insecure-64`, `insecure` (l-BFV, also `insecure-lbfv`), `insecure-simd` (l-BFV),
+`secure-8192` (trBFV), or `secure-16384` (l-BFV); each name is its artifact directory. Historical
+result directories and that config stay under `circuits/benchmarks/`.
 
 ## Measurement rules
 

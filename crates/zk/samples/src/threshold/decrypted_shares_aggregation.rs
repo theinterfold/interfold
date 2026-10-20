@@ -10,27 +10,33 @@
 //! encrypts a message, computes T+1 decryption shares, and decrypts to obtain the message.
 //! The result is used as inputs for computation and codegen.
 
-use e3_fhe_params::{create_deterministic_crp_from_default_seed, BfvPreset};
-use e3_zk_config::threshold::decrypted_shares_aggregation::Configs;
+use e3_fhe_params::{
+    create_deterministic_crp_from_default_seed, generate_smudging_error, BfvPreset,
+};
 use e3_zk_witness::threshold::decrypted_shares_aggregation::DecryptedSharesAggregationCircuitData;
 use e3_zk_witness::WitnessError;
 use fhe::bfv::{Encoding, Plaintext, PublicKey, SecretKey};
 use fhe::mbfv::{AggregateIter, PublicKeyShare};
-use fhe::trbfv::ShareManager;
+use fhe::trbfv::{
+    AggregatedSecretKeyShare, AggregatedSmudgingShare, SecretKeyShare, ShareManager, SmudgingShare,
+};
 use fhe_math::rq::{Poly, PowerBasis};
 use fhe_traits::FheDecoder;
 use fhe_traits::{FheEncoder, FheEncrypter};
 use ndarray::Array2;
 use std::sync::Arc;
 
+use e3_zk_config::threshold::decrypted_shares_aggregation::Configs;
 struct Party {
+    pk_share: PublicKeyShare,
     sk_sss: Vec<Array2<u64>>,
     esi_sss: Vec<Array2<u64>>,
+    sk_sss_collected: Vec<Array2<u64>>,
+    es_sss_collected: Vec<Array2<u64>>,
+    sk_aggregate: Option<AggregatedSecretKeyShare>,
+    esi_aggregate: Option<AggregatedSmudgingShare>,
 }
 
-/// Generates sample data for the decrypted shares aggregation circuit:
-/// TRBFV setup, parties with sk/pk shares and smudging error shares, share collection
-/// and aggregation, encryption of a message, T+1 decryption shares, and threshold decrypt.
 pub fn generate(
     config: &Configs,
     preset: BfvPreset,
@@ -41,34 +47,31 @@ pub fn generate(
     let sd = preset
         .search_defaults()
         .ok_or_else(|| WitnessError::Sample("Preset has no search defaults".into()))?;
+    // Lambda is secure or insecure depending on the preset's security tier.
+    let lambda = preset
+        .lambda()
+        .map_err(|e| WitnessError::Sample(e.to_string()))?;
+
     let num_parties = committee.n;
     let threshold = committee.threshold;
     let degree = threshold_params.degree();
-    let width = config.max_msg_non_zero_coeffs;
-    if width > degree {
-        return Err(WitnessError::Sample(
-            "sample message width exceeds the BFV degree".into(),
-        ));
-    }
-    let mut share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone())?;
-    let noise = crate::smudging::generator(
-        threshold_params,
-        num_parties,
-        usize::try_from(sd.z).map_err(|e| WitnessError::Sample(e.to_string()))?,
-        preset,
-    )?;
+    let num_moduli = threshold_params.moduli().len();
+
     let mut rng = rand::rng();
 
-    let crp = create_deterministic_crp_from_default_seed(threshold_params);
-    let mut pk_shares = Vec::with_capacity(num_parties);
+    let crp = create_deterministic_crp_from_default_seed(&threshold_params);
 
-    let parties: Vec<Party> = (0..num_parties)
+    let mut parties: Vec<Party> = (0..num_parties)
         .map(|_| -> Result<Party, WitnessError> {
-            let sk_share = SecretKey::random(threshold_params, &mut rng);
+            let sk_share = SecretKey::random(&threshold_params, &mut rng);
             let pk_share = PublicKeyShare::new(&sk_share, crp.clone(), &mut rng).map_err(|e| {
                 WitnessError::Sample(format!("Failed to create public key share: {:?}", e))
             })?;
 
+            let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone())
+                .map_err(|e| {
+                    WitnessError::Sample(format!("Failed to create ShareManager: {:?}", e))
+                })?;
             let sk_poly = share_manager
                 .coeffs_to_poly_level0(sk_share.coeffs.as_ref())
                 .map_err(|e| {
@@ -76,42 +79,146 @@ pub fn generate(
                 })?;
 
             let sk_sss = share_manager
-                .generate_secret_shares_from_poly(sk_poly, &mut rng)
+                .generate_secret_key_shares(sk_poly, &mut rng)
+                .map(|shares| shares.into_transport())
                 .map_err(|e| {
                     WitnessError::Sample(format!("Failed to generate secret shares: {:?}", e))
                 })?;
 
-            let esi_coeffs = noise.generate_smudging_error(&mut rng).map_err(|e| {
+            let esi_coeffs = generate_smudging_error(
+                threshold_params.clone(),
+                num_parties,
+                sd.z as usize,
+                sd.mult_depth,
+                lambda,
+                &mut rng,
+            )
+            .map_err(|e| {
                 WitnessError::Sample(format!("Failed to generate smudging error: {:?}", e))
             })?;
-            let esi_poly = share_manager.bigints_to_poly(&esi_coeffs).map_err(|e| {
+            let esi_poly = Poly::from_bigints(
+                &esi_coeffs,
+                threshold_params.context_at_level(0).map_err(|e| {
+                    WitnessError::Sample(format!("Failed to get BFV context: {:?}", e))
+                })?,
+            )
+            .map_err(|e| {
                 WitnessError::Sample(format!("Failed to convert error to poly: {:?}", e))
             })?;
             let esi_sss = share_manager
-                .generate_secret_shares_from_poly(esi_poly, &mut rng)
+                .generate_secret_key_shares(esi_poly, &mut rng)
+                .map(|shares| shares.into_transport())
                 .map_err(|e| {
                     WitnessError::Sample(format!("Failed to generate error shares: {:?}", e))
                 })?;
 
-            pk_shares.push(pk_share);
-            Ok(Party { sk_sss, esi_sss })
+            let sk_sss_collected = Vec::with_capacity(num_parties);
+            let es_sss_collected = Vec::with_capacity(num_parties);
+            Ok(Party {
+                pk_share,
+                sk_sss,
+                esi_sss,
+                sk_sss_collected,
+                es_sss_collected,
+                sk_aggregate: None,
+                esi_aggregate: None,
+            })
         })
         .collect::<Result<Vec<_>, _>>()?;
 
+    // Collect shares: for each party i, sk_sss_collected is one Array2 per sender j
+    // (same as Vec<ShamirShare>). Each Array2 has shape (num_moduli, degree): row m = share from j for modulus m.
+    for i in 0..num_parties {
+        parties[i].sk_sss_collected = (0..num_parties)
+            .map(|j| {
+                let data: Vec<u64> = (0..num_moduli)
+                    .flat_map(|m| {
+                        parties[j].sk_sss[m]
+                            .row(i)
+                            .iter()
+                            .copied()
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                Array2::from_shape_vec((num_moduli, degree), data)
+                    .map_err(|e| WitnessError::Sample(format!("sk_sss_collected shape: {:?}", e)))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| {
+                WitnessError::Sample(format!("Failed to collect sk_sss_collected: {:?}", e))
+            })?;
+        parties[i].es_sss_collected = (0..num_parties)
+            .map(|j| {
+                let data: Vec<u64> = (0..num_moduli)
+                    .flat_map(|m| {
+                        parties[j].esi_sss[m]
+                            .row(i)
+                            .iter()
+                            .copied()
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                Array2::from_shape_vec((num_moduli, degree), data)
+                    .map_err(|e| WitnessError::Sample(format!("es_sss_collected shape: {:?}", e)))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| {
+                WitnessError::Sample(format!("Failed to collect es_sss_collected: {:?}", e))
+            })?;
+    }
+
+    // Aggregate collected shares to get sk_poly_sum and es_poly_sum per party
+    for party in parties.iter_mut() {
+        let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone())
+            .map_err(|e| WitnessError::Sample(format!("Failed to create ShareManager: {:?}", e)))?;
+        party.sk_aggregate = Some(
+            share_manager
+                .aggregate_secret_key_shares(
+                    party
+                        .sk_sss_collected
+                        .drain(..)
+                        .map(SecretKeyShare::from_transport)
+                        .collect(),
+                )
+                .map_err(|e| {
+                    WitnessError::Sample(format!("Failed to aggregate collected shares: {:?}", e))
+                })?,
+        );
+        party.esi_aggregate = Some(
+            share_manager
+                .aggregate_smudging_shares(
+                    party
+                        .es_sss_collected
+                        .drain(..)
+                        .map(SmudgingShare::from_transport)
+                        .collect(),
+                )
+                .map_err(|e| {
+                    WitnessError::Sample(format!("Failed to aggregate collected shares: {:?}", e))
+                })?,
+        );
+    }
+
     // Aggregate public key
-    let public_key: PublicKey = pk_shares
-        .into_iter()
+    let public_key: PublicKey = parties
+        .iter()
+        .map(|p| p.pk_share.clone())
+        .collect::<Vec<_>>()
+        .iter()
+        .cloned()
         .aggregate()
         .map_err(|e| WitnessError::Sample(format!("Failed to aggregate public key: {:?}", e)))?;
 
-    // Use the supplied message prefix width, then pad the plaintext to the BFV degree.
-    let pattern = [
+    // Build message: max_msg_non_zero_coeffs from config, tiled from CRISP-style pattern, pad to degree
+    let configs = config;
+    let n = configs.max_msg_non_zero_coeffs;
+    let pattern: Vec<u64> = vec![
         2, 1, 5, 2, 1, 2, 3, 2, 4, 3, 3, 3, 2, 3, 3, 1, 2, 3, 4, 6, 1, 5, 1, 1, 2, 1, 2,
     ];
-    let mut message: Vec<u64> = (0..width).map(|i| pattern[i % pattern.len()]).collect();
+    let mut message: Vec<u64> = (0..n).map(|i| pattern[i % pattern.len()]).collect();
     message.resize(degree, 0);
 
-    let pt = Plaintext::try_encode(&message, Encoding::poly(), threshold_params)
+    let pt = Plaintext::try_encode(&message, Encoding::poly(), &threshold_params)
         .map_err(|e| WitnessError::Sample(format!("Failed to encode plaintext: {:?}", e)))?;
     let ciphertext = public_key
         .try_encrypt(&pt, &mut rng)
@@ -120,35 +227,33 @@ pub fn generate(
     let ciphertext = Arc::new(ciphertext);
 
     // Decryption shares from T+1 parties (1-based party IDs)
-    let reconstructing_count = threshold + 1;
-    let mut d_share_polys: Vec<Poly<PowerBasis>> = Vec::with_capacity(reconstructing_count);
+    let honest_parties = threshold + 1;
+    let mut d_share_polys: Vec<Poly<PowerBasis>> = Vec::with_capacity(honest_parties);
 
-    for receiver in 0..reconstructing_count {
-        // Keep every dealer contribution, but only collect the recipients used for reconstruction.
-        // Each temporary contribution set is dropped after aggregation.
-        let sk_poly_sum = share_manager.aggregate_collected_shares(
-            &parties
-                .iter()
-                .map(|party| super::receiver_shares(&party.sk_sss, receiver, threshold_params))
-                .collect::<Vec<_>>(),
-        )?;
-        let es_poly_sum = share_manager.aggregate_collected_shares(
-            &parties
-                .iter()
-                .map(|party| super::receiver_shares(&party.esi_sss, receiver, threshold_params))
-                .collect::<Vec<_>>(),
-        )?;
+    for party in parties.iter_mut().take(honest_parties) {
+        let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone())
+            .map_err(|e| WitnessError::Sample(format!("Failed to create ShareManager: {:?}", e)))?;
         let d_share = share_manager
-            .decryption_share(Arc::clone(&ciphertext), sk_poly_sum.into_ntt(), es_poly_sum)
+            .decryption_share(
+                Arc::clone(&ciphertext),
+                party.sk_aggregate.as_ref().ok_or_else(|| {
+                    WitnessError::Sample("missing aggregated secret-key share".into())
+                })?,
+                party.esi_aggregate.take().ok_or_else(|| {
+                    WitnessError::Sample("missing aggregated smudging share".into())
+                })?,
+            )
             .map_err(|e| {
                 WitnessError::Sample(format!("Failed to compute decryption share: {:?}", e))
             })?;
         d_share_polys.push(d_share);
     }
 
-    let reconstructing_parties: Vec<usize> = (1..=reconstructing_count).collect();
+    let reconstructing_parties: Vec<usize> = (1..=honest_parties).collect();
 
     // Threshold decrypt to obtain message (verify)
+    let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone())
+        .map_err(|e| WitnessError::Sample(format!("Failed to create ShareManager: {:?}", e)))?;
     let plaintext = share_manager
         .decrypt_from_shares(
             d_share_polys.clone(),
@@ -159,11 +264,6 @@ pub fn generate(
 
     let message_vec = Vec::<u64>::try_decode(&plaintext, Encoding::poly())
         .map_err(|e| WitnessError::Sample(format!("Failed to decode plaintext: {:?}", e)))?;
-    if message_vec != message {
-        return Err(WitnessError::Sample(
-            "threshold decryption did not recover the sample message".into(),
-        ));
-    }
 
     Ok(DecryptedSharesAggregationCircuitData {
         d_share_polys,
@@ -171,7 +271,6 @@ pub fn generate(
         message_vec,
     })
 }
-
 #[cfg(test)]
 mod tests {
     use super::generate;

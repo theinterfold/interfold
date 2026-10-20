@@ -17,8 +17,8 @@ use alloy::{
 };
 use anyhow::{bail, Result};
 use chrono::Utc;
-use e3_ciphernode_builder::EventSystem;
 use e3_committee_hash::{hash_lbfv_proof_session, LbfvProofDomainContext};
+use e3_event_system::EventSystem;
 use e3_events::{
     AggregateConfig, AggregateId, BusHandle, CiphernodeSelected, DocumentKind, DocumentMeta, E3id,
     EncryptionKey, EncryptionKeyCreated, GetEvents, HistoryCollector, InterfoldError,

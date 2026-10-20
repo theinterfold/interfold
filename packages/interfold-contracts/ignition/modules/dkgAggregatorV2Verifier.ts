@@ -5,8 +5,9 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
 
-const SOURCE =
-  "contracts/verifiers/bfv/honk/secure-16384/minimum/DkgAggregatorV2Verifier.sol";
+import { ACTIVE_BFV_CONFIG, bfvHonkSource } from "../../scripts/utils";
+
+const SOURCE = bfvHonkSource(ACTIVE_BFV_CONFIG, "DkgAggregatorV2Verifier");
 
 export default buildModule("DkgAggregatorV2Verifier", (m) => {
   const zkTranscriptLib = m.library(`${SOURCE}:ZKTranscriptLib`);

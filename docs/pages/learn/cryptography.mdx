@@ -254,26 +254,35 @@ cannot substitute another circuit within the proof tree.
 
 ## BFV presets
 
-Two BFV presets exist. Each preset has a threshold parameter set for user data and a DKG parameter
-set for the individual keys. The values come from `crates/fhe-params/src/constants.rs`.
+Five BFV presets exist. Each preset has a threshold parameter set for user data and a DKG parameter
+set for the individual keys. The values come from `crates/fhe-params/src/constants.rs`. `insecure-64`
+and `secure-8192` use the trBFV protocol path. `insecure`, `insecure-simd`, and `secure-16384` use
+the l-BFV protocol path.
 
-| Preset        | `paramSet` | Threshold degree | Threshold CRT moduli | Plaintext modulus $t$ | DKG degree | DKG CRT moduli |
-| ------------- | ---------: | ---------------: | -------------------: | --------------------: | ---------: | -------------: |
-| `insecure-64` |          0 |               64 |                    3 |            17,000,000 |         64 |              2 |
-| `secure-8192` |          2 |             8192 |                    3 |            17,000,000 |       8192 |              2 |
+| Preset          | `paramSet` | Threshold degree | Threshold CRT moduli | Plaintext modulus $t$ | DKG degree | DKG CRT moduli |
+| --------------- | ---------: | ---------------: | -------------------: | --------------------: | ---------: | -------------: |
+| `insecure-64`   |          0 |               64 |                    3 |            17,000,000 |         64 |              2 |
+| `insecure`      |          4 |              128 |                    3 |                   100 |        128 |              2 |
+| `insecure-simd` |          5 |              128 |                    3 |                   257 |        128 |              2 |
+| `secure-8192`   |          2 |             8192 |                    3 |            17,000,000 |       8192 |              2 |
+| `secure-16384`  |          3 |            16384 |                    5 |                 1,000 |      16384 |              2 |
 
-`insecure-64` is for development and tests only. The code marks it as not for production. The
-deployment script refuses to deploy it on a chain that is not a known test or local chain.
+The l-BFV presets cannot run on the trBFV path, and the trBFV presets cannot run on the l-BFV path.
+Their proof shapes are not interchangeable.
+
+`insecure-64`, `insecure`, and `insecure-simd` are for development and tests only. The code marks
+them as not for production. The deployment script refuses to deploy them on a chain that is not a
+known test or local chain. `insecure-simd` supports only the `Minimum` and `Micro` committees.
 
 ### Presets by chain
 
 `ActiveCryptoConfig.sol` selects the supported presets from `block.chainid`:
 
-| Chain            | Chain ID    | Presets                      | Committee sizes in the circuit build |
-| ---------------- | ----------- | ---------------------------- | ------------------------------------ |
-| Ethereum mainnet | 1           | `secure-8192`                | `Minimum`, `Micro`, `Small`          |
-| Sepolia          | 11155111    | `insecure-64`, `secure-8192` | `Minimum`, `Micro`, `Small`          |
-| Local            | 31337, 1337 | `insecure-64`, `secure-8192` | `Minimum`, `Micro`, `Small`          |
+| Chain            | Chain ID    | Presets                                   | Committee sizes in the circuit build |
+| ---------------- | ----------- | ----------------------------------------- | ------------------------------------ |
+| Ethereum mainnet | 1           | `secure-8192`                             | `Minimum`, `Micro`, `Small`          |
+| Sepolia          | 11155111    | All five presets                          | Registered routes only               |
+| Local            | 31337, 1337 | All five presets                          | Registered routes only               |
 
 Any chain that is not Sepolia or local gets the mainnet rules. The mainnet launch pricing
 configuration sets `minCommitteeSize` to 19. With that value, `getE3Quote` rejects `Minimum` and

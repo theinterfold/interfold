@@ -95,19 +95,24 @@ export const COMMITTEE_PARAMS: Record<CircuitCommittee, CommitteeParams> = {
   [CIRCUIT_COMMITTEES.SMALL]: { n: 19, t: 9, h: 14 },
 }
 
-/**
- * Secure-16384 currently has a V2 verifier route only for the minimum committee.
- * Do not advertise a pair until its V2 verifier and artifact set exist.
- */
+/** Build policy shared with the Rust circuit builder. Manifest order defines build order. */
 export const SUPPORTED_PRESET_COMMITTEE_PAIRS: ReadonlyArray<{
   preset: CircuitPreset
   committee: CircuitCommittee
-}> = ALL_PRESETS.flatMap((preset) =>
-  ALL_COMMITTEES.filter(
-    (committee) =>
-      preset !== CIRCUIT_PRESETS.SECURE_16384 || committee === CIRCUIT_COMMITTEES.MINIMUM || committee === CIRCUIT_COMMITTEES.SMALL,
-  ).map((committee) => ({ preset, committee })),
-)
+}> = (() => {
+  if (buildPairs.length === 0) throw new Error('Circuit build policy contains no supported pairs')
+  const seen = new Set<string>()
+  return buildPairs.map((pair) => {
+    const [preset, committee] = pair as [CircuitPreset, CircuitCommittee]
+    if (pair.length !== 2 || !ALL_PRESETS.includes(preset) || !ALL_COMMITTEES.includes(committee)) {
+      throw new Error(`Invalid circuit build pair: ${JSON.stringify(pair)}`)
+    }
+    const key = `${preset}/${committee}`
+    if (seen.has(key)) throw new Error(`Duplicate circuit build pair: ${key}`)
+    seen.add(key)
+    return { preset, committee }
+  })
+})()
 
 /** Pairs that a released circuit archive must contain for the current deployment matrix. */
 export const RELEASE_PRESET_COMMITTEE_PAIRS = SUPPORTED_PRESET_COMMITTEE_PAIRS

@@ -72,7 +72,7 @@ protocol 7 does not satisfy this cutover; the source's compiled values are expli
 from SemVer.
 
 Sampler/smudging/BFV validation and non-centered C3/user-encryption/CRISP k1 scale change witnesses
-and bounds. Workspace fhe.rs pin is v0.4.2. Node, client configuration IDs, circuit archives, and
+and bounds. The workspace pins the fhe.rs `dev` revision. Node, client configuration IDs, circuit archives, and
 OpenVM guest/receipt identity must match; v1–v4 requests cannot be treated as v5. Runtime/SDK
 tooling reject old configuration IDs for new requests.
 
@@ -148,9 +148,17 @@ discriminants under schema 8, so the schema marker cannot reject them. Before st
 fresh testnet stack, testnet nodes must run `interfold node reset-data` under the guards below.
 Redeploy a testnet that holds degree-512 index-0 E3s; do not upgrade it in place or reinterpret
 those E3s with degree-64 parameters. This requirement does not replace mainnet's secure index-2
-cutover procedure.
+cutover procedure. The insecure l-BFV presets (`insecure`, `insecure-simd`) use appended
+`BfvPreset` variants and on-chain indices 4 and 5. They do not reuse index 0.
 
 ### Identity and active-state guards
+
+The l-BFV protocol-4 contribution-wire cutoff uses typed fhe.rs `LBFVPublicKeyShare` and
+`LBFVRelinKeyShare` envelopes, not older bare contribution bytes. Version-3 PK documents carry
+signed PK row proofs without C1 and reject versions 1/2. Drain active work before a coordinated
+development-data cutoff and rebuild matching artifacts/consumers; do not reinterpret retained opaque
+payloads. This is separate from the insecure preset reset and is not authorization to erase operator
+identities or active keyshares.
 
 Operator/libp2p keys are in the same store under `//eth_private_key` and `//libp2p/keypair`;
 deleting a data directory destroys bonded identity. `nodes purge` also deletes cipher-key

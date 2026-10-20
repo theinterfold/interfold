@@ -145,24 +145,11 @@
     "note": "Interfold passes its decryption verifier to InterfoldLifecycle, which calls verify (line 332), and BfvDecryptionVerifier forwards the proof to the DecryptionAggregatorVerifier Honk contract (line 218)."
   },
   {
-    "id": "D11",
-    "supported": true,
-    "refs": [
-      "examples/CRISP/circuits/bin/fold/src/main.nr@43@user_data_encryption_proof,",
-      "examples/CRISP/circuits/bin/fold/src/main.nr@49@crisp_proof,",
-      "circuits/bin/threshold/user_data_encryption_chunked/src/main.nr@26@P3: ct0 top-level proof.",
-      "circuits/bin/threshold/user_data_encryption_chunked/src/main.nr@39@ct0_proof,",
-      "circuits/bin/threshold/user_data_encryption_chunked/src/main.nr@45@ct1_proof,"
-    ],
-    "line_text": ["user_data_encryption_proof,", "crisp_proof,", "// P3: ct0 top-level proof.", "ct0_proof,", "ct1_proof,"],
-    "note": "The CRISP fold verifies the P3 proof of the chunked l-BFV wrapper user_data_encryption_chunked (which verifies the ct0 and ct1 top-level proofs) together with the crisp voter proof. CRISP does not use the one-circuit trBFV user_data_encryption."
-  },
-  {
     "id": "D12",
     "supported": true,
     "refs": [
-      "circuits/bin/config/src/main.nr@22@use lib::configs::secure::dkg::{",
-      "circuits/bin/config/src/main.nr@34@use lib::configs::secure::threshold::{",
+      "circuits/bin/config/src/main.nr@22@use lib::configs::secure_8192::dkg::{",
+      "circuits/bin/config/src/main.nr@34@use lib::configs::secure_8192::threshold::{",
       "circuits/bin/config/src/main.nr@88@fn main() {",
       "circuits/bin/config/src/main.nr@128@DKG Q_MOD_T verification failed",
       "circuits/bin/config/src/main.nr@207@SHARE_ENCRYPTION_E0_BOUND == 20",
@@ -170,8 +157,8 @@
       "circuits/bin/config/src/main.nr@606@assert(L_THRESHOLD == THRESHOLD_L"
     ],
     "line_text": [
-      "use lib::configs::secure::dkg::{",
-      "use lib::configs::secure::threshold::{",
+      "use lib::configs::secure_8192::dkg::{",
+      "use lib::configs::secure_8192::threshold::{",
       "fn main() {",
       "assert(product == DKG_Q_MOD_T, \"DKG Q_MOD_T verification failed\");",
       "assert(SHARE_ENCRYPTION_E0_BOUND == 20, \"SHARE_ENCRYPTION_E0_BOUND should be 20\");",

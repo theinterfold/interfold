@@ -123,6 +123,18 @@ mod tests {
         );
         assert_eq!(request.circuits, ["pk"]);
         assert!(request.no_clean && request.no_clean_targets);
+        assert_eq!(
+            parse(&["hash", "--preset", "insecure"])
+                .unwrap()
+                .preset,
+            PresetSelection::Single(BfvPreset::InsecureThresholdLbfv)
+        );
+        assert_eq!(
+            parse(&["build", "--preset", "secure-16384"])
+                .unwrap()
+                .preset,
+            PresetSelection::Single(BfvPreset::SecureThreshold16384)
+        );
     }
 
     #[test]

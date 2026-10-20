@@ -2,10 +2,9 @@
 
 use super::{preset_name, run, tier, Request, COMMITTEES};
 use alloy_primitives::{keccak256, B256};
-use alloy_sol_types::SolValue;
 use anyhow::{bail, Context, Result};
 use e3_committee::CiphernodesCommitteeSize;
-use e3_fhe_params::{encode_bfv_params, BfvPreset};
+use e3_fhe_params::{crypto_config_id, encode_bfv_params, BfvPreset, CIRCUIT_VERSION_LABEL};
 use e3_zk_config::{dkg, threshold};
 use fhe::bfv::BfvParameters;
 use regex::Regex;
@@ -16,8 +15,6 @@ use std::{
     process::Command,
     sync::Arc,
 };
-
-const CIRCUIT_VERSION: &str = "interfold-bfv-v5";
 
 /// The BFV parameter pair and protocol hashes of one preset, built once per operation.
 pub struct PresetMaterial {
@@ -31,14 +28,7 @@ impl PresetMaterial {
     pub fn new(preset: BfvPreset) -> Result<Self> {
         let (threshold, dkg) = preset.build_pair()?;
         let parameter_hash = keccak256(encode_bfv_params(&threshold));
-        let config_id = keccak256(
-            (
-                keccak256(b"fhe.rs:BFV"),
-                parameter_hash,
-                keccak256(CIRCUIT_VERSION.as_bytes()),
-            )
-                .abi_encode(),
-        );
+        let config_id = crypto_config_id(&encode_bfv_params(&threshold));
         Ok(Self {
             threshold,
             dkg,
@@ -48,25 +38,28 @@ impl PresetMaterial {
     }
 }
 
-/// The parameter material for both supported presets of one operation. Every renderer reuses it;
+/// The parameter material for supported presets of one operation. Every renderer reuses it;
 /// nothing rebuilds a preset pair inside an operation.
 pub struct OperationParams {
     insecure: PresetMaterial,
     secure: PresetMaterial,
+    secure16384: PresetMaterial,
 }
 
 impl OperationParams {
     pub fn both() -> Result<Self> {
         Ok(Self {
-            insecure: PresetMaterial::new(BfvPreset::InsecureThreshold64)?,
+            insecure: PresetMaterial::new(BfvPreset::InsecureThreshold)?,
             secure: PresetMaterial::new(BfvPreset::SecureThreshold8192)?,
+            secure16384: PresetMaterial::new(BfvPreset::SecureThreshold16384)?,
         })
     }
     pub fn get(&self, preset: BfvPreset) -> &PresetMaterial {
-        if preset == BfvPreset::InsecureThreshold64 {
-            &self.insecure
-        } else {
-            &self.secure
+        match preset {
+            BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => &self.insecure,
+            BfvPreset::SecureThreshold8192 => &self.secure,
+            BfvPreset::SecureThreshold16384 => &self.secure16384,
+            _ => unreachable!("build selects threshold presets"),
         }
     }
 }
@@ -150,6 +143,14 @@ pub const BOUND_SOURCES: &[(&str, &str)] = &[
     ("dkg.nr", "SHARE_COMPUTATION_"),
 ];
 
+// The chunk grid belongs to the module generator, not committee-dependent C2 bounds.
+pub const CHUNK_GLOBALS: &[&str] = &[
+    "SHARE_COMPUTATION_CHUNK_SIZE",
+    "SHARE_COMPUTATION_N_CHUNKS",
+    "SHARE_COMPUTATION_CHUNKS_PER_BATCH",
+    "SHARE_COMPUTATION_N_BATCHES",
+];
+
 /// Find the complete declaration, including arrays and formatted multi-line values.
 pub fn declarations(source: &str) -> BTreeMap<String, String> {
     let regex = Regex::new(r"(?m)^pub global ([A-Z0-9_]+):").unwrap();
@@ -191,6 +192,9 @@ pub fn replace_declarations(
     let mut updated = original.to_string();
     let mut count = 0;
     for (name, declaration) in &fresh {
+        if CHUNK_GLOBALS.contains(&name.as_str()) {
+            continue;
+        }
         if !name.starts_with(prefix) && !common.contains(&name.as_str()) {
             continue;
         }
@@ -208,7 +212,7 @@ pub fn replace_declarations(
             bail!("No {prefix} constants generated");
         }
         for name in old.keys().filter(|name| name.starts_with(prefix)) {
-            if !fresh.contains_key(name) {
+            if !CHUNK_GLOBALS.contains(&name.as_str()) && !fresh.contains_key(name) {
                 bail!("{name} is not generated; remove it or generate it");
             }
         }
@@ -306,6 +310,12 @@ pub fn sync_preset(
         ),
         (
             "threshold.nr",
+            "USER_DATA_ENCRYPTION_CHUNKED_",
+            vec![],
+            threshold::user_data_encryption_chunked::Configs::new(&material.threshold)?.render()?,
+        ),
+        (
+            "threshold.nr",
             "PK_AGGREGATION_",
             vec![],
             threshold::pk_aggregation::Configs::new(&material.threshold, committee)?.render()?,
@@ -345,6 +355,38 @@ pub fn sync_preset(
             replace_declarations(&text, &generated, prefix, &common, false)?,
         );
     }
+    let threshold_path = root
+        .join("circuits/lib/src/configs")
+        .join(tier(preset))
+        .join("threshold.nr");
+    let additional = super::lbfv::threshold_constants(preset, &material.threshold, committee)?;
+    let mut text = pending
+        .remove(&threshold_path)
+        .context("threshold configuration")?;
+    for prefix in ["LBFV_PK_GENERATION_", "RLK_GENERATION_", "RLK_AGGREGATION_"] {
+        text = replace_declarations(&text, &additional, prefix, &[], false)?;
+    }
+    pending.insert(threshold_path, text);
+    let dkg_path = root
+        .join("circuits/lib/src/configs")
+        .join(tier(preset))
+        .join("dkg.nr");
+    let mut text = pending.remove(&dkg_path).context("DKG configuration")?;
+    let old = declarations(&text);
+    for (name, generated) in declarations(&super::lbfv::chunk_grid(material.threshold.degree())) {
+        let current = old
+            .get(&name)
+            .with_context(|| format!("Missing chunk-grid declaration {name}"))?;
+        if compact(current) != compact(&generated) {
+            text = text.replacen(current, &generated, 1);
+        }
+    }
+    pending.insert(dkg_path, text);
+    pending.extend(super::lbfv::public_randomness(
+        root,
+        preset,
+        &material.threshold,
+    )?);
     publish_changes(formatted_noir_changes(
         root,
         &root.join("circuits/lib"),
@@ -358,7 +400,7 @@ pub fn parity_files(
 ) -> Result<Vec<(PathBuf, String)>> {
     let values = committee.values();
     let mut out = Vec::new();
-    for preset in BfvPreset::PAIR_PRESETS {
+    for preset in super::ARTIFACT_PRESETS {
         let material = params.get(preset);
         let suffix = tier(preset);
         let l = material.threshold.moduli().len();
@@ -373,6 +415,23 @@ pub fn parity_files(
             content,
         ));
     }
+    let mut smudging = format!("{HEADER}//\n// AUTO-GENERATED by `generate_parity_matrices`. DO NOT EDIT BY HAND.\n// Regenerate with `pnpm build:circuits --committee {committee}`.\n//\n// C1 and C2b must use the same smudging-noise width as Rust witness generation.\n\n");
+    for (label, preset) in [
+        ("INSECURE", BfvPreset::InsecureThreshold),
+        ("SECURE_8192", BfvPreset::SecureThreshold8192),
+        ("SECURE_16384", BfvPreset::SecureThreshold16384),
+    ] {
+        let config = threshold::pk_generation::Configs::new(
+            preset,
+            &params.get(preset).threshold,
+            committee,
+        )?;
+        smudging.push_str(&format!(
+            "pub global {label}_E_SM_BIT: u32 = {};\npub global {label}_E_SM_BOUND: Field = {};\n",
+            config.bits.e_sm_bit, config.bounds.e_sm_bound
+        ));
+    }
+    out.push((PathBuf::from(format!("{committee}/smudging.nr")), smudging));
     Ok(out)
 }
 
@@ -473,16 +532,21 @@ pub fn protocol_contract(
     preset: BfvPreset,
     committee: CiphernodesCommitteeSize,
     params: &OperationParams,
+    pairs: &[[String; 2]],
 ) -> Result<String> {
     let mut text = include_str!("../templates/active_crypto_config.sol.in")
         .replace(
             "@selection@",
             &format!("{}/{}", preset_name(preset), committee),
         )
-        .replace("@CIRCUIT_VERSION@", CIRCUIT_VERSION);
+        .replace(
+            "@CIRCUIT_VERSION@",
+            std::str::from_utf8(CIRCUIT_VERSION_LABEL)?,
+        );
     for (label, preset, param_set) in [
-        ("INSECURE", BfvPreset::InsecureThreshold64, 0),
+        ("INSECURE", BfvPreset::InsecureThreshold, 0),
         ("SECURE", BfvPreset::SecureThreshold8192, 2),
+        ("SECURE_16384", BfvPreset::SecureThreshold16384, 3),
     ] {
         let material = params.get(preset);
         text = text
@@ -508,7 +572,28 @@ pub fn protocol_contract(
             text = text.replace(&format!("@{label}_{suffix}@"), &value.to_string());
         }
     }
-    Ok(text)
+    let mut admission = String::new();
+    for (name, param_sets) in [
+        (
+            "insecure",
+            "paramSet == INSECURE_PARAM_SET || paramSet == INSECURE_LBFV_PARAM_SET",
+        ),
+        ("secure-8192", "paramSet == SECURE_PARAM_SET"),
+        ("secure-16384", "paramSet == SECURE_16384_PARAM_SET"),
+    ] {
+        let committees = pairs
+            .iter()
+            .filter(|pair| pair[0] == name)
+            .map(|pair| format!("committeeSize == {}_COMMITTEE_SIZE", pair[1].to_uppercase()))
+            .collect::<Vec<_>>();
+        if !committees.is_empty() {
+            admission.push_str(&format!(
+                "        if ({param_sets}) {{\n            if (\n                {}\n            ) return;\n        }}\n",
+                committees.join(" ||\n                ")
+            ));
+        }
+    }
+    Ok(text.replace("@PAIR_ADMISSION@", admission.trim_end()))
 }
 
 fn replace_required(text: &str, pattern: &str, replacement: &str) -> Result<String> {
@@ -526,16 +611,19 @@ pub fn protocol_utils(
     preset: BfvPreset,
     committee: CiphernodesCommitteeSize,
     params: &OperationParams,
+    pairs: &[[String; 2]],
 ) -> Result<String> {
     let values = committee.values();
     let size = COMMITTEES
         .iter()
         .position(|name| *name == committee.to_string())
         .context("committee index")?;
-    let param_set = if preset == BfvPreset::InsecureThreshold64 {
-        0
-    } else {
-        2
+    let param_set = match preset {
+        BfvPreset::InsecureThreshold => 0,
+        BfvPreset::InsecureThresholdLbfv => 4,
+        BfvPreset::SecureThreshold8192 => 2,
+        BfvPreset::SecureThreshold16384 => 3,
+        _ => unreachable!("build selects threshold presets"),
     };
     let mut after = before.to_string();
     for (name, value) in [
@@ -552,8 +640,9 @@ pub fn protocol_utils(
         )?;
     }
     for (prefix, preset) in [
-        ("INSECURE", BfvPreset::InsecureThreshold64),
+        ("INSECURE", BfvPreset::InsecureThreshold),
         ("SECURE", BfvPreset::SecureThreshold8192),
+        ("SECURE_16384", BfvPreset::SecureThreshold16384),
     ] {
         let material = params.get(preset);
         for (suffix, value) in [
@@ -568,6 +657,61 @@ pub fn protocol_utils(
             )?;
         }
     }
+    // Keep installed-package deployment self-contained: render the shared policy rather than
+    // importing a repository-relative JSON file from the published package.
+    let mut configs = String::from(
+        "// Generated from scripts/circuits/build-pairs.json and canonical committee values.\n",
+    );
+    let mut names = Vec::new();
+    let deployment_pairs = pairs
+        .iter()
+        .filter(|pair| pair[0] == "insecure")
+        .map(|pair| (pair, false))
+        .chain(
+            pairs
+                .iter()
+                .filter(|pair| pair[0] == "insecure")
+                .map(|pair| (pair, true)),
+        )
+        .chain(
+            pairs
+                .iter()
+                .filter(|pair| pair[0] != "insecure")
+                .map(|pair| (pair, false)),
+        );
+    for (pair, lbfv) in deployment_pairs {
+        let prefix = match (pair[0].as_str(), lbfv) {
+            ("insecure", false) => "INSECURE",
+            ("insecure", true) => "INSECURE_LBFV",
+            ("secure-8192", _) => "SECURE",
+            ("secure-16384", _) => "SECURE_16384",
+            _ => bail!("Unsupported deployment preset: {}", pair[0]),
+        };
+        let name = format!("{prefix}_{}_BFV_CONFIG", pair[1].to_uppercase());
+        let values = pair[1].parse::<CiphernodesCommitteeSize>()?.values();
+        let size = COMMITTEES
+            .iter()
+            .position(|name| *name == pair[1])
+            .context("committee index")?;
+        configs.push_str(&format!("export const {name}: ActiveBfvConfig = bfvConfig(\n  \"{}\",\n  \"{}\",\n  {{ committeeSize: {size}, h: {}, t: {}, n: {} }},\n{});\n\n", pair[0], pair[1], values.h, values.threshold, values.n, if lbfv { "  true,\n" } else { "" }));
+        names.push(name);
+    }
+    after = replace_required(
+        &after,
+        r"(?:// Generated from scripts/circuits/build-pairs.json and canonical committee values.\n)?export const INSECURE_MINIMUM_BFV_CONFIG:[\s\S]*?\nexport const PRODUCTION_BFV_CONFIG:",
+        &format!("{configs}export const PRODUCTION_BFV_CONFIG:"),
+    )?;
+    let mut routes =
+        String::from("export const TESTNET_BFV_CONFIGS: readonly ActiveBfvConfig[] = [\n");
+    for name in names {
+        routes.push_str(&format!("  {name},\n"));
+    }
+    routes.push_str("] as const;");
+    after = replace_required(
+        &after,
+        r"export const TESTNET_BFV_CONFIGS:[\s\S]*?\] as const;",
+        &routes,
+    )?;
     let name = committee.to_string();
     let capitalized = format!("{}{}", name[..1].to_uppercase(), &name[1..]);
     let doc = format!("/**\n * <generated-committee-doc>\n * Active {} / {committee} committee layout for BFV aggregator verifiers.\n * Must match `lib::configs::default::{{H, T}}` in compiled circuits.\n * {capitalized} committee: N={}, T={}, H={}.\n * </generated-committee-doc>\n */", preset_name(preset), values.n, values.threshold, values.h);
@@ -597,15 +741,16 @@ fn protocol_updates(
     skip_utils: bool,
     params: &OperationParams,
 ) -> Result<Vec<(PathBuf, String)>> {
+    let pairs = crate::build_pairs(root)?;
     let mut updates = Vec::new();
     let path = root.join("packages/interfold-contracts/scripts/utils.ts");
     if !skip_utils && path.exists() {
         let before = fs::read_to_string(&path)?;
-        let updated = protocol_utils(&before, preset, committee, params)?;
+        let updated = protocol_utils(&before, preset, committee, params, &pairs)?;
         updates.push((path, updated));
     }
     let path = root.join("packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol");
-    let contract = protocol_contract(preset, committee, params)?;
+    let contract = protocol_contract(preset, committee, params, &pairs)?;
     updates.push((path, contract));
     Ok(updates)
 }

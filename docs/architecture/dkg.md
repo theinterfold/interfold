@@ -13,6 +13,11 @@ Owners: [keyshare](../../crates/keyshare/src/threshold_keyshare/),
 
 ## Identities and dimensions
 
+There are two proof paths. `insecure-64` (parameter set 0) and `secure-8192` use trBFV; `secure-16384`,
+`insecure-simd` (parameter set 5), and the insecure l-BFV parameter set 4 (`insecure`) use l-BFV.
+`insecure-64` and `insecure` have different degrees, and their protocol paths are not
+interchangeable. The C1/C5 and singleton C2 descriptions below describe trBFV unless stated otherwise.
+
 - Normalize the finalized committee by ascending parsed EVM address. Runtime, DKG circuit, and
   fold-attestation party IDs are zero-based. Address casing never changes membership or exclusion.
   Only the decryption boundary converts to one-based Shamir coordinates.
@@ -35,8 +40,16 @@ sets needs coordinated producer, validator, NodeFold, wire, and circuit changes,
 sizes. [Shape tests](../../crates/zk/prover/src/share_verification/workflow_tests/shape.rs) pin that
 distinction for both presets.
 
-Both insecure-64 and secure-8192 use three threshold Shamir rows. Each recipient bundle therefore
-contains one C2a, one C2b, three C3a, and three C3b proofs.
+The trBFV presets `insecure-64` and `secure-8192` use three threshold Shamir rows. The l-BFV path
+uses chunked C2/C3 proofs; `secure-16384` has five threshold rows. Do not infer one path's proof
+shape from the other.
+
+The l-BFV C2 chunk size is `c2_chunk_size(degree, n_parties)` in `e3-zk-config`. At degree 16384 it is
+8192 coefficients for up to 4 parties and 2048 above. Other degrees use the smaller of 512 and the
+degree. A batch holds up to four chunks. The generated `dkg.nr` of `secure-16384` writes the chunk
+size as an expression over the active committee's `N_PARTIES`, so the compiled circuits follow the
+same rule. The other presets write fixed values. A non-default `--chunk-size` gives artifacts that
+are valid only after the C2/C3/C4 circuits are recompiled against the generated configuration.
 
 | Boundary                                             | Requirement and reason                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -156,7 +169,7 @@ agree. The wrapper checks its 128-bit limbs; other contextual PK-verifier argume
 additional circuit bindings merely because the interface accepts them.
 
 The proven commitment is authority; serialized bytes are transport. Request-time members, including
-retained expelled members, can publish canonical 90 KiB chunks of a candidate up to 512 KiB while
+retained expelled members, can publish canonical 90 KiB chunks of a candidate up to 16 MiB while
 `KeyPublished`. Each consumer admits at most the first candidate per publisher and groups chunks by
 E3, publisher, and candidate hash. Require a complete sequence, Keccak candidate hash, valid BFV
 decode with request-time parameters, and recomputed C5 commitment equality before producing runtime
@@ -165,10 +178,10 @@ candidate. Terminal stages reject chunks and cannot recreate cleaned-up assembli
 alone does not mean clients have usable key bytes.
 
 **Accepted processing cost (ZEN2-17):** publication accepts dynamic proof/data without wrapper-level
-caps. Canonical chunk shape/512 KiB candidate limits bound retained assembly, not total emitted
-logs: members may repeat valid chunks while KeyPublished because contracts do not track emitted
-indices. Senders pay gas; observers pay processing. Verification failure still reverts atomically.
-The transport caps do not establish a bound on every publication's observer cost.
+caps. Canonical chunk shape/16 MiB candidate limits bound retained assembly, not total emitted logs:
+members may repeat valid chunks while KeyPublished because contracts do not track emitted indices.
+Senders pay gas; observers pay processing. Verification failure still reverts atomically. The
+transport caps do not establish a bound on every publication's observer cost.
 
 The local writer coalesces publication intents until effects resume and uses chain preflight reads.
 An equal commitment published by another aggregator completes that step; a different one is an
@@ -178,6 +191,46 @@ rejection. Peer `PublicKeyAggregated` copies distribute state but cannot create 
 intents.
 
 ## Recovery and evidence
+
+### l-BFV generation, collection, and publication
+
+The l-BFV path has **no C1 and no C5**. PK and RLK generation row proofs bind the same secret as the
+C2a secret root; C2b chunk leaves enforce the lifted smudging bound themselves. For secure-16384,
+generation supplies five ordered PK rows and five ordered RLK rows. Aggregation uses the same exact
+H ascending parties for PK, RLK D0, and RLK D2, with expected commitments equal to their verified
+generation records. Row identity includes family and row; RLK aggregation uses
+`component * rows + row`, not only `ProofType`.
+
+Signed manifests bind the E3/session, party, document role, and SHA-256 of each exact contribution
+document. Generic document notifications do not initiate a fetch. Versioned requests also bind
+attempt number; unavailable and invalid responses are distinct. Persist document bytes before
+marking their collection slot durable. Persist the exact-H ready candidate set before verification,
+match results to its stable ID, and durably invalidate a failed candidate before selecting another.
+Seal the accepted commitments before row aggregation advances. Late noncandidate failures do not
+create dishonest-party evidence. Recovery redrives the saved dispatch or sealed set, not a new
+arrival-order quorum.
+
+`lbfv_generation_fold` and `lbfv_aggregation_fold` cover the ordered rows. `node_fold_v2` binds the
+generation secret to the chunked node's C2a root; `nodes_fold_v2` contains exactly H parties.
+`dkg_aggregator_v2` binds independent legacy and V2 VK manifests, the session, accepted set,
+committee, and operational key-envelope commitment. The final public-input length is
+`39 + 3*H + 3*rows` (60 for secure-16384/minimum), not the trBFV C5 layout. Aggregator ID is
+statement metadata; publication remains permissionless.
+
+Persist both operational keys reconstructed from accepted contribution documents before final V2
+proof dispatch. `LbfvPublicKeyAggregated` is a local publication intent, not canonical authority.
+The registry writer retains the existing publication gate and attestation bundle. The published
+`IFLBFVKE` version-3 envelope carries canonical `LBFVRelinearizationKey` bytes; consumers
+reconstruct the level-zero `LBFVPublicKey`, validate fixed CRS/URS material, convert all rows to
+reversed, centered circuit CRT form, and recompute the combined PK/D0/D2 commitment. Only equality
+with the on-chain `pkCommitment` authorizes encryption or exposing the RLK. A decoded public-key
+prefix alone is insufficient.
+
+Owners include
+[l-BFV collection](../../crates/aggregator/src/public_key_aggregation/lbfv_contribution_collection.rs),
+[V2 aggregation](../../crates/zk/prover/src/circuits/aggregation/v2.rs), and
+[the V2 wrapper](../../packages/interfold-contracts/contracts/verifiers/bfv/BfvPkVerifierV2.sol).
+These are protocol requirements, not a claim that mock lifecycle tests verify real row proofs.
 
 During replay, `ThresholdKeyshare` records keys, threshold shares, and C4 shares without starting
 collectors or their timers. Both hydrated actors and actors created during replay inherit the

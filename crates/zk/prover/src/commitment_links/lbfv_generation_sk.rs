@@ -19,7 +19,7 @@
 
 use super::{CommitmentLink, FieldValue, LinkScope};
 use e3_events::{CircuitName, ProofType};
-use e3_zk_helpers::FIELD_BYTE_LEN;
+use e3_zk_witness::FIELD_BYTE_LEN;
 
 /// Index of C2a's secret root in the chunk finalizer's public signals.
 const C2A_SECRET_ROOT_FIELD: usize = 1;

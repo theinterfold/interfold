@@ -18,8 +18,8 @@ preset/committee pair has its own H-shaped PK and T-shaped decryption public-inp
 `pnpm check:committee` compares committee Noir/Rust/ActiveCryptoConfig/deployment utils, complete
 threshold BFV tuples across deployment constants/Rust/preset Noir, and configuration IDs across
 contracts, tasks, SDK, and EVM helpers. Drift can register a tuple nodes/circuits do not implement.
-The committed default is insecure-64/minimum; CI rebuilds that selection and rejects diffs. Local
-active-preset cache mismatch is only a note. **Limits:** the gate does not compare
+The committed default is insecure-64/minimum (degree 64); CI rebuilds that selection and rejects
+diffs. Local active-preset cache mismatch is only a note. **Limits:** the gate does not compare
 `scripts/circuits/constants.ts` committee values; manually review those. With Nargo available, the
 gate runs `pnpm build:circuits check --committee all`. The Rust owner renders/formats an isolated
 library copy and compares generated files without swapping live files. Circuit CI also rejects
@@ -77,12 +77,22 @@ tree** under the old hash scheme. Another tree needs a rebuild, not a new label.
 | OpenVM application commitments and receipt identity | Guest executable, VM configuration, proving/deployed verifier boundary | Artifact SHA-256 or source reproducibility by itself.            |
 
 `required_circuits_version` equals Interfold release version without v; binary resolves GitHub tag
-`v{version}` / `circuits-{version}.tar.gz`. Release workflow rejects mismatch. All six pairs in
-[supported-configurations](../../crates/zk/prover/supported-configurations.json) must ship:
-insecure-64 and secure-8192 × minimum/micro/small. That matrix is canonical for release/installation
-and must be a subset of `scripts/circuits/build-pairs.json` (tooling test). Both Rust and TypeScript
-read that build policy. Wildcards preserve its order, not a Cartesian product; an unsupported
-explicit pair fails before tools or writes.
+`v{version}` / `circuits-{version}.tar.gz`. Release workflow rejects mismatch. All pairs in
+[supported-configurations](../../crates/zk/prover/supported-configurations.json) must ship: insecure-64,
+insecure, and secure-8192 × minimum/micro/small, the supported secure-16384 pairs, and
+insecure-simd × minimum/micro. That matrix is
+canonical for release/installation and must be a subset of `scripts/circuits/build-pairs.json`
+(tooling test). Both Rust and TypeScript read that build policy. Wildcards preserve its order, not a
+Cartesian product; an unsupported explicit pair fails before tools or writes.
+
+The build policy also generates deployment configuration declarations/testnet routes and Solidity
+pair admission. Network admission is separate and remains secure-8192-only on mainnet.
+Secure-16384/micro uses the existing `(N,T,H) = (9,4,5)` committee and five l-BFV rows; its V2 PK
+layout has 69 public fields; small has 96. The required release matrix includes all three
+secure-16384 committees. Enabling a new pair requires a complete matching artifact build, real-proof
+acceptance, and replacement/installation of the matching PK/decryption router routes before requests
+are admitted. Wrapper generation alone does not qualify the full proof chain or an existing
+deployment.
 
 Default `store:circuits pull` selects newest first-parent artifact commit with matching source hash,
 not necessarily branch tip. Release uses it and `verify-release` checks every pair, stamps,
@@ -103,6 +113,8 @@ access.
 Both download and local install require nonempty SHA-256 checksums.json, verify every entry, reject
 uncovered artifacts, and require every path in
 [required-artifacts](../../crates/zk/prover/required-artifacts.json) for required/included pairs.
+Also require `required-artifacts-trbfv.json` for trBFV pairs and `required-artifacts-lbfv.json` for
+l-BFV pairs. Insecure serves both paths; secure-8192 serves trBFV and secure-16384 serves l-BFV.
 SOURCE_HASH/root manifests/stamps are metadata, not prover artifacts. Required pairs cannot be
 chosen by archive contents. Explicit nonempty subsets are available through installer APIs and
 repeated `--circuits-configuration` only with `--circuits-archive`. Local archives need the same
@@ -126,7 +138,7 @@ public-input length and VK anchors. Selecting an already installed matching pair
 replacement; missing routes or changed VKs require matching wrappers and replacement routers before
 mapping updates. Constructor code checks/nonzero VK anchors are mandatory. Deployment compares
 immutables with built artifacts. Generated verifiers must match built VKs: pre-push reads circuit
-filter paths and checked-out insecure pair (local committee/default minimum), refusing dirty
+filter paths and checked-out insecure-64 pair (local committee/default minimum), refusing dirty
 relevant files; CI source builds compile/check the selected default pair using the same filter.
 Releases require the complete supported matrix. A wrapper name alone does not identify its accepted
 statement.
@@ -143,8 +155,9 @@ nested layout, and bad gap consumption fail. Creating a baseline is explicit mai
 an automatic fix. Tracked contract artifacts feed CLI `sol!`; after `pnpm evm:build`,
 `pnpm check:bindings` compares fresh ABI and requires regenerated artifacts for changed
 functions/events/errors. Size CI reserves >=128 bytes below EIP-170 for Interfold, BondingRegistry,
-CiphernodeRegistryOwnable, and canonical insecure-minimum aggregator verifiers. **Limit:** every
-variant must fit, but other verifier variants are not measured by that gate. See
+CiphernodeRegistryOwnable, canonical insecure-64 minimum aggregator verifiers, the secure-16384 minimum
+V2 verifier, and all secure-16384 micro/small aggregator verifiers. **Limit:** every variant must
+fit, but the remaining verifier variants are not measured by that gate. See
 [registration](registration-and-bonding.md) for library links.
 
 Configuration writes in deployInterfold/configureLocalSlashingPolicies use `scripts/utils.ts`'s

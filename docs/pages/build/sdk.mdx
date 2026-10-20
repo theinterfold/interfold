@@ -173,16 +173,16 @@ const sdk = InterfoldSDK.create({
 | `INSECURE_THRESHOLD`    | `0`                 | 128    | 2              | ❌ None  | Fast local or testnet work |
 | `SECURE_THRESHOLD_8192` | `1`                 | 8192   | 3              | ✅ Full  | Production-equivalent work |
 
-| Preset name             | `paramSet` | Ring degree | CRT moduli (L) | Use                             |
-| ----------------------- | ---------- | ----------- | -------------- | ------------------------------- |
-| `INSECURE_THRESHOLD_64` | 0          | 64          | 3              | Local development and tests     |
-| `SECURE_THRESHOLD_8192` | 2          | 8192        | 3              | Production and secure test runs |
+| Preset name               | `paramSet` | Ring degree | CRT moduli (L) | Use                                               |
+| ------------------------- | ---------- | ----------- | -------------- | ------------------------------------------------- |
+| `INSECURE_THRESHOLD`      | 0          | 128         | 3              | Local development and tests                       |
+| `SECURE_THRESHOLD_8192`   | 2          | 8192        | 3              | Production and secure test runs                   |
+| `SECURE_THRESHOLD_16384`  | 3          | 16384       | 5              | l-BFV with a `minimum` committee; not on mainnet  |
+| `INSECURE_THRESHOLD_LBFV` | 4          | 128         | 3              | Test-only l-BFV path with the insecure parameters |
 
-| Network           | Supported presets                                |
-| ----------------- | ------------------------------------------------ |
-| Local development | `INSECURE_THRESHOLD` and `SECURE_THRESHOLD_8192` |
-| Sepolia testnet   | `INSECURE_THRESHOLD` and `SECURE_THRESHOLD_8192` |
-| Ethereum mainnet  | `SECURE_THRESHOLD_8192` only                     |
+The insecure preset has no production security. Use it only for tests.
+`ThresholdBfvParamsPresetNames` lists these four names, and
+`DEFAULT_THRESHOLD_BFV_PARAMS_PRESET_NAME` is `INSECURE_THRESHOLD`.
 
 <Callout type='warning'>
   The SDK does not compare the preset with the `paramSet` of the E3. A mismatch encrypts inputs
@@ -310,18 +310,13 @@ const ct = await encryptNumber(42n, pk, 'INSECURE_THRESHOLD')
 
 ### Full encryption method reference
 
-| Method                             | Description                                           |
-| ---------------------------------- | ----------------------------------------------------- |
-| `generatePublicKey()`              | Generate a BFV public key                             |
-| `computePublicKeyCommitment(pk)`   | Compute a commitment for a public key                 |
-| `encryptNumber(n, pk)`             | Encrypt a single bigint                               |
-| `encryptVector(vec, pk)`           | Encrypt a `BigUint64Array`                            |
-| `encryptNumberAndGenInputs(n, pk)` | Encrypt and return circuit inputs for ZK verification |
-| `encryptNumberAndGenProof(n, pk)`  | Encrypt and generate a ZK proof of valid encryption   |
-| `encryptVectorAndGenInputs(v, pk)` | Vector version of `encryptNumberAndGenInputs`         |
-| `encryptVectorAndGenProof(v, pk)`  | Vector version of `encryptNumberAndGenProof`          |
-| `getThresholdBfvParamsSet()`       | Get the parameter set for the configured preset       |
-| `generateProof(circuitInputs)`     | Generate a ZK proof from circuit inputs directly      |
+- `add(event.data)` returns an `AssembledCommitteePublicKey` (`e3Id`, `nodes`, `pkCommitment`,
+  `publicKey`) when a candidate is complete and its Keccak-256 hash matches. Otherwise it returns
+  `undefined`.
+- It accepts only the first candidate from each publisher.
+- It rejects keys larger than `MAX_COMMITTEE_PUBLIC_KEY_BYTES` (16 MiB). Each chunk is at most
+  `MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES` (90 KiB).
+- It tracks 128 E3s by default. `clear(e3Id)` removes the state for one E3.
 
 ### Proving: embedded circuits or your own
 
@@ -366,8 +361,25 @@ are `pk_commitment`, `ct_commitment`, and `k1_commitment`. For an l-BFV preset
 In Node.js, `generateProof` checks the circuit stamp file (`.active-preset.json`) when it finds one.
 It fails with one of these codes when the stamp does not match:
 
-The SDK is organized into three submodules (`contracts`, `events`, `crypto`) that can be imported
-independently for tree-shaking:
+- `SDK_CIRCUIT_STAMP_MISSING` or `SDK_CIRCUIT_STAMP_INVALID`: the stamp file is missing or broken.
+- `SDK_CIRCUIT_COMMITTEE_MISMATCH`: the circuits are not for the `minimum` committee.
+- `SDK_CIRCUIT_PRESET_MISMATCH`: the circuits are not for `insecure`.
+
+For another preset, another committee size, or an on-chain verifier, compile your own circuits. Use
+`encryptNumberAndGenInputs` or `encryptVectorAndGenInputs` to get the witness for your prover. See
+[Noir circuits](/build/noir-circuits). The [CRISP repository](https://github.com/theinterfold/CRISP)
+shows a complete custom pipeline.
+
+## Submodule imports
+
+Each subpath exports part of the SDK. The main entry point exports everything, except the type
+`CiphertextOutputReferencePublishedData`, which only `@interfold/sdk/events` exports.
+
+| Import path                | Exports                                                                                                                                                                                                         |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@interfold/sdk/crypto`    | The standalone encryption functions, `generateProof`, `ThresholdBfvParamsPresetNames`, and the types `BfvParams`, `ThresholdBfvParamsPresetName`, `VerifiableEncryptionResult`, `EncryptedValueAndPublicInputs` |
+| `@interfold/sdk/contracts` | `ContractClient`, `E3Stage`, `FailureReason`, and the types `ContractClientConfig`, `ContractAddresses`, `E3`, `E3RequestParams`                                                                                |
+| `@interfold/sdk/events`    | `EventListener`, `InterfoldEventType`, `RegistryEventType`, `RandomnessProviderEventType`, and the event data types                                                                                             |
 
 ```ts
 import { encryptNumber, generatePublicKey } from '@interfold/sdk/crypto'

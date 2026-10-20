@@ -11,18 +11,19 @@ use common::{
     require_minimum_circuits_for_preset, setup_compiled_circuit_for_preset,
     setup_recursive_aggregation_fold_circuit_for_preset, setup_test_prover,
 };
+use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{CircuitName, CircuitVariant, Proof, ProofType};
 use e3_fhe_params::BfvPreset;
 use e3_utils::utility_types::ArcBytes;
-use e3_zk_helpers::computation::DkgInputType;
-use e3_zk_helpers::dkg::share_computation::ShareComputationCircuitData;
-use e3_zk_helpers::CiphernodesCommitteeSize;
+use e3_zk_config::DkgInputType;
 use e3_zk_prover::test_utils::{
     fold_witness_field_strings, fold_witness_input_map, load_vk_artifacts,
 };
 use e3_zk_prover::{
     validate_c2_terminal_proof, C2TerminalAnchors, CompiledCircuit, WitnessGenerator, ZkProver,
 };
+use e3_zk_witness::dkg::share_computation::ShareComputationCircuitData;
+
 use serde_json::{json, Value};
 
 fn c2ab_input(
@@ -147,22 +148,46 @@ async fn chunked_c2_chain_rejects_artifact_vk_substitution() {
     let prover = ZkProver::new(&backend);
     let artifacts_dir = preset.artifacts_dir_for_committee("minimum");
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let c2a_data = ShareComputationCircuitData::generate_sample(
+    let c2a_data = e3_zk_samples::dkg::share_computation::generate(
+        &e3_zk_config::dkg::share_computation::Configs::for_preset(
+            preset,
+            e3_committee::CiphernodesCommitteeSize::from_threshold(
+                (committee.clone()).threshold,
+                (committee.clone()).n,
+            )
+            .unwrap(),
+        )
+        .unwrap(),
         preset,
-        committee.clone(),
         DkgInputType::SecretKey,
     )
     .expect("canonical C2a sample");
-    let c2b_data = ShareComputationCircuitData::generate_sample(
+    let c2b_data = e3_zk_samples::dkg::share_computation::generate(
+        &e3_zk_config::dkg::share_computation::Configs::for_preset(
+            preset,
+            e3_committee::CiphernodesCommitteeSize::from_threshold(
+                (committee).threshold,
+                (committee).n,
+            )
+            .unwrap(),
+        )
+        .unwrap(),
         preset,
-        committee,
         DkgInputType::SmudgingNoise,
     )
     .expect("canonical C2b sample");
 
     let c2a = e3_zk_prover::prove_chunked_share_computation(
         &prover,
-        preset,
+        &e3_zk_config::dkg::share_computation::Configs::for_preset(
+            preset,
+            e3_committee::CiphernodesCommitteeSize::from_threshold(
+                (&c2a_data).threshold as usize,
+                (&c2a_data).n_parties as usize,
+            )
+            .unwrap(),
+        )
+        .unwrap(),
         &c2a_data,
         "fold-vk-c2a",
         &artifacts_dir,
@@ -170,7 +195,15 @@ async fn chunked_c2_chain_rejects_artifact_vk_substitution() {
     .expect("canonical chunked C2a proof");
     let c2b = e3_zk_prover::prove_chunked_share_computation(
         &prover,
-        preset,
+        &e3_zk_config::dkg::share_computation::Configs::for_preset(
+            preset,
+            e3_committee::CiphernodesCommitteeSize::from_threshold(
+                (&c2b_data).threshold as usize,
+                (&c2b_data).n_parties as usize,
+            )
+            .unwrap(),
+        )
+        .unwrap(),
         &c2b_data,
         "fold-vk-c2b",
         &artifacts_dir,

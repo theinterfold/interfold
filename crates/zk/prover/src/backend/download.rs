@@ -687,7 +687,20 @@ mod tests {
         include_manifest: bool,
         extra_entries: &[(&str, &[u8])],
     ) -> Vec<u8> {
-        let rel_path = "insecure/minimum/default/dkg/pk/pk.json";
+        circuit_archive_with_manifest(
+            circuit,
+            include_manifest.then(|| fixture_manifest(circuit)),
+            extra_entries,
+            &[],
+        )
+    }
+
+    fn circuit_archive_with_manifest(
+        circuit: &[u8],
+        manifest_files: Option<HashMap<String, String>>,
+        extra_entries: &[(&str, &[u8])],
+        omitted: &[&str],
+    ) -> Vec<u8> {
         let encoder = GzEncoder::new(Vec::new(), Compression::default());
         let mut builder = Builder::new(encoder);
         append_global_pax_header(&mut builder);
@@ -890,35 +903,41 @@ mod tests {
 
     #[tokio::test]
     async fn download_requires_all_release_configurations() {
-        let temp = TempDir::new().unwrap();
-        let mut backend = test_backend(&temp);
-        let previous_version = seed_installation(&backend).await;
-        let mut manifest = fixture_manifest(b"circuit");
-        let artifacts = fixture_artifacts();
-        let omitted: Vec<&str> = artifacts
-            .iter()
-            .filter(|path| path.starts_with("secure-8192/small/"))
-            .map(String::as_str)
-            .collect();
-        for path in &omitted {
-            manifest.remove(*path);
+        for missing_pair in [
+            "secure-8192/small/",
+            "secure-16384/micro/",
+            "secure-16384/small/",
+        ] {
+            let temp = TempDir::new().unwrap();
+            let mut backend = test_backend(&temp);
+            let previous_version = seed_installation(&backend).await;
+            let mut manifest = fixture_manifest(b"circuit");
+            let artifacts = fixture_artifacts();
+            let omitted: Vec<&str> = artifacts
+                .iter()
+                .filter(|path| path.starts_with(missing_pair))
+                .map(String::as_str)
+                .collect();
+            for path in &omitted {
+                manifest.remove(*path);
+            }
+            let archive = circuit_archive_with_manifest(b"circuit", Some(manifest), &[], &omitted);
+            backend
+                .config
+                .circuits_checksums
+                .insert("candidate".into(), sha256_hex(&archive));
+            let (url, server) = serve_archive(archive).await;
+            backend.config.circuits_download_url = url;
+
+            let result = backend.download_circuits().await;
+            server.await.unwrap();
+
+            assert!(
+                matches!(result, Err(ZkError::CircuitNotFound(ref path)) if path.starts_with(missing_pair)),
+                "{result:?}"
+            );
+            assert_installation_unchanged(&backend, &previous_version);
         }
-        let archive = circuit_archive_with_manifest(b"circuit", Some(manifest), &[], &omitted);
-        backend
-            .config
-            .circuits_checksums
-            .insert("candidate".into(), sha256_hex(&archive));
-        let (url, server) = serve_archive(archive).await;
-        backend.config.circuits_download_url = url;
-
-        let result = backend.download_circuits().await;
-        server.await.unwrap();
-
-        assert!(
-            matches!(result, Err(ZkError::CircuitNotFound(ref path)) if path.starts_with("secure-8192/small/")),
-            "{result:?}"
-        );
-        assert_installation_unchanged(&backend, &previous_version);
     }
 
     #[tokio::test]
@@ -1133,21 +1152,30 @@ mod tests {
         let trbfv = inventory(REQUIRED_TRBFV_ARTIFACTS);
         let lbfv = inventory(REQUIRED_LBFV_ARTIFACTS);
         assert!(!shared.is_empty() && !trbfv.is_empty() && !lbfv.is_empty());
-        let both = [shared.clone(), trbfv.clone(), lbfv.clone()].concat();
-        assert_eq!(required_artifacts("insecure"), both);
-        assert_eq!(
-            required_artifacts("secure-8192"),
-            [shared.clone(), trbfv].concat()
-        );
-        assert_eq!(required_artifacts("secure-16384"), [shared, lbfv].concat());
-        // Secure-16384 proves C7 with the wide circuit only; the bounded C7 does not hold there.
+        let trbfv_only = [shared.clone(), trbfv.clone()].concat();
+        let lbfv_only = [shared, lbfv.clone()].concat();
+        for preset_dir in ["insecure-64", "secure-8192"] {
+            assert_eq!(required_artifacts(preset_dir), trbfv_only, "{preset_dir}");
+        }
+        for preset_dir in ["insecure", "insecure-simd", "secure-16384"] {
+            assert_eq!(required_artifacts(preset_dir), lbfv_only, "{preset_dir}");
+        }
+        let c5 = "default/threshold/pk_aggregation/pk_aggregation.json";
+        assert!(required_artifacts("insecure-64").contains(&c5));
+        assert!(required_artifacts("secure-8192").contains(&c5));
+        assert!(!required_artifacts("insecure").contains(&c5));
+        assert!(!required_artifacts("secure-16384").contains(&c5));
+        // The l-BFV path proves C7 with the wide circuit only; the bounded C7 does not hold there.
         let narrow_c7 =
             "default/threshold/decrypted_shares_aggregation/decrypted_shares_aggregation.json";
         let wide_c7 =
             "default/threshold/decrypted_shares_aggregation_wide/decrypted_shares_aggregation_wide.json";
-        assert!(!required_artifacts("secure-16384").contains(&narrow_c7));
-        assert!(required_artifacts("secure-16384").contains(&wide_c7));
-        assert!(required_artifacts("insecure").contains(&narrow_c7));
+        for preset_dir in ["insecure", "insecure-simd", "secure-16384"] {
+            assert!(!required_artifacts(preset_dir).contains(&narrow_c7));
+            assert!(required_artifacts(preset_dir).contains(&wide_c7));
+        }
+        assert!(required_artifacts("insecure-64").contains(&narrow_c7));
+        let both = [inventory(REQUIRED_ARTIFACTS), trbfv, lbfv].concat();
         assert_eq!(
             both.iter().collect::<HashSet<_>>().len(),
             both.len(),
@@ -1218,11 +1246,11 @@ mod tests {
 
         let installed_circuit = backend
             .circuits_dir
-            .join("insecure/minimum/default/dkg/pk/pk.json");
+            .join("insecure-64/minimum/default/dkg/pk/pk.json");
         write_file(&backend.circuits_dir, "installed.txt", b"installed");
         write_file(
             &backend.circuits_dir,
-            "insecure/minimum/default/dkg/pk/pk.json",
+            "insecure-64/minimum/default/dkg/pk/pk.json",
             b"previous-circuit",
         );
 
@@ -1329,12 +1357,13 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let circuits_dir = temp.path();
         let contents = b"flat";
-        write_file(circuits_dir, "insecure/default/dkg/pk/pk.json", contents);
+        write_file(circuits_dir, "insecure-64/default/dkg/pk/pk.json", contents);
         let hash = sha256_hex(contents);
 
-        let data = read_manifest_file(circuits_dir, "insecure/default/dkg/pk/pk.json", &hash)
-            .await
-            .unwrap();
+        let path =
+            locate_manifest_artifact(circuits_dir, "insecure-64/default/dkg/pk/pk.json", &hash)
+                .await
+                .unwrap();
 
         assert_eq!(fs::read(path).unwrap(), contents);
     }
@@ -1347,15 +1376,23 @@ mod tests {
         let small = b"small";
         write_file(
             circuits_dir,
-            "insecure/minimum/default/dkg/pk/pk.json",
+            "insecure-64/minimum/default/dkg/pk/pk.json",
             minimum,
         );
-        write_file(circuits_dir, "insecure/small/default/dkg/pk/pk.json", small);
+        write_file(
+            circuits_dir,
+            "insecure-64/small/default/dkg/pk/pk.json",
+            small,
+        );
         let small_hash = sha256_hex(small);
 
-        let data = read_manifest_file(circuits_dir, "insecure/default/dkg/pk/pk.json", &small_hash)
-            .await
-            .unwrap();
+        let path = locate_manifest_artifact(
+            circuits_dir,
+            "insecure-64/default/dkg/pk/pk.json",
+            &small_hash,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(fs::read(path).unwrap(), small);
     }
@@ -1367,14 +1404,14 @@ mod tests {
         let contents = b"minimum";
         write_file(
             circuits_dir,
-            "insecure/minimum/default/dkg/pk/pk.json",
+            "insecure-64/minimum/default/dkg/pk/pk.json",
             contents,
         );
         let hash = sha256_hex(contents);
 
         let path = locate_manifest_artifact(
             circuits_dir,
-            "insecure/minimum/default/dkg/pk/pk.json",
+            "insecure-64/minimum/default/dkg/pk/pk.json",
             &hash,
         )
         .await

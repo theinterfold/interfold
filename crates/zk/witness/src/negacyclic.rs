@@ -10,13 +10,15 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::CircuitsErrors;
-use e3_polynomial::Polynomial;
+use crate::WitnessError;
+
+use e3_polynomial::{Polynomial, PolynomialError};
 use fhe_math::rq::traits::TryConvertFrom;
 use fhe_math::rq::{Context, Poly, PowerBasis};
 use fhe_math::zq::primes::generate_prime;
 use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
+
 use num_traits::Zero;
 use num_traits::{Signed, ToPrimitive};
 
@@ -149,6 +151,76 @@ pub(crate) fn fold_negacyclic(poly: &Polynomial, n: usize) -> Polynomial {
         out.push(&c[n - 1 + j] - &c[j - 1]);
     }
     Polynomial::new(out)
+}
+
+/// Returns `a * b mod X^N + 1` over the integers, with exactly `N` coefficients.
+///
+/// # Errors
+///
+/// Returns an error when an operand has more than `N` coefficients.
+pub(crate) fn negacyclic_mul(
+    a: &Polynomial,
+    b: &Polynomial,
+    n: usize,
+) -> Result<Polynomial, WitnessError> {
+    if a.coefficients().len() > n || b.coefficients().len() > n {
+        return Err(WitnessError::Other(format!(
+            "negacyclic product operands must have at most {n} coefficients"
+        )));
+    }
+    // `mul` collapses a zero factor to one coefficient; the fold needs all `2N - 1`.
+    let product = Polynomial::new(vec![BigInt::zero(); 2 * n - 1]).add(&a.mul(b));
+    Ok(fold_negacyclic(&product, n))
+}
+
+/// Divides every coefficient of `numerator` by `modulus` exactly.
+///
+/// A reduced identity `x == x_hat + modulus * k` holds over the integers exactly when
+/// `x - x_hat` divides coefficient-wise, so a remainder means the caller built an inconsistent
+/// witness.
+///
+/// # Errors
+///
+/// Returns an error naming `what` when a coefficient is not a multiple of `modulus`.
+pub(crate) fn exact_quotient(
+    numerator: &Polynomial,
+    modulus: &BigInt,
+    what: &str,
+) -> Result<Polynomial, WitnessError> {
+    numerator
+        .coefficients()
+        .iter()
+        .map(|coefficient| {
+            let (quotient, remainder) = coefficient.div_rem(modulus);
+            if remainder.is_zero() {
+                Ok(quotient)
+            } else {
+                Err(WitnessError::Other(format!(
+                    "{what} is not divisible by its CRT modulus"
+                )))
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Polynomial::new)
+}
+
+#[cfg(test)]
+/// Independent long division by the monic polynomial X^N + 1.
+pub(crate) fn reduce_reference(poly: &Polynomial, n: usize) -> Polynomial {
+    let mut divisor = vec![BigInt::zero(); n + 1];
+    divisor[0] = BigInt::from(1);
+    divisor[n] = BigInt::from(1);
+    let mut remainder = poly.coefficients().to_vec();
+    for i in 0..remainder.len().saturating_sub(n) {
+        let leading = remainder[i].clone();
+        for (j, coefficient) in divisor.iter().enumerate() {
+            remainder[i + j] -= &leading * coefficient;
+        }
+    }
+    let mut coefficients = vec![BigInt::zero(); n];
+    let tail_len = remainder.len().min(n);
+    coefficients[n - tail_len..].clone_from_slice(&remainder[remainder.len() - tail_len..]);
+    Polynomial::new(coefficients)
 }
 
 /// Fold the integer expression and solve `actual = reduced + qi * quotient` exactly.

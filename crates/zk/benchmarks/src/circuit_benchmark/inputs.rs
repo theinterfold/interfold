@@ -65,7 +65,7 @@ pub(crate) fn prepare(
     let m = material;
     match case {
         Case::Config => Ok(InputMap::new()),
-        Case::Ct0 | Case::Ct1 => {
+        Case::Ct0 | Case::Ct1 | Case::Ude => {
             if ude.is_none() {
                 let outcome = (|| -> Result<serde_json::Value> {
                     let config = threshold::user_data_encryption::Configs::new(&m.threshold)?;
@@ -125,8 +125,34 @@ pub(crate) fn prepare(
                 record,
             )
         }
+        Case::Named(
+            CircuitName::SkShareComputationChunk | CircuitName::ESmShareComputationChunk,
+        ) => {
+            let input_type = if case == Case::Named(CircuitName::SkShareComputationChunk) {
+                DkgInputType::SecretKey
+            } else {
+                DkgInputType::SmudgingNoise
+            };
+            let preset = m.preset;
+            let config = dkg::share_computation::Configs::new(preset, &m.threshold, m.committee)?;
+            let sample =
+                e3_zk_samples::dkg::share_computation::generate(&config, preset, input_type)?;
+            let start = Instant::now();
+            let result = (|| -> Result<InputMap> {
+                let json =
+                    e3_zk_witness::dkg::share_computation::prepare_chunk(&config, &sample, 0)?;
+                Ok(e3_zk_prover::inputs_json_to_input_map(&json)?)
+            })();
+            record.preparation.finish(start.elapsed(), &result);
+            result
+        }
         Case::Named(CircuitName::ShareEncryption) => {
-            let config = dkg::share_encryption::Configs::new(&m.dkg)?;
+            let config = dkg::share_encryption::Configs::new(&m.dkg)?
+                .with_preset(m.preset)?
+                .with_chunk_size(e3_zk_config::chunks::c2_chunk_size(
+                    m.threshold.degree(),
+                    m.committee.values().n,
+                ))?;
             let sample = e3_zk_samples::dkg::share_encryption::generate(
                 &m.threshold,
                 &m.dkg,
@@ -138,7 +164,8 @@ pub(crate) fn prepare(
             prepared(e3_zk_prover::ShareEncryptionCircuit, config, sample, record)
         }
         Case::Named(CircuitName::DkgShareDecryption) => {
-            let config = dkg::share_decryption::Configs::new(&m.threshold, &m.dkg)?;
+            let config =
+                dkg::share_decryption::Configs::new(&m.threshold, &m.dkg)?.with_preset(m.preset)?;
             let sample = e3_zk_samples::dkg::share_decryption::generate(
                 &config,
                 m.preset,
@@ -163,6 +190,69 @@ pub(crate) fn prepare(
             let sample = e3_zk_samples::threshold::pk_aggregation::generate(&config)?;
             prepared(e3_zk_prover::PkAggregationCircuit, config, sample, record)
         }
+        Case::Named(CircuitName::LbfvPkGeneration) => {
+            let preset = m.preset;
+            let config = threshold::pk_generation::Configs::new(preset, &m.threshold, m.committee)?;
+            let sample = e3_zk_samples::threshold::lbfv_pk_generation::generate_sample_for_row(
+                preset,
+                m.committee.values(),
+                0,
+            )?;
+            prepared(
+                e3_zk_prover::LbfvPkGenerationCircuit,
+                config,
+                sample,
+                record,
+            )
+        }
+        Case::Named(CircuitName::LbfvPkAggregation) => {
+            let preset = m.preset;
+            let config = threshold::lbfv_pk_aggregation::LbfvPkAggregationConfigs::new(
+                preset,
+                &m.threshold,
+                m.committee,
+            )?;
+            let sample = e3_zk_samples::threshold::lbfv_pk_aggregation::generate_sample_for_row(
+                preset,
+                m.committee.values(),
+                0,
+            )?;
+            prepared(
+                e3_zk_prover::LbfvPkAggregationCircuit,
+                config,
+                sample,
+                record,
+            )
+        }
+        Case::Named(CircuitName::RlkGeneration) => {
+            let preset = m.preset;
+            let config = threshold::rlk_generation::RlkGenerationConfigs::new(
+                preset,
+                &m.threshold,
+                m.committee,
+            )?;
+            let sample = e3_zk_samples::threshold::rlk_generation::generate_sample_for_row(
+                preset,
+                m.committee.values(),
+                0,
+            )?;
+            prepared(e3_zk_prover::RlkGenerationCircuit, config, sample, record)
+        }
+        Case::Named(CircuitName::RlkAggregation) => {
+            let preset = m.preset;
+            let config = threshold::rlk_aggregation::RlkAggregationConfigs::new(
+                preset,
+                &m.threshold,
+                m.committee,
+            )?;
+            let sample = e3_zk_samples::threshold::rlk_aggregation::generate_sample_for_row(
+                preset,
+                m.committee.values(),
+                0,
+                e3_zk_witness::threshold::rlk_aggregation::RlkAggregationComponent::D0,
+            )?;
+            prepared(e3_zk_prover::RlkAggregationCircuit, config, sample, record)
+        }
         Case::Named(CircuitName::ThresholdShareDecryption) => {
             let config = threshold::share_decryption::Configs::new(&m.threshold)?;
             let sample = e3_zk_samples::threshold::share_decryption::generate(
@@ -177,9 +267,12 @@ pub(crate) fn prepare(
                 record,
             )
         }
-        Case::Named(CircuitName::DecryptedSharesAggregation) => {
+        Case::Named(
+            CircuitName::DecryptedSharesAggregation | CircuitName::DecryptedSharesAggregationWide,
+        ) => {
             let config =
-                threshold::decrypted_shares_aggregation::Configs::new(&m.threshold, m.committee)?;
+                threshold::decrypted_shares_aggregation::Configs::new(&m.threshold, m.committee)?
+                    .with_preset(m.preset)?;
             let sample = e3_zk_samples::threshold::decrypted_shares_aggregation::generate(
                 &config, m.preset,
             )?;

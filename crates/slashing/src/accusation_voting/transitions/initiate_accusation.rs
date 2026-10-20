@@ -67,10 +67,10 @@ impl AccusationVoting {
 
         self.accuse_when_effects_run(DeferredAccusation {
             accused_address,
-            event.accused_party_id,
-            event.proof_type,
-            identity.instance,
-            event.data_hash,
+            accused_party_id: event.accused_party_id,
+            proof_type: event.proof_type,
+            proof_instance: identity.instance,
+            data_hash: event.data_hash,
             forwarded_payload,
             ec: ec.clone(),
         })
@@ -113,6 +113,7 @@ impl AccusationVoting {
             accused_address: data.accused_address,
             accused_party_id: data.accused_party_id,
             proof_type: data.proof_type,
+            proof_instance: data.proof_instance,
             data_hash: data.data_hash,
             forwarded_payload: None,
             ec: ec.clone(),
@@ -123,11 +124,15 @@ impl AccusationVoting {
     /// accusation per proof is enough: a later one of the same proof is a duplicate.
     fn accuse_when_effects_run(&mut self, accusation: DeferredAccusation) -> Vec<VoteAction> {
         if !self.effects_enabled {
-            let key = (accusation.accused_address, accusation.proof_type);
+            let key = (
+                accusation.accused_address,
+                accusation.proof_type,
+                accusation.proof_instance,
+            );
             if !self
                 .deferred_accusations
                 .iter()
-                .any(|held| (held.accused_address, held.proof_type) == key)
+                .any(|held| (held.accused_address, held.proof_type, held.proof_instance) == key)
             {
                 self.deferred_accusations.push(accusation);
             }
@@ -135,13 +140,13 @@ impl AccusationVoting {
         }
         let mut actions = Vec::new();
         self.initiate_accusation(
-            data.accused_address,
-            data.accused_party_id,
-            data.proof_type,
-            data.proof_instance,
-            data.data_hash,
-            None,
-            ec,
+            accusation.accused_address,
+            accusation.accused_party_id,
+            accusation.proof_type,
+            accusation.proof_instance,
+            accusation.data_hash,
+            accusation.forwarded_payload,
+            &accusation.ec,
             &mut actions,
         );
         actions
@@ -157,11 +162,23 @@ impl AccusationVoting {
         self.effects_enabled = true;
         let mut actions = Vec::new();
         for accusation in std::mem::take(&mut self.deferred_accusations) {
-            let key = (accusation.accused_address, accusation.proof_type);
+            let key = (
+                accusation.accused_address,
+                ProofIdentity {
+                    proof_type: accusation.proof_type,
+                    instance: accusation.proof_instance,
+                },
+            );
             // A peer accusation that still waits for this node's re-verification has no vote from
             // it yet, and the re-verification can fail or end late, so it does not count.
             if self.pending.values().any(|pending| {
-                (pending.accusation.accused, pending.accusation.proof_type) == key
+                (
+                    pending.accusation.accused,
+                    ProofIdentity {
+                        proof_type: pending.accusation.proof_type,
+                        instance: pending.accusation.proof_instance,
+                    },
+                ) == key
                     && pending
                         .votes_for
                         .iter()
@@ -174,6 +191,7 @@ impl AccusationVoting {
                 accusation.accused_address,
                 accusation.accused_party_id,
                 accusation.proof_type,
+                accusation.proof_instance,
                 accusation.data_hash,
                 accusation.forwarded_payload,
                 &accusation.ec,

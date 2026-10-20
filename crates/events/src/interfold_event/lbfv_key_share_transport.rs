@@ -21,7 +21,7 @@ use e3_committee_hash::{
 };
 use e3_fhe_params::{is_supported_lbfv_row_count, lbfv_row_count, BfvPreset};
 use e3_utils::ArcBytes;
-use e3_zk_helpers::FIELD_BYTE_LEN;
+use e3_zk_config::FIELD_BYTE_LEN;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 

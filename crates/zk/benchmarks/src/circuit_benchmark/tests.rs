@@ -11,23 +11,28 @@ fn configured_leaf_selection_rejects_unknown_or_restricted_cases() {
         "../../../../../circuits/benchmarks/config.json"
     ))
     .unwrap();
-    assert_eq!(config.select("secure", &[]).unwrap().len(), 12);
-    assert_eq!(config.select("insecure", &[]).unwrap().len(), 11);
+    assert_eq!(config.select("secure", &[]).unwrap().len(), 11);
+    assert_eq!(config.select("insecure", &[]).unwrap().len(), 10);
+    for (mode, preset, count) in [
+        ("insecure", "insecure", 8),
+        ("insecure", "insecure-simd", 8),
+        ("secure", "secure-16384", 10),
+    ] {
+        assert_eq!(
+            config.select_for_preset(mode, preset, &[]).unwrap().len(),
+            count,
+            "{preset}"
+        );
+    }
     assert!(config.select("insecure", &["config".into()]).is_err());
     assert!(config
         .select("secure", &["threshold/missing".into()])
         .is_err());
     assert_eq!(
         config
-            .select(
-                "secure",
-                &[
-                    "threshold/user_data_encryption_ct0".into(),
-                    "threshold/user_data_encryption_ct1".into()
-                ]
-            )
+            .select("secure", &["threshold/user_data_encryption".into(),])
             .unwrap(),
-        [Case::Ct0, Case::Ct1]
+        [Case::Ude]
     );
 }
 

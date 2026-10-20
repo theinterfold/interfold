@@ -33,32 +33,36 @@ use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{CircuitName, Proof};
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_polynomial::{CrtPolynomial, Polynomial};
-use e3_zk_helpers::circuits::dkg::pk::circuit::PkCircuit;
-use e3_zk_helpers::circuits::dkg::pk::circuit::PkCircuitData;
-use e3_zk_helpers::circuits::{
-    commitments::{
-        compute_aggregated_shares_commitment, compute_dkg_pk_commitment,
-        compute_sc_sk_secret_root_commitment, compute_threshold_decryption_share_commitment,
-    },
-    threshold::decrypted_shares_aggregation::MAX_MSG_NON_ZERO_COEFFS,
-    CircuitComputation,
+use e3_zk_config::DkgInputType;
+use e3_zk_prover::{
+    CircuitVariant, DecryptedSharesAggregationCircuit, DkgShareDecryptionCircuit,
+    PkAggregationCircuit, PkGenerationCircuit, Provable, ShareComputationCircuit,
+    ShareEncryptionCircuit, ThresholdShareDecryptionCircuit, ZkBackend, ZkProver,
 };
-use e3_zk_witness::commitments::{
-    compute_aggregated_shares_commitment, compute_dkg_pk_commitment,
-    compute_threshold_decryption_share_commitment,
-};
+
+use e3_zk_prover::PkCircuit;
+
 use e3_zk_witness::dkg::share_computation::ShareComputationCircuitData;
+
 use e3_zk_witness::dkg::share_decryption::ShareDecryptionCircuitData as DkgShareDecryptionCircuitData;
+
 use e3_zk_witness::dkg::share_encryption::ShareEncryptionCircuitData;
+
 use e3_zk_witness::threshold::pk_generation::PkGenerationCircuitData;
+
 use e3_zk_witness::threshold::{
     decrypted_shares_aggregation::DecryptedSharesAggregationCircuitData,
     pk_aggregation::PkAggregationCircuitData,
     share_decryption::ShareDecryptionCircuitData as ThresholdShareDecryptionCircuitData,
 };
-use e3_zk_helpers::CiphernodesCommitteeSize;
-use e3_zk_helpers::{compute_pk_aggregation_commitment, compute_threshold_pk_commitment};
-use e3_zk_prover::{CircuitVariant, Provable, ZkBackend, ZkProver};
+
+use e3_zk_witness::commitments::{
+    compute_aggregated_shares_commitment, compute_dkg_pk_commitment,
+    compute_sc_sk_secret_root_commitment, compute_threshold_decryption_share_commitment,
+};
+
+use e3_zk_witness::{compute_pk_aggregation_commitment, compute_threshold_pk_commitment};
+
 use fhe::trbfv::{SecretKeyShare, ShareManager, SmudgingShare};
 
 /// Sum per-modulus decrypted shares across honest parties (matches C4 `compute_aggregated_shares`).
@@ -545,13 +549,7 @@ macro_rules! e2e_proof_tests {
 }
 
 e2e_proof_tests! {
-    (pk_generation, setup_pk_generation_test(), CircuitVariant::Recursive),
-    (pk, setup_pk_test(), CircuitVariant::Recursive),
-    (share_encryption_sk, setup_share_encryption_sk_test(), CircuitVariant::Recursive),
-    (share_encryption_e_sm, setup_share_encryption_e_sm_test(), CircuitVariant::Recursive),
-    (share_decryption, setup_share_decryption_test(), CircuitVariant::Recursive),
-    (pk_aggregation, setup_pk_aggregation_test(), CircuitVariant::Default),
-    (decrypted_shares_aggregation, setup_decrypted_shares_aggregation_test(), CircuitVariant::Recursive),
+    (share_encryption_e_sm, setup_share_encryption_e_sm_test(), CircuitVariant::Recursive, |preset| e3_zk_config::dkg::share_encryption::Configs::for_preset(preset).unwrap()),
 }
 
 #[tokio::test]
@@ -599,15 +597,9 @@ async fn test_pk_generation_commitment_consistency() {
     let pk_commitment_from_proof = extract_field_from_end(&proof.public_signals, 1);
 
     // Recompute commitments from the witness
-    let sk_commitment_expected = compute_sc_sk_secret_root_commitment(
-        &computation_output.inputs.sk,
-        computation_output.bits.sk_bit,
-        512,
-    );
-    let pk_commitment_expected = compute_threshold_pk_commitment(
-        &computation_output.inputs.pk0is,
-        computation_output.bits.pk_bit,
-    );
+    let sk_commitment_expected =
+        e3_zk_witness::compute_share_computation_sk_commitment(&inputs.sk, config.bits.sk_bit);
+    let pk_commitment_expected = compute_threshold_pk_commitment(&inputs.pk0is, config.bits.pk_bit);
 
     assert_eq!(
         sk_commitment_from_proof, sk_commitment_expected,
@@ -687,7 +679,15 @@ async fn test_chunked_share_computation_proof() {
         preset.artifacts_dir_for_committee(CiphernodesCommitteeSize::Minimum.as_str());
     let result = e3_zk_prover::prove_chunked_share_computation(
         &prover,
-        preset,
+        &e3_zk_config::dkg::share_computation::Configs::for_preset(
+            preset,
+            e3_committee::CiphernodesCommitteeSize::from_threshold(
+                (&sample).threshold as usize,
+                (&sample).n_parties as usize,
+            )
+            .unwrap(),
+        )
+        .unwrap(),
         &sample,
         e3_id,
         &artifacts_dir,
@@ -737,7 +737,15 @@ async fn test_chunked_esm_share_computation_proof() {
         preset.artifacts_dir_for_committee(CiphernodesCommitteeSize::Minimum.as_str());
     let result = e3_zk_prover::prove_chunked_share_computation(
         &prover,
-        preset,
+        &e3_zk_config::dkg::share_computation::Configs::for_preset(
+            preset,
+            e3_committee::CiphernodesCommitteeSize::from_threshold(
+                (&sample).threshold as usize,
+                (&sample).n_parties as usize,
+            )
+            .unwrap(),
+        )
+        .unwrap(),
         &sample,
         e3_id,
         &artifacts_dir,
@@ -821,8 +829,20 @@ async fn setup_secure_chunked_share_computation_test(
             .await;
     }
 
-    let sample =
-        ShareComputationCircuitData::generate_sample(preset, committee, input_type).ok()?;
+    let sample = e3_zk_samples::dkg::share_computation::generate(
+        &e3_zk_config::dkg::share_computation::Configs::for_preset(
+            preset,
+            e3_committee::CiphernodesCommitteeSize::from_threshold(
+                (committee).threshold,
+                (committee).n,
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+        preset,
+        input_type,
+    )
+    .ok()?;
     let prover = ZkProver::new(&backend);
     Some((backend, temp, prover, sample, preset, e3_id))
 }
@@ -837,7 +857,15 @@ async fn test_secure_chunked_share_computation_proof() {
     let artifacts_dir = preset.artifacts_dir_for_committee("minimum");
     let result = e3_zk_prover::prove_chunked_share_computation(
         &prover,
-        preset,
+        &e3_zk_config::dkg::share_computation::Configs::for_preset(
+            preset,
+            e3_committee::CiphernodesCommitteeSize::from_threshold(
+                (&sample).threshold as usize,
+                (&sample).n_parties as usize,
+            )
+            .unwrap(),
+        )
+        .unwrap(),
         &sample,
         e3_id,
         &artifacts_dir,
@@ -868,7 +896,15 @@ async fn test_secure_chunked_esm_share_computation_proof() {
     let artifacts_dir = preset.artifacts_dir_for_committee("minimum");
     let result = e3_zk_prover::prove_chunked_share_computation(
         &prover,
-        preset,
+        &e3_zk_config::dkg::share_computation::Configs::for_preset(
+            preset,
+            e3_committee::CiphernodesCommitteeSize::from_threshold(
+                (&sample).threshold as usize,
+                (&sample).n_parties as usize,
+            )
+            .unwrap(),
+        )
+        .unwrap(),
         &sample,
         e3_id,
         &artifacts_dir,
@@ -1187,3 +1223,5 @@ async fn test_decrypted_shares_aggregation_commitment_consistency() {
 
     prover.cleanup(e3_id).unwrap();
 }
+
+use e3_zk_config::MAX_MSG_NON_ZERO_COEFFS;

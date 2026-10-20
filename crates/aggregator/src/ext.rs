@@ -6,6 +6,7 @@
 
 use crate::actors::DecryptionshareCreatedBuffer;
 use crate::actors::KeyshareCreatedFilterBuffer;
+use crate::domain::committee::committee_addresses_in_party_order;
 use crate::{
     LbfvAggregationStateV1, LbfvContributionCollectionStateV1, LbfvContributionRepositoryFactory,
     LbfvPublicKeyPublicationStateV1, PublicKeyAggregator, PublicKeyAggregatorParams,
@@ -24,8 +25,8 @@ use async_trait::async_trait;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_data::{AutoPersist, Persistable, RepositoriesFactory};
 use e3_events::{
-    prelude::*, CiphernodeSelected, CiphertextOutputPublished, E3id, EventContext, OrderedSet,
-    Sequenced,
+    prelude::*, CiphernodeSelected, CiphertextOutputPublished, E3Stage, E3id, EventContext,
+    EventStoreQueryBy, SeqAgg, Sequenced,
 };
 use e3_events::{BusHandle, EType, InterfoldEvent, InterfoldEventData};
 use e3_fhe::ext::FHE_KEY;
@@ -305,6 +306,17 @@ impl E3Extension for PublicKeyAggregatorExtension {
                     )
                 },
             )?;
+        // The lifecycle projection belongs to the node root, not the per-E3 context scope.
+        let initial_stage = ctx
+            .repositories()
+            .store
+            .base("")
+            .repositories()
+            .e3_lifecycle()
+            .read()
+            .await?
+            .and_then(|stages| stages.get(&ctx.e3_id).cloned())
+            .unwrap_or(E3Stage::None);
         let lbfv_collection = load_lbfv_collection(
             ctx,
             &recovered_state,
@@ -724,6 +736,39 @@ fn load_honest_committee_addresses(ctx: &E3Context) -> Result<Vec<Address>> {
     Err(anyhow!(ERROR_TRBFV_PLAINTEXT_HONEST_COMMITTEE_MISSING))
 }
 
+fn addresses_for_sorted_party_ids(party_nodes: &HashMap<u64, String>) -> Result<Vec<Address>> {
+    let mut party_ids: Vec<u64> = party_nodes.keys().copied().collect();
+    party_ids.sort_unstable();
+    committee_addresses_in_party_order(&party_ids, party_nodes)
+}
+
+fn publickey_state_committee_addresses(
+    state: &PublicKeyAggregatorState,
+) -> Result<Option<Vec<Address>>> {
+    match state {
+        PublicKeyAggregatorState::Complete {
+            committee_addresses,
+            ..
+        } if !committee_addresses.is_empty() => Ok(Some(committee_addresses.clone())),
+        PublicKeyAggregatorState::GeneratingC5Proof { party_nodes, .. }
+            if !party_nodes.is_empty() =>
+        {
+            Ok(Some(addresses_for_sorted_party_ids(party_nodes)?))
+        }
+        PublicKeyAggregatorState::Collecting {
+            canonical_party_nodes,
+            ..
+        }
+        | PublicKeyAggregatorState::VerifyingC1 {
+            canonical_party_nodes,
+            ..
+        } if !canonical_party_nodes.is_empty() => {
+            Ok(Some(addresses_for_sorted_party_ids(canonical_party_nodes)?))
+        }
+        _ => Ok(None),
+    }
+}
+
 fn party_nodes_from_committee_addresses(committee_addresses: &[Address]) -> HashMap<u64, String> {
     committee_addresses
         .iter()
@@ -740,159 +785,6 @@ fn committee_addresses_from_node_strings(nodes: &[String]) -> Result<Vec<Address
                 .map_err(|e| anyhow!("invalid committee node address {node}: {e}"))
         })
         .collect()
-}
-
-fn remember_committee_dependencies_from_publickey_state(
-    ctx: &mut E3Context,
-    state: &PublicKeyAggregatorState,
-) -> Result<()> {
-    if let Some(addrs) = publickey_state_committee_addresses(state)? {
-        ctx.set_dependency(COMMITTEE_ADDRESSES_KEY, addrs);
-    }
-    if let Some(addrs) = publickey_state_honest_committee_addresses(state)? {
-        ctx.set_dependency(HONEST_COMMITTEE_ADDRESSES_KEY, addrs);
-    }
-    Ok(())
-}
-
-async fn recover_committee_dependencies_from_publickey_state(
-    ctx: &mut E3Context,
-    e3_id: &E3id,
-) -> Result<()> {
-    let repo = ctx.repositories().publickey(e3_id);
-    if let Some(state) = repo.read().await? {
-        remember_committee_dependencies_from_publickey_state(ctx, &state)?;
-    }
-    Ok(())
-}
-
-async fn recover_committee_dependencies_from_sortition_state(
-    ctx: &mut E3Context,
-    e3_id: &E3id,
-) -> Result<()> {
-    if ctx.get_dependency(COMMITTEE_ADDRESSES_KEY).is_some() {
-        return Ok(());
-    }
-
-    let repo = ctx.repositories().finalized_committees();
-    let Some(committees) = repo.read().await? else {
-        return Ok(());
-    };
-    let Some(committee) = committees.get(e3_id) else {
-        return Ok(());
-    };
-
-    let addresses = committee_addresses_from_node_strings(committee.members())?;
-    ctx.set_dependency(COMMITTEE_ADDRESSES_KEY, addresses);
-    Ok(())
-}
-
-async fn recover_honest_committee_dependencies_from_keyshare_state(
-    ctx: &mut E3Context,
-    e3_id: &E3id,
-) -> Result<()> {
-    let repo = ctx.repositories().threshold_keyshare(e3_id);
-    let Some(state) = repo.read().await? else {
-        return Ok(());
-    };
-    let Some(honest_party_ids) = state.honest_parties.clone() else {
-        return Ok(());
-    };
-
-    ctx.set_dependency(HONEST_PARTY_IDS_KEY, honest_party_ids);
-    remember_honest_committee_from_cached_party_ids(ctx, e3_id)?;
-    Ok(())
-}
-
-fn remember_honest_committee_from_cached_party_ids(
-    ctx: &mut E3Context,
-    e3_id: &E3id,
-) -> Result<()> {
-    if ctx.get_dependency(HONEST_COMMITTEE_ADDRESSES_KEY).is_some() {
-        return Ok(());
-    }
-
-    let Some(committee_addresses) = ctx.get_dependency(COMMITTEE_ADDRESSES_KEY).cloned() else {
-        return Ok(());
-    };
-    let Some(honest_party_ids) = ctx.get_dependency(HONEST_PARTY_IDS_KEY).cloned() else {
-        return Ok(());
-    };
-
-    let honest_committee_addresses =
-        honest_addresses_from_party_ids(&committee_addresses, &honest_party_ids)?;
-    tracing::info!(
-        e3_id = %e3_id,
-        honest_party_ids = ?honest_party_ids,
-        honest_committee_len = honest_committee_addresses.len(),
-        "Recovered honest committee addresses from persisted threshold keyshare state"
-    );
-    ctx.set_dependency(HONEST_COMMITTEE_ADDRESSES_KEY, honest_committee_addresses);
-    Ok(())
-}
-
-fn remember_committee_published(ctx: &mut E3Context, e3_id: &E3id, nodes: &[String]) -> Result<()> {
-    let addrs = committee_addresses_from_node_strings(nodes)?;
-    let addrs_len = addrs.len();
-    ctx.set_dependency(COMMITTEE_ADDRESSES_KEY, addrs.clone());
-
-    // In committees where every on-chain member is also part of the honest circuit set,
-    // CommitteePublished is sufficient to recover the honest roster. For N > H we keep
-    // the honest dependency from PublicKeyAggregated / public-key state.
-    if let Some(meta) = ctx.get_dependency(META_KEY) {
-        let committee =
-            CiphernodesCommitteeSize::from_threshold(meta.threshold_m, meta.threshold_n)
-                .map(|size| size.values());
-        if committee.is_ok_and(|committee| committee.h == addrs_len) {
-            ctx.set_dependency(HONEST_COMMITTEE_ADDRESSES_KEY, addrs);
-        }
-    }
-
-    remember_honest_committee_from_cached_party_ids(ctx, e3_id)?;
-    Ok(())
-}
-
-fn remember_public_key_aggregated(
-    ctx: &mut E3Context,
-    committee_addresses: &[Address],
-    nodes: &OrderedSet<String>,
-    honest_committee_addresses: &[Address],
-) -> Result<()> {
-    let addrs = if !committee_addresses.is_empty() {
-        committee_addresses.to_vec()
-    } else {
-        committee_addresses_from_nodes(nodes)?
-    };
-    ctx.set_dependency(COMMITTEE_ADDRESSES_KEY, addrs);
-    ensure!(
-        !honest_committee_addresses.is_empty(),
-        ERROR_TRBFV_PLAINTEXT_HONEST_COMMITTEE_MISSING
-    );
-    ctx.set_dependency(
-        HONEST_COMMITTEE_ADDRESSES_KEY,
-        honest_committee_addresses.to_vec(),
-    );
-    Ok(())
-}
-
-fn remember_lbfv_public_key_aggregated(
-    ctx: &mut E3Context,
-    data: &e3_events::LbfvPublicKeyAggregated,
-) -> Result<()> {
-    ensure!(
-        data.e3_id == ctx.e3_id,
-        "secure-16384 public-key event belongs to another E3"
-    );
-    ensure!(
-        data.dkg_aggregator_v2_proof.circuit == e3_events::CircuitName::DkgAggregatorV2,
-        "secure-16384 public-key event has the wrong recursive circuit"
-    );
-    remember_public_key_aggregated(
-        ctx,
-        &data.committee_addresses,
-        &data.nodes,
-        &data.honest_committee_addresses,
-    )
 }
 
 fn load_is_active_aggregator(ctx: &E3Context) -> bool {
@@ -925,34 +817,50 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
         }
 
         if let InterfoldEventData::PublicKeyAggregated(data) = evt.get_data() {
-            match remember_public_key_aggregated(
-                ctx,
-                &data.committee_addresses,
-                &data.nodes,
-                &data.honest_committee_addresses,
-            ) {
-                Ok(()) => {
-                    if let Some(ciphertext) =
-                        ctx.get_dependency(PENDING_CIPHERTEXT_OUTPUT_KEY).cloned()
-                    {
-                        self.try_start_plaintext(ctx, &ciphertext, evt.get_ctx());
-                    }
-                }
-                Err(e) => self.bus.err(EType::PlaintextAggregation, e),
+            let Some(key) = self.canonical_keys.get(&ctx.e3_id) else {
+                return;
+            };
+            if !key.accepts(data) {
+                return;
+            }
+            self.remember_canonical_committee(ctx);
+            if let Some(ciphertext) = ctx.get_dependency(PENDING_CIPHERTEXT_OUTPUT_KEY).cloned() {
+                self.try_start_plaintext(ctx, &ciphertext, evt.get_ctx(), true);
             }
             return;
         }
 
         if let InterfoldEventData::LbfvPublicKeyAggregated(data) = evt.get_data() {
-            match remember_lbfv_public_key_aggregated(ctx, data) {
-                Ok(()) => {
-                    if let Some(ciphertext) =
-                        ctx.get_dependency(PENDING_CIPHERTEXT_OUTPUT_KEY).cloned()
-                    {
-                        self.try_start_plaintext(ctx, &ciphertext, evt.get_ctx());
-                    }
-                }
-                Err(e) => self.bus.err(EType::PlaintextAggregation, e),
+            // The l-BFV aggregator announces its key with this event. The chain-bound canonical
+            // key stays the authority: the event only triggers a start when it matches that key.
+            if data.e3_id != ctx.e3_id
+                || data.dkg_aggregator_v2_proof.circuit != e3_events::CircuitName::DkgAggregatorV2
+            {
+                self.bus.err(
+                    EType::PlaintextAggregation,
+                    anyhow!("secure-16384 public-key event has the wrong E3 or recursive circuit"),
+                );
+                return;
+            }
+            let Some(key) = self.canonical_keys.get(&ctx.e3_id) else {
+                return;
+            };
+            let publication = e3_events::PublicKeyAggregated {
+                pubkey: data.pubkey.clone(),
+                e3_id: data.e3_id.clone(),
+                nodes: data.nodes.clone(),
+                committee_addresses: data.committee_addresses.clone(),
+                honest_committee_addresses: data.honest_committee_addresses.clone(),
+                pk_commitment: data.pk_commitment,
+                dkg_aggregator_proof: Some(data.dkg_aggregator_v2_proof.clone()),
+                dkg_attestation_bundle: data.dkg_attestation_bundle.clone(),
+            };
+            if !key.accepts(&publication) {
+                return;
+            }
+            self.remember_canonical_committee(ctx);
+            if let Some(ciphertext) = ctx.get_dependency(PENDING_CIPHERTEXT_OUTPUT_KEY).cloned() {
+                self.try_start_plaintext(ctx, &ciphertext, evt.get_ctx(), true);
             }
             return;
         }
@@ -1250,345 +1158,15 @@ impl Handler<InterfoldEvent> for DeferredPlaintextAggregator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy::primitives::address;
     use e3_data::{DataStore, InMemStore};
-    use e3_events::{Committee, OrderedSet, Seed};
+    use e3_events::Seed;
     use e3_fhe::Fhe;
     use e3_fhe_params::BfvPreset;
     use e3_request::{ContextRepositoryFactory, E3ContextParams, E3Meta};
     use e3_test_helpers::get_common_setup;
     use e3_utils::ArcBytes;
-    use std::{
-        collections::{BTreeSet, HashMap},
-        sync::Arc,
-    };
-
-    fn generating_c5_state() -> PublicKeyAggregatorState {
-        let party_nodes = HashMap::from([
-            (
-                2u64,
-                "0x70997970C51812dc3A010C7d01b50e0d17dc79C8".to_string(),
-            ),
-            (
-                0u64,
-                "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65".to_string(),
-            ),
-            (
-                1u64,
-                "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC".to_string(),
-            ),
-        ]);
-
-        PublicKeyAggregatorState::GeneratingC5Proof {
-            public_key: ArcBytes::from_bytes(&[1, 2, 3]),
-            keyshare_bytes: vec![],
-            nodes: OrderedSet::new(),
-            party_nodes,
-            dkg_node_proofs: HashMap::new(),
-            dkg_fold_attestations: HashMap::new(),
-            honest_party_ids: BTreeSet::from([0, 2]),
-            dishonest_parties: BTreeSet::from([1]),
-            circuit_committee_n: 3,
-            circuit_committee_h: 2,
-            dkg_aggregation_correlation: None,
-            dkg_aggregated_proof: None,
-            c5_proof_pending: None,
-            last_ec: None,
-            nodes_fold_accumulator: None,
-            nodes_fold_completed_slots: 0,
-            nodes_fold_step_correlation: None,
-        }
-    }
-
-    fn secure_public_key_intent(
-        e3_id: E3id,
-        circuit: e3_events::CircuitName,
-    ) -> e3_events::LbfvPublicKeyAggregated {
-        let committee_addresses = vec![
-            address!("0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65"),
-            address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
-            address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"),
-        ];
-        e3_events::LbfvPublicKeyAggregated {
-            pubkey: ArcBytes::from_bytes(&[1, 2, 3]),
-            e3_id,
-            nodes: OrderedSet::new(),
-            committee_addresses: committee_addresses.clone(),
-            honest_committee_addresses: committee_addresses[..2].to_vec(),
-            pk_commitment: [7; 32],
-            dkg_aggregator_v2_proof: e3_events::Proof::new(
-                circuit,
-                ArcBytes::from_bytes(&[4]),
-                ArcBytes::from_bytes(&[5]),
-            ),
-            dkg_attestation_bundle: Some(ArcBytes::from_bytes(&[6])),
-        }
-    }
-
-    #[actix::test]
-    async fn secure_public_key_intent_restores_plaintext_committee_dependencies() -> Result<()> {
-        let e3_id = E3id::new("42", 1);
-        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
-        let mut ctx = E3Context::from_params(E3ContextParams {
-            repository: store.repositories().context(&e3_id),
-            e3_id: e3_id.clone(),
-            extensions: Arc::new(Vec::new()),
-        });
-        let event = secure_public_key_intent(e3_id, e3_events::CircuitName::DkgAggregatorV2);
-
-        remember_lbfv_public_key_aggregated(&mut ctx, &event)?;
-
-        assert_eq!(
-            ctx.get_dependency(COMMITTEE_ADDRESSES_KEY),
-            Some(&event.committee_addresses)
-        );
-        assert_eq!(
-            ctx.get_dependency(HONEST_COMMITTEE_ADDRESSES_KEY),
-            Some(&event.honest_committee_addresses)
-        );
-        Ok(())
-    }
-
-    #[actix::test]
-    async fn secure_public_key_intent_rejects_wrong_identity_and_circuit() {
-        let e3_id = E3id::new("42", 1);
-        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
-        let mut ctx = E3Context::from_params(E3ContextParams {
-            repository: store.repositories().context(&e3_id),
-            e3_id: e3_id.clone(),
-            extensions: Arc::new(Vec::new()),
-        });
-        let wrong_e3 =
-            secure_public_key_intent(E3id::new("43", 1), e3_events::CircuitName::DkgAggregatorV2);
-        assert!(remember_lbfv_public_key_aggregated(&mut ctx, &wrong_e3).is_err());
-
-        let wrong_circuit = secure_public_key_intent(e3_id, e3_events::CircuitName::PkAggregation);
-        assert!(remember_lbfv_public_key_aggregated(&mut ctx, &wrong_circuit).is_err());
-    }
-
-    #[test]
-    fn recovers_full_committee_addresses_from_generating_c5_state() -> Result<()> {
-        let state = generating_c5_state();
-
-        let addresses = publickey_state_committee_addresses(&state)?.expect("addresses");
-
-        assert_eq!(
-            addresses,
-            vec![
-                address!("0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65"),
-                address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
-                address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"),
-            ]
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn recovers_full_committee_addresses_from_collecting_state() -> Result<()> {
-        let committee_addresses = vec![
-            address!("0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65"),
-            address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
-            address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"),
-        ];
-        let state = PublicKeyAggregatorState::init(
-            3,
-            1,
-            Seed([0; 32]),
-            party_nodes_from_committee_addresses(&committee_addresses),
-        );
-
-        let recovered = publickey_state_committee_addresses(&state)?.expect("addresses");
-
-        assert_eq!(recovered, committee_addresses);
-        Ok(())
-    }
-
-    #[test]
-    fn secure_collection_uses_the_keyshare_generation_domain() -> Result<()> {
-        let signer = address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
-        let interfold = Address::repeat_byte(0x11);
-        let selection = CiphernodeSelected {
-            e3_id: E3id::new("7", 1),
-            threshold_m: 1,
-            threshold_n: 3,
-            seed: Seed([0; 32]),
-            error_size: ArcBytes::from_bytes(&[1]),
-            params_preset: BfvPreset::SecureThreshold16384,
-            params: ArcBytes::from_bytes(b"secure-16384-params"),
-            party_id: 1,
-            committee: vec![
-                Address::ZERO.to_string(),
-                signer.to_string(),
-                Address::repeat_byte(0xff).to_string(),
-            ],
-        };
-        let generation = e3_keyshare::LbfvGenerationStateV1::from_selection(
-            &selection,
-            interfold,
-            signer,
-            e3_config::current_node_release().protocol_version,
-        )?;
-
-        let collection = initial_lbfv_collection(
-            &selection,
-            &HashMap::from([(1, interfold)]),
-            signer,
-            CiphernodesCommitteeSize::Minimum,
-        )?
-        .expect("secure collection");
-
-        assert_eq!(collection.proof_domain, generation.context.proof_domain);
-        assert_eq!(
-            collection.proof_session_id,
-            generation.context.proof_session_id
-        );
-        assert_eq!(collection.committee, generation.committee);
-        Ok(())
-    }
-
-    #[actix::test]
-    async fn secure_hydration_reconstructs_a_missing_initial_collection() -> Result<()> {
-        let (bus, rng, seed, params, crp, _errors, _history) =
-            get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
-        let e3_id = E3id::new("42", 1);
-        let signer = address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
-        let committee = vec![Address::ZERO, signer, Address::repeat_byte(0xff)];
-        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
-        let mut ctx = E3Context::from_params(E3ContextParams {
-            repository: store.repositories().context(&e3_id),
-            e3_id: e3_id.clone(),
-            extensions: Arc::new(Vec::new()),
-        });
-        ctx.set_dependency(FHE_KEY, Arc::new(Fhe::new(params, crp, rng)));
-        ctx.set_dependency(
-            META_KEY,
-            E3Meta {
-                threshold_m: 1,
-                threshold_n: 3,
-                seed,
-                params_preset: BfvPreset::SecureThreshold16384,
-                params: ArcBytes::from_bytes(b"secure-16384-params"),
-                error_size: ArcBytes::from_bytes(&[1]),
-            },
-        );
-        ctx.repositories()
-            .publickey(&e3_id)
-            .write_sync(&PublicKeyAggregatorState::init(
-                3,
-                1,
-                seed,
-                party_nodes_from_committee_addresses(&committee),
-            ))
-            .await?;
-        ctx.repositories()
-            .publickey_recovery(&e3_id)
-            .write_sync(&PublicKeyAggregatorRecoveryState::default())
-            .await?;
-        let snapshot = E3ContextSnapshot {
-            e3_id: e3_id.clone(),
-            recipients: vec!["publickey".to_string()],
-            dependencies: Vec::new(),
-        };
-
-        PublicKeyAggregatorExtension::create(
-            &bus,
-            HashMap::from([(1, Address::repeat_byte(0x11))]),
-            signer,
-        )
-        .hydrate(&mut ctx, &snapshot)
-        .await?;
-
-        let collection = ctx
-            .repositories()
-            .publickey_lbfv_collection(&e3_id)
-            .read()
-            .await?
-            .expect("reconstructed l-BFV collection");
-        collection.validate_loaded()?;
-        assert_eq!(collection.committee, committee);
-        assert!(ctx.get_event_recipient("publickey").is_some());
-        Ok(())
-    }
-
-    #[actix::test]
-    async fn secure_hydration_rejects_a_mismatched_proof_domain() -> Result<()> {
-        let (bus, rng, seed, params, crp, _errors, _history) =
-            get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
-        let e3_id = E3id::new("42", 1);
-        let signer = address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
-        let committee = vec![Address::ZERO, signer, Address::repeat_byte(0xff)];
-        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
-        let mut ctx = E3Context::from_params(E3ContextParams {
-            repository: store.repositories().context(&e3_id),
-            e3_id: e3_id.clone(),
-            extensions: Arc::new(Vec::new()),
-        });
-        ctx.set_dependency(FHE_KEY, Arc::new(Fhe::new(params, crp, rng)));
-        ctx.set_dependency(
-            META_KEY,
-            E3Meta {
-                threshold_m: 1,
-                threshold_n: 3,
-                seed,
-                params_preset: BfvPreset::SecureThreshold16384,
-                params: ArcBytes::from_bytes(b"secure-16384-params"),
-                error_size: ArcBytes::from_bytes(&[1]),
-            },
-        );
-        let publickey = PublicKeyAggregatorState::init(
-            3,
-            1,
-            seed,
-            party_nodes_from_committee_addresses(&committee),
-        );
-        ctx.repositories()
-            .publickey(&e3_id)
-            .write_sync(&publickey)
-            .await?;
-        ctx.repositories()
-            .publickey_recovery(&e3_id)
-            .write_sync(&PublicKeyAggregatorRecoveryState::default())
-            .await?;
-        let mismatched_domain = e3_committee_hash::LbfvProofDomainContext {
-            protocol_version: e3_config::current_node_release().protocol_version,
-            chain_id: 1,
-            interfold_address: Address::repeat_byte(0x22),
-            e3_id: alloy::primitives::U256::from(42),
-            crypto_config_id: alloy::primitives::B256::repeat_byte(0x33),
-            finalized_committee_hash: e3_committee_hash::hash_committee_addresses(&committee),
-            lbfv_constants_version: 1,
-            ciphertext_level: 0,
-            key_level: 0,
-        };
-        ctx.repositories()
-            .publickey_lbfv_collection(&e3_id)
-            .write_sync(&LbfvContributionCollectionStateV1::new(
-                e3_id.clone(),
-                mismatched_domain,
-                committee,
-                2,
-                BfvPreset::SecureThreshold16384,
-            )?)
-            .await?;
-        let snapshot = E3ContextSnapshot {
-            e3_id,
-            recipients: vec!["publickey".to_string()],
-            dependencies: Vec::new(),
-        };
-
-        let error = PublicKeyAggregatorExtension::create(
-            &bus,
-            HashMap::from([(1, Address::repeat_byte(0x11))]),
-            signer,
-        )
-        .hydrate(&mut ctx, &snapshot)
-        .await
-        .unwrap_err();
-
-        assert!(error
-            .to_string()
-            .contains("persisted l-BFV collection context does not match"));
-        Ok(())
-    }
+    use std::{collections::HashMap, sync::Arc};
 
     #[actix::test]
     async fn hydration_uses_the_recovered_role() -> Result<()> {
@@ -1614,28 +1192,15 @@ mod tests {
     }
 
     #[actix::test]
-    async fn publickey_hydration_restores_committee_dependencies_first() -> Result<()> {
-        let (bus, rng, seed, params, crp, _errors, _history) =
-            get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
-        let e3_id = E3id::new("42", 1);
-        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
-        let mut ctx = E3Context::from_params(E3ContextParams {
-            repository: store.repositories().context(&e3_id),
-            e3_id: e3_id.clone(),
-            extensions: Arc::new(Vec::new()),
-        });
-        ctx.set_dependency(FHE_KEY, Arc::new(Fhe::new(params, crp, rng)));
-        ctx.set_dependency(
-            META_KEY,
-            E3Meta {
-                threshold_m: 1,
-                threshold_n: 3,
-                seed,
-                params_preset: BfvPreset::InsecureThreshold,
-                params: ArcBytes::from_bytes(&[]),
-                error_size: ArcBytes::from_bytes(&[]),
-            },
-        );
+    async fn plaintext_dependencies_use_chain_rosters_across_restart() -> Result<()> {
+        use e3_bfv_client::{client::generate_public_key, compute_pk_commitment};
+        use e3_data::{PersistableData, Repository};
+        use e3_events::{EventSource, OrderedSet, PublicKeyAggregated, Unsequenced};
+        use e3_fhe_params::{BfvParamSet, BfvPreset};
+        use e3_keyshare::canonical_key::CanonicalPublicKey;
+        use e3_request::{E3Meta, META_KEY};
+        use e3_sortition::{CiphernodeSelector, SortitionParams};
+        use e3_utils::ArcBytes;
 
         fn persist<T: PersistableData>(value: T) -> Persistable<T> {
             Repository::new(DataStore::from_in_mem(&InMemStore::new(false).start()))
@@ -1717,25 +1282,378 @@ mod tests {
                 honest_committee_addresses: vec![Address::ZERO],
             })
             .await?;
+        for restart in [false, true] {
+            let mut ctx = E3Context::from_params(E3ContextParams {
+                repository: store.repositories().context(&id),
+                e3_id: id.clone(),
+                extensions: Arc::new(vec![]),
+            });
+            ctx.set_dependency(
+                META_KEY,
+                E3Meta {
+                    threshold_m: 1,
+                    threshold_n: 3,
+                    seed,
+                    params_preset: preset,
+                    params: ArcBytes::from_bytes(&e3_fhe_params::encode_bfv_params(
+                        &params.build_arc(),
+                    )),
+                    error_size: ArcBytes::from_bytes(&[]),
+                },
+            );
+            let snapshot = E3ContextSnapshot {
+                e3_id: id.clone(),
+                recipients: if restart {
+                    vec!["plaintext".into()]
+                } else {
+                    vec![]
+                },
+                dependencies: vec![],
+            };
+            let keys = CanonicalPublicKeys::default();
+            let canonical = canonical.clone();
+            keys.insert(id.clone(), canonical)?;
+            let mut eventstore = e3_events::EventStore::new(
+                e3_data::InMemSequenceIndex::new(),
+                e3_data::InMemEventLog::new(),
+            )?;
+            let ciphertext_event = eventstore
+                .store_event(InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                    CiphertextOutputPublished {
+                        e3_id: id.clone(),
+                        ciphertext_output: vec![ArcBytes::from_bytes(&[8])],
+                        ciphertext_commitment: [0; 32],
+                    }
+                    .into(),
+                    None,
+                    1,
+                    None,
+                    EventSource::Local,
+                ))?
+                .unwrap();
+            let eventstore =
+                e3_events::EventStoreRouter::new(HashMap::from([(1, eventstore.start())]))
+                    .start()
+                    .recipient();
+            let extension = ThresholdPlaintextAggregatorExtension::create(
+                &bus, &sortition, false, keys, eventstore,
+            );
+            if restart {
+                let mut saved = ThresholdPlaintextAggregatorState::init(
+                    1,
+                    3,
+                    seed,
+                    vec![ArcBytes::from_bytes(&[8])],
+                    ArcBytes::from_bytes(&[]),
+                );
+                if let ThresholdPlaintextAggregatorState::Collecting(state) = &mut saved {
+                    state.shares.insert(2, vec![ArcBytes::from_bytes(&[6])]);
+                }
+                ctx.repositories()
+                    .trbfv_plaintext(&id)
+                    .write_sync(&saved)
+                    .await?;
+                ctx.repositories()
+                    .trbfv_plaintext_recovery(&id)
+                    .write_sync(&crate::new_threshold_plaintext_recovery(
+                        ciphertext_event.get_ctx().clone(),
+                    ))
+                    .await?;
+                ctx.set_dependency(COMMITTEE_ADDRESSES_KEY, vec![Address::ZERO]);
+                ctx.set_dependency(HONEST_COMMITTEE_ADDRESSES_KEY, vec![Address::ZERO]);
+                extension.hydrate(&mut ctx, &snapshot).await?;
+                assert_eq!(
+                    ctx.get_dependency(COMMITTEE_ADDRESSES_KEY),
+                    Some(&committee)
+                );
+                assert_eq!(
+                    ctx.get_dependency(HONEST_COMMITTEE_ADDRESSES_KEY),
+                    Some(&honest)
+                );
+                assert!(
+                    ctx.get_event_recipient("plaintext").is_some(),
+                    "existing plaintext actor must hydrate"
+                );
+                let restored = ctx
+                    .repositories()
+                    .trbfv_plaintext(&id)
+                    .read()
+                    .await?
+                    .unwrap();
+                let ThresholdPlaintextAggregatorState::Collecting(restored) = restored else {
+                    panic!("expected share collection");
+                };
+                assert!(
+                    restored.shares.is_empty(),
+                    "unsigned retained shares must be removed"
+                );
+            }
+            extension.on_event(
+                &mut ctx,
+                &InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                    publication.clone().into(),
+                    None,
+                    1,
+                    None,
+                    EventSource::Net,
+                )
+                .into_sequenced(1),
+            );
+            assert_eq!(
+                ctx.get_dependency(COMMITTEE_ADDRESSES_KEY),
+                Some(&committee)
+            );
+            assert_eq!(
+                ctx.get_dependency(HONEST_COMMITTEE_ADDRESSES_KEY),
+                Some(&honest)
+            );
+            for variant in 0..3 {
+                let mut other = publication.clone();
+                match variant {
+                    0 => {
+                        other.pk_commitment = [7; 32];
+                        other.committee_addresses = vec![Address::ZERO];
+                        other.honest_committee_addresses = vec![Address::ZERO];
+                    }
+                    1 => other.committee_addresses.swap(0, 1),
+                    _ => other.honest_committee_addresses = committee[..2].to_vec(),
+                }
+                extension.on_event(
+                    &mut ctx,
+                    &InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                        other.into(),
+                        None,
+                        2 + variant,
+                        None,
+                        EventSource::Net,
+                    )
+                    .into_sequenced(2 + variant as u64),
+                );
+                assert_eq!(
+                    ctx.get_dependency(COMMITTEE_ADDRESSES_KEY),
+                    Some(&committee),
+                    "committee changed after restart={restart}"
+                );
+                assert_eq!(
+                    ctx.get_dependency(HONEST_COMMITTEE_ADDRESSES_KEY),
+                    Some(&honest),
+                    "honest roster changed after restart={restart}"
+                );
+            }
+            ctx.set_event_recipient(
+                "threshold_keyshare",
+                Some(
+                    e3_events::HistoryCollector::<InterfoldEvent>::new()
+                        .start()
+                        .recipient(),
+                ),
+            );
+            extension.on_event(
+                &mut ctx,
+                &InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                    CiphertextOutputPublished {
+                        e3_id: id.clone(),
+                        ciphertext_output: vec![ArcBytes::from_bytes(&[8])],
+                        ciphertext_commitment: [0; 32],
+                    }
+                    .into(),
+                    None,
+                    6,
+                    Some(1),
+                    EventSource::Evm,
+                )
+                .into_sequenced(6),
+            );
+            assert!(ctx.get_event_recipient("plaintext").is_some());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn secure_collection_uses_the_keyshare_generation_domain() -> Result<()> {
+        let signer = address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
+        let interfold = Address::repeat_byte(0x11);
+        let selection = CiphernodeSelected {
+            e3_id: E3id::new("7", 1),
+            threshold_m: 1,
+            threshold_n: 3,
+            seed: Seed([0; 32]),
+            error_size: ArcBytes::from_bytes(&[1]),
+            params_preset: BfvPreset::SecureThreshold16384,
+            params: ArcBytes::from_bytes(b"secure-16384-params"),
+            party_id: 1,
+            committee: vec![
+                Address::ZERO.to_string(),
+                signer.to_string(),
+                Address::repeat_byte(0xff).to_string(),
+            ],
+        };
+        let generation = e3_keyshare::LbfvGenerationStateV1::from_selection(
+            &selection,
+            interfold,
+            signer,
+            e3_config::current_node_release().protocol_version,
+        )?;
+
+        let collection = initial_lbfv_collection(
+            &selection,
+            &HashMap::from([(1, interfold)]),
+            signer,
+            CiphernodesCommitteeSize::Minimum,
+        )?
+        .expect("secure collection");
+
+        assert_eq!(collection.proof_domain, generation.context.proof_domain);
+        assert_eq!(
+            collection.proof_session_id,
+            generation.context.proof_session_id
+        );
+        assert_eq!(collection.committee, generation.committee);
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn secure_hydration_reconstructs_a_missing_initial_collection() -> Result<()> {
+        let (bus, rng, seed, params, crp, _errors, _history) =
+            get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
+        let e3_id = E3id::new("42", 1);
+        let signer = address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
+        let committee = vec![Address::ZERO, signer, Address::repeat_byte(0xff)];
+        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+        let mut ctx = E3Context::from_params(E3ContextParams {
+            repository: store.repositories().context(&e3_id),
+            e3_id: e3_id.clone(),
+            extensions: Arc::new(Vec::new()),
+        });
+        ctx.set_dependency(FHE_KEY, Arc::new(Fhe::new(params, crp, rng)));
+        ctx.set_dependency(
+            META_KEY,
+            E3Meta {
+                threshold_m: 1,
+                threshold_n: 3,
+                seed,
+                params_preset: BfvPreset::SecureThreshold16384,
+                params: ArcBytes::from_bytes(b"secure-16384-params"),
+                error_size: ArcBytes::from_bytes(&[1]),
+            },
+        );
+        ctx.repositories()
+            .publickey(&e3_id)
+            .write_sync(&PublicKeyAggregatorState::init(
+                3,
+                1,
+                seed,
+                party_nodes_from_committee_addresses(&committee),
+            ))
+            .await?;
+        ctx.repositories()
+            .publickey_recovery(&e3_id)
+            .write_sync(&PublicKeyAggregatorRecoveryState::default())
+            .await?;
+        let snapshot = E3ContextSnapshot {
+            e3_id: e3_id.clone(),
+            recipients: vec!["publickey".to_string()],
+            dependencies: Vec::new(),
+        };
+
+        PublicKeyAggregatorExtension::create(
+            &bus,
+            HashMap::from([(1, Address::repeat_byte(0x11))]),
+            signer,
+        )
+        .hydrate(&mut ctx, &snapshot)
+        .await?;
+
+        let collection = ctx
+            .repositories()
+            .publickey_lbfv_collection(&e3_id)
+            .read()
+            .await?
+            .expect("reconstructed l-BFV collection");
+        collection.validate_loaded()?;
+        assert_eq!(collection.committee, committee);
+        assert!(ctx.get_event_recipient("publickey").is_some());
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn secure_hydration_rejects_a_mismatched_proof_domain() -> Result<()> {
+        let (bus, rng, seed, params, crp, _errors, _history) =
+            get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
+        let e3_id = E3id::new("42", 1);
+        let signer = address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
+        let committee = vec![Address::ZERO, signer, Address::repeat_byte(0xff)];
+        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+        let mut ctx = E3Context::from_params(E3ContextParams {
+            repository: store.repositories().context(&e3_id),
+            e3_id: e3_id.clone(),
+            extensions: Arc::new(Vec::new()),
+        });
+        ctx.set_dependency(FHE_KEY, Arc::new(Fhe::new(params, crp, rng)));
+        ctx.set_dependency(
+            META_KEY,
+            E3Meta {
+                threshold_m: 1,
+                threshold_n: 3,
+                seed,
+                params_preset: BfvPreset::SecureThreshold16384,
+                params: ArcBytes::from_bytes(b"secure-16384-params"),
+                error_size: ArcBytes::from_bytes(&[1]),
+            },
+        );
+        let publickey = PublicKeyAggregatorState::init(
+            3,
+            1,
+            seed,
+            party_nodes_from_committee_addresses(&committee),
+        );
+        ctx.repositories()
+            .publickey(&e3_id)
+            .write_sync(&publickey)
+            .await?;
+        ctx.repositories()
+            .publickey_recovery(&e3_id)
+            .write_sync(&PublicKeyAggregatorRecoveryState::default())
+            .await?;
+        let mismatched_domain = e3_committee_hash::LbfvProofDomainContext {
+            protocol_version: e3_config::current_node_release().protocol_version,
+            chain_id: 1,
+            interfold_address: Address::repeat_byte(0x22),
+            e3_id: alloy::primitives::U256::from(42),
+            crypto_config_id: alloy::primitives::B256::repeat_byte(0x33),
+            finalized_committee_hash: e3_committee_hash::hash_committee_addresses(&committee),
+            lbfv_constants_version: 1,
+            ciphertext_level: 0,
+            key_level: 0,
+        };
+        ctx.repositories()
+            .publickey_lbfv_collection(&e3_id)
+            .write_sync(&LbfvContributionCollectionStateV1::new(
+                e3_id.clone(),
+                mismatched_domain,
+                committee,
+                2,
+                BfvPreset::SecureThreshold16384,
+            )?)
+            .await?;
         let snapshot = E3ContextSnapshot {
             e3_id,
             recipients: vec!["publickey".to_string()],
             dependencies: Vec::new(),
         };
 
-        PublicKeyAggregatorExtension::create(&bus, HashMap::new(), Address::ZERO)
-            .hydrate(&mut ctx, &snapshot)
-            .await?;
+        let error = PublicKeyAggregatorExtension::create(
+            &bus,
+            HashMap::from([(1, Address::repeat_byte(0x11))]),
+            signer,
+        )
+        .hydrate(&mut ctx, &snapshot)
+        .await
+        .unwrap_err();
 
-        assert_eq!(
-            ctx.get_dependency(COMMITTEE_ADDRESSES_KEY),
-            Some(&committee_addresses)
-        );
-        assert_eq!(
-            ctx.get_dependency(HONEST_COMMITTEE_ADDRESSES_KEY),
-            Some(&honest_committee_addresses)
-        );
-        assert!(ctx.get_event_recipient("publickey").is_some());
+        assert!(error
+            .to_string()
+            .contains("persisted l-BFV collection context does not match"));
         Ok(())
     }
 }

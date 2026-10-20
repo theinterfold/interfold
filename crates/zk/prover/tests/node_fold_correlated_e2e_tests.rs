@@ -25,21 +25,20 @@ use common::{
 use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{CircuitName, Proof};
 use e3_fhe_params::BfvPreset;
-use e3_zk_helpers::computation::Computation;
-use e3_zk_helpers::computation::DkgInputType;
-use e3_zk_helpers::dkg::pk::circuit::{PkCircuit, PkCircuitData};
-use e3_zk_helpers::dkg::share_computation::{
-    Inputs as ShareComputationInputs, ShareComputationCircuit,
-};
-use e3_zk_helpers::dkg::share_decryption::{ShareDecryptionCircuit, ShareDecryptionCircuitData};
-use e3_zk_helpers::dkg::share_encryption::ShareEncryptionCircuit;
-use e3_zk_helpers::threshold::pk_generation::PkGenerationCircuit;
-use e3_zk_helpers::CiphernodesCommitteeSize;
+use e3_zk_config::DkgInputType;
 use e3_zk_prover::test_utils::{
     fold_witness_field_strings, fold_witness_input_map, load_vk_artifacts,
 };
 use e3_zk_prover::{generate_sequential_c3_fold, CircuitVariant, Provable, ZkProver};
 use e3_zk_prover::{CompiledCircuit, WitnessGenerator};
+use e3_zk_prover::{
+    DkgShareDecryptionCircuit as ShareDecryptionCircuit, PkCircuit, PkGenerationCircuit,
+    ShareComputationCircuit, ShareEncryptionCircuit,
+};
+use e3_zk_witness::dkg::share_computation::Inputs as ShareComputationInputs;
+
+use e3_zk_witness::dkg::share_decryption::ShareDecryptionCircuitData;
+
 use node_fold_witness::{
     pk_generation_sample_with_esi, share_computation_esm_from_esi, share_computation_sk_from_pk,
     share_encryption_for_slot,
@@ -77,7 +76,7 @@ fn c3_fold_total_slots_from_compiled_json() -> usize {
                 .and_then(|p| p.get("type")?.get("length")?.as_u64())
         })
         .expect("c3_fold acc_public_inputs length") as usize;
-    (len - 6) / 3
+    (len - 5) / 3
 }
 
 fn field_str_zero() -> String {
@@ -340,7 +339,7 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
     }
 
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold;
+    let preset = BfvPreset::InsecureThreshold64;
 
     let (backend, temp) = setup_test_prover(&bb).await;
     let prover = ZkProver::new(&backend);
@@ -454,7 +453,15 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
     let c2a_proof = ShareComputationCircuit
         .prove_with_variant(
             &prover,
-            &preset,
+            &e3_zk_config::dkg::share_computation::Configs::for_preset(
+                preset,
+                e3_committee::CiphernodesCommitteeSize::from_threshold(
+                    committee.threshold,
+                    committee.n,
+                )
+                .unwrap(),
+            )
+            .unwrap(),
             &share_sk,
             c2a_e3,
             CircuitVariant::Recursive,
@@ -464,7 +471,15 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
     let c2b_proof = ShareComputationCircuit
         .prove_with_variant(
             &prover,
-            &preset,
+            &e3_zk_config::dkg::share_computation::Configs::for_preset(
+                preset,
+                e3_committee::CiphernodesCommitteeSize::from_threshold(
+                    committee.threshold,
+                    committee.n,
+                )
+                .unwrap(),
+            )
+            .unwrap(),
             &share_esm,
             c2b_e3,
             CircuitVariant::Recursive,
@@ -517,7 +532,7 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
         )
         .expect("c2ab_fold proof");
 
-    let (_dkg_th, dkg_dkg) = e3_fhe_params::build_pair_for_preset(preset).expect("pair");
+    let (dkg_th, dkg_dkg) = e3_fhe_params::build_pair_for_preset(preset).expect("pair");
     let mut rng = rand::rng();
     let dkg_sk = fhe::bfv::SecretKey::random(&dkg_dkg, &mut rng);
     let dkg_pk = fhe::bfv::PublicKey::new(&dkg_sk, &mut rng);
@@ -541,7 +556,6 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
 
         let da = share_encryption_for_slot(
             preset,
-            &dkg_sk,
             &dkg_pk,
             &sk_inputs,
             slot,
@@ -667,7 +681,9 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
         )
         .expect("c3ab_fold proof");
 
-    let c4a_sample = ShareDecryptionCircuitData::generate_sample(
+    let c4_config = e3_zk_config::dkg::share_decryption::Configs::for_preset(preset).unwrap();
+    let c4a_sample = e3_zk_samples::dkg::share_decryption::generate(
+        &c4_config,
         preset,
         committee.clone(),
         DkgInputType::SecretKey,

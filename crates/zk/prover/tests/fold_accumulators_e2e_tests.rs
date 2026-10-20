@@ -41,7 +41,9 @@ use e3_zk_prover::{
     ShareEncryptionCircuit, ThresholdShareDecryptionCircuit as ShareDecryptionCircuit,
 };
 use e3_zk_witness::dkg::share_encryption::ShareEncryptionCircuitData;
+
 use e3_zk_witness::threshold::share_decryption::ShareDecryptionCircuitData;
+
 use recursive_vk_substitution::{assert_fold_rejected, fields, substitute_proof, vk_hash, witness};
 use serde_json::json;
 

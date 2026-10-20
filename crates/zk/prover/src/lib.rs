@@ -51,13 +51,22 @@ pub use circuits::aggregation::v2::{
     prove_node_dkg_fold_v2_for_preset, prove_nodes_fold_v2_step,
     prove_nodes_fold_v2_step_for_preset,
 };
+pub use circuits::dkg::pk::PkCircuit;
+pub use circuits::dkg::share_computation::ShareComputationCircuit;
 pub use circuits::dkg::share_computation::{
     c2_chunk_size, prove_chunked_share_computation,
     prove_chunked_share_computation_with_chunk_size, ChunkedShareComputationProofs,
     DEFAULT_C2_CHUNK_SIZE,
 };
+pub use circuits::dkg::share_decryption::ShareDecryptionCircuit as DkgShareDecryptionCircuit;
+pub use circuits::dkg::share_encryption::ShareEncryptionCircuit;
+pub use circuits::threshold::decrypted_shares_aggregation::DecryptedSharesAggregationCircuit;
 pub use circuits::threshold::lbfv_pk_generation::prove_lbfv_pk_generation_row;
+pub use circuits::threshold::pk_aggregation::PkAggregationCircuit;
+pub use circuits::threshold::pk_generation::PkGenerationCircuit;
 pub use circuits::threshold::rlk_generation::prove_rlk_generation_row;
+pub use circuits::threshold::share_decryption::ShareDecryptionCircuit as ThresholdShareDecryptionCircuit;
+pub use circuits::utils::inputs_json_to_input_map;
 pub use config::{verify_checksum, BbTarget, CircuitInfo, VersionInfo, ZkConfig};
 pub use dkg_attestation_bundle::encode_dkg_attestation_bundle;
 pub use e3_events::CircuitVariant;
@@ -67,3 +76,8 @@ pub use prover::ZkProver;
 pub use request_execution::{execute_zk_request, zk_operation_name};
 pub use traits::Provable;
 pub use witness::{input_map, CompiledCircuit, WitnessGenerator};
+
+pub use circuits::threshold::{
+    lbfv_pk_aggregation::LbfvPkAggregationCircuit, lbfv_pk_generation::LbfvPkGenerationCircuit,
+    rlk_aggregation::RlkAggregationCircuit, rlk_generation::RlkGenerationCircuit,
+};

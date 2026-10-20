@@ -7,6 +7,9 @@ description = "BFV circuit witness preparation and canonical Noir encoding"
 repository.workspace = true
 
 [dependencies]
+alloy-primitives.workspace = true
+e3-committee-hash.workspace = true
+zeroize.workspace = true
 anyhow.workspace = true
 ark-bn254.workspace = true
 ark-ff.workspace = true
@@ -14,6 +17,7 @@ e3-zk-config.workspace = true
 e3-polynomial = { workspace = true, features = ["serde"] }
 e3-polynomial-fhe.workspace = true
 e3-committee.workspace = true
+e3-parity-matrix.workspace = true
 e3-safe.workspace = true
 e3-fhe-params.workspace = true
 fhe.workspace = true
@@ -32,5 +36,6 @@ itertools = "0.14.0"
 ndarray.workspace = true
 
 [dev-dependencies]
+toml.workspace = true
 e3-zk-samples.workspace = true
 tempfile.workspace = true

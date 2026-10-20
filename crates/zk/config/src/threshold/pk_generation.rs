@@ -9,10 +9,10 @@
 use crate::field::join_display;
 use crate::{CircuitMetadata, ConfigError};
 use e3_committee::CiphernodesCommitteeSize;
+use e3_fhe_params::calculate_smudging_bound;
 use e3_fhe_params::utils::*;
 use e3_fhe_params::{BfvPreset, ParameterType};
 use fhe::bfv::{BfvParameters, SecretKey};
-use fhe::trbfv::{SmudgingBoundCalculator, SmudgingBoundCalculatorConfig};
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
@@ -28,6 +28,7 @@ pub const METADATA: CircuitMetadata = CircuitMetadata {
 #[derive(Debug, Clone)]
 pub struct Configs {
     pub params: Arc<BfvParameters>,
+    pub preset: BfvPreset,
     pub committee: CiphernodesCommitteeSize,
     pub bits: Bits,
     pub bounds: Bounds,
@@ -65,6 +66,7 @@ impl Configs {
 
         Ok(Configs {
             params: threshold_params.clone(),
+            preset,
             committee,
 
             bits,
@@ -96,16 +98,14 @@ impl Bounds {
         let lambda = preset
             .lambda()
             .map_err(|e| ConfigError::Other(e.to_string()))?;
-        let smudging_config = SmudgingBoundCalculatorConfig::new(
+        let e_sm_bound = calculate_smudging_bound(
             threshold_params.clone(),
             committee_n,
             sd.z as usize,
+            sd.mult_depth,
             lambda,
-        )?;
-        let smudging_calculator = SmudgingBoundCalculator::new(smudging_config);
-        let e_sm_bound = smudging_calculator.calculate_sm_bound().map_err(|e| {
-            ConfigError::Other(format!("Failed to calculate smudging bound: {:?}", e))
-        })?;
+        )
+        .map_err(|e| ConfigError::Other(format!("Failed to calculate smudging bound: {:?}", e)))?;
 
         // Calculate bounds for each CRT basis
         let num_moduli = ctx.moduli().len();

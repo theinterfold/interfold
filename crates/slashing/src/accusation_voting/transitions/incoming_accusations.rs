@@ -22,69 +22,10 @@ impl AccusationVoting {
         ec: &EventContext<Sequenced>,
         actions: &mut Vec<VoteAction>,
     ) {
-        // Ignore accusations for other E3s
-        if accusation.e3_id != self.e3_id {
-            return;
-        }
-
-        if !accusation.proof_type.is_multirow() && accusation.proof_instance != 0 {
-            warn!("Ignoring accusation with an invalid proof instance");
-            return;
-        }
-
-        let now = self.clock.unix_now_secs();
-        if !Self::is_peer_deadline_acceptable(
-            accusation.issued_at,
-            accusation.deadline,
-            now,
-            self.vote_validity_secs,
-            self.accusation_deadline_skew_secs,
-        ) {
-            let max_deadline = now
-                .saturating_add(self.vote_validity_secs)
-                .saturating_add(self.accusation_deadline_skew_secs);
-            warn!(
-                "Ignoring accusation from {} — deadline {} outside local validity window \
-                 (now={}, vote_validity_secs={}, skew_secs={}, max_accepted_deadline={})",
-                accusation.accuser,
-                accusation.deadline,
-                now,
-                self.vote_validity_secs,
-                self.accusation_deadline_skew_secs,
-                max_deadline
-            );
-            return;
-        }
-
-        // Verify accuser is in committee
-        if !self.committee.contains(&accusation.accuser) {
-            warn!(
-                "Ignoring accusation from non-committee member {}",
-                accusation.accuser
-            );
-            return;
-        }
-
-        // Verify accused is a committee member (defense-in-depth)
-        if !self.committee.contains(&accusation.accused) {
-            warn!(
-                "Ignoring accusation against non-committee member {}",
-                accusation.accused
-            );
-            return;
-        }
-
-        // Ignore our own accusations (we already voted)
-        if accusation.accuser == self.my_address {
-            return;
-        }
-
-        // Verify accuser's ECDSA signature
-        if !self.verify_accusation_signature(&accusation) {
-            warn!(
-                "Invalid signature on accusation from {} — ignoring",
-                accusation.accuser
-            );
+        // This node's own accusation in the replayed log: a held failure of the same proof is not
+        // accused again.
+        if let Some(key) = self.admit_own_replayed_accusation(&accusation) {
+            self.accused_proofs.insert(key);
             return;
         }
         let accusation = match self.admit_accusation(accusation) {
@@ -94,6 +35,12 @@ impl AccusationVoting {
                 return;
             }
         };
+
+        // Only multirow proof types (l-BFV row proofs) carry a non-zero proof instance.
+        if !accusation.proof_type.is_multirow() && accusation.proof_instance != 0 {
+            warn!("Ignoring accusation with an invalid proof instance");
+            return;
+        }
 
         let accusation_id = Self::accusation_id(&accusation);
 

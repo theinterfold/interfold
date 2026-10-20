@@ -96,7 +96,7 @@ From the repository root:
 ```bash
 pnpm build:circuits                # compile circuits, verification keys, artifacts
 pnpm noir:lint                    # nargo fmt --check; nargo check (skipped if nargo absent)
-pnpm noir:test                    # nargo test: lib, decryption_aggregator, dkg_aggregator and node_fold (3 preset/committee pairs); nargo execute: config
+pnpm noir:test                    # every package with Noir tests, l-BFV presets and committee matrix; nargo execute: config
 ```
 
 Pin **nargo** and **bb** to the versions in `crates/zk/prover` and `versions.json`. For local work,

@@ -3,6 +3,8 @@
 mod artifacts;
 mod configuration;
 mod identity;
+mod lbfv;
+mod policy;
 mod toolchain;
 mod vk_tree;
 
@@ -21,6 +23,12 @@ use std::{
 };
 
 const COMMITTEES: &[&str] = &["minimum", "micro", "small"];
+// The two insecure protocol labels intentionally share one artifact and Noir module identity.
+const ARTIFACT_PRESETS: [BfvPreset; 3] = [
+    BfvPreset::InsecureThreshold,
+    BfvPreset::SecureThreshold8192,
+    BfvPreset::SecureThreshold16384,
+];
 
 pub fn build_pairs(root: &Path) -> Result<Vec<[String; 2]>> {
     let path = root.join("scripts/circuits/build-pairs.json");
@@ -332,22 +340,26 @@ impl fmt::Display for CommitteeSelection {
 
 fn preset(value: &str) -> Result<BfvPreset> {
     match value {
-        "insecure-64" => Ok(BfvPreset::InsecureThreshold64),
+        "insecure" => Ok(BfvPreset::InsecureThreshold),
+        "insecure-lbfv" => Ok(BfvPreset::InsecureThresholdLbfv),
         "secure-8192" => Ok(BfvPreset::SecureThreshold8192),
+        "secure-16384" => Ok(BfvPreset::SecureThreshold16384),
         _ => bail!("Select one supported preset, not {value}"),
     }
 }
 fn tier(preset: BfvPreset) -> &'static str {
     match preset {
-        BfvPreset::InsecureThreshold64 => "insecure",
-        BfvPreset::SecureThreshold8192 => "secure",
+        BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => "insecure",
+        BfvPreset::SecureThreshold8192 => "secure_8192",
+        BfvPreset::SecureThreshold16384 => "secure_16384",
         _ => unreachable!("build selects threshold presets"),
     }
 }
 fn preset_name(preset: BfvPreset) -> &'static str {
     match preset {
-        BfvPreset::InsecureThreshold64 => "insecure-64",
+        BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => "insecure",
         BfvPreset::SecureThreshold8192 => "secure-8192",
+        BfvPreset::SecureThreshold16384 => "secure-16384",
         _ => unreachable!("build selects threshold presets"),
     }
 }

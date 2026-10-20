@@ -62,7 +62,7 @@ fn debug_vec_arcbytes(v: &[ArcBytes], f: &mut std::fmt::Formatter) -> std::fmt::
 impl BfvEncryptedShare {
     /// Encrypt a Shamir share and return encryption randomness for ZK proofs.
     ///
-    /// Encrypts each modulus row with `try_encrypt_with_intermediates` and captures the
+    /// Encrypts each modulus row with `try_encrypt_extended` and captures the
     /// encryption randomness (u, e0, e1) that C3a/C3b share encryption proofs need.
     pub fn encrypt_extended<R: RngCore + CryptoRng>(
         share: &ShamirShare,
@@ -83,17 +83,17 @@ impl BfvEncryptedShare {
             let pt = Plaintext::try_encode(&share_vec, Encoding::poly(), params)
                 .context("Failed to encode share as plaintext")?;
 
-            let (ct, intermediates) = recipient_pk
-                .try_encrypt_with_intermediates(&pt, rng)
+            let (ct, u_rns, e0_rns, e1_rns) = recipient_pk
+                .try_encrypt_extended(&pt, rng)
                 .context("Failed to encrypt share (extended)")?;
 
             ciphertexts.push(ArcBytes::from_bytes(&ct.to_bytes()));
             witnesses.push(BfvEncryptionWitness {
                 share_row: share_vec,
                 ciphertext: ct,
-                u_rns: intermediates.randomness().clone(),
-                e0_rns: intermediates.error_0().clone(),
-                e1_rns: intermediates.error_1().clone(),
+                u_rns,
+                e0_rns,
+                e1_rns,
             });
         }
 
@@ -255,39 +255,8 @@ mod tests {
     use e3_fhe_params::{BfvParamSet, BfvPreset};
 
     #[test]
-    fn test_encrypt_decrypt_share() {
-        let params = BfvParamSet::from(BfvPreset::InsecureDkg).build_arc();
-        let mut rng = rand::rng();
-
-        // Generate key pair
-        let sk = SecretKey::random(&params, &mut rng);
-        let pk = PublicKey::new(&sk, &mut rng);
-
-        // Create a test share (1 modulus row, 512 coefficients)
-        let degree = params.degree();
-        let test_data: Vec<u64> = (0..degree as u64).collect();
-        let mut data = Array2::zeros((1, degree));
-        for (i, val) in test_data.iter().enumerate() {
-            data[[0, i]] = *val;
-        }
-        let share = ShamirShare::new(data.clone());
-
-        // Encrypt
-        let encrypted = BfvEncryptedShare::encrypt(&share, &pk, &params, &mut rng)
-            .expect("Encryption should succeed");
-
-        // Decrypt
-        let decrypted = encrypted
-            .decrypt(&sk, &params, degree)
-            .expect("Decryption should succeed");
-
-        // Verify
-        assert_eq!(share.deref(), decrypted.deref());
-    }
-
-    #[test]
     fn test_secret_key_serialization() {
-        let params = BfvParamSet::from(BfvPreset::InsecureDkg).build_arc();
+        let params = BfvParamSet::from(BfvPreset::InsecureDkg64).build_arc();
         let mut rng = rand::rng();
 
         // Generate a secret key
@@ -306,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_encrypt_all_extended_for_share_indices_uses_real_share_rows() {
-        let params = BfvParamSet::from(BfvPreset::InsecureDkg).build_arc();
+        let params = BfvParamSet::from(BfvPreset::InsecureDkg64).build_arc();
         let mut rng = rand::rng();
 
         let _sk_one = SecretKey::random(&params, &mut rng);

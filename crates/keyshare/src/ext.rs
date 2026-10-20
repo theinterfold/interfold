@@ -12,7 +12,7 @@ use crate::{
 use actix::Actor;
 use alloy::primitives::Address;
 use alloy::signers::local::PrivateKeySigner;
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use async_trait::async_trait;
 use e3_crypto::Cipher;
 use e3_data::{AutoPersist, RepositoriesFactory};
@@ -29,7 +29,9 @@ pub struct ThresholdKeyshareExtension {
     cipher: Arc<Cipher>,
     address: String,
     interfold_addresses: HashMap<u64, Address>,
+    dkg_timing_reader: DkgTimingReader,
     signer: PrivateKeySigner,
+    canonical_keys: crate::canonical_key::CanonicalPublicKeys,
 }
 
 impl ThresholdKeyshareExtension {
@@ -38,14 +40,18 @@ impl ThresholdKeyshareExtension {
         cipher: &Arc<Cipher>,
         address: &str,
         interfold_addresses: HashMap<u64, Address>,
+        dkg_timing_reader: DkgTimingReader,
         signer: PrivateKeySigner,
+        canonical_keys: crate::canonical_key::CanonicalPublicKeys,
     ) -> Box<Self> {
         Box::new(Self {
             bus: bus.clone(),
             cipher: cipher.to_owned(),
             address: address.to_owned(),
             interfold_addresses,
+            dkg_timing_reader,
             signer,
+            canonical_keys,
         })
     }
 }
@@ -121,6 +127,10 @@ impl E3Extension for ThresholdKeyshareExtension {
             .repositories()
             .threshold_keyshare_lbfv_generation(&e3_id);
         let lbfv_generation = lbfv_repo.send(lbfv_initial);
+        let recovery_payloads = ThresholdKeyshareRecoveryPayloads::new(
+            ctx.repositories()
+                .threshold_keyshare_recovery_payloads(&e3_id),
+        );
 
         // New container with None
         ctx.set_event_recipient(
@@ -134,7 +144,13 @@ impl E3Extension for ThresholdKeyshareExtension {
                     interfold_address,
                     recovery,
                     lbfv_generation,
+                    recovery_payloads,
+                    bfv_key: ctx.repositories().threshold_keyshare_bfv_key(&e3_id),
+                    dkg_timing_reader: self.dkg_timing_reader.clone(),
                     signer: self.signer.clone(),
+                    // Replay of a selection that the restored context lacks starts the keyshare
+                    // before `EffectsEnabled`; it then waits like a restored keyshare.
+                    effects_enabled: ctx.effects_enabled(),
                 })
                 .with_canonical_keys(self.canonical_keys.clone())
                 .start()
@@ -195,10 +211,6 @@ impl E3Extension for ThresholdKeyshareExtension {
         let Some(meta) = ctx.get_dependency(META_KEY) else {
             return Err(anyhow!(ERROR_KEYSHARE_META_MISSING));
         };
-        let share_enc_preset = meta
-            .params_preset
-            .dkg_counterpart()
-            .unwrap_or(meta.params_preset);
         if e3_fhe_params::supports_lbfv(meta.params_preset) {
             let lbfv_state = lbfv_generation.get().ok_or_else(|| {
                 anyhow!(
@@ -233,7 +245,13 @@ impl E3Extension for ThresholdKeyshareExtension {
             interfold_address,
             recovery,
             lbfv_generation,
+            recovery_payloads,
+            bfv_key: ctx
+                .repositories()
+                .threshold_keyshare_bfv_key(&snapshot.e3_id),
+            dkg_timing_reader: self.dkg_timing_reader.clone(),
             signer: self.signer.clone(),
+            effects_enabled: false,
         })
         .with_canonical_keys(self.canonical_keys.clone());
         // The lifecycle projection is node-wide, outside the per-E3 context scope.

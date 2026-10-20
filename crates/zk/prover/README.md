@@ -48,6 +48,12 @@ diagnostic labels. This API creates no actor, pool, retry loop or publication si
 from the node's existing bounded executor. Signature admission remains upstream, and deterministic
 witness computation/encoding remains in `zk/witness`.
 
+It also executes the l-BFV requests: row proofs for pk/RLK generation and aggregation, generation
+and aggregation folds, node fold v2, nodes fold v2 steps and DKG aggregation v2. C2 on the l-BFV
+path runs as chunked proofs with a terminal projection; each request rejects a preset that is not on
+the l-BFV path, and the trBFV C1 request rejects an l-BFV preset. The l-BFV key-share generation
+request is a trBFV request and runs in `e3-trbfv`.
+
 Node runtimes use `setup_zk_actors` with `ZkActorRecovery`, canonical committees/keys, signer, and
 repositories, plus the compute dispatcher's shared `e3_task_pool::TaskPool` and node scope. C0
 verification runs off the actor runtime through that pool, preserving serial response/barrier order.
@@ -58,7 +64,10 @@ manual actor construction. Slashing implementation lives in [e3-slashing](../../
 
 `Provable::Config` carries each circuit's concrete configuration into preparation. Workers build it
 from their existing BFV parameter owner; C6/C7 reuse it across ciphertext indices. User encryption
-prepares from one exact ciphertext and its encryption intermediates, not a second encryption.
+prepares from one exact ciphertext and its encryption intermediates, not a second encryption. The
+l-BFV row helpers and chunked C2 helper also take concrete configs, not preset-only inputs. Chunk
+slicing lives in `e3-zk-witness`; the prover reuses its prepared inputs while bounding parallel leaf
+proof execution. C5 artifacts are required only for the trBFV path.
 
 ## Before running Cargo
 
@@ -110,3 +119,31 @@ See [proof statements](../../../docs/architecture/proof-statements.md) and
 acceptance. Witness generation, process success, checksum matching, and verified statements are
 different results. See [AGENTS.md](AGENTS.md) for proof-plan, verification-outcome, and artifact
 change rules.
+
+### Secure l-BFV committee campaigns
+
+The V2 measurement targets accept `INTERFOLD_SECURE_16384_COMMITTEE=minimum|micro|small` (default
+`minimum`) and read that exact pair below `INTERFOLD_SECURE_16384_ARTIFACTS`. Build the complete
+matching pair first; missing artifacts or invalid explicit selections fail rather than substituting
+another committee. Proof caches are namespaced by preset/committee so saved runs for another pair
+are preserved.
+
+```sh
+# Focused row proofs and recursive generation/aggregation folds.
+E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 \
+INTERFOLD_SECURE_16384_ARTIFACTS="$PWD/dist/circuits" \
+INTERFOLD_SECURE_16384_COMMITTEE=small \
+cargo test --locked -p e3-zk-prover --test v2_generation_fold_measurement -- --nocapture
+
+# Expensive full DKG chain through the EVM-target V2 proof, not a deployed-contract acceptance test.
+E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 \
+INTERFOLD_SECURE_16384_ARTIFACTS="$PWD/dist/circuits" \
+INTERFOLD_SECURE_16384_COMMITTEE=small INTERFOLD_RUN_V2_FINAL_PROOF=1 \
+cargo test --locked -p e3-zk-prover --test v2_final_proof_measurement -- --nocapture
+```
+
+Run these commands from the repository root. Small's full DKG campaign includes 2,520 C3 proofs
+before recursive folding; it is not routine unit-test preparation. The full target is gated by
+`INTERFOLD_RUN_V2_FINAL_PROOF`; a run without that flag does not execute or qualify the proof chain.
+Neither target alone qualifies the C6/C7 decryption lifecycle, a release archive, or a deployed
+Solidity verifier/router. Keep those acceptance checks separate.

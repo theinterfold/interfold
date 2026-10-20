@@ -9,11 +9,11 @@ import { execFileSync, execSync } from 'child_process'
 import { createHash } from 'crypto'
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
 import { join, relative, resolve } from 'path'
-import type { CircuitCommittee, CircuitPreset } from './circuit-constants'
-import requiredArtifacts from '../crates/zk-prover/required-artifacts.json'
-import requiredLbfvArtifacts from '../crates/zk-prover/required-artifacts-lbfv.json'
-import requiredTrbfvArtifacts from '../crates/zk-prover/required-artifacts-trbfv.json'
-import supportedConfigurations from '../crates/zk-prover/supported-configurations.json'
+import type { CircuitCommittee, CircuitPreset } from './constants'
+import requiredArtifacts from '../../crates/zk/prover/required-artifacts.json'
+import requiredLbfvArtifacts from '../../crates/zk/prover/required-artifacts-lbfv.json'
+import requiredTrbfvArtifacts from '../../crates/zk/prover/required-artifacts-trbfv.json'
+import supportedConfigurations from '../../crates/zk/prover/supported-configurations.json'
 
 const BRANCH = 'circuit-artifacts'
 const ROOT = resolve(__dirname, '../..')
@@ -163,10 +163,28 @@ export function refreshChecksums(dir: string): void {
   )
 }
 
-function validateChecksumEntries(dir: string, files: string[], entries: Record<string, unknown>, source: string): void {
-  const entryFiles = Object.keys(entries).sort()
-  if (entryFiles.join('\n') !== files.join('\n')) {
-    throw new Error(`${source} does not cover the complete circuit artifact set`)
+/**
+ * Check `checksums.json` as a node's installer does (`crates/zk/prover/src/backend/download.rs`):
+ * sha256, at least one file, plain relative paths, every listed file present with its digest, and
+ * every artifact listed. Build stamps and the root manifests need no entry.
+ */
+export function validateChecksums(dir: string): void {
+  const manifestPath = join(dir, 'checksums.json')
+  if (!existsSync(manifestPath)) throw new Error('checksums.json is missing')
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { algorithm?: string; files?: Record<string, string> }
+  if (manifest.algorithm !== 'sha256') throw new Error('checksums.json must use sha256')
+  const files = Object.entries(manifest.files ?? {})
+  if (files.length === 0) throw new Error('checksums.json lists no files')
+  const listed = new Set<string>()
+  for (const [file, digest] of files) {
+    if (file.startsWith('/') || file.split('/').some((part) => part === '' || part === '.' || part === '..')) {
+      throw new Error(`checksums.json lists an invalid path: ${file}`)
+    }
+    const path = join(dir, file)
+    if (!existsSync(path) || !statSync(path).isFile()) throw new Error(`checksums.json lists a missing file: ${file}`)
+    const actual = createHash('sha256').update(readFileSync(path)).digest('hex')
+    if (actual !== digest) throw new Error(`checksums.json has the wrong digest for ${file}`)
+    listed.add(file)
   }
 
   for (const file of files) {
@@ -230,7 +248,7 @@ function stampFiles(dir: string): string[] {
 }
 
 // Preset directories that serve the l-BFV path, and those that serve only it. The Rust installer
-// applies the same rule (`required_artifacts` in `crates/zk-prover/src/backend/download.rs`).
+// applies the same rule (`required_artifacts` in `crates/zk/prover/src/backend/download.rs`).
 const LBFV_PRESET_DIRS = new Set(['insecure', 'secure-16384'])
 const LBFV_ONLY_PRESET_DIRS = new Set(['secure-16384'])
 

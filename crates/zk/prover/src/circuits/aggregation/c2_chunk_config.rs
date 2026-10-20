@@ -5,11 +5,11 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 /// Default coefficient count per C2 chunk in the compiled Noir artifacts.
-pub use e3_zk_helpers::circuits::dkg::share_computation::DEFAULT_C2_CHUNK_SIZE;
+pub use e3_zk_config::chunks::DEFAULT_C2_CHUNK_SIZE;
 /// Default chunk count per C2 batch in the compiled Noir artifacts.
 pub const DEFAULT_C2_CHUNKS_PER_BATCH: usize = 4;
 
-pub use e3_zk_helpers::circuits::dkg::share_computation::c2_chunk_size;
+pub use e3_zk_config::chunks::c2_chunk_size;
 
 // The derived layout (`chunk_count`, `chunks_per_batch`, `batch_count`) is
 // computed by `c2_chunk_layout::C2ChunkLayout` from `c2_chunk_size`.

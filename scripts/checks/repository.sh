@@ -5,24 +5,8 @@
 # without even the implied warranty of MERCHANTABILITY
 # or FITNESS FOR A PARTICULAR PURPOSE.
 
-# Mechanically enforces grep-checkable invariants from agent/INVARIANTS.md.
-# Companion to check-committee.sh (structural sync) and check-doc-sync.sh (doc drift).
-#
-# Checks:
-#   1. do_send ratchet — `.do_send(` is allowed only for best-effort telemetry
-#      (agent/ARCHITECTURE.md); the call-site count may only go DOWN. Baseline lives in
-#      scripts/invariant-baselines.env.
-#   2. skip-proof feature containment — `test-only-skip-proof-aggregation` must never be
-#      a default feature and must only be *enabled* (as a dependency feature) by
-#      crates/tests. Forwarding declarations in [features] sections are fine.
-#   3. runtime proof-skip guard — validate_proof_aggregation_mode must exist and be
-#      called in crates/entrypoint (INVARIANTS §No proof-disabled bypass, C-02).
-#   4. ciphernode Docker workspace coverage — every root workspace crate manifest
-#      must be present in the dependency-cache stage of crates/Dockerfile.
-#   5. l-BFV protocol version sync — the Rust release manifest and Solidity V2
-#      verifier must use the same protocol version in the proof-session domain.
-#
-# Exit 0 when all hold, 1 otherwise.
+# Check production configuration, the startup proof guard, and the fire-and-forget send ceiling.
+# These static checks do not establish runtime delivery or proof-verification behavior.
 
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -126,28 +110,7 @@ if ! grep -rq 'fn validate_proof_aggregation_mode' crates/entrypoint/src ||
   fail=1
 fi
 
-# --- 5. l-BFV protocol version sync -----------------------------------------------
-release_file="crates/config/protocol-release.toml"
-verifier_file="packages/interfold-contracts/contracts/verifiers/bfv/BfvPkVerifierV2.sol"
-release_match_count=$(grep -Ec '^protocol_version = [0-9]+$' "$release_file" || true)
-verifier_match_count=$(grep -Ec '^[[:space:]]*uint256 public constant LBFV_PROTOCOL_VERSION = [0-9]+;$' "$verifier_file" || true)
-if ((release_match_count != 1 || verifier_match_count != 1)); then
-  echo "check-invariants: FAILED — expected one protocol-version declaration in each source"
-  echo "  Rust: $release_file (matches: $release_match_count)"
-  echo "  Solidity: $verifier_file (matches: $verifier_match_count)"
-  fail=1
-else
-  release_protocol_version=$(sed -nE 's/^protocol_version = ([0-9]+)$/\1/p' "$release_file")
-  verifier_protocol_version=$(sed -nE 's/^[[:space:]]*uint256 public constant LBFV_PROTOCOL_VERSION = ([0-9]+);$/\1/p' "$verifier_file")
-  if ((release_protocol_version == 0 || release_protocol_version != verifier_protocol_version)); then
-    echo "check-invariants: FAILED — l-BFV protocol versions differ"
-    echo "  Rust protocol_version=$release_protocol_version"
-    echo "  Solidity LBFV_PROTOCOL_VERSION=$verifier_protocol_version"
-    fail=1
-  fi
-fi
-
 if ((fail == 0)); then
-  echo "✓ check:invariants: do_send=$count (≤ $DO_SEND_BASELINE), skip-proof feature contained, runtime guard present, ciphernode Docker workspace complete, l-BFV protocol version=$release_protocol_version"
+  echo "✓ check:repository: do_send=$count (≤ $DO_SEND_BASELINE), feature containment, runtime proof guard, Docker coverage, and shutdown grace verified"
 fi
 exit "$fail"

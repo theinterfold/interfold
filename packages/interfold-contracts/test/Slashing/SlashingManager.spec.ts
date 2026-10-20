@@ -491,47 +491,95 @@ describe("SlashingManager", function () {
       expect(proposal.proposer).to.equal(await proposer.getAddress());
     });
 
-    it("accepts a canonical multirow proof instance", async function () {
-      const {
-        slashingManager,
-        proposer,
-        operatorAddress,
-        voter1,
-        voter2,
-        mockCiphernodeRegistry,
-      } = await loadFixture(setup);
-      const proofType = 11;
-      const reason = ethers.keccak256(
-        ethers.solidityPacked(["uint256"], [proofType]),
-      );
-      await slashingManager.setSlashPolicy(reason, buildProofPolicy());
-      await mockCiphernodeRegistry.setCommitteeNodes(0, [
-        operatorAddress,
-        await voter1.getAddress(),
-        await voter2.getAddress(),
-      ]);
-      await mockCiphernodeRegistry.setThreshold(0, 2);
+    for (const [proofType, proofInstance, accepted] of [
+      [11, 4, true],
+      [12, 4, true],
+      [13, 4, true],
+      [14, 4, true],
+      [14, 5, true],
+      [14, 9, true],
+      [11, 5, false],
+      [12, 5, false],
+      [13, 5, false],
+      [14, 10, false],
+    ] as const) {
+      it(`${accepted ? "accepts" : "rejects"} proof family ${proofType} instance ${proofInstance}`, async function () {
+        const {
+          slashingManager,
+          proposer,
+          operatorAddress,
+          voter1,
+          voter2,
+          mockCiphernodeRegistry,
+        } = await loadFixture(setup);
+        const reason = ethers.keccak256(
+          ethers.solidityPacked(["uint256"], [proofType]),
+        );
+        await slashingManager.setSlashPolicy(reason, buildProofPolicy());
+        const smallD2 = proofType === 14 && proofInstance === 9;
+        const candidates = smallD2
+          ? (await ethers.getSigners()).filter(
+              (signer) => signer.address !== operatorAddress,
+            )
+          : [voter1, voter2];
+        const voters = candidates.slice(0, smallD2 ? 14 : 2);
+        await mockCiphernodeRegistry.setCommitteeNodes(0, [
+          operatorAddress,
+          ...(await Promise.all(
+            candidates
+              .slice(0, smallD2 ? 18 : 2)
+              .map((signer) => signer.getAddress()),
+          )),
+        ]);
+        await mockCiphernodeRegistry.setThreshold(0, voters.length);
 
-      const proof = await signAndEncodeAttestation(
-        [voter1, voter2],
-        0,
-        operatorAddress,
-        await slashingManager.getAddress(),
-        proofType,
-        31337,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        4,
-      );
+        const proof = await signAndEncodeAttestation(
+          voters,
+          0,
+          operatorAddress,
+          await slashingManager.getAddress(),
+          proofType,
+          31337,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          proofInstance,
+        );
 
-      await expect(
-        slashingManager
+        const proposal = slashingManager
           .connect(proposer)
-          .proposeSlash(0, operatorAddress, proof),
-      ).to.emit(slashingManager, "SlashProposed");
-    });
+          .proposeSlash(0, operatorAddress, proof);
+        if (accepted) {
+          await expect(proposal).to.emit(slashingManager, "SlashProposed");
+        } else {
+          await expect(proposal).to.be.revertedWithCustomError(
+            slashingManager,
+            "InvalidProof",
+          );
+        }
+        if (proofType === 14 && proofInstance === 9) {
+          const anotherRow = await signAndEncodeAttestation(
+            voters,
+            0,
+            operatorAddress,
+            await slashingManager.getAddress(),
+            proofType,
+            31337,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            8,
+          );
+          await expect(
+            slashingManager
+              .connect(proposer)
+              .proposeSlash(0, operatorAddress, anotherRow),
+          ).to.be.revertedWithCustomError(slashingManager, "DuplicateEvidence");
+        }
+      });
+    }
 
     it("rejects a nonzero singleton proof instance", async function () {
       const {

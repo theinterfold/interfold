@@ -61,16 +61,26 @@ pub fn hashes(root: &Path) -> Result<[(&'static str, [u8; 32]); 2]> {
         fold("node_fold")?,
         node,
     ]);
-    let c6 = compute_vk_hash(vec![
-        fold("c6_fold")?,
-        fold("c6_fold_kernel")?,
-        load(root, "recursive", "threshold", "share_decryption")?,
-    ]);
     let encode = |value: Fr| {
         let repr = value.into_bigint().to_bytes_be();
         let mut bytes = [0; 32];
         bytes[32 - repr.len()..].copy_from_slice(&repr);
         bytes
     };
-    Ok([("nodes_fold", encode(nodes)), ("c6_fold", encode(c6))])
+    Ok([
+        ("nodes_fold", encode(nodes)),
+        ("c6_fold", decryption_hash(root)?),
+    ])
+}
+
+pub fn decryption_hash(root: &Path) -> Result<[u8; 32]> {
+    let hash = compute_vk_hash(vec![
+        load(root, "default", "recursive_aggregation", "c6_fold")?,
+        load(root, "default", "recursive_aggregation", "c6_fold_kernel")?,
+        load(root, "recursive", "threshold", "share_decryption")?,
+    ]);
+    let repr = hash.into_bigint().to_bytes_be();
+    let mut bytes = [0; 32];
+    bytes[32 - repr.len()..].copy_from_slice(&repr);
+    Ok(bytes)
 }

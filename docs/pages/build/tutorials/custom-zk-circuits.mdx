@@ -27,7 +27,7 @@ checkout, use that checkout's matching SDK, circuits, and [toolchain pins](/buil
 
 - A project from the default template. See
   [Build a Complete E3 Program](/build/tutorials/write-e3-program).
-- `nargo` `1.0.0-beta.26` and `bb` `5.1.0` on your `PATH`. See
+- `nargo` `1.0.0-rc.3` and `bb` `6.0.0` on your `PATH`. See
   [Noir Circuits](/build/noir-circuits).
 - A checkout of the Interfold repository at the tag `v0.18.0`, with Rust installed. You compile the
   user-data-encryption circuits and run one Rust tool from it.
@@ -101,8 +101,8 @@ Add a `circuits` directory to the project. The verifier goes in `contracts/verif
 
 ### Write the input circuit
 
-Create `circuits/binary_input/Nargo.toml`. The library at `v0.18.0` uses the `insecure-64` preset,
-which the template requests (`paramSet: 0`).
+Create `circuits/binary_input/Nargo.toml`. This branch uses the `insecure` preset, which the
+template requests (`paramSet: 0`).
 
 ```toml filename="circuits/binary_input/Nargo.toml"
 [package]
@@ -183,7 +183,7 @@ type = "bin"
 
 [dependencies]
 interfold_lib = { git = "https://github.com/theinterfold/interfold", tag = "v0.18.0", directory = "circuits/lib" }
-bb_proof_verification = { git = "https://github.com/AztecProtocol/aztec-packages/", tag = "v5.1.0", directory = "barretenberg/noir/bb_proof_verification" }
+bb_proof_verification = { git = "https://github.com/AztecProtocol/aztec-packages/", tag = "v6.0.0", directory = "barretenberg/noir/bb_proof_verification" }
 ```
 
 Create `circuits/binary_input_fold/src/main.nr`. It follows
@@ -287,9 +287,9 @@ mv target/vk_hash target/binary_input.vk_recursive_hash
 ```
 
 <Callout type='info'>
-  The checkout must select `insecure-64` with `minimum`, as the tag does. If you ran `pnpm
-  build:circuits` for another pair, the user-data-encryption circuits no longer match the library
-  that your circuits use.
+  The checkout must select `insecure` with `minimum`, with matching application dependencies. If you
+  ran `pnpm build:circuits` for another pair, the user-data-encryption circuits no longer match the
+  library that your circuits use.
 </Callout>
 
 ### Pin the key hash
@@ -451,11 +451,11 @@ Before you use it, do these two things:
 
 1. Copy the five compiled JSON files (`user_data_encryption_ct0`, `user_data_encryption_ct1`,
    `user_data_encryption`, `binary_input`, and `binary_input_fold`) into `client/src/circuits`.
-2. Add `@aztec/bb.js` `5.1.0` and `@noir-lang/noir_js` `1.0.0-beta.26` to `client/package.json`.
+2. Add `@aztec-foundation/bb.js` `6.0.0` and `@noir-lang/noir_js` `1.0.0-rc.3` to `client/package.json`.
    These are the versions that `@interfold/sdk` uses in release `0.18.0`.
 
 ```ts filename="client/src/utils/prove-input.ts"
-import { Barretenberg, UltraHonkBackend } from '@aztec/bb.js'
+import { Barretenberg, UltraHonkBackend } from '@aztec-foundation/bb.js'
 import { Noir, type CompiledCircuit } from '@noir-lang/noir_js'
 import type { InterfoldSDK } from '@interfold/sdk'
 import { bytesToHex, encodeAbiParameters, parseAbiParameters } from 'viem'

@@ -90,7 +90,13 @@ impl AccusationVoting {
                     .any(|vote| vote.voter == self.my_address)
             })
             .map(|(id, pending)| {
-                let key = (pending.accusation.accused, pending.accusation.proof_type);
+                let key = (
+                    pending.accusation.accused,
+                    ProofIdentity {
+                        proof_type: pending.accusation.proof_type,
+                        instance: pending.accusation.proof_instance,
+                    },
+                );
                 let failed_proof = self
                     .received_data
                     .get(&key)
@@ -113,7 +119,9 @@ impl AccusationVoting {
             .collect::<Vec<_>>();
         pending.sort_by_key(|(id, _)| *id);
         let mut accused_proofs = self.accused_proofs.iter().copied().collect::<Vec<_>>();
-        accused_proofs.sort_by_key(|(address, proof_type)| (*address, *proof_type as u8));
+        accused_proofs.sort_by_key(|(address, identity)| {
+            (*address, identity.proof_type as u8, identity.instance)
+        });
         AccusationVotesSnapshot {
             version: ACCUSATION_VOTES_SNAPSHOT_VERSION,
             pending: pending.into_iter().map(|(_, saved)| saved).collect(),
@@ -145,7 +153,13 @@ impl AccusationVoting {
             self.restored_timeouts.push(accusation_id);
             if let Some(failed_proof) = saved.failed_proof {
                 self.received_data.insert(
-                    (saved.accusation.accused, saved.accusation.proof_type),
+                    (
+                        saved.accusation.accused,
+                        ProofIdentity {
+                            proof_type: saved.accusation.proof_type,
+                            instance: saved.accusation.proof_instance,
+                        },
+                    ),
                     ReceivedProofData {
                         data_hash: failed_proof.data_hash,
                         verification_passed: false,

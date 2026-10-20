@@ -17,8 +17,6 @@ e3-events = { workspace = true }
 e3-utils = { workspace = true }
 e3-zk-prover = { workspace = true }
 rand = { workspace = true }
-rand_chacha = { workspace = true }
-rayon = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 
@@ -26,5 +24,8 @@ tracing = { workspace = true }
 alloy.workspace = true
 e3-bfv-client.workspace = true
 e3-committee.workspace = true
+e3-committee-hash.workspace = true
 e3-fhe-params.workspace = true
+e3-zk-samples.workspace = true
+e3-zk-witness.workspace = true
 rand_chacha = { workspace = true }

@@ -14,14 +14,17 @@ use e3_fhe_params::BfvPreset;
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use e3_polynomial_fhe::FromFhePolynomial as _;
 use e3_zk_config::DkgInputType;
+use e3_zk_prover::c2_chunk_size;
 use e3_zk_witness::dkg::share_computation::{
     Inputs as ShareComputationInputs, ShareComputationCircuitData,
 };
-use e3_zk_helpers::dkg::share_encryption::ShareEncryptionCircuitData;
-use e3_zk_helpers::threshold::pk_generation::PkGenerationCircuitData;
-use e3_zk_helpers::CiphernodesCommittee;
-use e3_zk_helpers::CircuitsErrors;
-use e3_zk_prover::c2_chunk_size;
+
+use e3_zk_witness::dkg::share_encryption::ShareEncryptionCircuitData;
+
+use e3_zk_witness::threshold::pk_generation::PkGenerationCircuitData;
+
+use e3_zk_witness::WitnessError;
+
 use fhe::bfv::Encoding;
 use fhe::bfv::SecretKey;
 use fhe::mbfv::PublicKeyShare;
@@ -38,14 +41,14 @@ use std::ops::Deref;
 
 /// Generate C1 sample data and retain the smudging coefficients for C2b.
 ///
-/// Returns the [`SecretKey`] used for [`PublicKeyShare::new_with_intermediates`] so correlated C2a shares can
-/// be built with the share-computation sample constructor's
+/// Returns the [`SecretKey`] used for [`PublicKeyShare::new_extended`] so correlated C2a shares can
+/// be built with [`ShareComputationCircuitData::generate_sample`]-compatible
 /// `coeffs_to_poly_level0(secret_key.coeffs)` (not a round-trip through `pk.sk` limb 0).
 #[allow(dead_code)]
 pub fn pk_generation_sample_with_esi(
     preset: BfvPreset,
     committee: CiphernodesCommittee,
-) -> Result<(PkGenerationCircuitData, Vec<BigInt>, SecretKey), CircuitsErrors> {
+) -> Result<(PkGenerationCircuitData, Vec<BigInt>, SecretKey), WitnessError> {
     let (pk, esi, secret_key, _) = pk_generation_sample_with_esi_and_share(preset, committee)?;
     Ok((pk, esi, secret_key))
 }
@@ -61,7 +64,7 @@ pub fn pk_generation_sample_with_esi_and_share(
         SecretKey,
         PublicKeyShare,
     ),
-    CircuitsErrors,
+    WitnessError,
 > {
     let (threshold_params, _) = build_pair_for_preset(preset)
         .map_err(|e| WitnessError::Sample(format!("Failed to build pair for preset: {:?}", e)))?;
@@ -73,11 +76,11 @@ pub fn pk_generation_sample_with_esi_and_share(
 
     let (pk0_share, _, _sk_fhe, e) =
         PublicKeyShare::new_extended(&secret_key, crp.clone(), &mut rng).map_err(|e| {
-            CircuitsErrors::Sample(format!("Failed to create public key share: {:?}", e))
+            WitnessError::Sample(format!("Failed to create public key share: {:?}", e))
         })?;
     let public_key_share =
         PublicKeyShare::deserialize(&pk0_share.to_bytes(), &threshold_params, crp).map_err(
-            |e| CircuitsErrors::Sample(format!("Failed to retain public key share: {:?}", e)),
+            |e| WitnessError::Sample(format!("Failed to retain public key share: {:?}", e)),
         )?;
 
     let sk_coeffs: Vec<BigInt> = secret_key.coeffs.iter().map(|&c| BigInt::from(c)).collect();
@@ -105,21 +108,21 @@ pub fn pk_generation_sample_with_esi_and_share(
         lambda,
         &mut rng,
     )
-    .map_err(|e| CircuitsErrors::Sample(format!("Failed to generate smudging error: {:?}", e)))?;
+    .map_err(|e| WitnessError::Sample(format!("Failed to generate smudging error: {:?}", e)))?;
 
     let e_sm = Poly::<PowerBasis>::from_bigints(
         &esi_coeffs,
         threshold_params
             .context_at_level(0)
-            .map_err(|e| CircuitsErrors::Sample(format!("context_at_level: {:?}", e)))?,
+            .map_err(|e| WitnessError::Sample(format!("context_at_level: {:?}", e)))?,
     )
-    .map_err(|e| CircuitsErrors::Sample(format!("from_bigints: {:?}", e)))?;
+    .map_err(|e| WitnessError::Sample(format!("from_bigints: {:?}", e)))?;
 
     let pk = PkGenerationCircuitData {
-        committee,
         pk0_share: CrtPolynomial::from_fhe_polynomial(&pk0_share),
         eek: CrtPolynomial::from_fhe_polynomial(&e),
         e_sm: CrtPolynomial::from_fhe_polynomial(e_sm.deref()),
+        e_sm_lifted: Polynomial::from_fhe_polynomial(e_sm.deref()),
         sk: sk_crt,
     };
 
@@ -140,12 +143,11 @@ pub fn share_computation_sk_from_pk(
 
     let parity_matrix =
         compute_parity_matrix(threshold_params.moduli(), committee.n, committee.threshold)
-            .map_err(CircuitsErrors::Sample)?;
+            .map_err(WitnessError::Sample)?;
 
     let share_manager =
-        ShareManager::new(committee.n, committee.threshold, threshold_params.clone()).map_err(
-            |e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)),
-        )?;
+        ShareManager::new(committee.n, committee.threshold, threshold_params.clone())
+            .map_err(|e| WitnessError::Sample(format!("Failed to create ShareManager: {:?}", e)))?;
 
     let sk_poly = share_manager
         .coeffs_to_poly_level0(secret_key.coeffs.clone().as_ref())
@@ -153,7 +155,7 @@ pub fn share_computation_sk_from_pk(
     let sk_sss_u64 = share_manager
         .generate_secret_key_shares(sk_poly, &mut rng)
         .map(|shares| shares.into_transport())
-        .map_err(|e| CircuitsErrors::Sample(format!("generate_secret_key_shares: {:?}", e)))?;
+        .map_err(|e| WitnessError::Sample(format!("generate_secret_key_shares: {:?}", e)))?;
     let secret_sss: Vec<Array2<BigInt>> = sk_sss_u64
         .into_iter()
         .map(|a| a.mapv(BigInt::from))
@@ -183,24 +185,23 @@ pub fn share_computation_esm_from_esi(
 
     let parity_matrix =
         compute_parity_matrix(threshold_params.moduli(), committee.n, committee.threshold)
-            .map_err(CircuitsErrors::Sample)?;
+            .map_err(WitnessError::Sample)?;
 
     let share_manager =
-        ShareManager::new(committee.n, committee.threshold, threshold_params.clone()).map_err(
-            |e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)),
-        )?;
+        ShareManager::new(committee.n, committee.threshold, threshold_params.clone())
+            .map_err(|e| WitnessError::Sample(format!("Failed to create ShareManager: {:?}", e)))?;
 
     let esi_poly = Poly::<PowerBasis>::from_bigints(
         esi_coeffs,
         threshold_params
             .context_at_level(0)
-            .map_err(|e| CircuitsErrors::Sample(format!("context_at_level: {:?}", e)))?,
+            .map_err(|e| WitnessError::Sample(format!("context_at_level: {:?}", e)))?,
     )
-    .map_err(|e| CircuitsErrors::Sample(format!("from_bigints: {:?}", e)))?;
+    .map_err(|e| WitnessError::Sample(format!("from_bigints: {:?}", e)))?;
     let esi_sss_u64 = share_manager
         .generate_secret_key_shares(esi_poly, &mut rng)
         .map(|shares| shares.into_transport())
-        .map_err(|e| CircuitsErrors::Sample(format!("generate_secret_key_shares: {:?}", e)))?;
+        .map_err(|e| WitnessError::Sample(format!("generate_secret_key_shares: {:?}", e)))?;
     let secret_sss: Vec<Array2<BigInt>> = esi_sss_u64
         .into_iter()
         .map(|a| a.mapv(BigInt::from))
@@ -225,10 +226,7 @@ pub fn share_encryption_for_slot(
     slot: usize,
     dkg_input_type: DkgInputType,
     committee: CiphernodesCommittee,
-) -> Result<ShareEncryptionCircuitData, CircuitsErrors> {
-    let (_, dkg_params) =
-        build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
-
+) -> Result<ShareEncryptionCircuitData, WitnessError> {
     let (threshold_params, _) = build_pair_for_preset(preset)
         .map_err(|e| WitnessError::Sample(format!("Failed to build pair for preset: {:?}", e)))?;
     let l = threshold_params.moduli().len();
@@ -254,18 +252,16 @@ pub fn share_encryption_for_slot(
     let pt = Plaintext::try_encode(&share_row, Encoding::poly(), &dkg_pk.params)
         .map_err(|e| WitnessError::Sample(format!("encode plaintext: {:?}", e)))?;
 
-    let (ct, encryption) = dkg_pk
-        .try_encrypt_with_intermediates(&pt, &mut rng)
+    let (ct, encryption) = e3_zk_witness::encrypt_with_intermediates(dkg_pk, &pt, &mut rng)
         .map_err(|e| WitnessError::Sample(format!("encrypt: {:?}", e)))?;
 
     Ok(ShareEncryptionCircuitData {
         plaintext: pt,
         ciphertext: ct,
         public_key: dkg_pk.clone(),
-        secret_key: dkg_sk.clone(),
-        u_rns,
-        e0_rns,
-        e1_rns,
+        u_rns: encryption.randomness().clone(),
+        e0_rns: encryption.error_0().clone(),
+        e1_rns: encryption.error_1().clone(),
         dkg_input_type,
         party_idx: party as u32,
         mod_idx: mod_ix as u32,
@@ -273,3 +269,5 @@ pub fn share_encryption_for_slot(
         committee,
     })
 }
+
+use e3_zk_config::dkg::share_computation::parity::compute_parity_matrix;

@@ -9,11 +9,13 @@
 use anyhow::{anyhow, ensure, Context, Result};
 use e3_fhe_params::{build_pair_for_preset, lbfv_crs_seed, lbfv_urs_seed, BfvPreset};
 use e3_polynomial::CrtPolynomial;
-use e3_zk_helpers::{
+use e3_polynomial_fhe::FromFhePolynomial as _;
+use e3_zk_witness::commitments::{
     compute_lbfv_key_envelope_commitment, compute_lbfv_public_key_commitment,
-    compute_lbfv_rlk_commitment, compute_modulus_bit, compute_pk_aggregation_commitment,
-    compute_rlk_aggregation_commitment, fhe_poly_to_crt_centered_checked,
+    compute_lbfv_rlk_commitment, compute_pk_aggregation_commitment,
+    compute_rlk_aggregation_commitment,
 };
+use e3_zk_witness::encoding::fhe_poly_to_crt_centered_checked;
 use fhe::bfv::{CommonRandomPolyVec, PublicKey};
 use fhe::trlbfv::{LBFVPublicKey, LBFVRelinearizationKey};
 use fhe_math::rq::{Ntt, NttShoup, Poly};
@@ -341,15 +343,15 @@ fn field_bytes(value: &BigInt) -> Result<[u8; 32]> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use e3_zk_helpers::circuits::threshold::lbfv_pk_aggregation::{
+    use e3_committee::CiphernodesCommitteeSize;
+    use e3_zk_samples::lbfv_proof_domain::sample_lbfv_proof_domain;
+    use e3_zk_witness::threshold::lbfv_pk_aggregation::{
         LbfvPkAggregationCircuitData, LbfvPkAggregationInputs,
     };
-    use e3_zk_helpers::circuits::threshold::lbfv_proof_domain::sample_lbfv_proof_domain;
-    use e3_zk_helpers::circuits::threshold::pk_generation::LbfvPkGenerationAdapter;
-    use e3_zk_helpers::circuits::threshold::rlk_aggregation::{
+    use e3_zk_witness::threshold::pk_generation::LbfvPkGenerationAdapter;
+    use e3_zk_witness::threshold::rlk_aggregation::{
         RlkAggregationCircuitData, RlkAggregationComponent, RlkAggregationInputs,
     };
-    use e3_zk_helpers::{CiphernodesCommitteeSize, Computation};
     use fhe::aggregate::AggregateIter;
     use fhe::bfv::SecretKey;
     use fhe::trlbfv::{aggregate_relinearization_key, PublicKeyShare, RelinKeyShare};
@@ -424,10 +426,27 @@ pub(crate) mod tests {
         let (actual, _) = inspect_lbfv_key_envelope(&encoded, preset)?;
         let (params, _) = build_pair_for_preset(preset)?;
         let committee = CiphernodesCommitteeSize::Minimum.values();
+        let pk_config = e3_zk_config::threshold::pk_generation::Configs::new(
+            preset,
+            &params,
+            CiphernodesCommitteeSize::Minimum,
+        )?;
+        let pk_aggregation_config =
+            e3_zk_config::threshold::lbfv_pk_aggregation::LbfvPkAggregationConfigs::new(
+                preset,
+                &params,
+                CiphernodesCommitteeSize::Minimum,
+            )?;
+        let rlk_aggregation_config =
+            e3_zk_config::threshold::rlk_aggregation::RlkAggregationConfigs::new(
+                preset,
+                &params,
+                CiphernodesCommitteeSize::Minimum,
+            )?;
         let proof_domain = sample_lbfv_proof_domain();
         let party_ids = vec![0, 1];
         let bit = compute_modulus_bit(&params);
-        let pk_adapter = LbfvPkGenerationAdapter::new(preset)?;
+        let pk_adapter = LbfvPkGenerationAdapter::from_config(&pk_config)?;
         let mut pk_rows = Vec::with_capacity(params.moduli().len());
         let mut d0_rows = Vec::with_capacity(params.moduli().len());
         let mut d2_rows = Vec::with_capacity(params.moduli().len());
@@ -435,7 +454,7 @@ pub(crate) mod tests {
         for row_index in 0..params.moduli().len() {
             let row_index = u32::try_from(row_index)?;
             let pk_inputs = LbfvPkAggregationInputs::compute(
-                preset,
+                &pk_aggregation_config,
                 &LbfvPkAggregationCircuitData {
                     committee: committee.clone(),
                     proof_domain: proof_domain.clone(),
@@ -447,7 +466,7 @@ pub(crate) mod tests {
             )?;
             let rlk_agg = |component| -> Result<_> {
                 let inputs = RlkAggregationInputs::compute(
-                    preset,
+                    &rlk_aggregation_config,
                     &RlkAggregationCircuitData {
                         committee: committee.clone(),
                         proof_domain: proof_domain.clone(),
@@ -485,11 +504,9 @@ pub(crate) mod tests {
     /// outputs, with the same packing width.
     #[test]
     fn encryption_key_commitment_matches_row_zero_aggregation_output() -> Result<()> {
-        use e3_zk_helpers::circuits::threshold::user_data_encryption_chunked::{
-            Bits as UdeBits, Bounds as UdeBounds, Inputs as UdeInputs,
-            UserDataEncryptionCircuitData,
-        };
-        use e3_zk_helpers::compute_pk_aggregation_pk1_commitment;
+        use e3_zk_witness::commitments::compute_pk_aggregation_pk1_commitment;
+        use e3_zk_witness::threshold::user_data_encryption::UserDataEncryptionCircuitData;
+        use e3_zk_witness::threshold::user_data_encryption_chunked::Inputs as UdeInputs;
         use fhe::bfv::{Encoding, Plaintext};
         use fhe_traits::FheEncoder;
 
@@ -498,9 +515,20 @@ pub(crate) mod tests {
         let (_, encryption_key) = inspect_lbfv_key_envelope(&encoded, preset)?;
         let (params, _) = build_pair_for_preset(preset)?;
         let bit = compute_modulus_bit(&params);
+        let pk_config = e3_zk_config::threshold::pk_generation::Configs::new(
+            preset,
+            &params,
+            CiphernodesCommitteeSize::Minimum,
+        )?;
+        let pk_aggregation_config =
+            e3_zk_config::threshold::lbfv_pk_aggregation::LbfvPkAggregationConfigs::new(
+                preset,
+                &params,
+                CiphernodesCommitteeSize::Minimum,
+            )?;
 
         let row_zero = LbfvPkAggregationInputs::compute(
-            preset,
+            &pk_aggregation_config,
             &LbfvPkAggregationCircuitData {
                 committee: CiphernodesCommitteeSize::Minimum.values(),
                 proof_domain: sample_lbfv_proof_domain(),
@@ -510,18 +538,23 @@ pub(crate) mod tests {
                 shares: public_key_shares,
             },
         )?;
-        let crs_row_zero = LbfvPkGenerationAdapter::new(preset)?.crs_row(0)?;
+        let crs_row_zero = LbfvPkGenerationAdapter::from_config(&pk_config)?.crs_row(0)?;
         let aggregation_output =
             compute_pk_aggregation_commitment(&row_zero.pk0_agg, &crs_row_zero, bit);
 
-        let ude = UdeInputs::compute(
-            preset,
-            &UserDataEncryptionCircuitData {
-                public_key: PublicKey::from_bytes(&encryption_key, &params)?,
-                plaintext: Plaintext::try_encode(&[1u64], Encoding::poly(), &params)?,
-            },
+        let ude_config =
+            e3_zk_config::threshold::user_data_encryption_chunked::Configs::new(&params)?;
+        let data = UserDataEncryptionCircuitData {
+            public_key: PublicKey::from_bytes(&encryption_key, &params)?,
+            plaintext: Plaintext::try_encode(&[1u64], Encoding::poly(), &params)?,
+        };
+        let (ciphertext, intermediates) = e3_zk_witness::encrypt_with_intermediates(
+            &data.public_key,
+            &data.plaintext,
+            &mut rand::rng(),
         )?;
-        let ude_bit = UdeBits::compute(preset, &UdeBounds::compute(preset, &())?)?.pk_bit;
+        let ude = UdeInputs::compute(&ude_config, &data, &ciphertext, &intermediates)?;
+        let ude_bit = ude_config.bits.pk_bit;
 
         assert_eq!(ude_bit, bit);
         assert_eq!(

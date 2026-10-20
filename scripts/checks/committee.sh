@@ -261,7 +261,7 @@ check_bfv_preset secure-16384 secure16384 secure_16384 secure_16384
 
 # 6. Every chain-supported route in utils.ts must match the Noir committee shape and the
 #    parameter/configuration hashes compiled into ActiveCryptoConfig.sol. Keep this check
-#    dependency-free because the Agent Harness runs it before Node dependencies are installed.
+#    dependency-free because Repository Checks runs it before Node dependencies are installed.
 CIRCUIT_VERSION_LABEL=$(grep -E 'bytes32 internal constant CIRCUIT_VERSION = keccak256\("[^\"]+"\);' "$ACTIVE_SOL" \
   | sed -E 's/.*keccak256\("([^\"]+)"\).*/\1/' \
   | head -n1)
@@ -365,6 +365,7 @@ check_utils_route SECURE_MINIMUM secure-8192 minimum 0
 check_utils_route SECURE_MICRO secure-8192 micro 1
 check_utils_route SECURE_SMALL secure-8192 small 2
 check_utils_route SECURE_16384_MINIMUM secure-16384 minimum 0
+check_utils_route SECURE_16384_MICRO secure-16384 micro 1
 check_utils_route SECURE_16384_SMALL secure-16384 small 2
 
 route_list() {
@@ -375,7 +376,7 @@ route_list() {
 }
 
 TESTNET_ROUTES=$(route_list TESTNET_BFV_CONFIGS)
-EXPECTED_TESTNET_ROUTES="INSECURE_MINIMUM_BFV_CONFIG,INSECURE_MICRO_BFV_CONFIG,INSECURE_SMALL_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_SMALL_BFV_CONFIG,SECURE_16384_MINIMUM_BFV_CONFIG,SECURE_16384_SMALL_BFV_CONFIG"
+EXPECTED_TESTNET_ROUTES="INSECURE_MINIMUM_BFV_CONFIG,INSECURE_MICRO_BFV_CONFIG,INSECURE_SMALL_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_SMALL_BFV_CONFIG,SECURE_16384_MINIMUM_BFV_CONFIG,SECURE_16384_MICRO_BFV_CONFIG,SECURE_16384_SMALL_BFV_CONFIG"
 [[ "$TESTNET_ROUTES" == "$EXPECTED_TESTNET_ROUTES" ]] \
   || fail "$UTILS_TS testnet routes must contain the exact supported-pair matrix; got $TESTNET_ROUTES"
 
@@ -429,120 +430,10 @@ $COMMITTEE_RS has (N=$rust_n, T=$rust_t, H=$rust_h) for $capitalized"
   fi
 done
 
-# 9. Parity matrices for every committee must match what `generate_parity_matrices` would
-#    write right now. Hand-edits to parity_*.nr would slip past every other check, so verify
-#    them by regenerating into a tempdir and diffing. On-disk files are kept `nargo fmt`-clean
-#    (see `scripts/lint-circuits.sh`), so we format the generator output before comparing.
-#    Skipped when the binary is unavailable (fresh clone before `cargo build`); the build step
-#    will re-emit them anyway.
-GEN_BIN="target/release/generate_parity_matrices"
-NOIR_LIB="circuits/lib"
-format_parity_matrices_for_committee() {
-  local committee="$1"
-  local tmp="$2"
-  local variant live fresh backup formatted
-  local -a swapped_live=()
-  local -a swapped_backup=()
-
-  _restore_swapped_parity_live() {
-    local i
-    for i in "${!swapped_live[@]}"; do
-      if [[ -f "${swapped_backup[$i]}" ]]; then
-        cp "${swapped_backup[$i]}" "${swapped_live[$i]}"
-      fi
-    done
-  }
-
-  trap '_restore_swapped_parity_live' ERR
-
-  for variant in insecure secure_8192 secure_16384; do
-    live="$NOIR_LIB/src/configs/committee/$committee/parity_${variant}.nr"
-    fresh="$tmp/$committee/parity_${variant}.nr"
-    [[ -f "$live" && -f "$fresh" ]] || continue
-    backup="$tmp/$committee/parity_${variant}.live.bak"
-    formatted="$tmp/$committee/parity_${variant}.formatted.nr"
-    cp "$live" "$backup"
-    cp "$fresh" "$live"
-    swapped_live+=("$live")
-    swapped_backup+=("$backup")
-  done
-
-  live="$NOIR_LIB/src/configs/committee/$committee/smudging.nr"
-  fresh="$tmp/$committee/smudging.nr"
-  if [[ -f "$live" && -f "$fresh" ]]; then
-    backup="$tmp/$committee/smudging.live.bak"
-    cp "$live" "$backup"
-    cp "$fresh" "$live"
-    swapped_live+=("$live")
-    swapped_backup+=("$backup")
-  fi
-
-  if ((${#swapped_live[@]} == 0)); then
-    trap - ERR
-    return 0
-  fi
-
-  if ! (cd "$NOIR_LIB" && nargo fmt) >/dev/null; then
-    _restore_swapped_parity_live
-    trap - ERR
-    return 1
-  fi
-
-  for variant in insecure secure_8192 secure_16384; do
-    live="$NOIR_LIB/src/configs/committee/$committee/parity_${variant}.nr"
-    fresh="$tmp/$committee/parity_${variant}.nr"
-    backup="$tmp/$committee/parity_${variant}.live.bak"
-    formatted="$tmp/$committee/parity_${variant}.formatted.nr"
-    [[ -f "$backup" ]] || continue
-    cp "$live" "$formatted"
-    cp "$backup" "$live"
-    cp "$formatted" "$fresh"
-  done
-  live="$NOIR_LIB/src/configs/committee/$committee/smudging.nr"
-  fresh="$tmp/$committee/smudging.nr"
-  backup="$tmp/$committee/smudging.live.bak"
-  formatted="$tmp/$committee/smudging.formatted.nr"
-  if [[ -f "$backup" ]]; then
-    cp "$live" "$formatted"
-    cp "$backup" "$live"
-    cp "$formatted" "$fresh"
-  fi
-
-  trap - ERR
-}
-
-if [[ -x "$GEN_BIN" ]]; then
-  if ! command -v nargo >/dev/null 2>&1; then
-    echo "  (skipping parity-matrix drift check: nargo not found. Install nargo to enable formatted parity comparison.)" >&2
-  else
-    RAN_PARITY_CHECK=true
-    TMP=$(mktemp -d)
-    trap 'rm -rf "$TMP"' EXIT
-    # Mirror the committee dir layout so the bin can write into <tmp>/<committee>/.
-    for c in minimum micro small; do
-      if [[ -d "circuits/lib/src/configs/committee/$c" ]]; then
-        mkdir -p "$TMP/$c"
-      fi
-    done
-    for c in minimum micro small; do
-      [[ -d "$TMP/$c" ]] || continue
-      "$GEN_BIN" --committee "$c" --output-root "$TMP" >/dev/null
-      format_parity_matrices_for_committee "$c" "$TMP"
-      for variant in insecure secure_8192 secure_16384; do
-        live="circuits/lib/src/configs/committee/$c/parity_${variant}.nr"
-        fresh="$TMP/$c/parity_${variant}.nr"
-        if [[ -f "$live" && -f "$fresh" ]] && ! diff -q "$live" "$fresh" >/dev/null; then
-          fail "$live drift vs generator output. Run: pnpm build:circuits --committee $c"
-        fi
-      done
-      live="circuits/lib/src/configs/committee/$c/smudging.nr"
-      fresh="$TMP/$c/smudging.nr"
-      [[ -f "$fresh" ]] || fail "$GEN_BIN did not generate $fresh"
-      if ! diff -q "$live" "$fresh" >/dev/null; then
-        fail "$live drift vs generator output. Run: pnpm build:circuits --committee $c"
-      fi
-    done
-  fi
+# 9. The Rust build owner renders and formats a temporary library copy, without swapping live files.
+if command -v nargo >/dev/null 2>&1; then
+  pnpm --silent build:circuits check --committee all || fail "generated committee configuration differs from the Rust build owner"
+  RAN_PARITY_CHECK=true
 else
   echo "  (skipping generated committee check: nargo not found.)" >&2
 fi

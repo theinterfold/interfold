@@ -10,7 +10,7 @@
 
 //! Sequential C3 fold on the l-BFV path: one inner ZK `ShareEncryption` proof per step, chained with
 //! the previous accumulator: the `c3_fold_kernel_chunked` proof of the chain's first leaf on the
-//! first step, a `c3_fold_chunked` non-ZK proof after that (see `crates/zk-prover` and
+//! first step, a `c3_fold_chunked` non-ZK proof after that (see `crates/zk/prover` and
 //! `c3_fold_kernel_chunked`).
 
 use bb_proof_verification::{

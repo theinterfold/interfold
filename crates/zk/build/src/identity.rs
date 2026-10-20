@@ -36,6 +36,9 @@ const SOURCE_FILES: &[&str] = &[
     "crates/zk/build/Cargo.toml",
     "scripts/circuits/constants.ts",
     "scripts/circuits/build-pairs.json",
+    "crates/zk/prover/required-artifacts.json",
+    "crates/zk/prover/required-artifacts-trbfv.json",
+    "crates/zk/prover/required-artifacts-lbfv.json",
     "packages/interfold-contracts/scripts/protocol/constants.ts",
     "Cargo.lock",
 ];
@@ -241,7 +244,9 @@ fn hash_dir(
                 {
                     let mut text = String::from_utf8(bytes)?;
                     for (name, declaration) in configuration::declarations(&text) {
-                        if name.starts_with(prefix) {
+                        if name.starts_with(prefix)
+                            && !configuration::CHUNK_GLOBALS.contains(&name.as_str())
+                        {
                             text = text.replacen(
                                 &declaration,
                                 &format!("pub global {name}:<generated>;"),
@@ -284,6 +289,18 @@ pub fn source_hash_with_updates(
 ) -> Result<String> {
     let mut hash = Sha256::new();
     hash.update(b"interfold:zk-source:v2\0");
+    if selected_preset.is_none() {
+        for preset in crate::ARTIFACT_PRESETS {
+            hash_dir(
+                root,
+                &root.join("circuits/lib/src/configs").join(tier(preset)),
+                &mut hash,
+                "",
+                true,
+                updates,
+            )?;
+        }
+    }
     if let Some(name) = selected_preset {
         let tier = tier(preset(name)?);
         hash_record(&mut hash, b'p', name, tier.as_bytes());
@@ -307,7 +324,37 @@ pub fn source_hash_with_updates(
             updates,
         )?;
     }
+    if committee.is_none() {
+        for name in crate::COMMITTEES {
+            hash_dir(
+                root,
+                &root.join("circuits/lib/src/configs/committee").join(name),
+                &mut hash,
+                "",
+                false,
+                updates,
+            )?;
+        }
+    }
+    for group in request.groups.groups() {
+        let path = root.join("circuits/bin").join(group).join("Nargo.toml");
+        if path.is_file() {
+            hash_record(
+                &mut hash,
+                b'f',
+                path.strip_prefix(root)?
+                    .to_str()
+                    .context("workspace path")?,
+                &fs::read(&path)?,
+            );
+        }
+    }
     let mut circuits = artifacts::discover(root, request)?;
+    if let Some(name) = selected_preset {
+        circuits.retain(|circuit| {
+            crate::policy::enabled(circuit, preset(name).expect("validated preset"))
+        });
+    }
     circuits.sort_by(|left, right| left.path.cmp(&right.path));
     for circuit in circuits {
         hash_dir(root, &circuit.path, &mut hash, "", false, updates)?;
@@ -325,10 +372,10 @@ pub fn source_hash_with_updates(
                 .with_context(|| format!("Read required source file {path}"))?,
         };
         if path == "circuits/lib/src/configs/default/mod.nr" {
-            source = Regex::new(r"preset: (insecure-64|secure-8192)")?
+            source = Regex::new(r"preset: (insecure|secure[-_]8192|secure[-_]16384)\b")?
                 .replace_all(&source, "preset: <selected>")
                 .into_owned();
-            source = Regex::new(r"super::(insecure|secure)::")?
+            source = Regex::new(r"super::(insecure|secure_8192|secure_16384)::")?
                 .replace_all(&source, "super::<selected>::")
                 .into_owned();
         }
@@ -392,7 +439,7 @@ pub(crate) mod tests {
         let root = temp.path().join("repository");
         seed_sources(&root);
         let request = crate::tests::request();
-        let hash = || source_hash(&root, &request, Some("insecure-64"), Some("minimum"));
+        let hash = || source_hash(&root, &request, Some("insecure"), Some("minimum"));
         hash().unwrap();
         for path in SOURCE_DIRS.iter().chain(SOURCE_FILES).copied().chain([
             "circuits/lib/src/configs/insecure",
@@ -416,7 +463,7 @@ pub(crate) mod tests {
             source_hash_with_updates(
                 &root,
                 &request,
-                Some("insecure-64"),
+                Some("insecure"),
                 Some("minimum"),
                 &[(selector, contents)]
             )
@@ -436,7 +483,7 @@ pub(crate) mod tests {
             fs::write(package.join("Nargo.toml"), "[package]\nname = 'example'\n").unwrap();
         }
         let mut request = crate::tests::request();
-        let expected = source_hash(root, &request, Some("insecure-64"), Some("minimum")).unwrap();
+        let expected = source_hash(root, &request, Some("insecure"), Some("minimum")).unwrap();
         request.groups = crate::GroupSelection::Selected(vec![
             crate::Group::Threshold,
             crate::Group::RecursiveAggregation,
@@ -444,7 +491,7 @@ pub(crate) mod tests {
             crate::Group::Threshold,
         ]);
         assert_eq!(
-            source_hash(root, &request, Some("insecure-64"), Some("minimum")).unwrap(),
+            source_hash(root, &request, Some("insecure"), Some("minimum")).unwrap(),
             expected
         );
     }

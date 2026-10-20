@@ -58,6 +58,7 @@ tokio = { workspace = true, features = ["process", "fs"] }
 toml.workspace = true
 tracing.workspace = true
 walkdir = "2.5"
+zeroize.workspace = true
 
 [dev-dependencies]
 e3-zk-samples.workspace = true
@@ -71,9 +72,7 @@ e3-layout-lock = { workspace = true }
 e3-evm = { workspace = true }
 ark-bn254 = { workspace = true }
 ark-ff = { workspace = true }
-fhe-traits = { workspace = true }
-fhe-math = { workspace = true }
-ndarray = { workspace = true }
+rand_chacha.workspace = true
 num-traits = { workspace = true }
 paste = "1"
 rand = { workspace = true }

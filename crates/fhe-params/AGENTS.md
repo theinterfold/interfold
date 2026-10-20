@@ -9,6 +9,10 @@ Keep BFV presets, parameter builders, and scalar parameter arithmetic here, not 
 - The degree-64 insecure variants reuse degree-512 discriminants under schema 8. Preserve the
   [testnet reset boundary](../../docs/architecture/upgrades.md#insecure-testnet-preset-reset);
   matching serialized discriminants do not prove matching parameter meaning.
+- The trBFV and l-BFV protocol paths use different presets. Moving a preset between paths, or
+  changing its `artifacts_dir` or Noir module name, changes the circuit artifacts and the
+  configuration IDs that the contracts pin. The l-BFV CRS and URS seeds in `lbfv.rs` are protocol
+  constants; changing them changes every l-BFV key.
 - Use exact integer arithmetic in search and residue/width derivation. Narrowing plaintext moduli or
   assuming the FHE primitive's restricted modulus range changes supported scalar calculations.
 - CRP derivation is deterministic from its prescribed seed and parameter set. Changing either

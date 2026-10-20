@@ -28,7 +28,6 @@ impl Provable for PkGenerationCircuit {
     type Config = e3_zk_config::threshold::pk_generation::Configs;
     type Input = PkGenerationCircuitData;
 
-    /// C1 exists on the trBFV path only; the l-BFV path proves no C1.
     fn circuit(&self) -> CircuitName {
         CircuitName::PkGeneration
     }

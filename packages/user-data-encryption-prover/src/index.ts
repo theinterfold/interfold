@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { Barretenberg, UltraHonkBackend } from '@aztec/bb.js'
+import { Barretenberg, UltraHonkBackend } from '@aztec-foundation/bb.js'
 import { CompiledCircuit, Noir } from '@noir-lang/noir_js'
 
 type Field = string
@@ -253,9 +253,12 @@ export const buildUserDataEncryptionTopLevelInputs = async (
   api: Barretenberg,
   circuits: UserDataEncryptionCircuitBundle,
   inputs: UserDataEncryptionInputs,
+  onStage?: (stage: 'ct0' | 'ct1') => void,
 ): Promise<UserDataEncryptionTopLevelInputs> => {
   const { l } = assertShape(inputs)
+  onStage?.('ct0')
   const ct0 = await buildCt0TopLevelInputs(api, circuits, inputs, l)
+  onStage?.('ct1')
   const ct1 = await buildCt1TopLevelInputs(api, circuits, inputs, l)
   return { ct0, ct1 }
 }
@@ -265,8 +268,9 @@ export const proveUserDataEncryptionTree = async (
   api: Barretenberg,
   circuits: UserDataEncryptionCircuitBundle,
   inputs: UserDataEncryptionInputs,
+  onStage?: (stage: 'ct0' | 'ct1') => void,
 ): Promise<UserDataEncryptionProofTree> => {
-  const topLevelInputs = await buildUserDataEncryptionTopLevelInputs(api, circuits, inputs)
+  const topLevelInputs = await buildUserDataEncryptionTopLevelInputs(api, circuits, inputs, onStage)
   const ct0 = await prove(api, circuits, 'userDataEncryptionCt0', topLevelInputs.ct0, 'noir-recursive')
   const ct1 = await prove(api, circuits, 'userDataEncryptionCt1', topLevelInputs.ct1, 'noir-recursive-no-zk')
   return { ct0, ct1 }

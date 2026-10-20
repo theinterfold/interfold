@@ -9,7 +9,7 @@ use e3_events::{
     LbfvPkAggregationProofRequest, RlkAggregationProofRequest, ZkRequest,
 };
 use e3_trbfv::lbfv_operation::LbfvOperationId;
-use e3_zk_helpers::threshold::rlk_aggregation::RlkAggregationComponent;
+use e3_zk_witness::threshold::rlk_aggregation::RlkAggregationComponent;
 
 impl PublicKeyAggregator {
     pub(in crate::actors::publickey_aggregator) fn try_dispatch_lbfv_aggregation_rows(

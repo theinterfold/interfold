@@ -23,7 +23,7 @@
 //! request produces the accepted response.
 
 use super::super::*;
-use e3_zk_helpers::threshold::rlk_aggregation::RlkAggregationComponent;
+use e3_zk_witness::threshold::rlk_aggregation::RlkAggregationComponent;
 use std::collections::HashSet;
 use std::time::Duration;
 

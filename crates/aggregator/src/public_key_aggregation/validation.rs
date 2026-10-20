@@ -94,10 +94,11 @@ pub(crate) fn extract_lbfv_key_envelope_commitment(
         proof.circuit == CircuitName::DkgAggregatorV2,
         "key-envelope commitment requires a DkgAggregatorV2 proof"
     );
-    let layout = e3_zk_helpers::DkgAggregatorV2PublicLayout::new(committee_h, lbfv_row_count);
+    let layout =
+        e3_zk_config::output_layout::DkgAggregatorV2PublicLayout::new(committee_h, lbfv_row_count);
     let expected_len = layout
         .field_count
-        .checked_mul(e3_zk_helpers::FIELD_BYTE_LEN)
+        .checked_mul(e3_zk_config::FIELD_BYTE_LEN)
         .ok_or_else(|| anyhow!("V2 public-signal length overflow"))?;
     ensure!(
         proof.public_signals.len() == expected_len,

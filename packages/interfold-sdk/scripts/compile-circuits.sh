@@ -47,6 +47,7 @@ for PRESET in "${PRESETS[@]}"; do
     --committee "${BUILD_COMMITTEE}" \
     --group threshold \
     "${CIRCUIT_ARGS[@]}" \
+    --output "${DIST}/threshold-build" \
     --skip-checksums \
     --no-clean-targets
 

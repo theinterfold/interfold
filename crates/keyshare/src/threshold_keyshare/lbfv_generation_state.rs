@@ -189,7 +189,7 @@ impl LbfvGenerationStateV1 {
                     .with_context(|| format!("invalid finalized committee address {address}"))
             })
             .collect::<Result<Vec<_>>>()?;
-        e3_zk_helpers::CiphernodesCommitteeSize::from_threshold(
+        e3_committee::CiphernodesCommitteeSize::from_threshold(
             selection.threshold_m,
             selection.threshold_n,
         )?;
@@ -612,8 +612,8 @@ impl LbfvGenerationStateV1 {
         Ok(())
     }
 
-    fn committee_size(&self) -> Result<e3_zk_helpers::CiphernodesCommitteeSize> {
-        e3_zk_helpers::CiphernodesCommitteeSize::from_threshold(
+    fn committee_size(&self) -> Result<e3_committee::CiphernodesCommitteeSize> {
+        e3_committee::CiphernodesCommitteeSize::from_threshold(
             self.committee.len().saturating_sub(1) / 2,
             self.committee.len(),
         )
@@ -676,7 +676,7 @@ mod tests {
     use e3_events::{CircuitName, E3id, Proof, ProofPayload, Seed};
     use e3_trbfv::gen_lbfv_key_shares::EncryptedRlkWitness;
     use e3_utils::ArcBytes;
-    use e3_zk_helpers::FIELD_BYTE_LEN;
+    use e3_zk_config::FIELD_BYTE_LEN;
 
     const LEGACY_GENERATION_STATE: &[u8] =
         include_bytes!("fixtures/lbfv_generation_state_v1.bincode");
@@ -811,7 +811,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_minimum_secure_committee() {
+    fn rejects_incomplete_micro_committee() {
         let signer = signer();
         let selection = CiphernodeSelected {
             e3_id: E3id::new("7", 31_337),
@@ -829,13 +829,64 @@ mod tests {
             ],
         };
 
-        assert!(LbfvGenerationStateV1::from_selection(
+        let error = LbfvGenerationStateV1::from_selection(
             &selection,
             Address::repeat_byte(0x11),
             signer.address(),
             4,
         )
-        .is_err());
+        .unwrap_err();
+        assert!(error.to_string().contains("exactly 9 committee addresses"));
+    }
+
+    #[test]
+    fn secure_committee_selections_round_trip_all_finalized_party_slots() {
+        let signer = signer();
+        let preset = BfvPreset::SecureThreshold16384;
+        let params =
+            e3_fhe_params::encode_bfv_params(&e3_fhe_params::BfvParamSet::from(preset).build_arc());
+        for committee_size in [
+            e3_committee::CiphernodesCommitteeSize::Micro,
+            e3_committee::CiphernodesCommitteeSize::Small,
+        ] {
+            let values = committee_size.values();
+            let last_party_id = values.n - 1;
+            let mut committee: Vec<_> = (1..values.n)
+                .map(|slot| Address::repeat_byte(slot as u8))
+                .collect();
+            committee.push(signer.address());
+            let selection = CiphernodeSelected {
+                e3_id: E3id::new("7", 31_337),
+                threshold_m: values.threshold,
+                threshold_n: values.n,
+                seed: Seed([0; 32]),
+                error_size: ArcBytes::from_bytes(&[1]),
+                params_preset: preset,
+                params: ArcBytes::from_bytes(&params),
+                party_id: last_party_id as u64,
+                committee: committee.iter().map(ToString::to_string).collect(),
+            };
+            let state = LbfvGenerationStateV1::from_selection(
+                &selection,
+                Address::repeat_byte(0x11),
+                signer.address(),
+                4,
+            )
+            .unwrap();
+            let restored: LbfvGenerationStateV1 =
+                bincode::deserialize(&bincode::serialize(&state).unwrap()).unwrap();
+            restored.validate_loaded().unwrap();
+            assert_eq!(restored.committee, committee);
+            assert_eq!(restored.context.party_id, last_party_id as u32);
+            assert_eq!(
+                restored.context.proof_session_id,
+                state.context.proof_session_id
+            );
+            assert_eq!(
+                restored.context.proof_domain.crypto_config_id,
+                e3_fhe_params::crypto_config_id(&params)
+            );
+        }
     }
 
     fn generation_request(state: &LbfvGenerationStateV1) -> GenLbfvKeySharesRequest {

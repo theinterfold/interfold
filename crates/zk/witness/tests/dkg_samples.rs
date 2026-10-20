@@ -194,7 +194,7 @@ mod share_encryption {
         assert_eq!(
             max_pk_bound.clone(),
             BigUint::from(
-                (e3_fhe_params::constants::insecure_64::dkg::MODULI
+                (e3_fhe_params::constants::insecure::dkg::MODULI
                     .iter()
                     .max()
                     .unwrap()

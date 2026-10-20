@@ -8,8 +8,8 @@ use e3_committee_hash::{
     hash_lbfv_accepted_party_set, hash_lbfv_proof_session, split_hash_to_field_limbs,
 };
 use e3_events::LbfvVerificationContext;
-use e3_zk_helpers::threshold::rlk_aggregation::RlkAggregationComponent;
-use e3_zk_helpers::{LbfvPkAggregationPublicLayout, RlkAggregationPublicLayout};
+use e3_zk_witness::threshold::rlk_aggregation::RlkAggregationComponent;
+use e3_zk_witness::{LbfvPkAggregationPublicLayout, RlkAggregationPublicLayout};
 
 impl ShareVerifier {
     fn has_complete_row_family(
@@ -65,8 +65,8 @@ impl ShareVerifier {
     }
 
     fn public_field_at(signed: &SignedProofPayload, index: usize) -> &[u8] {
-        let start = index * e3_zk_helpers::FIELD_BYTE_LEN;
-        &signed.payload.proof.public_signals[start..start + e3_zk_helpers::FIELD_BYTE_LEN]
+        let start = index * e3_zk_witness::FIELD_BYTE_LEN;
+        &signed.payload.proof.public_signals[start..start + e3_zk_witness::FIELD_BYTE_LEN]
     }
 
     fn field_matches_u128(field: &[u8], expected: u128) -> bool {
@@ -143,7 +143,7 @@ impl ShareVerifier {
             proofs.iter().all(|signed| {
                 expected_fields(signed.payload.proof_type).is_some_and(|fields| {
                     signed.payload.proof.public_signals.len()
-                        == fields * e3_zk_helpers::FIELD_BYTE_LEN
+                        == fields * e3_zk_witness::FIELD_BYTE_LEN
                 })
             })
         };

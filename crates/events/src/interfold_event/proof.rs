@@ -2,7 +2,7 @@
 
 use derivative::Derivative;
 use e3_utils::utility_types::ArcBytes;
-use e3_zk_helpers::{
+use e3_zk_config::output_layout::{
     CircuitInputLayout, CircuitOutputLayout, DKG_SHARE_DECRYPTION_OUTPUTS,
     LBFV_PK_AGGREGATION_INPUTS, LBFV_PK_AGGREGATION_OUTPUTS, LBFV_PK_GENERATION_INPUTS,
     LBFV_PK_GENERATION_LIMB_INPUTS, LBFV_PK_GENERATION_LIMB_OUTPUTS, LBFV_PK_GENERATION_OUTPUTS,

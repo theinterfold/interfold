@@ -6,12 +6,10 @@
 
 use anyhow::{anyhow, Result};
 use e3_fhe_params::{try_build_bfv_params_arc, BfvParamSet, BfvPreset};
-use e3_zk_helpers::circuits::threshold::user_data_encryption::circuit::UserDataEncryptionCircuitData;
-use e3_zk_helpers::circuits::threshold::user_data_encryption::utils::public_key_on_protocol_crs;
-use e3_zk_helpers::circuits::threshold::user_data_encryption::Inputs as UserDataEncryptionInputs;
-use e3_zk_helpers::circuits::threshold::user_data_encryption_chunked::circuit::UserDataEncryptionCircuitData as ChunkedUserDataEncryptionCircuitData;
-use e3_zk_helpers::circuits::threshold::user_data_encryption_chunked::Inputs as ChunkedUserDataEncryptionInputs;
-use e3_zk_helpers::circuits::Computation;
+use e3_zk_witness::threshold::user_data_encryption::{
+    encrypt_and_prepare, UserDataEncryptionCircuitData,
+};
+use e3_zk_witness::threshold::user_data_encryption_chunked::Inputs as ChunkedUserDataEncryptionInputs;
 use fhe::bfv::{BfvParameters, Ciphertext, Encoding, Plaintext, PublicKey, SecretKey};
 use fhe::Error as FheError;
 use fhe_traits::{DeserializeParametrized, FheEncoder, FheEncrypter, Serialize};
@@ -181,23 +179,29 @@ where
     // The trBFV path proves user encryption with `user_data_encryption`'s ct0/ct1; the l-BFV path
     // with the chunked ct0/ct1 pipeline, which takes its own witness.
     let (encrypted_data, mut witness) = if e3_fhe_params::is_lbfv_path(preset) {
+        let config = e3_zk_config::threshold::user_data_encryption_chunked::Configs::new(&params)?;
+        let (ciphertext, intermediates) =
+            e3_zk_witness::encrypt_with_intermediates(&pk, &plaintext, &mut rng())?;
         let inputs = ChunkedUserDataEncryptionInputs::compute(
-            preset,
-            &ChunkedUserDataEncryptionCircuitData {
+            &config,
+            &UserDataEncryptionCircuitData {
                 public_key: pk,
                 plaintext,
             },
+            &ciphertext,
+            &intermediates,
         )?;
-        (inputs.ciphertext.clone(), inputs.to_json()?)
+        (ciphertext.to_bytes(), inputs.to_json()?)
     } else {
-        let inputs = UserDataEncryptionInputs::compute(
-            preset,
+        let config = e3_zk_config::threshold::user_data_encryption::Configs::new(&params)?;
+        let (ciphertext, inputs) = encrypt_and_prepare(
+            &config,
             &UserDataEncryptionCircuitData {
                 public_key: pk,
                 plaintext,
             },
         )?;
-        (inputs.ciphertext.clone(), inputs.to_json()?)
+        (ciphertext.to_bytes(), inputs.to_json())
     };
     stringify_unsafe_js_integers(&mut witness);
     let circuit_inputs = witness.to_string();
@@ -228,7 +232,10 @@ pub fn generate_public_key(
     let mut rng = rng();
     let sk = SecretKey::random(&params, &mut rng);
     // On the protocol CRS, as committee keys are: user-data encryption proofs need that `a`.
-    let pk = public_key_on_protocol_crs(&params, &sk, &mut rng)
+    use fhe::mbfv::{Aggregate as _, PublicKeyShare};
+    let crp = e3_fhe_params::create_deterministic_crp_from_default_seed(&params);
+    let pk = PublicKeyShare::new(&sk, crp, &mut rng)
+        .and_then(|share| PublicKey::from_shares(vec![share]))
         .map_err(|e| anyhow!("Failed to build public key: {e}"))?;
 
     Ok(pk.to_bytes())
@@ -353,6 +360,7 @@ pub fn compute_ct_commitment_with_params(
 mod tests {
     use e3_fhe_params::DEFAULT_BFV_PRESET;
     use e3_fhe_params::{build_bfv_params_from_set_arc, BfvParamSet};
+    use e3_zk_samples::threshold::user_data_encryption::public_key_on_protocol_crs;
     use fhe_traits::FheDecoder;
 
     use super::*;

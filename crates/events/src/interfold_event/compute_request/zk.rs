@@ -7,6 +7,7 @@
 use crate::{Proof, SignedProofPayload};
 use alloy::primitives::Address;
 use derivative::Derivative;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_committee_hash::{
     hash_lbfv_accepted_party_set, hash_lbfv_proof_session, DecryptionDomainContext,
     LbfvProofDomainContext,
@@ -16,8 +17,8 @@ use e3_fhe_params::BfvPreset;
 use e3_trbfv::gen_lbfv_key_shares::{GenLbfvKeySharesRequest, GenLbfvKeySharesResponse};
 use e3_trbfv::lbfv_operation::{digest_lbfv_public_artifacts, LbfvOperationId, LbfvOperationKind};
 use e3_utils::utility_types::ArcBytes;
-use e3_zk_helpers::threshold::rlk_aggregation::RlkAggregationComponent;
-use e3_zk_helpers::{computation::DkgInputType, CiphernodesCommitteeSize};
+use e3_zk_config::DkgInputType;
+use e3_zk_witness::threshold::rlk_aggregation::RlkAggregationComponent;
 use serde::{Deserialize, Serialize};
 
 /// ZK proof generation request variants.
@@ -72,6 +73,10 @@ pub enum ZkRequest {
     LbfvAggregationFold(LbfvAggregationFoldRequest),
     /// Aggregate the secure-16384 DKG proof chain.
     DkgAggregationV2(DkgAggregationV2Request),
+    /// Re-verify a C3a/C3b proof that an accusation forwards. It is accusation work, so it still
+    /// runs after the E3 fails, until the request completes. Its response is
+    /// `ZkResponse::VerifyShareProofs`.
+    ReverifyAccusedProof(VerifyShareProofsRequest),
 }
 
 impl ZkRequest {
@@ -222,7 +227,7 @@ fn validate_lbfv_proof_request_domain(
         e3_fhe_params::supports_lbfv(params_preset),
         "l-BFV proof requests require a preset with l-BFV parameters"
     );
-    e3_zk_helpers::threshold::lbfv_proof_domain::lbfv_proof_session(proof_domain)
+    e3_zk_witness::threshold::lbfv_proof_domain::lbfv_proof_session(proof_domain)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     let committee = committee_size.values();
     anyhow::ensure!(
@@ -676,14 +681,16 @@ pub struct DkgShareDecryptionProofRequest {
     pub num_honest_parties: usize,
     /// Number of CRT moduli (L).
     pub num_moduli: usize,
+    /// Own party's row in the selected order, if the party contributed to the key.
     /// Position of the own party within the H ascending-party_id ordering. The prover
     /// splices `own_share_raw` into this slot when assembling C4 inputs.
-    pub own_plaintext_idx: usize,
+    pub own_plaintext_idx: Option<usize>,
     /// Zero-based recipient party ID whose share row each C4 proof decrypts.
     pub recipient_party_id: u64,
+    /// Own plaintext share, present only when `own_plaintext_idx` is present.
     /// Bincode-serialised `Vec<Vec<u64>>` of shape `[L][N]` — the own party's plaintext
     /// share row per modulus (witness — encrypted at rest).
-    pub own_share_raw: SensitiveBytes,
+    pub own_share_raw: Option<SensitiveBytes>,
     /// SecretKey or SmudgingNoise.
     pub dkg_input_type: DkgInputType,
     /// BFV preset for parameter resolution.
@@ -1145,7 +1152,7 @@ mod serialization_tests {
     use e3_trbfv::gen_lbfv_key_shares::{EncryptedRlkWitness, GenLbfvKeySharesResponse};
 
     fn proof_domain() -> LbfvProofDomainContext {
-        e3_zk_helpers::threshold::lbfv_proof_domain::sample_lbfv_proof_domain()
+        e3_zk_samples::lbfv_proof_domain::sample_lbfv_proof_domain()
     }
 
     fn generation_operation_id(domain: LbfvProofDomainContext, party_id: u32) -> LbfvOperationId {

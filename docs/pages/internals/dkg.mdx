@@ -650,7 +650,7 @@ anchors let later steps map each DKG output to `topNodes[partyId]`.
 ### Public key transport
 
 `publishCommittee` stores only the commitment. Committee members then send the serialized key with
-`publishCommitteePublicKey` in 90 KiB chunks, with a maximum of 512 KiB, while the E3 is at
+`publishCommitteePublicKey` in 90 KiB chunks, with a maximum of 16 MiB, while the E3 is at
 `KeyPublished`. The registry emits `CommitteePublicKeyChunkPublished`. A consumer assembles a
 complete chunk set, checks `keccak256(publicKey) == candidateHash`, and recomputes the commitment
 before it uses the key.
@@ -714,8 +714,8 @@ The Honk verifiers `DkgAggregatorVerifier.sol` and `DecryptionAggregatorVerifier
 from the recursive VKs of `dkg_aggregator` and `decryption_aggregator` with
 `bb write_solidity_verifier`. The files in
 `packages/interfold-contracts/contracts/verifiers/bfv/honk/` are the `insecure` and `minimum` pair.
-The other pairs are in `honk/<preset>/<committee>/`. `secure-16384` supports the `minimum` and
-`small` committees. A deployment must use the pair that matches its preset and committee. A
+The other pairs are in `honk/<preset>/<committee>/`. `secure-16384` supports the `minimum`, `micro`,
+and `small` committees. A deployment must use the pair that matches its preset and committee. A
 production deployment on a non-canonical preset must regenerate the verifiers locally for that
 deployment.
 

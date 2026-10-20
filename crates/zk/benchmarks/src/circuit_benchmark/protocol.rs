@@ -137,8 +137,8 @@ pub(crate) fn configuration(
     let stored_mode = cfg["mode"]
         .as_str()
         .or_else(|| match cfg["bfv_preset_subdir"].as_str() {
-            Some("insecure-64") => Some("insecure"),
-            Some("secure-8192") => Some("secure"),
+            Some("insecure-64" | "insecure" | "insecure-simd") => Some("insecure"),
+            Some("secure-8192" | "secure-16384") => Some("secure"),
             _ => None,
         });
     if let (Some(requested), Some(stored)) = (mode, stored_mode) {
@@ -150,10 +150,17 @@ pub(crate) fn configuration(
         .or(stored_mode)
         .context("Specify --mode for an export without preset metadata")?;
     let preset = match mode {
-        "insecure" => "insecure-64",
-        "secure" => "secure-8192",
+        "insecure" => cfg["bfv_preset_subdir"].as_str().unwrap_or("insecure-64"),
+        "secure" => cfg["bfv_preset_subdir"].as_str().unwrap_or("secure-8192"),
         _ => bail!("Mode must be insecure or secure"),
     };
+    if !matches!(
+        (mode, preset),
+        ("insecure", "insecure-64" | "insecure" | "insecure-simd")
+            | ("secure", "secure-8192" | "secure-16384")
+    ) {
+        bail!("Exported preset disagrees with its benchmark mode");
+    }
     if cfg["bfv_preset_subdir"]
         .as_str()
         .is_some_and(|stored| stored != preset)
@@ -272,6 +279,7 @@ pub(crate) fn integration_command(
         ])
         .current_dir(root)
         .env("BENCHMARK_MODE", &cfg.mode)
+        .env("BENCHMARK_PRESET", &cfg.preset)
         .env("E3_CUSTOM_BB", bb)
         .env("CIPHERNODE_SKIP_PROOF_AGGREGATION", "false")
         .env("BENCHMARK_MULTITHREAD_JOBS", cfg.jobs.to_string())

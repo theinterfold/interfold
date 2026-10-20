@@ -34,6 +34,8 @@ system. It supports two main workflows:
 | [`utils.rs`](src/utils.rs)                                                  | Exact scalar residue, inverse, and coefficient-width derivation.                   |
 | [`search/`](src/search), [`bin/search_params.rs`](src/bin/search_params.rs) | Exact-integer security search and its CLI.                                         |
 | [`encoding.rs`](src/encoding.rs)                                            | Optional Solidity ABI parameter exchange.                                          |
+| [`lbfv.rs`](src/lbfv.rs), [`output_cap.rs`](src/output_cap.rs)              | l-BFV path detection, fixed CRS/URS seeds, and the per-preset decryption output cap. |
+| [`smudging.rs`](src/smudging.rs)                                            | Smudging bound and noise helpers on the fhe.rs smudging API.                       |
 
 Consumers resolve a named preset to metadata, build its threshold/DKG pair as needed, and derive
 scalar bounds/CRP at this shared boundary. Searching custom parameters is an exploratory workflow,
@@ -47,8 +49,30 @@ Pre-configured BFV parameter sets for PVSS (Public Verifiable Secret Sharing) pr
 
 - **`BfvPreset::SecureThreshold8192`**: Secure threshold BFV parameters (degree 8192)
 - **`BfvPreset::SecureDkg8192`**: Production-ready DKG parameters (degree 8192)
-- **`BfvPreset::InsecureThreshold`**: Testing-only threshold BFV parameters (degree 128)
-- **`BfvPreset::InsecureDkg`**: Testing-only DKG parameters (degree 128)
+- **`BfvPreset::InsecureThreshold64`** (current `DEFAULT_BFV_PRESET`): Testing-only threshold BFV
+  parameters (degree 64)
+- **`BfvPreset::InsecureDkg64`**: Testing-only DKG parameters (degree 64)
+- **`BfvPreset::InsecureThresholdLbfv`** / **`BfvPreset::InsecureDkgLbfv`**: Testing-only
+  parameters (degree 128) of the l-BFV protocol path (on-chain parameter set 4)
+- **`BfvPreset::InsecureThresholdSimd`** / **`BfvPreset::InsecureDkgSimd`**: Testing-only l-BFV
+  parameters (degree 128, plaintext modulus 257, on-chain parameter set 5) that allow SIMD
+  encoding with 128 slots
+- **`BfvPreset::SecureThreshold16384`** / **`BfvPreset::SecureDkg16384`**: Secure l-BFV
+  parameters (degree 16384, multiplicative depth 3, on-chain parameter set 3)
+
+The trBFV presets are `InsecureThreshold64` and `SecureThreshold8192`; the l-BFV presets are the
+other threshold presets. `supports_lbfv` and `is_lbfv_path` name the protocol path of a preset, and
+`BfvPreset::artifacts_dir` and `BfvPreset::noir_config_module` name its circuit artifacts
+(`insecure-64`, `insecure`, `insecure-simd`, `secure-8192`, `secure-16384`). The l-BFV presets
+also carry fixed CRS and URS seeds (`lbfv` module). `BfvPreset::max_msg_non_zero_coeffs` gives the
+number of plaintext coefficients that the decryption circuits publish (128 for the SIMD preset,
+50 for the others).
+
+The insecure-64 and secure-8192 threshold presets use plaintext modulus 17,000,000, three CRT limbs,
+and `SEARCH_Z = 100,000`. Degree 64 is not secure and is only for development/tests. Reusing the old
+degree-512 persisted discriminants does not migrate stored data. Follow the
+[testnet reset requirement](../../docs/architecture/upgrades.md#insecure-testnet-preset-reset)
+before opening an existing degree-512 testnet store.
 
 In the PVSS protocol, two types of BFV parameters are needed:
 

@@ -19,7 +19,7 @@ library SlashingEvidenceLib {
         );
     uint256 internal constant CLOCK_SKEW = 30 seconds;
     uint256 internal constant FIRST_MULTIROW_PROOF_TYPE = 11;
-    uint256 internal constant LAST_MULTIROW_PROOF_TYPE = 14;
+    uint256 internal constant RLK_AGGREGATION_PROOF_TYPE = 14;
     uint256 internal constant LBFV_ROW_INSTANCES = 5;
 
     struct AttestationEvidence {
@@ -55,12 +55,20 @@ library SlashingEvidenceLib {
     ) external view {
         ICiphernodeRegistry registry = ICiphernodeRegistry(registryAddress);
         AttestationEvidence memory attestation = _decodeEvidence(proof);
-        bool isMultirow = attestation.proofType >= FIRST_MULTIROW_PROOF_TYPE &&
-            attestation.proofType <= LAST_MULTIROW_PROOF_TYPE;
-        if (
-            (isMultirow && attestation.proofInstance >= LBFV_ROW_INSTANCES) ||
-            (!isMultirow && attestation.proofInstance != 0)
-        ) revert ISlashingManager.InvalidProof();
+        {
+            bool isMultirow = attestation.proofType >=
+                FIRST_MULTIROW_PROOF_TYPE &&
+                attestation.proofType <= RLK_AGGREGATION_PROOF_TYPE;
+            // RLK aggregation identifies both d0 and d2 as component * rowCount + row.
+            uint256 instanceLimit = attestation.proofType ==
+                RLK_AGGREGATION_PROOF_TYPE
+                ? 2 * LBFV_ROW_INSTANCES
+                : LBFV_ROW_INSTANCES;
+            if (
+                (isMultirow && attestation.proofInstance >= instanceLimit) ||
+                (!isMultirow && attestation.proofInstance != 0)
+            ) revert ISlashingManager.InvalidProof();
+        }
         uint256 numVotes = attestation.voters.length;
         if (
             numVotes != attestation.dataHashes.length ||
