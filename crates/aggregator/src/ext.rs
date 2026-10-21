@@ -875,12 +875,12 @@ mod tests {
     async fn plaintext_dependencies_use_chain_rosters_across_restart() -> Result<()> {
         use e3_bfv_client::{client::generate_public_key, compute_pk_commitment};
         use e3_data::{PersistableData, Repository};
-        use e3_events::{EventSource, OrderedSet, PublicKeyAggregated, Unsequenced};
+        use e3_events::{EventSource, PublicKeyAggregated, Unsequenced};
         use e3_fhe_params::{BfvParamSet, BfvPreset};
         use e3_keyshare::canonical_key::CanonicalPublicKey;
         use e3_request::{E3Meta, META_KEY};
         use e3_sortition::{CiphernodeSelector, SortitionParams};
-        use e3_utils::ArcBytes;
+        use e3_utils::{ArcBytes, OrderedSet};
 
         fn persist<T: PersistableData>(value: T) -> Persistable<T> {
             Repository::new(DataStore::from_in_mem(&InMemStore::new(false).start()))

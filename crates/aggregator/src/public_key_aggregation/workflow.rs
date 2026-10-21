@@ -16,11 +16,11 @@ use alloy::primitives::Address;
 use anyhow::{anyhow, ensure, Context as _, Result};
 use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{
-    CircuitName, E3id, OrderedSet, PartyProofsToVerify, Proof, Seed, SignedDkgFoldAttestation,
+    CircuitName, E3id, PartyProofsToVerify, Proof, Seed, SignedDkgFoldAttestation,
     SignedProofPayload,
 };
 use e3_fhe::Fhe;
-use e3_utils::ArcBytes;
+use e3_utils::{ArcBytes, OrderedSet};
 use e3_zk_prover::extract_node_fold_agg_commits;
 use std::collections::{BTreeSet, HashMap};
 use tracing::{error, info, warn};

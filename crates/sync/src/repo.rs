@@ -7,7 +7,8 @@
 use crate::NodeRole;
 use e3_data::{Repositories, Repository};
 use e3_events::StoreKeys;
-use e3_events::{AggregateId, E3id, RequestRouterCheckpoint};
+use e3_events::{AggregateId, E3id};
+use e3_request::RequestRouterCheckpoint;
 use std::collections::HashMap;
 
 pub trait SyncRepositoryFactory {

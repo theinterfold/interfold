@@ -599,8 +599,9 @@ async fn replayed_c6_intent_is_repaired_before_deduplication() -> Result<()> {
     use e3_events::{
         AggregateConfig, AggregateId, EventConstructorWithTimestamp, EvmEventConfig,
         EvmEventConfigChain, HistoricalEvmEventsReceived, HistoricalNetSyncEventsReceived,
-        NetReady, RequestRouterCheckpoint,
+        NetReady,
     };
+    use e3_request::RequestRouterCheckpoint;
     use e3_sync::SyncRepositoryFactory;
     use std::time::Duration;
     let id = E3id::new("83", 1);

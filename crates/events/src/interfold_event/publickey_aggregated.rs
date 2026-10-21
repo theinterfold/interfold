@@ -4,11 +4,11 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{E3id, OrderedSet, Proof};
+use crate::{E3id, Proof};
 use actix::Message;
 use alloy::primitives::Address;
 use derivative::Derivative;
-use e3_utils::ArcBytes;
+use e3_utils::{ArcBytes, OrderedSet};
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Display};
 

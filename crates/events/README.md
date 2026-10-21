@@ -65,5 +65,7 @@ events and network envelopes; see [upgrades](../../docs/architecture/upgrades.md
 
 Tests are colocated with pipeline modules: stores cover append/query/failure behavior; bus tests
 cover delivery/barriers; snapshot-buffer tests cover batching/timing; HLC tests cover
-ordering/drift. Production health monitoring and whole-node restart are separate consumer tests. See
-[AGENTS.md](AGENTS.md) for identity, encoding, and pipeline changes.
+ordering/drift. Scenarios that need an assembled `EventSystem` live in
+[e3-event-system](../event-system/README.md#tests). Production health monitoring and whole-node
+restart are separate consumer tests. See [AGENTS.md](AGENTS.md) for identity, encoding, and pipeline
+changes.

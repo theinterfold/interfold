@@ -6,13 +6,10 @@
 
 use anyhow::Result;
 use e3_data::{Repositories, Repository};
-use e3_events::{
-    AggregateId, DkgFoldAttestationContextEstablished, E3Stage, E3id, RequestRouterCheckpoint,
-    StoreKeys,
-};
+use e3_events::{AggregateId, DkgFoldAttestationContextEstablished, E3Stage, E3id, StoreKeys};
 use std::collections::HashMap;
 
-use crate::{E3ContextSnapshot, E3Meta, E3RouterSnapshot};
+use crate::{E3ContextSnapshot, E3Meta, E3RouterSnapshot, RequestRouterCheckpoint};
 
 pub trait MetaRepositoryFactory {
     fn meta(&self, e3_id: &E3id) -> Repository<E3Meta>;

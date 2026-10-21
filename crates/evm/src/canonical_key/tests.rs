@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 use super::*;
-use e3_events::{EventConstructorWithTimestamp, OrderedSet, Unsequenced};
+use e3_events::{EventConstructorWithTimestamp, Unsequenced};
 use e3_fhe_params::{BfvParamSet, BfvPreset};
+use e3_utils::OrderedSet;
 
 fn event(
     data: impl Into<InterfoldEventData>,

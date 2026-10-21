@@ -27,8 +27,8 @@ async fn replay_suffix(
     use e3_events::{
         AggregateConfig, AggregateId, EventType, EvmEventConfig, EvmEventConfigChain,
         HistoricalEvmEventsReceived, HistoricalNetSyncEventsReceived, NetReady,
-        RequestRouterCheckpoint,
     };
+    use e3_request::RequestRouterCheckpoint;
     let aggregate = AggregateId::new(1);
     let repositories = store.repositories();
     repositories
