@@ -64,14 +64,25 @@ pub enum BfvPreset {
 }
 
 impl BfvPreset {
+    /// Current registry entries. Historical indices do not identify current presets.
+    pub const ON_CHAIN_PARAMETER_SETS: [(u8, Self); 2] = [
+        (0, Self::InsecureThreshold64),
+        (2, Self::SecureThreshold8192),
+    ];
+
     /// Map a supported on-chain parameter-set index to a threshold `BfvPreset`.
     /// Return `None` for the historical secure index 1 and other unsupported indices.
     pub fn from_on_chain_param_set(value: u8) -> Option<Self> {
-        match value {
-            0 => Some(BfvPreset::InsecureThreshold64),
-            2 => Some(BfvPreset::SecureThreshold8192),
-            _ => None,
-        }
+        Self::ON_CHAIN_PARAMETER_SETS
+            .iter()
+            .find_map(|&(index, preset)| (index == value).then_some(preset))
+    }
+
+    /// Return the current registry index of a threshold preset, not its DKG counterpart.
+    pub fn on_chain_param_set(self) -> Option<u8> {
+        Self::ON_CHAIN_PARAMETER_SETS
+            .iter()
+            .find_map(|&(index, preset)| (preset == self).then_some(index))
     }
 }
 
@@ -290,8 +301,8 @@ impl BfvPreset {
     ];
 
     pub const PAIR_PRESETS: [BfvPreset; 2] = [
-        BfvPreset::InsecureThreshold64,
-        BfvPreset::SecureThreshold8192,
+        Self::ON_CHAIN_PARAMETER_SETS[0].1,
+        Self::ON_CHAIN_PARAMETER_SETS[1].1,
     ];
 
     pub fn from_name(name: &str) -> Result<Self, PresetError> {
@@ -492,6 +503,32 @@ impl BfvPreset {
     pub fn build_pair(&self) -> Result<(Arc<BfvParameters>, Arc<BfvParameters>), PresetError> {
         build_pair_for_preset(*self)
     }
+
+    /// Complete search recipe that reproduces this preset's selected threshold/DKG pair.
+    ///
+    /// This supplies inputs only; it does not run search or authorize a new parameter set.
+    pub fn search_config(&self) -> Option<crate::search::bfv::BfvSearchConfig> {
+        let defaults = self.search_defaults()?;
+        let insecure = self.security_tier() == SecurityTier::INSECURE;
+        Some(crate::search::bfv::BfvSearchConfig {
+            n: defaults.n,
+            z: defaults.z,
+            k: defaults.k,
+            lambda: defaults.lambda,
+            b: defaults.b,
+            b_chi: defaults.b_chi,
+            min_margin: crate::search::constants::MIN_MARGIN_BITS,
+            d: insecure.then_some(self.metadata().degree as u64),
+            insecure,
+            mult_depth: 0,
+            min_prime_bits: if insecure {
+                crate::constants::insecure_search_defaults::MIN_PRIME_BITS
+            } else {
+                crate::search::constants::DEFAULT_MIN_PRIME_BITS
+            },
+            verbose: false,
+        })
+    }
 }
 
 impl From<BfvPreset> for BfvParamSet {
@@ -633,6 +670,17 @@ mod tests {
             BfvPreset::from_on_chain_param_set(2),
             Some(BfvPreset::SecureThreshold8192)
         );
+        for (index, preset) in BfvPreset::ON_CHAIN_PARAMETER_SETS {
+            assert_eq!(preset.on_chain_param_set(), Some(index));
+        }
+        assert_eq!(BfvPreset::InsecureDkg64.on_chain_param_set(), None);
+        assert_eq!(BfvPreset::SecureDkg8192.on_chain_param_set(), None);
+    }
+
+    #[test]
+    fn dkg_presets_do_not_define_threshold_search_recipes() {
+        assert!(BfvPreset::InsecureDkg64.search_config().is_none());
+        assert!(BfvPreset::SecureDkg8192.search_config().is_none());
     }
 
     #[test]

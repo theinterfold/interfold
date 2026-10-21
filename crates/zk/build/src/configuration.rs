@@ -475,10 +475,13 @@ pub fn protocol_contract(
         )
         .replace("@ENCRYPTION_SCHEME@", BFV_ENCRYPTION_SCHEME)
         .replace("@CIRCUIT_VERSION@", INTERFOLD_BFV_VERSION);
-    for (label, preset, param_set) in [
-        ("INSECURE", BfvPreset::InsecureThreshold64, 0),
-        ("SECURE", BfvPreset::SecureThreshold8192, 2),
+    for (label, preset) in [
+        ("INSECURE", BfvPreset::InsecureThreshold64),
+        ("SECURE", BfvPreset::SecureThreshold8192),
     ] {
+        let param_set = preset
+            .on_chain_param_set()
+            .context("Missing current parameter-set index")?;
         let material = params.get(preset);
         text = text
             .replace(&format!("@{label}_PARAM_SET@"), &param_set.to_string())
@@ -527,16 +530,14 @@ pub fn protocol_utils(
         .iter()
         .position(|name| *name == committee.to_string())
         .context("committee index")?;
-    let param_set = if preset == BfvPreset::InsecureThreshold64 {
-        0
-    } else {
-        2
-    };
+    let param_set = preset
+        .on_chain_param_set()
+        .context("Missing current parameter-set index")?;
     let mut after = before.to_string();
     for (name, value) in [
         ("BFV_DKG_H", values.h),
         ("BFV_THRESHOLD_T", values.threshold),
-        ("ACTIVE_BFV_PARAM_SET", param_set),
+        ("ACTIVE_BFV_PARAM_SET", usize::from(param_set)),
         ("ACTIVE_BFV_COMMITTEE_SIZE", size),
         ("ACTIVE_BFV_COMMITTEE_N", values.n),
     ] {
