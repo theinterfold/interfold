@@ -30,10 +30,6 @@ impl SetDependencies {
 
 #[derive(Message)]
 #[rtype(result = "()")]
-pub struct Start;
-
-#[derive(Message)]
-#[rtype(result = "()")]
 pub struct UpdateDestination(pub Recipient<InsertBatch>);
 impl UpdateDestination {
     pub fn new(base: impl Into<Recipient<InsertBatch>>) -> Self {

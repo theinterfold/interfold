@@ -217,23 +217,6 @@ macro_rules! impl_event_types {
                     $(EventType::$variant => stringify!($variant),)*
                 }
             }
-
-            /// Parse an EventType from a string
-            #[allow(clippy::should_implement_trait)]
-            pub fn from_str(s: &str) -> Option<Self> {
-                match s {
-                    "*" => Some(EventType::All),
-                    $(stringify!($variant) => Some(EventType::$variant),)*
-                    _ => None,
-                }
-            }
-
-            /// Get all event types (excluding All wildcard)
-            pub fn all_types() -> Vec<EventType> {
-                vec![
-                    $(EventType::$variant,)*
-                ]
-            }
         }
 
         impl fmt::Display for EventType {
