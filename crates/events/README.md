@@ -23,7 +23,10 @@ handlers then update projections or request effects with the delivered causal co
 
 ## Event model
 
-`InterfoldEventData` holds domain payloads and `EventType` selects subscriptions.
+`InterfoldEventData` holds domain payloads and `EventType` selects subscriptions. Both come from one
+variant list in [`event_data.rs`](src/interfold_event/event_data.rs). That list is the persisted
+enum order: append new variants at the end. `get_e3_id` names every variant, because the E3 chain
+selects the aggregate. [`envelope.rs`](src/interfold_event/envelope.rs) holds `InterfoldEvent<S>`.
 `InterfoldEvent<S>` pairs a payload with `EventContext<S>`: logical ID, causation/origin, timestamp,
 aggregate, source, and sequence state. `E3id` includes the chain ID, so equal numeric request IDs on
 different chains are distinct. Import `e3_events::prelude::*` for the event
