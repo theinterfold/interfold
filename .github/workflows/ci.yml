@@ -13,10 +13,8 @@ on:
         type: boolean
         default: false
   workflow_dispatch:
+  # Dependent PRs target the preceding stack branch, not necessarily main/dev.
   pull_request:
-    branches:
-      - main
-      - dev
 env:
   CIPHERNODE_DOCKERFILE_PATH: crates/Dockerfile
   CIPHERNODE_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ciphernode
