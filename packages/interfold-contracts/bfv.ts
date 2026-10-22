@@ -39,7 +39,31 @@ export const BFV_PRESETS = Object.fromEntries(
   ),
 );
 
-export const CIRCUIT_DIMENSIONS = config.zk;
+const { decryptionAggregator, ...dimensions } = config.zk;
+export const CIRCUIT_DIMENSIONS = dimensions;
+export const DECRYPTION_AGGREGATOR_LAYOUT = decryptionAggregator;
+export const DECRYPTION_INPUT_INDICES = Object.fromEntries(
+  decryptionAggregator.publicInputs.map((field, index) => [field.name, index]),
+);
+
+export function decryptionAggregatorLayout(threshold: number) {
+  const shareCount = threshold + 1;
+  const partyIdOffset =
+    decryptionAggregator.publicInputs.length +
+    decryptionAggregator.returnPrefix.length;
+  const skOffset = partyIdOffset + shareCount;
+  const esmOffset = skOffset + shareCount;
+  const messageOffset =
+    partyIdOffset + decryptionAggregator.columns.length * shareCount;
+  return {
+    shareCount,
+    partyIdOffset,
+    skOffset,
+    esmOffset,
+    messageOffset,
+    publicInputsLength: messageOffset + CIRCUIT_DIMENSIONS.messageCoeffsCount,
+  };
+}
 export const COMMITTEES = Object.fromEntries(
   config.committees.map((committee) => [committee.name, committee]),
 );

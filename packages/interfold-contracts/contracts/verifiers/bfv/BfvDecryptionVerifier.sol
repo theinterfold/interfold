@@ -10,6 +10,7 @@ import { ICircuitVerifier } from "../../interfaces/ICircuitVerifier.sol";
 import { ICiphernodeRegistry } from "../../interfaces/ICiphernodeRegistry.sol";
 import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
 import { BfvProtocol } from "../../lib/BfvProtocol.sol";
+import { BfvDecryptionLayout } from "../../lib/BfvDecryptionLayout.sol";
 
 /**
  * @title BfvDecryptionVerifier
@@ -65,28 +66,26 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
     uint256 internal constant MESSAGE_COEFFS_COUNT =
         BfvProtocol.MESSAGE_COEFFS_COUNT;
 
-    /// @dev `decryption_aggregator` return tail: `1 + 3*(T+1) + MESSAGE_COEFFS_COUNT` fields.
-    uint256 internal constant DEC_RETURN_PREFIX_LEN = 1;
-
-    /// @dev `decryption_aggregator` return columns after the leading key hash
-    ///      (party_ids, expected_sk, expected_esm).
-    uint256 internal constant DEC_RETURN_COLUMN_COUNT = 3;
-
     /// @dev `publicInputs` index for `committee_hash_hi` (after sub-circuit key hashes).
-    uint256 internal constant COMMITTEE_HASH_HI_IDX = 2;
+    uint256 internal constant COMMITTEE_HASH_HI_IDX =
+        BfvProtocol.DEC_COMMITTEE_HASH_HI_IDX;
 
     /// @dev `publicInputs` index for `committee_hash_lo`.
-    uint256 internal constant COMMITTEE_HASH_LO_IDX = 3;
+    uint256 internal constant COMMITTEE_HASH_LO_IDX =
+        BfvProtocol.DEC_COMMITTEE_HASH_LO_IDX;
 
     /// @dev Public input indices for the E3 decryption-domain limbs.
-    uint256 internal constant DECRYPTION_DOMAIN_HI_IDX = 4;
-    uint256 internal constant DECRYPTION_DOMAIN_LO_IDX = 5;
-    uint256 internal constant CIPHERTEXT_COMMITMENT_IDX = 6;
+    uint256 internal constant DECRYPTION_DOMAIN_HI_IDX =
+        BfvProtocol.DEC_DOMAIN_HI_IDX;
+    uint256 internal constant DECRYPTION_DOMAIN_LO_IDX =
+        BfvProtocol.DEC_DOMAIN_LO_IDX;
+    uint256 internal constant CIPHERTEXT_COMMITMENT_IDX =
+        BfvProtocol.DEC_CIPHERTEXT_COMMITMENT_IDX;
 
     /// @notice BFV threshold `T`; must match the compiled DecryptionAggregator circuit.
     uint256 public immutable override threshold;
 
-    /// @dev `7 + DEC_RETURN_PREFIX_LEN + DEC_RETURN_COLUMN_COUNT*(T+1) + MESSAGE_COEFFS_COUNT`.
+    /// @dev Application input count; Honk's pairing-point fields are not caller inputs.
     uint256 internal immutable expectedPublicInputsLen;
 
     /// @dev `publicInputs` start index of the `party_ids[T+1]` column.
@@ -134,15 +133,12 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
             _expectedC7KeyHash == bytes32(0)
         ) revert InvalidVerificationKeyHash();
         threshold = _threshold;
-        expectedPublicInputsLen =
-            7 +
-            DEC_RETURN_PREFIX_LEN +
-            (DEC_RETURN_COLUMN_COUNT * (_threshold + 1)) +
-            MESSAGE_COEFFS_COUNT;
-
-        partyIdColOffset = 7 + DEC_RETURN_PREFIX_LEN;
-        skColOffset = partyIdColOffset + (_threshold + 1);
-        esmColOffset = skColOffset + (_threshold + 1);
+        expectedPublicInputsLen = BfvDecryptionLayout.publicInputsLength(
+            _threshold
+        );
+        partyIdColOffset = BfvDecryptionLayout.partyIdOffset();
+        skColOffset = BfvDecryptionLayout.skOffset(_threshold);
+        esmColOffset = BfvDecryptionLayout.esmOffset(_threshold);
 
         circuitVerifier = ICircuitVerifier(_circuitVerifier);
         ciphernodeRegistry = ICiphernodeRegistry(_ciphernodeRegistry);
@@ -170,10 +166,15 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
         _validatePublicInputs(publicInputs);
 
         // Anchor recursive-aggregation trust to immutable VK hashes.
-        if (publicInputs[0] != expectedC6FoldKeyHash) {
+        if (
+            publicInputs[BfvProtocol.DEC_C6_FOLD_KEY_HASH_IDX] !=
+            expectedC6FoldKeyHash
+        ) {
             revert VkHashMismatch();
         }
-        if (publicInputs[1] != expectedC7KeyHash) {
+        if (
+            publicInputs[BfvProtocol.DEC_C7_KEY_HASH_IDX] != expectedC7KeyHash
+        ) {
             revert VkHashMismatch();
         }
 
@@ -243,11 +244,13 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
         bytes32 expected
     ) internal view returns (bool) {
         uint256 offset = expectedPublicInputsLen - MESSAGE_COEFFS_COUNT;
-        bytes memory plaintext = new bytes(MESSAGE_COEFFS_COUNT * 8);
+        bytes memory plaintext = new bytes(BfvProtocol.PLAINTEXT_BYTE_LEN);
         for (uint256 i = 0; i < MESSAGE_COEFFS_COUNT; i++) {
             uint64 coeff = uint64(uint256(publicInputs[offset + i]));
-            for (uint256 j = 0; j < 8; j++) {
-                plaintext[i * 8 + j] = bytes1(uint8(coeff >> (j * 8)));
+            for (uint256 j = 0; j < BfvProtocol.MESSAGE_COEFF_BYTE_LEN; j++) {
+                plaintext[i * BfvProtocol.MESSAGE_COEFF_BYTE_LEN + j] = bytes1(
+                    uint8(coeff >> (j * 8))
+                );
             }
         }
         return keccak256(plaintext) == expected;

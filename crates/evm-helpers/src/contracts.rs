@@ -18,6 +18,7 @@ use alloy::{
     sol,
 };
 use async_trait::async_trait;
+use e3_fhe_params::{current_bfv_crypto_config_id, encode_bfv_params, BfvPreset};
 use eyre::Result;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
@@ -27,10 +28,44 @@ use crate::events::E3Requested;
 use crate::nonce::send_with_next_nonce;
 
 fn crypto_config_id_for_param_set(param_set: u8) -> Result<B256> {
-    match param_set {
-        0 => Ok("0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9".parse()?),
-        2 => Ok("0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa".parse()?),
-        _ => Err(eyre::eyre!("unsupported BFV parameter set: {}", param_set)),
+    let preset = BfvPreset::from_on_chain_param_set(param_set)
+        .ok_or_else(|| eyre::eyre!("unsupported BFV parameter set: {}", param_set))?;
+    let (threshold, _) = preset.build_pair()?;
+    Ok(current_bfv_crypto_config_id(&encode_bfv_params(&threshold)))
+}
+
+#[cfg(test)]
+mod crypto_config_tests {
+    use super::*;
+
+    #[test]
+    fn request_identities_match_frozen_vectors_without_admitting_historical_slots() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../fhe-params/tests/fixtures/bfv_protocol.json"
+        ))
+        .unwrap();
+        for vector in fixture["vectors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|vector| vector["preset"].is_string())
+        {
+            let param_set = vector["paramSet"].as_u64().unwrap() as u8;
+            assert_eq!(
+                crypto_config_id_for_param_set(param_set)
+                    .unwrap()
+                    .to_string(),
+                vector["cryptoConfigId"].as_str().unwrap()
+            );
+        }
+        for param_set in [1, 255] {
+            assert_eq!(
+                crypto_config_id_for_param_set(param_set)
+                    .unwrap_err()
+                    .to_string(),
+                format!("unsupported BFV parameter set: {param_set}")
+            );
+        }
     }
 }
 

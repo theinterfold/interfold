@@ -6,6 +6,8 @@
 pragma solidity 0.8.28;
 
 import { IDecryptionVerifier } from "../../interfaces/IDecryptionVerifier.sol";
+import { BfvProtocol } from "../../lib/BfvProtocol.sol";
+import { BfvDecryptionLayout } from "../../lib/BfvDecryptionLayout.sol";
 
 interface IBfvDecryptionVerifierRoute is IDecryptionVerifier {
     function expectedC6FoldKeyHash() external view returns (bytes32);
@@ -48,8 +50,8 @@ contract BfvDecryptionVerifierRouter is IDecryptionVerifier {
             routes.push(
                 Route({
                     verifier: route,
-                    // BfvDecryptionVerifier: 7 + 1 + 3 * (T + 1) + 50 message coefficients.
-                    expectedPublicInputsLen: 61 + (3 * routeThreshold),
+                    expectedPublicInputsLen: BfvDecryptionLayout
+                        .publicInputsLength(routeThreshold),
                     expectedC6FoldKeyHash: route.expectedC6FoldKeyHash(),
                     expectedC7KeyHash: route.expectedC7KeyHash()
                 })
@@ -97,7 +99,7 @@ contract BfvDecryptionVerifierRouter is IDecryptionVerifier {
         );
         rawProof;
 
-        if (publicInputs.length < 2) {
+        if (publicInputs.length <= BfvProtocol.DEC_C7_KEY_HASH_IDX) {
             revert InvalidPublicInputsLength();
         }
 
@@ -109,8 +111,10 @@ contract BfvDecryptionVerifierRouter is IDecryptionVerifier {
             }
             lengthMatched = true;
             if (
-                publicInputs[0] != route.expectedC6FoldKeyHash ||
-                publicInputs[1] != route.expectedC7KeyHash
+                publicInputs[BfvProtocol.DEC_C6_FOLD_KEY_HASH_IDX] !=
+                route.expectedC6FoldKeyHash ||
+                publicInputs[BfvProtocol.DEC_C7_KEY_HASH_IDX] !=
+                route.expectedC7KeyHash
             ) {
                 continue;
             }

@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import buildPairs from './build-pairs.json'
+import { COMMITTEES } from '../../packages/interfold-contracts/bfv'
 
 /**
  * Shared constants for circuit groups used across build and verifier generation scripts.
@@ -76,10 +77,7 @@ export type CircuitCommittee = (typeof CIRCUIT_COMMITTEES)[keyof typeof CIRCUIT_
 export const ALL_COMMITTEES: CircuitCommittee[] = [CIRCUIT_COMMITTEES.MINIMUM, CIRCUIT_COMMITTEES.MICRO, CIRCUIT_COMMITTEES.SMALL]
 
 /**
- * `(N, T, H)` per committee. Mirrors `circuits/lib/src/configs/committee/{name}/mod.nr`
- * and Rust `e3_committee::CiphernodesCommitteeSize::values()`. The build script writes
- * `H` and `T` into `packages/interfold-contracts/scripts/utils.ts` so the EVM gas benchmark
- * deploys verifiers with the matching public-input layout.
+ * Committee dimensions from the shared binding, used to deploy matching verifier layouts.
  */
 export interface CommitteeParams {
   n: number
@@ -88,9 +86,9 @@ export interface CommitteeParams {
 }
 
 export const COMMITTEE_PARAMS: Record<CircuitCommittee, CommitteeParams> = {
-  [CIRCUIT_COMMITTEES.MINIMUM]: { n: 3, t: 1, h: 2 },
-  [CIRCUIT_COMMITTEES.MICRO]: { n: 9, t: 4, h: 5 },
-  [CIRCUIT_COMMITTEES.SMALL]: { n: 19, t: 9, h: 14 },
+  [CIRCUIT_COMMITTEES.MINIMUM]: { n: COMMITTEES.minimum.n, t: COMMITTEES.minimum.t, h: COMMITTEES.minimum.h },
+  [CIRCUIT_COMMITTEES.MICRO]: { n: COMMITTEES.micro.n, t: COMMITTEES.micro.t, h: COMMITTEES.micro.h },
+  [CIRCUIT_COMMITTEES.SMALL]: { n: COMMITTEES.small.n, t: COMMITTEES.small.t, h: COMMITTEES.small.h },
 }
 
 /** Build policy shared with the Rust circuit builder. Manifest order defines build order. */

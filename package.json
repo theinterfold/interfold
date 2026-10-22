@@ -23,6 +23,7 @@
     "test:circuit-build": "cargo test --locked -p e3-zk-build",
     "generate:crypto-bindings": "node scripts/circuits/crypto-config.mjs",
     "check:crypto-bindings": "node scripts/circuits/crypto-config.mjs --check",
+    "check:decryption-layout": "pnpm build:circuits check-layouts",
     "bench:circuits": "cargo run --locked --release -p e3-zk-benchmarks --",
     "test:circuit-bench": "cargo test --locked -p e3-zk-benchmarks",
     "generate:verifiers": "tsx scripts/circuits/verifiers.ts --circuits dkg_aggregator,decryption_aggregator",

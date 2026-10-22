@@ -91,7 +91,48 @@
     "fieldByteLen": 32,
     "messageCoeffsCount": 50,
     "messageCoeffByteLen": 8,
-    "plaintextByteLen": 400
+    "plaintextByteLen": 400,
+    "decryptionAggregator": {
+      "publicInputs": [
+        {
+          "name": "c6_fold_key_hash"
+        },
+        {
+          "name": "c7_key_hash"
+        },
+        {
+          "name": "committee_hash_hi"
+        },
+        {
+          "name": "committee_hash_lo"
+        },
+        {
+          "name": "domain_hi"
+        },
+        {
+          "name": "domain_lo"
+        },
+        {
+          "name": "ciphertext_commitment"
+        }
+      ],
+      "returnPrefix": [
+        {
+          "name": "key_hash"
+        }
+      ],
+      "columns": [
+        {
+          "name": "party_ids"
+        },
+        {
+          "name": "expected_sk"
+        },
+        {
+          "name": "expected_esm"
+        }
+      ]
+    }
   },
   "committees": [
     {

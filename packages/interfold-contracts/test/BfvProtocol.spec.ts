@@ -2,7 +2,11 @@
 import { expect } from "chai";
 import { readFileSync } from "node:fs";
 
-import { CIRCUIT_DIMENSIONS, COMMITTEES } from "../bfv.js";
+import {
+  CIRCUIT_DIMENSIONS,
+  COMMITTEES,
+  decryptionAggregatorLayout,
+} from "../bfv.js";
 import { ethers } from "./fixtures/connection";
 
 const fixture = JSON.parse(
@@ -16,6 +20,30 @@ const fixture = JSON.parse(
 );
 
 describe("BFV protocol bindings", function () {
+  it("shares the frozen decryption layout across Solidity and TypeScript", async function () {
+    const harness = await (
+      await ethers.getContractFactory("BfvProtocolHarness")
+    ).deploy();
+    for (const [threshold, expected] of [
+      [1, [8, 10, 12, 14, 64]],
+      [4, [8, 13, 18, 23, 73]],
+      [9, [8, 18, 28, 38, 88]],
+      [2, [8, 11, 14, 17, 67]],
+    ] as const) {
+      expect(await harness.layout(threshold)).to.deep.equal(
+        expected.map(BigInt),
+      );
+      const layout = decryptionAggregatorLayout(threshold);
+      expect([
+        layout.partyIdOffset,
+        layout.skOffset,
+        layout.esmOffset,
+        layout.messageOffset,
+        layout.publicInputsLength,
+      ]).to.deep.equal(expected);
+    }
+  });
+
   it("preserves the independently frozen protocol identities in Solidity", async function () {
     const harness = await (
       await ethers.getContractFactory("BfvProtocolHarness")

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { ethers as ethersLib } from "ethers";
 
+import { BFV_ENCRYPTION_SCHEME_ID } from "../../bfv.js";
 import { connect } from "./cli";
 import { deploymentPath, readJson } from "./files";
 import { currentNodeRelease } from "./nodeRelease";
@@ -358,7 +359,7 @@ export async function actionValidate(): Promise<void> {
 
   // Verifier read-backs. Each is configured by a Safe transaction, so a dropped or reverted write
   // would otherwise leave the reference at address(0) with the deploy script still exiting zero.
-  const bfvSchemeId = ethers.id("fhe.rs:BFV");
+  const bfvSchemeId = BFV_ENCRYPTION_SCHEME_ID;
   // A read-back alone proves only that the address was stored. Interfold returns whatever was
   // configured, so an EOA or an undeployed address passes while being unusable when a receipt is
   // actually verified.
@@ -441,7 +442,7 @@ export async function actionValidate(): Promise<void> {
   }
   console.log(`  ok interfold.e3Programs(${deployment.initialE3Program})`);
 
-  const encryptionSchemeId = ethers.id("fhe.rs:BFV");
+  const encryptionSchemeId = BFV_ENCRYPTION_SCHEME_ID;
   for (const [label, actualPromise, expected] of [
     [
       "interfold.decryptionVerifier",

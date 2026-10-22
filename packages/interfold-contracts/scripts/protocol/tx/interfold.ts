@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { ethers as ethersLib } from "ethers";
 
+import { BFV_ENCRYPTION_SCHEME_ID, BFV_PRESETS } from "../../../bfv.js";
 import { bfvParamSetConfigsForChain } from "../../utils";
-import { BFV_PARAMS } from "../constants";
 import { safeTx } from "../safe";
 import type {
   ProtocolConfigFile,
@@ -72,10 +72,7 @@ function appendCommitteeAndPricingTxs(
   }
   if (config.interfold.registerActiveBfvParamSet) {
     for (const bfvConfig of bfvParamSetConfigsForChain(config.chainId)) {
-      const activeParams =
-        bfvConfig.paramSet === 0
-          ? BFV_PARAMS.insecure64
-          : BFV_PARAMS.secure8192;
+      const activeParams = BFV_PRESETS[bfvConfig.preset].threshold;
       txs.push(
         safeTx(
           c.interfold,
@@ -112,7 +109,7 @@ function appendVerifierTxs(
       safeTx(
         c.interfold,
         i.interfold.encodeFunctionData("setDecryptionVerifier", [
-          ethersLib.id("fhe.rs:BFV"),
+          BFV_ENCRYPTION_SCHEME_ID,
           decryption,
         ]),
       ),
@@ -125,7 +122,7 @@ function appendVerifierTxs(
       safeTx(
         c.interfold,
         i.interfold.encodeFunctionData("setPkVerifier", [
-          ethersLib.id("fhe.rs:BFV"),
+          BFV_ENCRYPTION_SCHEME_ID,
           pk,
         ]),
       ),
@@ -152,7 +149,7 @@ function appendVerifierTxs(
       safeTx(
         c.interfold,
         i.interfold.encodeFunctionData("setCiphertextVerifier", [
-          ethersLib.id("fhe.rs:BFV"),
+          BFV_ENCRYPTION_SCHEME_ID,
           ciphertext,
         ]),
       ),

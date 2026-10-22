@@ -5,7 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 // Adapters: shape on-chain data into the prop shapes the React components expect.
 
-import { formatUnits, keccak256, numberToHex, toHex } from 'viem'
+import { BFV_ENCRYPTION_SCHEME_ID } from '@interfold/contracts/bfv'
+import { formatUnits, numberToHex } from 'viem'
 import type { HistoryEntry, Poll } from '../data'
 import type { E3FullDetails, E3Summary } from './e3'
 import { failureReasonLabel, failureReasonToUiIdx, isCrispE3, isE3Active } from './e3'
@@ -138,7 +139,7 @@ const ZERO_HASH = '0x' + '0'.repeat(64)
 // Encryption-scheme ids are keccak256 of a label string, so map known hashes
 // back to a readable name (can't be reversed otherwise).
 const KNOWN_SCHEMES: Record<string, string> = {
-  [keccak256(toHex('fhe.rs:BFV'))]: 'BFV (fhe.rs)',
+  [BFV_ENCRYPTION_SCHEME_ID]: 'BFV (fhe.rs)',
 }
 function schemeName(id: string): string {
   if (!id || id === ZERO_HASH) return '—'

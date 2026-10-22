@@ -646,8 +646,7 @@ fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
     )
     .unwrap();
     let params = configuration::OperationParams::both().unwrap();
-    // The same material renders parity files, bound updates, the TypeScript constants, and the
-    // Solidity contract with the deployed hashes.
+    // The same material renders parity files, bound updates, and Solidity's deployed hashes.
     for committee in [
         CiphernodesCommitteeSize::Minimum,
         CiphernodesCommitteeSize::Micro,
@@ -700,6 +699,29 @@ fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
         .parse::<usize>()
         .unwrap();
     assert_eq!(width, e3_zk_config::MAX_MSG_NON_ZERO_COEFFS);
+}
+
+#[test]
+fn deployment_selection_switches_only_names_and_is_idempotent_for_every_pair() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let before =
+        fs::read_to_string(repo.join("packages/interfold-contracts/scripts/utils.ts")).unwrap();
+    for preset in BfvPreset::PAIR_PRESETS {
+        for committee in CiphernodesCommitteeSize::ALL {
+            let selected = configuration::protocol_utils(&before, preset, committee).unwrap();
+            assert!(selected.contains(&format!(
+                "export const ACTIVE_BFV_PRESET: BfvArtifactPreset = \"{}\";",
+                preset_name(preset)
+            )));
+            assert!(selected.contains(&format!(
+                "export const ACTIVE_BFV_COMMITTEE: BfvCommittee = \"{committee}\";"
+            )));
+            assert_eq!(
+                configuration::protocol_utils(&selected, preset, committee).unwrap(),
+                selected
+            );
+        }
+    }
 }
 
 #[test]

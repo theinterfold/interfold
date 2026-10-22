@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 import { readFileSync as readFixture } from 'node:fs'
+import { COMMITTEES } from '@interfold/contracts/bfv'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { assertSdkMinimumCircuits } from '../src/circuits/assert-minimum-circuits'
-import { ParamSet } from '../src/contracts/types'
-import { cryptoConfigIdForParamSet } from '../src/utils'
+import { CommitteeSize, ParamSet } from '../src/contracts/types'
+import { DEFAULT_E3_CONFIG, cryptoConfigIdForParamSet } from '../src/utils'
 
 const { readFileSync } = vi.hoisted(() => ({ readFileSync: vi.fn() }))
 vi.mock('node:fs', async () => {
@@ -17,6 +18,17 @@ vi.mock('node:fs', async () => {
 })
 
 describe('SDK circuit selection', () => {
+  it('preserves public committee enum values and the minimum-committee default', () => {
+    for (const [name, value] of [
+      ['minimum', CommitteeSize.Minimum],
+      ['micro', CommitteeSize.Micro],
+      ['small', CommitteeSize.Small],
+    ] as const) {
+      expect(value).toBe(COMMITTEES[name].committeeSize)
+    }
+    expect(DEFAULT_E3_CONFIG.committeeSize).toBe(CommitteeSize.Minimum)
+  })
+
   it('uses current configuration IDs and the current secure registry entry', () => {
     const fixture = JSON.parse(readFixture(new URL('../../../crates/fhe-params/tests/fixtures/bfv_protocol.json', import.meta.url), 'utf8'))
     expect(ParamSet.Secure8192).toBe(fixture.vectors.find((vector: { name: string }) => vector.name === 'current-secure').paramSet)

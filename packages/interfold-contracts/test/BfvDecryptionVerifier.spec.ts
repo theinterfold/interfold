@@ -6,6 +6,7 @@
 import { expect } from "chai";
 import { network } from "hardhat";
 
+import { CIRCUIT_DIMENSIONS, DECRYPTION_INPUT_INDICES } from "../bfv.js";
 import MockCiphernodeRegistryModule from "../ignition/modules/mockCiphernodeRegistry";
 import MockCircuitVerifierModule from "../ignition/modules/mockSlashingVerifier";
 import {
@@ -24,7 +25,7 @@ const { loadFixture } = networkHelpers;
 const [testSigner] = await ethers.getSigners();
 
 /** Must match `BfvDecryptionVerifier.MESSAGE_COEFFS_COUNT` / circuit `MAX_MSG_NON_ZERO_COEFFS`. */
-const MESSAGE_COEFFS_COUNT = 50;
+const MESSAGE_COEFFS_COUNT = CIRCUIT_DIMENSIONS.messageCoeffsCount;
 const BN254_SCALAR_MODULUS =
   21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
@@ -44,10 +45,10 @@ const THRESHOLD = BFV_THRESHOLD_T;
 const EXPECTED_PUBLIC_INPUTS_LEN = bfvDecExpectedPublicInputsLen(THRESHOLD);
 
 /** Indices for committee hash limbs (fixed layout). */
-const COMMITTEE_HASH_HI_IDX = 2;
-const COMMITTEE_HASH_LO_IDX = 3;
-const DECRYPTION_DOMAIN_HI_IDX = 4;
-const DECRYPTION_DOMAIN_LO_IDX = 5;
+const COMMITTEE_HASH_HI_IDX = DECRYPTION_INPUT_INDICES.committee_hash_hi;
+const COMMITTEE_HASH_LO_IDX = DECRYPTION_INPUT_INDICES.committee_hash_lo;
+const DECRYPTION_DOMAIN_HI_IDX = DECRYPTION_INPUT_INDICES.domain_hi;
+const DECRYPTION_DOMAIN_LO_IDX = DECRYPTION_INPUT_INDICES.domain_lo;
 
 /** `party_ids`/`expected_sk`/`expected_esm` column start indices for `THRESHOLD`. */
 const {
@@ -109,7 +110,7 @@ function buildPublicInputsWithMessage(
   }
   arr[COMMITTEE_HASH_HI_IDX] = committeeHashHi(committeeHash);
   arr[COMMITTEE_HASH_LO_IDX] = committeeHashLo(committeeHash);
-  arr[6] = CIPHERTEXT_COMMITMENT;
+  arr[DECRYPTION_INPUT_INDICES.ciphertext_commitment] = CIPHERTEXT_COMMITMENT;
   for (let i = 0; i < partyIds.length; i++) {
     arr[PARTY_ID_COL_OFFSET + i] =
       "0x" + partyIds[i].toString(16).padStart(64, "0");
@@ -130,15 +131,17 @@ function buildPublicInputsWithMessage(
 }
 
 function plaintextToHash(messageCoeffs: bigint[]): string {
-  const buf = new Uint8Array(MESSAGE_COEFFS_COUNT * 8);
+  const buf = new Uint8Array(CIRCUIT_DIMENSIONS.plaintextByteLen);
   for (
     let i = 0;
     i < Math.min(messageCoeffs.length, MESSAGE_COEFFS_COUNT);
     i++
   ) {
     const c = messageCoeffs[i];
-    for (let j = 0; j < 8; j++) {
-      buf[i * 8 + j] = Number((c >> BigInt(j * 8)) & 0xffn);
+    for (let j = 0; j < CIRCUIT_DIMENSIONS.messageCoeffByteLen; j++) {
+      buf[i * CIRCUIT_DIMENSIONS.messageCoeffByteLen + j] = Number(
+        (c >> BigInt(j * 8)) & 0xffn,
+      );
     }
   }
   const hex =
@@ -203,6 +206,72 @@ describe("BfvDecryptionVerifier", function () {
   const ctx = () => {
     return { e3Id: E3_ID, decryptionDomain: DECRYPTION_DOMAIN };
   };
+
+  it("preserves wrapper columns and plaintext encoding for every canonical T and positive non-preset T", async function () {
+    const { mockCircuit, mockCiphernodeRegistry } = await loadFixture(
+      deployWithMockCircuit,
+    );
+    await mockCircuit.setReturnValue(true);
+    await expect(
+      ethers.deployContract("BfvDecryptionVerifier", [
+        await mockCircuit.getAddress(),
+        await mockCiphernodeRegistry.getAddress(),
+        EXPECTED_C6_FOLD_KEY_HASH,
+        EXPECTED_C7_KEY_HASH,
+        0,
+      ]),
+    ).to.be.revertedWithoutReason(ethers); // The repository compiler strips require strings.
+    // These are frozen application-layout expectations, not values derived from the helper under test.
+    for (const [threshold, shares, skOffset, esmOffset, count] of [
+      [1, 2, 10, 12, 64],
+      [4, 5, 13, 18, 73],
+      [9, 10, 18, 28, 88],
+      [2, 3, 11, 14, 67],
+    ]) {
+      const ids = Array.from({ length: shares }, (_, i) => i);
+      const sk = ids.map((i) => ethers.toBeHex(i + 10, 32));
+      const esm = ids.map((i) => ethers.toBeHex(i + 20, 32));
+      await mockCiphernodeRegistry.setDkgAnchors(E3_ID, ids, sk, esm);
+      const wrapper = await ethers.deployContract("BfvDecryptionVerifier", [
+        await mockCircuit.getAddress(),
+        await mockCiphernodeRegistry.getAddress(),
+        EXPECTED_C6_FOLD_KEY_HASH,
+        EXPECTED_C7_KEY_HASH,
+        threshold,
+      ]);
+      const inputs = Array.from({ length: count }, () => ethers.ZeroHash);
+      inputs[0] = EXPECTED_C6_FOLD_KEY_HASH;
+      inputs[1] = EXPECTED_C7_KEY_HASH;
+      for (const i of ids) {
+        inputs[8 + i] = ethers.toBeHex(i + 1, 32);
+        inputs[skOffset + i] = sk[i];
+        inputs[esmOffset + i] = esm[i];
+      }
+      inputs[count - 1] = ethers.toBeHex(42, 32);
+      const plaintext = new Uint8Array(400);
+      plaintext[392] = 42; // Last of 50 little-endian u64 coefficients.
+      expect(
+        await wrapper.verify.staticCall(
+          E3_ID,
+          ethers.ZeroHash,
+          ethers.keccak256(plaintext),
+          ethers.ZeroHash,
+          ethers.ZeroHash,
+          encodeProof("0x01", inputs),
+        ),
+      ).to.equal(true);
+      await expect(
+        wrapper.verify.staticCall(
+          E3_ID,
+          ethers.ZeroHash,
+          ethers.keccak256(plaintext),
+          ethers.ZeroHash,
+          ethers.ZeroHash,
+          encodeProof("0x01", inputs.slice(1)),
+        ),
+      ).to.be.revertedWithCustomError(wrapper, "InvalidPublicInputsLength");
+    }
+  });
 
   describe("reverts", function () {
     it("rejects zero, EOA, and zero-hash trust anchors at deployment", async function () {

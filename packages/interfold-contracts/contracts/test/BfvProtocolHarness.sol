@@ -7,6 +7,7 @@ pragma solidity 0.8.28;
 
 import { ActiveCryptoConfig } from "../lib/ActiveCryptoConfig.sol";
 import { BfvProtocol } from "../lib/BfvProtocol.sol";
+import { BfvDecryptionLayout } from "../lib/BfvDecryptionLayout.sol";
 
 contract BfvProtocolHarness {
     function identity(
@@ -54,6 +55,28 @@ contract BfvProtocolHarness {
             BfvProtocol.MESSAGE_COEFF_BYTE_LEN,
             BfvProtocol.FIELD_BYTE_LEN,
             BfvProtocol.PLAINTEXT_BYTE_LEN
+        );
+    }
+
+    function layout(
+        uint256 threshold
+    )
+        external
+        pure
+        returns (
+            uint256 partyId,
+            uint256 sk,
+            uint256 esm,
+            uint256 message,
+            uint256 inputs
+        )
+    {
+        return (
+            BfvDecryptionLayout.partyIdOffset(),
+            BfvDecryptionLayout.skOffset(threshold),
+            BfvDecryptionLayout.esmOffset(threshold),
+            BfvDecryptionLayout.messageOffset(threshold),
+            BfvDecryptionLayout.publicInputsLength(threshold)
         );
     }
 }

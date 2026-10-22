@@ -8,6 +8,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import { CIRCUIT_DIMENSIONS } from "../bfv.js";
 import {
   type ActiveBfvConfig,
   type BfvCommittee,
@@ -318,16 +319,18 @@ function plaintextHashFromPublicInputs(
   publicInputs: string[],
   ethersLib: any,
 ): string {
-  const messageCoeffsCount = 50;
+  const messageCoeffsCount = CIRCUIT_DIMENSIONS.messageCoeffsCount;
   if (publicInputs.length < messageCoeffsCount) {
     throw new Error(`Not enough public inputs: ${publicInputs.length}`);
   }
   const offset = publicInputs.length - messageCoeffsCount;
-  const plaintext = new Uint8Array(messageCoeffsCount * 8);
+  const plaintext = new Uint8Array(CIRCUIT_DIMENSIONS.plaintextByteLen);
   for (let i = 0; i < messageCoeffsCount; i++) {
     const coeff = BigInt(publicInputs[offset + i]);
-    for (let j = 0; j < 8; j++) {
-      plaintext[i * 8 + j] = Number((coeff >> BigInt(j * 8)) & 0xffn);
+    for (let j = 0; j < CIRCUIT_DIMENSIONS.messageCoeffByteLen; j++) {
+      plaintext[i * CIRCUIT_DIMENSIONS.messageCoeffByteLen + j] = Number(
+        (coeff >> BigInt(j * 8)) & 0xffn,
+      );
     }
   }
   return ethersLib.keccak256(plaintext);
