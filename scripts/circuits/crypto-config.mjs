@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 import { execFileSync } from 'node:child_process'
-import { readFileSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export function syncSnapshot(path, metadata, check = false) {
@@ -18,7 +18,7 @@ export function syncSnapshot(path, metadata, check = false) {
   writeFileSync(path, expected)
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const args = process.argv.slice(2)
     if (args.length > 1 || (args.length === 1 && args[0] !== '--check')) throw new Error('Usage: crypto-config.mjs [--check]')
