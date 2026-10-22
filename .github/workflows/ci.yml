@@ -760,6 +760,9 @@ jobs:
       # Without coverage instrumentation. No step reads the coverage report, instrumentation makes
       # the suite several times slower, and under `--coverage` BfvVkBindingIntegration skips the
       # on-chain Honk verification because instrumented verifiers run out of gas.
+      - name: Build deployment utilities for installed-package tests
+        run: pnpm -C packages/interfold-contracts compile:ts
+
       - name: 'Test the contracts'
         run: 'pnpm evm:test'
 

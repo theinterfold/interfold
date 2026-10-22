@@ -95,3 +95,10 @@ separate requirements.
 
 These limits remain tracked in #2197; passing the Interfold matrix alone does not satisfy the
 cross-repository release and historical-measurement requirements.
+
+The first GitHub runs exposed missing test prerequisites: library jobs lacked the pinned Nargo
+formatter, and installed-package contract tests lacked compiled TypeScript deployment utilities. The
+workflow now prepares both without skipping those tests. The failed contract job cancelled the pair
+builds, and the aggregate gate correctly rejected that cancelled matrix. Those runs are not accepted
+CI evidence; the prerequisite-only follow-up leaves the qualified crypto inputs and manifest
+unchanged, and its new CI results must be reviewed separately.
