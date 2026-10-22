@@ -423,6 +423,13 @@ jobs:
       - name: Compile contracts for ABI catalog tests
         run: pnpm evm:build
 
+      # The source-identity regression compares against Noir's actual formatted selector.
+      - name: Install Nargo for formatted source identity tests
+        if: matrix.suite == 'lib'
+        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f
+        with:
+          toolchain: ${{ env.NOIR_TOOLCHAIN }}
+
       - name: Check the committed contract artifacts against the build
         if: matrix.suite == 'lib' && matrix.partition == 1
         run: pnpm check:bindings
