@@ -242,6 +242,70 @@ pub fn assert_in_range<let BIT: u32>(v: Field, upper: Field) {
     (upper - 1 - v).assert_max_bit_size::<BIT>();
 }
 
+/// [`assert_in_range`] for a residue interval `[0, upper)` whose `upper` is a modulus of bit length
+/// `BIT`, with one `(BIT - 1)`-bit check and a boolean instead of two `BIT`-bit checks.
+///
+/// With `W = 2^(BIT - 1)` and `W <= upper <= 2^BIT`, the windows `[0, W)` and `[upper - W, upper)`
+/// cover `[0, upper)` exactly, so a boolean selector chooses the window that holds `v`. Pass `upper`
+/// as a compile-time constant (a configured modulus), so the width test below folds away. A smaller
+/// `upper` keeps [`assert_in_range`], which holds for any `upper` that `BIT` covers.
+pub fn assert_in_residue_range<let BIT: u32>(v: Field, upper: Field) {
+    std::static_assert(BIT >= 2, "a residue window needs at least two bits");
+    std::static_assert(BIT <= 127, "the width test compares as u128");
+    let width = 2.pow_32((BIT - 1) as Field);
+    if (upper as u128) >= (width as u128) {
+        // Safety: the selector is constrained to be boolean, and either value puts `v` in
+        // `[0, W)` or `[upper - W, upper)`, both inside `[0, upper)`.
+        let selector = unsafe { residue_window_hint(v, width) };
+        assert(selector * (selector - 1) == 0);
+        (v - selector * (upper - width)).assert_max_bit_size::<BIT - 1>();
+    } else {
+        assert_in_range::<BIT>(v, upper);
+    }
+}
+
+unconstrained fn residue_window_hint(v: Field, width: Field) -> Field {
+    ((v as u128) >= (width as u128)) as Field
+}
+
+#[test]
+fn residue_range_accepts_the_whole_interval() {
+    // A modulus between W and 2^BIT, a power of two at each end, and a 51-bit configured modulus.
+    for v in [0, 63, 64, 100] {
+        assert_in_residue_range::<7>(v, 101);
+    }
+    for v in [0, 63] {
+        assert_in_residue_range::<7>(v, 64);
+    }
+    for v in [0, 63, 64, 127] {
+        assert_in_residue_range::<7>(v, 128);
+    }
+    for v in [0, 1125899906842623, 1125899906842624, 1125899917262848] {
+        assert_in_residue_range::<51>(v, 1125899917262849);
+    }
+}
+
+#[test]
+fn residue_range_falls_back_below_the_window() {
+    // 100 < 2^7, so the 8-bit check keeps the two-sided bound.
+    assert_in_residue_range::<8>(99, 100);
+}
+
+#[test(should_fail)]
+fn residue_range_rejects_the_modulus() {
+    assert_in_residue_range::<51>(1125899917262849, 1125899917262849);
+}
+
+#[test(should_fail)]
+fn residue_range_rejects_minus_one() {
+    assert_in_residue_range::<51>(-1, 1125899917262849);
+}
+
+#[test(should_fail)]
+fn residue_range_fallback_rejects_the_modulus() {
+    assert_in_residue_range::<8>(100, 100);
+}
+
 /// Appends `value_at(0) .. value_at(A - 1)` packed at exactly `W` bits each: `253 / W` digits per
 /// carrier, big-endian, the last carrier padded with zero digits.
 ///

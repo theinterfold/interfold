@@ -9,7 +9,7 @@ use crate::math::commitments::{
     compute_share_encryption_commitment_from_message,
 };
 use crate::math::commitments::{compute_dkg_pk_commitment, compute_dkg_pk_commitment_checked};
-use crate::math::helpers::{assert_in_range, flatten, flatten_exact_width};
+use crate::math::helpers::{assert_in_residue_range, flatten, flatten_exact_width};
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::{negacyclic_kernel, Polynomial};
 
@@ -234,7 +234,7 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
             z.coefficients[j].assert_max_bit_size::<BIT_Z>();
             // Exactly one `z` puts the remainder in `[0, t)`, because any `t` consecutive integers
             // hold one representative of each residue class. That fixes `z` uniquely.
-            assert_in_range::<BIT_MSG>(scaled - t * z.coefficients[j], t);
+            assert_in_residue_range::<BIT_MSG>(scaled - t * z.coefficients[j], t);
         }
 
         z

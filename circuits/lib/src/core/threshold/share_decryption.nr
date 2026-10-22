@@ -8,7 +8,7 @@ use crate::math::commitments::{
     compute_aggregated_shares_commitment_checked, compute_ciphertext_commitment_checked,
     compute_threshold_decryption_share_commitment, compute_threshold_share_decryption_challenge,
 };
-use crate::math::helpers::{assert_in_range, flatten, flatten_checked};
+use crate::math::helpers::{assert_in_residue_range, flatten, flatten_checked};
 use crate::math::polynomial::{negacyclic_kernel, Polynomial};
 
 /// Parameters for threshold share decryption (C6).
@@ -121,8 +121,8 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
     /// so it covers both ranges.
     fn assert_native_coeff_matches_centered_d(u: Field, w: Field, q: Field) {
         let half = (q - 1) / 2;
-        assert_in_range::<BIT_D_NATIVE>(u, q);
-        assert_in_range::<BIT_D_NATIVE>(w + half, q);
+        assert_in_residue_range::<BIT_D_NATIVE>(u, q);
+        assert_in_residue_range::<BIT_D_NATIVE>(w + half, q);
         let shift = u - w;
         assert(shift * (shift - q) == 0, "native coefficient does not match centered d");
     }
