@@ -332,6 +332,18 @@ pub fn source_hash_with_updates(
             source = Regex::new(r"super::(insecure|secure)::")?
                 .replace_all(&source, "super::<selected>::")
                 .into_owned();
+            // Noir sorts imports lexically: `protocol` follows `insecure`, but precedes `secure`.
+            // Normalize that incidental order after masking the selected preset name.
+            let imports = Regex::new(r"(?m)^pub use [^;\n]+;$")?;
+            let mut ordered = imports
+                .find_iter(&source)
+                .map(|item| item.as_str().to_owned())
+                .collect::<Vec<_>>();
+            ordered.sort();
+            let mut ordered = ordered.into_iter();
+            source = imports
+                .replace_all(&source, |_: &regex::Captures| ordered.next().unwrap())
+                .into_owned();
         }
         if path == "Cargo.lock" {
             source = external_pins(&source)?;

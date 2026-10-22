@@ -11,6 +11,41 @@ use ark_ff::{BigInteger, PrimeField};
 use e3_zk_witness::compute_vk_hash;
 use std::time::{Duration, SystemTime};
 
+#[test]
+fn source_hash_matches_the_formatted_build_projection_for_every_pair() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    for preset in BfvPreset::PAIR_PRESETS {
+        for committee in CiphernodesCommitteeSize::ALL {
+            let mut request = request();
+            request.preset = PresetSelection::Single(preset);
+            request.committee = CommitteeSelection::Single(committee);
+            let mut selection =
+                configuration::prepare_selection(&root, preset, committee, true).unwrap();
+            selection.format(&root).unwrap();
+            let name = preset_name(preset);
+            let committee = committee.to_string();
+            assert_eq!(
+                identity::source_hash(&root, &request, Some(name), Some(&committee)).unwrap(),
+                identity::source_hash_with_updates(
+                    &root,
+                    &request,
+                    Some(name),
+                    Some(&committee),
+                    &selection.noir
+                )
+                .unwrap(),
+                "{name}/{committee}: hash CLI and staged build disagree; projected selector: {}",
+                selection
+                    .noir
+                    .iter()
+                    .find(|(path, _)| path.ends_with("configs/default/mod.nr"))
+                    .unwrap()
+                    .1,
+            );
+        }
+    }
+}
+
 pub(crate) fn request() -> Request {
     Request {
         operation: Operation::Build,
