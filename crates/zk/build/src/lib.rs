@@ -3,6 +3,7 @@
 mod artifacts;
 mod bindings;
 mod configuration;
+mod identities;
 mod identity;
 mod layouts;
 pub mod metadata;
@@ -63,6 +64,9 @@ pub enum Operation {
     SyncBindings,
     CheckBindings,
     CheckLayouts,
+    SyncIdentities,
+    CheckIdentities,
+    SyncSources,
 }
 
 impl FromStr for Operation {
@@ -78,8 +82,11 @@ impl FromStr for Operation {
             "sync-bindings" => Ok(Self::SyncBindings),
             "check-bindings" => Ok(Self::CheckBindings),
             "check-layouts" => Ok(Self::CheckLayouts),
+            "sync-identities" => Ok(Self::SyncIdentities),
+            "check-identities" => Ok(Self::CheckIdentities),
+            "sync-sources" => Ok(Self::SyncSources),
             other => Err(format!(
-                "unknown build operation {other}; expected build, hash, sync-config, sync-preset, check, export-config, sync-bindings, check-bindings, or check-layouts"
+                "unknown build operation {other}; expected build, hash, sync-config, sync-preset, check, export-config, sync-bindings, check-bindings, check-layouts, sync-identities, check-identities, or sync-sources"
             )),
         }
     }
@@ -97,6 +104,9 @@ impl fmt::Display for Operation {
             Self::SyncBindings => "sync-bindings",
             Self::CheckBindings => "check-bindings",
             Self::CheckLayouts => "check-layouts",
+            Self::SyncIdentities => "sync-identities",
+            Self::CheckIdentities => "check-identities",
+            Self::SyncSources => "sync-sources",
         })
     }
 }
@@ -232,6 +242,28 @@ pub struct Request {
     pub hydrate_bin_only: bool,
     /// Show the selected circuits without changing files.
     pub dry_run: bool,
+    /// Compile in a source snapshot without switching the live library or bin cache.
+    pub isolated: bool,
+}
+
+pub(crate) fn default_request() -> Request {
+    Request {
+        operation: Operation::Build,
+        preset: PresetSelection::Single(BfvPreset::InsecureThreshold64),
+        committee: CommitteeSelection::Single(CiphernodesCommitteeSize::Minimum),
+        groups: GroupSelection::All,
+        circuits: Vec::new(),
+        output: None,
+        skip_vk: false,
+        skip_checksums: false,
+        skip_utils_patch: false,
+        no_clean: false,
+        no_clean_targets: false,
+        skip_if_built: false,
+        hydrate_bin_only: false,
+        dry_run: false,
+        isolated: false,
+    }
 }
 
 impl Request {
@@ -371,6 +403,20 @@ fn run(command: &mut Command) -> Result<String> {
     let output = command
         .output()
         .with_context(|| format!("Start {command:?}"))?;
+    let diagnostic = Path::new(command.get_program())
+        .file_name()
+        .is_some_and(|name| name == "nargo")
+        && [&output.stdout, &output.stderr]
+            .into_iter()
+            .any(|stream| String::from_utf8_lossy(stream).contains("bug:"));
+    if diagnostic {
+        bail!(
+            "{command:?}: compiler emitted a bug diagnostic despite process exit {}:\n{}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
     if !output.status.success() {
         bail!(
             "{command:?} failed ({}):\n{}\n{}",
@@ -435,12 +481,16 @@ pub fn execute(root: &Path, request: &Request) -> Result<()> {
         Operation::SyncBindings => bindings::sync(root, false)?,
         Operation::CheckBindings => bindings::sync(root, true)?,
         Operation::CheckLayouts => layouts::check(root, request)?,
+        Operation::SyncIdentities => identities::generate(root, &request.output_dir(root))?,
+        Operation::CheckIdentities => identities::check(root, request)?,
+        Operation::SyncSources => configuration::sync_sources(root)?,
         Operation::ExportConfig => {
             let metadata = metadata::collect(root)?;
             let mut stdout = std::io::stdout().lock();
             serde_json::to_writer_pretty(&mut stdout, &metadata)?;
             writeln!(stdout)?;
         }
+        Operation::Build if request.isolated => artifacts::build_isolated(root, request)?,
         Operation::Build => artifacts::build(root, request)?,
     }
     Ok(())

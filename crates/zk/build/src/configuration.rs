@@ -2,7 +2,7 @@
 
 use super::{bindings, preset_name, run, tier, Request};
 use alloy_primitives::B256;
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use e3_committee::CiphernodesCommitteeSize;
 use e3_fhe_params::{
     bfv_parameter_hash, current_bfv_crypto_config_id, encode_bfv_params, BfvPreset,
@@ -189,7 +189,11 @@ pub fn replace_declarations(
         }
         count += 1;
         match old.get(name) {
-            Some(current) if compact(current) != compact(declaration) => {
+            Some(current)
+                if compact(current) != compact(declaration)
+                    && !declaration_tokens(current)
+                        .is_some_and(|old| Some(old) == declaration_tokens(declaration)) =>
+            {
                 updated = updated.replacen(current, declaration, 1)
             }
             None if strict => bail!("Missing {name} in committed circuit configuration"),
@@ -209,6 +213,7 @@ pub fn replace_declarations(
     Ok(updated)
 }
 
+#[cfg(test)]
 pub fn bound_updates(
     root: &Path,
     preset: BfvPreset,
@@ -251,7 +256,27 @@ pub fn sync_preset(
     committee: CiphernodesCommitteeSize,
 ) -> Result<()> {
     let material = PresetMaterial::new(preset)?;
+    publish_changes(formatted_noir_changes(
+        root,
+        &root.join("circuits/lib"),
+        preset_updates(root, preset, committee, &material)?,
+    )?)
+}
+
+pub fn preset_updates(
+    root: &Path,
+    preset: BfvPreset,
+    committee: CiphernodesCommitteeSize,
+    material: &PresetMaterial,
+) -> Result<Vec<(PathBuf, String)>> {
+    let search = preset.search_config().context("Preset search recipe")?;
     let sources = [
+        (
+            "threshold.nr",
+            "PARAMS_SEARCH_",
+            vec![],
+            format!("pub global PARAMS_SEARCH_N: Field = {};\npub global PARAMS_SEARCH_Z: Field = {};\n", search.n, search.z),
+        ),
         (
             "dkg.nr",
             "PK_",
@@ -322,8 +347,20 @@ pub fn sync_preset(
                 .render()?,
         ),
     ];
+    let threshold_source = sources
+        .iter()
+        .find(|(file, prefix, _, _)| {
+            *file == "threshold.nr" && *prefix == "THRESHOLD_SHARE_DECRYPTION_"
+        })
+        .context("Threshold share-decryption declarations")?;
+    let aggregate_alias_target =
+        declarations(&threshold_source.3)["THRESHOLD_SHARE_DECRYPTION_BIT_SK"].clone();
     let mut pending = BTreeMap::new();
-    for (file, prefix, common, generated) in sources {
+    for (file, prefix, common, mut generated) in sources {
+        // Only the secure preset exposes these legacy public search globals.
+        if prefix == "PARAMS_SEARCH_" && preset == BfvPreset::InsecureThreshold64 {
+            continue;
+        }
         let path = root
             .join("circuits/lib/src/configs")
             .join(tier(preset))
@@ -333,16 +370,35 @@ pub fn sync_preset(
             Some(text) => text,
             None => fs::read_to_string(&path)?,
         };
+        if file == "dkg.nr" && prefix == "SHARE_DECRYPTION_" {
+            // C4 re-exports C6's aggregate width rather than defining another scalar. Verify the
+            // real import and the freshly derived values, then leave that alias intact.
+            let import = Regex::new(&format!(
+                r"(?s)pub\s+use\s+crate::configs::{}::threshold::\{{([^}}]+)\}};",
+                tier(preset)
+            ))?;
+            let exports = import.captures(&text).context("DKG threshold re-exports")?;
+            if !compact(&exports[1])
+                .contains("THRESHOLD_SHARE_DECRYPTION_BIT_SKasSHARE_DECRYPTION_BIT_AGG")
+            {
+                bail!("DKG aggregate width must re-export THRESHOLD_SHARE_DECRYPTION_BIT_SK");
+            }
+            let alias = declarations(&generated)["SHARE_DECRYPTION_BIT_AGG"].clone();
+            if compact(&alias.replace(
+                "SHARE_DECRYPTION_BIT_AGG",
+                "THRESHOLD_SHARE_DECRYPTION_BIT_SK",
+            )) != compact(&aggregate_alias_target)
+            {
+                bail!("C4 and C6 aggregate widths disagree");
+            }
+            generated = generated.replacen(&alias, "", 1);
+        }
         pending.insert(
             path,
-            replace_declarations(&text, &generated, prefix, &common, false)?,
+            replace_declarations(&text, &generated, prefix, &common, true)?,
         );
     }
-    publish_changes(formatted_noir_changes(
-        root,
-        &root.join("circuits/lib"),
-        pending.into_iter().collect(),
-    )?)
+    Ok(pending.into_iter().collect())
 }
 
 pub fn parity_files(
@@ -391,31 +447,32 @@ impl Selection {
     }
 }
 
-/// Keep formatter layout only for the generated numeric parity declaration. Comments, strings,
-/// imports, and headers must match exactly; they never participate in whitespace normalization.
+/// Ignore optional trailing commas only in generated numeric declarations. Comments, strings,
+/// imports, and headers never participate in normalization.
+fn declaration_tokens(declaration: &str) -> Option<Vec<String>> {
+    if !declaration.chars().all(|c| {
+        c.is_ascii_alphanumeric() || c.is_ascii_whitespace() || "_:;=+-*[],()<>".contains(c)
+    }) {
+        return None;
+    }
+    let regex = Regex::new(r"[A-Za-z0-9_]+|[^\s]").unwrap();
+    let mut tokens: Vec<_> = regex
+        .find_iter(declaration)
+        .map(|m| m.as_str().to_owned())
+        .collect();
+    for i in (0..tokens.len().saturating_sub(1)).rev() {
+        if tokens[i] == "," && matches!(tokens[i + 1].as_str(), "]" | ")") {
+            tokens.remove(i);
+        }
+    }
+    Some(tokens)
+}
+
 fn preserve_parity_layout(original: &str, generated: String) -> String {
     let old = declarations(original);
     let fresh = declarations(&generated);
-    let tokens = |declaration: &str| -> Option<Vec<String>> {
-        if !declaration.chars().all(|c| {
-            c.is_ascii_alphanumeric() || c.is_ascii_whitespace() || "_:;=+-*[],()".contains(c)
-        }) {
-            return None;
-        }
-        let regex = Regex::new(r"[A-Za-z0-9_]+|[^\s]").unwrap();
-        let mut tokens: Vec<_> = regex
-            .find_iter(declaration)
-            .map(|m| m.as_str().to_owned())
-            .collect();
-        for i in (0..tokens.len().saturating_sub(1)).rev() {
-            if tokens[i] == "," && tokens[i + 1] == "]" {
-                tokens.remove(i);
-            }
-        }
-        Some(tokens)
-    };
     if let (Some(old), Some(fresh)) = (old.get("PARITY_MATRIX"), fresh.get("PARITY_MATRIX")) {
-        if tokens(old).is_some_and(|old| Some(old) == tokens(fresh)) {
+        if declaration_tokens(old).is_some_and(|old| Some(old) == declaration_tokens(fresh)) {
             return generated.replacen(fresh, old, 1);
         }
     }
@@ -455,7 +512,7 @@ pub fn prepare_selection(
         };
         updates.push((path, content));
     }
-    updates.extend(bound_updates(root, preset, committee, params.get(preset))?);
+    updates.extend(preset_updates(root, preset, committee, params.get(preset))?);
     Ok(Selection {
         noir: updates,
         protocol: protocol_updates(root, preset, committee, skip_utils, &params)?,
@@ -531,9 +588,62 @@ fn protocol_updates(
     Ok(updates)
 }
 
-/// Format only an isolated library copy. A check never swaps live generated files.
-pub fn check(root: &Path, options: &Request) -> Result<()> {
+fn all_sources(root: &Path) -> Result<Selection> {
     let params = OperationParams::both()?;
+    let selection_source =
+        fs::read_to_string(root.join("packages/interfold-contracts/scripts/utils.ts"))?;
+    let selection_name = |name: &str| -> Result<String> {
+        let pattern = Regex::new(&format!(r#"export const {name}: [A-Za-z]+ = "([^"]+)";"#))?;
+        Ok(pattern
+            .captures(&selection_source)
+            .with_context(|| format!("Missing deployment selection {name}"))?[1]
+            .to_string())
+    };
+    let active_preset = super::preset(&selection_name("ACTIVE_BFV_PRESET")?)?;
+    let active_committee: CiphernodesCommitteeSize =
+        selection_name("ACTIVE_BFV_COMMITTEE")?.parse()?;
+    let mut selection = prepare_selection(root, active_preset, active_committee, false)?;
+    let mut sources: BTreeMap<_, _> = selection.noir.into_iter().collect();
+    // An unselected preset retains its canonical development declarations. Pair-specific checks
+    // stage the requested committee instead of comparing all pairs with this one live library.
+    for preset in BfvPreset::PAIR_PRESETS {
+        let committee = if preset == active_preset {
+            active_committee
+        } else {
+            CiphernodesCommitteeSize::Minimum
+        };
+        for (path, contents) in preset_updates(root, preset, committee, params.get(preset))? {
+            sources.insert(path, contents);
+        }
+    }
+    for committee in CiphernodesCommitteeSize::ALL {
+        for (relative, contents) in parity_files(committee, &params)? {
+            let path = root
+                .join("circuits/lib/src/configs/committee")
+                .join(relative);
+            let contents = match fs::read_to_string(&path) {
+                Ok(old) => preserve_parity_layout(&old, contents),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => contents,
+                Err(error) => return Err(error.into()),
+            };
+            sources.insert(path, contents);
+        }
+    }
+    selection.noir = sources.into_iter().collect();
+    Ok(selection)
+}
+
+pub fn sync_sources(root: &Path) -> Result<()> {
+    let mut sources = all_sources(root)?;
+    sources.format(root)?;
+    sources.publish()
+}
+
+/// Format only an isolated library copy. A check never swaps live generated files.
+pub fn check(root: &Path, _options: &Request) -> Result<()> {
+    bindings::sync(root, true)?;
+    check_ownership(root)?;
+    let expected = all_sources(root)?;
     let temp = tempfile::tempdir()?;
     let lib = root.join("circuits/lib");
     super::artifacts::copy_tree(
@@ -542,12 +652,10 @@ pub fn check(root: &Path, options: &Request) -> Result<()> {
         &["target", "Prover.toml", "Witness.toml"],
     )?;
     let mut paths = Vec::new();
-    for committee in options.committees() {
-        for (relative, contents) in parity_files(committee, &params)? {
-            let path = PathBuf::from("src/configs/committee").join(relative);
-            fs::write(temp.path().join(&path), contents)?;
-            paths.push(path);
-        }
+    for (path, contents) in expected.noir {
+        let path = path.strip_prefix(&lib)?.to_path_buf();
+        fs::write(temp.path().join(&path), contents)?;
+        paths.push(path);
     }
     format_noir(root, temp.path())?;
     for path in paths {
@@ -558,6 +666,115 @@ pub fn check(root: &Path, options: &Request) -> Result<()> {
             );
         }
     }
-    println!("Generated committee configuration matches the Rust owner.");
+    for (path, contents) in expected.protocol {
+        if fs::read_to_string(&path)? != contents {
+            bail!("{} differs from its generated source", path.display());
+        }
+    }
+    println!("Generated preset and committee configuration matches the Rust owners (source-only; no artifact qualification).");
+    Ok(())
+}
+
+pub fn check_ownership(root: &Path) -> Result<()> {
+    let metadata = e3_fhe_params::metadata::BfvMetadata::current()?;
+    let mut forbidden = vec![
+        metadata.encryption_scheme.to_string(),
+        metadata.encryption_scheme_id,
+        metadata.circuit_version.to_string(),
+    ];
+    for preset in metadata.presets {
+        forbidden.extend([preset.parameter_hash, preset.crypto_config_id]);
+    }
+    let width = Regex::new(&format!(
+        r"(?i)(?:const|global|let|static)\s+(?:MAX_MSG_NON_ZERO_COEFFS|MESSAGE_COEFFS_COUNT|messageCoeffsCount|message_coeffs_count|plaintextByteLength|plaintextByteLen)(?:\s*:\s*[A-Za-z0-9_<>]+)?\s*=\s*(?:{}|{})\b",
+        e3_zk_config::MAX_MSG_NON_ZERO_COEFFS,
+        e3_zk_config::metadata::CircuitDimensions::current().plaintext_byte_len
+    ))?;
+    let reviewed = [
+        "crates/fhe-params/src/constants.rs",
+        "crates/zk/config/src/constants.rs",
+        "packages/interfold-contracts/contracts/lib/BfvProtocol.sol",
+        "circuits/lib/src/configs/protocol.nr",
+        "crates/indexer/tests/fixtures/fake_interfold.sol",
+        "crates/zk/build/src/tests.rs",
+        "packages/interfold-contracts/scripts/upgrade/v19Cutover.ts",
+        "packages/interfold-contracts/test/Risc0BfvCiphertextVerifier.spec.ts",
+        "packages/interfold-contracts/test/MockE3Program.spec.ts",
+        "packages/interfold-contracts/test/Deployment/ProtocolDeployment.spec.ts",
+    ];
+    let comments = Regex::new(r"(?s)/\*.*?\*/|(?m)//[^\n]*")?;
+    fn walk(root: &Path, directory: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.')
+                || ["node_modules", "target", "dist", "cache", "deployments"]
+                    .contains(&name.as_str())
+            {
+                continue;
+            }
+            // TypeChain/Hardhat output is owned by the contracts build, not every directory named
+            // `types`, `artifacts`, or `build` in a new consumer's maintained source tree.
+            if [
+                "packages/interfold-contracts/types",
+                "packages/interfold-contracts/artifacts",
+                "templates/default/types",
+                "templates/default/artifacts",
+            ]
+            .iter()
+            .any(|generated| entry.path() == root.join(generated))
+            {
+                continue;
+            }
+            if entry.file_type()?.is_symlink() {
+                if matches!(
+                    entry.path().extension().and_then(|value| value.to_str()),
+                    Some("rs" | "ts" | "tsx" | "js" | "mjs" | "cjs" | "sol" | "nr")
+                ) {
+                    bail!("Unregistered symlinked consumer {}", entry.path().display());
+                }
+                continue;
+            }
+            if entry.file_type()?.is_dir() {
+                walk(root, &entry.path(), files)?;
+            } else if matches!(
+                entry.path().extension().and_then(|value| value.to_str()),
+                Some("rs" | "ts" | "tsx" | "js" | "mjs" | "cjs" | "sol" | "nr")
+            ) {
+                files.push(entry.path().strip_prefix(root)?.to_path_buf());
+            }
+        }
+        Ok(())
+    }
+    let mut files = Vec::new();
+    for directory in ["crates", "packages", "scripts", "templates", "circuits"] {
+        let path = root.join(directory);
+        if path.is_dir() {
+            walk(root, &path, &mut files)?;
+        }
+    }
+    for path in files {
+        let relative = path
+            .to_str()
+            .context("UTF-8 consumer path")?
+            .replace('\\', "/");
+        if reviewed.contains(&relative.as_str()) {
+            continue;
+        }
+        let source = fs::read_to_string(root.join(&path))?;
+        let code = comments.replace_all(&source, "");
+        if forbidden.iter().any(|value| {
+            if value.starts_with("0x") {
+                code.to_ascii_lowercase().contains(value)
+            } else {
+                ['"', '\'', '`']
+                    .into_iter()
+                    .any(|quote| code.contains(&format!("{quote}{value}{quote}")))
+            }
+        }) || width.is_match(&code)
+        {
+            bail!("Independent current protocol definition in {relative}; import its owning binding (generated headers do not exempt consumers)");
+        }
+    }
     Ok(())
 }

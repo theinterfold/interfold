@@ -5,22 +5,14 @@
 # without even the implied warranty of MERCHANTABILITY
 # or FITNESS FOR A PARTICULAR PURPOSE.
 
-# Asserts that the BFV parameters and committee selection are internally consistent across
-# the files that encode them independently:
-#
-#   1. packages/interfold-contracts/crypto-config.json (deployment parameter snapshot)
-#   2. crates/fhe-params/src/constants.rs (ciphernode parameters)
-#   3. circuits/lib/src/configs/{insecure,secure}/threshold.nr (circuit parameters)
-#   4. circuits/lib/src/configs/committee/active.nr (Noir-side active committee)
-#   5. packages/interfold-contracts/scripts/utils.ts (deployment hashes and committee values)
-#   6. crates/committee/src/lib.rs (committee enum values)
-#   7. packages/interfold-contracts/contracts/lib/BfvProtocol.sol
+# Compatibility entry point for BFV source consistency. Numerical facts come from the Rust-owner
+# snapshot, not Rust/TypeScript source parsing. With Nargo installed, typed regeneration checks every
+# preset and committee declaration, selector, and parity matrix in isolation.
 #
 # `circuits/bin/.active-preset.json` is only a local hydrated cache. It can point at Sepolia's
 # fast insecure-minimum artifacts while the checked-in production config points at secure-small.
 #
-# A drift between any two means the next `pnpm build:circuits` would silently produce
-# verifiers / proofs against the wrong committee. Run from .husky/pre-push (or CI).
+# This checks sources only. Use check:crypto-config for complete artifact/key qualification.
 #
 # Exit 0 on consistency, 1 on drift.
 
@@ -34,8 +26,6 @@ STAMP="circuits/bin/.active-preset.json"
 UTILS_TS="packages/interfold-contracts/scripts/utils.ts"
 PROTOCOL_CONSTANTS_TS="packages/interfold-contracts/scripts/protocol/constants.ts"
 CRYPTO_CONFIG_JSON="packages/interfold-contracts/crypto-config.json"
-FHE_CONSTANTS_RS="crates/fhe-params/src/constants.rs"
-COMMITTEE_RS="crates/committee/src/lib.rs"
 PROTOCOL_SOL="packages/interfold-contracts/contracts/lib/BfvProtocol.sol"
 TASKS_TS="packages/interfold-contracts/tasks/interfold.ts"
 SDK_UTILS_TS="packages/interfold-sdk/src/utils.ts"
@@ -51,7 +41,6 @@ fail() {
 for required_file in \
   "$PROTOCOL_CONSTANTS_TS" \
   "$CRYPTO_CONFIG_JSON" \
-  "$FHE_CONSTANTS_RS" \
   "$PROTOCOL_SOL" \
   "$TASKS_TS" \
   "$SDK_UTILS_TS" \
@@ -176,11 +165,9 @@ if (value < 2n) {
 
 check_bfv_preset() {
   local label="$1"
-  local rust_name="$2"
-  local noir_name="$3"
-  local ts_values rust_block rust_threshold noir_file
+  local noir_name="$2"
+  local ts_values noir_file
   local ts_degree ts_plaintext ts_moduli ts_error
-  local rust_degree rust_plaintext rust_moduli rust_error
   local noir_degree noir_plaintext noir_moduli noir_error_bound expected_error_bound
   local noir_q_mod_t noir_q_inverse_mod_t expected_q_mod_t expected_q_inverse_mod_t
 
@@ -193,32 +180,12 @@ const p = preset.threshold;
 process.stdout.write([p.degree, p.plaintextModulus, p.moduli.map(value => `0x${BigInt(value).toString(16)}`).join(','), p.error1Variance].join(';'));
 NODE
   )
-  rust_block=$(awk -v marker="pub mod ${rust_name} {" '
-    $0 == marker { found = 1 }
-    found { print }
-    found && /^}/ { exit }
-  ' "$FHE_CONSTANTS_RS")
-  rust_threshold=$(awk '
-    /^    pub mod threshold \{/ { found = 1 }
-    found { print }
-    found && /^    }/ { exit }
-  ' <<< "$rust_block")
   noir_file="circuits/lib/src/configs/${noir_name}/threshold.nr"
 
-  [[ -n "$ts_values" && -n "$rust_threshold" && -f "$noir_file" ]] \
+  [[ -n "$ts_values" && -f "$noir_file" ]] \
     || fail "could not read the ${label} BFV parameter sources"
 
   IFS=';' read -r ts_degree ts_plaintext ts_moduli ts_error <<< "$ts_values"
-
-  rust_degree=$(grep -E '^[[:space:]]*pub const DEGREE: usize = [0-9]+;' <<< "$rust_block" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
-  rust_plaintext=$(grep -E 'PLAINTEXT_MODULUS: u64 = [0-9]+;' <<< "$rust_threshold" | sed -E 's/.*= ([0-9]+);/\1/')
-  rust_moduli=$(grep -oE '0x[0-9a-fA-F]+' <<< "$rust_threshold" | tr '[:upper:]' '[:lower:]' | paste -sd, -)
-  rust_error=$(grep -E 'ERROR1_VARIANCE: &str = "[0-9]+";' <<< "$rust_threshold" | sed -E 's/.*"([0-9]+)".*/\1/')
-
-  if [[ "$ts_degree" != "$rust_degree" || "$ts_plaintext" != "$rust_plaintext" || \
-        "$(hex_csv_to_decimal "$ts_moduli")" != "$(hex_csv_to_decimal "$rust_moduli")" || "$ts_error" != "$rust_error" ]]; then
-    fail "drift: ${label} BFV parameters differ between $CRYPTO_CONFIG_JSON and $FHE_CONSTANTS_RS"
-  fi
 
   noir_degree=$(grep -E '^pub global N: u32 = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
   noir_plaintext=$(grep -E '^pub global PLAINTEXT_MODULUS: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
@@ -253,8 +220,8 @@ process.stdout.write(`${qModT},${(x % t + t) % t}\n`);
   fi
 }
 
-check_bfv_preset insecure-64 insecure_64 insecure
-check_bfv_preset secure-8192 secure_8192 secure
+check_bfv_preset insecure-64 insecure
+check_bfv_preset secure-8192 secure
 
 # 6. Every chain-supported route in utils.ts must match the Noir committee shape and the
 #    parameter/configuration hashes in BfvProtocol.sol. Keep this check
@@ -393,10 +360,7 @@ if [[ -f "$STAMP" ]]; then
   fi
 fi
 
-# 8. Check every Rust enum row against its Noir committee module.
-if [[ ! -f "$COMMITTEE_RS" ]]; then
-  fail "missing $COMMITTEE_RS"
-fi
+# 8. Check owner-exported committee records against their Noir modules, without parsing Rust.
 for committee in minimum micro small; do
   mod_file="circuits/lib/src/configs/committee/$committee/mod.nr"
   [[ -f "$mod_file" ]] || fail "missing $mod_file"
@@ -404,28 +368,31 @@ for committee in minimum micro small; do
   noir_n=$(grep -E 'pub global N_PARTIES: u32 = [0-9]+' "$mod_file" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
   noir_h=$(grep -E 'pub global H: u32 = [0-9]+' "$mod_file" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
   noir_t=$(grep -E 'pub global T: u32 = [0-9]+' "$mod_file" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
-  capitalized="$(echo "$committee" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')"
-  rust_block="$(
-    awk -v marker="CiphernodesCommitteeSize::$capitalized => CiphernodesCommittee {" '
-      index($0, marker) { found = 1 }
-      found { print }
-      found && /^[[:space:]]*},[[:space:]]*$/ { exit }
-    ' "$COMMITTEE_RS"
-  )"
-  rust_n=$(grep -E '^[[:space:]]*n: [0-9]+,' <<<"$rust_block" | grep -oE '[0-9]+' | head -n1)
-  rust_h=$(grep -E '^[[:space:]]*h: [0-9]+,' <<<"$rust_block" | grep -oE '[0-9]+' | head -n1)
-  rust_t=$(grep -E '^[[:space:]]*threshold: [0-9]+,' <<<"$rust_block" | grep -oE '[0-9]+' | head -n1)
+  IFS=';' read -r rust_n rust_h rust_t < <(node --input-type=module - "$CRYPTO_CONFIG_JSON" "$committee" <<'NODE'
+import { readFileSync } from 'node:fs';
+const config = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+const committee = config.committees.find(committee => committee.name === process.argv[3]);
+if (!committee) throw new Error(`Missing committee: ${process.argv[3]}`);
+process.stdout.write(`${committee.n};${committee.h};${committee.t}\n`);
+NODE
+  )
 
   if [[ -z "$rust_n" || -z "$rust_h" || -z "$rust_t" ]]; then
-    fail "could not parse CiphernodesCommitteeSize::$capitalized from $COMMITTEE_RS"
+    fail "could not read $committee from the owner snapshot"
   fi
   if [[ "$rust_n" != "$noir_n" || "$rust_h" != "$noir_h" || "$rust_t" != "$noir_t" ]]; then
     fail "drift: $mod_file has (N=$noir_n, T=$noir_t, H=$noir_h) but \
-$COMMITTEE_RS has (N=$rust_n, T=$rust_t, H=$rust_h) for $capitalized"
+$CRYPTO_CONFIG_JSON has (N=$rust_n, T=$rust_t, H=$rust_h) for $committee"
   fi
 done
 
-# 9. The Rust build owner renders and formats a temporary library copy, without swapping live files.
+# 9. Keep the lightweight compatibility path available without build tools. Full qualification
+# requires them unconditionally; this fallback compares the checked snapshot and its consumers only.
+if command -v cargo >/dev/null 2>&1 && command -v pnpm >/dev/null 2>&1; then
+  pnpm --silent check:crypto-bindings || fail "binding snapshot differs from the Rust owners"
+else
+  echo "  (snapshot/consumer comparison only: cargo/pnpm not found.)" >&2
+fi
 if command -v nargo >/dev/null 2>&1; then
   pnpm --silent build:circuits check --committee all || fail "generated committee configuration differs from the Rust build owner"
   RAN_PARITY_CHECK=true
@@ -433,4 +400,4 @@ else
   echo "  (skipping generated committee check: nargo not found.)" >&2
 fi
 
-echo "✓ check:committee: BFV tuples, configuration IDs, all six routes, and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) are consistent across TypeScript, Rust, Noir, and Solidity$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"
+echo "✓ check:committee: owner bindings, BFV tuples, configuration IDs, routes, and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) agree (source-only)$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', generated preset/committee/parity files')"

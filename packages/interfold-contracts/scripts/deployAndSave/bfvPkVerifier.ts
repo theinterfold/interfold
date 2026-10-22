@@ -12,9 +12,8 @@ import {
 import {
   BFV_DKG_H,
   assertBfvPkVerifierSubCircuitVkHashes,
-  getBfvPkSubCircuitVkHashPaths,
+  getBfvCircuitIdentities,
   readDeploymentArgs,
-  readVkRecursiveHash,
   storeDeploymentArgs,
 } from "../utils";
 
@@ -62,12 +61,8 @@ export const deployAndSaveBfvPkVerifier = async (
     return { bfvPkVerifier };
   }
 
-  const expectedNodesFoldKeyHash = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths().nodesFold,
-  );
-  const expectedC5KeyHash = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths().c5,
-  );
+  const { nodesFold: expectedNodesFoldKeyHash, c5: expectedC5KeyHash } =
+    getBfvCircuitIdentities();
 
   const bfvPkVerifierFactory = await ethers.getContractFactory("BfvPkVerifier");
   const bfvPkVerifier = await bfvPkVerifierFactory.deploy(

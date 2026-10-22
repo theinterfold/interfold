@@ -4,9 +4,7 @@ import {
   ActiveBfvConfig,
   activeBfvConfigForChain,
   bfvConfigsForChain,
-  getBfvDecryptionSubCircuitVkHashPaths,
-  getBfvPkSubCircuitVkHashPaths,
-  readVkRecursiveHash,
+  getBfvCircuitIdentities,
 } from "../utils";
 import { ADDRESS_ONE } from "./constants";
 import { deployNodeReleaseRegistry } from "./nodeRelease";
@@ -27,6 +25,10 @@ export async function deployProtocolContracts(
   config: ProtocolConfigFile,
 ): Promise<ProtocolDeployResult> {
   assertMockDeploymentAllowed(config);
+  if (config.verifiers?.deploy) {
+    for (const selected of bfvConfigsForChain(config.chainId))
+      getBfvCircuitIdentities(selected);
+  }
   const poseidonT3 = await ensurePoseidonT3(ethers);
 
   let initialE3Program = config.e3Programs[0];
@@ -344,9 +346,15 @@ export async function deployBfvVerifierRoutes(
     throw new Error("At least one BFV verifier route is required");
   }
 
+  const qualified = configs.map((config) => ({
+    config,
+    identities: getBfvCircuitIdentities(config),
+  }));
   const routes = [];
-  for (const config of configs) {
-    routes.push(await deployBfvVerifierRoute(ethers, registry, config));
+  for (const { config, identities } of qualified) {
+    routes.push(
+      await deployBfvVerifierRoute(ethers, registry, config, identities),
+    );
   }
 
   let pkVerifier = routes[0].pkVerifier;
@@ -389,6 +397,7 @@ async function deployBfvVerifierRoute(
   ethers: any,
   registry: string,
   config: ActiveBfvConfig,
+  identities: ReturnType<typeof getBfvCircuitIdentities>,
 ) {
   const dkgSource = bfvHonkSource(config, "DkgAggregatorVerifier");
   const decryptionSource = bfvHonkSource(
@@ -447,26 +456,24 @@ async function deployBfvVerifierRoute(
   const decryptionAggregatorVerifier =
     await deployedAddress(decryptionAggregator);
 
-  const pkPaths = getBfvPkSubCircuitVkHashPaths(config);
   const pkFactory = await ethers.getContractFactory("BfvPkVerifier");
   const pk = await pkFactory.deploy(
     dkgAggregatorVerifier,
-    readVkRecursiveHash(pkPaths.nodesFold, config),
-    readVkRecursiveHash(pkPaths.c5, config),
+    identities.nodesFold,
+    identities.c5,
     config.h,
   );
   await pk.waitForDeployment();
   const pkVerifier = await deployedAddress(pk);
 
-  const decryptionPaths = getBfvDecryptionSubCircuitVkHashPaths(config);
   const decryptionFactory = await ethers.getContractFactory(
     "BfvDecryptionVerifier",
   );
   const decryption = await decryptionFactory.deploy(
     decryptionAggregatorVerifier,
     registry,
-    readVkRecursiveHash(decryptionPaths.c6Fold, config),
-    readVkRecursiveHash(decryptionPaths.c7, config),
+    identities.c6Fold,
+    identities.c7,
     config.t,
   );
   await decryption.waitForDeployment();

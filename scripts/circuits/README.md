@@ -41,7 +41,7 @@ needed for actual circuit/verifier work.
 pnpm build:circuits
 
 # Switch the active committee size (regenerates committee/active.nr,
-# default/mod.nr, and patches BFV_DKG_H / BFV_THRESHOLD_T in utils.ts atomically)
+# default/mod.nr, and selects deployment preset/committee names atomically)
 pnpm build:circuits --committee micro
 
 # Combine preset + committee
@@ -67,6 +67,11 @@ pnpm build:circuits sync-preset --preset insecure-64 --committee minimum
 
 # Compare generated files in an isolated copy
 pnpm build:circuits check --committee all
+
+# Prepare a source-bound matrix without changing live selectors or circuits/bin caches
+pnpm build:circuits --isolated --preset all --committee all
+pnpm generate:circuit-identities
+pnpm check:crypto-config
 
 # Benchmark production preparation and Noir execution with artificial inputs
 pnpm bench:circuits run --mode insecure --committee minimum --circuit dkg/pk --leaf-only
@@ -106,7 +111,7 @@ the generator would produce.
 
 - `--preset <name>` - Parameter preset: `insecure-64` (default), `secure-8192`, or `all`
 - `--committee <name>` - Committee size: `minimum` (default), `micro`, `small`
-- `--skip-utils-patch` - Skip rewriting committee values and BFV configuration hashes in
+- `--skip-utils-patch` - Skip selecting deployment preset/committee names in
   `packages/interfold-contracts/scripts/utils.ts`
 - `--group <groups>` - Circuit groups (comma-separated: dkg,threshold)
 - `--circuit <name>` - Build specific circuit(s)
@@ -118,6 +123,8 @@ the generator would produce.
 - `--no-clean-targets` - Keep compiler targets during a source build
 - `--skip-if-built` - Reuse a source-matched build or hydrate its archived pair
 - `--hydrate-bin-only` - Hydrate a stamped pair without compiling
+- `--isolated` - Build each pair in a source snapshot; never switch live selectors or hydrate live
+  caches
 
 Hydration accepts a different source hash, reports it, and records the original artifact hash in the
 active stamp. It never restamps the archive. `--skip-if-built` still requires a source match.
@@ -127,6 +134,27 @@ Only a complete build with verification keys writes the `nodes_fold.vk_tree_hash
 a failed circuit, removes both anchors from the pair and from `circuits/bin/`. An old anchor can
 hash a key that no longer matches the compiled circuits. Run a complete build before you deploy the
 BFV verifiers or aggregate proofs.
+
+Complete builds also write a pair `identities.json`. Partial or failed builds invalidate that slice
+and aggregate indexes, as well as both anchors. Tool-preflight failures do not touch live outputs.
+After preparing every build-policy pair, `pnpm generate:circuit-identities` writes the deterministic
+`circuits/identities.json` and archive index. It refuses stale source stamps; it never restamps
+them.
+
+`pnpm generate:crypto-config` refreshes source bindings and complete preset/committee declarations
+without compiled artifacts. `pnpm check:crypto-config --bindings-only` checks those sources and
+consumer ownership only. The default `pnpm check:crypto-config` requires the complete prepared
+matrix, pinned tools, and identity metadata; it independently derives every backend key and ordered
+tree, compares complete Solidity verifiers, and checks compiled application layouts and archive
+checksums. It is read-only and never hydrates, downloads, rebuilds, or repairs artifacts. With an
+isolated output, pass `--artifacts-dir <directory>`; pass the same directory as `--output` to
+identity generation.
+
+`pnpm build:circuits check-identities --preset <preset> --committee <committee>` qualifies one pair,
+not the complete matrix. CI builds/checks each pair in isolation, then requires `crypto_consistency`
+to check their complete assembled output. Configure that aggregate as a required check; a
+source-only or selected-pair result cannot replace it. Relevant pre-push changes run the full local
+gate too.
 
 `sync-config` updates only `scripts/utils.ts` and `BfvProtocol.sol`. Use it when BFV parameter
 constants change and the prebuilt circuit artifacts already exist. It does not compile Noir circuits

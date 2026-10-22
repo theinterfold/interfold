@@ -18,12 +18,11 @@ preset/committee pair has its own H-shaped PK and T-shaped decryption public-inp
 `pnpm check:committee` compares committee Noir/Rust/BfvProtocol/deployment utils, complete threshold
 BFV tuples across deployment constants/Rust/preset Noir, and configuration IDs across contracts,
 tasks, SDK, and EVM helpers. Drift can register a tuple nodes/circuits do not implement. The
-committed default is insecure-64/minimum; CI rebuilds that selection and rejects diffs. Local
-active-preset cache mismatch is only a note. **Limits:** these source checks do not establish
+committed default is insecure-64/minimum; CI checks its selectors without switching the live tree.
+Local active-preset cache mismatch is only a note. **Limits:** these source checks do not establish
 verification-key or proof compatibility. With Nargo available, the gate runs
 `pnpm build:circuits check --committee all`. The Rust owner renders/formats an isolated library copy
-and compares generated files without swapping live files. Circuit CI also rejects
-committed-selection drift after rebuilding.
+and compares complete preset/committee declarations without swapping live files.
 
 C1/C2 `PK_GENERATION_*`/`SHARE_COMPUTATION_*` bounds are derived from preset+committee. Generator
 replaces whole declarations including array dimensions and rejects unknown prefixed globals, because
@@ -125,11 +124,11 @@ Each supported pair has concrete BfvPkVerifier/BfvDecryptionVerifier; immutable 
 public-input length and VK anchors. Selecting an already installed matching pair needs no
 replacement; missing routes or changed VKs require matching wrappers and replacement routers before
 mapping updates. Constructor code checks/nonzero VK anchors are mandatory. Deployment compares
-immutables with built artifacts. Generated verifiers must match built VKs: pre-push reads circuit
-filter paths and checked-out insecure pair (local committee/default minimum), refusing dirty
-relevant files; CI source builds compile/check the selected default pair using the same filter.
-Releases require the complete supported matrix. A wrapper name alone does not identify its accepted
-statement.
+immutables with built artifacts. Generated verifiers must match built VKs: relevant pre-push changes
+require complete source-bound crypto qualification as well as the existing selected verifier check.
+CI builds/checks each build-policy pair in isolation and requires an aggregate complete-matrix
+result, including every release-required pair. A skipped required leg fails that result. A wrapper
+name alone does not identify its accepted statement.
 
 Published `@interfold/contracts` deploys do not require a checkout. Outside the monorepo,
 node-release metadata comes from `dist/node-release.json`, written by `compile:ts`, and BFV VK paths
@@ -137,6 +136,26 @@ use `INTERFOLD_CIRCUITS_DIR`. The circuits must match the package release. Monor
 ignore that override and retain repository release files and local artifact selection. See
 [npm-package deployment](../../packages/interfold-contracts/README.md#deploying-from-the-npm-package)
 for layout and setup.
+
+`circuits/identities.json` separates backend VK hashes, Solidity VK hashes, and ordered
+recursive-tree commitments, keyed by pair, group-qualified circuit, proof variant, and hash kind.
+Pair slices travel with artifacts; package metadata carries the aggregate. Named deployment lookup
+verifies source stamps, slices, referenced artifact/VK digests, and tree descendants before
+transactions. Intermediate tree identities have ordered dependencies but no invented compiled
+artifact or VK. Repeated dependencies preserve proof multiplicity. Partial/failed builds invalidate
+affected slices and aggregate indexes. The existing runtime installer does not require this additive
+metadata from older archives.
+
+The builder canonicalizes checkout and Nargo Git-cache paths in compiled source maps before staging,
+and refuses unrecognized absolute source paths. Artifact digests therefore do not intentionally bind
+a builder's home directory or checkout location. Exact compiled bytes and source identity remain
+separate commitments; path normalization never relabels an older archive's source stamp.
+
+`pnpm check:crypto-config` is the complete read-only gate: isolated source/ownership checks,
+source-bound artifact inventory/checksums, independently rederived backend VK bytes/hashes, ordered
+trees, complete regenerated Solidity verifiers, and compiled application layouts. It never repairs
+or prepares artifacts. `--bindings-only` and selected-pair checks report a narrower result and
+cannot satisfy complete acceptance. These checks still do not replace real-proof verification.
 
 Storage baselines are committed read-only CI inputs; missing baseline, compiler drift, incompatible
 nested layout, and bad gap consumption fail. Creating a baseline is explicit maintainer work, never

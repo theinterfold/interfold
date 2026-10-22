@@ -1,6 +1,6 @@
 # Path filters for the circuit jobs, in the dorny/paths-filter format. The `detect_changes` job in
 # `workflows/ci.yml` reads this file. `.husky/pre-push` reads every pattern in it as one list, and
-# runs `check:verifiers` when a pushed branch changes a matching path.
+# runs the verifier and complete crypto checks when a pushed branch changes a matching path.
 #
 # Put one single-quoted pattern on each list line, because the hook reads the patterns with sed.
 # Give every filter the same `!` patterns, because the hook applies each one to the whole list.
@@ -19,8 +19,28 @@ circuits:
   - '!**/*.md'
   - '!**/*.mdx'
 
-# The other inputs of the generated verifier contracts. In CI they start only `build_circuits`,
-# which runs `check:verifiers`.
+# Complete configuration/consumer qualification, including inputs outside the Noir compiler.
+crypto_config:
+  - 'scripts/circuits/**'
+  - 'scripts/checks/committee.sh'
+  - 'scripts/hooks/**'
+  - '.husky/pre-push'
+  - '.github/filters/circuits.yml'
+  - '.github/workflows/ci.yml'
+  - 'Cargo.toml'
+  - 'Cargo.lock'
+  - 'package.json'
+  - 'crates/fhe/**'
+  - 'crates/parity-matrix/**'
+  - 'crates/safe/**'
+  - 'packages/interfold-contracts/**'
+  - 'packages/interfold-sdk/**'
+  - 'packages/interfold-dashboard/**'
+  - 'templates/**'
+  - '!**/*.md'
+  - '!**/*.mdx'
+
+# Other inputs of the generated verifier contracts, qualified in every build-pair CI leg.
 verifiers:
   - 'packages/interfold-contracts/contracts/verifiers/**'
   - 'crates/zk/prover/versions.json'

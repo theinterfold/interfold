@@ -62,6 +62,7 @@ pub(crate) fn request() -> Request {
         skip_if_built: false,
         hydrate_bin_only: false,
         dry_run: false,
+        isolated: false,
     }
 }
 
@@ -722,6 +723,151 @@ fn deployment_selection_switches_only_names_and_is_idempotent_for_every_pair() {
             );
         }
     }
+}
+
+#[test]
+fn complete_preset_generation_preserves_each_existing_pair_statement() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let params = configuration::OperationParams::both().unwrap();
+    for preset in BfvPreset::PAIR_PRESETS {
+        for committee in CiphernodesCommitteeSize::ALL {
+            let original =
+                configuration::bound_updates(&root, preset, committee, params.get(preset)).unwrap();
+            for (path, full) in
+                configuration::preset_updates(&root, preset, committee, params.get(preset)).unwrap()
+            {
+                let previous = &original.iter().find(|(old, _)| *old == path).unwrap().1;
+                let normalized = |source: &str| {
+                    configuration::declarations(source)
+                        .into_iter()
+                        .map(|(k, v)| (k, compact(&v).replace(",]", "]").replace(",)", ")")))
+                        .collect::<std::collections::BTreeMap<_, _>>()
+                };
+                assert_eq!(
+                    normalized(&full),
+                    normalized(previous),
+                    "{preset:?}/{committee}: full generation changed a circuit statement"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn ownership_checks_reject_new_consumer_copies_even_with_a_generated_header() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    write(
+        root,
+        "packages/new-consumer/value.ts",
+        "export const width = CIRCUIT_DIMENSIONS.messageCoeffsCount;\n",
+    );
+    configuration::check_ownership(root).unwrap();
+    for copy in [
+        format!(
+            "// Generated. Do not edit.\nexport const MESSAGE_COEFFS_COUNT = {};\n",
+            e3_zk_config::MAX_MSG_NON_ZERO_COEFFS
+        ),
+        format!(
+            "export const DOMAIN = {:?};\n",
+            e3_fhe_params::INTERFOLD_BFV_VERSION
+        ),
+        format!(
+            "export const SCHEME = {:?};\n",
+            e3_fhe_params::BFV_ENCRYPTION_SCHEME
+        ),
+    ] {
+        write(root, "packages/new-consumer/value.ts", copy);
+        assert!(configuration::check_ownership(root)
+            .unwrap_err()
+            .to_string()
+            .contains("new-consumer"));
+    }
+    write(
+        root,
+        "packages/new-consumer/value.ts",
+        "export const width = CIRCUIT_DIMENSIONS.messageCoeffsCount;\n",
+    );
+    write(
+        root,
+        "packages/new-consumer/types/config.ts",
+        format!(
+            "export const MESSAGE_COEFFS_COUNT = {};\n",
+            e3_zk_config::MAX_MSG_NON_ZERO_COEFFS
+        ),
+    );
+    assert!(configuration::check_ownership(root)
+        .unwrap_err()
+        .to_string()
+        .contains("types/config.ts"));
+}
+
+#[test]
+fn full_source_checks_detect_stale_missing_and_wrong_alias_declarations_without_repair() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    artifacts::copy_tree(
+        &repo.join("circuits/lib"),
+        &root.join("circuits/lib"),
+        &["target", "Prover.toml", "Witness.toml"],
+    )
+    .unwrap();
+    for path in [
+        "packages/interfold-contracts/scripts/utils.ts",
+        "packages/interfold-contracts/contracts/lib/BfvProtocol.sol",
+    ] {
+        write(root, path, fs::read(repo.join(path)).unwrap());
+    }
+    write_pins(root);
+    let threshold = root.join("circuits/lib/src/configs/insecure/threshold.nr");
+    let original = fs::read_to_string(&threshold).unwrap();
+    let declaration = configuration::declarations(&original)["USER_DATA_ENCRYPTION_BIT_U"].clone();
+    for replacement in ["pub global USER_DATA_ENCRYPTION_BIT_U: u32 = 99;", ""] {
+        fs::write(&threshold, original.replace(&declaration, replacement)).unwrap();
+        let before = snapshot(root);
+        assert!(configuration::check(root, &request()).is_err());
+        assert_eq!(snapshot(root), before);
+    }
+    fs::write(&threshold, original).unwrap();
+    let dkg = root.join("circuits/lib/src/configs/insecure/dkg.nr");
+    let original = fs::read_to_string(&dkg).unwrap();
+    fs::write(
+        &dkg,
+        original.replace(
+            "THRESHOLD_SHARE_DECRYPTION_BIT_SK as SHARE_DECRYPTION_BIT_AGG",
+            "PK_AGGREGATION_BIT_PK as SHARE_DECRYPTION_BIT_AGG",
+        ),
+    )
+    .unwrap();
+    let before = snapshot(root);
+    assert!(configuration::check(root, &request()).is_err());
+    assert_eq!(snapshot(root), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn successful_compiler_process_with_bug_diagnostic_is_not_accepted() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let compiler = temp.path().join("nargo");
+    for stream in ["", ">&2"] {
+        fs::write(
+            &compiler,
+            format!("#!/bin/sh\necho 'bug: unconstrained output' {stream}\nexit 0\n"),
+        )
+        .unwrap();
+        fs::set_permissions(&compiler, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(run(Command::new(&compiler).arg("compile"))
+            .unwrap_err()
+            .to_string()
+            .contains("bug diagnostic"));
+    }
+    fs::write(&compiler, "#!/bin/sh\nprintf 'compiled'\n").unwrap();
+    assert_eq!(
+        run(Command::new(&compiler).arg("compile")).unwrap(),
+        "compiled"
+    );
 }
 
 #[test]

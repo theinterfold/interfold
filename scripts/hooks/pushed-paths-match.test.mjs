@@ -58,7 +58,7 @@ test('the pre-push path helper stops a pushed branch that differs from HEAD in a
   assert.equal(push('feature').status, 0)
 })
 
-test('the production verifier filter excludes artifact transport and gas setup but retains generator inputs', (t) => {
+test('the production crypto filter covers owners, consumers, and tooling but excludes documentation', (t) => {
   const repo = mkdtempSync(join(tmpdir(), 'interfold-verifier-filter-'))
   t.after(() => rmSync(repo, { recursive: true, force: true }))
   const env = {
@@ -75,8 +75,8 @@ test('the production verifier filter excludes artifact transport and gas setup b
     assert.equal(result.status, 0, result.stderr)
   }
   const cases = [
-    ['scripts/circuits/artifacts.ts', 1],
-    ['scripts/circuits/artifacts.test.ts', 1],
+    ['scripts/circuits/artifacts.ts', 0],
+    ['scripts/circuits/artifacts.test.ts', 0],
     ['scripts/circuits/README.md', 1],
     ['scripts/circuits/constants.ts', 0],
     ['scripts/circuits/build-pairs.json', 0],
@@ -86,6 +86,17 @@ test('the production verifier filter excludes artifact transport and gas setup b
     ['scripts/circuits/test.sh', 0],
     ['crates/zk/build/src/identity.rs', 0],
     ['circuits/lib/src/core/circuit.nr', 0],
+    ['crates/fhe-params/src/constants.rs', 0],
+    ['crates/zk/config/src/constants.rs', 0],
+    ['crates/committee/src/lib.rs', 0],
+    ['packages/interfold-contracts/bfv.ts', 0],
+    ['packages/interfold-contracts/crypto-config.json', 0],
+    ['packages/interfold-sdk/src/utils.ts', 0],
+    ['packages/interfold-dashboard/src/lib/adapt.ts', 0],
+    ['templates/default/contracts/MyProgram.sol', 0],
+    ['scripts/circuits/crypto-config.mjs', 0],
+    ['.husky/pre-push', 0],
+    ['Cargo.lock', 0],
   ]
   git('init', '--quiet', '-b', 'main')
   for (const [path] of cases) {

@@ -12,7 +12,9 @@ import {
 } from "ethers";
 import fs from "fs";
 import type { HardhatRuntimeEnvironment } from "hardhat/types/hre";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import path from "path";
 
 import {
@@ -431,6 +433,228 @@ export function readVkRecursiveHash(
   return `0x${raw.toString("hex")}`;
 }
 
+interface CircuitIdentityKey {
+  preset: string;
+  committee: string;
+  circuit: string;
+  proofVariant: "default" | "recursive" | "evm";
+  hashKind: "bb-vk-hash" | "solidity-vk-hash" | "recursive-tree-commitment";
+}
+
+interface CircuitIdentityEntry {
+  key: CircuitIdentityKey;
+  value: string;
+  compiledArtifact: { path: string; sha256: string } | null;
+  verificationKey: { path: string; sha256: string } | null;
+  dependencies: CircuitIdentityKey[];
+}
+
+interface CircuitIdentityPair {
+  preset: string;
+  committee: string;
+  sourceHash: string;
+  entries: CircuitIdentityEntry[];
+}
+
+function readIdentityValues(
+  requested: Pick<
+    CircuitIdentityKey,
+    "circuit" | "proofVariant" | "hashKind"
+  >[],
+  selected: ActiveBfvConfig = ACTIVE_BFV_CONFIG,
+): string[] {
+  const repo = findMonorepoRoot();
+  const artifacts = repo
+    ? path.join(repo, "dist/circuits")
+    : process.env[CIRCUITS_DIR_ENV];
+  if (!artifacts)
+    throw new Error(`Set ${CIRCUITS_DIR_ENV} to the release circuit directory`);
+  const packaged = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../circuit-identities.json",
+  );
+  const manifestPath = repo
+    ? path.join(repo, "circuits/identities.json")
+    : packaged;
+  if (!fs.existsSync(manifestPath))
+    throw new Error(
+      `Missing circuit identity manifest: ${manifestPath}; prepare and qualify the complete circuit matrix`,
+    );
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
+    formatVersion: number;
+    pairs: CircuitIdentityPair[];
+  };
+  if (manifest.formatVersion !== 1 || !Array.isArray(manifest.pairs))
+    throw new Error("Unsupported circuit identity manifest");
+  const pairs = manifest.pairs.filter(
+    (pair) =>
+      pair.preset === selected.preset && pair.committee === selected.committee,
+  );
+  if (pairs.length !== 1)
+    throw new Error(
+      `Expected one circuit identity pair for ${selected.preset}/${selected.committee}`,
+    );
+  const pair = pairs[0];
+  const pairDirectory = path.join(
+    artifacts,
+    selected.preset,
+    selected.committee,
+  );
+  const slice = JSON.parse(
+    fs.readFileSync(path.join(pairDirectory, "identities.json"), "utf8"),
+  );
+  if (!isDeepStrictEqual(slice, pair))
+    throw new Error(
+      "Circuit archive identity slice differs from the package manifest",
+    );
+  const stamp = JSON.parse(
+    fs.readFileSync(path.join(pairDirectory, ".build-stamp.json"), "utf8"),
+  );
+  if (
+    stamp.preset !== selected.preset ||
+    stamp.committee !== selected.committee ||
+    stamp.sourceHash !== pair.sourceHash
+  )
+    throw new Error(
+      "Circuit identity source stamp differs from the package manifest",
+    );
+  const verified = new Set<string>();
+  const visiting = new Set<string>();
+  const identity = (key: CircuitIdentityKey) =>
+    JSON.stringify([
+      key.preset,
+      key.committee,
+      key.circuit,
+      key.proofVariant,
+      key.hashKind,
+    ]);
+  const lookup = (key: CircuitIdentityKey): CircuitIdentityEntry => {
+    if (key.preset !== selected.preset || key.committee !== selected.committee)
+      throw new Error("Cross-pair circuit identity dependency");
+    const matches = pair.entries.filter(
+      (entry) => identity(entry.key) === identity(key),
+    );
+    if (matches.length !== 1)
+      throw new Error(`Missing or duplicate circuit identity ${identity(key)}`);
+    return matches[0];
+  };
+  const root = fs.realpathSync(artifacts);
+  const digest = (artifact: { path: string; sha256: string }) => {
+    if (
+      path.isAbsolute(artifact.path) ||
+      artifact.path.includes("\\") ||
+      artifact.path
+        .split("/")
+        .some((part) => !part || part === "." || part === "..") ||
+      !artifact.path.startsWith(`${selected.preset}/${selected.committee}/`)
+    )
+      throw new Error("Invalid circuit identity artifact path");
+    const filename = fs.realpathSync(path.join(root, artifact.path));
+    if (!filename.startsWith(`${root}${path.sep}`))
+      throw new Error("Circuit identity artifact escapes its directory");
+    if (
+      createHash("sha256").update(fs.readFileSync(filename)).digest("hex") !==
+      artifact.sha256
+    )
+      throw new Error(
+        `Circuit identity artifact digest differs: ${artifact.path}`,
+      );
+  };
+  const verify = (key: CircuitIdentityKey) => {
+    const id = identity(key);
+    if (verified.has(id)) return;
+    if (visiting.has(id)) throw new Error("Cyclic circuit identity dependency");
+    visiting.add(id);
+    const entry = lookup(key);
+    if (!/^0x[0-9a-f]{64}$/.test(entry.value))
+      throw new Error("Invalid circuit identity value");
+    if (entry.compiledArtifact) digest(entry.compiledArtifact);
+    if (entry.verificationKey) {
+      digest(entry.verificationKey);
+      if (
+        key.hashKind === "bb-vk-hash" &&
+        readVkRecursiveHash(
+          path.join(root, `${entry.verificationKey.path}_hash`),
+          selected,
+        ) !== entry.value
+      )
+        throw new Error("Circuit VK hash differs from the named identity");
+    } else if (key.hashKind !== "recursive-tree-commitment")
+      throw new Error("Circuit key identity has no key material");
+    for (const child of entry.dependencies) verify(child);
+    if (
+      key.hashKind === "recursive-tree-commitment" &&
+      [
+        "recursive_aggregation/nodes_fold",
+        "recursive_aggregation/c6_fold",
+      ].includes(key.circuit)
+    ) {
+      const name = key.circuit.split("/").pop()!;
+      if (
+        readVkRecursiveHash(
+          path.join(
+            pairDirectory,
+            "default",
+            key.circuit,
+            `${name}.vk_tree_hash`,
+          ),
+          selected,
+        ) !== entry.value
+      )
+        throw new Error("Circuit tree anchor differs from the named identity");
+    }
+    visiting.delete(id);
+    verified.add(id);
+  };
+  return requested.map((request) => {
+    const key = {
+      preset: selected.preset,
+      committee: selected.committee,
+      ...request,
+    };
+    verify(key);
+    return lookup(key).value;
+  });
+}
+
+export function readBfvCircuitIdentity(
+  circuit: string,
+  proofVariant: CircuitIdentityKey["proofVariant"],
+  hashKind: CircuitIdentityKey["hashKind"],
+  config?: ActiveBfvConfig,
+): string {
+  return readIdentityValues([{ circuit, proofVariant, hashKind }], config)[0];
+}
+
+export function getBfvCircuitIdentities(config?: ActiveBfvConfig) {
+  const [nodesFold, c5, c6Fold, c7] = readIdentityValues(
+    [
+      {
+        circuit: "recursive_aggregation/nodes_fold",
+        proofVariant: "default",
+        hashKind: "recursive-tree-commitment",
+      },
+      {
+        circuit: "threshold/pk_aggregation",
+        proofVariant: "default",
+        hashKind: "bb-vk-hash",
+      },
+      {
+        circuit: "recursive_aggregation/c6_fold",
+        proofVariant: "default",
+        hashKind: "recursive-tree-commitment",
+      },
+      {
+        circuit: "threshold/decrypted_shares_aggregation",
+        proofVariant: "default",
+        hashKind: "bb-vk-hash",
+      },
+    ],
+    config,
+  );
+  return { nodesFold, c5, c6Fold, c7 };
+}
+
 /** On-chain `BfvPkVerifier` sub-circuit VK immutables (for deploy-time staleness checks). */
 export interface BfvPkVerifierVkReader {
   expectedNodesFoldKeyHash(): Promise<string>;
@@ -452,14 +676,8 @@ export async function assertBfvPkVerifierSubCircuitVkHashes(
   address: string,
   config?: ActiveBfvConfig,
 ): Promise<void> {
-  const expectedNodesFold = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths(config).nodesFold,
-    config,
-  );
-  const expectedC5 = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths(config).c5,
-    config,
-  );
+  const { nodesFold: expectedNodesFold, c5: expectedC5 } =
+    getBfvCircuitIdentities(config);
   const [onChainNodesFold, onChainC5] = await Promise.all([
     verifier.expectedNodesFoldKeyHash(),
     verifier.expectedC5KeyHash(),
@@ -485,14 +703,8 @@ export async function assertBfvDecryptionVerifierSubCircuitVkHashes(
   address: string,
   config?: ActiveBfvConfig,
 ): Promise<void> {
-  const expectedC6Fold = readVkRecursiveHash(
-    getBfvDecryptionSubCircuitVkHashPaths(config).c6Fold,
-    config,
-  );
-  const expectedC7 = readVkRecursiveHash(
-    getBfvDecryptionSubCircuitVkHashPaths(config).c7,
-    config,
-  );
+  const { c6Fold: expectedC6Fold, c7: expectedC7 } =
+    getBfvCircuitIdentities(config);
   const [onChainC6Fold, onChainC7] = await Promise.all([
     verifier.expectedC6FoldKeyHash(),
     verifier.expectedC7KeyHash(),

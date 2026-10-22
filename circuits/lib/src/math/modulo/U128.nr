@@ -11,7 +11,8 @@
 //! are verified in-circuit to ensure correctness.
 use crate::math::helpers::assert_in_range;
 use super::unconstrained_U128::{
-    __compute_mod_reduction, __div_mod, __inv_mod, __neg, __sub_with_underflow,
+    __compute_mod_quotient, __compute_mod_reduction, __div_mod, __inv_mod, __neg,
+    __sub_with_underflow,
 };
 
 /// Modular arithmetic context for u128 values.
@@ -238,7 +239,7 @@ impl ModU128 {
 pub fn reduce_mod_bounded<let BIT_Q: u32, let BIT_K: u32>(n: Field, q: Field) -> Field {
     // Safety: the quotient bound and the canonical remainder interval below fix the division, so a
     // wrong hint cannot satisfy both.
-    let (quotient, _) = unsafe { __compute_mod_reduction(n, q) };
+    let quotient = unsafe { __compute_mod_quotient(n, q) };
     quotient.assert_max_bit_size::<BIT_K>();
     let remainder = n - q * quotient;
     assert_in_range::<BIT_Q>(remainder, q);
@@ -274,7 +275,7 @@ pub fn centered_mod_bounded<let BIT_Q: u32, let BIT_K: u32>(n: Field, q: Field) 
     let half = (q - 1) / 2;
     // Safety: the quotient bound and the canonical centered interval below fix the division, so a
     // wrong hint cannot satisfy both.
-    let (quotient, _) = unsafe { __compute_mod_reduction(n + half, q) };
+    let quotient = unsafe { __compute_mod_quotient(n + half, q) };
     quotient.assert_max_bit_size::<BIT_K>();
     let centered = n - q * quotient;
     assert_in_range::<BIT_Q>(centered + half, q);

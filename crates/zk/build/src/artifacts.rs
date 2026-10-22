@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-use super::{configuration, github_output, identity, preset, run, vk_tree, write_json, Request};
+use super::{
+    configuration, github_output, identities, identity, preset, run, vk_tree, write_json, Request,
+};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -306,16 +308,30 @@ fn compiled_path(root: &Path, circuit: &Circuit) -> Result<PathBuf> {
 }
 
 fn sanitize_paths(path: &Path) -> Result<()> {
-    let text = fs::read_to_string(path)?;
-    let text = regex::Regex::new(r#""path"\s*:\s*"[^"]*[/\\](interfold[/\\]circuits[/\\][^"]+)""#)?
-        .replace_all(&text, "\"path\":\"$1\"")
-        .into_owned();
-    let text = regex::Regex::new(
-        r#""path"\s*:\s*"(?:/[^"]*|[A-Za-z]:\\[^"]*)[/\\](circuits[/\\][^"]+)""#,
-    )?
-    .replace_all(&text, "\"path\":\"interfold/$1\"")
-    .into_owned();
-    fs::write(path, text)?;
+    let mut compiled: serde_json::Value = serde_json::from_slice(&fs::read(path)?)?;
+    let files = compiled["file_map"]
+        .as_object_mut()
+        .context("Compiled circuit has no source file map")?;
+    for file in files.values_mut() {
+        let source = file["path"]
+            .as_str()
+            .context("Compiler source path")?
+            .replace('\\', "/");
+        let canonical = if let Some((_, suffix)) = source.split_once("/github.com/") {
+            format!("nargo/github.com/{suffix}")
+        } else if let Some((_, suffix)) = source.rsplit_once("/circuits/") {
+            format!("interfold/circuits/{suffix}")
+        } else {
+            anyhow::ensure!(
+                !source.starts_with('/') && source.as_bytes().get(1) != Some(&b':'),
+                "Unrecognized absolute compiler source path: {source}"
+            );
+            source
+        };
+        file["path"] = canonical.into();
+    }
+    // Canonical JSON and dependency paths keep digests independent of checkout/cache locations.
+    fs::write(path, serde_json::to_vec(&compiled)?)?;
     Ok(())
 }
 
@@ -392,6 +408,7 @@ fn build_circuit(root: &Path, pair: &Path, circuit: &Circuit, skip_vk: bool) -> 
 }
 
 pub fn refresh_anchors(root: &Path, pair: &Path, complete: bool) -> Result<()> {
+    identities::invalidate(root, pair)?;
     for name in ["nodes_fold", "c6_fold"] {
         for path in [
             pair.join("default/recursive_aggregation")
@@ -419,6 +436,31 @@ pub fn refresh_anchors(root: &Path, pair: &Path, complete: bool) -> Result<()> {
                 fs::write(directory.join(format!("{name}.vk_tree_hash")), bytes)?;
             }
         }
+    }
+    Ok(())
+}
+
+pub fn build_isolated(root: &Path, request: &Request) -> Result<()> {
+    request.validate(root)?;
+    if request.dry_run {
+        return build(root, request);
+    }
+    anyhow::ensure!(
+        !request.hydrate_bin_only,
+        "Isolated builds do not hydrate the live bin cache"
+    );
+    identity::check_tools(root, true, !request.skip_vk)?;
+    let output = request.output_dir(root);
+    for [preset, committee] in request.selected_pairs(root)? {
+        let temp = tempfile::tempdir()?;
+        identity::stage_sources(root, temp.path())?;
+        let mut selected = request.clone();
+        selected.isolated = false;
+        selected.preset = super::PresetSelection::Single(super::preset(&preset)?);
+        selected.committee = super::CommitteeSelection::Single(committee.parse()?);
+        selected.output = Some(output.clone());
+        identities::invalidate(root, &output.join(&preset).join(&committee))?;
+        build(temp.path(), &selected)?;
     }
     Ok(())
 }
@@ -491,6 +533,7 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
         let preset_name = selected[0].as_str();
         let committee = selected[1].as_str();
         let pair = output.join(preset_name).join(committee);
+        let mut started = false;
         let result = (|| -> Result<()> {
             let mut selection = configuration::prepare_selection(
                 root,
@@ -527,6 +570,8 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
             // The compilation ahead runs nargo, and bb unless VK generation is skipped. Probe the
             // pinned versions before any destructive build step.
             identity::check_tools(root, true, !request.skip_vk)?;
+            started = true;
+            identities::invalidate(root, &pair)?;
             selection.publish()?;
             if !request.no_clean {
                 remove_dir(&pair)?;
@@ -559,9 +604,20 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
                 built_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             };
             write_json(&pair.join(".build-stamp.json"), &stamp)?;
+            if complete {
+                let manifest = identities::collect_pair(root, &output, preset_name, committee)?;
+                identities::write_pair(&pair, &manifest)?;
+            }
             active_stamp(root, preset_name, committee, &hash)
         })();
         if let Err(error) = result {
+            if started {
+                if let Err(cleanup) = refresh_anchors(root, &pair, false)
+                    .and_then(|_| identities::invalidate(root, &pair))
+                {
+                    errors.push(format!("{preset_name}/{committee}: failed to invalidate incomplete outputs: {cleanup:#}"));
+                }
+            }
             errors.push(format!("{preset_name}/{committee}: {error:#}"));
         }
     }
@@ -585,6 +641,49 @@ mod tests {
     use super::*;
     use e3_fhe_params::BfvPreset;
 
+    #[test]
+    fn compiled_artifact_paths_are_portable_idempotent_and_fail_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("compiled.json");
+        let artifact = |checkout: &str, cache: &str| {
+            serde_json::json!({
+                "bytecode": "unchanged", "abi": {"parameters": []},
+                "file_map": {
+                    "1": {"path": format!("{checkout}/circuits/bin/example/src/main.nr"), "source": "fn main() {}"},
+                    "2": {"path": format!("{cache}/github.com/AztecProtocol/aztec-packages/v5.2.0/barretenberg/noir/bb_proof_verification/src/lib.nr")},
+                    "3": {"path": "std/field/mod.nr"},
+                }
+            })
+        };
+        let mut outputs = Vec::new();
+        for (checkout, cache) in [
+            ("/Users/alice/worktree", "/Users/alice/nargo"),
+            ("/home/runner/work/project", "/home/runner/.nargo"),
+            ("C:\\worktree", "C:\\Users\\bob\\nargo"),
+        ] {
+            fs::write(
+                &path,
+                serde_json::to_vec(&artifact(checkout, cache)).unwrap(),
+            )
+            .unwrap();
+            sanitize_paths(&path).unwrap();
+            let bytes = fs::read(&path).unwrap();
+            sanitize_paths(&path).unwrap();
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+            outputs.push(bytes);
+        }
+        assert!(outputs.windows(2).all(|pair| pair[0] == pair[1]));
+        let mut unknown = artifact("/worktree", "/cache");
+        unknown["file_map"]["3"]["path"] = "/unknown/private/library.nr".into();
+        let original = serde_json::to_vec(&unknown).unwrap();
+        fs::write(&path, &original).unwrap();
+        assert!(sanitize_paths(&path)
+            .unwrap_err()
+            .to_string()
+            .contains("Unrecognized absolute"));
+        assert_eq!(fs::read(&path).unwrap(), original);
+    }
+
     fn request() -> Request {
         Request {
             operation: super::super::Operation::Build,
@@ -603,6 +702,7 @@ mod tests {
             skip_if_built: false,
             hydrate_bin_only: false,
             dry_run: false,
+            isolated: false,
         }
     }
 
