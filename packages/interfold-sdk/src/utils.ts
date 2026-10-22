@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+import { bfvPresetForParamSet } from '@interfold/contracts/bfv'
 import { type Address, type Hash, type Log, PublicClient, encodeAbiParameters } from 'viem'
 import type { BfvParams } from './types'
 
@@ -84,12 +85,8 @@ export const DEFAULT_E3_CONFIG = {
 } as const
 
 export function cryptoConfigIdForParamSet(paramSet: number): Hash {
-  if (paramSet === 0) {
-    return '0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9'
-  }
-  if (paramSet === 2) {
-    return '0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa'
-  }
+  const preset = bfvPresetForParamSet(paramSet)
+  if (preset) return preset.configId
   throw new SDKError(`Unsupported BFV parameter set: ${paramSet}`, 'UNSUPPORTED_CRYPTO_CONFIG')
 }
 

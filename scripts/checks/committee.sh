@@ -8,7 +8,7 @@
 # Asserts that the BFV parameters and committee selection are internally consistent across
 # the files that encode them independently:
 #
-#   1. packages/interfold-contracts/scripts/protocol/constants.ts (deployment parameters)
+#   1. packages/interfold-contracts/crypto-config.json (deployment parameter snapshot)
 #   2. crates/fhe-params/src/constants.rs (ciphernode parameters)
 #   3. circuits/lib/src/configs/{insecure,secure}/threshold.nr (circuit parameters)
 #   4. circuits/lib/src/configs/committee/active.nr (Noir-side active committee)
@@ -33,6 +33,7 @@ ACTIVE_NR="circuits/lib/src/configs/committee/active.nr"
 STAMP="circuits/bin/.active-preset.json"
 UTILS_TS="packages/interfold-contracts/scripts/utils.ts"
 PROTOCOL_CONSTANTS_TS="packages/interfold-contracts/scripts/protocol/constants.ts"
+CRYPTO_CONFIG_JSON="packages/interfold-contracts/crypto-config.json"
 FHE_CONSTANTS_RS="crates/fhe-params/src/constants.rs"
 COMMITTEE_RS="crates/committee/src/lib.rs"
 ACTIVE_SOL="packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol"
@@ -49,6 +50,7 @@ fail() {
 
 for required_file in \
   "$PROTOCOL_CONSTANTS_TS" \
+  "$CRYPTO_CONFIG_JSON" \
   "$FHE_CONSTANTS_RS" \
   "$ACTIVE_SOL" \
   "$TASKS_TS" \
@@ -166,20 +168,23 @@ if (value < 2n) {
 
 check_bfv_preset() {
   local label="$1"
-  local ts_name="$2"
-  local rust_name="$3"
-  local noir_name="$4"
-  local ts_block rust_block rust_threshold noir_file
+  local rust_name="$2"
+  local noir_name="$3"
+  local ts_values rust_block rust_threshold noir_file
   local ts_degree ts_plaintext ts_moduli ts_error
   local rust_degree rust_plaintext rust_moduli rust_error
   local noir_degree noir_plaintext noir_moduli noir_error_bound expected_error_bound
   local noir_q_mod_t noir_q_inverse_mod_t expected_q_mod_t expected_q_inverse_mod_t
 
-  ts_block=$(awk -v marker="  ${ts_name}: {" '
-    $0 == marker { found = 1 }
-    found { print }
-    found && /^  },/ { exit }
-  ' "$PROTOCOL_CONSTANTS_TS")
+  ts_values=$(node --input-type=module - "$CRYPTO_CONFIG_JSON" "$label" <<'NODE'
+import { readFileSync } from 'node:fs';
+const config = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+const preset = config.bfv.presets.find(preset => preset.preset === process.argv[3]);
+if (!preset) throw new Error(`Missing BFV preset: ${process.argv[3]}`);
+const p = preset.threshold;
+process.stdout.write([p.degree, p.plaintextModulus, p.moduli.map(value => `0x${BigInt(value).toString(16)}`).join(','), p.error1Variance].join(';'));
+NODE
+  )
   rust_block=$(awk -v marker="pub mod ${rust_name} {" '
     $0 == marker { found = 1 }
     found { print }
@@ -192,13 +197,10 @@ check_bfv_preset() {
   ' <<< "$rust_block")
   noir_file="circuits/lib/src/configs/${noir_name}/threshold.nr"
 
-  [[ -n "$ts_block" && -n "$rust_threshold" && -f "$noir_file" ]] \
+  [[ -n "$ts_values" && -n "$rust_threshold" && -f "$noir_file" ]] \
     || fail "could not read the ${label} BFV parameter sources"
 
-  ts_degree=$(grep -E '^[[:space:]]*degree: [0-9]+n,' <<< "$ts_block" | sed -E 's/.*degree: ([0-9]+)n,.*/\1/')
-  ts_plaintext=$(grep -E '^[[:space:]]*plaintextModulus: [0-9]+n,' <<< "$ts_block" | sed -E 's/.*plaintextModulus: ([0-9]+)n,.*/\1/')
-  ts_moduli=$(grep -oE '0x[0-9a-fA-F]+n' <<< "$ts_block" | tr -d 'n' | tr '[:upper:]' '[:lower:]' | paste -sd, -)
-  ts_error=$(grep -E '^[[:space:]]*error1Variance: "[0-9]+",' <<< "$ts_block" | sed -E 's/.*"([0-9]+)".*/\1/')
+  IFS=';' read -r ts_degree ts_plaintext ts_moduli ts_error <<< "$ts_values"
 
   rust_degree=$(grep -E '^[[:space:]]*pub const DEGREE: usize = [0-9]+;' <<< "$rust_block" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
   rust_plaintext=$(grep -E 'PLAINTEXT_MODULUS: u64 = [0-9]+;' <<< "$rust_threshold" | sed -E 's/.*= ([0-9]+);/\1/')
@@ -206,8 +208,8 @@ check_bfv_preset() {
   rust_error=$(grep -E 'ERROR1_VARIANCE: &str = "[0-9]+";' <<< "$rust_threshold" | sed -E 's/.*"([0-9]+)".*/\1/')
 
   if [[ "$ts_degree" != "$rust_degree" || "$ts_plaintext" != "$rust_plaintext" || \
-        "$ts_moduli" != "$rust_moduli" || "$ts_error" != "$rust_error" ]]; then
-    fail "drift: ${label} BFV parameters differ between $PROTOCOL_CONSTANTS_TS and $FHE_CONSTANTS_RS"
+        "$(hex_csv_to_decimal "$ts_moduli")" != "$(hex_csv_to_decimal "$rust_moduli")" || "$ts_error" != "$rust_error" ]]; then
+    fail "drift: ${label} BFV parameters differ between $CRYPTO_CONFIG_JSON and $FHE_CONSTANTS_RS"
   fi
 
   noir_degree=$(grep -E '^pub global N: u32 = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
@@ -221,7 +223,7 @@ check_bfv_preset() {
   if [[ "$ts_degree" != "$noir_degree" || "$ts_plaintext" != "$noir_plaintext" || \
         "$(hex_csv_to_decimal "$ts_moduli")" != "$noir_moduli" || \
         "$expected_error_bound" != "$noir_error_bound" ]]; then
-    fail "drift: ${label} BFV parameters differ between $PROTOCOL_CONSTANTS_TS and $noir_file"
+    fail "drift: ${label} BFV parameters differ between $CRYPTO_CONFIG_JSON and $noir_file"
   fi
 
   # C7 decoding uses the inverse of the product of the threshold CRT primes modulo t.
@@ -243,8 +245,8 @@ process.stdout.write(`${qModT},${(x % t + t) % t}\n`);
   fi
 }
 
-check_bfv_preset insecure-64 insecure64 insecure_64 insecure
-check_bfv_preset secure-8192 secure8192 secure_8192 secure
+check_bfv_preset insecure-64 insecure_64 insecure
+check_bfv_preset secure-8192 secure_8192 secure
 
 # 6. Every chain-supported route in utils.ts must match the Noir committee shape and the
 #    parameter/configuration hashes compiled into ActiveCryptoConfig.sol. Keep this check
@@ -273,14 +275,30 @@ for prefix in INSECURE SECURE; do
   fi
 done
 
-extract_ts_config_id() {
-  local file="$1"
-  local param_set="$2"
-  sed -n '/function cryptoConfigIdForParamSet/,/^}/p' "$file" \
-    | grep -A2 "paramSet === ${param_set}" \
-    | grep -oE '0x[0-9a-fA-F]{64}' \
-    | head -n1
+binding_config_id() {
+  node --input-type=module - "$CRYPTO_CONFIG_JSON" "$1" <<'NODE'
+import { readFileSync } from 'node:fs';
+const config = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+const preset = config.bfv.presets.find(preset => preset.paramSet === Number(process.argv[3]));
+if (!preset) throw new Error(`Unsupported BFV parameter set: ${process.argv[3]}`);
+process.stdout.write(preset.cryptoConfigId);
+NODE
 }
+
+node --input-type=module - "$TASKS_TS" "$SDK_UTILS_TS" <<'NODE'
+import { readFileSync } from 'node:fs';
+for (const [index, file] of process.argv.slice(2).entries()) {
+  const source = readFileSync(file, 'utf8');
+  const imported = /import\s*\{[^}]*\bbfvPresetForParamSet\b[^}]*\}\s*from\s*["']([^"']+)["']/.exec(source);
+  const expected = index === 0 ? '../bfv.js' : '@interfold/contracts/bfv';
+  if (imported?.[1] !== expected) {
+    throw new Error(`${file} must import the shared BFV preset lookup`);
+  }
+  if (/0x[0-9a-fA-F]{64}/.test(source)) {
+    throw new Error(`${file} contains an independent configuration-ID literal`);
+  }
+}
+NODE
 
 extract_rust_config_id() {
   local file="$1"
@@ -295,11 +313,10 @@ for prefix_and_param_set in INSECURE:0 SECURE:2; do
   prefix="${prefix_and_param_set%%:*}"
   param_set="${prefix_and_param_set##*:}"
   expected_id=$(sol_bytes32 "${prefix}_CONFIG_ID")
-  task_id=$(extract_ts_config_id "$TASKS_TS" "$param_set")
-  sdk_id=$(extract_ts_config_id "$SDK_UTILS_TS" "$param_set")
+  binding_id=$(binding_config_id "$param_set")
   evm_helper_id=$(extract_rust_config_id "$EVM_HELPERS_RS" "$param_set")
-  if [[ "$task_id" != "$expected_id" || "$sdk_id" != "$expected_id" || "$evm_helper_id" != "$expected_id" ]]; then
-    fail "drift: paramSet=${param_set} config ID must match $ACTIVE_SOL in tasks, SDK, and EVM helpers"
+  if [[ "$binding_id" != "$expected_id" || "$evm_helper_id" != "$expected_id" ]]; then
+    fail "drift: paramSet=${param_set} config ID must match $ACTIVE_SOL in shared bindings and EVM helpers"
   fi
 done
 

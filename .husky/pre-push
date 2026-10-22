@@ -8,6 +8,7 @@ pnpm lint
 pnpm check:pnpm
 pnpm check:license
 pnpm check:committee
+pnpm check:crypto-bindings
 pnpm check:addresses
 pnpm check:repository
 pnpm check:links

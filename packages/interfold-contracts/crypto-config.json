@@ -1,0 +1,145 @@
+{
+  "formatVersion": 1,
+  "bfv": {
+    "encryptionScheme": "fhe.rs:BFV",
+    "encryptionSchemeId": "0x2c2a814a0495f913a3a312fc4771e37552bc14f8a2d4075a08122d356f0849c6",
+    "circuitVersion": "interfold-bfv-v5",
+    "presets": [
+      {
+        "preset": "insecure-64",
+        "paramSet": 0,
+        "threshold": {
+          "name": "INSECURE_THRESHOLD_64",
+          "degree": "64",
+          "plaintextModulus": "17000000",
+          "moduli": [
+            "134217089",
+            "134215681",
+            "134215553"
+          ],
+          "error1Variance": "12617929386"
+        },
+        "dkg": {
+          "name": "INSECURE_DKG_64",
+          "degree": "64",
+          "plaintextModulus": "134217089",
+          "moduli": [
+            "536852993",
+            "536854657"
+          ],
+          "error1Variance": "10"
+        },
+        "parameterHash": "0xaff065a7d6e3d8c830dfcd37c2af8a25b3dcc6cd74ba458894075e8264f1ab1e",
+        "cryptoConfigId": "0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9",
+        "search": {
+          "n": "19",
+          "z": "100000",
+          "k": "17000000",
+          "lambda": 2,
+          "b": "20",
+          "bChi": "1",
+          "minMargin": 2,
+          "d": "64",
+          "insecure": true,
+          "multDepth": 0,
+          "minPrimeBits": 12
+        }
+      },
+      {
+        "preset": "secure-8192",
+        "paramSet": 2,
+        "threshold": {
+          "name": "SECURE_THRESHOLD_8192",
+          "degree": "8192",
+          "plaintextModulus": "17000000",
+          "moduli": [
+            "576460752317792257",
+            "576460752317399041",
+            "576460752316776449"
+          ],
+          "error1Variance": "17723039943798878305460955570711717478400"
+        },
+        "dkg": {
+          "name": "SECURE_DKG_8192",
+          "degree": "8192",
+          "plaintextModulus": "576460752317792257",
+          "moduli": [
+            "2305843009214758913",
+            "2305843009214988289"
+          ],
+          "error1Variance": "10"
+        },
+        "parameterHash": "0x1b2620f6a5919d5ee19a51f34026369816f479efd0404b56585ad37d31c52317",
+        "cryptoConfigId": "0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa",
+        "search": {
+          "n": "20",
+          "z": "100000",
+          "k": "17000000",
+          "lambda": 45,
+          "b": "20",
+          "bChi": "1",
+          "minMargin": 2,
+          "d": null,
+          "insecure": false,
+          "multDepth": 0,
+          "minPrimeBits": 50
+        }
+      }
+    ]
+  },
+  "zk": {
+    "fieldByteLen": 32,
+    "messageCoeffsCount": 50,
+    "messageCoeffByteLen": 8,
+    "plaintextByteLen": 400
+  },
+  "committees": [
+    {
+      "name": "minimum",
+      "committeeSize": 0,
+      "n": 3,
+      "t": 1,
+      "h": 2
+    },
+    {
+      "name": "micro",
+      "committeeSize": 1,
+      "n": 9,
+      "t": 4,
+      "h": 5
+    },
+    {
+      "name": "small",
+      "committeeSize": 2,
+      "n": 19,
+      "t": 9,
+      "h": 14
+    }
+  ],
+  "buildPairs": [
+    [
+      "insecure-64",
+      "minimum"
+    ],
+    [
+      "insecure-64",
+      "micro"
+    ],
+    [
+      "insecure-64",
+      "small"
+    ],
+    [
+      "secure-8192",
+      "minimum"
+    ],
+    [
+      "secure-8192",
+      "micro"
+    ],
+    [
+      "secure-8192",
+      "small"
+    ]
+  ]
+}

@@ -195,16 +195,20 @@ jobs:
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
-            # Inputs of build_circuits that the `circuits` and `verifiers` filters do not list: the
-            # circuit artifact store and its test (`store:circuits`, `test:circuit-tooling`), and
-            # the BFV parameters. The Rust circuit builder derives the generated constants in
-            # ActiveCryptoConfig.sol and utils.ts from them, and hashes their file into SOURCE_HASH.
-            # check:verifiers reads none of these files, so they stay out of
-            # .github/filters/circuits.yml, which also starts check:verifiers in pre-push.
+            # Binding generation/packaging and artifact-tooling checks share this job. These paths
+            # do not feed check:verifiers, so they stay out of its shared pre-push filter.
             circuit_build:
               - 'scripts/circuits/artifacts.ts'
               - 'scripts/circuits/artifacts.test.ts'
               - 'packages/interfold-contracts/scripts/protocol/constants.ts'
+              - 'packages/interfold-contracts/bfv.ts'
+              - 'packages/interfold-contracts/crypto-config.json'
+              - 'packages/interfold-contracts/.prettierrc.yml'
+              - 'packages/interfold-contracts/package.json'
+              - 'packages/interfold-contracts/tsconfig.json'
+              - 'scripts/circuits/bfv-bindings.test.ts'
+              - 'scripts/circuits/crypto-config.mjs'
+              - 'scripts/checks/committee.sh'
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         if: ${{ !inputs.release_candidate }}
         id: circuit_filter
@@ -1096,6 +1100,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Check generated crypto bindings
+        run: pnpm check:crypto-bindings
 
       - name: Build circuits
         run: pnpm build:circuits
