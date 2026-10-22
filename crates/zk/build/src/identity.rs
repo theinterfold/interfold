@@ -31,6 +31,7 @@ const SOURCE_FILES: &[&str] = &[
     "circuits/lib/Nargo.toml",
     "circuits/lib/src/lib.nr",
     "circuits/lib/src/configs/mod.nr",
+    "circuits/lib/src/configs/protocol.nr",
     "circuits/lib/src/configs/committee/mod.nr",
     "circuits/lib/src/configs/default/mod.nr",
     "crates/zk/build/Cargo.toml",
@@ -408,21 +409,29 @@ pub(crate) mod tests {
             let error = result.expect_err(path);
             assert!(format!("{error:#}").contains(path), "{path}: {error:#}");
         }
-        let selector = root.join("circuits/lib/src/configs/default/mod.nr");
-        let contents = fs::read_to_string(&selector).unwrap();
-        let expected = hash().unwrap();
-        fs::remove_file(&selector).unwrap();
-        assert_eq!(
-            source_hash_with_updates(
-                &root,
-                &request,
-                Some("insecure-64"),
-                Some("minimum"),
-                &[(selector, contents)]
-            )
-            .unwrap(),
-            expected
-        );
+        for relative in [
+            "circuits/lib/src/configs/default/mod.nr",
+            crate::bindings::NOIR_PATH,
+        ] {
+            let path = root.join(relative);
+            let contents = fs::read_to_string(&path).unwrap();
+            let expected = hash().unwrap();
+            fs::remove_file(&path).unwrap();
+            assert_eq!(
+                source_hash_with_updates(
+                    &root,
+                    &request,
+                    Some("insecure-64"),
+                    Some("minimum"),
+                    &[(path.clone(), contents.clone())]
+                )
+                .unwrap(),
+                expected
+            );
+            fs::write(&path, format!("{contents}\n// changed protocol source\n")).unwrap();
+            assert_ne!(hash().unwrap(), expected);
+            fs::write(path, contents).unwrap();
+        }
     }
 
     #[test]

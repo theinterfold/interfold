@@ -128,9 +128,9 @@ a failed circuit, removes both anchors from the pair and from `circuits/bin/`. A
 hash a key that no longer matches the compiled circuits. Run a complete build before you deploy the
 BFV verifiers or aggregate proofs.
 
-`sync-config` updates only `scripts/utils.ts` and `ActiveCryptoConfig.sol`. Use it when BFV
-parameter constants change and the prebuilt circuit artifacts already exist. It does not compile
-Noir circuits or regenerate verification keys.
+`sync-config` updates only `scripts/utils.ts` and `BfvProtocol.sol`. Use it when BFV parameter
+constants change and the prebuilt circuit artifacts already exist. It does not compile Noir circuits
+or regenerate verification keys.
 
 ### Prerequisites
 

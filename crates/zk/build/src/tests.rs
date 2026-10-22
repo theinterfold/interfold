@@ -257,7 +257,7 @@ fn current_selection_sync_preserves_bytes_and_mtimes_without_tools() {
     .unwrap();
     for relative in [
         "packages/interfold-contracts/scripts/utils.ts",
-        "packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol",
+        "packages/interfold-contracts/contracts/lib/BfvProtocol.sol",
     ] {
         write(root, relative, fs::read(repo.join(relative)).unwrap());
     }
@@ -630,12 +630,7 @@ fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
     )
     .unwrap();
     assert_eq!(bounds.len(), 2);
-    let contract = configuration::protocol_contract(
-        BfvPreset::InsecureThreshold64,
-        CiphernodesCommitteeSize::Minimum,
-        &params,
-    )
-    .unwrap();
+    let contract = crate::bindings::solidity(&params).unwrap();
     assert!(contract.contains(&format!(
         "{:#x}",
         params.get(BfvPreset::SecureThreshold8192).config_id
@@ -647,13 +642,13 @@ fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
         true,
     )
     .unwrap();
-    let selector = &selection
+    let protocol = &selection
         .noir
         .iter()
-        .find(|(path, _)| path.ends_with("configs/default/mod.nr"))
+        .find(|(path, _)| path.ends_with("configs/protocol.nr"))
         .unwrap()
         .1;
-    let declarations = configuration::declarations(selector);
+    let declarations = configuration::declarations(protocol);
     let width = declarations["MAX_MSG_NON_ZERO_COEFFS"]
         .split('=')
         .nth(1)
@@ -663,13 +658,9 @@ fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
         .parse::<usize>()
         .unwrap();
     assert_eq!(width, e3_zk_config::MAX_MSG_NON_ZERO_COEFFS);
-    let verifier = fs::read_to_string(
-        repo.join("packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol"),
-    )
-    .unwrap();
     let width = regex::Regex::new(r"\bMESSAGE_COEFFS_COUNT\s*=\s*(\d+)\s*;")
         .unwrap()
-        .captures(&verifier)
+        .captures(&contract)
         .unwrap()[1]
         .parse::<usize>()
         .unwrap();

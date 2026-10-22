@@ -203,6 +203,7 @@ jobs:
               - 'packages/interfold-contracts/scripts/protocol/constants.ts'
               - 'packages/interfold-contracts/bfv.ts'
               - 'packages/interfold-contracts/crypto-config.json'
+              - 'packages/interfold-contracts/contracts/lib/BfvProtocol.sol'
               - 'packages/interfold-contracts/.prettierrc.yml'
               - 'packages/interfold-contracts/package.json'
               - 'packages/interfold-contracts/tsconfig.json'
@@ -1111,7 +1112,7 @@ jobs:
         run: |
           git diff --exit-code -- \
             circuits/lib/src/configs \
-            packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol \
+            packages/interfold-contracts/contracts/lib/BfvProtocol.sol \
             packages/interfold-contracts/scripts/utils.ts
 
       - name: Test circuit artifact validation and verifier selection

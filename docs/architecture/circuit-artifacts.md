@@ -15,10 +15,10 @@ constants, verifier output, local `.active-preset.json`, or prepared OpenVM iden
 Canonical committees `(N,T,H)` are minimum `(3,1,2)`, micro `(9,4,5)`, small `(19,9,14)`. Every
 preset/committee pair has its own H-shaped PK and T-shaped decryption public-input layout.
 
-`pnpm check:committee` compares committee Noir/Rust/ActiveCryptoConfig/deployment utils, complete
-threshold BFV tuples across deployment constants/Rust/preset Noir, and configuration IDs across
-contracts, tasks, SDK, and EVM helpers. Drift can register a tuple nodes/circuits do not implement.
-The committed default is insecure-64/minimum; CI rebuilds that selection and rejects diffs. Local
+`pnpm check:committee` compares committee Noir/Rust/BfvProtocol/deployment utils, complete threshold
+BFV tuples across deployment constants/Rust/preset Noir, and configuration IDs across contracts,
+tasks, SDK, and EVM helpers. Drift can register a tuple nodes/circuits do not implement. The
+committed default is insecure-64/minimum; CI rebuilds that selection and rejects diffs. Local
 active-preset cache mismatch is only a note. **Limits:** the gate does not compare
 `scripts/circuits/constants.ts` committee values; manually review those. With Nargo available, the
 gate runs `pnpm build:circuits check --committee all`. The Rust owner renders/formats an isolated
@@ -30,9 +30,9 @@ replaces whole declarations including array dimensions and rejects unknown prefi
 pair source hash ignores generated values. Smudging quotient bounds grow with committee: retaining a
 minimum array in another pair can reject honest proofs. A renamed global must first have
 declarations seeded in both preset files, removing the old name, then run generation. `sync-config`
-updates deployment utils and ActiveCryptoConfig only; it neither switches Noir selectors nor
-regenerates bounds. General generated-file policy does not permit guessing new generated values by
-hand.
+updates deployment utils and the shared Solidity binding only; it neither switches Noir selectors
+nor regenerates bounds. General generated-file policy does not permit guessing new generated values
+by hand.
 
 Generated provenance headers retain their original spelling across tooling moves. Changing those
 bytes requires a coordinated generated-source refresh; renaming a script alone must not make CI's

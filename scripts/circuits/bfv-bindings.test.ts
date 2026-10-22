@@ -150,7 +150,7 @@ test('the dependency-free committee gate rejects binding drift and independent c
       'packages/interfold-contracts/crypto-config.json',
       'packages/interfold-contracts/scripts/protocol/constants.ts',
       'packages/interfold-contracts/scripts/utils.ts',
-      'packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol',
+      'packages/interfold-contracts/contracts/lib/BfvProtocol.sol',
       'packages/interfold-contracts/tasks/interfold.ts',
       'packages/interfold-sdk/src/utils.ts',
       'crates/fhe-params/src/constants.rs',

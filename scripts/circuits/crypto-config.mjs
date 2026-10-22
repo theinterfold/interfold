@@ -30,7 +30,12 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
         stdio: ['ignore', 'pipe', 'inherit'],
       }),
     )
-    syncSnapshot(join(root, 'packages/interfold-contracts/crypto-config.json'), metadata, args[0] === '--check')
+    const check = args[0] === '--check'
+    execFileSync('cargo', ['run', '--quiet', '--locked', '-p', 'e3-zk-build', '--', check ? 'check-bindings' : 'sync-bindings'], {
+      cwd: root,
+      stdio: 'inherit',
+    })
+    syncSnapshot(join(root, 'packages/interfold-contracts/crypto-config.json'), metadata, check)
   } catch (error) {
     console.error(error.message)
     process.exitCode = error.status || 1
