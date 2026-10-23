@@ -43,6 +43,7 @@ impl E3RequestedWithChainId {
             0 => CiphernodesCommitteeSize::Minimum,
             1 => CiphernodesCommitteeSize::Micro,
             2 => CiphernodesCommitteeSize::Small,
+            3 => CiphernodesCommitteeSize::Large,
             other => anyhow::bail!(
                 "Unsupported committee size enum value {} — this node's binary does not recognize \
                  it (likely a version skew with the on-chain contracts). Upgrade the ciphernode to \
@@ -555,11 +556,11 @@ mod tests {
         let expected = [
             (
                 0,
-                "0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9",
+                "0xa3bd5ecc8eede945ef4c08d5454022649137c7696ef8ad2f984f2b9ece35dd32",
             ),
             (
                 2,
-                "0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa",
+                "0xfb73fe2faf11760fd19a2374e7077fdf5e7f7d8324a36b3acb0c05d56ca6307a",
             ),
         ];
 

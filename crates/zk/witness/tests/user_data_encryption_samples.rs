@@ -50,9 +50,9 @@ fn insecure_e0_bound_matches_error1_sampler() {
         .map(|config| config.bits)
         .unwrap();
     // B_Enc of the insecure-64 search: ⌊B_Enc(B_Enc+1)/3⌋ is its error1 variance.
-    assert_eq!(bounds.e0_bound, BigUint::from(194560u32));
+    assert_eq!(bounds.e0_bound, BigUint::from(399360u32));
     assert_eq!(bounds.e1_bound, BigUint::from(20u32));
-    assert_eq!(bits.e0_bit, 18);
+    assert_eq!(bits.e0_bit, 19);
 }
 
 /// ct1 hard-codes the CRS, so a key with a random `a` cannot be proven; say so up front.

@@ -208,7 +208,7 @@ mod tests {
         );
         assert_eq!(
             threshold.get_error1_variance().to_string(),
-            "17723039943798878305460955570711717478400"
+            "67391859386295234756372897751812360110080"
         );
 
         assert_eq!(dkg.degree(), 8192);
@@ -236,7 +236,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             smudging_bound.to_string(),
-            "13292279957850296184850092126921713254400000"
+            "25919945917807355877288957292621227622400000"
         );
         let b_c = BigUint::parse_bytes(b"23058430092138912691300000", 10).unwrap();
         let delta = &threshold_q / threshold.plaintext();

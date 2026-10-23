@@ -61,7 +61,7 @@ done
 if [[ ! -f "$ACTIVE_NR" ]]; then
   fail "missing $ACTIVE_NR"
 fi
-ACTIVE_COMMITTEE=$(grep -oE 'crate::configs::committee::(minimum|micro|small)::N_PARTIES' "$ACTIVE_NR" \
+ACTIVE_COMMITTEE=$(grep -oE 'crate::configs::committee::(minimum|micro|small|large)::N_PARTIES' "$ACTIVE_NR" \
   | head -n1 \
   | sed -E 's|.*committee::([a-z]+)::N_PARTIES|\1|')
 if [[ -z "${ACTIVE_COMMITTEE:-}" ]]; then
@@ -126,6 +126,7 @@ check_sol_committee() {
 check_sol_committee minimum MINIMUM 0
 check_sol_committee micro MICRO 1
 check_sol_committee small SMALL 2
+check_sol_committee large LARGE 3
 
 # 5. The complete threshold parameter tuple must match across deployment tooling, ciphernodes,
 #    and Noir. The error variance is represented in Noir by the generated encryption bound.
@@ -326,21 +327,23 @@ check_utils_route() {
 check_utils_route INSECURE_MINIMUM insecure-64 minimum 0
 check_utils_route INSECURE_MICRO insecure-64 micro 1
 check_utils_route INSECURE_SMALL insecure-64 small 2
+check_utils_route INSECURE_LARGE insecure-64 large 3
 check_utils_route SECURE_MINIMUM secure-8192 minimum 0
 check_utils_route SECURE_MICRO secure-8192 micro 1
 check_utils_route SECURE_SMALL secure-8192 small 2
+check_utils_route SECURE_LARGE secure-8192 large 3
 
 route_list() {
   local array_name="$1"
   sed -n "/^export const ${array_name}:.*= \[/,/^\] as const;/p" "$UTILS_TS" \
-    | grep -oE '(INSECURE|SECURE)_(MINIMUM|MICRO|SMALL)_BFV_CONFIG' \
+    | grep -oE '(INSECURE|SECURE)_(MINIMUM|MICRO|SMALL|LARGE)_BFV_CONFIG' \
     | paste -sd, -
 }
 
 TESTNET_ROUTES=$(route_list TESTNET_BFV_CONFIGS)
-EXPECTED_TESTNET_ROUTES="INSECURE_MINIMUM_BFV_CONFIG,INSECURE_MICRO_BFV_CONFIG,INSECURE_SMALL_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_SMALL_BFV_CONFIG"
+EXPECTED_TESTNET_ROUTES="INSECURE_MINIMUM_BFV_CONFIG,INSECURE_MICRO_BFV_CONFIG,INSECURE_SMALL_BFV_CONFIG,INSECURE_LARGE_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_SMALL_BFV_CONFIG,SECURE_LARGE_BFV_CONFIG"
 [[ "$TESTNET_ROUTES" == "$EXPECTED_TESTNET_ROUTES" ]] \
-  || fail "$UTILS_TS testnet routes must contain the exact six-pair matrix; got $TESTNET_ROUTES"
+  || fail "$UTILS_TS testnet routes must contain the exact eight-pair matrix; got $TESTNET_ROUTES"
 
 MAINNET_ROUTES=$(route_list MAINNET_BFV_CONFIGS)
 EXPECTED_MAINNET_ROUTES="SECURE_SMALL_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG"
@@ -364,7 +367,7 @@ fi
 if [[ ! -f "$COMMITTEE_RS" ]]; then
   fail "missing $COMMITTEE_RS"
 fi
-for committee in minimum micro small; do
+for committee in minimum micro small large; do
   mod_file="circuits/lib/src/configs/committee/$committee/mod.nr"
   [[ -f "$mod_file" ]] || fail "missing $mod_file"
 
@@ -400,4 +403,4 @@ else
   echo "  (skipping generated committee check: nargo not found.)" >&2
 fi
 
-echo "✓ check:committee: BFV tuples, configuration IDs, all six routes, and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) are consistent across TypeScript, Rust, Noir, and Solidity$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"
+echo "✓ check:committee: BFV tuples, configuration IDs, all eight routes, and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) are consistent across TypeScript, Rust, Noir, and Solidity$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"

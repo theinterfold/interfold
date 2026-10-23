@@ -15,16 +15,16 @@ library ActiveCryptoConfig {
     bytes32 internal constant CIRCUIT_VERSION = keccak256("interfold-bfv-v5");
 
     bytes32 internal constant INSECURE_CONFIG_ID =
-        0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9;
+        0xa3bd5ecc8eede945ef4c08d5454022649137c7696ef8ad2f984f2b9ece35dd32;
     uint8 internal constant INSECURE_PARAM_SET = 0;
     bytes32 internal constant INSECURE_PARAM_SET_HASH =
-        0xaff065a7d6e3d8c830dfcd37c2af8a25b3dcc6cd74ba458894075e8264f1ab1e;
+        0x0c989bf49a85bd9e3bee06d72073c5e060e0f3260cbfc583407519959e74cbe4;
 
     bytes32 internal constant SECURE_CONFIG_ID =
-        0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa;
+        0xfb73fe2faf11760fd19a2374e7077fdf5e7f7d8324a36b3acb0c05d56ca6307a;
     uint8 internal constant SECURE_PARAM_SET = 2;
     bytes32 internal constant SECURE_PARAM_SET_HASH =
-        0x1b2620f6a5919d5ee19a51f34026369816f479efd0404b56585ad37d31c52317;
+        0x79f1d3a1594ca78e3232c804c49c2a404303ae1c539fb25c57971d7a582de2e2;
 
     uint8 internal constant MINIMUM_COMMITTEE_SIZE = 0;
     uint32 internal constant MINIMUM_T = 1;
@@ -40,6 +40,11 @@ library ActiveCryptoConfig {
     uint32 internal constant SMALL_T = 9;
     uint32 internal constant SMALL_H = 14;
     uint32 internal constant SMALL_N = 19;
+
+    uint8 internal constant LARGE_COMMITTEE_SIZE = 3;
+    uint32 internal constant LARGE_T = 14;
+    uint32 internal constant LARGE_H = 28;
+    uint32 internal constant LARGE_N = 39;
 
     // Production default. The public MAX_COMMITTEE_SIZE constant reads N.
     bytes32 internal constant CONFIG_ID = SECURE_CONFIG_ID;
@@ -94,7 +99,8 @@ library ActiveCryptoConfig {
         return
             committeeSize == MINIMUM_COMMITTEE_SIZE ||
             committeeSize == MICRO_COMMITTEE_SIZE ||
-            committeeSize == SMALL_COMMITTEE_SIZE;
+            committeeSize == SMALL_COMMITTEE_SIZE ||
+            committeeSize == LARGE_COMMITTEE_SIZE;
     }
 
     function committeeParams(
@@ -108,6 +114,9 @@ library ActiveCryptoConfig {
         }
         if (committeeSize == SMALL_COMMITTEE_SIZE) {
             return (SMALL_T, SMALL_H, SMALL_N);
+        }
+        if (committeeSize == LARGE_COMMITTEE_SIZE) {
+            return (LARGE_T, LARGE_H, LARGE_N);
         }
         revert IInterfold.UnsupportedCryptoConfig();
     }

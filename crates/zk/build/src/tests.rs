@@ -169,7 +169,7 @@ fn build_policy_rejects_disabled_pairs_before_tools_and_filters_all_selectors() 
             if matches!(options.preset, PresetSelection::All) {
                 1
             } else {
-                2
+                3
             }
         );
         options.validate(temp.path()).unwrap();
@@ -579,13 +579,13 @@ fn protocol_generation_preserves_deployed_parameter_hashes() {
     for (preset, expected_hash, expected_id) in [
         (
             BfvPreset::InsecureThreshold64,
-            "aff065a7d6e3d8c830dfcd37c2af8a25b3dcc6cd74ba458894075e8264f1ab1e",
-            "92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9",
+            "0c989bf49a85bd9e3bee06d72073c5e060e0f3260cbfc583407519959e74cbe4",
+            "a3bd5ecc8eede945ef4c08d5454022649137c7696ef8ad2f984f2b9ece35dd32",
         ),
         (
             BfvPreset::SecureThreshold8192,
-            "1b2620f6a5919d5ee19a51f34026369816f479efd0404b56585ad37d31c52317",
-            "a174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa",
+            "79f1d3a1594ca78e3232c804c49c2a404303ae1c539fb25c57971d7a582de2e2",
+            "fb73fe2faf11760fd19a2374e7077fdf5e7f7d8324a36b3acb0c05d56ca6307a",
         ),
     ] {
         let material = PresetMaterial::new(preset).unwrap();

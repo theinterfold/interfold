@@ -111,7 +111,7 @@ export const ACTIVE_BFV_COMMITTEE_SIZE = 0;
 export const ACTIVE_BFV_COMMITTEE_N = 3;
 
 export type BfvArtifactPreset = "insecure-64" | "secure-8192";
-export type BfvCommittee = "minimum" | "micro" | "small";
+export type BfvCommittee = "minimum" | "micro" | "small" | "large";
 
 export interface ActiveBfvConfig {
   preset: BfvArtifactPreset;
@@ -126,13 +126,13 @@ export interface ActiveBfvConfig {
 }
 
 const INSECURE_PARAM_SET_HASH =
-  "0xaff065a7d6e3d8c830dfcd37c2af8a25b3dcc6cd74ba458894075e8264f1ab1e";
+  "0x0c989bf49a85bd9e3bee06d72073c5e060e0f3260cbfc583407519959e74cbe4";
 const INSECURE_CONFIG_ID =
-  "0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9";
+  "0xa3bd5ecc8eede945ef4c08d5454022649137c7696ef8ad2f984f2b9ece35dd32";
 const SECURE_PARAM_SET_HASH =
-  "0x1b2620f6a5919d5ee19a51f34026369816f479efd0404b56585ad37d31c52317";
+  "0x79f1d3a1594ca78e3232c804c49c2a404303ae1c539fb25c57971d7a582de2e2";
 const SECURE_CONFIG_ID =
-  "0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa";
+  "0xfb73fe2faf11760fd19a2374e7077fdf5e7f7d8324a36b3acb0c05d56ca6307a";
 
 function bfvConfig(
   preset: BfvArtifactPreset,
@@ -168,6 +168,12 @@ export const INSECURE_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   { committeeSize: 2, h: 14, t: 9, n: 19 },
 );
 
+export const INSECURE_LARGE_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "insecure-64",
+  "large",
+  { committeeSize: 3, h: 28, t: 14, n: 39 },
+);
+
 export const SECURE_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "secure-8192",
   "minimum",
@@ -186,6 +192,12 @@ export const SECURE_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   { committeeSize: 2, h: 14, t: 9, n: 19 },
 );
 
+export const SECURE_LARGE_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "secure-8192",
+  "large",
+  { committeeSize: 3, h: 28, t: 14, n: 39 },
+);
+
 export const PRODUCTION_BFV_CONFIG: ActiveBfvConfig = SECURE_SMALL_BFV_CONFIG;
 
 export const TESTNET_BFV_CONFIG: ActiveBfvConfig = INSECURE_MINIMUM_BFV_CONFIG;
@@ -200,9 +212,11 @@ export const TESTNET_BFV_CONFIGS: readonly ActiveBfvConfig[] = [
   INSECURE_MINIMUM_BFV_CONFIG,
   INSECURE_MICRO_BFV_CONFIG,
   INSECURE_SMALL_BFV_CONFIG,
+  INSECURE_LARGE_BFV_CONFIG,
   SECURE_MINIMUM_BFV_CONFIG,
   SECURE_MICRO_BFV_CONFIG,
   SECURE_SMALL_BFV_CONFIG,
+  SECURE_LARGE_BFV_CONFIG,
 ] as const;
 
 /** The pair of the generated `ACTIVE_BFV_*` constants, which `ActiveCryptoConfig.sol` matches. */

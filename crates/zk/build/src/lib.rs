@@ -20,7 +20,7 @@ use std::{
     str::FromStr,
 };
 
-const COMMITTEES: &[&str] = &["minimum", "micro", "small"];
+const COMMITTEES: &[&str] = &["minimum", "micro", "small", "large"];
 
 pub fn build_pairs(root: &Path) -> Result<Vec<[String; 2]>> {
     let path = root.join("scripts/circuits/build-pairs.json");

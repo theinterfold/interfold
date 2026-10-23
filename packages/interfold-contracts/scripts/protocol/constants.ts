@@ -16,12 +16,12 @@ export const BFV_PARAMS = {
     degree: 64n,
     plaintextModulus: 17000000n,
     moduli: [0x0000000007fffd81n, 0x0000000007fff801n, 0x0000000007fff781n],
-    error1Variance: "12617929386",
+    error1Variance: "53162936320",
   },
   secure8192: {
     degree: 8192n,
     plaintextModulus: 17000000n,
     moduli: [0x0800000000db4001n, 0x0800000000d54001n, 0x0800000000cbc001n],
-    error1Variance: "17723039943798878305460955570711717478400",
+    error1Variance: "67391859386295234756372897751812360110080",
   },
 } as const;

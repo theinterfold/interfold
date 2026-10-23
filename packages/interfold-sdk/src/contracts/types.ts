@@ -12,18 +12,19 @@ export interface ContractAddresses {
   feeToken: `0x${string}`
 }
 
-/** On-chain `IInterfold.CommitteeSize`: Minimum (N=3), Micro (N=9), Small (N=19). */
+/** On-chain `IInterfold.CommitteeSize`: Minimum (N=3), Micro (N=9), Small (N=19), Large (N=39). */
 export enum CommitteeSize {
   Minimum = 0,
   Micro = 1,
   Small = 2,
+  Large = 3,
 }
 
 /** Fail fast on out-of-range committee sizes before they hit the contract. */
 export function validateCommitteeSize(value: number | CommitteeSize): CommitteeSize {
-  if (!Number.isInteger(value) || value < CommitteeSize.Minimum || value > CommitteeSize.Small) {
+  if (!Number.isInteger(value) || value < CommitteeSize.Minimum || value > CommitteeSize.Large) {
     throw new SDKError(
-      `Invalid committeeSize ${value}. Use CommitteeSize.Minimum (0), CommitteeSize.Micro (1), or CommitteeSize.Small (2).`,
+      `Invalid committeeSize ${value}. Use CommitteeSize.Minimum (0), CommitteeSize.Micro (1), CommitteeSize.Small (2), or CommitteeSize.Large (3).`,
       'INVALID_COMMITTEE_SIZE',
     )
   }

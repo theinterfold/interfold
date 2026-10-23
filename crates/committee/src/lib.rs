@@ -21,6 +21,8 @@ pub enum CiphernodesCommitteeSize {
     Micro,
     /// Small committee size (higher assurance).
     Small,
+    /// Large committee size (scaling target).
+    Large,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,7 +36,7 @@ pub struct CiphernodesCommittee {
 }
 
 impl CiphernodesCommitteeSize {
-    const ALL: [Self; 3] = [Self::Minimum, Self::Micro, Self::Small];
+    const ALL: [Self; 4] = [Self::Minimum, Self::Micro, Self::Small, Self::Large];
 
     /// Derives the committee size from threshold values (M, N).
     pub fn from_threshold(threshold_m: usize, threshold_n: usize) -> Result<Self> {
@@ -69,6 +71,7 @@ impl CiphernodesCommitteeSize {
             Self::Minimum => "minimum",
             Self::Micro => "micro",
             Self::Small => "small",
+            Self::Large => "large",
         }
     }
 
@@ -90,6 +93,11 @@ impl CiphernodesCommitteeSize {
                 h: 14,
                 threshold: 9,
             },
+            CiphernodesCommitteeSize::Large => CiphernodesCommittee {
+                n: 39,
+                h: 28,
+                threshold: 14,
+            },
         }
     }
 }
@@ -102,7 +110,8 @@ impl FromStr for CiphernodesCommitteeSize {
             "minimum" => Ok(Self::Minimum),
             "micro" => Ok(Self::Micro),
             "small" => Ok(Self::Small),
-            _ => bail!("Unknown committee size '{s}'. Expected minimum|micro|small"),
+            "large" => Ok(Self::Large),
+            _ => bail!("Unknown committee size '{s}'. Expected minimum|micro|small|large"),
         }
     }
 }
@@ -137,6 +146,12 @@ mod tests {
                 "Small",
                 [2, 0, 0, 0],
                 (19, 14, 9),
+            ),
+            (
+                CiphernodesCommitteeSize::Large,
+                "Large",
+                [3, 0, 0, 0],
+                (39, 28, 14),
             ),
         ] {
             assert_eq!(bincode::serialize(&size).unwrap(), bytes);
