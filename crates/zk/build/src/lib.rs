@@ -65,6 +65,7 @@ pub enum Operation {
     CheckBindings,
     CheckLayouts,
     SyncIdentities,
+    PrepareIdentities,
     CheckIdentities,
     QualifyIdentities,
     SyncSources,
@@ -84,11 +85,12 @@ impl FromStr for Operation {
             "check-bindings" => Ok(Self::CheckBindings),
             "check-layouts" => Ok(Self::CheckLayouts),
             "sync-identities" => Ok(Self::SyncIdentities),
+            "prepare-identities" => Ok(Self::PrepareIdentities),
             "check-identities" => Ok(Self::CheckIdentities),
             "qualify-identities" => Ok(Self::QualifyIdentities),
             "sync-sources" => Ok(Self::SyncSources),
             other => Err(format!(
-                "unknown build operation {other}; expected build, hash, sync-config, sync-preset, check, export-config, sync-bindings, check-bindings, check-layouts, sync-identities, check-identities, qualify-identities, or sync-sources"
+                "unknown build operation {other}; expected build, hash, sync-config, sync-preset, check, export-config, sync-bindings, check-bindings, check-layouts, sync-identities, prepare-identities, check-identities, qualify-identities, or sync-sources"
             )),
         }
     }
@@ -107,6 +109,7 @@ impl fmt::Display for Operation {
             Self::CheckBindings => "check-bindings",
             Self::CheckLayouts => "check-layouts",
             Self::SyncIdentities => "sync-identities",
+            Self::PrepareIdentities => "prepare-identities",
             Self::CheckIdentities => "check-identities",
             Self::QualifyIdentities => "qualify-identities",
             Self::SyncSources => "sync-sources",
@@ -387,9 +390,11 @@ fn run(command: &mut Command) -> Result<String> {
     let diagnostic = Path::new(command.get_program())
         .file_name()
         .is_some_and(|name| name == "nargo")
-        && [&output.stdout, &output.stderr]
-            .into_iter()
-            .any(|stream| String::from_utf8_lossy(stream).contains("bug:"));
+        && [&output.stdout, &output.stderr].into_iter().any(|stream| {
+            String::from_utf8_lossy(stream)
+                .lines()
+                .any(|line| line.trim_start().starts_with("bug:"))
+        });
     if diagnostic {
         bail!(
             "{command:?}: compiler emitted a bug diagnostic despite process exit {}:\n{}\n{}",
@@ -463,6 +468,7 @@ pub fn execute(root: &Path, request: &Request) -> Result<()> {
         Operation::CheckBindings => bindings::sync(root, true)?,
         Operation::CheckLayouts => layouts::check(root, request)?,
         Operation::SyncIdentities => identities::generate(root, &request.output_dir(root))?,
+        Operation::PrepareIdentities => identities::prepare(root, &request.output_dir(root))?,
         Operation::CheckIdentities => identities::check(root, request)?,
         Operation::QualifyIdentities => identities::qualify(root, request)?,
         Operation::SyncSources => configuration::sync_sources(root)?,

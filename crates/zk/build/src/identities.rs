@@ -96,6 +96,15 @@ pub fn write_pair(directory: &Path, pair: &Pair) -> Result<()> {
 }
 
 pub fn generate(root: &Path, output: &Path) -> Result<()> {
+    sync(root, output, true)
+}
+
+/// Prepare older archives for named consumers without changing the committed expectations.
+pub fn prepare(root: &Path, output: &Path) -> Result<()> {
+    sync(root, output, false)
+}
+
+fn sync(root: &Path, output: &Path, update_expected: bool) -> Result<()> {
     let pairs = crate::build_pairs(root)?
         .into_iter()
         .map(|[preset, committee]| collect_pair(output, &preset, &committee))
@@ -104,6 +113,13 @@ pub fn generate(root: &Path, output: &Path) -> Result<()> {
         format_version: 1,
         pairs,
     };
+    if !update_expected {
+        let expected: Manifest = serde_json::from_slice(&fs::read(root.join(MANIFEST))?)?;
+        ensure!(
+            manifest == expected,
+            "Prepared circuit identities differ from the committed catalogue; use matching artifacts"
+        );
+    }
     let mut changed = false;
     for pair in &manifest.pairs {
         changed |= write_changed(
@@ -114,7 +130,9 @@ pub fn generate(root: &Path, output: &Path) -> Result<()> {
             pair,
         )?;
     }
-    changed |= write_changed(&root.join(MANIFEST), &manifest)?;
+    if update_expected {
+        changed |= write_changed(&root.join(MANIFEST), &manifest)?;
+    }
     changed |= write_changed(&output.join(PAIR_FILE), &manifest)?;
     if changed || !output.join("checksums.json").is_file() {
         artifacts::checksums(output)?;
@@ -302,5 +320,55 @@ mod tests {
         assert_eq!(fs::read(root.join(MANIFEST)).unwrap(), source);
         assert!(!path.exists());
         assert!(!output.join(PAIR_FILE).exists());
+    }
+
+    #[test]
+    fn prepare_legacy_archive_metadata_preserves_expectations_and_rejects_drift_before_writes() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let output = root.join("dist/circuits");
+        let pair = seed(root, &output);
+        fs::create_dir_all(root.join("scripts/circuits")).unwrap();
+        fs::write(
+            root.join("scripts/circuits/build-pairs.json"),
+            r#"[["insecure-64","minimum"]]"#,
+        )
+        .unwrap();
+        generate(root, &output).unwrap();
+        fs::remove_file(pair.join(PAIR_FILE)).unwrap();
+        fs::remove_file(output.join(PAIR_FILE)).unwrap();
+        artifacts::checksums(&output).unwrap();
+
+        let before = crate::tests::snapshot(root);
+        let mut request = crate::tests::request();
+        request.operation = "prepare-identities".parse().unwrap();
+        crate::execute(root, &request).unwrap();
+        let after = crate::tests::snapshot(root);
+        for (path, original) in &before {
+            if !["SHA256SUMS", "checksums.json"]
+                .contains(&path.file_name().unwrap().to_str().unwrap())
+            {
+                assert_eq!(&after[path], original, "{} changed", path.display());
+            }
+        }
+        check(root, &request).unwrap();
+        assert!(pair.join(PAIR_FILE).is_file());
+        crate::execute(root, &request).unwrap();
+        assert_eq!(crate::tests::snapshot(root), after);
+
+        let mut hash = [0; 32];
+        hash[31] = 1;
+        fs::write(
+            pair.join("default/threshold/user_data_encryption/user_data_encryption.vk_hash"),
+            hash,
+        )
+        .unwrap();
+        fs::remove_file(pair.join(PAIR_FILE)).unwrap();
+        let before = crate::tests::snapshot(root);
+        assert!(crate::execute(root, &request)
+            .unwrap_err()
+            .to_string()
+            .contains("differ from the committed catalogue"));
+        assert_eq!(crate::tests::snapshot(root), before);
     }
 }

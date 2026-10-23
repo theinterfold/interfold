@@ -1206,6 +1206,9 @@ jobs:
       - name: Hydrate the insecure-64/minimum circuits
         run: pnpm build:circuits --preset insecure-64 --committee minimum --hydrate-bin-only --no-clean-targets
 
+      - name: Prepare published circuit identity metadata
+        run: pnpm build:circuits prepare-identities
+
       - name: Verify circuit artifacts
         run: |
           echo "DKG circuits:"

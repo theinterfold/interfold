@@ -819,16 +819,27 @@ fn full_source_checks_detect_stale_missing_and_wrong_alias_declarations_without_
         write(root, path, fs::read(repo.join(path)).unwrap());
     }
     write_pins(root);
+    configuration::check(root, &request()).expect("unmodified sources must pass");
     let threshold = root.join("circuits/lib/src/configs/insecure/threshold.nr");
     let original = fs::read_to_string(&threshold).unwrap();
     let declaration = configuration::declarations(&original)["USER_DATA_ENCRYPTION_BIT_U"].clone();
-    for replacement in ["pub global USER_DATA_ENCRYPTION_BIT_U: u32 = 99;", ""] {
+    for (replacement, expected) in [
+        (
+            "pub global USER_DATA_ENCRYPTION_BIT_U: u32 = 99;",
+            "differs from generated configuration",
+        ),
+        ("", "Missing USER_DATA_ENCRYPTION_BIT_U"),
+    ] {
         fs::write(&threshold, original.replace(&declaration, replacement)).unwrap();
         let before = snapshot(root);
-        assert!(configuration::check(root, &request()).is_err());
+        let error = configuration::check(root, &request())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(expected), "{error}");
         assert_eq!(snapshot(root), before);
+        fs::write(&threshold, &original).unwrap();
     }
-    fs::write(&threshold, original).unwrap();
+    configuration::check(root, &request()).expect("restored sources must pass");
     let dkg = root.join("circuits/lib/src/configs/insecure/dkg.nr");
     let original = fs::read_to_string(&dkg).unwrap();
     fs::write(
@@ -840,7 +851,13 @@ fn full_source_checks_detect_stale_missing_and_wrong_alias_declarations_without_
     )
     .unwrap();
     let before = snapshot(root);
-    assert!(configuration::check(root, &request()).is_err());
+    let error = configuration::check(root, &request())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("DKG aggregate width must re-export THRESHOLD_SHARE_DECRYPTION_BIT_SK"),
+        "{error}"
+    );
     assert_eq!(snapshot(root), before);
 }
 
@@ -851,16 +868,33 @@ fn successful_compiler_process_with_bug_diagnostic_is_not_accepted() {
     let temp = tempfile::tempdir().unwrap();
     let compiler = temp.path().join("nargo");
     for stream in ["", ">&2"] {
-        fs::write(
-            &compiler,
-            format!("#!/bin/sh\necho 'bug: unconstrained output' {stream}\nexit 0\n"),
-        )
-        .unwrap();
-        fs::set_permissions(&compiler, fs::Permissions::from_mode(0o755)).unwrap();
-        assert!(run(Command::new(&compiler).arg("compile"))
-            .unwrap_err()
-            .to_string()
-            .contains("bug diagnostic"));
+        for message in ["bug: unconstrained output", "  bug: unconstrained output"] {
+            fs::write(
+                &compiler,
+                format!("#!/bin/sh\nprintf '%s\\n' '{message}' {stream}\nexit 0\n"),
+            )
+            .unwrap();
+            fs::set_permissions(&compiler, fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(run(Command::new(&compiler).arg("compile"))
+                .unwrap_err()
+                .to_string()
+                .contains("bug diagnostic"));
+        }
+        for message in [
+            "debug: compiled successfully",
+            "warning: unused variable\n  12 | let label = \"bug: a string\";",
+            "warning: unused variable\n  12 | // debug: trace input",
+        ] {
+            fs::write(
+                &compiler,
+                format!("#!/bin/sh\nprintf '%s\\n' '{message}' {stream}\nexit 0\n"),
+            )
+            .unwrap();
+            assert!(
+                run(Command::new(&compiler).arg("compile")).is_ok(),
+                "{message}"
+            );
+        }
     }
     fs::write(&compiler, "#!/bin/sh\nprintf 'compiled'\n").unwrap();
     assert_eq!(

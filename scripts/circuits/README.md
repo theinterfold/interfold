@@ -140,6 +140,10 @@ After preparing every build-policy pair, run `pnpm generate:circuit-identities`.
 builds invalidate affected archive metadata, not the committed catalogue. Generation preserves old
 source stamps; it does not qualify them against current sources.
 
+For published archives, `pnpm build:circuits prepare-identities` fills the archive metadata only if
+its identities match the committed catalogue. It never refreshes those expectations or source
+stamps.
+
 `pnpm check:crypto-config` needs Cargo and pinned Nargo but no compiled artifacts. Add `--full` to
 validate a prepared matrix, or use `pnpm qualify:crypto-config` for backend key/verifier
 rederivation. Neither prepares or repairs artifacts. Use `--artifacts-dir <directory>` for a custom

@@ -32,6 +32,7 @@ if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
     --committee minimum \
     --hydrate-bin-only \
     --no-clean-targets)
+  (cd "$ROOT_DIR" && pnpm build:circuits prepare-identities)
   for preset in insecure-64 secure-8192; do
     mkdir -p "${INTEGRATION_NOIR}/circuits/${preset}"
     cp -R "${ROOT_DIR}/dist/circuits/${preset}/minimum" \
