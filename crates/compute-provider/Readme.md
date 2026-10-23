@@ -1,8 +1,24 @@
 # FHE Compute Manager
 
+## Purpose
+
 This project provides a framework for managing Secure Programs (SP) of the
 [Interfold Protocol](https://theinterfold.com), with the ability to integrate various compute
 providers.
+
+## Map
+
+| Location                                                                                 | Responsibility                                                                     |
+| ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| [`compute_manager.rs`](src/compute_manager.rs)                                           | Native result plus provider orchestration with one caller-selected policy.         |
+| [`compute_input.rs`](src/compute_input.rs), [`secure_process.rs`](src/secure_process.rs) | Held-round adapter and streaming two-pass computation shared with guests.          |
+| [`policy.rs`](src/policy.rs)                                                             | Published metadata, authenticated input records, leaf construction, and selection. |
+| [`merkle_tree_builder.rs`](src/merkle_tree_builder.rs), [`hashing.rs`](src/hashing.rs)   | Input-root construction and reference/accelerated hashing.                         |
+| [`ciphertext_output.rs`](src/ciphertext_output.rs), [`lib.rs`](src/lib.rs)               | Result commitments and public input/processor/provider types.                      |
+
+The manager computes natively and asks the provider to reproduce the same Secure Process under the
+same policy. Every published input first contributes a leaf; policy selection affects only the
+computation's second pass, whose bytes are checked against the first pass.
 
 ## Features
 
@@ -159,7 +175,7 @@ memory. `ComputeInput::run` runs the same code over a round held in memory, and
 
 The OpenVM provider is `e3-openvm-host`. It runs the program natively, writes the guest's input
 stream, and calls the separate `interfold-openvm-prover` worker, which returns a verified EVM
-receipt. See `crates/openvm-prover/README.md`.
+receipt. See the [OpenVM worker guide](../openvm-prover/README.md).
 
 ## Configuration
 
@@ -171,3 +187,12 @@ receipt. See `crates/openvm-prover/README.md`.
 
 `ComputeManager::with_published()` takes the same three, plus `published`: one `PublishedData` entry
 per ciphertext, in the same order as `fhe_inputs.ciphertexts`.
+
+## Tests
+
+From the root, run `cargo test --locked -p e3-compute-provider`; add `--features parallel` for host
+batching coverage. Inline `compute_input.rs` tests cover policy/root/metadata and batching
+equivalence. `secure_process.rs` tests compare held/streamed rounds, second-pass substitution, and
+complete processor consumption; tree/hash tests pin Solidity/reference behavior. No OpenVM worker is
+needed for these tests. Guest/proof integration is in the
+[OpenVM workflow](../openvm-prover/README.md); editing rules are in [AGENTS.md](AGENTS.md).

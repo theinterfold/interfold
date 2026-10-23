@@ -19,7 +19,7 @@ type Entry = {
 
 const HIST_FILTERS = [
   { id: 'all', label: 'All', test: () => true },
-  { id: 'appr', label: 'Approved', test: (e: Entry) => /Approved|Adopted|Completed/i.test(e.result) },
+  { id: 'completed', label: 'Completed', test: (e: Entry) => /Completed/i.test(e.result) },
   { id: 'failed', label: 'Failed', test: (e: Entry) => /Failed/i.test(e.result) },
   { id: 'expired', label: 'Expired', test: (e: Entry) => /Expired/i.test(e.result) },
 ]
@@ -68,11 +68,11 @@ function HistoryRow({
   onToggle: () => void
   onNavigate?: (view: string) => void
 }) {
-  const [winner, pct] = entry.result.split(' · ')
-  const lower = winner.toLowerCase()
-  const bad = /declined|failed|expired/.test(lower)
-  const good = /approved|adopted|completed/.test(lower)
-  const tone = bad ? 'hist-row__verdict--bad' : good ? 'hist-row__verdict--good' : ''
+  const tone = /failed|expired/i.test(entry.result)
+    ? 'hist-row__verdict--bad'
+    : /completed/i.test(entry.result)
+      ? 'hist-row__verdict--good'
+      : ''
   return (
     <li className={`hist-row ${expanded ? 'hist-row--open' : ''}`}>
       <button type='button' className='hist-row__btn' onClick={onToggle} aria-expanded={expanded}>
@@ -90,8 +90,7 @@ function HistoryRow({
         </div>
         <div className='hist-row__result'>
           <div className={`hist-row__verdict ${tone}`}>
-            <span className='hist-row__verdict-text'>{winner}</span>
-            <span className='hist-row__verdict-pct mono'>{pct}</span>
+            <span className='hist-row__verdict-text'>{entry.result}</span>
           </div>
           <div className='hist-row__ballots mono'>{entry.ballotCount.toLocaleString()} ballots</div>
         </div>

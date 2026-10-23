@@ -189,6 +189,11 @@ fn layout_rows() -> Vec<String> {
         &mut rows,
     );
     repository(
+        "slashing_writer_intent_times",
+        |r| r.slashing_writer_intent_times(1),
+        &mut rows,
+    );
+    repository(
         "data_availability_recovery",
         |r| r.data_availability_recovery(1),
         &mut rows,

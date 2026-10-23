@@ -391,6 +391,11 @@ mod tests {
             .slashing_writer_recovery(2)
             .write_sync(&SlashingWriterRecoveryState::default())
             .await?;
+        // The writer also saves when it recorded each intent; that record is not a slash report.
+        repositories
+            .slashing_writer_intent_times(1)
+            .write_sync(&e3_evm::SlashIntentTimes::default())
+            .await?;
 
         assert_eq!(
             pending_slash_reports(&repositories).await?,

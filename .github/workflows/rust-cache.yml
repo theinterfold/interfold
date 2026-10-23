@@ -103,12 +103,10 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: cargo build
 
-      # scripts/build-circuits.ts runs zk-artifacts with --release in every ci job that
-      # builds or hydrates circuits, zk_prover_e2e included. Built from scratch, they took about two
-      # minutes.
-      - name: Build the release circuit CLI
+      # Circuit builds and hydration use the unpublished Rust build crate.
+      - name: Build the circuit builder
         if: steps.cache.outputs.cache-hit != 'true'
-        run: pnpm rust:build:zk --release
+        run: pnpm rust:build:circuits
 
       # A checkout gives the workspace sources new modification times, so every ci job rebuilds the
       # workspace crates and relinks their test binaries, and reuses only the dependencies' artifacts.

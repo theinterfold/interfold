@@ -432,7 +432,12 @@ impl CiphernodeBuilder {
             .await?;
         }
 
-        let slashing_managers = resolve_slashing_managers(&storage.chains).await?;
+        // Only a full node signs accusation votes and submits slash proposals.
+        let slashing_managers = if self.role() == NodeRole::Full {
+            resolve_slashing_managers(&storage.chains).await?
+        } else {
+            storage.chains.iter().map(|_| None).collect()
+        };
 
         Ok(Protocol {
             canonical_keys,

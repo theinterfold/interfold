@@ -42,10 +42,12 @@ export function generate({ units, wiring, codeFor, windowFor }) {
   const refCode = (ref) => (ref ? { code: windowFor(ref), focus: ref.line } : null)
 
   for (const u of Object.values(units)) {
-    if (u.kind === 'crate' && !u.app) add(crateDiagram(u))
-    else if (u.kind === 'contract' && !u.app) add(contractDiagram(u))
-    else if (u.kind === 'circuit' && !u.app) add(circuitDiagram(u))
-    else add(appDiagram(u))
+    let d
+    if (u.kind === 'crate' && !u.app) d = crateDiagram(u)
+    else if (u.kind === 'contract' && !u.app) d = contractDiagram(u)
+    else if (u.kind === 'circuit' && !u.app) d = circuitDiagram(u)
+    else d = appDiagram(u)
+    add({ ...d, documentation: u.facts?.documentation || [] })
   }
   return diagrams
 
@@ -275,7 +277,7 @@ export function generate({ units, wiring, codeFor, windowFor }) {
       title: u.id,
       mono: true,
       lines: one,
-      tip: f.explain || '',
+      tip: f.one_line || '',
       ...(f.read_first && f.read_first[0] && f.read_first[0].ref ? refCode(f.read_first[0].ref) : {}),
     }
     nodes.push(center)
@@ -521,21 +523,7 @@ export function generate({ units, wiring, codeFor, windowFor }) {
       tip: 'Click to read the circuit',
     }
     nodes.push(self)
-    const proves = {
-      id: 'proves',
-      x: 1180,
-      y: 60,
-      w: 500,
-      h: 270,
-      title: 'What the proof shows',
-      lines: wrap(f.explain || '', 54, 10),
-      style: 'soft',
-    }
-    nodes.push(proves)
-    edges.push({ from: 'self', to: 'proves', fs: 'r', ts: 'l', label: 'proves' })
-    if (f.analogy)
-      nodes.push({ id: 'analogy', x: 1180, y: 370, w: 500, h: 130, title: 'Picture it', lines: wrap(f.analogy, 54, 4), style: 'soft' })
-    const h = Math.max(y, 520)
+    const h = Math.max(y, 340)
     return {
       id: `circuit:${u.id}`,
       kind: 'diagram',
@@ -543,7 +531,7 @@ export function generate({ units, wiring, codeFor, windowFor }) {
       crumb: u.id,
       parent: 'circuits',
       sub: f.one_line || '',
-      w: 1700,
+      w: 1180,
       h,
       nodes,
       edges,
@@ -566,7 +554,7 @@ export function generate({ units, wiring, codeFor, windowFor }) {
       title: u.id,
       mono: true,
       lines: wrap(f.one_line || '', 46, 5),
-      tip: f.explain || '',
+      tip: f.one_line || '',
     }
     nodes.push(self)
     const rf = f.read_first || []
@@ -756,6 +744,7 @@ export function actorDiagrams({ units, wiring, codeFor, windowFor }) {
         crumb: a.name,
         parent: `crate:${u.id}`,
         sub: roles[a.name] || `An actor in ${u.id}`,
+        documentation: f.documentation || [],
         w: 1700,
         h: y + 10,
         nodes,

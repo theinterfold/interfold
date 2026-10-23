@@ -46,8 +46,8 @@ of the template move ciphertexts to this function and move its result to the com
 1. The client encrypts each number with the committee public key and calls `MyProgram.publishInput`.
 2. When the input window closes, the coordination server (`server/index.ts`) reads the published
    inputs and sends them to the program server on port 13151.
-3. The program server (`.interfold/support/dev/src/main.rs`) calls `fhe_processor` and sends the
-   encrypted result back to the coordination server.
+3. The program runner (`runner/`, in `dev` mode) calls `fhe_processor` and sends the encrypted
+   result back to the coordination server.
 4. The coordination server publishes the encrypted result. The committee decrypts it.
 
 This is the default computation in `program/src/lib.rs`. The doc comment above `policy` is removed
@@ -180,7 +180,7 @@ pnpm dev:all
 ```
 
 The `PROGRAM` process runs `interfold program start`. In dev mode, this command runs
-`cargo run --bin e3-support-scripts-dev`, so Cargo compiles the program server again with your new
+`cargo run --bin program-runner -- dev`, so Cargo compiles the runner again with your new
 `fhe_processor`.
 
 ### Run an E3
@@ -218,8 +218,9 @@ expect(BigInt(result)).toBe(2n * (num1 + num2))
 ```
 
 Run the test with `pnpm test:integration`. This test needs a CLI that is built with the
-`test-only-skip-proof-aggregation` Cargo feature. Release binaries do not include it. See
-[Installation](/build/installation#install-the-cli) for a source build.
+`test-only-skip-proof-aggregation` Cargo feature. Of the release archives, only the test-only
+archive for Linux x86_64 has it. See [Installation](/build/installation#supported-platforms) for
+this archive and for a source build.
 
 ## Operations on ciphertexts
 

@@ -5,7 +5,7 @@ edition = "2021"
 license = "LGPL-3.0-only"
 
 # Proves this project's E3 program. Built for the OpenVM target with `cargo openvm build`
-# (see `.interfold/support/openvm/compile`), so it is a workspace of its own.
+# (see `interfold program compile`), so it is a workspace of its own.
 [workspace]
 resolver = "3"
 

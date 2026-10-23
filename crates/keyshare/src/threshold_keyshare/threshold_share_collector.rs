@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use actix::{Actor, ActorContext, Addr, AsyncContext, Handler, Message, SpawnHandle};
@@ -28,6 +29,13 @@ pub struct ThresholdShareCollectionCutoff;
 #[derive(Message, Clone, Debug)]
 #[rtype(result = "()")]
 pub struct ThresholdShareCollectionTimeout;
+
+/// Dealers whose C0 key this node did not have when key collection closed.
+#[derive(Message, Clone, Debug)]
+#[rtype(result = "()")]
+pub struct DealersWithoutKey {
+    pub party_ids: HashSet<PartyId>,
+}
 
 /// Remove this party from `todo` so collection finishes without it.
 #[derive(Message, Clone, Debug)]
@@ -77,6 +85,25 @@ impl ThresholdShareCollector {
                 deadline_handle: None,
             }
         })
+    }
+
+    /// Reach the soft cutoff early when every missing dealer had no C0 key at the key cutoff.
+    /// This node dealt such a dealer no share, so no roster holds both of them, and waiting for
+    /// the 75% checkpoint gains nothing. Collection stays open, as after the checkpoint. Returns
+    /// whether this call reached the cutoff.
+    fn reach_cutoff_without_keyless_dealers(&mut self, ctx: &mut actix::Context<Self>) -> bool {
+        if self.cutoff_reached || !self.collection.waits_only_for_dealers_without_key() {
+            return false;
+        }
+        info!(
+            e3_id = %self.e3_id,
+            "Only dealers without a C0 key are missing; continuing before the soft cutoff"
+        );
+        if let Some(handle) = self.cutoff_handle.take() {
+            ctx.cancel_future(handle);
+        }
+        self.cutoff_reached = true;
+        true
     }
 
     fn complete_at_cutoff(&mut self, ctx: &mut actix::Context<Self>) -> bool {
@@ -178,6 +205,9 @@ impl Handler<TypedEvent<ThresholdShareCreated>> for ThresholdShareCollector {
         if !matches!(&outcome, ShareCollectOutcome::Ignored) {
             self.last_ec = Some(ec.clone());
         }
+        if matches!(&outcome, ShareCollectOutcome::Pending) {
+            self.reach_cutoff_without_keyless_dealers(ctx);
+        }
         if matches!(&outcome, ShareCollectOutcome::Pending) && self.cutoff_reached {
             self.complete_at_cutoff(ctx);
         } else {
@@ -260,11 +290,24 @@ impl Handler<ExpelPartyFromShareCollection> for ThresholdShareCollector {
                 "All remaining threshold shares collected after party expulsion!"
             );
         }
+        if matches!(&outcome, ShareCollectOutcome::Pending) {
+            self.reach_cutoff_without_keyless_dealers(ctx);
+        }
         if matches!(&outcome, ShareCollectOutcome::Pending) && self.cutoff_reached {
             self.last_ec = Some(msg.ec);
             self.complete_at_cutoff(ctx);
         } else {
             self.publish_outcome(ctx, msg.ec, outcome);
+        }
+    }
+}
+
+impl Handler<DealersWithoutKey> for ThresholdShareCollector {
+    type Result = ();
+    fn handle(&mut self, msg: DealersWithoutKey, ctx: &mut Self::Context) -> Self::Result {
+        self.collection.set_dealers_without_key(msg.party_ids);
+        if self.reach_cutoff_without_keyless_dealers(ctx) {
+            self.complete_at_cutoff(ctx);
         }
     }
 }

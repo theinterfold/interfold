@@ -1,14 +1,12 @@
 # Facts schema
 
-Each file here describes a group of units (crates, contracts, circuits, packages) for an engineer
-who is learning this codebase. An agent or a person writes a file from the code. The blueprint shows
-the facts in its generated diagrams, and its build checks every reference.
+Each file supplies short UI summaries and code-navigation facts for a group of units (crates,
+contracts, circuits, packages). Every unit links to its relevant owner documentation under `docs/`.
+Protocol explanations, rationale, and limitations belong there, not in parallel `explain` or
+`analogy` narratives in JSON. Do not embed or compile Markdown into the facts.
 
-Read the code of the repository. Change no code.
-
-Your job: describe what each unit (crate, contract, circuit, package) does, for an engineer who is
-learning this codebase. Every fact must come from the code you read. When you are not sure, put the
-claim in `unverified` instead of stating it.
+Read the current code and owning documentation. When extraction did not establish a claim, preserve
+that qualification in `unverified` rather than presenting it as verified.
 
 ## How to work
 
@@ -16,9 +14,11 @@ claim in `unverified` instead of stating it.
   use `grep -rn` for `impl Actor for`, `impl Handler<`, `#[derive(Message`, `pub enum`,
   `pub struct`, `pub trait`, `publish(`, `subscribe`, `EventType::`, `sled`, `Persistable`,
   `Repository`, `#[test]`. Read the matching sections only.
-- `agent/CRATES_ARCHITECTURE.md` and `agent/flow-trace/*.md` describe the architecture. You may read
-  them for orientation, but every `ref` must point at code (`.rs`, `.sol`, `.nr`, `.ts`), not at a
-  `.md` file.
+- Use the relevant domain in `docs/architecture/` or product guide in `docs/pages/` as the
+  `documentation` target. Do not substitute a generic index or an unrelated domain merely to fill
+  the field. If the topic has no owner, add focused documentation before linking it.
+- Every `ref` still points at code (`.rs`, `.sol`, `.nr`, `.ts`), never Markdown. Code references
+  open excerpts and VS Code; documentation links open GitHub source for the selected version.
 - Get line numbers from `grep -n`. Never guess a line number.
 
 ## Reference format (`ref`)
@@ -32,6 +32,18 @@ A reference is one string: `path@line@token`
   `@`. The build accepts the token up to three lines from the cited line, uses the nearest copy of
   the token when the line moved further, and drops the entry with a warning when the token is gone.
   `check.mjs --fix` rewrites the line number to the exact line.
+
+## Documentation format (`documentation`)
+
+Use a nonempty array of
+`{ "title": "Committee selection", "path": "docs/architecture/committee-selection.md" }` entries. A
+path is canonical and repository-relative, under `docs/`, and ends in `.md` or `.mdx`. URLs,
+traversal, fragments, and code-token references do not belong in this field. Multiple entries are
+appropriate when a unit spans real domain owners.
+
+The checker verifies target existence, not that the document proves the summary. Code-token checks
+likewise establish navigation, not semantic correctness, proof soundness, or complete test coverage.
+The build warns and omits invalid links; the strict check reports missing owners too.
 
 ## Output
 
@@ -48,9 +60,10 @@ it parses. Write no other file.
       "id": "e3-sortition",
       "kind": "crate",
       "path": "crates/sortition",
-      "one_line": "One sentence, at most 25 words: what it does.",
-      "explain": "2-4 short sentences for a newcomer: the problem it solves, how it fits into the node or protocol, and what would break without it.",
-      "analogy": "One sentence: a physical-world analogy that is true to how it works (for example: a lottery drum that draws committee members, weighted by tickets).",
+      "one_line": "Short UI summary: what it does, not a protocol specification.",
+      "documentation": [
+        { "title": "Committee selection", "path": "docs/architecture/committee-selection.md" }
+      ],
       "actors": [
         {
           "name": "Sortition",
@@ -86,7 +99,8 @@ Field rules:
 - `actors`, `consumes`, `emits`, `state`: empty arrays when the unit has none (for example a pure
   library). For a contract, use `consumes` for the external functions that change state (`name` is
   the function) and `emits` for its Solidity events. For a circuit, use `consumes` for the inputs
-  (`name`: `public: <input>` or `private: <input>`) and put what it proves in `explain`.
+  (`name`: `public: <input>` or `private: <input>`). Keep a short purpose in `one_line` and link the
+  owning proof statement instead of restating its constraints.
 - `read_first`: 2-5 references, in the order a newcomer should read them.
 - `rust_patterns`: 2-6 clear examples, only for Rust units. Use these names only:
   `result-question-mark`, `anyhow-context`, `thiserror-enum`, `enum-match`, `option-combinators`,
@@ -99,4 +113,6 @@ Field rules:
 - `depends_on`: workspace crates only (names that start with `e3-` or `interfold`), from the unit's
   `Cargo.toml` `[dependencies]` (not dev-dependencies).
 - Describe the current code only. Do not speculate about bugs or security weaknesses.
-- Keep each unit under about 60 lines of JSON. Prefer fewer, correct entries over many guesses.
+- Keep entries concise. Preserve source pointers, evidence qualifications, and current limitations;
+  prefer fewer, correct navigation facts over many guesses. Inventories of actors and dependencies
+  remain code-derived; do not replace their generator with hand-maintained documentation.

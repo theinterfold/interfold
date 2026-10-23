@@ -240,12 +240,8 @@ fn share_with_matching_commitment(
     ciphertexts: &[ArcBytes],
 ) -> (Vec<ArcBytes>, Vec<SignedProofPayload>) {
     use e3_polynomial_fhe::FromFhePolynomial as _;
-    use e3_zk_helpers::{
-        circuits::commitments::compute_threshold_decryption_share_commitment,
-        circuits::threshold::decrypted_shares_aggregation::MAX_MSG_NON_ZERO_COEFFS,
-        threshold::share_decryption::{Bits, Bounds},
-        Computation,
-    };
+    use e3_zk_config::{threshold::share_decryption::Configs, MAX_MSG_NON_ZERO_COEFFS};
+    use e3_zk_witness::compute_threshold_decryption_share_commitment;
     use fhe_math::rq::{Poly, PowerBasis};
     use fhe_traits::Serialize;
 
@@ -253,10 +249,10 @@ fn share_with_matching_commitment(
     let (params, _) = e3_fhe_params::build_pair_for_preset(preset).unwrap();
     let poly = Poly::<PowerBasis>::zero(params.context_at_level(0).unwrap());
     let crt = e3_polynomial::CrtPolynomial::from_fhe_polynomial(&poly);
-    let bits = Bits::compute(preset, &Bounds::compute(preset, &()).unwrap()).unwrap();
+    let config = Configs::new(&params).unwrap();
     let commitment = compute_threshold_decryption_share_commitment(
         &crt,
-        bits.d_native_bit,
+        config.bits.d_native_bit,
         MAX_MSG_NON_ZERO_COEFFS,
     );
     let (_, bytes) = commitment.to_bytes_be();

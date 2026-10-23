@@ -2,12 +2,62 @@
   "group": "foundations",
   "units": [
     {
+      "id": "e3-task-pool",
+      "documentation": [{ "title": "Compute admission and cancellation", "path": "docs/architecture/persistence-and-replay.md" }],
+      "kind": "crate",
+      "path": "crates/task-pool",
+      "one_line": "Protocol-independent bounded Rayon execution with shared admission and caller-scoped cancellation groups.",
+      "actors": [],
+      "consumes": [],
+      "emits": [],
+      "state": [
+        {
+          "name": "Shared semaphore, Rayon pool and cancellation groups",
+          "where": "memory",
+          "ref": "crates/task-pool/src/lib.rs@26@pub struct TaskPool {"
+        }
+      ],
+      "key_types": [
+        {
+          "name": "TaskPool",
+          "what": "Cloneable shared CPU admission budget",
+          "ref": "crates/task-pool/src/lib.rs@26@pub struct TaskPool {"
+        },
+        {
+          "name": "TaskPoolError",
+          "what": "Admission, channel, cancellation and panic outcomes",
+          "ref": "crates/task-pool/src/lib.rs@33@pub enum TaskPoolError {"
+        }
+      ],
+      "read_first": [
+        { "why": "Pool state shared by its clones", "ref": "crates/task-pool/src/lib.rs@26@pub struct TaskPool {" },
+        {
+          "why": "Admission, queued cancellation and worker execution",
+          "ref": "crates/task-pool/src/lib.rs@128@async fn spawn_inner<OP, T: Debug + Send + 'static>("
+        }
+      ],
+      "rust_patterns": [
+        {
+          "pattern": "arc-shared",
+          "note": "Clones retain the same cancellation map",
+          "ref": "crates/task-pool/src/lib.rs@29@task_groups: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,"
+        },
+        {
+          "pattern": "tokio-select",
+          "note": "Admission waits for a permit or cancellation",
+          "ref": "crates/task-pool/src/lib.rs@150@tokio::select! {"
+        }
+      ],
+      "depends_on": [],
+      "tests": "cargo test --locked -p e3-task-pool: cancellation before admission and inside Rayon, retry cancellation and panic classification.",
+      "unverified": ["Already-running closures are not preempted; pool tests do not establish production memory use or proof validity."]
+    },
+    {
       "id": "e3-fhe-params",
+      "documentation": [{ "title": "Preset and artifact identity", "path": "docs/architecture/circuit-artifacts.md" }],
       "kind": "crate",
       "path": "crates/fhe-params",
       "one_line": "BFV parameter presets (insecure 64 and secure 8192, threshold and DKG variants) and the committee sizes they assume.",
-      "explain": "Threshold encryption needs every node to build the same BFV ring degree, moduli and plaintext modulus, so this crate keeps them as named presets. Each preset is a threshold pair plus a DKG pair; the 64 presets are marked insecure and not for production, and the default preset for local development and tests is the insecure threshold one. The on-chain parameter index 0 maps to the insecure 64 threshold preset and index 2 to the secure 8192 threshold preset. Keyshare, aggregator, config, sdk and the CLI depend on it.",
-      "analogy": "A price list with two sizes, each sold as a matched pair: one for the shared public key and one for the temporary setup key.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -80,11 +130,13 @@
     },
     {
       "id": "e3-committee-hash",
+      "documentation": [
+        { "title": "Canonical decryption domain", "path": "docs/architecture/threshold-decryption.md" },
+        { "title": "Committee identity", "path": "docs/architecture/dkg.md" }
+      ],
       "kind": "crate",
       "path": "crates/committee-hash",
       "one_line": "Canonical keccak256 hashes of the ordered committee and of the E3 decryption domain, matching the Solidity contracts.",
-      "explain": "A decryption-share proof has to name the committee and the E3 it belongs to, so the node and the on-chain contract must compute the same hash. This crate hashes the ordered 20-byte committee addresses with keccak256, and hashes the decryption domain over the chain id, Interfold address, E3 id, committee hash, ciphertext output hash and committee key. Each hash is split into two 128-bit limbs for the Noir public inputs. The module comments say the results must match CommitteeHashLib.sol and InterfoldPricing.decryptionDomain.",
-      "analogy": "A fingerprint taken over a guest list in a fixed order: the same list always gives the same fingerprint, whether the node or the contract takes it.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -147,11 +199,13 @@
     },
     {
       "id": "e3-crypto",
+      "documentation": [
+        { "title": "Operator secrets", "path": "docs/architecture/registration-and-bonding.md" },
+        { "title": "Key management", "path": "docs/pages/reference/cli.mdx" }
+      ],
       "kind": "crate",
       "path": "crates/crypto",
       "one_line": "Local encryption of node secrets at rest: an Argon2id-derived AES-256-GCM key, a password manager and sensitive-byte containers.",
-      "explain": "Values that must not sit in plaintext are wrapped as SensitiveBytes, which hold ciphertext produced by a Cipher. A Cipher derives a 32-byte key from a password with Argon2id and a fixed application salt, then seals data with AES-256-GCM and writes a random 12-byte nonce in front of the ciphertext. The password comes from an environment variable, a file or memory through the PasswordManager trait. Plaintext input is zeroized after encryption, and SensitiveBytes::access returns the decrypted value in a Zeroizing buffer.",
-      "analogy": "A safe-deposit box whose key is cut from a password: what goes in is sealed, and only the holder of that password can open it.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -230,11 +284,10 @@
     },
     {
       "id": "e3-polynomial",
+      "documentation": [{ "title": "Proof arithmetic", "path": "docs/architecture/proof-statements.md" }],
       "kind": "crate",
       "path": "crates/polynomial",
       "one_line": "Polynomial arithmetic over big-integer coefficients, with CRT limbs and range checks, for the circuit input math.",
-      "explain": "The zk-helpers circuit code works with ring arithmetic on exact integers, so each coefficient is a num-bigint BigInt. Polynomial covers add, subtract, negate, multiply, exact division by an integer, scalar multiplication, centering and reduction, and CrtPolynomial keeps one such polynomial per modulus. The conversions from fhe.rs polynomials are in e3-polynomial-fhe, and the aggregator, multithread and zk-prover crates use this crate too.",
-      "analogy": "A string of numbered beads, one bead per power of x: adding or multiplying polynomials means combining the strings bead by bead.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -292,11 +345,13 @@
     },
     {
       "id": "e3-parity-matrix",
+      "documentation": [
+        { "title": "DKG sharing and parity checks", "path": "docs/pages/internals/dkg.mdx" },
+        { "title": "Generated matrices", "path": "docs/architecture/circuit-artifacts.md" }
+      ],
       "kind": "crate",
       "path": "crates/parity-matrix",
       "one_line": "Generates and checks parity matrices for polynomial evaluations mod q, used by the DKG share-computation circuit inputs.",
-      "explain": "The crate docs take a polynomial of degree t evaluated at n+1 points mod q, build the generator matrix G for those evaluations, and compute a parity matrix H with H * G^T = 0 mod q. Any valid evaluation vector v then satisfies H * v = 0 mod q, so the check catches vectors that do not come from a degree-t polynomial. zk-helpers' DKG share-computation utilities call build_generator_matrix and null_space.",
-      "analogy": "A checksum that comes out zero only for lists drawn from a low-degree curve.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -369,11 +424,13 @@
     },
     {
       "id": "e3-safe",
+      "documentation": [
+        { "title": "Commitments and domain separation", "path": "docs/architecture/proof-statements.md" },
+        { "title": "SAFE in the proof pipeline", "path": "docs/pages/internals/dkg.mdx" }
+      ],
       "kind": "crate",
       "path": "crates/safe",
       "one_line": "SAFE sponge (Sponge API for Field Elements) over BN254 with a Poseidon2 permutation, for zero-knowledge hashing.",
-      "explain": "The name is the SAFE acronym, Sponge API for Field Elements, not Gnosis Safe: this crate contains no transaction code. It implements the start, absorb, squeeze and finish operations of a sponge over the BN254 scalar field, with rate 3 and capacity 1, and the permutation is Poseidon2 (a zkVM build uses poseidon2_accel). The IO pattern and a 64-byte domain separator are hashed into a tag that initializes the state, which the crate docs describe as domain separation.",
-      "analogy": "A kitchen sponge with a fixed recipe: field elements are soaked up and wrung out in an order fixed before the first drop.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -436,11 +493,10 @@
     },
     {
       "id": "e3-hamt",
+      "documentation": [{ "title": "Storage representations", "path": "docs/architecture/persistence-and-replay.md" }],
       "kind": "crate",
       "path": "crates/hamt",
       "one_line": "A persistent hash array mapped trie: insert and remove return a new map that shares unchanged nodes through Arc.",
-      "explain": "The data crate's live key-value map is backed by this trie, so an older version of the map stays readable after a write. Keys are hashed with the standard DefaultHasher, and each level uses 5 bits of the hash to pick one of 32 slots, with a bitmap recording which slots are filled. insert and remove build new nodes only along the changed path and reuse the rest, so cloning a map is cheap.",
-      "analogy": "A tree of mailboxes: each level reads five bits of the key's hash to choose one of 32 boxes, and a changed box gets a fresh copy while the rest stay shared.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -509,11 +565,10 @@
     },
     {
       "id": "e3-utils",
+      "documentation": [{ "title": "Decoding and runtime boundaries", "path": "docs/architecture/persistence-and-replay.md" }],
       "kind": "crate",
       "path": "crates/utils",
       "one_line": "Shared helpers: actix channel adapters, size-bounded bincode, retry with backoff, random Ethereum addresses and byte newtypes.",
-      "explain": "Several crates need the same small pieces, such as retrying a flaky call, decoding bincode with a size limit, and feeding actix messages into tokio channels, so these live here instead of being copied. transaction::require_successful_receipt turns a reverted transaction into an error, and the BytesSerde derive from e3-utils-derive is re-exported here. Crypto, net and data are among the crates that depend on this one.",
-      "analogy": "A shared toolbox of standard fittings: a retry wrench, a size gauge for bincode, and adapters that plug an actor into a channel.",
       "actors": [
         {
           "name": "Oneshot<M>",
@@ -566,7 +621,7 @@
         },
         {
           "why": "retry_with_backoff: retries an operation with a delay between attempts",
-          "ref": "crates/utils/src/retry.rs@34@pub async fn retry_with_backoff<F, Fut, T>("
+          "ref": "crates/utils/src/retry.rs@48@pub async fn retry_with_backoff<F, Fut, T>("
         }
       ],
       "rust_patterns": [
@@ -588,7 +643,7 @@
         {
           "pattern": "async-await",
           "note": "retry_with_backoff is an async function over a closure that returns a future",
-          "ref": "crates/utils/src/retry.rs@34@pub async fn retry_with_backoff<F, Fut, T>("
+          "ref": "crates/utils/src/retry.rs@48@pub async fn retry_with_backoff<F, Fut, T>("
         },
         {
           "pattern": "derive-macro",
@@ -602,11 +657,10 @@
     },
     {
       "id": "e3-utils-derive",
+      "documentation": [{ "title": "Byte representations and compatibility", "path": "docs/architecture/persistence-and-replay.md" }],
       "kind": "crate",
       "path": "crates/utils-derive",
       "one_line": "Proc-macro crate with one derive, BytesSerde, that gives a one-field newtype hex JSON and raw-byte bincode.",
-      "explain": "Byte newtypes such as event ids and seeds need one serde form for JSON and another for bincode, and the derive writes both. For human-readable formats it emits a 0x-prefixed hex string, and for binary formats raw bytes, decoding through the type's AsBytesSerde impl. The derive accepts only a struct with exactly one unnamed field and rejects anything else at compile time.",
-      "analogy": "A rubber stamp for one shape of box: the same mark makes the box read as hex on paper and as raw bytes on the wire.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -655,11 +709,10 @@
     },
     {
       "id": "e3-test-helpers",
+      "documentation": [{ "title": "Test harness boundaries", "path": "docs/architecture/repository-testing.md" }],
       "kind": "crate",
       "path": "crates/test-helpers",
-      "one_line": "Shared test scaffolding: an in-process ciphernode system builder, a libp2p network mock, and setup helpers for tests.",
-      "explain": "Integration tests need several nodes that talk to each other without a real network, so CiphernodeSystemBuilder starts a group of ciphernode handles in one process. With simulate_libp2p(), Libp2pMock carries broadcast events and DHT records between the nodes, and restart_node shuts one node down, rebuilds it and tells the mock about the replacement. The crate also has helpers such as find_bb, get_common_setup and AddToCommittee, and ships two binaries, fake_encrypt and pack_e3_params.",
-      "analogy": "A film set: the builder seats the cast in one room and a radio mock carries their messages, so the scene runs with no outside network.",
+      "one_line": "Shared test scaffolding: deterministic setup, application helpers, history collectors and a libp2p network mock.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -672,14 +725,9 @@
       ],
       "key_types": [
         {
-          "name": "CiphernodeSystemBuilder",
-          "what": "collects groups of node setups and builds them in order",
-          "ref": "crates/test-helpers/src/ciphernode_system.rs@36@pub struct CiphernodeSystemBuilder<'a> {"
-        },
-        {
-          "name": "CiphernodeSystem",
-          "what": "the built nodes and the optional network mock",
-          "ref": "crates/test-helpers/src/ciphernode_system.rs@102@pub struct CiphernodeSystem {"
+          "name": "AddToCommittee",
+          "what": "test helper that publishes CiphernodeAdded with incrementing indices",
+          "ref": "crates/test-helpers/src/lib.rs@160@pub struct AddToCommittee {"
         },
         {
           "name": "Libp2pMock",
@@ -689,16 +737,16 @@
       ],
       "read_first": [
         {
-          "why": "module list: the four helper modules",
-          "ref": "crates/test-helpers/src/lib.rs@8@pub mod ciphernode_system;"
+          "why": "module list and shared deterministic setup helpers",
+          "ref": "crates/test-helpers/src/lib.rs@7@pub mod application;"
         },
         {
-          "why": "the builder: add groups, simulate the network, build",
-          "ref": "crates/test-helpers/src/ciphernode_system.rs@36@pub struct CiphernodeSystemBuilder<'a> {"
+          "why": "per-node RNGs avoid serializing parallel test work on one shared mutex",
+          "ref": "crates/test-helpers/src/lib.rs@98@pub fn derive_shared_rng(base_seed: u64, salt: u64) -> SharedRng {"
         },
         {
-          "why": "turns on the simulated network for the built nodes",
-          "ref": "crates/test-helpers/src/ciphernode_system.rs@74@pub fn simulate_libp2p(mut self) -> Self {"
+          "why": "multi-node assembly now belongs to the integration harness, not this shared crate",
+          "ref": "crates/tests/tests/ciphernode_system/mod.rs@36@pub struct CiphernodeSystemBuilder<'a> {"
         },
         {
           "why": "the in-process gossip and DHT mock",
@@ -707,30 +755,30 @@
       ],
       "rust_patterns": [
         {
-          "pattern": "builder-pattern",
-          "note": "CiphernodeSystemBuilder chains add_group and simulate_libp2p, then build",
-          "ref": "crates/test-helpers/src/ciphernode_system.rs@58@pub fn add_group<F, Fut>("
+          "pattern": "ownership-clone",
+          "note": "committee helper publishes its test event and also returns its payload",
+          "ref": "crates/test-helpers/src/lib.rs@184@self.bus.publish_without_context(evt.clone())?;"
         },
         {
-          "pattern": "trait-object-dyn",
-          "note": "each group's setup is stored as a boxed Fn that returns a boxed future",
-          "ref": "crates/test-helpers/src/ciphernode_system.rs@21@Box<dyn Fn()"
+          "pattern": "arc-shared",
+          "note": "the deterministic RNG is shared behind a mutex",
+          "ref": "crates/test-helpers/src/lib.rs@90@Arc::new(std::sync::Mutex::new(ChaCha20Rng::seed_from_u64(value)))"
         },
         {
           "pattern": "async-await",
-          "note": "build awaits each group's setup in turn",
-          "ref": "crates/test-helpers/src/ciphernode_system.rs@80@pub async fn build(self)"
+          "note": "mock node registration is asynchronous",
+          "ref": "crates/test-helpers/src/libp2p_mock.rs@60@pub async fn add_node(&self, peer_id: PeerId, handle: NetChannelBridge) {"
         },
         {
           "pattern": "async-test",
-          "note": "the one test in ciphernode_system.rs runs under actix",
-          "ref": "crates/test-helpers/src/ciphernode_system.rs@404@#[actix::test]"
+          "note": "network mock tests run under tokio",
+          "ref": "crates/test-helpers/src/libp2p_mock.rs@297@#[tokio::test]"
         }
       ],
       "depends_on": [
         "e3-aggregator",
         "e3-crypto",
-        "e3-ciphernode-builder",
+        "e3-event-system",
         "e3-data",
         "e3-bfv-client",
         "e3-fhe-params",
@@ -745,21 +793,20 @@
         "e3-utils",
         "e3-sortition"
       ],
-      "tests": "Six tests: five #[tokio::test] in src/libp2p_mock.rs and one #[actix::test] in src/ciphernode_system.rs. Run: cargo test -p e3-test-helpers.",
+      "tests": "Five #[tokio::test] tests in src/libp2p_mock.rs. Multi-node harness tests live in e3-tests. Run: cargo test -p e3-test-helpers.",
       "unverified": []
     },
     {
       "id": "e3-tests",
+      "documentation": [{ "title": "Integration evidence", "path": "docs/architecture/repository-testing.md" }],
       "kind": "crate",
       "path": "crates/tests",
       "one_line": "Integration test binaries for the workspace, which run several in-process ciphernodes over a simulated network.",
-      "explain": "This crate has no library code: src/main.rs is intentionally blank, and the tests live in tests/integration.rs, tests/large_work_plan_recovery.rs and tests/layout_lock.rs. The integration test builds its nodes with CiphernodeSystemBuilder and calls simulate_libp2p(), so each node is a full ciphernode actor system in one process, and events marked for broadcast reach the other nodes through the mock. setup_test_zk_backend uses a local bb binary when find_bb finds one, and otherwise calls ensure_installed to fetch bb and the circuits.",
-      "analogy": "A dress rehearsal: the real cast runs the full script in one theatre, with a radio mock standing in for the outside world.",
       "actors": [
         {
           "name": "StoredEvents",
           "role": "test-only actor that answers one event-store query by sending the events back on a oneshot channel",
-          "ref": "crates/tests/tests/integration.rs@3076@struct StoredEvents("
+          "ref": "crates/tests/tests/integration.rs@3064@struct StoredEvents("
         }
       ],
       "consumes": [],
@@ -768,55 +815,62 @@
       "key_types": [
         {
           "name": "CiphernodeSystemBuilder",
-          "what": "builds the ciphernode groups each test uses (from e3-test-helpers)",
-          "ref": "crates/tests/tests/integration.rs@1506@let mut nodes = CiphernodeSystemBuilder::new()"
+          "what": "integration-local builder for groups of nodes and their optional network mock",
+          "ref": "crates/tests/tests/ciphernode_system/mod.rs@36@pub struct CiphernodeSystemBuilder<'a> {"
+        },
+        {
+          "name": "CiphernodeSystem",
+          "what": "built nodes and network mock, with restart support",
+          "ref": "crates/tests/tests/ciphernode_system/mod.rs@113@pub struct CiphernodeSystem {"
         }
       ],
       "read_first": [
         {
           "why": "a full multi-node test: test_trbfv_actor",
-          "ref": "crates/tests/tests/integration.rs@1328@async fn test_trbfv_actor()"
+          "ref": "crates/tests/tests/integration.rs@1329@async fn test_trbfv_actor()"
         },
         {
           "why": "the simulated network is switched on for the node group",
-          "ref": "crates/tests/tests/integration.rs@1619@.simulate_libp2p()"
+          "ref": "crates/tests/tests/integration.rs@1615@.simulate_libp2p()"
         },
         {
           "why": "how the zk backend is chosen: a local bb binary or the CI install",
-          "ref": "crates/tests/tests/integration.rs@365@async fn setup_test_zk_backend("
+          "ref": "crates/tests/tests/integration.rs@366@async fn setup_test_zk_backend("
         },
         {
           "why": "the layout-lock test that compares the persisted layouts with the fixture",
-          "ref": "crates/tests/tests/layout_lock.rs@246@fn persisted_layouts_match_the_locked_fixture()"
+          "ref": "crates/tests/tests/layout_lock.rs@251@fn persisted_layouts_match_the_locked_fixture()"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "async-test",
           "note": "integration tests run under actix::test and are serialized with serial_test",
-          "ref": "crates/tests/tests/integration.rs@1326@#[actix::test]"
+          "ref": "crates/tests/tests/integration.rs@1327@#[actix::test]"
         },
         {
           "pattern": "builder-pattern",
           "note": "the node groups are assembled with CiphernodeSystemBuilder",
-          "ref": "crates/tests/tests/integration.rs@1506@let mut nodes = CiphernodeSystemBuilder::new()"
+          "ref": "crates/tests/tests/integration.rs@1507@let mut nodes = CiphernodeSystemBuilder::new()"
         },
         {
           "pattern": "actix-actor",
           "note": "StoredEvents is a small actor that answers one query",
-          "ref": "crates/tests/tests/integration.rs@3078@impl actix::Actor for StoredEvents {"
+          "ref": "crates/tests/tests/integration.rs@3066@impl actix::Actor for StoredEvents {"
         },
         {
           "pattern": "unit-test",
           "note": "the layout test is a plain #[test] that calls the fixture check",
-          "ref": "crates/tests/tests/layout_lock.rs@245@#[test]"
+          "ref": "crates/tests/tests/layout_lock.rs@250@#[test]"
         }
       ],
       "depends_on": [
+        "e3-committee",
         "e3-aggregator",
         "e3-config",
         "e3-crypto",
         "e3-ciphernode-builder",
+        "e3-event-system",
         "e3-data",
         "e3-events",
         "e3-evm",
@@ -834,7 +888,7 @@
         "e3-fhe-params",
         "e3-utils",
         "e3-zk-prover",
-        "e3-zk-helpers",
+        "e3-zk-config",
         "e3-polynomial"
       ],
       "tests": "cargo test -p e3-tests --test integration (5 tests), --test large_work_plan_recovery (1) and --test layout_lock (1). Regenerate the layout fixture locally with LAYOUT_LOCK_UPDATE=1 cargo test -p e3-tests --test layout_lock. tests/docker holds a shell test of the ciphernode entrypoint's state paths.",
@@ -842,11 +896,10 @@
     },
     {
       "id": "e3-layout-lock",
+      "documentation": [{ "title": "Schema and layout validation", "path": "docs/architecture/persistence-and-replay.md" }],
       "kind": "crate",
       "path": "crates/layout-lock",
       "one_line": "Test helper that samples persisted and wire types from their serde layout and checks their bincode encoding against a fixture.",
-      "explain": "A node reads bytes that an older release wrote, and peers on two releases exchange messages, so the layout of persisted and wire types must not change silently. sample_rows builds sample values of a type from its serde layout, encodes each one with bincode, and returns digest rows per enum variant. assert_fixture compares those rows with a checked-in fixture, and the LAYOUT_LOCK_UPDATE variable rewrites it, which is refused when CI is set. e3-tests, net, zk-prover and slashing use this crate as a dev-dependency.",
-      "analogy": "A sealed sample book: each type gets pressed sample pages with digests, and any change to the press shows up when new pages are compared with the sealed book.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -915,11 +968,13 @@
     },
     {
       "id": "e3-openvm-host",
+      "documentation": [
+        { "title": "Compute receipts", "path": "docs/architecture/encrypted-computation.md" },
+        { "title": "OpenVM operations", "path": "docs/pages/build/e3-program/compute-provider.mdx" }
+      ],
       "kind": "crate",
       "path": "crates/openvm-host",
       "one_line": "Runs an E3 program's secure process natively, writes the guest inputs, and hands them to the OpenVM prover worker.",
-      "explain": "The OpenVM guest proves the same program, so this crate runs the secure process natively, which yields the ComputeJournal, and writes the guest's input items. Prover::start checks the chosen worker, its keys and its verifier before it accepts work, and worker runs have a timeout. encode_compute_proof checks that the seal is 1856 bytes and returns abi.encode(bytes seal, bytes32 paramsHash, bytes32 inputRoot) for the receipt verifier.",
-      "analogy": "A courier desk: the host packs the parcel, a separate sealing worker signs it, and the desk checks the seal before the parcel leaves.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -992,11 +1047,10 @@
     },
     {
       "id": "e3-openvm-types",
+      "documentation": [{ "title": "Guest journal and input binding", "path": "docs/architecture/encrypted-computation.md" }],
       "kind": "crate",
       "path": "crates/openvm-types",
       "one_line": "Types shared by the OpenVM host and guest: the guest header, the nine-word journal, and length-prefixed item framing.",
-      "explain": "The host and the OpenVM guest must read the same bytes for the round header, the journal and the input items, so these types live in one crate; the host and the CRISP program crate depend on it. GuestHeader carries the E3 domain, BFV parameters, input indices and published data, and ComputeJournal is the nine 32-byte words the verifier reads. write_items writes a u32 count and then a u64 length before each item, and ItemReader reads them back one at a time.",
-      "analogy": "A shipping manifest and numbered crates: the header lists the contents, each item goes in a length-marked crate, and the journal is the fixed nine-line receipt.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -1069,11 +1123,13 @@
     },
     {
       "id": "e3-openvm-prover",
+      "documentation": [
+        { "title": "OpenVM proving service", "path": "docs/pages/build/e3-program/compute-provider.mdx" },
+        { "title": "Computation trust boundary", "path": "docs/architecture/encrypted-computation.md" }
+      ],
       "kind": "crate",
       "path": "crates/openvm-prover",
       "one_line": "Separate OpenVM worker binary, CPU or CUDA, that prepares keys, executes, proves and verifies E3 rounds.",
-      "explain": "This crate builds the worker that proves OpenVM rounds; its package name is interfold-openvm-prover, and it is its own Cargo workspace that the root workspace excludes. Its subcommands are probe, write-config, prepare, check, execute, prove and verify, and prove and verify both check the EVM proof against the journal before they write the seal. This is the only manifest in the snapshot that declares openvm-sdk, and it holds the optional cuda feature.",
-      "analogy": "A notary at a separate desk who re-checks each sealed envelope against the official stamp before anything leaves the building.",
       "actors": [],
       "consumes": [],
       "emits": [],

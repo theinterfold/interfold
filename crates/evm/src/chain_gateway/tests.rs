@@ -331,6 +331,69 @@ async fn post_startup_failure_is_reported() -> Result<()> {
     Ok(())
 }
 
+/// After startup, a `SlashingManagerSet` that replaces this node's SlashingManager stops the
+/// gateway. One that sets the same manager again does not.
+#[actix::test]
+async fn a_replaced_slashing_manager_fails_the_gateway_closed() -> Result<()> {
+    let current = Address::repeat_byte(0x75);
+    for (manager, replaced) in [(current, false), (Address::repeat_byte(0x99), true)] {
+        let system = EventSystem::new().with_fresh_bus();
+        let bus = system.handle()?.enable("test-slashing-manager-set");
+        let gateway = EvmChainGateway::setup_with_readiness_and_limit(
+            &bus,
+            DEFAULT_MAX_BUFFERED_EVM_EVENTS,
+            Some(current),
+        );
+        let failure = gateway.failure_receiver();
+        let addr = gateway.addr();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let collector = SyncEventCollector { tx }.start();
+        let mut evm_config = EvmEventConfig::new();
+        evm_config.insert(1, EvmEventConfigChain::new(0));
+        bus.publish_without_context(HistoricalEvmSyncStart::new(collector, evm_config))?;
+        addr.send(InterfoldEvmEvent::HistoricalSyncComplete(
+            HistoricalSyncComplete::new(1, None),
+        ))
+        .await?;
+        rx.recv()
+            .await
+            .expect("the gateway must forward its historical batch");
+        bus.publish_without_context(SyncEnded::new())?;
+        gateway.wait_until_live().await?;
+
+        // The log as the Interfold reader decodes it.
+        let topics = [
+            alloy::primitives::keccak256("SlashingManagerSet(address)"),
+            manager.into_word(),
+        ];
+        let log = crate::domain::evm_log_observation::observe(
+            "Interfold",
+            &alloy::primitives::LogData::new_unchecked(topics.to_vec(), Default::default()),
+            &topics,
+            1,
+        );
+        addr.send(InterfoldEvmEvent::Event(EvmEvent::new(
+            CorrelationId::new(),
+            log,
+            200,
+            1_000,
+            1,
+        )))
+        .await?;
+
+        let reason = failure.borrow().clone();
+        assert_eq!(
+            reason.is_some(),
+            replaced,
+            "replaced={replaced}: {reason:?}"
+        );
+        if let Some(reason) = reason {
+            assert!(reason.contains("replaced the SlashingManager"), "{reason}");
+        }
+    }
+    Ok(())
+}
+
 impl Actor for SyncEventCollector {
     type Context = actix::Context<Self>;
 }
@@ -459,7 +522,7 @@ async fn overflow_emits_actionable_error_stops_and_fails_readiness() -> Result<(
     let system = EventSystem::new().with_fresh_bus();
     let bus: BusHandle = system.handle()?.enable("test-overflow");
     let errors = bus.errors();
-    let gateway = EvmChainGateway::setup_with_readiness_and_limit(&bus, 1);
+    let gateway = EvmChainGateway::setup_with_readiness_and_limit(&bus, 1, None);
     let addr = gateway.addr();
 
     for entropy in [1, 2] {

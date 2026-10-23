@@ -115,6 +115,8 @@ impl AccusationManager {
                 clock,
             ),
             timeout_handles: HashMap::new(),
+            votes_repo: None,
+            last_ec: None,
         }
     }
 
@@ -205,7 +207,7 @@ impl AccusationManager {
         bus.subscribe(EventType::AccusationVote, addr.clone().into());
         bus.subscribe(EventType::ComputeResponse, addr.clone().into());
         bus.subscribe(EventType::ComputeRequestError, addr.clone().into());
-        bus.subscribe(EventType::SlashExecuted, addr.clone().into());
+        bus.subscribe(EventType::CommitteeMemberExpelled, addr.clone().into());
         bus.subscribe(
             EventType::CommitmentConsistencyViolation,
             addr.clone().into(),
@@ -213,11 +215,32 @@ impl AccusationManager {
         addr
     }
 
+    /// Save the vote state in `repo`, and restore `restored`, the state that this E3's manager
+    /// saved before a restart.
+    pub(crate) fn with_saved_votes(
+        mut self,
+        repo: Repository<AccusationVotesSnapshot>,
+        restored: Option<AccusationVotesSnapshot>,
+    ) -> anyhow::Result<Self> {
+        if let Some(snapshot) = restored {
+            self.voting.restore(snapshot)?;
+        }
+        self.votes_repo = Some(repo);
+        Ok(self)
+    }
+
+    /// Hold local accusations until `EffectsEnabled`, for a manager that startup rebuilds before
+    /// it replays the event log.
+    pub(crate) fn hold_accusations_until_effects(mut self) -> Self {
+        self.voting.hold_accusations_until_effects();
+        self
+    }
+
     /// Canonical EIP-712 typed-data hash for a vote.
     ///
     /// Delegates to [`AccusationVoting::vote_digest`]. Exposed `pub` so the
     /// Anvil parity test in
-    /// `crates/zk-prover/tests/slashing_integration_tests.rs` can sign votes
+    /// `crates/zk/prover/tests/slashing_integration_tests.rs` can sign votes
     /// through the **same** code path the production actor uses.
     pub fn vote_digest(vote: &AccusationVote, verifying_contract: Address) -> [u8; 32] {
         AccusationVoting::vote_digest(vote, verifying_contract)

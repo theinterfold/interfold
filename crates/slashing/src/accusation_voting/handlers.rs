@@ -13,6 +13,11 @@ impl Handler<InterfoldEvent> for AccusationManager {
 
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         let (msg, ec) = msg.into_components();
+        // Only an event of this E3 is a position of its chain aggregate; `EffectsEnabled` and
+        // `Shutdown` are the node's.
+        if msg.get_e3_id().as_ref() == Some(self.voting.e3_id()) {
+            self.last_ec = Some(ec.clone());
+        }
         match msg {
             InterfoldEventData::ProofVerificationFailed(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
@@ -32,14 +37,28 @@ impl Handler<InterfoldEvent> for AccusationManager {
             InterfoldEventData::ComputeRequestError(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
-            InterfoldEventData::SlashExecuted(data) => {
-                self.voting.on_slash_executed(data);
+            InterfoldEventData::CommitteeMemberExpelled(data) => {
+                self.voting.on_member_expelled(&data);
+            }
+            InterfoldEventData::EffectsEnabled(_) => {
+                let actions = self.voting.on_effects_enabled();
+                self.apply_actions(actions, ctx);
             }
             InterfoldEventData::CommitmentConsistencyViolation(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
-            _ => (),
+            // A vote timeout publishes this; it changed the state before.
+            InterfoldEventData::AccusationQuorumReached(_) => {}
+            InterfoldEventData::E3RequestComplete(data) => {
+                if data.e3_id == *self.voting.e3_id() {
+                    self.end_e3(&ec, ctx);
+                }
+                return;
+            }
+            _ => return,
         }
+        // Each handler above runs synchronously, so the state is complete here.
+        self.save_votes();
     }
 }
 

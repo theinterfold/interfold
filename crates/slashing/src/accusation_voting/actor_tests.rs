@@ -172,3 +172,130 @@ fn peer_deadline_acceptance_enforces_local_window() {
         "vote_validity_secs=0 must reject peer accusations"
     );
 }
+
+/// A slash that does not expel leaves the operator a voter, so its vote still completes the
+/// quorum. An expulsion removes the voter.
+#[actix::test]
+async fn only_an_expulsion_removes_a_voter() -> anyhow::Result<()> {
+    use alloy::signers::SignerSync;
+    use e3_events::{
+        AccusationQuorumReached, AggregateConfig, AggregateId, CommitmentConsistencyViolation,
+        CommitteeMemberExpelled, Event, EventConstructorWithTimestamp, EventSource, GetEvents,
+        SlashExecuted, Unsequenced,
+    };
+
+    for expelled in [false, true] {
+        let system = e3_event_system::EventSystem::new()
+            .with_fresh_bus()
+            .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+                AggregateId::from_chain_id(Some(31337)),
+                std::time::Duration::ZERO,
+            )])));
+        let bus = system.handle()?.enable("expulsion-removes-voter");
+        let history = bus.history();
+        let me = PrivateKeySigner::random();
+        let voter = PrivateKeySigner::random();
+        let accused = Address::repeat_byte(0x33);
+        let slashing_manager = Address::repeat_byte(0x44);
+        let e3_id = E3id::new("5", 31337);
+        // T = 1 and N = 3 give the quorum H = 2: this node's vote and the voter's.
+        let manager = AccusationManager::new(
+            &bus,
+            e3_id.clone(),
+            me.clone(),
+            slashing_manager,
+            vec![me.address(), voter.address(), accused],
+            1,
+            300,
+            DEFAULT_ACCUSATION_DEADLINE_SKEW_SECS,
+            e3_fhe_params::BfvPreset::InsecureThreshold64,
+        )
+        .start();
+        let event = |data: InterfoldEventData, seq: u64| {
+            InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                data,
+                None,
+                seq as u128,
+                None,
+                EventSource::Evm,
+            )
+            .into_sequenced(seq)
+        };
+        let removal: InterfoldEventData = if expelled {
+            CommitteeMemberExpelled {
+                e3_id: e3_id.clone(),
+                node: voter.address(),
+                reason: [0; 32],
+                active_count_after: 2,
+                party_id: None,
+            }
+            .into()
+        } else {
+            SlashExecuted {
+                e3_id: e3_id.clone(),
+                proposal_id: 1,
+                operator: voter.address(),
+                reason: [0; 32],
+                ticket_amount: 1,
+                ciphernode_bond_amount: 0,
+            }
+            .into()
+        };
+        manager.send(event(removal, 1)).await?;
+        manager
+            .send(event(
+                CommitmentConsistencyViolation {
+                    e3_id: e3_id.clone(),
+                    accused_address: accused,
+                    accused_party_id: 2,
+                    proof_type: ProofType::C1PkGeneration,
+                    data_hash: [7; 32],
+                    evidence: Default::default(),
+                }
+                .into(),
+                2,
+            ))
+            .await?;
+        let accusation = actix::clock::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                for event in history.send(GetEvents::new()).await? {
+                    if let InterfoldEventData::ProofFailureAccusation(accusation) =
+                        event.into_data()
+                    {
+                        return Ok::<_, anyhow::Error>(accusation);
+                    }
+                }
+                actix::clock::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await??;
+
+        let mut vote = AccusationVote {
+            e3_id: e3_id.clone(),
+            accusation_id: AccusationVoting::accusation_id(&accusation),
+            voter: voter.address(),
+            data_hash: accusation.data_hash,
+            issued_at: accusation.issued_at,
+            deadline: accusation.deadline,
+            signature: ArcBytes::default(),
+        };
+        let digest = AccusationVoting::vote_digest(&vote, slashing_manager);
+        let signature = voter.sign_hash_sync(&digest.into())?;
+        vote.signature = ArcBytes::from_bytes(&signature.as_bytes());
+        manager.send(event(vote.into(), 3)).await?;
+        actix::clock::sleep(std::time::Duration::from_millis(200)).await;
+
+        let quorum = history
+            .send(GetEvents::new())
+            .await?
+            .into_iter()
+            .any(|event| {
+                matches!(
+                    event.get_data(),
+                    InterfoldEventData::AccusationQuorumReached(AccusationQuorumReached { .. })
+                )
+            });
+        assert_eq!(quorum, !expelled, "expelled={expelled}");
+    }
+    Ok(())
+}

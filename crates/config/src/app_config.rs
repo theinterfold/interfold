@@ -721,8 +721,28 @@ nodes:
     }
 
     #[test]
-    fn crisp_local_config_selects_only_the_local_network() -> Result<()> {
-        let yaml = include_str!("../../../examples/CRISP/interfold.config.yaml");
+    fn local_chain_config_selects_only_the_local_network() -> Result<()> {
+        let yaml = r#"
+chains:
+  - name: localhost
+    enabled: true
+    rpc_url: ws://localhost:8545
+    contracts:
+      interfold: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
+      ciphernode_registry: "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
+      bonding_registry: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"
+  - name: mainnet
+    enabled: false
+    rpc_url: wss://ethereum-rpc.publicnode.com
+    chain_id: 1
+    contracts:
+      interfold: "0x0000000000000000000000000000000000000001"
+      ciphernode_registry: "0x0000000000000000000000000000000000000002"
+      bonding_registry: "0x0000000000000000000000000000000000000003"
+nodes:
+  cn1:
+    quic_port: 9201
+"#;
 
         for name in ["_default", "cn1"] {
             let config: UnscopedAppConfig = serde_yaml::from_str(yaml)?;
@@ -730,7 +750,7 @@ nodes:
                 name,
                 &PathBuf::from("/default/data"),
                 &PathBuf::from("/default/config"),
-                &PathBuf::from("/crisp"),
+                &PathBuf::from("/my/cwd"),
             )?;
 
             assert_eq!(config.network().name(), "local");

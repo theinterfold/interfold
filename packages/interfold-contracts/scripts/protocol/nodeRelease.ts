@@ -3,7 +3,7 @@ import { ethers } from "ethers";
 import fs from "node:fs";
 import path from "node:path";
 
-import { getRepoRoot } from "../utils";
+import { findMonorepoRoot, getRepoRoot } from "../utils";
 import { safeTx } from "./safe";
 import type {
   ProtocolContracts,
@@ -12,6 +12,15 @@ import type {
 } from "./types";
 
 const RELEASE_DOMAIN = "interfold.node.release:v1:";
+
+/**
+ * The node release of a built package, written by `scripts/writeNodeRelease.ts` to
+ * `dist/node-release.json`. The URL resolves from the compiled `dist/scripts/protocol/`.
+ */
+const PACKAGED_NODE_RELEASE = new URL(
+  "../../node-release.json",
+  import.meta.url,
+);
 
 export interface CurrentNodeRelease {
   version: string;
@@ -51,7 +60,7 @@ export function requiresNodeReleasePolicyUpdate(
 export function requiredCircuitsVersion(): string {
   const root = getRepoRoot();
   const versions = JSON.parse(
-    fs.readFileSync(path.join(root, "crates/zk-prover/versions.json"), "utf8"),
+    fs.readFileSync(path.join(root, "crates/zk/prover/versions.json"), "utf8"),
   ) as { required_circuits_version?: string };
   if (!versions.required_circuits_version) {
     throw new Error("Required circuit version is missing");
@@ -68,8 +77,8 @@ function unsignedInteger(source: string, name: string): number {
   return value;
 }
 
-export function currentNodeRelease(): CurrentNodeRelease {
-  const root = getRepoRoot();
+/** Read the node release from the release files of the Interfold monorepo at `root`. */
+export function readRepoNodeRelease(root: string): CurrentNodeRelease {
   const source = fs.readFileSync(
     path.join(root, "crates/config/protocol-release.toml"),
     "utf8",
@@ -96,6 +105,23 @@ export function currentNodeRelease(): CurrentNodeRelease {
     nodeGeneration: unsignedInteger(source, "node_generation"),
     releaseId: ethers.id(`${RELEASE_DOMAIN}${rootPackage.version}`),
   };
+}
+
+/**
+ * The node release that a deployment requires. Inside the Interfold monorepo it comes from the
+ * release files. An installed `@interfold/contracts` package uses the copy that its build wrote.
+ */
+export function currentNodeRelease(): CurrentNodeRelease {
+  const root = findMonorepoRoot();
+  if (root) return readRepoNodeRelease(root);
+  if (!fs.existsSync(PACKAGED_NODE_RELEASE)) {
+    throw new Error(
+      `Missing ${PACKAGED_NODE_RELEASE.pathname}: build @interfold/contracts with pnpm compile`,
+    );
+  }
+  return JSON.parse(
+    fs.readFileSync(PACKAGED_NODE_RELEASE, "utf8"),
+  ) as CurrentNodeRelease;
 }
 
 export function appendNodeReleaseTransactions(

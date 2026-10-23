@@ -36,16 +36,20 @@
           "deploy_block": 25786384
         },
         "BfvDecryptionVerifierRouter": {
-          "address": "0xA66CAb7AE230698b2a9ee1E0E967BaD4651FeEa7",
-          "deploy_block": 25998927
+          "address": "0xbbFF7101A3Be43e06b64B00e2e656529E6aDf2eE",
+          "deploy_block": 26156286
         },
         "BfvPkVerifierRouter": {
-          "address": "0x7CD10057c25674bd5666A9deEE3193f1b29563d1",
-          "deploy_block": 25998926
+          "address": "0x3E9614e711ee301DAC3FeF7D86031ED015bc406b",
+          "deploy_block": 26156286
         },
-        "Risc0BfvCiphertextVerifier": {
-          "address": "0x80D217d3b2e16fF2ecc178cC75655C773895c549",
-          "deploy_block": 25998859
+        "OpenVmBfvCiphertextVerifier": {
+          "address": "0x6cD258E0a893612Aea41c42dC47450ac1A6E2dD1",
+          "deploy_block": 26156226
+        },
+        "OpenVmReceiptVerifier": {
+          "address": "0x0dd5E45414629F0f7D757cbb0310A9cfdc5B400b",
+          "deploy_block": 26156225
         }
       }
     },

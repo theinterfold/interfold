@@ -3,7 +3,15 @@
   "version": "0.10.0",
   "private": true,
   "license": "LGPL-3.0-only",
+  "scripts": {
+    "check": "node validate.mjs",
+    "test": "bash tests/test-hardening.sh",
+    "test:image": "bash tests/test-image.sh",
+    "build": "dappnodesdk build --dir . --arch linux/amd64 --all-variants"
+  },
   "devDependencies": {
-    "@dappnode/dappnodesdk": "0.3.53"
+    "@dappnode/dappnodesdk": "0.3.53",
+    "@dappnode/schemas": "0.1.26",
+    "js-yaml": "4.3.1"
   }
 }

@@ -128,6 +128,20 @@ impl AdmissionHarness {
                     test_ec(0),
                 ),
             );
+            // Every dealer had a key when key collection closed; the node recorded each one.
+            for party_id in 1..committee.n as u64 {
+                recovery.encryption_keys.insert(
+                    party_id,
+                    TypedEvent::new(
+                        EncryptionKeyCreated {
+                            e3_id: e3_id.clone(),
+                            key: Arc::new(EncryptionKey::new(party_id, ArcBytes::default())),
+                            external: true,
+                        },
+                        test_ec(0),
+                    ),
+                );
+            }
             Ok(recovery)
         })?;
         let store = InMemStore::new(false).start();

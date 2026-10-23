@@ -53,5 +53,6 @@ pub use interfold_sol_writer::InterfoldSolWriter;
 pub use randomness_provider_sol::RandomnessProviderSolReader;
 pub use slashing_manager_sol_reader::SlashingManagerSolReader;
 pub use slashing_manager_sol_writer::{
-    SlashingManagerSolWriter, SlashingWriterRecoveryState, SLASHING_WRITER_RECOVERY_SCHEMA_VERSION,
+    SlashIntentTimes, SlashingManagerSolWriter, SlashingWriterRecoveryState,
+    SLASHING_WRITER_RECOVERY_SCHEMA_VERSION,
 };

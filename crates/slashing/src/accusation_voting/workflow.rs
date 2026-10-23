@@ -35,13 +35,14 @@ use alloy::sol_types::SolValue;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{
     AccusationOutcome, AccusationQuorumReached, AccusationVote, CommitmentConsistencyViolation,
-    ComputeRequest, ComputeRequestError, ComputeResponse, ComputeResponseKind, CorrelationId, E3id,
-    EventContext, PartyProofsToVerify, ProofFailureAccusation, ProofType, ProofVerificationFailed,
-    ProofVerificationPassed, Sequenced, SignedProofPayload, SlashExecuted, TypedEvent,
-    VerifyShareProofsRequest, ZkRequest, ZkResponse, VOTE_DOMAIN_NAME, VOTE_DOMAIN_VERSION,
-    VOTE_TYPEHASH_STR,
+    CommitteeMemberExpelled, ComputeRequest, ComputeRequestError, ComputeResponse,
+    ComputeResponseKind, CorrelationId, E3id, EventContext, PartyProofsToVerify,
+    ProofFailureAccusation, ProofType, ProofVerificationFailed, ProofVerificationPassed, Sequenced,
+    SignedProofPayload, TypedEvent, VerifyShareProofsRequest, ZkRequest, ZkResponse,
+    VOTE_DOMAIN_NAME, VOTE_DOMAIN_VERSION, VOTE_TYPEHASH_STR,
 };
 use e3_utils::ArcBytes;
+use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
 
 #[path = "state.rs"]

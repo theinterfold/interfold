@@ -1,89 +1,68 @@
-# Interfold — Agent Entry Point
+# Working in Interfold
 
-This file is the tool-neutral entry point for any LLM coding agent (Claude Code, OpenCode, Codex,
-Cursor, Cline, Windsurf, ...). Tool-specific config files point here. The content lives in `agent/`
-and `.agents/skills/`. Do not copy it into tool configs.
+Interfold implements encrypted execution across contracts, circuits, and asynchronous nodes. READMEs
+own usage and public contracts; the nearest `AGENTS.md` owns change guidance, and domain documents
+own cross-component rules, rationale, and limits.
 
-## Read budget
+## Sources of authority
 
-Read `agent/RULES.md` before you start. It is short, and it applies to every task.
+When sources disagree, use this descending order:
 
-Everything else is reference material. Look it up only when the task needs it. Search a large file
-for the paths and symbols that you change, and read the matching section. Do not read the harness
-docs whole before you start: the flow-trace, the architecture map, and the invariant sections are
-too large for that.
+1. Deployed contract behavior and protocol/circuit invariants.
+2. Compatibility and end-to-end tests.
+3. Durable event/snapshot schemas.
+4. Domain descriptions of current behavior and crate/module maps.
+5. Target designs in [design principles](docs/architecture/design-principles.md).
 
-| When the task                                                                    | Look up                                                                             |
-| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| changes code in a crate that has its own `AGENTS.md`                             | That file, before you change the crate                                              |
-| needs a command, a term, the monorepo map, or the build configuration            | `agent/CONTEXT.md`                                                                  |
-| changes protocol-bearing code (`agent/RULES.md` §Protocol-bearing changes)       | `agent/invariants/00_INDEX.md`: its routing table names the section to search       |
-| adds a Rust crate, actor, message, persisted state, or side effect               | `agent/ARCHITECTURE.md` (rules) and `agent/CRATES_ARCHITECTURE.md` (map), by search |
-| changes protocol behavior, or current behavior looks wrong                       | `agent/flow-trace/00_INDEX.md` topic table, then search the matching trace file     |
-| writes docs, a README, release notes, PR text, or user-facing help or error text | `.agents/skills/asd-ste100/SKILL.md`                                                |
-| adds, changes, or removes tests                                                  | `.agents/skills/test-audit/SKILL.md`                                                |
-| switches the committee or preset, or reviews or updates `agent/` docs            | `agent/prompts/` (`switch-committee`, `invariant-reviewer`, `update-flow-trace`)    |
+Correct documentation against higher-authority sources. A target design is not evidence of current
+behavior; record unmet requirements as gaps rather than weakening them to match code.
 
-## Task loop
+## Working agreement
 
-1. Change only the requested scope. If the same rule already lives in several files, consolidate
-   that domain first. — `agent/RULES.md` §One owner, no copies
-2. Verify at the smallest scope that covers the change. — `agent/RULES.md` §Verification ladder
-3. Review the diff. A protocol-bearing diff gets one invariant review pass. — `agent/RULES.md`
-   §Review
-4. If the change makes a statement in `agent/` false, correct it in the same change. —
-   `agent/RULES.md` §Harness docs
-5. Report the commands that you ran, their results, and the open questions. Do not merge unless the
-   user asks.
+- Preserve unrelated work. Confirm the checkout and branch before editing; coordinate concurrent
+  work in separate, durable worktrees. Keep scratch files outside tracked source.
+- Commit, push, open or publish PRs, mark them ready, merge, tag, or release only when requested. Do
+  not bypass failing checks; report failures and missing prerequisites.
 
-## Code review rules
+## Development and style
 
-- For a protocol-bearing change (`agent/RULES.md` §Protocol-bearing changes), cite the applicable
-  `agent/invariants/` entry in each finding. The safe path preserves the invariant or implements an
-  explicit, tested migration.
-- A protocol-bearing change is not correct only because it compiles. Check compatibility, replay,
-  persistence, and cross-layer behavior.
-- When a change consolidates a scattered domain, re-run the same counts (files, copies,
-  disagreements). Cite the owner module. — `agent/RULES.md` §One owner, no copies
-- Leave formatting and other mechanical findings to the automated checks. Report only consequential,
-  actionable findings.
+- **KISS:** use the smallest cohesive solution. Avoid speculative frameworks, compatibility layers
+  without callers, and unrelated cleanup.
+- **SOLID:** give modules clear responsibilities and interfaces their callers need. Extend the
+  existing domain owner instead of copying a rule. Add abstractions for real boundaries, not
+  symmetry.
+- **Clean Architecture is the design direction:** domain rules and deterministic workflows stay
+  independent of runtime and I/O. Actors coordinate work; effects/adapters perform it; composition
+  roots wire dependencies. Organize by capability, not a mandatory hierarchy of layer folders.
+  Existing code has exceptions; see [design principles](docs/architecture/design-principles.md).
+- Follow nearby code and repository formatter/linter configuration. Format changed files only. Write
+  concise comments that explain why; match documentation style and preserve exact interface text.
 
-## Harness layout
+## Protocol and artifact changes
 
-This section is for people who change the harness. A task agent does not need it.
+- Cleanup must never silently change committee ordering, threshold meaning, proof multiplicity,
+  hashing, signatures, circuit witness shape, event identity, or replay semantics. It does not
+  authorize changes to cryptographic statements, deployed verifiers, durable encodings, or actor
+  ordering. Consult the affected [domain document](docs/architecture/AGENTS.md) and verify its
+  claims against code and tests.
+- Migrations need explicit compatibility, release-counter, rollout, and rollback decisions for human
+  review. Follow [Protocol compatibility](CONTRIBUTING.md#protocol-compatibility).
+- Use canonical generators for committee/preset outputs, parity matrices, verifiers, constants, and
+  deployment manifests. Preset switches change shared files: coordinate them. See
+  [Circuit Builder](scripts/circuits/README.md#circuit-builder) and
+  [contract addresses](packages/interfold-contracts/README.md#contract-addresses).
+- Release preparation and publication follow [RELEASING.md](RELEASING.md); commit/push flags and
+  tag/publication commands require explicit authorization.
 
-Canonical, tool-neutral content (edit these; they are the single source of truth):
+## Verification
 
-- `agent/*.md`, `agent/invariants/`, `agent/flow-trace/`: rules, context, invariants, architecture,
-  and protocol traces.
-- `crates/*/AGENTS.md`: the purpose, file map, change rules, and tests of one crate. Keep each file
-  short. Link to `agent/` for a rule that other crates share; do not copy it.
-- `agent/prompts/`: bodies of the reusable agents and commands (`invariant-reviewer`,
-  `switch-committee`, `update-flow-trace`).
-- `.agents/skills/`: portable skills. Detailed material stays in the `references/` directory of each
-  skill.
-- `scripts/check-*.{sh,ts}` and `.husky/pre-push`: mechanical gates (committee sync, doc drift,
-  contract addresses, invariant ratchets).
-- `packages/interfold-mcp/`: the `interfold-docs` MCP server.
-
-Per-tool adapters are thin wrappers. Do not put content in them:
-
-- Claude Code: `CLAUDE.md`, `.claude/settings.json` (permissions and the format hook), `.mcp.json`,
-  `.claude/agents/` (`invariant-reviewer`), `.claude/commands/` (`/invariant-review`,
-  `/switch-committee`, `/update-flow-trace`), and `.claude/skills/` (the `asd-ste100` pointer).
-- Codex: `AGENTS.md`, `.agents/skills/`, and `.codex/config.toml` (MCP).
-- OpenCode: `opencode.json` (permissions, MCP, and the `invariant-reviewer` agent). It loads skills
-  from `.agents/skills/` and from `.claude/skills/`.
-- Cursor, Cline, Windsurf, and Copilot: one-line pointers to this file.
-
-Sync rules:
-
-- `.claude/settings.json` and `opencode.json` must grant and deny the same capabilities, each in its
-  native syntax. Change both together.
-- Put the body of a new agent or command in `agent/prompts/`. Add one pointer skill in
-  `.agents/skills/` for Codex and OpenCode, and a Claude command or agent in `.claude/`.
-- Do not add a `.claude/skills/` pointer for a skill in `.agents/skills/`, because OpenCode would
-  load both. The `asd-ste100` pointer is the one exception, because Claude Code finds skills only in
-  `.claude/skills/`.
-- Keep the always-read surface small. Add reference material to the file that owns the topic, and
-  add a row to the read-budget table above. Do not add another file that every task must read.
+- Use root [package scripts](package.json) for their setup; focused `cargo test -p` and
+  `cargo check -p` are also supported. Start with the smallest covering check. Cross-layer changes
+  need the affected integration scenario; proof changes need real-crypto coverage, not only mocks.
+- Test observable behavior at its owner boundary. A bug regression should fail before the fix and
+  pass afterward. Avoid duplicate coverage, implementation-copying tests, and tests of instruction
+  wording.
+- Review the actual diff, correct documentation made false, and report commands, results, and
+  verification limits. A successful compile is not proof verification or a successful CI run.
+- Record protocol-review references and outcomes as
+  [CONTRIBUTING.md](CONTRIBUTING.md#protocol-compatibility) requires.

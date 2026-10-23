@@ -337,9 +337,9 @@ VectorX addresses from `AVAIL_VECTORX.sepolia` in `@interfold/contracts/scripts`
 `npmFilesToBuild` in `hardhat.config.ts` so that Hardhat compiles it.
 
 The coordination server must then publish the output bytes to Avail and pass the VectorX proof as
-`availabilityProof` to `publishCiphertextOutput`. The template server does not do this. The CRISP
-server in `examples/CRISP/server` does, and
-[`agent/flow-trace/08_DATA_AVAILABILITY.md`](https://github.com/theinterfold/interfold/blob/main/agent/flow-trace/08_DATA_AVAILABILITY.md)
+`availabilityProof` to `publishCiphertextOutput`. The template server does not do this. The
+[CRISP server](https://github.com/theinterfold/CRISP/tree/main/server) does, and
+[`docs/architecture/data-availability.md`](https://github.com/theinterfold/interfold/blob/main/docs/architecture/data-availability.md)
 describes the flow.
 
 ### Point the server at Sepolia
@@ -431,7 +431,15 @@ await sdk.onInterfoldEvent(InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED, (event
 | Template                       | `pnpm hardhat ciphernode:admin-add --ciphernode-address <address> --network localhost` | Adds a ciphernode with admin privileges. It needs account impersonation (Anvil or Hardhat), so it works only on a local chain. |
 | `packages/interfold-contracts` | `pnpm e3:enable --e3-address <address> --network <name>`                               | Registers an E3 program. The signer must be the owner of the Interfold contract.                                               |
 | `packages/interfold-contracts` | `pnpm run deploy --network <name>`                                                     | Deploys the protocol contracts (`scripts/run.ts`, `deployInterfold`). This is for the protocol owner.                          |
-| `packages/crisp-contracts`     | `pnpm deploy:contracts --network sepolia`                                              | Deploys CRISP and its verifiers, and wires them only when the signer owns the Interfold contract.                              |
+| CRISP repository               | `pnpm deploy:contracts --network sepolia`                                              | Deploys CRISP and its verifiers, and wires them only when the signer owns the Interfold contract.                              |
+
+Outside the Interfold monorepo, the deploy scripts come from the published `@interfold/contracts`
+package. With `ENABLE_ZK_VERIFICATION=true`, the deploy of the BFV ZK verifiers reads the
+verification key hashes of the BFV aggregation circuits. In the monorepo, it reads them from
+`dist/circuits`. Outside the monorepo, set `INTERFOLD_CIRCUITS_DIR` to a release circuit directory,
+in the layout `<preset>/<committee>/default/...`. The circuits must come from the release of the
+package version, for example the `circuits/` directory of `circuits-<version>.tar.gz` from the
+GitHub release. Without `INTERFOLD_CIRCUITS_DIR`, the deploy stops with an error.
 
 The Sepolia deployment has these test contracts: `MockUSDC`, the `Faucet`, `MockE3Program`, and
 `MockOpenVmReceiptVerifier`. The public key, decryption, and DKG verifiers are real.

@@ -4,7 +4,8 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use alloy::primitives::{LogData, B256, U256};
+use alloy::primitives::{Address, LogData, B256, U256};
+use anyhow::{anyhow, Result};
 use e3_events::{E3id, EvmLogObserved, InterfoldEventData};
 use e3_utils::ArcBytes;
 
@@ -39,6 +40,21 @@ pub(crate) fn observe(
         data: ArcBytes::from_bytes(data.data.as_ref()),
     }
     .into()
+}
+
+/// The new manager that an `Interfold` contract's `SlashingManagerSet` log names, or `None` for
+/// any other log. A log of that event without a readable manager topic is an error.
+pub(crate) fn interfold_slashing_manager_set(log: &EvmLogObserved) -> Option<Result<Address>> {
+    if log.contract != "Interfold" || log.event_name != "SlashingManagerSet" {
+        return None;
+    }
+    Some(
+        log.topics
+            .get(1)
+            .and_then(|topic| topic.parse::<B256>().ok())
+            .map(Address::from_word)
+            .ok_or_else(|| anyhow!("Interfold SlashingManagerSet log has no manager topic")),
+    )
 }
 
 #[cfg(test)]

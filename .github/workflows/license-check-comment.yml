@@ -64,7 +64,7 @@ jobs:
               // or FITNESS FOR A PARTICULAR PURPOSE.
               \`\`\`
 
-              You can run \`./scripts/check-license-headers.sh --fix\` locally to automatically add missing headers, then commit the changes.
+              You can run \`pnpm check:license --fix\` locally to automatically add missing headers, then commit the changes.
 
-              Or run \`./scripts/check-license-headers.sh\` to see which files need headers.`,
+              Or run \`pnpm check:license\` to see which files need headers.`,
             })

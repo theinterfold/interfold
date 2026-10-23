@@ -23,6 +23,8 @@ pub async fn execute(mut config: AppConfig, peers: Vec<String>, bootstrap: bool)
     // Register signal listeners immediately at startup
     let shutdown = shutdown_signal();
     tokio::pin!(shutdown);
+    // Before any actor starts, so that a panic during startup is also reported.
+    let mut actor_panics = e3_entrypoint::actor_panics::ActorPanics::watch();
 
     owo();
 
@@ -109,6 +111,11 @@ pub async fn execute(mut config: AppConfig, peers: Vec<String>, bootstrap: bool)
             error!(%failure, "Ciphernode stopped after a chain gateway failure");
             graceful_shutdown(Some(node)).await?;
             bail!("fatal chain gateway failure: {failure}");
+        }
+        failure = actor_panics.first() => {
+            error!(%failure, "Ciphernode stopped after an actor panicked");
+            graceful_shutdown(Some(node)).await?;
+            bail!("actor panic: {failure}");
         }
         failure = wait_for_persistence_failure(&mut persistence_health) => {
             let failure = failure?;

@@ -165,10 +165,10 @@ The script loads `scripts/lib/dev_config.sh` and runs `interfold program compile
 settings set `E3_PROGRAM__DEV=true` and `TEMPLATE_UNPROVED_TEST=1` unless `TEMPLATE_REAL_PROOFS=1`,
 which selects what the command builds:
 
-| Mode                         | `interfold program compile` runs                                                                                           |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Dev mode (the local default) | `.interfold/support/dev/compile`, which runs `cargo build --locked --bin e3-support-scripts-dev`. No guest is built.       |
-| `TEMPLATE_REAL_PROOFS=1`     | `.interfold/support/openvm/compile`: the OpenVM guest in `guest/`, its keys and receipt identity, and the proving service. |
+| Mode                         | `interfold program compile` runs                                                                                    |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Dev mode (the local default) | `cargo build --bin program-runner`. No guest is built.                                                              |
+| `TEMPLATE_REAL_PROOFS=1`     | The OpenVM guest in `guest/`, its keys and receipt identity, and then `cargo build --release --bin program-runner`. |
 
 In dev mode, the program server runs the computation without a proof, and the template deploys
 `MockOpenVmReceiptVerifier`, which accepts every receipt on the local chain only. See

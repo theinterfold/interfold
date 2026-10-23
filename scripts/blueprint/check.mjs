@@ -107,6 +107,10 @@ say('Facts references that moved (--fix rewrites them) or broke (the build drops
   ...factsMoved.map((m) => `moved: ${m.raw} → line ${m.line}`),
   ...report.bad.map((b) => `broken: ${b.unit}: ${b.raw}`),
 ])
+say(
+  'Missing or invalid documentation owners (fix by hand)',
+  report.documentation.map((d) => `facts/${d.file}, ${d.unit}: ${d.why}`),
+)
 say('Crates that the blueprint does not show (add them to LAYERS in lib/inventory.mjs)', unmapped)
 say('Paths on the map that are gone (remove or rename them in lib/inventory.mjs)', MISSING)
 say(
@@ -205,5 +209,8 @@ if (fix && (moved.length || factsMoved.length)) {
   const again = spawnSync(process.execPath, [fileURLToPath(import.meta.url), ...(since ? ['--since', since] : [])], { stdio: 'inherit' })
   process.exit(again.status ?? 1)
 }
-const problems = [moved, factsMoved, broken, report.bad, report.unmatched, unmapped, MISSING].reduce((n, list) => n + list.length, 0)
+const problems = [moved, factsMoved, broken, report.bad, report.documentation, report.unmatched, unmapped, MISSING].reduce(
+  (n, list) => n + list.length,
+  0,
+)
 process.exit(problems || !build.ok ? 1 : 0)

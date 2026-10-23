@@ -6,13 +6,16 @@
 # Give every filter the same `!` patterns, because the hook applies each one to the whole list.
 
 # The Noir circuits and the scripts that build, lint, and test them.
+# Add new generator/check inputs explicitly; scripts/circuits/ is not matched wholesale.
 circuits:
   - 'circuits/**'
-  - 'scripts/*-circuits.sh'
-  - 'scripts/build-circuits.ts'
-  - 'scripts/generate-verifiers*.ts'
-  - 'scripts/circuit-constants.ts'
-  - 'crates/zk-prover/supported-configurations.json'
+  - 'scripts/circuits/lint.sh'
+  - 'scripts/circuits/test.sh'
+  - 'scripts/circuits/verifiers*.ts'
+  - 'scripts/circuits/constants.ts'
+  - 'scripts/circuits/build-pairs.json'
+  - 'crates/zk/build/**'
+  - 'crates/zk/prover/supported-configurations.json'
   - '!**/*.md'
   - '!**/*.mdx'
 
@@ -20,13 +23,13 @@ circuits:
 # which runs `check:verifiers`.
 verifiers:
   - 'packages/interfold-contracts/contracts/verifiers/**'
-  - 'crates/zk-prover/versions.json'
-  - 'crates/zk-helpers/**'
-  - 'crates/zk/cli/**'
+  - 'crates/zk/prover/versions.json'
+  - 'crates/zk/config/**'
+  - 'crates/zk/witness/**'
   - 'crates/fhe-params/**'
   - 'crates/committee/**'
   - 'crates/polynomial/**'
-  # generate-verifiers.ts formats the contracts with this prettier config, and with the prettier
+  # scripts/circuits/verifiers.ts formats contracts with this config and the prettier
   # and prettier-plugin-solidity versions in the lockfile.
   - 'packages/interfold-contracts/.prettierrc.yml'
   - 'pnpm-lock.yaml'

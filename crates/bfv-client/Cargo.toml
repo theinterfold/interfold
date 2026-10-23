@@ -9,7 +9,8 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace = true
 e3-fhe-params = { workspace = true }
-e3-zk-helpers = { workspace = true }
+e3-zk-witness = { workspace = true }
+e3-zk-config = { workspace = true }
 fhe.workspace = true
 fhe-traits.workspace = true
 rand.workspace = true

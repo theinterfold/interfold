@@ -280,8 +280,8 @@ for inputs and for the output.
 
 ## Input validation with ZK proofs (CRISP)
 
-`CRISPProgram.sol` (`examples/CRISP/packages/crisp-contracts/contracts/`) validates each input with
-a Noir proof. It uses two transactions for each input.
+[`CRISPProgram.sol`](https://github.com/theinterfold/CRISP/blob/main/packages/crisp-contracts/contracts/CRISPProgram.sol)
+validates each input with a Noir proof. It uses two transactions for each input.
 
 1. **`publishInput`** decodes the Noir proof, the slot address, the ciphertext commitment, the
    ciphertext content hash, the parent index, and a signed availability attestation. It verifies the

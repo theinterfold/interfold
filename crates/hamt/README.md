@@ -1,7 +1,16 @@
 # HAMT - A Persistent Hash Array Mapped Trie
 
+## Purpose
+
 A persistent, immutable hash map implementation in Rust using a Hash Array Mapped Trie data
 structure designed for using in Interfold Sortition.
+
+## Map
+
+[`src/lib.rs`](src/lib.rs) contains `Hamt`, immutable leaf/bitmap/collision nodes, hash-path
+traversal, and tests. Inserts/removals copy the changed path and share the rest through `Arc`, so
+sortition can retain earlier eligibility snapshots while newer registry state evolves. There is no
+disk encoding or cryptographic commitment to the internal trie shape.
 
 ## What is a HAMT?
 
@@ -19,7 +28,7 @@ fast and memory-efficient.
 ## Usage
 
 ```rust
-use hamt::Hamt;
+use e3_hamt::Hamt;
 
 // Create a new empty map
 let map1 = Hamt::new();
@@ -82,3 +91,11 @@ HAMT total time: 368.344061ms
 HashMap total time: 640.458474ms
 HAMT is 0.58x the cost
 ```
+
+## Tests
+
+Run `cargo test --locked -p e3-hamt` from the root without external services. Inline tests cover
+insert/lookup/removal, retaining earlier maps, and equivalence with a `BTreeMap` over operation
+sequences. The laptop timing above is historical context, not a repository benchmark target or
+correctness claim. [Sortition](../sortition/Readme.md) owns snapshot use; [AGENTS.md](AGENTS.md)
+covers structural-sharing changes.

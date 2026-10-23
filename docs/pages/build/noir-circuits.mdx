@@ -59,8 +59,6 @@ All binary packages depend on one shared library. The Nargo package name of the 
         <FileTree.Folder name='pk_generation' />
         <FileTree.Folder name='pk_aggregation' />
         <FileTree.Folder name='user_data_encryption' />
-        <FileTree.Folder name='user_data_encryption_ct0' />
-        <FileTree.Folder name='user_data_encryption_ct1' />
         <FileTree.Folder name='share_decryption' />
         <FileTree.Folder name='decrypted_shares_aggregation' />
       </FileTree.Folder>
@@ -83,16 +81,16 @@ All binary packages depend on one shared library. The Nargo package name of the 
   </FileTree.Folder>
 </FileTree>
 
-| Directory                   | Contents                                                                                                                                                                                                                              |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lib/src/math`              | Polynomials, the SAFE sponge (Poseidon2 and Keccak256), modular arithmetic, and the commitment functions with their domain separators.                                                                                                |
-| `lib/src/core`              | The circuit logic that the binary packages call. `core/dkg` holds C0 and C2 to C4. `core/threshold` holds C1, C5, the two user-encryption legs, C6, and C7.                                                                           |
-| `lib/src/configs`           | The BFV presets (`insecure`, `secure`) and the committee sizes. `default/mod.nr` and `committee/active.nr` select the active pair. The build script writes both files.                                                                |
-| `bin/dkg`                   | Nargo workspace: `pk` (C0), `sk_share_computation` (C2a), `e_sm_share_computation` (C2b), `share_encryption` (C3), `share_decryption` (C4).                                                                                           |
-| `bin/threshold`             | Nargo workspace: `pk_generation` (C1), `pk_aggregation` (C5), `user_data_encryption` (P3), legs `user_data_encryption_ct0` and `user_data_encryption_ct1` (benchmarks), `share_decryption` (C6), `decrypted_shares_aggregation` (C7). |
-| `bin/recursive_aggregation` | Twelve packages that fold proofs together. The two final circuits are `dkg_aggregator` and `decryption_aggregator`.                                                                                                                   |
-| `bin/config`                | Package `validate_secure_configs`. It checks the secure preset constants (CRT moduli, bounds, and parity matrices).                                                                                                                   |
-| `benchmarks`                | Timing scripts and reports.                                                                                                                                                                                                           |
+| Directory                   | Contents                                                                                                                                                               |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/src/math`              | Polynomials, the SAFE sponge (Poseidon2 and Keccak256), modular arithmetic, and the commitment functions with their domain separators.                                 |
+| `lib/src/core`              | The circuit logic that the binary packages call. `core/dkg` holds C0 and C2 to C4. `core/threshold` holds C1, C5, the two user-encryption legs, C6, and C7.            |
+| `lib/src/configs`           | The BFV presets (`insecure`, `secure`) and the committee sizes. `default/mod.nr` and `committee/active.nr` select the active pair. The build script writes both files. |
+| `bin/dkg`                   | Nargo workspace: `pk` (C0), `sk_share_computation` (C2a), `e_sm_share_computation` (C2b), `share_encryption` (C3), `share_decryption` (C4).                            |
+| `bin/threshold`             | Nargo workspace: `pk_generation` (C1), `pk_aggregation` (C5), `user_data_encryption` (P3), `share_decryption` (C6), `decrypted_shares_aggregation` (C7).               |
+| `bin/recursive_aggregation` | Twelve packages that fold proofs together. The two final circuits are `dkg_aggregator` and `decryption_aggregator`.                                                    |
+| `bin/config`                | Package `validate_secure_configs`. It checks the secure preset constants (CRT moduli, bounds, and parity matrices).                                                    |
+| `benchmarks`                | Timing scripts and reports.                                                                                                                                            |
 
 The package directory names match the `CircuitName` enum in
 `crates/events/src/interfold_event/proof.rs`. For example, `CircuitName::PkBfv` is `pk`, and
@@ -136,8 +134,8 @@ release.
 
 | Component                            | Version                  | Pinned in                                                                                                          |
 | ------------------------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| `nargo`                              | `1.0.0-beta.26`          | `NOIR_TOOLCHAIN` in `.github/workflows/ci.yml`. The Noir crates in `crates/zk-prover/Cargo.toml` use the same tag. |
-| `bb`                                 | `5.2.0`                  | `required_bb_version` in `crates/zk-prover/versions.json`, and `BB_VERSION` in `ci.yml`                            |
+| `nargo`                              | `1.0.0-beta.26`          | `NOIR_TOOLCHAIN` in `.github/workflows/ci.yml`. The Noir crates in `crates/zk/prover/Cargo.toml` use the same tag. |
+| `bb`                                 | `5.2.0`                  | `required_bb_version` in `crates/zk/prover/versions.json`, and `BB_VERSION` in `ci.yml`                            |
 | Circuit artifacts for source builds  | Build from this checkout | `pnpm build:circuits`                                                                                              |
 | `bb_proof_verification` (Noir)       | `v5.2.0`                 | The `Nargo.toml` of each package that verifies a proof                                                             |
 | `@aztec/bb.js`, `@noir-lang/noir_js` | `5.2.0`, `1.0.0-beta.26` | `packages/interfold-sdk/package.json`                                                                              |
@@ -223,10 +221,10 @@ pnpm build:circuits --preset secure-8192 --committee small
 
 A build selects one BFV preset and one committee size:
 
-| Option        | Values                               | Default        |
-| ------------- | ------------------------------------ | -------------- |
+| Option        | Values                              | Default       |
+| ------------- | ----------------------------------- | ------------- |
 | `--preset`    | `insecure-64`, `secure-8192`, `all` | `insecure-64` |
-| `--committee` | `minimum`, `micro`, `small`, `all`   | `minimum`      |
+| `--committee` | `minimum`, `micro`, `small`, `all`  | `minimum`     |
 
 | Committee | N   | T   | H   |
 | --------- | --- | --- | --- |
@@ -238,7 +236,7 @@ N is the committee size, T is the threshold, and H is the number of honest parti
 expects. Decryption needs T + 1 shares. The mainnet contracts accept only the secure parameter set.
 Sepolia and local chains accept both sets (`ActiveCryptoConfig.sol`).
 
-For each pair, the build does these steps (`scripts/build-circuits.ts`):
+For each pair, the Rust build owner does these steps (`crates/zk/build`):
 
 1. It writes `configs/default/mod.nr` and `configs/committee/active.nr` for the pair.
 2. It regenerates the parity matrices and the C1 and C2 bounds with the Rust generators.
@@ -255,20 +253,20 @@ For each pair, the build does these steps (`scripts/build-circuits.ts`):
 The build records the active pair in `circuits/bin/.active-preset.json`.
 
 Downloaded release archives must match the SHA-256 compiled into the binary for their version. The
-binary includes pins from `crates/zk-prover/versions.json` (`circuits_checksums`) and the release
+binary includes pins from `crates/zk/prover/versions.json` (`circuits_checksums`) and the release
 build input. The installer checks it before extraction, then requires a nonempty internal manifest
 that covers every artifact file. Root manifests, `SOURCE_HASH`, and build stamps are metadata.
 `noir setup --circuits-archive` requires the same pin for a local archive. Add
 `--allow-unpinned-archive` to install another archive, such as a local build.
 
-The installer requires every pair in `crates/zk-prover/supported-configurations.json` by default,
+The installer requires every pair in `crates/zk/prover/supported-configurations.json` by default,
 including for `noir setup --circuits-archive`. The release validator uses the same matrix. For a
 local archive, repeat `--circuits-configuration <PRESET/COMMITTEE>` to select a subset explicitly.
 For example, `--circuits-configuration insecure-64/minimum` selects the development configuration.
 Local and CI callers can request a nonempty subset through `download_circuits_for_configurations` or
 `install_circuits_archive_for_configurations`. The required set never depends on archive contents.
 Each required or included pair must contain every artifact in
-`crates/zk-prover/required-artifacts.json`. The release validator and installer share this
+`crates/zk/prover/required-artifacts.json`. The release validator and installer share this
 inventory. The manifest must cover each artifact.
 
 If circuit replacement or the version update fails, the installer attempts rollback and returns the
@@ -301,17 +299,19 @@ Other circuit commands:
 | `pnpm build:circuits hash`                                     | Prints the source hash that identifies a build.                                                                                                                                              |
 | `pnpm build:circuits sync-config --preset <p> --committee <c>` | Updates `utils.ts` and `ActiveCryptoConfig.sol` only. It does not compile.                                                                                                                   |
 | `pnpm check:committee`                                         | Checks that the committee and BFV values agree across Noir, Rust, TypeScript, and Solidity.                                                                                                  |
-| `pnpm noir:lint` (`scripts/lint-circuits.sh`)                  | Runs `nargo fmt --check` and `nargo check` on the library and each package. It exits with success if `nargo` is missing.                                                                     |
-| `pnpm noir:test` (`scripts/test-circuits.sh`)                  | Runs `nargo test` on `circuits/lib` and `decryption_aggregator`, then `nargo execute` on `bin/config`, then the `dkg_aggregator` and `node_fold` tests for three preset and committee pairs. |
+| `pnpm noir:lint` (`scripts/circuits/lint.sh`)                  | Runs `nargo fmt --check` and `nargo check` on the library and each package. It exits with success if `nargo` is missing.                                                                     |
+| `pnpm noir:test` (`scripts/circuits/test.sh`)                  | Runs `nargo test` on `circuits/lib` and `decryption_aggregator`, then `nargo execute` on `bin/config`, then the `dkg_aggregator` and `node_fold` tests for three preset and committee pairs. |
 
-To make sample inputs for one circuit, use `zk-artifacts generate`. Its `--committee` value must
-match the active committee of the library:
+The Rust benchmark runner creates artificial cryptographic material and executes production witness
+preparation directly. Its preset and committee must match the selected artifacts:
 
 ```bash
-pnpm zk generate --circuit pk-generation --preset insecure --committee minimum --toml
+pnpm bench:circuits run --mode insecure --committee minimum --circuit threshold/pk_generation --witness-only --leaf-only
 ```
 
-`pnpm zk list` prints the circuit names that it accepts.
+Use `--export-toml` only for debug ABI inputs. Samples are not live application inputs.
+`pnpm bench:circuits list` prints the selected leaf cases. The Rust configuration library owns
+static configuration; `pnpm build:circuits sync-preset` writes the selected preset's constants.
 
 ## Generate the Solidity verifiers
 
@@ -345,15 +345,15 @@ function verify(
 ## Verifiers for your own circuits
 
 An E3 program can check its inputs with its own circuits. CRISP does this in
-`examples/CRISP/scripts/compile_circuits.sh`:
+[`scripts/compile_circuits.sh`](https://github.com/theinterfold/CRISP/blob/main/scripts/compile_circuits.sh)
+in the CRISP repository. The `user_data_encryption` circuits and their keys come compiled from the
+Interfold release. For each ballot stack, the script does these steps:
 
-1. It compiles `user_data_encryption` from `circuits/bin/threshold`. This one circuit proves both
-   parts of the BFV ciphertext.
-2. It writes its verification key with `bb write_vk -t noir-recursive-no-zk`.
-3. It compiles the application circuit and writes its key the same way.
-4. It compiles the fold circuit, which verifies both proofs, and writes its key with
+1. It compiles the application circuit and writes its verification key with
+   `bb write_vk -t noir-recursive-no-zk`.
+2. It compiles the fold circuit, which verifies both proofs, and writes its key with
    `bb write_vk --oracle_hash keccak`.
-5. It runs `bb write_solidity_verifier` on the fold key and copies the result to
+3. It runs `bb write_solidity_verifier` on the fold key and copies the result to
    `packages/crisp-contracts/contracts/verifiers/`.
 
 The script makes two verifiers: `CRISPVerifier.sol` from the `crisp` and `fold` circuits, and
@@ -402,7 +402,7 @@ The library itself depends on `poseidon` `v0.3.0` and `keccak256` `v0.1.2` from 
 
 ## Rust integration
 
-The crate `e3-zk-prover` (`crates/zk-prover`) runs the circuits for the ciphernode.
+The crate `e3-zk-prover` (`crates/zk/prover`) runs the circuits for the ciphernode.
 
 | Item                                                                    | Role                                                                                                                                         |
 | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -414,14 +414,15 @@ The crate `e3-zk-prover` (`crates/zk-prover`) runs the circuits for the cipherno
 
 The event types (`CircuitName`, `ProofType`) are in `crates/events`. The protocol flow that uses
 them is in
-[`agent/flow-trace/04_DKG_AND_COMPUTATION.md`](https://github.com/theinterfold/interfold/blob/main/agent/flow-trace/04_DKG_AND_COMPUTATION.md).
+[proof statements](https://github.com/theinterfold/interfold/blob/main/docs/architecture/proof-statements.md)
+and [DKG](https://github.com/theinterfold/interfold/blob/main/docs/architecture/dkg.md).
 
 ## Add or rename a circuit
 
 1. Put the package in `bin/dkg`, `bin/threshold`, or `bin/recursive_aggregation`. The build script
    finds packages in these groups automatically.
 2. Add the package to the `members` list of the group workspace, for `bin/dkg` and `bin/threshold`.
-3. Add the directory to `DIRS` in `scripts/lint-circuits.sh`, for a package in
+3. Add the directory to `DIRS` in `scripts/circuits/lint.sh`, for a package in
    `bin/recursive_aggregation`.
 4. Add a `CircuitName` variant in `crates/events` if the Rust prover must run the circuit.
 5. Rebuild each pair that you ship, and regenerate the verifiers if the circuit goes on-chain.

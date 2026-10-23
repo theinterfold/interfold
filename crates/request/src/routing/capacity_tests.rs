@@ -7,7 +7,7 @@ use e3_events::*;
 use e3_fhe_params::{constants::secure_8192, BfvPreset};
 use e3_trbfv::shares::BfvEncryptedShares;
 use e3_utils::AsBytesSerde;
-use e3_zk_helpers::computation::DkgInputType;
+use e3_zk_config::DkgInputType;
 
 const MIB: usize = 1024 * 1024;
 const N: usize = 19;

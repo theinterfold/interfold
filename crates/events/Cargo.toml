@@ -32,7 +32,7 @@ e3-committee-hash = { workspace = true }
 e3-trbfv = { workspace = true }
 e3-utils = { workspace = true }
 e3-fhe-params = { workspace = true }
-e3-zk-helpers = { workspace = true }
+e3-zk-config = { workspace = true }
 
 [features]
 test-helpers = [] # ensure test-helpers is available for integration tests

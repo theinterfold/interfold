@@ -3550,18 +3550,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4c3cf4824e2d5f025c7b531afcb2325364084a16806f6d47fbc1f5fbd9960590"
 
 [[package]]
-name = "duct"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6ce170a0e8454fa0f9b0e5ca38a6ba17ed76a50916839d217eb5357e05cdfde"
-dependencies = [
- "libc",
- "os_pipe",
- "shared_child",
- "shared_thread",
-]
-
-[[package]]
 name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3575,7 +3563,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "e3-aggregator"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix",
  "alloy",
@@ -3599,8 +3587,9 @@ dependencies = [
  "e3-test-helpers",
  "e3-trbfv",
  "e3-utils",
- "e3-zk-helpers",
+ "e3-zk-config",
  "e3-zk-prover",
+ "e3-zk-witness",
  "fhe",
  "fhe-math",
  "fhe-traits",
@@ -3613,11 +3602,12 @@ dependencies = [
 
 [[package]]
 name = "e3-bfv-client"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "anyhow",
  "e3-fhe-params",
- "e3-zk-helpers",
+ "e3-zk-config",
+ "e3-zk-witness",
  "fhe",
  "fhe-traits",
  "rand 0.9.5",
@@ -3626,7 +3616,7 @@ dependencies = [
 
 [[package]]
 name = "e3-ciphernode-builder"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix",
  "alloy",
@@ -3651,6 +3641,7 @@ dependencies = [
  "e3-slashing",
  "e3-sortition",
  "e3-sync",
+ "e3-task-pool",
  "e3-test-helpers",
  "e3-utils",
  "e3-zk-prover",
@@ -3662,7 +3653,7 @@ dependencies = [
 
 [[package]]
 name = "e3-cli"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix",
  "alloy",
@@ -3685,7 +3676,6 @@ dependencies = [
  "e3-fhe-params",
  "e3-init",
  "e3-logger",
- "e3-support-scripts",
  "e3-trbfv",
  "e3-utils",
  "e3-zk-prover",
@@ -3717,7 +3707,7 @@ dependencies = [
 
 [[package]]
 name = "e3-committee"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "anyhow",
  "bincode",
@@ -3727,7 +3717,7 @@ dependencies = [
 
 [[package]]
 name = "e3-committee-hash"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "alloy",
  "hex",
@@ -3736,7 +3726,7 @@ dependencies = [
 
 [[package]]
 name = "e3-compute-provider"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "ark-bn254 0.4.0",
  "ark-ff 0.4.2",
@@ -3763,7 +3753,7 @@ dependencies = [
 
 [[package]]
 name = "e3-config"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "alloy-primitives",
  "anyhow",
@@ -3785,14 +3775,14 @@ dependencies = [
 
 [[package]]
 name = "e3-console"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "tokio",
 ]
 
 [[package]]
 name = "e3-crypto"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -3810,7 +3800,7 @@ dependencies = [
 
 [[package]]
 name = "e3-daemon-server"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "anyhow",
  "e3-config",
@@ -3824,7 +3814,7 @@ dependencies = [
 
 [[package]]
 name = "e3-dashboard"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix-web",
  "alloy",
@@ -3846,7 +3836,7 @@ dependencies = [
 
 [[package]]
 name = "e3-data"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix",
  "alloy-primitives",
@@ -3869,7 +3859,7 @@ dependencies = [
 
 [[package]]
 name = "e3-data-availability"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -3885,7 +3875,7 @@ dependencies = [
 
 [[package]]
 name = "e3-entrypoint"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix",
  "actix-web",
@@ -3934,7 +3924,7 @@ dependencies = [
 
 [[package]]
 name = "e3-event-system"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix",
  "anyhow",
@@ -3952,7 +3942,7 @@ dependencies = [
 
 [[package]]
 name = "e3-events"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix",
  "alloy",
@@ -3973,7 +3963,7 @@ dependencies = [
  "e3-test-helpers",
  "e3-trbfv",
  "e3-utils",
- "e3-zk-helpers",
+ "e3-zk-config",
  "futures-util",
  "hex",
  "once_cell",
@@ -3989,7 +3979,7 @@ dependencies = [
 
 [[package]]
 name = "e3-evm"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix",
  "alloy",
@@ -4016,7 +4006,6 @@ dependencies = [
  "e3-test-helpers",
  "e3-trbfv",
  "e3-utils",
- "e3-zk-helpers",
  "futures-util",
  "hex",
  "num-bigint 0.5.1",
@@ -4033,7 +4022,7 @@ dependencies = [
 
 [[package]]
 name = "e3-evm-helpers"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "alloy",
  "anyhow",
@@ -4050,7 +4039,7 @@ dependencies = [
 
 [[package]]
 name = "e3-fhe"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix",
  "anyhow",
@@ -4073,7 +4062,7 @@ dependencies = [
 
 [[package]]
 name = "e3-fhe-params"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -4093,7 +4082,7 @@ dependencies = [
 
 [[package]]
 name = "e3-fs"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4106,11 +4095,11 @@ dependencies = [
 
 [[package]]
 name = "e3-hamt"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 
 [[package]]
 name = "e3-indexer"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "alloy",
  "async-trait",
@@ -4130,7 +4119,7 @@ dependencies = [
 
 [[package]]
 name = "e3-init"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "anyhow",
  "async-recursion",
@@ -4149,7 +4138,7 @@ dependencies = [
 
 [[package]]
 name = "e3-keyshare"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix",
  "alloy",
@@ -4171,7 +4160,7 @@ dependencies = [
  "e3-request",
  "e3-trbfv",
  "e3-utils",
- "e3-zk-helpers",
+ "e3-zk-config",
  "e3-zk-prover",
  "fhe",
  "fhe-traits",
@@ -4186,7 +4175,7 @@ dependencies = [
 
 [[package]]
 name = "e3-layout-lock"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "bincode",
  "e3-utils",
@@ -4197,7 +4186,7 @@ dependencies = [
 
 [[package]]
 name = "e3-logger"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix",
  "alloy",
@@ -4212,43 +4201,30 @@ dependencies = [
 
 [[package]]
 name = "e3-multithread"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix",
  "alloy",
  "anyhow",
- "bincode",
  "e3-bfv-client",
  "e3-committee",
- "e3-committee-hash",
  "e3-crypto",
- "e3-data",
  "e3-events",
  "e3-fhe-params",
- "e3-polynomial",
- "e3-polynomial-fhe",
  "e3-request",
+ "e3-task-pool",
  "e3-trbfv",
  "e3-utils",
- "e3-zk-helpers",
  "e3-zk-prover",
- "fhe",
- "fhe-math",
- "fhe-traits",
- "ndarray",
- "num-bigint 0.5.1",
  "rand 0.9.5",
  "rand_chacha 0.9.0",
- "rayon",
- "thiserror 1.0.69",
  "tokio",
  "tracing",
- "zeroize",
 ]
 
 [[package]]
 name = "e3-net"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix",
  "anyhow",
@@ -4264,6 +4240,7 @@ dependencies = [
  "e3-layout-lock",
  "e3-request",
  "e3-sync",
+ "e3-trbfv",
  "e3-utils",
  "futures",
  "hex",
@@ -4271,6 +4248,7 @@ dependencies = [
  "rand 0.9.5",
  "serde",
  "serde_bytes",
+ "serde_json",
  "sha2 0.10.9",
  "tokio",
  "tracing",
@@ -4280,7 +4258,7 @@ dependencies = [
 
 [[package]]
 name = "e3-openvm-host"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "anyhow",
  "e3-compute-provider",
@@ -4292,7 +4270,7 @@ dependencies = [
 
 [[package]]
 name = "e3-openvm-types"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "bincode",
  "e3-compute-provider",
@@ -4301,7 +4279,7 @@ dependencies = [
 
 [[package]]
 name = "e3-parity-matrix"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "num-bigint 0.5.1",
  "num-traits",
@@ -4312,7 +4290,7 @@ dependencies = [
 
 [[package]]
 name = "e3-polynomial"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "num-bigint 0.5.1",
  "num-integer",
@@ -4323,7 +4301,7 @@ dependencies = [
 
 [[package]]
 name = "e3-polynomial-fhe"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "e3-polynomial",
  "fhe-math",
@@ -4331,8 +4309,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "e3-program-runner"
+version = "0.20.0-dev.2"
+dependencies = [
+ "anyhow",
+ "e3-compute-provider",
+ "e3-openvm-host",
+ "e3-program-server",
+ "tokio",
+]
+
+[[package]]
 name = "e3-program-server"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix-web",
  "alloy-primitives",
@@ -4351,7 +4340,7 @@ dependencies = [
 
 [[package]]
 name = "e3-request"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix",
  "alloy",
@@ -4368,14 +4357,14 @@ dependencies = [
  "e3-fhe-params",
  "e3-trbfv",
  "e3-utils",
- "e3-zk-helpers",
+ "e3-zk-config",
  "serde",
  "tracing",
 ]
 
 [[package]]
 name = "e3-safe"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
@@ -4392,7 +4381,7 @@ dependencies = [
 
 [[package]]
 name = "e3-sdk"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "e3-bfv-client",
  "e3-evm-helpers",
@@ -4402,7 +4391,7 @@ dependencies = [
 
 [[package]]
 name = "e3-slashing"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix",
  "alloy",
@@ -4412,12 +4401,12 @@ dependencies = [
  "chrono",
  "e3-committee",
  "e3-data",
+ "e3-event-system",
  "e3-events",
  "e3-fhe-params",
  "e3-layout-lock",
  "e3-request",
  "e3-utils",
- "e3-zk-helpers",
  "hex",
  "serde",
  "sha2 0.10.9",
@@ -4426,7 +4415,7 @@ dependencies = [
 
 [[package]]
 name = "e3-sortition"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix",
  "alloy",
@@ -4448,19 +4437,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "e3-support-scripts"
-version = "0.19.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "duct",
- "e3-config",
- "tokio",
-]
-
-[[package]]
 name = "e3-sync"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix",
  "anyhow",
@@ -4479,8 +4457,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "e3-task-pool"
+version = "0.20.0-dev.2"
+dependencies = [
+ "rayon",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "e3-test-helpers"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix",
  "anyhow",
@@ -4515,7 +4503,7 @@ dependencies = [
 
 [[package]]
 name = "e3-tests"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix",
  "alloy",
@@ -4549,7 +4537,7 @@ dependencies = [
  "e3-test-helpers",
  "e3-trbfv",
  "e3-utils",
- "e3-zk-helpers",
+ "e3-zk-config",
  "e3-zk-prover",
  "fhe",
  "fhe-traits",
@@ -4571,7 +4559,7 @@ dependencies = [
 
 [[package]]
 name = "e3-trbfv"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "anyhow",
  "bincode",
@@ -4600,7 +4588,7 @@ dependencies = [
 
 [[package]]
 name = "e3-utils"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "actix",
  "alloy",
@@ -4619,7 +4607,7 @@ dependencies = [
 
 [[package]]
 name = "e3-utils-derive"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "hex",
  "proc-macro2",
@@ -4629,7 +4617,7 @@ dependencies = [
 
 [[package]]
 name = "e3-wasm"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "e3-bfv-client",
  "e3-fhe-params",
@@ -4641,26 +4629,61 @@ dependencies = [
 ]
 
 [[package]]
-name = "e3-zk-artifacts"
-version = "0.19.0"
+name = "e3-zk-benchmarks"
+version = "0.20.0-dev.2"
 dependencies = [
+ "acir",
  "anyhow",
- "ark-bn254 0.5.0",
- "ark-ff 0.5.0",
+ "chrono",
  "clap",
  "e3-committee",
+ "e3-config",
+ "e3-events",
  "e3-fhe-params",
- "e3-zk-helpers",
+ "e3-zk-build",
+ "e3-zk-config",
+ "e3-zk-prover",
+ "e3-zk-samples",
+ "e3-zk-witness",
+ "fhe",
  "hex",
+ "noirc_abi",
+ "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
+ "toml",
 ]
 
 [[package]]
-name = "e3-zk-helpers"
-version = "0.19.0"
+name = "e3-zk-build"
+version = "0.20.0-dev.2"
 dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
  "anyhow",
+ "ark-bn254 0.5.0",
+ "ark-ff 0.5.0",
+ "chrono",
+ "clap",
+ "e3-committee",
+ "e3-fhe-params",
+ "e3-zk-config",
+ "e3-zk-witness",
+ "fhe",
+ "hex",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "e3-zk-config"
+version = "0.20.0-dev.2"
+dependencies = [
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
  "e3-committee",
@@ -4668,28 +4691,17 @@ dependencies = [
  "e3-parity-matrix",
  "e3-polynomial",
  "e3-polynomial-fhe",
- "e3-safe",
  "fhe",
- "fhe-math",
- "fhe-traits",
- "hex",
- "itertools 0.14.0",
- "ndarray",
  "num-bigint 0.5.1",
  "num-integer",
  "num-traits",
- "rand 0.9.5",
- "rayon",
  "serde",
- "serde_json",
- "tempfile",
  "thiserror 1.0.69",
- "toml",
 ]
 
 [[package]]
 name = "e3-zk-prover"
-version = "0.19.0"
+version = "0.20.0-dev.2"
 dependencies = [
  "acir",
  "actix",
@@ -4722,10 +4734,13 @@ dependencies = [
  "e3-slashing",
  "e3-sortition",
  "e3-sync",
+ "e3-task-pool",
  "e3-test-helpers",
  "e3-trbfv",
  "e3-utils",
- "e3-zk-helpers",
+ "e3-zk-config",
+ "e3-zk-samples",
+ "e3-zk-witness",
  "fhe",
  "fhe-math",
  "fhe-traits",
@@ -4741,6 +4756,7 @@ dependencies = [
  "num-traits",
  "paste",
  "rand 0.9.5",
+ "rand_chacha 0.9.0",
  "rayon",
  "reqwest",
  "serde",
@@ -4753,6 +4769,56 @@ dependencies = [
  "toml",
  "tracing",
  "walkdir",
+]
+
+[[package]]
+name = "e3-zk-samples"
+version = "0.20.0-dev.2"
+dependencies = [
+ "e3-committee",
+ "e3-fhe-params",
+ "e3-polynomial",
+ "e3-polynomial-fhe",
+ "e3-zk-config",
+ "e3-zk-witness",
+ "fhe",
+ "fhe-math",
+ "fhe-traits",
+ "ndarray",
+ "num-bigint 0.5.1",
+ "num-traits",
+ "rand 0.9.5",
+]
+
+[[package]]
+name = "e3-zk-witness"
+version = "0.20.0-dev.2"
+dependencies = [
+ "anyhow",
+ "ark-bn254 0.5.0",
+ "ark-ff 0.5.0",
+ "e3-committee",
+ "e3-fhe-params",
+ "e3-polynomial",
+ "e3-polynomial-fhe",
+ "e3-safe",
+ "e3-zk-config",
+ "e3-zk-samples",
+ "fhe",
+ "fhe-math",
+ "fhe-traits",
+ "hex",
+ "itertools 0.14.0",
+ "ndarray",
+ "num-bigint 0.5.1",
+ "num-integer",
+ "num-traits",
+ "rand 0.9.5",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -8313,16 +8379,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
-name = "os_pipe"
-version = "1.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
-dependencies = [
- "libc",
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "p256"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10456,23 +10512,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "shared_child"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e362d9935bc50f019969e2f9ecd66786612daae13e8f277be7bfb66e8bed3f7"
-dependencies = [
- "libc",
- "sigchld",
- "windows-sys 0.60.2",
-]
-
-[[package]]
-name = "shared_thread"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7a6f98357c6bb0ebace19b22220e5543801d9de90ffe77f8abb27c056bac064"
-
-[[package]]
 name = "shell-words"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10492,27 +10531,6 @@ name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
-
-[[package]]
-name = "sigchld"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47106eded3c154e70176fc83df9737335c94ce22f821c32d17ed1db1f83badb1"
-dependencies = [
- "libc",
- "os_pipe",
- "signal-hook",
-]
-
-[[package]]
-name = "signal-hook"
-version = "0.3.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d881a16cf4426aa584979d30bd82cb33429027e42122b169753d6ef1085ed6e2"
-dependencies = [
- "libc",
- "signal-hook-registry",
-]
 
 [[package]]
 name = "signal-hook-registry"

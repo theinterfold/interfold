@@ -29,6 +29,11 @@ Each release publishes prebuilt archives for two platforms.
 The releases do not include archives for other platforms, for example Linux on arm64 or macOS on
 Intel. On these platforms, [build the CLI from source](#install-the-cli).
 
+Each release also publishes `interfold-test-only-skip-proof-aggregation-linux-x86_64.tar.gz`. This
+CLI has the `test-only-skip-proof-aggregation` Cargo feature, so its nodes can skip recursive proof
+aggregation. Use it only for tests and CI, for example the end-to-end tests of an E3 program. Do not
+use it on a network. The install script and `interfold update` do not install it.
+
 ## Developer tools
 
 `interfold init` needs Git and pnpm. The default project template also starts a local chain,
@@ -187,8 +192,9 @@ Cargo installs the binary to `~/.cargo/bin/interfold`.
 
 <Callout type='info'>
   The template integration test (`pnpm test:integration`) needs a CLI that is built with the
-  `test-only-skip-proof-aggregation` Cargo feature. Release binaries do not include this feature. To
-  build it, add `--features test-only-skip-proof-aggregation` to the `cargo install` command.
+  `test-only-skip-proof-aggregation` Cargo feature. Of the release archives, only the [test-only
+  archive](#supported-platforms) has this feature. To build it, add `--features
+  test-only-skip-proof-aggregation` to the `cargo install` command.
 </Callout>
 
 </Tabs.Tab>
@@ -251,8 +257,9 @@ is not an Interfold project.
 interfold rev --features
 ```
 
-A release binary prints nothing. A binary built with `test-only-skip-proof-aggregation` prints that
-feature name.
+The CLI from the `interfold-<platform>` archive prints nothing. A binary built with
+`test-only-skip-proof-aggregation` prints that feature name. The CLI from the test-only archive is
+such a binary.
 
 </Steps>
 

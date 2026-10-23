@@ -470,6 +470,12 @@ pub const D_POW2_START: u64 = 256;
 pub const D_POW2_MAX: u64 = 32768;
 /// Maximum number of votes/plaintext additions (k_plain_eff)
 pub const K_MAX: u128 = 1u128 << 25; // 33,554,432
+/// Smallest prime bit-length that the search uses by default. 49-bit primes leave less than
+/// 0.2 bits of correctness margin for worst-case secure inputs at d = 8192.
+pub const DEFAULT_MIN_PRIME_BITS: u8 = 50;
+/// Minimum correctness margin in bits, `log2(Δ) - log2(LHS)`. The secure and insecure
+/// presets were searched with this margin.
+pub const MIN_MARGIN_BITS: f64 = 2.0;
 
 #[cfg(test)]
 mod tests {

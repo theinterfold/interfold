@@ -3,11 +3,10 @@
   "units": [
     {
       "id": "e3-net",
+      "documentation": [{ "title": "Network delivery", "path": "docs/architecture/network-delivery.md" }],
       "kind": "crate",
       "path": "crates/net",
       "one_line": "The libp2p networking layer: it runs the QUIC swarm and translates between network messages and EventBus events.",
-      "explain": "Peers exchange protocol messages over gossipsub and direct requests, and key-share documents (threshold shares, encryption keys, decryption keys) go into a Kademlia DHT under their content hash while a small gossip notification names each one. Libp2pNetInterface runs the swarm as a tokio task, not an actor, while DocumentPublisher, NetEventTranslator, NetEventBuffer and NetSyncManager are actix actors fed by forwarding tasks from the swarm's event stream, and EventConverter is an actix actor fed by bus subscriptions. Without this crate a node would not receive its committee's DKG and decryption shares, and it could not fetch peer history after a restart.",
-      "analogy": "Like a post office with a notice board and a locker bank: gossip is the notice that says which locker holds a parcel, and the DHT is the lockers that keep large parcels until someone collects them.",
       "actors": [
         {
           "name": "Libp2pNetInterface",
@@ -17,7 +16,7 @@
         {
           "name": "DocumentPublisher",
           "role": "Announces the documents this node publishes (DHT store plus gossip notice), uploads replicas, and fetches documents that peers name.",
-          "ref": "crates/net/src/document_publishing/actor.rs@145@pub struct DocumentPublisher {"
+          "ref": "crates/net/src/document_publishing/actor.rs@148@pub struct DocumentPublisher {"
         },
         {
           "name": "NetEventTranslator",
@@ -44,22 +43,22 @@
         {
           "name": "PublishDocumentRequested",
           "by": "DocumentPublisher",
-          "ref": "crates/net/src/document_publishing/handlers.rs@80@impl Handler<TypedEvent<PublishDocumentRequested>> for DocumentPublisher {"
+          "ref": "crates/net/src/document_publishing/handlers.rs@87@impl Handler<TypedEvent<PublishDocumentRequested>> for DocumentPublisher {"
         },
         {
           "name": "DocumentIngress",
           "by": "DocumentPublisher",
-          "ref": "crates/net/src/document_publishing/handlers.rs@261@impl Handler<DocumentIngress> for DocumentPublisher {"
+          "ref": "crates/net/src/document_publishing/handlers.rs@268@impl Handler<DocumentIngress> for DocumentPublisher {"
         },
         {
           "name": "all bus events, filtered to the forwardable allowlist",
           "by": "NetEventTranslator",
-          "ref": "crates/net/src/event_translation/actor.rs@104@bus.subscribe(EventType::All, addr.clone().recipient());"
+          "ref": "crates/net/src/event_translation/actor.rs@106@bus.subscribe(EventType::All, addr.clone().recipient());"
         },
         {
           "name": "NetEvent::GossipIngress (accepted gossip)",
           "by": "NetEventTranslator",
-          "ref": "crates/net/src/event_translation/actor.rs@128@NetEvent::GossipIngress {"
+          "ref": "crates/net/src/event_translation/actor.rs@130@NetEvent::GossipIngress {"
         },
         {
           "name": "SyncEnded",
@@ -96,12 +95,12 @@
         {
           "name": "DocumentReceived",
           "by": "DocumentPublisher",
-          "ref": "crates/net/src/document_publishing/handlers.rs@371@.publish_from_remote(document, notification.ts, None, EventSource::Net)"
+          "ref": "crates/net/src/document_publishing/handlers.rs@378@.publish_from_remote(document, notification.ts, None, EventSource::Net)"
         },
         {
           "name": "accepted peer events (publish_from_remote)",
           "by": "NetEventTranslator",
-          "ref": "crates/net/src/event_translation/actor.rs@261@.publish_from_remote(data, ec.ts(), None, EventSource::Net)"
+          "ref": "crates/net/src/event_translation/actor.rs@263@.publish_from_remote(data, ec.ts(), None, EventSource::Net)"
         },
         {
           "name": "PublishDocumentRequested",
@@ -128,12 +127,12 @@
         {
           "name": "publications waiting to be announced and uploaded",
           "where": "memory",
-          "ref": "crates/net/src/document_publishing/actor.rs@160@publications: HashMap<DocumentId, Publication>,"
+          "ref": "crates/net/src/document_publishing/actor.rs@163@publications: HashMap<DocumentId, Publication>,"
         },
         {
           "name": "documents received after restart, kept until SyncEnded",
           "where": "memory",
-          "ref": "crates/net/src/document_publishing/workflow.rs@470@pub struct RestorableDocuments {"
+          "ref": "crates/net/src/document_publishing/workflow.rs@502@pub struct RestorableDocuments {"
         },
         {
           "name": "inbound DHT replicas by sender, bounded per peer and in total",
@@ -196,7 +195,7 @@
       "read_first": [
         {
           "why": "The entry point: wires the startup buffer, sync manager, publisher, translator and converter around the swarm.",
-          "ref": "crates/net/src/lib.rs@142@pub fn setup_net_with_limits_and_interests("
+          "ref": "crates/net/src/lib.rs@141@pub fn setup_net_with_limits_and_interests("
         },
         {
           "why": "The libp2p behaviours the swarm combines, with the gossip and DHT settings.",
@@ -208,11 +207,11 @@
         },
         {
           "why": "How a publish request becomes a DHT store, a gossip notice and an upload.",
-          "ref": "crates/net/src/document_publishing/handlers.rs@80@impl Handler<TypedEvent<PublishDocumentRequested>> for DocumentPublisher {"
+          "ref": "crates/net/src/document_publishing/handlers.rs@87@impl Handler<TypedEvent<PublishDocumentRequested>> for DocumentPublisher {"
         },
         {
           "why": "How an accepted gossip event passes the allowlist and reaches the bus.",
-          "ref": "crates/net/src/event_translation/actor.rs@250@fn handle_remote_event(&mut self, msg: LibP2pEvent) -> Result<()> {"
+          "ref": "crates/net/src/event_translation/actor.rs@252@fn handle_remote_event(&mut self, msg: LibP2pEvent) -> Result<()> {"
         }
       ],
       "rust_patterns": [
@@ -224,17 +223,17 @@
         {
           "pattern": "actix-handler",
           "note": "The translator implements Handler for the bus event type it receives.",
-          "ref": "crates/net/src/event_translation/actor.rs@337@impl Handler<InterfoldEvent> for NetEventTranslator {"
+          "ref": "crates/net/src/event_translation/actor.rs@341@impl Handler<InterfoldEvent> for NetEventTranslator {"
         },
         {
           "pattern": "actix-message",
           "note": "A private message type that carries a publication key into the actor.",
-          "ref": "crates/net/src/document_publishing/actor.rs@91@struct AnnounceDocument(DocumentId);"
+          "ref": "crates/net/src/document_publishing/actor.rs@94@struct AnnounceDocument(DocumentId);"
         },
         {
           "pattern": "tokio-spawn",
           "note": "A tokio task forwards broadcast NetEvents into the actor mailbox.",
-          "ref": "crates/net/src/document_publishing/actor.rs@334@tokio::spawn({"
+          "ref": "crates/net/src/document_publishing/actor.rs@340@tokio::spawn({"
         },
         {
           "pattern": "derive-macro",
@@ -257,11 +256,10 @@
     },
     {
       "id": "e3-sync",
+      "documentation": [{ "title": "Replay and startup fences", "path": "docs/architecture/persistence-and-replay.md" }],
       "kind": "crate",
       "path": "crates/sync",
       "one_line": "Restart catch-up: checks schema and role markers, replays the event log after snapshot cursors, merges chain and peer history, then re-enables effects.",
-      "explain": "sync_with_net_ready runs before effects are enabled: it checks the schema marker, loads each aggregate's snapshot cursor, replays the EventStore after those cursors, and collects historical EVM events. After NetReady it fetches peer history, sorts both sources by HLC timestamp, and publishes EffectsEnabled, SyncEffect, the merged history and SyncEnded in fenced steps, so per-E3 actors see the same order as an uninterrupted run. Without this sequence a restarted node would miss the events after its snapshot cursors, and the EVM gateway would stay in buffering mode and drop live chain events. The crate has no actix actor of its own: it is async functions that call the EventBus and an EventStore Recipient.",
-      "analogy": "Like a shift handover: the returning engineer checks the badge matches the site, reads the logbook from the last signed entry, asks other crews what happened while away, and only then takes live work.",
       "actors": [],
       "consumes": [
         { "name": "NetReady", "by": "sync_with_net_ready", "ref": "crates/sync/src/sync/service.rs@489@net_ready.await?;" },
@@ -394,7 +392,7 @@
         },
         {
           "why": "The production caller: NetReady is armed before networking starts, then sync runs.",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@958@sync_with_net_ready("
+          "ref": "crates/ciphernode-builder/src/builder/startup.rs@160@sync_with_net_ready("
         },
         {
           "why": "The schema check that runs before any state is written.",

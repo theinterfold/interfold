@@ -127,7 +127,9 @@ impl E3Extension for ThresholdKeyshareExtension {
                     bfv_key: ctx.repositories().threshold_keyshare_bfv_key(&e3_id),
                     dkg_timing_reader: self.dkg_timing_reader.clone(),
                     signer: self.signer.clone(),
-                    effects_enabled: true,
+                    // Replay of a selection that the restored context lacks starts the keyshare
+                    // before `EffectsEnabled`; it then waits like a restored keyshare.
+                    effects_enabled: ctx.effects_enabled(),
                 })
                 .with_canonical_keys(self.canonical_keys.clone())
                 .start()

@@ -25,7 +25,7 @@ use e3_trbfv::{
     TrBFVConfig,
 };
 use e3_utils::utility_types::ArcBytes;
-use e3_zk_helpers::computation::DkgInputType;
+use e3_zk_config::DkgInputType;
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 use tracing::{info, warn};

@@ -57,17 +57,14 @@ impl AccusationVoting {
         let forwarded_payload =
             Self::can_forward_proof(event.proof_type).then(|| event.signed_payload.clone());
 
-        let mut actions = Vec::new();
-        self.initiate_accusation(
+        self.accuse_when_effects_run(DeferredAccusation {
             accused_address,
-            event.accused_party_id,
-            event.proof_type,
-            event.data_hash,
+            accused_party_id: event.accused_party_id,
+            proof_type: event.proof_type,
+            data_hash: event.data_hash,
             forwarded_payload,
-            ec,
-            &mut actions,
-        );
-        actions
+            ec: ec.clone(),
+        })
     }
 
     /// Called when the `CommitmentConsistencyChecker` detects a cross-circuit
@@ -94,16 +91,81 @@ impl AccusationVoting {
             },
         );
 
+        self.accuse_when_effects_run(DeferredAccusation {
+            accused_address: data.accused_address,
+            accused_party_id: data.accused_party_id,
+            proof_type: data.proof_type,
+            data_hash: data.data_hash,
+            forwarded_payload: None,
+            ec: ec.clone(),
+        })
+    }
+
+    /// Accuse now, or hold the accusation while startup replays the event log. One held
+    /// accusation per proof is enough: a later one of the same proof is a duplicate.
+    fn accuse_when_effects_run(&mut self, accusation: DeferredAccusation) -> Vec<VoteAction> {
+        if !self.effects_enabled {
+            let key = (accusation.accused_address, accusation.proof_type);
+            if !self
+                .deferred_accusations
+                .iter()
+                .any(|held| (held.accused_address, held.proof_type) == key)
+            {
+                self.deferred_accusations.push(accusation);
+            }
+            return Vec::new();
+        }
         let mut actions = Vec::new();
         self.initiate_accusation(
-            data.accused_address,
-            data.accused_party_id,
-            data.proof_type,
-            data.data_hash,
-            None,
-            ec,
+            accusation.accused_address,
+            accusation.accused_party_id,
+            accusation.proof_type,
+            accusation.data_hash,
+            accusation.forwarded_payload,
+            &accusation.ec,
             &mut actions,
         );
+        actions
+    }
+
+    /// Effects run: accuse the held failures. A failure whose own accusation the replayed log
+    /// held is a duplicate, so this node does not sign a second accusation of it. Neither does it
+    /// for a proof whose peer accusation is pending with this node's vote: that accusation goes on.
+    pub(crate) fn on_effects_enabled(&mut self) -> Vec<VoteAction> {
+        if self.effects_enabled {
+            return Vec::new();
+        }
+        self.effects_enabled = true;
+        let mut actions = Vec::new();
+        for accusation in std::mem::take(&mut self.deferred_accusations) {
+            let key = (accusation.accused_address, accusation.proof_type);
+            // A peer accusation that still waits for this node's re-verification has no vote from
+            // it yet, and the re-verification can fail or end late, so it does not count.
+            if self.pending.values().any(|pending| {
+                (pending.accusation.accused, pending.accusation.proof_type) == key
+                    && pending
+                        .votes_for
+                        .iter()
+                        .any(|vote| vote.voter == self.my_address)
+            }) {
+                self.accused_proofs.insert(key);
+                continue;
+            }
+            self.initiate_accusation(
+                accusation.accused_address,
+                accusation.accused_party_id,
+                accusation.proof_type,
+                accusation.data_hash,
+                accusation.forwarded_payload,
+                &accusation.ec,
+                &mut actions,
+            );
+        }
+        for accusation_id in std::mem::take(&mut self.restored_timeouts) {
+            if self.pending.contains_key(&accusation_id) {
+                actions.push(VoteAction::StartTimeout(accusation_id));
+            }
+        }
         actions
     }
 
@@ -174,6 +236,11 @@ impl AccusationVoting {
         }
 
         let accusation_id = Self::accusation_id(&accusation);
+        // This node votes now from its own failure. A re-verification that a peer's accusation of
+        // the same proof started is no longer needed, and its late result must not add a second
+        // vote from this node.
+        self.pending_reverifications
+            .retain(|_, reverification| reverification.accusation_id != accusation_id);
 
         info!(
             "Broadcasting accusation against {} for {:?} failure",
@@ -221,6 +288,7 @@ impl AccusationVoting {
                 accusation,
                 votes_for: vec![own_vote],
                 ec: ec.clone(),
+                timeout_at: self.timeout_from_now(),
             },
         );
 

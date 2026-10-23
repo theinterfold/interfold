@@ -79,9 +79,14 @@ when an address or a chain ID does not match. For the flags and the finding labe
 | ---------------------------- | -------------------------------------------- | ------------ | ----------------------------- | ------------------------------------------------------------------------------------ |
 | InterfoldTicketToken (tFOLD) | `0xC0B5b49a3949eC4B520eF21BaCFE16e3695F3B5D` | 25786372     | `InterfoldTicketToken`        | [Etherscan](https://etherscan.io/address/0xC0B5b49a3949eC4B520eF21BaCFE16e3695F3B5D) |
 | E3RefundManager              | `0x1940eF168f4E0B3dA24BEca539856684793B0F6e` | 25786384     | `E3RefundManager`             | [Etherscan](https://etherscan.io/address/0x1940eF168f4E0B3dA24BEca539856684793B0F6e) |
-| BfvDecryptionVerifierRouter  | `0xA66CAb7AE230698b2a9ee1E0E967BaD4651FeEa7` | 25998927     | `BfvDecryptionVerifierRouter` | [Etherscan](https://etherscan.io/address/0xA66CAb7AE230698b2a9ee1E0E967BaD4651FeEa7) |
-| BfvPkVerifierRouter          | `0x7CD10057c25674bd5666A9deEE3193f1b29563d1` | 25998926     | `BfvPkVerifierRouter`         | [Etherscan](https://etherscan.io/address/0x7CD10057c25674bd5666A9deEE3193f1b29563d1) |
-| Risc0BfvCiphertextVerifier   | `0x80D217d3b2e16fF2ecc178cC75655C773895c549` | 25998859     | `Risc0BfvCiphertextVerifier`  | [Etherscan](https://etherscan.io/address/0x80D217d3b2e16fF2ecc178cC75655C773895c549) |
+| BfvDecryptionVerifierRouter  | `0xbbFF7101A3Be43e06b64B00e2e656529E6aDf2eE` | 26156286     | `BfvDecryptionVerifierRouter` | [Etherscan](https://etherscan.io/address/0xbbFF7101A3Be43e06b64B00e2e656529E6aDf2eE) |
+| BfvPkVerifierRouter          | `0x3E9614e711ee301DAC3FeF7D86031ED015bc406b` | 26156286     | `BfvPkVerifierRouter`         | [Etherscan](https://etherscan.io/address/0x3E9614e711ee301DAC3FeF7D86031ED015bc406b) |
+| OpenVmBfvCiphertextVerifier  | `0x6cD258E0a893612Aea41c42dC47450ac1A6E2dD1` | 26156226     | `OpenVmBfvCiphertextVerifier` | [Etherscan](https://etherscan.io/address/0x6cD258E0a893612Aea41c42dC47450ac1A6E2dD1) |
+| OpenVmReceiptVerifier        | `0x0dd5E45414629F0f7D757cbb0310A9cfdc5B400b` | 26156225     | `OpenVmReceiptVerifier`       | [Etherscan](https://etherscan.io/address/0x0dd5E45414629F0f7D757cbb0310A9cfdc5B400b) |
+
+For the two routers, the manifest records block 26,156,286 as the deploy block. That is the first
+block of the v0.19 deployment. The router contracts have code from block 26,156,611
+(`BfvPkVerifierRouter`) and block 26,156,612 (`BfvDecryptionVerifierRouter`).
 
 ### Also used on mainnet
 
@@ -102,24 +107,24 @@ collateral, call `underlying()` on the `InterfoldTicketToken`.
 ### Verifiers in use on mainnet
 
 <Callout type='info'>
-  OpenVM replaces RISC Zero as the compute proof system for new deployments. Mainnet keeps the RISC
-  Zero ciphertext verifier listed here until an OpenVM migration deploys an `OpenVmReceiptVerifier`
-  and an `OpenVmBfvCiphertextVerifier` and rebinds the E3 programs. See [Verify the Compute
-  Provider](/build/e3-program/verify-compute-provider).
+  Since the v0.19 cutover at block 26,176,770 (12 October 2026), mainnet uses OpenVM for compute
+  proofs. See [Verify the Compute Provider](/build/e3-program/verify-compute-provider).
 </Callout>
 
 The `Interfold` contract stores one verifier of each kind for each encryption scheme. The table
-shows the values for the BFV scheme (`keccak256("fhe.rs:BFV")`) at block 26,057,073 (25 September
+shows the values for the BFV scheme (`keccak256("fhe.rs:BFV")`) at block 26,221,910 (18 October
 2026). Each E3 keeps the verifiers that were set when it was requested.
 
 | Verifier   | Contract                      | Address                                      | Set at block | Read with                         |
 | ---------- | ----------------------------- | -------------------------------------------- | ------------ | --------------------------------- |
-| Ciphertext | `Risc0BfvCiphertextVerifier`  | `0x80D217d3b2e16fF2ecc178cC75655C773895c549` | 26004622     | `getCiphertextVerifier(schemeId)` |
-| Decryption | `BfvDecryptionVerifierRouter` | `0xA66CAb7AE230698b2a9ee1E0E967BaD4651FeEa7` | 26004622     | `getDecryptionVerifier(schemeId)` |
-| Public key | `BfvPkVerifierRouter`         | `0x7CD10057c25674bd5666A9deEE3193f1b29563d1` | 26004622     | `getPkVerifier(schemeId)`         |
+| Ciphertext | `OpenVmBfvCiphertextVerifier` | `0x6cD258E0a893612Aea41c42dC47450ac1A6E2dD1` | 26176770     | `getCiphertextVerifier(schemeId)` |
+| Decryption | `BfvDecryptionVerifierRouter` | `0xbbFF7101A3Be43e06b64B00e2e656529E6aDf2eE` | 26176770     | `getDecryptionVerifier(schemeId)` |
+| Public key | `BfvPkVerifierRouter`         | `0x3E9614e711ee301DAC3FeF7D86031ED015bc406b` | 26176770     | `getPkVerifier(schemeId)`         |
 
-- The ciphertext verifier checks a RISC Zero Groth16 proof for the guest image ID
-  `0x9d3e21fd7cc08e629cb467e5ca6bfc8e1a645b483bfd91b6b1648ced259110fc`. Read it with `imageId()`.
+- The ciphertext verifier checks an OpenVM proof for the guest image ID
+  `0x126eb3ea8c2d24cbf8e89f7e41dd2f0be5050be7a28276f0bcd4cb0546acdf52`. Read it with `imageId()`.
+  The ciphertext verifier uses the `OpenVmReceiptVerifier` from the reference table to verify the
+  proof.
 - Each router has three routes (`routeCount()`, `routeAt(index)`). All routes point to
   `BfvDecryptionVerifier` or `BfvPkVerifier` contracts.
 - `mainnet-protocol.deployment.json` records these verifiers. Its `bfvVerifierRoutes` field lists
@@ -134,9 +139,14 @@ shows the values for the BFV scheme (`keccak256("fhe.rs:BFV")`) at block 26,057,
   first E3 program, `MockE3Program`, and registered `CRISPProgram`.
 </Callout>
 
+At block 26,176,770 (12 October 2026), the contract owner ran the v0.19 cutover. It replaced the
+ciphertext verifier with an `OpenVmBfvCiphertextVerifier` and installed two new verifier routers. It
+also unregistered the earlier `CRISPProgram` and registered a new `CRISPProgram`.
+
 The `manifest.json` asset of release v0.18.0 still marks mainnet with `mocks: true`. With that
 asset, `interfold config check` prints the mock-deployment note for mainnet, although the verifiers
-in use are not mocks.
+in use are not mocks. The `manifest.json` asset of release v0.19.0 lists the verifiers from before
+the cutover. The manifest in the repository lists the current verifiers.
 
 ## Sepolia
 
@@ -181,7 +191,8 @@ proofs. CRISP uses real Avail data availability. `MockUSDC` is the fee token. An
 The manifest does not publish these Sepolia contracts, so `interfold config check` does not compare
 them. The addresses and deploy blocks come from two deployment records. The Interfold record is
 `packages/interfold-contracts/deployed_contracts.json`. The CRISP record is
-`examples/CRISP/packages/crisp-contracts/deployed_contracts.json`.
+[`packages/crisp-contracts/deployed_contracts.json`](https://github.com/theinterfold/CRISP/blob/main/packages/crisp-contracts/deployed_contracts.json)
+in the CRISP repository.
 
 | Contract                             | Address                                      | Deploy block | Record    | Explorer                                                                                     |
 | ------------------------------------ | -------------------------------------------- | ------------ | --------- | -------------------------------------------------------------------------------------------- |

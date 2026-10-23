@@ -15,8 +15,8 @@ It is for developers who have the CRISP stack running. At the end, you have a co
 decoded tally, and you know what CRISP does at each E3 stage.
 
 Before you start, complete [Set up CRISP](/CRISP/setup). `pnpm dev:up` must run in a terminal, and
-the client must be available at `http://localhost:3000`. Run the `pnpm cli` commands from
-`examples/CRISP` in a second terminal.
+the client must be available at `http://localhost:3000`. Run the `pnpm cli` commands from the root
+of the CRISP repository in a second terminal.
 
 ## Run the round
 
@@ -246,9 +246,9 @@ On Sepolia and Ethereum mainnet, each round has three limits:
 `sortitionSubmissionWindow`, and `dkgWindow`. The CLI and the server read it for each request. In
 the mainnet protocol configuration, these values are 3,600 seconds, 600 seconds, and 21,600 seconds,
 so `start` is at least 25,800 seconds after the request
-(`packages/interfold-contracts/deploy/protocol/mainnet-protocol.config.json`). The protocol owner
-can change these values. For this reason, an application must read `earliestVotingStart()` and not
-keep a fixed minimum.
+([`mainnet-protocol.config.json`](https://github.com/theinterfold/interfold/blob/main/packages/interfold-contracts/deploy/protocol/mainnet-protocol.config.json)).
+The protocol owner can change these values. For this reason, an application must read
+`earliestVotingStart()` and not keep a fixed minimum.
 
 CRISP deployments on Avail set `availabilityFinalizationWindow` to 10,800 seconds (3 hours).
 `CRISPProgram.validate` rejects a request with these errors:

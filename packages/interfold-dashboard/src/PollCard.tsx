@@ -117,16 +117,12 @@ function PrivacyExplainer() {
 export default function PollCard({
   pollState,
   currentStageIdx,
-  liveMode,
-  onToggleLive,
   ballotCount,
   onNavigate,
   poll,
 }: {
   pollState: string
   currentStageIdx: number
-  liveMode?: boolean
-  onToggleLive?: () => void
   ballotCount?: number
   onNavigate?: (view: string) => void
   poll: Poll
@@ -155,28 +151,6 @@ export default function PollCard({
               {poll.displayId}
             </span>
           </div>
-          {onToggleLive && (
-            <button
-              type='button'
-              className={`live-toggle ${liveMode ? 'live-toggle--on' : ''}`}
-              onClick={onToggleLive}
-              aria-pressed={!!liveMode}
-            >
-              <span className='live-toggle__icon' aria-hidden='true'>
-                {liveMode ? (
-                  <svg viewBox='0 0 10 10' width='10' height='10'>
-                    <rect x='2' y='1.5' width='2' height='7' fill='currentColor' />
-                    <rect x='6' y='1.5' width='2' height='7' fill='currentColor' />
-                  </svg>
-                ) : (
-                  <svg viewBox='0 0 10 10' width='10' height='10'>
-                    <path d='M2 1 L9 5 L2 9 Z' fill='currentColor' />
-                  </svg>
-                )}
-              </span>
-              <span>{liveMode ? 'Pause demo' : 'Watch the lifecycle'}</span>
-            </button>
-          )}
           <StageBadge stageIdx={safeStageIdx} label={isIdle ? 'No ballots' : undefined} />
         </header>
 

@@ -36,12 +36,12 @@ host and open the correct ports.
 A ciphernode runs threshold cryptography and makes zero-knowledge proofs. The work uses a lot of CPU
 and memory during DKG and proof generation. Memory is the only hardware value that the node checks.
 
-| Resource | Enforced by the node                                                                                  | Guidance (not enforced)                                           |
-| -------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Memory   | On Linux, the node does not start with less than 17 GiB. The default of two prover jobs needs 30 GiB. | 32 GB for mainnet.                                                |
-| CPU      | No minimum. The node keeps `multithread_reserve_threads` (default `2`) logical CPUs for other work.   | 8 or more modern x86-64 cores for mainnet. 4 or more for testnet. |
-| Disk     | No minimum.                                                                                           | SSD. Start with 100 GB for testnet and 500 GB NVMe for mainnet.   |
-| Network  | One inbound UDP port for QUIC.                                                                        | A stable, low-latency connection that does not filter UDP.        |
+| Resource | Enforced by the node                                                                                  | Guidance (not enforced)                                                                                               |
+| -------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Memory   | On Linux, the node does not start with less than 17 GiB. The default of two prover jobs needs 30 GiB. | 32 GB for mainnet.                                                                                                    |
+| CPU      | No minimum. The node keeps `multithread_reserve_threads` (default `2`) logical CPUs for other work.   | 8 or more modern x86-64 cores for mainnet. 4 or more for testnet.                                                     |
+| Disk     | No minimum.                                                                                           | SSD. Start with 100 GB for testnet and 500 GB NVMe for mainnet.                                                       |
+| Network  | One inbound UDP port for QUIC.                                                                        | At least 10 Mbit/s of upload ([Network bandwidth](#network-bandwidth)). A stable connection that does not filter UDP. |
 
 ### How the node sizes its prover work
 
@@ -106,9 +106,9 @@ check does not stop startup. To build from source, use the Rust toolchain in `ru
 | `50505`          | TCP      | `127.0.0.1`  | Local control port for CLI commands. Set with `node.ctrl_port`. | No                   |
 | Not set          | TCP      | `127.0.0.1`  | Optional node dashboard. Set with `node.dashboard_port`.        | No                   |
 
-The DAppNode package uses UDP port `37173` for QUIC. Cloud firewalls (for example, AWS security
-groups or GCP firewall rules) must allow inbound UDP on the QUIC port. Behind NAT, forward the same
-UDP port to the host.
+The DAppNode Mainnet package uses UDP port `37173` for QUIC, and the Sepolia package uses `37174`.
+Cloud firewalls (for example, AWS security groups or GCP firewall rules) must allow inbound UDP on
+the QUIC port. Behind NAT, forward the same UDP port to the host.
 
 <Callout type='warning'>
   The control port accepts CLI commands for the running node. The node binds it to `127.0.0.1`. Do
@@ -118,6 +118,32 @@ UDP port to the host.
 The node finds its first peers through a DNS bootstrap address for its network:
 `/dnsaddr/bootstrap.interfold.network` on mainnet and `/dnsaddr/bootstrap-sepolia.interfold.network`
 on Sepolia. See [Run a Ciphernode](/operate/running#networking) to set peers.
+
+## Network bandwidth
+
+The node does not check its bandwidth. Upload bandwidth is the limit. When the node is in a
+committee, it sends a threshold share of approximately 1.8 MB to each other member during the DKG.
+The node uploads one share at a time. Each upload sends the share to up to 20 peers at the same
+time, and each transfer has 60 seconds to complete.
+
+| Upload that the node can use | Result in a test with a committee of 19 nodes                                                                                                                         |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 Mbit/s to 4 Mbit/s         | All share uploads timed out. Most members did not receive the shares of the node in 30 minutes. This delays the DKG, and the committee can continue without the node. |
+| 6 Mbit/s                     | The committee sent all shares in approximately 28 minutes. 8% of the uploads failed and started again. Other traffic on the connection can stop the uploads.          |
+| 10 Mbit/s                    | Minimum. The committee sent all shares in approximately 21 minutes.                                                                                                   |
+| 20 Mbit/s or more            | Recommended. The committee sent all shares in approximately 10 minutes at 20 Mbit/s and 5 minutes at 50 Mbit/s.                                                       |
+
+Other traffic on the same connection decreases the upload that the node can use. Examples are
+backups, file synchronization, video calls, and a second node.
+
+For each E3 where the node is in the committee, the node sends approximately 1 GB when it first
+sends its shares, and it receives approximately the same quantity. Until the committee public key is
+published, the node sends each of its documents again approximately every 30 minutes. A node that is
+not in the committee also sends data, because it keeps copies of the shares of other nodes and sends
+them to peers that ask for them.
+
+The values come from a test of the v0.19.0 network code: 30 nodes on one host, with documents of the
+size that the secure parameters make. The test did not limit download bandwidth.
 
 ## RPC endpoints
 

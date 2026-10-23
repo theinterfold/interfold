@@ -21,6 +21,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                     && is_slashable_outcome(&data.outcome)
                 {
                     let recovery = &mut self.recovery;
+                    let intent_times = &mut self.intent_times;
                     let decision = self.submissions.record_and_admit(data.clone(), |event| {
                         if let Some(recovery) = recovery.as_mut() {
                             recovery.try_mutate(&event_context, |mut recovery| {
@@ -28,11 +29,28 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                                 Ok(recovery)
                             })?;
                         }
+                        // A missing time only makes a fallback submitter wait its full delay, so
+                        // a failed write does not stop the intent.
+                        if let Some(intent_times) = intent_times.as_mut() {
+                            let key = SlashIntentKey::from_quorum(event)?;
+                            if let Err(error) =
+                                intent_times.try_mutate_without_context(|mut times| {
+                                    times.record(key, now_unix_secs());
+                                    Ok(times)
+                                })
+                            {
+                                warn!(%error, "Could not save when the slash intent was recorded");
+                            }
+                        }
                         Ok(())
                     });
                     match decision {
                         Ok((key, SlashSubmissionDecision::Submit)) => {
-                            ctx.notify(SubmitSlashIntent { key, event: data });
+                            ctx.notify(SubmitSlashIntent {
+                                key,
+                                event: data,
+                                retry: false,
+                            });
                         }
                         Ok((_, SlashSubmissionDecision::Defer)) => {
                             info!(e3_id = %data.e3_id, "Deferred slash intent until effects are enabled");
@@ -58,6 +76,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                                     self.bus.with_ec(&event_context).err(EType::Evm, error);
                                 }
                             }
+                            self.forget_intent_time(&key);
                             self.submissions.mark_completed(key);
                         }
                         Err(error) => self.bus.err(EType::Evm, error),
@@ -78,6 +97,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                                     self.bus.with_ec(&event_context).err(EType::Evm, error);
                                 }
                             }
+                            self.forget_intent_time(&key);
                             self.submissions.mark_completed(key);
                         }
                         Ok(None) => {}
@@ -97,7 +117,13 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                         async move {
                             for (key, event) in deferred {
                                 if let Err(error) =
-                                    address.send(SubmitSlashIntent { key, event }).await
+                                    address
+                                        .send(SubmitSlashIntent {
+                                            key,
+                                            event,
+                                            retry: false,
+                                        })
+                                        .await
                                 {
                                     warn!(%error, "Slashing writer stopped with deferred intents pending");
                                     break;
@@ -120,6 +146,13 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitSlashIntent>
     type Result = ResponseFuture<()>;
 
     fn handle(&mut self, msg: SubmitSlashIntent, ctx: &mut Self::Context) -> Self::Result {
+        let recorded_ago = self
+            .intent_times
+            .as_ref()
+            .and_then(|times| times.get())
+            .filter(|_| !msg.retry)
+            .map(|times| times.recorded_ago(&msg.key, now_unix_secs()))
+            .unwrap_or_default();
         Box::pin({
             let contract_address = self.contract_address;
             let provider = self.provider.clone();
@@ -127,9 +160,10 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitSlashIntent>
             let my_addr = self.provider.provider().default_signer_address();
             let address = ctx.address();
             async move {
-                let SubmitSlashIntent { key, event } = msg;
+                let SubmitSlashIntent { key, event, .. } = msg;
+                let attempt_started = tokio::time::Instant::now();
                 // The workflow decides; this loop only runs the effect of each step.
-                let (submission, mut step) = SlashSubmission::new(event, my_addr);
+                let (submission, mut step) = SlashSubmission::new(event, my_addr, recorded_ago);
                 let end = loop {
                     step = match step {
                         SubmissionStep::ReadPolicy => {
@@ -146,7 +180,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitSlashIntent>
                                 warn!(%error, "Could not read slash policy before submission");
                                 error.to_string()
                             });
-                            submission.policy_read(policy)
+                            submission.policy_read(policy, attempt_started.elapsed())
                         }
                         SubmissionStep::Exclude(exclusion) => {
                             info!(
@@ -227,18 +261,26 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SlashSubmissionFini
                     self.bus.err(EType::Evm, error);
                 }
             }
+            self.forget_intent_time(&msg.key);
         }
         self.submissions.finish(&msg.key, msg.terminal);
         let Some(event) = msg.retry_event else {
             return;
         };
+        // A retry waits the full rank delay again. Forgetting the first record time keeps that true
+        // after a restart, so a restarted retry does not submit at once.
+        self.forget_intent_time(&msg.key);
 
         ctx.run_later(SLASH_SUBMISSION_RETRY_DELAY, move |actor, ctx| match actor
             .submissions
             .admit(event.clone())
         {
             Ok((key, SlashSubmissionDecision::Submit)) => {
-                ctx.notify(SubmitSlashIntent { key, event });
+                ctx.notify(SubmitSlashIntent {
+                    key,
+                    event,
+                    retry: true,
+                });
             }
             Ok((_, SlashSubmissionDecision::Defer)) => {}
             Ok((_, SlashSubmissionDecision::IgnoreDuplicate)) => {}

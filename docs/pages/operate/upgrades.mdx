@@ -216,7 +216,11 @@ Install the exact release that the release notes name:
 | -------------- | -------------------------------------------------------------------------- |
 | CLI binary     | `interfold update --version v0.18.0`, or `interfold update` for the latest |
 | Docker         | `docker pull ghcr.io/theinterfold/ciphernode:0.18.0`                       |
-| DAppNode       | Update the Interfold ciphernode package in the DAppNode interface          |
+| DAppNode       | Update the Mainnet or Sepolia package in the DAppNode interface            |
+
+A DAppNode package does the rest of this procedure when it starts: it resets the state if the
+release needs it, and then starts the node. That reset needs a release with
+`interfold node reset-data --if-schema-older`. See [Reset node state](#reset-node-state).
 
 Release 0.19.0 and earlier do not have the `update` command. On such a release, run the install
 script with the tag of the release:
@@ -331,8 +335,14 @@ volume. For such a container, follow
 [Move state from an earlier image](/operate/running#move-state-from-an-earlier-image). It copies the
 state to the volume, and then it resets the state.
 
-The DAppNode package stores its state on the `/data` volume. Keep that volume. Use the one-off
-container commands below instead of the CLI image migration procedure.
+The DAppNode package stores its state on the `/data` volume. Keep that volume. On a release with
+`interfold node reset-data --if-schema-older`, the package runs that command before each start, so
+an update resets an older state by itself. A refusal stops the package with the same lists. Do the
+checks in [If the command refuses](#if-the-command-refuses). For a package, the release that the
+node ran before is the previous package version. Set `ALLOW_ACTIVE_E3S_RESET` to `true` in the
+package Config only where those checks say to add `--allow-active-e3s`, and set it back to `false`
+after the start. On v0.19.0, use the one-off container commands below instead of the CLI image
+migration procedure.
 
 <Steps>
 
@@ -378,8 +388,9 @@ Run the reset command:
 interfold node reset-data --name <node> --yes
 ```
 
-For DAppNode, stop the package and back up its complete `/data` volume first. Use the new DAppNode
-image, not the CLI image. Confirm its binary version:
+For DAppNode, stop the package and create a package backup first. The backup includes the
+configuration, encryption password, and durable node state. Use the new DAppNode image for the same
+network. Confirm its binary version:
 
 ```bash
 docker run --rm --entrypoint interfold <new-dappnode-image> --version

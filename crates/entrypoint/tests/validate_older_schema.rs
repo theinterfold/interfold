@@ -13,6 +13,7 @@ use e3_config::{AppConfig, UnscopedAppConfig};
 use e3_crypto::Cipher;
 use e3_data::SledDb;
 use e3_entrypoint::helpers::datastore::get_eventstore_reader;
+use e3_entrypoint::nodes::reset_data::stored_schema_is_older;
 use e3_entrypoint::validate::{validate_node, Severity};
 use e3_event_system::EventSystem;
 use e3_events::{Get, Insert, InterfoldEvent, StoreKeys, Unsequenced};
@@ -160,6 +161,38 @@ async fn validate_reports_a_store_from_an_older_schema() -> Result<()> {
         assert!(!report.has_failure(), "{}", report.render());
         assert_eq!(db.get(Get::new(StoreKeys::schema_version()))?, None);
     }
+    Ok(())
+}
+
+/// `interfold node reset-data --if-schema-older` resets only a store with an older schema marker.
+/// A package runs it before every start, so it must leave every other data directory alone.
+#[actix::test]
+async fn reset_if_schema_older_finds_only_an_older_store() -> Result<()> {
+    // A newer marker and a store without a marker halt at startup with their own message.
+    for (schema, older) in [
+        (Some(7), true),
+        (Some(SCHEMA_VERSION + 1), false),
+        (None, false),
+    ] {
+        let root = tempfile::tempdir()?;
+        let config = node_config(root.path())?;
+        older_store(&config, SCHEMA_SEVEN_EVENTS[0], schema)?;
+        assert_eq!(stored_schema_is_older(&config)?, older, "marker {schema:?}");
+    }
+
+    // A node that has not started has no store, and the check must not create one.
+    let root = tempfile::tempdir()?;
+    let config = node_config(root.path())?;
+    assert!(!stored_schema_is_older(&config)?);
+    assert!(!config.db_file().exists(), "the check created a store");
+
+    let mut db = SledDb::new(&config.db_file(), "datastore")?;
+    db.insert(Insert::new(
+        StoreKeys::schema_version(),
+        bincode::serialize(&SCHEMA_VERSION)?,
+    ))?;
+    db.flush()?;
+    assert!(!stored_schema_is_older(&config)?);
     Ok(())
 }
 

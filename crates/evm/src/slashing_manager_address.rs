@@ -20,14 +20,20 @@ const SLASHING_MANAGER_READ_RETRY_DELAYS: [u64; 2] = [1, 3];
 
 /// Decide the SlashingManager for one chain.
 ///
-/// `Interfold.slashingManager()` is authoritative: the contracts call that manager, and accusation
-/// votes sign its address as the EIP-712 `verifyingContract`. The configured address applies only
-/// when the chain gives no address. `None` means that neither source gives an address.
+/// On an enabled chain, `Interfold.slashingManager()` is authoritative: the contracts call that
+/// manager, and accusation votes sign its address as the EIP-712 `verifyingContract`. A configured
+/// address can be a retired manager, so it never replaces the chain's value. A disabled chain has
+/// no provider, so its configured address applies. `None` means that the chain has no
+/// SlashingManager.
 fn choose_slashing_manager(
     chain: &str,
+    enabled: bool,
     configured: Option<Address>,
     on_chain: Option<Address>,
 ) -> Option<Address> {
+    if !enabled {
+        return configured;
+    }
     if let (Some(on_chain), Some(configured)) = (on_chain, configured) {
         if on_chain != configured {
             warn!(
@@ -39,13 +45,14 @@ fn choose_slashing_manager(
             );
         }
     }
-    on_chain.or(configured)
+    on_chain
 }
 
 /// Resolve the SlashingManager address of each configured chain, in `chains` order.
 ///
 /// An enabled chain reads `Interfold.slashingManager()`. A disabled chain has no provider, so
-/// only its configured address applies. `choose_slashing_manager` decides the address.
+/// only its configured address applies. `choose_slashing_manager` decides the address. An enabled
+/// chain whose read fails or returns zero has no SlashingManager, and a full node does not start.
 pub async fn resolve_slashing_managers(chains: &Chains) -> Result<Vec<Option<Address>>> {
     let mut slashing_managers = Vec::new();
     for chain in chains.iter() {
@@ -57,11 +64,12 @@ pub async fn resolve_slashing_managers(chains: &Chains) -> Result<Vec<Option<Add
             .map(|contract| contract.address())
             .transpose()?;
         let mut on_chain = None;
+        let enabled = matches!(chain, Chain::Enabled(_));
         if let Chain::Enabled(chain) = chain {
             let provider = chain.provider.provider();
             let interfold = config.contracts.interfold.address()?;
-            // A configured address can be a retired manager, so a transient read failure should
-            // not decide the signing domain for the whole run.
+            // Without the live manager a full node does not start, so a transient read failure
+            // is retried before startup gives up.
             let mut read = fetch_slashing_manager(provider, interfold).await;
             for delay_secs in SLASHING_MANAGER_READ_RETRY_DELAYS {
                 if read.is_ok() {
@@ -72,21 +80,26 @@ pub async fn resolve_slashing_managers(chains: &Chains) -> Result<Vec<Option<Add
             }
             match read {
                 Ok(Some(address)) => on_chain = Some(address),
-                Ok(None) => warn!(
+                Ok(None) => error!(
                     chain = %config.name,
                     configured = ?configured,
-                    "Interfold.slashingManager() is not set; the configured SlashingManager applies"
+                    "Interfold.slashingManager() is not set; this chain has no SlashingManager"
                 ),
                 Err(error) => error!(
                     chain = %config.name,
                     configured = ?configured,
                     error = %error,
-                    "Could not read Interfold.slashingManager(); the configured SlashingManager \
-                     applies until the next restart. Check that it is the live manager"
+                    "Could not read Interfold.slashingManager(); this chain has no \
+                     SlashingManager until a restart reads it"
                 ),
             }
         }
-        slashing_managers.push(choose_slashing_manager(&config.name, configured, on_chain));
+        slashing_managers.push(choose_slashing_manager(
+            &config.name,
+            enabled,
+            configured,
+            on_chain,
+        ));
     }
     Ok(slashing_managers)
 }
@@ -130,22 +143,28 @@ mod tests {
     use alloy::primitives::Address;
 
     #[test]
-    fn the_interfold_slashing_manager_wins_over_the_configured_address() {
+    fn an_enabled_chain_uses_only_the_interfold_slashing_manager() {
         let live = Address::repeat_byte(0x75);
         let retired = Address::repeat_byte(0x97);
 
         assert_eq!(
-            choose_slashing_manager("test", Some(retired), Some(live)),
+            choose_slashing_manager("test", true, Some(retired), Some(live)),
             Some(live)
         );
         assert_eq!(
-            choose_slashing_manager("test", None, Some(live)),
+            choose_slashing_manager("test", true, None, Some(live)),
             Some(live)
         );
+        // A failed or unset read never falls back to a configured, possibly retired, manager.
         assert_eq!(
-            choose_slashing_manager("test", Some(retired), None),
+            choose_slashing_manager("test", true, Some(retired), None),
+            None
+        );
+        assert_eq!(choose_slashing_manager("test", true, None, None), None);
+        // A disabled chain has no provider, so its configured address applies.
+        assert_eq!(
+            choose_slashing_manager("test", false, Some(retired), None),
             Some(retired)
         );
-        assert_eq!(choose_slashing_manager("test", None, None), None);
     }
 }

@@ -207,6 +207,10 @@ sol! {
         error ProofRequired();
         error InvalidProof();
         error Unauthorized();
+        error ZeroAddress();
+        error InvalidAccusationWindow();
+        error AccusationIssuedInFuture();
+        error SlashSubmissionDeadlinePassed();
     }
 }
 
@@ -463,6 +467,12 @@ sol! {
         ) external view returns (bool active, uint256 activeOperatorCount);
         function numActiveOperators() external view returns (uint256);
         function hasExitInProgress(address operator) external view returns (bool);
+
+        function unresolvedCommitteesOf(address operator) external view returns (uint256);
+        function committeeObligationAt(
+            address operator,
+            uint256 index
+        ) external view returns (uint256 e3Id, address registry);
 
         event TicketBalanceUpdated(
             address indexed operator,

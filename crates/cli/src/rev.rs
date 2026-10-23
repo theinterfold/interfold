@@ -12,8 +12,9 @@ pub const GIT_SHA: &str = env!("GIT_SHA");
 ///
 /// Feature gates are resolved at compile time, so a checkout says nothing about
 /// what the installed binary can do. Scripts that need a feature must ask the
-/// binary itself. Released binaries build `--bin interfold` with no features and
-/// report an empty list.
+/// binary itself. The `interfold-<platform>` release archives build `--bin interfold` with
+/// no features and report an empty list. The test-only release archive reports
+/// `test-only-skip-proof-aggregation`.
 pub fn compiled_features() -> Vec<&'static str> {
     let mut features = Vec::new();
     if cfg!(feature = "test-only-skip-proof-aggregation") {

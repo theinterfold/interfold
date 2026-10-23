@@ -13,7 +13,9 @@ import { Flow, LinkCard, LinkCards } from '@/components/ui'
 An E3 program contract cannot read the plaintext of an input. If the program must reject bad inputs,
 the submitter must attach a zero-knowledge proof. This tutorial adds that proof to the default
 template: each input must encrypt 0 or 1, so the sum is a count of "yes" answers. The steps follow
-what CRISP does in `examples/CRISP/circuits` and `packages/crisp-contracts`.
+what CRISP does in the [`circuits`](https://github.com/theinterfold/CRISP/tree/main/circuits) and
+[`packages/crisp-contracts`](https://github.com/theinterfold/CRISP/tree/main/packages/crisp-contracts)
+folders of the CRISP repository.
 
 At the end, you have two Noir circuits, a generated Solidity verifier, and a `publishInput` that
 rejects an input without a valid proof.
@@ -155,10 +157,10 @@ fn main(
 ```
 
 The input `k1` is the plaintext polynomial scaled to `[q * m]_t` (`k1 = [q*m]_t` in
-`crates/zk-helpers/src/circuits/threshold/user_data_encryption/computation.rs`). For each option,
-CRISP's `check_coefficient_values_with_balance` proves that the coefficient in `k1` is a weight in
-`[0, t)` scaled the same way. The two commitment functions are the ones that `user_data_encryption`
-uses, so equal inputs give equal outputs.
+`crates/zk/witness/src/threshold/user_data_encryption.rs`). For each option, CRISP's
+`check_coefficient_values_with_balance` proves that the coefficient in `k1` is a weight in `[0, t)`
+scaled the same way. The two commitment functions are the ones that `user_data_encryption` uses, so
+equal inputs give equal outputs.
 
 Check the circuit:
 
@@ -183,13 +185,15 @@ interfold_lib = { git = "https://github.com/theinterfold/interfold", tag = "v0.1
 bb_proof_verification = { git = "https://github.com/AztecProtocol/aztec-packages/", tag = "v5.1.0", directory = "barretenberg/noir/bb_proof_verification" }
 ```
 
-Create `circuits/binary_input_fold/src/main.nr`. It follows `examples/CRISP/circuits/bin/fold`:
+Create `circuits/binary_input_fold/src/main.nr`. It follows
+[`circuits/bin/fold`](https://github.com/theinterfold/CRISP/tree/main/circuits/bin/fold) in the
+CRISP repository:
 
 ```noir filename="circuits/binary_input_fold/src/main.nr"
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use interfold_lib::math::commitments::compute_vk_hash;
 
-/// The hash of the two inner verification keys. Set it from the zk-artifacts vk-hash output.
+/// The ordered SAFE hash of the two canonical inner verification-key hashes.
 pub global EXPECTED_KEY_HASH: Field = 0;
 
 fn main(
@@ -279,17 +283,17 @@ mv target/vk_hash target/binary_input.vk_recursive_hash
 
 ### Pin the key hash
 
-From the root of the Interfold checkout, hash the two key hashes. The order must match the order in
-the fold circuit:
+Call `e3_zk_witness::compute_vk_hash` from your Rust artifact build hook. Load each key hash as a
+canonical BN254 field value: exactly 32 bytes, big-endian, in `[0, p)`. Reject invalid values; do
+not reduce them modulo the field. Preserve this order:
 
-```bash
-pnpm zk vk-hash \
-  circuits/bin/threshold/target/user_data_encryption.vk_recursive_hash \
-  <my-e3>/circuits/binary_input/target/binary_input.vk_recursive_hash
-```
+1. `user_data_encryption.vk_recursive_hash`
+2. `binary_input.vk_recursive_hash`
 
-The tool prints one field value as 32-byte hexadecimal. Set `EXPECTED_KEY_HASH` in
-`circuits/binary_input_fold/src/main.nr` to this value. Then compile the fold:
+The repository build owner implements strict loading in `crates/zk/build/src/vk_tree.rs`.
+[CRISP](https://github.com/theinterfold/CRISP) computes the same ordered hash for its fold circuits
+with `pnpm compute:vk-hash`. For your custom circuit, write the computed field value to
+`EXPECTED_KEY_HASH` in `circuits/binary_input_fold/src/main.nr`. Then compile the fold:
 
 ```bash
 cd circuits/binary_input_fold && nargo compile
@@ -300,7 +304,8 @@ Each change to `binary_input` changes its key. Repeat this step after each chang
 ### Generate the Solidity verifier
 
 Write the fold key for the EVM, then generate the verifier. These are the commands in
-`examples/CRISP/scripts/compile_circuits.sh`:
+[`scripts/compile_circuits.sh`](https://github.com/theinterfold/CRISP/blob/main/scripts/compile_circuits.sh)
+in the CRISP repository:
 
 ```bash
 cd circuits/binary_input_fold
@@ -383,14 +388,16 @@ its input tree.
   other bytes. The default input policy of the template (`InputPolicy::default()`) cannot detect
   this, because its leaf is the commitment alone. The CRISP Secure Process drops an input whose
   bytes do not reproduce its commitment (`matches_commitment` in
-  `examples/CRISP/program/src/lib.rs`). See [The Secure Process](/build/e3-program/secure-process).
+  [`program/src/lib.rs`](https://github.com/theinterfold/CRISP/blob/main/program/src/lib.rs) in the
+  CRISP repository). See [The Secure Process](/build/e3-program/secure-process).
 </Callout>
 
 ### Deploy the verifier with the program
 
 In `deploy/default.ts`, deploy the two libraries and the verifier before `MyProgram`. Use fully
-qualified names, as `examples/CRISP/packages/crisp-contracts/scripts/verifiers.ts` does. Every
-generated verifier declares the same contract names.
+qualified names, as
+[`packages/crisp-contracts/scripts/verifiers.ts`](https://github.com/theinterfold/CRISP/blob/main/packages/crisp-contracts/scripts/verifiers.ts)
+in the CRISP repository does. Every generated verifier declares the same contract names.
 
 ```ts filename="deploy/default.ts"
 const source = 'contracts/verifiers/BinaryInputVerifier.sol'
@@ -424,7 +431,8 @@ Run `pnpm compile` to regenerate the TypeChain types before you deploy.
 
 The client makes three proofs: one for the encryption, one for the rule, and the fold. Then it
 encodes the input for `publishInput`. This function is adapted from `generateProof` in
-`examples/CRISP/packages/crisp-sdk/src/vote.ts`.
+[`packages/crisp-sdk/src/vote.ts`](https://github.com/theinterfold/CRISP/blob/main/packages/crisp-sdk/src/vote.ts)
+in the CRISP repository.
 
 Before you use it, do these two things:
 
@@ -537,8 +545,9 @@ new format.
 ## Test the circuit
 
 Put Noir tests (`#[test]` functions) next to the circuit code and run them with `nargo test` in the
-package. CRISP does this in `examples/CRISP/circuits/lib/src/merkle_tree.nr` and runs the tests with
-`pnpm test:circuits`.
+package. CRISP does this in
+[`circuits/lib/src/merkle_tree.nr`](https://github.com/theinterfold/CRISP/blob/main/circuits/lib/src/merkle_tree.nr)
+and runs the tests with `pnpm test:circuits`.
 
 ## Compare with CRISP
 

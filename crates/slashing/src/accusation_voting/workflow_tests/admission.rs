@@ -227,7 +227,7 @@ fn local_self_accusations_are_ignored() {
     let removed = signer(3);
     let committee = vec![removed.address(), me.address(), other.address()];
 
-    for after_slash in [false, true] {
+    for after_expulsion in [false, true] {
         for consistency in [false, true] {
             for (address, party_id) in [
                 (me.address(), 1),
@@ -239,14 +239,13 @@ fn local_self_accusations_are_ignored() {
                     continue;
                 }
                 let mut v = voting_with(&me, committee.clone(), 1, 2);
-                if after_slash {
-                    v.on_slash_executed(SlashExecuted {
+                if after_expulsion {
+                    v.on_member_expelled(&CommitteeMemberExpelled {
                         e3_id: v.e3_id.clone(),
-                        proposal_id: 1,
-                        operator: removed.address(),
+                        node: removed.address(),
                         reason: [0; 32],
-                        ticket_amount: 0,
-                        ciphernode_bond_amount: 0,
+                        active_count_after: 2,
+                        party_id: Some(0),
                     });
                 }
                 let mut failure = proof_failure(&me, party_id, ProofType::C3aSkShareEncryption);
@@ -268,7 +267,7 @@ fn local_self_accusations_are_ignored() {
                 };
                 assert!(
                     actions.is_empty(),
-                    "self-accusation: consistency={consistency}, after_slash={after_slash}, address={address}, party_id={party_id}"
+                    "self-accusation: consistency={consistency}, after_expulsion={after_expulsion}, address={address}, party_id={party_id}"
                 );
                 assert!(v.received_data.is_empty());
                 assert!(v.pending.is_empty());
@@ -397,4 +396,145 @@ fn received_accusations_with_changed_party_ids_reach_quorum() {
             assert!(v.on_vote_timeout(id).is_none());
         }
     }
+}
+
+/// Startup replays the event log before `EffectsEnabled`. A replayed failure signs no accusation
+/// then. At `EffectsEnabled` it is accused, unless the log holds this node's own accusation of the
+/// proof, or a peer's accusation of it that this node voted on.
+#[test]
+fn a_replayed_failure_is_accused_once_effects_run_unless_the_log_holds_the_accusation() {
+    let me = signer(1);
+    let first = signer(2);
+    let second = signer(3);
+    let third = signer(4);
+    let peer = signer(5);
+    let committee = vec![
+        me.address(),
+        first.address(),
+        second.address(),
+        third.address(),
+        peer.address(),
+    ];
+    let mut v = voting_with(&me, committee, 1, 3);
+    v.hold_accusations_until_effects();
+    let accused_by_me = proof_failure(&first, 1, ProofType::C1PkGeneration);
+    let accused_by_peer = proof_failure(&second, 2, ProofType::C1PkGeneration);
+    let not_yet_accused = proof_failure(&third, 3, ProofType::C1PkGeneration);
+
+    for failure in [&accused_by_me, &accused_by_peer, &not_yet_accused] {
+        assert!(v.on_local_proof_failure(failure.clone(), &ctx()).is_empty());
+    }
+    let own = accusation_from_failure(&me, &accused_by_me, false, NOW - 60);
+    assert!(v.on_accusation_received(own, &ctx()).is_empty());
+    let by_peer = accusation_from_failure(&peer, &accused_by_peer, false, NOW - 30);
+    let by_peer_id = AccusationVoting::accusation_id(&by_peer);
+    v.on_accusation_received(by_peer, &ctx());
+
+    let accused: Vec<Address> = v
+        .on_effects_enabled()
+        .iter()
+        .filter_map(|action| match action {
+            VoteAction::PublishAccusation { accusation, .. } => Some(accusation.accused),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(accused, vec![third.address()]);
+    assert_eq!(v.pending[&by_peer_id].accusation.accuser, peer.address());
+}
+
+/// A held failure is skipped only when this node has voted on the matching peer accusation. A peer
+/// accusation that still waits for this node's re-verification does not stop this node from
+/// accusing at `EffectsEnabled`.
+#[test]
+fn a_held_failure_is_accused_when_the_peer_accusation_lacks_this_nodes_vote() {
+    let me = signer(1);
+    let accused = signer(2);
+    let peer = signer(3);
+    let committee = vec![
+        me.address(),
+        accused.address(),
+        peer.address(),
+        signer(4).address(),
+        signer(5).address(),
+    ];
+    let mut v = voting_with(&me, committee, 1, 3);
+    v.hold_accusations_until_effects();
+    let failure = proof_failure(&accused, 1, ProofType::C1PkGeneration);
+    assert!(v.on_local_proof_failure(failure.clone(), &ctx()).is_empty());
+    let by_peer = accusation_from_failure(&peer, &failure, false, NOW - 30);
+    v.pending.insert(
+        AccusationVoting::accusation_id(&by_peer),
+        PendingAccusation {
+            accusation: by_peer,
+            votes_for: Vec::new(),
+            ec: ctx(),
+            timeout_at: NOW + 300,
+        },
+    );
+
+    let accused_now: Vec<Address> = v
+        .on_effects_enabled()
+        .iter()
+        .filter_map(|action| match action {
+            VoteAction::PublishAccusation { accusation, .. } => Some(accusation.accused),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(accused_now, vec![accused.address()]);
+}
+
+/// During startup a peer's forwarded C3 accusation can start re-verification before this node's
+/// own failure of the proof is held. When this node then accuses at `EffectsEnabled`, the late
+/// re-verification result adds no second vote from it, so the quorum still needs H distinct voters.
+#[test]
+fn a_late_reverification_does_not_count_this_node_twice() {
+    let me = signer(1);
+    let accuser = signer(2);
+    let accused = signer(3);
+    let committee = vec![me.address(), accuser.address(), accused.address()];
+    let mut v = voting_with(&me, committee, 1, 2);
+    v.hold_accusations_until_effects();
+    let failure = proof_failure(&accused, 2, ProofType::C3aSkShareEncryption);
+    let accusation = accusation_from_failure(&accuser, &failure, true, NOW);
+    let id = AccusationVoting::accusation_id(&accusation);
+
+    // The peer's accusation comes first: without local data, this node re-verifies the proof.
+    let request = v
+        .on_accusation_received(accusation, &ctx())
+        .into_iter()
+        .find_map(|action| match action {
+            VoteAction::DispatchZk { request, .. } => Some(request),
+            _ => None,
+        })
+        .expect("forwarded C3 is re-verified");
+    // Then this node's own failure of the proof arrives and is held.
+    assert!(v.on_local_proof_failure(failure.clone(), &ctx()).is_empty());
+    assert!(v
+        .on_effects_enabled()
+        .iter()
+        .any(|action| matches!(action, VoteAction::PublishAccusation { .. })));
+
+    let response = ComputeResponse::zk(
+        ZkResponse::VerifyShareProofs(VerifyShareProofsResponse {
+            party_results: vec![PartyVerificationResult {
+                sender_party_id: 2,
+                all_verified: false,
+                failed_signed_payload: Some(failure.signed_payload),
+                recovered_address: Some(accused.address()),
+            }],
+        }),
+        request.correlation_id,
+        v.e3_id.clone(),
+    );
+    let actions = v.handle_reverification_response(TypedEvent::new(response, ctx()));
+    assert!(!actions.iter().any(|action| matches!(
+        action,
+        VoteAction::PublishVote { .. } | VoteAction::PublishQuorum { .. }
+    )));
+    let my_votes = v.pending[&id]
+        .votes_for
+        .iter()
+        .filter(|vote| vote.voter == me.address())
+        .count();
+    assert_eq!(my_votes, 1);
 }

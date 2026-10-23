@@ -5,14 +5,7 @@
   "solidity.formatter": "prettier",
   "typescript.tsdk": "node_modules/typescript/lib",
   "rust-analyzer.cargo.extraArgs": ["--locked"],
-  "rust-analyzer.linkedProjects": [
-    "crates/evm/Cargo.toml",
-    "crates/evm-helpers/Cargo.toml",
-    "examples/CRISP/program/Cargo.toml",
-    "examples/CRISP/server/Cargo.toml",
-    "examples/CRISP/crates/zk-inputs/Cargo.toml",
-    "examples/CRISP/crates/zk-inputs-wasm/Cargo.toml"
-  ],
+  "rust-analyzer.linkedProjects": ["crates/evm/Cargo.toml", "crates/evm-helpers/Cargo.toml"],
   "[solidity]": {
     "editor.defaultFormatter": "NomicFoundation.hardhat-solidity"
   },

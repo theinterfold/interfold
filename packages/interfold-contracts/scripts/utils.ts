@@ -58,8 +58,11 @@ export const isLocalDeploymentChain = (chain: string): boolean =>
   (LOCAL_DEPLOYMENT_NETWORKS as readonly string[]).includes(chain) ||
   (LEGACY_LOCAL_DEPLOYMENT_ALIASES as readonly string[]).includes(chain);
 
-/** Monorepo root (`interfold/`). Works from `scripts/` and compiled `dist/scripts/`. */
-function resolveRepoRoot(): string {
+/**
+ * Monorepo root (`interfold/`), or `undefined` when this package is installed outside it. Works
+ * from `scripts/` and compiled `dist/scripts/`.
+ */
+export function findMonorepoRoot(): string | undefined {
   let dir = path.dirname(fileURLToPath(import.meta.url));
   const root = path.parse(dir).root;
   while (dir !== root) {
@@ -78,16 +81,19 @@ function resolveRepoRoot(): string {
     }
     dir = path.dirname(dir);
   }
-  throw new Error(
-    "Could not find interfold repo root (expected package.json name @interfold/main)",
-  );
+  return undefined;
 }
 
 let _repoRoot: string | undefined;
 
-/** Lazy version of REPO_ROOT — only resolves when called, safe for import-time. */
+/** Monorepo root, resolved on first call. Throws when this package is installed outside it. */
 export function getRepoRoot(): string {
-  if (!_repoRoot) _repoRoot = resolveRepoRoot();
+  _repoRoot ??= findMonorepoRoot();
+  if (!_repoRoot) {
+    throw new Error(
+      "Could not find interfold repo root (expected package.json name @interfold/main)",
+    );
+  }
   return _repoRoot;
 }
 
@@ -199,6 +205,21 @@ export const TESTNET_BFV_CONFIGS: readonly ActiveBfvConfig[] = [
   SECURE_SMALL_BFV_CONFIG,
 ] as const;
 
+/** The pair of the generated `ACTIVE_BFV_*` constants, which `ActiveCryptoConfig.sol` matches. */
+const ACTIVE_BFV_CONFIG = TESTNET_BFV_CONFIGS.find(
+  (config) =>
+    config.paramSet === ACTIVE_BFV_PARAM_SET &&
+    config.committeeSize === ACTIVE_BFV_COMMITTEE_SIZE,
+)!;
+
+/**
+ * Names a circuit directory in the release-archive layout (`<preset>/<committee>/default/...`):
+ * the `circuits/` directory of `circuits-<version>.tar.gz`, or the directory that
+ * `interfold noir setup` installs, from the release of this package. Only a package installed
+ * outside the monorepo reads it; the monorepo reads its own release-verified circuit build.
+ */
+const CIRCUITS_DIR_ENV = "INTERFOLD_CIRCUITS_DIR";
+
 export function isTestnetOrLocalChainId(chainId: number): boolean {
   return chainId === 11155111 || chainId === 31337 || chainId === 1337;
 }
@@ -301,26 +322,39 @@ export function bfvDecCiphertextCommitmentIndex(): number {
   return 6;
 }
 
-function distCircuitRoot(config: ActiveBfvConfig): string {
-  return path.join(
-    getRepoRoot(),
-    "dist/circuits",
-    config.preset,
-    config.committee,
-  );
+/**
+ * Release-layout directory of a preset/committee pair, or `undefined` for the monorepo circuit
+ * build under `circuits/bin`. In the monorepo, a selected `config` reads `dist/circuits`. Outside
+ * it, `INTERFOLD_CIRCUITS_DIR` is required, and a missing `config` selects the active pair.
+ */
+function releaseCircuitRoot(config?: ActiveBfvConfig): string | undefined {
+  const root = findMonorepoRoot();
+  if (root) {
+    return config
+      ? path.join(root, "dist/circuits", config.preset, config.committee)
+      : undefined;
+  }
+  const dir = process.env[CIRCUITS_DIR_ENV];
+  if (!dir) {
+    throw new Error(
+      `Outside the Interfold monorepo, set ${CIRCUITS_DIR_ENV} to a release circuit directory to read BFV VK hashes`,
+    );
+  }
+  const { preset, committee } = config ?? ACTIVE_BFV_CONFIG;
+  return path.join(dir, preset, committee);
 }
 
 /** Complete nodes-fold VK-tree anchor and C5 recursive VK hash. */
 export function getBfvPkSubCircuitVkHashPaths(config?: ActiveBfvConfig) {
-  if (config) {
-    const root = distCircuitRoot(config);
+  const releaseRoot = releaseCircuitRoot(config);
+  if (releaseRoot) {
     return {
       nodesFold: path.join(
-        root,
+        releaseRoot,
         "default/recursive_aggregation/nodes_fold/nodes_fold.vk_tree_hash",
       ),
       c5: path.join(
-        root,
+        releaseRoot,
         "default/threshold/pk_aggregation/pk_aggregation.vk_hash",
       ),
     } as const;
@@ -343,15 +377,15 @@ export function getBfvPkSubCircuitVkHashPaths(config?: ActiveBfvConfig) {
 export function getBfvDecryptionSubCircuitVkHashPaths(
   config?: ActiveBfvConfig,
 ) {
-  if (config) {
-    const root = distCircuitRoot(config);
+  const releaseRoot = releaseCircuitRoot(config);
+  if (releaseRoot) {
     return {
       c6Fold: path.join(
-        root,
+        releaseRoot,
         "default/recursive_aggregation/c6_fold/c6_fold.vk_tree_hash",
       ),
       c7: path.join(
-        root,
+        releaseRoot,
         "default/threshold/decrypted_shares_aggregation/decrypted_shares_aggregation.vk_hash",
       ),
     } as const;

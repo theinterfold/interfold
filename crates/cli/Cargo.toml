@@ -38,7 +38,6 @@ e3-trbfv = { workspace = true }
 e3-fhe-params = { workspace = true }
 chrono = { workspace = true }
 e3-init = { workspace = true }
-e3-support-scripts = { workspace = true }
 e3-daemon-server = { workspace = true }
 e3-utils = { workspace = true }
 e3-zk-prover = { workspace = true }

@@ -47,12 +47,131 @@ impl AccusationVoting {
             accusation_deadline_skew_secs,
             clock,
             params_preset,
+            effects_enabled: true,
+            deferred_accusations: Vec::new(),
+            restored_timeouts: Vec::new(),
+            // An E3 without accusations writes no record.
+            saved: Some(AccusationVotesSnapshot::default()),
         }
     }
 
-    /// The vote-collection timeout the actor should schedule.
-    pub(crate) fn vote_timeout(&self) -> Duration {
-        self.vote_timeout
+    pub(crate) fn e3_id(&self) -> &E3id {
+        &self.e3_id
+    }
+
+    /// The vote timeout of an accusation that starts collecting now.
+    pub(super) fn timeout_from_now(&self) -> u64 {
+        self.clock
+            .unix_now_secs()
+            .saturating_add(self.vote_timeout.as_secs())
+    }
+
+    /// How long until the vote collection of `accusation_id` times out; `None` when it is not
+    /// pending.
+    pub(crate) fn vote_timeout_for(&self, accusation_id: [u8; 32]) -> Option<Duration> {
+        let pending = self.pending.get(&accusation_id)?;
+        Some(Duration::from_secs(
+            pending
+                .timeout_at
+                .saturating_sub(self.clock.unix_now_secs()),
+        ))
+    }
+
+    /// The vote state to save. Only accusations that hold this node's vote are saved: one that
+    /// waits for this node's re-verification of a forwarded proof starts again after a restart.
+    pub(crate) fn snapshot(&self) -> AccusationVotesSnapshot {
+        let mut pending = self
+            .pending
+            .iter()
+            .filter(|(_, pending)| {
+                pending
+                    .votes_for
+                    .iter()
+                    .any(|vote| vote.voter == self.my_address)
+            })
+            .map(|(id, pending)| {
+                let key = (pending.accusation.accused, pending.accusation.proof_type);
+                let failed_proof = self
+                    .received_data
+                    .get(&key)
+                    .filter(|received| !received.verification_passed)
+                    .map(|received| SavedFailedProof {
+                        data_hash: received.data_hash,
+                        evidence: received.evidence.clone(),
+                    });
+                (
+                    *id,
+                    SavedAccusation {
+                        accusation: pending.accusation.clone(),
+                        votes_for: pending.votes_for.clone(),
+                        ec: pending.ec.clone(),
+                        timeout_at: pending.timeout_at,
+                        failed_proof,
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        pending.sort_by_key(|(id, _)| *id);
+        let mut accused_proofs = self.accused_proofs.iter().copied().collect::<Vec<_>>();
+        accused_proofs.sort_by_key(|(address, proof_type)| (*address, *proof_type as u8));
+        AccusationVotesSnapshot {
+            version: ACCUSATION_VOTES_SNAPSHOT_VERSION,
+            pending: pending.into_iter().map(|(_, saved)| saved).collect(),
+            accused_proofs,
+        }
+    }
+
+    /// The vote state to save, when it changed since the last save.
+    pub(crate) fn take_snapshot_if_changed(&mut self) -> Option<AccusationVotesSnapshot> {
+        let snapshot = self.snapshot();
+        if self.saved.as_ref() == Some(&snapshot) {
+            return None;
+        }
+        self.saved = Some(snapshot.clone());
+        Some(snapshot)
+    }
+
+    /// A save failed: the next change saves the whole state again.
+    pub(crate) fn retry_snapshot(&mut self) {
+        self.saved = None;
+    }
+
+    /// Restore the saved vote state of a restarted manager. Its vote timers start at
+    /// `EffectsEnabled`, from the saved timeouts.
+    pub(crate) fn restore(&mut self, snapshot: AccusationVotesSnapshot) -> anyhow::Result<()> {
+        snapshot.validate()?;
+        for saved in snapshot.pending {
+            let accusation_id = Self::accusation_id(&saved.accusation);
+            self.restored_timeouts.push(accusation_id);
+            if let Some(failed_proof) = saved.failed_proof {
+                self.received_data.insert(
+                    (saved.accusation.accused, saved.accusation.proof_type),
+                    ReceivedProofData {
+                        data_hash: failed_proof.data_hash,
+                        verification_passed: false,
+                        evidence: failed_proof.evidence,
+                    },
+                );
+            }
+            self.pending.insert(
+                accusation_id,
+                PendingAccusation {
+                    accusation: saved.accusation,
+                    votes_for: saved.votes_for,
+                    ec: saved.ec,
+                    timeout_at: saved.timeout_at,
+                },
+            );
+        }
+        self.accused_proofs.extend(snapshot.accused_proofs);
+        self.saved = Some(self.snapshot());
+        Ok(())
+    }
+
+    /// Hold local accusations until `EffectsEnabled`. A manager that startup rebuilds receives the
+    /// replayed event log first.
+    pub(crate) fn hold_accusations_until_effects(&mut self) {
+        self.effects_enabled = false;
     }
 
     // ─── Deadline computation ────────────────────────────────────────────

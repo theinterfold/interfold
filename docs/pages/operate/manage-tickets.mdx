@@ -220,6 +220,10 @@ The contract call for the claim is
 `claimExitsFor(operator, maxTicketAmount, maxCiphernodeBondAmount)` on `BondingRegistry`. To claim
 everything with a contract call, the bond owner sets both maximums to the largest `uint256` value.
 
+The **Manage the position** section of the
+[hosted operator guide](https://dashboard.theinterfold.com/#operator) burns tickets and claims the
+collateral from a browser wallet.
+
 ## Keep the balance healthy
 
 - **Deposit before demand.** An E3 uses the balance at `requestBlock - 1`. A deposit counts only for

@@ -19,6 +19,25 @@ interface IBondingRegistry {
     function numRegisteredOperators() external view returns (uint256);
 
     function unresolvedCommitteeCount() external view returns (uint256);
+
+    /// @notice Number of unreleased committees that hold the collateral of `operator`.
+    /// @dev While it is not zero, `claimExitsFor` reverts with `OperatorInActiveCommittee`.
+    function unresolvedCommitteesOf(
+        address operator
+    ) external view returns (uint256);
+
+    /// @notice An unreleased committee that holds the collateral of `operator`.
+    /// @dev Indexes run from 0 to `unresolvedCommitteesOf(operator) - 1`, in no fixed order. A
+    ///      committee requested before this registry version tracked committees has no index, so
+    ///      for an operator in one, the last indexes revert with `CommitteeObligationNotTracked`.
+    ///      The `CommitteeObligationUpdated` events list those committees.
+    /// @return e3Id The E3 of the committee
+    /// @return registry The request-time registry that owns the committee
+    function committeeObligationAt(
+        address operator,
+        uint256 index
+    ) external view returns (uint256 e3Id, address registry);
+
     /// @notice Bonding assets and every raw-unit value denominated in them.
     struct BondingAssetConfig {
         address ticketToken;
@@ -150,6 +169,9 @@ interface IBondingRegistry {
 
     /// @notice Thrown when {setExitDelay} input is outside the permitted range.
     error ExitDelayOutOfBounds(uint64 exitDelay);
+
+    /// @notice `operator` has no tracked committee obligation at `index`.
+    error CommitteeObligationNotTracked(address operator, uint256 index);
 
     /// @notice Exit collateral could unlock while snapshot tickets remain valid.
     error ExitDelayMustExceedSortitionWindow(

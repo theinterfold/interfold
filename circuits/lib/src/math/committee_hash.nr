@@ -13,7 +13,7 @@
 
 // Same value as `configs::default::N_PARTIES`, but pulled from `committee::active` to
 // break the cycle math -> default -> insecure::threshold -> math. `committee::active`
-// is regenerated atomically with `default/mod.nr` by `scripts/build-circuits.ts`.
+// is regenerated atomically with `default/mod.nr` by the Rust circuit builder.
 use crate::configs::committee::active::N_PARTIES;
 use keccak256::keccak256;
 

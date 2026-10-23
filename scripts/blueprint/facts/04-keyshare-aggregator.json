@@ -3,11 +3,13 @@
   "units": [
     {
       "id": "e3-keyshare",
+      "documentation": [
+        { "title": "DKG", "path": "docs/architecture/dkg.md" },
+        { "title": "Threshold decryption", "path": "docs/architecture/threshold-decryption.md" }
+      ],
       "kind": "crate",
       "path": "crates/keyshare",
       "one_line": "Runs one committee member's share of the E3 distributed key generation, then produces its decryption share.",
-      "explain": "Before any ciphertext can be decrypted, each committee member needs its own secret share of the E3 key. The ThresholdKeyshare actor runs this DKG through the KeyshareState phases: it records a BFV keypair, collects every member's public key, encrypts its shares to each recipient, collects the shares sent to it, and derives its decryption-key share; the active aggregator also proposes the DKG roster. Without this unit no member holds a key share, so no decryption share could be produced.",
-      "analogy": "Like a group of guardians who each split their own secret into pieces, seal every piece for the guardian who must hold it, and later hand in their pieces so that only a quorum can rebuild the key.",
       "actors": [
         {
           "name": "ThresholdKeyshare",
@@ -22,7 +24,7 @@
         {
           "name": "ThresholdShareCollector",
           "role": "collects the threshold shares sent to this node with their proofs, then sends AllThresholdSharesCollected",
-          "ref": "crates/keyshare/src/threshold_keyshare/threshold_share_collector.rs@42@pub struct ThresholdShareCollector {"
+          "ref": "crates/keyshare/src/threshold_keyshare/threshold_share_collector.rs@50@pub struct ThresholdShareCollector {"
         },
         {
           "name": "DecryptionKeySharedCollector",
@@ -32,7 +34,7 @@
         {
           "name": "ProofRequestActor (e3-zk-prover, outside this crate)",
           "role": "produces the proofs for these steps and publishes EncryptionKeyCreated, ThresholdShareCreated, DecryptionKeyShared and DecryptionshareCreated",
-          "ref": "crates/zk-prover/src/proof_request/actor.rs@67@pub struct ProofRequestActor {"
+          "ref": "crates/zk/prover/src/proof_request/actor.rs@67@pub struct ProofRequestActor {"
         }
       ],
       "consumes": [
@@ -49,7 +51,7 @@
         {
           "name": "ThresholdShareCreated",
           "by": "ThresholdShareCollector",
-          "ref": "crates/keyshare/src/threshold_keyshare/threshold_share_collector.rs@162@impl Handler<TypedEvent<ThresholdShareCreated>> for ThresholdShareCollector {"
+          "ref": "crates/keyshare/src/threshold_keyshare/threshold_share_collector.rs@189@impl Handler<TypedEvent<ThresholdShareCreated>> for ThresholdShareCollector {"
         },
         {
           "name": "ShareVerificationComplete",
@@ -76,12 +78,12 @@
         {
           "name": "EncryptionKeyPending",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/effects/initialize_dkg.rs@153@EncryptionKeyPending {"
+          "ref": "crates/keyshare/src/threshold_keyshare/effects/initialize_dkg.rs@158@EncryptionKeyPending {"
         },
         {
           "name": "ComputeRequest (TrBFV GenPkShareAndSkSss)",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/effects/initialize_dkg.rs@283@let event = ComputeRequest::trbfv("
+          "ref": "crates/keyshare/src/threshold_keyshare/effects/initialize_dkg.rs@291@let event = ComputeRequest::trbfv("
         },
         {
           "name": "ThresholdSharePending",
@@ -116,7 +118,7 @@
         {
           "name": "KeyshareCreated",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/effects/verify_decryption_key.rs@284@KeyshareCreated {"
+          "ref": "crates/keyshare/src/threshold_keyshare/effects/verify_decryption_key.rs@288@KeyshareCreated {"
         },
         {
           "name": "E3Failed",
@@ -185,6 +187,7 @@
         }
       ],
       "depends_on": [
+        "e3-committee",
         "e3-bfv-client",
         "e3-config",
         "e3-committee-hash",
@@ -197,7 +200,7 @@
         "e3-request",
         "e3-trbfv",
         "e3-utils",
-        "e3-zk-helpers"
+        "e3-zk-config"
       ],
       "tests": "crates/keyshare/src/threshold_keyshare/tests.rs, state_tests.rs and tests/admission.rs, plus the #[test] functions in pure modules such as generate_encryption_key.rs; run: cargo test -p e3-keyshare",
       "unverified": [
@@ -208,21 +211,23 @@
     },
     {
       "id": "e3-aggregator",
+      "documentation": [
+        { "title": "DKG aggregation", "path": "docs/architecture/dkg.md" },
+        { "title": "Plaintext aggregation", "path": "docs/architecture/threshold-decryption.md" }
+      ],
       "kind": "crate",
       "path": "crates/aggregator",
       "one_line": "Combines committee members' keyshares into the E3 public key and decryption shares into the plaintext, then publishes both.",
-      "explain": "Every E3 needs one committee public key and, at the end, one decrypted plaintext. The PublicKeyAggregator verifies the members' keyshares and C1 proofs, aggregates them, proves the aggregation (C5) and publishes PublicKeyAggregated; the ThresholdPlaintextAggregator verifies decryption shares (C6), combines them through a TrBFV request, proves the result (C7) and publishes PlaintextAggregated. Only the node that AggregatorChanged marks as active aggregator starts these effects, and a demoted node may finish work it already started.",
-      "analogy": "Like a returns clerk who checks each signed ballot from a committee and announces the count only after enough valid ballots have arrived.",
       "actors": [
         {
           "name": "PublicKeyAggregator",
           "role": "public-key state machine: verifies C1 proofs, aggregates the keyshares, proves C5, publishes PublicKeyAggregated",
-          "ref": "crates/aggregator/src/public_key_aggregation/actor.rs@44@pub struct PublicKeyAggregator {"
+          "ref": "crates/aggregator/src/public_key_aggregation/actor.rs@42@pub struct PublicKeyAggregator {"
         },
         {
           "name": "ThresholdPlaintextAggregator",
           "role": "decryption state machine: verifies C6 shares, runs the TrBFV threshold decryption, proves C7, publishes PlaintextAggregated",
-          "ref": "crates/aggregator/src/plaintext_aggregation/actor.rs@69@pub struct ThresholdPlaintextAggregator {"
+          "ref": "crates/aggregator/src/plaintext_aggregation/actor.rs@68@pub struct ThresholdPlaintextAggregator {"
         },
         {
           "name": "CommitteeFinalizer",
@@ -247,7 +252,7 @@
         {
           "name": "CiphernodeSelector (e3-sortition, outside this crate)",
           "role": "decides is_aggregator for each E3 and publishes AggregatorChanged",
-          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@108@pub struct CiphernodeSelector {"
+          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@112@pub struct CiphernodeSelector {"
         },
         {
           "name": "CiphernodeRegistrySolWriter (e3-evm, outside this crate)",
@@ -257,7 +262,7 @@
         {
           "name": "InterfoldSolWriter (e3-evm, outside this crate)",
           "role": "takes a locally computed PlaintextAggregated and submits publishPlaintextOutput on chain",
-          "ref": "crates/evm/src/interfold_writing/handlers.rs@217@InterfoldEventData::PlaintextAggregated(data) => {"
+          "ref": "crates/evm/src/interfold_writing/handlers.rs@222@InterfoldEventData::PlaintextAggregated(data) => {"
         }
       ],
       "consumes": [
@@ -331,7 +336,7 @@
         {
           "name": "PlaintextAggregated",
           "by": "ThresholdPlaintextAggregator",
-          "ref": "crates/aggregator/src/plaintext_aggregation/effects/publish_result.rs@113@let event = PlaintextAggregated {"
+          "ref": "crates/aggregator/src/plaintext_aggregation/effects/publish_result.rs@111@let event = PlaintextAggregated {"
         },
         {
           "name": "CommitteeFinalizeRequested",
@@ -353,7 +358,7 @@
         {
           "name": "registered committee (topNodes) for decryption, read from the chain",
           "where": "chain",
-          "ref": "crates/aggregator/src/plaintext_aggregation/actor.rs@80@committee_addresses: Vec<Address>,"
+          "ref": "crates/aggregator/src/plaintext_aggregation/actor.rs@79@committee_addresses: Vec<Address>,"
         }
       ],
       "key_types": [
@@ -375,11 +380,19 @@
         },
         {
           "why": "can_run_aggregation_effects decides which node runs the aggregation effects",
-          "ref": "crates/aggregator/src/public_key_aggregation/actor.rs@141@fn can_run_aggregation_effects(&self) -> bool {"
+          "ref": "crates/aggregator/src/public_key_aggregation/actor.rs@139@fn can_run_aggregation_effects(&self) -> bool {"
         },
         {
           "why": "the decryption actor, which holds the decryption work",
-          "ref": "crates/aggregator/src/plaintext_aggregation/actor.rs@69@pub struct ThresholdPlaintextAggregator {"
+          "ref": "crates/aggregator/src/plaintext_aggregation/actor.rs@68@pub struct ThresholdPlaintextAggregator {"
+        },
+        {
+          "why": "crate surface: CommitteeFinalizer, recovery/state types and repositories are public; key/plaintext actors stay crate-private",
+          "ref": "crates/aggregator/src/lib.rs@21@pub use actors::{"
+        },
+        {
+          "why": "committee hashing is owned by e3-committee-hash, not a local aggregator wrapper",
+          "ref": "crates/committee-hash/src/lib.rs@42@pub fn hash_committee_addresses"
         }
       ],
       "rust_patterns": [
@@ -400,21 +413,22 @@
         }
       ],
       "depends_on": [
-        "e3-config",
+        "e3-committee",
         "e3-data",
         "e3-events",
         "e3-evm",
         "e3-fhe",
         "e3-fhe-params",
         "e3-keyshare",
-        "e3-multithread",
         "e3-polynomial",
+        "e3-polynomial-fhe",
         "e3-trbfv",
         "e3-bfv-client",
         "e3-committee-hash",
         "e3-request",
         "e3-sortition",
-        "e3-zk-helpers",
+        "e3-zk-config",
+        "e3-zk-witness",
         "e3-utils",
         "e3-zk-prover"
       ],

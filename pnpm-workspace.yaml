@@ -1,11 +1,6 @@
 packages:
   - crates/wasm
   - docs
-  - examples/CRISP
-  - examples/CRISP/client
-  - examples/CRISP/packages/crisp-sdk
-  - examples/CRISP/packages/crisp-contracts
-  - examples/CRISP/packages/crisp-zk-inputs
   - packages/interfold-config
   - packages/interfold-react
   - packages/interfold-sdk

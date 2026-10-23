@@ -32,6 +32,7 @@ import { inventory, ROOT } from '../lib/inventory.mjs'
 import { buildData, pageHtml } from '../lib/page.mjs'
 import { evName } from '../generate.mjs'
 import { wiring } from '../lib/wiring.mjs'
+import { checkoutRef } from '../lib/documentation.mjs'
 
 const SELF = fileURLToPath(import.meta.url)
 const HERE = dirname(SELF)
@@ -94,14 +95,14 @@ function extract(sha) {
 }
 // A folder is read as it is. A ref is read at its commit, or at its merge base with `other`.
 function side(arg, other) {
-  if (isDir(arg)) return { dir: resolve(arg), label: arg }
+  if (isDir(arg)) return { dir: resolve(arg), label: arg, ref: checkoutRef(resolve(arg)) }
   const sha = other ? git('merge-base', arg, other) : git('rev-parse', '--verify', `${arg}^{commit}`)
-  return { dir: extract(sha), label: sha.slice(0, 9) }
+  return { dir: extract(sha), label: sha.slice(0, 9), ref: sha }
 }
 // A version is read by its own scripts when they write this snapshot format, so that its own lists
 // (LAYERS, CONTRACTS, CIRCUITS) and hand-drawn diagrams apply: a contract removed with its entry
 // still shows as removed. Otherwise, as for a base from before diff.mjs, this script reads it.
-function read(dir) {
+function read(dir, ref) {
   const own = join(dir, 'scripts/blueprint/diff/diff.mjs')
   const scripts = existsSync(own) && resolve(own) !== SELF ? [own, SELF] : [SELF]
   const failed = []
@@ -111,7 +112,7 @@ function read(dir) {
     const file = join(out, 'snapshot.json')
     const r = spawnSync(process.execPath, [script, '--snapshot', file], {
       encoding: 'utf8',
-      env: { ...process.env, BLUEPRINT_ROOT: dir },
+      env: { ...process.env, BLUEPRINT_ROOT: dir, BLUEPRINT_SOURCE_REF: ref },
       timeout: 300000,
     })
     const snap = r.status === 0 && existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null
@@ -125,10 +126,10 @@ try {
   const local =
     process.env.BLUEPRINT_HEAD_LABEL ||
     `${git('rev-parse', '--short=9', 'HEAD')}${git('status', '--porcelain') ? ' with local changes' : ''}`
-  head = headArg ? side(headArg) : { dir: ROOT, label: local }
+  head = headArg ? side(headArg) : { dir: ROOT, label: local, ref: checkoutRef(ROOT) }
   base = side(baseArg, headArg ? (isDir(headArg) ? null : headArg) : 'HEAD')
-  before = read(base.dir)
-  after = read(head.dir)
+  before = read(base.dir, base.ref)
+  after = read(head.dir, head.ref)
 } finally {
   for (const d of temp) rmSync(d, { recursive: true, force: true })
 }
@@ -252,6 +253,9 @@ function compare(a, b, layoutOnly = () => false) {
     return m
   }
   const [an, bn, ae, be] = [a.nodes || [], b.nodes || [], a.edges || [], b.edges || []]
+  // Ref-specific URLs differ even for identical docs; only the authored targets count as a change.
+  const docs = (d) => JSON.stringify((d.documentation || []).map(({ path, title }) => [path, title]))
+  m.documentation = docs(a) !== docs(b)
   for (const n of unmatched(bn, match, an)) if (!layoutOnly(n.id, 'added')) m.after.nodes[n.id] = 'added'
   for (const n of unmatched(an, match, bn)) if (!layoutOnly(n.id, 'removed')) m.before.nodes[n.id] = 'removed'
   const was = Object.fromEntries(an.map((n) => [n.id, n]))
@@ -284,7 +288,7 @@ for (const id of new Set([...Object.keys(A), ...Object.keys(B)])) {
   const [had, has] = crate ? [messages(S0, crate), messages(S1, crate)] : []
   const layoutOnly = (n, state) => !!crate && n.startsWith('in:') && (state === 'added' ? had : has).has(n.slice(3))
   const m = compare(A[id], B[id], layoutOnly)
-  if (m.whole || m.own || Object.keys(m.after.edges).length || Object.keys(m.before.edges).length) marks[id] = m
+  if (m.whole || m.own || m.documentation || Object.keys(m.after.edges).length || Object.keys(m.before.edges).length) marks[id] = m
 }
 // The number on a box: the changes from the list in the diagram that it opens and in every diagram
 // below that one, by the parent links of both versions. A change whose diagram does not exist
@@ -337,12 +341,17 @@ const diff = {
   head: head.label,
   before: Object.fromEntries([...changedIds, ...codeChanged].map((id) => [id, A[id] || null])),
   codeBefore,
+  documentationBefore: Object.fromEntries(Object.entries(A).map(([id, d]) => [id, d.documentation || []])),
   marks,
   counts,
   touched,
   list: list.length
     ? list
-    : changedIds.map((id) => ({ text: `${(A[id] || B[id]).title}: boxes changed`, diagram: id, mode: B[id] ? 'after' : 'before' })),
+    : changedIds.map((id) => ({
+        text: `${(A[id] || B[id]).title}: ${marks[id].documentation && !marks[id].own ? 'documentation' : 'boxes'} changed`,
+        diagram: id,
+        mode: B[id] ? 'after' : 'before',
+      })),
 }
 const page = { ...after.data, tag: `${base.label} → ${head.label}`, diff }
 const extra = {

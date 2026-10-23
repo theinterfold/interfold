@@ -26,6 +26,9 @@ export type NetworkProfile = {
   interfold: string
   ciphernodeRegistry: string
   crispProgram: string
+  // Earlier CRISP program deployments. Their E3s still show as CRISP polls. No variable overrides
+  // this list.
+  previousCrispPrograms: readonly string[]
   bondingRegistry: string
   // Empty string = no faucet on this network (hides the operator-guide card).
   faucet: string
@@ -50,6 +53,7 @@ export const NETWORKS: Record<NetworkKey, NetworkProfile> = {
     interfold: '0xBD5B6D1aDA9e0eB248B678469C9Cd6a63507E42b',
     ciphernodeRegistry: '0xb1E8640CF8D0A927290E3d9E1b01c4899B5225Ef',
     crispProgram: '0xA9894A39061EC33f8550a2B63A66Be59fb9fa443',
+    previousCrispPrograms: [],
     bondingRegistry: '0x8687bC7C8f055b41aD2C2447c04aCBD76C1075b2',
     // Test Faucet. It sends 1000 FOLD and 1000 MockUSDC.
     faucet: '0x1B4340A65BB669267BF5DE37385B139987C3F09c',
@@ -69,7 +73,9 @@ export const NETWORKS: Record<NetworkKey, NetworkProfile> = {
     explorer: 'https://etherscan.io',
     interfold: '0x28cF63B459e6218C69EA97ea7D90541cf648c715',
     ciphernodeRegistry: '0xC927A5B2d8F68697bC28C0670df05178c93df2d7',
-    crispProgram: '0x53FCdb21E73A461CfE6c64B19855204384B91BA3',
+    crispProgram: '0x1EA4dBdec0F2F1E9235915847fc59EF4045EEe28',
+    // The first mainnet CRISP program. It ran E3-0 to E3-2.
+    previousCrispPrograms: ['0x53FCdb21E73A461CfE6c64B19855204384B91BA3'],
     bondingRegistry: '0x0ec90465095C21830BEcED07e032809A2Bd2915F',
     // No faucet on mainnet.
     faucet: '',

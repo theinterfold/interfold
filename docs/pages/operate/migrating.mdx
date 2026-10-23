@@ -211,8 +211,8 @@ Docker entrypoint sets the password and the operator key from the credentials se
 has none. Use the same credentials secret on the new server.
 
 The DAppNode package keeps its configuration and its `.interfold` directory in the `/data` volume.
-The package declares a backup named `ciphernode-data` for this volume. Use the same credentials file
-on the new server.
+Its backup includes the configuration, encryption password, and durable node state. Downloaded
+circuits and prover caches are excluded. Use the package for the same network on the new server.
 
 ## Migrate and upgrade together
 

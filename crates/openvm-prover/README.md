@@ -1,23 +1,40 @@
 # OpenVM proving
 
+## Purpose
+
 OpenVM replaces RISC Zero and Boundless. Each project proves its own E3 program: the guest and the
-proving service link the project's `program/` crate, so the guest, the native host and the contract
-use one processor and one input policy. This is a new guest and verifier deployment, not an upgrade
-of an existing receipt. Existing deployment records and legacy RISC Zero contracts stay unchanged.
+project's `runner/` link the project's `program/` crate, so the guest, the native host and the
+contract use one processor and one input policy. This is a new guest and verifier deployment, not an
+upgrade of an existing receipt. Existing deployment records and legacy RISC Zero contracts stay
+unchanged.
+
+## Source map
+
+This worker is an excluded, independent Cargo workspace. [`src/main.rs`](src/main.rs) owns command
+parsing plus bounded artifact/input loading, SDK construction, native guest execution,
+proving/verification, and seal encoding. `Config` binds artifact paths/checksums and application
+identity; `verify` checks the expected journal; `read_items` adapts the shared stream into OpenVM
+stdin. [`Cargo.toml`](Cargo.toml) pins this worker's SDK/features independently of the runtime
+workspace; use the Rust/OpenVM toolchains listed under prerequisites below.
+
+The host starts a checked CPU/CUDA worker per operation. The worker executes/proves the project
+guest, aggregates into an EVM proof, verifies it against the supplied journal/commitments, then
+writes the seal. The following map shows how this process fits the consuming project.
 
 ## Pieces
 
-| Piece                                  | What it is                                                                 |
-| -------------------------------------- | -------------------------------------------------------------------------- |
-| `guest/` in the project                | The OpenVM guest. Its own workspace, built with `cargo openvm`             |
-| `.interfold/support/openvm/service`    | The proving service: `e3-program-server` with `e3-openvm-host` as runner   |
-| `.interfold/support/openvm/compile`    | Builds the guest, keys, receipt identity, worker configuration and service |
-| `.interfold/support/openvm/start`      | Starts the service                                                         |
-| `interfold-openvm-prover` (this crate) | The worker. A separate process, in a CPU build and a CUDA build            |
+| Piece                                  | What it is                                                                                            |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `guest/` in the project                | The OpenVM guest. Its own workspace, built with `cargo openvm`                                        |
+| `runner/` in the project               | The `program-runner` binary. `program-runner openvm` is the proving service (`crates/program-runner`) |
+| `interfold-openvm-prover` (this crate) | The worker. A separate process, in a CPU build and a CUDA build                                       |
 
-`interfold init` copies the service folder and pins the guest's Interfold crates to the template's
-commit. In this repository, `templates/default` and `examples/CRISP` link the folder from
-`crates/support-scripts/openvm`.
+The proving service is `e3-program-server` with `e3-openvm-host` as runner. `interfold init` pins
+the guest's Interfold crates to the template's commit. `interfold program compile` runs
+`crates/cli/scripts/openvm-compile.sh`, which builds the guest, keys, receipt identity, worker
+configuration and `program-runner`. `interfold program start` runs `program-runner openvm` with
+`cargo run --release`. In this repository, `templates/default` has a `runner/` crate that calls
+`e3_program_runner::run`.
 
 The guest reads the round one item at a time: a header, every ciphertext in index order, then the
 ciphertexts the policy selected, again in index order. It keeps a hash of each ciphertext from the
@@ -76,12 +93,12 @@ interfold program compile
 
 This builds `guest/`, generates its application key, runs the worker's `prepare` for the aggregation
 key and receipt identity, writes the worker configuration (`OPENVM_PROVER_CONFIG`, or
-`.interfold/caches/openvm/prover.json`), and builds the service. `start` and the deploys read the
-same path. The keys are regenerated only when the guest executable or `guest/openvm.toml` changes.
-The receipt identity is in `.interfold/caches/openvm/prepared/identity.json`.
+`.interfold/caches/openvm/prover.json`), and builds `program-runner`. `start` and the deploys read
+the same path. The keys are regenerated only when the guest executable or `guest/openvm.toml`
+changes. The receipt identity is in `.interfold/caches/openvm/prepared/identity.json`.
 
-Deploy the contracts next. The template and CRISP deploys read the identity and verifier artifact
-from that `prover.json` unless `OPENVM_APP_EXE_COMMIT`, `OPENVM_APP_VM_COMMIT`, and either
+Deploy the contracts next. The template deploy reads the identity and verifier artifact from that
+`prover.json` unless `OPENVM_APP_EXE_COMMIT`, `OPENVM_APP_VM_COMMIT`, and either
 `OPENVM_VERIFIER_ARTIFACT` with `OPENVM_VERIFIER_SHA256` or `OPENVM_HALO2_VERIFIER` with
 `OPENVM_HALO2_RUNTIME_CODE_HASH` are set. A rebuilt guest has a new identity and needs a new
 verifier.
@@ -161,43 +178,23 @@ journal: the proof's only public value is the journal digest, which the contract
 The receipt identity binds the Halo2 verifier address, the executable commitment and the VM
 commitment. The protocol BFV verifier and the program's verifier must use the same identity, and
 both verification calls stay mandatory. Rounds keep their request-time verifier snapshot and must
-drain before a live migration. The historical RISC Zero activation scripts do not activate OpenVM.
-The compute path is unaudited.
+drain before a live migration. The compute path is unaudited.
 
-## CRISP checks
+## Tests
+
+From the repository root, `pnpm openvm prover-check` checks the independent worker and
+`pnpm openvm prover-test` runs its inline stream/seal/probe tests using the pinned toolchain and
+prerequisites above. Root `cargo -p interfold-openvm-prover` cannot select this workspace. Those
+tests do not prepare keys or generate receipts. Real execution/proving/contract acceptance uses the
+prepared workflows below. [AGENTS.md](AGENTS.md) covers worker/artifact changes.
+
+## Checks
 
 From the repository root:
 
 ```sh
-pnpm openvm service-test   # host, types, Secure Process and program server
-pnpm openvm contract-test  # receipt and journal contracts
+pnpm openvm service-test   # host, types, program server and program runner
 ```
 
-`pnpm openvm proof-test` verifies an externally supplied proof on an in-memory chain. It needs
-`OPENVM_TEST_IDENTITY`, `OPENVM_TEST_JOURNAL`, `OPENVM_TEST_VERIFIER`,
-`OPENVM_TEST_VERIFIER_SHA256`, and `OPENVM_TEST_PROOF` (proof JSON) or `OPENVM_TEST_SEAL` (worker
-seal).
-
-`pnpm openvm service-e2e` runs a live round: CRISP input submission and indexing, the running OpenVM
-service, the callback, and ciphertext publication. It needs an isolated loopback RPC with chain ID
-31337 (use Anvil for long rounds) and a running service started with `pnpm openvm service-start`
-after `pnpm openvm compile`. Build the CRISP server with `pnpm openvm crisp-server-build --release`
-and generate secure-8192 ballots with `pnpm openvm fixture <count> <new-directory>`. Set:
-
-| Variable                      | Meaning                                                    |
-| ----------------------------- | ---------------------------------------------------------- |
-| `LOCAL_RPC_URL`               | Isolated loopback EVM RPC                                  |
-| `OPENVM_E2E_FIXTURE`          | Directory the fixture command wrote                        |
-| `OPENVM_E2E_SERVER`           | Absolute path to the CRISP server binary                   |
-| `OPENVM_E2E_OUTPUT`           | New directory for the report and logs                      |
-| `OPENVM_E2E_PROGRAM_URL`      | The running service, reachable from CRISP                  |
-| `OPENVM_E2E_CALLBACK_URL`     | CRISP URL reachable from the service                       |
-| `OPENVM_E2E_LOCAL_SERVER_URL` | Local CRISP listener; defaults to `http://127.0.0.1:14000` |
-| `OPENVM_TEST_IDENTITY`        | The `identity.json` the worker was prepared with           |
-| `OPENVM_TEST_VERIFIER`        | The verifier bytecode JSON the worker uses                 |
-| `OPENVM_TEST_VERIFIER_SHA256` | Its SHA-256 digest                                         |
-
-The test deploys real OpenVM receipt and protocol verifiers, rejects a changed proof, and checks the
-tally and settlement. Randomness, DKG proofs, ballot proofs and census, data availability, and
-threshold-decryption proofs are local mocks, so it is a real compute-proof test, not a fully
-cryptographic E3 round. Keep reports, inputs, keys and proofs out of the repository.
+The CRISP repository, https://github.com/theinterfold/CRISP, owns the live OpenVM round test for the
+CRISP program. Keep reports, inputs, keys and proofs out of the repository.

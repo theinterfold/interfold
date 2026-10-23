@@ -549,6 +549,133 @@ async fn a_rebuilt_share_collector_does_not_wait_for_an_expelled_party() -> Resu
     Ok(())
 }
 
+#[actix::test]
+async fn shares_continue_without_waiting_for_a_dealer_that_had_no_key() -> Result<()> {
+    let e3_id = E3id::new("keyless-dealer", 1);
+    // With a 30 s window, the key cutoff (10%) comes 3 s after selection. The share cutoff (75%)
+    // comes 22.5 s after selection, later than the 10 s that the waits below allow.
+    let (actor, repo, recovery_repo, _) =
+        start_actor_before_selection_with_recovery(&e3_id, 30).await?;
+    // Party 1 publishes no key, so this node deals it no share.
+    actor
+        .send(keyshare_event(peer_key(&e3_id, 2), 1, EventSource::Net))
+        .await?;
+    actor
+        .send(keyshare_event(selection(&e3_id), 2, EventSource::Evm))
+        .await?;
+    let own_key = wait_for_own_key(&e3_id, &repo).await?;
+    actor
+        .send(keyshare_event(own_key, 3, EventSource::Local))
+        .await?;
+    wait_for_keyshare_state(&repo, |state| {
+        matches!(state, KeyshareState::GeneratingThresholdShare(_))
+    })
+    .await?;
+    actor
+        .send(keyshare_event(peer_share(&e3_id, 2), 4, EventSource::Net))
+        .await?;
+
+    // Party 2 is the last dealer with a key, so its share completes the batch before the cutoff.
+    let recovery = wait_for_record(&recovery_repo, |recovery| {
+        recovery.collected_threshold_share_ids.is_some()
+    })
+    .await?;
+    assert_eq!(
+        recovery.collected_threshold_share_ids,
+        Some(BTreeSet::from([2]))
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn a_rebuilt_share_collector_does_not_wait_for_a_dealer_that_had_no_key() -> Result<()> {
+    let e3_id = E3id::new("keyless-dealer-restart", 1);
+    // The node dealt its shares and waits for the others'. The 75% threshold-share cutoff of this
+    // 7,200 s window is 5,400 s away. Key collection closed with the keys of parties 0 and 2.
+    let (mut actor, _, recovery_repo, _) = build_actor(
+        &e3_id,
+        KeyshareState::AggregatingDecryptionKey(aggregating_decryption_key_for_roster_test()),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    for (seq, key) in [(1, own_key(&e3_id)), (2, peer_key(&e3_id, 2))] {
+        actor.record_encryption_key(&TypedEvent::new(key, test_ec(seq)))?;
+    }
+    actor.record_threshold_share(&TypedEvent::new(peer_share(&e3_id, 2), test_ec(3)))?;
+    let actor = actor.start();
+    actor
+        .send(keyshare_event(EffectsEnabled::new(), 4, EventSource::Local))
+        .await?;
+
+    // The rebuilt collector learns that party 1 had no key, so party 2's share completes the batch.
+    let recovery = wait_for_record(&recovery_repo, |recovery| {
+        recovery.collected_threshold_share_ids.is_some()
+    })
+    .await?;
+    assert_eq!(
+        recovery.collected_threshold_share_ids,
+        Some(BTreeSet::from([2]))
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn a_completed_share_collection_does_not_stop_share_generation() -> Result<()> {
+    let e3_id = E3id::new("shares-before-key-cutoff", 1);
+    // With a 30 s window, the key cutoff (10%) comes 3 s after selection.
+    let (actor, repo, recovery_repo, history) =
+        start_actor_before_selection_with_recovery(&e3_id, 30).await?;
+    actor
+        .send(keyshare_event(peer_key(&e3_id, 2), 1, EventSource::Net))
+        .await?;
+    actor
+        .send(keyshare_event(selection(&e3_id), 2, EventSource::Evm))
+        .await?;
+    let own_key = wait_for_own_key(&e3_id, &repo).await?;
+    actor
+        .send(keyshare_event(own_key, 3, EventSource::Local))
+        .await?;
+    // Party 1's key does not reach this node, but party 1 has this node's key and deals to it. Both
+    // shares arrive before the key cutoff, so the share collector completes and stops.
+    for (seq, party_id) in [(4, 1), (5, 2)] {
+        actor
+            .send(keyshare_event(
+                peer_share(&e3_id, party_id),
+                seq,
+                EventSource::Net,
+            ))
+            .await?;
+    }
+    wait_for_record(&recovery_repo, |recovery| {
+        recovery.collected_threshold_share_ids.is_some()
+    })
+    .await?;
+
+    // At the key cutoff, party 1 has no key here, and the node still generates its own shares.
+    actix::clock::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+            if events.iter().any(|event| {
+                matches!(
+                    event.get_data(),
+                    InterfoldEventData::ComputeRequest(request)
+                        if matches!(
+                            request.request,
+                            ComputeRequestKind::TrBFV(TrBFVRequest::GenPkShareAndSkSss(_))
+                        )
+                )
+            }) {
+                return Ok::<_, anyhow::Error>(());
+            }
+            actix::clock::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await??;
+    Ok(())
+}
+
 /// The expulsion of `party_id` from the chain, with the party ID that sortition adds.
 fn expulsion_of(e3_id: &E3id, party_id: u64) -> CommitteeMemberExpelled {
     CommitteeMemberExpelled {
@@ -605,7 +732,7 @@ async fn a_key_collector_created_after_an_expulsion_does_not_wait_for_that_party
 async fn a_share_collector_created_after_an_expulsion_does_not_wait_for_that_party() -> Result<()> {
     let e3_id = E3id::new("expelled-before-share-collector", 1);
     // The threshold-share cutoff (75% of 7,200 s) is 5,400 s after selection.
-    let (actor, repo, recovery_repo) =
+    let (actor, repo, recovery_repo, _) =
         start_actor_before_selection_with_recovery(&e3_id, 7_200).await?;
     actor
         .send(keyshare_event(expulsion_of(&e3_id, 1), 1, EventSource::Evm))
@@ -993,12 +1120,12 @@ async fn start_actor_before_selection(
     e3_id: &E3id,
     dkg_window_secs: u64,
 ) -> Result<(Addr<ThresholdKeyshare>, Repository<ThresholdKeyshareState>)> {
-    let (actor, repo, _) =
+    let (actor, repo, _, _) =
         start_actor_before_selection_with_recovery(e3_id, dkg_window_secs).await?;
     Ok((actor, repo))
 }
 
-/// `start_actor_before_selection`, which also returns the recovery repository.
+/// `start_actor_before_selection`, which also returns the recovery repository and the bus history.
 async fn start_actor_before_selection_with_recovery(
     e3_id: &E3id,
     dkg_window_secs: u64,
@@ -1006,8 +1133,9 @@ async fn start_actor_before_selection_with_recovery(
     Addr<ThresholdKeyshare>,
     Repository<ThresholdKeyshareState>,
     Repository<ThresholdKeyshareRecoveryState>,
+    Addr<HistoryCollector<InterfoldEvent>>,
 )> {
-    let (bus, _) = test_bus();
+    let (bus, history) = test_bus();
     let (mut state, repo) = test_state(e3_id, KeyshareState::Init);
     state.try_mutate_without_context(|mut state| {
         state.dkg_deadline_unix_secs = None;
@@ -1041,7 +1169,7 @@ async fn start_actor_before_selection_with_recovery(
         }),
     })
     .start();
-    Ok((actor, repo, recovery_repo))
+    Ok((actor, repo, recovery_repo, history))
 }
 
 /// A keyshare before its selection, with its state, recovery state and recorded BFV key in
@@ -4171,12 +4299,12 @@ async fn stale_threshold_share_deadline_preserves_decryption(decrypting: bool) -
         num_moduli: 1,
         own_plaintext_idx: Some(0),
         own_share_raw: Some(current.own_sk_share_raw),
-        dkg_input_type: e3_zk_helpers::computation::DkgInputType::SecretKey,
+        dkg_input_type: e3_zk_config::DkgInputType::SecretKey,
         params_preset: BfvPreset::InsecureDkg64,
         committee_size: actor.state.try_get()?.committee_size()?,
     };
     let esm_request = DkgShareDecryptionProofRequest {
-        dkg_input_type: e3_zk_helpers::computation::DkgInputType::SmudgingNoise,
+        dkg_input_type: e3_zk_config::DkgInputType::SmudgingNoise,
         own_share_raw: Some(current.own_esi_shares_raw[0].clone()),
         ..sk_request.clone()
     };
@@ -6627,3 +6755,129 @@ async fn decryption_proof_recovery_coalesces_repeated_resume_triggers() -> Resul
 
 #[path = "tests/admission.rs"]
 mod admission;
+
+/// Replay of a selection that the restored context lacks starts the keyshare before
+/// `EffectsEnabled`. It publishes nothing and starts no collector then, so an encryption-key cutoff
+/// that passes during replay ends nothing. At `EffectsEnabled` the rebuilt collector applies the
+/// cutoff: no peer sent a key, so the DKG fails.
+#[actix::test]
+async fn a_keyshare_that_replay_starts_waits_for_effects() -> Result<()> {
+    let e3_id = E3id::new("replay-started-keyshare", 1);
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let (bus, history) = test_bus();
+    let repositories = Repositories::in_mem();
+    let mut context = E3Context::from_params(E3ContextParams {
+        e3_id: e3_id.clone(),
+        repository: repositories.router().repositories().context(&e3_id),
+        extensions: Arc::new(Vec::new()),
+    });
+    // The router's context before `EffectsEnabled`.
+    context.set_effects_enabled(false);
+    context.set_dependency(
+        META_KEY,
+        E3Meta {
+            threshold_m: 1,
+            threshold_n: 3,
+            seed: e3_events::Seed([0; 32]),
+            params_preset: BfvPreset::InsecureThreshold64,
+            params: insecure_threshold_params(),
+            error_size: ArcBytes::from_bytes(&[]),
+        },
+    );
+    // A 30 s window: the encryption-key cutoff (10%) comes 3 s after the selection.
+    let extension = ThresholdKeyshareExtension::create(
+        &bus,
+        &cipher,
+        &Address::ZERO.to_string(),
+        HashMap::from([(1, Address::ZERO)]),
+        Arc::new(|_| {
+            Box::pin(async {
+                Ok((
+                    crate::domain::timeout_policy::now_unix_secs().saturating_add(30),
+                    30,
+                ))
+            })
+        }),
+        alloy::signers::local::PrivateKeySigner::random(),
+        Default::default(),
+    );
+    let selected = keyshare_event(selection(&e3_id), 1, EventSource::Evm);
+    extension.on_event(&mut context, &selected);
+    let actor = context
+        .get_event_recipient("threshold_keyshare")
+        .cloned()
+        .expect("the selection starts the keyshare");
+    actor.send(selected).await?;
+
+    // The cutoff passes while startup still replays the log.
+    actix::clock::sleep(std::time::Duration::from_secs(4)).await;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(
+        !events.iter().any(|event| matches!(
+            event.get_data(),
+            InterfoldEventData::EncryptionKeyPending(_)
+                | InterfoldEventData::EncryptionKeyCollectionFailed(_)
+                | InterfoldEventData::E3Failed(_)
+        )),
+        "the keyshare acted before EffectsEnabled: {:?}",
+        events
+            .iter()
+            .map(|event| event.event_type())
+            .collect::<Vec<_>>()
+    );
+
+    actor
+        .send(keyshare_event(EffectsEnabled::new(), 2, EventSource::Local))
+        .await?;
+    let repo = context.repositories().threshold_keyshare(&e3_id);
+    let state =
+        wait_for_keyshare_state(&repo, |state| matches!(state, KeyshareState::Failed { .. }))
+            .await?;
+    assert!(
+        matches!(
+            state,
+            KeyshareState::Failed {
+                failed_at_stage: E3Stage::CommitteeFinalized,
+                reason: FailureReason::DKGTimeout,
+            }
+        ),
+        "expected the cutoff to fail the DKG once effects run, got {state:?}"
+    );
+    Ok(())
+}
+
+/// While startup replays the log, a peer's key is recorded but starts no collector, whose deadline
+/// could run out before replay delivers the other recorded keys.
+#[actix::test]
+async fn a_replayed_key_is_recorded_without_a_collector() -> Result<()> {
+    let e3_id = E3id::new("replayed-key", 1);
+    let (parent, _, _, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    let parent = parent.start();
+    // `build_actor` starts with effects off, as during replay.
+    let (mut actor, _, recovery, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    actor
+        .handle_encryption_key_created(TypedEvent::new(peer_key(&e3_id, 1), test_ec(1)), parent)?;
+
+    assert!(actor.encryption_key_collector.is_none());
+    assert!(recovery
+        .read()
+        .await?
+        .expect("recovery state")
+        .encryption_keys
+        .contains_key(&1));
+    Ok(())
+}

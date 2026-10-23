@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { join } from 'node:path'
 
 import { ROOT_DIR, fail, readJson } from './core.mjs'
@@ -8,7 +9,6 @@ import { ROOT_DIR, fail, readJson } from './core.mjs'
 export function verifyPublications(environment = process.env) {
   const required = [
     ['ciphernode image', environment.CIPHERNODE_RESULT],
-    ['e3-support image', environment.SUPPORT_RESULT],
     ['npm packages', environment.NPM_RESULT],
   ]
 
@@ -26,79 +26,84 @@ export function verifyPublications(environment = process.env) {
   console.log('Every required release publication succeeded.')
 }
 
-function jobSource(workflow, jobName) {
-  const start = workflow.indexOf(`\n  ${jobName}:`)
-  if (start < 0) {
-    fail(`release workflow does not contain ${jobName}`)
-  }
-  const next = workflow.slice(start + 1).search(/\n  [A-Za-z0-9_-]+:/)
-  return next < 0 ? workflow.slice(start) : workflow.slice(start, start + 1 + next)
-}
-
-function requireText(source, text, message) {
-  if (!source.includes(text)) {
-    fail(message)
-  }
-}
-
 export function checkReleaseSafeguards(rootDir = ROOT_DIR) {
-  const release = readFileSync(join(rootDir, '.github/workflows/releases.yml'), 'utf8')
-  const bump = readFileSync(join(rootDir, 'scripts/bump-versions.ts'), 'utf8')
+  // Only this development check needs YAML. Publication CLI commands run without npm dependencies.
+  const { parse } = createRequire(import.meta.url)('yaml')
+  const release = parse(readFileSync(join(rootDir, '.github/workflows/releases.yml'), 'utf8'))
   const packageJson = readJson(rootDir, 'package.json')
-
-  requireText(release, 'node scripts/release.mjs prepare', 'the release tag is not bound to main history')
-  requireText(release, 'group: release-promotion-${{ github.repository }}', 'release promotions can overlap')
-
-  if (release.includes('uses: ./.github/workflows/ci.yml')) {
-    fail('release workflow repeats CI that already qualified the main commit')
+  const job = (name) => {
+    if (!release.jobs?.[name]) fail(`release workflow does not contain ${name}`)
+    return release.jobs[name]
   }
-
-  for (const unsafeText of ['continue-on-error: true', 'cachix/cachix-action', 'cargo workspaces publish', 'npm@latest']) {
-    if (release.includes(unsafeText)) {
-      fail(`release workflow contains unsafe operation: ${unsafeText}`)
+  const requires = (name, dependencies) => {
+    const needs = [job(name).needs].flat()
+    for (const dependency of dependencies) {
+      if (!needs.includes(dependency)) fail(`${name} must require ${dependency}`)
     }
   }
-
-  if (!/^  NPM_VERSION: '\d+\.\d+\.\d+'$/m.test(release)) {
-    fail('release workflow does not pin an exact npm version')
+  const command = (name, text) => {
+    if (!job(name).steps?.some((step) => step.run?.split('\n').some((line) => line.trim() === text || line.trim().startsWith(`${text} `))))
+      fail(`${name} must execute ${text}`)
   }
 
-  for (const publisher of ['build-ciphernode-image-release', 'build-e3-support-release', 'publish-npm-packages']) {
-    requireText(jobSource(release, publisher), 'release-candidate-gate', `${publisher} can publish before candidate qualification`)
+  if (release.concurrency?.group !== 'release-promotion-${{ github.repository }}' || release.concurrency?.['cancel-in-progress'] !== false)
+    fail('release promotions must be serialized without cancellation')
+  if (!/^\d+\.\d+\.\d+$/.test(release.env?.NPM_VERSION ?? '')) fail('release workflow does not pin an exact npm version')
+  for (const entry of Object.values(release.jobs)) {
+    if (entry.uses === './.github/workflows/ci.yml') fail('release workflow repeats CI that already qualified the main commit')
+    for (const operation of [entry, ...(entry.steps ?? [])]) {
+      if (operation['continue-on-error']) fail('release workflow must not continue on error')
+      if (operation.uses?.startsWith('cachix/cachix-action')) fail('release workflow contains cachix/cachix-action')
+      for (const unsafe of ['cargo workspaces publish', 'npm@latest'])
+        if (operation.run?.includes(unsafe)) fail(`release workflow contains unsafe operation: ${unsafe}`)
+    }
   }
-
-  const candidateGate = jobSource(release, 'release-candidate-gate')
-  requireText(candidateGate, 'validate-and-prepare', 'release artifacts are not bound to the validated main commit')
-  requireText(candidateGate, 'build-binaries', 'publication can start without release binaries')
-  requireText(candidateGate, 'download-circuits', 'publication can start without source-matched circuits')
-
-  requireText(release, 'Required circuit-artifacts branch is missing', 'missing circuit artifacts do not fail closed')
-  requireText(release, 'if-no-files-found: error', 'missing release archives do not fail artifact upload')
-  requireText(release, 'node scripts/release.mjs publish-npm', 'npm publication cannot resume safely')
-  requireText(release, 'aliases=(--tag "${image}:dev")', 'a stable release leaves the dev container aliases behind')
-  requireText(
-    jobSource(release, 'publish-npm-packages'),
-    'npm install -g "npm@${NPM_VERSION}"',
-    'npm publication does not install the pinned npm version',
-  )
-
-  const createRelease = jobSource(release, 'create-github-release')
-  requireText(createRelease, 'publication-gate', 'GitHub release creation does not require all publications')
-  if (createRelease.includes('always()')) {
-    fail('GitHub release creation can bypass a failed dependency')
+  command('validate-and-prepare', 'node scripts/release/index.mjs prepare')
+  for (const publisher of ['build-ciphernode-image-release', 'publish-npm-packages']) {
+    requires(publisher, ['release-candidate-gate'])
+    if (job(publisher).if !== undefined) fail(`${publisher} must retain implicit dependency success gating`)
   }
-  if (createRelease.indexOf('- name: Create GitHub Release') < createRelease.indexOf('- name: Update stable tag')) {
-    fail('the stable release is created before its aliases and stable tag are promoted')
+  requires('release-candidate-gate', ['validate-and-prepare', 'build-binaries', 'download-circuits'])
+  if (job('release-candidate-gate').if !== undefined) fail('release-candidate-gate must retain implicit dependency success gating')
+  requires('publication-gate', [
+    'validate-and-prepare',
+    'build-ciphernode-image-release',
+    'publish-npm-packages',
+    'build-dappnode-package-release',
+  ])
+  command('publication-gate', 'node scripts/release/index.mjs verify-publications')
+  command('download-circuits', 'pnpm store:circuits verify-release')
+  for (const name of ['build-binaries', 'download-circuits']) {
+    const uploads = job(name).steps.filter((step) => step.uses?.startsWith('actions/upload-artifact@'))
+    if (!uploads.length || uploads.some((step) => step.with?.['if-no-files-found'] !== 'error'))
+      fail(`${name} must fail on missing release archives`)
   }
-
-  if (/git tag (?:-a|--annotate)|git push .*refs\/tags/.test(bump)) {
-    fail('the version bump script still creates or pushes a release tag')
+  const binaries = job('build-binaries').strategy?.matrix?.include ?? []
+  for (const [asset, features] of Object.entries({
+    'interfold-linux-x86_64': '',
+    'interfold-macos-aarch64': '',
+    'interfold-test-only-skip-proof-aggregation-linux-x86_64': 'test-only-skip-proof-aggregation',
+  })) {
+    const entries = binaries.filter((entry) => entry.asset === asset)
+    if (entries.length !== 1 || entries[0].features !== features)
+      fail(`the ${asset} release archive must be built with features: ${features}`)
   }
-  requireText(bump, 'this.checkReleaseBranch()', 'the version bump can commit directly on a protected branch')
+  command('build-binaries', 'test "$compiled" = "$FEATURES"')
+  command('build-binaries', 'case "$ASSET" in interfold-test-only-*) ;; *) exit 1 ;; esac')
+  command('publish-npm-packages', 'node scripts/release/index.mjs publish-npm')
+  command('publish-npm-packages', 'npm install -g "npm@${NPM_VERSION}"')
+  requires('create-github-release', ['publication-gate'])
+  const createRelease = job('create-github-release')
+  if (createRelease.if?.includes('always()') || !createRelease.if?.includes("needs.publication-gate.result == 'success'"))
+    fail('GitHub release creation must require successful publications')
+  const steps = createRelease.steps
+  const create = steps.findIndex((step) => step.uses?.startsWith('softprops/action-gh-release@'))
+  const promote = steps.findIndex((step) => step.run?.startsWith('node scripts/release/index.mjs promote-stable'))
+  if (promote < 0 || create <= promote) fail('the stable release must be created after its stable tag is promoted')
+  command('create-github-release', 'aliases=(--tag "${CIPHERNODE_IMAGE_NAME}:dev")')
 
-  if (packageJson.scripts['release:tag'] !== 'node scripts/release.mjs tag') {
+  if (packageJson.scripts['release:tag'] !== 'node scripts/release/index.mjs tag') {
     fail('release:tag does not use the protected release command')
   }
-
-  console.log('Release promotion safeguards are fail closed.')
+  console.log('Release workflow dependency structure verified (not runtime publication assurance).')
 }

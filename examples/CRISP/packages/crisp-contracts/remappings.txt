@@ -1,5 +1,0 @@
-@interfold/contracts/=node_modules/@interfold/contracts/
-solady/=node_modules/solady/
-@zk-kit/lazy-imt.sol=node_modules/@zk-kit/lazy-imt.sol
-poseidon-solidity/=node_modules/poseidon-solidity/
-@openzeppelin/=node_modules/@openzeppelin/

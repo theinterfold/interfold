@@ -1,0 +1,105 @@
+{
+  "group": "sdk",
+  "units": [
+    {
+      "id": "interfold-sdk",
+      "documentation": [{ "title": "TypeScript SDK", "path": "docs/pages/build/sdk.mdx" }],
+      "kind": "package",
+      "path": "packages/interfold-sdk/src",
+      "one_line": "TypeScript SDK for dApps: requests E3 rounds, encrypts values to the committee key with proofs, and reads E3 state and events.",
+      "actors": [
+        {
+          "name": "InterfoldSDK",
+          "role": "facade for requests, key reads, encryption, output publishing, and event subscriptions",
+          "ref": "packages/interfold-sdk/src/interfold-sdk.ts@45@export class InterfoldSDK"
+        },
+        {
+          "name": "ContractClient",
+          "role": "wallet and public client for the Interfold contract: request, cancel, publish output, read E3",
+          "ref": "packages/interfold-sdk/src/contracts/contract-client.ts@33@export class ContractClient"
+        },
+        {
+          "name": "EventListener",
+          "role": "delivers typed logs through contract watchers or polling; polling skips watched types and emits fetched ranges in block/log order",
+          "ref": "packages/interfold-sdk/src/events/event-listener.ts@34@export class EventListener"
+        },
+        {
+          "name": "CommitteePublicKeyAssembler",
+          "role": "rebuilds the committee public key from its published chunks",
+          "ref": "packages/interfold-sdk/src/committee-public-key.ts@36@export class CommitteePublicKeyAssembler"
+        }
+      ],
+      "consumes": [
+        {
+          "name": "CommitteePublicKeyChunkPublished",
+          "by": "CommitteePublicKeyAssembler",
+          "ref": "packages/interfold-sdk/src/events/types.ts@28@COMMITTEE_PUBLIC_KEY_CHUNK_PUBLISHED"
+        }
+      ],
+      "emits": [],
+      "state": [
+        {
+          "name": "tracked committee-key assemblies, up to 128 E3 IDs by default",
+          "where": "memory",
+          "ref": "packages/interfold-sdk/src/committee-public-key.ts@13@DEFAULT_MAX_TRACKED_COMMITTEE_KEYS = 128"
+        },
+        {
+          "name": "poll cursor and generation; cursor advances only after the range fetch succeeds, and a restarted loop invalidates the old generation",
+          "where": "memory",
+          "ref": "packages/interfold-sdk/src/events/event-listener.ts@447@private async pollForEvents(generation: number): Promise<void> {"
+        }
+      ],
+      "key_types": [
+        {
+          "name": "E3RequestParams",
+          "what": "committee size, input window, E3 program, param set, compute and custom params, fee cap",
+          "ref": "packages/interfold-sdk/src/contracts/types.ts@57@export interface E3RequestParams extends RequestParams"
+        },
+        {
+          "name": "E3Stage",
+          "what": "None, Requested, CommitteeFinalized, KeyPublished, CiphertextReady, Complete, Failed",
+          "ref": "packages/interfold-sdk/src/contracts/types.ts@76@export enum E3Stage"
+        },
+        {
+          "name": "BfvParams",
+          "what": "threshold BFV parameters: degree, plaintext modulus, moduli, error variance",
+          "ref": "packages/interfold-sdk/src/crypto/types.ts@10@export interface BfvParams"
+        },
+        {
+          "name": "CiphertextOutputReference",
+          "what": "proof-backed reference to the aggregate ciphertext on the data-availability layer",
+          "ref": "packages/interfold-sdk/src/contracts/types.ts@69@export interface CiphertextOutputReference"
+        }
+      ],
+      "read_first": [
+        {
+          "why": "public surface: the names a dApp imports",
+          "ref": "packages/interfold-sdk/src/index.ts@8@export { InterfoldSDK } from './interfold-sdk'"
+        },
+        {
+          "why": "the request method and what it calls",
+          "ref": "packages/interfold-sdk/src/interfold-sdk.ts@159@public async requestE3(params: E3RequestParams): Promise<Hash> {"
+        },
+        {
+          "why": "polling lifecycle: starts at the current block, then fetches and emits newly observed ranges",
+          "ref": "packages/interfold-sdk/src/events/event-listener.ts@276@public async startPolling(): Promise<void> {"
+        },
+        {
+          "why": "where the committee public key is read, from the ciphernode registry",
+          "ref": "packages/interfold-sdk/src/contracts/contract-client.ts@305@functionName: 'committeePublicKey'"
+        },
+        {
+          "why": "encryption with a proof: the input path a dApp uses",
+          "ref": "packages/interfold-sdk/src/crypto/encrypt.ts@103@export async function encryptVectorAndGenProof"
+        }
+      ],
+      "rust_patterns": [],
+      "depends_on": [],
+      "tests": "Vitest tests in tests/ cover events (including polling), SDK calls, key assembly and proof API selection; run: pnpm --filter @interfold/sdk test. Real-proof integration uses test:proofs and its circuit/toolchain prerequisites.",
+      "unverified": [
+        "The brief says dApps publish inputs with this SDK. This package has no publish-input method; the starter template client sends publishInput to its program contract directly, so that use is not recorded as a fact here.",
+        "The @interfold/wasm functions and the circuits under circuits/bin/threshold/target that this package imports were not read."
+      ]
+    }
+  ]
+}

@@ -5,28 +5,29 @@
 use super::*;
 
 impl AccusationVoting {
-    /// Handle an on-chain SlashExecuted event for this E3.
-    pub(crate) fn on_slash_executed(&mut self, data: SlashExecuted) {
+    /// Remove a member that the chain expelled from this E3's committee. A slash that does not
+    /// expel (`SlashExecuted` without `CommitteeMemberExpelled`) leaves the member a voter.
+    pub(crate) fn on_member_expelled(&mut self, data: &CommitteeMemberExpelled) {
         if data.e3_id != self.e3_id {
             return;
         }
         let prev_len = self.committee.len();
-        self.committee.retain(|addr| *addr != data.operator);
+        self.committee.retain(|addr| *addr != data.node);
         if self.committee.len() < prev_len {
             info!(
-                "Removed slashed operator {} from committee (now {} members)",
-                data.operator,
+                "Removed expelled member {} from committee (now {} members)",
+                data.node,
                 self.committee.len()
             );
 
             // Purge any votes from the expelled node in pending accusations
             for pending in self.pending.values_mut() {
-                pending.votes_for.retain(|v| v.voter != data.operator);
+                pending.votes_for.retain(|v| v.voter != data.node);
             }
 
             // Purge from buffered votes
             for buf in self.buffered_votes.values_mut() {
-                buf.retain(|v| v.voter != data.operator);
+                buf.retain(|v| v.voter != data.node);
             }
         }
     }

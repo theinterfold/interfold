@@ -14,25 +14,26 @@ This page shows how to build CRISP and run it on a local chain. It is for develo
 the reference application or change it. At the end, the full CRISP stack runs on your computer and
 the client is at `http://localhost:3000`.
 
-CRISP runs inside the Interfold monorepo. `pnpm dev:setup` builds workspace packages and installs
-the `interfold` CLI from the repository source. For this reason, you need a full clone of the
-repository. Run all `pnpm` commands on this page from `examples/CRISP`.
+CRISP lives in its own repository, [theinterfold/CRISP](https://github.com/theinterfold/CRISP). It
+builds against one released version of the Interfold, which `interfold-release.json` names. You do
+not need a clone of the Interfold repository. Run all `pnpm` commands on this page from the root of
+the CRISP repository.
 
 ## Prerequisites
 
-| Tool                                                            | Version                                     | Used by                                                        |
-| --------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------- |
-| Git                                                             | Any                                         | Clone                                                          |
-| [Rust](https://rust-lang.org/tools/install/)                    | 1.91.1 (`rust-toolchain.toml`)              | Server, CLI, program, and the `interfold` CLI                  |
-| [Node.js](https://nodejs.org/en/download)                       | 22.x (CI uses `NODE_VERSION: 22`)           | Client, SDK, contracts, and scripts                            |
-| [pnpm](https://pnpm.io)                                         | 10.7.1 (`packageManager` in `package.json`) | All JavaScript packages                                        |
-| [Foundry](https://getfoundry.sh)                                | Any                                         | `anvil`, the local chain that `scripts/dev.sh` starts          |
-| [`yq`](https://github.com/mikefarah/yq)                         | Any                                         | `scripts/dev_cipher.sh` reads node addresses from the config   |
-| [`nargo`](https://noir-lang.org/docs/installation)              | `v1.0.0-beta.26` (`NOIR_TOOLCHAIN` in CI)   | Circuit builds in `pnpm dev:setup` and `pnpm compile:circuits` |
-| [`bb`](https://barretenberg.aztec.network/docs/getting_started) | 5.2.0 (`crates/zk-prover/versions.json`)    | Verification keys and generated verifiers                      |
-| Python 3                                                        | Any                                         | `scripts/compile_circuits.sh` patches the generated verifiers  |
-| A browser wallet, for example [MetaMask](https://metamask.io)   | Any                                         | The client                                                     |
-| `cargo-openvm` v2.0.2                                           | v2.0.2                                      | Only for real OpenVM proofs (`CRISP_REAL_PROOFS=1`)            |
+| Tool                                                            | Version                                                           | Used by                                                                                           |
+| --------------------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Git                                                             | Any                                                               | Clone                                                                                             |
+| [Rust](https://rust-lang.org/tools/install/)                    | 1.91.1 (`rust-toolchain.toml`)                                    | Server, CLI, program, and runner. Also the `interfold` CLI, on a platform with no release binary. |
+| [Node.js](https://nodejs.org/en/download)                       | 22.x (CI uses `NODE_VERSION: 22`)                                 | Client, SDK, contracts, and scripts                                                               |
+| [pnpm](https://pnpm.io)                                         | 10.7.1 (`packageManager` in `package.json`)                       | All JavaScript packages                                                                           |
+| [Foundry](https://getfoundry.sh)                                | Any                                                               | `anvil`, the local chain that `scripts/dev.sh` starts                                             |
+| [`yq`](https://github.com/mikefarah/yq)                         | Any                                                               | `scripts/dev_cipher.sh` reads node addresses from the config                                      |
+| [`nargo`](https://noir-lang.org/docs/installation)              | `v1.0.0-beta.26` (`NOIR_TOOLCHAIN` in CI)                         | Circuit builds in `pnpm dev:setup` and `pnpm compile:circuits`                                    |
+| [`bb`](https://barretenberg.aztec.network/docs/getting_started) | 5.2.0 (`crates/zk/prover/versions.json` of the Interfold release) | Verification keys and generated verifiers                                                         |
+| Python 3                                                        | Any                                                               | `scripts/compile_circuits.sh` patches the generated verifiers                                     |
+| A browser wallet, for example [MetaMask](https://metamask.io)   | Any                                                               | The client                                                                                        |
+| `cargo-openvm` v2.0.2                                           | v2.0.2                                                            | Only for real OpenVM proofs (`CRISP_REAL_PROOFS=1`)                                               |
 
 Install `nargo` with `noirup -v v1.0.0-beta.26`. Other `nargo` versions can fail to compile the
 circuits. OpenVM is not necessary for local development, because the local scripts start the program
@@ -45,9 +46,8 @@ server in dev mode unless `CRISP_REAL_PROOFS=1`.
 ### Clone the repository
 
 ```bash
-git clone https://github.com/theinterfold/interfold.git
-cd interfold
-cd examples/CRISP
+git clone https://github.com/theinterfold/CRISP.git
+cd CRISP
 ```
 
 ### Choose a local profile
@@ -69,17 +69,17 @@ pnpm dev:setup
 
 `scripts/setup.sh` does these tasks in sequence:
 
-1. Installs the workspace dependencies (`pnpm install --frozen-lockfile`) and runs `pnpm build:ts`
-   at the repository root.
-2. Builds the CRISP SDK (`pnpm build:sdk`). This step compiles the CRISP circuits.
-3. Builds the recursive Interfold circuits, only when `CRISP_SKIP_PROOF_AGGREGATION=false`.
-4. Compiles the Interfold contracts and the CRISP contracts.
-5. Copies `server/.env.example` to `server/.env` when `server/.env` does not exist. Then it builds
+1. Installs the dependencies (`pnpm install --frozen-lockfile`).
+2. Builds the CRISP SDK (`pnpm build:sdk`). This step takes the circuits of the pinned Interfold
+   release, compiles the CRISP circuits, and stages the circuit presets.
+3. Compiles the CRISP contracts (`pnpm compile:contracts`).
+4. Copies `server/.env.example` to `server/.env` when `server/.env` does not exist. Then it builds
    the `cli` and `server` binaries.
-6. Writes the `E3_PARAM_SET` that matches the profile into `server/.env`.
-7. Copies `client/.env.example` to `client/.env` when `client/.env` does not exist.
-8. Runs `cargo install --locked --path crates/cli --bin interfold -f`. When the profile skips proof
-   aggregation, it adds `--features test-only-skip-proof-aggregation`.
+5. Writes the `E3_PARAM_SET` that matches the profile into `server/.env`.
+6. Copies `client/.env.example` to `client/.env` when `client/.env` does not exist.
+7. Installs the `interfold` CLI of the pinned release into `~/.cargo/bin` (see
+   [Interfold release](#interfold-release)).
+8. Runs `interfold program compile`, only when `CRISP_REAL_PROOFS=1`.
 
 At the end, the script prints the active profile under the heading `CRISP dev profile`.
 
@@ -101,15 +101,15 @@ pnpm dev:up
 `scripts/dev.sh` starts the services in this order. The ciphernodes, the program server, the CRISP
 server, and the client start after the contract deployment is complete.
 
-| Service                    | Started by                                                      | Port                                    |
-| -------------------------- | --------------------------------------------------------------- | --------------------------------------- |
-| Anvil (chain ID 31337)     | `scripts/dev.sh`                                                | 8545                                    |
-| Local randomness helper    | `scripts/anvil-randomness.mjs`                                  | None                                    |
-| Contract deployment        | `scripts/crisp_deploy.sh`                                       | None                                    |
-| Ciphernodes `cn1` to `cn5` | `scripts/dev_cipher.sh` (`interfold nodes up`)                  | QUIC 9201 to 9205. `cn1` dashboard 8080 |
-| Program server             | `scripts/dev_program.sh` (`interfold program start --dev true`) | 13151                                   |
-| CRISP server               | `scripts/dev_server.sh` (`cargo run --bin server`)              | 4000                                    |
-| Client                     | `scripts/dev_client.sh` (`pnpm dev-static`)                     | 3000                                    |
+| Service                    | Started by                                           | Port                                    |
+| -------------------------- | ---------------------------------------------------- | --------------------------------------- |
+| Anvil (chain ID 31337)     | `scripts/dev.sh`                                     | 8545                                    |
+| Local randomness helper    | `scripts/anvil-randomness.mjs`                       | None                                    |
+| Contract deployment        | `scripts/crisp_deploy.sh`                            | None                                    |
+| Ciphernodes `cn1` to `cn5` | `scripts/dev_cipher.sh` (`interfold nodes up`)       | QUIC 9201 to 9205. `cn1` dashboard 8080 |
+| Program server             | `scripts/dev_program.sh` (`interfold program start`) | 13151                                   |
+| CRISP server               | `scripts/dev_server.sh` (`cargo run --bin server`)   | 4000                                    |
+| Client                     | `scripts/dev_client.sh` (`pnpm dev-static`)          | 3000                                    |
 
 When `dev_cipher.sh` has registered the ciphernodes, it prints `CIPHERNODES HAVE BEEN ADDED.` and
 writes the file `.interfold/ready`. The client starts after port 4000 is open and that file exists.
@@ -137,7 +137,8 @@ includes these contracts:
 
 - The Interfold contracts, with mock BFV verifiers for the DKG. With
   `CRISP_SKIP_PROOF_AGGREGATION=false`, the script sets `ENABLE_ZK_VERIFICATION=true`, and the
-  deployment uses the real BFV verifiers.
+  deployment uses the real BFV verifiers. For these verifiers, the script extracts the circuit
+  archive of the pinned Interfold release and sets `INTERFOLD_CIRCUITS_DIR` (see below).
 - `CRISPProgram`, the two generated Noir ballot verifiers, and `SelfRegistry`.
 - `MockOpenVmReceiptVerifier` (with `CRISP_UNPROVED_TEST=1`, which the local scripts set unless
   `CRISP_REAL_PROOFS=1`), `MockVotingToken`, and `MockCrispDataAvailabilityVerifier`. With
@@ -157,15 +158,45 @@ addresses by hand:
 The deployment records are in `packages/crisp-contracts/deployed_contracts.json`. For the addresses
 of the public networks, see [Contract addresses](/reference/contracts).
 
+CRISP deploys the Interfold contracts with the scripts of the published `@interfold/contracts`
+package, not with a clone of the Interfold repository. Outside the Interfold monorepo, the real BFV
+verifiers (`ENABLE_ZK_VERIFICATION=true`) read the verification key hashes of the BFV aggregation
+circuits from the directory that `INTERFOLD_CIRCUITS_DIR` names. This directory must hold the
+circuits of the same release as the package, in the release layout
+(`<preset>/<committee>/default/...`). `scripts/crisp_deploy.sh` sets the variable to
+`circuits/interfold/release`, which `node scripts/interfold-release.mjs circuits` writes from the
+release archive. When you run `pnpm deploy:contracts` yourself with `ENABLE_ZK_VERIFICATION=true`,
+set `INTERFOLD_CIRCUITS_DIR` to that directory. The deployment stops with an error when the variable
+is not set.
+
 ## Configuration
 
-| File                    | Created by                                         | Purpose                                               |
-| ----------------------- | -------------------------------------------------- | ----------------------------------------------------- |
-| `crisp.dev.env`         | Copied from `crisp.dev.env.example` by the scripts | Local profile: BFV preset and proof aggregation mode  |
-| `interfold.config.yaml` | Tracked in Git. The deployment updates addresses.  | Ciphernode chains, contracts, program mode, and nodes |
-| `server/.env`           | Copied from `server/.env.example` by `dev:setup`   | Settings for the CRISP server and the CLI             |
-| `client/.env`           | Copied from `client/.env.example` by `dev:setup`   | Settings for the client                               |
-| `.env`                  | Copied by hand from `.env.example`                 | Keys for `scripts/setup_testnet.sh` only              |
+| File                     | Created by                                         | Purpose                                               |
+| ------------------------ | -------------------------------------------------- | ----------------------------------------------------- |
+| `crisp.dev.env`          | Copied from `crisp.dev.env.example` by the scripts | Local profile: BFV preset and proof aggregation mode  |
+| `interfold.config.yaml`  | Tracked in Git. The deployment updates addresses.  | Ciphernode chains, contracts, program mode, and nodes |
+| `server/.env`            | Copied from `server/.env.example` by `dev:setup`   | Settings for the CRISP server and the CLI             |
+| `client/.env`            | Copied from `client/.env.example` by `dev:setup`   | Settings for the client                               |
+| `.env`                   | Copied by hand from `.env.example`                 | Keys for `scripts/setup_testnet.sh` only              |
+| `interfold-release.json` | Tracked in Git                                     | The Interfold release that CRISP builds against       |
+
+### Interfold release
+
+`interfold-release.json` names the Interfold version and the SHA-256 digest of each release asset
+that CRISP downloads: the `interfold` CLI and the circuit archive. `scripts/interfold-release.mjs`
+refuses an asset when its digest does not match. The other dependencies name the same release in
+their own files:
+
+- `Cargo.toml` and `guest/Cargo.toml`: the Rust crates (`e3-*`), as Cargo git dependencies on the
+  release tag.
+- `circuits/lib/Nargo.toml` and `circuits/bin/*/Nargo.toml`: the Noir library `interfold_lib`, as a
+  Nargo git dependency on the release tag.
+- `package.json` and `packages/crisp-contracts/package.json`: the npm packages `@interfold/config`
+  and `@interfold/contracts`.
+
+To move to another release, follow the steps in the
+[Interfold dependency section](https://github.com/theinterfold/CRISP#interfold-dependency) of the
+CRISP Readme.
 
 ### Local profile
 
@@ -183,9 +214,9 @@ Cargo feature. `pnpm dev:setup` selects that feature from the profile. With
 make recursive proofs.
 
 <Callout type='warning'>
-  `~/.cargo/bin/interfold` is shared. A `pnpm dev:setup` in `templates/default` or in another
-  example replaces the binary that this profile installed. When the ciphernodes then exit at
-  startup, `dev_cipher.sh` stops and prints the node status table.
+  `~/.cargo/bin/interfold` is shared. A `pnpm dev:setup` in another project, for example
+  `templates/default`, replaces the binary that this profile installed. When the ciphernodes then
+  exit at startup, `dev_cipher.sh` stops and prints the node status table.
 </Callout>
 
 ### interfold.config.yaml
@@ -310,14 +341,14 @@ program:
 ```
 
 Then set `CRISP_REAL_PROOFS=1` in `crisp.dev.env` and run `pnpm dev:setup` again. With it,
-`interfold program compile` builds `examples/CRISP/guest` and its keys, the deployment deploys the
-receipt verifier for that guest, and `interfold program start` serves real proofs. A changed program
-or policy has a new receipt identity, so compile and deploy again after you change either.
+`interfold program compile` builds `guest/` and its keys, the deployment deploys the receipt
+verifier for that guest, and `interfold program start` serves real proofs. A changed program or
+policy has a new receipt identity, so compile and deploy again after you change either.
 
 ## Run single components
 
 `pnpm dev:up` runs all services together. To run them one at a time, open a terminal for each
-command and run the commands in this order from `examples/CRISP`:
+command and run the commands in this order from the root of the CRISP repository:
 
 ```bash
 # 1. Local chain
@@ -347,7 +378,7 @@ its own requests.
 
 ## Scripts
 
-These scripts are defined in `examples/CRISP/package.json`.
+These scripts are defined in `package.json` of the CRISP repository.
 
 | Script                                                                                                                 | What it does                                                                                                                                                 |
 | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -355,7 +386,9 @@ These scripts are defined in `examples/CRISP/package.json`.
 | `pnpm dev:up`                                                                                                          | Runs `scripts/dev.sh`: starts the full local stack                                                                                                           |
 | `pnpm cli`                                                                                                             | Runs `target/debug/cli` with the arguments that you give                                                                                                     |
 | `pnpm compile:circuits`                                                                                                | Compiles the Noir circuits and writes the verifiers to `packages/crisp-contracts/contracts/verifiers`                                                        |
-| `pnpm compute:vk-hash`                                                                                                 | Compiles the circuits and prints the fold key hash for each ballot stack                                                                                     |
+| `pnpm compute:vk-hash <preset>`                                                                                        | Prints the key hash that each fold circuit binds for one BFV preset. Run it after you change a ballot circuit or move to another Interfold release.          |
+| `pnpm build:runner-image`                                                                                              | Builds the `e3-support` program runner image from `runner/Dockerfile`. With `--push`, it also pushes the image.                                              |
+| `pnpm openvm <task>`                                                                                                   | Runs a task of `scripts/openvm.sh`, for example `service-build`, `service-start`, `fixture`, or `guest-parity`                                               |
 | `pnpm compile:contracts`                                                                                               | Compiles the CRISP contracts with Hardhat                                                                                                                    |
 | `pnpm build:sdk`, `pnpm build:presets`                                                                                 | Builds the SDK, or compiles and stages the circuit presets                                                                                                   |
 | `pnpm deploy:contracts`, `pnpm deploy:contracts:mock`, `pnpm deploy:contracts:full`, `pnpm deploy:contracts:full:mock` | Deploys the CRISP contracts. `mock` sets `USE_MOCKS=true`, which mocks the token and data availability, not compute. `full` adds the Interfold contracts.    |
@@ -402,7 +435,8 @@ copy.
 
 1. Stop the CRISP server.
 2. In the server's working directory, run the `server` binary with `compact-database`. A source
-   build puts the binary in `target/release` or `target/debug` below `examples/CRISP`:
+   build puts the binary in `target/release` or `target/debug` below the root of the CRISP
+   repository:
 
    ```bash
    server compact-database database/server database/server-compact
@@ -451,14 +485,15 @@ ballots are lost.
 
 ## Common setup errors
 
-| Symptom                                                                                                    | Cause                                                                     | Fix                                                                                            |
-| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `dev_cipher.sh` prints `ERROR: only <n>/<m> ciphernodes stayed up`                                         | The `interfold` binary does not match the profile, or another node error. | Read the node output above the table. For a missing Cargo feature, run `pnpm dev:setup` again. |
-| `Invalid CRISP_BFV_PRESET` or `Invalid CRISP_SKIP_PROOF_AGGREGATION`                                       | A value in `crisp.dev.env` is not allowed.                                | Use `insecure-64` or `secure-8192`, and `true` or `false`.                                     |
-| The server stops at startup with `DATA_AVAILABILITY_MODE=mock is allowed only on local development chains` | `CHAIN_ID` is not 31337 or 1337 and the mode is `mock`.                   | Set `DATA_AVAILABILITY_MODE=avail` and the Avail settings.                                     |
-| The server stops at startup with `Ethereum mainnet requires E3_PARAM_SET=2 (secure-8192)`                  | `CHAIN_ID=1` with `E3_PARAM_SET=0`.                                       | Set `E3_PARAM_SET=2`.                                                                          |
-| The server stops at startup with `CHAIN_ID (…) does not match the chain of HTTP_RPC_URL (…)`               | `HTTP_RPC_URL` serves a different chain.                                  | Use an RPC for the chain in `CHAIN_ID`, or correct `CHAIN_ID`.                                 |
-| The server stops at startup with `RELAY_MIN_BALANCE_ETH is required outside local chains…`                 | `RELAY_MIN_BALANCE_ETH` is empty outside mainnet and local chains.        | Set the balance that `finalizeInput` needs, or `0` to relay without a floor.                   |
+| Symptom                                                                                                    | Cause                                                                             | Fix                                                                                                      |
+| ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `dev_cipher.sh` prints `ERROR: only <n>/<m> ciphernodes stayed up`                                         | The `interfold` binary does not match the profile, or another node error.         | Read the node output above the table. For a missing Cargo feature, run `pnpm dev:setup` again.           |
+| `Invalid CRISP_BFV_PRESET` or `Invalid CRISP_SKIP_PROOF_AGGREGATION`                                       | A value in `crisp.dev.env` is not allowed.                                        | Use `insecure-64` or `secure-8192`, and `true` or `false`.                                               |
+| The server stops at startup with `DATA_AVAILABILITY_MODE=mock is allowed only on local development chains` | `CHAIN_ID` is not 31337 or 1337 and the mode is `mock`.                           | Set `DATA_AVAILABILITY_MODE=avail` and the Avail settings.                                               |
+| The server stops at startup with `Ethereum mainnet requires E3_PARAM_SET=2 (secure-8192)`                  | `CHAIN_ID=1` with `E3_PARAM_SET=0`.                                               | Set `E3_PARAM_SET=2`.                                                                                    |
+| The server stops at startup with `CHAIN_ID (…) does not match the chain of HTTP_RPC_URL (…)`               | `HTTP_RPC_URL` serves a different chain.                                          | Use an RPC for the chain in `CHAIN_ID`, or correct `CHAIN_ID`.                                           |
+| The server stops at startup with `RELAY_MIN_BALANCE_ETH is required outside local chains…`                 | `RELAY_MIN_BALANCE_ETH` is empty outside mainnet and local chains.                | Set the balance that `finalizeInput` needs, or `0` to relay without a floor.                             |
+| `interfold-release.mjs` prints `SHA-256 is <digest>, interfold-release.json pins <digest>`                 | A downloaded release asset does not match its digest in `interfold-release.json`. | Download the asset again. When the digests still differ, correct the digest in `interfold-release.json`. |
 
 ## Next steps
 

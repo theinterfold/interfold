@@ -17,9 +17,7 @@ on:
 
 env:
   CIPHERNODE_DOCKERFILE_PATH: crates/Dockerfile
-  SUPPORT_DOCKERFILE_PATH: crates/support/Dockerfile
   CIPHERNODE_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ciphernode
-  SUPPORT_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/e3-support
   NPM_VERSION: '11.19.1'
   NOIR_TOOLCHAIN: v1.0.0-beta.26
   MNEMONIC: 'test test test test test test test test test test test junk'
@@ -43,7 +41,7 @@ jobs:
 
       - name: Validate release candidate
         id: release
-        run: node scripts/release.mjs prepare
+        run: node scripts/release/index.mjs prepare
 
   build-ciphernode-image-release:
     name: Build & Push ciphernode (release)
@@ -79,43 +77,8 @@ jobs:
           cache-from: |
             type=gha,scope=ciphernode
 
-  build-e3-support-release:
-    name: Build & Push e3-support (release)
-    runs-on: ubuntu-latest
-    needs: [validate-and-prepare, release-candidate-gate]
-    env:
-      SUPPORT_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/e3-support
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Resolve the CLI revision tag
-        id: revision
-        run: echo "short_sha=$(git rev-parse --short=9 HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Build & push e3-support release image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ${{ env.SUPPORT_DOCKERFILE_PATH }}
-          push: true
-          tags: |
-            ${{ env.SUPPORT_IMAGE_NAME }}:${{ needs.validate-and-prepare.outputs.version }}
-            ${{ env.SUPPORT_IMAGE_NAME }}:${{ steps.revision.outputs.short_sha }}
-          cache-from: |
-            type=gha,scope=e3-support
-
   build-dappnode-package-release:
-    name: Build DAppNode package (release)
+    name: Build DAppNode packages (release)
     runs-on: ubuntu-latest
     needs: [validate-and-prepare, build-ciphernode-image-release]
     if: needs.validate-and-prepare.outputs.is_prerelease == 'false'
@@ -138,12 +101,11 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build DAppNode package
-        working-directory: dappnode
-        run: npx --no-install dappnodesdk build --skip_upload --skip_save --arch linux/amd64
+      - name: Build DAppNode packages
+        run: npm run build --prefix dappnode -- --skip_upload --skip_save
 
   build-binaries:
-    name: Build Binaries (${{ matrix.os_name }}-${{ matrix.arch }})
+    name: Build Binaries (${{ matrix.asset }})
     runs-on: ${{ matrix.os }}
     needs: [validate-and-prepare, download-circuits]
     env:
@@ -153,12 +115,19 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            os_name: linux
-            arch: x86_64
+            asset: interfold-linux-x86_64
+            features: ''
           - os: macos-latest
             target: aarch64-apple-darwin
-            os_name: macos
-            arch: aarch64
+            asset: interfold-macos-aarch64
+            features: ''
+          # Test and CI only: projects such as CRISP run their end-to-end tests with this binary and
+          # `skip_proof_aggregation: true`. The install script and `interfold update` select
+          # `interfold-<platform>.tar.gz`, so they never install it.
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset: interfold-test-only-skip-proof-aggregation-linux-x86_64
+            features: test-only-skip-proof-aggregation
 
     steps:
       - name: Checkout
@@ -172,7 +141,7 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: ${{ matrix.asset }}
 
       - name: Install solc (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -183,24 +152,39 @@ jobs:
         run: brew install solidity
 
       - name: Build interfold binary
+        env:
+          FEATURES: ${{ matrix.features }}
         run: |
           test -n "$E3_CIRCUITS_ARCHIVE_SHA256"
-          cargo build --locked --release --target ${{ matrix.target }} --bin interfold
+          cargo build --locked --release --target ${{ matrix.target }} --bin interfold ${FEATURES:+--features "$FEATURES"}
 
       - name: Check compiled circuit archive pin
         run: |
           target/${{ matrix.target }}/release/interfold noir status > "$RUNNER_TEMP/noir-status.txt"
           grep -Fx "  Archive SHA-256: $E3_CIRCUITS_ARCHIVE_SHA256" "$RUNNER_TEMP/noir-status.txt"
 
+      # A production archive must report no features. The test-only archive must report exactly its
+      # feature, and its name must say that it is test-only.
+      - name: Check compiled features
+        env:
+          ASSET: ${{ matrix.asset }}
+          FEATURES: ${{ matrix.features }}
+        run: |
+          compiled="$(target/${{ matrix.target }}/release/interfold rev --features)"
+          test "$compiled" = "$FEATURES"
+          if [ -n "$FEATURES" ]; then
+            case "$ASSET" in interfold-test-only-*) ;; *) exit 1 ;; esac
+          fi
+
       - name: Create release archives
         run: |
           mkdir -p dist
-          tar -C "target/${{ matrix.target }}/release" -czf "dist/interfold-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz" interfold
+          tar -C "target/${{ matrix.target }}/release" -czf "dist/${{ matrix.asset }}.tar.gz" interfold
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: interfold-binaries-${{ matrix.os_name }}-${{ matrix.arch }}
+          name: interfold-binaries-${{ matrix.asset }}
           if-no-files-found: error
           path: dist/
 
@@ -245,22 +229,22 @@ jobs:
         run: pnpm prepare-publish
 
       - name: Publish @interfold/config
-        run: node scripts/release.mjs publish-npm packages/interfold-config ${{ needs.validate-and-prepare.outputs.channel }}
+        run: node scripts/release/index.mjs publish-npm packages/interfold-config ${{ needs.validate-and-prepare.outputs.channel }}
 
       - name: Publish @interfold/contracts
-        run: node scripts/release.mjs publish-npm packages/interfold-contracts ${{ needs.validate-and-prepare.outputs.channel }}
+        run: node scripts/release/index.mjs publish-npm packages/interfold-contracts ${{ needs.validate-and-prepare.outputs.channel }}
 
       - name: Publish @interfold/wasm
-        run: node scripts/release.mjs publish-npm crates/wasm ${{ needs.validate-and-prepare.outputs.channel }}
+        run: node scripts/release/index.mjs publish-npm crates/wasm ${{ needs.validate-and-prepare.outputs.channel }}
 
       - name: Publish @interfold/sdk
-        run: node scripts/release.mjs publish-npm packages/interfold-sdk ${{ needs.validate-and-prepare.outputs.channel }}
+        run: node scripts/release/index.mjs publish-npm packages/interfold-sdk ${{ needs.validate-and-prepare.outputs.channel }}
 
       - name: Publish @interfold/react
-        run: node scripts/release.mjs publish-npm packages/interfold-react ${{ needs.validate-and-prepare.outputs.channel }}
+        run: node scripts/release/index.mjs publish-npm packages/interfold-react ${{ needs.validate-and-prepare.outputs.channel }}
 
       - name: Publish @interfold/mcp
-        run: node scripts/release.mjs publish-npm packages/interfold-mcp ${{ needs.validate-and-prepare.outputs.channel }}
+        run: node scripts/release/index.mjs publish-npm packages/interfold-mcp ${{ needs.validate-and-prepare.outputs.channel }}
 
   download-circuits:
     name: Download Circuit Artifacts
@@ -287,7 +271,7 @@ jobs:
       - name: Pull circuit artifacts
         id: pull
         run: |
-          SOURCE_HASH=$(pnpm tsx scripts/build-circuits.ts hash)
+          SOURCE_HASH=$(pnpm --silent build:circuits hash)
           echo "source_hash=$SOURCE_HASH" >> "$GITHUB_OUTPUT"
 
           if ! git fetch origin circuit-artifacts; then
@@ -330,8 +314,7 @@ jobs:
   publication-gate:
     name: Verify Every Release Publication
     runs-on: ubuntu-latest
-    needs:
-      [validate-and-prepare, build-ciphernode-image-release, build-e3-support-release, publish-npm-packages, build-dappnode-package-release]
+    needs: [validate-and-prepare, build-ciphernode-image-release, publish-npm-packages, build-dappnode-package-release]
     if: ${{ always() && !cancelled() }}
     steps:
       - uses: actions/checkout@v6
@@ -340,10 +323,9 @@ jobs:
         env:
           IS_PRERELEASE: ${{ needs.validate-and-prepare.outputs.is_prerelease }}
           CIPHERNODE_RESULT: ${{ needs.build-ciphernode-image-release.result }}
-          SUPPORT_RESULT: ${{ needs.build-e3-support-release.result }}
           NPM_RESULT: ${{ needs.publish-npm-packages.result }}
           DAPPNODE_RESULT: ${{ needs.build-dappnode-package-release.result }}
-        run: node scripts/release.mjs verify-publications
+        run: node scripts/release/index.mjs verify-publications
 
   create-github-release:
     name: Create GitHub Release
@@ -390,7 +372,7 @@ jobs:
           RELEASE_IS_PRERELEASE: ${{ needs.validate-and-prepare.outputs.is_prerelease }}
           RELEASE_CANDIDATE_SHA: ${{ needs.validate-and-prepare.outputs.candidate_sha }}
           CIRCUIT_SOURCE_HASH: ${{ needs.download-circuits.outputs.source_hash }}
-        run: node scripts/release.mjs prepare-assets
+        run: node scripts/release/index.mjs prepare-assets
 
       - name: Set up Buildx for channel aliases
         uses: docker/setup-buildx-action@v3
@@ -409,19 +391,17 @@ jobs:
           CHANNEL: ${{ needs.validate-and-prepare.outputs.channel }}
           VERSION: ${{ needs.validate-and-prepare.outputs.version }}
         run: |
-          for image in "${CIPHERNODE_IMAGE_NAME}" "${SUPPORT_IMAGE_NAME}"; do
-            aliases=(--tag "${image}:dev")
-            if [ "${CHANNEL}" = latest ]; then
-              aliases+=(--tag "${image}:latest")
-            fi
-            docker buildx imagetools create "${aliases[@]}" "${image}:${VERSION}"
-          done
+          aliases=(--tag "${CIPHERNODE_IMAGE_NAME}:dev")
+          if [ "${CHANNEL}" = latest ]; then
+            aliases+=(--tag "${CIPHERNODE_IMAGE_NAME}:latest")
+          fi
+          docker buildx imagetools create "${aliases[@]}" "${CIPHERNODE_IMAGE_NAME}:${VERSION}"
 
       - name: Update stable tag (for stable releases only)
         if: needs.validate-and-prepare.outputs.is_prerelease == 'false'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/release.mjs promote-stable ${{ needs.validate-and-prepare.outputs.candidate_sha }}
+        run: node scripts/release/index.mjs promote-stable ${{ needs.validate-and-prepare.outputs.candidate_sha }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

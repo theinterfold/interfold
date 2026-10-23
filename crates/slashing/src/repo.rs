@@ -6,6 +6,17 @@ use e3_data::{Repositories, Repository};
 use e3_events::{E3id, StoreKeys};
 
 use crate::domain::commitment_consistency::CommitmentConsistencySnapshot;
+use crate::workflow::accusation_voting::AccusationVotesSnapshot;
+
+pub(crate) trait AccusationVotesRepositoryFactory {
+    fn accusation_votes(&self, e3_id: &E3id) -> Repository<AccusationVotesSnapshot>;
+}
+
+impl AccusationVotesRepositoryFactory for Repositories {
+    fn accusation_votes(&self, e3_id: &E3id) -> Repository<AccusationVotesSnapshot> {
+        Repository::new(self.store.scope(StoreKeys::accusation_votes(e3_id)))
+    }
+}
 
 pub(crate) trait CommitmentConsistencyRepositoryFactory {
     fn commitment_consistency(&self, e3_id: &E3id) -> Repository<CommitmentConsistencySnapshot>;
@@ -36,9 +47,12 @@ mod layout_lock {
 
     #[test]
     fn persisted_layouts_match_the_locked_fixture() {
-        let rows = repository("commitment_consistency", |r| {
+        let mut rows = repository("commitment_consistency", |r| {
             r.commitment_consistency(&E3id::new("1", 1))
         });
+        rows.extend(repository("accusation_votes", |r| {
+            r.accusation_votes(&E3id::new("1", 1))
+        }));
         e3_layout_lock::assert_fixture(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/layout_lock.txt"),
             &rows,

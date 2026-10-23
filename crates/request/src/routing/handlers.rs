@@ -10,7 +10,7 @@ use e3_events::{
     E3Stage, E3StageChanged, EventContext, InterfoldEventData, RequestRouterCheckpoint, Sequenced,
     SyncEffect,
 };
-use tracing::info;
+use tracing::{debug, info};
 
 impl E3Router {
     fn checkpoint_with_context(&mut self, context: &EventContext<Sequenced>) -> Result<()> {
@@ -131,6 +131,10 @@ impl Handler<InterfoldEvent> for E3Router {
                     // resume its work. It completes instead.
                     let finished =
                         if matches!(msg.get_data(), InterfoldEventData::EffectsEnabled(_)) {
+                            self.effects_enabled = true;
+                            for context in self.contexts.values_mut() {
+                                context.set_effects_enabled(true);
+                            }
                             self.end_protocol_work_of_failed_contexts()?;
                             std::mem::take(&mut self.complete_on_restart)
                         } else {
@@ -160,24 +164,32 @@ impl Handler<InterfoldEvent> for E3Router {
                     msg.source(),
                     msg.block(),
                 )),
-                RoutingDecision::UnadmittedNetworkEvent(e3_id) => Err(anyhow!(
-                    "rejected {} for unknown E3 {} from the peer network (event={}, origin={})",
-                    msg.event_type(),
-                    e3_id,
-                    msg.id(),
-                    msg.origin_id(),
-                )),
+                RoutingDecision::UnadmittedNetworkEvent(e3_id) => {
+                    // A peer event cannot create a context. It waits for the chain event that does.
+                    debug!(
+                        %e3_id,
+                        event_type = %msg.event_type(),
+                        event = %msg.id(),
+                        "Holding a peer event until the chain admits its E3"
+                    );
+                    self.unadmitted.hold(e3_id, msg);
+                    Ok(())
+                }
                 RoutingDecision::Process {
                     e3_id,
                     post_forward,
                 } => {
                     let repositories = self.store.repositories();
+                    let created = !self.contexts.contains_key(&e3_id);
+                    let effects_enabled = self.effects_enabled;
                     let context = self.contexts.entry(e3_id.clone()).or_insert_with(|| {
-                        E3Context::from_params(E3ContextParams {
+                        let mut context = E3Context::from_params(E3ContextParams {
                             e3_id: e3_id.clone(),
                             repository: repositories.context(&e3_id),
                             extensions: self.extensions.clone(),
-                        })
+                        });
+                        context.set_effects_enabled(effects_enabled);
+                        context
                     });
 
                     // A selection of a failed E3 kept for accusation or slashing work starts no
@@ -190,6 +202,16 @@ impl Handler<InterfoldEvent> for E3Router {
                             extension.on_event(context, &msg);
                         }
                         context.forward_message(&msg, &mut self.buffer);
+                    }
+                    // Peer events that arrived before the chain admitted this E3 follow the event
+                    // that admitted it, in arrival order, along the same path.
+                    if created && post_forward != PostForward::Teardown {
+                        for held in self.unadmitted.take(&e3_id) {
+                            for extension in self.extensions.iter() {
+                                extension.on_event(context, &held);
+                            }
+                            context.forward_message(&held, &mut self.buffer);
+                        }
                     }
                     if post_forward != PostForward::Teardown {
                         context
@@ -220,6 +242,7 @@ impl Handler<InterfoldEvent> for E3Router {
                         PostForward::Teardown => {
                             self.contexts.remove(&e3_id);
                             self.buffer.remove_e3(&e3_id);
+                            self.unadmitted.remove_e3(&e3_id);
                             self.completed.insert(e3_id);
                         }
                         PostForward::None => (),

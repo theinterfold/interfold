@@ -40,19 +40,20 @@ that made it.
 
 ## Components
 
-| Component                   | Location                               | Role                                                                                   |
-| --------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------- |
-| `e3-compute-provider`       | `crates/compute-provider`              | `SecureProcess`, `ComputeProvider`, `ComputeManager`, `InputPolicy`, input tree        |
-| `e3-program-server`         | `crates/program-server`                | HTTP server with `POST /run_compute` and `GET /health`. It calls a runner function.    |
-| `e3-openvm-host`            | `crates/openvm-host`                   | The OpenVM runner: native run, guest input, worker selection, proof envelope           |
-| `interfold-openvm-prover`   | `crates/openvm-prover`                 | The worker that proves the guest. A CPU build and a CUDA build.                        |
-| Guest                       | `guest/` in your project               | The OpenVM guest. It links your `program/` crate.                                      |
-| Proving service and scripts | `.interfold/support/openvm` in project | The service binary and the `compile` and `start` scripts that `interfold program` runs |
-| Development runner          | `.interfold/support/dev` in project    | An unproved runner with a mock proof, for local work                                   |
-| Coordination server         | `server/index.ts` (template)           | Sends the job, receives the webhook, and calls `publishCiphertextOutput`               |
+| Component                 | Location                     | Role                                                                                |
+| ------------------------- | ---------------------------- | ----------------------------------------------------------------------------------- |
+| `e3-compute-provider`     | `crates/compute-provider`    | `SecureProcess`, `ComputeProvider`, `ComputeManager`, `InputPolicy`, input tree     |
+| `e3-program-server`       | `crates/program-server`      | HTTP server with `POST /run_compute` and `GET /health`. It calls a runner function. |
+| `e3-program-runner`       | `crates/program-runner`      | `run(processor, policy)`: the dev runner and the OpenVM service, chosen by argument |
+| `e3-openvm-host`          | `crates/openvm-host`         | The OpenVM runner: native run, guest input, worker selection, proof envelope        |
+| `interfold-openvm-prover` | `crates/openvm-prover`       | The worker that proves the guest. A CPU build and a CUDA build.                     |
+| Guest                     | `guest/` in your project     | The OpenVM guest. It links your `program/` crate.                                   |
+| Program runner            | `runner/` in your project    | The `program-runner` binary. It passes your `program/` crate to `e3-program-runner` |
+| Coordination server       | `server/index.ts` (template) | Sends the job, receives the webhook, and calls `publishCiphertextOutput`            |
 
-`interfold init` copies both support folders into the project and pins the guest's Interfold crates
-to the template's commit.
+`interfold program compile` and `interfold program start` build and run the `program-runner` binary
+in your project directory. `interfold init` pins the guest's Interfold crates to the template's
+commit.
 
 ## The secure process
 
@@ -107,34 +108,43 @@ secure process and then calls `prove` with the same policy. It returns the provi
 output ciphertext from the same input selection. Use `with_published` when the policy reads the
 commitment or metadata of each input.
 
-The dev runner (`crates/support-scripts/dev/src/main.rs`) is the smallest complete CP. It runs your
+The dev runner (`crates/program-runner/src/dev.rs`) is the smallest complete CP. It runs your
 processor, builds a mock proof, and serves it over HTTP:
 
-```rust filename="crates/support-scripts/dev/src/main.rs"
-#[tokio::main]
-async fn main() -> Result<()> {
-    let server = E3ProgramServer::builder(|job| async move {
+```rust filename="crates/program-runner/src/dev.rs"
+pub(crate) async fn serve(processor: FHEProcessor, policy: InputPolicy) -> Result<()> {
+    let server = E3ProgramServer::builder(move |job| async move {
         let mut manager = ComputeManager::with_published(
-            MockProofProvider,
+            MockProofProvider { processor },
             job.inputs,
             job.published,
-            fhe_processor,
+            processor,
         );
-        let (result, ciphertext) = manager.start(e3_user_program::policy())?;
+        let (result, ciphertext) = manager.start(policy)?;
         let proof = encode_mock_compute_proof(&[3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5], &result)?;
 
         Ok((proof, ciphertext))
     })
     .build()?;
 
-    server.run().await?;
-    Ok(())
+    server.run().await
 }
 ```
 
-The OpenVM service (`crates/support-scripts/openvm/service/src/main.rs`) has the same shape. Its
-runner is `e3_openvm_host::Prover::prove`, which runs the secure process natively, writes the
-guest's input stream, runs the worker, and returns the verified proof envelope.
+Your project passes its processor and policy to `e3_program_runner::run` from the `runner/` crate:
+
+```rust filename="runner/src/main.rs"
+fn main() -> anyhow::Result<()> {
+    e3_program_runner::run(e3_user_program::fhe_processor, e3_user_program::policy())
+}
+```
+
+The first command-line argument selects the mode: `dev` for the dev runner, `openvm` for the OpenVM
+service. `interfold program start` passes it for you.
+
+The OpenVM service (`crates/program-runner/src/openvm.rs`) has the same shape. Its runner is
+`e3_openvm_host::Prover::prove`, which runs the secure process natively, writes the guest's input
+stream, runs the worker, and returns the verified proof envelope.
 
 ## The program server
 
@@ -212,10 +222,10 @@ is allowed. Set `ALLOW_PRIVATE_CALLBACKS=1` to allow private addresses for local
 The `program` section of `interfold.config.yaml` selects the mode
 (`crates/config/src/program_config.rs`).
 
-| Setting                                | What `interfold program start` runs                                              | Proof                                                    |
-| -------------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `program.dev: true`                    | `.interfold/support/dev/start`: the dev runner, built from your `program/` crate | Mock proof. Only `MockOpenVmReceiptVerifier` accepts it. |
-| `program.dev: false`, `program.openvm` | `.interfold/support/openvm/start`: the OpenVM service for your `program/` crate  | OpenVM Halo2 EVM proof, verified before it is returned   |
+| Setting                                | What `interfold program start` runs                                           | Proof                                                    |
+| -------------------------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `program.dev: true`                    | `cargo run --bin program-runner -- dev`: the dev runner, with your `program/` | Mock proof. Only `MockOpenVmReceiptVerifier` accepts it. |
+| `program.dev: false`, `program.openvm` | `cargo run --release --bin program-runner -- openvm`: the OpenVM service      | OpenVM Halo2 EVM proof, verified before it is returned   |
 
 `--dev true` on `interfold program start` or `interfold program compile` overrides the file, as does
 `E3_PROGRAM__DEV=true`. The template's local scripts set it unless `TEMPLATE_REAL_PROOFS=1`, and

@@ -23,7 +23,7 @@ import {
 /// `contentHash` is persisted, so re-pointing a live round would prove its earlier inputs against
 /// one provider and its later inputs against another with nothing on chain to separate them: the
 /// earlier retrieval coordinates stop resolving and the aggregate step cannot read the round. See
-/// `agent/flow-trace/08_DATA_AVAILABILITY.md` for detection, containment, and recovery.
+/// `docs/architecture/data-availability.md` for detection, containment, and recovery.
 contract AvailVectorXDataAvailabilityVerifier is IDataAvailabilityVerifier {
     IAvailBridge public immutable bridge;
     IVectorx public immutable vectorx;

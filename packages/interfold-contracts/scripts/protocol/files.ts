@@ -80,6 +80,25 @@ export function safeProposalPath(config: ProtocolConfigFile): string {
     : path.join(protocolDir, `${config.name}.safe-proposal.json`);
 }
 
+/**
+ * The CRISP deployment record named by `--crisp-deployments`. CRISP lives in its own repository,
+ * so the record has no default location.
+ */
+export function crispDeploymentsPath(
+  record = arg("crisp-deployments"),
+): string {
+  if (!record) {
+    throw new Error(
+      "Pass --crisp-deployments <path> with the packages/crisp-contracts/deployed_contracts.json of the CRISP deployment (https://github.com/theinterfold/CRISP)",
+    );
+  }
+  const file = resolvePath(record);
+  if (!fs.existsSync(file)) {
+    throw new Error(`CRISP deployment file not found: ${file}`);
+  }
+  return file;
+}
+
 export function readJson<T>(file: string): T {
   return JSON.parse(fs.readFileSync(file, "utf8")) as T;
 }

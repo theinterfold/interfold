@@ -179,7 +179,7 @@ nav a:hover {
   left: 0;
   top: 0;
   right: 0;
-  height: 78px;
+  height: 100px;
   padding: 14px 22px 0;
   box-sizing: border-box;
   pointer-events: none;
@@ -199,11 +199,22 @@ nav a:hover {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+#documentation {
+  display: flex;
+  gap: 14px;
+  margin-top: 4px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+#documentation a {
+  color: var(--accent);
+  pointer-events: auto;
+}
 #canvas {
   position: absolute;
-  inset: 78px 0 0 0;
+  inset: 100px 0 0 0;
   width: 100%;
-  height: calc(100% - 78px);
+  height: calc(100% - 100px);
   touch-action: none;
   user-select: none;
   transition: opacity 0.16s ease;

@@ -142,4 +142,8 @@ describe("v0.19 cutover", function () {
       "OpenVmBfvCiphertextVerifier",
     );
   });
+
+  it("requires the CRISP deployment record to be named", function () {
+    expect(() => resolveOpenVmCrisp("mainnet")).to.throw("--crisp-deployments");
+  });
 });

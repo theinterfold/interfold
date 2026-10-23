@@ -1,8 +1,34 @@
 # Sortition and E3 Complete Flow
 
-This document describes the complete flow of the Interfold system, from operator registration
-through E3 computation request, sortition, committee selection, keyshare generation, public key
-aggregation, encryption, and decryption.
+## Purpose
+
+`e3-sortition` projects request-time operator eligibility, scores local ticket submissions, retains
+finalized committees, and derives this node's party/aggregator roles. Contracts finalize membership;
+DKG and aggregation are downstream consumers. The walkthrough below places selection in the larger
+E3 lifecycle; the [selection domain](../../docs/architecture/committee-selection.md) owns the
+cross-component rules and limits.
+
+## Map
+
+| Location                                                                                                                                                                                       | Responsibility                                                        |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| [`sortition/actor.rs`](src/sortition/actor.rs), [`sortition/handlers/`](src/sortition/handlers)                                                                                                | Registry/request projection and ticket dispatch.                      |
+| [`sortition/node_registry.rs`](src/sortition/node_registry.rs), [`sortition/admission.rs`](src/sortition/admission.rs), [`sortition/bond_owners.rs`](src/sortition/bond_owners.rs)             | Historical eligibility, policy, and request-time owners.              |
+| [`sortition/selection_backend.rs`](src/sortition/selection_backend.rs), [`sortition/ticket_selection.rs`](src/sortition/ticket_selection.rs), [`sortition/ticket.rs`](src/sortition/ticket.rs) | Owner shortlist, score/rank calculation, and canonical ticket digest. |
+| [`ciphernode_selection/`](src/ciphernode_selection), [`failover.rs`](src/failover.rs)                                                                                                          | Finalized party roles and readiness-gated aggregator failover.        |
+| [`messages.rs`](src/messages.rs), [`repo.rs`](src/repo.rs)                                                                                                                                     | Query/delivery messages and typed persistence.                        |
+
+## Runtime integration
+
+`Sortition::attach(SortitionAttachParams { ... }).await` restores repositories/backend and
+subscribes to registry/request events. `CiphernodeSelector::attach` restores local party/aggregator
+roles. The [builder caller](../ciphernode-builder/src/builder/sortition.rs) shows their combined
+setup, including committee reconciliation and pending ticket intents. Consumers query the actor with
+messages such as `GetNodesForE3`; they do not rerun selection from current balances.
+
+`FailoverPolicy` supplies a 10-minute roster/plaintext budget and a 40-minute public-key budget in
+the production selector. `timeout(phase)` selects the budget; `with_public_key_timeout` overrides
+the public-key value. Deadlines begin at phase readiness and survive restart with remaining time.
 
 ## Overview
 
@@ -269,6 +295,9 @@ reservation or releases it when the node is not in the final committee. Terminal
 remaining reservations. Remote operators keep their full on-chain-valid ticket ranges. This local
 policy does not reserve collateral or reduce the range that Solidity accepts.
 
+Startup releases reservations whose lifecycle is terminal. A finalization arriving after failure or
+completion cannot reserve that E3's capacity again.
+
 ### 4. Sortition Actor
 
 - **Purpose**: Manage sortition algorithm and committee state
@@ -318,7 +347,8 @@ policy does not reserve collateral or reduce the range that Solidity accepts.
   - `threshold_n`: Total committee size
 - **DKG roster**: The committee enum fixes `H`; the active aggregator proposes one mutually ready
   H-dealer roster before C4
-- **Common Random Polynomial (CRP)**: Shared randomness from E3 seed
+- **Common Random Polynomial (CRP)**: Deterministically derived from the prescribed seed and BFV
+  parameters
 - **Keyshare Generation**:
   - Secret key: Random polynomial
   - Public key share: Secret key + CRP
@@ -378,11 +408,20 @@ policy does not reserve collateral or reduce the range that Solidity accepts.
 | `PlaintextOutputPublished`  | e3Id, plaintextOutput, proof                                   | Canonical on-chain result           |
 | `E3RequestComplete`         | e3Id                                                           | Request teardown after chain result |
 
-## Testing Flow
+## Tests
+
+Run `cargo test --locked -p e3-sortition` from the root with the
+[shared prerequisites](../test-helpers/README.md). Inline modules test score vectors, historical
+owners/admission, capacity reservations, and phase-specific failover. Actor cases cover role
+restoration/promotion. On-chain ticket acceptance and owner caps are covered by the
+[contract suite](../../packages/interfold-contracts/README.md), separately from local decisions. See
+[AGENTS.md](AGENTS.md) for selection/snapshot changes.
+
+### Integration testing flow
 
 The integration tests follow this pattern:
 
-1. **Setup**: Create ciphernodes with shared event bus
+1. **Setup**: Create isolated ciphernodes and connect their network/test transport
 2. **Register**: Use `setup_score_sortition_environment` to:
    - Set ticket price via `ConfigurationUpdated`
    - Add nodes via `CiphernodeAdded`

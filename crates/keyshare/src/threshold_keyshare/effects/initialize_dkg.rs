@@ -51,10 +51,15 @@ impl ThresholdKeyshare {
             return Ok(());
         }
 
-        // `handle_encryption_key_created` only records a peer key that arrives in `Init`.
-        let collector = self.ensure_encryption_key_collector(address.clone(), &ec, now)?;
-        self.replay_encryption_keys(&collector)?;
-        self.ensure_collector(address.clone(), &ec, now)?;
+        // `handle_encryption_key_created` only records a peer key that arrives in `Init`. While
+        // startup replays the event log, no collector starts: its deadline could end a collection
+        // before replay delivers the recorded inputs. `resume_in_flight_work` builds both
+        // collectors from the recorded inputs at `EffectsEnabled`.
+        if self.effects_enabled {
+            let collector = self.ensure_encryption_key_collector(address.clone(), &ec, now)?;
+            self.replay_encryption_keys(&collector)?;
+            self.ensure_collector(address.clone(), &ec, now)?;
+        }
 
         // Peers encrypt their DKG shares to the key that this node publishes, so a start that
         // lost the keyshare's snapshot reuses the recorded keypair instead of generating another.
@@ -240,6 +245,9 @@ impl ThresholdKeyshare {
                 },
             ))
         })?;
+        if let Some(collector) = self.decryption_key_collector.clone() {
+            self.send_dealers_without_key(&collector);
+        }
 
         if let Some(response) = self.pending.gen_pk_response.take() {
             self.handle_gen_pk_share_and_sk_sss_response(response)?;

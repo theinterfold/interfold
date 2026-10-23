@@ -516,8 +516,8 @@ execute.
 
 For on-chain Honk verification, compile your own UDE, app, and fold circuits for the preset and
 committee your deployment uses, emit the Solidity verifier from them, and feed them the witness from
-`encryptNumberAndGenInputs()`. `examples/CRISP` in the monorepo shows the full flow. Secure
-artifacts may ship here in a later release.
+`encryptNumberAndGenInputs()`. The [CRISP repository](https://github.com/theinterfold/CRISP) shows
+the full flow. Secure artifacts may ship here in a later release.
 
 ## Error Handling
 

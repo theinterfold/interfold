@@ -1,8 +1,22 @@
 # Parity Matrix Library
 
+## Purpose
+
 A library for generating parity matrices for linear subspaces of Z_q^{n+1} consisting of polynomial
 evaluations. Designed for cryptographic applications, particularly in homomorphic encryption and
 error-correcting codes.
+
+## Map
+
+| Location                                             | Responsibility                                                                                      |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| [`matrix.rs`](src/matrix.rs)                         | Validated matrix types, generator construction, Gaussian elimination/null space, and parity checks. |
+| [`math.rs`](src/math.rs)                             | Modular powers/inverses and finite-field arithmetic errors.                                         |
+| [`errors.rs`](src/errors.rs), [`lib.rs`](src/lib.rs) | Typed errors and public exports.                                                                    |
+
+The workflow builds the evaluation generator, derives a deterministic null-space basis, and checks
+that its product with the generator transpose vanishes. The artifact CLI consumes these rows; this
+library does not write Noir configuration files itself.
 
 ## Features
 
@@ -40,11 +54,11 @@ This ensures the subspace has a non-trivial parity check matrix.
 
 ## Installation
 
-Add this to your `Cargo.toml`:
+Inside this workspace, add:
 
 ```toml
 [dependencies]
-parity-matrix = { git = "https://github.com/theinterfold/interfold", path = "crates/parity-matrix" }
+e3-parity-matrix = { workspace = true }
 ```
 
 ## Usage
@@ -52,7 +66,7 @@ parity-matrix = { git = "https://github.com/theinterfold/interfold", path = "cra
 ### Library Usage
 
 ```rust
-use parity_matrix::{ParityMatrixConfig, build_generator_matrix, null_space, verify_parity_matrix};
+use e3_parity_matrix::{ParityMatrixConfig, build_generator_matrix, null_space, verify_parity_matrix};
 use num_bigint::BigUint;
 
 // Configure parameters
@@ -80,7 +94,7 @@ assert!(is_valid);
 The library provides `ParityMatrix` for type-safe matrix operations with dimension validation:
 
 ```rust
-use parity_matrix::ParityMatrix;
+use e3_parity_matrix::ParityMatrix;
 use num_bigint::BigUint;
 
 // Create a matrix with dimension validation
@@ -119,17 +133,22 @@ All matrix operations automatically validate dimension compatibility, preventing
 
 ## Testing
 
-Run the test suite:
+From the repository root:
 
 ```bash
-cargo test
+cargo test --locked -p e3-parity-matrix
 ```
 
 Run tests with verbose output:
 
 ```bash
-cargo test -- --nocapture
+cargo test --locked -p e3-parity-matrix -- --nocapture
 ```
+
+Inline `matrix.rs` cases check dimensions, independent parity identities, and rejection of
+higher-degree evaluations over small/large fields. `math.rs` covers invertible/noninvertible and
+boundary moduli. No FHE runtime or prover is required. Generated-output integration is in the
+[circuit builder](../zk/build/README.md); change guidance is in [AGENTS.md](AGENTS.md).
 
 ## API Reference
 

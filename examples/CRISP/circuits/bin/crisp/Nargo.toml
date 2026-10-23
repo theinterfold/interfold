@@ -1,9 +1,0 @@
-[package]
-name = "crisp"
-type = "bin"
-version = "0.1.0"
-authors = ["Gnosis Guild / Interfold"]
-
-[dependencies]
-interfold_lib = { path = "../../../../../circuits/lib" }
-crisp_lib = { path = "../../lib" }

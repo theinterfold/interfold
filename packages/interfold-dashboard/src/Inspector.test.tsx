@@ -107,7 +107,7 @@ test('history row shows the compact E3 id, with the full id in the tooltip', () 
     closed: 'Sep 21, 2026',
     duration: '2 days',
     ballotCount: 12,
-    result: 'Approved · 62%',
+    result: 'Completed',
   }
 
   const html = renderToStaticMarkup(<History entries={[entry]} />)

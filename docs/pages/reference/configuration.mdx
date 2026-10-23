@@ -199,8 +199,8 @@ When the EVM buffer overflows during startup, the start fails. The node does not
 <Callout type='info'>
   `skip_proof_aggregation: true` skips recursive proof aggregation for DKG and decryption. The node
   refuses to start with this value unless the binary has the `test-only-skip-proof-aggregation`
-  Cargo feature. Release binaries do not have this feature. On-chain verification still applies, so
-  the value works only against mock verifiers.
+  Cargo feature. Of the release archives, only the test-only archive for Linux x86_64 has this
+  feature. On-chain verification still applies, so the value works only against mock verifiers.
 </Callout>
 
 ## Network profiles
@@ -310,7 +310,7 @@ from [Contracts & Addresses](/reference/contracts).
 | `interfold`                     | Yes                    | The node, `print-env`, `config check`                                                    |
 | `ciphernode_registry`           | Yes                    | The node, `print-env`, `config check`                                                    |
 | `bonding_registry`              | Yes                    | The node, the `ciphernode` on-chain commands, `print-env`, `config check`                |
-| `slashing_manager`              | For `interfold start`  | The node, which submits slash proposals, and `config check`                              |
+| `slashing_manager`              | No                     | `config check`. The node uses the manager that the `interfold` contract names.           |
 | `fee_token`                     | No                     | `print-env`, `config check`                                                              |
 | `faucet`                        | For `interfold faucet` | `interfold faucet`, `config check`. Sepolia publishes a faucet. Mainnet does not.        |
 | `e3_program`                    | No                     | `print-env`. An application sets its own E3 program. `config check` does not compare it. |

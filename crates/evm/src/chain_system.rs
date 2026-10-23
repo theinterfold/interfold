@@ -28,6 +28,7 @@ pub struct EvmSystemChainBuilder<P> {
     max_log_window: u64,
     progress: Option<IngestionProgressSink>,
     route_factories: Vec<(Address, Box<dyn RouteFn>)>,
+    slashing_manager: Option<Address>,
 }
 
 impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
@@ -42,7 +43,15 @@ impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
             max_log_window: DEFAULT_RPC_LOG_RANGE_BLOCKS,
             progress: None,
             route_factories: Vec::new(),
+            slashing_manager: None,
         }
+    }
+
+    /// The SlashingManager that this node uses on the chain. The gateway stops the chain when the
+    /// Interfold contract replaces it.
+    pub fn with_slashing_manager(&mut self, address: Address) -> &mut Self {
+        self.slashing_manager = Some(address);
+        self
     }
 
     pub fn with_buffer_limit(&mut self, max_buffered_events: usize) -> &mut Self {
@@ -90,8 +99,11 @@ impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
         // Think about the following in reverse order
 
         // Gateway is the final step before connecting to the bus
-        let gateway =
-            EvmChainGateway::setup_with_readiness_and_limit(&self.bus, self.max_buffered_events);
+        let gateway = EvmChainGateway::setup_with_readiness_and_limit(
+            &self.bus,
+            self.max_buffered_events,
+            self.slashing_manager,
+        );
         let next = gateway.addr();
 
         // Fix the historical order to avoid missing historical events

@@ -856,7 +856,7 @@ impl Handler<EventStoreQueryBy<SeqAgg>> for CountingHistoryReader {
 
 fn batch_c7_proofs(parties: &[u64], ciphertexts: usize) -> Vec<Proof> {
     use alloy::primitives::U256;
-    use e3_zk_helpers::circuits::threshold::decrypted_shares_aggregation::MAX_MSG_NON_ZERO_COEFFS;
+    use e3_zk_config::MAX_MSG_NON_ZERO_COEFFS;
     let id = E3id::new("42", 1);
     let (_, c6) = share_with_matching_commitment(&id, parties[0], &test_ciphertexts());
     (0..ciphertexts)

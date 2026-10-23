@@ -87,6 +87,10 @@ impl CiphernodeSelectorState {
 pub struct GetCiphernodeSelectorState;
 
 const AGGREGATOR_PROGRESS_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// The public-key phase also waits for the node fold proof of every roster member before C5 can
+/// publish. Those proofs can arrive long after the key shares that start the budget, so this phase
+/// gets a longer budget than the others.
+const PUBLIC_KEY_PROGRESS_TIMEOUT: Duration = Duration::from_secs(40 * 60);
 
 trait Clock: Send + Sync {
     fn now_unix_secs(&self) -> u64;
@@ -179,7 +183,8 @@ impl CiphernodeSelector {
             failover_timers: HashMap::new(),
             terminal_e3s,
             effects_enabled: false,
-            failover_policy: FailoverPolicy::new(AGGREGATOR_PROGRESS_TIMEOUT),
+            failover_policy: FailoverPolicy::new(AGGREGATOR_PROGRESS_TIMEOUT)
+                .with_public_key_timeout(PUBLIC_KEY_PROGRESS_TIMEOUT),
             clock,
         }
     }
@@ -746,6 +751,14 @@ mod recovery_tests {
         (repository.send(Some(value)), repository)
     }
 
+    struct FixedClock(u64);
+
+    impl Clock for FixedClock {
+        fn now_unix_secs(&self) -> u64 {
+            self.0
+        }
+    }
+
     fn test_ec(seq: u64) -> EventContext<Sequenced> {
         InterfoldEvent::<Unsequenced>::new_with_timestamp(
             EffectsEnabled::new().into(),
@@ -960,13 +973,14 @@ mod recovery_tests {
         let (failover, failover_repository) = test_persistable(AggregatorFailoverState::default());
         let bus = test_bus();
         let lifecycle = HashMap::from([(e3_id.clone(), E3Stage::CommitteeFinalized)]);
+        let now = 1_000_000;
         let selector = CiphernodeSelector::new_with_clock(
             &bus,
             state,
             failover,
             "0xa",
             lifecycle,
-            Arc::new(SystemClock),
+            Arc::new(FixedClock(now)),
         )
         .start();
 
@@ -980,14 +994,16 @@ mod recovery_tests {
                 test_ec(1),
             ))
             .await?;
+        let round = failover_repository
+            .read()
+            .await?
+            .expect("roster failover state")
+            .rounds[&e3_id]
+            .clone();
+        assert_eq!(round.phase, AggregatorPhase::DkgRoster);
         assert_eq!(
-            failover_repository
-                .read()
-                .await?
-                .expect("roster failover state")
-                .rounds[&e3_id]
-                .phase,
-            AggregatorPhase::DkgRoster
+            round.deadline_unix_secs,
+            now + AGGREGATOR_PROGRESS_TIMEOUT.as_secs()
         );
 
         let selected = CommitmentRosterSelected {
@@ -1013,14 +1029,17 @@ mod recovery_tests {
                 test_ec(3),
             ))
             .await?;
+        // The public-key phase also waits for every roster member's node fold proof.
+        let round = failover_repository
+            .read()
+            .await?
+            .expect("public-key failover state")
+            .rounds[&e3_id]
+            .clone();
+        assert_eq!(round.phase, AggregatorPhase::PublicKey);
         assert_eq!(
-            failover_repository
-                .read()
-                .await?
-                .expect("public-key failover state")
-                .rounds[&e3_id]
-                .phase,
-            AggregatorPhase::PublicKey
+            round.deadline_unix_secs,
+            now + PUBLIC_KEY_PROGRESS_TIMEOUT.as_secs()
         );
 
         selector.send(TypedEvent::new(selected, test_ec(4))).await?;

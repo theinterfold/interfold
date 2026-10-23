@@ -23,8 +23,9 @@ use e3_crypto::Cipher;
 use e3_events::AggregateConfig;
 #[cfg(feature = "test-helpers")]
 use e3_keyshare::DkgTimingReader;
-use e3_multithread::{Multithread, MultithreadReport, TaskPool};
+use e3_multithread::{Multithread, MultithreadReport};
 use e3_sync::NodeRole;
+use e3_task_pool::TaskPool;
 use e3_utils::SharedRng;
 use e3_zk_prover::ZkBackend;
 use std::{path::PathBuf, sync::Arc};

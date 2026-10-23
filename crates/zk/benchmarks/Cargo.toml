@@ -1,0 +1,31 @@
+[package]
+name = "e3-zk-benchmarks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Development benchmark owner for circuit leaves, protocol phases, verifier gas, and saved-data replay"
+publish = false
+
+[dependencies]
+acir = { git = "https://github.com/noir-lang/noir", tag = "v1.0.0-beta.26" }
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
+e3-committee.workspace = true
+e3-config.workspace = true
+e3-events.workspace = true
+e3-fhe-params.workspace = true
+e3-zk-build.workspace = true
+e3-zk-config.workspace = true
+e3-zk-prover.workspace = true
+e3-zk-samples.workspace = true
+e3-zk-witness.workspace = true
+fhe.workspace = true
+hex.workspace = true
+noirc_abi = { git = "https://github.com/noir-lang/noir", tag = "v1.0.0-beta.26" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+toml.workspace = true

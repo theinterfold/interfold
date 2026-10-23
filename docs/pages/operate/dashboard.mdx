@@ -253,8 +253,29 @@ price, the minimum ticket count, and the exit delay from `BondingRegistry`. It h
 4. **Register the ciphernode.** The bond owner sends `registerOperatorFor`.
 5. **Buy tickets.** The bond owner approves the ticket collateral and sends `addTicketBalanceFor`.
 
+After setup, **Manage the position** sends the other transactions of the `interfold ciphernode`
+commands: `refreshOperatorStatus` (refresh the status), `removeTicketBalanceFor` (burn tickets),
+`unbondCiphernodeFor` (unbond FOLD), `deregisterOperatorFor` (leave the network), `claimExitsFor`
+(claim exits), `proposeBondOwner`, and `acceptBondOwner`. It shows the collateral in the exit queue
+and the part whose exit delay has ended. An open slash proposal, or a committee of the operator that
+is not released yet, can still hold a claim. The bond owner sends each of them, except that the
+operator key can also deregister, any wallet can refresh the status and claim tickets, and the
+proposed owner accepts a transfer. A node that runs without the CLI, for example a DAppNode package,
+uses these actions.
+
+**E3 rewards**, at the top of the page, shows the amount that the operator's recipient can claim and
+a **Claim rewards** action. The recipient is the bond owner of the operator at committee
+finalization, or the operator key when it had no bond owner. Connect the recipient wallet to claim.
+The action sends `claimRewards(e3Ids)` for the completed E3s, then
+`claimHonestNodeReward(e3Id, operator)` for each failed E3. Below it, the committee history shows
+each E3 that selected the operator, with its outcome, its amount, and a claim status: In progress,
+Claimable, Claimed, On hold (an open expulsion proposal holds the payment), Forfeited (an executed
+expulsion), Needs processing, Not eligible (not an honest member of a failed E3), or No reward.
+Point to a status to see its reason. A failed E3 needs `processE3Failure(e3Id)` before its honest
+members can claim. Any connected wallet can send it with **Process** in the history.
+
 The guide simulates each transaction before the wallet prompt, so a contract error, for example
-`NotBondOwner`, shows before you sign. The guide sets up the on-chain position only. The ciphernode
+`NotBondOwner`, shows before you sign. The guide manages the on-chain position only. The ciphernode
 must run with the same operator key. See [Registration](/operate/registration) for the CLI
 procedure.
 

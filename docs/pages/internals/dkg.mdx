@@ -485,7 +485,7 @@ that a peer failed to publish.
 | A roster member, after roster acceptance and before key publication | No replacement exists. The fixed H-row proof needs every roster member.                                                         | The E3 fails with `DKGTimeout` after the DKG deadline.                                  |
 | A roster member is expelled or excluded before key publication      | The public-key aggregator stops the DKG because the fixed H-row proof needs every selected member.                              | The E3 fails.                                                                           |
 | A roster member is expelled or excluded after key publication       | Public-key aggregators retain canonical publication, including after restart. Decryption still needs T + 1 valid roster shares. | Decryption continues if enough valid shares remain and the chain has not failed the E3. |
-| Active aggregator, during C5 or publication                         | After 10 minutes, the next eligible party resumes from its persisted phase.                                                     | Publication continues.                                                                  |
+| Active aggregator, during C5 or publication                         | After 40 minutes, the next eligible party resumes from its persisted phase.                                                     | Publication continues if the DKG deadline leaves time.                                  |
 | Up to $H - (T + 1)$ roster members, before decryption               | The aggregator starts at T + 1 valid roster shares.                                                                             | Decryption continues.                                                                   |
 | Active aggregator, during plaintext aggregation                     | After 10 minutes, the next eligible party resumes.                                                                              | Decryption continues.                                                                   |
 
@@ -717,7 +717,7 @@ matches its preset and committee.
 difference. `tests/integration/lib/prebuild.sh` uses it. `--write` overwrites the committed files.
 Both modes refuse to run unless `dist/circuits/<preset>/<committee>/.build-stamp.json` exists and
 `circuits/bin/.active-preset.json` names the same pair. The toolchain versions are pinned in
-`crates/zk-prover/versions.json`.
+`crates/zk/prover/versions.json`.
 
 ### Verifier rotation
 

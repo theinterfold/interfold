@@ -11,9 +11,9 @@ mod logging;
 mod package_json;
 mod pkgman;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use copy::Filter;
-use file_utils::{delete_path, move_file, remove_all_files_in_dir, remove_dir_except};
+use file_utils::{delete_path, move_file, remove_all_files_in_dir};
 use git::parse_git_url;
 use pkgman::PkgMan;
 use std::path::PathBuf;
@@ -102,6 +102,13 @@ async fn install_interfold(
         .await?;
 
     let src = PathBuf::from(TEMP_DIR).join(template_path);
+    if fs::try_exists(src.join(".interfold/support")).await? {
+        bail!(
+            "The template at commit {commit_hash} keeps its program server in .interfold/support, \
+             which this interfold CLI does not run. Pass --template with a template that has a \
+             runner/ crate."
+        );
+    }
 
     spinner
         .run("Copy with filters...", || async {
@@ -126,8 +133,8 @@ async fn install_interfold(
                     ),
                     Filter::new(
                         "**/Cargo.toml",
-                        r"(?m)^e3-program-server =.*\n?",
-                        &format!("e3-program-server = {{ git = \"https://github.com/theinterfold/interfold\", rev = \"{}\" }}\n",commit_hash),
+                        r"(?m)^e3-program-runner =.*\n?",
+                        &format!("e3-program-runner = {{ git = \"https://github.com/theinterfold/interfold\", rev = \"{}\" }}\n",commit_hash),
                     ),
                     Filter::new(
                        "**/Cargo.toml",
@@ -152,38 +159,6 @@ async fn install_interfold(
         .await?;
 
     spinner.complete_task("Template configured\n");
-
-    spinner
-        .update("Setting up support folders...".to_string())
-        .await;
-
-    spinner
-        .run("Resetting support folder...", || async {
-            remove_dir_except(&cwd.join(".interfold"), &["generated"]).await
-        })
-        .await?;
-
-    spinner
-        .run("Setting up the development runner", || async {
-            copy::copy_with_filters(
-                &PathBuf::from(TEMP_DIR).join("crates/support-scripts/dev"),
-                &cwd.join(".interfold/support/dev"),
-                &[],
-            )
-            .await
-        })
-        .await?;
-
-    spinner
-        .run("Setting up the OpenVM proving service", || async {
-            copy::copy_with_filters(
-                &PathBuf::from(TEMP_DIR).join("crates/support-scripts/openvm"),
-                &cwd.join(".interfold/support/openvm"),
-                &[],
-            )
-            .await
-        })
-        .await?;
 
     spinner
         .run("Removing template ignore files...", || async {
@@ -213,7 +188,7 @@ async fn install_interfold(
         })
         .await?;
 
-    spinner.complete_task("Support folders set up\n");
+    spinner.complete_task("Project files set up\n");
 
     spinner.update("Setting up the project repository...").await;
 
@@ -271,7 +246,7 @@ async fn install_interfold(
 // Updated execute function to include workspace dependency substitution
 /// The Interfold crates that the template's manifests depend on by path.
 const INTERFOLD_TEMPLATE_CRATES: &str =
-    "program-server|bfv-client|fhe-params|compute-provider|openvm-host|openvm-types|safe";
+    "program-runner|bfv-client|fhe-params|compute-provider|openvm-types|safe";
 
 /// Pins an inline path dependency on an Interfold crate, such as the OpenVM guest's, to the
 /// template's commit. Only the source changes, so features in the same table are kept. Other path

@@ -18,10 +18,10 @@ __pycache__/
 
 # circuit benchmarks
 circuits/benchmarks/results_*/raw/
+circuits/benchmarks/runs/
 
 # Local dependency checkouts are not part of the program source.
 templates/default/lib/
-examples/CRISP/packages/crisp-contracts/lib/
 .vercel
 .vercel-env-backups/
 
@@ -37,7 +37,7 @@ openvm-prover.local.json
 # Built blueprint page (node scripts/blueprint/build.mjs)
 scripts/blueprint/out/
 
-# Local secrets. `crates/support/.env` can hold deployment keys and machine-specific paths.
+# Local secrets. A `.env` file can hold deployment keys and machine-specific paths.
 # Committing one publishes them.
 # The agent permission files deny reads of these paths, but a denied read does not stop `git add`,
 # so the per-environment variants are ignored here too.

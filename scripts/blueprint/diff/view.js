@@ -22,6 +22,7 @@
       .replace(/"/g, '&quot;')
   const code = (s) => esc(s).replace(/`([^`]*)`/g, '<code>$1</code>')
   const afterCode = B.code
+  const afterDocumentation = Object.fromEntries(Object.entries(D).map(([id, d]) => [id, d.documentation || []]))
   // The after version of each diagram that changed, or null when the change removed it.
   const afterOf = Object.fromEntries(Object.keys(X.before).map((id) => [id, D[id] || null]))
   let mode = 'after'
@@ -34,6 +35,8 @@
       else delete D[id]
     }
     B.code = m === 'before' ? { ...afterCode, ...X.codeBefore } : afterCode
+    // Even an unchanged diagram must link to the source version selected by Before/After.
+    for (const [id, d] of Object.entries(D)) d.documentation = (m === 'before' ? X.documentationBefore : afterDocumentation)?.[id] || []
     document.body.dataset.diff = m
     for (const b of document.querySelectorAll('.dswitch button')) b.setAttribute('aria-pressed', String(b.id === `d-${m}`))
   }

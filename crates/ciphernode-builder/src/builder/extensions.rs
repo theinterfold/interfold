@@ -30,6 +30,7 @@ use e3_multithread::Multithread;
 use e3_request::{canonical_key::CanonicalPublicKeys, E3Router, E3RouterBuilder};
 use e3_slashing::{AccusationManagerExtension, CommitmentConsistencyCheckerExtension};
 use e3_sortition::{CiphernodeSelectorFactory, FinalizedCommitteesRepositoryFactory};
+use e3_task_pool::TaskPool;
 use e3_zk_prover::{setup_zk_actors, ZkActorRecovery, ZkBackend};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tracing::{info, warn};
@@ -65,7 +66,7 @@ impl CiphernodeBuilder {
         };
 
         // ── Threshold keyshare + ZK actors ──
-        let _multithread =
+        let (_multithread, task_pool) =
             self.start_multithread(bus, addr, &effect_stages, canonical_keys, zk_backend);
         zk_backend.ensure_installed().await?;
         let signer = provider_cache.ensure_signer().await?;
@@ -94,6 +95,8 @@ impl CiphernodeBuilder {
             zk_recovery.with_canonical_keys(canonical_keys.clone()),
             self.proof_aggregation_enabled,
             Repositories::clone(repositories),
+            task_pool,
+            addr.to_owned(),
         );
 
         // ── Public key aggregation ──
@@ -191,24 +194,25 @@ impl CiphernodeBuilder {
         lifecycle_stages: &HashMap<E3id, E3Stage>,
         canonical_keys: &CanonicalPublicKeys,
         zk_backend: &ZkBackend,
-    ) -> Addr<Multithread> {
+    ) -> (Addr<Multithread>, TaskPool) {
         info!("Setting up multithread actor with ZK prover");
         let task_pool = self.task_pool.clone().unwrap_or_else(|| {
             let pool_threads = self.threads.unwrap_or(1);
             let concurrent_jobs = self.multithread_concurrent_jobs.unwrap_or(1);
             Multithread::create_taskpool(pool_threads, concurrent_jobs)
         });
-        Multithread::attach_with_zk(
+        let worker = Multithread::attach_with_zk(
             bus,
             self.rng.clone(),
             self.cipher.clone(),
-            task_pool,
+            task_pool.clone(),
             task_scope.to_owned(),
             self.multithread_report.clone(),
             zk_backend,
             lifecycle_stages.clone(),
             canonical_keys.clone(),
-        )
+        );
+        (worker, task_pool)
     }
 }
 
@@ -324,6 +328,7 @@ fn accusation_manager(
         vote_validity_by_chain.clone(),
         accusation_deadline_skew_secs,
         persisted_committees,
+        &storage.repositories.store,
     ))
 }
 

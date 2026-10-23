@@ -325,7 +325,8 @@ It fails with one of these codes when the stamp does not match:
 
 For another preset, another committee size, or an on-chain verifier, compile your own circuits. Use
 `encryptNumberAndGenInputs` or `encryptVectorAndGenInputs` to get the witness for your prover. See
-[Noir circuits](/build/noir-circuits). `examples/CRISP` shows a complete custom pipeline.
+[Noir circuits](/build/noir-circuits). The [CRISP repository](https://github.com/theinterfold/CRISP)
+shows a complete custom pipeline.
 
 ## Submodule imports
 
@@ -557,8 +558,9 @@ export function useTemplateSdk() {
 ## Application SDKs
 
 A complex E3 program can ship its own SDK next to the Interfold SDK. CRISP uses `@crisp-e3/sdk`
-(`examples/CRISP/packages/crisp-sdk`). It exports `CrispSDK`, vote functions such as `encryptVote`,
-`prepareBallot`, and `decodeTally`, and Merkle helpers such as `generateMerkleProof`.
+([`packages/crisp-sdk`](https://github.com/theinterfold/CRISP/tree/main/packages/crisp-sdk) in the
+CRISP repository). It exports `CrispSDK`, vote functions such as `encryptVote`, `prepareBallot`, and
+`decodeTally`, and Merkle helpers such as `generateMerkleProof`.
 
 ## Next steps
 

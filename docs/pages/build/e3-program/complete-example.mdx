@@ -147,7 +147,7 @@ for the E3 from `MyProgram`. The server skips the E3 when it has fewer than two 
 body has the E3 ID, the proof domain, the parameters, the inputs, and the callback URL
 `http://127.0.0.1:8080`.
 
-The dev runner (`crates/support-scripts/dev/src/main.rs`) builds a `ComputeManager` with your
+The dev runner (`crates/program-runner/src/dev.rs`) builds a `ComputeManager` with your
 `fhe_processor` from `program/src/lib.rs`. `start(policy())` builds the input tree, runs the
 processor, and computes the output hash, commitment, parameter hash, and input root. The runner
 encodes a mock proof with the parameter hash and the input root. With real proofs, the OpenVM
@@ -206,14 +206,14 @@ output with `decodePlaintextOutput` and shows the sum.
 
 CRISP uses the same parts with production choices:
 
-| Step              | Template                                               | CRISP                                                                            |
-| ----------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------- |
-| Input submission  | One `publishInput` call with ciphertext and commitment | `publishInput` with a Noir proof, then `finalizeInput` with a DA receipt         |
-| Input leaf        | The SAFE commitment                                    | `sha256(keccak256(ciphertext) ‖ commitment ‖ slot ‖ parent)` mod the BN254 field |
-| Input policy      | `InputPolicy::default()`                               | `policy::crisp()`, one input for each slot                                       |
-| Compute provider  | Dev runner with a mock proof                           | CRISP's OpenVM service and guest, proved on the operator's GPU or CPU            |
-| Data availability | Local file store and a hash check                      | `AvailVectorXDataAvailabilityVerifier` (a mock on a local chain)                 |
-| Output publisher  | `server/index.ts`                                      | `examples/CRISP/server` (`/state/add-result` webhook)                            |
+| Step              | Template                                               | CRISP                                                                                                                     |
+| ----------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| Input submission  | One `publishInput` call with ciphertext and commitment | `publishInput` with a Noir proof, then `finalizeInput` with a DA receipt                                                  |
+| Input leaf        | The SAFE commitment                                    | `sha256(keccak256(ciphertext) ‖ commitment ‖ slot ‖ parent)` mod the BN254 field                                          |
+| Input policy      | `InputPolicy::default()`                               | `policy::crisp()`, one input for each slot                                                                                |
+| Compute provider  | Dev runner with a mock proof                           | CRISP's OpenVM service and guest, proved on the operator's GPU or CPU                                                     |
+| Data availability | Local file store and a hash check                      | `AvailVectorXDataAvailabilityVerifier` (a mock on a local chain)                                                          |
+| Output publisher  | `server/index.ts`                                      | [`server/`](https://github.com/theinterfold/CRISP/tree/main/server) in the CRISP repository (`/state/add-result` webhook) |
 
 ## Get help
 

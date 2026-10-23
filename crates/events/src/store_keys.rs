@@ -98,6 +98,11 @@ impl StoreKeys {
         format!("//commitment_consistency/v1/{e3_id}")
     }
 
+    /// Durable vote state of the per-E3 accusation manager.
+    pub fn accusation_votes(e3_id: &E3id) -> String {
+        format!("//accusation_votes/v1/{e3_id}")
+    }
+
     pub fn router() -> String {
         String::from("//router")
     }
@@ -136,6 +141,13 @@ impl StoreKeys {
 
     pub fn slashing_writer_recovery(chain_id: u64) -> String {
         format!("{}{chain_id}/recovery/v1", Self::SLASHING_WRITER_PREFIX)
+    }
+
+    /// When the slash writer of a chain first recorded each slash intent. It is outside
+    /// `SLASHING_WRITER_PREFIX`: the reset and purge guards refuse any record under that prefix
+    /// other than the recovery record.
+    pub fn slashing_writer_intent_times(chain_id: u64) -> String {
+        format!("//slash_intent_times/{chain_id}/v1")
     }
 
     pub fn data_availability_recovery(chain_id: u64) -> String {

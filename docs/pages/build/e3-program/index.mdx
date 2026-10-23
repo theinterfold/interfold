@@ -19,16 +19,17 @@ the end, you know which file to edit for each change and which page explains it.
 An E3 program has five parts. You write the secure process, the program contract, and the client and
 server. The compute provider and the protocol verifiers come from the Interfold repository.
 
-| Part                | What it does                                                                                     | Default template                                                                         | CRISP example                                                         |
-| ------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| Secure process      | The FHE computation. It combines encrypted inputs into one encrypted output.                     | `program/src/lib.rs` (`fhe_processor`, `policy`)                                         | `examples/CRISP/program/src/lib.rs`                                   |
-| E3 program contract | Implements `IE3Program`. It accepts inputs, keeps the input tree, and verifies the output proof. | `contracts/MyProgram.sol`                                                                | `examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol`  |
-| Compute provider    | Runs the secure process off-chain and proves the run.                                            | `.interfold/support/dev` (dev mode) or `.interfold/support/openvm` and `guest/` (OpenVM) | `examples/CRISP/.interfold/support/openvm` and `examples/CRISP/guest` |
-| Verifiers           | Check the compute proof on-chain before the Interfold contract accepts the output.               | `OpenVmBfvCiphertextVerifier` and the check in `MyProgram.verify`                        | `OpenVmBfvCiphertextVerifier` and `CRISPProgram.verify`               |
-| Client and server   | The client encrypts and submits inputs. The server starts the compute and publishes the output.  | `client/src/`, `server/index.ts`                                                         | `examples/CRISP/client`, `examples/CRISP/server`                      |
+| Part                | What it does                                                                                     | Default template                                                                | CRISP example                                           |
+| ------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Secure process      | The FHE computation. It combines encrypted inputs into one encrypted output.                     | `program/src/lib.rs` (`fhe_processor`, `policy`)                                | `program/src/lib.rs`                                    |
+| E3 program contract | Implements `IE3Program`. It accepts inputs, keeps the input tree, and verifies the output proof. | `contracts/MyProgram.sol`                                                       | `packages/crisp-contracts/contracts/CRISPProgram.sol`   |
+| Compute provider    | Runs the secure process off-chain and proves the run.                                            | `runner/` (`program-runner`, dev mode and OpenVM service) and `guest/` (OpenVM) | `runner/` and `guest/`                                  |
+| Verifiers           | Check the compute proof on-chain before the Interfold contract accepts the output.               | `OpenVmBfvCiphertextVerifier` and the check in `MyProgram.verify`               | `OpenVmBfvCiphertextVerifier` and `CRISPProgram.verify` |
+| Client and server   | The client encrypts and submits inputs. The server starts the compute and publishes the output.  | `client/src/`, `server/index.ts`                                                | `client/`, `server/`                                    |
 
-Template paths are relative to the project root. CRISP paths and `crates/` paths are relative to the
-root of the Interfold repository.
+Template paths are relative to the project root. CRISP paths are relative to the root of the
+[CRISP repository](https://github.com/theinterfold/CRISP). `crates/` paths are relative to the root
+of the Interfold repository.
 
 The Interfold contract (`Interfold.sol`) and the ciphernodes are not part of your E3 program. The
 Interfold contract records each E3 and calls your program contract. The ciphernodes generate the

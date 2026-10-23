@@ -40,7 +40,7 @@ import {
   loadConfig,
   readExcludedAccounts,
 } from "../../scripts/protocol/values";
-import { requiredActiveOperatorsForSecureCrisp } from "../../scripts/upgrade/resumeSecureCrisp";
+import { requiredActiveOperators } from "../../scripts/upgrade/v19Cutover";
 import { BondingRegistry__factory as BondingRegistryFactory } from "../../types";
 
 const { ethers } = await network.connect();
@@ -80,13 +80,11 @@ describe("Protocol deployment", function () {
       { size: "2", total: "19" },
     ];
 
-    expect(requiredActiveOperatorsForSecureCrisp(thresholds, 1)).to.equal(19n);
-    expect(
-      requiredActiveOperatorsForSecureCrisp(thresholds, 11155111, "0"),
-    ).to.equal(3n);
-    expect(() =>
-      requiredActiveOperatorsForSecureCrisp(thresholds, 1, "0"),
-    ).to.throw("only for a Sepolia rehearsal");
+    expect(requiredActiveOperators(thresholds, 1)).to.equal(19n);
+    expect(requiredActiveOperators(thresholds, 11155111, "0")).to.equal(3n);
+    expect(() => requiredActiveOperators(thresholds, 1, "0")).to.throw(
+      "only for a Sepolia rehearsal",
+    );
   });
 
   it("requires a ciphernode restart acknowledgement before resume", function () {

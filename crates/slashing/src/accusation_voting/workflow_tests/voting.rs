@@ -272,3 +272,40 @@ fn vote_window_moves_once_per_peer_and_never_for_the_accused() {
     assert!(!moved(accuse(&b, NOW + 7, NOW + VALIDITY + 7)));
     assert_eq!(v.pending[&id].accusation.deadline, NOW + VALIDITY + 6);
 }
+
+/// An expulsion drops the expelled member's counted vote, so that vote no longer helps reach
+/// the quorum.
+#[test]
+fn an_expulsion_drops_a_counted_vote() {
+    let me = signer(1);
+    let expelled = signer(2);
+    let other = signer(3);
+    let accused = signer(9).address();
+    let committee = vec![me.address(), expelled.address(), other.address(), accused];
+    let mut v = voting_with(&me, committee, 1, 3);
+    let sm = v.slashing_manager;
+    let data_hash = [0x11; 32];
+
+    let own = signed_vote(&me, sm, &v.e3_id, [0u8; 32], data_hash, NOW + VALIDITY);
+    let id = insert_pending(&mut v, &me, accused, data_hash, NOW + VALIDITY, own);
+    v.pending.get_mut(&id).unwrap().votes_for[0].accusation_id = id;
+    let expelled_vote = signed_vote(&expelled, sm, &v.e3_id, id, data_hash, NOW + VALIDITY);
+    assert!(v.on_vote_received(expelled_vote, &ctx()).is_empty());
+    assert_eq!(v.pending[&id].votes_for.len(), 2);
+
+    v.on_member_expelled(&CommitteeMemberExpelled {
+        e3_id: v.e3_id.clone(),
+        node: expelled.address(),
+        reason: [0; 32],
+        active_count_after: 3,
+        party_id: Some(1),
+    });
+    assert_eq!(v.pending[&id].votes_for.len(), 1);
+
+    // Two valid votes stay below the quorum of three.
+    let other_vote = signed_vote(&other, sm, &v.e3_id, id, data_hash, NOW + VALIDITY);
+    let actions = v.on_vote_received(other_vote, &ctx());
+    assert!(!actions
+        .iter()
+        .any(|action| matches!(action, VoteAction::PublishQuorum { .. })));
+}

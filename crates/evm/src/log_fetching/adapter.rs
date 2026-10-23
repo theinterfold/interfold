@@ -7,6 +7,7 @@
 use crate::adapters::ingestion_progress::{IngestionProgress, IngestionProgressSink};
 use crate::domain::log_window::{is_range_limit_error, LogWindow, MIN_LOG_WINDOW};
 use crate::messages::{EvmEventProcessor, EvmLog, InterfoldEvmEvent};
+use alloy::primitives::B256;
 use alloy::providers::Provider;
 use alloy::rpc::types::{Filter, Log};
 use anyhow::{anyhow, Context as _};
@@ -29,6 +30,8 @@ pub(crate) trait LogProvider: Send + Sync {
     async fn fetch_logs(&self, filter: &Filter) -> Result<Vec<Log>, anyhow::Error>;
     async fn fetch_block_number(&self) -> Result<u64, anyhow::Error>;
     async fn fetch_block_timestamp(&self, block_number: u64) -> Result<u64, anyhow::Error>;
+    /// Hash of the block at `block_number`, or `None` when the provider has no block there yet.
+    async fn fetch_block_hash(&self, block_number: u64) -> Result<Option<B256>, anyhow::Error>;
 }
 
 #[async_trait]
@@ -45,6 +48,13 @@ impl<P: Provider + Send + Sync> LogProvider for P {
             .map_err(|error| anyhow!("failed to fetch block {block_number}: {error}"))?
             .map(|block| block.header.timestamp)
             .ok_or_else(|| anyhow!("provider returned no block for height {block_number}"))
+    }
+    async fn fetch_block_hash(&self, block_number: u64) -> Result<Option<B256>, anyhow::Error> {
+        Ok(self
+            .get_block_by_number(block_number.into())
+            .await
+            .map_err(|error| anyhow!("failed to fetch block {block_number}: {error}"))?
+            .map(|block| block.header.hash))
     }
 }
 

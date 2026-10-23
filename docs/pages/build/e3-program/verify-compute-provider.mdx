@@ -149,15 +149,15 @@ pnpm provenance:manifest --project <PROJECT_DIR> --config <PROVER_JSON> --prover
   --rpc <RPC_URL> --verifier <VERIFIER_ADDRESS> --out manifest.json
 ```
 
-`--project` is the project whose guest the worker configuration describes. It defaults to
-`examples/CRISP`.
+`--project` is required. It is the project whose guest the worker configuration describes, for
+example a checkout of the [CRISP repository](https://github.com/theinterfold/CRISP).
 
 Make sure that the manifest shows `"complete": true`. The `unresolved` list names each field that
 the script did not resolve.
 
 </Steps>
 
-The manifest (`scripts/generate-provenance-manifest.ts`) records these values:
+The manifest (`scripts/openvm/provenance.ts`) records these values:
 
 - The source commit and the project's commit, whether both are clean, and the digests of the root
   and worker lockfiles, the project's lockfile, the guest lockfile, and the guest's `openvm.toml`

@@ -12,13 +12,13 @@ import { Flow, LinkCard, LinkCards } from '@/components/ui'
 
 This page explains what CRISP is, the problem that it solves, and how its parts map onto an E3. It
 is for developers who want to study a complete E3 application before they build their own. At the
-end, you know what each folder in `examples/CRISP` contains and which page to read next.
+end, you know what each folder in the CRISP repository contains and which page to read next.
 
 CRISP (Coercion-Resistant Impartial Selection Protocol) is a private voting application that runs on
 the Interfold. Voters encrypt their ballots, the E3 program adds the encrypted ballots, and a
-committee of ciphernodes decrypts only the final tally. The code is in
-[`examples/CRISP`](https://github.com/theinterfold/interfold/tree/main/examples/CRISP). CRISP has
-its own release cycle, separate from the protocol release.
+committee of ciphernodes decrypts only the final tally. The code is in the
+[CRISP repository](https://github.com/theinterfold/CRISP). CRISP has its own release cycle, separate
+from the protocol release. Each CRISP release builds against one released version of the Interfold.
 
 ## The problem
 
@@ -130,7 +130,8 @@ power of 1.
 
 Secure BFV ciphertexts are too large for one Ethereum transaction. For this reason, each input goes
 on-chain in two transactions, `publishInput` and `finalizeInput`. The sequence is
-(`agent/flow-trace/08_DATA_AVAILABILITY.md`):
+([`docs/architecture/data-availability.md`](https://github.com/theinterfold/interfold/blob/main/docs/architecture/data-availability.md)
+in the Interfold repository):
 
 1. The server validates the Noir proof, stores the exact ciphertext bytes, and signs an availability
    promise. The promise is valid for 10 minutes at most (`INPUT_AVAILABILITY_ATTESTATION_TTL`).
@@ -155,17 +156,19 @@ For contract addresses, see [Contract addresses](/reference/contracts).
 
 ## Project Structure
 
-The tree shows the top-level content of `examples/CRISP` that is tracked in Git.
+The tree shows the top-level content of the
+[CRISP repository](https://github.com/theinterfold/CRISP) that is tracked in Git.
 
 <FileTree>
-  <FileTree.Folder name='examples/CRISP' defaultOpen>
-    <FileTree.Folder name='.interfold' />
+  <FileTree.Folder name='CRISP' defaultOpen>
     <FileTree.Folder name='circuits' />
     <FileTree.Folder name='client' />
     <FileTree.Folder name='crates' />
     <FileTree.Folder name='docs' />
+    <FileTree.Folder name='guest' />
     <FileTree.Folder name='packages' />
     <FileTree.Folder name='program' />
+    <FileTree.Folder name='runner' />
     <FileTree.Folder name='scripts' />
     <FileTree.Folder name='server' />
     <FileTree.Folder name='test' />
@@ -174,6 +177,7 @@ The tree shows the top-level content of `examples/CRISP` that is tracked in Git.
     <FileTree.File name='crisp.dev.env.example' />
     <FileTree.File name='docker-compose.yaml' />
     <FileTree.File name='Dockerfile' />
+    <FileTree.File name='interfold-release.json' />
     <FileTree.File name='interfold.config.yaml' />
     <FileTree.File name='package.json' />
     <FileTree.File name='playwright.config.ts' />
@@ -183,28 +187,31 @@ The tree shows the top-level content of `examples/CRISP` that is tracked in Git.
   </FileTree.Folder>
 </FileTree>
 
-| Path                    | Contents                                                                                                                                                 |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.interfold/`           | Links to the program support scripts. At run time, it also holds ciphernode data and configuration, which `scripts/dev_cipher.sh` deletes at each start. |
-| `circuits/`             | Noir ballot circuits in `bin/` (`crisp`, `crisp_onchain`, `fold`, `fold_onchain`) and the shared library in `lib/`.                                      |
-| `client/`               | The React and Vite voting client.                                                                                                                        |
-| `crates/`               | Rust libraries: `crisp-utils` (`decode_tally`), `evm_helpers` (contract bindings), `zk-inputs` and `zk-inputs-wasm` (circuit input generation).          |
-| `docs/`                 | `PROOF_AGGREGATION_AND_ZK.md`: local modes for DKG proof aggregation.                                                                                    |
-| `packages/`             | `crisp-contracts` (Hardhat project with `CRISPProgram.sol`), `crisp-sdk` (`@crisp-e3/sdk`), and `crisp-zk-inputs` (WASM bindings).                       |
-| `program/`              | The E3 program crate `e3-user-program`: `fhe_processor` and the input `policy`.                                                                          |
-| `guest/`                | The OpenVM guest that proves `program/`. Its own Cargo workspace, built by `interfold program compile`.                                                  |
-| `scripts/`              | Shell and Node scripts for setup, local services, circuits, tests, and publication.                                                                      |
-| `server/`               | The coordination server, the CLI, and the cron client.                                                                                                   |
-| `test/`                 | The Playwright and Synpress end-to-end test.                                                                                                             |
-| `interfold.config.yaml` | Ciphernode configuration: chains, contract addresses, program mode, and the five local nodes `cn1` to `cn5`.                                             |
-| `crisp.dev.env.example` | Template for the local development profile (`crisp.dev.env`).                                                                                            |
-| `.env.example`          | Template for the keys that `scripts/setup_testnet.sh` reads.                                                                                             |
-| `docker-compose.yaml`   | An optional development container that mounts the repository and publishes ports 8545, 3000, and 4000.                                                   |
+| Path                     | Contents                                                                                                                                                |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `circuits/`              | Noir ballot circuits in `bin/` (`crisp`, `crisp_onchain`, `fold`, `fold_onchain`) and the shared library in `lib/`.                                     |
+| `client/`                | The React and Vite voting client.                                                                                                                       |
+| `crates/`                | Rust libraries: `crisp-utils` (`decode_tally`), `evm_helpers` (contract bindings), `zk-inputs` and `zk-inputs-wasm` (circuit input generation).         |
+| `docs/`                  | `PROOF_AGGREGATION_AND_ZK.md`: local modes for DKG proof aggregation.                                                                                   |
+| `packages/`              | `crisp-contracts` (Hardhat project with `CRISPProgram.sol`), `crisp-sdk` (`@crisp-e3/sdk`), and `crisp-zk-inputs` (WASM bindings).                      |
+| `program/`               | The E3 program crate `e3-user-program`: `fhe_processor` and the input `policy`.                                                                         |
+| `runner/`                | The crate `e3-user-program-runner`. Its `program-runner` binary serves `program/` through `e3-program-runner`, as the dev runner or the OpenVM service. |
+| `guest/`                 | The OpenVM guest that proves `program/`. Its own Cargo workspace, built by `interfold program compile`.                                                 |
+| `scripts/`               | Shell and Node scripts for setup, local services, circuits, tests, and publication.                                                                     |
+| `server/`                | The coordination server, the CLI, and the cron client.                                                                                                  |
+| `test/`                  | The Playwright and Synpress end-to-end test.                                                                                                            |
+| `interfold.config.yaml`  | Ciphernode configuration: chains, contract addresses, program mode, and the five local nodes `cn1` to `cn5`.                                            |
+| `crisp.dev.env.example`  | Template for the local development profile (`crisp.dev.env`).                                                                                           |
+| `.env.example`           | Template for the keys that `scripts/setup_testnet.sh` reads.                                                                                            |
+| `interfold-release.json` | The Interfold release that CRISP builds against, and the SHA-256 digest of each release asset that CRISP downloads.                                     |
+| `docker-compose.yaml`    | An optional development container that mounts the repository and publishes ports 8545, 3000, and 4000.                                                  |
 
-The OpenVM guest is in `guest/`, and the proving service is in `.interfold/support/openvm`. Both
+The OpenVM guest is in `guest/`, and the program runner (the proving service) is in `runner/`. Both
 link `program/`, so they run the same `fhe_processor` and `policy` as the native host and agree with
 `CRISPProgram`. `interfold program compile` builds the guest and writes its receipt identity, which
-the CRISP deploy script reads unless `OPENVM_*` settings name another.
+the CRISP deploy script reads unless `OPENVM_*` settings name another. CRISP builds and publishes
+its own program runner image, `e3-support`, from `runner/Dockerfile`. The Interfold releases do not
+include this image.
 
 ## Further reading
 

@@ -159,13 +159,12 @@ function publishInput(uint256 e3Id, bytes memory data) external;
 
 The E3 program decides the encoding of `data`, the checks, and the storage. Interfold does not check
 the input window for inputs. Interfold enforces the window only on the output: it rejects a
-ciphertext output before `inputWindow[1]`. The two programs in the repository use different input
-paths.
+ciphertext output before `inputWindow[1]`. The default template and CRISP use different input paths.
 
-| Program                           | Encoding of `data`                                                                                                           | Where the ciphertext bytes go                                                                                                                           |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MyProgram` (`templates/default`) | `abi.encode(bytes ciphertext, bytes32 ciphertextCommitment)`                                                                 | On-chain, in the `InputPublished(e3Id, data, index)` event. The contract inserts the commitment into a LazyIMT tree.                                    |
-| `CRISPProgram` (`examples/CRISP`) | A ballot proof, the voting slot, the ciphertext commitment and hash, the parent index, and a signed availability attestation | To Avail. `publishInput` reserves the tree leaf and emits `InputCommitted`. Later, `finalizeInput` checks the Avail receipt and emits `InputPublished`. |
+| Program                                                         | Encoding of `data`                                                                                                           | Where the ciphertext bytes go                                                                                                                           |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MyProgram` (`templates/default`)                               | `abi.encode(bytes ciphertext, bytes32 ciphertextCommitment)`                                                                 | On-chain, in the `InputPublished(e3Id, data, index)` event. The contract inserts the commitment into a LazyIMT tree.                                    |
+| `CRISPProgram` ([CRISP](https://github.com/theinterfold/CRISP)) | A ballot proof, the voting slot, the ciphertext commitment and hash, the parent index, and a signed availability attestation | To Avail. `publishInput` reserves the tree leaf and emits `InputCommitted`. Later, `finalizeInput` checks the Avail receipt and emits `InputPublished`. |
 
 The template program does not prove that the ciphertext matches its commitment. A comment in
 `MyProgram.sol` states that a production program must verify this binding. For the program side, see

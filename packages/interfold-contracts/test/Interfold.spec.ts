@@ -1060,7 +1060,7 @@ describe("Interfold", function () {
     });
 
     // The CRISP server reads `requests[e3Id]` here before it pays for availability
-    // (examples/CRISP/crates/evm_helpers), because Interfold has no getter for it.
+    // (https://github.com/theinterfold/CRISP/tree/main/crates/evm_helpers), because Interfold has no getter for it.
     it("stores the request-time verifier and parameter hash at the namespaced location", async function () {
       const { interfold, request, usdcToken, mocks } = await loadFixture(setup);
       const replacement = await ethers.deployContract("MockCiphertextVerifier");

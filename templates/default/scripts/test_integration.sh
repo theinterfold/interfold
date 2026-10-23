@@ -9,10 +9,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/dev_config.sh"
 load_template_dev_config
 
 # The skip below is only honoured by an interfold binary carrying the
-# `test-only-skip-proof-aggregation` Cargo feature. `pnpm dev:setup` builds one from the monorepo;
-# released binaries (releases.yml builds `--bin interfold` with no features) do not have it, and
-# every ciphernode would exit at startup. Fail here rather than let the `wait-on` below block until
-# the CI timeout.
+# `test-only-skip-proof-aggregation` Cargo feature. `pnpm dev:setup` builds one from the monorepo.
+# Of the release archives, only `interfold-test-only-skip-proof-aggregation-linux-x86_64` has it.
+# With any other binary every ciphernode would exit at startup. Fail here rather than let the
+# `wait-on` below block until the CI timeout.
 #
 # Probe the binary on PATH, not the checkout: the feature is compiled in, so a monorepo checkout
 # alongside a stale or release-profile install passes a checkout test and still fails at startup,
@@ -25,8 +25,10 @@ if ! template_cli_has_feature test-only-skip-proof-aggregation; then
   if template_monorepo_build_available; then
     echo "Run 'pnpm dev:setup' to reinstall the CLI from ${INTERFOLD_REPO_ROOT}." >&2
   else
-    echo "No interfold checkout found at ${INTERFOLD_REPO_ROOT}. Install the CLI from an interfold" >&2
-    echo "checkout with '--features test-only-skip-proof-aggregation'." >&2
+    echo "No interfold checkout found at ${INTERFOLD_REPO_ROOT}. On Linux x86_64, install the CLI" >&2
+    echo "from the interfold-test-only-skip-proof-aggregation-linux-x86_64.tar.gz release archive." >&2
+    echo "Otherwise install the CLI from an interfold checkout with" >&2
+    echo "'--features test-only-skip-proof-aggregation'." >&2
   fi
   exit 1
 fi

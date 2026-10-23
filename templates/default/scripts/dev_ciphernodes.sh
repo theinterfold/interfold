@@ -109,9 +109,10 @@ if [[ "$STABLE_SAMPLES" -lt "$REQUIRED_STABLE_SAMPLES" ]]; then
   if template_monorepo_build_available; then
     echo "  - re-run 'pnpm dev:setup' to reinstall the CLI from ${INTERFOLD_REPO_ROOT}" >&2
   else
-    echo "  - this is a standalone template, so 'pnpm dev:setup' cannot fix it: released interfold" >&2
-    echo "    binaries are built without that feature. Install the CLI from an interfold checkout" >&2
-    echo "    with '--features test-only-skip-proof-aggregation', or unset the" >&2
+    echo "  - this is a standalone template, so 'pnpm dev:setup' cannot fix it. On Linux x86_64," >&2
+    echo "    install the CLI from the interfold-test-only-skip-proof-aggregation-linux-x86_64.tar.gz" >&2
+    echo "    release archive. Otherwise install the CLI from an interfold checkout with" >&2
+    echo "    '--features test-only-skip-proof-aggregation', or unset the" >&2
     echo "    E3_NODES__CN*__SKIP_PROOF_AGGREGATION exports and run with proof aggregation on." >&2
   fi
   exit 1

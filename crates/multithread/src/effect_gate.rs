@@ -827,6 +827,64 @@ pub(crate) mod tests {
     }
 
     #[actix::test]
+    async fn replayed_native_success_reuses_exact_encrypted_bytes() {
+        use e3_crypto::{Cipher, SensitiveBytes};
+        use e3_trbfv::{
+            gen_esi_sss::{GenEsiSssRequest, GenEsiSssResponse},
+            shares::{Encrypted, SharedSecret},
+            TrBFVConfig, TrBFVRequest, TrBFVResponse,
+        };
+
+        let cipher = Cipher::from_password("native-replay-test").await.unwrap();
+        let work = TrBFVRequest::GenEsiSss(GenEsiSssRequest {
+            trbfv_config: TrBFVConfig::new(ArcBytes::default(), 3, 1),
+            e_sm_raw: SensitiveBytes::new(vec![1, 2, 3], &cipher).unwrap(),
+        });
+        // Opaque encrypted fixtures exercise byte reuse, not validity of the underlying share.
+        let material = TrBFVResponse::GenEsiSss(GenEsiSssResponse {
+            esi_sss: vec![Encrypted::new(SharedSecret::new(Vec::new()), &cipher).unwrap()],
+        });
+        let durable = CorrelationId::new();
+        let regenerated = CorrelationId::new();
+        let event = |id, time| {
+            InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                ComputeRequest::trbfv(work.clone(), id, E3id::new("4", 1)).into(),
+                None,
+                time,
+                None,
+                EventSource::Local,
+            )
+            .into_sequenced(1)
+        };
+        let (bus, history) = test_bus();
+        let recorder = Recorder::default().start();
+        let gate = ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new())
+            .with_bus(bus)
+            .start();
+        gate.send(event(durable, 10)).await.unwrap();
+        gate.send(outcome_event(ComputeResponse::trbfv(
+            material.clone(),
+            durable,
+            E3id::new("4", 1),
+        )))
+        .await
+        .unwrap();
+        gate.send(event(regenerated, 20)).await.unwrap();
+        gate.send(effects_enabled()).await.unwrap();
+        assert!(
+            recorder.send(Received).await.unwrap().is_empty(),
+            "replayed random material was recomputed"
+        );
+        let InterfoldEventData::ComputeResponse(result) = next_outcome(&history).await.into_data()
+        else {
+            panic!("wrong outcome")
+        };
+        assert_eq!(result.correlation_id, regenerated);
+        assert_eq!(result.e3_id, E3id::new("4", 1));
+        assert_eq!(result.try_into_trbfv().unwrap(), material);
+    }
+
+    #[actix::test]
     async fn an_earlier_boots_response_does_not_answer_a_request_with_the_same_id() {
         let (bus, _history) = test_bus();
         let recorder = Recorder::default().start();

@@ -25,7 +25,7 @@ use e3_events::{
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_trbfv::shares::{BfvEncryptedShares, SharedSecret};
 use e3_utils::utility_types::ArcBytes;
-use e3_zk_helpers::computation::DkgInputType;
+use e3_zk_config::DkgInputType;
 use fhe::bfv::{BfvParameters, PublicKey};
 use fhe_traits::{DeserializeParametrized, Serialize as _};
 use rand::rngs::OsRng;

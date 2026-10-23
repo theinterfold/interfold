@@ -1,9 +1,0 @@
-target
-**/target
-node_modules
-**/node_modules
-.git
-.DS_Store
-**/.DS_Store
-**/tests/tmp/
-**/*.log

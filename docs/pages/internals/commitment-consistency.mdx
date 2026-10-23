@@ -138,7 +138,7 @@ party.
 
 ## Registered links
 
-`default_links(preset)` in `crates/zk-prover/src/commitment_links/mod.rs` registers 12 links. The C2
+`default_links(preset)` in `crates/zk/prover/src/commitment_links/mod.rs` registers 12 links. The C2
 to C4 links take `l = preset.metadata().num_moduli`. The preset is the E3 threshold preset, so `l`
 is 3 for `insecure-64` and for `secure-8192`.
 
@@ -164,12 +164,11 @@ is 3 for `insecure-64` and for `secure-8192`.
 | `C4bToC6ESmCommitmentLink` | `C4b->C6 e_sm_commitment` | C4b to C6        | `SameParty`  | The C4b output `commitment` equals the C6 input `expected_e_sm_commitment`.      |
 | `C6ToC7DCommitmentLink`    | `C6->C7 d_commitment`     | C6 to C7         | `CrossParty` | The C6 `d_commitment` is one of the expected `d` commitments at the start of C7. |
 
-The public-signal field names come from `crates/zk-helpers/src/circuits/output_layout.rs`. Inputs
-sit at the start of `public_signals` and outputs at the end. C3 inputs are `expected_pk_commitment`
-and `expected_message_commitment`. C6 inputs are `expected_sk_commitment`,
-`expected_e_sm_commitment`, `ct_commitment`, `domain_hi`, and `domain_lo`. For the C6 to C7 link,
-the checker derives the number of `d` commitments as $(F - 100) / 2$, where $F$ is the number of C7
-fields.
+The public-signal field names come from `crates/zk/config/src/output_layout.rs`. Inputs sit at the
+start of `public_signals` and outputs at the end. C3 inputs are `expected_pk_commitment` and
+`expected_message_commitment`. C6 inputs are `expected_sk_commitment`, `expected_e_sm_commitment`,
+`ct_commitment`, `domain_hi`, and `domain_lo`. For the C6 to C7 link, the checker derives the number
+of `d` commitments as $(F - 100) / 2$, where $F$ is the number of C7 fields.
 
 ### The disabled C3 to C0 links
 

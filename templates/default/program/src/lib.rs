@@ -15,7 +15,8 @@ use fhe_traits::{DeserializeParametrized, Serialize};
 /// `MyProgram.publishInput` that inserts the commitment directly.
 ///
 /// A program whose contract builds a different leaf, or that needs to drop inputs it cannot verify,
-/// supplies its own instead. See `examples/CRISP/program` for one that does.
+/// supplies its own instead. The CRISP program is one that does:
+/// <https://github.com/theinterfold/CRISP/tree/main/program>
 pub fn policy() -> InputPolicy {
     InputPolicy::default()
 }

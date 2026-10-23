@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use e3_config::AppConfig;
 use e3_console::{log, Console};
 use serde::Serialize;
@@ -42,14 +42,13 @@ pub async fn run_on_daemon<T: Serialize>(
 ) -> anyhow::Result<()> {
     let url = format!("http://{}:{}", TCP_ADDRESS, server.port);
     let client = reqwest::Client::new();
-    let resp = client
-        .post(&url)
-        .json(&cli)
-        .send()
-        .await?
-        .error_for_status()?;
-
+    let resp = client.post(&url).json(&cli).send().await?;
+    let status = resp.status();
     let text = resp.text().await?;
+    // The node answers an error with its message, which says more than the status code.
+    if !status.is_success() {
+        bail!("The running node could not run the command: {text}");
+    }
     for line in text.lines() {
         log!(out, "{}", line);
     }

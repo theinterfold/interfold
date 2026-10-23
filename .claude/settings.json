@@ -33,18 +33,5 @@
       "Bash(git branch *)"
     ],
     "deny": ["Read(./**/.env)", "Read(./**/.env.local)", "Read(./**/.env.*.local)", "Read(./**/*.secrets.json)"]
-  },
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PROJECT_DIR}\"/scripts/agent-format-hook.sh"
-          }
-        ]
-      }
-    ]
   }
 }

@@ -3,8 +3,8 @@ name: contributors
 # Runs on pull_request and commits to the PR's own branch, rather than on push
 # to main. main is covered by the "Main Protection" ruleset: a direct push is
 # rejected, and a PR opened with GITHUB_TOKEN can never merge, because such PRs
-# do not trigger workflow runs and the required template_integration /
-# crisp_e2e checks would never report. PR branches are not covered by the
+# do not trigger workflow runs and the required checks, such as
+# template_integration, would never report. PR branches are not covered by the
 # ruleset, so the table reaches main when the PR merges.
 on:
   pull_request:

@@ -36,16 +36,14 @@ does these operations in sequence:
 2. It copies the template to the project folder. In each `package.json`, it replaces the workspace
    versions of `@interfold/contracts`, `@interfold/react`, and `@interfold/sdk` with the versions of
    the cloned release. In each `Cargo.toml`, including the guest's, it replaces every path
-   dependency on an Interfold crate (`e3-program-server`, `e3-bfv-client`, `e3-fhe-params`,
-   `e3-compute-provider`, `e3-openvm-host`, `e3-openvm-types`, and `e3-safe`) with a Git dependency
-   at the cloned commit.
-3. It empties `.interfold/` except `.interfold/generated/`. Then it copies the support folders
-   `crates/support-scripts/dev` and `crates/support-scripts/openvm` to `.interfold/support/`.
-4. It replaces `.gitignore` with `.gitignore.bak`, renames `pnpm-workspace.yaml.bak` to
+   dependency on an Interfold crate (`e3-program-runner`, `e3-bfv-client`, `e3-fhe-params`,
+   `e3-compute-provider`, `e3-openvm-types`, and `e3-safe`) with a Git dependency at the cloned
+   commit.
+3. It replaces `.gitignore` with `.gitignore.bak`, renames `pnpm-workspace.yaml.bak` to
    `pnpm-workspace.yaml`, and deletes `lib/`.
-5. It runs `git init`.
-6. It runs `pnpm install`, unless you give `--skip-install`.
-7. It commits all files with the message `Initial Commit`.
+4. It runs `git init`.
+5. It runs `pnpm install`, unless you give `--skip-install`.
+6. It commits all files with the message `Initial Commit`.
 
 `interfold init` does not run when the CLI finds an `interfold.config.yaml` in the current folder,
 in a parent folder, or in the default configuration folder. In that case, it stops with
@@ -53,18 +51,12 @@ in a parent folder, or in the default configuration folder. In that case, it sto
 
 ## Layout
 
+The template copier uses `e3-fs`, a small async filesystem adapter. Production copying uses the
+physical filesystem; tests can use the same operations over an in-memory root. That test seam does
+not make copying or replacement an atomic filesystem transaction.
+
 <FileTree>
   <FileTree.Folder name='my-first-e3' defaultOpen>
-    <FileTree.Folder name='.interfold'>
-      <FileTree.Folder name='support'>
-        <FileTree.Folder name='dev' />
-        <FileTree.Folder name='openvm'>
-          <FileTree.Folder name='service' />
-          <FileTree.File name='compile' />
-          <FileTree.File name='start' />
-        </FileTree.Folder>
-      </FileTree.Folder>
-    </FileTree.Folder>
     <FileTree.Folder name='client'>
       <FileTree.Folder name='src'>
         <FileTree.Folder name='context'>
@@ -114,6 +106,12 @@ in a parent folder, or in the default configuration folder. In that case, it sto
       </FileTree.Folder>
       <FileTree.File name='Cargo.toml' />
     </FileTree.Folder>
+    <FileTree.Folder name='runner'>
+      <FileTree.Folder name='src'>
+        <FileTree.File name='main.rs' />
+      </FileTree.Folder>
+      <FileTree.File name='Cargo.toml' />
+    </FileTree.Folder>
     <FileTree.Folder name='scripts'>
       <FileTree.Folder name='lib'>
         <FileTree.File name='dev_config.sh' />
@@ -157,20 +155,29 @@ in a parent folder, or in the default configuration folder. In that case, it sto
   </FileTree.Folder>
 </FileTree>
 
-| Path                      | Contents                                                                                                                                                                  |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `program/`                | The Rust crate `e3-user-program`. `src/lib.rs` exports `fhe_processor` (the FHE computation) and `policy` (the input policy).                                             |
-| `guest/`                  | The OpenVM guest that proves `program/`. A Cargo workspace of its own; `openvm.toml` lists the VM extensions.                                                             |
-| `contracts/`              | `MyProgram.sol`, the E3 program contract, and `Mocks/MockOpenVmReceiptVerifier.sol`, a verifier that accepts every receipt, for the local chain only.                     |
-| `deploy/default.ts`       | `deployTemplate`, which deploys the receipt verifier and `MyProgram`, registers `MyProgram` on the Interfold contract, and writes the addresses to the config.            |
-| `scripts/`                | The shell scripts behind the `dev:*` scripts, the local deploy entry point `deploy-local.ts`, and `anvil-automine.mjs`.                                                   |
-| `server/`                 | The coordination server (`index.ts`) and the client for the program server (`runner.ts`).                                                                                 |
-| `client/`                 | The React and Vite web client. It is the only package in `pnpm-workspace.yaml`.                                                                                           |
-| `tests/`                  | The end-to-end test `integration.spec.ts` and its Anvil helpers.                                                                                                          |
-| `.interfold/support/`     | The support folders that `interfold program` runs. `dev/` holds the development runner. `openvm/` holds the OpenVM proving service and its `compile` and `start` scripts. |
-| `Cargo.toml`              | The Cargo workspace. Its members are `program`, `.interfold/support/dev`, and `.interfold/support/openvm/service`.                                                        |
-| `deployed_contracts.json` | The deployment records that the deploy scripts read and write.                                                                                                            |
-| `flake.nix`               | A Nix development shell with Rust 1.91.1, Node.js, and pnpm. `.envrc` loads it with direnv.                                                                               |
+| Path                      | Contents                                                                                                                                                       |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `program/`                | The Rust crate `e3-user-program`. `src/lib.rs` exports `fhe_processor` (the FHE computation) and `policy` (the input policy).                                  |
+| `guest/`                  | The OpenVM guest that proves `program/`. A Cargo workspace of its own; `openvm.toml` lists the VM extensions.                                                  |
+| `contracts/`              | `MyProgram.sol`, the E3 program contract, and `Mocks/MockOpenVmReceiptVerifier.sol`, a verifier that accepts every receipt, for the local chain only.          |
+| `deploy/default.ts`       | `deployTemplate`, which deploys the receipt verifier and `MyProgram`, registers `MyProgram` on the Interfold contract, and writes the addresses to the config. |
+| `scripts/`                | The shell scripts behind the `dev:*` scripts, the local deploy entry point `deploy-local.ts`, and `anvil-automine.mjs`.                                        |
+| `server/`                 | The coordination server (`index.ts`) and the client for the program server (`runner.ts`).                                                                      |
+| `client/`                 | The React and Vite web client. It is the only package in `pnpm-workspace.yaml`.                                                                                |
+| `tests/`                  | The end-to-end test `integration.spec.ts` and its Anvil helpers.                                                                                               |
+| `runner/`                 | The crate `e3-user-program-runner`. Its `program-runner` binary serves `program/` as the development runner or the OpenVM proving service.                     |
+| `Cargo.toml`              | The Cargo workspace. Its members are `program` and `runner`.                                                                                                   |
+| `deployed_contracts.json` | The deployment records that the deploy scripts read and write.                                                                                                 |
+| `flake.nix`               | A Nix development shell with Rust 1.91.1, Node.js, and pnpm. `.envrc` loads it with direnv.                                                                    |
+
+<Callout type='info'>
+  A project that has an `.interfold/support` folder cannot run `interfold program`. To migrate it,
+  delete `.interfold/support` and its two workspace members from `Cargo.toml`. Then copy `runner/`
+  from the template and add `runner` to the workspace members. In `[workspace.dependencies]`,
+  replace `e3-program-server` with `e3-program-runner ={' '}
+  {((git = 'https://github.com/theinterfold/interfold'), (rev = '<rev>'))}`. Use the same `rev` as
+  the other `e3-*` dependencies of the project.
+</Callout>
 
 The scripts make more folders when they run:
 
@@ -341,7 +348,7 @@ the template is inside an Interfold repository checkout, where the scripts build
 | How the client shows the result                             | `client/src/pages/steps/EncryptSubmit.tsx` and `client/src/pages/steps/Results.tsx`.                                                                              |
 | The SDK setup                                               | `client/src/utils/sdk-config.ts` and `client/src/context/WizardContext.tsx` (client), `createPrivateSDK` in `server/index.ts` (server).                           |
 | When the computation starts and how the output is published | `server/index.ts`. The server schedules the job when the input window closes. It skips an E3 with fewer than two inputs.                                          |
-| The program server and its proof                            | `.interfold/support/dev/src/main.rs` (unproved) and `.interfold/support/openvm` (OpenVM). `interfold init` copies both from `crates/support-scripts`.             |
+| The program server and its proof                            | `runner/src/main.rs` calls `e3_program_runner::run`. `program-runner dev` is unproved. `program-runner openvm` is the OpenVM service.                             |
 | What the guest proves with                                  | `guest/openvm.toml` (the VM extensions) and the `openvm-hashes` feature of `program/Cargo.toml`. A change gives a new receipt identity.                           |
 | The local ciphernodes                                       | The `nodes` section of `interfold.config.yaml` and `scripts/dev_ciphernodes.sh`. Both files must list the same nodes.                                             |
 | The local chain                                             | The `anvil` command in `scripts/dev_all_concurrently.sh` and `scripts/anvil-automine.mjs`.                                                                        |
@@ -356,8 +363,9 @@ node, change all of these items together with the `nodes` section of `interfold.
 <Callout type='warning'>
   The template is for local development. `MyProgram.publishInput` does not prove that a ciphertext
   matches its commitment, and `verifyDataAvailability` is a local mock. A production E3 program must
-  do both checks. The CRISP program in `examples/CRISP` shows one approach. The program server does
-  not authenticate callers, so it is not safe on an untrusted network.
+  do both checks. The [CRISP program](https://github.com/theinterfold/CRISP/tree/main/program) shows
+  one approach. The program server does not authenticate callers, so it is not safe on an untrusted
+  network.
 </Callout>
 
 ## Next steps

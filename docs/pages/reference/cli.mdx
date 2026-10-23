@@ -97,6 +97,10 @@ All other commands run in the local process.
 
 A command that fails prints the error in red and exits with status `1`.
 
+Command output uses the `e3-console` channel and printer task. Normal completion waits for the
+printer to drain after its senders close; remote commands can collect those lines instead. This is
+not a crash-durable output log, and the channel is unbounded.
+
 ## Install and update
 
 ### Install script
@@ -162,8 +166,7 @@ These commands make and run an E3 project from the template. For a walkthrough, 
 ### `interfold init`
 
 Makes a new Interfold project from a template. The command clones the template, pins its Interfold
-crates to the cloned commit, copies the development runner and the OpenVM proving service to
-`.interfold/support`, runs `pnpm install`, and makes the first Git commit. It needs `git` and
+crates to the cloned commit, runs `pnpm install`, and makes the first Git commit. It needs `git` and
 `pnpm`.
 
 ```bash
@@ -193,17 +196,17 @@ interfold compile [--dev <true|false>]
 
 ### `interfold program`
 
-Manages the E3 program of the project. Each subcommand runs a script in `.interfold/support` in the
-current directory. `interfold init` puts these scripts in the project.
+Manages the E3 program of the project. Each subcommand runs in the current directory and builds or
+runs the `program-runner` binary of the project's `runner/` crate.
 
-The `--dev` flag selects the script set. When the flag is absent, the CLI uses `program.dev` from
-the configuration, which defaults to `false`.
+The `--dev` flag selects the mode. When the flag is absent, the CLI uses `program.dev` from the
+configuration, which defaults to `false`.
 
-| Subcommand                      | Purpose                                                                                                                                                                                              | Script                            |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| `program start [--dev <DEV>]`   | Starts the program server. In Dev Mode, the program runs without a proving backend, so nothing verifies the result. Otherwise the OpenVM service checks its worker and keys, then proves each round. | `dev/start` or `openvm/start`     |
-| `program compile [--dev <DEV>]` | Compiles the program. Outside Dev Mode, it also builds the OpenVM guest, its keys, the receipt identity, and the worker configuration.                                                               | `dev/compile` or `openvm/compile` |
-| `program cache purge`           | Deletes `.interfold/caches`, including the OpenVM guest build and keys. The next compilation takes longer.                                                                                           | None                              |
+| Subcommand                      | Purpose                                                                                                                                                                                              | Command                                                                                                        |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `program start [--dev <DEV>]`   | Starts the program server. In Dev Mode, the program runs without a proving backend, so nothing verifies the result. Otherwise the OpenVM service checks its worker and keys, then proves each round. | `cargo run --bin program-runner -- dev` or `cargo run --release --bin program-runner -- openvm`                |
+| `program compile [--dev <DEV>]` | Compiles the program. Outside Dev Mode, it also builds the OpenVM guest, its keys, the receipt identity, and the worker configuration.                                                               | `cargo build --bin program-runner` or, outside Dev Mode, a build script that ends with `cargo build --release` |
+| `program cache purge`           | Deletes `.interfold/caches`, including the OpenVM guest build and keys. The next compilation takes longer.                                                                                           | None                                                                                                           |
 
 Outside Dev Mode, `program compile` and `program start` need a `program.openvm` section with at
 least one worker. The CLI refuses the removed `program.risc0` section. See
@@ -372,7 +375,7 @@ The detached supervisor does not receive the `--otel` flag. Set `otel` in the co
 
 Manages the Noir prover tools that the node uses to make zero-knowledge proofs: the Barretenberg
 binary (`bb`) and the compiled circuits. The required versions come from
-`crates/zk-prover/versions.json`. For release 0.18.0, they are `bb` 5.1.0 and circuits 0.18.0.
+`crates/zk/prover/versions.json`. For release 0.18.0, they are `bb` 5.1.0 and circuits 0.18.0.
 
 | Subcommand    | Flags                                                                                                                                                                                                                                                                                                                                                                                      | Purpose                                                                                                             |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
@@ -384,7 +387,7 @@ to `~/.interfold/noir`. A custom `bb` from `custom_bb` or `E3_CUSTOM_BB` replace
 one.
 
 Circuit downloads require an archive SHA-256 compiled in for the required version from
-`crates/zk-prover/versions.json` or the release build input. `noir status` reports the required
+`crates/zk/prover/versions.json` or the release build input. `noir status` reports the required
 version and this pin. The installer checks this digest before extraction. It then requires a
 nonempty `checksums.json` that covers every artifact file and verifies each entry. The archive must
 contain the full supported preset/committee matrix and the complete artifact inventory used by
@@ -568,8 +571,13 @@ interfold ciphernode deactivate [--tickets <AMOUNT>] [--bond <AMOUNT>] [--operat
 Prints the on-chain state of an operator. The command sends no transaction.
 
 ```bash
-interfold ciphernode status [--operator <ADDRESS>] [--chain <CHAIN>]
+interfold ciphernode status [--operator <ADDRESS>] [--no-committees] [--chain <CHAIN>]
 ```
+
+| Flag              | Value       | Default           | Description                                                          |
+| ----------------- | ----------- | ----------------- | -------------------------------------------------------------------- |
+| `--operator`      | `<ADDRESS>` | Configured signer | Operator to show.                                                    |
+| `--no-committees` | None        | Off               | Do not list the committees. The command then reads no event history. |
 
 The output shows these values:
 
@@ -586,13 +594,32 @@ The output shows these values:
 A committee stays in the list until `releaseCommittee(e3Id)` releases it, also after its E3 is
 complete or failed. A `candidate` holds a provisional seat while the sortition of the E3 is open.
 
-The command reads the `CommitteeObligationUpdated` events of `BondingRegistry`, from the
-`deploy_block` of the contract to the latest block. When the configuration has no `deploy_block` for
-`bonding_registry`, the read starts at block 0. It sends one `eth_getLogs` request for each 10,000
-blocks (or the chain's `rpc_log_range_blocks`), or for each smaller range that the RPC endpoint
-accepts. Thus the read can take some seconds, and longer on an endpoint with a small range limit. If
-the read fails, the command shows `Committees: unavailable` with the error, and it shows all the
+To find the committees, the command reads the `unresolvedCommitteesOf` and `committeeObligationAt`
+views of `BondingRegistry`: one block read, one call for the number, and one call for each
+committee. These calls read no event history. A registry deployed before these views, or one that
+holds committees requested before them, does not list every committee. The command then reads the
+`CommitteeObligationUpdated` events of `BondingRegistry`. The first run reads from the
+`deploy_block` of the contract. When the configuration has no `deploy_block` for `bonding_registry`,
+the read starts at block 0. The first run sends one `eth_getLogs` request for each 10,000 blocks (or
+the chain's `rpc_log_range_blocks`), or for each smaller range that the RPC endpoint accepts. Thus
+the first run can take some seconds, and longer on an endpoint with a small range limit.
+
+The command saves the result in `committee-scans/` in the node data directory, one file for each
+operator. A later run reads only the blocks after the saved block: usually one `eth_getLogs`
+request, and three block reads that detect a chain reorganization. After a reorganization of the
+saved block, the command reads the full history again. The read stops at the latest block minus the
+chain's `ingestion_confirmations`, so a new committee shows after that number of blocks.
+
+If the read fails, the command shows `Committees: unavailable` with the error, and it shows all the
 other values.
+
+<Callout type='info'>
+  To monitor a node from a script, do not run this command often. Each run reads the chain, and a
+  hosted RPC endpoint can bill each read. Use `--no-committees`, or read the heartbeat files that
+  the node writes (see [Watch the node](/operate/running#watch-the-node)). They need no RPC request.
+  A running node of an earlier version refuses `--no-committees` until it restarts on the new
+  version.
+</Callout>
 
 ### `interfold faucet`
 
@@ -717,10 +744,11 @@ the storage schema and the binary refuses to load the old data folder.
 interfold node reset-data --yes
 ```
 
-| Flag                 | Value | Default | Description                                                                                                                     |
-| -------------------- | ----- | ------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `--yes`              | None  | Off     | Confirms the deletion. Without it, the command stops with a message that lists what it deletes.                                 |
-| `--allow-active-e3s` | None  | Off     | Deletes the state even when this node holds a key share for an E3 that it has not seen complete. The node loses that key share. |
+| Flag                 | Value | Default | Description                                                                                                                                                                             |
+| -------------------- | ----- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--yes`              | None  | Off     | Confirms the deletion. Without it, the command stops with a message that lists what it deletes.                                                                                         |
+| `--allow-active-e3s` | None  | Off     | Deletes the state even when this node holds a key share for an E3 that it has not seen complete. The node loses that key share.                                                         |
+| `--if-schema-older`  | None  | Off     | Resets only when the stored state uses an older storage schema than this binary. Otherwise the command changes nothing and exits with success. A package can run it before every start. |
 
 The command first writes an encrypted backup of the wallet key and libp2p key to
 `identity-backup-<name>-<timestamp>.json` next to the database. Then it deletes the key/value store
@@ -771,9 +799,9 @@ Prints the Git revision that the binary was built from.
 interfold rev [--features]
 ```
 
-| Flag         | Value | Default | Description                                                                                                   |
-| ------------ | ----- | ------- | ------------------------------------------------------------------------------------------------------------- |
-| `--features` | None  | Off     | Prints the optional Cargo features of this binary instead, one for each line. A release build prints nothing. |
+| Flag         | Value | Default | Description                                                                                                                                          |
+| ------------ | ----- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--features` | None  | Off     | Prints the optional Cargo features of this binary instead, one for each line. The CLI from an `interfold-<platform>` release archive prints nothing. |
 
 ### `interfold purge-all`
 

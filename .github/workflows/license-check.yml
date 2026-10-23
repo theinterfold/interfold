@@ -29,7 +29,7 @@ jobs:
 
       - name: Check license headers
         id: check-headers
-        run: ./scripts/check-license-headers.sh --check-only
+        run: ./scripts/checks/license-headers.sh --check-only
         continue-on-error: true
 
       - name: Fail job if headers are missing (PR only)

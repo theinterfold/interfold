@@ -6,7 +6,7 @@
 
 //! Sequential C3 fold: one inner ZK `ShareEncryption` proof per step, chained with the previous
 //! accumulator: the `c3_fold_kernel` proof of the chain's first leaf on the first step, a `c3_fold`
-//! non-ZK proof after that (see `crates/zk-prover` and `c3_fold_kernel`).
+//! non-ZK proof after that (see `crates/zk/prover` and `c3_fold_kernel`).
 
 use bb_proof_verification::{
     UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,

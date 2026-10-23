@@ -27,7 +27,7 @@ pub async fn execute(
     purge(config, config_file, &dir, allow_active_e3s).await?;
     // A missing cache folder is nothing to delete. The node state is already gone at this point.
     if dir.join(".interfold/caches").exists() {
-        e3_support_scripts::program_cache_purge().await?;
+        crate::program_support::cache_purge().await?;
     }
     Ok(())
 }

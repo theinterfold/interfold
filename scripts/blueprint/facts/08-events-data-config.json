@@ -3,11 +3,10 @@
   "units": [
     {
       "id": "e3-events",
+      "documentation": [{ "title": "Event durability and replay", "path": "docs/architecture/persistence-and-replay.md" }],
       "kind": "crate",
       "path": "crates/events",
       "one_line": "Typed event vocabulary and in-process bus: sequences every protocol event, stores it, and fans it out to actor subscribers.",
-      "explain": "Each protocol step is an InterfoldEvent: an InterfoldEventData payload plus an EventContext holding its id, causation, HLC timestamp, aggregate and source. A BusHandle stamps a new event with a hybrid logical clock and sends it to the Sequencer, which hands it to the EventStore router; the router passes it to the EventStore of the event's aggregate, which appends and flushes it before the sequenced copy reaches the EventBus, which fans it out by event type. Without this persisted, ordered history a restarted node would have no authoritative record to rebuild its actors from.",
-      "analogy": "Like a notary's register: each document gets the next number and is filed before the mail room hands copies to the offices that asked for that kind of document.",
       "actors": [
         {
           "name": "EventBus",
@@ -26,8 +25,8 @@
         },
         {
           "name": "EventStoreRouter",
-          "role": "Routes each store request to the EventStore of the event's aggregate and panics when no store is configured for it",
-          "ref": "crates/events/src/eventstore_router.rs@154@pub struct EventStoreRouter<I: SequenceIndex, L: EventLog> {"
+          "role": "Routes each store request to its aggregate's EventStore; an unconfigured aggregate signals fatal storage failure without dispatch or misrouting",
+          "ref": "crates/events/src/eventstore_router.rs@155@pub struct EventStoreRouter<I: SequenceIndex, L: EventLog> {"
         },
         {
           "name": "SnapshotBuffer",
@@ -120,7 +119,7 @@
         {
           "name": "CircuitName",
           "what": "names of the ZK circuits (PkBfv, PkGeneration, ThresholdShareDecryption, DecryptedSharesAggregation, fold circuits) with as_str",
-          "ref": "crates/events/src/interfold_event/proof.rs@108@pub enum CircuitName {"
+          "ref": "crates/events/src/interfold_event/proof.rs@109@pub enum CircuitName {"
         },
         {
           "name": "ProofType",
@@ -224,7 +223,7 @@
         {
           "pattern": "enum-match",
           "note": "CircuitName::as_str maps each circuit to its name string",
-          "ref": "crates/events/src/interfold_event/proof.rs@156@CircuitName::PkBfv => \"pk\","
+          "ref": "crates/events/src/interfold_event/proof.rs@157@CircuitName::PkBfv => \"pk\","
         },
         {
           "pattern": "newtype",
@@ -232,19 +231,89 @@
           "ref": "crates/events/src/event_context.rs@24@pub struct AggregateId(usize);"
         }
       ],
-      "depends_on": ["e3-crypto", "e3-committee-hash", "e3-trbfv", "e3-utils", "e3-fhe-params", "e3-zk-helpers"],
+      "depends_on": ["e3-committee", "e3-crypto", "e3-committee-hash", "e3-trbfv", "e3-utils", "e3-fhe-params", "e3-zk-config"],
       "tests": "Unit tests sit in #[cfg(test)] modules in eventbus.rs, eventstore.rs and sequencer.rs. Run: cargo test -p e3-events",
       "unverified": [
         "The replay path that feeds stored events back into the EventBus after a restart lives outside these four crates and was not traced here."
       ]
     },
     {
+      "id": "e3-event-system",
+      "documentation": [{ "title": "Persistence runtime and startup", "path": "docs/architecture/persistence-and-replay.md" }],
+      "kind": "crate",
+      "path": "crates/event-system",
+      "one_line": "Wires the events crate's bus, sequencer, snapshot buffer and per-aggregate event stores to in-memory or persisted data backends.",
+      "actors": [],
+      "consumes": [],
+      "emits": [],
+      "state": [
+        {
+          "name": "lazy runtime handles for stores, router, sequencer, snapshot buffer and bus",
+          "where": "memory",
+          "ref": "crates/event-system/src/event_system.rs@146@pub struct EventSystem {"
+        },
+        {
+          "name": "persisted log paths and sled store, when persisted mode is selected",
+          "where": "disk",
+          "ref": "crates/event-system/src/event_system.rs@187@pub fn persisted(log_path: PathBuf, sled_path: PathBuf) -> Self {"
+        }
+      ],
+      "key_types": [
+        {
+          "name": "EventSystem",
+          "what": "runtime assembly with backend selection, shared-store access and storage failure monitoring",
+          "ref": "crates/event-system/src/event_system.rs@146@pub struct EventSystem {"
+        },
+        {
+          "name": "EventStoreAddrs",
+          "what": "per-aggregate actor addresses for either in-memory or persisted event stores",
+          "ref": "crates/event-system/src/event_system.rs@69@pub enum EventStoreAddrs {"
+        }
+      ],
+      "read_first": [
+        {
+          "why": "crate exports: runtime assembly and process-local shared access",
+          "ref": "crates/event-system/src/lib.rs@11@pub use event_system::*;"
+        },
+        {
+          "why": "in-memory construction, used by tests and standalone helpers",
+          "ref": "crates/event-system/src/event_system.rs@182@pub fn in_mem() -> Self {"
+        },
+        {
+          "why": "open per-aggregate stores, checking persisted schema compatibility before reconciliation",
+          "ref": "crates/event-system/src/event_system.rs@287@pub fn eventstore_addrs(&self) -> Result<EventStoreAddrs> {"
+        },
+        {
+          "why": "enable publishing only after reading every durable log's clock floor",
+          "ref": "crates/event-system/src/event_system.rs@357@pub async fn enable_handle_with_hlc(&self, hlc: Hlc) -> Result<BusHandle<Enabled>> {"
+        },
+        {
+          "why": "register snapshot admission and create the disabled bus handle",
+          "ref": "crates/event-system/src/event_system.rs@403@pub fn handle(&self) -> Result<BusHandle<Disabled>> {"
+        }
+      ],
+      "rust_patterns": [
+        {
+          "pattern": "enum-match",
+          "note": "backend selection chooses in-memory or sled-backed snapshot storage",
+          "ref": "crates/event-system/src/event_system.rs@421@let store = match &self.backend {"
+        },
+        {
+          "pattern": "result-question-mark",
+          "note": "failed snapshot admission registration prevents returning a usable handle",
+          "ref": "crates/event-system/src/event_system.rs@412@.context(\"event bus could not register snapshot admission\")?;"
+        }
+      ],
+      "depends_on": ["e3-data", "e3-events", "e3-sync", "e3-utils"],
+      "tests": "Inline tests in src/event_system.rs cover persisted storage, clock-floor seeding, failure signals and snapshot admission; run: cargo test -p e3-event-system",
+      "unverified": ["Process exit and restart ordering are owned by the builder and CLI, not guaranteed by a standalone EventSystem."]
+    },
+    {
       "id": "e3-data",
+      "documentation": [{ "title": "Persistence and replay", "path": "docs/architecture/persistence-and-replay.md" }],
       "kind": "crate",
       "path": "crates/data",
       "one_line": "Persistence layer on sled and commitlog: keyed snapshot storage with Repository and Persistable, plus the durable append-only event log.",
-      "explain": "Actors persist their state as typed snapshots: Persistable and Repository bincode-serialize a value into an Insert message, which the DataStore's recipient delivers to the SledStore actor. A sled batch that carries a snapshot revision is rejected as a whole when its sequence is older than the cursor already stored. The events themselves live in an append-only commitlog, which the code calls the durable source of truth; snapshots are read back through Persistable::load or Repository::read.",
-      "analogy": "Like a row of labelled lockers: each actor keeps its latest belongings in its own locker, and a batch is refused whole if its sequence number is older than the one the aggregate's cursor already records.",
       "actors": [
         {
           "name": "SledStore",
@@ -278,7 +347,7 @@
         {
           "name": "Per-aggregate timestamp-to-sequence index, one sled tree per aggregate",
           "where": "disk",
-          "ref": "crates/ciphernode-builder/src/event_system.rs@306@let tree_name = format!(\"sequence_index.{}\", index);"
+          "ref": "crates/event-system/src/event_system.rs@329@let tree_name = format!(\"sequence_index.{}\", index);"
         },
         {
           "name": "Event log: commitlog segments per aggregate, with blob files for large local events",
@@ -367,7 +436,7 @@
         },
         {
           "why": "real use: E3Context implements Checkpoint over its repository",
-          "ref": "crates/request/src/context.rs@183@impl Checkpoint for E3Context {"
+          "ref": "crates/request/src/context.rs@199@impl Checkpoint for E3Context {"
         }
       ],
       "rust_patterns": [
@@ -406,11 +475,10 @@
     },
     {
       "id": "e3-config",
+      "documentation": [{ "title": "Configuration reference", "path": "docs/pages/reference/configuration.mdx" }],
       "kind": "crate",
       "path": "crates/config",
       "one_line": "Loads and validates node configuration from interfold.config.yaml, merging environment and CLI overrides, and exposes chains, contracts and release numbers.",
-      "explain": "A node is picked by name from the nodes map in interfold.config.yaml, found by searching parent folders or taken from the CLI path. Environment references in the YAML are expanded, E3_-prefixed variables and CLI overrides are merged on top with Figment, and the result is scoped to the chosen node, which resolves its network and checks its limits. protocol-release.toml is compiled in and supplies protocol_version and node_generation; the net crate reads protocol_version. Without this layering a node would not know its chains, contracts, ports or network.",
-      "analogy": "Like house rules with stacked overrides: the printed defaults are overlaid by the operator's notebook, then by sticky notes (environment variables), then by a note handed in at the desk (command-line flags).",
       "actors": [],
       "consumes": [
         { "name": "interfold.config.yaml", "by": "load_config", "ref": "crates/config/src/app_config.rs@558@pub fn load_config(" },
@@ -535,7 +603,7 @@
         }
       ],
       "depends_on": ["e3-events", "e3-fhe-params"],
-      "tests": "Unit tests sit in #[cfg(test)] modules, mainly app_config.rs (uses figment::Jail and the CRISP example config). Run: cargo test -p e3-config",
+      "tests": "Unit tests sit in #[cfg(test)] modules, mainly app_config.rs (uses figment::Jail and inline chain configs). Run: cargo test -p e3-config",
       "unverified": [
         "Which node code reads each ChainConfig and NodeDefinition field was not traced; only the loaders and NetworkProfile were read.",
         "The validation rules in validation.rs and chain_config.rs were only sampled."
@@ -543,11 +611,13 @@
     },
     {
       "id": "e3-logger",
+      "documentation": [
+        { "title": "Operational logs", "path": "docs/pages/reference/dashboard-api.mdx" },
+        { "title": "Dashboard views", "path": "docs/pages/operate/dashboard.mdx" }
+      ],
       "kind": "crate",
       "path": "crates/logger",
       "one_line": "Passive protocol-event logger plus a bounded, redacting operational log of tracing output for the dashboard.",
-      "explain": "attach_protocol_logger subscribes a SimpleLogger to the node's EventBus for every event type, and each event becomes one structured tracing line with a severity chosen by its type; the observer never publishes or changes event ordering. OperationalLogLayer copies tracing events and span fields into LogCollector, which keeps the newest 20,000 entries in memory and, when a path is configured, writes JSON lines to a file that rotates at 25 MiB. Field names such as password, seed, keyshare or plaintext are replaced with [REDACTED] before they are stored. Without it, operators would have no compact, redacted trail of what the node did.",
-      "analogy": "Like a ship's logbook: the newest pages stay in the wheelhouse for quick reading, the full book is copied into numbered volumes that roll over when full, and private names are blacked out before an entry is written.",
       "actors": [
         {
           "name": "SimpleLogger",

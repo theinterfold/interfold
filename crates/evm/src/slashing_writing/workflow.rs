@@ -248,25 +248,42 @@ pub(crate) enum SubmissionStep {
 pub(crate) struct SlashSubmission {
     event: AccusationQuorumReached,
     rank: Option<usize>,
+    /// How long ago this node first recorded the intent. A fallback submitter waits only for the
+    /// rest of its delay, so a restart does not start the wait again.
+    recorded_ago: Duration,
 }
 
 impl SlashSubmission {
-    /// A submission of `event` by `submitter`, and its first step.
+    /// A submission of `event` by `submitter`, which first recorded it `recorded_ago`, and its
+    /// first step.
     pub(crate) fn new(
         event: AccusationQuorumReached,
         submitter: Address,
+        recorded_ago: Duration,
     ) -> (Self, SubmissionStep) {
         let rank = submission_rank(event.votes_for.iter().map(|vote| vote.voter), submitter);
-        (Self { event, rank }, SubmissionStep::ReadPolicy)
+        (
+            Self {
+                event,
+                rank,
+                recorded_ago,
+            },
+            SubmissionStep::ReadPolicy,
+        )
     }
 
     pub(crate) fn event(&self) -> &AccusationQuorumReached {
         &self.event
     }
 
-    /// The policy, or the error of its read. A failed read must not invent an exclusion: eligible
-    /// submitters go on, so a temporary RPC failure cannot suppress an enabled slash.
-    pub(crate) fn policy_read(&self, policy: Result<SlashPolicyState, String>) -> SubmissionStep {
+    /// The policy, or the error of its read, which took `read_took`. A failed read must not invent
+    /// an exclusion: eligible submitters go on, so a temporary RPC failure cannot suppress an
+    /// enabled slash.
+    pub(crate) fn policy_read(
+        &self,
+        policy: Result<SlashPolicyState, String>,
+        read_took: Duration,
+    ) -> SubmissionStep {
         match policy {
             Ok(SlashPolicyState::Disabled) => SubmissionStep::Exclude(CommitteeMemberExcluded {
                 e3_id: self.event.e3_id.clone(),
@@ -281,13 +298,14 @@ impl SlashSubmission {
                     self.event.proof_type
                 ))),
             },
-            Ok(SlashPolicyState::ProofEnabled) | Err(_) => self.submission(),
+            Ok(SlashPolicyState::ProofEnabled) | Err(_) => self.submission(read_took),
         }
     }
 
     /// Only the first `MAX_SLASH_SUBMITTERS` voters submit, with evidence, rank 0 at once and the
-    /// fallback ranks after their delay.
-    fn submission(&self) -> SubmissionStep {
+    /// fallback ranks after their delay. The delay counts from when the intent was first recorded,
+    /// and the policy read that took `read_took` is part of it.
+    fn submission(&self, read_took: Duration) -> SubmissionStep {
         let rank = match self.rank {
             Some(rank) if should_submit_slash(true, &self.event.outcome, Some(rank)) => rank,
             _ => {
@@ -306,13 +324,11 @@ impl SlashSubmission {
                 ))),
             };
         }
-        if rank > 0 {
-            SubmissionStep::Wait {
-                rank,
-                delay: submission_delay(rank),
-            }
-        } else {
+        let delay = submission_delay(rank).saturating_sub(self.recorded_ago + read_took);
+        if delay.is_zero() {
             SubmissionStep::Submit { rank }
+        } else {
+            SubmissionStep::Wait { rank, delay }
         }
     }
 
@@ -418,30 +434,34 @@ pub(crate) fn submission_delay(rank: usize) -> Duration {
     Duration::from_secs(rank as u64 * SUBMITTER_DELAY_SECS)
 }
 
-/// Return true when retrying the same attestation cannot change the contract outcome.
+/// The `SlashingManager` errors that no retry of the same attestation can change. Each one must be
+/// in the `ISlashingManager` ABI, or its raw revert does not decode and looks like a transport error.
 ///
 /// `AccusationIssuedInFuture` is deliberately absent: a bounded clock skew can become valid after
 /// time advances. Transport, RPC, nonce, and unknown errors also remain retryable.
+const TERMINAL_SLASH_SUBMISSION_ERRORS: [&str; 15] = [
+    "ZeroAddress",
+    "ProofRequired",
+    "OperatorNotInCommittee",
+    "DuplicateEvidence",
+    "ChainIdMismatch",
+    "InvalidProof",
+    "InsufficientAttestations",
+    "DuplicateVoter",
+    "VoterNotInCommittee",
+    "InvalidVoteSignature",
+    "VoterIsAccused",
+    "EquivocationDetected",
+    "SignatureExpired",
+    "InvalidAccusationWindow",
+    "SlashSubmissionDeadlinePassed",
+];
+
+/// Return true when retrying the same attestation cannot change the contract outcome.
 pub(crate) fn slash_submission_error_is_terminal(decoded: &str) -> bool {
-    [
-        "ZeroAddress",
-        "ProofRequired",
-        "OperatorNotInCommittee",
-        "DuplicateEvidence",
-        "ChainIdMismatch",
-        "InvalidProof",
-        "InsufficientAttestations",
-        "DuplicateVoter",
-        "VoterNotInCommittee",
-        "InvalidVoteSignature",
-        "VoterIsAccused",
-        "EquivocationDetected",
-        "SignatureExpired",
-        "InvalidAccusationWindow",
-        "SlashSubmissionDeadlinePassed",
-    ]
-    .iter()
-    .any(|name| decoded.contains(name))
+    TERMINAL_SLASH_SUBMISSION_ERRORS
+        .iter()
+        .any(|name| decoded.contains(name))
 }
 
 #[cfg(test)]
@@ -487,9 +507,53 @@ mod tests {
     fn submission_by(rank: Option<usize>) -> SlashSubmission {
         let voters: Vec<_> = (1..=4).map(Address::repeat_byte).collect();
         let submitter = rank.map_or(Address::repeat_byte(0xee), |rank| voters[rank]);
-        let (submission, first) = SlashSubmission::new(quorum(voters), submitter);
+        let (submission, first) = SlashSubmission::new(quorum(voters), submitter, Duration::ZERO);
         assert_eq!(first, SubmissionStep::ReadPolicy);
         submission
+    }
+
+    /// A fallback submitter counts its delay from when it first recorded the intent, so after a
+    /// restart it waits only for the rest of the delay.
+    #[test]
+    fn a_fallback_submitter_waits_only_for_the_rest_of_its_delay() {
+        let voters: Vec<_> = (1..=4).map(Address::repeat_byte).collect();
+        let full = submission_delay(2);
+        for (recorded_ago, step) in [
+            (
+                Duration::ZERO,
+                SubmissionStep::Wait {
+                    rank: 2,
+                    delay: full,
+                },
+            ),
+            (
+                Duration::from_secs(40),
+                SubmissionStep::Wait {
+                    rank: 2,
+                    delay: full - Duration::from_secs(40),
+                },
+            ),
+            (full, SubmissionStep::Submit { rank: 2 }),
+        ] {
+            let (submission, _) =
+                SlashSubmission::new(quorum(voters.clone()), voters[2], recorded_ago);
+            assert_eq!(
+                submission.policy_read(Ok(SlashPolicyState::ProofEnabled), Duration::ZERO),
+                step,
+                "recorded {recorded_ago:?} ago"
+            );
+        }
+
+        // A slow policy read is part of the delay too.
+        let (submission, _) =
+            SlashSubmission::new(quorum(voters.clone()), voters[2], Duration::ZERO);
+        assert_eq!(
+            submission.policy_read(Ok(SlashPolicyState::ProofEnabled), Duration::from_secs(45)),
+            SubmissionStep::Wait {
+                rank: 2,
+                delay: full - Duration::from_secs(45),
+            }
+        );
     }
 
     #[test]
@@ -498,7 +562,7 @@ mod tests {
             let submission = submission_by(rank);
             let event = submission.event().clone();
             assert_eq!(
-                submission.policy_read(Ok(SlashPolicyState::Disabled)),
+                submission.policy_read(Ok(SlashPolicyState::Disabled), Duration::ZERO),
                 SubmissionStep::Exclude(CommitteeMemberExcluded {
                     e3_id: event.e3_id,
                     node: event.accused,
@@ -528,7 +592,8 @@ mod tests {
 
     #[test]
     fn a_policy_without_attestations_ends_the_submission_with_an_error() {
-        let step = submission_by(Some(0)).policy_read(Ok(SlashPolicyState::InvalidForAttestations));
+        let step = submission_by(Some(0))
+            .policy_read(Ok(SlashPolicyState::InvalidForAttestations), Duration::ZERO);
         assert!(matches!(
             step,
             SubmissionStep::End {
@@ -549,12 +614,12 @@ mod tests {
             Err("rpc unavailable".to_string()),
         ] {
             assert_eq!(
-                submission_by(Some(0)).policy_read(policy.clone()),
+                submission_by(Some(0)).policy_read(policy.clone(), Duration::ZERO),
                 SubmissionStep::Submit { rank: 0 }
             );
             for rank in [1, 2] {
                 assert_eq!(
-                    submission_by(Some(rank)).policy_read(policy.clone()),
+                    submission_by(Some(rank)).policy_read(policy.clone(), Duration::ZERO),
                     SubmissionStep::Wait {
                         rank,
                         delay: Duration::from_secs(rank as u64 * SUBMITTER_DELAY_SECS)
@@ -564,7 +629,7 @@ mod tests {
             // Rank 3 and non-voters do not submit; the intent is settled for them.
             for rank in [Some(3), None] {
                 assert_eq!(
-                    submission_by(rank).policy_read(policy.clone()),
+                    submission_by(rank).policy_read(policy.clone(), Duration::ZERO),
                     SubmissionStep::End {
                         end: end_settled_acknowledged(),
                         report: None
@@ -579,9 +644,9 @@ mod tests {
         let voters = vec![Address::repeat_byte(1)];
         let mut event = quorum(voters.clone());
         event.evidence = Bytes::new();
-        let (submission, _) = SlashSubmission::new(event, voters[0]);
+        let (submission, _) = SlashSubmission::new(event, voters[0], Duration::ZERO);
         assert!(matches!(
-            submission.policy_read(Ok(SlashPolicyState::ProofEnabled)),
+            submission.policy_read(Ok(SlashPolicyState::ProofEnabled), Duration::ZERO),
             SubmissionStep::End {
                 end,
                 report: Some(SubmissionReport::Error(_)),
@@ -803,5 +868,28 @@ mod tests {
             "execution reverted: SlashReasonDisabled()"
         ));
         assert!(!slash_submission_error_is_terminal("temporary RPC timeout"));
+    }
+
+    /// The RPC error of a reverted call carries the custom error as raw revert data. The writer
+    /// decodes it with `format_evm_error` before it decides whether to try again.
+    fn raw_revert(name: &str) -> String {
+        let selector = hex::encode(&keccak256(format!("{name}()"))[..4]);
+        crate::domain::error_decoder::format_evm_error(&anyhow::anyhow!(
+            "server returned an error response: error code 3: execution reverted, data: \"0x{selector}\""
+        ))
+    }
+
+    #[test]
+    fn every_terminal_revert_decodes_from_its_raw_data() {
+        for name in TERMINAL_SLASH_SUBMISSION_ERRORS {
+            let decoded = raw_revert(name);
+            assert!(
+                slash_submission_error_is_terminal(&decoded),
+                "{name} does not stop the retries: {decoded}"
+            );
+        }
+        let decoded = raw_revert("AccusationIssuedInFuture");
+        assert!(decoded.contains("AccusationIssuedInFuture"), "{decoded}");
+        assert!(!slash_submission_error_is_terminal(&decoded));
     }
 }

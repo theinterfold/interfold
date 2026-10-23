@@ -5,11 +5,13 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::domain::chain_sync_state::SyncStatus;
+use crate::domain::evm_log_observation::interfold_slashing_manager_set;
 use crate::messages::HistoricalSyncComplete;
 use crate::messages::InterfoldEvmEvent;
 use actix::{Actor, ActorContext, Handler};
 use actix::{Addr, Recipient};
-use anyhow::{bail, Context, Result};
+use alloy::primitives::Address;
+use anyhow::{bail, ensure, Context, Result};
 use e3_events::EType;
 use e3_events::{
     BusHandle, ErrorDispatcher, EventSubscriber, EventType, HistoricalEvmEventsReceived,
@@ -60,17 +62,20 @@ pub struct EvmChainGateway {
     max_buffered_events: usize,
     readiness: Option<oneshot::Sender<std::result::Result<(), String>>>,
     failure: watch::Sender<Option<String>>,
+    /// The SlashingManager that this node signs and submits for on this chain, when it has one.
+    slashing_manager: Option<Address>,
 }
 
 impl EvmChainGateway {
     pub fn new(bus: &BusHandle) -> Self {
-        Self::with_options(bus, DEFAULT_MAX_BUFFERED_EVM_EVENTS, None)
+        Self::with_options(bus, DEFAULT_MAX_BUFFERED_EVM_EVENTS, None, None)
     }
 
     fn with_options(
         bus: &BusHandle,
         max_buffered_events: usize,
         readiness: Option<oneshot::Sender<std::result::Result<(), String>>>,
+        slashing_manager: Option<Address>,
     ) -> Self {
         let (failure, _) = watch::channel(None);
         Self {
@@ -79,6 +84,7 @@ impl EvmChainGateway {
             max_buffered_events,
             readiness,
             failure,
+            slashing_manager,
         }
     }
 
@@ -87,15 +93,18 @@ impl EvmChainGateway {
     }
 
     pub fn setup_with_readiness(bus: &BusHandle) -> EvmChainGatewayHandle {
-        Self::setup_with_readiness_and_limit(bus, DEFAULT_MAX_BUFFERED_EVM_EVENTS)
+        Self::setup_with_readiness_and_limit(bus, DEFAULT_MAX_BUFFERED_EVM_EVENTS, None)
     }
 
+    /// `slashing_manager` is the SlashingManager that this node uses on the chain: the gateway
+    /// fails closed when the Interfold contract replaces it.
     pub fn setup_with_readiness_and_limit(
         bus: &BusHandle,
         max_buffered_events: usize,
+        slashing_manager: Option<Address>,
     ) -> EvmChainGatewayHandle {
         let (tx, readiness) = oneshot::channel();
-        let actor = Self::with_options(bus, max_buffered_events, Some(tx));
+        let actor = Self::with_options(bus, max_buffered_events, Some(tx), slashing_manager);
         let failure = actor.failure.subscribe();
         let addr = Self::start_and_subscribe(bus, actor);
         EvmChainGatewayHandle {
@@ -161,7 +170,31 @@ impl EvmChainGateway {
     }
 
     fn publish_evm_event(&mut self, msg: InterfoldEvent<Unsequenced>) -> Result<()> {
+        self.check_slashing_manager(&msg)?;
         self.bus.naked_dispatch(msg);
+        Ok(())
+    }
+
+    /// The Interfold contract can replace its SlashingManager once requests are paused and
+    /// drained. This node signs accusation votes and submits slash proposals for the manager that
+    /// it read at startup, so a replacement after startup stops the chain: a restart reads the new
+    /// manager. Historical logs never reach this check.
+    fn check_slashing_manager(&self, msg: &InterfoldEvent<Unsequenced>) -> Result<()> {
+        let (Some(current), InterfoldEventData::EvmLogObserved(log)) =
+            (self.slashing_manager, msg.get_data())
+        else {
+            return Ok(());
+        };
+        let Some(replacement) = interfold_slashing_manager_set(log) else {
+            return Ok(());
+        };
+        let replacement = replacement?;
+        ensure!(
+            replacement == current,
+            "the Interfold contract replaced the SlashingManager {current} with {replacement}. \
+             Restart the node so that it signs accusation votes and submits slash proposals for \
+             the new manager"
+        );
         Ok(())
     }
 

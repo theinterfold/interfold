@@ -37,6 +37,9 @@ pub struct E3Context {
     pub dependencies: HetrogenousMap,
     /// A Repository for storing this context's data snapshot
     pub repository: Repository<E3ContextSnapshot>,
+    /// False while startup replays the event log, until `EffectsEnabled`. An extension that starts
+    /// an actor passes it on, so an actor that replay starts holds its effects like a restored one.
+    effects_enabled: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -65,7 +68,18 @@ impl E3Context {
             repository: params.repository,
             recipients: init_recipients(&params.extensions),
             dependencies: HetrogenousMap::new(),
+            effects_enabled: true,
         }
+    }
+
+    /// Whether the node's effects run: false while startup replays the event log.
+    pub fn effects_enabled(&self) -> bool {
+        self.effects_enabled
+    }
+
+    /// The router sets this when it creates the context and at `EffectsEnabled`.
+    pub fn set_effects_enabled(&mut self, enabled: bool) {
+        self.effects_enabled = enabled;
     }
 
     /// Return a list of expected recipient keys alongside any values that have or have not been
@@ -165,11 +179,13 @@ impl Snapshot for E3Context {
 impl FromSnapshotWithParams for E3Context {
     type Params = E3ContextParams;
     async fn from_snapshot(params: Self::Params, snapshot: Self::Snapshot) -> Result<Self> {
+        // A restored context exists before startup replays the event log.
         let mut ctx = Self {
             e3_id: params.e3_id,
             repository: params.repository,
             recipients: init_recipients(&params.extensions),
             dependencies: HetrogenousMap::new(),
+            effects_enabled: false,
         };
 
         for extension in params.extensions.iter() {

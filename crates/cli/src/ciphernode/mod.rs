@@ -154,6 +154,9 @@ pub enum CiphernodeCommands {
         /// Target operator; defaults to the configured signer
         #[arg(long = "operator", value_name = "ADDRESS")]
         operator: Option<String>,
+        /// Do not list the committees: the command then reads no event history
+        #[arg(long = "no-committees")]
+        no_committees: bool,
         #[command(flatten)]
         chain: ChainArgs,
     },
@@ -259,10 +262,14 @@ pub async fn execute(out: Console, command: CiphernodeCommands, config: &AppConf
             lifecycle::deactivate(out, &ctx, operator, ticket_amount, ciphernode_bond_amount)
                 .await?
         }
-        CiphernodeCommands::Status { chain, operator } => {
+        CiphernodeCommands::Status {
+            chain,
+            operator,
+            no_committees,
+        } => {
             let ctx = ChainContext::new(config, chain.selection()).await?;
             let operator = ctx.resolve_operator(operator.as_deref())?;
-            lifecycle::status(out, &ctx, operator).await?
+            lifecycle::status(out, &ctx, operator, !no_committees).await?
         }
         CiphernodeCommands::Setup { .. } => {
             bail!(

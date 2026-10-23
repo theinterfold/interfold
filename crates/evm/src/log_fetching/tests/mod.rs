@@ -104,6 +104,10 @@ impl LogProvider for MockLogProvider {
             None => Ok(0),
         }
     }
+
+    async fn fetch_block_hash(&self, _block_number: u64) -> Result<Option<B256>, anyhow::Error> {
+        Ok(None)
+    }
 }
 
 /// A provider that refuses any `eth_getLogs` range wider than `cap`, the way a hosted endpoint
@@ -200,6 +204,10 @@ impl LogProvider for CappedLogProvider {
 
     async fn fetch_block_timestamp(&self, _block_number: u64) -> Result<u64, anyhow::Error> {
         Ok(0)
+    }
+
+    async fn fetch_block_hash(&self, _block_number: u64) -> Result<Option<B256>, anyhow::Error> {
+        Ok(None)
     }
 }
 

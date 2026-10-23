@@ -21,7 +21,7 @@ use e3_fhe_params::BfvPreset;
 use e3_keyshare::{ThresholdKeyshareRecoveryPayloads, ThresholdKeyshareRecoveryState};
 use e3_trbfv::shares::BfvEncryptedShares;
 use e3_utils::ArcBytes;
-use e3_zk_helpers::computation::DkgInputType;
+use e3_zk_config::DkgInputType;
 use e3_zk_prover::ProofRequestActor;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 

@@ -131,7 +131,7 @@ selection.
 | Ticket collateral | At least `minTicketBalance` tickets. On mainnet, one ticket is 1,000 sUSDS shares and the minimum is one ticket.  |
 | ETH               | Gas for the bond owner transactions, and for the operator key (ticket submissions and release acknowledgment).    |
 | Memory            | On Linux, the node does not start below 17 GiB (4 GiB reserve plus one 13 GiB prover job). The guidance is 32 GB. |
-| Network           | One open inbound UDP port for QUIC. The default is `9091`.                                                        |
+| Network           | One open inbound UDP port for QUIC. The default is `9091`. At least 10 Mbit/s of upload.                          |
 | RPC endpoints     | A WebSocket Ethereum endpoint with log history from the contract deploy blocks, and an Avail HTTP endpoint.       |
 
 The full list is on [Ciphernode Requirements](/operate/requirements). Read the live economic values

@@ -3,7 +3,7 @@
 //! Deterministic plaintext formatting and C7 aggregation job planning.
 
 use super::*;
-use e3_zk_helpers::circuits::threshold::decrypted_shares_aggregation::MAX_MSG_NON_ZERO_COEFFS;
+use e3_zk_config::MAX_MSG_NON_ZERO_COEFFS;
 use tracing::warn;
 
 /// Match C7's ordered commitments, one-based party IDs, and message to the selected C6 batch.

@@ -54,8 +54,10 @@ pub fn fhe_processor(fhe_inputs: FHEProcessorInput<'_>) -> Vec<u8> {
 }
 ```
 
-CRISP uses the same processor (`examples/CRISP/program/src/lib.rs`). The two programs differ only in
-their input policy. See [Input policy](#input-policy).
+CRISP uses the same processor
+([`program/src/lib.rs`](https://github.com/theinterfold/CRISP/blob/main/program/src/lib.rs) in the
+CRISP repository). The two programs differ only in their input policy. See
+[Input policy](#input-policy).
 
 ## Processor inputs
 
@@ -165,7 +167,7 @@ run with `ComputeError::LeafCommitment`.
 CRISP binds four values in each leaf and computes over one input for each voter slot. Its leaf
 function matches `CRISPProgram.inputLeaf`:
 
-```rust filename="examples/CRISP/program/src/lib.rs"
+```rust filename="program/src/lib.rs (CRISP repository)"
 pub fn leaf(input: &PublishedInput) -> Result<String, ComputeError> {
     let commitment = input
         .commitment
@@ -231,7 +233,7 @@ indices, and the parameters.
 | Ciphertext times ciphertext                   | Three components. The output commitment rejects it. |
 
 The output commitment accepts only a ciphertext with exactly two components
-(`bfv_ciphertext_to_greco` in `crates/zk-helpers`). A ciphertext product in fhe.rs has three
+(`bfv_ciphertext_to_greco` in `crates/zk/witness`). A ciphertext product in fhe.rs has three
 components. The Interfold does not publish a relinearization key, so the run then stops with
 `ComputeError::OutputCommitment`.
 

@@ -7,7 +7,10 @@ import { basename, join } from 'node:path'
 import { ROOT_DIR, fail } from './core.mjs'
 import { releaseChannel } from './version.mjs'
 
-const REQUIRED_BINARIES = ['interfold-linux-x86_64.tar.gz', 'interfold-macos-aarch64.tar.gz']
+// The test-only archive holds a CLI built with `test-only-skip-proof-aggregation`. The install script
+// and `interfold update` select `interfold-<platform>.tar.gz`, so they never install it.
+const TEST_ONLY_BINARY = 'interfold-test-only-skip-proof-aggregation-linux-x86_64.tar.gz'
+const REQUIRED_BINARIES = ['interfold-linux-x86_64.tar.gz', 'interfold-macos-aarch64.tar.gz', TEST_ONLY_BINARY]
 
 function filesBelow(directory) {
   const files = []
@@ -144,7 +147,10 @@ npm install @interfold/react@${npmTag}
 
 ## Binary Assets
 
-- \`interfold-*\`: Interfold CLI
+- \`interfold-<platform>.tar.gz\`: Interfold CLI
+- \`${TEST_ONLY_BINARY}\`: Interfold CLI for tests and CI only. It is built with the
+  \`test-only-skip-proof-aggregation\` Cargo feature, so its nodes accept \`skip_proof_aggregation: true\`.
+  Do not use it in production.
 
 Supported platforms:
 

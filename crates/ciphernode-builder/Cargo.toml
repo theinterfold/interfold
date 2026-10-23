@@ -11,6 +11,7 @@ test-helpers = []
 test-only-skip-proof-aggregation = []
 
 [dependencies]
+e3-task-pool.workspace = true
 actix.workspace = true
 alloy.workspace = true
 anyhow.workspace = true

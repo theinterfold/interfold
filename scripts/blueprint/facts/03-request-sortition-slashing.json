@@ -3,11 +3,10 @@
   "units": [
     {
       "id": "e3-request",
+      "documentation": [{ "title": "Request routing and recovery", "path": "docs/architecture/persistence-and-replay.md" }],
       "kind": "crate",
       "path": "crates/request",
       "one_line": "Routes every bus event to a per-E3 context, creates that E3's actors on demand, and tears the context down when the E3 ends.",
-      "explain": "E3Router gives each E3 id its own E3Context, a struct (not an actor) that holds the Addr of actors created by router extensions and typed dependencies such as E3Meta. Extensions run on every routed event and can create actors on demand (AccusationManagerExtension does so on CommitteeFinalized); the router then forwards the event to that context's recipients, buffering it while a recipient does not exist yet. Without this split, concurrent E3s would share state, and a restart could not tell which E3s are still open.",
-      "analogy": "A hotel front desk that gives each guest a folder of rooms, opens the rooms when the first booking arrives, and passes messages only to that guest's rooms.",
       "actors": [
         {
           "name": "E3Router",
@@ -67,17 +66,17 @@
           "ref": "crates/request/src/lifecycle/actor.rs@72@subscriptions.push(EventType::Shutdown);"
         }
       ],
-      "emits": [{ "name": "E3RequestComplete", "by": "E3Router", "ref": "crates/request/src/routing/handlers.rs@204@E3RequestComplete {" }],
+      "emits": [{ "name": "E3RequestComplete", "by": "E3Router", "ref": "crates/request/src/routing/handlers.rs@226@E3RequestComplete {" }],
       "state": [
         {
           "name": "live contexts keyed by E3 id",
           "where": "memory",
-          "ref": "crates/request/src/routing/actor.rs@96@contexts: HashMap<E3id, E3Context>,"
+          "ref": "crates/request/src/routing/actor.rs@97@contexts: HashMap<E3id, E3Context>,"
         },
         {
           "name": "router recovery checkpoint (contexts, completed set, replay cursors)",
           "where": "disk",
-          "ref": "crates/request/src/routing/actor.rs@109@recovery_store: Repository<RequestRouterCheckpoint>,"
+          "ref": "crates/request/src/routing/actor.rs@114@recovery_store: Repository<RequestRouterCheckpoint>,"
         },
         {
           "name": "per-E3 context snapshot (recipient and dependency keys)",
@@ -99,7 +98,7 @@
         {
           "name": "E3Router",
           "what": "Actix actor that owns the per-E3 contexts, the extension list, the event buffer, and the checkpoint store.",
-          "ref": "crates/request/src/routing/actor.rs@94@pub struct E3Router {"
+          "ref": "crates/request/src/routing/actor.rs@95@pub struct E3Router {"
         },
         {
           "name": "E3Context",
@@ -109,7 +108,7 @@
         {
           "name": "E3Extension",
           "what": "Plugin trait: on_event runs on each routed event and may create actors; hydrate rebuilds them after restart.",
-          "ref": "crates/request/src/routing/actor.rs@62@pub trait E3Extension: Send + Sync + 'static {"
+          "ref": "crates/request/src/routing/actor.rs@63@pub trait E3Extension: Send + Sync + 'static {"
         },
         {
           "name": "RequestRouter",
@@ -140,9 +139,9 @@
       "read_first": [
         {
           "why": "Wiring: the node builds E3Router and installs the router extensions",
-          "ref": "crates/ciphernode-builder/src/ciphernode_builder.rs@1226@let mut e3_builder = E3Router::builder(bus, store.clone())"
+          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@239@Ok(E3Router::builder(bus, storage.store.clone())"
         },
-        { "why": "The router actor and what it holds per E3", "ref": "crates/request/src/routing/actor.rs@94@pub struct E3Router {" },
+        { "why": "The router actor and what it holds per E3", "ref": "crates/request/src/routing/actor.rs@95@pub struct E3Router {" },
         {
           "why": "Per-event handler: create or route the context, run extensions, forward, publish completion",
           "ref": "crates/request/src/routing/handlers.rs@111@impl Handler<InterfoldEvent> for E3Router {"
@@ -150,7 +149,7 @@
         { "why": "Pure routing decision for each event", "ref": "crates/request/src/routing/workflow.rs@60@pub fn route_with_context(" },
         {
           "why": "How an event reaches a per-E3 actor: send to a recipient, or buffer",
-          "ref": "crates/request/src/context.rs@80@pub fn forward_message(&self, msg: &InterfoldEvent, buffer: &mut EventBuffer) {"
+          "ref": "crates/request/src/context.rs@94@pub fn forward_message(&self, msg: &InterfoldEvent, buffer: &mut EventBuffer) {"
         }
       ],
       "rust_patterns": [
@@ -172,12 +171,12 @@
         {
           "pattern": "trait-def",
           "note": "E3Extension is the plugin trait: on_event and async hydrate.",
-          "ref": "crates/request/src/routing/actor.rs@62@pub trait E3Extension: Send + Sync + 'static {"
+          "ref": "crates/request/src/routing/actor.rs@63@pub trait E3Extension: Send + Sync + 'static {"
         },
         {
           "pattern": "trait-object-dyn",
           "note": "Extensions are shared as a vector of boxed trait objects.",
-          "ref": "crates/request/src/routing/actor.rs@100@extensions: Arc<Vec<Box<dyn E3Extension>>>,"
+          "ref": "crates/request/src/routing/actor.rs@101@extensions: Arc<Vec<Box<dyn E3Extension>>>,"
         },
         {
           "pattern": "builder-pattern",
@@ -188,7 +187,7 @@
       "depends_on": [
         "e3-bfv-client",
         "e3-committee-hash",
-        "e3-zk-helpers",
+        "e3-committee",
         "e3-events",
         "e3-fhe-params",
         "e3-data",
@@ -202,11 +201,10 @@
     },
     {
       "id": "e3-sortition",
+      "documentation": [{ "title": "Committee selection", "path": "docs/architecture/committee-selection.md" }],
       "kind": "crate",
       "path": "crates/sortition",
       "one_line": "Chooses E3 committees by ranking operator tickets against the request seed, then tells each node whether it was finalized into one.",
-      "explain": "Sortition ranks each candidate operator's tickets by keccak256 over the operator address, ticket id, E3 id and the seed that CommitteeRequested delivers, and the lowest scores take the seats; a node whose ranked ticket falls inside the candidate buffer publishes TicketGenerated through CiphernodeSelector. CommitteeFinalizer in e3-aggregator collects those tickets and publishes CommitteeFinalizeRequested at the deadline, and CommitteeFinalized then makes Sortition store the roster and CiphernodeSelector publish CiphernodeSelected, but only when this node's address is in the roster. Without this crate no node could tell whether it must run DKG and decryption for an E3.",
-      "analogy": "A lottery drum with a public seed: every ticket is hashed the same way on every node, and the lowest hashes fill the seats.",
       "actors": [
         {
           "name": "Sortition",
@@ -216,7 +214,7 @@
         {
           "name": "CiphernodeSelector",
           "role": "Bus subscriber that turns a ranking result into TicketGenerated and a finalized roster into CiphernodeSelected; it also tracks aggregator failover.",
-          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@123@impl Actor for CiphernodeSelector {"
+          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@127@impl Actor for CiphernodeSelector {"
         }
       ],
       "consumes": [
@@ -248,12 +246,12 @@
         {
           "name": "CommitteeMemberExpelled (buffered until the roster exists, then re-published with party id)",
           "by": "Sortition",
-          "ref": "crates/sortition/src/sortition/handlers/committee.rs@91@impl Handler<TypedEvent<CommitteeMemberExpelled>> for Sortition {"
+          "ref": "crates/sortition/src/sortition/handlers/committee.rs@99@impl Handler<TypedEvent<CommitteeMemberExpelled>> for Sortition {"
         },
         {
           "name": "CommitteeMemberExcluded (same buffer and re-publish path)",
           "by": "Sortition",
-          "ref": "crates/sortition/src/sortition/handlers/committee.rs@53@impl Handler<TypedEvent<CommitteeMemberExcluded>> for Sortition {"
+          "ref": "crates/sortition/src/sortition/handlers/committee.rs@61@impl Handler<TypedEvent<CommitteeMemberExcluded>> for Sortition {"
         },
         {
           "name": "STATE_EVENTS (registry and chain-state events, for example CiphernodeAdded and TicketBalanceUpdatedAt)",
@@ -290,17 +288,17 @@
         {
           "name": "AggregatorChanged",
           "by": "CiphernodeSelector",
-          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@378@let event = AggregatorChanged {"
+          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@383@let event = AggregatorChanged {"
         },
         {
           "name": "CommitteeMemberExpelled (re-published with party id)",
           "by": "Sortition",
-          "ref": "crates/sortition/src/sortition/actor.rs@413@CommitteeMemberExpelled {"
+          "ref": "crates/sortition/src/sortition/actor.rs@430@CommitteeMemberExpelled {"
         },
         {
           "name": "CommitteeMemberExcluded (re-published with party id)",
           "by": "Sortition",
-          "ref": "crates/sortition/src/sortition/actor.rs@450@CommitteeMemberExcluded {"
+          "ref": "crates/sortition/src/sortition/actor.rs@467@CommitteeMemberExcluded {"
         }
       ],
       "state": [
@@ -370,7 +368,7 @@
       "read_first": [
         {
           "why": "E3Requested is subscribed only at EffectsEnabled, so replay does not generate tickets",
-          "ref": "crates/sortition/src/sortition/actor.rs@293@bus.subscribe(EventType::E3Requested, addr.into());"
+          "ref": "crates/sortition/src/sortition/actor.rs@310@bus.subscribe(EventType::E3Requested, addr.into());"
         },
         {
           "why": "perform_sortition: seed lookup, candidate count, ranking, dispatch to CiphernodeSelector",
@@ -408,7 +406,7 @@
         {
           "pattern": "actix-timer",
           "note": "The selector arms its aggregator failover timer with run_later.",
-          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@625@let handle = ctx.run_later(delay, move |actor, ctx| {"
+          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@630@let handle = ctx.run_later(delay, move |actor, ctx| {"
         },
         {
           "pattern": "iterator-chain",
@@ -429,11 +427,10 @@
     },
     {
       "id": "e3-slashing",
+      "documentation": [{ "title": "Accusations and slashing", "path": "docs/architecture/slashing.md" }],
       "kind": "crate",
       "path": "crates/slashing",
       "one_line": "Turns a detected proof fault into a signed accusation, gathers committee votes to a quorum, and emits the verdict for on-chain slashing.",
-      "explain": "A node that sees a proof fail, or a commitment mismatch between circuits, signs an accusation and its own vote, gossips both, and starts a vote timer. Other committee members vote only after their own check, and H agreeing votes decide the outcome: AccusedFaulted for one data hash, Equivocation for several, and Inconclusive when the timer ends with fewer than H votes. Only AccusedFaulted leads to a slash proposal in e3-evm; without this crate a bad share would be seen locally and never attributed.",
-      "analogy": "A jury with a quorum rule: each juror checks the evidence before voting, a verdict needs H agreeing jurors, and only a guilty verdict goes to the court clerk.",
       "actors": [
         {
           "name": "AccusationManager",
@@ -450,37 +447,37 @@
         {
           "name": "ProofVerificationFailed and ProofVerificationPassed (local results)",
           "by": "AccusationManager",
-          "ref": "crates/slashing/src/accusation_voting/handlers.rs@46@impl Handler<TypedEvent<ProofVerificationFailed>> for AccusationManager {"
+          "ref": "crates/slashing/src/accusation_voting/handlers.rs@65@impl Handler<TypedEvent<ProofVerificationFailed>> for AccusationManager {"
         },
         {
           "name": "ProofFailureAccusation (from a peer: agree, abstain, or re-verify)",
           "by": "AccusationManager",
-          "ref": "crates/slashing/src/accusation_voting/handlers.rs@73@impl Handler<TypedEvent<ProofFailureAccusation>> for AccusationManager {"
+          "ref": "crates/slashing/src/accusation_voting/handlers.rs@92@impl Handler<TypedEvent<ProofFailureAccusation>> for AccusationManager {"
         },
         {
           "name": "AccusationVote (from a peer: counted toward quorum)",
           "by": "AccusationManager",
-          "ref": "crates/slashing/src/accusation_voting/handlers.rs@87@impl Handler<TypedEvent<AccusationVote>> for AccusationManager {"
+          "ref": "crates/slashing/src/accusation_voting/handlers.rs@106@impl Handler<TypedEvent<AccusationVote>> for AccusationManager {"
         },
         {
           "name": "ComputeResponse and ComputeRequestError (ZK re-verification results)",
           "by": "AccusationManager",
-          "ref": "crates/slashing/src/accusation_voting/handlers.rs@97@impl Handler<TypedEvent<ComputeResponse>> for AccusationManager {"
+          "ref": "crates/slashing/src/accusation_voting/handlers.rs@116@impl Handler<TypedEvent<ComputeResponse>> for AccusationManager {"
         },
         {
           "name": "CommitmentConsistencyViolation (starts an accusation)",
           "by": "AccusationManager",
-          "ref": "crates/slashing/src/accusation_voting/handlers.rs@122@impl Handler<TypedEvent<CommitmentConsistencyViolation>> for AccusationManager {"
+          "ref": "crates/slashing/src/accusation_voting/handlers.rs@141@impl Handler<TypedEvent<CommitmentConsistencyViolation>> for AccusationManager {"
         },
         {
-          "name": "SlashExecuted (removes the operator from the live committee and its votes)",
+          "name": "CommitteeMemberExpelled (removes the operator from the voters and its votes)",
           "by": "AccusationManager",
-          "ref": "crates/slashing/src/accusation_voting/handlers.rs@35@InterfoldEventData::SlashExecuted(data) => {"
+          "ref": "crates/slashing/src/accusation_voting/handlers.rs@40@InterfoldEventData::CommitteeMemberExpelled(data) => {"
         },
         {
           "name": "CommitteeFinalized (starts the AccusationManager for the E3)",
           "by": "AccusationManagerExtension",
-          "ref": "crates/slashing/src/accusation_manager_ext.rs@183@let InterfoldEventData::CommitteeFinalized(data) = evt.get_data() else {"
+          "ref": "crates/slashing/src/accusation_manager_ext.rs@211@let InterfoldEventData::CommitteeFinalized(data) = evt.get_data() else {"
         },
         {
           "name": "CommitmentConsistencyCheckRequested (pre-ZK gate, returns inconsistent parties)",
@@ -534,12 +531,17 @@
         {
           "name": "AccusationVoting service (pending accusations, votes, received proofs)",
           "where": "memory",
-          "ref": "crates/slashing/src/accusation_voting/actor.rs@101@voting: AccusationVoting,"
+          "ref": "crates/slashing/src/accusation_voting/actor.rs@103@voting: AccusationVoting,"
         },
         {
           "name": "vote timeout handles keyed by accusation id",
           "where": "memory",
-          "ref": "crates/slashing/src/accusation_voting/actor.rs@104@timeout_handles: HashMap<[u8; 32], SpawnHandle>,"
+          "ref": "crates/slashing/src/accusation_voting/actor.rs@106@timeout_handles: HashMap<[u8; 32], SpawnHandle>,"
+        },
+        {
+          "name": "saved pending accusations, admitted votes, absolute timeouts, evidence, and accused proofs",
+          "where": "disk",
+          "ref": "crates/slashing/src/accusation_voting/state.rs@66@pub(crate) struct AccusationVotesSnapshot {"
         },
         {
           "name": "verified proof cache keyed by (address, proof type)",
@@ -556,12 +558,12 @@
         {
           "name": "AccusationVoting",
           "what": "Plain synchronous quorum service: admits accusations and votes, and returns VoteActions for the actor to run.",
-          "ref": "crates/slashing/src/accusation_voting/state.rs@63@pub(crate) struct AccusationVoting {"
+          "ref": "crates/slashing/src/accusation_voting/state.rs@126@pub(crate) struct AccusationVoting {"
         },
         {
           "name": "accusation_vote_quorum",
           "what": "Maps threshold T and committee size N to H, the honest-party count used as the vote quorum.",
-          "ref": "crates/slashing/src/accusation_manager_ext.rs@35@fn accusation_vote_quorum(threshold_t: usize, committee_n: usize) -> Result<usize> {"
+          "ref": "crates/slashing/src/accusation_manager_ext.rs@38@fn accusation_vote_quorum(threshold_t: usize, committee_n: usize) -> Result<usize> {"
         },
         {
           "name": "ProofFailureAccusation",
@@ -591,17 +593,17 @@
         {
           "name": "AccusationManagerExtension",
           "what": "Router extension, not an actor: starts an AccusationManager on CommitteeFinalized, and again on hydrate after restart.",
-          "ref": "crates/slashing/src/accusation_manager_ext.rs@43@pub struct AccusationManagerExtension {"
+          "ref": "crates/slashing/src/accusation_manager_ext.rs@46@pub struct AccusationManagerExtension {"
         }
       ],
       "read_first": [
         {
           "why": "Router extension that starts the per-E3 accusation actor on CommitteeFinalized",
-          "ref": "crates/slashing/src/accusation_manager_ext.rs@181@impl E3Extension for AccusationManagerExtension {"
+          "ref": "crates/slashing/src/accusation_manager_ext.rs@209@impl E3Extension for AccusationManagerExtension {"
         },
         {
           "why": "How a local proof failure starts an accusation and its own vote",
-          "ref": "crates/slashing/src/accusation_voting/transitions/initiate_accusation.rs@112@pub(super) fn initiate_accusation("
+          "ref": "crates/slashing/src/accusation_voting/transitions/initiate_accusation.rs@174@pub(super) fn initiate_accusation("
         },
         {
           "why": "Quorum decision: H agreeing votes, one data hash or several",
@@ -630,7 +632,7 @@
         {
           "pattern": "actix-timer",
           "note": "Vote timeouts are scheduled with run_later and cancelled through the stored SpawnHandle.",
-          "ref": "crates/slashing/src/accusation_voting/effects/apply_actions.rs@53@let handle = ctx.run_later(timeout, move |act, _ctx| {"
+          "ref": "crates/slashing/src/accusation_voting/effects/apply_actions.rs@55@let handle = ctx.run_later(timeout, move |act, _ctx| {"
         },
         {
           "pattern": "trait-object-dyn",
@@ -645,12 +647,14 @@
         {
           "pattern": "let-else",
           "note": "A ZK response with no pending re-verification is ignored with an early return.",
-          "ref": "crates/slashing/src/accusation_voting/transitions/reverify_proofs.rs@43@let Some(reverif) = self.pending_reverifications.remove(&correlation_id) else {"
+          "ref": "crates/slashing/src/accusation_voting/transitions/reverify_proofs.rs@44@let Some(reverif) = self.pending_reverifications.remove(&correlation_id) else {"
         }
       ],
-      "depends_on": ["e3-data", "e3-events", "e3-fhe-params", "e3-request", "e3-utils", "e3-zk-helpers"],
+      "depends_on": ["e3-committee", "e3-data", "e3-events", "e3-fhe-params", "e3-request", "e3-utils"],
       "tests": "accusation_voting/workflow_tests/ (admission, voting, outcomes), accusation_voting/actor_tests.rs and commitment_consistency/workflow_tests.rs under crates/slashing/src; fixture crates/slashing/tests/fixtures/layout_lock.txt; cargo test -p e3-slashing",
-      "unverified": ["SlashExecuted is built from chain logs in crates/evm/src/slashing/events.rs; only its construction line was read."]
+      "unverified": [
+        "Buffered votes, window-move limits, and in-flight re-verifications are not saved. Restart also does not reapply expulsions before the router checkpoint; see the slashing domain's recovery limits."
+      ]
     }
   ]
 }

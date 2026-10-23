@@ -12,8 +12,9 @@ use std::fmt::{self, Display};
 
 /// Emitted when a slash proposal is executed on-chain.
 ///
-/// This event is read from the SlashingManager contract logs.
-/// The `CommitteeExpulsionHandler` reacts to this to update local committee state.
+/// This event is read from the SlashingManager contract logs. It settles slash intents (the slash
+/// writer and sync). It does not change the voters: a slash removes a member only with an
+/// expulsion, which `CommitteeMemberExpelled` reports.
 #[derive(Message, Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[rtype(result = "()")]
 pub struct SlashExecuted {
@@ -43,9 +44,9 @@ impl Display for SlashExecuted {
 
 /// Emitted when a committee member is expelled from an E3 committee.
 ///
-/// Read from the CiphernodeRegistry contract logs after slashing triggers expulsion.
-/// The `CommitteeExpulsionHandler` uses this to update the local committee view
-/// and check viability (whether remaining active members >= threshold H).
+/// Read from the CiphernodeRegistry contract logs after slashing triggers expulsion. Sortition
+/// adds the party ID and publishes it again; the collectors, aggregators and the accusation
+/// manager then remove the member.
 #[derive(Message, Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[rtype(result = "()")]
 pub struct CommitteeMemberExpelled {

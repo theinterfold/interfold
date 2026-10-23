@@ -57,7 +57,7 @@ use crate::actors::encryption_key_collector::{
     ExpelPartyFromKeyCollection,
 };
 use crate::actors::threshold_share_collector::{
-    ExpelPartyFromShareCollection, ThresholdShareCollector,
+    DealersWithoutKey, ExpelPartyFromShareCollection, ThresholdShareCollector,
 };
 use crate::domain::timeout_policy::{
     past_dkg_deadline, past_phase_cutoff, resolve_encryption_key_timeout,

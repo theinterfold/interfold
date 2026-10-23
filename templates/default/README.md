@@ -24,7 +24,7 @@ As system requirements:
 ### Configure OpenVM
 
 Real proofs use OpenVM. `guest/` proves your `program/`, with your processor and your input policy,
-and `.interfold/support/openvm` is the proving service. Build the OpenVM workers, set
+and `runner/` is the proving service (`program-runner openvm`). Build the OpenVM workers, set
 `program.openvm` in `interfold.config.yaml`, then run:
 
 ```sh

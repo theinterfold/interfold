@@ -54,6 +54,12 @@ export type OperatorStatus = {
    */
   eligible: boolean | null
   exitInProgress: boolean
+  /** Collateral queued for exit after a ticket burn, an unbond, or a deregistration. */
+  pendingTicketExit: bigint
+  pendingBondExit: bigint
+  /** The part of the queued collateral whose exit delay has ended. */
+  claimableTicket: bigint
+  claimableBond: bigint
 }
 
 export type AccountFunds = {
@@ -139,18 +145,31 @@ async function fetchEligibility(operator: Address): Promise<boolean | null> {
 
 export async function fetchOperatorStatus(operator: Address): Promise<OperatorStatus> {
   const eligibility = fetchEligibility(operator)
-  const [bondOwner, pendingBondOwner, ciphernodeBond, ticketBalance, availableTickets, bonded, registered, active, exitInProgress] =
-    await Promise.all([
-      (publicClient.readContract as any)({ ...registry, functionName: 'bondOwnerOf', args: [operator] }) as Promise<Address>,
-      (publicClient.readContract as any)({ ...registry, functionName: 'pendingBondOwnerOf', args: [operator] }) as Promise<Address>,
-      (publicClient.readContract as any)({ ...registry, functionName: 'getCiphernodeBond', args: [operator] }) as Promise<bigint>,
-      (publicClient.readContract as any)({ ...registry, functionName: 'getTicketBalance', args: [operator] }) as Promise<bigint>,
-      (publicClient.readContract as any)({ ...registry, functionName: 'availableTickets', args: [operator] }) as Promise<bigint>,
-      (publicClient.readContract as any)({ ...registry, functionName: 'isCiphernodeBonded', args: [operator] }) as Promise<boolean>,
-      (publicClient.readContract as any)({ ...registry, functionName: 'isRegistered', args: [operator] }) as Promise<boolean>,
-      (publicClient.readContract as any)({ ...registry, functionName: 'isActive', args: [operator] }) as Promise<boolean>,
-      (publicClient.readContract as any)({ ...registry, functionName: 'hasExitInProgress', args: [operator] }) as Promise<boolean>,
-    ])
+  const [
+    bondOwner,
+    pendingBondOwner,
+    ciphernodeBond,
+    ticketBalance,
+    availableTickets,
+    bonded,
+    registered,
+    active,
+    exitInProgress,
+    [pendingTicketExit, pendingBondExit],
+    [claimableTicket, claimableBond],
+  ] = await Promise.all([
+    (publicClient.readContract as any)({ ...registry, functionName: 'bondOwnerOf', args: [operator] }) as Promise<Address>,
+    (publicClient.readContract as any)({ ...registry, functionName: 'pendingBondOwnerOf', args: [operator] }) as Promise<Address>,
+    (publicClient.readContract as any)({ ...registry, functionName: 'getCiphernodeBond', args: [operator] }) as Promise<bigint>,
+    (publicClient.readContract as any)({ ...registry, functionName: 'getTicketBalance', args: [operator] }) as Promise<bigint>,
+    (publicClient.readContract as any)({ ...registry, functionName: 'availableTickets', args: [operator] }) as Promise<bigint>,
+    (publicClient.readContract as any)({ ...registry, functionName: 'isCiphernodeBonded', args: [operator] }) as Promise<boolean>,
+    (publicClient.readContract as any)({ ...registry, functionName: 'isRegistered', args: [operator] }) as Promise<boolean>,
+    (publicClient.readContract as any)({ ...registry, functionName: 'isActive', args: [operator] }) as Promise<boolean>,
+    (publicClient.readContract as any)({ ...registry, functionName: 'hasExitInProgress', args: [operator] }) as Promise<boolean>,
+    (publicClient.readContract as any)({ ...registry, functionName: 'pendingExits', args: [operator] }) as Promise<[bigint, bigint]>,
+    (publicClient.readContract as any)({ ...registry, functionName: 'previewClaimable', args: [operator] }) as Promise<[bigint, bigint]>,
+  ])
 
   return {
     bondOwner: bondOwner === ZERO_ADDRESS ? null : bondOwner,
@@ -163,6 +182,10 @@ export async function fetchOperatorStatus(operator: Address): Promise<OperatorSt
     active,
     eligible: await eligibility,
     exitInProgress,
+    pendingTicketExit,
+    pendingBondExit,
+    claimableTicket,
+    claimableBond,
   }
 }
 

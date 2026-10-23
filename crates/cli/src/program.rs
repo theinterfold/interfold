@@ -8,6 +8,8 @@ use anyhow::Result;
 use clap::Subcommand;
 use e3_config::AppConfig;
 
+use crate::program_support;
+
 #[derive(Subcommand, Clone, Debug)]
 pub enum ProgramCommands {
     /// Start the program
@@ -40,14 +42,10 @@ pub enum ProgramCacheCommands {
 
 pub async fn execute(command: ProgramCommands, config: &AppConfig) -> Result<()> {
     match command {
-        ProgramCommands::Start { dev } => {
-            e3_support_scripts::program_start(config.program().clone(), dev).await?
-        }
-        ProgramCommands::Compile { dev } => {
-            e3_support_scripts::program_compile(config.program().clone(), dev).await?
-        }
+        ProgramCommands::Start { dev } => program_support::start(config.program(), dev).await?,
+        ProgramCommands::Compile { dev } => program_support::compile(config.program(), dev).await?,
         ProgramCommands::Cache { command } => match command {
-            ProgramCacheCommands::Purge => e3_support_scripts::program_cache_purge().await?,
+            ProgramCacheCommands::Purge => program_support::cache_purge().await?,
         },
     };
 

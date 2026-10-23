@@ -41,14 +41,12 @@ export default function Timeline({
   currentStageIdx,
   pollLabel,
   density,
-  onStageClick,
 }: {
   stages: Stage[]
   currentStageIdx: number
   // Display text only — use the compact E3 id, not the full identity value.
   pollLabel: string
   density: string
-  onStageClick?: (i: number) => void
 }) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null)
   const clamp = (i: number) => Math.min(Math.max(i, 0), stages.length - 1)
@@ -70,26 +68,22 @@ export default function Timeline({
           // The final stage (Published) is terminal — when reached it's complete, not in-progress.
           const isLast = i === stages.length - 1
           const state = i < currentStageIdx ? 'done' : i === currentStageIdx ? (isLast ? 'done' : 'active') : 'todo'
-          const isClickable = !!onStageClick
-          const Tag: any = isClickable ? 'button' : 'div'
           return (
             <React.Fragment key={s.id}>
-              <Tag
-                role={isClickable ? undefined : 'listitem'}
-                type={isClickable ? 'button' : undefined}
-                className={`stage stage--${state} ${isClickable ? 'stage--clickable' : ''}`}
+              <div
+                role='listitem'
+                className={`stage stage--${state}`}
                 onMouseEnter={() => setHoverIdx(i)}
                 onMouseLeave={() => setHoverIdx(null)}
                 onFocus={() => setHoverIdx(i)}
                 onBlur={() => setHoverIdx(null)}
-                onClick={isClickable ? () => onStageClick!(i) : undefined}
                 tabIndex={0}
-                aria-label={`Stage ${i + 1} of ${stages.length}: ${s.label}. ${s.blurb}${isClickable ? '. Click to jump to this stage.' : ''}`}
+                aria-label={`Stage ${i + 1} of ${stages.length}: ${s.label}. ${s.blurb}`}
               >
                 <StageDot state={state} />
                 <div className='stage__label'>{s.label}</div>
                 {state === 'active' && <div className='stage__active-tag'>In progress</div>}
-              </Tag>
+              </div>
               {i < stages.length - 1 && (
                 <div className={`stage-connector ${i < currentStageIdx ? 'stage-connector--done' : ''}`} aria-hidden='true' />
               )}

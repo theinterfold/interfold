@@ -14,7 +14,7 @@ use e3_entrypoint::helpers::datastore::get_repositories;
 use e3_evm::{
     fetch_operator_committees,
     helpers::{load_signer_from_repository, ConcreteWriteProvider, EthProvider, ProviderConfig},
-    EthPrivateKeyRepositoryFactory, OperatorCommittee,
+    CommitteeScan, EthPrivateKeyRepositoryFactory, OperatorCommittee,
 };
 
 mod bonding_registry_contract {
@@ -60,14 +60,17 @@ use interfold_ticket_token_contract::InterfoldTicketTokenContract;
 
 use crate::helpers::chain::select_chain;
 
+/// Directory under the node data directory for the saved committee obligation scans.
+const COMMITTEE_SCAN_DIR: &str = "committee-scans";
+
 pub(crate) struct ChainContext {
     chain_label: String,
     bonding_registry: Address,
     contracts: ContractAddresses,
     provider: EthProvider<ConcreteWriteProvider>,
     signer_address: Address,
-    /// The chain's widest `eth_getLogs` block range, for the history reads.
-    max_log_window: u64,
+    /// How `ciphernode status` reads the committee obligation history.
+    committee_scan: CommitteeScan,
 }
 
 impl ChainContext {
@@ -91,7 +94,11 @@ impl ChainContext {
             contracts: chain.contracts.clone(),
             provider,
             signer_address,
-            max_log_window: chain.rpc_log_range_blocks()?,
+            committee_scan: CommitteeScan {
+                max_log_window: chain.rpc_log_range_blocks()?,
+                confirmations: chain.ingestion_confirmations()?,
+                cache_dir: Some(config.node_data_dir().join(COMMITTEE_SCAN_DIR)),
+            },
         })
     }
 
@@ -160,7 +167,7 @@ impl ChainContext {
             &self.provider_client(),
             &self.contracts,
             operator,
-            self.max_log_window,
+            &self.committee_scan,
         )
         .await
     }

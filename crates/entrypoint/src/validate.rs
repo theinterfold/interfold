@@ -164,7 +164,7 @@ impl ValidationReport {
 ///
 /// Whether `path` holds a sled store: its `conf` and `db` files exist.
 /// What the store path holds.
-enum StorePresence {
+pub(crate) enum StorePresence {
     /// Nothing, or an empty folder such as a mount point.
     Absent,
     /// A sled store: its `conf` and `db` files.
@@ -173,7 +173,7 @@ enum StorePresence {
     Damaged(String),
 }
 
-fn store_presence(path: &std::path::Path) -> StorePresence {
+pub(crate) fn store_presence(path: &std::path::Path) -> StorePresence {
     let entries = match std::fs::read_dir(path) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return StorePresence::Absent,

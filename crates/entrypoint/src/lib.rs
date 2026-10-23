@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+pub mod actor_panics;
 pub mod config;
 pub mod fence;
 pub mod helpers;

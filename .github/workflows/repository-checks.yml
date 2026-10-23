@@ -1,0 +1,55 @@
+name: Repository Checks
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check repository configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: Check shell syntax
+        run: node scripts/checks/shell-syntax.mjs
+
+      - name: Check relative documentation links and anchors
+        run: node scripts/checks/doc-links.mjs
+
+      - name: Test dependency-free checks and blueprint navigation
+        run: node --test scripts/checks/*.test.mjs scripts/blueprint/documentation.test.mjs
+
+      - name: Check feature containment, Docker coverage, and shutdown grace
+        run: ./scripts/checks/repository.sh
+
+      - name: Check committee configuration
+        run: ./scripts/checks/committee.sh
+
+  formatting:
+    name: Check changed-file formatting
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - run: pnpm install --frozen-lockfile
+      - name: Check supported files changed by the pull request
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/checks/changed-format.mjs "$BASE_SHA" "$HEAD_SHA"

@@ -82,6 +82,10 @@ impl ThresholdKeyshare {
             KeyshareState::AggregatingDecryptionKey(_) => {
                 self.handle_early_decryption_key_share(data, ec)
             }
+            // While startup replays the event log, the share stays recorded:
+            // `resume_in_flight_work` sends the recorded shares to a new collector at
+            // `EffectsEnabled`, if C4 still needs them.
+            KeyshareState::ReadyForDecryption(_) if !self.effects_enabled => Ok(()),
             KeyshareState::ReadyForDecryption(_) => self
                 .ensure_decryption_key_shared_collector(self_addr)
                 .map(|collector| {

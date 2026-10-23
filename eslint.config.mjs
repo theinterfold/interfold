@@ -4,7 +4,6 @@ import config from '@interfold/config/eslint.config.js'
 export default defineConfig([
   globalIgnores([
     // External Solidity libraries, including copies retained by older checkouts.
-    'examples/CRISP/packages/crisp-contracts/lib/**',
     'templates/default/lib/**',
     // Build and cache directories.
     '**/node_modules/**',

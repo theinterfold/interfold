@@ -154,6 +154,20 @@ impl AccusationVoting {
         Ok(Admitted(data))
     }
 
+    /// This node's own accusation while it holds accusations during replay: the log shows that
+    /// this node already accused the proof. Returns the proof's dedup key. Live, this node's own
+    /// accusation is rejected as `Own`.
+    pub(super) fn admit_own_replayed_accusation(
+        &self,
+        accusation: &ProofFailureAccusation,
+    ) -> Option<(Address, ProofType)> {
+        (!self.effects_enabled
+            && accusation.e3_id == self.e3_id
+            && accusation.accuser == self.my_address
+            && self.verify_accusation_signature(accusation))
+        .then_some((accusation.accused, accusation.proof_type))
+    }
+
     /// A peer's accusation. Its signature binds the addresses, not `accused_party_id`, so the
     /// self-accusation check compares addresses. Only C3 proofs can be forwarded with it.
     pub(super) fn admit_accusation(

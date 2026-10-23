@@ -50,7 +50,7 @@ On the 40 pull requests merged from #1996 to #2236, it found all 36 changes of t
 reported none that was not real. It reads patterns in the code and compiles nothing, so it does not
 see what a function does inside, events published on the bus, Solidity view, pure, internal and
 private functions, interfaces and mocks, contracts and circuits that `CONTRACTS` and `CIRCUITS` do
-not list, the inside of the SDK and of CRISP, config, CLI flags, network messages, or test code.
+not list, the inside of the SDK, config, CLI flags, network messages, or test code.
 
 ## Turn it off
 

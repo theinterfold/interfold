@@ -6,7 +6,7 @@
 
 //! Sequential fold of `H` per-node `node_fold` proofs (non-ZK), one honest slot per step, chained with
 //! the previous accumulator: the `nodes_fold_kernel` proof of the first node on the first step, a
-//! `nodes_fold` non-ZK proof after that (see `crates/zk-prover` and `nodes_fold_kernel`).
+//! `nodes_fold` non-ZK proof after that (see `crates/zk/prover` and `nodes_fold_kernel`).
 
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use lib::configs::default::dkg::L_THRESHOLD;

@@ -40,64 +40,61 @@
     "id": "A5",
     "supported": true,
     "refs": [
-      "examples/CRISP/server/src/server/data_availability.rs@2277@contract.publish_input(e3_id, payload)",
-      "examples/CRISP/crates/evm_helpers/src/lib.rs@633@contract.publishInput(e3_id, data)"
+      "templates/default/client/src/utils/input.ts@44@functionName: 'publishInput'",
+      "templates/default/contracts/MyProgram.sol@89@function publishInput("
     ],
-    "line_text": ["match contract.publish_input(e3_id, payload).await {", "contract.publishInput(e3_id, data),"],
-    "note": "submit_input_commitment_payload calls publish_input, which sends publishInput to the CRISPProgram contract."
+    "line_text": ["functionName: 'publishInput',", "function publishInput(uint256 e3Id, bytes memory data) external override {"],
+    "note": "The starter client sends publishInput to the E3 program contract, and MyProgram.publishInput records the input commitment."
   },
   {
     "id": "A6",
     "supported": true,
-    "refs": [
-      "examples/CRISP/server/src/server/data_availability.rs@1953@publisher.publish(&object)",
-      "crates/data-availability/src/avail.rs@119@submit_data(bytes)"
-    ],
-    "line_text": ["let publication = publisher.publish(&object).await?;", "let tx = client.tx().data_availability().submit_data(bytes);"],
-    "note": "start_availability calls AvailPublisher::publish, which submits the bytes to Avail with submit_data."
+    "refs": ["crates/data-availability/src/avail.rs@119@submit_data(bytes)"],
+    "line_text": ["let tx = client.tx().data_availability().submit_data(bytes);"],
+    "note": "The Avail publisher in e3-data-availability submits the bytes to Avail with submit_data."
   },
   {
     "id": "A7",
     "supported": true,
     "refs": [
-      "examples/CRISP/server/src/server/data_availability.rs@1824@.publish_ciphertext_output(",
+      "templates/default/server/index.ts@245@sdk.publishCiphertextOutput(",
       "crates/evm-helpers/src/contracts.rs@550@contract.publishCiphertextOutput("
     ],
-    "line_text": [".publish_ciphertext_output(", "contract.publishCiphertextOutput(e3_id, output_reference.abi_encode().into()),"],
-    "note": "The server calls publish_ciphertext_output on the Interfold address, and evm-helpers binds Interfold and calls publishCiphertextOutput."
+    "line_text": [
+      "await sdk.publishCiphertextOutput(BigInt(e3_id), {",
+      "contract.publishCiphertextOutput(e3_id, output_reference.abi_encode().into()),"
+    ],
+    "note": "The starter server calls publishCiphertextOutput through the SDK, and evm-helpers binds Interfold and calls publishCiphertextOutput."
   },
   {
     "id": "A8",
     "supported": true,
-    "refs": [
-      "examples/CRISP/server/src/server/indexer.rs@857@run_compute(&e3_id, e3, snapshot)",
-      "examples/CRISP/server/src/server/program_server_request.rs@97@/run_compute"
-    ],
+    "refs": ["templates/default/server/runner.ts@36@/run_compute", "crates/program-server/src/lib.rs@250@.route(\"/run_compute\""],
     "line_text": [
-      "if let Err(error) = run_compute(&e3_id, e3, snapshot).await {",
-      ".post(format!(\"{}/run_compute\", CONFIG.program_server_url))"
+      "const response = await fetch(`${PROGRAM_RUNNER_URL}/run_compute`, {",
+      ".route(\"/run_compute\", web::post().to(handle_compute))"
     ],
-    "note": "At the input deadline (handle_e3_input_deadline_expiration), run_compute POSTs the round to the program server at /run_compute."
+    "note": "The starter server POSTs the round to the program server at /run_compute, and the program server routes that path to its compute handler."
   },
   {
     "id": "A9",
     "supported": true,
     "refs": [
       "crates/program-server/src/lib.rs@111@pub fn new<F, Fut>(callback: F)",
-      "crates/support-scripts/dev/src/main.rs@61@ComputeManager::with_published("
+      "crates/program-runner/src/dev.rs@63@ComputeManager::with_published("
     ],
     "line_text": ["pub fn new<F, Fut>(callback: F) -> Self", "let mut manager = ComputeManager::with_published("],
-    "note": "program-server hosts /run_compute and hands each job to the callback it is built with; the shipped runners call compute-provider (dev runner ComputeManager, OpenVM service via openvm-host)."
+    "note": "program-server hosts /run_compute and hands each job to the callback it is built with; program-runner supplies that callback and calls compute-provider (dev runner ComputeManager, OpenVM service via openvm-host)."
   },
   {
     "id": "A10",
     "supported": true,
     "refs": [
       "crates/compute-provider/src/secure_process.rs@225@let output = processor(FHEProcessorInput {",
-      "examples/CRISP/program/src/lib.rs@23@pub fn fhe_processor("
+      "templates/default/program/src/lib.rs@28@pub fn fhe_processor("
     ],
     "line_text": ["let output = processor(FHEProcessorInput {", "pub fn fhe_processor(fhe_inputs: FHEProcessorInput<'_>) -> Vec<u8> {"],
-    "note": "Selected::finish calls whichever FHEProcessor it is given, and CRISP supplies its fhe_processor from the e3-user-program crate."
+    "note": "Selected::finish calls whichever FHEProcessor it is given, and the starter template supplies its fhe_processor."
   },
   {
     "id": "A11",
@@ -110,18 +107,21 @@
     "id": "A12",
     "supported": true,
     "refs": [
-      "examples/CRISP/server/src/server/routes/rounds.rs@374@.request_e3(",
+      "packages/interfold-sdk/src/contracts/contract-client.ts@137@public async requestE3(",
       "crates/evm-helpers/src/contracts.rs@499@contract.request(e3_request)"
     ],
-    "line_text": [".request_e3(", "let receipt = send_with_next_nonce(contract.request(e3_request), wallet_addr)"],
-    "note": "rounds.rs calls request_e3 on an InterfoldContract bound to interfold_address, and that method calls Interfold.request."
+    "line_text": [
+      "public async requestE3(params: E3RequestParams): Promise<Hash> {",
+      "let receipt = send_with_next_nonce(contract.request(e3_request), wallet_addr)"
+    ],
+    "note": "The SDK contract client sends the E3 request, and the evm-helpers crate binds Interfold and calls Interfold.request."
   },
   {
     "id": "A13",
     "supported": true,
     "refs": [
       "packages/interfold-sdk/src/events/types.ts@13@PlaintextOutputPublished",
-      "packages/interfold-sdk/src/events/event-listener.ts@217@publicClient.watchContractEvent({"
+      "packages/interfold-sdk/src/events/event-listener.ts@218@publicClient.watchContractEvent({"
     ],
     "line_text": ["PLAINTEXT_OUTPUT_PUBLISHED = 'PlaintextOutputPublished',", "const unwatch = this.publicClient.watchContractEvent({"],
     "note": "The SDK defines the PlaintextOutputPublished event type, and its listener watches contract events by event name."
@@ -140,31 +140,11 @@
     "note": "The indexer builds an EventListener whose first address is the Interfold contract, and listens to its logs."
   },
   {
-    "id": "A15",
-    "supported": true,
-    "refs": [
-      "examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol@780@function validateInputProof(",
-      "examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol@882@verifier.verify(noirProof, noirPublicInputs)"
-    ],
-    "line_text": ["function validateInputProof(", "if (!verifier.verify(noirProof, noirPublicInputs)) {"],
-    "note": "validateInputProof runs _verifyInputProof, which checks each ballot's Noir proof with an IHonkVerifier."
-  },
-  {
-    "id": "A16",
-    "supported": true,
-    "refs": [
-      "examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol@996@function verify(",
-      "examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol@1022@openVmVerifier.verify(computeProof.seal"
-    ],
-    "line_text": ["function verify(", "openVmVerifier.verify(computeProof.seal, imageId, sha256(journal));"],
-    "note": "verify decodes the OpenVM compute proof and checks its seal against imageId and the journal digest."
-  },
-  {
     "id": "A17",
     "supported": true,
     "refs": [
-      "crates/cli/src/cli.rs@194@start::execute(config, peers, bootstrap)",
-      "crates/cli/src/start.rs@167@e3_entrypoint::start::start::execute(config, bootstrap)"
+      "crates/cli/src/cli.rs@205@start::execute(config, peers, bootstrap)",
+      "crates/cli/src/start.rs@174@e3_entrypoint::start::start::execute(config, bootstrap)"
     ],
     "line_text": [
       "start::execute(config, peers, bootstrap).await?",
@@ -210,7 +190,7 @@
   {
     "id": "A21",
     "supported": false,
-    "refs": ["crates/zk-prover/src/prover.rs@104@StdCommand::new(bb)", "crates/zk-prover/src/witness.rs@59@execute_program("],
+    "refs": ["crates/zk/prover/src/prover.rs@104@StdCommand::new(bb)", "crates/zk/prover/src/witness.rs@59@execute_program("],
     "line_text": ["let mut child = StdCommand::new(bb)", "execute_program("],
     "note": "bb runs as a spawned child process, but nargo is a linked Rust library called in-process (witness.rs line 59), not a child process."
   },
@@ -219,7 +199,7 @@
     "supported": true,
     "refs": [
       "crates/evm/src/event_decoding/catalog.rs@33@pub(crate) fn find(",
-      "crates/evm/src/event_decoding/observation.rs@15@pub(crate) fn observe("
+      "crates/evm/src/event_decoding/observation.rs@16@pub(crate) fn observe("
     ],
     "line_text": ["pub(crate) fn find(contract: &str, topic0: B256) -> Option<&'static EvmEventDefinition> {", "pub(crate) fn observe("],
     "note": "catalog.rs names a log by its topic0, observation.rs turns it into an EvmLogObserved node event, and protocol events use typed decoders."

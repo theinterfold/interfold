@@ -18,7 +18,7 @@ e3-events = { workspace = true }
 e3-fhe-params = { workspace = true }
 e3-request = { workspace = true }
 e3-utils = { workspace = true }
-e3-zk-helpers = { workspace = true }
+
 hex = { workspace = true }
 serde = { workspace = true }
 sha2 = { workspace = true }
@@ -26,4 +26,5 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 bincode = { workspace = true }
+e3-event-system = { workspace = true }
 e3-layout-lock = { workspace = true }

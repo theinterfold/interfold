@@ -29,15 +29,15 @@ list:
 
 - `crates/compute-provider` and the RISC Zero guest — the Secure Process and its
   input binding
-- `crates/zk-helpers` — the SAFE ciphertext commitment
+- `crates/zk/witness` — the SAFE ciphertext commitment
 - `contracts/verifiers/bfv/Risc0BfvCiphertextVerifier.sol`
 - `contracts/lib/InterfoldLifecycle.sol`, `lib/Risc0ComputeProof.sol`,
   `lib/FailurePayerLib.sol`
-- `examples/CRISP/**`
+- the CRISP application (https://github.com/theinterfold/CRISP)
 
-Several `Z-` entries in `agent/flow-trace/00_INDEX.md` were remediated by adding
-files that are themselves outside both file lists, so the remediation code did
-not go through the mitigation review either.
+Several `Z-` entries in `docs/architecture/protocol-history.md` were remediated
+by adding files that are themselves outside both file lists, so the remediation
+code did not go through the mitigation review either.
 
 Zenith's own §2.5 Security Note: "it is statistically likely that there are more
 complex bugs still present given the time-boxed nature of this engagement... a

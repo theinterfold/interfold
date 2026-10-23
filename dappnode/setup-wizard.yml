@@ -1,191 +1,17 @@
 # DAppNode Setup Wizard - Interfold Ciphernode
 version: '2'
 fields:
-  - id: NETWORK
-    target:
-      type: environment
-      name: NETWORK
-      service: ciphernode
-    title: 'Network'
-    description: 'Select the network to connect to.'
-    enum:
-      - mainnet
-      - sepolia
-      - localhost
-    required: true
-
-  - id: RPC_URL
-    target:
-      type: environment
-      name: RPC_URL
-      service: ciphernode
-    title: 'RPC URL'
-    description: |
-      WebSocket RPC endpoint for the blockchain.
-
-      Examples:
-      - Sepolia: wss://ethereum-sepolia-rpc.publicnode.com
-      - Mainnet: wss://ethereum.publicnode.com
-      - Localhost: ws://localhost:8545
-    required: true
-    pattern: '^wss?://.*'
-    patternErrorMessage: 'Must be a WebSocket URL (wss:// or ws://)'
-
-  - id: CHAIN_ID
-    target:
-      type: environment
-      name: CHAIN_ID
-      service: ciphernode
-    title: 'Chain ID'
-    description: 'EIP-155 chain ID for the selected network. Mainnet is 1.'
-    required: true
-    pattern: '^[0-9]+$'
-    patternErrorMessage: 'Must be a chain ID (integer).'
-
-  - id: NODE_ADDRESS
-    target:
-      type: environment
-      name: NODE_ADDRESS
-      service: ciphernode
-    title: 'Node Address'
-    description: 'Public address for this node (must match private_key in the credentials JSON file).'
-    required: true
-    pattern: '^0x[a-fA-F0-9]{40}$'
-    patternErrorMessage: 'Must be a valid 20-byte hex address (0x...)'
-
-  # Contracts
-  - id: INTERFOLD_CONTRACT
-    target:
-      type: environment
-      name: INTERFOLD_CONTRACT
-      service: ciphernode
-    title: 'Interfold Contract Address'
-    description: 'Address of the Interfold contract on the selected network.'
-    required: true
-    pattern: '^0x[a-fA-F0-9]{40}$'
-    patternErrorMessage: 'Must be a valid Ethereum address (0x...)'
-
-  - id: CIPHERNODE_REGISTRY_CONTRACT
-    target:
-      type: environment
-      name: CIPHERNODE_REGISTRY_CONTRACT
-      service: ciphernode
-    title: 'Ciphernode Registry Contract'
-    description: 'Address of the CiphernodeRegistry contract.'
-    required: true
-    pattern: '^0x[a-fA-F0-9]{40}$'
-    patternErrorMessage: 'Must be a valid Ethereum address (0x...)'
-
-  - id: BONDING_REGISTRY_CONTRACT
-    target:
-      type: environment
-      name: BONDING_REGISTRY_CONTRACT
-      service: ciphernode
-    title: 'Bonding Registry Contract'
-    description: 'Address of the BondingRegistry contract.'
-    required: true
-    pattern: '^0x[a-fA-F0-9]{40}$'
-    patternErrorMessage: 'Must be a valid Ethereum address (0x...)'
-
-  - id: SLASHING_MANAGER_CONTRACT
-    target:
-      type: environment
-      name: SLASHING_MANAGER_CONTRACT
-      service: ciphernode
-    title: 'Slashing Manager Contract'
-    description: 'Address of the SlashingManager contract.'
-    required: true
-    pattern: '^0x[a-fA-F0-9]{40}$'
-    patternErrorMessage: 'Must be a valid Ethereum address (0x...)'
-
-  - id: FEE_TOKEN_CONTRACT
-    target:
-      type: environment
-      name: FEE_TOKEN_CONTRACT
-      service: ciphernode
-    title: 'Fee Token Contract'
-    description: 'Address of the fee token contract. Mainnet uses USDS.'
-    required: true
-    pattern: '^0x[a-fA-F0-9]{40}$'
-    patternErrorMessage: 'Must be a valid Ethereum address (0x...)'
-
-  - id: INTERFOLD_DEPLOY_BLOCK
-    target:
-      type: environment
-      name: INTERFOLD_DEPLOY_BLOCK
-      service: ciphernode
-    title: 'Interfold Deploy Block'
-    description: 'Block number where the Interfold contract was deployed.'
-    required: true
-    pattern: '^[0-9]+$'
-    patternErrorMessage: 'Must be a block number (integer).'
-
-  - id: CIPHERNODE_REGISTRY_DEPLOY_BLOCK
-    target:
-      type: environment
-      name: CIPHERNODE_REGISTRY_DEPLOY_BLOCK
-      service: ciphernode
-    title: 'Ciphernode Registry Deploy Block'
-    description: 'Block number where the CiphernodeRegistry contract was deployed.'
-    required: true
-    pattern: '^[0-9]+$'
-    patternErrorMessage: 'Must be a block number (integer).'
-
-  - id: BONDING_REGISTRY_DEPLOY_BLOCK
-    target:
-      type: environment
-      name: BONDING_REGISTRY_DEPLOY_BLOCK
-      service: ciphernode
-    title: 'Bonding Registry Deploy Block'
-    description: 'Block number where the BondingRegistry contract was deployed.'
-    required: true
-    pattern: '^[0-9]+$'
-    patternErrorMessage: 'Must be a block number (integer).'
-
-  - id: SLASHING_MANAGER_DEPLOY_BLOCK
-    target:
-      type: environment
-      name: SLASHING_MANAGER_DEPLOY_BLOCK
-      service: ciphernode
-    title: 'Slashing Manager Deploy Block'
-    description: 'Block number where the SlashingManager contract was deployed.'
-    required: true
-    pattern: '^[0-9]+$'
-    patternErrorMessage: 'Must be a block number (integer).'
-
-  - id: FEE_TOKEN_DEPLOY_BLOCK
-    target:
-      type: environment
-      name: FEE_TOKEN_DEPLOY_BLOCK
-      service: ciphernode
-    title: 'Fee Token Deploy Block'
-    description: 'Block number where the fee token contract was deployed.'
-    required: true
-    pattern: '^[0-9]+$'
-    patternErrorMessage: 'Must be a block number (integer).'
-
-  - id: PEERS
-    target:
-      type: environment
-      name: PEERS
-      service: ciphernode
-    title: 'Bootstrap Peers'
-    description: |
-      Comma-separated peer addresses, e.g.:
-      /dns4/cn1/udp/37173/quic-v1, /dns4/cn2/udp/37173/quic-v1
-      Leave empty to use the selected network's DNS bootstrap address.
-    required: false
-
-  # Credentials are uploaded as a file so they are not stored in container
-  # environment/process metadata. DAppNode copies the file before startup.
   - id: CREDENTIALS_FILE
     target:
       type: fileUpload
-      path: /run/secrets/secrets.json
+      path: /data/secrets.json
       service: ciphernode
-    title: 'Ciphernode Credentials JSON'
+    title: Node credentials (skip on updates)
     description: |
-      Upload a JSON file with exactly the credentials used by this node:
+      **Updates: no reupload needed. Leave this field empty.**
+      The node reuses your saved identity automatically.
+
+      **First installation:** upload `secrets.json` with your operator private key and an encryption password:
 
       ```json
       {
@@ -194,30 +20,5 @@ fields:
       }
       ```
 
-      The Ethereum private key must correspond to the Node Address above. Keep
-      an encrypted backup; the plaintext upload is removed after successful
-      credential provisioning.
-    required: true
-
-  # Advanced
-  - id: LOG_LEVEL
-    target:
-      type: environment
-      name: LOG_LEVEL
-      service: ciphernode
-    title: 'Log Level'
-    description: 'Log level for the ciphernode.'
-    enum:
-      - info
-      - debug
-      - trace
-    required: false
-
-  - id: EXTRA_OPTS
-    target:
-      type: environment
-      name: EXTRA_OPTS
-      service: ciphernode
-    title: 'Extra Options'
-    description: 'Additional CLI arguments passed to `interfold start`.'
+      Keep an encrypted backup offline. The node saves its encrypted identity and deletes the uploaded file.
     required: false

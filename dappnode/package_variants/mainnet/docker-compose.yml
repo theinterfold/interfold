@@ -1,0 +1,3 @@
+services:
+  ciphernode:
+    image: 'interfold-ciphernode-mainnet.dnp.dappnode.eth:0.10.0'

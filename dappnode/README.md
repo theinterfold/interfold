@@ -1,309 +1,107 @@
-# Interfold Ciphernode – DAppNode Package
+# Interfold Ciphernode for Dappnode
 
-Run an Interfold ciphernode on DAppNode.
+Run an Interfold ciphernode and monitor it in Dappnode.
 
-This package wraps the `interfold` CLI in a DAppNode service so users can run a ciphernode with a
-simple UI form (setup wizard) instead of hand-crafting configs and Docker commands.
+## Install
 
-## Networks
+1. Select a synced execution client in Dappnode **Stakers**. Enable its WebSocket RPC.
+2. Install the Mainnet or Sepolia package using its IPFS hash.
+3. On first installation, upload your `secrets.json` file.
+4. Open the package **Operator Dashboard** link and follow the
+   [operator setup steps](getting-started.md).
 
-This is a **single-configuration** package: the same package can be pointed at different networks by
-changing the config in the DAppNode UI.
+The package supplies the network settings and uses your selected Dappnode execution client.
 
-You choose:
+| Network | Operator Dashboard                                           | Node dashboard                                            | UDP port |
+| ------- | ------------------------------------------------------------ | --------------------------------------------------------- | -------- |
+| Mainnet | [Open](https://dashboard.theinterfold.com/#operator)         | [Open](http://interfold-ciphernode-mainnet.dappnode:8081) | 37173    |
+| Sepolia | [Open](https://testnet-dashboard.theinterfold.com/#operator) | [Open](http://interfold-ciphernode-sepolia.dappnode:8081) | 37174    |
 
-- `NETWORK` (e.g. `sepolia`, `mainnet`, `localhost`)
-- `CHAIN_ID` (e.g. `1` for Ethereum mainnet)
-- The RPC URL [remote procedure call endpoint]
-- Contract addresses and deploy blocks
+Use the remote **Operator Dashboard** to interact with contracts. Connect through the Dappnode LAN
+or VPN to open the local **Node dashboard**. The Node dashboard has no login, and every container on
+the Dappnode network can also reach it. If its proxy cannot start, the node runs without it.
 
-All of these are set in the setup wizard or in the package config after installation.
+## Credentials and backups
 
-## Files
-
-Package layout (from the `dappnode/` directory):
-
-```text
-dappnode/
-├── Dockerfile            # Builds the DAppNode image from the upstream ciphernode image
-├── docker-compose.yml    # DAppNode service definition (single variant)
-├── dappnode_package.json # Package metadata (name, version, links, backup, etc.)
-├── setup-wizard.yml      # DAppNode UI form -> configuration and credential upload
-├── entrypoint.sh         # Startup script (validates env, renders config, runs interfold)
-├── healthcheck.sh        # Local process, credential, config, QUIC listener and ingestion checks
-├── config.template.yaml  # Interfold config template (filled via envsubst)
-├── releases.json         # Release metadata used by DAppNode
-└── avatar-default.png    # Icon shown in the DAppNode UI
-```
-
-Non-secret configuration is supplied through environment variables. Credentials use DAppNode's
-`fileUpload` setup-wizard target and are copied to `/run/secrets/secrets.json` before startup; they
-are never accepted through container environment variables.
-
-## Quick Start
-
-### For DAppNode Users
-
-Once this package is published to the DAppStore:
-
-1. Open your DAppNode UI (`http://my.dappnode`).
-2. Search for **“Interfold Ciphernode”** and install the package.
-3. The **setup wizard** will prompt you for:
-   - `RPC_URL` – WebSocket RPC endpoint (e.g. `wss://ethereum-sepolia-rpc.publicnode.com`)
-   - `NETWORK` – e.g. `sepolia`, `mainnet`, `localhost`
-   - Chain ID, contract addresses, and deploy blocks
-   - A required ciphernode credentials JSON file
-   - Optional peers
-
-4. Confirm and finish the installation.
-5. Go to **Packages → interfold-ciphernode.public.dappnode.eth → Logs** to verify the node started
-   correctly.
-
-Until it’s in the public store, you can install it by IPFS hash:
-
-- Build it with the SDK (see “For Developers”).
-- Paste the resulting `/ipfs/...` hash into the DAppNode installer UI (“Install from IPFS hash”).
-
----
-
-### For Developers
-
-You’ll typically:
-
-- Build the package with the DAppNode SDK.
-- Install it on a DAppNode box (device or VM) from the resulting IPFS hash.
-- Iterate on the entrypoint, config template, and setup wizard.
-
-#### 1. Build the package
-
-From the `dappnode/` directory:
-
-```bash
-cd dappnode
-npx @dappnode/dappnodesdk@latest build
-```
-
-This will:
-
-- Validate `docker-compose.yml`, `setup-wizard.yml`, and `dappnode_package.json`
-- Build a multi-arch Docker image for `ciphernode.interfold-ciphernode.public.dappnode.eth`
-- Upload the release to the DAppNode IPFS node
-- Print an `/ipfs/<hash>` you can use to install the package
-
-#### 2. Install on your DAppNode instance
-
-In your browser (connected to your DAppNode):
-
-- Open the installer URL that the SDK prints, **or**
-- Go to the DAppNode UI → Installer → “Install from IPFS hash” and paste the `/ipfs/<hash>`.
-
-Fill in the wizard fields, then install.
-
-#### 3. Debugging and iteration
-
-- Use the package **Logs** tab to inspect `entrypoint.sh` and `interfold` output.
-
-- If something is wrong in the generated config, `docker exec` into the container and inspect:
-
-  ```bash
-  docker exec -it <ciphernode-container> cat /data/config.yaml
-  ```
-
-- Edit `entrypoint.sh`, `config.template.yaml`, or `setup-wizard.yml` locally, then rebuild with:
-
-  ```bash
-  npx @dappnode/dappnodesdk@latest build
-  ```
-
-- Reinstall with the new IPFS hash.
-
-## Configuration
-
-Non-secret runtime configuration is provided through environment variables:
-
-### Core
-
-- **`RPC_URL`** (required) WebSocket RPC endpoint for the chain (e.g.
-  `wss://ethereum-sepolia-rpc.publicnode.com`).
-
-- **`AVAIL_RPC_URL`** Avail HTTP endpoint used to retrieve proof-backed ciphertexts. It defaults by
-  `CHAIN_ID` for Ethereum mainnet and Sepolia. Set it explicitly to use a managed or self-hosted
-  endpoint.
-
-- **`NETWORK`** Logical network name written into the Interfold config. Default in this package:
-  `mainnet`.
-
-- **`CHAIN_ID`** EIP-155 chain ID written into the Interfold config. Default in this package: `1`.
-
-- **`NODE_ADDRESS`** Ethereum address for this ciphernode. It must match the private key in the
-  uploaded credentials JSON file.
-
-- **`QUIC_PORT`** Internal UDP port used for QUIC [Quick UDP Internet Connections] P2P networking.
-  Default in this package: `37173`.
-
-- **`LOG_LEVEL`** One of `info`, `debug`, `trace`. Mapped internally to `-v`, `-vv`, or `-vvv` when
-  calling `interfold start`.
-
-- **`EXTRA_OPTS`** Extra flags appended to the `interfold start` CLI.
-
-### Contracts
-
-Used to populate the `chains[0].contracts` section in `config.yaml`:
-
-- `INTERFOLD_CONTRACT`
-- `CIPHERNODE_REGISTRY_CONTRACT`
-- `BONDING_REGISTRY_CONTRACT`
-- `SLASHING_MANAGER_CONTRACT`
-- `FEE_TOKEN_CONTRACT`
-- `INTERFOLD_DEPLOY_BLOCK`
-- `CIPHERNODE_REGISTRY_DEPLOY_BLOCK`
-- `BONDING_REGISTRY_DEPLOY_BLOCK`
-- `SLASHING_MANAGER_DEPLOY_BLOCK`
-- `FEE_TOKEN_DEPLOY_BLOCK`
-
-These are all required in the setup wizard so that the node can index chain events from the correct
-block heights.
-
-### Credentials file
-
-Create a local JSON file containing the password and operator key:
+Create `secrets.json` with an encryption password and a dedicated operator private key:
 
 ```json
 {
   "password": "a strong encryption password",
-  "private_key": "0x<64 hex characters>"
+  "private_key": "0x<64 hexadecimal characters>"
 }
 ```
 
-Upload it in the setup wizard as **Ciphernode Credentials JSON**. DAppNode copies it to
-`/run/secrets/secrets.json` before starting the container. The entrypoint validates a maximum size
-of 16 KiB, required fields, and key encodings, then runs the exact commands supported by the pinned
-Interfold image. Any failed command aborts startup. The wallet command derives and stores both the
-Ethereum and libp2p identities. Both keys are encrypted in `/data`; the password key is stored there
-as a mode-`0400` file. After successful persistence, the entrypoint removes the combined plaintext
-upload. Provisioning sends secrets through the CLI's stdin-only credential flags; plaintext
-credentials are never placed in process arguments or container environment variables.
+Keep an encrypted backup offline. The node saves its encrypted identity and deletes the uploaded
+file. If startup stops before that, for example because the RPC check fails, the file stays in
+`/data` until a start succeeds. For updates, leave the credential upload empty. Updates and restarts
+reuse the saved identity. If the database exists without its credential key, startup stops and asks
+for the complete backup instead of creating another identity.
 
-Legacy three-field files containing `network_private_key` are accepted for upgrade compatibility,
-but the current wallet command ignores that obsolete field on a fresh setup. When encrypted identity
-state already exists, a matching upload is removed without rewriting either identity; a password
-mismatch fails closed.
+The package **Backup** includes the configuration, encryption password, and node database with the
+encrypted operator and network keys. It excludes downloaded circuits and prover caches. The database
+also contains committee state that a password file alone cannot restore.
 
-The Ethereum key must correspond to `NODE_ADDRESS`. Keep an encrypted offline backup of this JSON;
-do not paste its contents into package environment variables, `EXTRA_OPTS`, logs, or support
-bundles. On an ordinary restart, persisted credential state is reused from `/data` and the upload is
-not required again. Uploading a different password while state already exists fails closed.
+Stop the node before a backup. Keep the backup encrypted offline; it contains the password that
+unlocks the keys. Restore it to the same network package. Mainnet and Sepolia use separate data
+volumes.
 
-### Peers
+## Updates and maintenance
 
-- **`PEERS`** Comma-separated list of peer multiaddresses, for example:
+To upgrade, wait until the **Updates** view of the Node dashboard shows no active E3. Then update
+the package in Dappnode. The package restarts the node with the new release.
 
-  ```text
-  /dns4/cn1/udp/37173/quic-v1,/dns4/cn2/udp/37173/quic-v1
-  ```
+When a release raises the storage schema, the package resets the node state before the node starts.
+The reset keeps the operator key and the libp2p key, and the node then syncs again from the chain.
+This needs a node release with `interfold node reset-data --if-schema-older`. On v0.19.0, use the
+[one-off reset](https://docs.theinterfold.com/operate/upgrades#reset-node-state) instead.
 
-  The entrypoint splits this on commas, trims spaces, and turns each into a `--peer` flag:
+The reset refuses while the node holds a key share for an E3 that it has not seen complete, or slash
+reports that it has not sent. The node then stays stopped, and the log lists each E3 or chain. Do
+the checks in
+[If the command refuses](https://docs.theinterfold.com/operate/upgrades#if-the-command-refuses).
+Where they say to start the release that the node ran before, install the previous package version,
+so that the node finishes its work or sends its reports. Set `ALLOW_ACTIVE_E3S_RESET` to `true` in
+package **Config** only where they say to add `--allow-active-e3s`. The node then deletes those key
+shares and reports. Set it back to `false` after the node starts.
 
-  ```bash
-  interfold start ... --peer /dns4/cn1/udp/37173/quic-v1 --peer /dns4/cn2/udp/37173/quic-v1
-  ```
-
-  Leave `PEERS` empty to use the DNS bootstrap address for the selected `NETWORK`. Mainnet uses
-  `bootstrap.interfold.network`; Sepolia uses `bootstrap-sepolia.interfold.network`.
-
-If a variable is not set in the wizard, it still appears (with its default) in the package config
-screen after installation, as per DAppNode’s env behavior.
-
-## How It Works Internally
-
-At container startup, `entrypoint.sh`:
-
-1. Validates `RPC_URL` is non-empty and starts with `ws://` or `wss://`.
-2. Applies sensible defaults for `NETWORK`, `QUIC_PORT`, and `LOG_LEVEL`.
-3. Uses `envsubst` to render `config.template.yaml` into `/data/config.yaml`, substituting:
-
-- node address, network identity, and ports
-- network name and RPC URL
-- chain ID, contract addresses, and deploy blocks
-
-4. Validates the uploaded credential file and programs the password plus wallet identity through
-   stdin-only CLI flags. Failures stop startup.
-5. Builds CLI args, including verbosity and `--peer` flags from `PEERS`.
-6. Executes:
-
-   ```bash
-   interfold start --config /data/config.yaml ...
-   ```
-
-The state and databases live under `/data` inside the container, which is backed by the
-`ciphernode_data` Docker volume and listed as a backup target in `dappnode_package.json`. Because
-that volume includes the password key, DAppNode backups of `/data` must be encrypted and
-access-controlled even though the wallet and network keys inside the volume are encrypted.
-
-### Required v0.1.8 state bridge
-
-This package keeps the required bridge from the shipped v0.1.8 package to current binaries. On its
-first start it atomically renames the custom-config state root from `/data/.enclave` to
-`/data/.interfold`, refusing to proceed if both roots exist. Do not skip this package when upgrading
-an existing v0.1.8 node, and keep a verified backup of `/data` until the bridge has started
-successfully.
-
-## Health semantics
-
-The ciphernode does not expose a local readiness endpoint. The package health check therefore uses
-the strongest non-invasive local signals available: PID 1 must be the expected `interfold start`
-command using `/data/config.yaml`, the protected config/password files must exist, the local
-database/event-log directories must be initialized, and the configured QUIC UDP listener must be
-bound. This detects the old false-positive case where an unrelated process matched `pgrep`, as well
-as missing credentials, uninitialized persistence, and a dead network listener.
-
-The check also reads the chain-ingestion heartbeat. The node writes one file per chain under
-`/data/.interfold/data/_default/ingestion/` (`chain-<id>.heartbeat`, `key=value` lines) after every
-successful read of the chain head: `head`, `cursor` (the last block whose logs the node applied),
-`polled_at` and `progressed_at` (the last read at which `head` or `cursor` moved) in Unix seconds.
-The check fails when a heartbeat is older than `INGESTION_MAX_AGE_SECS` (120) or neither its head
-nor its cursor moved for `INGESTION_STALL_MAX_SECS` (600), which catches a reader that stopped
-polling, an RPC endpoint that stopped following the chain, and a sync that stopped advancing. A node
-without a heartbeat is still starting: the node removes the files of an earlier run at startup, and
-it refuses to start when it cannot write them. At startup the node also writes `expected` in the
-same folder (`chains=<enabled chains>`, `started_at=<Unix seconds>`). Once
-`INGESTION_START_GRACE_SECS` (900) have passed since then, every enabled chain must have a
-heartbeat, so a reader that never reaches its first successful read, as against an RPC endpoint that
-never answers, fails the check instead of passing as a starting node. The node writes `expected`
-before it starts any reader, so a heartbeat without `expected` fails the check. The node refuses to
-start with two enabled entries of one chain, also in bootstrap mode, so each entry has its own
-heartbeat file. A write that fails later leaves the previous file in place, which then goes stale.
-
-This remains a liveness check, not proof of healthy RPC responses, honest peers, registration, or
-safe protocol participation. Operators must inspect logs and on-chain status before treating the
-node as protocol-ready.
-
-## Data & Ports
-
-- **Data volume**: `ciphernode_data` → `/data` This is where Interfold stores its databases and
-  state.
-
-- **Ports**:
-  - **UDP 37173** – QUIC P2P networking (host and container).
-
-If you change `QUIC_PORT` in the config, you must also adjust the `ports:` mapping in
-`docker-compose.yml` in a derived package.
-
-## Publishing
-
-To publish this package to the public DAppStore so others can install it:
+To repair a state that `interfold node validate` reports, stop the package. Then run its image in a
+one-off container with the package volume:
 
 ```bash
-npx @dappnode/dappnodesdk@latest publish minor -p dappnode
+docker run --rm --volumes-from <stopped-package-container> --workdir /data \
+  --entrypoint interfold <package-image> node validate --repair --config /data/config.yaml
 ```
 
-The SDK can prompt for the developer address and guide the authorized publisher wallet through the
-Ethereum mainnet transaction that registers the new package version.
+To leave the network, complete the
+[exit checklist](https://docs.theinterfold.com/operate/exits-and-slashing#exit-checklist) before you
+remove the package. The package volume holds the operator key, and its removal does not run the
+checks of `interfold nodes purge`. To change the operator key or the password, exit first, then
+install the package with a new volume.
 
-## Links
+## Custom RPC
 
-- [Interfold Docs](https://docs.theinterfold.com)
-- [DAppNode Package Development – Single Configuration](https://docs.dappnode.io/docs/dev/package-development/single-configuration/)
-- [DAppNode Docker Compose Reference](https://docs.dappnode.io/docs/dev/references/docker-compose/)
-- [DAppNode Setup Wizard Reference](https://docs.dappnode.io/docs/dev/references/setup-wizard/)
-- [Interfold GitHub Repository](https://github.com/theinterfold/interfold)
+Change `RPC_URL` in package **Config** to use another endpoint. Use `ws://` or `wss://` for the
+package network. The endpoint must also accept HTTP at the same host, port, and path.
+
+The Dappnode defaults work with the client's separate HTTP and WebSocket ports automatically.
+
+## Local development
+
+Run from the repository root. `check`, `build`, and `test:image` require Docker with Compose. The
+hardening test requires `jq`, `envsubst`, Python `PyYAML`, and `websocket-client`.
+
+```bash
+npm ci --ignore-scripts --prefix dappnode
+pnpm --dir dappnode check
+pnpm --dir dappnode test
+pnpm --dir dappnode build --skip_upload
+pnpm --dir dappnode test:image
+```
+
+`build --skip_upload` builds both packages for `linux/amd64` and saves them locally. `test:image`
+then starts the Mainnet image against a test execution client. Run `pnpm --dir dappnode build` to
+upload the packages to IPFS and obtain installation hashes.
+
+Package files stay in `dappnode/`. The image extends the pinned Interfold image and copies
+deployment settings from the repository's `deployments/manifest.json`.

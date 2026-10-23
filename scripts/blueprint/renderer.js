@@ -14,6 +14,7 @@
   const crumbs = document.getElementById('crumbs')
   const titleEl = document.getElementById('dtitle')
   const subEl = document.getElementById('dsub')
+  const documentationEl = document.getElementById('documentation')
   const panel = document.getElementById('code')
   const tip = document.getElementById('tip')
   const q = document.getElementById('q')
@@ -226,6 +227,16 @@
     fit = { x: -40, y: -40, w: d.w + 80, h: d.h + 80 }
     titleEl.textContent = d.title
     subEl.textContent = d.sub || ''
+    documentationEl.replaceChildren()
+    for (const doc of d.documentation || []) {
+      if (!/^https:\/\/github\.com\//.test(doc.href)) continue
+      const a = document.createElement('a')
+      a.href = doc.href
+      a.textContent = doc.title
+      a.target = '_blank'
+      a.rel = 'noopener noreferrer'
+      documentationEl.appendChild(a)
+    }
     document.title = `${d.title} · Interfold blueprint`
     drawCrumbs(d)
   }

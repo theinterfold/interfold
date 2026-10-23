@@ -41,6 +41,7 @@ mod password_delete;
 mod password_set;
 mod print_env;
 mod program;
+mod program_support;
 mod purge_all;
 mod rev;
 mod start;

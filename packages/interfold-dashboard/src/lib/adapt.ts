@@ -8,9 +8,9 @@
 import { formatUnits, keccak256, numberToHex, toHex } from 'viem'
 import type { HistoryEntry, Poll } from '../data'
 import type { E3FullDetails, E3Summary } from './e3'
-import { failureReasonLabel, failureReasonToUiIdx, isE3Active } from './e3'
+import { failureReasonLabel, failureReasonToUiIdx, isCrispE3, isE3Active } from './e3'
 import { E3Stage, FEE_TOKEN, NETWORK_NAME } from './chain'
-import { compactE3Id, formatE3Id, isCrispProgram, pollMetaFor, programName, shortHash } from './pollMeta'
+import { compactE3Id, formatE3Id, pollMetaFor, programName, shortHash } from './pollMeta'
 
 // Fee token symbol/decimals come from the selected network's deployment profile.
 function fmtFee(v: bigint | undefined): string {
@@ -35,9 +35,8 @@ export function adaptPoll(s: E3Summary): Poll {
   }
 }
 
-export function adaptHistoryEntries(list: E3Summary[], detailsCache: Map<string, E3FullDetails>): HistoryEntry[] {
+export function adaptHistoryEntries(list: E3Summary[]): HistoryEntry[] {
   return list.map((s) => {
-    const detail = detailsCache.get(s.id.toString())
     const meta = pollMetaFor(s.id)
     return {
       id: formatE3Id(s.id),
@@ -46,25 +45,15 @@ export function adaptHistoryEntries(list: E3Summary[], detailsCache: Map<string,
       closed: s.inputWindow[1] > 0n ? fmtDate(s.inputWindow[1]) : 'in progress',
       duration: s.inputWindow[1] > s.inputWindow[0] && s.inputWindow[0] > 0n ? fmtDuration(s.inputWindow[1] - s.inputWindow[0]) : '—',
       ballotCount: s.ballotCount,
-      result: historyResult(s, detail, meta),
+      result: historyResult(s),
     }
   })
 }
 
-// A truthful one-line status for a past poll. Prefers the decoded verdict when
-// we have the result; otherwise reflects the on-chain stage (failed / expired /
-// in progress / completed) rather than a blanket "Pending".
-function historyResult(s: E3Summary, detail: E3FullDetails | undefined, meta: ReturnType<typeof pollMetaFor>): string {
-  const tally = detail?.tally
-  if (tally?.length) {
-    const total = tally.reduce((a, b) => a + b, 0n)
-    const max = tally.reduce((a, b) => (b > a ? b : a), 0n)
-    // Integer division truncates, so bias the numerator by half a percentage point to round half-up.
-    const pct = total > 0n ? Number((max * 200n + total) / (total * 2n)) : 0
-    const winnerLabel = meta.options[tally.indexOf(max)]?.label ?? 'Outcome'
-    const verdict = /^no/i.test(winnerLabel) ? 'Declined' : /^abs/i.test(winnerLabel) ? 'Inconclusive' : 'Approved'
-    return `${verdict} · ${pct}%`
-  }
+// A truthful one-line status for a past poll, from the on-chain stage (failed / expired /
+// in progress / completed) rather than a blanket "Pending". The dashboard has no option labels, so
+// it names no winner.
+function historyResult(s: E3Summary): string {
   if (s.stage === E3Stage.Complete) return 'Completed'
   if (s.stage === E3Stage.Failed) return 'Failed'
   if (isE3Active(s.stage, s.inputWindow[1], { e3Program: s.e3Program, ballotCount: s.ballotCount })) return 'In progress'
@@ -78,7 +67,7 @@ export function adaptInspectorE3List(list: E3Summary[]) {
   return list.map((s) => ({
     id: formatE3Id(s.id),
     displayId: compactE3Id(s.id),
-    label: isCrispProgram(s.e3Program) ? pollMetaFor(s.id).question.slice(0, 64) : programName(s.e3Program),
+    label: isCrispE3(s.e3Program) ? pollMetaFor(s.id).question.slice(0, 64) : programName(s.e3Program),
   }))
 }
 
@@ -158,7 +147,7 @@ function schemeName(id: string): string {
 
 export function adaptInspectorDetail(detail: E3FullDetails | null): InspectorDetail | null {
   if (!detail) return null
-  const isCrisp = isCrispProgram(detail.e3Program)
+  const isCrisp = isCrispE3(detail.e3Program)
   const meta = pollMetaFor(detail.id)
   const inputsReceived = detail.inputsTracked ? detail.ballotCount.toLocaleString() : '—'
   const rosterThreshold = detail.committeeThreshold[0] || 0

@@ -4,8 +4,8 @@
     "supported": true,
     "refs": [
       "crates/evm/src/event_decoding/actor.rs@95@InterfoldEvmEvent::Event(event)",
-      "crates/evm/src/chain_gateway/actor.rs@175@into_interfold_event(&self.bus)",
-      "crates/evm/src/chain_gateway/actor.rs@164@self.bus.naked_dispatch(msg);"
+      "crates/evm/src/chain_gateway/actor.rs@208@into_interfold_event(&self.bus)",
+      "crates/evm/src/chain_gateway/actor.rs@174@self.bus.naked_dispatch(msg);"
     ],
     "line_text": [
       "Ok(Some(event)) => self.next.do_send(InterfoldEvmEvent::Event(event)),",
@@ -19,7 +19,7 @@
     "supported": true,
     "refs": [
       "crates/evm/src/interfold_writing/effects.rs@272@.publishPlaintextOutput(e3_id, decrypted_output, proof)",
-      "crates/evm/src/interfold_writing/handlers.rs@406@let result = publish_plaintext_output("
+      "crates/evm/src/interfold_writing/handlers.rs@411@let result = publish_plaintext_output("
     ],
     "line_text": [".publishPlaintextOutput(e3_id, decrypted_output, proof)", "let result = publish_plaintext_output("],
     "note": "publish_plaintext_output sends the publishPlaintextOutput transaction, and the InterfoldSolWriter handler calls it."
@@ -51,7 +51,7 @@
     "id": "B5",
     "supported": false,
     "refs": [
-      "crates/net/src/event_translation/actor.rs@261@.publish_from_remote(data, ec.ts(), None, EventSource::Net)",
+      "crates/net/src/event_translation/actor.rs@263@.publish_from_remote(data, ec.ts(), None, EventSource::Net)",
       "crates/net/src/event_conversion/actor.rs@69@decode_received(&msg.meta, &msg.value)",
       "crates/net/src/event_conversion/actor.rs@71@self.bus.publish(evt, ctx)?;"
     ],
@@ -83,9 +83,9 @@
     "id": "B7",
     "supported": true,
     "refs": [
-      "crates/request/src/routing/handlers.rs@175@self.contexts.entry(e3_id.clone()).or_insert_with(|| {",
-      "crates/request/src/routing/handlers.rs@190@extension.on_event(context, &msg);",
-      "crates/request/src/routing/actor.rs@72@fn on_event(&self, ctx: &mut E3Context, evt: &InterfoldEvent);",
+      "crates/request/src/routing/handlers.rs@185@self.contexts.entry(e3_id.clone()).or_insert_with(|| {",
+      "crates/request/src/routing/handlers.rs@202@extension.on_event(context, &msg);",
+      "crates/request/src/routing/actor.rs@73@fn on_event(&self, ctx: &mut E3Context, evt: &InterfoldEvent);",
       "crates/keyshare/src/ext.rs@119@ThresholdKeyshare::new(ThresholdKeyshareParams {"
     ],
     "line_text": [
@@ -106,7 +106,7 @@
   {
     "id": "B9",
     "supported": true,
-    "refs": ["crates/keyshare/src/threshold_keyshare/effects/verify_decryption_key.rs@284@KeyshareCreated {"],
+    "refs": ["crates/keyshare/src/threshold_keyshare/effects/verify_decryption_key.rs@288@KeyshareCreated {"],
     "line_text": ["KeyshareCreated {"],
     "note": "publish_keyshare_created publishes KeyshareCreated with the public key share and the signed C1 proof."
   },
@@ -114,7 +114,7 @@
     "id": "B10",
     "supported": false,
     "refs": [
-      "crates/zk-prover/src/proof_request/effects/decryption_share_proofs.rs@139@DecryptionshareCreated {",
+      "crates/zk/prover/src/proof_request/effects/decryption_share_proofs.rs@139@DecryptionshareCreated {",
       "crates/keyshare/src/threshold_keyshare/effects/create_decryption_share.rs@259@let event = ShareDecryptionProofPending {",
       "crates/keyshare/src/threshold_keyshare/effects/create_decryption_share.rs@102@let event = ComputeRequest::trbfv("
     ],
@@ -135,8 +135,8 @@
     "id": "B12",
     "supported": true,
     "refs": [
-      "crates/aggregator/src/plaintext_aggregation/effects/publish_result.rs@113@let event = PlaintextAggregated {",
-      "crates/aggregator/src/plaintext_aggregation/effects/publish_result.rs@128@self.bus.publish(event, ec.clone())?;"
+      "crates/aggregator/src/plaintext_aggregation/effects/publish_result.rs@111@let event = PlaintextAggregated {",
+      "crates/aggregator/src/plaintext_aggregation/effects/publish_result.rs@126@self.bus.publish(event, ec.clone())?;"
     ],
     "line_text": ["let event = PlaintextAggregated {", "self.bus.publish(event, ec.clone())?;"],
     "note": "ThresholdPlaintextAggregator builds the PlaintextAggregated event and publishes it on the bus."
@@ -147,7 +147,7 @@
     "refs": [
       "crates/slashing/src/accusation_voting/effects/apply_actions.rs@37@self.bus.publish(quorum, ec)",
       "crates/slashing/src/accusation_voting/transitions/vote.rs@226@quorum: AccusationQuorumReached {",
-      "crates/slashing/src/accusation_voting/actor.rs@98@pub struct AccusationManager {"
+      "crates/slashing/src/accusation_voting/actor.rs@100@pub struct AccusationManager {"
     ],
     "line_text": [
       "if let Err(err) = self.bus.publish(quorum, ec) {",
@@ -160,9 +160,9 @@
     "id": "B14",
     "supported": true,
     "refs": [
-      "crates/multithread/src/multithread.rs@571@impl Handler<TypedEvent<ComputeRequest>> for Multithread {",
-      "crates/multithread/src/multithread.rs@1141@) -> (Result<ComputeResponse, ComputeRequestError>, Duration) {",
-      "crates/multithread/src/multithread.rs@711@bus.publish(value, ctx)?;"
+      "crates/multithread/src/multithread.rs@526@impl Handler<TypedEvent<ComputeRequest>> for Multithread {",
+      "crates/multithread/src/multithread.rs@856@fn handle_compute_request(",
+      "crates/multithread/src/multithread.rs@666@bus.publish(value, ctx)?;"
     ],
     "line_text": [
       "impl Handler<TypedEvent<ComputeRequest>> for Multithread {",
@@ -175,10 +175,10 @@
     "id": "B15",
     "supported": true,
     "refs": [
-      "crates/zk-prover/src/proof_request/handlers.rs@134@impl Handler<TypedEvent<ShareDecryptionProofPending>> for ProofRequestActor {",
-      "crates/zk-prover/src/proof_request/effects/signing.rs@80@match SignedProofPayload::sign(payload, &self.signer) {",
-      "crates/zk-prover/src/proof_request/effects/aggregation_proofs.rs@84@PkAggregationProofSigned {",
-      "crates/zk-prover/src/proof_request/effects/decryption_share_proofs.rs@139@DecryptionshareCreated {"
+      "crates/zk/prover/src/proof_request/handlers.rs@134@impl Handler<TypedEvent<ShareDecryptionProofPending>> for ProofRequestActor {",
+      "crates/zk/prover/src/proof_request/effects/signing.rs@80@match SignedProofPayload::sign(payload, &self.signer) {",
+      "crates/zk/prover/src/proof_request/effects/aggregation_proofs.rs@84@PkAggregationProofSigned {",
+      "crates/zk/prover/src/proof_request/effects/decryption_share_proofs.rs@139@DecryptionshareCreated {"
     ],
     "line_text": [
       "impl Handler<TypedEvent<ShareDecryptionProofPending>> for ProofRequestActor {",
@@ -236,7 +236,7 @@
       "crates/data/src/persistable.rs@184@.try_send(msg)",
       "crates/data/src/sled_store.rs@64@fn handle(&mut self, event: Insert, _: &mut Self::Context) -> Self::Result {",
       "crates/data/src/sled_db.rs@38@.insert(msg.key(), msg.value().to_vec())",
-      "crates/request/src/routing/handlers.rs@197@.write_with_context(&context.snapshot()?, &event_context)?;"
+      "crates/request/src/routing/handlers.rs@219@.write_with_context(&context.snapshot()?, &event_context)?;"
     ],
     "line_text": [
       "self.store.write(value)",
@@ -267,18 +267,18 @@
     "id": "B21",
     "supported": true,
     "refs": [
-      "crates/ciphernode-builder/src/ciphernode_builder.rs@652@pub async fn build(self) -> anyhow::Result<CiphernodeHandle> {",
-      "crates/ciphernode-builder/src/ciphernode_builder.rs@657@async fn build_inner(mut self) -> anyhow::Result<CiphernodeHandle> {",
-      "crates/ciphernode-builder/src/ciphernode_builder.rs@847@E3LifecycleCoordinator::attach(&bus, store.clone()).await?;",
-      "crates/ciphernode-builder/src/ciphernode_builder.rs@1083@let ciphernode_selector = CiphernodeSelector::attach("
+      "crates/ciphernode-builder/src/builder/startup.rs@96@pub async fn build(self) -> anyhow::Result<CiphernodeHandle> {",
+      "crates/ciphernode-builder/src/builder/startup.rs@101@async fn build_inner(mut self) -> anyhow::Result<CiphernodeHandle> {",
+      "crates/ciphernode-builder/src/builder/startup.rs@418@E3LifecycleCoordinator::attach(bus, storage.store.clone()).await?;",
+      "crates/ciphernode-builder/src/builder/sortition.rs@48@let ciphernode_selector = CiphernodeSelector::attach("
     ],
     "line_text": [
       "pub async fn build(self) -> anyhow::Result<CiphernodeHandle> {",
       "async fn build_inner(mut self) -> anyhow::Result<CiphernodeHandle> {",
-      "E3LifecycleCoordinator::attach(&bus, store.clone()).await?;",
+      "E3LifecycleCoordinator::attach(bus, storage.store.clone()).await?;",
       "let ciphernode_selector = CiphernodeSelector::attach("
     ],
-    "note": "build() calls build_inner, which attaches the lifecycle, sortition, EVM, extension and networking actors to the bus."
+    "note": "build() calls build_inner, which orders storage, recovery, live bus, protocol core, EVM, extensions, networking and sync; the full/bootstrap profile selects the work installed."
   },
   {
     "id": "B22",
@@ -301,10 +301,10 @@
     "id": "B23",
     "supported": true,
     "refs": [
-      "crates/cli/src/cli.rs@193@Commands::Start { peers, bootstrap } => {",
-      "crates/cli/src/cli.rs@194@start::execute(config, peers, bootstrap).await?",
-      "crates/cli/src/start.rs@167@let node = e3_entrypoint::start::start::execute(config, bootstrap).await?;",
-      "crates/entrypoint/src/start/start.rs@69@pub async fn execute(config: &AppConfig, bootstrap: bool) -> Result<CiphernodeHandle> {"
+      "crates/cli/src/cli.rs@204@Commands::Start { peers, bootstrap } => {",
+      "crates/cli/src/cli.rs@205@start::execute(config, peers, bootstrap).await?",
+      "crates/cli/src/start.rs@174@let node = e3_entrypoint::start::start::execute(config, bootstrap).await?;",
+      "crates/entrypoint/src/start/start.rs@70@pub async fn execute(config: &AppConfig, bootstrap: bool) -> Result<CiphernodeHandle> {"
     ],
     "line_text": [
       "Commands::Start { peers, bootstrap } => {",
