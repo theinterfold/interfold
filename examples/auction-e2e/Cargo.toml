@@ -1,0 +1,24 @@
+[workspace]
+resolver = "3"
+members = [
+  "program",
+  "runner",
+  "da"
+]
+# `cargo build` skips the Avail helper; build it with `cargo build --release -p auction-da`.
+default-members = [
+  "program",
+  "runner"
+]
+
+[workspace.dependencies]
+e3-user-program = { path = "./program" }
+fhe = { git = "https://github.com/gnosisguild/fhe.rs", branch = "dev", features = ["experimental-mbfv"] }
+fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", branch = "dev" }
+e3-program-runner = { path = "../../crates/program-runner" }
+e3-bfv-client = { path = "../../crates/bfv-client" }
+e3-fhe-params = { path = "../../crates/fhe-params" }
+e3-compute-provider = { path = "../../crates/compute-provider" }
+e3-data-availability = { path = "../../crates/data-availability" }
+rand = "0.9"
+anyhow = "1.0.86"

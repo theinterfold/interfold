@@ -1,0 +1,111 @@
+chains:
+  - name: 'localhost'
+    rpc_url: 'ws://localhost:8545'
+    ingestion_confirmations: 0
+    rpc_poll_interval_ms: 250
+    data_availability:
+      mode: mock_http
+      rpc_url: http://127.0.0.1:8080/availability
+    contracts:
+      e3_program:
+        address: "0x7A9Ec1d04904907De0ED7b6839CcdD59c3716AC9"
+        deploy_block: 117
+      interfold:
+        address: "0x84eA74d481Ee0A5332c457a4d796187F6Ba67fEB"
+        deploy_block: 43
+      ciphernode_registry:
+        address: "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853"
+        deploy_block: 18
+      bonding_registry:
+        address: "0x0B306BF915C4d645ff596e518fAf3F9669b97016"
+        deploy_block: 20
+      slashing_manager:
+        address: '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9'
+        deploy_block: 18
+      fee_token:
+        address: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
+        deploy_block: 13
+  # Sepolia. Disabled by default: enable it only after the program is deployed (README, "Deploy to
+  # Sepolia"). The interfold, ciphernode_registry, bonding_registry, slashing_manager and fee_token
+  # entries are the official Interfold deployment (packages/interfold-contracts/deploy/protocol/
+  # sepolia-protocol.deployment.json). For a deployment of your own protocol, replace them.
+  # `pnpm deploy:sepolia` writes e3_program, and the keys that it finds in deployed_contracts.json.
+  # Set rpc_url to a WebSocket endpoint of your provider.
+  - name: 'sepolia'
+    enabled: false
+    rpc_url: 'wss://ethereum-sepolia-rpc.publicnode.com'
+    chain_id: 11155111
+    # Public RPC endpoints cap the block range of one log request. Lower this to match yours.
+    rpc_log_range_blocks: 10000
+    data_availability:
+      mode: avail
+      rpc_url: 'https://turing-rpc.avail.so/rpc'
+    contracts:
+      e3_program:
+        address: "0x0000000000000000000000000000000000000000"
+        deploy_block: 0
+      interfold:
+        address: "0xBD5B6D1aDA9e0eB248B678469C9Cd6a63507E42b"
+        deploy_block: 11873232
+      ciphernode_registry:
+        address: "0xb1E8640CF8D0A927290E3d9E1b01c4899B5225Ef"
+        deploy_block: 11873232
+      bonding_registry:
+        address: "0x8687bC7C8f055b41aD2C2447c04aCBD76C1075b2"
+        deploy_block: 11873232
+      slashing_manager:
+        address: '0x5F9D21751aA24bc3D67C9B9D6ceEf2b62AAdac6d'
+        deploy_block: 11873232
+      fee_token:
+        address: "0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B"
+        deploy_block: 11856062
+program:
+  dev: false
+  # Real proofs use program.openvm, with absolute paths local to the deployment:
+  # openvm:
+  #   prover_bin: /path/to/interfold-openvm-prover            # the CPU worker
+  #   prover_bin_cuda: /path/to/interfold-openvm-prover-cuda  # optional; used when a GPU works
+  #   backend: auto                                           # auto, cpu or cuda
+  # `interfold program compile` builds ./guest against ./program, and `interfold program start`
+  # serves real proofs. See the OpenVM worker README in the Interfold repository.
+  # The scheduler defaults to 2 concurrent jobs and reserves 2 logical CPUs for Actix / libp2p.
+  # It reduces concurrency when the host or cgroup memory limit is too small.
+  # Example override on a dedicated 64 GB host:
+  # node:
+  #   multithread_reserve_threads: 2
+  #   multithread_concurrent_jobs: 4
+  #   # Test/CI only. Requires mock on-chain proof verifiers and an Interfold binary built with
+  #   # the `test-only-skip-proof-aggregation` Cargo feature.
+  #   skip_proof_aggregation: false
+nodes:
+  cn1:
+    address: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'
+    quic_port: 9201
+    ctrl_port: 50501
+    autonetkey: true
+    autopassword: true
+    dashboard_port: 8004
+  cn2:
+    address: '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC'
+    quic_port: 9202
+    ctrl_port: 50502
+    autonetkey: true
+    autopassword: true
+  cn3:
+    address: '0x90F79bf6EB2c4f870365E785982E1f101E93b906'
+    quic_port: 9203
+    ctrl_port: 50503
+    autonetkey: true
+    autopassword: true
+  cn4:
+    address: '0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65'
+    quic_port: 9204
+    ctrl_port: 50504
+    autonetkey: true
+    autopassword: true
+  cn5:
+    address: '0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc'
+    quic_port: 9205
+    ctrl_port: 50505
+    autonetkey: true
+    autopassword: true

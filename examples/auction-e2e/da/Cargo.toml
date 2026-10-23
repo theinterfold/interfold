@@ -1,0 +1,20 @@
+# Publishes the auction's ciphertext output to Avail and fetches its VectorX proof. The server
+# runs this binary, so the TypeScript server needs no Avail client of its own.
+[package]
+name = "auction-da"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "auction-da"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { version = "=4.6.0", features = ["derive"] }
+e3-data-availability = { workspace = true, features = ["avail-submit"] }
+hex = "=0.4.3"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.145"
+tokio = { version = "=1.46.1", features = ["macros", "rt-multi-thread"] }

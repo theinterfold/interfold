@@ -1,0 +1,14 @@
+# Used by `docker build -f examples/auction-e2e/server/Dockerfile .` from the repository root.
+.git
+**/node_modules
+**/target
+**/.DS_Store
+**/*.log
+examples/auction-e2e/artifacts
+examples/auction-e2e/cache
+examples/auction-e2e/.interfold
+examples/auction-e2e/guest
+# Never send local secrets to an image.
+**/.env
+**/.env.*
+!**/.env.example

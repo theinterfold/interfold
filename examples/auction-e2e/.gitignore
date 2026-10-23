@@ -1,0 +1,33 @@
+node_modules
+.env
+.direnv
+
+# Hardhat files
+/cache
+/artifacts
+
+# TypeChain files
+/types
+
+# solidity-coverage files
+/coverage
+/coverage.json
+
+.interfold/data/
+.interfold/config/
+.interfold/caches/
+.interfold/noir/
+.interfold/data-availability/
+
+/target
+/guest/target
+
+.interfold/generated/
+
+/deployments
+
+# Hardhat Ignition default folder for deployments against a local node
+ignition/deployments/chain-31337
+
+# tmux log files
+tmux-*.log

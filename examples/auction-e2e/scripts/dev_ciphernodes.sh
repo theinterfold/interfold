@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/lib/dev_config.sh"
+load_template_dev_config
+
+SIGNAL_FILE=/tmp/interfold_ciphernodes_ready
+
+cleanup() {
+  echo "Cleaning up processes..."
+  pkill -9 -f "interfold start"
+  sleep 2
+  pkill interfold
+  echo "Cleanup complete"
+  exit 0
+}
+
+rm -rf $SIGNAL_FILE
+
+trap cleanup INT TERM
+
+echo "Waiting for local evm node..."
+pnpm wait-on tcp:localhost:8545
+
+# Fresh node state for this deploy
+rm -rf .interfold/data
+rm -rf .interfold/config
+
+PRIVATE_KEY_CN1="0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+PRIVATE_KEY_CN2="0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+PRIVATE_KEY_CN3="0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6"
+PRIVATE_KEY_CN4="0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a"
+PRIVATE_KEY_CN5="0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba"
+
+printf '%s\n' "$PRIVATE_KEY_CN1" | interfold wallet set --name cn1 --private-key-stdin
+printf '%s\n' "$PRIVATE_KEY_CN2" | interfold wallet set --name cn2 --private-key-stdin
+printf '%s\n' "$PRIVATE_KEY_CN3" | interfold wallet set --name cn3 --private-key-stdin
+printf '%s\n' "$PRIVATE_KEY_CN4" | interfold wallet set --name cn4 --private-key-stdin
+printf '%s\n' "$PRIVATE_KEY_CN5" | interfold wallet set --name cn5 --private-key-stdin
+
+echo "Setting up ZK prover..."
+interfold noir setup
+
+sync_interfold_circuit_artifacts
+
+# Deploy before starting nodes so interfold.config.yaml addresses match the chain.
+echo "Deploying protocol + AuctionProgram..."
+pnpm exec hardhat utils:clean-deployments --network localhost
+pnpm exec hardhat run scripts/deploy-local.ts --network localhost
+if ! grep -q '"AuctionProgram"' deployed_contracts.json; then
+  echo "deployTemplate did not record AuctionProgram — check deploy logs above"
+  exit 1
+fi
+
+CN1=$(grep -A 1 'cn1:' interfold.config.yaml | grep 'address:' | sed "s/.*address: *['\"]//;s/['\"].*//")
+CN2=$(grep -A 1 'cn2:' interfold.config.yaml | grep 'address:' | sed "s/.*address: *['\"]//;s/['\"].*//")
+CN3=$(grep -A 1 'cn3:' interfold.config.yaml | grep 'address:' | sed "s/.*address: *['\"]//;s/['\"].*//")
+CN4=$(grep -A 1 'cn4:' interfold.config.yaml | grep 'address:' | sed "s/.*address: *['\"]//;s/['\"].*//")
+CN5=$(grep -A 1 'cn5:' interfold.config.yaml | grep 'address:' | sed "s/.*address: *['\"]//;s/['\"].*//")
+
+echo "Starting ciphernodes (post-deploy config)..."
+interfold nodes up -v &
+SWARM_PID=$!
+
+# `cleanup` above only pkills `interfold start` (the child nodes), not this supervisor, and
+# `nodes up` keeps running even when every node under it has exited. Left behind it holds
+# 127.0.0.1:13415 and the next run bails with "Swarm is already running!".
+cleanup_swarm() {
+  kill -TERM "$SWARM_PID" 2>/dev/null || true
+}
+trap cleanup_swarm EXIT
+
+# A node reports `Started` as soon as its process is spawned, which is earlier than the point where
+# it is usable, so a single sample can accept one that is about to die. Require the count to hold
+# across consecutive samples. Match the STATUS column with awk rather than grepping the whole line:
+# node names come from the config, so a name like `not-Started-yet` would pass a substring match.
+# Five nodes, matching the five CN addresses registered below.
+EXPECTED_NODES=5
+REQUIRED_STABLE_SAMPLES=3
+STABLE_SAMPLES=0
+STARTED_NODES=0
+
+for _ in $(seq 1 60); do
+  # `|| true`: this is a poll, so a failing `nodes ps` has to cost a sample rather than abort the
+  # script through `set -e`. Captured first so `set -o pipefail` cannot do the same via the pipe.
+  PS_OUTPUT=$(interfold nodes ps 2>/dev/null || true)
+  STARTED_NODES=$(printf '%s\n' "$PS_OUTPUT" | awk 'NR > 1 && $2 == "Started" { c++ } END { print c + 0 }')
+  if [[ "$STARTED_NODES" -eq "$EXPECTED_NODES" ]]; then
+    STABLE_SAMPLES=$((STABLE_SAMPLES + 1))
+  else
+    STABLE_SAMPLES=0
+  fi
+  if [[ "$STABLE_SAMPLES" -ge "$REQUIRED_STABLE_SAMPLES" ]]; then
+    break
+  fi
+  sleep 1
+done
+
+if [[ "$STABLE_SAMPLES" -lt "$REQUIRED_STABLE_SAMPLES" ]]; then
+  echo "ERROR: only ${STARTED_NODES}/${EXPECTED_NODES} ciphernodes stayed up. Current status:" >&2
+  interfold nodes ps >&2 || true
+  echo "See the node output above for the cause. If it mentions the" >&2
+  echo "'test-only-skip-proof-aggregation' Cargo feature, the installed interfold binary cannot" >&2
+  echo "honour SKIP_PROOF_AGGREGATION:" >&2
+  if template_monorepo_build_available; then
+    echo "  - re-run 'pnpm dev:setup' to reinstall the CLI from ${INTERFOLD_REPO_ROOT}" >&2
+  else
+    echo "  - this is a standalone template, so 'pnpm dev:setup' cannot fix it. On Linux x86_64," >&2
+    echo "    install the CLI from the interfold-test-only-skip-proof-aggregation-linux-x86_64.tar.gz" >&2
+    echo "    release archive. Otherwise install the CLI from an interfold checkout with" >&2
+    echo "    '--features test-only-skip-proof-aggregation', or unset the" >&2
+    echo "    E3_NODES__CN*__SKIP_PROOF_AGGREGATION exports and run with proof aggregation on." >&2
+  fi
+  exit 1
+fi
+
+pnpm hardhat ciphernode:admin-add --ciphernode-address $CN1 --network localhost
+pnpm hardhat ciphernode:admin-add --ciphernode-address $CN2 --network localhost
+pnpm hardhat ciphernode:admin-add --ciphernode-address $CN3 --network localhost
+pnpm hardhat ciphernode:admin-add --ciphernode-address $CN4 --network localhost
+pnpm hardhat ciphernode:admin-add --ciphernode-address $CN5 --network localhost
+
+touch $SIGNAL_FILE
+
+wait

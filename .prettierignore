@@ -32,6 +32,7 @@ Cargo.lock
 # generated files
 deployed_contracts.json
 *.last-run.json
+examples/auction-e2e/contracts/verifiers/AuctionVerifier.sol
 
 # test results
 test-results/

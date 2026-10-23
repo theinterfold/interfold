@@ -11,6 +11,8 @@ packages:
   - packages/interfold-node
   - templates/default
   - templates/default/client
+  - examples/auction-e2e
+  - examples/auction-e2e/client
 linkWorkspacePackages: true
 overrides:
   '@nomicfoundation/hardhat-keystore': 3.0.3
