@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import type { Address } from 'viem'
-import type { SubmittedBid } from '@shared/selection'
+import type { SubmittedBid } from '@interfold/auction'
 import { AuctionProgram__factory } from '@contract-types/factories/contracts/AuctionProgram__factory'
 import { MerkleAllowlistGate__factory } from '@contract-types/factories/contracts/gates/MerkleAllowlistGate__factory'
 import { getContractAddresses } from './env-config'

@@ -6,7 +6,7 @@
 
 import React, { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { AUCTION_TYPE_DESCRIPTIONS, AUCTION_TYPE_LABELS, MAX_BIDDERS_BY_TYPE, isRatioType } from '@shared/layout'
+import { AUCTION_TYPE_DESCRIPTIONS, AUCTION_TYPE_LABELS, MAX_BIDDERS_BY_TYPE, isRatioType } from '@interfold/auction'
 import { useAuction } from '@/hooks/useAuctions'
 import { useChainTime } from '@/hooks/useChainTime'
 import { useCommitteeKey } from '@/hooks/useCommitteeKey'

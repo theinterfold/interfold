@@ -4,7 +4,7 @@
 # imports (the image does not rebuild them: the SDK build needs the circuit toolchain):
 #
 #   pnpm install && pnpm evm:build && pnpm wasm:build && pnpm sdk:build
-#   (cd examples/auction-e2e && pnpm compile)
+#   (cd examples/auction-e2e && pnpm compile && pnpm build:sdk)   # build:sdk writes sdk/dist, which the server imports
 #   docker build -f examples/auction-e2e/server/Dockerfile -t auction-server .
 #
 # The ignore file next to this Dockerfile keeps secrets and build output out of the image.

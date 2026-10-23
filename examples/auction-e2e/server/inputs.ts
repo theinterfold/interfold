@@ -6,8 +6,7 @@
 
 import { computeCiphertextCommitment } from '@interfold/sdk'
 import { bytesToHex, hexToBytes, zeroAddress, type Hex } from 'viem'
-import { type AuctionType, auctionConfigInput, PRESET } from '../shared/layout'
-import type { SubmittedBid } from '../shared/selection'
+import { type AuctionType, auctionConfigInput, PRESET, type SubmittedBid } from '@interfold/auction'
 
 /** The zero commitment of the configuration input. */
 const ZERO_COMMITMENT = `0x${'00'.repeat(32)}`

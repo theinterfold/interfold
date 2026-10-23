@@ -13,6 +13,7 @@ packages:
   - templates/default/client
   - examples/auction-e2e
   - examples/auction-e2e/client
+  - examples/auction-e2e/sdk
 linkWorkspacePackages: true
 overrides:
   '@nomicfoundation/hardhat-keystore': 3.0.3

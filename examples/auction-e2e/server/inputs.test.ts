@@ -6,8 +6,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { zeroAddress, type Hex } from 'viem'
-import { AuctionType, auctionConfigInput } from '../shared/layout'
-import type { SubmittedBid } from '../shared/selection'
+import { AuctionType, auctionConfigInput, type SubmittedBid } from '@interfold/auction'
 import { auctionInputs } from './inputs'
 
 const alice = '0x1111111111111111111111111111111111111111'

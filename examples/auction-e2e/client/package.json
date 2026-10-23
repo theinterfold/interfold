@@ -16,10 +16,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@aztec/bb.js": "5.2.0",
+    "@aztec-foundation/bb.js": "6.0.0",
+    "@interfold/auction": "workspace:*",
     "@interfold/contracts": "workspace:*",
     "@interfold/sdk": "workspace:*",
-    "@noir-lang/noir_js": "1.0.0-beta.26",
+    "@noir-lang/noir_js": "1.0.0-rc.3",
     "@phosphor-icons/react": "^2.1.4",
     "@tanstack/react-query": "^5.74.3",
     "connectkit": "^1.9.0",

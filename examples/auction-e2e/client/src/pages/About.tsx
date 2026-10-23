@@ -17,7 +17,7 @@ import {
   MAX_BIDS_PER_BIDDER,
   MIN_BIDDERS,
   PLAINTEXT_MODULUS,
-} from '@shared/layout'
+} from '@interfold/auction'
 import { GITHUB_URL } from '@/components/Footer'
 
 const HIDDEN_REVEALED: Record<AuctionType, { hidden: string[]; revealed: string[] }> = {

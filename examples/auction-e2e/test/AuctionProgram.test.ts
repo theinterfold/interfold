@@ -7,8 +7,16 @@
 import { expect } from 'chai'
 import hre from 'hardhat'
 import { type Hex, hashTypedData, keccak256, zeroAddress } from 'viem'
-import { allowlistProof, encodeAllowlistConfig } from '../shared/allowlist'
-import { AuctionType, bidInputsHash, bidTypedData, encodeAuctionParams, encodeBidInput, evenPrices } from '../shared/layout'
+import {
+  AuctionType,
+  allowlistProof,
+  bidInputsHash,
+  bidTypedData,
+  encodeAllowlistConfig,
+  encodeAuctionParams,
+  encodeBidInput,
+  evenPrices,
+} from '@interfold/auction'
 import { AuctionProgram__factory } from '../types/factories/contracts'
 
 const PROOF = '0x01'
@@ -101,7 +109,7 @@ describe('AuctionProgram bids', () => {
 
   it('matches the shared leaf vector', async () => {
     const { program } = await setup()
-    // The same vector `program/src/lib.rs` and `shared/selection.ts` test.
+    // The same vector `program/src/lib.rs` and `sdk/src/selection.ts` test.
     expect(await program.inputLeaf(filled(0x11), filled(0x22), '0x3333333333333333333333333333333333333333', 2)).to.equal(
       0x0b8ba63e8917dfb3f66cfcc1b0be5d3a8f8613ba8092d690a43b84daec02b94an,
     )

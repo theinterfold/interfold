@@ -6,7 +6,7 @@
 
 import React, { useEffect, useState } from 'react'
 import { CheckCircleIcon, CircleIcon, WarningCircleIcon } from '@phosphor-icons/react'
-import { MAX_BIDDERS_BY_TYPE, MAX_BIDS_PER_BIDDER, MIN_BIDDERS, rolesFor } from '@shared/layout'
+import { MAX_BIDDERS_BY_TYPE, MAX_BIDS_PER_BIDDER, MIN_BIDDERS, rolesFor } from '@interfold/auction'
 import { type StepRow, useBid } from '@/hooks/useBid'
 import { type UseAllowlist, gateKind as gateKindOf } from '@/hooks/useAllowlist'
 import type { Wallet } from '@/hooks/useWallet'

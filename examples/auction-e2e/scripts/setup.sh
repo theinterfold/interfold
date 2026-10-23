@@ -24,6 +24,9 @@ build_interfold_circuits_at_setup
 echo "Compiling the record and fold circuits..."
 ./scripts/compile_circuits.sh
 
+echo "Building @interfold/auction (it ships the compiled bid circuits)..."
+pnpm build:sdk
+
 echo "Compiling contracts..."
 pnpm compile
 

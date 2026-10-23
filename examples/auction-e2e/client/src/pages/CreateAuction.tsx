@@ -12,12 +12,13 @@ import {
   AUCTION_TYPE_DESCRIPTIONS,
   AUCTION_TYPE_LABELS,
   AuctionType,
+  MAX_ALLOWLIST_MEMBERS,
   MAX_BIDDERS_BY_TYPE,
   MIN_BIDDERS,
+  encodeAllowlistConfig,
   isRatioType,
   rolesFor,
-} from '@shared/layout'
-import { MAX_ALLOWLIST_MEMBERS, encodeAllowlistConfig } from '@shared/allowlist'
+} from '@interfold/auction'
 import { STEP_LABELS, useCreateAuction } from '@/hooks/useCreateAuction'
 import { useWallet } from '@/hooks/useWallet'
 import { parseAllowlist } from '@/utils/allowlist-input'

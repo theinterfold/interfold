@@ -10,7 +10,7 @@
  * The leaf of a member is `keccak256(address)` over the 20 address bytes. An inner node is the
  * `keccak256` of its two children, the smaller one first. A level with an odd number of nodes
  * promotes its last node unchanged. The members are strictly increasing addresses, 1 to 256 of them.
- * The contract builds the root on chain from the same list; `tests/allowlist.test.ts` and the Solidity
+ * The contract builds the root on chain from the same list; `test/MerkleAllowlistGate.test.ts` and the Solidity
  * gate check one shared test vector.
  */
 import { type Address, type Hex, encodeAbiParameters, getAddress, isAddress, keccak256, parseAbiParameters } from 'viem'

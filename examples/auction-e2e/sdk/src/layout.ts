@@ -56,7 +56,7 @@
  * and every update of it, adds one run of `rolesFor(type).length` consecutive leaves in role order.
  * A leaf binds the ciphertext bytes, the commitment the bid proof checked, the bidder and the bid
  * version. The program picks the latest version of each bidder whose bytes open their commitments
- * (`shared/selection.ts`); the bidder position in this file is the order of the picked runs.
+ * (`selection.ts`); the bidder position in this file is the order of the picked runs.
  */
 import {
   type AbiParameter,

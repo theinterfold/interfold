@@ -6,7 +6,7 @@
 
 import { zeroAddress } from 'viem'
 import { E3Stage, FailureReason } from '@interfold/sdk'
-import { type AuctionType, isAuctionType, type PriceList, readPriceList } from '@shared/layout'
+import { type AuctionType, isAuctionType, type PriceList, readPriceList } from '@interfold/auction'
 import { AuctionProgram__factory } from '@contract-types/factories/contracts/AuctionProgram__factory'
 import { getContractAddresses } from './env-config'
 import { scanLogs } from './logs'

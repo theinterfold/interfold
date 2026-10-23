@@ -161,9 +161,9 @@ If `gate` is the zero address, anyone can bid and `gateConfig` must be empty
 the Merkle root on chain, stores it and emits `AllowlistSet(program, e3Id, root, members)`. The leaf
 of a member is `keccak256(member)`. The inner nodes use the sorted-pair `keccak256`, and an odd node
 moves up unchanged. The `gateProof` of a bidder is `abi.encode(bytes32[] path)`.
-`shared/allowlist.ts` (`allowlistRoot`, `allowlistProof`) builds the same root and path. The web app
-sorts and deduplicates the addresses that the creator enters. It builds the proof of a bidder from
-the `AllowlistSet` event. The web app finds the gate through `VITE_ALLOWLIST_GATE_ADDRESS`.
+`sdk/src/allowlist.ts` (`allowlistRoot`, `allowlistProof`) builds the same root and path. The web
+app sorts and deduplicates the addresses that the creator enters. It builds the proof of a bidder
+from the `AllowlistSet` event. The web app finds the gate through `VITE_ALLOWLIST_GATE_ADDRESS`.
 
 ### The program: which bids count
 
@@ -183,8 +183,8 @@ policy of the program (`policy()` in `program/src/lib.rs`) has two parts:
   commitment. A bidder with no such run is dropped whole. A run with malformed metadata is never
   selected. The bidder position in the computation is the order of the selected runs by leaf index.
 
-`shared/selection.ts` (`selectBids`) is the same rule in TypeScript. The server, the web app and the
-integration test use it. The server starts no computation with fewer than 2 selected bidders.
+`sdk/src/selection.ts` (`selectBids`) is the same rule in TypeScript. The server, the web app and
+the integration test use it. The server starts no computation with fewer than 2 selected bidders.
 
 ### The program: region types
 
@@ -209,8 +209,8 @@ region of the winner, at the highest bid `h`.
 - At a level above `s`, every region is zero.
 
 All other slots hold uniform random values. The result does not show the other bids or a tie. For a
-second-price auction it also does not show the winning bid. `shared/layout.ts` decodes the result. A
-set slot reads as zero by error with probability `1 / 257` for each copy.
+second-price auction it also does not show the winning bid. `sdk/src/layout.ts` decodes the result.
+A set slot reads as zero by error with probability `1 / 257` for each copy.
 
 ### The ratio-lane types
 
@@ -331,7 +331,7 @@ The limit of bidders is `maxBidders(type)`: 4 for the region types and 8 for the
 
 ## Prerequisites
 
-- Rust, Node, pnpm, `nargo` 1.0.0-beta.26, `bb` 5.2.0 and Foundry (`anvil`).
+- Rust, Node, pnpm, `nargo` 1.0.0-rc.3, `bb` 6.0.0 and Foundry (`anvil`).
 - An `interfold` CLI built from this checkout. `pnpm dev:setup` installs it.
 
 Proof aggregation stays on everywhere, tests included. The l-BFV key aggregator has no skip path.
@@ -368,6 +368,13 @@ Run these commands in this order.
    pnpm install
    pnpm dev:setup
    ```
+
+   `pnpm dev:setup` also builds `@interfold/auction` (`sdk/`, `pnpm build:sdk`). The client, the
+   server and the tests import it from `sdk/dist`, so run `pnpm build:sdk` again after you change
+   `sdk/src` or recompile the circuits. The package copies the compiled bid circuits and
+   `vk_anchor.json` from `circuits/` into `sdk/circuits`. `@interfold/auction` has the layout, the
+   selection and the allowlist; `@interfold/auction/prover` has `BidProver` and loads
+   `@aztec-foundation/bb.js`.
 
 4. Start the stack: anvil, the ciphernodes, the program server, the coordination server and the web
    app:
@@ -450,7 +457,7 @@ computes nothing, and the E3 fails at its compute deadline.
 cargo test --release -p e3-user-program   # the FHE program and its input policy, all four types, against a local l-BFV key
 (cd circuits/bid && nargo test)           # the bid validity rules (the shared library)
 hardhat test                              # the contract and the allowlist gate (with a mock bid verifier)
-pnpm test:server                          # the server and the shared code
+pnpm test:server                          # the server and the @interfold/auction package
 pnpm test:integration                     # DKG -> 11 bid proofs -> FHE -> threshold decryption, all four types
 ```
 
@@ -485,8 +492,8 @@ valid version wins. An earlier version counts if the latest does not open. A bid
 opens is dropped whole. A leaf vector is shared with the Solidity `inputLeaf`. `hardhat test` covers
 the contract (bids, updates, relayed bids, the 4-role verifier, the allowlist and the gate
 configuration) and the Merkle root of the allowlist gate on chain and in TypeScript.
-`pnpm test:server` runs the unit tests of the server and of `shared/`, including the input assembly
-for 3 and 4 roles, the relay and the bid selection.
+`pnpm test:server` runs the unit tests of the server and of `sdk/`, including the input assembly for
+3 and 4 roles, the relay and the bid selection.
 
 ## Deploy to Sepolia
 
@@ -647,7 +654,7 @@ The server does this:
   configuration and each ciphertext of each bid, with its commitment, its bidder and its bid version
   (`input_commitments`, `input_slots`, `input_parents`). The input root covers all of them. The
   program then counts, for each bidder, its latest bid whose ciphertexts open their commitments. The
-  server applies the same rule (`shared/selection.ts`) and does not start a run with fewer than two
+  server applies the same rule (`sdk/src/selection.ts`) and does not start a run with fewer than two
   such bidders.
 - `POST /relay` with `{ "e3Id": "<decimal>", "data": "0x..." }` sends `publishInput(e3Id, data)`
   from the relayer account, after a simulation, and answers `{ "txHash": "0x..." }` once it is
@@ -675,7 +682,8 @@ circuits, `types/` and the built SDK and wasm package, and none of them is commi
 prepared host and upload the output.
 
 1. Prepare the host. Run `pnpm dev:setup` and `pnpm compile` in this directory, and build the
-   workspace packages the client imports (`@interfold/sdk` and `@interfold/contracts`).
+   workspace packages the client imports (`@interfold/sdk`, `@interfold/contracts` and
+   `@interfold/auction`).
 2. Link the client to a Vercel project: `cd client && vercel link`.
 3. Pull the project settings: `vercel pull --yes --environment=production`. Set the `VITE_*`
    variables of `client/.env.example` on the project first. Every value is public in the bundle: put
@@ -722,10 +730,11 @@ older figures were for a proof of each ciphertext, and they do not apply.
 
 | Path                            | What                                                                                                             |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `shared/layout.ts`              | the slot encoding, the roles and limits of each type, the tie priority and the result decoders                   |
-| `shared/prover.ts`              | `BidProver`: encrypt, the encryption proofs, the pair, masks and bid proofs                                      |
-| `shared/selection.ts`           | `selectBids`: the TypeScript form of the input policy (which bids count)                                         |
-| `shared/allowlist.ts`           | `allowlistRoot` and `allowlistProof`: the allowlist tree of `MerkleAllowlistGate`                                |
+| `sdk/`                          | `@interfold/auction` (private): the four files below. `pnpm build:sdk` builds `sdk/dist` and `sdk/circuits`      |
+| `sdk/src/layout.ts`             | the slot encoding, the roles and limits of each type, the tie priority and the result decoders                   |
+| `sdk/src/prover.ts`             | `BidProver`: encrypt, the encryption proofs, the pair, masks and bid proofs                                      |
+| `sdk/src/selection.ts`          | `selectBids`: the TypeScript form of the input policy (which bids count)                                         |
+| `sdk/src/allowlist.ts`          | `allowlistRoot` and `allowlistProof`: the allowlist tree of `MerkleAllowlistGate`                                |
 | `circuits/bid/`                 | `auction_bid`: the library with the bid rules shared by the four circuits, and the tables of the honest bids     |
 | `circuits/pair/`, `masks/`      | `auction_bid_pair` (roles 0 and 1, the bid) and `auction_bid_masks` (roles 2 and 3, the pair mask): recursive    |
 | `circuits/bid3/`, `bid4/`       | `auction_bid3` and `auction_bid4`: the proofs the contract verifies; `scripts/compile_circuits.sh` builds all    |
@@ -749,10 +758,10 @@ older figures were for a proof of each ciphertext, and they do not apply.
 
 - The parameters are insecure. They give no security.
 - An auction has 2 to 4 bidders (region types) or 2 to 8 bidders (ratio-lane types).
-  `maxBidders(type)` and `MAX_BIDDERS_BY_TYPE` in `shared/layout.ts` set the limit. The region types
-  are limited by the slot layout: `floor(8 / n)` copies of `n` regions of 16 slots. The ratio-lane
-  types are limited by the weights `2^k`, which must add up to less than `t = 257`, and by
-  `n (n - 1) < t` (56 for 8 bidders).
+  `maxBidders(type)` and `MAX_BIDDERS_BY_TYPE` in `sdk/src/layout.ts` set the limit. The region
+  types are limited by the slot layout: `floor(8 / n)` copies of `n` regions of 16 slots. The
+  ratio-lane types are limited by the weights `2^k`, which must add up to less than `t = 257`, and
+  by `n (n - 1) < t` (56 for 8 bidders).
 - An auction has 2 to 16 price steps, chosen by its creator. The slot layout always has 16 levels (0
   to 15). The steps `levels` to 15 stay empty, because every thermometer is 0 there. Thus the price
   never decodes to a step that the auction does not have.

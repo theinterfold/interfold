@@ -6,7 +6,7 @@
 
 import { expect } from 'chai'
 import hre from 'hardhat'
-import { allowlistProof, allowlistRoot, encodeAllowlistConfig, sortedAllowlist } from '../shared/allowlist'
+import { allowlistProof, allowlistRoot, encodeAllowlistConfig, sortedAllowlist } from '@interfold/auction'
 
 // The shared test vector: five members, so the odd node is promoted at two levels. The root is the
 // one the TypeScript mirror and the Solidity gate must both produce.

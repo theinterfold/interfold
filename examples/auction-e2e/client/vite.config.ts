@@ -30,7 +30,7 @@ export default defineConfig({
       '@noir-lang/noirc_abi',
       '@noir-lang/acvm_js',
       '@noir-lang/noir_js',
-      '@aztec/bb.js', // Pre-bundling breaks worker URLs (thread.worker.js, main.worker.js)
+      '@aztec-foundation/bb.js', // Pre-bundling breaks worker URLs (thread.worker.js, main.worker.js)
     ],
   },
   build: {
@@ -42,7 +42,6 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      '@shared': path.resolve(__dirname, '../shared'),
       '@contract-types': path.resolve(__dirname, '../types'),
     },
   },

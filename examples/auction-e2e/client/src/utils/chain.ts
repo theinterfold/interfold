@@ -7,7 +7,7 @@
 import { createPublicClient, http, type Chain, type PublicClient, type WalletClient } from 'viem'
 import { anvil, sepolia } from 'viem/chains'
 import { InterfoldSDK } from '@interfold/sdk'
-import { PRESET } from '@shared/layout'
+import { PRESET } from '@interfold/auction'
 import { CHAIN_ID, ENABLE_TEST_TOKEN_MINT_FLAG, FAUCET_ADDRESS, RPC_URL, getContractAddresses } from './env-config'
 
 /** The chain the app runs on: `VITE_CHAIN_ID`, anvil (31337) when unset. Sepolia (11155111) is the other supported one. */

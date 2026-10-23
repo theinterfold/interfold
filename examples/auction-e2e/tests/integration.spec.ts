@@ -25,13 +25,15 @@ import { publishBidInput } from './input'
 import { AuctionProgram__factory } from '../types/factories/contracts'
 import { MerkleAllowlistGate__factory } from '../types/factories/contracts/gates'
 import { AuctionVerifier3__factory } from '../types/factories/contracts/verifiers/AuctionVerifier3.sol'
-import { allowlistProof, allowlistRoot, encodeAllowlistConfig } from '../shared/allowlist'
 import {
   AuctionType,
   type BidInput,
+  allowlistProof,
+  allowlistRoot,
   bidInputsHash,
   bidTypedData,
   decodeAuction,
+  encodeAllowlistConfig,
   encodeAuctionParams,
   encodeBidInput,
   evenPrices,
@@ -41,12 +43,14 @@ import {
   LEVELS,
   MAX_BIDDERS_BY_TYPE,
   MAX_BIDS_PER_BIDDER,
+  PRESET,
   readPriceList,
   Role,
   rolesFor,
-} from '../shared/layout'
-import { BidProver, PARAM_SET, PRESET, type PreparedBid, toHex } from '../shared/prover'
-import { selectBids, type SubmittedBid } from '../shared/selection'
+  selectBids,
+  type SubmittedBid,
+} from '@interfold/auction'
+import { BidProver, PARAM_SET, type PreparedBid, toHex } from '@interfold/auction/prover'
 import { advanceAnvilTime, sleep } from './anvil-helpers'
 
 const registryReadAbi = parseAbi(['function sortitionSeed(uint256 e3Id) view returns (bool ready, uint256 seed)'])
@@ -286,7 +290,7 @@ describe('Sealed-bid auction', () => {
         const stored = await publicClient.readContract({ ...program, functionName: 'auctionPrices', args: [created.args.e3Id] })
         expect(stored).toEqual(padded)
         expect(readPriceList(auction.prices.length, stored)).toEqual(auction.prices)
-        // The contract and `shared/layout.ts` keep their own tables of the roles and the limit of a type.
+        // The contract and `sdk/src/layout.ts` keep their own tables of the roles and the limit of a type.
         expect(await publicClient.readContract({ ...program, functionName: 'roleCount', args: [auction.type] })).toBe(
           rolesFor(auction.type).length,
         )
@@ -294,7 +298,7 @@ describe('Sealed-bid auction', () => {
           MAX_BIDDERS_BY_TYPE[auction.type],
         )
         if (auction.allowlist) {
-          // The gate built its root on chain from the list; `shared/allowlist.ts` builds the same root.
+          // The gate built its root on chain from the list; `sdk/src/allowlist.ts` builds the same root.
           const [set] = parseEventLogs({ abi: MerkleAllowlistGate__factory.abi, logs: receipt.logs, eventName: 'AllowlistSet' })
           expect(set.args).toMatchObject({
             program: contracts.e3Program,

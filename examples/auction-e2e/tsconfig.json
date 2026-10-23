@@ -11,15 +11,6 @@
     "declaration": true,
     "declarationMap": true
   },
-  "include": [
-    "hardhat.config.ts",
-    "scripts/**/*.ts",
-    "test/**/*.ts",
-    "tests/**/*.ts",
-    "types/**/*.ts",
-    "server/**/*.ts",
-    "shared/**/*.ts",
-    "deploy/**/*.ts"
-  ],
+  "include": ["hardhat.config.ts", "scripts/**/*.ts", "test/**/*.ts", "tests/**/*.ts", "types/**/*.ts", "server/**/*.ts", "deploy/**/*.ts"],
   "exclude": ["node_modules", "dist", "types"]
 }

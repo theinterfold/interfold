@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import React from 'react'
-import { evenPrices, LEVELS, MIN_LEVELS, priceListError, type PriceList } from '@shared/layout'
+import { evenPrices, LEVELS, MIN_LEVELS, priceListError, type PriceList } from '@interfold/auction'
 
 export type PriceMode = 'even' | 'custom'
 

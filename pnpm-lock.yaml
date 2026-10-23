@@ -119,6 +119,9 @@ importers:
       '@aztec/bb.js':
         specifier: 5.2.0
         version: 5.2.0
+      '@interfold/auction':
+        specifier: workspace:*
+        version: link:sdk
       '@interfold/contracts':
         specifier: workspace:*
         version: link:../../packages/interfold-contracts
@@ -252,6 +255,9 @@ importers:
       '@aztec/bb.js':
         specifier: 5.2.0
         version: 5.2.0
+      '@interfold/auction':
+        specifier: workspace:*
+        version: link:../sdk
       '@interfold/contracts':
         specifier: workspace:*
         version: link:../../../packages/interfold-contracts
@@ -325,6 +331,37 @@ importers:
       wasm-pack:
         specifier: ^0.15.0
         version: 0.15.0
+
+  examples/auction-e2e/sdk:
+    dependencies:
+      '@aztec/bb.js':
+        specifier: 5.2.0
+        version: 5.2.0
+      '@interfold/sdk':
+        specifier: workspace:*
+        version: link:../../../packages/interfold-sdk
+      '@noir-lang/noir_js':
+        specifier: 1.0.0-beta.26
+        version: 1.0.0-beta.26
+      viem:
+        specifier: 2.38.6
+        version: 2.38.6(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.4.3)
+    devDependencies:
+      '@interfold/config':
+        specifier: workspace:*
+        version: link:../../../packages/interfold-config
+      '@interfold/user-data-encryption-prover':
+        specifier: workspace:*
+        version: link:../../../packages/user-data-encryption-prover
+      tsup:
+        specifier: 8.5.0
+        version: 8.5.0(@microsoft/api-extractor@7.58.12(@types/node@22.7.5))(@swc/core@1.15.46)(jiti@1.21.7)(postcss@8.5.25)(tsx@4.20.6)(typescript@5.8.3)(yaml@2.8.2)
+      typescript:
+        specifier: 5.8.3
+        version: 5.8.3
+      vitest:
+        specifier: ^1.6.1
+        version: 1.6.1(@types/node@22.7.5)
 
   packages/interfold-config:
     dependencies:

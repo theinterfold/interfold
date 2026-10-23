@@ -7,8 +7,18 @@
 import React, { useEffect, useState } from 'react'
 import { bytesToHex, hexToBytes, type Address, type Hex } from 'viem'
 import { computeCiphertextCommitment } from '@interfold/sdk'
-import { type AuctionResult, AuctionType, type LaneResult, MIN_BIDDERS, PRESET, type RegionResult, decodeAuction } from '@shared/layout'
-import { type SelectedBid, type SubmittedBid, selectBids } from '@shared/selection'
+import {
+  type AuctionResult,
+  AuctionType,
+  type LaneResult,
+  MIN_BIDDERS,
+  PRESET,
+  type RegionResult,
+  type SelectedBid,
+  type SubmittedBid,
+  decodeAuction,
+  selectBids,
+} from '@interfold/auction'
 import { type AuctionState, formatPrice } from '@/utils/auction'
 import { readSubmittedBids } from '@/utils/auction-events'
 import type { StoredVersion } from '@/utils/bid-storage'

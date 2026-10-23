@@ -6,7 +6,7 @@
 
 import type { Account, WalletClient } from 'viem'
 import { AuctionProgram__factory } from '../types/factories/contracts'
-import { type BidInput, encodeBidInput } from '../shared/layout'
+import { type BidInput, encodeBidInput } from '@interfold/auction'
 
 /**
  * Publish a bid to the program from the wallet's account.

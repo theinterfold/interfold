@@ -7,9 +7,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useWalletClient } from 'wagmi'
 import { type Address } from 'viem'
-import { type AuctionType, MAX_BIDS_PER_BIDDER, ROLE_LABELS, bidInputsHash, bidTypedData, encodeBidInput, rolesFor } from '@shared/layout'
-import { allowlistProof } from '@shared/allowlist'
-import { type BidStep, BidProver } from '@shared/prover'
+import {
+  type AuctionType,
+  MAX_BIDS_PER_BIDDER,
+  ROLE_LABELS,
+  allowlistProof,
+  bidInputsHash,
+  bidTypedData,
+  encodeBidInput,
+  rolesFor,
+} from '@interfold/auction'
+import { type BidStep, BidProver } from '@interfold/auction/prover'
 import { AuctionProgram__factory } from '@contract-types/factories/contracts/AuctionProgram__factory'
 import { type StoredVersion, loadVersions, saveVersion } from '@/utils/bid-storage'
 import { chain, publicClient } from '@/utils/chain'

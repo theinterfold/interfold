@@ -6,7 +6,7 @@
 
 import React from 'react'
 import { Link } from 'react-router-dom'
-import { AUCTION_TYPE_LABELS, MAX_BIDDERS_BY_TYPE } from '@shared/layout'
+import { AUCTION_TYPE_LABELS, MAX_BIDDERS_BY_TYPE } from '@interfold/auction'
 import { type AuctionState, phaseOf, timeLeftLabel } from '@/utils/auction'
 import { shorten } from '@/utils/error-formatting'
 import StatusBadge from './StatusBadge'
