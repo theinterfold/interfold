@@ -1,0 +1,8 @@
+[package]
+name = "bid_lib"
+type = "lib"
+version = "0.1.0"
+authors = ["Gnosis Guild / Interfold"]
+
+[dependencies]
+interfold_lib = { path = "../../../../../circuits/lib" }

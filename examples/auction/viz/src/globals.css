@@ -1,0 +1,256 @@
+@import './editorial.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  min-height: 100vh;
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 16px;
+}
+
+body {
+  margin: 0;
+  overflow-x: hidden;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--f-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: var(--accent);
+  color: #fff;
+}
+
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='range'] {
+  accent-color: var(--accent);
+  width: 100%;
+}
+
+/* ---------- Tabs ---------- */
+.tabs {
+  display: flex;
+  gap: 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--ink);
+}
+.tab {
+  appearance: none;
+  flex: none;
+  padding: 11px 16px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  font-family: var(--f-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  border-radius: 0;
+  margin-bottom: -1px;
+}
+.tab:hover {
+  color: var(--ink);
+}
+.tab[aria-selected='true'] {
+  border-color: var(--ink);
+  background: var(--card);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: 0 1px 0 0 var(--card);
+}
+
+/* ---------- Tables ---------- */
+.tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.tbl th {
+  padding: 8px 12px;
+  text-align: left;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--ink-soft);
+  border-bottom: 1px solid var(--ink);
+  white-space: nowrap;
+}
+.tbl td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+.tbl td.num,
+.tbl th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.tbl tr.current td {
+  background: var(--accent-soft);
+}
+.tbl tbody tr:hover td {
+  background: var(--accent-soft);
+}
+
+/* ---------- Vector grid ---------- */
+.vgrid {
+  display: grid;
+  gap: 2px;
+  width: max-content;
+  align-items: center;
+}
+.vgrid .cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 22px;
+  border: 1px solid var(--rule-strong);
+  background: var(--card);
+  font-family: var(--f-mono);
+  font-size: 10px;
+  color: var(--ink-2);
+}
+.vgrid .cell.zero {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.vgrid .cell.rand {
+  background: repeating-linear-gradient(45deg, var(--ink-soft) 0 1px, transparent 1px 4px);
+  background-color: var(--paper-2);
+}
+.vgrid .cell.small {
+  background: var(--paper-2);
+}
+.vgrid .cell.result {
+  background: var(--warm);
+  border-color: var(--warm);
+  color: var(--card);
+}
+.vgrid .axis {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  text-align: center;
+  color: var(--ink-soft);
+}
+.vgrid .row-name {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  padding-right: 12px;
+  background: var(--card);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.vgrid .corner {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--card);
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  padding-right: 12px;
+  white-space: nowrap;
+}
+.scroll-x {
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.legend i {
+  display: block;
+  width: 18px;
+  height: 14px;
+  border: 1px solid var(--rule-strong);
+  background: var(--card);
+}
+.legend i.zero {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.legend i.rand {
+  background: repeating-linear-gradient(45deg, var(--ink-soft) 0 1px, transparent 1px 4px);
+  background-color: var(--paper-2);
+}
+.legend i.small {
+  background: var(--paper-2);
+}
+.legend i.result {
+  background: var(--warm);
+  border-color: var(--warm);
+}
+
+/* ---------- Trace pin ---------- */
+.pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--f-mono);
+  font-size: 11px;
+}
+details > summary {
+  cursor: pointer;
+  list-style: none;
+}
+details > summary::-webkit-details-marker {
+  display: none;
+}
+details > summary::before {
+  content: '▸';
+  display: inline-block;
+  width: 16px;
+  color: var(--ink-soft);
+}
+details[open] > summary::before {
+  content: '▾';
+}

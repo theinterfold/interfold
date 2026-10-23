@@ -1,0 +1,8 @@
+[package]
+name = "bid_table"
+type = "bin"
+version = "0.1.0"
+authors = ["Gnosis Guild / Interfold"]
+
+[dependencies]
+bid_lib = { path = "../lib" }

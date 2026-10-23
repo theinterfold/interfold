@@ -1,0 +1,18 @@
+[workspace]
+
+[package]
+name = "auction-designs"
+version = "0.1.0"
+edition = "2021"
+license = "LGPL-3.0-only"
+description = "Sealed-bid auction designs over l-BFV encrypted bids"
+publish = false
+
+[dependencies]
+# The revision that the l-BFV integration branch pins. `fhe::lbfv` needs no feature flag.
+fhe = { git = "https://github.com/gnosisguild/fhe.rs", rev = "b620840941ce54c139b8b3278a13e81b5a0b80a6" }
+fhe-math = { git = "https://github.com/gnosisguild/fhe.rs", rev = "b620840941ce54c139b8b3278a13e81b5a0b80a6" }
+fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", rev = "b620840941ce54c139b8b3278a13e81b5a0b80a6" }
+clap = { version = "=4.6.0", features = ["derive"] }
+rand = "=0.9.5"
+rand_chacha = "=0.9.0"
