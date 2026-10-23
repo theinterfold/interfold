@@ -4,24 +4,18 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { type AuctionType, type Role, rolesFor } from '@shared/layout'
-import type { BidSecret } from '@shared/prover'
 import { loadState, saveState } from './persistence'
 
-export interface StoredRole {
-  /** `sent`: the transaction was handed to the wallet; it may or may not be mined yet. */
-  status: 'pending' | 'sent' | 'done'
-  txHash?: `0x${string}`
-}
-
 /**
- * What a bidder keeps private for one auction: the bid level and the salt of its commitment, plus
- * how far the submission got. The chain stays the source of truth for the roles (`submittedRoles`);
- * this record lets the bidder finish with the same bid and see "your bid" after a reload. It holds one
- * entry for each role of the auction type, so a type with three roles has no entry for the fourth.
+ * One bid of this browser that the chain accepted. The level never leaves the browser unencrypted, so
+ * this record is the only place the bidder can read it again, for "your bid" and the result page.
  */
-export interface StoredBid extends BidSecret {
-  roles: Partial<Record<Role, StoredRole>>
+export interface StoredVersion {
+  /** The bid version the contract gave it: 1 for the first bid, then one more for each update. */
+  version: number
+  /** The price step that was bid. */
+  level: number
+  txHash: `0x${string}`
 }
 
 export interface BidKey {
@@ -32,29 +26,16 @@ export interface BidKey {
 }
 
 const storageKey = ({ chainId, program, e3Id, account }: BidKey) =>
-  `bid:${chainId}:${program.toLowerCase()}:${e3Id}:${account.toLowerCase()}`
+  `bids:${chainId}:${program.toLowerCase()}:${e3Id}:${account.toLowerCase()}`
 
-export function emptyRoles(type: AuctionType): Partial<Record<Role, StoredRole>> {
-  return Object.fromEntries(rolesFor(type).map((role) => [role, { status: 'pending' as const }]))
-}
+/** The versions this browser submitted for `key`, ascending. */
+export const loadVersions = (key: BidKey): StoredVersion[] => loadState<StoredVersion[]>(storageKey(key)) ?? []
 
-export const loadBid = (key: BidKey): StoredBid | null => loadState<StoredBid>(storageKey(key))
-
-export const saveBid = (key: BidKey, bid: StoredBid): void => saveState(storageKey(key), bid)
-
-/** Whether any ciphertext of this bid was sent: from then on the secret must never be replaced. */
-export const hasSentRole = (bid: StoredBid): boolean => Object.values(bid.roles).some((stored) => stored.txHash !== undefined)
-
-/**
- * Save a bid and read it back. `saveState` is best-effort, but a secret that was not stored would
- * leave a half-published bid that can never be finished, so the caller stops before sending anything.
- */
-export function saveBidChecked(key: BidKey, bid: StoredBid): void {
-  saveBid(key, bid)
-  const back = loadBid(key)
-  if (!back || back.salt !== bid.salt || back.bid !== bid.bid) {
-    throw new Error(
-      'This browser cannot store the bid secret (is localStorage disabled or full?). Nothing was sent. Fix the storage and try again.',
-    )
-  }
+/** Add an accepted bid to the list. A version that is already there is replaced. */
+export function saveVersion(key: BidKey, entry: StoredVersion): void {
+  const kept = loadVersions(key).filter(({ version }) => version !== entry.version)
+  saveState(
+    storageKey(key),
+    [...kept, entry].sort((a, b) => a.version - b.version),
+  )
 }

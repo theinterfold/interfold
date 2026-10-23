@@ -14,6 +14,7 @@ import {
   AuctionType,
   LEVELS,
   MAX_BIDDERS_BY_TYPE,
+  MAX_BIDS_PER_BIDDER,
   MIN_BIDDERS,
   PLAINTEXT_MODULUS,
 } from '@shared/layout'
@@ -47,7 +48,7 @@ const HIDDEN_REVEALED: Record<AuctionType, { hidden: string[]; revealed: string[
 const LIFECYCLE = [
   [
     'Create',
-    'Anyone requests an auction: a title, a type, the price of each bid level and how long bidding stays open. The creator pays the Interfold fee.',
+    'Anyone requests an auction: a title, a type, the number of price steps (2 to 16), the price of each step, who may bid (anyone, or the addresses on an allowlist) and how long bidding stays open. The creator pays the Interfold fee.',
   ],
   [
     'Committee key',
@@ -55,24 +56,27 @@ const LIFECYCLE = [
   ],
   [
     'Bid',
-    'A bidder picks one of 16 price levels. The browser encrypts it to the committee key, as 3 ciphertexts (4 for ratio-lane second price), proves each is well formed and the bidder publishes each on chain.',
+    'A bidder picks one of the price steps the creator set. The browser encrypts it to the committee key, as 3 ciphertexts (4 for ratio-lane second price), proves the bid is well formed and the bidder publishes it on chain in one transaction. A bidder can update the bid twice.',
   ],
-  ['Compute', 'After the window closes a program computes over the encrypted bids. It never decrypts them.'],
+  [
+    'Compute',
+    'After the window closes a program checks the published bytes of each bid against its commitments and computes over the encrypted bids that pass, using the latest valid version of each bidder. It never decrypts them.',
+  ],
   ['Decrypt', 'The committee decrypts one ciphertext, the outcome, and publishes it. The page decodes it in your browser.'],
 ] as const
 
 const PROOFS = [
   [
-    'Encryption proof',
-    'The ciphertext is a correct encryption, under the committee key, of the plaintext the bidder committed to. This is the Interfold user-data encryption proof.',
+    'Encryption proofs',
+    'One for each ciphertext. It shows that the ciphertext is a correct encryption, under the committee key, of the plaintext the bidder committed to. This is the Interfold user-data encryption proof.',
   ],
   [
-    'Bid-validity proof',
-    `The plaintext is a well-formed bid: a thermometer over ${LEVELS} levels, or a random mask. The two thermometers of one bid are tied to the same level by a hash commitment, so the contract can check they agree without learning the level. The fourth ciphertext of ratio-lane second price is a paired mask: a random mask in which each slot of a pair holds the same value as its partner slot. This keeps the program's result readable.`,
+    'Bid proof',
+    `One proof for the whole bid. It checks the encryption proofs and that the plaintexts are a well-formed bid: a thermometer over ${LEVELS} slots, or a random mask. The bid must be below the number of steps the creator chose, which is a public input of the proof, so nobody can bid above the top step. The two thermometers use the same step, because the proof holds the step once and builds both from it. The fourth ciphertext of ratio-lane second price is a paired mask: a random mask in which each slot of a pair holds the same value as its partner slot. This keeps the program's result readable. The proof is bound to the bidder address and to the committee key, so it cannot be copied from another bidder, and the contract verifies it before it accepts the bid.`,
   ],
   [
-    'Fold proof',
-    'The two proofs are folded into one. It is bound to the bidder address and to the committee key, so it cannot be copied from another bidder, and the contract verifies it before accepting the ciphertext.',
+    'Check by the program',
+    'The contract cannot read the ciphertext bytes against their commitments, but it stores both in the input tree. After the window closes, the program hashes each published ciphertext again and keeps only the bids whose bytes open their commitments. A bid that does not open is ignored whole, and the bidder falls back to its earlier valid version, if it has one.',
   ],
 ] as const
 
@@ -129,10 +133,10 @@ const About: React.FC = () => (
         ))}
       </div>
       <p className='prose-ed muted text-sm'>
-        Always public, because it happens on chain: which address submitted a bid, when, and how many bidders took part. An auction has{' '}
-        {MIN_BIDDERS} to {MAX_BIDDERS_BY_TYPE[AuctionType.FirstPrice]} bidders ({MAX_BIDDERS_BY_TYPE[AuctionType.RatioFirstPrice]} for the
-        ratio-lane types), and a bid is one of {LEVELS} price levels. The creator sets the price of each level; the steps between levels can
-        be uneven.
+        Always public, because it happens on chain: which address submitted a bid, when, how many versions it sent, and how many bidders
+        took part. An auction has {MIN_BIDDERS} to {MAX_BIDDERS_BY_TYPE[AuctionType.FirstPrice]} bidders (
+        {MAX_BIDDERS_BY_TYPE[AuctionType.RatioFirstPrice]} for the ratio-lane types), and a bid is one of the price steps the creator chose,
+        from 2 to {LEVELS} steps. The creator sets the price of each step; the gaps between steps can be uneven.
       </p>
     </Block>
 
@@ -150,11 +154,11 @@ const About: React.FC = () => (
       </ol>
     </Block>
 
-    <Block eyebrow='Nº 03' title='The three proofs of a bid'>
+    <Block eyebrow='Nº 03' title='The proofs of a bid'>
       <p className='prose-ed max-w-3xl'>
-        A bid is three ciphertexts: two thermometers of the bid level and a random mask. Ratio-lane second price adds a fourth, the paired
-        mask. For each ciphertext the browser proves the following, which takes several minutes, and the contract checks it before it
-        accepts the ciphertext. You are a bidder once all of them are in.
+        A bid is three ciphertexts: two thermometers of the bid step and a random mask. Ratio-lane second price adds a fourth, the paired
+        mask. The browser proves the following, which takes several minutes, and sends everything in one transaction. The contract checks
+        the bid proof before it accepts the bid, and you are a bidder once the transaction is mined.
       </p>
       <div className='grid gap-5 md:grid-cols-3'>
         {PROOFS.map(([title, body], index) => (
@@ -167,12 +171,34 @@ const About: React.FC = () => (
       </div>
     </Block>
 
-    <Block eyebrow='Nº 04' title='Ties'>
+    <Block eyebrow='Nº 04' title='Updates, relayers and who can bid'>
+      <p className='prose-ed max-w-3xl'>
+        <strong>Updates.</strong> A bidder can bid again, up to {MAX_BIDS_PER_BIDDER} times in all: the first bid and two updates. Each is a
+        new version with new ciphertexts. The contract keeps them all and the program computes over the latest version that is valid, so an
+        update replaces the earlier bid without anyone seeing either. Which addresses bid and how many versions each sent is public; the
+        steps stay hidden. An update does not take another place in the auction: a place belongs to an address.
+      </p>
+      <p className='prose-ed max-w-3xl'>
+        <strong>Relayed bids.</strong> A bidder can sign the bid in the wallet and let a relayer send the transaction, so the bidder needs
+        no gas and the transaction does not come from the bidder address. The signature covers the bid commitments, a hash of every
+        ciphertext and the version of the bid. The relayer cannot change a byte of the bid, and a signature stops working once the bidder
+        bids again.
+      </p>
+      <p className='prose-ed max-w-3xl'>
+        <strong>Who can bid.</strong> The creator can name a gate contract that decides which addresses may bid. This app ships an
+        allowlist: the creator pastes the addresses, the contract builds a Merkle root from them, and a bidder proves membership with a
+        short proof that this page builds from the public list. The list is public. Any other gate contract works on chain, but this page
+        can only build the proof for the allowlist.
+      </p>
+    </Block>
+
+    <Block eyebrow='Nº 05' title='Ties'>
       <p className='prose-ed max-w-3xl'>
         <strong>First-price and second-price (Vickrey).</strong> If two bidders reach the highest bid, the tie goes to the bidder with the
         higher priority. The priority comes from a hash of the published ciphertexts of all bidders. The last bidder sees the other
-        ciphertexts first, and can encrypt again until the priority favours it. This changes the winner only when the top bids tie; a fair
-        draw needs randomness that is fixed after the window closes, which these two types do not have.
+        ciphertexts first, and can encrypt again until the priority favours it; with updates it can try more than once. This changes the
+        winner only when the top bids tie; a fair draw needs randomness that is fixed after the window closes, which these two types do not
+        have.
       </p>
       <p className='prose-ed max-w-3xl'>
         <strong>Ratio-lane types.</strong> The result shows which bidders tie for the top bid, not only one winner. If more than one bidder
@@ -185,17 +211,17 @@ const About: React.FC = () => (
       </p>
     </Block>
 
-    <Block eyebrow='Nº 05' title='Read the result'>
+    <Block eyebrow='Nº 06' title='Read the result'>
       <p className='prose-ed max-w-3xl'>
         The committee publishes a vector of slots. For first-price and second-price (Vickrey) there are {LEVELS} slots per bidder, one per
-        price level. The program arranges them so that a zero slot marks the outcome: the winner&apos;s slot at the winning bid for a
-        first-price auction, and the winner&apos;s slot at the second-highest bid for a second-price one. Every other slot holds a random
-        value. The result page draws this grid and decodes it for you.
+        price step; an auction with fewer steps uses only the first ones. The program arranges them so that a zero slot marks the outcome:
+        the winner&apos;s slot at the winning bid for a first-price auction, and the winner&apos;s slot at the second-highest bid for a
+        second-price one. Every other slot holds a random value. The result page draws this grid and decodes it for you.
       </p>
       <p className='prose-ed max-w-3xl'>
-        For the ratio-lane types the result is one lane of {LEVELS} slots, one per price level, and not one lane per bidder. Above the price
-        every slot is zero. At the price level the slot holds the set of bidders that tied. It writes the set as a sum with a weight of 1,
-        2, 4, 8 and so on for each bidder, so one number names the whole set. Ratio-lane second price reads the set from the ratio of two
+        For the ratio-lane types the result is one lane of {LEVELS} slots, one per price step, and not one lane per bidder. Above the price
+        every slot is zero. At the price step the slot holds the set of bidders that tied. It writes the set as a sum with a weight of 1, 2,
+        4, 8 and so on for each bidder, so one number names the whole set. Ratio-lane second price reads the set from the ratio of two
         slots. Below the price every slot is random. Ratio-lane second price repeats the lanes in three copies, and the page checks that the
         copies agree. One more slot holds the random value for the tie draw. The result page draws the lane and decodes the winner for you.
       </p>

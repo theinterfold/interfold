@@ -6,7 +6,7 @@
 
 import { zeroAddress } from 'viem'
 import { E3Stage, FailureReason } from '@interfold/sdk'
-import { type AuctionType, isAuctionType, type PriceList } from '@shared/layout'
+import { type AuctionType, isAuctionType, type PriceList, readPriceList } from '@shared/layout'
 import { AuctionProgram__factory } from '@contract-types/factories/contracts/AuctionProgram__factory'
 import { getContractAddresses } from './env-config'
 import { scanLogs } from './logs'
@@ -18,7 +18,7 @@ export interface AuctionState {
   auctionType: AuctionType
   creator: `0x${string}`
   title: string
-  /** The price of each bid level: a bid of level `l` costs `prices[l]`. */
+  /** The price of each step, one per step the creator chose (2 to 16): a bid of step `l` costs `prices[l]`. A bid is below `prices.length`. */
   prices: PriceList
   stage: E3Stage
   failureReason: FailureReason | null
@@ -26,8 +26,10 @@ export interface AuctionState {
   inputWindow: readonly [bigint, bigint]
   /** The decrypted result, once the committee has published it. */
   plaintextOutput: `0x${string}` | null
-  /** Bidders whose ciphertexts are all in. They take a place of `MAX_BIDDERS_BY_TYPE[auctionType]`. */
-  linkedBidders: number
+  /** The bidder gate contract, or the zero address when anyone may bid. */
+  gate: `0x${string}`
+  /** Addresses that have bid at least once. They take a place of `MAX_BIDDERS_BY_TYPE[auctionType]`. */
+  bidderCount: number
 }
 
 /** Where an auction is, in the order it passes through. `failed` can happen at any point. */
@@ -102,12 +104,12 @@ export async function loadAuction(e3Id: bigint): Promise<AuctionState | null> {
   const { e3Program } = getContractAddresses()
   const sdk = getReadSdk()
   const read = { address: e3Program, abi: AuctionProgram__factory.abi } as const
-  const [config, prices, linked] = await Promise.all([
+  const [config, prices, bidders] = await Promise.all([
     publicClient.readContract({ ...read, functionName: 'auctions', args: [e3Id] }),
     publicClient.readContract({ ...read, functionName: 'auctionPrices', args: [e3Id] }),
-    publicClient.readContract({ ...read, functionName: 'linkedBidders', args: [e3Id] }),
+    publicClient.readContract({ ...read, functionName: 'bidderCount', args: [e3Id] }),
   ])
-  const [auctionType, creator, title] = config
+  const [auctionType, levels, creator, title, gate] = config
   if (creator === zeroAddress) return null
   if (!isAuctionType(auctionType)) throw new Error(`Auction ${e3Id} has the unknown type ${auctionType}`)
 
@@ -118,12 +120,13 @@ export async function loadAuction(e3Id: bigint): Promise<AuctionState | null> {
     auctionType,
     creator,
     title,
-    prices,
+    prices: readPriceList(levels, prices),
     stage,
     failureReason,
     inputWindow: e3.inputWindow,
     plaintextOutput: isPublished(e3.plaintextOutput) ? e3.plaintextOutput : null,
-    linkedBidders: Number(linked),
+    gate,
+    bidderCount: Number(bidders),
   }
 }
 

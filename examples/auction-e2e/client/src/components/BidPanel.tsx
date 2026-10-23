@@ -6,22 +6,14 @@
 
 import React, { useEffect, useState } from 'react'
 import { CheckCircleIcon, CircleIcon, WarningCircleIcon } from '@phosphor-icons/react'
-import { LEVELS, MAX_BIDDERS_BY_TYPE, ROLE_LABELS, type Role, rolesFor } from '@shared/layout'
-import { allRolesMask, type Row, type RowStatus, useBid } from '@/hooks/useBid'
+import { MAX_BIDDERS_BY_TYPE, MAX_BIDS_PER_BIDDER, MIN_BIDDERS, rolesFor } from '@shared/layout'
+import { type StepRow, useBid } from '@/hooks/useBid'
+import { type UseAllowlist, gateKind as gateKindOf } from '@/hooks/useAllowlist'
 import type { Wallet } from '@/hooks/useWallet'
 import { type AuctionPhase, type AuctionState, formatPrice } from '@/utils/auction'
 import { ConnectPrompt } from './ConnectPrompt'
 import { TxLink } from './Explorer'
 import Spinner from './Spinner'
-
-/** The stages of one ciphertext, in the order the browser and the wallet go through them. */
-const STAGES = [
-  ['encrypt', 'Encrypt the bid'],
-  ['encryption-proof', 'Prove the encryption'],
-  ['bid-proof', 'Prove the bid is valid'],
-  ['fold-proof', 'Fold the proofs into one'],
-  ['sending', 'Publish on chain (confirm in your wallet)'],
-] as const satisfies readonly (readonly [RowStatus, string])[]
 
 function formatElapsed(ms: number): string {
   const seconds = Math.floor(ms / 1000)
@@ -40,119 +32,94 @@ function useElapsed(startedAt: number | undefined, running: boolean): number {
   return startedAt === undefined ? 0 : Math.max(now - startedAt, 0)
 }
 
-const CiphertextProgress: React.FC<{ index: number; total: number; role: Role; row: Row }> = ({ index, total, role, row }) => {
-  const running = row.status !== 'pending' && row.status !== 'done' && row.status !== 'error'
-  const elapsed = useElapsed(row.startedAt, running)
-  const stageIndex = STAGES.findIndex(([status]) => status === row.status)
-
-  return (
-    <li className='border border-rule-strong bg-card p-4'>
-      <div className='flex flex-wrap items-center justify-between gap-2'>
-        <p className='text-sm font-semibold'>
-          <span className='mono muted mr-2'>
-            {index + 1}/{total}
-          </span>
-          {ROLE_LABELS[role]}
-        </p>
-        {row.status === 'done' ? (
-          <span className='tag live'>
-            <CheckCircleIcon size={12} weight='fill' /> submitted{row.elapsedMs !== undefined && ` in ${formatElapsed(row.elapsedMs)}`}
-          </span>
-        ) : row.status === 'error' ? (
-          <span className='tag bad'>
-            <WarningCircleIcon size={12} weight='fill' /> failed
-          </span>
-        ) : running ? (
-          <span className='tag wait font-mono'>{formatElapsed(elapsed)}</span>
-        ) : (
-          <span className='tag muted'>waiting</span>
-        )}
-      </div>
-
-      {running && (
-        <ol className='mt-3 space-y-1.5 text-sm'>
-          {STAGES.map(([status, label], position) => {
-            const done = position < stageIndex
-            const active = position === stageIndex
-            return (
-              <li key={status} className={`flex items-center gap-2 ${active ? 'font-semibold' : done ? 'text-ink-2' : 'text-ink-soft'}`}>
-                {done ? (
-                  <CheckCircleIcon size={16} weight='fill' className='text-accent' />
-                ) : active ? (
-                  <Spinner size={14} />
-                ) : (
-                  <CircleIcon size={16} />
-                )}
-                {label}
-              </li>
-            )
-          })}
-        </ol>
-      )}
-      {row.status === 'sending' && row.txHash && (
-        <p className='muted mt-2 text-xs'>
-          Transaction <TxLink hash={row.txHash} />
-        </p>
-      )}
-      {row.status === 'done' && row.txHash && (
-        <p className='muted mt-2 text-xs'>
-          Transaction <TxLink hash={row.txHash} />
-        </p>
-      )}
-      {row.error && <p className='note bad mt-3'>{row.error}</p>}
-    </li>
+const StepIcon: React.FC<{ status: StepRow['status'] }> = ({ status }) =>
+  status === 'done' ? (
+    <CheckCircleIcon size={16} weight='fill' className='text-accent' />
+  ) : status === 'active' ? (
+    <Spinner size={14} />
+  ) : status === 'error' ? (
+    <WarningCircleIcon size={16} weight='fill' className='text-danger' />
+  ) : (
+    <CircleIcon size={16} />
   )
-}
 
 interface BidPanelProps {
   auction: AuctionState
   phase: AuctionPhase
   wallet: Wallet
   committeeKey: Uint8Array | null
-  /** The roles the connected account has on chain, or `null` before the first read. */
-  mask: number | null
+  /** The members of the auction's allowlist, when it has one. */
+  allowlist: UseAllowlist
+  /** How many bids the connected account has on chain, or `null` before the first read. */
+  bidCount: number | null
   onSubmitted: () => void
 }
 
-const BidPanel: React.FC<BidPanelProps> = ({ auction, phase, wallet, committeeKey, mask, onSubmitted }) => {
+const BidPanel: React.FC<BidPanelProps> = ({ auction, phase, wallet, committeeKey, allowlist, bidCount, onSubmitted }) => {
+  const levels = auction.prices.length
+  const gateKind = gateKindOf(auction.gate)
   const bid = useBid({
     e3Id: auction.e3Id,
     auctionType: auction.auctionType,
+    levels,
+    gateKind,
+    members: allowlist.members,
     account: wallet.address,
     committeeKey,
-    mask: mask ?? 0,
     onSubmitted,
   })
   const [level, setLevel] = useState(0)
+  const [relayed, setRelayed] = useState(false)
+  const elapsed = useElapsed(bid.run?.startedAt, bid.submitting)
 
-  const roles = rolesFor(auction.auctionType)
   const maxBidders = MAX_BIDDERS_BY_TYPE[auction.auctionType]
-  const submittedAny = (mask ?? 0) !== 0
-  const linked = mask === allRolesMask(auction.auctionType)
-  const chosen = bid.stored && submittedAny ? bid.stored.bid : level
-  // Only complete bids take a place: the contract rejects every ciphertext once the places are full.
-  const full = auction.linkedBidders >= maxBidders && !linked
-  const secretLost = submittedAny && !bid.stored
+  const count = bidCount ?? 0
+  const left = MAX_BIDS_PER_BIDDER - count
+  // What this browser remembers of the bid that is on chain now.
+  const current = bid.versions.find(({ version }) => version === count)
+  const onList =
+    allowlist.members === null || wallet.address === undefined
+      ? null
+      : allowlist.members.some((member) => member.toLowerCase() === wallet.address?.toLowerCase())
+  const limitNote = (
+    <p className='muted text-xs'>
+      This auction type takes {MIN_BIDDERS} to {maxBidders} bidders. {auction.bidderCount} of {maxBidders} places are taken.
+    </p>
+  )
 
   // Why bidding is not possible right now, if it is not.
   let blocked: string | null = null
   if (phase === 'awaiting-key') blocked = 'Bidding opens once the committee has published its key. Key generation takes several minutes.'
   else if (phase !== 'bidding') blocked = 'Bidding is closed.'
-  else if (linked) blocked = `Your bid is in: all ${roles.length} ciphertexts are on chain.`
-  else if (full) blocked = `This auction is full: ${maxBidders} bidders have completed their bids.`
-  else if (secretLost)
-    blocked = 'Part of a bid from this account is on chain, but this browser does not hold its secret, so the bid cannot be completed here.'
+  else if (gateKind === 'unknown')
+    blocked = 'This auction uses a bidder gate that this app cannot build a proof for, so it cannot bid here.'
+  else if (gateKind === 'allowlist' && allowlist.error) blocked = `Could not read the allowlist: ${allowlist.error}`
+  else if (gateKind === 'allowlist' && allowlist.members === null) blocked = 'Reading the allowlist…'
+  else if (gateKind === 'allowlist' && onList === false)
+    blocked = 'This account is not on the allowlist of the auction, so the contract would reject its bid.'
+  else if (left <= 0) blocked = `You have used all ${MAX_BIDS_PER_BIDDER} bids of this auction.`
+  else if (count === 0 && auction.bidderCount >= maxBidders) blocked = `This auction is full: ${maxBidders} bidders have bid.`
   else if (committeeKey === null) blocked = 'Fetching the committee key…'
 
-  const pending = bid.rows.filter((row) => row.status !== 'done').length
-  const canSubmit = wallet.ready && blocked === null && !bid.submitting && mask !== null && pending > 0
-  const showProgress = bid.submitting || submittedAny || bid.rows.some((row) => row.status === 'error' || row.status === 'sending')
+  const canSubmit = wallet.ready && blocked === null && !bid.submitting && bidCount !== null
+
+  const gateNote =
+    gateKind === 'allowlist' ? (
+      <p className='muted text-xs'>
+        Only addresses on the allowlist of the creator can bid
+        {allowlist.members && ` (${allowlist.members.length} ${allowlist.members.length === 1 ? 'address' : 'addresses'})`}.
+      </p>
+    ) : gateKind === 'open' ? (
+      <p className='muted text-xs'>Anyone can bid.</p>
+    ) : null
 
   if (!wallet.isConnected) {
     return (
       <div className='space-y-4'>
         <ConnectPrompt>Connect a wallet to bid.</ConnectPrompt>
         {blocked && <p className='muted text-sm'>{blocked}</p>}
+        {gateNote}
+        {limitNote}
       </div>
     )
   }
@@ -161,19 +128,41 @@ const BidPanel: React.FC<BidPanelProps> = ({ auction, phase, wallet, committeeKe
     <div className='space-y-6'>
       {wallet.wrongChain && <div className='note bad'>Your wallet is on another network. Switch networks to bid.</div>}
 
-      {bid.stored && submittedAny ? (
+      {count > 0 && (
         <div className='border border-accent bg-accent-soft p-4'>
-          <p className='mono-sm muted'>Your bid</p>
-          <p className='font-serif text-4xl'>{formatPrice(bid.stored.bid, auction.prices)}</p>
-          <p className='muted mt-1 text-xs'>
-            Level {bid.stored.bid} of {LEVELS - 1}. Kept in this browser; only you can see it.
+          <p className='mono-sm muted'>
+            Your bid · version {count} of up to {MAX_BIDS_PER_BIDDER}
           </p>
+          {current ? (
+            <>
+              <p className='font-serif text-4xl'>{formatPrice(current.level, auction.prices)}</p>
+              <p className='muted mt-1 text-xs'>
+                Step {current.level} of {levels - 1}. Kept in this browser; only you can see it.
+              </p>
+              <p className='muted mt-1 text-xs'>
+                Transaction <TxLink hash={current.txHash} />
+              </p>
+            </>
+          ) : (
+            <p className='muted mt-1 text-xs'>
+              This account has bid {count} {count === 1 ? 'time' : 'times'} here, but this browser does not hold the level. Only the browser
+              that made the bid can show it.
+            </p>
+          )}
         </div>
-      ) : (
+      )}
+
+      {gateKind === 'allowlist' && onList !== null && (
+        <div className={`note ${onList ? 'ok' : 'bad'}`}>
+          {onList ? 'Your account is on the allowlist of this auction.' : 'Your account is not on the allowlist of this auction.'}
+        </div>
+      )}
+
+      {left > 0 && (
         <div className='space-y-3'>
-          <p className='label !mb-0'>Pick your bid</p>
+          <p className='label !mb-0'>{count === 0 ? 'Pick your bid' : 'Pick a new bid'}</p>
           <div className='grid grid-cols-4 gap-2' role='radiogroup' aria-label='Bid level'>
-            {Array.from({ length: LEVELS }, (_, l) => (
+            {Array.from({ length: levels }, (_, l) => (
               <button
                 key={l}
                 type='button'
@@ -190,46 +179,71 @@ const BidPanel: React.FC<BidPanelProps> = ({ auction, phase, wallet, committeeKe
             ))}
           </div>
           <p className='muted text-xs'>
-            The creator set the price of each of the {LEVELS} levels. Your bid never leaves this browser unencrypted: only ciphertexts and
-            proofs are published. Nobody, the creator included, can read it.
+            The creator set {levels} steps and the price of each. Your bid never leaves this browser unencrypted: only ciphertexts and a
+            proof are published. Nobody, the creator included, can read it.
+            {count > 0 && ' An update replaces your bid: the latest version that is valid counts, and earlier versions are ignored.'}
           </p>
+          {gateNote}
+          {limitNote}
         </div>
       )}
 
-      {blocked && <div className={`note ${linked ? 'ok' : ''}`}>{blocked}</div>}
+      {blocked && <div className='note'>{blocked}</div>}
       {bid.error && <div className='note bad'>{bid.error}</div>}
 
-      {!linked && (
+      {left > 0 && (
         <div className='space-y-3'>
-          <button onClick={() => void bid.submit(chosen)} disabled={!canSubmit} className='btn accent lg block'>
+          <label className='flex cursor-pointer items-start gap-3 text-sm'>
+            <input
+              type='checkbox'
+              checked={relayed}
+              disabled={bid.submitting}
+              onChange={(event) => setRelayed(event.target.checked)}
+              className='mt-1'
+            />
+            <span>
+              <span className='block font-semibold'>Send through relayer</span>
+              <span className='muted block text-xs'>
+                You sign the bid in your wallet and the server sends the transaction and pays the gas. The relayer cannot change the bid:
+                the signature covers the bytes and the version.
+              </span>
+            </span>
+          </label>
+          <button onClick={() => void bid.submit(level, relayed)} disabled={!canSubmit} className='btn accent lg block'>
             {bid.submitting ? (
               <>
                 <Spinner size={14} /> Proving and submitting…
               </>
-            ) : submittedAny ? (
-              `Resume: prove and submit ${pending} more`
+            ) : count === 0 ? (
+              'Submit bid'
             ) : (
-              'Encrypt, prove and submit'
+              `Update bid (${left} left)`
             )}
           </button>
           <p className='muted text-xs'>
-            Proving runs in this tab and takes a few minutes for each of the {roles.length} ciphertexts. Keep the tab open; if you leave,
-            you can resume from the auction page with the same bid.
+            Proving runs in this tab and takes a few minutes: {rolesFor(auction.auctionType).length} encryptions with their proofs, then{' '}
+            {rolesFor(auction.auctionType).length === 4 ? 'three' : 'two'} proofs for the bid itself. Keep the tab open.
           </p>
         </div>
       )}
 
-      {showProgress && (
+      {bid.steps.length > 0 && (
         <div className='space-y-3'>
           <div className='flex items-center justify-between'>
             <p className='label !mb-0'>Your submission</p>
             <p className='muted font-mono text-xs'>
-              {roles.length - pending}/{roles.length} submitted
+              {bid.run?.elapsedMs != null ? `done in ${formatElapsed(bid.run.elapsedMs)}` : bid.submitting ? formatElapsed(elapsed) : ''}
             </p>
           </div>
-          <ol className='space-y-3'>
-            {roles.map((role, index) => (
-              <CiphertextProgress key={role} index={index} total={roles.length} role={role} row={bid.rows[index]} />
+          <ol className='space-y-1.5 border border-rule-strong bg-card p-4 text-sm'>
+            {bid.steps.map((step) => (
+              <li
+                key={step.id}
+                className={`flex items-center gap-2 ${step.status === 'active' ? 'font-semibold' : step.status === 'pending' ? 'text-ink-soft' : 'text-ink-2'}`}
+              >
+                <StepIcon status={step.status} />
+                {step.label}
+              </li>
             ))}
           </ol>
         </div>

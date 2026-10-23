@@ -22,7 +22,7 @@ equals the price. They pick the winner from it with the random value of the resu
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Create         | The creator pays the E3 fee and requests an E3. The request carries the type, the title and the price of each bid level.                                                 |
 | Key generation | The ciphernodes run a distributed key generation. It makes the l-BFV public key and the threshold relinearization key.                                                   |
-| Bid            | Each bidder encrypts a bid in the browser and proves the bid is valid.                                                                                                   |
+| Bid            | Each bidder encrypts a bid in the browser, proves with one proof that the bid is valid, and sends it. A bidder can update a bid, and a relayer can send it.              |
 | Computation    | The FHE program multiplies ciphertexts. It uses the threshold relinearization key.                                                                                       |
 | Decryption     | The committee decrypts one ciphertext. It holds the winner and the price only.                                                                                           |
 | Result         | The web app decodes the result and shows the winner and the price. Region types also show the tie priority. Ratio-lane types also show the tie set and the random value. |
@@ -49,23 +49,142 @@ second-price ratio-lane type:
 
 These ciphertexts do not depend on the number of bidders or on the position of the bidder.
 
-`AuctionProgram.validate` reads
-`customParams = abi.encode(uint8 auctionType, uint256[16] prices, string title)`. It stores the
-auction and emits `AuctionCreated`. It inserts leaf 0: the configuration leaf,
-`keccak256("interfold-auction-config-v1" || auctionType)` in the BN254 field. `prices[b]` is the
-price of bid level `b`. The prices must increase strictly; the steps can be uneven. Read them with
-`auctionPrices(e3Id)`. The program and the circuits see only levels, so the prices do not change the
-computation. The coordination server gives the program the configuration bytes as input 0. The
-program reads the type from them, so the compute proof binds the type through the input root.
+### Create an auction
 
-`AuctionProgram.publishInput` takes one ciphertext in each call. The bidder is the sender. Each role
-is accepted once for each bidder. `roleCount(type)` gives the number of roles of a type (3 or 4).
-The roles 2 and 3 have no bid commitment, and `bidCommitment` is 0 for them. When all roles of the
-type are in, the contract inserts their commitments as consecutive leaves, from leaf 1: `roleCount`
-leaves for each bidder. It emits `BidLinked`. `submittedRoles(e3Id, bidder)` is a bit mask of the
-roles of a bidder: 7 (3 roles) or 15 (4 roles) when the bidder is linked. The FHE program reads the
-leaves after the configuration in groups of `roleCount` ciphertexts, one group for each bidder.
-`maxBidders(type)` gives the limit of a type: 4 for the region types and 8 for the ratio-lane types.
+`AuctionProgram.validate` reads
+`customParams = abi.encode(uint8 auctionType, uint8 levels, uint256[16] prices, string title, address gate, bytes gateConfig)`.
+`levels` is the number of price steps, from 2 to 16 (`InvalidLevels` otherwise). It stores the
+auction and emits `AuctionCreated`, which carries `gate` and `gateConfig`. It inserts leaf 0: the
+configuration leaf, `keccak256("interfold-auction-config-v1" || auctionType)` in the BN254 field. If
+`gate` is not the zero address, it calls `IBidderGate(gate).configure(e3Id, gateConfig)` (see "The
+bidder gate"). `prices[b]` is the price of step `b`. The first `levels` prices must increase
+strictly, and the other prices must be zero (`InvalidPrices` otherwise); the steps can be uneven.
+Read them with `auctionPrices(e3Id)`, and the number of steps with `auctions(e3Id)`, which returns
+`(auctionType, levels, creator, title, gate)`. The program and the circuits see only steps, so the
+prices do not change the computation. The coordination server gives the program the configuration
+bytes as input 0. The program reads the type from them, so the compute proof binds the type through
+the input root.
+
+### Send a bid
+
+One `publishInput(e3Id, data)` call sends one complete bid. The bidder does not send the ciphertexts
+one by one.
+
+```text
+data = abi.encode(address bidder, bytes[] ciphertexts, bytes32[] commitments,
+                  bytes proof, bytes gateProof, bytes signature)
+```
+
+`ciphertexts` and `commitments` have `roleCount(type)` entries (3 or 4), in role order.
+`commitments[r]` is the ciphertext commitment of `ciphertexts[r]`. The contract does these steps:
+
+1. It rejects the call after the input window (`InputDeadlineReached`).
+2. It rejects a wrong number of ciphertexts or commitments, an empty ciphertext and a zero bidder
+   (`InvalidBidShape`, `EmptyInputData`, `BidderIsZero`).
+3. It gives the bid the version `bidCount(e3Id, bidder) + 1`. A fourth bid of one address fails
+   (`TooManyBids`). The first bid of an address takes one of the places: `maxBidders(type)` is 4 for
+   the region types and 8 for the ratio-lane types (`TooManyBidders`).
+4. It checks the sender. A direct bid comes from `bidder` (`SenderNotBidder`). A relayed bid carries
+   the signature of `bidder` (see "Relayed bids").
+5. If the auction has a gate, it asks the gate if `bidder` can bid (`BidderNotEligible`).
+6. It verifies the bid proof (`InvalidBidProof`) with `bidVerifier3` (3 roles) or `bidVerifier4` (4
+   roles). The public inputs are the commitments, the bidder, `levels`, the committee key commitment
+   of the E3 and the VK anchor.
+7. It inserts one leaf for each ciphertext as consecutive leaves, in role order, and emits
+   `BidSubmitted(e3Id, bidder, version, firstIndex, ciphertexts, commitments)`. `firstIndex` is the
+   leaf index of the first ciphertext.
+
+The leaf of a bid ciphertext is
+`sha256(keccak256(ciphertext) || commitment || bidder || uint40 version)` in the BN254 field
+(`inputLeaf`). It binds four things: the published bytes, the commitment, the bidder and the
+version. The contract cannot check that the bytes open the commitment. It binds both in the leaf,
+and the program checks them (see "The program: which bids count").
+
+`bidCount(e3Id, bidder)` gives the number of bids of an address. `bidderCount(e3Id)` gives the
+number of addresses that bid. The ciphertexts are in the calldata and in the `BidSubmitted` event.
+The server and the web app read them from the event.
+
+### Bid updates
+
+A bidder is an address. It can send up to `MAX_BIDS_PER_BIDDER` = 3 bids: the first bid and two
+updates. Each bid has its own ciphertexts, its own proof and the next version. An update does not
+remove the earlier bid: all leaves stay in the tree and in the input root.
+
+The program counts one bid for each bidder: the latest bid whose ciphertexts all open their
+commitments. If the latest bid does not open, an earlier version counts. If no bid of a bidder
+opens, the program drops the bidder whole. The program never counts part of a bid.
+
+### Relayed bids
+
+A bidder can sign a bid, and any account can send it. The relayer pays the gas. The bidder address
+stays the bidder of the proof, the gate check and the leaves.
+
+The signature is EIP-712 with the domain name `AuctionProgram` and the domain version `1`, and the
+type `Bid(uint256 e3Id,address bidder,uint32 version,bytes32 inputsHash)`:
+
+- `version` is the version the bid will get: `bidCount + 1`. An old signature is useless after the
+  bidder bids again.
+- `inputsHash` is `keccak256(abi.encode(commitments, ciphertextHashes))`, with
+  `ciphertextHashes[r] = keccak256(ciphertexts[r])`. A relayer cannot swap the bytes of a signed
+  bid.
+
+`bidDigest(e3Id, bidder, version, inputsHash)` returns the digest to sign. The contract checks the
+signature with OpenZeppelin `SignatureChecker`, so it accepts an EOA and an ERC-1271 wallet. With an
+empty `signature`, the bid is direct.
+
+The coordination server has a relayer: `POST /relay` sends `publishInput` from the account of
+`RELAYER_PRIVATE_KEY`. On the local chain this key is Anvil account 9 by default. No bidder and no
+ciphernode uses it. The web app signs with the wallet when you select **Send through relayer**. See
+"Run the server" for the endpoint.
+
+### The bidder gate
+
+An auction can name a gate contract. The gate decides which addresses can bid. A gate implements
+`IBidderGate`:
+
+```solidity
+function configure(uint256 e3Id, bytes calldata config) external;
+function isEligible(
+  uint256 e3Id,
+  address bidder,
+  bytes calldata proof
+) external view returns (bool);
+```
+
+`validate` calls `configure` once for each auction, with `gateConfig`. Each bid calls `isEligible`
+with `gateProof`. The gate keys its state by `(msg.sender, e3Id)`, and `msg.sender` is the program.
+If `gate` is the zero address, anyone can bid and `gateConfig` must be empty
+(`GateConfigWithoutGate`). A non-zero `gate` must be a contract (`InvalidGate`).
+
+`contracts/gates/MerkleAllowlistGate.sol` is an example gate. Its `gateConfig` is
+`abi.encode(address[] members)`: 1 to 256 addresses in strictly increasing order. The gate builds
+the Merkle root on chain, stores it and emits `AllowlistSet(program, e3Id, root, members)`. The leaf
+of a member is `keccak256(member)`. The inner nodes use the sorted-pair `keccak256`, and an odd node
+moves up unchanged. The `gateProof` of a bidder is `abi.encode(bytes32[] path)`.
+`shared/allowlist.ts` (`allowlistRoot`, `allowlistProof`) builds the same root and path. The web app
+sorts and deduplicates the addresses that the creator enters. It builds the proof of a bidder from
+the `AllowlistSet` event. The web app finds the gate through `VITE_ALLOWLIST_GATE_ADDRESS`.
+
+### The program: which bids count
+
+The server sends the runner every published input, not only the bids that count. For each input it
+sends the commitment (`input_commitments`), the bidder (`input_slots`) and the bid version
+(`input_parents`). The program reads the 5-byte field `input_parents` as the bid version, not as a
+parent. Input 0 (the configuration) has a zero commitment, a zero slot and the parent 0. The input
+policy of the program (`policy()` in `program/src/lib.rs`) has two parts:
+
+- **Leaf.** The leaf of input 0 is the configuration leaf. For every other input, the program needs
+  a commitment and 25 bytes of metadata (`bidder || uint40 version`). It computes the same leaf as
+  `inputLeaf`. A ciphertext that does not open its commitment still gets a leaf, because every
+  published input needs one.
+- **Select.** The program always selects input 0. It groups the other inputs into bids: a bid is a
+  maximal run of consecutive inputs with identical metadata, because the contract inserts one bid as
+  one run. For each bidder it keeps the run with the highest version in which every input opens its
+  commitment. A bidder with no such run is dropped whole. A run with malformed metadata is never
+  selected. The bidder position in the computation is the order of the selected runs by leaf index.
+
+`shared/selection.ts` (`selectBids`) is the same rule in TypeScript. The server, the web app and the
+integration test use it. The server starts no computation with fewer than 2 selected bidders.
 
 ### The program: region types
 
@@ -74,10 +193,10 @@ program zeroes the unused groups. It multiplies a test vector by the sum of the 
 is uniform where the test is non-zero, so the result shows only the zero slots.
 
 The tie priority comes from the published ciphertexts. The seed is `keccak256` of the `ge`
-ciphertexts of all bidders in leaf order. The program ranks the bidder positions by
-`keccak256(seed || u32_be(position))`. The highest hash gets priority `n - 1`. The priority is fixed
-only when the last `ge` ciphertext is in. A tie at the top goes to the bidder with the higher
-priority.
+ciphertexts of the selected bids, in bidder-position order. The program ranks the bidder positions
+by `keccak256(seed || u32_be(position))`. The highest hash gets priority `n - 1`. The priority is
+fixed only when the input window closes, because a bidder can update a bid until then. A tie at the
+top goes to the bidder with the higher priority.
 
 **First-price.** One ciphertext product, depth 1. The result has one zero slot in each copy: the
 region of the winner, at the highest bid `h`.
@@ -143,31 +262,72 @@ wins with certainty. Every slot that is not a result lane or the random lane is 
 The result is a function of the price, the tie set and the random value only. It does not show the
 other bids, or any count. Compared with the region types, a ratio-lane type shows the tie set. It
 does not need regions, so it supports 8 bidders. The lane count does not depend on the number of
-bidders. The fourth ciphertext of the second-price type adds about 40 seconds of proof time for each
-bid.
+bidders. The fourth ciphertext of the second-price type adds one encryption, one encryption proof
+and a larger bid circuit to each bid.
 
 ## What is proven
 
-- **`circuits/record`** (`auction_bid`): for the roles 0 and 1, the plaintext is the thermometer of
-  a private bid `b` below 16. The circuit also returns `bid_commitment = poseidon2(b, salt)`. For
-  the mask, `k1` is free and `bid_commitment` is 0. For the pair mask (role 3), the plaintext is a
-  mod-`t` combination of 64 unit rows, one for each `(c, l)`. Thus the slots `(2c) * 16 + l` and
-  `(2c + 1) * 16 + l` are equal, and `bid_commitment` is 0. Without this proof, a bidder could give
-  `R` two values (in the `y` lane and in the `z` lane) and change the winner that the decoder reads.
-  The thermometers come from a table that `program/examples/bid_table.rs` generates from fhe.rs.
-- **Interfold user-data encryption proof**: the ciphertext encrypts that plaintext under this E3
-  committee key.
-- **`circuits/fold`** (`auction_fold`): it verifies both proofs and checks that they use the same
-  plaintext. Its public inputs are the role, the ciphertext commitment, the bid commitment, the
-  bidder address, the committee key commitment and a VK anchor. Only this proof leaves the browser.
+Each bidder publishes one bid proof. It is `auction_bid3` for the types with 3 roles and
+`auction_bid4` for the second-price ratio-lane type. The proof runs in the browser, and a browser
+can prove at most 2^21 gates (the WASM heap is 4 GiB; a 2^22 circuit runs out of memory after it
+loads the SRS). One circuit that verifies all `K` encryption proofs has more gates than that, so the
+bid is a tree of four circuits. Every one has fewer than 2^21 gates and pads to 2^21. The shared
+rules are in the Noir library `circuits/bid` (`auction_bid`). The four circuits are thin packages
+around it:
 
-The contract gives `msg.sender` as the bidder address. Thus a proof that another address copies
-fails. Without this, a copy of the thermometers of the highest bidder would make a tie at that bid,
+- `auction_bid_pair` (`circuits/pair`) verifies the encryption proofs of the roles 0 and 1. It holds
+  the bid.
+- `auction_bid_masks` (`circuits/masks`, type 3 only) verifies the encryption proofs of the roles 2
+  and 3. It holds the pair-mask check.
+- `auction_bid3` (`circuits/bid3`) verifies the pair proof and the encryption proof of role 2.
+- `auction_bid4` (`circuits/bid4`) verifies the pair proof and the masks proof.
+
+Only `auction_bid3` and `auction_bid4` have an EVM verifier. The two inner circuits make recursive
+proofs. Together, the circuits check these facts:
+
+- **The encryption.** Every ciphertext has an Interfold user-data encryption proof. It shows that
+  the ciphertext encrypts a plaintext `k1` under this E3 committee key. All proofs use the same
+  verification key, and they carry the same `ct0` and `ct1` verification-key chains. The inner
+  proofs publish the key row commitment, the key hash and the chains, and the outer circuit checks
+  that they are the same in every proof of the tree.
+- **The bid.** `auction_bid_pair` has one private bid `b`. The public input `levels` is the number
+  of price steps that the creator chose. The circuit proves that `levels` is in 2 to 16, that
+  `b < levels` and that `b` has a one-hot vector. The contract gives the `levels` of the auction, so
+  no valid proof exists for a bid at a step that the auction does not have.
+- **The plaintexts.** The `k1` of role 0 is the row `b` of the table for `ge`. The `k1` of role 1 is
+  the row `b` of the table for `gt`. Both roles use the same `b` inside `auction_bid_pair`, so
+  nothing links them afterwards. A mask has a free `k1`. For the pair mask (role 3),
+  `auction_bid_masks` checks that the plaintext is a mod-`t` combination of 64 unit rows, one for
+  each `(c, l)`. Thus the slots `(2c) * 16 + l` and `(2c + 1) * 16 + l` are equal. Without this
+  check, a bidder could give `R` two values (in the `y` lane and in the `z` lane) and change the
+  winner that the decoder reads. The tables come from `program/examples/bid_table.rs` and fhe.rs.
+- **The binding.** Each ciphertext commitment is the commitment of its encryption proof. The bidder
+  is not zero.
+
+The public inputs of the bid proof, in order, are: the `K` ciphertext commitments, `bidder`,
+`levels`, the committee key commitment and the VK anchor. That is `K + 4` values. The contract
+supplies `bidder`, `levels`, the committee key commitment of the E3 and the anchor of the
+deployment. The VK anchor covers the user-data encryption circuits and the inner circuits of the
+tree. It is `vkAnchor3` for `K = 3` (it contains `auction_bid_pair`) and `vkAnchor4` for `K = 4` (it
+contains `auction_bid_pair` and `auction_bid_masks`). The contract chooses the verifier and the
+anchor by the type.
+
+| Circuit             | Proof                             | Types  | Gates (`bb gates`) | Padded size |
+| ------------------- | --------------------------------- | ------ | ------------------ | ----------- |
+| `auction_bid_pair`  | recursive, roles 0 and 1          | 0 to 3 | 1,427,574          | 2^21        |
+| `auction_bid_masks` | recursive, roles 2 and 3          | 3      | 1,429,486          | 2^21        |
+| `auction_bid3`      | EVM, the pair proof and role 2    | 0 to 2 | 1,426,850          | 2^21        |
+| `auction_bid4`      | EVM, the pair proof and the masks | 3      | 1,426,857          | 2^21        |
+
+Only the bid proof leaves the browser. The encryption proofs stay on the machine of the bidder.
+
+The proof has `bidder` as a public input. For a direct bid, `bidder` is `msg.sender`. For a relayed
+bid, it is the signer. A proof that another address copies fails, because the bidder is part of the
+proof. Without this, a copy of the thermometers of the highest bidder would make a tie at that bid,
 and the price would show the bid.
 
-The contract rejects a second thermometer that has a different bid commitment from the first. Thus
-both thermometers come from one bid. The cap is `maxBidders(type)`: 4 for the region types, 8 for
-the ratio-lane types.
+The `ge` and `gt` ciphertexts of one bid come from one `b`, because the circuit has only one `b`.
+The limit of bidders is `maxBidders(type)`: 4 for the region types and 8 for the ratio-lane types.
 
 ## Prerequisites
 
@@ -199,9 +359,10 @@ Run these commands in this order.
    The SDK build selects `insecure/minimum` at its end. Step 3 selects `insecure-simd/minimum`
    again.
 
-3. Set up the example. This step runs `scripts/compile_circuits.sh`, which compiles `auction_bid`
-   and `auction_fold` and writes the fold verifier and the VK anchor. It builds
-   `program/examples/vk_hash.rs` to hash the verification keys:
+3. Set up the example. This step runs `scripts/compile_circuits.sh`, which compiles the four bid
+   circuits and writes the verifiers of `auction_bid3` and `auction_bid4`
+   (`contracts/verifiers/AuctionVerifier3.sol` and `AuctionVerifier4.sol`) and the two VK anchors.
+   It builds `program/examples/vk_hash.rs` to hash the verification keys:
 
    ```sh
    pnpm install
@@ -239,62 +400,93 @@ it works**.
 
 1. **Connect a wallet.** Add the anvil network to a browser wallet (chain ID 31337, RPC
    `http://localhost:8545`). Import some of the well-known anvil keys. Do not use accounts 1 to 5:
-   they are the ciphernodes. Use these keys on a local chain only.
+   they are the ciphernodes. Do not use account 9: it is the relayer of the server. Use these keys
+   on a local chain only.
 2. **Get test tokens.** A request pays a fee in the fee token. On anvil, select **Get test tokens**
    to mint some.
-3. **Create an auction.** Enter a title (1 to 80 bytes), select the type, the price levels and the
+3. **Create an auction.** Enter a title (1 to 80 bytes), select the type, the price steps and the
    bidding duration. The page offers four types: first-price, second-price (Vickrey), first-price
    with ratio lanes and second-price with ratio lanes. It shows the bidder limit of the chosen type
    (2 to 4 bidders for the first two types, 2 to 8 for the ratio-lane types) and the number of
    ciphertexts of each bid. A ratio-lane auction resolves a top tie with a public random draw among
    the tied bidders. The tie set becomes public: the result names every bidder that tied. For the
-   price levels, select **Even steps** (a start price and a step) or **Custom list** (16 prices that
-   increase, for example a 1-2-5 scale). Key generation takes some minutes. Bidding opens when the
+   price steps, first set **Number of steps** (2 to 16, 8 by default). Then select **Even steps** (a
+   start price and a step) or **Custom list** (one price for each step, increasing, for example a
+   1-2-5 scale). Under **Who can bid**, select **Anyone** or **Allowlist**. For an allowlist, enter
+   the addresses. The page sorts them and removes duplicates. The **Allowlist** choice needs
+   `VITE_ALLOWLIST_GATE_ADDRESS`. Key generation takes some minutes. Bidding opens when the
    committee publishes the key, and it closes at the end of the duration.
-4. **Bid.** Open the auction page from another account. Select one of the 16 prices that the creator
-   set. Select the bid button. A bid is 3 ciphertexts: the bid thermometer "at least", the bid
-   thermometer "above" and a random mask. A ratio-lane second-price bid adds a fourth, the paired
-   mask. The browser encrypts and proves each ciphertext, and the wallet publishes each one. Each
-   proof takes some minutes. The bidder is linked, and takes one of the places, when all ciphertexts
-   of the type are on chain (`submittedRoles` is 7, or 15 for ratio-lane second-price). The auction
-   is full when `linkedBidders` reaches the limit of its type. The bid and its salt stay in the
-   browser storage: a page reload resumes an incomplete bid and sends only the missing ciphertexts.
+4. **Bid.** Open the auction page from another account. Select one of the prices that the creator
+   set (the steps 0 to `levels - 1`). Select **Submit bid**. A bid is 3 ciphertexts: the bid
+   thermometer "at least", the bid thermometer "above" and a random mask. A ratio-lane second-price
+   bid adds a fourth, the paired mask. The browser encrypts each ciphertext and proves its
+   encryption, then makes the bid proof. The page shows each step. Each proof takes some minutes.
+   The wallet then sends one transaction. With **Send through relayer**, the wallet signs the bid
+   and the server sends the transaction. The bid counts when the transaction is mined. On an
+   allowlist auction, the page shows if the account is on the list. After a bid, the page shows the
+   version of the bid and **Update bid (n left)**: an address can send 3 bids. An update has a new
+   proof. The latest bid whose bytes open counts. The auction is full when `bidderCount` reaches the
+   limit of its type. The page keeps the level and the transaction hash of each version in the
+   browser storage.
 5. **Result.** When the window closes, the server computes the result, and the committee decrypts
-   it. The page decodes the published plaintext in the browser. First-price and Vickrey show the
-   winner, the price, your outcome and the region grid (one row for each bidder, one column for each
-   level). The grid shows that the region of the winner is the only zero region at the price level.
-   Ratio-lane types show the winner, the price and one lane of 16 slots: zero above the price, the
-   set of tied bidders at the price, and random values below. If more than one bidder tied, the page
-   also shows the tie set, the random value `r` and the draw `r mod |tie set|`. The page shows an
-   error when a lane does not decode to a price and a tie set, when the copies of ratio-lane
-   second-price disagree, or when the random lane is unreadable during a tie.
+   it. The page decodes the published plaintext in the browser. It uses `selectBids` to find the
+   bids that counted. It shows the bidders that it dropped because their bytes did not open, and the
+   version of each bid that counted. First-price and Vickrey show the winner, the price, your
+   outcome and the region grid (one row for each bidder, one column for each level). The grid shows
+   that the region of the winner is the only zero region at the price level. Ratio-lane types show
+   the winner, the price and one lane of 16 slots: zero above the price, the set of tied bidders at
+   the price, and random values below. If more than one bidder tied, the page also shows the tie
+   set, the random value `r` and the draw `r mod |tie set|`. The page shows an error when a lane
+   does not decode to a price and a tie set, when the copies of ratio-lane second-price disagree, or
+   when the random lane is unreadable during a tie.
 
-An auction needs 2 bidders at least, and 4 (region types) or 8 (ratio-lane types) at most. With
-fewer than 2 complete bids, the server computes nothing, and the E3 fails at its compute deadline.
+An auction needs 2 bidders at least, and 4 (region types) or 8 (ratio-lane types) at most. A bidder
+counts only if one of its bids opens its commitments. With fewer than 2 such bidders, the server
+computes nothing, and the E3 fails at its compute deadline.
 
 ## Test
 
 ```sh
-cargo test --release -p e3-user-program   # the FHE program, all four types, against a local l-BFV key
-(cd circuits/record && nargo test)        # the bid validity rules
-pnpm test:integration                     # DKG -> 29 proven ciphertexts -> FHE -> threshold decryption, all four types
+cargo test --release -p e3-user-program   # the FHE program and its input policy, all four types, against a local l-BFV key
+(cd circuits/bid && nargo test)           # the bid validity rules (the shared library)
+hardhat test                              # the contract and the allowlist gate (with a mock bid verifier)
+pnpm test:server                          # the server and the shared code
+pnpm test:integration                     # DKG -> 11 bid proofs -> FHE -> threshold decryption, all four types
 ```
 
-The integration test runs four auctions at the same time:
+`pnpm test` runs `hardhat test`. `pnpm test:integration` runs `pnpm test:server` first.
 
-| Type                      | Bids         | Result checked                                           |
-| ------------------------- | ------------ | -------------------------------------------------------- |
-| Second-price (Vickrey)    | `[5, 12, 9]` | bidder 1 wins at price 9                                 |
-| First-price               | `[6, 11]`    | bidder 1 wins at price 11                                |
-| First-price, ratio lanes  | `[4, 13]`    | price 13, tie set `[1]`, bidder 1 wins                   |
-| Second-price, ratio lanes | `[7, 7]`     | price 7, tie set `[0, 1]`, winner `tieSet[random mod 2]` |
+The integration test runs four auctions at the same time. They need 35 encryptions and 11 bid
+proofs.
 
-The test also checks that the contract rejects a second thermometer with a different bid commitment,
-a proof sent from another address, and role 3 in an auction that has 3 roles. It checks `roleCount`,
-`maxBidders`, `submittedRoles` and the leaves of each bidder. `cargo test` covers more ties, 8
-bidders, the zero slots of the output and the plaintext formulas of the ratio-lane types.
-`pnpm test:server` runs the unit tests of the server, including the input assembly for 3 and 4
-roles.
+| Type                      | Bids (bidder: step)              | What else it covers                                                                                                                             | Result checked                                           |
+| ------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| Second-price (Vickrey)    | `0: 14`, `1: 12`, `2: 9`, `0: 5` | The update counts: bidder 0 bids the highest step and then updates. The test sends the update again as version 3, and a fourth bid is rejected. | bidder 1 wins at price 9                                 |
+| First-price               | `0: 6`, `1: 9`, `2: 11`          | An allowlist of bidders 0 to 2, and the creator account is rejected. The bytes of bidder 2 do not open, so the program drops bidder 2.          | bidder 1 wins at price 9                                 |
+| First-price, ratio lanes  | `0: 2`, `1: 7`                   | Bidder 1 signs, and the relayer of the server sends the bid.                                                                                    | price 7, tie set `[1]`, bidder 1 wins                    |
+| Second-price, ratio lanes | `0: 5`, `1: 5`                   | A top tie on step 5 of a 6-step auction.                                                                                                        | price 5, tie set `[0, 1]`, winner `tieSet[random mod 2]` |
+
+The test also checks that the contract rejects these bids:
+
+- a 4-ciphertext bid for an auction with 3 roles (`InvalidBidShape`);
+- a proof whose commitments are swapped (the verifier fails);
+- a proof that another bidder copies with its own address (the verifier fails);
+- a direct bid from an account that is not the bidder (`SenderNotBidder`);
+- a bid from an account that is not on the allowlist (`BidderNotEligible`);
+- a signed bid with two ciphertexts swapped, a bid with the signature of another account, and the
+  same signed bid after it was sent (`InvalidSignature`);
+- a fourth bid of one address (`TooManyBids`).
+
+It checks `bidCount`, `bidderCount`, the `firstIndex` and the `version` of each `BidSubmitted` event
+and the number of leaves. It then selects the bids with `selectBids` and compares them with the
+expected bids. `cargo test` covers more ties, 8 bidders, the zero slots of the output, the plaintext
+formulas of the ratio-lane types, and the leaf and the selection of the input policy. The latest
+valid version wins. An earlier version counts if the latest does not open. A bidder with no bid that
+opens is dropped whole. A leaf vector is shared with the Solidity `inputLeaf`. `hardhat test` covers
+the contract (bids, updates, relayed bids, the 4-role verifier, the allowlist and the gate
+configuration) and the Merkle root of the allowlist gate on chain and in TypeScript.
+`pnpm test:server` runs the unit tests of the server and of `shared/`, including the input assembly
+for 3 and 4 roles, the relay and the bid selection.
 
 ## Deploy to Sepolia
 
@@ -328,8 +520,8 @@ Your protocol and the official one need these as well:
 - Ciphernodes that run the insecure SIMD l-BFV circuits (`BFV_PRESET=insecure-simd`). Register and
   bond them in the registry. The `minimum` committee has 3 nodes. Enable the `sepolia` chain in
   `interfold.config.yaml` (`enabled: true`) and start each node with `interfold start`.
-- The built circuits of this example: `pnpm dev:setup` writes `circuits/target/vk_anchor.json` and
-  the fold verifier. The deploy reads both.
+- The built circuits of this example: `pnpm dev:setup` writes `circuits/target/vk_anchor.json`
+  (`vkAnchor3` and `vkAnchor4`) and the two bid verifiers. The deploy reads them.
 - Sepolia ETH for the deploy account and for the server key. The auction creators need the fee token
   of the protocol.
 
@@ -425,16 +617,17 @@ docker build -f examples/auction-e2e/server/Dockerfile -t auction-server .
 docker run -p 8080:8080 -v auction-data:/data --env-file examples/auction-e2e/server/.env auction-server
 ```
 
-| Variable                                                                           | Use                                                                                                                                            |
-| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RPC_URL`, `WS_RPC_URL`, `CHAIN_ID`, `PRIVATE_KEY`                                 | The chain (31337 or 11155111), the HTTP endpoint, an optional WebSocket endpoint for the live listener, and the operator key.                  |
-| `INTERFOLD_ADDRESS`, `REGISTRY_ADDRESS`, `FEE_TOKEN_ADDRESS`, `E3_PROGRAM_ADDRESS` | The contracts.                                                                                                                                 |
-| `DEPLOY_BLOCK`, `LOG_CHUNK_SIZE`                                                   | The first block to scan, and the largest log range of one request (default 10 000). `DEPLOY_BLOCK` is required on Sepolia.                     |
-| `PORT`, `PROGRAM_RUNNER_URL`, `CALLBACK_URL`                                       | The listen port, the program runner and the base URL of this server that the runner calls back. In Docker, use service names, not `127.0.0.1`. |
-| `DATA_AVAILABILITY_MODE`                                                           | `mock_http` (default) or `avail`.                                                                                                              |
-| `AVAIL_RPC_URL`, `AVAIL_APP_ID`, `AVAIL_SEED`, `AVAIL_BRIDGE_API_URL`              | The Avail settings of `avail` mode. `DESTINATION_CHAIN_ID` is `CHAIN_ID`.                                                                      |
-| `AVAIL_PROOF_POLL_INTERVAL_SECONDS`, `AUCTION_DA_BIN`                              | The proof poll interval (default 60) and the path of `auction-da`.                                                                             |
-| `DATA_DIRECTORY`                                                                   | The directory of the published objects and the Avail records. Keep it on a volume.                                                             |
+| Variable                                                                           | Use                                                                                                                                                                            |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `RPC_URL`, `WS_RPC_URL`, `CHAIN_ID`, `PRIVATE_KEY`                                 | The chain (31337 or 11155111), the HTTP endpoint, an optional WebSocket endpoint for the live listener, and the operator key.                                                  |
+| `INTERFOLD_ADDRESS`, `REGISTRY_ADDRESS`, `FEE_TOKEN_ADDRESS`, `E3_PROGRAM_ADDRESS` | The contracts.                                                                                                                                                                 |
+| `DEPLOY_BLOCK`, `LOG_CHUNK_SIZE`                                                   | The first block to scan, and the largest log range of one request (default 10 000). `DEPLOY_BLOCK` is required on Sepolia.                                                     |
+| `PORT`, `PROGRAM_RUNNER_URL`, `CALLBACK_URL`                                       | The listen port, the program runner and the base URL of this server that the runner calls back. In Docker, use service names, not `127.0.0.1`.                                 |
+| `DATA_AVAILABILITY_MODE`                                                           | `mock_http` (default) or `avail`.                                                                                                                                              |
+| `AVAIL_RPC_URL`, `AVAIL_APP_ID`, `AVAIL_SEED`, `AVAIL_BRIDGE_API_URL`              | The Avail settings of `avail` mode. `DESTINATION_CHAIN_ID` is `CHAIN_ID`.                                                                                                      |
+| `AVAIL_PROOF_POLL_INTERVAL_SECONDS`, `AUCTION_DA_BIN`                              | The proof poll interval (default 60) and the path of `auction-da`.                                                                                                             |
+| `DATA_DIRECTORY`                                                                   | The directory of the published objects and the Avail records. Keep it on a volume.                                                                                             |
+| `RELAYER_PRIVATE_KEY`                                                              | The account that pays the gas of `POST /relay`. On the local chain it defaults to Anvil account 9, which no bidder or ciphernode uses. On Sepolia the relay is off without it. |
 
 The server does this:
 
@@ -450,9 +643,21 @@ The server does this:
   `KeyPublished` or chain time passes the compute deadline.
 - In `avail` mode it calls `verify` on the program before it spends Avail funds on an output.
 - `GET /health` returns 200 when the process is up.
+- It reads every `BidSubmitted` event of the auction and sends the runner all the inputs: the
+  configuration and each ciphertext of each bid, with its commitment, its bidder and its bid version
+  (`input_commitments`, `input_slots`, `input_parents`). The input root covers all of them. The
+  program then counts, for each bidder, its latest bid whose ciphertexts open their commitments. The
+  server applies the same rule (`shared/selection.ts`) and does not start a run with fewer than two
+  such bidders.
+- `POST /relay` with `{ "e3Id": "<decimal>", "data": "0x..." }` sends `publishInput(e3Id, data)`
+  from the relayer account, after a simulation, and answers `{ "txHash": "0x..." }` once it is
+  mined, or `{ "error": "<revert reason>" }` with status 422. It makes no other check: the program
+  verifies the EIP-712 signature, the gate and the proof, and a relayed bid cannot change after it
+  is signed. Any page may call it (CORS is open). It spends the gas of `RELAYER_PRIVATE_KEY`, so a
+  public server needs its own funded key and a rate limit in front.
 
-Run `pnpm test:server` for the unit tests of the configuration, the log chunks and the publication
-steps.
+Run `pnpm test:server` for the unit tests of the configuration, the log chunks, the publication
+steps, the input metadata, the relay and the bid selection.
 
 ### 6. Run the program runner
 
@@ -501,38 +706,44 @@ isolation headers and the single-page rewrite. Prover threads need those headers
 
 ## Timings
 
-These figures come from one run of `pnpm test:integration` (Node, 11 prover threads) and one web app
-run in headless Chromium, on an Apple Silicon laptop. They are estimates.
+These figures come from one run of `pnpm test:integration` (Node, 11 prover threads) on an Apple
+Silicon laptop. They are estimates.
 
-| Step                                                                 | Time                                                                                       |
-| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Proofs for one ciphertext (Node)                                     | about 40 seconds                                                                           |
-| Proofs for one bidder (Node, 3 ciphertexts)                          | about 2 minutes                                                                            |
-| Proofs for one bidder (Node, 4 ciphertexts, ratio-lane second-price) | about 2.7 minutes (estimate: 4 times the time of one ciphertext)                           |
-| Proofs for one bidder (browser, 3 ciphertexts)                       | about 5 minutes                                                                            |
-| Proofs for one bidder (browser, 4 ciphertexts)                       | about 7 minutes (estimate)                                                                 |
-| Key generation (request to published key, real DKG)                  | 6 to 13 minutes for one auction; about 26 minutes when the test runs four at the same time |
-| Threshold decryption (ciphertext output to result)                   | about 20 seconds                                                                           |
-| Integration test (4 auctions, 9 bidders, 29 ciphertexts)             | about 71 minutes                                                                           |
+| Step                                                | Time                                                                                       |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Key generation (request to published key, real DKG) | 6 to 13 minutes for one auction; about 26 minutes when the test runs four at the same time |
+| Threshold decryption (ciphertext output to result)  | about 20 seconds                                                                           |
+
+The time of a bidder (encryptions, encryption proofs and the bid proof, in Node and in the browser)
+and the time of the integration test have not been measured again for the flow of one bid proof. The
+older figures were for a proof of each ciphertext, and they do not apply.
 
 ## Layout
 
-| Path                            | What                                                                                           |
-| ------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `shared/layout.ts`              | the slot encoding, the roles and limits of each type, the tie priority and the result decoders |
-| `shared/prover.ts`              | encrypt, the three proofs and the `publishInput` calldata                                      |
-| `circuits/`                     | `auction_bid`, `auction_fold`; `scripts/compile_circuits.sh`                                   |
-| `contracts/AuctionProgram.sol`  | auction config, bidder roles, proof check, bidder linkage, DA check                            |
-| `program/src/lib.rs`            | the FHE processor and the input policy (all four auction types)                                |
-| `program/examples/bid_table.rs` | the generator of `circuits/record/src/constants.nr`                                            |
-| `program/examples/vk_hash.rs`   | the hash of ordered VK hashes, for the VK anchor                                               |
-| `runner/`                       | the program server (`program-runner`) that serves `program/`                                   |
-| `guest/`                        | the OpenVM guest that proves the program                                                       |
-| `server/`                       | the coordination server: events, compute, output publication, `/health`                        |
-| `da/`                           | `auction-da`: the Avail helper of the server (Rust)                                            |
-| `deploy/default.ts`             | the deployment of the program, for the local chain and Sepolia                                 |
-| `client/`                       | the web app                                                                                    |
-| `tests/`                        | the integration test and its input helper                                                      |
+| Path                            | What                                                                                                             |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `shared/layout.ts`              | the slot encoding, the roles and limits of each type, the tie priority and the result decoders                   |
+| `shared/prover.ts`              | `BidProver`: encrypt, the encryption proofs, the pair, masks and bid proofs                                      |
+| `shared/selection.ts`           | `selectBids`: the TypeScript form of the input policy (which bids count)                                         |
+| `shared/allowlist.ts`           | `allowlistRoot` and `allowlistProof`: the allowlist tree of `MerkleAllowlistGate`                                |
+| `circuits/bid/`                 | `auction_bid`: the library with the bid rules shared by the four circuits, and the tables of the honest bids     |
+| `circuits/pair/`, `masks/`      | `auction_bid_pair` (roles 0 and 1, the bid) and `auction_bid_masks` (roles 2 and 3, the pair mask): recursive    |
+| `circuits/bid3/`, `bid4/`       | `auction_bid3` and `auction_bid4`: the proofs the contract verifies; `scripts/compile_circuits.sh` builds all    |
+| `contracts/AuctionProgram.sol`  | auction config, bids and updates, relayed-bid signatures, gate check, bid proof check, leaves, DA check          |
+| `contracts/interfaces/`         | `IBidderGate` and `IBidVerifier`                                                                                 |
+| `contracts/gates/`              | `MerkleAllowlistGate`: the example gate                                                                          |
+| `contracts/verifiers/`          | `AuctionVerifier3.sol` and `AuctionVerifier4.sol`: generated by `scripts/compile_circuits.sh`. Do not edit them. |
+| `program/src/lib.rs`            | the FHE processor and the input policy (the leaf and the selection; all four auction types)                      |
+| `program/examples/bid_table.rs` | the generator of `circuits/bid/src/constants.nr`                                                                 |
+| `program/examples/vk_hash.rs`   | the hash of ordered VK hashes, for the VK anchor                                                                 |
+| `runner/`                       | the program server (`program-runner`) that serves `program/`                                                     |
+| `guest/`                        | the OpenVM guest that proves the program                                                                         |
+| `server/`                       | the coordination server: events, compute, relay (`POST /relay`), output publication, `/health`                   |
+| `da/`                           | `auction-da`: the Avail helper of the server (Rust)                                                              |
+| `deploy/default.ts`             | the deployment of the program and of the allowlist gate, for the local chain and Sepolia                         |
+| `client/`                       | the web app                                                                                                      |
+| `test/`                         | the Hardhat tests of the contract and the gate                                                                   |
+| `tests/`                        | the integration test and its input helper                                                                        |
 
 ## Limits
 
@@ -542,19 +753,32 @@ run in headless Chromium, on an Apple Silicon laptop. They are estimates.
   are limited by the slot layout: `floor(8 / n)` copies of `n` regions of 16 slots. The ratio-lane
   types are limited by the weights `2^k`, which must add up to less than `t = 257`, and by
   `n (n - 1) < t` (56 for 8 bidders).
-- A bid has 16 levels (0 to 15).
-- Anyone can bid. Only a complete bid (all ciphertexts of the type: 3, or 4 for ratio-lane
-  second-price) takes a place. A bidder that does not finish blocks nobody. When the places are full
-  (4 or 8), the contract rejects all other ciphertexts. One party with that many addresses can fill
-  all places.
+- An auction has 2 to 16 price steps, chosen by its creator. The slot layout always has 16 levels (0
+  to 15). The steps `levels` to 15 stay empty, because every thermometer is 0 there. Thus the price
+  never decodes to a step that the auction does not have.
+- Anyone can bid, unless the auction has a gate. The first bid of an address takes one of the places
+  (4 or 8), even if its bytes do not open. When the places are full, the contract rejects the first
+  bid of every new address. One party with that many addresses can fill all places. A gate limits
+  who can bid, but the example allowlist does not limit one party that holds several listed
+  addresses.
+- An address can send 3 bids at most: the first bid and 2 updates.
 - The proof binds the ciphertext commitment, not the published bytes. A bidder that publishes bytes
-  that do not open the commitment stalls the E3.
-- The bid commitment is `poseidon2(b, salt)`. A bidder must keep `salt` secret. The web app keeps it
-  in the browser storage.
+  that do not open the commitment does not count: the program uses an earlier version, or drops the
+  bidder whole. This does not stall the E3. The auction needs 2 bidders that count.
+- A bidder can withdraw by publishing bytes that do not open the commitments. The bidder learns
+  nothing from this.
+- The ciphertexts are still on chain as calldata. This example has no data-availability input path
+  yet. The leaf already binds the content hash of each ciphertext, so a later data-availability path
+  can supply the bytes.
+- A relayed bid shows the bidder address on chain, as a direct bid does. `POST /relay` has no
+  authentication and no rate limit.
 - A region type resolves a tie at the top with the tie priority: the tied bidder with the higher
-  priority wins. The result does not show that a tie happened. The last bidder sees all other `ge`
-  ciphertexts. That bidder can encrypt again with new randomness until the priority is good for the
-  bidder. This can change the winner only when the bids tie.
+  priority wins. The result does not show that a tie happened. The priority comes from the `ge`
+  ciphertexts of the selected bids. A bidder can encrypt again with new randomness until the
+  priority is good for the bidder. This can change the winner only when the bids tie. Updates make
+  this cheaper: a bidder does not need to bid last. It can update after it has seen the ciphertexts
+  of the other bidders, until the window closes. Randomness that is set after the window closes
+  would fix this.
 - A ratio-lane type resolves a tie with the random lane. The result shows the tie set (every bidder
   whose bid equals the price) and the random value. This is the one thing the result shows beyond
   the winner and the price. The random lane is the sum of all masks at one slot. It is uniform if at
@@ -562,8 +786,9 @@ run in headless Chromium, on an Apple Silicon laptop. They are estimates.
   masks fix the value, and a bidder cannot read the masks of other bidders, so one bidder alone
   cannot grind it. Bidders that all collude can choose it. A fair draw against such a group needs
   randomness that is set after the input window closes. The platform does not supply it.
-- A ratio-lane second-price bid has a fourth ciphertext, so a bid takes about 33 percent more proof
-  time than the other types.
+- A ratio-lane second-price bid has a fourth ciphertext. It needs one more encryption and one more
+  encryption proof, and it has one more proof in the tree: `auction_bid_masks`, so a bid makes three
+  proofs after the encryptions, against two for the other types.
 - In a region type, a slot reads as zero by error with probability `1 / 257` for each copy. The
   decoder then cannot find a unique winner. Run the auction again.
 - Ratio-lane first-price has no such error: the lane at the price has no mask. In ratio-lane

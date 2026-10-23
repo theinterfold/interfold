@@ -6,26 +6,26 @@
 
 import type { Account, WalletClient } from 'viem'
 import { AuctionProgram__factory } from '../types/factories/contracts'
-import { encodeBidInput, type PreparedInput } from '../shared/prover'
+import { type BidInput, encodeBidInput } from '../shared/layout'
 
 /**
- * Publish one ciphertext of a bid to the program.
- * @param walletClient - The bidder's wallet client; the sender is the bidder
+ * Publish a bid to the program from the wallet's account.
+ * @param walletClient - The sender's wallet client. For a direct bid it is the bidder.
  * @param e3Id - The E3 ID
- * @param record - The encrypted, proven ciphertext
+ * @param bid - What `publishInput` takes: the bidder, the bytes, the proof, the gate proof and the signature
  * @param programAddress - The program contract address
  */
 export const publishBidInput = async (
   walletClient: WalletClient & { account: Account },
   e3Id: bigint,
-  record: PreparedInput,
+  bid: BidInput,
   programAddress: `0x${string}`,
 ): Promise<`0x${string}`> => {
   return walletClient.writeContract({
     address: programAddress,
     abi: AuctionProgram__factory.abi,
     functionName: 'publishInput',
-    args: [e3Id, encodeBidInput(record)],
+    args: [e3Id, encodeBidInput(bid)],
     chain: walletClient.chain,
     account: walletClient.account,
   })

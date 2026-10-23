@@ -37,15 +37,17 @@ const AuctionCard: React.FC<{ auction: AuctionState; now: bigint }> = ({ auction
       </div>
       <div className='space-y-1'>
         <h3 className='h3'>{auction.title}</h3>
-        <p className='muted text-sm'>{AUCTION_TYPE_LABELS[auction.auctionType]}</p>
+        <p className='muted text-sm'>
+          {AUCTION_TYPE_LABELS[auction.auctionType]} · {auction.prices.length} steps
+        </p>
       </div>
       <div className='hr-soft mt-auto' />
       <dl className='grid grid-cols-3 gap-3'>
         <Fact label='Bidders'>
           <span className='flex items-center gap-2'>
-            <Pips filled={auction.linkedBidders} total={maxBidders} />
+            <Pips filled={auction.bidderCount} total={maxBidders} />
             <span className='font-mono text-xs'>
-              {auction.linkedBidders}/{maxBidders}
+              {auction.bidderCount}/{maxBidders}
             </span>
           </span>
         </Fact>

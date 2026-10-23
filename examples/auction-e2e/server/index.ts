@@ -10,7 +10,8 @@ import type { CiphertextOutputReference, CommitteePublicKeyChunkPublishedData } 
 import { E3Stage } from '@interfold/sdk/contracts'
 import { RegistryEventType } from '@interfold/sdk/events'
 import { Interfold__factory } from '@interfold/contracts/types'
-import { bytesToHex, hexToBytes, keccak256 } from 'viem'
+import { bytesToHex, createWalletClient, hexToBytes, http, keccak256 } from 'viem'
+import { privateKeyToAccount } from 'viem/accounts'
 import { loadConfig, type ServerConfig } from './config'
 import { callFheRunner } from './runner'
 import { AvailabilityStore, AvailHelper } from './availability'
@@ -19,8 +20,10 @@ import { ComputeScheduler } from './scheduler'
 import { closedReason, computeWindowOpen, type E3Window } from './window'
 import { getLogsChunked } from './logs'
 import { AuctionProgram__factory } from '../types/factories/contracts'
-import { AUCTION_TYPE_LABELS, isAuctionType, MIN_BIDDERS, rolesFor } from '../shared/layout'
-import { auctionInputs } from './inputs'
+import { AUCTION_TYPE_LABELS, isAuctionType, MIN_BIDDERS } from '../shared/layout'
+import { selectBids, type SubmittedBid } from '../shared/selection'
+import { auctionInputs, opensCommitment, type ProgramInputs } from './inputs'
+import { parseRelayRequest, relayBid, RelayRequestError, RelayRevertError } from './relay'
 
 // The coordination server orchestrates the FHE run automatically: it watches for
 // each E3's committee to publish, schedules the compute for when the input window
@@ -171,30 +174,24 @@ async function runProgram(e3Id: bigint, committeeKey: Uint8Array, callbackToken:
   })) as string
 
   // Gather the inputs with one-shot log queries — no long-lived listeners, no in-memory input
-  // buffer. A ciphertext's bytes are published once, in `BidSubmitted`; `BidLinked` gives the
-  // leaves a bidder's ciphertexts occupy, so only bidders that submitted every role of the auction
-  // type are computed over. Leaf 0 is the auction's configuration, which the contract inserted at
-  // request time; the program reads it first and then the ciphertexts of each bidder in leaf order
-  // (3 per bidder, 4 for the second-price ratio type). Every input comes after the auction's
-  // creation, so the scans start at its `AuctionCreated` block, in chunks that a public RPC
-  // accepts.
+  // buffer. `BidSubmitted` holds the bytes of every bid and the leaf of its first ciphertext. Every
+  // bid is a published input, counted or not, because the input root covers all leaves. Leaf 0 is
+  // the auction's configuration, which the contract inserted at request time. Every input comes
+  // after the auction's creation, so the scans start at its `AuctionCreated` block, in chunks that
+  // a public RPC accepts.
   const fromBlock = await auctionCreatedBlock(e3Id)
   const toBlock = await publicClient.getBlockNumber()
-  const query = {
-    address: config.program,
-    abi: AuctionProgram__factory.abi,
-    args: { e3Id },
-    strict: true,
-  } as const
-  const [submitted, linked, auction] = await Promise.all([
+  const [submitted, auction] = await Promise.all([
     getLogsChunked(
-      (range) => publicClient.getContractEvents({ ...query, ...range, eventName: 'BidSubmitted' }),
-      fromBlock,
-      toBlock,
-      config.logChunkSize,
-    ),
-    getLogsChunked(
-      (range) => publicClient.getContractEvents({ ...query, ...range, eventName: 'BidLinked' }),
+      (range) =>
+        publicClient.getContractEvents({
+          address: config.program,
+          abi: AuctionProgram__factory.abi,
+          args: { e3Id },
+          strict: true,
+          eventName: 'BidSubmitted',
+          ...range,
+        }),
       fromBlock,
       toBlock,
       config.logChunkSize,
@@ -209,25 +206,32 @@ async function runProgram(e3Id: bigint, committeeKey: Uint8Array, callbackToken:
   const [auctionType] = auction
   if (!isAuctionType(auctionType)) throw new Error(`E3 ${e3Id}: unknown auction type ${auctionType}`)
 
-  let ciphertextInputs: Array<[string, number]>
+  const bids: SubmittedBid[] = submitted.map(({ args }) => ({
+    bidder: args.bidder,
+    version: args.version,
+    firstIndex: Number(args.firstIndex),
+    ciphertexts: [...args.ciphertexts],
+    commitments: [...args.commitments],
+  }))
+  let inputs: ProgramInputs
   try {
-    ciphertextInputs = auctionInputs(
-      auctionType,
-      submitted.map(({ args }) => args),
-      linked.map(({ args }) => args),
-    )
+    inputs = auctionInputs(auctionType, bids)
   } catch (error) {
     throw new Error(`E3 ${e3Id}: ${error instanceof Error ? error.message : error}`)
   }
 
+  // The contract cannot check that published bytes open their commitments; the program does, and
+  // leaves a bid that does not open out of the computation. Apply the same rule here, to know
+  // whether there is an auction to run.
+  const counted = selectBids(bids, await opensCommitment(bids))
   console.log(
-    `📊 Processing E3 ${e3Id} (${AUCTION_TYPE_LABELS[auctionType]}): ${linked.length} linked bidders, ${ciphertextInputs.length} input(s)`,
+    `📊 Processing E3 ${e3Id} (${AUCTION_TYPE_LABELS[auctionType]}): ${bids.length} bid(s), ${counted.length} counted, ${inputs.ciphertexts.length} input(s)`,
   )
 
   // The program needs 2 bidders at least (the most is set by the contract); with fewer there is no auction to run.
-  if (linked.length < MIN_BIDDERS) {
+  if (counted.length < MIN_BIDDERS) {
     console.log(
-      `⏭️  Skipping E3 ${e3Id}: ${linked.length} bidder(s) submitted all ${rolesFor(auctionType).length} ciphertexts, an auction needs ${MIN_BIDDERS}`,
+      `⏭️  Skipping E3 ${e3Id}: ${counted.length} bidder(s) with a bid that opens its commitments, an auction needs ${MIN_BIDDERS}`,
     )
     return 'skipped'
   }
@@ -244,7 +248,7 @@ async function runProgram(e3Id: bigint, committeeKey: Uint8Array, callbackToken:
     e3ProgramParams,
     // The l-BFV relinearization key travels in the committee key; the program needs it.
     bytesToHex(committeeKey),
-    ciphertextInputs,
+    inputs,
     // The runner posts its result to this URL verbatim. The token is the only credential of the callback.
     { runnerUrl: config.programRunnerUrl, callbackUrl: `${config.callbackUrl}/callback/${e3Id}/${callbackToken}` },
   )
@@ -466,6 +470,55 @@ async function handleCallback(req: CallbackRequest, res: Response) {
   }
 }
 
+const RELAY_BODY_LIMIT = '2mb'
+
+// The relayer account, if configured. It is not the operator account, so a flood of relayed bids
+// cannot drain the funds that publish outputs.
+const relayer = config.relayerPrivateKey
+  ? createWalletClient({ account: privateKeyToAccount(config.relayerPrivateKey), chain: config.chain, transport: http(config.rpcUrl) })
+  : undefined
+
+/** The relay endpoint carries no credential, so any page may call it. */
+function allowAnyOrigin(req: Request, res: Response, next: NextFunction) {
+  res.set({
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'content-type',
+  })
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(204)
+    return
+  }
+  next()
+}
+
+/**
+ * `POST /relay { e3Id, data }` sends `publishInput(e3Id, data)` from the relayer account. It answers
+ * `{ txHash }` once the transaction is mined, or `{ error }` with the revert reason. The program
+ * checks the signature, the gate and the proof, so this checks nothing else.
+ */
+async function handleRelay(req: Request, res: Response) {
+  if (!relayer) {
+    res.status(503).json({ error: 'This server has no relayer: set RELAYER_PRIVATE_KEY' })
+    return
+  }
+  try {
+    const { e3Id, data } = parseRelayRequest(req.body)
+    const txHash = await relayBid(sdk.getPublicClient(), relayer, config.program, e3Id, data)
+    console.log(`📨 Relayed a bid to E3 ${e3Id}: ${txHash}`)
+    res.json({ txHash })
+  } catch (error) {
+    if (error instanceof RelayRequestError) {
+      res.status(400).json({ error: error.message })
+    } else if (error instanceof RelayRevertError) {
+      res.status(422).json({ error: error.message })
+    } else {
+      console.error('❌ Relay failed:', error)
+      res.status(500).json({ error: 'Internal server error' })
+    }
+  }
+}
+
 const app = express()
 
 app.get('/health', (_req, res) => {
@@ -473,6 +526,9 @@ app.get('/health', (_req, res) => {
 })
 // The authentication runs before the body parser, so an unauthorized caller makes the server read nothing.
 app.post('/callback/:e3Id/:token', authenticateCallback, express.json({ limit: CALLBACK_BODY_LIMIT }), handleCallback)
+// The relayer sends a signed bid for a bidder who has no gas. A browser at another origin calls it.
+app.use('/relay', allowAnyOrigin)
+app.post('/relay', express.json({ limit: RELAY_BODY_LIMIT }), handleRelay)
 app.get('/availability/objects/:contentHash', async (req, res) => {
   const contentHash = req.params.contentHash
   if (!/^0x[a-fA-F0-9]{64}$/.test(contentHash)) {

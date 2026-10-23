@@ -41,6 +41,15 @@ describe('loadConfig', () => {
     expect(loadConfig({ ...local, CALLBACK_URL: 'http://server:8080/' }).callbackUrl).toBe('http://server:8080')
   })
 
+  it('uses a separate Anvil account for the relayer on the local chain only', () => {
+    const local9 = loadConfig(local).relayerPrivateKey
+    expect(local9).toMatch(/^0x[0-9a-f]{64}$/)
+    expect(local9).not.toBe(local.PRIVATE_KEY)
+    expect(loadConfig({ ...local, RELAYER_PRIVATE_KEY: `0x${'cd'.repeat(32)}` }).relayerPrivateKey).toBe(`0x${'cd'.repeat(32)}`)
+    expect(loadConfig({ ...local, CHAIN_ID: '11155111', DEPLOY_BLOCK: '1' }).relayerPrivateKey).toBeUndefined()
+    expect(() => loadConfig({ ...local, RELAYER_PRIVATE_KEY: '0x12' })).toThrow('RELAYER_PRIVATE_KEY')
+  })
+
   it('requires the deployment block on a public chain', () => {
     const sepolia = { ...local, CHAIN_ID: '11155111' }
     expect(() => loadConfig(sepolia)).toThrow('DEPLOY_BLOCK is required')

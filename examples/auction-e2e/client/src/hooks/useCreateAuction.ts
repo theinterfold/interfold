@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useWalletClient } from 'wagmi'
-import { parseAbi, parseEventLogs } from 'viem'
+import { type Address, type Hex, parseAbi, parseEventLogs } from 'viem'
 import { CommitteeSize, DEFAULT_COMPUTE_PROVIDER_PARAMS, calculateInputWindow, encodeComputeProviderParams } from '@interfold/sdk'
 import { MockUSDC__factory } from '@interfold/contracts/types'
 import { type AuctionType, encodeAuctionParams, type PriceList } from '@shared/layout'
@@ -26,6 +26,10 @@ export interface CreateInput {
   title: string
   auctionType: AuctionType
   prices: PriceList
+  /** The bidder gate contract, or the zero address when anyone may bid. */
+  gate: Address
+  /** What `gate.configure` takes; `0x` without a gate. */
+  gateConfig: Hex
   /** Seconds the input window stays open, counted from its start. */
   durationSeconds: number
 }
@@ -129,7 +133,7 @@ export function useCreateAuction(account: `0x${string}` | undefined): UseCreateA
           paramSet: PARAM_SET,
           // The mock flag makes the compute provider return 32 zero bytes; the program server computes the real result.
           computeProviderParams: encodeComputeProviderParams(DEFAULT_COMPUTE_PROVIDER_PARAMS, true),
-          customParams: encodeAuctionParams(input.auctionType, input.prices, input.title),
+          customParams: encodeAuctionParams(input.auctionType, input.prices, input.title, input.gate, input.gateConfig),
         }
 
         setStep('quoting')

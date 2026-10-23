@@ -56,7 +56,6 @@ export function useAuction(e3Id: bigint | null): AuctionView {
   const [auction, setAuction] = useState<AuctionState | null | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
   const latest = useRef(e3Id)
-  latest.current = e3Id
 
   const refresh = useCallback(async () => {
     const id = latest.current
@@ -74,6 +73,7 @@ export function useAuction(e3Id: bigint | null): AuctionView {
   }, [])
 
   useEffect(() => {
+    latest.current = e3Id
     setAuction(undefined)
     setError(null)
     if (e3Id === null) return

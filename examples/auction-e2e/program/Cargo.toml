@@ -6,13 +6,15 @@ edition = "2024"
 [features]
 # Used by the OpenVM guest: computes Keccak-256 with OpenVM's instructions. Add any other hashes the
 # program computes here too.
-openvm-hashes = ["e3-compute-provider/openvm-hashes"]
+openvm-hashes = ["e3-compute-provider/openvm-hashes", "dep:openvm-sha2"]
 
 [dependencies]
 fhe = { workspace = true }
 fhe-traits = { workspace = true }
 e3-compute-provider = { workspace = true }
 e3-fhe-params = { workspace = true }
+sha2 = "=0.10.9"
+openvm-sha2 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2", optional = true }
 
 [dev-dependencies]
 rand = { workspace = true }

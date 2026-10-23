@@ -13,10 +13,12 @@
 //! the type through the input root (see [`policy`]).
 //!
 //! Each bidder sends [`role_count`] ciphertexts that do not depend on the bidder's index, on the
-//! number of bidders or on the other bids. `AuctionProgram.publishInput` links them and inserts
-//! their commitments as consecutive leaves in role order, so after the configuration the processor
-//! receives one group of ciphertexts per bidder, in leaf order. All are SIMD-encoded; a bid is a
-//! level `b` in `0..LEVELS`:
+//! number of bidders or on the other bids. `AuctionProgram.publishInput` verifies one proof for the
+//! whole bid and inserts one leaf per ciphertext as consecutive leaves in role order. A bidder may
+//! bid again (an update), so the tree can hold several bids of one bidder. The policy picks, for
+//! each bidder, its latest bid whose bytes open their commitments (see [`select_bids`]). After the
+//! configuration the processor then receives one group of ciphertexts per chosen bid, in leaf
+//! order. All are SIMD-encoded; a bid is a level `b` in `0..LEVELS`:
 //!
 //! ```text
 //! ge         slot i  [b >= i % LEVELS]
@@ -121,11 +123,18 @@
 //! See `shared/layout.ts` for the client decoder.
 
 use e3_compute_provider::hashing::keccak256;
-use e3_compute_provider::policy::{all_inputs, commitment_leaf, leaf_from_digest};
+use e3_compute_provider::policy::{InputRecord, leaf_from_digest};
 use e3_compute_provider::{ComputeError, FHEProcessorInput, InputPolicy, PublishedInput};
 use fhe::bfv::{Ciphertext, Encoding, Plaintext};
 use fhe::trlbfv::LBFVRelinearizationKey;
 use fhe_traits::{DeserializeParametrized, FheEncoder, Serialize};
+#[cfg(feature = "openvm-hashes")]
+use openvm_sha2::Sha256;
+#[cfg(not(all(feature = "openvm-hashes", target_os = "zkvm")))]
+use sha2::Digest;
+#[cfg(not(feature = "openvm-hashes"))]
+use sha2::Sha256;
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -197,25 +206,115 @@ pub fn config_input(auction_type: AuctionType) -> Vec<u8> {
     [CONFIG_DOMAIN, &[auction_type as u8]].concat()
 }
 
-/// The input policy this E3 program requires.
+/// The metadata `AuctionProgram` publishes with each bid ciphertext: the 20-byte bidder, then the
+/// 5-byte bid version, as `abi.encodePacked(address, uint40)` lays it out.
 ///
-/// Every input is computed over. The leaf of input 0, the configuration, is
-/// `keccak256(config) mod BN254`, which `AuctionProgram.validate` inserts. The leaf of every other
-/// input is the ciphertext's own commitment, which `AuctionProgram.publishInput` inserts once all
-/// roles of a bidder are in.
+/// The program server builds it from `input_slots` (the bidder) and `input_parents` (the version).
+/// The auction reads the 5-byte field as the bid version, not as a parent. The configuration at
+/// index 0 gets a zero commitment, a zero slot and the parent 0; its leaf ignores them.
+const METADATA_LEN: usize = 25;
+
+/// The input policy this E3 program requires: [`auction_leaf`] and [`select_bids`].
 pub fn policy() -> InputPolicy {
     InputPolicy {
         leaf: auction_leaf,
-        select: all_inputs,
+        select: select_bids,
     }
 }
 
-fn auction_leaf(input: &PublishedInput) -> Result<String, ComputeError> {
+/// The leaf of input `index`.
+///
+/// The leaf of input 0, the configuration, is `keccak256(config) mod BN254`, which
+/// `AuctionProgram.validate` inserts. The leaf of every other input is
+/// `sha256(keccak256(ciphertext) || commitment || bidder || uint40(version)) mod BN254`. It must stay
+/// byte-identical to `AuctionProgram.inputLeaf`, or no root will ever match. It binds the bytes,
+/// because the bid proof constrains only the commitment and never sees the serialized ciphertext;
+/// the commitment, so no commitment can be paired with any ciphertext; and the bidder and the
+/// version, because selection groups the leaves by them.
+///
+/// The leaf does not check that the bytes open the commitment. A ciphertext that does not open it
+/// still gets a leaf, since every published input must; [`select_bids`] leaves it out of the
+/// computation.
+pub fn auction_leaf(input: &PublishedInput) -> Result<String, ComputeError> {
     if input.index == 0 {
-        Ok(leaf_from_digest(&input.ciphertext_hash))
-    } else {
-        commitment_leaf(input)
+        return Ok(leaf_from_digest(&input.ciphertext_hash));
     }
+    let commitment = input
+        .commitment
+        .ok_or_else(|| ComputeError::LeafCommitment {
+            index: input.index,
+            reason: "the auction publishes a commitment with every bid ciphertext".to_string(),
+        })?;
+    if input.metadata.len() != METADATA_LEN {
+        return Err(ComputeError::LeafCommitment {
+            index: input.index,
+            reason: format!(
+                "expected {METADATA_LEN} bytes of bidder and version, got {}",
+                input.metadata.len()
+            ),
+        });
+    }
+
+    // `ciphertext_hash` is `keccak256(input.ciphertext)`, computed once by the Secure Process.
+    let mut outer = Sha256::new();
+    outer.update(input.ciphertext_hash.as_slice());
+    outer.update(commitment);
+    outer.update(input.metadata);
+    Ok(leaf_from_digest(&outer.finalize()))
+}
+
+/// Which inputs the computation runs over: the configuration, and for each bidder its latest bid
+/// whose bytes all open their commitments.
+///
+/// `AuctionProgram.publishInput` inserts one bid as a run of consecutive leaves with the same
+/// metadata, so a run of records with identical metadata is one bid. A bidder may bid up to a few
+/// times; each bid has the next version. For every bidder this keeps the run with the highest
+/// version in which every record has a commitment and reproduces it. A bidder with no such run
+/// is dropped whole, and a run is never taken in part, because a bid with one missing role is
+/// no bid.
+///
+/// The contract cannot check that published bytes open a commitment, so any submitter can publish
+/// a bid that does not. That bid is skipped, and an earlier valid bid of the same bidder counts. A
+/// bidder can also withdraw this way, and it learns nothing from doing so.
+///
+/// A run whose metadata is not [`METADATA_LEN`] bytes is never taken. The result is ascending
+/// by index, so the order of the chosen runs is the bidder position in the computation.
+pub fn select_bids(inputs: &[InputRecord]) -> Vec<usize> {
+    let Some((_, bids)) = inputs.split_first() else {
+        return Vec::new();
+    };
+
+    // The best run so far of each bidder: its version bytes and its records.
+    let mut latest: BTreeMap<&[u8], (&[u8], &[InputRecord])> = BTreeMap::new();
+    for run in bids.chunk_by(|a, b| a.metadata == b.metadata) {
+        let metadata = run[0].metadata;
+        if metadata.len() != METADATA_LEN {
+            continue;
+        }
+        if !run
+            .iter()
+            .all(|record| record.commitment.is_some() && record.matches_commitment())
+        {
+            continue;
+        }
+        let (bidder, version) = metadata.split_at(20);
+        // Versions are big-endian of one fixed width, so comparing the bytes compares the numbers.
+        if latest
+            .get(bidder)
+            .is_none_or(|(chosen, _)| *chosen < version)
+        {
+            latest.insert(bidder, (version, run));
+        }
+    }
+
+    let mut selected = vec![0];
+    selected.extend(
+        latest
+            .into_values()
+            .flat_map(|(_, run)| run.iter().map(|record| record.index)),
+    );
+    selected.sort_unstable();
+    selected
 }
 
 /// The tie priority of each bidder position: `priority[j]` is the region of bidder position `j`.
@@ -451,8 +550,8 @@ fn ratio_second_price(
 /// Runs the auction over the inputs of the round.
 ///
 /// The selected inputs arrive one at a time, in leaf order: the configuration, then the
-/// [`role_count`] ciphertexts of each bidder in role order. The on-chain index is not used, only
-/// the position.
+/// [`role_count`] ciphertexts of each chosen bid in role order (see [`select_bids`]). The on-chain
+/// index is not used, only the position.
 ///
 /// # Panics
 ///
@@ -1247,24 +1346,192 @@ mod tests {
     #[test]
     fn the_configuration_leaf_is_the_reduced_hash_of_the_configuration() {
         // `AuctionProgram.configLeaf` computes `keccak256(CONFIG_DOMAIN || type) mod BN254`. Input 0
-        // must get that leaf, and every other input its ciphertext commitment.
+        // must get that leaf, whatever commitment and metadata come with it.
         let config = config_input(AuctionType::SecondPrice);
-        let commitment = [7u8; 32];
-        let leaf_of = |index, bytes: &[u8], recomputed| {
-            (policy().leaf)(&PublishedInput {
-                index,
-                ciphertext: bytes,
-                ciphertext_hash: keccak256(bytes),
-                commitment: None,
-                metadata: &[],
-                recomputed,
-            })
-            .unwrap()
-        };
+        let zero = [0u8; 32];
+        let leaf = (policy().leaf)(&PublishedInput {
+            index: 0,
+            ciphertext: &config,
+            ciphertext_hash: keccak256(&config),
+            commitment: Some(&zero),
+            metadata: &[0; METADATA_LEN],
+            recomputed: None,
+        })
+        .unwrap();
         assert_eq!(
-            leaf_of(0, &config, None),
+            leaf,
             leaf_from_digest(&keccak256(b"interfold-auction-config-v1\x01"))
         );
-        assert_eq!(leaf_of(1, b"ct", Some(commitment)), hex::encode(commitment));
+    }
+
+    /// The leaf of a bid ciphertext with the given parts.
+    fn bid_leaf(
+        hash: [u8; 32],
+        commitment: Option<&[u8; 32]>,
+        metadata: &[u8],
+        recomputed: Option<[u8; 32]>,
+    ) -> Result<String, ComputeError> {
+        (policy().leaf)(&PublishedInput {
+            index: 1,
+            ciphertext: b"unused",
+            ciphertext_hash: hash,
+            commitment,
+            metadata,
+            recomputed,
+        })
+    }
+
+    #[test]
+    fn the_bid_leaf_matches_the_solidity_vector() {
+        // `AuctionProgram.inputLeaf(h, c, bidder, version)` for this input is the same number.
+        let metadata = [vec![0x33; 20], 2u64.to_be_bytes()[3..].to_vec()].concat();
+        let leaf = bid_leaf([0x11; 32], Some(&[0x22; 32]), &metadata, None).unwrap();
+        assert_eq!(
+            format!("{leaf:0>64}"),
+            "0b8ba63e8917dfb3f66cfcc1b0be5d3a8f8613ba8092d690a43b84daec02b94a"
+        );
+    }
+
+    #[test]
+    fn the_bid_leaf_binds_every_part_and_ignores_whether_the_bytes_open() {
+        let commitment = [0x22; 32];
+        let metadata = metadata_of(5, 1);
+        let leaf = |hash, commitment: &[u8; 32], metadata: &[u8], recomputed| {
+            bid_leaf(hash, Some(commitment), metadata, recomputed).unwrap()
+        };
+        let base = leaf([0x11; 32], &commitment, &metadata, None);
+        // A ciphertext that does not open its commitment still has a leaf, the same one.
+        assert_eq!(base, leaf([0x11; 32], &commitment, &metadata, Some([9; 32])));
+        assert_ne!(base, leaf([0x12; 32], &commitment, &metadata, None));
+        assert_ne!(base, leaf([0x11; 32], &[0x23; 32], &metadata, None));
+        assert_ne!(base, leaf([0x11; 32], &commitment, &metadata_of(6, 1), None));
+        assert_ne!(base, leaf([0x11; 32], &commitment, &metadata_of(5, 2), None));
+    }
+
+    #[test]
+    fn the_bid_leaf_needs_a_commitment_and_25_bytes_of_metadata() {
+        let commitment = [0x22; 32];
+        assert!(bid_leaf([0x11; 32], None, &metadata_of(5, 1), None).is_err());
+        assert!(bid_leaf([0x11; 32], Some(&commitment), &[0; 24], None).is_err());
+        assert!(bid_leaf([0x11; 32], Some(&commitment), &[0; 26], None).is_err());
+    }
+
+    /// `bidder || uint40(version)`, as the contract publishes it.
+    fn metadata_of(bidder: u8, version: u64) -> Vec<u8> {
+        [vec![bidder; 20], version.to_be_bytes()[3..].to_vec()].concat()
+    }
+
+    /// What the policy sees of one published bid ciphertext.
+    struct Row {
+        metadata: Vec<u8>,
+        commitment: Option<[u8; 32]>,
+        recomputed: Option<[u8; 32]>,
+    }
+
+    /// The 3 records of a bid; `opens[r]` says whether role `r` opens its commitment.
+    fn bid(bidder: u8, version: u64, opens: [bool; 3]) -> Vec<Row> {
+        opens
+            .iter()
+            .enumerate()
+            .map(|(role, opens)| Row {
+                metadata: metadata_of(bidder, version),
+                commitment: Some([role as u8 + 1; 32]),
+                recomputed: Some([if *opens { role as u8 + 1 } else { 0xff }; 32]),
+            })
+            .collect()
+    }
+
+    /// The indices `select_bids` picks from the configuration followed by `rows`.
+    fn selected(rows: &[Vec<Row>]) -> Vec<usize> {
+        let zero = [0u8; 32];
+        let config = std::iter::once(InputRecord {
+            index: 0,
+            ciphertext_hash: [0; 32],
+            commitment: Some(&zero),
+            metadata: &[0; METADATA_LEN],
+            recomputed: Some(zero),
+        });
+        let records: Vec<InputRecord> = config
+            .chain(rows.iter().flatten().enumerate().map(|(i, row)| InputRecord {
+                index: i + 1,
+                ciphertext_hash: [0; 32],
+                commitment: row.commitment.as_ref(),
+                metadata: &row.metadata,
+                recomputed: row.recomputed,
+            }))
+            .collect();
+        select_bids(&records)
+    }
+
+    const OPENS: [bool; 3] = [true; 3];
+
+    #[test]
+    fn the_latest_valid_version_of_a_bidder_is_selected() {
+        // Leaves 1-3 are version 1, leaves 4-6 version 2, leaves 7-9 version 3.
+        assert_eq!(
+            selected(&[bid(1, 1, OPENS), bid(1, 2, OPENS), bid(1, 3, OPENS)]),
+            [0, 7, 8, 9]
+        );
+    }
+
+    #[test]
+    fn a_bidder_falls_back_to_an_earlier_version_when_the_latest_does_not_open() {
+        assert_eq!(
+            selected(&[bid(1, 1, OPENS), bid(1, 2, [true, false, true])]),
+            [0, 1, 2, 3]
+        );
+        // The first usable one counts, not the first one.
+        assert_eq!(
+            selected(&[
+                bid(1, 1, OPENS),
+                bid(1, 2, [false, true, true]),
+                bid(1, 3, [true, true, false]),
+            ]),
+            [0, 1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn a_bidder_with_one_bad_ciphertext_in_its_only_bid_is_dropped_whole() {
+        for bad in 0..3 {
+            let mut opens = OPENS;
+            opens[bad] = false;
+            assert_eq!(
+                selected(&[bid(1, 1, opens), bid(2, 1, OPENS)]),
+                [0, 4, 5, 6],
+                "role {bad} does not open"
+            );
+        }
+    }
+
+    #[test]
+    fn bidders_are_ordered_by_the_leaf_of_the_selected_bid() {
+        // bidder 1: leaves 1-3 and 7-9, bidder 2: leaves 4-6. Bidder 1 counts at its update, so
+        // it comes after bidder 2.
+        assert_eq!(
+            selected(&[bid(1, 1, OPENS), bid(2, 1, OPENS), bid(1, 2, OPENS)]),
+            [0, 4, 5, 6, 7, 8, 9]
+        );
+    }
+
+    #[test]
+    fn the_configuration_is_always_selected() {
+        assert_eq!(selected(&[]), [0]);
+        assert_eq!(selected(&[bid(1, 1, [false; 3])]), [0]);
+    }
+
+    #[test]
+    fn a_bid_with_malformed_metadata_or_no_commitment_is_never_selected() {
+        for length in [0, 24, 26] {
+            let mut malformed = bid(1, 1, OPENS);
+            for row in &mut malformed {
+                row.metadata = vec![1; length];
+            }
+            assert_eq!(selected(&[malformed, bid(2, 1, OPENS)]), [0, 4, 5, 6]);
+        }
+
+        let mut no_commitment = bid(1, 1, OPENS);
+        no_commitment[1].commitment = None;
+        assert_eq!(selected(&[no_commitment, bid(2, 1, OPENS)]), [0, 4, 5, 6]);
     }
 }

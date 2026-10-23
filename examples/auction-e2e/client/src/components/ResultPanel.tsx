@@ -5,16 +5,60 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import React, { useEffect, useState } from 'react'
-import { type AuctionResult, AuctionType, LEVELS, type LaneResult, type RegionResult, decodeAuction } from '@shared/layout'
+import { bytesToHex, hexToBytes, type Address, type Hex } from 'viem'
+import { computeCiphertextCommitment } from '@interfold/sdk'
+import { type AuctionResult, AuctionType, type LaneResult, MIN_BIDDERS, PRESET, type RegionResult, decodeAuction } from '@shared/layout'
+import { type SelectedBid, type SubmittedBid, selectBids } from '@shared/selection'
 import { type AuctionState, formatPrice } from '@/utils/auction'
-import { type LinkedBidder, readLinkedBidders } from '@/utils/auction-events'
+import { readSubmittedBids } from '@/utils/auction-events'
+import type { StoredVersion } from '@/utils/bid-storage'
 import { formatError } from '@/utils/error-formatting'
 import { AddressLink } from './Explorer'
 import Spinner from './Spinner'
 
+/** What became of one bidder's bids: the version the auction computed over, if any. */
+interface BidderOutcome {
+  bidder: Address
+  /** The highest version the bidder submitted. */
+  latest: number
+  /** The version that counted: the highest one whose bytes open their commitments. `null` if none did. */
+  counted: number | null
+}
+
 interface Decoded {
-  bidders: LinkedBidder[]
+  /** The bids the program computed over, in bidder position order. */
+  bidders: SelectedBid[]
+  outcomes: BidderOutcome[]
   result: AuctionResult
+}
+
+/**
+ * The bids of the auction as the program reads them: the bytes of each ciphertext are hashed again and
+ * must open the commitment the bidder published. The same rule as `select` in the program.
+ */
+async function selectCountedBids(bids: SubmittedBid[]): Promise<{ bidders: SelectedBid[]; outcomes: BidderOutcome[] }> {
+  const recomputed = new Map<Hex, string>()
+  await Promise.all(
+    [...new Set(bids.flatMap((bid) => bid.ciphertexts))].map(async (ciphertext) => {
+      try {
+        recomputed.set(ciphertext, bytesToHex(await computeCiphertextCommitment(hexToBytes(ciphertext), PRESET)))
+      } catch {
+        // Bytes that are no ciphertext open no commitment: the ciphertext is left out of the map.
+      }
+    }),
+  )
+  const bidders = selectBids(bids, (ciphertext, commitment) => recomputed.get(ciphertext) === commitment.toLowerCase())
+  const outcomes = new Map<string, BidderOutcome>()
+  for (const { bidder, version } of bids) {
+    const key = bidder.toLowerCase()
+    const known = outcomes.get(key)
+    outcomes.set(key, { bidder, latest: Math.max(known?.latest ?? 0, version), counted: null })
+  }
+  for (const { bidder, version } of bidders) {
+    const outcome = outcomes.get(bidder.toLowerCase())
+    if (outcome) outcome.counted = version
+  }
+  return { bidders, outcomes: [...outcomes.values()] }
 }
 
 const sameAddress = (a: string, b: string | undefined) => b !== undefined && a.toLowerCase() === b.toLowerCase()
@@ -40,12 +84,12 @@ const PRICE_CAPTION: Record<AuctionType, string> = {
 interface ResultPanelProps {
   auction: AuctionState
   account: `0x${string}` | undefined
-  /** The connected account's own bid level, if this browser holds it. */
-  myBid: number | null
+  /** The bids of the connected account that this browser remembers. */
+  myVersions: StoredVersion[]
 }
 
 /** Decodes the published plaintext of an auction and shows who won, at what price, and how to read it. */
-const ResultPanel: React.FC<ResultPanelProps> = ({ auction, account, myBid }) => {
+const ResultPanel: React.FC<ResultPanelProps> = ({ auction, account, myVersions }) => {
   const [decoded, setDecoded] = useState<Decoded | { error: string } | null>(null)
   const plaintextOutput = auction.plaintextOutput
 
@@ -53,14 +97,20 @@ const ResultPanel: React.FC<ResultPanelProps> = ({ auction, account, myBid }) =>
     let cancelled = false
     setDecoded(null)
     if (plaintextOutput === null) return
-    readLinkedBidders(auction.e3Id)
-      .then(async (bidders) => {
+    readSubmittedBids(auction.e3Id)
+      .then(selectCountedBids)
+      .then(async ({ bidders, outcomes }) => {
+        if (bidders.length < MIN_BIDDERS) {
+          throw new Error(
+            `Only ${bidders.length} ${bidders.length === 1 ? 'bid' : 'bids'} opened their commitments, and the auction needs ${MIN_BIDDERS}. The program had nothing to compute over.`,
+          )
+        }
         const result = await decodeAuction(
           auction.auctionType,
           plaintextOutput,
-          bidders.map((bidder) => bidder.geCiphertext),
+          bidders.map((bid) => bid.ciphertexts[0]),
         )
-        if (!cancelled) setDecoded({ bidders, result })
+        if (!cancelled) setDecoded({ bidders, outcomes, result })
       })
       .catch((err) => {
         if (!cancelled) setDecoded({ error: formatError(err) })
@@ -79,23 +129,36 @@ const ResultPanel: React.FC<ResultPanelProps> = ({ auction, account, myBid }) =>
   }
   if ('error' in decoded) return <div className='note bad'>Could not decode the result: {decoded.error}</div>
 
-  return <ResultView auction={auction} account={account} myBid={myBid} bidders={decoded.bidders} result={decoded.result} />
+  return (
+    <ResultView
+      auction={auction}
+      account={account}
+      myVersions={myVersions}
+      bidders={decoded.bidders}
+      outcomes={decoded.outcomes}
+      result={decoded.result}
+    />
+  )
 }
 
 interface ResultViewProps extends ResultPanelProps {
-  bidders: LinkedBidder[]
+  bidders: SelectedBid[]
+  outcomes: BidderOutcome[]
   result: AuctionResult
 }
 
 /** Shows a decoded result: the winner, the price and the view that fits the result kind. */
-export const ResultView: React.FC<ResultViewProps> = ({ auction, account, myBid, bidders, result }) => {
+export const ResultView: React.FC<ResultViewProps> = ({ auction, account, myVersions, bidders, outcomes, result }) => {
   const { winner, price } = result
-  const winnerAddress = winner === null ? null : bidders[winner].address
+  const winnerAddress = winner === null ? null : bidders[winner].bidder
   const youWon = winnerAddress !== null && sameAddress(winnerAddress, account)
-  const youBid = account !== undefined && bidders.some((bidder) => sameAddress(bidder.address, account))
+  const mine = outcomes.find((outcome) => sameAddress(outcome.bidder, account))
+  const youBid = mine?.counted != null
+  // The level of the version that counted, if this browser made that bid.
+  const myBid = myVersions.find(({ version }) => version === mine?.counted)?.level ?? null
   const priceLabel = price === null ? 'unreadable' : formatPrice(price, auction.prices)
   const tieSet = result.kind === 'lane' ? result.tieSet : []
-  const inTieSet = tieSet.length > 1 && account !== undefined && tieSet.some((position) => sameAddress(bidders[position].address, account))
+  const inTieSet = tieSet.length > 1 && account !== undefined && tieSet.some((position) => sameAddress(bidders[position].bidder, account))
 
   return (
     <div className='space-y-7'>
@@ -109,7 +172,7 @@ export const ResultView: React.FC<ResultViewProps> = ({ auction, account, myBid,
           <p className='mt-1 font-serif text-4xl leading-none'>{priceLabel}</p>
           <p className='muted mt-2 text-xs'>
             {PRICE_CAPTION[auction.auctionType]}
-            {price !== null && `: level ${price} of ${LEVELS - 1}`}
+            {price !== null && `: step ${price} of ${auction.prices.length - 1}`}
           </p>
         </div>
       </div>
@@ -137,6 +200,11 @@ export const ResultView: React.FC<ResultViewProps> = ({ auction, account, myBid,
               {inTieSet && ' You tied for the top bid and the random draw picked another bidder.'}
               {myBid !== null && ` Your bid was ${formatPrice(myBid, auction.prices)}.`}
             </>
+          ) : mine ? (
+            <>
+              <strong>Your bid was dropped.</strong> The ciphertext bytes of {mine.latest === 1 ? 'your bid' : 'each of your bids'} did not
+              open their commitments, so the program left {mine.latest === 1 ? 'it' : 'them'} out.
+            </>
           ) : (
             'This account did not bid in this auction.'
           )}
@@ -148,6 +216,68 @@ export const ResultView: React.FC<ResultViewProps> = ({ auction, account, myBid,
         <LaneView auction={auction} account={account} bidders={bidders} result={result} />
       ) : (
         <SlotGrid auction={auction} account={account} bidders={bidders} result={result} />
+      )}
+      <CountedBids account={account} bidders={bidders} outcomes={outcomes} />
+    </div>
+  )
+}
+
+/** Which version of each bidder's bid the program computed over, and the bidders that it left out. */
+const CountedBids: React.FC<{ account: `0x${string}` | undefined; bidders: SelectedBid[]; outcomes: BidderOutcome[] }> = ({
+  account,
+  bidders,
+  outcomes,
+}) => {
+  const dropped = outcomes.filter((outcome) => outcome.counted === null)
+  return (
+    <div className='space-y-3'>
+      <h3 className='h3'>Which bids counted</h3>
+      <p className='text-sm text-ink-soft'>
+        A bidder can update its bid, and the program computes over the latest version that is valid. The program hashes the bytes of every
+        ciphertext again and checks that they open the commitment the bidder published; a bid with any ciphertext that does not open is
+        ignored whole. This page repeats that check in your browser.
+      </p>
+      <ol className='space-y-2'>
+        {bidders.map((bid) => {
+          const outcome = outcomes.find((candidate) => sameAddress(candidate.bidder, bid.bidder))
+          return (
+            <li key={bid.bidder} className='flex flex-wrap items-center gap-2 text-sm'>
+              <span className='mono muted'>{bid.position}</span>
+              <AddressLink address={bid.bidder} />
+              {sameAddress(bid.bidder, account) && <span className='tag muted'>you</span>}
+              <span className='tag live'>version {bid.version} counted</span>
+              {outcome && outcome.latest > bid.version && (
+                <span className='muted text-xs'>
+                  {outcome.latest === bid.version + 1
+                    ? `version ${outcome.latest} did not open its commitments`
+                    : `versions above ${bid.version} did not open their commitments`}
+                </span>
+              )}
+            </li>
+          )
+        })}
+      </ol>
+      {dropped.length > 0 && (
+        <>
+          <h3 className='h3'>Dropped bidders</h3>
+          <p className='text-sm text-ink-soft'>
+            These bidders sent bytes that do not open their commitments in any version. Nothing of their bids was used.
+          </p>
+          <ul className='space-y-2'>
+            {dropped.map((outcome) => (
+              <li key={outcome.bidder} className='flex flex-wrap items-center gap-2 text-sm'>
+                <AddressLink address={outcome.bidder} />
+                {sameAddress(outcome.bidder, account) && <span className='tag muted'>you</span>}
+                <span className='tag bad'>dropped</span>
+                <span className='muted text-xs'>
+                  {outcome.latest === 1
+                    ? 'bytes did not open the commitments'
+                    : `none of its ${outcome.latest} versions opened the commitments`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </div>
   )
@@ -181,11 +311,12 @@ const LaneProblems: React.FC<{ auction: AuctionState; result: LaneResult }> = ({
 const LaneView: React.FC<{
   auction: AuctionState
   account: `0x${string}` | undefined
-  bidders: LinkedBidder[]
+  bidders: SelectedBid[]
   result: LaneResult
 }> = ({ auction, account, bidders, result }) => {
   const { price, winner, tieSet, random, lanes, copies } = result
-  const columns = { gridTemplateColumns: `max-content repeat(${LEVELS}, minmax(0, 1fr))` }
+  const levels = auction.prices.length
+  const columns = { gridTemplateColumns: `max-content repeat(${levels}, minmax(0, 1fr))` }
   const drawn = random !== null && tieSet.length > 1 ? random % tieSet.length : null
 
   return (
@@ -193,8 +324,8 @@ const LaneView: React.FC<{
       <div className='space-y-1'>
         <h3 className='h3'>How the result is read</h3>
         <p className='text-sm text-ink-soft'>
-          The committee published one lane of {LEVELS} slots, one per price level, and not one row per bidder. Above the price every slot is
-          zero. At the price level the slot holds the set of bidders that tied for the top bid. Below it every slot is random.
+          The committee published one lane of {levels} slots, one per price step, and not one row per bidder. Above the price every slot is
+          zero. At the price step the slot holds the set of bidders that tied for the top bid. Below it every slot is random.
           {copies > 1 && ` The program repeats the lane in ${copies} copies. The page reads each copy and checks that they agree.`}
         </p>
       </div>
@@ -202,17 +333,17 @@ const LaneView: React.FC<{
       <div className='overflow-x-auto pb-2'>
         <div className='slots' style={columns}>
           <span />
-          {Array.from({ length: LEVELS }, (_, level) => (
+          {Array.from({ length: levels }, (_, level) => (
             <span key={level} className='axis' title={`price ${formatPrice(level, auction.prices)}`}>
               {level}
             </span>
           ))}
           <span className='row-name'>Result lane</span>
-          {lanes.map((lane, level) => (
+          {lanes.slice(0, levels).map((lane, level) => (
             <span
               key={level}
               className={`cell ${lane === 'random' ? 'rand' : lane === 'result' ? 'read' : 'zero'} ${level === price ? 'col-price' : ''}`}
-              title={`level ${level}: ${lane === 'random' ? 'random value' : lane === 'result' ? 'the set of tied bidders' : 'zero'}`}
+              title={`step ${level}: ${lane === 'random' ? 'random value' : lane === 'result' ? 'the set of tied bidders' : 'zero'}`}
             />
           ))}
         </div>
@@ -229,20 +360,23 @@ const LaneView: React.FC<{
           <i style={{ background: 'var(--accent)', borderColor: 'var(--accent)' }} /> The set of tied bidders, at the price
         </span>
         <span>
-          <i style={{ boxShadow: '0 0 0 2px var(--warm)' }} /> Price level
+          <i style={{ boxShadow: '0 0 0 2px var(--warm)' }} /> Price step
         </span>
       </div>
 
       {tieSet.length > 0 && (
         <div className='space-y-3'>
           <h3 className='h3'>{tieSet.length > 1 ? `${tieSet.length} bidders tied for the top bid` : 'No tie'}</h3>
+          <p className='text-sm text-ink-soft'>
+            The tie set is the group of bidders that bid the top step. The result publishes it, so everyone sees who tied, but not any other
+            bid. If the set holds one bidder, that bidder wins. If it holds more, the winner is picked at random from the set.
+          </p>
           {tieSet.length > 1 ? (
             <>
               <p className='text-sm text-ink-soft'>
-                A tie makes the set of tied bidders public: all of them bid the price. A random value, published in one extra slot, picks
-                the winner. It is the sum of the random masks of all bidders, so it is uniform if one bidder is honest, and nobody could
-                predict it or try again. The winner is the tied bidder at the place (value mod {tieSet.length}) in the list below, which is
-                in the order the bidders bid.
+                The random pick uses a number the committee publishes in one extra slot. It is the sum of the random masks of all bidders,
+                so nobody can choose it or try again. The winner is the tied bidder at the place (number mod {tieSet.length}) in the list
+                below. The list is in the order the bidders bid.
               </p>
               {random !== null && drawn !== null && (
                 <p className='font-mono text-sm'>
@@ -251,7 +385,7 @@ const LaneView: React.FC<{
               )}
               <ol className='space-y-2'>
                 {tieSet.map((position, place) => {
-                  const address = bidders[position].address
+                  const address = bidders[position].bidder
                   return (
                     <li key={address} className='flex flex-wrap items-center gap-2 text-sm'>
                       <span className='mono muted'>{place}</span>
@@ -265,7 +399,7 @@ const LaneView: React.FC<{
             </>
           ) : (
             <p className='text-sm text-ink-soft'>
-              One bidder holds the top bid, so that bidder won and no random draw was needed.{' '}
+              Here one bidder holds the top bid, so that bidder won and no random pick was needed.{' '}
               {auction.auctionType === AuctionType.RatioSecondPrice
                 ? 'The winning bid stays secret: only the second-highest bid, the price, is public.'
                 : 'The winning bid is the price.'}
@@ -280,35 +414,36 @@ const LaneView: React.FC<{
 const SlotGrid: React.FC<{
   auction: AuctionState
   account: `0x${string}` | undefined
-  bidders: LinkedBidder[]
+  bidders: SelectedBid[]
   result: RegionResult
 }> = ({ auction, account, bidders, result }) => {
   const { price, winner, set } = result
   const firstPrice = auction.auctionType === AuctionType.FirstPrice
-  const columns = { gridTemplateColumns: `max-content repeat(${LEVELS}, minmax(0, 1fr))` }
+  const levels = auction.prices.length
+  const columns = { gridTemplateColumns: `max-content repeat(${levels}, minmax(0, 1fr))` }
 
   return (
     <div className='space-y-4'>
       <div className='space-y-1'>
         <h3 className='h3'>How the result is read</h3>
         <p className='text-sm text-ink-soft'>
-          The committee published {LEVELS} slots per bidder, one per price level. Slots hold a random value unless the program zeroed them.{' '}
+          The committee published {levels} slots per bidder, one per price step. Slots hold a random value unless the program zeroed them.{' '}
           {firstPrice
             ? 'Exactly one slot is zero: the winner’s, at the winning bid.'
-            : 'Every bidder’s slots are random up to the price. At the price level exactly one is zero, the winner’s. Above it every slot is zero.'}
+            : 'Every bidder’s slots are random up to the price. At the price step exactly one is zero, the winner’s. Above it every slot is zero.'}
         </p>
       </div>
 
       <div className='overflow-x-auto pb-2'>
         <div className='slots' style={columns}>
           <span />
-          {Array.from({ length: LEVELS }, (_, level) => (
+          {Array.from({ length: levels }, (_, level) => (
             <span key={level} className='axis' title={`price ${formatPrice(level, auction.prices)}`}>
               {level}
             </span>
           ))}
           {set.map((row, position) => {
-            const address = bidders[position].address
+            const address = bidders[position].bidder
             const mine = sameAddress(address, account)
             return (
               <React.Fragment key={address}>
@@ -317,13 +452,13 @@ const SlotGrid: React.FC<{
                   {mine && <span className='tag muted'>you</span>}
                   {position === winner && <span className='tag live'>winner</span>}
                 </span>
-                {row.map((isSet, level) => {
+                {row.slice(0, levels).map((isSet, level) => {
                   const reading = !isSet && position === winner && level === price
                   return (
                     <span
                       key={level}
                       className={`cell ${isSet ? 'rand' : reading ? 'read' : 'zero'} ${level === price ? 'col-price' : ''}`}
-                      title={`level ${level}: ${isSet ? 'random value' : 'zero'}`}
+                      title={`step ${level}: ${isSet ? 'random value' : 'zero'}`}
                     />
                   )
                 })}
@@ -344,7 +479,7 @@ const SlotGrid: React.FC<{
           <i style={{ background: 'var(--accent)', borderColor: 'var(--accent)' }} /> The reading: the winner’s zero at the price
         </span>
         <span>
-          <i style={{ boxShadow: '0 0 0 2px var(--warm)' }} /> Price level
+          <i style={{ boxShadow: '0 0 0 2px var(--warm)' }} /> Price step
         </span>
       </div>
       <p className='muted text-xs'>

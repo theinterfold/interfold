@@ -32,7 +32,12 @@ describe('callFheRunner', () => {
       },
       '0x0102',
       '0x0405',
-      [['0x03', 0]],
+      {
+        ciphertexts: [['0x03', 0]],
+        commitments: [`0x${'00'.repeat(32)}`],
+        slots: [`0x${'00'.repeat(20)}`],
+        parents: [0],
+      },
       { runnerUrl: 'http://127.0.0.1:13151', callbackUrl: 'http://127.0.0.1:8080/callback/7/secret' },
     )
 
@@ -52,6 +57,9 @@ describe('callFheRunner', () => {
           params: '0x0102',
           committee_public_key: '0x0405',
           ciphertext_inputs: [['0x03', 0]],
+          input_commitments: [`0x${'00'.repeat(32)}`],
+          input_slots: [`0x${'00'.repeat(20)}`],
+          input_parents: [0],
           callback_url: 'http://127.0.0.1:8080/callback/7/secret',
         }),
       }),

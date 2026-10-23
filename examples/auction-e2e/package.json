@@ -21,7 +21,7 @@
     "dev:server": "./scripts/dev_server.sh",
     "predev:all": "./scripts/compile_program.sh",
     "test": "hardhat test",
-    "test:server": "vitest run ./server",
+    "test:server": "vitest run ./server ./shared",
     "test:integration": "pnpm test:server && ./scripts/test_integration.sh"
   },
   "dependencies": {

@@ -10,11 +10,11 @@ import { AUCTION_TYPE_DESCRIPTIONS, AUCTION_TYPE_LABELS, MAX_BIDDERS_BY_TYPE, is
 import { useAuction } from '@/hooks/useAuctions'
 import { useChainTime } from '@/hooks/useChainTime'
 import { useCommitteeKey } from '@/hooks/useCommitteeKey'
-import { allRolesMask } from '@/hooks/useBid'
-import { useSubmittedRoles } from '@/hooks/useSubmittedRoles'
+import { useAllowlist, gateKind as gateKindOf } from '@/hooks/useAllowlist'
+import { useBidCount } from '@/hooks/useBidCount'
 import { useWallet } from '@/hooks/useWallet'
 import { formatDateTime, phaseOf, timeLeftLabel } from '@/utils/auction'
-import { loadBid } from '@/utils/bid-storage'
+import { loadVersions } from '@/utils/bid-storage'
 import { chain } from '@/utils/chain'
 import { getContractAddresses } from '@/utils/env-config'
 import { Pips } from '@/components/AuctionCard'
@@ -33,23 +33,27 @@ const AuctionPage: React.FC = () => {
   const { auction, error, refresh } = useAuction(e3Id)
   const now = useChainTime()
   const wallet = useWallet()
-  const { mask, refresh: refreshRoles } = useSubmittedRoles(e3Id, wallet.address)
+  const { count: bidCount, refresh: refreshBidCount } = useBidCount(e3Id, wallet.address)
 
   const phase = auction ? phaseOf(auction, now) : null
   // The key is only needed to bid, and bidding needs it until the window closes.
   const committeeKey = useCommitteeKey(e3Id, phase === 'awaiting-key' || phase === 'bidding')
 
-  const auctionType = auction?.auctionType
-  const myBid = useMemo(() => {
-    if (e3Id === null || !wallet.address || auctionType === undefined || mask !== allRolesMask(auctionType)) return null
-    const { e3Program } = getContractAddresses()
-    return loadBid({ chainId: chain.id, program: e3Program, e3Id, account: wallet.address })?.bid ?? null
-  }, [e3Id, wallet.address, auctionType, mask])
+  const allowlist = useAllowlist(auction?.gate, e3Id)
+
+  // The bids of this browser change only when a submission lands, which moves the bid count.
+  const myVersions = useMemo(
+    () =>
+      e3Id === null || !wallet.address || bidCount === null
+        ? []
+        : loadVersions({ chainId: chain.id, program: getContractAddresses().e3Program, e3Id, account: wallet.address }),
+    [e3Id, wallet.address, bidCount],
+  )
 
   const onSubmitted = React.useCallback(() => {
-    refreshRoles()
+    refreshBidCount()
     void refresh()
-  }, [refreshRoles, refresh])
+  }, [refreshBidCount, refresh])
 
   if (e3Id === null) return <NotFound text='This is not a valid auction id.' />
   if (auction === undefined) {
@@ -72,6 +76,7 @@ const AuctionPage: React.FC = () => {
 
   const { e3Program } = getContractAddresses()
   const maxBidders = MAX_BIDDERS_BY_TYPE[auction.auctionType]
+  const gateKind = gateKindOf(auction.gate)
 
   return (
     <div className='page space-y-10'>
@@ -97,18 +102,33 @@ const AuctionPage: React.FC = () => {
       <dl className='card grid grid-cols-2 gap-x-6 gap-y-5 !p-5 md:grid-cols-3 lg:grid-cols-4'>
         <Fact label='Bidders'>
           <span className='flex items-center gap-2'>
-            <Pips filled={auction.linkedBidders} total={maxBidders} />
+            <Pips filled={auction.bidderCount} total={maxBidders} />
             <span className='font-mono text-xs'>
-              {auction.linkedBidders}/{maxBidders}
+              {auction.bidderCount}/{maxBidders}
             </span>
           </span>
+        </Fact>
+        <Fact label='Who can bid'>
+          {gateKind === 'open' ? (
+            'Anyone'
+          ) : gateKind === 'allowlist' ? (
+            allowlist.members ? (
+              `An allowlist of ${allowlist.members.length} ${allowlist.members.length === 1 ? 'address' : 'addresses'}`
+            ) : (
+              'An allowlist'
+            )
+          ) : (
+            <span className='flex flex-wrap items-center gap-1'>
+              A gate contract <AddressLink address={auction.gate} />
+            </span>
+          )}
         </Fact>
         <Fact label='Top tie'>
           {isRatioType(auction.auctionType) ? 'Random draw among the tied bidders' : 'Priority from a hash of the ciphertexts'}
         </Fact>
         <Fact label='Time'>{timeLeftLabel(auction, phase, now)}</Fact>
         <Fact label='Bidding ends'>{formatDateTime(auction.inputWindow[1])}</Fact>
-        <Fact label='Prices'>
+        <Fact label={`${auction.prices.length} price steps`}>
           <span className='font-mono' title={auction.prices.map((price) => price.toLocaleString('en-US')).join(', ')}>
             {auction.prices[0].toLocaleString('en-US')} – {auction.prices[auction.prices.length - 1].toLocaleString('en-US')}
           </span>
@@ -128,13 +148,21 @@ const AuctionPage: React.FC = () => {
           <PhaseTimeline phase={phase} auction={auction} />
         </Section>
         <Section eyebrow='Nº 02' title='Your bid'>
-          <BidPanel auction={auction} phase={phase} wallet={wallet} committeeKey={committeeKey} mask={mask} onSubmitted={onSubmitted} />
+          <BidPanel
+            auction={auction}
+            phase={phase}
+            wallet={wallet}
+            committeeKey={committeeKey}
+            allowlist={allowlist}
+            bidCount={bidCount}
+            onSubmitted={onSubmitted}
+          />
         </Section>
       </div>
 
       <Section eyebrow='Nº 03' title='Result'>
         {phase === 'complete' ? (
-          <ResultPanel auction={auction} account={wallet.address} myBid={myBid} />
+          <ResultPanel auction={auction} account={wallet.address} myVersions={myVersions} />
         ) : phase === 'failed' ? (
           <div className='note'>There is no result: the auction failed.</div>
         ) : (

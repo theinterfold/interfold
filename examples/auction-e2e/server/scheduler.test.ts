@@ -54,7 +54,7 @@ describe('ComputeScheduler', () => {
     expect(token).toMatch(/^[0-9a-f]{64}$/)
 
     expect(instance.authorize(7n, token)).toBe(true)
-    expect(instance.authorize(7n, `${token.slice(0, -1)}0`)).toBe(false)
+    expect(instance.authorize(7n, `${token.slice(0, -1)}${token.endsWith('0') ? '1' : '0'}`)).toBe(false)
     expect(instance.authorize(7n, '')).toBe(false)
     expect(instance.authorize(8n, token)).toBe(false)
 

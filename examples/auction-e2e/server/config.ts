@@ -12,6 +12,9 @@ const CHAINS: Record<number, Chain> = {
   [sepolia.id]: sepolia,
 }
 
+/** Anvil account 9, `0xa0Ee7A142d267C1f36714E4a8F75612F20a79720`. Ciphernodes use accounts 1-5, bidders 6-8, the operator account 0. */
+const LOCAL_RELAYER_KEY: Hex = '0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6'
+
 export type DataAvailabilityConfig =
   | { mode: 'mock_http' }
   | {
@@ -32,6 +35,11 @@ export interface ServerConfig {
   wsRpcUrl?: string
   /** Never log it. */
   privateKey: Hex
+  /**
+   * Pays the gas of `POST /relay`. Never log it. `undefined` turns the endpoint off. The local chain
+   * defaults to Anvil account 9, which no bidder and no ciphernode uses.
+   */
+  relayerPrivateKey?: Hex
   chain: Chain
   interfold: Address
   registry: Address
@@ -101,6 +109,10 @@ export function loadConfig(env: Env = process.env): ServerConfig {
   const privateKey = required(env, 'PRIVATE_KEY')
   if (!/^0x[0-9a-fA-F]{64}$/.test(privateKey)) throw new Error('PRIVATE_KEY must be a 32-byte hex value with a 0x prefix')
 
+  const relayerKey = env.RELAYER_PRIVATE_KEY?.trim() || (chainId === hardhat.id ? LOCAL_RELAYER_KEY : undefined)
+  if (relayerKey && !/^0x[0-9a-fA-F]{64}$/.test(relayerKey))
+    throw new Error('RELAYER_PRIVATE_KEY must be a 32-byte hex value with a 0x prefix')
+
   const wsRpcUrl = env.WS_RPC_URL?.trim()
   const deployBlockText = env.DEPLOY_BLOCK?.trim()
   if (!deployBlockText && chainId !== hardhat.id) {
@@ -129,6 +141,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     rpcUrl: url('RPC_URL', required(env, 'RPC_URL'), ['http:', 'https:']),
     wsRpcUrl: wsRpcUrl ? url('WS_RPC_URL', wsRpcUrl, ['ws:', 'wss:']) : undefined,
     privateKey: privateKey as Hex,
+    relayerPrivateKey: relayerKey as Hex | undefined,
     chain,
     interfold: address(env, 'INTERFOLD_ADDRESS'),
     registry: address(env, 'REGISTRY_ADDRESS'),

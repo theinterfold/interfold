@@ -7,6 +7,7 @@
 import {
   InterfoldSDK,
   calculateInputWindow,
+  computeCiphertextCommitment,
   DEFAULT_COMPUTE_PROVIDER_PARAMS,
   encodeComputeProviderParams,
   CommitteeSize,
@@ -14,82 +15,164 @@ import {
 } from '@interfold/sdk'
 import { InterfoldEventType, RegistryEventType } from '@interfold/sdk/events'
 import { E3Stage } from '@interfold/sdk/contracts'
-import { createWalletClient, hexToBytes, http, parseAbi, parseEventLogs } from 'viem'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { createWalletClient, type Hex, hexToBytes, http, parseAbi, parseEventLogs, zeroAddress } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { anvil } from 'viem/chains'
 import { describe, expect, it } from 'vitest'
 import { publishBidInput } from './input'
 import { AuctionProgram__factory } from '../types/factories/contracts'
-import { HonkVerifier__factory } from '../types/factories/contracts/verifiers/AuctionVerifier.sol'
+import { MerkleAllowlistGate__factory } from '../types/factories/contracts/gates'
+import { AuctionVerifier3__factory } from '../types/factories/contracts/verifiers/AuctionVerifier3.sol'
+import { allowlistProof, allowlistRoot, encodeAllowlistConfig } from '../shared/allowlist'
 import {
   AuctionType,
+  type BidInput,
+  bidInputsHash,
+  bidTypedData,
   decodeAuction,
   encodeAuctionParams,
+  encodeBidInput,
   evenPrices,
   expectedAuction,
   expectedTieSet,
-  FIRST_BID_LEAF,
   isRatioType,
+  LEVELS,
   MAX_BIDDERS_BY_TYPE,
+  MAX_BIDS_PER_BIDDER,
+  readPriceList,
   Role,
   rolesFor,
 } from '../shared/layout'
-import { encodeBidInput, InputProver, newBidSecret, PARAM_SET, PRESET, type PreparedInput } from '../shared/prover'
+import { BidProver, PARAM_SET, PRESET, type PreparedBid, toHex } from '../shared/prover'
+import { selectBids, type SubmittedBid } from '../shared/selection'
 import { advanceAnvilTime, sleep } from './anvil-helpers'
 
 const registryReadAbi = parseAbi(['function sortitionSeed(uint256 e3Id) view returns (bool ready, uint256 seed)'])
 
 const CREATOR_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
-// Anvil accounts 6-8. Accounts 1-5 are the ciphernodes' wallets.
+// Anvil accounts 6-8. Accounts 1-5 are the ciphernodes' wallets. Account 9 is the server's relayer.
 const BIDDER_KEYS = [
   '0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e',
   '0x4bbbf85ce3377467afe5d46f804f221813b2bb87f24d81f60f1fcdbf7cbf4356',
   '0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97',
 ] as const
+const SERVER_URL = process.env.AUCTION_SERVER_URL ?? 'http://localhost:8080'
+
+/** One bid, in the order that the test publishes the bids of its auction. */
+interface BidPlan {
+  /** The bidder, as an index into `BIDDER_KEYS`. */
+  bidder: number
+  level: number
+  /** The bidder signs the bid and the server's relayer sends it. */
+  relayed?: true
+  /** The bidder publishes its `gt` bytes in the `mask` position, with the commitments of the proof. They do not open. */
+  unopened?: true
+  /** Send the prepared bid of the plan at this index again, as the next version of the bidder: no new proof. */
+  resend?: number
+}
 
 interface AuctionCase {
   type: AuctionType
   title: string
   prices: readonly bigint[]
-  bids: readonly number[]
+  bids: readonly BidPlan[]
+  /** The bidders, as indices into `BIDDER_KEYS`, that the allowlist gate lets in. No gate if absent. */
+  allowlist?: readonly number[]
   price: number
-  /** The winner of a region auction, or of a ratio auction without a tie. */
+  /** The bidder, as an index into `BIDDER_KEYS`, that wins a region auction, or a ratio auction without a tie. */
   winner?: number
-  /** The bidders of a ratio auction whose bid equals the price. */
+  /** The bidders of a ratio auction whose counted bid equals the price. */
   tieSet?: readonly number[]
 }
 
 /**
- * One auction of each type, run at the same time. The bids of the region auctions are distinct, so
- * their winner does not depend on the tie priority. The ratio first-price bids are distinct too.
- * The ratio second-price bids tie, so the winner is the member of the tie set that the random lane
- * picks. Every ciphertext costs minutes of proving, twenty-nine in all; `program/src/lib.rs` tests
- * more ties and the other bidder counts against the FHE program directly.
+ * One auction of each type, run at the same time, each with its own number of price steps. Every
+ * bid is below the `levels` of its auction, and the top step of the shorter auctions is bid, so
+ * the bid circuit's `b < levels` check is met at its edge. The counted bids of the region auctions
+ * are distinct, so their winner does not depend on the tie priority. The ratio first-price bids are
+ * distinct too. The ratio second-price bids tie, on the top step of a 6-step auction, so the winner
+ * is the member of the tie set that the random lane picks.
+ *
+ * The auctions also cover:
+ * - an update: in the second-price auction bidder 0 bids step 14, which would win, then updates to
+ *   step 5, so the result shows that the later version counts. It sends that update once more, as
+ *   version 3, which reaches the limit of 3 bids;
+ * - the allowlist gate: the first-price auction lets in bidders 0 to 2, and the creator's account is
+ *   rejected;
+ * - bytes that do not open: bidder 2 of the first-price auction bids step 11, the highest, but
+ *   publishes bytes that do not open its commitments, so the result does not count it;
+ * - a relayed bid: bidder 1 of the ratio first-price auction signs its bid and the server sends it.
+ *
+ * Every encryption costs minutes of proving: 35 encryptions and 11 bid proofs in all;
+ * `program/src/lib.rs` tests more ties and the other bidder counts against the FHE program directly.
  */
-// The second-price auction uses even steps; the first-price auction uses an uneven list. The
-// program sees only levels, so the prices change nothing in the computation.
+// The second-price auction has all 16 steps with even prices; the other auctions have uneven or
+// shorter lists. The program sees only steps, so the prices change nothing in the computation.
 const UNEVEN_PRICES = [0n, 1n, 2n, 5n, 10n, 20n, 50n, 100n, 150n, 200n, 300n, 500n, 750n, 1000n, 2000n, 5000n]
 const AUCTIONS: readonly AuctionCase[] = [
-  { type: AuctionType.SecondPrice, title: 'Second-price test', prices: evenPrices(0n, 100n), bids: [5, 12, 9], winner: 1, price: 9 },
-  { type: AuctionType.FirstPrice, title: 'First-price test', prices: UNEVEN_PRICES, bids: [6, 11], winner: 1, price: 11 },
+  {
+    type: AuctionType.SecondPrice,
+    title: 'Second-price test',
+    prices: evenPrices(0n, 100n, 16),
+    bids: [
+      { bidder: 0, level: 14 },
+      { bidder: 1, level: 12 },
+      { bidder: 2, level: 9 },
+      { bidder: 0, level: 5 },
+      { bidder: 0, level: 5, resend: 3 },
+    ],
+    winner: 1,
+    price: 9,
+  },
+  {
+    type: AuctionType.FirstPrice,
+    title: 'First-price allowlist test',
+    prices: UNEVEN_PRICES.slice(0, 12),
+    bids: [
+      { bidder: 0, level: 6 },
+      { bidder: 1, level: 9 },
+      { bidder: 2, level: 11, unopened: true },
+    ],
+    allowlist: [0, 1, 2],
+    winner: 1,
+    price: 9,
+  },
   {
     type: AuctionType.RatioFirstPrice,
-    title: 'Ratio first-price test',
-    prices: UNEVEN_PRICES,
-    bids: [4, 13],
+    title: 'Ratio first-price relayed test',
+    prices: evenPrices(25n, 25n, 8),
+    bids: [
+      { bidder: 0, level: 2 },
+      { bidder: 1, level: 7, relayed: true },
+    ],
     winner: 1,
-    price: 13,
+    price: 7,
     tieSet: [1],
   },
   {
     type: AuctionType.RatioSecondPrice,
     title: 'Ratio second-price tie test',
-    prices: evenPrices(10n, 10n),
-    bids: [7, 7],
-    price: 7,
+    prices: evenPrices(10n, 10n, 6),
+    bids: [
+      { bidder: 0, level: 5 },
+      { bidder: 1, level: 5 },
+    ],
+    price: 5,
     tieSet: [0, 1],
   },
 ]
+
+/** The `MerkleAllowlistGate` that `pnpm deploy` recorded for the local chain. */
+function readGateAddress(): Hex {
+  const deployments = JSON.parse(readFileSync(fileURLToPath(new URL('../deployed_contracts.json', import.meta.url)), 'utf8')) as {
+    localhost?: { MerkleAllowlistGate?: { address?: Hex } }
+  }
+  const address = deployments.localhost?.MerkleAllowlistGate?.address
+  if (!address) throw new Error('deployed_contracts.json has no localhost MerkleAllowlistGate; run pnpm deploy')
+  return address
+}
 
 function getContractAddresses() {
   return {
@@ -97,6 +180,7 @@ function getContractAddresses() {
     ciphernodeRegistry: process.env.REGISTRY_ADDRESS as `0x${string}`,
     e3Program: process.env.E3_PROGRAM_ADDRESS as `0x${string}`,
     feeToken: process.env.FEE_TOKEN_ADDRESS as `0x${string}`,
+    allowlistGate: readGateAddress(),
   }
 }
 
@@ -114,7 +198,8 @@ describe('Sealed-bid auction', () => {
     privateKey: CREATOR_KEY,
   })
   const publicClient = sdk.getPublicClient()
-  const creator = privateKeyToAccount(CREATOR_KEY).address
+  const creatorAccount = privateKeyToAccount(CREATOR_KEY)
+  const creator = creatorAccount.address
   const bidders = BIDDER_KEYS.map((key) =>
     createWalletClient({ account: privateKeyToAccount(key), chain: anvil, transport: http('http://localhost:8545') }),
   )
@@ -146,7 +231,11 @@ describe('Sealed-bid auction', () => {
         }
       }
 
-      // The four key generations take about 26 minutes together and the proofs about 40 more. All four
+      const bidderAddresses = bidders.map((bidder) => bidder.account.address)
+      const bidderIndex = (address: string) => bidderAddresses.findIndex((candidate) => candidate.toLowerCase() === address.toLowerCase())
+      const allowlistMembers = (auction: AuctionCase) => (auction.allowlist ?? []).map((index) => bidderAddresses[index])
+
+      // The four key generations take about 26 minutes together and the proofs about 50 more. All four
       // requests share one window, so its start leaves time for the four approve-and-request rounds.
       const inputWindow = await calculateInputWindow(publicClient, 3 * 3600, 300n)
       const requestParams = (auction: AuctionCase) => ({
@@ -155,8 +244,18 @@ describe('Sealed-bid auction', () => {
         e3Program: contracts.e3Program,
         paramSet: PARAM_SET,
         computeProviderParams: encodeComputeProviderParams(DEFAULT_COMPUTE_PROVIDER_PARAMS, true),
-        customParams: encodeAuctionParams(auction.type, auction.prices, auction.title),
+        customParams: auction.allowlist
+          ? encodeAuctionParams(
+              auction.type,
+              auction.prices,
+              auction.title,
+              contracts.allowlistGate,
+              encodeAllowlistConfig(allowlistMembers(auction)),
+            )
+          : encodeAuctionParams(auction.type, auction.prices, auction.title),
       })
+
+      expect(await publicClient.readContract({ ...program, functionName: 'MAX_BIDS_PER_BIDDER' })).toBe(MAX_BIDS_PER_BIDDER)
 
       const e3Ids: bigint[] = []
       for (const auction of AUCTIONS) {
@@ -164,15 +263,29 @@ describe('Sealed-bid auction', () => {
         await sdk.waitForTransaction(await sdk.approveFeeToken(await sdk.getE3Quote(params)))
         const receipt = await publicClient.waitForTransactionReceipt({ hash: await sdk.requestE3(params) })
         const [created] = parseEventLogs({ abi: AuctionProgram__factory.abi, logs: receipt.logs, eventName: 'AuctionCreated' })
-        expect(created.args).toMatchObject({ creator, auctionType: auction.type, prices: auction.prices, title: auction.title })
+        // The contract keeps the unused steps at zero.
+        const padded = [...auction.prices, ...Array.from({ length: LEVELS - auction.prices.length }, () => 0n)]
+        const gate = auction.allowlist ? contracts.allowlistGate : zeroAddress
+        expect(created.args).toMatchObject({
+          creator,
+          auctionType: auction.type,
+          levels: auction.prices.length,
+          prices: padded,
+          title: auction.title,
+          gate,
+          gateConfig: auction.allowlist ? encodeAllowlistConfig(allowlistMembers(auction)) : '0x',
+        })
+        // The getter omits the price array: `(auctionType, levels, creator, title, gate)`.
         expect(await publicClient.readContract({ ...program, functionName: 'auctions', args: [created.args.e3Id] })).toEqual([
           auction.type,
+          auction.prices.length,
           creator,
           auction.title,
+          gate,
         ])
-        expect(await publicClient.readContract({ ...program, functionName: 'auctionPrices', args: [created.args.e3Id] })).toEqual(
-          auction.prices,
-        )
+        const stored = await publicClient.readContract({ ...program, functionName: 'auctionPrices', args: [created.args.e3Id] })
+        expect(stored).toEqual(padded)
+        expect(readPriceList(auction.prices.length, stored)).toEqual(auction.prices)
         // The contract and `shared/layout.ts` keep their own tables of the roles and the limit of a type.
         expect(await publicClient.readContract({ ...program, functionName: 'roleCount', args: [auction.type] })).toBe(
           rolesFor(auction.type).length,
@@ -180,6 +293,15 @@ describe('Sealed-bid auction', () => {
         expect(await publicClient.readContract({ ...program, functionName: 'maxBidders', args: [auction.type] })).toBe(
           MAX_BIDDERS_BY_TYPE[auction.type],
         )
+        if (auction.allowlist) {
+          // The gate built its root on chain from the list; `shared/allowlist.ts` builds the same root.
+          const [set] = parseEventLogs({ abi: MerkleAllowlistGate__factory.abi, logs: receipt.logs, eventName: 'AllowlistSet' })
+          expect(set.args).toMatchObject({
+            program: contracts.e3Program,
+            e3Id: created.args.e3Id,
+            root: allowlistRoot(allowlistMembers(auction)),
+          })
+        }
         e3Ids.push(created.args.e3Id)
         console.log(`Requested E3 ${created.args.e3Id}: ${auction.title}`)
       }
@@ -205,77 +327,177 @@ describe('Sealed-bid auction', () => {
         console.log(`Committee key published for E3 ${e3Id}`)
       }
 
-      // Prove every ciphertext first: `prepared[auction][bidder][role]`. A proof binds its sender.
-      const prepared: PreparedInput[][][] = AUCTIONS.map((auction) => auction.bids.map(() => []))
-      const prover = await InputProver.create()
+      // Prove every bid first: `prepared[auction][plan]`. A resent bid reuses the proof of its plan.
+      // A proof binds its bidder, so each bid is proven for the address that will be its bidder.
+      const prepared: PreparedBid[][] = AUCTIONS.map(() => [])
+      const prover = await BidProver.create()
       try {
         for (const [a, auction] of AUCTIONS.entries()) {
-          for (const [bidder, bid] of auction.bids.entries()) {
-            const secret = newBidSecret(bid)
-            for (const role of rolesFor(auction.type)) {
-              const started = Date.now()
-              prepared[a][bidder][role] = await prover.prove(role, secret, committeeKeyOf[a], bidders[bidder].account.address)
-              console.log(`Proved role ${role} of bidder ${bidder} in auction ${a} in ${Date.now() - started}ms`)
+          for (const [i, plan] of auction.bids.entries()) {
+            if (plan.resend !== undefined) {
+              prepared[a][i] = prepared[a][plan.resend]
+              continue
             }
+            const started = Date.now()
+            prepared[a][i] = await prover.prove(
+              auction.type,
+              plan.level,
+              auction.prices.length,
+              committeeKeyOf[a],
+              bidderAddresses[plan.bidder],
+              (step) => console.log(`Auction ${a}, bid ${i}: ${step.kind}${'role' in step ? ` of role ${step.role}` : ''}`),
+            )
+            console.log(`Proved bid ${i} of auction ${a} in ${Date.now() - started}ms`)
           }
         }
       } finally {
         await prover.destroy()
       }
 
-      const publish = async (a: number, bidder: number, role: number) =>
-        sdk.waitForTransaction(await publishBidInput(bidders[bidder], e3Ids[a], prepared[a][bidder][role], contracts.e3Program))
-      // The record verifier reverts on a bad proof; its errors decode with its ABI.
-      const verifierErrors = HonkVerifier__factory.abi.filter((item) => item.type === 'error')
-      const simulate = (a: number, input: PreparedInput, bidder: number) =>
+      // What each bid publishes. An unopened bid carries its own `gt` bytes in the `mask` position,
+      // under the commitments the proof covers, so the contract accepts it and the program does not count it.
+      const bidInput = (a: number, i: number): BidInput => {
+        const plan = AUCTIONS[a].bids[i]
+        const { ciphertexts, commitments, proof } = prepared[a][i]
+        const roles = rolesFor(AUCTIONS[a].type)
+        const published = plan.unopened
+          ? ciphertexts.map((ciphertext, r) => (roles[r] === Role.Mask ? ciphertexts[roles.indexOf(Role.Gt)] : ciphertext))
+          : ciphertexts
+        const members = allowlistMembers(AUCTIONS[a])
+        return {
+          bidder: bidderAddresses[plan.bidder],
+          ciphertexts: published,
+          commitments,
+          proof,
+          gateProof: AUCTIONS[a].allowlist ? allowlistProof(members, bidderAddresses[plan.bidder]) : '0x',
+          signature: '0x',
+        }
+      }
+      const bidCountOf = (a: number, bidder: number) =>
+        publicClient.readContract({ ...program, functionName: 'bidCount', args: [e3Ids[a], bidderAddresses[bidder]] })
+
+      // The bid verifier reverts on a bad proof; its errors decode with its ABI.
+      const verifierErrors = AuctionVerifier3__factory.abi.filter((item) => item.type === 'error')
+      const simulate = (a: number, input: BidInput, sender: { address: Hex }) =>
         publicClient.simulateContract({
           address: contracts.e3Program,
           abi: [...AuctionProgram__factory.abi, ...verifierErrors],
           functionName: 'publishInput',
           args: [e3Ids[a], encodeBidInput(input)],
-          account: bidders[bidder].account,
+          account: sender.address,
         })
-      const submittedRoles = (a: number, bidder: number) =>
-        publicClient.readContract({ ...program, functionName: 'submittedRoles', args: [e3Ids[a], bidders[bidder].account.address] })
-      const ratioSecond = AUCTIONS.findIndex((auction) => auction.type === AuctionType.RatioSecondPrice)
-      const ratioFirst = AUCTIONS.findIndex((auction) => auction.type === AuctionType.RatioFirstPrice)
+      // The signature of the bidder, for the version the bid will get.
+      const sign = async (a: number, input: BidInput, bidder: number) => {
+        const version = Number(await bidCountOf(a, bidder)) + 1
+        return bidders[bidder].signTypedData(
+          bidTypedData(
+            anvil.id,
+            contracts.e3Program,
+            e3Ids[a],
+            bidderAddresses[bidder],
+            version,
+            bidInputsHash(input.commitments, input.ciphertexts),
+          ),
+        )
+      }
+      const relay = async (a: number, input: BidInput) => {
+        const response = await fetch(`${SERVER_URL}/relay`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ e3Id: e3Ids[a].toString(), data: encodeBidInput(input) }),
+        })
+        return { ok: response.ok, body: (await response.json()) as { txHash?: Hex; error?: string } }
+      }
 
-      // Bidder 0 submits its first thermometer. A second thermometer that commits to another bid is
-      // rejected: bidder 1's thermometer, sent from bidder 0's account, has another bid commitment.
-      await publish(0, 0, 0)
-      await expect(simulate(0, prepared[0][1][1], 0)).rejects.toThrow(/BidCommitmentMismatch/)
-      expect(await submittedRoles(0, 0)).toBe(0b001)
+      const [secondPrice, firstPrice, ratioFirst, ratioSecond] = [0, 1, 2, 3]
+      expect(AUCTIONS.map((auction) => auction.type)).toEqual([
+        AuctionType.SecondPrice,
+        AuctionType.FirstPrice,
+        AuctionType.RatioFirstPrice,
+        AuctionType.RatioSecondPrice,
+      ])
+
+      // The program takes the number of ciphertexts of its type: a 4-role bid does not fit a 3-role auction.
+      await expect(simulate(ratioFirst, { ...bidInput(ratioSecond, 0), bidder: bidderAddresses[0] }, bidders[0].account)).rejects.toThrow(
+        /InvalidBidShape/,
+      )
 
       // A ciphertext is bound to its commitment: the right proof does not carry another ciphertext's.
-      const forged = { ...prepared[0][0][1], ciphertextCommitment: prepared[0][0][2].ciphertextCommitment }
-      await expect(simulate(0, forged, 0)).rejects.toThrow()
+      const genuine = bidInput(secondPrice, 0)
+      const forged = { ...genuine, commitments: [genuine.commitments[2], genuine.commitments[1], genuine.commitments[0]] }
+      await expect(simulate(secondPrice, forged, bidders[0].account)).rejects.toThrow(/SumcheckFailed|ShpleminiFailed/)
 
-      // A proof is bound to its sender: bidder 0's published thermometer, copied by bidder 2, fails
-      // verification, because the sender is a public input of the proof.
-      await expect(simulate(0, prepared[0][0][0], 2)).rejects.toThrow(/SumcheckFailed/)
+      // A proof is bound to its bidder: bidder 0's bid, copied by bidder 2 with its own address as the
+      // bidder, fails verification, because the bidder is a public input of the proof.
+      await expect(simulate(secondPrice, { ...genuine, bidder: bidderAddresses[2] }, bidders[2].account)).rejects.toThrow(
+        /SumcheckFailed|ShpleminiFailed/,
+      )
+      // Another account cannot send a direct bid for the bidder.
+      await expect(simulate(secondPrice, genuine, bidders[2].account)).rejects.toThrow(/SenderNotBidder/)
 
-      // The pair mask exists only in the second-price ratio auction: the other types reject role 3
-      // before they verify the proof.
-      await expect(simulate(ratioFirst, prepared[ratioSecond][0][Role.PairMask], 0)).rejects.toThrow(/UnknownRole/)
+      // The allowlist: the creator is no member. Its own proof for its own address would be rejected as
+      // well; a member's proof does not carry it.
+      const allowlisted = bidInput(firstPrice, 0)
+      await expect(simulate(firstPrice, { ...allowlisted, bidder: creator }, creatorAccount)).rejects.toThrow(/BidderNotEligible/)
 
-      // Leaf order is the order in which the bidders complete, after the configuration leaf.
-      await publish(0, 0, 1)
-      await publish(0, 0, 2)
+      // A relayed bid: bidder 1 signs, the relayer sends. The signature covers the exact bytes, so
+      // swapping two ciphertexts invalidates it.
+      const relayedPlan = AUCTIONS[ratioFirst].bids.findIndex((plan) => plan.relayed)
+      const unsigned = bidInput(ratioFirst, relayedPlan)
+      const relayedBidder = AUCTIONS[ratioFirst].bids[relayedPlan].bidder
+      const signed = { ...unsigned, signature: await sign(ratioFirst, unsigned, relayedBidder) }
+      const swapped = { ...signed, ciphertexts: [signed.ciphertexts[1], signed.ciphertexts[0], ...signed.ciphertexts.slice(2)] }
+      await expect(simulate(ratioFirst, swapped, creatorAccount)).rejects.toThrow(/InvalidSignature/)
+      // A signature of another account does not carry the bidder's bid.
+      await expect(simulate(ratioFirst, { ...unsigned, signature: await sign(ratioFirst, unsigned, 2) }, creatorAccount)).rejects.toThrow(
+        /InvalidSignature/,
+      )
+
       for (const [a, auction] of AUCTIONS.entries()) {
-        for (const bidder of auction.bids.keys()) {
-          if (a === 0 && bidder === 0) continue
-          for (const role of rolesFor(auction.type)) await publish(a, bidder, role)
+        for (const [i, plan] of auction.bids.entries()) {
+          const input = bidInput(a, i)
+          const version = Number(await bidCountOf(a, plan.bidder)) + 1
+          if (plan.relayed) {
+            const relayed = { ...input, signature: await sign(a, input, plan.bidder) }
+            const { ok, body } = await relay(a, relayed)
+            expect(body.error).toBeUndefined()
+            expect(ok).toBe(true)
+            const receipt = await publicClient.waitForTransactionReceipt({ hash: body.txHash! })
+            expect(receipt.status).toBe('success')
+            // The relayer sent it, not the bidder.
+            expect(receipt.from.toLowerCase()).not.toBe(bidderAddresses[plan.bidder].toLowerCase())
+            // The signature is for one version: the same signed bid no longer passes.
+            const replay = await relay(a, relayed)
+            expect(replay.ok).toBe(false)
+            expect(replay.body.error).toMatch(/InvalidSignature/)
+          } else {
+            await sdk.waitForTransaction(await publishBidInput(bidders[plan.bidder], e3Ids[a], input, contracts.e3Program))
+          }
+          expect(await bidCountOf(a, plan.bidder)).toBe(version)
+          // The third bid of an address is its last.
+          if (version === MAX_BIDS_PER_BIDDER) {
+            await expect(simulate(a, input, bidders[plan.bidder].account)).rejects.toThrow(/TooManyBids/)
+          }
         }
-        expect(await publicClient.readContract({ ...program, functionName: 'linkedBidders', args: [e3Ids[a]] })).toBe(
-          BigInt(auction.bids.length),
+
+        // `bidderCount` counts addresses, not bids; `BidSubmitted` numbers the leaves after the config leaf.
+        const distinctBidders = new Set(auction.bids.map((plan) => plan.bidder))
+        expect(await publicClient.readContract({ ...program, functionName: 'bidderCount', args: [e3Ids[a]] })).toBe(
+          BigInt(distinctBidders.size),
         )
-        // A linked bidder has every role of its type: 7 for 3 roles, 15 for 4.
-        expect(await submittedRoles(a, 0)).toBe((1 << rolesFor(auction.type).length) - 1)
-        // Bidder `i` takes the leaves `1 + roles * i` on.
-        const linked = await publicClient.getContractEvents({ ...program, eventName: 'BidLinked', args: { e3Id: e3Ids[a] }, fromBlock: 0n })
-        expect(linked.map((event) => event.args.firstIndex)).toEqual(
-          auction.bids.map((_, bidder) => BigInt(FIRST_BID_LEAF + rolesFor(auction.type).length * bidder)),
+        const roles = rolesFor(auction.type).length
+        const submitted = await publicClient.getContractEvents({
+          ...program,
+          eventName: 'BidSubmitted',
+          args: { e3Id: e3Ids[a] },
+          fromBlock: 0n,
+        })
+        expect(submitted.map((event) => event.args.firstIndex)).toEqual(auction.bids.map((_, i) => BigInt(1 + roles * i)))
+        expect(submitted.map((event) => event.args.version)).toEqual(
+          auction.bids.map((plan, i) => auction.bids.slice(0, i + 1).filter((other) => other.bidder === plan.bidder).length),
         )
+        const [, leaves] = await publicClient.readContract({ ...program, functionName: 'inputs', args: [e3Ids[a]] })
+        expect(leaves).toBe(1 + roles * auction.bids.length)
       }
 
       const now = (await publicClient.getBlock()).timestamp
@@ -283,30 +505,81 @@ describe('Sealed-bid auction', () => {
       console.log('Closed the input windows')
 
       for (const [a, auction] of AUCTIONS.entries()) {
+        // The program counts the latest version of each bidder whose bytes open their commitments. The
+        // expectation comes from the plans: the latest plan of a bidder that is not `unopened`.
+        const versionOfPlan = auction.bids.map(
+          (plan, i) => auction.bids.slice(0, i + 1).filter((other) => other.bidder === plan.bidder).length,
+        )
+        const counted = [...new Set(auction.bids.map((plan) => plan.bidder))]
+          .map((bidder) =>
+            auction.bids
+              .map((plan, i) => ({ plan, i }))
+              .filter(({ plan }) => plan.bidder === bidder && !plan.unopened)
+              .at(-1),
+          )
+          .filter((entry) => entry !== undefined)
+          .sort((x, y) => x.i - y.i)
+
+        const events = await publicClient.getContractEvents({
+          ...program,
+          eventName: 'BidSubmitted',
+          args: { e3Id: e3Ids[a] },
+          fromBlock: 0n,
+        })
+        const submitted: SubmittedBid[] = events.map((event) => ({
+          bidder: event.args.bidder!,
+          version: event.args.version!,
+          firstIndex: Number(event.args.firstIndex),
+          ciphertexts: [...event.args.ciphertexts!],
+          commitments: [...event.args.commitments!],
+        }))
+        // `opens` is synchronous, so the commitments of all published bytes are computed first.
+        const commitmentOf = new Map<Hex, string>()
+        for (const bid of submitted) {
+          for (const ciphertext of bid.ciphertexts) {
+            if (!commitmentOf.has(ciphertext))
+              commitmentOf.set(ciphertext, toHex(await computeCiphertextCommitment(hexToBytes(ciphertext), PRESET)))
+          }
+        }
+        const selected = selectBids(submitted, (ciphertext, commitment) => commitmentOf.get(ciphertext) === commitment.toLowerCase())
+        expect(selected.map(({ bidder, version }) => [bidderIndex(bidder), version])).toEqual(
+          counted.map(({ plan, i }) => [plan.bidder, versionOfPlan[i]]),
+        )
+        // The bidder whose bytes do not open is dropped whole.
+        const dropped = auction.bids.filter((plan) => plan.unopened).map((plan) => plan.bidder)
+        for (const bidder of dropped) expect(selected.map((bid) => bidderIndex(bid.bidder))).not.toContain(bidder)
+        const levels = counted.map(({ plan }) => plan.level)
+
         const plaintextOutput = await waitFor(`the plaintext output of E3 ${e3Ids[a]}`, () => plaintexts.get(e3Ids[a]), 25 * 60_000)
+        // The role-0 ciphertexts of the counted bids in bidder-position order fix the tie priority.
         const result = await decodeAuction(
           auction.type,
           plaintextOutput,
-          prepared[a].map((inputs) => inputs[0].ciphertext),
+          selected.map((bid) => bid.ciphertexts[0] as `0x${string}`),
         )
+        const bidderAt = (position: number) => bidderIndex(selected[position].bidder)
         if (result.kind === 'lane') {
           console.log(
-            `${auction.title}: price ${result.price}, tie set ${result.tieSet.join(',')}, random ${result.random}, winner bidder ${result.winner}`,
+            `${auction.title}: price ${result.price}, tie set ${result.tieSet.join(',')}, random ${result.random}, winner bidder ${result.winner === null ? 'none' : bidderAt(result.winner)}`,
           )
           expect(isRatioType(auction.type)).toBe(true)
-          const { price, tieSet } = expectedTieSet(auction.type, auction.bids)
-          expect({ price, tieSet }).toEqual({ price: auction.price, tieSet: auction.tieSet })
+          const { price, tieSet } = expectedTieSet(auction.type, levels)
+          expect(price).toBe(auction.price)
+          expect(tieSet.map(bidderAt)).toEqual(auction.tieSet)
           expect(result).toMatchObject({ price, tieSet, copiesAgree: true })
           expect(result.random).not.toBeNull()
           // The winner is the member of the sorted tie set that the random lane picks.
           expect(result.winner).toBe(tieSet[result.random! % tieSet.length])
-          if (auction.winner !== undefined) expect(result.winner).toBe(auction.winner)
+          if (auction.winner !== undefined) expect(bidderAt(result.winner!)).toBe(auction.winner)
           expect(result.lanes.filter((lane) => lane === 'result')).toHaveLength(1)
         } else {
-          console.log(`${auction.title}: winner bidder ${result.winner}, price ${result.price}, priority ${result.priority.join(',')}`)
+          console.log(
+            `${auction.title}: winner bidder ${result.winner === null ? 'none' : bidderAt(result.winner)}, price ${result.price}, priority ${result.priority.join(',')}`,
+          )
           expect(result.unusedGroupsZero).toBe(true)
-          expect(result).toMatchObject({ winner: auction.winner, price: auction.price })
-          expect(expectedAuction(auction.type, auction.bids, result.priority)).toEqual({ winner: auction.winner, price: auction.price })
+          const winnerPosition = selected.findIndex((bid) => bidderIndex(bid.bidder) === auction.winner)
+          expect(result).toMatchObject({ winner: winnerPosition, price: auction.price })
+          expect(expectedAuction(auction.type, levels, result.priority)).toEqual({ winner: winnerPosition, price: auction.price })
         }
       }
     },

@@ -162,25 +162,46 @@ export const deployTemplate = async () => {
     chain,
   )
 
-  // `scripts/compile_circuits.sh` writes the record verifier and the anchor of the circuits it was
+  // `scripts/compile_circuits.sh` writes the bid verifiers and the anchor of the circuits they were
   // generated from; they must come from the same run.
   const anchorFile: unknown = JSON.parse(readFileSync(path.join(TEMPLATE_ROOT, 'circuits/target/vk_anchor.json'), 'utf8'))
-  if (!anchorFile || typeof anchorFile !== 'object' || !('vkAnchor' in anchorFile) || typeof anchorFile.vkAnchor !== 'string') {
-    throw new Error('circuits/target/vk_anchor.json has no vkAnchor; run scripts/compile_circuits.sh')
+  if (
+    !anchorFile ||
+    typeof anchorFile !== 'object' ||
+    !('vkAnchor3' in anchorFile) ||
+    typeof anchorFile.vkAnchor3 !== 'string' ||
+    !('vkAnchor4' in anchorFile) ||
+    typeof anchorFile.vkAnchor4 !== 'string'
+  ) {
+    throw new Error('circuits/target/vk_anchor.json has no vkAnchor3 and vkAnchor4; run scripts/compile_circuits.sh')
   }
-  const { vkAnchor } = anchorFile
-  const verifierSource = 'contracts/verifiers/AuctionVerifier.sol'
-  // bb's ZK verifier is too large for one contract; it ships two external libraries to link.
-  const libraries: Record<string, string> = {}
-  for (const library of ['ZKTranscriptLib', 'RelationsLib']) {
-    const deployed = await ethers.deployContract(`${verifierSource}:${library}`)
-    await deployed.waitForDeployment()
-    libraries[`project/${verifierSource}:${library}`] = await deployed.getAddress()
+  const { vkAnchor3, vkAnchor4 } = anchorFile
+  // One verifier per role count. bb's ZK verifier is too large for one contract; each ships two
+  // external libraries to link, and the generated files suffix every name with the role count.
+  const bidVerifierAddresses: Record<3 | 4, string> = { 3: '', 4: '' }
+  for (const roles of [3, 4] as const) {
+    const verifierSource = `contracts/verifiers/AuctionVerifier${roles}.sol`
+    const libraries: Record<string, string> = {}
+    for (const library of ['ZKTranscriptLib', 'RelationsLib']) {
+      const deployed = await ethers.deployContract(`${verifierSource}:${library}${roles}`)
+      await deployed.waitForDeployment()
+      libraries[`project/${verifierSource}:${library}${roles}`] = await deployed.getAddress()
+    }
+    const bidVerifier = await ethers.deployContract(`${verifierSource}:AuctionVerifier${roles}`, { libraries })
+    await bidVerifier.waitForDeployment()
+    bidVerifierAddresses[roles] = await bidVerifier.getAddress()
+    storeDeploymentArgs(
+      { address: bidVerifierAddresses[roles], blockNumber: await ethers.provider.getBlockNumber() },
+      `AuctionVerifier${roles}`,
+      chain,
+    )
   }
-  const recordVerifier = await ethers.deployContract(`${verifierSource}:HonkVerifier`, { libraries })
-  await recordVerifier.waitForDeployment()
-  const recordVerifierAddress = await recordVerifier.getAddress()
-  storeDeploymentArgs({ address: recordVerifierAddress, blockNumber: await ethers.provider.getBlockNumber() }, 'HonkVerifier', chain)
+
+  // The allowlist gate is an example `IBidderGate`; an auction names it in its `customParams`.
+  const allowlistGate = await ethers.deployContract('MerkleAllowlistGate')
+  await allowlistGate.waitForDeployment()
+  const allowlistGateAddress = await allowlistGate.getAddress()
+  storeDeploymentArgs({ address: allowlistGateAddress, blockNumber: await ethers.provider.getBlockNumber() }, 'MerkleAllowlistGate', chain)
 
   const e3ProgramFactory = await ethers.getContractFactory(
     AuctionProgramFactory.abi,
@@ -193,8 +214,10 @@ export const deployTemplate = async () => {
     await interfold.getAddress(),
     await verifier.getAddress(),
     programId,
-    recordVerifierAddress,
-    vkAnchor,
+    bidVerifierAddresses[3],
+    bidVerifierAddresses[4],
+    vkAnchor3,
+    vkAnchor4,
     dataAvailabilityVerifierAddress,
   )
   await e3Program.waitForDeployment()
@@ -208,8 +231,10 @@ export const deployTemplate = async () => {
         interfold: await interfold.getAddress(),
         verifier: await verifier.getAddress(),
         imageId: programId,
-        recordVerifier: recordVerifierAddress,
-        vkAnchor,
+        bidVerifier3: bidVerifierAddresses[3],
+        bidVerifier4: bidVerifierAddresses[4],
+        vkAnchor3,
+        vkAnchor4,
         dataAvailabilityVerifier: dataAvailabilityVerifierAddress,
       },
     },
@@ -268,7 +293,8 @@ export const deployTemplate = async () => {
   console.log(
     `
       Deployed AuctionProgram at address: ${programAddress}
-      Deployed the record verifier at address: ${recordVerifierAddress} (VK anchor ${vkAnchor})
+      Deployed the bid verifiers at addresses: ${bidVerifierAddresses[3]} (3 roles), ${bidVerifierAddresses[4]} (4 roles); VK anchors ${vkAnchor3}, ${vkAnchor4}
+      Deployed MerkleAllowlistGate at address: ${allowlistGateAddress}
       Deployed ${unprovedTest ? 'local unproved test verifier' : 'OpenVmReceiptVerifier'} at address: ${await verifier.getAddress()}
       Deployed OpenVmBfvCiphertextVerifier at address: ${ciphertextVerifierAddress}
       Deployed ${useMockDataAvailability ? 'MockDataAvailabilityVerifier' : 'AvailVectorXDataAvailabilityVerifier'} at address: ${dataAvailabilityVerifierAddress}

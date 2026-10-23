@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 /**
- * The encoding the bidders, the validity circuit (`circuits/record`), the FHE program
+ * The encoding the bidders, the bid circuits (`auction_bid3`, `auction_bid4`), the FHE program
  * (`program/src/lib.rs`) and the result decoder share.
  *
  * All ciphertexts are SIMD-encoded over the 128 slots of the ring. Slot `i` has level `i % LEVELS`,
@@ -52,18 +52,24 @@
  * of the sorted tie set at the index `random % tieSet.length`. Every other slot is zero.
  *
  * Leaf 0 of every auction is a configuration input, not a ciphertext: `auctionConfigInput(type)`.
- * `AuctionProgram.validate` inserts its leaf, and the program reads the type from it. Bidder `i`
- * occupies the leaves `1 + r * i` to `r * (i + 1)`, with `r = rolesFor(type).length`.
+ * `AuctionProgram.validate` inserts its leaf, and the program reads the type from it. Every bid,
+ * and every update of it, adds one run of `rolesFor(type).length` consecutive leaves in role order.
+ * A leaf binds the ciphertext bytes, the commitment the bid proof checked, the bidder and the bid
+ * version. The program picks the latest version of each bidder whose bytes open their commitments
+ * (`shared/selection.ts`); the bidder position in this file is the order of the picked runs.
  */
 import {
   type AbiParameter,
+  type Address,
   bytesToHex,
   concatBytes,
   encodeAbiParameters,
+  type Hex,
   hexToBytes,
   keccak256,
   maxUint256,
   parseAbiParameters,
+  zeroAddress,
 } from 'viem'
 import { decodePlaintextSlots } from '@interfold/sdk'
 
@@ -75,9 +81,13 @@ export const PLAINTEXT_MODULUS = 257
 export const PRESET = 'INSECURE_THRESHOLD_SIMD' as const
 /** The number of levels, which is the period of a thermometer. A bid is in `[0, LEVELS)`. */
 export const LEVELS = 16
+/** The fewest price steps an auction can have. */
+export const MIN_LEVELS = 2
 /** The groups of `LEVELS` slots in the ring. */
 export const GROUPS = DEGREE / LEVELS
 export const MIN_BIDDERS = 2
+/** The most bids of one bidder: the first bid and two updates. `AuctionProgram.MAX_BIDS_PER_BIDDER`. */
+export const MAX_BIDS_PER_BIDDER = 3
 /** Coefficients the committee publishes after decryption for this preset. */
 export const OUTPUT_COEFFS = 128
 
@@ -103,8 +113,8 @@ export const AUCTION_TYPES = [
 export const AUCTION_TYPE_LABELS: Record<AuctionType, string> = {
   [AuctionType.FirstPrice]: 'First-price',
   [AuctionType.SecondPrice]: 'Second-price (Vickrey)',
-  [AuctionType.RatioFirstPrice]: 'First-price, ratio lanes',
-  [AuctionType.RatioSecondPrice]: 'Second-price, ratio lanes',
+  [AuctionType.RatioFirstPrice]: 'Ratio first-price',
+  [AuctionType.RatioSecondPrice]: 'Ratio second-price',
 }
 
 export const AUCTION_TYPE_DESCRIPTIONS: Record<AuctionType, string> = {
@@ -112,9 +122,9 @@ export const AUCTION_TYPE_DESCRIPTIONS: Record<AuctionType, string> = {
   [AuctionType.SecondPrice]:
     'The highest bid wins and pays the second-highest bid. Only the winner and that price are revealed; the winning bid stays secret.',
   [AuctionType.RatioFirstPrice]:
-    'The highest bid wins and pays its own bid. The price and the set of bidders that tied at the top are revealed; a random value in the result picks the winner from that set. Up to 8 bidders.',
+    'The highest bid wins and pays its own bid. The price and the set of bidders that tied at the top are revealed; a random value in the result picks the winner from that set.',
   [AuctionType.RatioSecondPrice]:
-    'The highest bid wins and pays the second-highest bid. The price and the winner set are revealed (more than one bidder only if the top bids tie); a random value in the result picks the winner from that set. Up to 8 bidders.',
+    'The highest bid wins and pays the second-highest bid. The price and the winner set are revealed (more than one bidder only if the top bids tie); a random value in the result picks the winner from that set.',
 }
 
 /** The most bidders of one auction, by type. The ratio types are limited by the weights `2^k` that must stay below the plaintext modulus. */
@@ -156,34 +166,112 @@ export function auctionConfigInput(type: AuctionType): `0x${string}` {
   return bytesToHex(concatBytes([new TextEncoder().encode(AUCTION_CONFIG_DOMAIN), new Uint8Array([type])]))
 }
 
-/** The price of each bid level: `LEVELS` strictly increasing whole numbers. Level `b` costs `prices[b]`. */
+/**
+ * The price of each step: 2 to `LEVELS` strictly increasing whole numbers. Step `b` costs `prices[b]`. The
+ * creator picks the length, `levels`; the bid circuit rejects a bid `b >= levels`.
+ */
 export type PriceList = readonly bigint[]
 
 /** Why `prices` is not a valid price list, or `null` when it is one. The contract applies the same rules to `uint256` values. */
 export function priceListError(prices: PriceList): string | null {
-  if (prices.length !== LEVELS) return `A price list has ${LEVELS} prices, got ${prices.length}`
+  if (prices.length < MIN_LEVELS || prices.length > LEVELS) {
+    return `A price list has ${MIN_LEVELS} to ${LEVELS} prices, got ${prices.length}`
+  }
   if (prices.some((price) => price < 0n || price > maxUint256)) return 'A price is a whole number from 0 to 2^256 - 1'
   const flat = prices.findIndex((price, level) => level > 0 && price <= prices[level - 1])
-  if (flat > 0) return `Prices must increase: level ${flat} (${prices[flat]}) is not above level ${flat - 1} (${prices[flat - 1]})`
+  if (flat > 0) return `Prices must increase: step ${flat} (${prices[flat]}) is not above step ${flat - 1} (${prices[flat - 1]})`
   return null
 }
 
-/** Evenly spaced prices: level `b` costs `start + b * step`. */
-export function evenPrices(start: bigint, step: bigint): bigint[] {
-  return Array.from({ length: LEVELS }, (_, level) => start + BigInt(level) * step)
+/** Evenly spaced prices: step `b` costs `start + b * step`, for `count` steps. */
+export function evenPrices(start: bigint, step: bigint, count: number): bigint[] {
+  return Array.from({ length: count }, (_, level) => start + BigInt(level) * step)
 }
 
-/** The request's `customParams`: `abi.encode(uint8 auctionType, uint256[16] prices, string title)`. */
-export function encodeAuctionParams(type: AuctionType, prices: PriceList, title: string): `0x${string}` {
+/**
+ * The request's `customParams`: `abi.encode(uint8 auctionType, uint8 levels, uint256[16] prices,
+ * string title, address gate, bytes gateConfig)`. `levels` is `prices.length`; the contract wants the
+ * unused prices to be zero, so they are padded. With the zero `gate` anyone may bid, and `gateConfig`
+ * must be empty. Otherwise the contract calls `gate.configure(e3Id, gateConfig)`.
+ */
+export function encodeAuctionParams(
+  type: AuctionType,
+  prices: PriceList,
+  title: string,
+  gate: Address = zeroAddress,
+  gateConfig: Hex = '0x',
+): Hex {
   const error = priceListError(prices)
   if (error) throw new Error(error)
-  // viem types `uint256[16]` as a 16-tuple; `priceListError` has checked the length.
-  const abi: readonly AbiParameter[] = parseAbiParameters('uint8, uint256[16], string')
-  return encodeAbiParameters(abi, [type, prices, title])
+  const padded = [...prices, ...Array.from({ length: LEVELS - prices.length }, () => 0n)]
+  const abi: readonly AbiParameter[] = parseAbiParameters('uint8, uint8, uint256[16], string, address, bytes')
+  return encodeAbiParameters(abi, [type, prices.length, padded, title, gate, gateConfig])
 }
 
-/** The leaf of the first bidder's first ciphertext. Leaf 0 is the configuration input. */
-export const FIRST_BID_LEAF = 1
+/**
+ * The price list of an auction from the contract's `levels` and its zero-padded `uint256[16]` prices
+ * (the last getter value and the event `prices` of `AuctionProgram`): the first `levels` prices.
+ */
+export function readPriceList(levels: number | bigint, prices: readonly bigint[]): bigint[] {
+  const count = Number(levels)
+  if (!Number.isInteger(count) || count < MIN_LEVELS || count > LEVELS) {
+    throw new Error(`levels must be an integer in [${MIN_LEVELS}, ${LEVELS}], got ${levels}`)
+  }
+  return prices.slice(0, count)
+}
+
+/** What a bid publishes: `AuctionProgram.publishInput` decodes it. */
+export interface BidInput {
+  bidder: Address
+  /** One per role, in role order. */
+  ciphertexts: readonly Hex[]
+  /** One `bytes32` SAFE commitment per ciphertext, in role order. */
+  commitments: readonly Hex[]
+  /** The bid proof. */
+  proof: Hex
+  /** What the auction's gate asks for; `0x` when the auction has no gate. */
+  gateProof: Hex
+  /** The bidder's EIP-712 signature (`bidTypedData`) for a relayed bid; `0x` for a direct bid. */
+  signature: Hex
+}
+
+/**
+ * The `data` of `AuctionProgram.publishInput`:
+ * `abi.encode(address bidder, bytes[] ciphertexts, bytes32[] commitments, bytes proof, bytes gateProof, bytes signature)`.
+ */
+export function encodeBidInput(input: BidInput): Hex {
+  const abi: readonly AbiParameter[] = parseAbiParameters('address, bytes[], bytes32[], bytes, bytes, bytes')
+  return encodeAbiParameters(abi, [input.bidder, input.ciphertexts, input.commitments, input.proof, input.gateProof, input.signature])
+}
+
+/**
+ * `keccak256(abi.encode(commitments, ciphertextHashes))` with `ciphertextHashes[r] = keccak256(ciphertexts[r])`.
+ * A relayed bid signs it, so a relayer cannot swap the bytes.
+ */
+export function bidInputsHash(commitments: readonly Hex[], ciphertexts: readonly Hex[]): Hex {
+  const abi: readonly AbiParameter[] = parseAbiParameters('bytes32[], bytes32[]')
+  return keccak256(encodeAbiParameters(abi, [commitments, ciphertexts.map((ciphertext) => keccak256(ciphertext))]))
+}
+
+/**
+ * The EIP-712 message the bidder signs to let a relayer send a bid: `AuctionProgram.bidDigest`.
+ * `version` is the version the bid will get, `bidCount + 1`. Pass the result to `signTypedData`.
+ */
+export function bidTypedData(chainId: number, program: Address, e3Id: bigint, bidder: Address, version: number, inputsHash: Hex) {
+  return {
+    domain: { name: 'AuctionProgram', version: '1', chainId, verifyingContract: program },
+    types: {
+      Bid: [
+        { name: 'e3Id', type: 'uint256' },
+        { name: 'bidder', type: 'address' },
+        { name: 'version', type: 'uint32' },
+        { name: 'inputsHash', type: 'bytes32' },
+      ],
+    },
+    primaryType: 'Bid',
+    message: { e3Id, bidder, version, inputsHash },
+  } as const
+}
 
 export enum Role {
   Ge = 0,

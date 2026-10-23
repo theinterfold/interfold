@@ -2027,7 +2027,9 @@ dependencies = [
  "fhe",
  "fhe-traits",
  "hex",
+ "openvm-sha2",
  "rand 0.9.5",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -3906,6 +3908,23 @@ source = "git+https://github.com/openvm-org/openvm.git?tag=v2.0.2#59a69b8b0cbee7
 dependencies = [
  "openvm-custom-insn",
  "strum_macros",
+]
+
+[[package]]
+name = "openvm-sha2"
+version = "2.0.2"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v2.0.2#59a69b8b0cbee7011ac978e4cc07707ee3681944"
+dependencies = [
+ "openvm-sha2-guest",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "openvm-sha2-guest"
+version = "2.0.2"
+source = "git+https://github.com/openvm-org/openvm.git?tag=v2.0.2#59a69b8b0cbee7011ac978e4cc07707ee3681944"
+dependencies = [
+ "openvm-platform",
 ]
 
 [[package]]

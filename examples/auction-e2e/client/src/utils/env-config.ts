@@ -16,6 +16,10 @@ export const WALLETCONNECT_PROJECT_ID: string = import.meta.env.VITE_WALLETCONNE
 export const ENABLE_TEST_TOKEN_MINT_FLAG = import.meta.env.VITE_ENABLE_TEST_TOKEN_MINT === 'true'
 /** A faucet that hands out the fee token (`Faucet.faucet()`); takes the place of minting when set. */
 export const FAUCET_ADDRESS: string | undefined = import.meta.env.VITE_FAUCET_ADDRESS || undefined
+/** The coordination server: relayed bids are posted to `<SERVER_URL>/relay`. */
+export const SERVER_URL: string = (import.meta.env.VITE_SERVER_URL || 'http://127.0.0.1:8080').replace(/\/+$/, '')
+/** The `MerkleAllowlistGate` of this deployment. Without it the create form offers no allowlist. */
+export const ALLOWLIST_GATE_ADDRESS: `0x${string}` | undefined = import.meta.env.VITE_ALLOWLIST_GATE_ADDRESS || undefined
 
 const parseBigInt = (name: string, value: string | undefined, fallback: bigint, min = 0n): bigint => {
   if (!value) return fallback

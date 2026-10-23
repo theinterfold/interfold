@@ -6,21 +6,23 @@
 
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { formatUnits } from 'viem'
+import { formatUnits, zeroAddress } from 'viem'
 import {
   AUCTION_TYPES,
   AUCTION_TYPE_DESCRIPTIONS,
   AUCTION_TYPE_LABELS,
   AuctionType,
-  LEVELS,
   MAX_BIDDERS_BY_TYPE,
   MIN_BIDDERS,
   isRatioType,
   rolesFor,
 } from '@shared/layout'
+import { MAX_ALLOWLIST_MEMBERS, encodeAllowlistConfig } from '@shared/allowlist'
 import { STEP_LABELS, useCreateAuction } from '@/hooks/useCreateAuction'
 import { useWallet } from '@/hooks/useWallet'
+import { parseAllowlist } from '@/utils/allowlist-input'
 import { chain } from '@/utils/chain'
+import { ALLOWLIST_GATE_ADDRESS } from '@/utils/env-config'
 import { ConnectPrompt } from '@/components/ConnectPrompt'
 import { INITIAL_PRICE_FORM, PriceLevelsField, pricesOf } from '@/components/PriceLevelsField'
 import Spinner from '@/components/Spinner'
@@ -53,18 +55,39 @@ const CreateAuction: React.FC = () => {
   const [auctionType, setAuctionType] = useState<AuctionType>(AuctionType.SecondPrice)
   const [priceForm, setPriceForm] = useState(INITIAL_PRICE_FORM)
   const [durationSeconds, setDurationSeconds] = useState<number>(DURATIONS[2].seconds)
+  const [who, setWho] = useState<'anyone' | 'allowlist'>('anyone')
+  const [allowlistText, setAllowlistText] = useState('')
 
   const trimmed = title.trim()
   const bytes = titleBytes(trimmed)
   const titleValid = bytes > 0 && bytes <= MAX_TITLE_BYTES
   const priced = pricesOf(priceForm)
   const busy = create.step !== 'idle'
-  const canSubmit = ready && titleValid && 'prices' in priced && !busy && create.shortfall === null
+  const listed = parseAllowlist(allowlistText)
+  const listError =
+    who !== 'allowlist'
+      ? null
+      : listed.invalid.length > 0
+        ? `Not an address: ${listed.invalid[0]}${listed.invalid.length > 1 ? ` (and ${listed.invalid.length - 1} more)` : ''}`
+        : listed.count === 0
+          ? 'Add at least one address.'
+          : listed.count > MAX_ALLOWLIST_MEMBERS
+            ? `An allowlist has at most ${MAX_ALLOWLIST_MEMBERS} addresses, got ${listed.count}.`
+            : null
+  const canSubmit = ready && titleValid && 'prices' in priced && listError === null && !busy && create.shortfall === null
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
     if (!canSubmit || !('prices' in priced)) return
-    const e3Id = await create.create({ title: trimmed, auctionType, prices: priced.prices, durationSeconds })
+    const gate = who === 'allowlist' ? ALLOWLIST_GATE_ADDRESS : undefined
+    const e3Id = await create.create({
+      title: trimmed,
+      auctionType,
+      prices: priced.prices,
+      gate: gate ?? zeroAddress,
+      gateConfig: gate ? encodeAllowlistConfig(listed.members) : '0x',
+      durationSeconds,
+    })
     if (e3Id !== null) navigate(`/auction/${e3Id}`)
   }
 
@@ -76,8 +99,8 @@ const CreateAuction: React.FC = () => {
         <p className='mono muted'>New auction</p>
         <h1 className='h1'>Create an auction</h1>
         <p className='lede'>
-          Choose what the auction reveals, then request it. Each bidder bids one of {LEVELS} price levels. Each type has its own limit on
-          the number of bidders.
+          Choose what the auction reveals, how many price steps a bid can pick from, and the price of each step. Each type has its own limit
+          on the number of bidders; the ratio types take the most.
         </p>
       </header>
 
@@ -108,19 +131,70 @@ const CreateAuction: React.FC = () => {
                 <span className='space-y-1'>
                   <span className='block font-semibold'>{AUCTION_TYPE_LABELS[type]}</span>
                   <span className='block text-sm text-ink-soft'>{AUCTION_TYPE_DESCRIPTIONS[type]}</span>
-                  <span className='block font-mono text-xs text-ink-soft'>{rolesFor(type).length} ciphertexts for each bid</span>
+                  <span className='block font-mono text-xs text-ink-soft'>
+                    {MIN_BIDDERS} to {MAX_BIDDERS_BY_TYPE[type]} bidders · {rolesFor(type).length} ciphertexts for each bid
+                  </span>
                 </span>
               </label>
             ))}
             <p className='text-sm text-ink-soft' aria-live='polite'>
-              This type takes {MIN_BIDDERS} to <strong>{MAX_BIDDERS_BY_TYPE[auctionType]}</strong> bidders.
               {isRatioType(auctionType)
-                ? ` Ratio-lane types allow more bidders than the other types (${MAX_BIDDERS_BY_TYPE[AuctionType.FirstPrice]} for them). If the top bids tie, a public random draw picks the winner among the tied bidders. The tie becomes public: the result names every bidder that tied.`
-                : ' If the top bids tie, a priority taken from a hash of the published ciphertexts picks the winner. Nothing about the tie is revealed.'}
+                ? `If the top bids tie, a public random draw picks the winner among the tied bidders. The tie becomes public: the result names every bidder that tied. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders, more than the ${MAX_BIDDERS_BY_TYPE[AuctionType.FirstPrice]} of the other types.`
+                : `If the top bids tie, a priority taken from a hash of the published ciphertexts picks the winner. Nothing about the tie is revealed. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders.`}
             </p>
           </fieldset>
 
           <PriceLevelsField form={priceForm} onChange={setPriceForm} disabled={busy} />
+
+          <fieldset className='space-y-3' disabled={busy}>
+            <legend className='label'>Who can bid</legend>
+            <label className={`choice ${who === 'anyone' ? 'on' : ''}`}>
+              <input type='radio' name='who' checked={who === 'anyone'} onChange={() => setWho('anyone')} />
+              <span className='space-y-1'>
+                <span className='block font-semibold'>Anyone</span>
+                <span className='block text-sm text-ink-soft'>Any address can bid, up to the limit of the auction type.</span>
+              </span>
+            </label>
+            <label className={`choice ${who === 'allowlist' ? 'on' : ''} ${ALLOWLIST_GATE_ADDRESS ? '' : 'opacity-60'}`}>
+              <input
+                type='radio'
+                name='who'
+                checked={who === 'allowlist'}
+                disabled={!ALLOWLIST_GATE_ADDRESS}
+                onChange={() => setWho('allowlist')}
+              />
+              <span className='space-y-1'>
+                <span className='block font-semibold'>Allowlist</span>
+                <span className='block text-sm text-ink-soft'>
+                  Only the addresses you list can bid. The list is public on chain, and the contract checks a Merkle proof of each bid.
+                </span>
+                {!ALLOWLIST_GATE_ADDRESS && (
+                  <span className='block font-mono text-xs text-ink-soft'>Not available: this deployment has no allowlist gate.</span>
+                )}
+              </span>
+            </label>
+            {who === 'allowlist' && (
+              <div>
+                <label htmlFor='allowlist' className='label'>
+                  Addresses
+                </label>
+                <textarea
+                  id='allowlist'
+                  value={allowlistText}
+                  onChange={(event) => setAllowlistText(event.target.value)}
+                  rows={5}
+                  spellCheck={false}
+                  placeholder='One address per line, or separated by commas'
+                  className='field font-mono text-xs'
+                />
+                <p className={`mt-1 text-xs ${listError && allowlistText.trim() !== '' ? 'text-danger' : 'text-ink-soft'}`}>
+                  {listError && allowlistText.trim() !== ''
+                    ? listError
+                    : `${listed.count} unique ${listed.count === 1 ? 'address' : 'addresses'} (at most ${MAX_ALLOWLIST_MEMBERS}). Sorted and deduplicated before they are sent.`}
+                </p>
+              </div>
+            )}
+          </fieldset>
 
           <div>
             <label htmlFor='duration' className='label'>

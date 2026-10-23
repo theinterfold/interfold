@@ -6,90 +6,99 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useWalletClient } from 'wagmi'
-import { type AuctionType, type Role, rolesFor } from '@shared/layout'
-import { InputProver, type ProveStep, encodeBidInput, newBidSecret } from '@shared/prover'
+import { type Address } from 'viem'
+import { type AuctionType, MAX_BIDS_PER_BIDDER, ROLE_LABELS, bidInputsHash, bidTypedData, encodeBidInput, rolesFor } from '@shared/layout'
+import { allowlistProof } from '@shared/allowlist'
+import { type BidStep, BidProver } from '@shared/prover'
 import { AuctionProgram__factory } from '@contract-types/factories/contracts/AuctionProgram__factory'
-import { type StoredBid, type StoredRole, emptyRoles, hasSentRole, loadBid, saveBid, saveBidChecked } from '@/utils/bid-storage'
+import { type StoredVersion, loadVersions, saveVersion } from '@/utils/bid-storage'
 import { chain, publicClient } from '@/utils/chain'
 import { getContractAddresses } from '@/utils/env-config'
 import { formatError } from '@/utils/error-formatting'
+import { relayBid } from '@/utils/relayer'
+import { type GateKind } from './useAllowlist'
 
-export type RowStatus = 'pending' | ProveStep | 'sending' | 'done' | 'error'
+export type StepStatus = 'pending' | 'active' | 'done' | 'error'
 
-export interface Row {
-  status: RowStatus
-  txHash?: `0x${string}`
-  error?: string
-  /** Wall-clock ms at which this ciphertext started, while it is in progress or done in this session. */
-  startedAt?: number
-  /** How long the ciphertext took, once it is done in this session. */
-  elapsedMs?: number
+export interface StepRow {
+  id: string
+  label: string
+  status: StepStatus
 }
 
-/** The `submittedRoles` bitmask when every role of the auction type is in, i.e. the bidder is linked. */
-export const allRolesMask = (type: AuctionType): number => rolesFor(type).reduce((mask, role) => mask | (1 << role), 0)
+const stepId = (step: BidStep): string => ('role' in step ? `${step.kind}:${step.role}` : step.kind)
 
-export const hasRole = (mask: number, role: Role) => (mask & (1 << role)) !== 0
-
-/** What became of a `publishInput` transaction that was sent in an earlier session. */
-async function settleSent(hash: `0x${string}`): Promise<'success' | 'reverted' | 'dropped'> {
-  try {
-    await publicClient.getTransaction({ hash })
-  } catch {
-    // Not in the chain and not in the pool: it was never mined or was replaced.
-    try {
-      const receipt = await publicClient.getTransactionReceipt({ hash })
-      return receipt.status === 'success' ? 'success' : 'reverted'
-    } catch {
-      return 'dropped'
-    }
-  }
-  const receipt = await publicClient.waitForTransactionReceipt({ hash })
-  return receipt.status === 'success' ? 'success' : 'reverted'
+/** The steps of one submission, in the order they run. A relayed bid is signed and posted, a direct one is sent by the wallet. */
+function planSteps(type: AuctionType, relayed: boolean): { id: string; label: string }[] {
+  const roles = rolesFor(type)
+  return [
+    ...roles.flatMap((role, index) => [
+      { id: stepId({ kind: 'encrypt', role }), label: `Encrypt ciphertext ${index + 1} of ${roles.length}: ${ROLE_LABELS[role]}` },
+      { id: stepId({ kind: 'encryption-proof', role }), label: `Prove the encryption of ciphertext ${index + 1}` },
+    ]),
+    { id: 'pair-proof', label: 'Prove the bid in the first two ciphertexts' },
+    ...(roles.length === 4 ? [{ id: 'masks-proof', label: 'Prove the masks in the last two ciphertexts' }] : []),
+    { id: 'bid-proof', label: 'Combine the proofs into the bid proof' },
+    ...(relayed
+      ? [
+          { id: 'sign', label: 'Sign the bid (confirm in your wallet)' },
+          { id: 'send', label: 'Send the signed bid to the relayer' },
+        ]
+      : [{ id: 'send', label: 'Send the bid (confirm in your wallet)' }]),
+    { id: 'confirm', label: 'Wait for the transaction to be mined' },
+  ]
 }
 
 export interface UseBid {
-  /** What this browser remembers of the account's bid in this auction. */
-  stored: StoredBid | null
-  /** One row for each ciphertext of the auction type, in the order of `rolesFor(type)`. */
-  rows: Row[]
+  /** The bids of this account that this browser remembers, ascending by version. */
+  versions: StoredVersion[]
+  /** The steps of the last submission; empty before the first one. */
+  steps: StepRow[]
   submitting: boolean
-  /** An error that is not tied to one ciphertext (wallet missing, secret lost). */
+  /** Wall-clock ms at which the last submission started, and how long it took once it is over. */
+  run: { startedAt: number; elapsedMs: number | null } | null
+  /** An error that is not tied to one step (wallet missing, gate proof). */
   error: string | null
-  /** Prove and publish the roles the chain does not have yet, for a bid of `level`. */
-  submit: (level: number) => Promise<void>
+  /** Prove and send a bid of `level`; `relayed` signs it and lets the server send it. */
+  submit: (level: number, relayed: boolean) => Promise<void>
 }
 
 interface Params {
   e3Id: bigint
   auctionType: AuctionType
-  account: `0x${string}` | undefined
+  /** The number of price steps of the auction: a bid is below it. */
+  levels: number
+  gateKind: GateKind
+  /** The allowlist members, once read. Only used when `gateKind` is `allowlist`. */
+  members: Address[] | null
+  account: Address | undefined
   committeeKey: Uint8Array | null
-  /** The roles of `account` already on chain, as read by the caller. */
-  mask: number
-  /** Re-read the chain after the submission moved. */
+  /** Re-read the chain after a submission. */
   onSubmitted: () => void
 }
 
 /**
- * Drives the bid of the connected account: one ciphertext for each role of the auction type (three,
- * or four for ratio-lane second price), each encrypted and proven in the browser, then published by
- * the wallet. A bid that was interrupted resumes with the secret kept in
- * localStorage, because the roles 0 and 1 of one bid must commit to the same level and salt.
+ * Drives one bid of the connected account: one ciphertext for each role of the auction type, each
+ * encrypted and proven in the browser, one proof for the whole bid, then one transaction that the
+ * wallet sends or, with `relayed`, the server. A later call updates the bid: the contract keeps
+ * every version and the auction program computes over the newest one that is valid.
  */
-export function useBid({ e3Id, auctionType, account, committeeKey, mask, onSubmitted }: Params): UseBid {
+export function useBid({ e3Id, auctionType, levels, gateKind, members, account, committeeKey, onSubmitted }: Params): UseBid {
   const { data: walletClient } = useWalletClient({ chainId: chain.id })
   const { e3Program } = getContractAddresses()
-  const roles = rolesFor(auctionType)
 
-  const [stored, setStored] = useState<StoredBid | null>(null)
-  const [progress, setProgress] = useState<Partial<Record<Role, Row>>>({})
+  const [versions, setVersions] = useState<StoredVersion[]>([])
+  const [plan, setPlan] = useState<{ id: string; label: string }[]>([])
+  const [statuses, setStatuses] = useState<Record<string, StepStatus>>({})
+  const [run, setRun] = useState<UseBid['run']>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // The wallet may switch accounts while a proof is running; the proof binds the account it was made for.
   const accountRef = useRef(account)
-  accountRef.current = account
+  useEffect(() => {
+    accountRef.current = account
+  }, [account])
   const abandoned = useRef(false)
   useEffect(() => {
     abandoned.current = false
@@ -98,133 +107,119 @@ export function useBid({ e3Id, auctionType, account, committeeKey, mask, onSubmi
     }
   }, [])
 
-  const keyFor = useCallback(
-    (bidder: `0x${string}`) => ({ chainId: chain.id, program: e3Program, e3Id, account: bidder }),
-    [e3Id, e3Program],
-  )
+  const keyFor = useCallback((bidder: Address) => ({ chainId: chain.id, program: e3Program, e3Id, account: bidder }), [e3Id, e3Program])
 
   useEffect(() => {
-    setProgress({})
+    setPlan([])
+    setStatuses({})
+    setRun(null)
     setError(null)
-    setStored(account ? loadBid(keyFor(account)) : null)
+    setVersions(account ? loadVersions(keyFor(account)) : [])
   }, [account, keyFor])
 
+  /** `id` starts; the step that was running is over. */
+  const advance = useCallback((id: string) => {
+    setStatuses((prev) => ({
+      ...Object.fromEntries(Object.entries(prev).map(([key, status]) => [key, status === 'active' ? 'done' : status])),
+      [id]: 'active',
+    }))
+  }, [])
+
   const submit = useCallback(
-    async (level: number) => {
+    async (level: number, relayed: boolean) => {
       if (!account || !walletClient || !committeeKey || submitting) return
+      const startedAt = Date.now()
       setSubmitting(true)
       setError(null)
-      setProgress({})
-      let prover: InputProver | undefined
-      let current: Role | null = null
+      setStatuses({})
+      setPlan(planSteps(auctionType, relayed))
+      setRun({ startedAt, elapsedMs: null })
+      let prover: BidProver | undefined
       try {
-        // Read the roles again, with the pool included: the mask the caller holds may predate a transaction
-        // that is sent but not mined yet.
-        const onChain = await publicClient.readContract({
-          address: e3Program,
-          abi: AuctionProgram__factory.abi,
-          functionName: 'submittedRoles',
-          args: [e3Id, account],
-          blockTag: 'pending',
-        })
-        const key = keyFor(account)
-        let bid = loadBid(key)
-        if (bid && hasSentRole(bid)) {
-          // A ciphertext of this bid was sent: its salt is on chain in a commitment, so keep the secret.
-        } else if (onChain === 0) {
-          // Nothing was sent, so the bid is free to change.
-          bid = { ...newBidSecret(level), roles: emptyRoles(auctionType) }
-          saveBidChecked(key, bid)
-        } else if (!bid) {
-          throw new Error('Part of this bid is on chain, but this browser does not hold its secret, so the rest cannot be linked to it.')
+        let gateProof: `0x${string}` = '0x'
+        if (gateKind === 'allowlist') {
+          if (members === null) throw new Error('The allowlist of this auction is not loaded yet.')
+          gateProof = allowlistProof(members, account)
         }
-        setStored(bid)
 
-        for (const role of roles) {
-          const sent: StoredRole = bid.roles[role] ?? { status: 'pending' }
-          let reopened = false
-          if (sent.status === 'sent' && sent.txHash !== undefined) {
-            // Sent in an earlier session: wait for that transaction instead of sending the role again.
-            current = role
-            setProgress((prev) => ({ ...prev, [role]: { status: 'sending', txHash: sent.txHash, startedAt: Date.now() } }))
-            const outcome = await settleSent(sent.txHash)
-            if (abandoned.current) return
-            const settled: StoredRole =
-              outcome === 'success' ? { status: 'done' as const, txHash: sent.txHash } : { status: 'pending' as const }
-            bid = { ...bid, roles: { ...bid.roles, [role]: settled } }
-            saveBid(key, bid)
-            setStored(bid)
-            setProgress((prev) => ({ ...prev, [role]: settled }))
-            current = null
-            onSubmitted()
-            if (outcome === 'success') continue
-            // Reverted or never mined: the role is open again, whatever the stale mask says.
-            reopened = true
-          }
-          if (!reopened && hasRole(onChain, role)) continue
-          current = role
-          prover ??= await InputProver.create()
-          const startedAt = Date.now()
-          const setRow = (row: Row) => setProgress((prev) => ({ ...prev, [role]: { startedAt, ...row } }))
-          setRow({ status: 'encrypt' })
-          const prepared = await prover.prove(role, bid, committeeKey, account, (step) => setRow({ status: step }))
-          if (abandoned.current) return
-          if (accountRef.current?.toLowerCase() !== account.toLowerCase()) {
-            throw new Error('The connected account changed while the proof was running. Reconnect the account that bids and submit again.')
-          }
+        prover = await BidProver.create()
+        const prepared = await prover.prove(auctionType, level, levels, committeeKey, account, (step) => advance(stepId(step)))
+        if (abandoned.current) return
+        if (accountRef.current?.toLowerCase() !== account.toLowerCase()) {
+          throw new Error('The connected account changed while the proof was running. Reconnect the account that bids and submit again.')
+        }
+        const bid = {
+          bidder: account,
+          ciphertexts: prepared.ciphertexts,
+          commitments: prepared.commitments,
+          proof: prepared.proof,
+          gateProof,
+        }
+        const read = { address: e3Program, abi: AuctionProgram__factory.abi } as const
 
-          setRow({ status: 'sending' })
+        let hash: `0x${string}`
+        if (relayed) {
+          advance('sign')
+          // The signature names the version the bid will get. Read it now: a long proof may have been overtaken.
+          const next =
+            Number(await publicClient.readContract({ ...read, functionName: 'bidCount', args: [e3Id, account], blockTag: 'pending' })) + 1
+          if (next > MAX_BIDS_PER_BIDDER) throw new Error(`A bidder can bid at most ${MAX_BIDS_PER_BIDDER} times in an auction.`)
+          const typedData = bidTypedData(chain.id, e3Program, e3Id, account, next, bidInputsHash(bid.commitments, bid.ciphertexts))
+          const signature = await walletClient.signTypedData({ account, ...typedData })
+          advance('send')
+          hash = await relayBid(e3Id, encodeBidInput({ ...bid, signature }))
+        } else {
+          advance('send')
           const { request } = await publicClient.simulateContract({
-            address: e3Program,
-            abi: AuctionProgram__factory.abi,
+            ...read,
             functionName: 'publishInput',
-            args: [e3Id, encodeBidInput(prepared)],
+            args: [e3Id, encodeBidInput({ ...bid, signature: '0x' })],
             account,
           })
-          const txHash = await walletClient.writeContract(request)
-          // Remember the transaction before waiting for it: a reload now must not start a new bid.
-          bid = { ...bid, roles: { ...bid.roles, [role]: { status: 'sent', txHash } } }
-          saveBid(key, bid)
-          setStored(bid)
-          setRow({ status: 'sending', txHash })
-          const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash })
-          if (receipt.status !== 'success') {
-            bid = { ...bid, roles: { ...bid.roles, [role]: { status: 'pending' } } }
-            saveBid(key, bid)
-            setStored(bid)
-            throw new Error('The publishInput transaction reverted')
-          }
+          hash = await walletClient.writeContract(request)
+        }
 
-          bid = { ...bid, roles: { ...bid.roles, [role]: { status: 'done', txHash } } }
-          saveBid(key, bid)
-          setStored(bid)
-          setRow({ status: 'done', txHash, elapsedMs: Date.now() - startedAt })
-          onSubmitted()
-        }
+        advance('confirm')
+        const receipt = await publicClient.waitForTransactionReceipt({ hash })
+        if (receipt.status !== 'success') throw new Error('The publishInput transaction reverted')
+        // The version this bid got is the bid count in the block that mined it.
+        const version = Number(
+          await publicClient.readContract({ ...read, functionName: 'bidCount', args: [e3Id, account], blockNumber: receipt.blockNumber }),
+        )
+        saveVersion(keyFor(account), { version, level, txHash: hash })
+        setVersions(loadVersions(keyFor(account)))
+        setStatuses((prev) => Object.fromEntries(Object.entries(prev).map(([key, status]) => [key, status === 'active' ? 'done' : status])))
+        setRun({ startedAt, elapsedMs: Date.now() - startedAt })
       } catch (err) {
-        if (current === null) setError(formatError(err))
-        else {
-          const failed = current
-          setProgress((prev) => ({ ...prev, [failed]: { ...prev[failed], status: 'error', error: formatError(err) } }))
-        }
+        setStatuses((prev) => {
+          const active = Object.keys(prev).find((key) => prev[key] === 'active')
+          return active === undefined ? prev : { ...prev, [active]: 'error' }
+        })
+        setError(formatError(err))
       } finally {
         await prover?.destroy()
         if (!abandoned.current) setSubmitting(false)
         onSubmitted()
       }
     },
-    [account, walletClient, committeeKey, submitting, e3Program, e3Id, auctionType, roles, keyFor, onSubmitted],
+    [
+      account,
+      walletClient,
+      committeeKey,
+      submitting,
+      e3Program,
+      e3Id,
+      auctionType,
+      levels,
+      gateKind,
+      members,
+      keyFor,
+      advance,
+      onSubmitted,
+    ],
   )
 
-  const rows = roles.map(
-    (role): Row =>
-      progress[role] ??
-      (hasRole(mask, role)
-        ? { status: 'done', txHash: stored?.roles[role]?.txHash }
-        : stored?.roles[role]?.status === 'sent'
-          ? { status: 'sending', txHash: stored.roles[role]?.txHash }
-          : { status: 'pending' }),
-  )
+  const steps = plan.map(({ id, label }): StepRow => ({ id, label, status: statuses[id] ?? 'pending' }))
 
-  return { stored, rows, submitting, error, submit }
+  return { versions, steps, submitting, run, error, submit }
 }
