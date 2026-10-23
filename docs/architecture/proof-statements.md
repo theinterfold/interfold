@@ -128,11 +128,10 @@ a missing circuit constraint with a comment claiming another circuit established
 
 ## Rust configuration and preparation
 
-`e3-fhe-params` owns BFV parameter encoding and protocol identity formulas. `e3-zk-config` owns
-static bounds, widths, parity, and public layouts, including the selected message width.
-`Configs::new` retains an existing BFV parameter owner; constructors check the ring, CRT basis, and
-sampler profile. C3 and user encryption share derived `k0is` across bounds, rendering, and
-preparation. Configuration needs no witness, sample, secret key, or prover.
+`e3-zk-config` owns static bounds, widths, parity, and public layouts. `Configs::new` retains an
+existing BFV parameter owner; constructors check the ring, CRT basis, and sampler profile. C3 and
+user encryption share derived `k0is` across bounds, rendering, and preparation. Configuration needs
+no witness, sample, secret key, or prover.
 
 `e3-zk-witness` owns production inputs, commitments, preparation, and canonical Noir JSON. Workers
 pass concrete configurations through `Provable::Config`, reusing C6/C7 configurations across
@@ -182,11 +181,11 @@ negative test, not an end-to-end threshold bypass demonstration.
 Before BFV verification, wrappers require canonical BN254 field encodings; message coefficients must
 also fit 64 bits. The output width is exactly 50 u64 coefficients across Noir
 `MAX_MSG_NON_ZERO_COEFFS`, `e3-zk-config`, and Solidity `MESSAGE_COEFFS_COUNT`. The builder emits
-the Noir value from the ZK configuration owner; its shared-material test compares rendered
-Noir/Solidity widths with that constant. C6/C7 preparation uses the same native ascending prefix
-selected by `config.max_msg_non_zero_coeffs`; a nondefault host width requires matching ABIs and
-consumers. Canonical field checks do not prove parameter-specific plaintext-modulus bounds because
-the wrapper does not store t.
+the Noir value from the Rust constant; its shared-material test compares rendered Noir/Solidity
+widths with that constant. C6/C7 preparation uses the same native ascending prefix selected by
+`config.max_msg_non_zero_coeffs`; a nondefault host width requires matching ABIs and consumers.
+Canonical field checks do not prove parameter-specific plaintext-modulus bounds because the wrapper
+does not store t.
 
 ## Evidence and change review
 

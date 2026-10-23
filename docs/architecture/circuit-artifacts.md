@@ -34,12 +34,6 @@ updates deployment utils and ActiveCryptoConfig only; it neither switches Noir s
 regenerates bounds. General generated-file policy does not permit guessing new generated values by
 hand.
 
-Protocol parameter/configuration hashes and the current scheme/version domain come from
-`e3-fhe-params`' optional ABI boundary. The builder, node admission, and indexer use that owner;
-historical indexer domains remain explicit. Frozen ABI/hash vectors live in
-`crates/fhe-params/tests/fixtures/bfv_protocol.json`. This does not replace the remaining
-TypeScript/Solidity consistency comparisons or qualify compiled artifacts.
-
 Generated provenance headers retain their original spelling across tooling moves. Changing those
 bytes requires a coordinated generated-source refresh; renaming a script alone must not make CI's
 source-regeneration comparison fail. Maintained documentation links identify the current owner.
