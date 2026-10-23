@@ -33,7 +33,7 @@ system. It supports two main workflows:
 | [`builder.rs`](src/builder.rs), [`crp.rs`](src/crp.rs)                      | FHE parameter construction and deterministic common random polynomials.            |
 | [`utils.rs`](src/utils.rs)                                                  | Exact scalar residue, inverse, and coefficient-width derivation.                   |
 | [`search/`](src/search), [`bin/search_params.rs`](src/bin/search_params.rs) | Exact-integer security search and its CLI.                                         |
-| [`encoding.rs`](src/encoding.rs)                                            | Optional Solidity ABI parameter exchange and protocol identity derivation.         |
+| [`encoding.rs`](src/encoding.rs)                                            | Optional Solidity ABI parameter exchange.                                          |
 
 Consumers resolve a named preset to metadata, build its threshold/DKG pair as needed, and derive
 scalar bounds/CRP at this shared boundary. Searching custom parameters is an exploratory workflow,
@@ -187,20 +187,13 @@ using Solidity ABI format:
 
 - `encode_bfv_params()`: Encode parameters to ABI bytes
 - `decode_bfv_params()` / `decode_bfv_params_arc()`: Decode ABI bytes to parameters
-- `bfv_parameter_hash()`: Hash the exact encoded parameter bytes
-- `bfv_encryption_scheme_id()`: Hash the canonical BFV scheme name
-- `bfv_crypto_config_id()`: Bind encoded parameters to an explicit circuit-version domain
-- `current_bfv_crypto_config_id()`: Bind encoded parameters to `INTERFOLD_BFV_VERSION`
 
 This enables serialization for smart contracts and cross-platform parameter exchange.
 
-`BFV_ENCRYPTION_SCHEME` and `INTERFOLD_BFV_VERSION` are public constants in this crate. Circuit
-message width and public-input layouts belong to `e3-zk-config`, not to the BFV parameter tuples.
-
-Configuration hashing does not admit a request or decode/normalize its parameter bytes. Runtime
-callers use the current domain and their supported preset checks. The indexer selects its historical
-domain explicitly and hashes the original registry bytes. Message width and DKG parameters are not
-direct inputs of the threshold parameter hash; statement changes still need an explicit version
+Hash registry parameters as received: decoding and re-encoding can preserve their meaning but change
+their identity. Hash derivation is not admission; current consumers still check supported presets,
+while the indexer selects historical domains explicitly. Message width and DKG parameters are not
+bound by the threshold parameter hash, so statement changes still require an explicit version
 decision. See [upgrade compatibility](../../docs/architecture/upgrades.md).
 
 ## Usage
@@ -381,8 +374,7 @@ assert_eq!(decoded_params.moduli(), params.moduli());
 Run `cargo test --locked -p e3-fhe-params --features abi-encoding` from the root. Inline suites
 cover exact preset lookup/pairs, fallible construction, deterministic CRP, ABI round trips,
 full-width scalar arithmetic, prime selection, and search validation. These native tests do not run
-a prover. The [protocol compatibility suite](tests/protocol_compatibility.rs) checks frozen ABI
-bytes, scheme/configuration hashes, and exact registry-byte binding against independently calculated
-[vectors](tests/fixtures/README.md).
+a prover. Frozen [compatibility vectors](tests/fixtures/README.md) were calculated independently; do
+not regenerate them to make a failing implementation pass.
 [Circuit artifacts](../../docs/architecture/circuit-artifacts.md) describes matching generated
 outputs; [AGENTS.md](AGENTS.md) covers parameter-compatibility changes.
