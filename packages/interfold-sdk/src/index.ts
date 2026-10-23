@@ -28,6 +28,7 @@ export {
   generatePublicKey,
   computeCiphertextCommitment,
   computePublicKeyCommitment,
+  openLbfvKeyEnvelope,
   encryptNumber,
   encryptVector,
   encryptNumberAndGenInputs,
@@ -36,6 +37,7 @@ export {
   encryptVectorAndGenProof,
   generateProof,
 } from './crypto'
+export type { VectorEncoding, VectorEncryptOptions } from './crypto'
 
 // Types and interfaces (re-exported from sub-modules via types.ts)
 export type {
@@ -68,6 +70,7 @@ export type {
   InterfoldEventData,
   RegistryEventData,
   BfvParams,
+  LbfvKeyEnvelopeOpening,
   VerifiableEncryptionResult,
   EncryptedValueAndPublicInputs,
   ThresholdBfvParamsPresetName,
@@ -105,5 +108,7 @@ export {
   encodeCustomParams,
   calculateInputWindow,
   decodePlaintextOutput,
+  decodePlaintextCoefficients,
+  decodePlaintextSlots,
   type ComputeProviderParams,
 } from './utils'

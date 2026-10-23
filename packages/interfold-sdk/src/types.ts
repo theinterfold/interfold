@@ -9,7 +9,13 @@ import type { ContractAddresses } from './contracts/types'
 import type { ThresholdBfvParamsPresetName } from './crypto/types'
 
 // Re-export all sub-module types for backward compatibility
-export type { BfvParams, ThresholdBfvParamsPresetName, VerifiableEncryptionResult, EncryptedValueAndPublicInputs } from './crypto/types'
+export type {
+  BfvParams,
+  LbfvKeyEnvelopeOpening,
+  ThresholdBfvParamsPresetName,
+  VerifiableEncryptionResult,
+  EncryptedValueAndPublicInputs,
+} from './crypto/types'
 
 export { ThresholdBfvParamsPresetNames } from './crypto/types'
 

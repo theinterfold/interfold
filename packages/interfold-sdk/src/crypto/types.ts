@@ -15,18 +15,21 @@ export interface BfvParams {
 }
 
 /**
- * `INSECURE_THRESHOLD` and `INSECURE_THRESHOLD_LBFV` share their parameters; they name the trBFV and
- * l-BFV paths (on-chain parameter sets 0 and 4).
+ * `INSECURE_THRESHOLD_64` and `SECURE_THRESHOLD_8192` run the trBFV path. The other presets run the
+ * l-BFV path: `INSECURE_THRESHOLD_LBFV` (N=128, on-chain parameter set 4), `INSECURE_THRESHOLD_SIMD`
+ * and `SECURE_THRESHOLD_16384`.
  */
 export type ThresholdBfvParamsPresetName =
-  | 'INSECURE_THRESHOLD'
+  | 'INSECURE_THRESHOLD_64'
   | 'INSECURE_THRESHOLD_LBFV'
+  | 'INSECURE_THRESHOLD_SIMD'
   | 'SECURE_THRESHOLD_8192'
   | 'SECURE_THRESHOLD_16384'
 
 export const ThresholdBfvParamsPresetNames = [
-  'INSECURE_THRESHOLD',
+  'INSECURE_THRESHOLD_64',
   'INSECURE_THRESHOLD_LBFV',
+  'INSECURE_THRESHOLD_SIMD',
   'SECURE_THRESHOLD_8192',
   'SECURE_THRESHOLD_16384',
 ] as const satisfies ReadonlyArray<ThresholdBfvParamsPresetName>
@@ -39,6 +42,18 @@ export interface VerifiableEncryptionResult {
 export interface EncryptedValueAndPublicInputs {
   encryptedData: Uint8Array
   circuitInputs: CircuitInputs
+}
+
+/**
+ * An l-BFV committee key's on-chain commitment, opened to its public-key rows.
+ *
+ * Row 0 is `pk_aggregation(pk0, crs0)`, the commitment a user-data-encryption proof exposes. A
+ * circuit rebuilds the on-chain commitment from the rows and `relinearizationKey`. Each value is a
+ * 32-byte big-endian field element.
+ */
+export interface LbfvKeyEnvelopeOpening {
+  publicKeyRows: Uint8Array[]
+  relinearizationKey: Uint8Array
 }
 
 export interface BfvParamSet {

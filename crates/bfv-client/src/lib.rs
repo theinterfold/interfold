@@ -7,18 +7,21 @@
 pub mod client;
 pub mod lbfv_key_envelope;
 
-use fhe::bfv::{Encoding, Plaintext};
+use fhe::bfv::Plaintext;
 use fhe_traits::FheDecoder;
 use thiserror::Error as ThisError;
 
 pub use client::VerifiableEncryptionResult;
 pub use client::{
-    bfv_encrypt, bfv_verifiable_encrypt, compute_ct_commitment, compute_ct_commitment_with_params,
-    compute_pk_commitment, validate_pk_commitment,
+    bfv_encrypt, bfv_encrypt_with_encoding, bfv_verifiable_encrypt,
+    bfv_verifiable_encrypt_with_encoding, compute_ct_commitment, compute_ct_commitment_with_params,
+    compute_pk_commitment, simd_decode, validate_pk_commitment,
 };
+pub use fhe::bfv::Encoding;
 pub use lbfv_key_envelope::{
     decode_lbfv_key_envelope, encode_lbfv_key_envelope, inspect_lbfv_key_envelope,
-    is_lbfv_key_envelope, validate_lbfv_key_envelope, LbfvKeyEnvelope, LbfvKeyEnvelopeCommitments,
+    is_lbfv_key_envelope, open_lbfv_key_envelope, validate_lbfv_key_envelope, LbfvKeyEnvelope,
+    LbfvKeyEnvelopeCommitments, LbfvKeyEnvelopeOpening,
 };
 
 #[derive(ThisError, Debug)]

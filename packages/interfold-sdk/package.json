@@ -28,6 +28,10 @@
       "types": "./dist/crypto/presets/insecure.d.ts",
       "import": "./dist/crypto/presets/insecure.js"
     },
+    "./internal/presets/insecure-simd": {
+      "types": "./dist/crypto/presets/insecure-simd.d.ts",
+      "import": "./dist/crypto/presets/insecure-simd.js"
+    },
     "./internal/presets/secure-8192": {
       "types": "./dist/crypto/presets/secure-8192.d.ts",
       "import": "./dist/crypto/presets/secure-8192.js"

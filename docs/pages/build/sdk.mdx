@@ -94,7 +94,7 @@ The template client uses the same two plugins in `client/vite.config.ts`.
 | `walletClient`                 | `WalletClient`                 | No       | A viem wallet client with an account. Write calls need it.   |
 | `contracts`                    | `ContractAddresses`            | Yes      | `interfold`, `ciphernodeRegistry`, and `feeToken` addresses. |
 | `chain`                        | `Chain`                        | No       | The viem chain.                                              |
-| `thresholdBfvParamsPresetName` | `ThresholdBfvParamsPresetName` | No       | The BFV preset. The default is `INSECURE_THRESHOLD_64`.      |
+| `thresholdBfvParamsPresetName` | `ThresholdBfvParamsPresetName` | No       | The BFV preset. The default is `INSECURE_THRESHOLD`.         |
 
 The constructor throws an `SDKError` with the code `MISSING_PUBLIC_CLIENT`, `INVALID_ADDRESS`, or
 `INVALID_THRESHOLD_BFV_PARAMS_PRESET_NAME` when the configuration is not valid.
@@ -126,8 +126,7 @@ const sdk = new InterfoldSDK({
     feeToken: FEE_TOKEN_ADDRESS,
   },
   chain: sepolia,
-  // Match the parameter set selected by the target E3.
-  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD',
+  thresholdBfvParamsPresetName: 'SECURE_THRESHOLD_8192',
 })
 ```
 
@@ -159,30 +158,27 @@ const sdk = InterfoldSDK.create({
     ciphernodeRegistry: CIPHERNODE_REGISTRY_CONTRACT as `0x${string}`,
     feeToken: FEE_TOKEN_CONTRACT as `0x${string}`,
   },
-  chain: sepolia,
-  privateKey: '0x...', // optional — omit for read-only
-  // Match the parameter set selected by the target E3.
+  chain: hardhat,
   thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD',
 })
 ```
 
 ## BFV presets
 
-| Preset Name             | On-chain `paramSet` | Degree | CRT moduli (L) | Security | Use case                   |
-| ----------------------- | ------------------- | ------ | -------------- | -------- | -------------------------- |
-| `INSECURE_THRESHOLD`    | `0`                 | 128    | 2              | ❌ None  | Fast local or testnet work |
-| `SECURE_THRESHOLD_8192` | `1`                 | 8192   | 3              | ✅ Full  | Production-equivalent work |
+The preset selects the BFV parameters that the client uses to encrypt. It must match the `paramSet`
+of the E3.
 
-| Preset name               | `paramSet` | Ring degree | CRT moduli (L) | Use                                               |
-| ------------------------- | ---------- | ----------- | -------------- | ------------------------------------------------- |
-| `INSECURE_THRESHOLD`      | 0          | 128         | 3              | Local development and tests                       |
-| `SECURE_THRESHOLD_8192`   | 2          | 8192        | 3              | Production and secure test runs                   |
-| `SECURE_THRESHOLD_16384`  | 3          | 16384       | 5              | l-BFV with a `minimum` committee; not on mainnet  |
-| `INSECURE_THRESHOLD_LBFV` | 4          | 128         | 3              | Test-only l-BFV path with the insecure parameters |
+| Preset name                | `paramSet` | Ring degree | CRT moduli (L) | Use                                                 |
+| -------------------------- | ---------- | ----------- | -------------- | --------------------------------------------------- |
+| `INSECURE_THRESHOLD_64`    | 0          | 64          | 3              | Local development and tests (trBFV)                 |
+| `SECURE_THRESHOLD_8192`    | 2          | 8192        | 3              | Production and secure test runs (trBFV)             |
+| `SECURE_THRESHOLD_16384`   | 3          | 16384       | 5              | l-BFV with a `minimum` committee; not on mainnet    |
+| `INSECURE_THRESHOLD_LBFV`  | 4          | 128         | 3              | Test-only l-BFV path with the insecure parameters   |
+| `INSECURE_THRESHOLD_SIMD`  | 5          | 128         | 3              | Test-only l-BFV path with plaintext modulus 257     |
 
-The insecure preset has no production security. Use it only for tests.
-`ThresholdBfvParamsPresetNames` lists these four names, and
-`DEFAULT_THRESHOLD_BFV_PARAMS_PRESET_NAME` is `INSECURE_THRESHOLD`.
+The insecure presets have no production security. Use them only for tests.
+`ThresholdBfvParamsPresetNames` lists these names, and
+`DEFAULT_THRESHOLD_BFV_PARAMS_PRESET_NAME` is `INSECURE_THRESHOLD_64`.
 
 <Callout type='warning'>
   The SDK does not compare the preset with the `paramSet` of the E3. A mismatch encrypts inputs
@@ -191,11 +187,9 @@ The insecure preset has no production security. Use it only for tests.
 
 ## Request an E3
 
-The `paramSet` index in the E3 request must match the preset used by the ciphernode network. If you
-request an E3 with `paramSet: 1` but initialize the SDK with `INSECURE_THRESHOLD`, the ciphertext
-will be encrypted under the wrong parameters and decryption will fail.
-
-### Requesting computations
+The request takes three calls: quote the fee, approve the fee token, and send the request. This
+sample is trimmed from `templates/default/client/src/pages/steps/RequestComputation.tsx`. It adds
+`maxFee`.
 
 ```ts
 import {
@@ -236,30 +230,10 @@ const hash = await sdk.requestE3({ ...requestParams, maxFee: fee })
 | `maxFee`                | `bigint`                    | A fresh quote     |
 | `gasLimit`              | `bigint`                    | Estimated by viem |
 
-export function Dashboard() {
-  const {
-    sdk,
-    isInitialized,
-    error,
-    requestE3,
-    getThresholdBfvParamsSet,
-    onInterfoldEvent,
-    off,
-    InterfoldEventType,
-    RegistryEventType,
-  } = useInterfoldSDK({
-    autoConnect: true,
-    contracts: {
-      interfold: import.meta.env.VITE_INTERFOLD_ADDRESS,
-      ciphernodeRegistry: import.meta.env.VITE_REGISTRY_ADDRESS,
-      feeToken: import.meta.env.VITE_FEE_TOKEN_ADDRESS,
-    },
-    // 'INSECURE_THRESHOLD' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production.
-    thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD',
-  })
+`requestE3` fills the fields that the contract needs and the SDK knows:
 
 - `expectedFeeToken` is the `feeToken` address from the SDK configuration.
-- `expectedCryptoConfigId` is the configuration ID for `paramSet` 0 or 2. Other values fail.
+- `expectedCryptoConfigId` is the configuration ID for `paramSet` 0, 2, or 3. Other values fail.
 - `committeeSize` must be 0, 1, or 2.
 
 `requestE3` simulates the call first, then sends it, and returns the transaction hash. To get the E3
@@ -297,18 +271,9 @@ await sdk.onInterfoldEvent(
     // assembled.publicKey is the committee public key for assembled.e3Id.
   },
 )
-
-// Generate circuit inputs without proof (useful for debugging)
-const { encryptedData, circuitInputs } = await sdk.encryptNumberAndGenInputs(42n, publicKey)
-
-// Standalone import (pass preset name explicitly)
-import { generatePublicKey, encryptNumber } from '@interfold/sdk'
-
-const pk = await generatePublicKey('INSECURE_THRESHOLD')
-const ct = await encryptNumber(42n, pk, 'INSECURE_THRESHOLD')
 ```
 
-### Full encryption method reference
+`CommitteePublicKeyAssembler` works as follows:
 
 - `add(event.data)` returns an `AssembledCommitteePublicKey` (`e3Id`, `nodes`, `pkCommitment`,
   `publicKey`) when a candidate is complete and its Keccak-256 hash matches. Otherwise it returns
@@ -318,37 +283,55 @@ const ct = await encryptNumber(42n, pk, 'INSECURE_THRESHOLD')
   `MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES` (90 KiB).
 - It tracks 128 E3s by default. `clear(e3Id)` removes the state for one E3.
 
-### Proving: embedded circuits or your own
+`sdk.getE3PublicKey(e3Id)` returns the 32-byte public key commitment from the registry. It is not
+the key. The call fails with `GET_E3_PUBLIC_KEY_FAILED` before the committee publishes.
 
-`generateProof()` — and the `*AndGenProof` helpers that call it — run the user-data-encryption (UDE)
-circuits that are embedded in the package. Those artifacts are compiled with
-`--preset insecure --committee minimum` (see `packages/interfold-sdk/scripts/compile-circuits.sh`),
-so they only match `INSECURE_THRESHOLD` and a minimum-size committee.
+## Encrypt inputs
 
-This has two consequences:
+The SDK has each encryption function in two forms. The instance method uses the preset from the
+configuration. The standalone function takes the preset name as its last argument.
 
-- **`generateProof()` is a convenience for the embedded insecure path.** It is enough for local
-  development, for Sepolia, and for tests. Secure (N=8192) artifacts do not ship in the SDK today.
-- **The secure preset gives witnesses the embedded circuits cannot execute.** With
-  `SECURE_THRESHOLD_8192`, `encryptNumberAndGenInputs()` returns N=8192 circuit inputs, while the
-  embedded UDE circuits are N=512. Proof generation fails on the shape mismatch.
+| Instance method                         | Standalone function                             | Returns                                                                |
+| --------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------- |
+| `generatePublicKey()`                   | `generatePublicKey(preset)`                     | A new BFV public key (`Uint8Array`). For tests only.                   |
+| `computePublicKeyCommitment(pk)`        | `computePublicKeyCommitment(pk, preset)`        | The public key commitment (`Uint8Array`).                              |
+| `validatePublicKeyCommitment(pk, c)`    | None                                            | `true` when the commitment of `pk` equals `c`.                         |
+| `computeCiphertextCommitment(ct)`       | `computeCiphertextCommitment(ct, preset)`       | The SAFE commitment of a ciphertext (`Uint8Array`).                    |
+| `encryptNumber(value, pk)`              | `encryptNumber(value, pk, preset)`              | The ciphertext of one `bigint` (`Uint8Array`).                         |
+| `encryptVector(values, pk)`             | `encryptVector(values, pk, preset)`             | The ciphertext of a `BigUint64Array` (`Uint8Array`).                   |
+| `encryptNumberAndGenInputs(value, pk)`  | `encryptNumberAndGenInputs(value, pk, preset)`  | `{ encryptedData, circuitInputs }`                                     |
+| `encryptVectorAndGenInputs(values, pk)` | `encryptVectorAndGenInputs(values, pk, preset)` | `{ encryptedData, circuitInputs }`                                     |
+| `encryptNumberAndGenProof(value, pk)`   | `encryptNumberAndGenProof(value, pk, preset)`   | `{ encryptedData, proof }`                                             |
+| `encryptVectorAndGenProof(values, pk)`  | `encryptVectorAndGenProof(values, pk, preset)`  | `{ encryptedData, proof }`                                             |
+| `getThresholdBfvParamsSet()`            | `getThresholdBfvParamsSet(preset)`              | `BfvParams` (`degree`, `plaintextModulus`, `moduli`, `error1Variance`) |
+| None                                    | `generateProof(circuitInputs)`                  | A `ProofData` proof from `@aztec-foundation/bb.js`.                    |
 
-**For on-chain Honk verification of encryption, bring your own compiled circuits.** Most E3 programs
-already need a custom proving pipeline on top of Greco — an app circuit and a fold circuit that
-wraps the UDE proof — so compile the UDE, app, and fold circuits for the preset and committee your
-deployment uses, then emit the Solidity verifier from them. `examples/CRISP` shows the whole flow.
-See [Noir Circuits](./noir-circuits) for the build commands and the verifier interface.
+A key from `generatePublicKey` is not a committee key. The committee cannot decrypt data that is
+encrypted to it. For the full encrypt and submit flow, see
+[Encrypt and submit](/build/tutorials/encrypt-and-submit).
 
-Use `encryptNumberAndGenInputs()` (or `encryptVectorAndGenInputs()`) to get the circuit inputs, and
-feed them to your own prover instead of `generateProof()`.
+### SIMD vectors
 
-Secure artifacts may ship in the SDK in a later release. Until they do, treat your own compiled
-circuits as the supported path for production.
+`encryptVector`, `encryptVectorAndGenInputs` and `encryptVectorAndGenProof` accept a last argument
+`{ encoding: 'poly' | 'simd' }`. The default is `'poly'`: `values[i]` is the coefficient of `X^i`.
+With `'simd'`, `values[i]` is slot `i`, and an operation on a ciphertext acts on all slots at once.
+The preset must have a plaintext modulus that is prime and 1 mod 2N, for example
+`INSECURE_THRESHOLD_SIMD`. Other presets reject `'simd'`.
 
-The circuit depends on the key type of the preset. For a trBFV preset (`SECURE_THRESHOLD_8192`), the
+The plaintext output of an E3 is always in the poly basis. Use `decodePlaintextSlots(hex, preset)`
+to get the slot values.
+
+### Encryption proofs
+
+The `*AndGenProof` functions and `generateProof` use circuits that ship in the SDK. The SDK compiles
+them with the `insecure-64` preset and the `minimum` committee
+(`packages/interfold-sdk/scripts/compile-circuits.sh`). The proofs target recursive verification
+(`noir-recursive-no-zk`), not a Solidity verifier.
+
+The circuit depends on the key type of the preset. For a trBFV preset (`INSECURE_THRESHOLD_64`, `SECURE_THRESHOLD_8192`), the
 SDK proves one circuit, `user_data_encryption`, which proves both ciphertext legs. Its public inputs
 are `pk_commitment`, `ct_commitment`, and `k1_commitment`. For an l-BFV preset
-(`INSECURE_THRESHOLD_LBFV`, `SECURE_THRESHOLD_16384`), the SDK proves the chunked proof tree and the
+(`INSECURE_THRESHOLD_LBFV`, `INSECURE_THRESHOLD_SIMD`, `SECURE_THRESHOLD_16384`), the SDK proves the chunked proof tree and the
 `user_data_encryption_chunked` wrapper.
 
 <Callout type='warning'>
@@ -363,7 +346,7 @@ It fails with one of these codes when the stamp does not match:
 
 - `SDK_CIRCUIT_STAMP_MISSING` or `SDK_CIRCUIT_STAMP_INVALID`: the stamp file is missing or broken.
 - `SDK_CIRCUIT_COMMITTEE_MISMATCH`: the circuits are not for the `minimum` committee.
-- `SDK_CIRCUIT_PRESET_MISMATCH`: the circuits are not for `insecure`.
+- `SDK_CIRCUIT_PRESET_MISMATCH`: the circuits are not for `insecure-64`.
 
 For another preset, another committee size, or an on-chain verifier, compile your own circuits. Use
 `encryptNumberAndGenInputs` or `encryptVectorAndGenInputs` to get the witness for your prover. See
@@ -506,6 +489,8 @@ The main entry point exports these utilities.
 | `encodeCustomParams(params)`                                                                       | The JSON of an object as hex bytes.                                                                        |
 | `encodeBfvParams(params)`                                                                          | ABI-encoded BFV parameters. It throws `MISSING_ERROR1_VARIANCE` without `error1Variance`.                  |
 | `decodePlaintextOutput(hex)`                                                                       | The first 8 bytes as a little-endian unsigned integer, as a `number`. `null` when the input is too short.  |
+| `decodePlaintextCoefficients(hex)`                                                                 | The coefficients of a published plaintext output: little-endian u64 chunks, as `bigint[]`.                 |
+| `decodePlaintextSlots(hex, preset)`                                                                | The SIMD slot values of a published plaintext output, as `Promise<bigint[]>`. It uses fhe.rs through wasm. |
 | `DEFAULT_COMPUTE_PROVIDER_PARAMS`                                                                  | `{ name: 'openvm', parallel: false, batch_size: 2 }`                                                       |
 | `DEFAULT_E3_CONFIG`                                                                                | `{ committeeSize: 0, duration: 1800, payment_amount: '0' }`                                                |
 | `isValidAddress(value)`, `isValidHash(value)`                                                      | Format checks for a 20-byte address and a 32-byte hash.                                                    |
@@ -586,7 +571,7 @@ export function useTemplateSdk() {
         ciphernodeRegistry: import.meta.env.VITE_REGISTRY_ADDRESS,
         feeToken: import.meta.env.VITE_FEE_TOKEN_ADDRESS,
       },
-      thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_64' as const,
+      thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD' as const,
     }),
     [],
   )

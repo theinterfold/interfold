@@ -6,16 +6,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 COMMITTEE="${CIRCUIT_COMMITTEE:-minimum}"
 case "${COMMITTEE}" in
-  minimum|micro|small) ;;
+  minimum) ;;
     *)
-    echo "Error: CIRCUIT_COMMITTEE must be minimum|micro|small (got: ${COMMITTEE})" >&2
+    echo "Error: SDK proof bundles require the minimum committee (got: ${COMMITTEE})" >&2
     exit 1
     ;;
 esac
 
 TARGET="${REPO_ROOT}/circuits/bin/threshold/target"
 DIST="${SCRIPT_DIR}/../circuits/dist"
-PRESETS=(secure-8192 secure-16384 insecure)
+# The l-BFV proof trees of each preset. The trBFV circuit follows them, so that insecure-64 stays the
+# local active selection.
+PRESETS=(secure-8192 secure-16384 insecure-simd insecure)
 # The proof tree: the prover also imports each one's recursive key (`<circuit>.vk.json`).
 TREE_ARTIFACTS=(
   ct0_chunk_main
@@ -64,6 +66,7 @@ for PRESET in "${PRESETS[@]}"; do
 
   case "${PRESET}" in
     insecure) EXPECTED_DEGREE=128 ;;
+    insecure-simd) EXPECTED_DEGREE=128 ;;
     secure-8192) EXPECTED_DEGREE=8192 ;;
     secure-16384) EXPECTED_DEGREE=16384 ;;
   esac
@@ -80,3 +83,14 @@ if (degree !== expectedDegree) {
 }
 NODE
 done
+
+# The trBFV path proves with one circuit; it is built last, so that insecure-64 is the final build
+# and the local active selection.
+pnpm -C "${REPO_ROOT}" build:circuits \
+  --preset insecure-64 \
+  --committee "${COMMITTEE}" \
+  --group threshold \
+  --circuit user_data_encryption \
+  --skip-vk \
+  --skip-checksums \
+  --no-clean-targets

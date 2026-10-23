@@ -32,6 +32,7 @@ import {
   encryptVectorAndGenInputs,
   encryptVectorAndGenProof,
 } from './crypto/encrypt'
+import type { VectorEncryptOptions } from './crypto/encrypt'
 import { ThresholdBfvParamsPresetNames } from './crypto/types'
 import { SDKError, isValidAddress } from './utils'
 import { DEFAULT_THRESHOLD_BFV_PARAMS_PRESET_NAME } from './constants'
@@ -130,8 +131,8 @@ export class InterfoldSDK {
     return encryptNumber(data, publicKey, this.thresholdBfvParamsPresetName)
   }
 
-  public async encryptVector(data: BigUint64Array, publicKey: Uint8Array): Promise<Uint8Array> {
-    return encryptVector(data, publicKey, this.thresholdBfvParamsPresetName)
+  public async encryptVector(data: BigUint64Array, publicKey: Uint8Array, options?: VectorEncryptOptions): Promise<Uint8Array> {
+    return encryptVector(data, publicKey, this.thresholdBfvParamsPresetName, options)
   }
 
   public async encryptNumberAndGenInputs(data: bigint, publicKey: Uint8Array): Promise<EncryptedValueAndPublicInputs> {
@@ -142,12 +143,20 @@ export class InterfoldSDK {
     return encryptNumberAndGenProof(data, publicKey, this.thresholdBfvParamsPresetName)
   }
 
-  public async encryptVectorAndGenInputs(data: BigUint64Array, publicKey: Uint8Array): Promise<EncryptedValueAndPublicInputs> {
-    return encryptVectorAndGenInputs(data, publicKey, this.thresholdBfvParamsPresetName)
+  public async encryptVectorAndGenInputs(
+    data: BigUint64Array,
+    publicKey: Uint8Array,
+    options?: VectorEncryptOptions,
+  ): Promise<EncryptedValueAndPublicInputs> {
+    return encryptVectorAndGenInputs(data, publicKey, this.thresholdBfvParamsPresetName, options)
   }
 
-  public async encryptVectorAndGenProof(data: BigUint64Array, publicKey: Uint8Array): Promise<VerifiableEncryptionResult> {
-    return encryptVectorAndGenProof(data, publicKey, this.thresholdBfvParamsPresetName)
+  public async encryptVectorAndGenProof(
+    data: BigUint64Array,
+    publicKey: Uint8Array,
+    options?: VectorEncryptOptions,
+  ): Promise<VerifiableEncryptionResult> {
+    return encryptVectorAndGenProof(data, publicKey, this.thresholdBfvParamsPresetName, options)
   }
 
   // --- Contracts (delegates to ContractClient) ---

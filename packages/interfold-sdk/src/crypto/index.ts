@@ -9,6 +9,7 @@ export {
   generatePublicKey,
   computeCiphertextCommitment,
   computePublicKeyCommitment,
+  openLbfvKeyEnvelope,
   encryptNumber,
   encryptVector,
   encryptNumberAndGenInputs,
@@ -16,9 +17,16 @@ export {
   encryptVectorAndGenInputs,
   encryptVectorAndGenProof,
 } from './encrypt'
+export type { VectorEncoding, VectorEncryptOptions } from './encrypt'
 
 export { generateProof } from './user-data-encryption'
 
-export type { BfvParams, ThresholdBfvParamsPresetName, VerifiableEncryptionResult, EncryptedValueAndPublicInputs } from './types'
+export type {
+  BfvParams,
+  LbfvKeyEnvelopeOpening,
+  ThresholdBfvParamsPresetName,
+  VerifiableEncryptionResult,
+  EncryptedValueAndPublicInputs,
+} from './types'
 
 export { ThresholdBfvParamsPresetNames } from './types'

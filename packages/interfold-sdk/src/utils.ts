@@ -5,6 +5,9 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import { type Address, type Hash, type Log, PublicClient, encodeAbiParameters } from 'viem'
+import initializeWasm from '@interfold/wasm/init'
+import { simd_decode } from '@interfold/wasm'
+import type { ThresholdBfvParamsPresetName } from './crypto/types'
 import type { BfvParams } from './types'
 
 export class SDKError extends Error {
@@ -85,13 +88,19 @@ export const DEFAULT_E3_CONFIG = {
 
 export function cryptoConfigIdForParamSet(paramSet: number): Hash {
   if (paramSet === 0) {
-    return '0x353ab90c0ebe9c13e1b9c2048539b7c2872f3eb12a9f1957f31410aa4bf44718'
+    return '0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9'
+  }
+  if (paramSet === 4) {
+    return '0x968e91054be28b2b577ac278284e03274ed46bd5c5064e573290312a2323d495'
   }
   if (paramSet === 2) {
-    return '0x5ebb3432396f21cd97fca47e006b9dd38c021bf2902d3e555cf74cb91b28e44e'
+    return '0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa'
   }
   if (paramSet === 3) {
-    return '0x9c5c09ac7421582c4407c7e6ad923b8f9126aa708957c2575760fb0a38153655'
+    return '0x9b9181e0304e51388d6edd6eb4d5ae9a8593cbdbf28838734d829d09d0701d86'
+  }
+  if (paramSet === 5) {
+    return '0x843cc091bc39d046eded5e9f0aed8250848b46f7e36623433d31a1f5d7ef5e35'
   }
   throw new SDKError(`Unsupported BFV parameter set: ${paramSet}`, 'UNSUPPORTED_CRYPTO_CONFIG')
 }
@@ -205,6 +214,42 @@ export function decodePlaintextOutput(plaintextOutput: string): number | null {
     console.error('Failed to decode plaintext output:', error)
     return null
   }
+}
+
+/**
+ * Decode a plaintextOutput into the coefficients of the decrypted plaintext.
+ *
+ * The output is little-endian u64 chunks, one per coefficient, in the poly basis. The coefficient
+ * count is the output cap of the preset, so a SIMD plaintext of degree N is N chunks.
+ * @throws SDKError if the hex is malformed or its length is not a multiple of 8 bytes
+ */
+export function decodePlaintextCoefficients(plaintextOutput: string): bigint[] {
+  const hex = plaintextOutput.startsWith('0x') ? plaintextOutput.slice(2) : plaintextOutput
+  if (hex.length % 16 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) {
+    throw new SDKError('Plaintext output must be whole little-endian u64 chunks of hex', 'INVALID_PLAINTEXT_OUTPUT')
+  }
+
+  const coefficients: bigint[] = []
+  for (let offset = 0; offset < hex.length; offset += 16) {
+    // Little-endian: the last byte of the chunk is the most significant.
+    const bytes = hex.slice(offset, offset + 16).match(/../g) as string[]
+    coefficients.push(BigInt(`0x${bytes.reverse().join('')}`))
+  }
+  return coefficients
+}
+
+/**
+ * Decode a plaintextOutput into the SIMD slot values of the decrypted plaintext.
+ *
+ * The coefficients are mapped to slots by fhe.rs (via wasm), so the slot order is the one
+ * `encryptVector(..., { encoding: 'simd' })` packs.
+ * @param plaintextOutput - The published plaintext output, as hex
+ * @param presetName - A preset whose plaintext modulus is prime and 1 mod 2N, e.g. `INSECURE_THRESHOLD_SIMD`
+ */
+export async function decodePlaintextSlots(plaintextOutput: string, presetName: ThresholdBfvParamsPresetName): Promise<bigint[]> {
+  const coefficients = decodePlaintextCoefficients(plaintextOutput)
+  await initializeWasm()
+  return Array.from(simd_decode(BigUint64Array.from(coefficients), presetName))
 }
 
 // Helper function to convert proof bytes to field elements
