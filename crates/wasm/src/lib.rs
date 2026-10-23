@@ -8,8 +8,7 @@ use e3_bfv_client::client::{
     bfv_encrypt, bfv_encrypt_with_encoding, bfv_verifiable_encrypt,
     bfv_verifiable_encrypt_with_encoding, compute_ct_commitment as _compute_ct_commitment,
     compute_pk_commitment as _compute_pk_commitment, generate_public_key as _generate_public_key,
-    open_lbfv_key_envelope as _open_lbfv_key_envelope,
-    simd_decode as _simd_decode,
+    open_lbfv_key_envelope as _open_lbfv_key_envelope, simd_decode as _simd_decode,
 };
 use e3_bfv_client::Encoding;
 use e3_fhe_params::{BfvParamSet, BfvPreset};
