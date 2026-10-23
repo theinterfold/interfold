@@ -408,7 +408,7 @@ fn build_circuit(root: &Path, pair: &Path, circuit: &Circuit, skip_vk: bool) -> 
 }
 
 pub fn refresh_anchors(root: &Path, pair: &Path, complete: bool) -> Result<()> {
-    identities::invalidate(root, pair)?;
+    identities::invalidate(pair)?;
     for name in ["nodes_fold", "c6_fold"] {
         for path in [
             pair.join("default/recursive_aggregation")
@@ -436,31 +436,6 @@ pub fn refresh_anchors(root: &Path, pair: &Path, complete: bool) -> Result<()> {
                 fs::write(directory.join(format!("{name}.vk_tree_hash")), bytes)?;
             }
         }
-    }
-    Ok(())
-}
-
-pub fn build_isolated(root: &Path, request: &Request) -> Result<()> {
-    request.validate(root)?;
-    if request.dry_run {
-        return build(root, request);
-    }
-    anyhow::ensure!(
-        !request.hydrate_bin_only,
-        "Isolated builds do not hydrate the live bin cache"
-    );
-    identity::check_tools(root, true, !request.skip_vk)?;
-    let output = request.output_dir(root);
-    for [preset, committee] in request.selected_pairs(root)? {
-        let temp = tempfile::tempdir()?;
-        identity::stage_sources(root, temp.path())?;
-        let mut selected = request.clone();
-        selected.isolated = false;
-        selected.preset = super::PresetSelection::Single(super::preset(&preset)?);
-        selected.committee = super::CommitteeSelection::Single(committee.parse()?);
-        selected.output = Some(output.clone());
-        identities::invalidate(root, &output.join(&preset).join(&committee))?;
-        build(temp.path(), &selected)?;
     }
     Ok(())
 }
@@ -571,7 +546,7 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
             // pinned versions before any destructive build step.
             identity::check_tools(root, true, !request.skip_vk)?;
             started = true;
-            identities::invalidate(root, &pair)?;
+            identities::invalidate(&pair)?;
             selection.publish()?;
             if !request.no_clean {
                 remove_dir(&pair)?;
@@ -605,15 +580,15 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
             };
             write_json(&pair.join(".build-stamp.json"), &stamp)?;
             if complete {
-                let manifest = identities::collect_pair(root, &output, preset_name, committee)?;
+                let manifest = identities::collect_pair(&output, preset_name, committee)?;
                 identities::write_pair(&pair, &manifest)?;
             }
             active_stamp(root, preset_name, committee, &hash)
         })();
         if let Err(error) = result {
             if started {
-                if let Err(cleanup) = refresh_anchors(root, &pair, false)
-                    .and_then(|_| identities::invalidate(root, &pair))
+                if let Err(cleanup) =
+                    refresh_anchors(root, &pair, false).and_then(|_| identities::invalidate(&pair))
                 {
                     errors.push(format!("{preset_name}/{committee}: failed to invalidate incomplete outputs: {cleanup:#}"));
                 }
@@ -702,7 +677,6 @@ mod tests {
             skip_if_built: false,
             hydrate_bin_only: false,
             dry_run: false,
-            isolated: false,
         }
     }
 
@@ -843,6 +817,17 @@ mod tests {
             2,
             "duplicate groups compiled twice"
         );
+        let before = crate::tests::snapshot(root);
+        identities::qualify(root, &partial).unwrap();
+        assert_eq!(crate::tests::snapshot(root), before);
+        let key = pair.join("evm/dkg/pk/pk.vk");
+        let original_key = fs::read(&key).unwrap();
+        fs::write(&key, "stale key").unwrap();
+        assert!(identities::qualify(root, &partial)
+            .unwrap_err()
+            .to_string()
+            .contains("VK bytes differ"));
+        fs::write(&key, original_key).unwrap();
         for circuit in discover(root, &request()).unwrap() {
             let target = target_dir(root, &circuit).unwrap();
             for (variant, _, extension) in variants(&circuit) {

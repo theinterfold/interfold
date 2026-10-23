@@ -125,10 +125,9 @@ public-input length and VK anchors. Selecting an already installed matching pair
 replacement; missing routes or changed VKs require matching wrappers and replacement routers before
 mapping updates. Constructor code checks/nonzero VK anchors are mandatory. Deployment compares
 immutables with built artifacts. Generated verifiers must match built VKs: relevant pre-push changes
-require complete source-bound crypto qualification as well as the existing selected verifier check.
-CI builds/checks each build-policy pair in isolation and requires an aggregate complete-matrix
-result, including every release-required pair. A skipped required leg fails that result. A wrapper
-name alone does not identify its accepted statement.
+retain the selected-pair verifier check, and ordinary circuit CI builds/checks the default pair.
+Release validation still requires every release-required source-matched pair. A wrapper name alone
+does not identify its accepted statement.
 
 Published `@interfold/contracts` deploys do not require a checkout. Outside the monorepo,
 node-release metadata comes from `dist/node-release.json`, written by `compile:ts`, and BFV VK paths
@@ -137,25 +136,23 @@ ignore that override and retain repository release files and local artifact sele
 [npm-package deployment](../../packages/interfold-contracts/README.md#deploying-from-the-npm-package)
 for layout and setup.
 
-`circuits/identities.json` separates backend VK hashes, Solidity VK hashes, and ordered
-recursive-tree commitments, keyed by pair, group-qualified circuit, proof variant, and hash kind.
-Pair slices travel with artifacts; package metadata carries the aggregate. Named deployment lookup
-verifies source stamps, slices, referenced artifact/VK digests, and tree descendants before
-transactions. Intermediate tree identities have ordered dependencies but no invented compiled
-artifact or VK. Repeated dependencies preserve proof multiplicity. Partial/failed builds invalidate
-affected slices and aggregate indexes. The existing runtime installer does not require this additive
-metadata from older archives.
+`circuits/identities.json` names the backend hashes and final ordered tree commitments consumed by
+deployment and CRISP. Pair slices travel with artifacts; package metadata carries the aggregate.
+Lookup compares the selected pair and its raw hash files, not a second copy of artifact digests or
+the dependency graph. The existing checksum/source validators and SAFE topology remain their owners.
+Partial/failed builds invalidate affected slices and archive indexes, not the committed expected
+catalogue. The runtime installer does not require this additive metadata from older archives.
 
 The builder canonicalizes checkout and Nargo Git-cache paths in compiled source maps before staging,
 and refuses unrecognized absolute source paths. Artifact digests therefore do not intentionally bind
 a builder's home directory or checkout location. Exact compiled bytes and source identity remain
 separate commitments; path normalization never relabels an older archive's source stamp.
 
-`pnpm check:crypto-config` is the complete read-only gate: isolated source/ownership checks,
-source-bound artifact inventory/checksums, independently rederived backend VK bytes/hashes, ordered
-trees, complete regenerated Solidity verifiers, and compiled application layouts. It never repairs
-or prepares artifacts. `--bindings-only` and selected-pair checks report a narrower result and
-cannot satisfy complete acceptance. These checks still do not replace real-proof verification.
+`pnpm check:crypto-config` checks generated sources and consumer ownership. Its explicit `--full`
+mode composes existing source-bound inventory/checksum validation, named identities, and compiled
+layouts over a prepared matrix. `pnpm qualify:crypto-config` additionally rederives backend keys and
+complete Solidity verifiers. These operations never prepare or repair artifacts, and source-only or
+default-pair checks are not matrix qualification. None replaces real-proof verification.
 
 Storage baselines are committed read-only CI inputs; missing baseline, compiler drift, incompatible
 nested layout, and bad gap consumption fail. Creating a baseline is explicit maintainer work, never

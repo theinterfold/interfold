@@ -66,6 +66,7 @@ pub enum Operation {
     CheckLayouts,
     SyncIdentities,
     CheckIdentities,
+    QualifyIdentities,
     SyncSources,
 }
 
@@ -84,9 +85,10 @@ impl FromStr for Operation {
             "check-layouts" => Ok(Self::CheckLayouts),
             "sync-identities" => Ok(Self::SyncIdentities),
             "check-identities" => Ok(Self::CheckIdentities),
+            "qualify-identities" => Ok(Self::QualifyIdentities),
             "sync-sources" => Ok(Self::SyncSources),
             other => Err(format!(
-                "unknown build operation {other}; expected build, hash, sync-config, sync-preset, check, export-config, sync-bindings, check-bindings, check-layouts, sync-identities, check-identities, or sync-sources"
+                "unknown build operation {other}; expected build, hash, sync-config, sync-preset, check, export-config, sync-bindings, check-bindings, check-layouts, sync-identities, check-identities, qualify-identities, or sync-sources"
             )),
         }
     }
@@ -106,6 +108,7 @@ impl fmt::Display for Operation {
             Self::CheckLayouts => "check-layouts",
             Self::SyncIdentities => "sync-identities",
             Self::CheckIdentities => "check-identities",
+            Self::QualifyIdentities => "qualify-identities",
             Self::SyncSources => "sync-sources",
         })
     }
@@ -242,28 +245,6 @@ pub struct Request {
     pub hydrate_bin_only: bool,
     /// Show the selected circuits without changing files.
     pub dry_run: bool,
-    /// Compile in a source snapshot without switching the live library or bin cache.
-    pub isolated: bool,
-}
-
-pub(crate) fn default_request() -> Request {
-    Request {
-        operation: Operation::Build,
-        preset: PresetSelection::Single(BfvPreset::InsecureThreshold64),
-        committee: CommitteeSelection::Single(CiphernodesCommitteeSize::Minimum),
-        groups: GroupSelection::All,
-        circuits: Vec::new(),
-        output: None,
-        skip_vk: false,
-        skip_checksums: false,
-        skip_utils_patch: false,
-        no_clean: false,
-        no_clean_targets: false,
-        skip_if_built: false,
-        hydrate_bin_only: false,
-        dry_run: false,
-        isolated: false,
-    }
 }
 
 impl Request {
@@ -483,6 +464,7 @@ pub fn execute(root: &Path, request: &Request) -> Result<()> {
         Operation::CheckLayouts => layouts::check(root, request)?,
         Operation::SyncIdentities => identities::generate(root, &request.output_dir(root))?,
         Operation::CheckIdentities => identities::check(root, request)?,
+        Operation::QualifyIdentities => identities::qualify(root, request)?,
         Operation::SyncSources => configuration::sync_sources(root)?,
         Operation::ExportConfig => {
             let metadata = metadata::collect(root)?;
@@ -490,7 +472,6 @@ pub fn execute(root: &Path, request: &Request) -> Result<()> {
             serde_json::to_writer_pretty(&mut stdout, &metadata)?;
             writeln!(stdout)?;
         }
-        Operation::Build if request.isolated => artifacts::build_isolated(root, request)?,
         Operation::Build => artifacts::build(root, request)?,
     }
     Ok(())

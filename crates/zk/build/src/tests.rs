@@ -62,7 +62,6 @@ pub(crate) fn request() -> Request {
         skip_if_built: false,
         hydrate_bin_only: false,
         dry_run: false,
-        isolated: false,
     }
 }
 

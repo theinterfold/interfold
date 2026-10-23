@@ -12,7 +12,6 @@ import {
 } from "ethers";
 import fs from "fs";
 import type { HardhatRuntimeEnvironment } from "hardhat/types/hre";
-import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import path from "path";
@@ -434,33 +433,19 @@ export function readVkRecursiveHash(
 }
 
 interface CircuitIdentityKey {
-  preset: string;
-  committee: string;
   circuit: string;
   proofVariant: "default" | "recursive" | "evm";
-  hashKind: "bb-vk-hash" | "solidity-vk-hash" | "recursive-tree-commitment";
-}
-
-interface CircuitIdentityEntry {
-  key: CircuitIdentityKey;
-  value: string;
-  compiledArtifact: { path: string; sha256: string } | null;
-  verificationKey: { path: string; sha256: string } | null;
-  dependencies: CircuitIdentityKey[];
+  hashKind: "bb-vk-hash" | "recursive-tree-commitment";
 }
 
 interface CircuitIdentityPair {
   preset: string;
   committee: string;
-  sourceHash: string;
-  entries: CircuitIdentityEntry[];
+  identities: Record<string, string>;
 }
 
 function readIdentityValues(
-  requested: Pick<
-    CircuitIdentityKey,
-    "circuit" | "proofVariant" | "hashKind"
-  >[],
+  requested: CircuitIdentityKey[],
   selected: ActiveBfvConfig = ACTIVE_BFV_CONFIG,
 ): string[] {
   const repo = findMonorepoRoot();
@@ -478,7 +463,7 @@ function readIdentityValues(
     : packaged;
   if (!fs.existsSync(manifestPath))
     throw new Error(
-      `Missing circuit identity manifest: ${manifestPath}; prepare and qualify the complete circuit matrix`,
+      `Missing circuit identity manifest: ${manifestPath}; run pnpm generate:circuit-identities after preparing the circuit artifacts`,
     );
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
     formatVersion: number;
@@ -512,108 +497,35 @@ function readIdentityValues(
   );
   if (
     stamp.preset !== selected.preset ||
-    stamp.committee !== selected.committee ||
-    stamp.sourceHash !== pair.sourceHash
+    stamp.committee !== selected.committee
   )
     throw new Error(
-      "Circuit identity source stamp differs from the package manifest",
+      "Circuit identity pair stamp differs from the selected configuration",
     );
-  const verified = new Set<string>();
-  const visiting = new Set<string>();
-  const identity = (key: CircuitIdentityKey) =>
-    JSON.stringify([
-      key.preset,
-      key.committee,
-      key.circuit,
-      key.proofVariant,
-      key.hashKind,
-    ]);
-  const lookup = (key: CircuitIdentityKey): CircuitIdentityEntry => {
-    if (key.preset !== selected.preset || key.committee !== selected.committee)
-      throw new Error("Cross-pair circuit identity dependency");
-    const matches = pair.entries.filter(
-      (entry) => identity(entry.key) === identity(key),
-    );
-    if (matches.length !== 1)
-      throw new Error(`Missing or duplicate circuit identity ${identity(key)}`);
-    return matches[0];
-  };
-  const root = fs.realpathSync(artifacts);
-  const digest = (artifact: { path: string; sha256: string }) => {
-    if (
-      path.isAbsolute(artifact.path) ||
-      artifact.path.includes("\\") ||
-      artifact.path
-        .split("/")
-        .some((part) => !part || part === "." || part === "..") ||
-      !artifact.path.startsWith(`${selected.preset}/${selected.committee}/`)
-    )
-      throw new Error("Invalid circuit identity artifact path");
-    const filename = fs.realpathSync(path.join(root, artifact.path));
-    if (!filename.startsWith(`${root}${path.sep}`))
-      throw new Error("Circuit identity artifact escapes its directory");
-    if (
-      createHash("sha256").update(fs.readFileSync(filename)).digest("hex") !==
-      artifact.sha256
-    )
-      throw new Error(
-        `Circuit identity artifact digest differs: ${artifact.path}`,
-      );
-  };
-  const verify = (key: CircuitIdentityKey) => {
-    const id = identity(key);
-    if (verified.has(id)) return;
-    if (visiting.has(id)) throw new Error("Cyclic circuit identity dependency");
-    visiting.add(id);
-    const entry = lookup(key);
-    if (!/^0x[0-9a-f]{64}$/.test(entry.value))
-      throw new Error("Invalid circuit identity value");
-    if (entry.compiledArtifact) digest(entry.compiledArtifact);
-    if (entry.verificationKey) {
-      digest(entry.verificationKey);
-      if (
-        key.hashKind === "bb-vk-hash" &&
-        readVkRecursiveHash(
-          path.join(root, `${entry.verificationKey.path}_hash`),
-          selected,
-        ) !== entry.value
-      )
-        throw new Error("Circuit VK hash differs from the named identity");
-    } else if (key.hashKind !== "recursive-tree-commitment")
-      throw new Error("Circuit key identity has no key material");
-    for (const child of entry.dependencies) verify(child);
-    if (
-      key.hashKind === "recursive-tree-commitment" &&
-      [
-        "recursive_aggregation/nodes_fold",
-        "recursive_aggregation/c6_fold",
-      ].includes(key.circuit)
-    ) {
-      const name = key.circuit.split("/").pop()!;
-      if (
-        readVkRecursiveHash(
-          path.join(
-            pairDirectory,
-            "default",
-            key.circuit,
-            `${name}.vk_tree_hash`,
-          ),
-          selected,
-        ) !== entry.value
-      )
-        throw new Error("Circuit tree anchor differs from the named identity");
-    }
-    visiting.delete(id);
-    verified.add(id);
-  };
   return requested.map((request) => {
-    const key = {
-      preset: selected.preset,
-      committee: selected.committee,
-      ...request,
-    };
-    verify(key);
-    return lookup(key).value;
+    if (
+      !/^(threshold|recursive_aggregation)\/[a-z][a-z0-9_]*$/.test(
+        request.circuit,
+      )
+    )
+      throw new Error("Invalid circuit identity name");
+    const key = `${request.hashKind}/${request.proofVariant}/${request.circuit}`;
+    const value = pair.identities?.[key];
+    if (!value) throw new Error(`Missing named circuit identity ${key}`);
+    if (!/^0x[0-9a-f]{64}$/.test(value))
+      throw new Error("Invalid circuit identity value");
+    const name = request.circuit.split("/").pop()!;
+    const extension =
+      request.hashKind === "bb-vk-hash" ? "vk_hash" : "vk_tree_hash";
+    const filename = path.join(
+      pairDirectory,
+      request.proofVariant,
+      request.circuit,
+      `${name}.${extension}`,
+    );
+    if (readVkRecursiveHash(filename, selected) !== value)
+      throw new Error("Circuit VK hash differs from the named identity");
+    return value;
   });
 }
 

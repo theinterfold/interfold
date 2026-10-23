@@ -186,6 +186,31 @@ test('a failed native export preserves the snapshot and its exit status', () => 
   }
 })
 
+test('the aggregate source check fails without Noir instead of using the lightweight fallback', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'interfold-source-tools-'))
+  const snapshot = join(packageRoot, 'crypto-config.json')
+  const before = readFileSync(snapshot)
+  const mtime = statSync(snapshot).mtimeMs
+  try {
+    for (const tool of ['cargo', 'rustc']) {
+      const binary = execFileSync('rustup', ['which', tool], { cwd: root, encoding: 'utf8' }).trim()
+      symlinkSync(binary, join(temp, tool))
+    }
+    symlinkSync(process.execPath, join(temp, 'node'))
+    const result = spawnSync(process.execPath, ['scripts/circuits/crypto-config.mjs', '--check', '--sources'], {
+      cwd: root,
+      env: { ...process.env, PATH: `${temp}:/usr/bin:/bin` },
+      encoding: 'utf8',
+    })
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /nargo/)
+    assert.deepEqual(readFileSync(snapshot), before)
+    assert.equal(statSync(snapshot).mtimeMs, mtime)
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
 test('bindings retain each owner-provided parameter family, search recipe, and circuit dimension', () => {
   const metadata = JSON.parse(execFileSync('pnpm', ['--silent', 'build:circuits', 'export-config'], { cwd: root, encoding: 'utf8' }))
   assert.deepEqual(JSON.parse(readFileSync(join(packageRoot, 'crypto-config.json'), 'utf8')), metadata)

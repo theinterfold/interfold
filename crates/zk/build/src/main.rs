@@ -45,9 +45,6 @@ struct Cli {
     /// Show the selected circuits without changing files.
     #[arg(long)]
     dry_run: bool,
-    /// Prepare artifacts without modifying live selectors or circuits/bin caches.
-    #[arg(long)]
-    isolated: bool,
 }
 
 impl From<Cli> for Request {
@@ -71,7 +68,6 @@ impl From<Cli> for Request {
             skip_if_built: cli.skip_if_built,
             hydrate_bin_only: cli.hydrate_bin_only,
             dry_run: cli.dry_run,
-            isolated: cli.isolated,
         }
     }
 }

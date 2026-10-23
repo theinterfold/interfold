@@ -79,31 +79,6 @@ pub fn check_tools(root: &Path, need_nargo: bool, need_bb: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn stage_sources(root: &Path, destination: &Path) -> Result<()> {
-    for directory in SOURCE_DIRS.iter().copied().chain([
-        "circuits/lib",
-        "circuits/bin",
-        "packages/interfold-contracts/contracts/verifiers/bfv/honk",
-    ]) {
-        artifacts::copy_tree(
-            &root.join(directory),
-            &destination.join(directory),
-            &["target", "Prover.toml", "Witness.toml"],
-        )?;
-    }
-    for file in SOURCE_FILES.iter().copied().chain([
-        "crates/zk/prover/Cargo.toml",
-        "crates/zk/prover/versions.json",
-        "crates/zk/prover/supported-configurations.json",
-        "packages/interfold-contracts/scripts/utils.ts",
-    ]) {
-        let path = destination.join(file);
-        fs::create_dir_all(path.parent().context("Staged source parent")?)?;
-        fs::copy(root.join(file), path)?;
-    }
-    Ok(())
-}
-
 pub fn strip_test_modules(source: &str) -> String {
     let lines: Vec<_> = source.split('\n').collect();
     let attribute = Regex::new(r"^(\s*)#\[cfg\(test\)\]\s*$").unwrap();

@@ -68,10 +68,13 @@ pnpm build:circuits sync-preset --preset insecure-64 --committee minimum
 # Compare generated files in an isolated copy
 pnpm build:circuits check --committee all
 
-# Prepare a source-bound matrix without changing live selectors or circuits/bin caches
-pnpm build:circuits --isolated --preset all --committee all
+# Prepare all pairs explicitly (this switches live selectors)
+pnpm build:circuits --preset all --committee all
 pnpm generate:circuit-identities
-pnpm check:crypto-config
+pnpm check:crypto-config --full
+
+# Optional independent key/verifier rederivation over the prepared matrix
+pnpm qualify:crypto-config
 
 # Benchmark production preparation and Noir execution with artificial inputs
 pnpm bench:circuits run --mode insecure --committee minimum --circuit dkg/pk --leaf-only
@@ -123,8 +126,6 @@ the generator would produce.
 - `--no-clean-targets` - Keep compiler targets during a source build
 - `--skip-if-built` - Reuse a source-matched build or hydrate its archived pair
 - `--hydrate-bin-only` - Hydrate a stamped pair without compiling
-- `--isolated` - Build each pair in a source snapshot; never switch live selectors or hydrate live
-  caches
 
 Hydration accepts a different source hash, reports it, and records the original artifact hash in the
 active stamp. It never restamps the archive. `--skip-if-built` still requires a source match.
@@ -136,25 +137,26 @@ hash a key that no longer matches the compiled circuits. Run a complete build be
 BFV verifiers or aggregate proofs.
 
 Complete builds also write a pair `identities.json`. Partial or failed builds invalidate that slice
-and aggregate indexes, as well as both anchors. Tool-preflight failures do not touch live outputs.
-After preparing every build-policy pair, `pnpm generate:circuit-identities` writes the deterministic
-`circuits/identities.json` and archive index. It refuses stale source stamps; it never restamps
-them.
+and the archive index, as well as both anchors. They do not delete the committed expected catalogue.
+Tool-preflight failures do not touch live outputs. After preparing every build-policy pair,
+`pnpm generate:circuit-identities` writes the deterministic `circuits/identities.json` and archive
+index. These contain only the named hashes used by deployment and CRISP, not copies of the artifact
+inventory or dependency graph. Generation does not rewrite source stamps or establish that an older
+artifact set matches current sources.
 
 `pnpm generate:crypto-config` refreshes source bindings and complete preset/committee declarations
-without compiled artifacts. `pnpm check:crypto-config --bindings-only` checks those sources and
-consumer ownership only. The default `pnpm check:crypto-config` requires the complete prepared
-matrix, pinned tools, and identity metadata; it independently derives every backend key and ordered
-tree, compares complete Solidity verifiers, and checks compiled application layouts and archive
-checksums. It is read-only and never hydrates, downloads, rebuilds, or repairs artifacts. With an
-isolated output, pass `--artifacts-dir <directory>`; pass the same directory as `--output` to
-identity generation.
+without compiled artifacts. The default `pnpm check:crypto-config` composes the existing source and
+committee checks, including consumer ownership. Pre-push uses that source check and the existing
+selected-pair verifier check; ordinary circuit CI still builds/checks the default pair.
 
-`pnpm build:circuits check-identities --preset <preset> --committee <committee>` qualifies one pair,
-not the complete matrix. CI builds/checks each pair in isolation, then requires `crypto_consistency`
-to check their complete assembled output. Configure that aggregate as a required check; a
-source-only or selected-pair result cannot replace it. Relevant pre-push changes run the full local
-gate too.
+Use `pnpm check:crypto-config --full` for a prepared matrix. It reuses artifact stamp/inventory/
+checksum validation, compares the named catalogue with its hash files and existing ordered SAFE
+anchors, and checks compiled layouts. `pnpm qualify:crypto-config` additionally rederives all
+backend keys and complete Solidity verifiers. Both commands are read-only: they never hydrate,
+download, rebuild, or repair artifacts. For another output directory, pass
+`--artifacts-dir <directory>` and use the same directory as `--output` during identity generation. A
+source-only check or default-pair CI result is not complete-matrix qualification. Release
+source/inventory/checksum validation is unchanged.
 
 `sync-config` updates only `scripts/utils.ts` and `BfvProtocol.sol`. Use it when BFV parameter
 constants change and the prebuilt circuit artifacts already exist. It does not compile Noir circuits

@@ -67,7 +67,6 @@ jobs:
       openvm_worker: ${{ steps.jobs.outputs.openvm_worker }}
       openvm_guest: ${{ steps.jobs.outputs.openvm_guest }}
       build_circuits: ${{ steps.jobs.outputs.build_circuits }}
-      crypto_pairs: ${{ steps.jobs.outputs.crypto_pairs }}
       noir_checks: ${{ steps.jobs.outputs.noir_checks }}
       integration_prebuild: ${{ steps.jobs.outputs.integration_prebuild }}
       zk_prover_integration: ${{ steps.jobs.outputs.zk_prover_integration }}
@@ -253,7 +252,6 @@ jobs:
           echo "openvm_guest=$(any $FORCE $OPENVM_GUEST $CI)" >> $GITHUB_OUTPUT
           # All source owners, generated outputs, consumers, and checker inputs share hook routing.
           echo "build_circuits=$(any $FORCE $RUST $CIRCUITS $VERIFIERS $CRYPTO_CONFIG $CI $TOOLING)" >> $GITHUB_OUTPUT
-          node -e 'const pairs = require("./scripts/circuits/build-pairs.json"); console.log("crypto_pairs=" + JSON.stringify({include: pairs.map(([preset, committee]) => ({preset, committee}))}));' >> $GITHUB_OUTPUT
           # nargo reads only the circuit paths, so Rust and tooling changes skip the Noir checks.
           echo "noir_checks=$(any $FORCE $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           echo "integration_prebuild=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI $TOOLING)" >> $GITHUB_OUTPUT
@@ -1041,18 +1039,18 @@ jobs:
   build_circuits:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.build_circuits == 'true'
-    timeout-minutes: 120
+    timeout-minutes: 45
     runs-on:
       ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
       github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      format('build_circuits-{0}-{1}', matrix.preset, matrix.committee)) || 'ubuntu-latest' }}
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.detect_changes.outputs.crypto_pairs) }}
+      'build_circuits') || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      actions: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
-          # Build scripts need no repository credentials.
+          # Keep the cancellation token out of install/build script credentials.
           persist-credentials: false
           submodules: recursive
 
@@ -1104,13 +1102,13 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Check complete generated crypto sources
-        run: pnpm check:crypto-config --bindings-only
+        run: pnpm check:crypto-config
 
       - name: Build circuits
-        run: pnpm build:circuits --isolated --preset ${{ matrix.preset }} --committee ${{ matrix.committee }}
+        run: pnpm build:circuits
 
       - name: Check compiled decryption layout
-        run: pnpm check:decryption-layout --preset ${{ matrix.preset }} --committee ${{ matrix.committee }}
+        run: pnpm check:decryption-layout
 
       - name: Check generated circuit sources are committed
         run: |
@@ -1120,78 +1118,19 @@ jobs:
             packages/interfold-contracts/scripts/utils.ts
 
       - name: Test circuit artifact validation and verifier selection
-        if: matrix.preset == 'insecure-64' && matrix.committee == 'minimum'
         run: pnpm test:circuit-build -- --include-ignored && pnpm test:circuit-tooling
 
-      - name: Independently rederive pair keys, ordered trees, and complete verifiers
-        run: pnpm build:circuits check-identities --preset ${{ matrix.preset }} --committee ${{ matrix.committee }}
+      - name: Check named identities
+        run: pnpm build:circuits check-identities
 
-      - name: Archive qualified pair
-        run:
-          tar -czf crypto-${{ matrix.preset }}-${{ matrix.committee }}.tar.gz -C dist/circuits ${{ matrix.preset }}/${{ matrix.committee }}
+      - name: Check generated verifiers are in sync
+        run: pnpm check:verifiers --no-compile
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: crypto-${{ matrix.preset }}-${{ matrix.committee }}
-          path: crypto-${{ matrix.preset }}-${{ matrix.committee }}.tar.gz
-          if-no-files-found: error
-          retention-days: 1
-
-  # Require this aggregate result, not a source-only or individual matrix result. A failed or skipped
-  # required leg cannot satisfy it, and the complete checker rejects a missing/disabled policy pair.
-  crypto_consistency:
-    needs: [detect_changes, build_circuits]
-    if: always() && (needs.detect_changes.result != 'success' || needs.detect_changes.outputs.build_circuits == 'true')
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    steps:
-      - name: Require every matrix leg
+      - name: Cancel workflow on failure
+        if: failure()
+        run: gh run cancel ${{ github.run_id }}
         env:
-          DETECTION: ${{ needs.detect_changes.result }}
-          RESULT: ${{ needs.build_circuits.result }}
-        run: test "$DETECTION" = success && test "$RESULT" = success
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-        with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-      - uses: ./.github/actions/cache-dependencies
-      - uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
-        with:
-          toolchain: ${{ env.NOIR_TOOLCHAIN }}
-      - uses: ./.github/actions/install-protoc
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        id: cache-bb
-        with:
-          path: /usr/local/bin/bb
-          key: bb-bin-${{ env.BB_VERSION }}-amd64-linux
-      - name: Install Barretenberg
-        if: steps.cache-bb.outputs.cache-hit != 'true'
-        run: |
-          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 --retry-max-time 600 \
-            "https://github.com/AztecProtocol/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
-          mkdir -p bb_extract && tar -xzf bb.tar.gz -C bb_extract
-          BB_BIN=$(find bb_extract -name bb -type f | head -n 1)
-          sudo mv "$BB_BIN" /usr/local/bin/bb
-          chmod +x /usr/local/bin/bb
-      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          pattern: crypto-*
-          path: crypto-pairs
-          merge-multiple: true
-      - name: Assemble complete matrix without rewriting committed identities
-        run: |
-          mkdir -p dist/circuits
-          for archive in crypto-pairs/*.tar.gz; do tar -xzf "$archive" -C dist/circuits; done
-          cp circuits/identities.json dist/circuits/identities.json
-          pnpm store:circuits checksums --dir dist/circuits
-      - name: Accept complete source-bound crypto matrix
-        run: pnpm check:crypto-config
+          GH_TOKEN: ${{ github.token }}
 
   # Proves with the newest published circuit set without a local SOURCE_HASH match.
   # Source builds still compile and check their selected pair. Releases verify the complete matrix.

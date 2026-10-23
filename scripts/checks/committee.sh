@@ -12,7 +12,7 @@
 # `circuits/bin/.active-preset.json` is only a local hydrated cache. It can point at Sepolia's
 # fast insecure-minimum artifacts while the checked-in production config points at secure-small.
 #
-# This checks sources only. Use check:crypto-config for complete artifact/key qualification.
+# This checks sources only; artifact validation and qualification are explicit operations.
 #
 # Exit 0 on consistency, 1 on drift.
 

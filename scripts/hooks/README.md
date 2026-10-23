@@ -12,7 +12,7 @@ checks: it must not validate one branch's artifacts while pushing another branch
 | File                                                         | Responsibility                                                         |
 | ------------------------------------------------------------ | ---------------------------------------------------------------------- |
 | [`.husky/pre-commit`](../../.husky/pre-commit)               | Invokes the staged-file formatting check.                              |
-| [`.husky/pre-push`](../../.husky/pre-push)                   | Runs repository checks and selects full crypto qualification.          |
+| [`.husky/pre-push`](../../.husky/pre-push)                   | Runs source/repository checks and selects the existing verifier check. |
 | [`pushed-paths-match.sh`](pushed-paths-match.sh)             | Reads pushed refs and compares circuit-filter paths with the checkout. |
 | [`format.test.ts`](format.test.ts)                           | Exercises staged versus unstaged formatting behavior.                  |
 | [`pushed-paths-match.test.mjs`](pushed-paths-match.test.mjs) | Exercises branch-sensitive verifier selection.                         |

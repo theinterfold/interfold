@@ -27,7 +27,6 @@ witness, samples, or runtime orchestration.
 | [configuration.rs](src/configuration.rs) | Shared material, rendering, isolated checks, and configuration synchronization. |
 | [identity.rs](src/identity.rs), [toolchain.rs](src/toolchain.rs) | Framed source identities, required inputs, and exact tool pins. |
 | [artifacts.rs](src/artifacts.rs), [vk_tree.rs](src/vk_tree.rs) | Discovery, staging, hydration, checksums, and recursive anchors. |
-| [identities.rs](src/identities.rs) | Typed circuit identities, ordered dependencies, and independent backend/verifier checks. |
 | [templates/](templates) | Stable generated Solidity and committee selectors. |
 
 The CLI parses a Request, admits supported pairs, validates the tools required by that operation,
@@ -41,11 +40,10 @@ Use `pnpm build:circuits --help` for flags and the
 [circuit tooling guide](../../../scripts/circuits/README.md#circuit-builder) for complete commands.
 `sync-config` selects deployment preset/committee names and refreshes Solidity constants;
 `sync-preset` regenerates preset declarations.
-`sync-sources` refreshes complete source configuration. `sync-identities` writes the aggregate and
-pair identity manifests only from source-matched prepared artifacts. `check-identities` independently
-rederives selected keys and verifiers without repairing files; selecting all pairs additionally
-requires the complete committed/archive index. Root `pnpm check:crypto-config` composes this with
-source ownership, archive, and compiled-layout checks. Source-only checks are not matrix acceptance.
+`sync-sources` refreshes complete source configuration. Identity generation reads prepared artifacts
+without rewriting their provenance; source-match validation remains the existing artifact check.
+Exhaustive key/verifier rederivation is explicit qualification, not ordinary pre-push work. See the
+tooling guide for preparation and assurance scopes.
 
 Run `pnpm test:circuit-build`. Native tests cover typed admission, source framing/inputs, generated
 bytes, hydration, anchors, checksums, and tool failures. Explicit ignored cases need pinned tools

@@ -352,12 +352,11 @@ own circuit build.
 
 New deployments resolve named identities from packaged
 `dist/circuit-identities.json` and require the archive's matching pair
-`identities.json`, source stamp, artifact/key digests, and complete tree
-descendants. Missing metadata fails before deployment; it never falls back to
-raw hashes. Build and qualify the complete matrix before packing a deployable
-candidate. The legacy raw-file helper remains available for existing callers,
-and older archives remain usable by the runtime installer; neither is sufficient
-for the new named deployment checks.
+`identities.json` and raw hash files. Missing or mismatched named values fail
+before deployment. Source provenance, checksums, full verifier generation, and
+proof acceptance remain the responsibility of the existing build/release checks,
+not a second dependency validator in deployment tooling. The legacy raw-file
+helper and runtime archive installer are unchanged.
 
 ## Configuration
 

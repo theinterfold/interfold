@@ -5,7 +5,6 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { expect } from "chai";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -55,7 +54,7 @@ describe("verifier artifact selection", function () {
     );
   });
 
-  it("resolves named package identities only with their matching artifacts and archive slice", function () {
+  it("resolves named identities from the matching package/archive pair and raw hashes", function () {
     const temp = fs.mkdtempSync(
       path.join(tmpdir(), "interfold-named-identities-"),
     );
@@ -73,60 +72,34 @@ describe("verifier artifact selection", function () {
         path.join(installed, "node_modules/ethers"),
         "dir",
       );
-      fs.copyFileSync(
-        path.join(packageRoot, "dist/scripts/utils.js"),
-        path.join(installed, "dist/scripts/utils.js"),
-      );
-      fs.copyFileSync(
-        path.join(packageRoot, "dist/bfv.js"),
-        path.join(installed, "dist/bfv.js"),
-      );
+      for (const file of ["scripts/utils.js", "bfv.js"]) {
+        fs.copyFileSync(
+          path.join(packageRoot, "dist", file),
+          path.join(installed, "dist", file),
+        );
+      }
       const directory = path.join(temp, "circuits");
-      const relative = "insecure-64/minimum/recursive/threshold/a/a";
-      const compiled = path.join(directory, `${relative}.json`);
-      fs.mkdirSync(path.dirname(compiled), { recursive: true });
-      fs.writeFileSync(compiled, "compiled fixture");
-      fs.writeFileSync(path.join(directory, `${relative}.vk`), "key fixture");
-      const value = `0x${"00".repeat(31)}01`;
-      fs.writeFileSync(
-        path.join(directory, `${relative}.vk_hash`),
-        Buffer.from(value.slice(2), "hex"),
+      const pairDirectory = path.join(directory, "insecure-64/minimum");
+      const hash = path.join(
+        pairDirectory,
+        "default/threshold/user_data_encryption/user_data_encryption.vk_hash",
       );
-      const key = {
-        preset: "insecure-64",
-        committee: "minimum",
-        circuit: "threshold/a",
-        proofVariant: "recursive",
-        hashKind: "bb-vk-hash",
-      };
-      const digest = (filename: string) =>
-        createHash("sha256").update(fs.readFileSync(filename)).digest("hex");
-      const entry = {
-        key,
-        value,
-        compiledArtifact: {
-          path: `${relative}.json`,
-          sha256: digest(compiled),
-        },
-        verificationKey: {
-          path: `${relative}.vk`,
-          sha256: digest(path.join(directory, `${relative}.vk`)),
-        },
-        dependencies: [],
-      };
+      fs.mkdirSync(path.dirname(hash), { recursive: true });
+      const value = `0x${"00".repeat(31)}01`;
+      fs.writeFileSync(hash, Buffer.from(value.slice(2), "hex"));
+      const key = "bb-vk-hash/default/threshold/user_data_encryption";
       const pair = {
         preset: "insecure-64",
         committee: "minimum",
-        sourceHash: "fixture-source",
-        entries: [entry],
+        identities: { [key]: value },
       };
-      const pairDirectory = path.join(directory, "insecure-64/minimum");
+      const stamp = path.join(pairDirectory, ".build-stamp.json");
       fs.writeFileSync(
-        path.join(pairDirectory, ".build-stamp.json"),
+        stamp,
         JSON.stringify({
           preset: pair.preset,
           committee: pair.committee,
-          sourceHash: pair.sourceHash,
+          sourceHash: "fixture-source",
         }),
       );
       const publish = (data: unknown) => {
@@ -139,14 +112,13 @@ describe("verifier artifact selection", function () {
           JSON.stringify(data),
         );
       };
-      publish(pair);
-      const check = (circuit = "threshold/a", kind = "bb-vk-hash") =>
+      const check = (circuit = "threshold/user_data_encryption") =>
         execFileSync(
           process.execPath,
           [
             "--input-type=module",
             "-e",
-            `import { readBfvCircuitIdentity } from ${JSON.stringify(pathToFileURL(path.join(installed, "dist/scripts/utils.js")).href)}; console.log(readBfvCircuitIdentity(${JSON.stringify(circuit)}, ${JSON.stringify(kind === "recursive-tree-commitment" ? "default" : "recursive")}, ${JSON.stringify(kind)}));`,
+            `import { readBfvCircuitIdentity } from ${JSON.stringify(pathToFileURL(path.join(installed, "dist/scripts/utils.js")).href)}; console.log(readBfvCircuitIdentity(${JSON.stringify(circuit)}, "default", "bb-vk-hash"));`,
           ],
           {
             cwd: temp,
@@ -155,68 +127,35 @@ describe("verifier artifact selection", function () {
             encoding: "utf8",
           },
         ).trim();
+
+      publish(pair);
       expect(check()).to.equal(value);
       fs.rmSync(path.join(installed, "dist/circuit-identities.json"));
       expect(() => check()).to.throw(/Missing circuit identity manifest/);
       publish(pair);
-      fs.writeFileSync(compiled, "different compiled circuit");
-      expect(() => check()).to.throw(/digest differs/);
-      fs.writeFileSync(compiled, "compiled fixture");
-      fs.writeFileSync(
-        path.join(directory, `${relative}.vk_hash`),
-        Buffer.alloc(32),
-      );
+      fs.writeFileSync(hash, Buffer.alloc(32));
       expect(() => check()).to.throw(/VK hash differs/);
-      fs.writeFileSync(
-        path.join(directory, `${relative}.vk_hash`),
-        Buffer.from(value.slice(2), "hex"),
-      );
+      fs.writeFileSync(hash, Buffer.from(value.slice(2), "hex"));
       fs.writeFileSync(
         path.join(pairDirectory, "identities.json"),
-        JSON.stringify({ ...pair, sourceHash: "wrong" }),
+        JSON.stringify({ ...pair, identities: {} }),
       );
       expect(() => check()).to.throw(/slice differs/);
-      publish({ ...pair, entries: [entry, entry] });
-      expect(() => check()).to.throw(/duplicate circuit identity/);
-      publish({
-        ...pair,
-        entries: [{ ...entry, key: { ...key, proofVariant: "evm" } }],
-      });
-      expect(() => check()).to.throw(/Missing or duplicate circuit identity/);
-      publish({
-        ...pair,
-        entries: [
-          {
-            ...entry,
-            compiledArtifact: {
-              ...entry.compiledArtifact,
-              path: "../escape.json",
-            },
-          },
-        ],
-      });
-      expect(() => check()).to.throw(/Invalid circuit identity artifact path/);
-      const treeKey = {
-        ...key,
-        circuit: "recursive_aggregation/test_tree",
-        proofVariant: "default",
-        hashKind: "recursive-tree-commitment",
-      };
-      publish({
-        ...pair,
-        entries: [
-          {
-            key: treeKey,
-            value,
-            compiledArtifact: null,
-            verificationKey: null,
-            dependencies: [treeKey],
-          },
-        ],
-      });
-      expect(() => check(treeKey.circuit, treeKey.hashKind)).to.throw(
-        /Cyclic circuit identity/,
+      publish({ ...pair, identities: {} });
+      expect(() => check()).to.throw(/Missing named circuit identity/);
+      publish(pair);
+      expect(() => check("../escape")).to.throw(
+        /Invalid circuit identity name/,
       );
+      fs.writeFileSync(
+        stamp,
+        JSON.stringify({
+          preset: pair.preset,
+          committee: "small",
+          sourceHash: "fixture-source",
+        }),
+      );
+      expect(() => check()).to.throw(/pair stamp differs/);
     } finally {
       fs.rmSync(temp, { recursive: true, force: true });
     }

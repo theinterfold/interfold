@@ -25,8 +25,8 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
     const artifactDir = artifactIndex === -1 ? undefined : args[artifactIndex + 1]
     if (artifactIndex !== -1 && (!artifactDir || artifactDir.startsWith('--'))) throw new Error('--artifacts-dir requires a directory')
     const flags = artifactIndex === -1 ? args : args.filter((_, index) => index !== artifactIndex && index !== artifactIndex + 1)
-    if (flags.some((arg) => !['--check', '--sources', '--full', '--bindings-only'].includes(arg)))
-      throw new Error('Usage: crypto-config.mjs [--check] [--sources | --full | --bindings-only] [--artifacts-dir path]')
+    if (flags.some((arg) => !['--check', '--sources', '--full', '--bindings-only', '--qualify'].includes(arg)))
+      throw new Error('Usage: crypto-config.mjs [--check] [--sources | --full | --bindings-only] [--qualify] [--artifacts-dir path]')
     const root = fileURLToPath(new URL('../..', import.meta.url))
     const metadata = JSON.parse(
       execFileSync('cargo', ['run', '--quiet', '--locked', '-p', 'e3-zk-build', '--', 'export-config'], {
@@ -38,19 +38,28 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
     const check = flags.includes('--check')
     const full = flags.includes('--full') && !flags.includes('--bindings-only')
     const sources = full || flags.includes('--sources') || flags.includes('--bindings-only')
+    const qualify = flags.includes('--qualify')
     if (full && !check) throw new Error('Full mode is check-only; prepare artifacts explicitly')
-    execFileSync('cargo', ['run', '--quiet', '--locked', '-p', 'e3-zk-build', '--', check ? 'check-bindings' : 'sync-bindings'], {
-      cwd: root,
-      stdio: 'inherit',
-    })
+    if (qualify && !full) throw new Error('--qualify requires --check --full')
+    if (artifactDir && !full) throw new Error('--artifacts-dir requires --check --full')
+    if (check && sources) {
+      // This existing gate already invokes the Rust generated-source and ownership checks.
+      // Its standalone fallback is lightweight; the aggregate source check must not skip Noir.
+      execFileSync('nargo', ['--version'], { cwd: root, stdio: 'ignore' })
+      execFileSync('/bin/bash', ['scripts/checks/committee.sh'], { cwd: root, stdio: 'inherit' })
+    } else {
+      execFileSync('cargo', ['run', '--quiet', '--locked', '-p', 'e3-zk-build', '--', check ? 'check-bindings' : 'sync-bindings'], {
+        cwd: root,
+        stdio: 'inherit',
+      })
+    }
     syncSnapshot(join(root, 'packages/interfold-contracts/crypto-config.json'), metadata, check)
     if (sources) {
-      execFileSync(
-        'cargo',
-        ['run', '--quiet', '--locked', '-p', 'e3-zk-build', '--', check ? 'check' : 'sync-sources', '--committee', 'all'],
-        { cwd: root, stdio: 'inherit' },
-      )
-      if (check) execFileSync('/bin/bash', ['scripts/checks/committee.sh'], { cwd: root, stdio: 'inherit' })
+      if (!check)
+        execFileSync('cargo', ['run', '--quiet', '--locked', '-p', 'e3-zk-build', '--', 'sync-sources', '--committee', 'all'], {
+          cwd: root,
+          stdio: 'inherit',
+        })
       console.log('Checked complete generated sources and registered consumer ownership. This is source-only, not artifact acceptance.')
     }
     if (full) {
@@ -67,7 +76,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
         ],
         { cwd: root, stdio: 'inherit' },
       )
-      for (const operation of ['check-identities', 'check-layouts']) {
+      for (const operation of ['check-identities', 'check-layouts', ...(qualify ? ['qualify-identities'] : [])]) {
         execFileSync(
           'cargo',
           [
@@ -89,7 +98,9 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
         )
       }
       console.log(
-        'Accepted the complete source-bound crypto matrix, independently rederived VKs, ordered trees, full Solidity verifiers, checksums, and application layouts.',
+        qualify
+          ? 'Qualified the prepared matrix with independent VK and Solidity verifier rederivation.'
+          : 'Checked prepared source stamps, artifact inventory/checksums, named identities, and compiled layouts. Backend keys were not rederived.',
       )
     }
   } catch (error) {
