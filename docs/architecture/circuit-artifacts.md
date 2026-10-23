@@ -136,24 +136,6 @@ ignore that override and retain repository release files and local artifact sele
 [npm-package deployment](../../packages/interfold-contracts/README.md#deploying-from-the-npm-package)
 for layout and setup.
 
-`circuits/identities.json` names the backend hashes and final ordered tree commitments consumed by
-deployment and CRISP. Pair slices travel with artifacts; package metadata carries the aggregate.
-Lookup compares the selected pair and its raw hash files, not a second copy of artifact digests or
-the dependency graph. The existing checksum/source validators and SAFE topology remain their owners.
-Partial/failed builds invalidate affected slices and archive indexes, not the committed expected
-catalogue. The runtime installer does not require this additive metadata from older archives.
-
-The builder canonicalizes checkout and Nargo Git-cache paths in compiled source maps before staging,
-and refuses unrecognized absolute source paths. Artifact digests therefore do not intentionally bind
-a builder's home directory or checkout location. Exact compiled bytes and source identity remain
-separate commitments; path normalization never relabels an older archive's source stamp.
-
-`pnpm check:crypto-config` checks generated sources and consumer ownership. Its explicit `--full`
-mode composes existing source-bound inventory/checksum validation, named identities, and compiled
-layouts over a prepared matrix. `pnpm qualify:crypto-config` additionally rederives backend keys and
-complete Solidity verifiers. These operations never prepare or repair artifacts, and source-only or
-default-pair checks are not matrix qualification. None replaces real-proof verification.
-
 Storage baselines are committed read-only CI inputs; missing baseline, compiler drift, incompatible
 nested layout, and bad gap consumption fail. Creating a baseline is explicit maintainer work, never
 an automatic fix. Tracked contract artifacts feed CLI `sol!`; after `pnpm evm:build`,

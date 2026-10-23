@@ -350,13 +350,10 @@ constants in `scripts/utils.ts`, which `ActiveCryptoConfig.sol` also uses.
 Inside the monorepo, the deploy ignores `INTERFOLD_CIRCUITS_DIR` and reads its
 own circuit build.
 
-New deployments resolve named identities from packaged
-`dist/circuit-identities.json` and require the archive's matching pair
-`identities.json` and raw hash files. Missing or mismatched named values fail
-before deployment. Source provenance, checksums, full verifier generation, and
-proof acceptance remain the responsibility of the existing build/release checks,
-not a second dependency validator in deployment tooling. The legacy raw-file
-helper and runtime archive installer are unchanged.
+The package's `dist/circuit-identities.json` must match the selected archive's
+`identities.json` and hash files. Runtime-compatible older archives may lack the
+metadata required for deployment; use matching release assets. These comparisons
+do not establish source provenance or proof acceptance.
 
 ## Configuration
 

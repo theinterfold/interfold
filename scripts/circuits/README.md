@@ -136,27 +136,15 @@ a failed circuit, removes both anchors from the pair and from `circuits/bin/`. A
 hash a key that no longer matches the compiled circuits. Run a complete build before you deploy the
 BFV verifiers or aggregate proofs.
 
-Complete builds also write a pair `identities.json`. Partial or failed builds invalidate that slice
-and the archive index, as well as both anchors. They do not delete the committed expected catalogue.
-Tool-preflight failures do not touch live outputs. After preparing every build-policy pair,
-`pnpm generate:circuit-identities` writes the deterministic `circuits/identities.json` and archive
-index. These contain only the named hashes used by deployment and CRISP, not copies of the artifact
-inventory or dependency graph. Generation does not rewrite source stamps or establish that an older
-artifact set matches current sources.
+After preparing every build-policy pair, run `pnpm generate:circuit-identities`. Partial or failed
+builds invalidate affected archive metadata, not the committed catalogue. Generation preserves old
+source stamps; it does not qualify them against current sources.
 
-`pnpm generate:crypto-config` refreshes source bindings and complete preset/committee declarations
-without compiled artifacts. The default `pnpm check:crypto-config` composes the existing source and
-committee checks, including consumer ownership. Pre-push uses that source check and the existing
-selected-pair verifier check; ordinary circuit CI still builds/checks the default pair.
-
-Use `pnpm check:crypto-config --full` for a prepared matrix. It reuses artifact stamp/inventory/
-checksum validation, compares the named catalogue with its hash files and existing ordered SAFE
-anchors, and checks compiled layouts. `pnpm qualify:crypto-config` additionally rederives all
-backend keys and complete Solidity verifiers. Both commands are read-only: they never hydrate,
-download, rebuild, or repair artifacts. For another output directory, pass
-`--artifacts-dir <directory>` and use the same directory as `--output` during identity generation. A
-source-only check or default-pair CI result is not complete-matrix qualification. Release
-source/inventory/checksum validation is unchanged.
+`pnpm check:crypto-config` needs Cargo and pinned Nargo but no compiled artifacts. Add `--full` to
+validate a prepared matrix, or use `pnpm qualify:crypto-config` for backend key/verifier
+rederivation. Neither prepares or repairs artifacts. Use `--artifacts-dir <directory>` for a custom
+output (`--output` during generation). Source checks and default-pair CI are not complete-matrix
+qualification or proof acceptance.
 
 `sync-config` updates only `scripts/utils.ts` and `BfvProtocol.sol`. Use it when BFV parameter
 constants change and the prebuilt circuit artifacts already exist. It does not compile Noir circuits
