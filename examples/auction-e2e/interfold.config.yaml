@@ -26,9 +26,8 @@ chains:
         address: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
         deploy_block: 13
   # Sepolia. Disabled by default: enable it only after the program is deployed (README, "Deploy to
-  # Sepolia"). The interfold, ciphernode_registry, bonding_registry, slashing_manager and fee_token
-  # entries are the official Interfold deployment (packages/interfold-contracts/deploy/protocol/
-  # sepolia-protocol.deployment.json). For a deployment of your own protocol, replace them.
+  # Sepolia"). The app needs a protocol that registers BFV parameter set 5 (insecure-simd). The
+  # official Sepolia deployment does not, so deploy your own protocol and put its addresses here.
   # `pnpm deploy:sepolia` writes e3_program, and the keys that it finds in deployed_contracts.json.
   # Set rpc_url to a WebSocket endpoint of your provider.
   - name: 'sepolia'
@@ -45,20 +44,20 @@ chains:
         address: "0x0000000000000000000000000000000000000000"
         deploy_block: 0
       interfold:
-        address: "0xBD5B6D1aDA9e0eB248B678469C9Cd6a63507E42b"
-        deploy_block: 11873232
+        address: "0x0000000000000000000000000000000000000000"
+        deploy_block: 0
       ciphernode_registry:
-        address: "0xb1E8640CF8D0A927290E3d9E1b01c4899B5225Ef"
-        deploy_block: 11873232
+        address: "0x0000000000000000000000000000000000000000"
+        deploy_block: 0
       bonding_registry:
-        address: "0x8687bC7C8f055b41aD2C2447c04aCBD76C1075b2"
-        deploy_block: 11873232
+        address: "0x0000000000000000000000000000000000000000"
+        deploy_block: 0
       slashing_manager:
-        address: '0x5F9D21751aA24bc3D67C9B9D6ceEf2b62AAdac6d'
-        deploy_block: 11873232
+        address: "0x0000000000000000000000000000000000000000"
+        deploy_block: 0
       fee_token:
-        address: "0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B"
-        deploy_block: 11856062
+        address: "0x0000000000000000000000000000000000000000"
+        deploy_block: 0
 program:
   dev: false
   # Real proofs use program.openvm, with absolute paths local to the deployment:
