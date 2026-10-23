@@ -13,9 +13,9 @@
 //! **C7 (DecryptedSharesAggregation)** `main` has (in order) `expected_d_commitments`,
 //! `party_ids`, and `message` as public inputs; there are no public return values. So
 //! `public_signals` are:
-//! `[d_commitments (T+1)] [party_ids (T+1)] [message coefficients (MAX_MSG_NON_ZERO_COEFFS)]`.
+//! `[d_commitments (T+1)] [party_ids (T+1)] [message coefficients (max_msg_non_zero_coeffs)]`.
 //!
-//! We recover `T+1` as `(total_fields - MAX_MSG_NON_ZERO_COEFFS) / 2`; see **Caveat** below and
+//! We recover `T+1` as `(total_fields - max_msg_non_zero_coeffs) / 2`; see **Caveat** below and
 //! `circuits/bin/threshold/decrypted_shares_aggregation/src/main.nr`.
 //!
 //! ## Check
@@ -25,21 +25,21 @@
 //!
 //! ## Caveat
 //!
-//! The Rust constant `MAX_MSG_NON_ZERO_COEFFS` (imported from
-//! `e3_zk_config`) must match the **compiled**
-//! C7 Noir circuit (same value as `Polynomial<MAX_MSG_NON_ZERO_COEFFS>` /
-//! `lib::configs::default::MAX_MSG_NON_ZERO_COEFFS` for that artifact). If you ever ship multiple C7
-//! builds with different message widths, verifying or linking against the wrong artifact will make
-//! `(total_fields - MAX_MSG_NON_ZERO_COEFFS) / 2` wrong and this check will mis-parse
-//! `public_signals` (false negatives/positives relative to the intended circuit).
+//! `max_msg_non_zero_coeffs` is the preset's cap (`BfvPreset::max_msg_non_zero_coeffs`). It must
+//! match the **compiled** C7 Noir circuit (same value as `Polynomial<MAX_MSG_NON_ZERO_COEFFS>` /
+//! `lib::configs::default::MAX_MSG_NON_ZERO_COEFFS` generated for that preset). Linking against a
+//! C7 artifact of another preset makes `(total_fields - max_msg_non_zero_coeffs) / 2` wrong and this
+//! check mis-parses `public_signals`.
 
 use super::{CommitmentLink, FieldValue, LinkScope};
 use e3_events::{CircuitName, ProofType};
 use e3_zk_config::FIELD_BYTE_LEN;
-use e3_zk_config::MAX_MSG_NON_ZERO_COEFFS;
 
 /// C6 → C7 `d_commitment` consistency link.
-pub struct C6ToC7DCommitmentLink;
+pub struct C6ToC7DCommitmentLink {
+    /// Message coefficients in the C7 public inputs, from the preset the link checks.
+    pub max_msg_non_zero_coeffs: usize,
+}
 
 impl CommitmentLink for C6ToC7DCommitmentLink {
     fn name(&self) -> &'static str {
@@ -78,9 +78,9 @@ impl CommitmentLink for C6ToC7DCommitmentLink {
         }
 
         // C7: `circuits/.../decrypted_shares_aggregation/src/main.nr` — public inputs in order:
-        // (T+1) d commitments, (T+1) party IDs, `MAX_MSG_NON_ZERO_COEFFS` message coefficients.
+        // (T+1) d commitments, (T+1) party IDs, `max_msg_non_zero_coeffs` message coefficients.
         let total_fields = target_public_signals.len() / FIELD_BYTE_LEN;
-        let rem = total_fields.checked_sub(MAX_MSG_NON_ZERO_COEFFS);
+        let rem = total_fields.checked_sub(self.max_msg_non_zero_coeffs);
         let Some(rem) = rem else {
             return false;
         };
@@ -109,6 +109,14 @@ impl CommitmentLink for C6ToC7DCommitmentLink {
 mod tests {
     use super::*;
 
+    const CAP: usize = 50;
+
+    fn link() -> C6ToC7DCommitmentLink {
+        C6ToC7DCommitmentLink {
+            max_msg_non_zero_coeffs: CAP,
+        }
+    }
+
     fn make_field(val: u8) -> [u8; 32] {
         let mut f = [0u8; 32];
         f[31] = val;
@@ -116,10 +124,11 @@ mod tests {
     }
 
     /// Builds C7 `public_signals` bytes: `(T+1)` d commitments, `(T+1)` party IDs, then message
-    /// coeffs (`MAX_MSG_NON_ZERO_COEFFS` fields), matching `decrypted_shares_aggregation/src/main.nr`.
+    /// coeffs (`max_msg_non_zero_coeffs` fields), matching `decrypted_shares_aggregation/src/main.nr`.
     fn c7_public_signals(
         d_commitments: &[[u8; FIELD_BYTE_LEN]],
         party_ids: &[[u8; FIELD_BYTE_LEN]],
+        max_msg_non_zero_coeffs: usize,
     ) -> Vec<u8> {
         assert_eq!(d_commitments.len(), party_ids.len());
         let mut v = Vec::new();
@@ -129,7 +138,7 @@ mod tests {
         for p in party_ids {
             v.extend_from_slice(p);
         }
-        for _ in 0..MAX_MSG_NON_ZERO_COEFFS {
+        for _ in 0..max_msg_non_zero_coeffs {
             v.extend_from_slice(&make_field(0));
         }
         v
@@ -137,7 +146,7 @@ mod tests {
 
     #[test]
     fn extract_d_commitment_from_c6() {
-        let link = C6ToC7DCommitmentLink;
+        let link = link();
         let d = make_field(7);
         let signals = d.to_vec();
 
@@ -148,39 +157,39 @@ mod tests {
 
     #[test]
     fn consistency_passes_when_d_present_in_c7_inputs() {
-        let link = C6ToC7DCommitmentLink;
+        let link = link();
         let d = make_field(42);
         let source_values = vec![d];
 
         let d_comm = [make_field(10), d, make_field(99)];
         let party = [make_field(1), make_field(2), make_field(3)];
-        let c7_signals = c7_public_signals(&d_comm, &party);
+        let c7_signals = c7_public_signals(&d_comm, &party, CAP);
 
         assert!(link.check_signals(&source_values, &c7_signals));
     }
 
     #[test]
     fn consistency_fails_when_d_missing_from_commitments() {
-        let link = C6ToC7DCommitmentLink;
+        let link = link();
         let d = make_field(42);
         let source_values = vec![d];
 
         let d_comm = [make_field(10), make_field(20), make_field(99)];
         let party = [make_field(1), make_field(2), make_field(3)];
-        let c7_signals = c7_public_signals(&d_comm, &party);
+        let c7_signals = c7_public_signals(&d_comm, &party, CAP);
 
         assert!(!link.check_signals(&source_values, &c7_signals));
     }
 
     #[test]
     fn consistency_fails_when_d_only_appears_in_message_tail() {
-        let link = C6ToC7DCommitmentLink;
+        let link = link();
         let d = make_field(42);
         let source_values = vec![d];
 
         let d_comm = [make_field(10), make_field(20), make_field(99)];
         let party = [make_field(1), make_field(2), make_field(3)];
-        let mut c7_signals = c7_public_signals(&d_comm, &party);
+        let mut c7_signals = c7_public_signals(&d_comm, &party, CAP);
         // Overwrite first message coefficient with `d` — must not count as a match.
         let msg_off = 6 * FIELD_BYTE_LEN;
         c7_signals[msg_off..msg_off + FIELD_BYTE_LEN].copy_from_slice(&d);
@@ -190,14 +199,34 @@ mod tests {
 
     #[test]
     fn short_source_signals_treated_as_inconsistent() {
-        let link = C6ToC7DCommitmentLink;
+        let link = link();
         assert!(link.extract_source_values(&[0u8; 16]).is_empty());
         assert!(!link.check_signals(&[], &[0u8; 32]));
     }
 
     #[test]
     fn short_target_signals_treated_as_inconsistent() {
-        let link = C6ToC7DCommitmentLink;
+        let link = link();
         assert!(!link.check_signals(&[make_field(1)], &[0u8; 16]));
+    }
+
+    #[test]
+    fn the_message_width_comes_from_the_link_cap() {
+        let d = make_field(42);
+        let d_comm = [make_field(10), d, make_field(99)];
+        let party = [make_field(1), make_field(2), make_field(3)];
+        let simd = C6ToC7DCommitmentLink {
+            max_msg_non_zero_coeffs: 128,
+        };
+        let simd_signals = c7_public_signals(&d_comm, &party, 128);
+        assert!(simd.check_signals(&[d], &simd_signals));
+
+        // Put `d` in a party-ID field. With the right width it is outside the commitment prefix.
+        // With the 50-coefficient width the prefix of the 134 fields is too long and accepts it.
+        let d_comm = [make_field(10), make_field(20), make_field(99)];
+        let party = [d, make_field(2), make_field(3)];
+        let simd_signals = c7_public_signals(&d_comm, &party, 128);
+        assert!(!simd.check_signals(&[d], &simd_signals));
+        assert!(link().check_signals(&[d], &simd_signals));
     }
 }

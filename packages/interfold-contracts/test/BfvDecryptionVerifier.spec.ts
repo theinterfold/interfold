@@ -23,7 +23,7 @@ const { ethers, ignition, networkHelpers } = await network.connect();
 const { loadFixture } = networkHelpers;
 const [testSigner] = await ethers.getSigners();
 
-/** Must match `BfvDecryptionVerifier.MESSAGE_COEFFS_COUNT` / circuit `MAX_MSG_NON_ZERO_COEFFS`. */
+/** Must match `BfvDecryptionVerifier.messageCoeffsCount` / circuit `MAX_MSG_NON_ZERO_COEFFS`. */
 const MESSAGE_COEFFS_COUNT = 50;
 const BN254_SCALAR_MODULUS =
   21888242871839275222246405745257275088548364400416034343698204186575808495617n;
@@ -41,7 +41,10 @@ const CIPHERTEXT_COMMITMENT = fieldHash("ciphertext-commitment");
 const THRESHOLD = BFV_THRESHOLD_T;
 
 /** Exact `publicInputs.length` for the configured threshold. */
-const EXPECTED_PUBLIC_INPUTS_LEN = bfvDecExpectedPublicInputsLen(THRESHOLD);
+const EXPECTED_PUBLIC_INPUTS_LEN = bfvDecExpectedPublicInputsLen(
+  THRESHOLD,
+  MESSAGE_COEFFS_COUNT,
+);
 
 /** Indices for committee hash limbs (fixed layout). */
 const COMMITTEE_HASH_HI_IDX = 2;
@@ -100,6 +103,7 @@ function buildPublicInputsWithMessage(
   skCommits: string[] = DEFAULT_SK_COMMITS,
   esmCommits: string[] = DEFAULT_ESM_COMMITS,
   decryptionDomain = DECRYPTION_DOMAIN,
+  messageCoeffsCount = MESSAGE_COEFFS_COUNT,
 ): string[] {
   const arr: string[] = new Array(totalInputs);
   arr[0] = subCircuitHashes[0];
@@ -122,20 +126,19 @@ function buildPublicInputsWithMessage(
   }
   arr[DECRYPTION_DOMAIN_HI_IDX] = committeeHashHi(decryptionDomain);
   arr[DECRYPTION_DOMAIN_LO_IDX] = committeeHashLo(decryptionDomain);
-  const offset = totalInputs - MESSAGE_COEFFS_COUNT;
-  for (let i = 0; i < messageCoeffs.length && i < MESSAGE_COEFFS_COUNT; i++) {
+  const offset = totalInputs - messageCoeffsCount;
+  for (let i = 0; i < messageCoeffs.length && i < messageCoeffsCount; i++) {
     arr[offset + i] = "0x" + messageCoeffs[i].toString(16).padStart(64, "0");
   }
   return arr;
 }
 
-function plaintextToHash(messageCoeffs: bigint[]): string {
-  const buf = new Uint8Array(MESSAGE_COEFFS_COUNT * 8);
-  for (
-    let i = 0;
-    i < Math.min(messageCoeffs.length, MESSAGE_COEFFS_COUNT);
-    i++
-  ) {
+function plaintextToHash(
+  messageCoeffs: bigint[],
+  messageCoeffsCount = MESSAGE_COEFFS_COUNT,
+): string {
+  const buf = new Uint8Array(messageCoeffsCount * 8);
+  for (let i = 0; i < Math.min(messageCoeffs.length, messageCoeffsCount); i++) {
     const c = messageCoeffs[i];
     for (let j = 0; j < 8; j++) {
       buf[i * 8 + j] = Number((c >> BigInt(j * 8)) & 0xffn);
@@ -184,6 +187,7 @@ describe("BfvDecryptionVerifier", function () {
       EXPECTED_C6_FOLD_KEY_HASH,
       EXPECTED_C7_KEY_HASH,
       THRESHOLD,
+      MESSAGE_COEFFS_COUNT,
     );
 
     await bfvDecryptionVerifier.waitForDeployment();
@@ -219,6 +223,7 @@ describe("BfvDecryptionVerifier", function () {
           EXPECTED_C6_FOLD_KEY_HASH,
           EXPECTED_C7_KEY_HASH,
           THRESHOLD,
+          MESSAGE_COEFFS_COUNT,
         ),
       )
         .to.be.revertedWithCustomError(factory, "InvalidCircuitVerifier")
@@ -230,6 +235,7 @@ describe("BfvDecryptionVerifier", function () {
           EXPECTED_C6_FOLD_KEY_HASH,
           EXPECTED_C7_KEY_HASH,
           THRESHOLD,
+          MESSAGE_COEFFS_COUNT,
         ),
       )
         .to.be.revertedWithCustomError(factory, "InvalidCircuitVerifier")
@@ -243,6 +249,7 @@ describe("BfvDecryptionVerifier", function () {
           ethers.ZeroHash,
           EXPECTED_C7_KEY_HASH,
           THRESHOLD,
+          MESSAGE_COEFFS_COUNT,
         ),
       ).to.be.revertedWithCustomError(factory, "InvalidVerificationKeyHash");
       await expect(
@@ -252,6 +259,7 @@ describe("BfvDecryptionVerifier", function () {
           EXPECTED_C6_FOLD_KEY_HASH,
           ethers.ZeroHash,
           THRESHOLD,
+          MESSAGE_COEFFS_COUNT,
         ),
       ).to.be.revertedWithCustomError(factory, "InvalidVerificationKeyHash");
     });
@@ -617,6 +625,7 @@ describe("BfvDecryptionVerifier", function () {
         ethers.id("wrong-c6"),
         ethers.id("wrong-c7"),
         THRESHOLD,
+        MESSAGE_COEFFS_COUNT,
       );
       await bfvDecryptionVerifier.waitForDeployment();
 
@@ -891,6 +900,78 @@ describe("BfvDecryptionVerifier", function () {
         proof,
       );
       expect(result).to.equal(true);
+    });
+
+    it("verifies a verifier built for 128 message coefficients", async function () {
+      const SIMD_MESSAGE_COEFFS_COUNT = 128;
+      const simdLen =
+        EXPECTED_PUBLIC_INPUTS_LEN -
+        MESSAGE_COEFFS_COUNT +
+        SIMD_MESSAGE_COEFFS_COUNT;
+      const { mockCircuit, mockCiphernodeRegistry } = await loadFixture(
+        deployWithMockCircuit,
+      );
+      await mockCircuit.setReturnValue(true);
+      const { decryptionDomain } = ctx();
+      const simd = await (
+        await ethers.getContractFactory("BfvDecryptionVerifier")
+      ).deploy(
+        await mockCircuit.getAddress(),
+        await mockCiphernodeRegistry.getAddress(),
+        EXPECTED_C6_FOLD_KEY_HASH,
+        EXPECTED_C7_KEY_HASH,
+        THRESHOLD,
+        SIMD_MESSAGE_COEFFS_COUNT,
+      );
+      await simd.waitForDeployment();
+      expect(await simd.messageCoeffsCount()).to.equal(
+        SIMD_MESSAGE_COEFFS_COUNT,
+      );
+
+      const messageCoeffs = Array.from(
+        { length: SIMD_MESSAGE_COEFFS_COUNT },
+        (_, i) => BigInt(i + 1),
+      );
+      const simdInputs = buildPublicInputsWithMessage(
+        messageCoeffs,
+        simdLen,
+        [EXPECTED_C6_FOLD_KEY_HASH, EXPECTED_C7_KEY_HASH],
+        ethers.ZeroHash,
+        DEFAULT_CIRCUIT_PARTY_IDS.map(BigInt),
+        DEFAULT_SK_COMMITS,
+        DEFAULT_ESM_COMMITS,
+        DECRYPTION_DOMAIN,
+        SIMD_MESSAGE_COEFFS_COUNT,
+      );
+      const simdHash = plaintextToHash(
+        messageCoeffs,
+        SIMD_MESSAGE_COEFFS_COUNT,
+      );
+      const verifyArgs = [
+        E3_ID,
+        decryptionDomain,
+        simdHash,
+        ethers.ZeroHash,
+        CIPHERTEXT_COMMITMENT,
+      ] as const;
+
+      expect(
+        await simd.verify.staticCall(
+          ...verifyArgs,
+          encodeProof("0x01", simdInputs),
+        ),
+      ).to.equal(true);
+
+      // The 128-coefficient plaintext cannot pass through a verifier built for 50 coefficients.
+      const { bfvDecryptionVerifier: capped } = await loadFixture(
+        deployWithMockCircuit,
+      );
+      await expect(
+        capped.verify.staticCall(
+          ...verifyArgs,
+          encodeProof("0x01", simdInputs),
+        ),
+      ).to.be.revertedWithCustomError(capped, "InvalidPublicInputsLength");
     });
 
     it("verifies all 50 message coefficients", async function () {

@@ -23,9 +23,12 @@ use std::{
 };
 
 const COMMITTEES: &[&str] = &["minimum", "micro", "small"];
-// The two insecure protocol labels intentionally share one artifact and Noir module identity.
-const ARTIFACT_PRESETS: [BfvPreset; 3] = [
-    BfvPreset::InsecureThreshold,
+// Every preset with its own artifact directory and Noir module. `insecure-64` and `secure-8192`
+// serve the trBFV path; `insecure`, `insecure-simd` and `secure-16384` serve the l-BFV path.
+const ARTIFACT_PRESETS: [BfvPreset; 5] = [
+    BfvPreset::InsecureThreshold64,
+    BfvPreset::InsecureThresholdLbfv,
+    BfvPreset::InsecureThresholdSimd,
     BfvPreset::SecureThreshold8192,
     BfvPreset::SecureThreshold16384,
 ];
@@ -340,8 +343,9 @@ impl fmt::Display for CommitteeSelection {
 
 fn preset(value: &str) -> Result<BfvPreset> {
     match value {
-        "insecure" => Ok(BfvPreset::InsecureThreshold),
-        "insecure-lbfv" => Ok(BfvPreset::InsecureThresholdLbfv),
+        "insecure-64" => Ok(BfvPreset::InsecureThreshold64),
+        "insecure" => Ok(BfvPreset::InsecureThresholdLbfv),
+        "insecure-simd" => Ok(BfvPreset::InsecureThresholdSimd),
         "secure-8192" => Ok(BfvPreset::SecureThreshold8192),
         "secure-16384" => Ok(BfvPreset::SecureThreshold16384),
         _ => bail!("Select one supported preset, not {value}"),
@@ -349,7 +353,9 @@ fn preset(value: &str) -> Result<BfvPreset> {
 }
 fn tier(preset: BfvPreset) -> &'static str {
     match preset {
-        BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => "insecure",
+        BfvPreset::InsecureThreshold64 => "insecure_64",
+        BfvPreset::InsecureThresholdLbfv => "insecure",
+        BfvPreset::InsecureThresholdSimd => "insecure_simd",
         BfvPreset::SecureThreshold8192 => "secure_8192",
         BfvPreset::SecureThreshold16384 => "secure_16384",
         _ => unreachable!("build selects threshold presets"),
@@ -357,7 +363,9 @@ fn tier(preset: BfvPreset) -> &'static str {
 }
 fn preset_name(preset: BfvPreset) -> &'static str {
     match preset {
-        BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => "insecure",
+        BfvPreset::InsecureThreshold64 => "insecure-64",
+        BfvPreset::InsecureThresholdLbfv => "insecure",
+        BfvPreset::InsecureThresholdSimd => "insecure-simd",
         BfvPreset::SecureThreshold8192 => "secure-8192",
         BfvPreset::SecureThreshold16384 => "secure-16384",
         _ => unreachable!("build selects threshold presets"),

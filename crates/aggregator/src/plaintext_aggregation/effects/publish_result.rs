@@ -101,7 +101,7 @@ impl ThresholdPlaintextAggregator {
 
         info!("C7 + decryption_aggregator proofs ready — publishing PlaintextAggregated");
 
-        let decrypted_output = format_decrypted_plaintext(&state.plaintext);
+        let decrypted_output = format_decrypted_plaintext(&state.plaintext, self.params_preset);
 
         let decryption_aggregator_proofs = self
             .pending

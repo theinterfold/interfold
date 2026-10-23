@@ -27,8 +27,8 @@ test('every release pair is a supported build pair', () => {
   }
 })
 
-test('l-BFV pairs require row, chunk and v2 artifacts, but secure8192 does not', () => {
-  for (const preset of ['insecure', 'secure-16384']) {
+test('l-BFV pairs require row, chunk and v2 artifacts, but the trBFV pairs do not', () => {
+  for (const preset of ['insecure', 'insecure-simd', 'secure-16384']) {
     const markers = requiredArtifactMarkers(preset, 'minimum')
     for (const circuit of ['lbfv_pk_generation', 'lbfv_pk_aggregation', 'rlk_generation', 'rlk_aggregation']) {
       for (const variant of ['default', 'recursive', 'evm']) {
@@ -40,7 +40,9 @@ test('l-BFV pairs require row, chunk and v2 artifacts, but secure8192 does not',
     assert.ok(markers.includes(`${preset}/minimum/evm/recursive_aggregation/dkg_aggregator_v2/dkg_aggregator_v2.vk`))
     assert.ok(markers.includes(`${preset}/minimum/recursive/dkg/esm_share_computation_chunk/esm_share_computation_chunk.vk`))
   }
-  assert.ok(!requiredArtifactMarkers('secure-8192', 'minimum').some((path) => path.includes('/rlk_generation/')))
+  for (const preset of ['insecure-64', 'secure-8192']) {
+    assert.ok(!requiredArtifactMarkers(preset, 'minimum').some((path) => path.includes('/rlk_generation/')))
+  }
 })
 
 test('build tooling excludes a disabled pair from the shared policy', () => {
@@ -91,8 +93,8 @@ function makeCompleteMatrix(): string {
 test('checksums command covers exactly the staged circuit configurations', () => {
   const dir = makeCompleteMatrix()
   try {
-    rmSync(join(dir, 'secure-16384'), { recursive: true })
-    for (const preset of ['insecure', 'secure-8192']) {
+    for (const preset of ['insecure', 'insecure-simd', 'secure-16384']) rmSync(join(dir, preset), { recursive: true })
+    for (const preset of ['insecure-64', 'secure-8192']) {
       for (const committee of ['micro', 'small']) rmSync(join(dir, preset, committee), { recursive: true })
     }
     execFileSync('pnpm', ['tsx', 'scripts/circuits/artifacts.ts', 'checksums', '--dir', dir])
@@ -100,12 +102,12 @@ test('checksums command covers exactly the staged circuit configurations', () =>
     assert.equal(manifest.algorithm, 'sha256')
     assert.deepEqual(
       Object.keys(manifest.files).sort(),
-      ['insecure', 'secure-8192']
+      ['insecure-64', 'secure-8192']
         .flatMap((preset) => [...requiredArtifactMarkers(preset, 'minimum'), join(preset, 'minimum', '.build-stamp.json')])
         .sort(),
     )
     assert.equal(
-      manifest.files['insecure/minimum/default/dkg/pk/pk.vk'],
+      manifest.files['insecure-64/minimum/default/dkg/pk/pk.vk'],
       '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
     )
   } finally {
@@ -132,7 +134,7 @@ test('release verification refuses the checksum manifests that a node refuses', 
     assert.throws(() => validateChecksums(dir), /wrong digest/)
     edit((files) => (files['../outside'] = files[first]))
     assert.throws(() => validateChecksums(dir), /invalid path/)
-    edit((files) => (files['insecure/minimum/absent.json'] = files[first]))
+    edit((files) => (files['insecure-64/minimum/absent.json'] = files[first]))
     assert.throws(() => validateChecksums(dir), /missing file/)
     edit(() => {})
     unlinkSync(manifestPath)
@@ -207,7 +209,7 @@ test('rejects a build stamp that declares a different pair', () => {
   try {
     writeFileSync(
       join(dir, 'secure-8192', 'small', '.build-stamp.json'),
-      JSON.stringify({ preset: 'insecure', committee: 'small', sourceHash: sourceHash('secure-8192', 'small') }),
+      JSON.stringify({ preset: 'insecure-64', committee: 'small', sourceHash: sourceHash('secure-8192', 'small') }),
     )
     assert.throws(() => validateReleaseArtifacts(dir, sourceHash), /Invalid circuit build stamp/)
   } finally {

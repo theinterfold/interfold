@@ -10,14 +10,14 @@
 #
 #   1. packages/interfold-contracts/scripts/protocol/constants.ts (deployment parameters)
 #   2. crates/fhe-params/src/constants.rs (ciphernode parameters)
-#   3. circuits/lib/src/configs/{insecure,secure_8192,secure_16384}/threshold.nr (circuit parameters)
+#   3. circuits/lib/src/configs/{insecure_64,insecure,insecure_simd,secure_8192,secure_16384}/threshold.nr (circuit parameters)
 #   4. circuits/lib/src/configs/committee/active.nr (Noir-side active committee)
 #   5. packages/interfold-contracts/scripts/utils.ts (deployment hashes and committee values)
 #   6. crates/committee/src/lib.rs (committee enum values)
 #   7. packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol
 #
 # `circuits/bin/.active-preset.json` is only a local hydrated cache. It can point at Sepolia's
-# fast insecure-minimum artifacts while the checked-in production config points at secure-small.
+# fast insecure-64 minimum artifacts while the checked-in production config points at secure-small.
 #
 # A drift between any two means the next `pnpm build:circuits` would silently produce
 # verifiers / proofs against the wrong committee. Run from .husky/pre-push (or CI).
@@ -65,7 +65,7 @@ for required_file in \
 done
 
 for committee in minimum micro small; do
-  for artifact in parity_insecure.nr parity_secure_8192.nr parity_secure_16384.nr smudging.nr; do
+  for artifact in parity_insecure_64.nr parity_insecure.nr parity_insecure_simd.nr parity_secure_8192.nr parity_secure_16384.nr smudging.nr; do
     [[ -f "circuits/lib/src/configs/committee/$committee/$artifact" ]] \
       || fail "missing generated committee artifact: $committee/$artifact"
   done
@@ -255,7 +255,9 @@ process.stdout.write(`${qModT},${(x % t + t) % t}\n`);
   fi
 }
 
+check_bfv_preset insecure-64 insecure64 insecure_64 insecure_64
 check_bfv_preset insecure insecure insecure insecure
+check_bfv_preset insecure-simd insecureSimd insecure_simd insecure_simd
 check_bfv_preset secure-8192 secure8192 secure_8192 secure_8192
 check_bfv_preset secure-16384 secure16384 secure_16384 secure_16384
 
@@ -292,7 +294,7 @@ ts_bytes32() {
     | head -n1
 }
 
-for prefix in INSECURE SECURE SECURE_16384; do
+for prefix in INSECURE INSECURE_LBFV INSECURE_SIMD SECURE SECURE_16384; do
   utils_param_hash=$(ts_bytes32 "${prefix}_PARAM_SET_HASH")
   utils_config_id=$(ts_bytes32 "${prefix}_CONFIG_ID")
   sol_param_hash=$(sol_bytes32 "${prefix}_PARAM_SET_HASH")
@@ -320,7 +322,7 @@ extract_rust_config_id() {
     | head -n1
 }
 
-for prefix_and_param_set in INSECURE:0 SECURE:1 SECURE_16384:2; do
+for prefix_and_param_set in INSECURE:0 INSECURE_LBFV:4 INSECURE_SIMD:5 SECURE:2 SECURE_16384:3; do
   prefix="${prefix_and_param_set%%:*}"
   param_set="${prefix_and_param_set##*:}"
   expected_id=$(sol_bytes32 "${prefix}_CONFIG_ID")
@@ -358,25 +360,30 @@ check_utils_route() {
   fi
 }
 
-check_utils_route INSECURE_MINIMUM insecure minimum 0
-check_utils_route INSECURE_MICRO insecure micro 1
-check_utils_route INSECURE_SMALL insecure small 2
+check_utils_route INSECURE_MINIMUM insecure-64 minimum 0
+check_utils_route INSECURE_MICRO insecure-64 micro 1
+check_utils_route INSECURE_SMALL insecure-64 small 2
+check_utils_route INSECURE_LBFV_MINIMUM insecure minimum 0
+check_utils_route INSECURE_LBFV_MICRO insecure micro 1
+check_utils_route INSECURE_LBFV_SMALL insecure small 2
 check_utils_route SECURE_MINIMUM secure-8192 minimum 0
 check_utils_route SECURE_MICRO secure-8192 micro 1
 check_utils_route SECURE_SMALL secure-8192 small 2
 check_utils_route SECURE_16384_MINIMUM secure-16384 minimum 0
 check_utils_route SECURE_16384_MICRO secure-16384 micro 1
 check_utils_route SECURE_16384_SMALL secure-16384 small 2
+check_utils_route INSECURE_SIMD_MINIMUM insecure-simd minimum 0
+check_utils_route INSECURE_SIMD_MICRO insecure-simd micro 1
 
 route_list() {
   local array_name="$1"
   sed -n "/^export const ${array_name}:.*= \[/,/^\] as const;/p" "$UTILS_TS" \
-    | grep -oE '(INSECURE|SECURE(_16384)?)_(MINIMUM|MICRO|SMALL)_BFV_CONFIG' \
+    | grep -oE '(INSECURE(_LBFV|_SIMD)?|SECURE(_16384)?)_(MINIMUM|MICRO|SMALL)_BFV_CONFIG' \
     | paste -sd, -
 }
 
 TESTNET_ROUTES=$(route_list TESTNET_BFV_CONFIGS)
-EXPECTED_TESTNET_ROUTES="INSECURE_MINIMUM_BFV_CONFIG,INSECURE_MICRO_BFV_CONFIG,INSECURE_SMALL_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_SMALL_BFV_CONFIG,SECURE_16384_MINIMUM_BFV_CONFIG,SECURE_16384_MICRO_BFV_CONFIG,SECURE_16384_SMALL_BFV_CONFIG"
+EXPECTED_TESTNET_ROUTES="INSECURE_MINIMUM_BFV_CONFIG,INSECURE_MICRO_BFV_CONFIG,INSECURE_SMALL_BFV_CONFIG,INSECURE_LBFV_MINIMUM_BFV_CONFIG,INSECURE_LBFV_MICRO_BFV_CONFIG,INSECURE_LBFV_SMALL_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_SMALL_BFV_CONFIG,SECURE_16384_MINIMUM_BFV_CONFIG,SECURE_16384_MICRO_BFV_CONFIG,SECURE_16384_SMALL_BFV_CONFIG,INSECURE_SIMD_MINIMUM_BFV_CONFIG,INSECURE_SIMD_MICRO_BFV_CONFIG"
 [[ "$TESTNET_ROUTES" == "$EXPECTED_TESTNET_ROUTES" ]] \
   || fail "$UTILS_TS testnet routes must contain the exact supported-pair matrix; got $TESTNET_ROUTES"
 
@@ -438,4 +445,4 @@ else
   echo "  (skipping generated committee check: nargo not found.)" >&2
 fi
 
-echo "✓ check:committee: BFV tuples, interfold-bfv-v2 configuration IDs, all supported testnet routes, and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) are consistent across TypeScript, Rust, Noir, and Solidity$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"
+echo "✓ check:committee: BFV tuples, interfold-bfv-v5 configuration IDs, all supported testnet routes, and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) are consistent across TypeScript, Rust, Noir, and Solidity$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"

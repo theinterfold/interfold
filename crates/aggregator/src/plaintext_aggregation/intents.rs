@@ -3,7 +3,6 @@
 //! Deterministic plaintext formatting and C7 aggregation job planning.
 
 use super::*;
-use e3_zk_config::MAX_MSG_NON_ZERO_COEFFS;
 use tracing::warn;
 
 /// Match C7's ordered commitments, one-based party IDs, and message to the selected C6 batch.
@@ -28,7 +27,7 @@ pub(crate) fn c7_proofs_match_batch(
             if !e3_events::ProofType::C7DecryptedSharesAggregation
                 .circuit_names_for(preset)
                 .contains(&proof.circuit)
-                || proof.public_signals.len() != (2 * slots + MAX_MSG_NON_ZERO_COEFFS) * 32
+                || proof.public_signals.len() != (2 * slots + preset.max_msg_non_zero_coeffs()) * 32
             {
                 return false;
             }
@@ -50,7 +49,7 @@ pub(crate) fn c7_proofs_match_batch(
             let Ok(mut message) = e3_bfv_client::decode_bytes_to_vec_u64(message) else {
                 return false;
             };
-            message.resize(MAX_MSG_NON_ZERO_COEFFS, 0);
+            message.resize(preset.max_msg_non_zero_coeffs(), 0);
             fields[2 * slots..]
                 .iter()
                 .zip(message)
@@ -58,9 +57,12 @@ pub(crate) fn c7_proofs_match_batch(
         })
 }
 
-/// Pad/truncate each decrypted plaintext limb to the fixed `MAX_MSG_NON_ZERO_COEFFS * 8`.
-pub(crate) fn format_decrypted_plaintext(plaintext: &[ArcBytes]) -> Vec<ArcBytes> {
-    let len = MAX_MSG_NON_ZERO_COEFFS * 8;
+/// Pad/truncate each decrypted plaintext limb to `preset.max_msg_non_zero_coeffs() * 8` bytes.
+pub(crate) fn format_decrypted_plaintext(
+    plaintext: &[ArcBytes],
+    preset: e3_fhe_params::BfvPreset,
+) -> Vec<ArcBytes> {
+    let len = preset.max_msg_non_zero_coeffs() * 8;
     plaintext
         .iter()
         .map(|pt| {
@@ -102,4 +104,26 @@ pub(crate) fn build_decryption_aggregation_jobs(
         });
     }
     Some(jobs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use e3_fhe_params::BfvPreset;
+
+    #[test]
+    fn the_published_length_follows_the_preset_cap() {
+        let plaintext = vec![ArcBytes::from_bytes(&[7u8; 128 * 8])];
+        let simd = format_decrypted_plaintext(&plaintext, BfvPreset::InsecureThresholdSimd);
+        assert_eq!(simd[0].extract_bytes(), vec![7u8; 128 * 8]);
+
+        // A 50-cap preset truncates the same plaintext; the SIMD preset pads a short one.
+        let capped = format_decrypted_plaintext(&plaintext, BfvPreset::InsecureThreshold64);
+        assert_eq!(capped[0].extract_bytes(), vec![7u8; 50 * 8]);
+        let short = format_decrypted_plaintext(
+            &[ArcBytes::from_bytes(&[1u8; 8])],
+            BfvPreset::InsecureThresholdSimd,
+        );
+        assert_eq!(short[0].extract_bytes().len(), 128 * 8);
+    }
 }

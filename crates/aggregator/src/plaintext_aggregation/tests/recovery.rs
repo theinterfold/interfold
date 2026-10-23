@@ -100,7 +100,7 @@ fn canonical_key() -> CanonicalPublicKey {
         pk_commitment: [7; 32],
         committee: (0..3).map(|party| test_signer(party).address()).collect(),
         honest_committee: (0..2).map(|party| test_signer(party).address()).collect(),
-        params_preset: BfvPreset::InsecureThreshold,
+        params_preset: BfvPreset::InsecureThreshold64,
         committee_size: CiphernodesCommitteeSize::Minimum,
         interfold_address: test_decryption_domain().interfold_address,
         sk_agg_commits: vec![],
@@ -184,9 +184,9 @@ async fn context(store: &DataStore, id: &E3id) -> Result<E3Context> {
             threshold_m: 1,
             threshold_n: 3,
             seed: Seed([0; 32]),
-            params_preset: BfvPreset::InsecureThreshold,
+            params_preset: BfvPreset::InsecureThreshold64,
             params: ArcBytes::from_bytes(&encode_bfv_params(
-                &BfvParamSet::from(BfvPreset::InsecureThreshold).build_arc(),
+                &BfvParamSet::from(BfvPreset::InsecureThreshold64).build_arc(),
             )),
             error_size: ArcBytes::from_bytes(&[]),
         },
@@ -229,7 +229,7 @@ async fn await_verifying(store: &DataStore, id: &E3id) -> Result<VerifyingC6> {
 async fn canonical_domain_gates_live_and_replayed_shares() -> Result<()> {
     for replay in [false, true] {
         let (bus, _, _, _, _, _, history) =
-            get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
+            get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
         let id = E3id::new("42", 1);
         let store = DataStore::from_in_mem(&InMemStore::new(false).start());
         let ciphertext = ciphertext_event(&id);
@@ -299,7 +299,7 @@ async fn hydration_rebuilds_noncanonical_c6_work_in_every_phase() -> Result<()> 
     for phase in 0..5 {
         for wrong_domain in [true, false] {
             let (bus, _, _, _, _, _, history) =
-                get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
+                get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
             let id = E3id::new("42", 1);
             let store = DataStore::from_in_mem(&InMemStore::new(false).start());
             let ciphertext = ciphertext_event(&id);
@@ -580,7 +580,7 @@ async fn deferred_plaintext_restart(
     failed_before_effects: bool,
 ) -> Result<()> {
     let (bus, _, _, _, _, _, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
     let id = E3id::new("42", 1);
     let store = DataStore::from_in_mem(&InMemStore::new(false).start());
     let keys = CanonicalPublicKeys::default();
@@ -856,7 +856,6 @@ impl Handler<EventStoreQueryBy<SeqAgg>> for CountingHistoryReader {
 
 fn batch_c7_proofs(parties: &[u64], ciphertexts: usize) -> Vec<Proof> {
     use alloy::primitives::U256;
-    use e3_zk_config::MAX_MSG_NON_ZERO_COEFFS;
     let id = E3id::new("42", 1);
     let (_, c6) = share_with_matching_commitment(&id, parties[0], &test_ciphertexts());
     (0..ciphertexts)
@@ -868,7 +867,10 @@ fn batch_c7_proofs(parties: &[u64], ciphertexts: usize) -> Vec<Proof> {
             for party in parties {
                 fields.extend_from_slice(&U256::from(party + 1).to_be_bytes::<32>());
             }
-            fields.resize((2 * parties.len() + MAX_MSG_NON_ZERO_COEFFS) * 32, 0);
+            fields.resize(
+                (2 * parties.len() + BfvPreset::InsecureThreshold64.max_msg_non_zero_coeffs()) * 32,
+                0,
+            );
             Proof::new(
                 CircuitName::DecryptedSharesAggregation,
                 ArcBytes::from_bytes(&[1]),
@@ -949,7 +951,7 @@ async fn replayed_c7_work_cannot_replace_the_recovered_share_batch() -> Result<(
             plaintext: plaintext.clone(),
             threshold_m: 9,
             threshold_n: 19,
-            params_preset: BfvPreset::InsecureThreshold,
+            params_preset: BfvPreset::InsecureThreshold64,
             committee_size: CiphernodesCommitteeSize::Small,
         },
     };

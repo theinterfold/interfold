@@ -32,8 +32,6 @@ pub enum DkgInputType {
     SmudgingNoise,
 }
 
-pub const MAX_MSG_NON_ZERO_COEFFS: usize = 50;
-
 #[derive(Error, Debug)]
 pub enum ConfigError {
     #[error("BFV error: {0}")]

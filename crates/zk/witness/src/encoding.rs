@@ -11,10 +11,10 @@ use ark_ff::BigInteger;
 use ark_ff::PrimeField;
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use e3_polynomial_fhe::{FromFhePolynomial as _, ToPowerBasisPoly};
-use fhe::bfv::{Encoding, Plaintext, SecretKey};
+use fhe::bfv::{BfvParameters, Plaintext, SecretKey};
 use fhe_math::rq::{traits::TryConvertFrom, Context, Poly, PowerBasis, RepresentationTag};
-use fhe_traits::FheDecoder;
 use num_bigint::BigInt;
+use num_bigint::BigUint;
 use num_bigint::Sign;
 use num_traits::ToPrimitive;
 use std::fmt::Display;
@@ -76,9 +76,34 @@ pub fn validate_fhe_poly_context<R: RepresentationTag>(
     Ok(())
 }
 
-/// Encoded plaintext coefficients in poly encoding (u64 limb values).
-pub fn plaintext_poly_u64(pt: &Plaintext) -> std::result::Result<Vec<u64>, WitnessError> {
-    Vec::<u64>::try_decode(pt, Encoding::poly()).map_err(WitnessError::Fhe)
+/// The raw polynomial of a plaintext, reduced modulo `t`, whatever its encoding.
+///
+/// This is the polynomial that `Delta * m` is built from, so it is the same for the poly and the
+/// SIMD encoding. `Vec::<u64>::try_decode` cannot be used: for a SIMD plaintext it returns slot
+/// values, and it fails for any encoding other than the stored one.
+pub fn plaintext_poly_u64(
+    pt: &Plaintext,
+    params: &BfvParameters,
+) -> std::result::Result<Vec<u64>, WitnessError> {
+    let ctx = params.context_at_level(pt.level())?;
+    let poly = Poly::<PowerBasis>::try_convert_from(pt, ctx, false)
+        .map_err(|error| WitnessError::Fhe(fhe::Error::from(error)))?;
+    let t = params.plaintext();
+
+    if ctx.moduli().first().is_some_and(|q0| t < *q0) {
+        let limbs = Vec::<u64>::try_from(&poly)
+            .map_err(|error| WitnessError::Fhe(fhe::Error::from(error)))?;
+        Ok(limbs[..ctx.degree].iter().map(|c| c % t).collect())
+    } else {
+        Vec::<BigUint>::from(&poly)
+            .into_iter()
+            .map(|c| {
+                (c % t)
+                    .to_u64()
+                    .ok_or_else(|| WitnessError::Other("plaintext coefficient exceeds u64".into()))
+            })
+            .collect()
+    }
 }
 
 /// Verify that a CRT polynomial has exactly `l` limbs, each with exactly `degree` coefficients.

@@ -5,6 +5,7 @@ import {
   activeBfvConfigForChain,
   bfvConfigsForChain,
   bfvHonkSource,
+  bfvMessageCoeffsCount,
   getBfvDecryptionSubCircuitVkHashPaths,
   getBfvPkSubCircuitVkHashPaths,
   getBfvPkVkBindingHashPaths,
@@ -405,7 +406,7 @@ async function deployBfvVerifierRoute(
     "DecryptionAggregatorVerifier",
   );
   // The trBFV path (parameter sets 0 and 2) verifies main's `dkg_aggregator`; the l-BFV path
-  // (3 and 4) verifies `dkg_aggregator_v2`.
+  // (3, 4 and 5) verifies `dkg_aggregator_v2`.
   const lbfv = isLbfvParamSet(config.paramSet);
   const v2Source = lbfv
     ? bfvHonkSource(config, "DkgAggregatorV2Verifier")
@@ -525,6 +526,7 @@ async function deployBfvVerifierRoute(
     readVkRecursiveHash(decryptionPaths.c6Fold, config),
     readVkRecursiveHash(decryptionPaths.c7, config),
     config.t,
+    bfvMessageCoeffsCount(config.paramSet),
   );
   await decryption.waitForDeployment();
   const decryptionVerifier = await deployedAddress(decryption);

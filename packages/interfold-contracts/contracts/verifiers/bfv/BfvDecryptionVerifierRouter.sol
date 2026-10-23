@@ -11,6 +11,7 @@ import { ICiphernodeRegistry } from "../../interfaces/ICiphernodeRegistry.sol";
 interface IBfvDecryptionVerifierRoute is IDecryptionVerifier {
     function expectedC6FoldKeyHash() external view returns (bytes32);
     function expectedC7KeyHash() external view returns (bytes32);
+    function messageCoeffsCount() external view returns (uint256);
 }
 
 /// @notice Dispatches BFV decryption proofs to the verifier that matches the E3 parameter set and
@@ -67,11 +68,17 @@ contract BfvDecryptionVerifierRouter is IDecryptionVerifier {
             );
             uint256 routeThreshold = route.threshold();
             if (routeThreshold == 0) revert InvalidVerifierRoute(verifier);
+            uint256 routeMessageCoeffsCount = route.messageCoeffsCount();
+            if (routeMessageCoeffsCount == 0) {
+                revert InvalidVerifierRoute(verifier);
+            }
             routes.push(
                 Route({
                     verifier: route,
-                    // BfvDecryptionVerifier: 7 + 1 + 3 * (T + 1) + 50 message coefficients.
-                    expectedPublicInputsLen: 61 + (3 * routeThreshold),
+                    // BfvDecryptionVerifier: 7 + 1 + 3 * (T + 1) + messageCoeffsCount message coefficients.
+                    expectedPublicInputsLen: 11 +
+                        (3 * routeThreshold) +
+                        routeMessageCoeffsCount,
                     expectedC6FoldKeyHash: route.expectedC6FoldKeyHash(),
                     expectedC7KeyHash: route.expectedC7KeyHash(),
                     expectedParamSet: expectedParamSets[i]

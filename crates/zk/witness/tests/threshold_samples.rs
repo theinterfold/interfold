@@ -8,9 +8,34 @@ mod decrypted_shares_aggregation {
     use e3_zk_config::threshold::decrypted_shares_aggregation::Configs;
     use e3_zk_witness::threshold::decrypted_shares_aggregation::Inputs;
 
+    /// A plaintext with 128 non-zero coefficients fits the SIMD preset's cap and exceeds the
+    /// 50-coefficient cap of every other preset.
+    #[test]
+    fn the_cap_is_per_preset() {
+        let simd = BfvPreset::InsecureThresholdSimd;
+        let simd_config = Configs::for_preset(simd, CiphernodesCommitteeSize::Minimum).unwrap();
+        assert_eq!(simd_config.max_msg_non_zero_coeffs, 128);
+        let sample =
+            e3_zk_samples::threshold::decrypted_shares_aggregation::generate(&simd_config, simd)
+                .unwrap();
+        assert_eq!(sample.message_vec.len(), 128);
+        assert!(sample.message_vec.iter().all(|c| *c != 0));
+        let inputs = Inputs::compute(&simd_config, &sample).unwrap();
+        assert_eq!(inputs.message.coefficients().len(), 128);
+
+        let capped = BfvPreset::InsecureThreshold64;
+        let capped_config = Configs::for_preset(capped, CiphernodesCommitteeSize::Minimum).unwrap();
+        assert_eq!(capped_config.max_msg_non_zero_coeffs, 50);
+        let error = Inputs::compute(&capped_config, &sample)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("78 non-zero coefficient(s)"), "{error}");
+        assert!(error.contains("(50)"), "{error}");
+    }
+
     #[test]
     fn an_extra_polynomial_or_party_id_is_refused() {
-        let preset = BfvPreset::InsecureThreshold;
+        let preset = BfvPreset::InsecureThreshold64;
         let config = Configs::for_preset(preset, CiphernodesCommitteeSize::Small).unwrap();
         let sample =
             e3_zk_samples::threshold::decrypted_shares_aggregation::generate(&config, preset)
@@ -43,7 +68,7 @@ mod decrypted_shares_aggregation {
 
     #[test]
     fn test_full_computation_with_sample() {
-        let preset = BfvPreset::InsecureThreshold;
+        let preset = BfvPreset::InsecureThreshold64;
         let committee = CiphernodesCommitteeSize::Small.values();
         let configs = Configs::for_preset(preset, CiphernodesCommitteeSize::Small).unwrap();
         let input =

@@ -45,14 +45,16 @@ pub struct Bounds {
 }
 impl Configs {
     pub fn new(threshold_params: &Arc<BfvParameters>) -> Result<Self, ConfigError> {
-        crate::parameters::matching_preset(threshold_params, ParameterType::THRESHOLD)?;
+        let preset =
+            crate::parameters::matching_preset(threshold_params, ParameterType::THRESHOLD)?;
 
         let bounds = Bounds::new(threshold_params)?;
         let bits = Bits::new(threshold_params, &bounds);
 
         Ok(Configs {
             params: threshold_params.clone(),
-            max_msg_non_zero_coeffs: crate::MAX_MSG_NON_ZERO_COEFFS,
+            // The width is compiled into the C6/C7 circuits of the preset.
+            max_msg_non_zero_coeffs: preset.max_msg_non_zero_coeffs(),
 
             bits,
             bounds,

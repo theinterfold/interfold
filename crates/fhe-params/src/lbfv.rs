@@ -67,11 +67,24 @@ pub const INSECURE_LBFV_URS_SEED: [u8; 32] = [
     0x9c, 0x9d, 0xcf, 0x38, 0xa1, 0x2c, 0x18, 0x69, 0x00, 0x83, 0x78, 0x46, 0xda, 0xeb, 0xab, 0x0f,
 ];
 
+/// SHA-256 of `interfold/lbfv/insecure-simd/v1/crs`.
+pub const INSECURE_SIMD_LBFV_CRS_SEED: [u8; 32] = [
+    0xce, 0x0e, 0x2a, 0xff, 0xf8, 0x53, 0xc8, 0x93, 0xd0, 0xe9, 0xb1, 0x2e, 0xcf, 0x97, 0x92, 0xe8,
+    0xb8, 0x18, 0x36, 0xf3, 0xb1, 0x8f, 0x72, 0xb6, 0x68, 0x19, 0x3d, 0x4a, 0xcb, 0x62, 0x95, 0xc4,
+];
+
+/// SHA-256 of `interfold/lbfv/insecure-simd/v1/urs`.
+pub const INSECURE_SIMD_LBFV_URS_SEED: [u8; 32] = [
+    0x3a, 0x58, 0x97, 0x31, 0x03, 0x19, 0x43, 0x11, 0x94, 0x65, 0x60, 0xcd, 0xd2, 0x4b, 0x9f, 0x3b,
+    0x81, 0x07, 0x5a, 0xd8, 0x26, 0x65, 0x16, 0xdc, 0xd2, 0x5b, 0xca, 0xa1, 0x3a, 0xee, 0xd2, 0x23,
+];
+
 /// Return the fixed l-BFV CRS seed for a supported threshold preset.
 #[must_use]
 pub const fn lbfv_crs_seed(preset: BfvPreset) -> Option<[u8; 32]> {
     match preset {
         BfvPreset::InsecureThresholdLbfv => Some(INSECURE_LBFV_CRS_SEED),
+        BfvPreset::InsecureThresholdSimd => Some(INSECURE_SIMD_LBFV_CRS_SEED),
         BfvPreset::SecureThreshold16384 => Some(SECURE_16384_LBFV_CRS_SEED),
         _ => None,
     }
@@ -82,6 +95,7 @@ pub const fn lbfv_crs_seed(preset: BfvPreset) -> Option<[u8; 32]> {
 pub const fn lbfv_urs_seed(preset: BfvPreset) -> Option<[u8; 32]> {
     match preset {
         BfvPreset::InsecureThresholdLbfv => Some(INSECURE_LBFV_URS_SEED),
+        BfvPreset::InsecureThresholdSimd => Some(INSECURE_SIMD_LBFV_URS_SEED),
         BfvPreset::SecureThreshold16384 => Some(SECURE_16384_LBFV_URS_SEED),
         _ => None,
     }
@@ -100,18 +114,26 @@ mod tests {
     #[test]
     fn supported_lbfv_presets_are_enabled() {
         assert!(lbfv_crs_seed(BfvPreset::InsecureThresholdLbfv).is_some());
-        assert!(lbfv_crs_seed(BfvPreset::InsecureThreshold).is_none());
+        assert!(lbfv_crs_seed(BfvPreset::InsecureThresholdSimd).is_some());
+        assert!(lbfv_urs_seed(BfvPreset::InsecureThresholdSimd).is_some());
+        assert_ne!(
+            lbfv_crs_seed(BfvPreset::InsecureThresholdSimd),
+            lbfv_crs_seed(BfvPreset::InsecureThresholdLbfv)
+        );
+        assert!(is_lbfv_path(BfvPreset::InsecureDkgSimd));
+        assert_eq!(lbfv_row_count(BfvPreset::InsecureThresholdSimd), Some(3));
+        assert!(lbfv_crs_seed(BfvPreset::InsecureThreshold64).is_none());
         assert!(lbfv_urs_seed(BfvPreset::InsecureThresholdLbfv).is_some());
         assert!(lbfv_crs_seed(BfvPreset::SecureThreshold16384).is_some());
         assert!(lbfv_urs_seed(BfvPreset::SecureThreshold16384).is_some());
         assert!(lbfv_crs_seed(BfvPreset::SecureThreshold8192).is_none());
-        assert!(lbfv_urs_seed(BfvPreset::InsecureDkg).is_none());
+        assert!(lbfv_urs_seed(BfvPreset::InsecureDkg64).is_none());
         assert!(is_lbfv_path(BfvPreset::InsecureDkgLbfv));
         assert!(is_lbfv_path(BfvPreset::SecureDkg16384));
-        assert!(!is_lbfv_path(BfvPreset::InsecureDkg));
+        assert!(!is_lbfv_path(BfvPreset::InsecureDkg64));
         assert!(!is_lbfv_path(BfvPreset::SecureDkg8192));
         assert_eq!(lbfv_row_count(BfvPreset::InsecureThresholdLbfv), Some(3));
-        assert_eq!(lbfv_row_count(BfvPreset::InsecureThreshold), None);
+        assert_eq!(lbfv_row_count(BfvPreset::InsecureThreshold64), None);
         assert_eq!(lbfv_row_count(BfvPreset::SecureThreshold16384), Some(5));
         assert_eq!(lbfv_row_count(BfvPreset::SecureThreshold8192), None);
         assert!(is_supported_lbfv_row_count(3));

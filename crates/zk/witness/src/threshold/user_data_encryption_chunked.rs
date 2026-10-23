@@ -109,7 +109,7 @@ impl Inputs {
         e0_mod_q.center(&modulus_q);
 
         // Reconstruct k1 from plaintext polynomial.
-        let mut k1_u64 = plaintext_poly_u64(&pt)?; // m
+        let mut k1_u64 = plaintext_poly_u64(&pt, threshold_params)?; // m
 
         Modulus::new(t)
             .map_err(|e| WitnessError::Fhe(fhe::Error::from(e)))?

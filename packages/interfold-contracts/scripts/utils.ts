@@ -99,7 +99,7 @@ export function getRepoRoot(): string {
 
 /**
  * <generated-committee-doc>
- * Active insecure / minimum committee layout for BFV aggregator verifiers.
+ * Active insecure-64 / minimum committee layout for BFV aggregator verifiers.
  * Must match `lib::configs::default::{H, T}` in compiled circuits.
  * Minimum committee: N=3, T=1, H=2.
  * </generated-committee-doc>
@@ -110,7 +110,12 @@ export const ACTIVE_BFV_PARAM_SET = 0;
 export const ACTIVE_BFV_COMMITTEE_SIZE = 0;
 export const ACTIVE_BFV_COMMITTEE_N = 3;
 
-export type BfvArtifactPreset = "insecure" | "secure-8192" | "secure-16384";
+export type BfvArtifactPreset =
+  | "insecure"
+  | "insecure-64"
+  | "insecure-simd"
+  | "secure-8192"
+  | "secure-16384";
 export type BfvCommittee = "minimum" | "micro" | "small";
 
 export interface ActiveBfvConfig {
@@ -126,93 +131,152 @@ export interface ActiveBfvConfig {
 }
 
 const INSECURE_PARAM_SET_HASH =
-  "0x0619925361a4d022377f93ccd0022c0164257ffb889b979eb382aa06d401e258";
+  "0xaff065a7d6e3d8c830dfcd37c2af8a25b3dcc6cd74ba458894075e8264f1ab1e";
 const INSECURE_CONFIG_ID =
-  "0x353ab90c0ebe9c13e1b9c2048539b7c2872f3eb12a9f1957f31410aa4bf44718";
+  "0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9";
+const INSECURE_LBFV_PARAM_SET_HASH =
+  "0x0619925361a4d022377f93ccd0022c0164257ffb889b979eb382aa06d401e258";
+const INSECURE_LBFV_CONFIG_ID =
+  "0x968e91054be28b2b577ac278284e03274ed46bd5c5064e573290312a2323d495";
 const SECURE_PARAM_SET_HASH =
-  "0x80775a19b6126a12943f9c1c53f92299f0c92ece819b625026ab1406bbbe0721";
+  "0x1b2620f6a5919d5ee19a51f34026369816f479efd0404b56585ad37d31c52317";
 const SECURE_CONFIG_ID =
-  "0x5ebb3432396f21cd97fca47e006b9dd38c021bf2902d3e555cf74cb91b28e44e";
+  "0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa";
 const SECURE_16384_PARAM_SET_HASH =
   "0x8afd5dddf1bc0cfb00c70e9a7d0a0fb11bd0617df27574fa7d2ccf9ae3a6bdb8";
 const SECURE_16384_CONFIG_ID =
-  "0x9c5c09ac7421582c4407c7e6ad923b8f9126aa708957c2575760fb0a38153655";
+  "0x9b9181e0304e51388d6edd6eb4d5ae9a8593cbdbf28838734d829d09d0701d86";
+const INSECURE_SIMD_PARAM_SET_HASH =
+  "0xa5324db0b69c6f2f152b04917d2ec47630b625562fd094d2428c04dd885081e3";
+const INSECURE_SIMD_CONFIG_ID =
+  "0x843cc091bc39d046eded5e9f0aed8250848b46f7e36623433d31a1f5d7ef5e35";
 
-/** On-chain index of the insecure parameters on the l-BFV path. */
+// Generated from `BfvPreset::max_msg_non_zero_coeffs` by `pnpm build:circuits`.
+const INSECURE_64_MESSAGE_COEFFS_COUNT = 50;
+const INSECURE_MESSAGE_COEFFS_COUNT = 50;
+const INSECURE_SIMD_MESSAGE_COEFFS_COUNT = 128;
+const SECURE_MESSAGE_COEFFS_COUNT = 50;
+const SECURE_16384_MESSAGE_COEFFS_COUNT = 50;
+
+/**
+ * On-chain index of the insecure degree-128 parameters, which run the l-BFV path. Index 0 is the
+ * insecure-64 trBFV parameters.
+ */
 export const INSECURE_LBFV_PARAM_SET = 4;
 
-/** Parameter sets on the l-BFV path: secure-16384 (3) and insecure l-BFV (4). */
+/** On-chain index of the insecure SIMD parameters (plaintext modulus 257, l-BFV path). */
+export const INSECURE_SIMD_PARAM_SET = 5;
+
+/** Parameter sets on the l-BFV path: secure-16384 (3), insecure l-BFV (4) and insecure SIMD (5). */
 export function isLbfvParamSet(paramSet: number): boolean {
-  return paramSet === 3 || paramSet === INSECURE_LBFV_PARAM_SET;
+  return (
+    paramSet === 3 ||
+    paramSet === INSECURE_LBFV_PARAM_SET ||
+    paramSet === INSECURE_SIMD_PARAM_SET
+  );
 }
 
 /**
- * The parameter set a local deployment registers. `BFV_PARAM_SET=4` selects the l-BFV path on the
- * insecure artifacts; otherwise the generated active parameter set applies.
+ * The decrypted-output cap of a parameter set (`MAX_MSG_NON_ZERO_COEFFS`), which is the
+ * `BfvDecryptionVerifier` constructor argument. The SIMD set publishes every ring slot.
+ */
+export function bfvMessageCoeffsCount(paramSet: number): number {
+  switch (paramSet) {
+    case 0:
+      return INSECURE_64_MESSAGE_COEFFS_COUNT;
+    case INSECURE_LBFV_PARAM_SET:
+      return INSECURE_MESSAGE_COEFFS_COUNT;
+    case 2:
+      return SECURE_MESSAGE_COEFFS_COUNT;
+    case 3:
+      return SECURE_16384_MESSAGE_COEFFS_COUNT;
+    case INSECURE_SIMD_PARAM_SET:
+      return INSECURE_SIMD_MESSAGE_COEFFS_COUNT;
+    default:
+      throw new Error(
+        `No decrypted-output cap for BFV parameter set ${paramSet}`,
+      );
+  }
+}
+
+/**
+ * The parameter set a local deployment registers: the generated active parameter set. A
+ * `BFV_PARAM_SET` override must name that set, because each preset's artifacts serve exactly one.
  */
 export function localBfvParamSet(): number {
   const override = process.env.BFV_PARAM_SET;
   if (override === undefined || override === "") return ACTIVE_BFV_PARAM_SET;
   const paramSet = Number(override);
-  const insecureArtifacts = ACTIVE_BFV_CONFIG.preset === "insecure";
   if (paramSet === ACTIVE_BFV_PARAM_SET) return paramSet;
-  if (paramSet === INSECURE_LBFV_PARAM_SET && insecureArtifacts)
-    return paramSet;
   throw new Error(
     `BFV_PARAM_SET=${override} does not match the active circuit artifacts (parameter set ${ACTIVE_BFV_PARAM_SET})`,
   );
 }
 
+const PRESET_PARAM_SETS: Record<BfvArtifactPreset, number> = {
+  "insecure-64": 0,
+  insecure: INSECURE_LBFV_PARAM_SET,
+  "insecure-simd": INSECURE_SIMD_PARAM_SET,
+  "secure-8192": 2,
+  "secure-16384": 3,
+};
+
+const PRESET_HASHES: Record<
+  BfvArtifactPreset,
+  { paramSetHash: string; configId: string }
+> = {
+  "insecure-64": {
+    paramSetHash: INSECURE_PARAM_SET_HASH,
+    configId: INSECURE_CONFIG_ID,
+  },
+  insecure: {
+    paramSetHash: INSECURE_LBFV_PARAM_SET_HASH,
+    configId: INSECURE_LBFV_CONFIG_ID,
+  },
+  "insecure-simd": {
+    paramSetHash: INSECURE_SIMD_PARAM_SET_HASH,
+    configId: INSECURE_SIMD_CONFIG_ID,
+  },
+  "secure-8192": {
+    paramSetHash: SECURE_PARAM_SET_HASH,
+    configId: SECURE_CONFIG_ID,
+  },
+  "secure-16384": {
+    paramSetHash: SECURE_16384_PARAM_SET_HASH,
+    configId: SECURE_16384_CONFIG_ID,
+  },
+};
+
 function bfvConfig(
   preset: BfvArtifactPreset,
   committee: BfvCommittee,
   params: Pick<ActiveBfvConfig, "committeeSize" | "h" | "t" | "n">,
-  lbfv = false,
 ): ActiveBfvConfig {
-  // The insecure artifacts serve both paths; `lbfv` selects parameter set 4 instead of 0.
-  const insecure = preset === "insecure";
-  const paramSet = insecure
-    ? lbfv
-      ? INSECURE_LBFV_PARAM_SET
-      : 0
-    : preset === "secure-8192"
-      ? 2
-      : 3;
-  const paramSetHash = insecure
-    ? INSECURE_PARAM_SET_HASH
-    : paramSet === 2
-      ? SECURE_PARAM_SET_HASH
-      : SECURE_16384_PARAM_SET_HASH;
-  const configId = insecure
-    ? INSECURE_CONFIG_ID
-    : paramSet === 2
-      ? SECURE_CONFIG_ID
-      : SECURE_16384_CONFIG_ID;
+  const paramSet = PRESET_PARAM_SETS[preset];
   return {
     preset,
     committee,
     paramSet,
-    paramSetHash,
-    configId,
+    ...PRESET_HASHES[preset],
     ...params,
   };
 }
 
 // Generated from scripts/circuits/build-pairs.json and canonical committee values.
 export const INSECURE_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
-  "insecure",
+  "insecure-64",
   "minimum",
   { committeeSize: 0, h: 2, t: 1, n: 3 },
 );
 
 export const INSECURE_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
-  "insecure",
+  "insecure-64",
   "micro",
   { committeeSize: 1, h: 5, t: 4, n: 9 },
 );
 
 export const INSECURE_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
-  "insecure",
+  "insecure-64",
   "small",
   { committeeSize: 2, h: 14, t: 9, n: 19 },
 );
@@ -221,21 +285,18 @@ export const INSECURE_LBFV_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "insecure",
   "minimum",
   { committeeSize: 0, h: 2, t: 1, n: 3 },
-  true,
 );
 
 export const INSECURE_LBFV_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "insecure",
   "micro",
   { committeeSize: 1, h: 5, t: 4, n: 9 },
-  true,
 );
 
 export const INSECURE_LBFV_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "insecure",
   "small",
   { committeeSize: 2, h: 14, t: 9, n: 19 },
-  true,
 );
 
 export const SECURE_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
@@ -274,6 +335,18 @@ export const SECURE_16384_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   { committeeSize: 2, h: 14, t: 9, n: 19 },
 );
 
+export const INSECURE_SIMD_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "insecure-simd",
+  "minimum",
+  { committeeSize: 0, h: 2, t: 1, n: 3 },
+);
+
+export const INSECURE_SIMD_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "insecure-simd",
+  "micro",
+  { committeeSize: 1, h: 5, t: 4, n: 9 },
+);
+
 export const PRODUCTION_BFV_CONFIG: ActiveBfvConfig = SECURE_SMALL_BFV_CONFIG;
 
 export const TESTNET_BFV_CONFIG: ActiveBfvConfig = INSECURE_MINIMUM_BFV_CONFIG;
@@ -297,6 +370,8 @@ export const TESTNET_BFV_CONFIGS: readonly ActiveBfvConfig[] = [
   SECURE_16384_MINIMUM_BFV_CONFIG,
   SECURE_16384_MICRO_BFV_CONFIG,
   SECURE_16384_SMALL_BFV_CONFIG,
+  INSECURE_SIMD_MINIMUM_BFV_CONFIG,
+  INSECURE_SIMD_MICRO_BFV_CONFIG,
 ] as const;
 
 /** The pair of the generated `ACTIVE_BFV_*` constants, which `ActiveCryptoConfig.sol` matches. */
@@ -306,6 +381,17 @@ export const ACTIVE_BFV_CONFIG = TESTNET_BFV_CONFIGS.find(
     config.committeeSize === ACTIVE_BFV_COMMITTEE_SIZE,
 )!;
 
+/**
+ * Directory of the Honk verifiers of a preset/committee pair. The canonical verifiers at the
+ * directory root belong to the insecure-64/minimum pair; every other pair has its own directory.
+ */
+export function bfvHonkDirectory(config: ActiveBfvConfig): string {
+  const root = "contracts/verifiers/bfv/honk";
+  return config.preset === "insecure-64" && config.committee === "minimum"
+    ? root
+    : `${root}/${config.preset}/${config.committee}`;
+}
+
 /** Source namespace shared by protocol deployment and local Ignition modules. */
 export function bfvHonkSource(
   config: ActiveBfvConfig,
@@ -314,11 +400,7 @@ export function bfvHonkSource(
     | "DecryptionAggregatorVerifier"
     | "DkgAggregatorV2Verifier",
 ): string {
-  const pair =
-    config.preset === "insecure" && config.committee === "minimum"
-      ? ""
-      : `${config.preset}/${config.committee}/`;
-  return `contracts/verifiers/bfv/honk/${pair}${contractName}.sol`;
+  return `${bfvHonkDirectory(config)}/${contractName}.sol`;
 }
 
 /**
@@ -428,9 +510,15 @@ export function bfvPkV2PublicInputLayout(
   };
 }
 
-/** `decryption_aggregator` EVM public-input count for BFV threshold `t`. */
-export function bfvDecExpectedPublicInputsLen(threshold: number): number {
-  return 61 + 3 * threshold;
+/**
+ * `decryption_aggregator` EVM public-input count for BFV threshold `t`: 11 fixed inputs, 3 per
+ * threshold slot and the decrypted-output cap (`bfvMessageCoeffsCount`).
+ */
+export function bfvDecExpectedPublicInputsLen(
+  threshold: number,
+  messageCoeffsCount: number,
+): number {
+  return 11 + 3 * threshold + messageCoeffsCount;
 }
 
 /** `publicInputs` indices for decryption-aggregator committee hash limbs. */
@@ -519,7 +607,12 @@ function localRecursiveVkHashPath(
   );
 }
 
-/** Recursive VK hashes for `BfvPkVerifier` sub-circuits. */
+/** Complete VK-tree anchor emitted next to a fold circuit (`*.vk_tree_hash`). */
+function localVkTreeHashPath(group: string, circuit: string): string {
+  return localCircuitArtifactPath(group, circuit, `${circuit}.vk_tree_hash`);
+}
+
+/** Complete nodes-fold VK-tree anchor and C5 recursive VK hash. */
 export function getBfvPkSubCircuitVkHashPaths(config?: ActiveBfvConfig) {
   const releaseRoot = releaseCircuitRoot(config);
   if (releaseRoot) {
@@ -544,7 +637,7 @@ export function getBfvPkSubCircuitVkHashPaths(config?: ActiveBfvConfig) {
   }
 
   return {
-    nodesFold: localRecursiveVkHashPath("recursive_aggregation", "nodes_fold"),
+    nodesFold: localVkTreeHashPath("recursive_aggregation", "nodes_fold"),
     c5: localRecursiveVkHashPath("threshold", "pk_aggregation"),
     skC2Chunk: localRecursiveVkHashPath(
       "dkg",
@@ -709,7 +802,7 @@ export function getBfvV2VkBindingHashPaths(config?: ActiveBfvConfig) {
   ] as const;
 }
 
-/** Recursive VK hashes for `BfvDecryptionVerifier` sub-circuits. */
+/** Complete C6-fold VK-tree anchor and C7 recursive VK hash. */
 export function getBfvDecryptionSubCircuitVkHashPaths(
   config?: ActiveBfvConfig,
 ) {
@@ -717,15 +810,15 @@ export function getBfvDecryptionSubCircuitVkHashPaths(
   const c7Circuit = isLbfvParamSet(config?.paramSet ?? localBfvParamSet())
     ? "decrypted_shares_aggregation_wide"
     : "decrypted_shares_aggregation";
-  const root = releaseCircuitRoot(config);
-  if (root) {
+  const releaseRoot = releaseCircuitRoot(config);
+  if (releaseRoot) {
     return {
       c6Fold: path.join(
         releaseRoot,
         "default/recursive_aggregation/c6_fold/c6_fold.vk_tree_hash",
       ),
       c7: path.join(
-        root,
+        releaseRoot,
         `default/threshold/${c7Circuit}/${c7Circuit}.vk_hash`,
       ),
     } as const;
@@ -885,7 +978,7 @@ export async function assertBfvPkVerifierV2VkHashes(
 }
 
 /**
- * Ensures deployed `BfvDecryptionVerifier` immutables match current `*.vk_recursive_hash` artifacts.
+ * Check the deployed C6 tree and C7 pins against the selected artifact pair.
  */
 export async function assertBfvDecryptionVerifierSubCircuitVkHashes(
   verifier: BfvDecryptionVerifierVkReader,

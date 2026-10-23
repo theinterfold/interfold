@@ -7,5 +7,7 @@
 pub mod default;
 pub mod committee;
 pub mod insecure;
+pub mod insecure_64;
+pub mod insecure_simd;
 pub mod secure_8192;
 pub mod secure_16384;

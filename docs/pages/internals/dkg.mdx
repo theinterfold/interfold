@@ -100,9 +100,9 @@ proof. Its numeric value is the `proofType` that slashing evidence uses. The `Ci
 | C6  | `C6ThresholdShareDecryption` (9)    | `ThresholdShareDecryption`   | `threshold/share_decryption`             | P4    | A partial decryption uses the C4 secret key and smudging noise shares.         |
 | C7  | `C7DecryptedSharesAggregation` (10) | `DecryptedSharesAggregation` | `threshold/decrypted_shares_aggregation` | P4    | Lagrange interpolation, CRT reconstruction, and decoding give the plaintext.   |
 
-P3 uses the user-data encryption packages. For a trBFV key (`secure-8192`), one package,
+P3 uses the user-data encryption packages. For a trBFV key (`insecure-64`, `secure-8192`), one package,
 `threshold/user_data_encryption`, proves both ciphertext legs. For an l-BFV key (`insecure`,
-`secure-16384`), the chunked packages prove each leg, and the wrapper
+`insecure-simd`, `secure-16384`), the chunked packages prove each leg, and the wrapper
 `threshold/user_data_encryption_chunked` verifies both legs. These packages have no `ProofType`
 because data providers, not ciphernodes, make these proofs.
 
@@ -125,8 +125,9 @@ proofs.
 
 ### Proof count per E3
 
-L is the number of threshold CRT moduli: 3 for `insecure-64` and for `secure-8192`. The current
-TrBFV code makes one smudging noise share set, so the smudging multiplicity Z is 1.
+L is the number of threshold CRT moduli: 3 for `insecure-64`, `insecure`, `insecure-simd`, and `secure-8192`, and 5 for
+`secure-16384`. The current TrBFV code makes one smudging noise share set, so the smudging
+multiplicity Z is 1.
 
 | Circuit | Count for one node                               | Count for the committee               |
 | ------- | ------------------------------------------------ | ------------------------------------- |
@@ -150,10 +151,10 @@ share under its own C0 key to fill the slot. The dealer does not deliver that pl
 
 The protocol uses two different BFV key pairs. They use different parameter sets.
 
-| Key            | Preset (`BfvPreset`)                           | Purpose                                                        | Lifetime |
-| -------------- | ---------------------------------------------- | -------------------------------------------------------------- | -------- |
-| Individual key | `InsecureDkg64` or `SecureDkg8192`             | Encrypts the Shamir shares sent to one node. C0 commits to it. | One DKG  |
-| Threshold key  | `InsecureThreshold64` or `SecureThreshold8192` | Data providers encrypt to it. C1 proves each contribution.     | One E3   |
+| Key            | Preset (`BfvPreset`)                                                | Purpose                                                        | Lifetime |
+| -------------- | ------------------------------------------------------------------- | -------------------------------------------------------------- | -------- |
+| Individual key | `InsecureDkg64`, `InsecureDkgLbfv`, `SecureDkg8192`, and others     | Encrypts the Shamir shares sent to one node. C0 commits to it. | One DKG  |
+| Threshold key  | `InsecureThreshold64`, `InsecureThresholdLbfv`, `SecureThreshold8192`, and others | Data providers encrypt to it. C1 proves each contribution (trBFV only). | One E3   |
 
 The threshold key uses a common random polynomial (CRP) $a$. Every node derives the same CRP from
 the default seed with `create_deterministic_crp_from_default_seed`. The node encrypts its individual
@@ -217,8 +218,11 @@ cutoff is then 36 minutes after the ticket deadline, and the soft checkpoint is 
 
 The node makes its individual BFV key pair and publishes `EncryptionKeyPending`. `ProofRequestActor`
 requests `ZkRequest::PkBfv`. C0 takes the individual public key polynomials $pk_0$ and $pk_1$ over
-the DKG moduli and outputs `pk_commitment`. C0 does not prove correct key generation. It binds the
-key so that C3 can prove which key encrypted each share.
+the DKG moduli. C0 range-checks every coefficient to its centered residue modulo $q_i$ and outputs
+`pk_commitment`. C0 does not prove correct key generation. It binds the key so that C3 can prove
+which key encrypted each share. Because C0 bounds the key once, C3 opens the commitment with
+checked packing and does not range-check the key again. A malformed key fails its owner's C0, not
+the C3 of every dealer.
 
 The node publishes `EncryptionKeyCreated` with the signed C0 proof. Receivers verify it in
 `ProofVerificationActor` before they store the key. Before reserving a verification slot, the
@@ -421,6 +425,16 @@ key, the chunked `ct0` and `ct1` proofs share a `u` root, and the wrapper
 `(pk_commitment, ct_commitment, k1_commitment)`. An E3 program binds the input proof to the key. For
 example, CRISP passes the on-chain `committeePublicKey` commitment as a public input.
 
+Each l-BFV ciphertext leg uses four proofs. The leaf (`*_chunk_main`) range-checks every private
+coefficient, commits each polynomial with bounded packing, and derives the Fiat-Shamir challenge
+from those commitments. The ciphertext circuit (`*_pk_ct_commit`) range-checks the ciphertext limbs
+to their centered residues, commits them, and evaluates them at that challenge. The identity circuit
+(`*_eval_chunk_identity`) opens the public key and $u$ against the leaf commitments and checks the
+identity reduced modulo $X^N + 1$. Because the identity is reduced, the witness has no cyclotomic
+quotient. The top-level circuit verifies the identity and ciphertext proofs and commits every child
+VK to the leg manifest. The ct0 top-level circuit also rebuilds the $k_1$ root from the complete
+$k_1$ polynomial and outputs its commitment.
+
 The compute provider runs the E3 program over the ciphertexts. `publishCiphertextOutput` then stores
 the output hash and its SAFE ciphertext commitment on-chain.
 
@@ -439,7 +453,8 @@ The smudging noise $e_{sm}$ hides the secret key share. C6 first checks that $sk
 the C4 commitments. It binds the witness ciphertext to `ct_commitment` and checks the relation at a
 Fiat-Shamir challenge point. Its public inputs are `expected_sk_commitment`,
 `expected_e_sm_commitment`, `ct_commitment`, `domain_hi`, and `domain_lo`. Its output is
-`d_commitment`, a commitment to the first 50 coefficients of $d$ for each modulus.
+`d_commitment`, a commitment to the first $M$ coefficients of $d$ for each modulus. $M$ is 50, or
+128 for the SIMD preset.
 
 The decryption domain binds each C6 proof to one E3:
 
@@ -704,7 +719,8 @@ strictly increasing, and at most N. The wrapper then checks:
 - Every public input is a canonical BN254 field element, and each plaintext coefficient fits in 64
   bits.
 - The VK hashes, the committee hash limbs, the domain limbs, and the stored ciphertext commitment.
-- `keccak256` of the 50 coefficients, each as 8 little-endian bytes, equals the plaintext hash.
+- `keccak256` of the $M$ coefficients (50, or 128 for the SIMD preset), each as 8 little-endian
+  bytes, equals the plaintext hash.
 - For each party, `party_id - 1` is in the DKG anchors, and the proof commitments equal the stored
   `dkgSkAggCommits` and `dkgEsmAggCommits`.
 
@@ -713,7 +729,7 @@ strictly increasing, and at most N. The wrapper then checks:
 The Honk verifiers `DkgAggregatorVerifier.sol` and `DecryptionAggregatorVerifier.sol` are generated
 from the recursive VKs of `dkg_aggregator` and `decryption_aggregator` with
 `bb write_solidity_verifier`. The files in
-`packages/interfold-contracts/contracts/verifiers/bfv/honk/` are the `insecure` and `minimum` pair.
+`packages/interfold-contracts/contracts/verifiers/bfv/honk/` are the `insecure-64` and `minimum` pair.
 The other pairs are in `honk/<preset>/<committee>/`. `secure-16384` supports the `minimum`, `micro`,
 and `small` committees. A deployment must use the pair that matches its preset and committee. A
 production deployment on a non-canonical preset must regenerate the verifiers locally for that
@@ -725,14 +741,7 @@ Both modes refuse to run unless `dist/circuits/<preset>/<committee>/.build-stamp
 `circuits/bin/.active-preset.json` names the same pair. The toolchain versions are pinned in
 `crates/zk/prover/versions.json`.
 
-**Preset is pinned.** The committed `.sol` files correspond to exactly one BFV preset:
-**`insecure`** (the dev / CI / benchmark default). The recursive VKs are preset-dependent —
-different BFV parameter sets compile to different VKs and therefore different `.sol` bytes — so "the
-committed verifier" is only well-defined for one preset. `pnpm generate:verifiers` refuses to run
-(in both `--check` and `--write` modes) unless `dist/circuits/insecure/.build-stamp.json` exists
-and reports that preset. If `pnpm build:circuits --preset secure-8192` was the last build, the
-generator surfaces this loudly with a fix recipe instead of silently producing wrong VK bytes.
-Production deploys on a non-canonical preset must regenerate locally for that deploy.
+### Verifier rotation
 
 Each E3 freezes its registry and its `DkgFoldAttestationVerifier` at request time and announces both
 in `DkgFoldAttestationContextEstablished`. A node restores this context after a restart. A verifier
@@ -743,11 +752,12 @@ works only when no verifier is set. A new verifier applies only to later E3 requ
 
 ### Test-only aggregation bypass
 
-The version pinning lives in `crates/zk-prover/versions.json` (consumed by `interfold noir setup`
-and by the integration test prebuild). If `--check` fails after a clean
-`pnpm build:circuits --preset insecure`, your local toolchain is out of sync with that pin. See
-[`scripts/README.md`](https://github.com/theinterfold/interfold/blob/main/scripts/README.md#verifier-generator)
-for the full contract.
+A binary built with the Cargo feature `test-only-skip-proof-aggregation` accepts the node setting
+`skip_proof_aggregation`. The node wraps C5 and C7 proof bytes in payloads for mock verifiers. The
+DKG placeholder carries the final roster, committee hash, and key commitment fields. The decryption
+placeholder carries the verified C6 domain. These fields let confirmed ingestion and the plaintext
+writer keep their admission checks. A production binary rejects this setting at startup, and
+production verifiers reject the placeholder bytes. The contracts still call their verifiers.
 
 ## Proof lifecycle
 
@@ -860,17 +870,19 @@ the party at fault.
 
 ## BFV parameter presets
 
-`crates/fhe-params/src/constants.rs` defines the presets. Version-7 E3 requests use `paramSet` 0 for
-`insecure-64` and 2 for `secure-8192`. Index 1 remains in the registry for older E3s.
+`crates/fhe-params/src/constants.rs` defines the presets. E3 requests use `paramSet` 0 for
+`insecure-64`, 2 for `secure-8192`, 3 for `secure-16384`, 4 for `insecure`, and 5 for
+`insecure-simd`. Index 1 is retired. It remains in the registry for older E3s.
 
-| Parameter                                | `insecure-64`                    | `secure-8192` |
-| ---------------------------------------- | -------------------------------- | ------------- |
-| Ring degree $d$                          | 64                               | 8192          |
-| Threshold CRT moduli L                   | 3                                | 3             |
-| DKG CRT moduli                           | 2                                | 2             |
-| Threshold plaintext modulus $t$          | 17000000                         | 17000000      |
-| Statistical security parameter $\lambda$ | 2                                | 45            |
-| Use                                      | Local development and tests only | Production    |
+| Parameter                                | `insecure-64`                    | `insecure`                       | `insecure-simd`                  | `secure-8192` | `secure-16384` |
+| ---------------------------------------- | -------------------------------- | -------------------------------- | -------------------------------- | ------------- | -------------- |
+| Protocol path                            | trBFV                            | l-BFV                            | l-BFV                            | trBFV         | l-BFV          |
+| Ring degree $d$                          | 64                               | 128                              | 128                              | 8192          | 16384          |
+| Threshold CRT moduli L                   | 3                                | 3                                | 3                                | 3             | 5              |
+| DKG CRT moduli                           | 2                                | 2                                | 2                                | 2             | 2              |
+| Threshold plaintext modulus $t$          | 17000000                         | 100                              | 257                              | 17000000      | 1000           |
+| Statistical security parameter $\lambda$ | 2                                | 2                                | 2                                | 45            | 31             |
+| Use                                      | Local development and tests only | Local development and tests only | Local development and tests only | Production    | l-BFV, not on mainnet |
 
 Circuit artifacts are compiled separately for each preset and committee. The prover and the verifier
 must use the same pair.

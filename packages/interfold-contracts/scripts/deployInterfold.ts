@@ -29,14 +29,13 @@ import { deployAndSavePoseidonT3 } from "./deployAndSave/poseidonT3";
 import { deployAndSaveSlashingManager } from "./deployAndSave/slashingManager";
 import { deployAndSaveAllVerifiers } from "./deployAndSave/verifiers";
 import { deployMocks } from "./deployMocks";
-import { BFV_PARAMS } from "./protocol/constants";
+import { bfvParamsForParamSet } from "./protocol/constants";
 import { currentNodeRelease } from "./protocol/nodeRelease";
 import { encodeBfvParams } from "./protocol/values";
 import {
   ACTIVE_BFV_COMMITTEE_N,
   ACTIVE_BFV_COMMITTEE_SIZE,
   BFV_DKG_H,
-  INSECURE_LBFV_PARAM_SET,
   committeeThresholdsForChain,
   isLbfvParamSet,
   isLocalDeploymentChain,
@@ -89,10 +88,6 @@ export const deployInterfold = async (
   if (!latestBlock) {
     throw new Error("Could not read latest block for local TGE timestamp");
   }
-
-  const encodedInsecure = encodeBfvParams(BFV_PARAMS.insecure);
-  const encodedSecure = encodeBfvParams(BFV_PARAMS.secure8192);
-  const encodedSecure16384 = encodeBfvParams(BFV_PARAMS.secure16384);
 
   const THIRTY_DAYS_IN_SECONDS = 60 * 60 * 24 * 30;
   const SEVEN_DAYS_IN_SECONDS = 60 * 60 * 24 * 7;
@@ -579,13 +574,7 @@ export const deployInterfold = async (
   // Register BFV param sets
   console.log("Registering BFV param sets...");
   const activeParamSet = localBfvParamSet();
-  // Parameter sets 0 and 4 share the insecure parameters; 4 runs the l-BFV path.
-  const activeParams =
-    activeParamSet === 0 || activeParamSet === INSECURE_LBFV_PARAM_SET
-      ? encodedInsecure
-      : activeParamSet === 1
-        ? encodedSecure
-        : encodedSecure16384;
+  const activeParams = encodeBfvParams(bfvParamsForParamSet(activeParamSet));
   await send(
     interfold.setParamSet(activeParamSet, activeParams),
     "interfold.setParamSet",
@@ -772,7 +761,9 @@ export const deployInterfold = async (
     } else {
       const { bfvPkVerifier } = await deployAndSaveBfvPkVerifier(hre);
       bfvPkVerifierAddress = await bfvPkVerifier.getAddress();
+      deployedBfvPkVerifier = bfvPkVerifier;
     }
+    expectedPkVerifier = bfvPkVerifierAddress;
     const deployedPkVerifier = await interfold.pkVerifiers(encryptionSchemeId);
     if (deployedPkVerifier !== bfvPkVerifierAddress) {
       await send(

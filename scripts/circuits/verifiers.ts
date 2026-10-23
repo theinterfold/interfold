@@ -68,7 +68,7 @@ const LICENSE_HEADER = `// SPDX-License-Identifier: LGPL-3.0-only
  * The on-chain `DkgAggregatorVerifier.sol` / `DecryptionAggregatorVerifier.sol` bake in the
  * recursive VKs of `dkg_aggregator` / `decryption_aggregator`, which are
  * **preset-dependent**: different BFV parameter sets compile to different VKs and therefore
- * different `.sol` bytes. The root directory is pinned to `insecure/minimum` because that is
+ * different `.sol` bytes. The root directory is pinned to `insecure-64/minimum` because that is
  * the development/CI/benchmark default.
  *
  * Both `--check` and `--write` refuse to run unless the pair's build stamp matches the requested
@@ -81,7 +81,7 @@ const LICENSE_HEADER = `// SPDX-License-Identifier: LGPL-3.0-only
  * run the generator when its circuits change. Non-canonical outputs land under
  * `honk/<preset>/<committee>/`, not over the canonical files.
  */
-const CANONICAL_PRESET = 'insecure'
+const CANONICAL_PRESET = 'insecure-64'
 
 /**
  * Canonical committee for the committed Honk Solidity verifiers under
@@ -99,7 +99,9 @@ function onChainVerifierCircuits(preset: CircuitPreset, committee: CircuitCommit
   if (!isPresetCommitteeSupported(preset, committee)) {
     throw new Error(`Unsupported preset/committee pair (${preset}, ${committee})`)
   }
-  return preset === CIRCUIT_PRESETS.INSECURE || preset === CIRCUIT_PRESETS.SECURE_16384
+  return preset === CIRCUIT_PRESETS.INSECURE ||
+    preset === CIRCUIT_PRESETS.INSECURE_SIMD ||
+    preset === CIRCUIT_PRESETS.SECURE_16384
     ? [...BASE_ON_CHAIN_VERIFIER_CIRCUITS, 'dkg_aggregator_v2']
     : [...BASE_ON_CHAIN_VERIFIER_CIRCUITS]
 }
@@ -396,7 +398,7 @@ class VerifierGenerator {
             `     - A circuit / VK changed without regenerating the committed Solidity files.\n` +
             `\n   To fix:\n` +
             `     1. Verify your Noir/bb versions match (see crates/zk/prover/versions.json).\n` +
-            `     2. Run 'pnpm build:circuits --preset insecure' (or the relevant preset).\n` +
+            `     2. Run 'pnpm build:circuits --preset insecure-64' (or the relevant preset).\n` +
             `     3. Run 'pnpm generate:verifiers --write' (or omit --check) to refresh the\n` +
             `        committed .sol files, then commit the diff.\n`,
         )
@@ -773,8 +775,8 @@ class VerifierGenerator {
 
   /**
    * Ensure `circuits/bin/` was last populated by `build:circuits` for the same preset.
-   * Without this, a secure benchmark could leave secure VKs in bin while `--check` diffs
-   * against committed insecure `.sol` files.
+   * Without this, a build for one preset could leave its VKs in bin while `--check` diffs
+   * against committed verifier files for another preset.
    */
   private assertCircuitsBinActivePreset(preset: string): void {
     const committee = this.targetCommittee()
@@ -873,7 +875,7 @@ async function main() {
     } else if (arg === '--preset') {
       const value = args[++i]
       if (!value || value.startsWith('--')) {
-        console.error('Error: --preset requires a value (insecure | secure-8192 | secure-16384)')
+        console.error('Error: --preset requires a value (insecure-64 | insecure | insecure-simd | secure-8192 | secure-16384)')
         process.exit(1)
       }
       if (!ALL_PRESETS.includes(value as (typeof ALL_PRESETS)[number])) {
@@ -943,7 +945,7 @@ async function main() {
     prepareAllSupportedOutput(rootDir, options)
     const pairs = SUPPORTED_PRESET_COMMITTEE_PAIRS.filter(
       ({ preset, committee }) => preset !== CANONICAL_PRESET || committee !== CANONICAL_COMMITTEE,
-    ).concat([{ preset: CIRCUIT_PRESETS.INSECURE, committee: CANONICAL_COMMITTEE }])
+    ).concat([{ preset: CIRCUIT_PRESETS.INSECURE_64, committee: CANONICAL_COMMITTEE }])
     for (const { preset, committee } of pairs) {
       const generator = new VerifierGenerator(rootDir, {
         ...options,
@@ -995,7 +997,7 @@ Options:
                          exact generated-contract inventory. Reads artifacts directly from dist.
   --on-chain             Generate the on-chain verifier circuits for one supported pair.
   --prune-unsupported    Remove generated directories for unsupported pairs, then exit.
-  --preset <name>        BFV preset for circuits/bin (insecure | secure-8192 | secure-16384).
+  --preset <name>        BFV preset for circuits/bin (insecure-64 | insecure | insecure-simd | secure-8192 | secure-16384).
                          Selecting a preset processes one pair. Check mode compares the committed
                          verifier for that pair.
   --committee <name>     Committee size (minimum | micro | small). In one-pair mode, an omitted

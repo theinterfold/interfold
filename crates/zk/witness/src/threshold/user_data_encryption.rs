@@ -6,7 +6,7 @@
 
 //! Circuit input data, witness preparation, and canonical Noir encoding.
 
-use crate::encoding::fhe_poly_to_crt_centered;
+use crate::encoding::{fhe_poly_to_crt_centered, plaintext_poly_u64};
 use crate::negacyclic::negacyclic_mul_exact;
 use crate::EncryptionIntermediates;
 use crate::WitnessError;
@@ -19,11 +19,9 @@ use e3_zk_config::field::get_zkp_modulus;
 use e3_zk_config::threshold::user_data_encryption::Configs;
 use fhe::bfv::BfvParameters;
 use fhe::bfv::Ciphertext;
-use fhe::bfv::Encoding;
 use fhe::bfv::Plaintext;
 use fhe::bfv::PublicKey;
 use fhe_math::zq::Modulus;
-use fhe_traits::FheDecoder;
 use itertools::izip;
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -111,7 +109,7 @@ impl Inputs {
         e0_mod_q.center(&modulus_q);
 
         // Reconstruct k1 from plaintext polynomial.
-        let mut k1_u64 = Vec::<u64>::try_decode(&pt, Encoding::poly())?; // m
+        let mut k1_u64 = plaintext_poly_u64(&pt, threshold_params)?; // m
 
         Modulus::new(t)
             .map_err(|e| WitnessError::Fhe(fhe::Error::from(e)))?

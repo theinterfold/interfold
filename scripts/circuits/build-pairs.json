@@ -1,4 +1,7 @@
 [
+  ["insecure-64", "minimum"],
+  ["insecure-64", "micro"],
+  ["insecure-64", "small"],
   ["insecure", "minimum"],
   ["insecure", "micro"],
   ["insecure", "small"],
@@ -7,5 +10,7 @@
   ["secure-8192", "small"],
   ["secure-16384", "minimum"],
   ["secure-16384", "micro"],
-  ["secure-16384", "small"]
+  ["secure-16384", "small"],
+  ["insecure-simd", "minimum"],
+  ["insecure-simd", "micro"]
 ]

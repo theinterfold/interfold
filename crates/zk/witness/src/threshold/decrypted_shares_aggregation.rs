@@ -84,7 +84,7 @@ impl Inputs {
             .count();
         if dropped_non_zero > 0 {
             return Err(WitnessError::Other(format!(
-                "message_vec has {} non-zero coefficient(s) at index >= MAX_MSG_NON_ZERO_COEFFS ({}); they would be silently dropped by truncation",
+                "message_vec has {} non-zero coefficient(s) at index >= the preset's max_msg_non_zero_coeffs ({}); they would be silently dropped by truncation",
                 dropped_non_zero, max_msg_non_zero_coeffs
             )));
         }

@@ -29,8 +29,12 @@ import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
  *        [6]                = ciphertext_commitment
  *        [7]                = aggregate recursive VK key hash
  *        [8 .. 8+3*(T+1))  = party_ids, expected_sk, expected_esm columns
- *        [last 50]          = plaintext message coefficients (50 u64 LE)
- *        Total: expectedPublicInputsLen = 7 + 1 + 3*(T+1) + 50.
+ *        [last M]           = plaintext message coefficients (M u64 LE)
+ *        Total: expectedPublicInputsLen = 7 + 1 + 3*(T+1) + M.
+ *
+ *      `M` is `messageCoeffsCount`, fixed per BFV preset at construction: it
+ *      is the `MAX_MSG_NON_ZERO_COEFFS` compiled into the DecryptionAggregator
+ *      circuit (50 for every preset except the SIMD preset, which uses 128).
  *
  *      The two VK-hash slots are checked against contract immutables set at
  *      construction; this anchors the recursive aggregation trust and
@@ -60,10 +64,7 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
     uint256 internal constant BN254_SCALAR_MODULUS =
         21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
-    /// @dev Message is always the last 50 public inputs (50 uint64 coeffs = 400 bytes plaintext).
-    uint256 internal constant MESSAGE_COEFFS_COUNT = 50;
-
-    /// @dev `decryption_aggregator` return tail: `1 + 3*(T+1) + MESSAGE_COEFFS_COUNT` fields.
+    /// @dev `decryption_aggregator` return tail: `1 + 3*(T+1) + messageCoeffsCount` fields.
     uint256 internal constant DEC_RETURN_PREFIX_LEN = 1;
 
     /// @dev `decryption_aggregator` return columns after the leading key hash
@@ -84,7 +85,12 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
     /// @notice BFV threshold `T`; must match the compiled DecryptionAggregator circuit.
     uint256 public immutable override threshold;
 
-    /// @dev `7 + DEC_RETURN_PREFIX_LEN + DEC_RETURN_COLUMN_COUNT*(T+1) + MESSAGE_COEFFS_COUNT`.
+    /// @notice Number of plaintext coefficients (uint64 LE) the proof publishes: the last
+    ///         `messageCoeffsCount` public inputs. The plaintext output is `messageCoeffsCount * 8` bytes.
+    ///         Must match the compiled circuit's `MAX_MSG_NON_ZERO_COEFFS`.
+    uint256 public immutable messageCoeffsCount;
+
+    /// @dev `7 + DEC_RETURN_PREFIX_LEN + DEC_RETURN_COLUMN_COUNT*(T+1) + messageCoeffsCount`.
     uint256 internal immutable expectedPublicInputsLen;
 
     /// @dev `publicInputs` start index of the `party_ids[T+1]` column.
@@ -121,9 +127,14 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
         address _ciphernodeRegistry,
         bytes32 _expectedC6FoldKeyHash,
         bytes32 _expectedC7KeyHash,
-        uint256 _threshold
+        uint256 _threshold,
+        uint256 _messageCoeffsCount
     ) {
         require(_threshold > 0, "BfvDecryptionVerifier: threshold=0");
+        require(
+            _messageCoeffsCount > 0,
+            "BfvDecryptionVerifier: messageCoeffsCount=0"
+        );
         if (_circuitVerifier.code.length == 0) {
             revert InvalidCircuitVerifier(_circuitVerifier);
         }
@@ -132,11 +143,12 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
             _expectedC7KeyHash == bytes32(0)
         ) revert InvalidVerificationKeyHash();
         threshold = _threshold;
+        messageCoeffsCount = _messageCoeffsCount;
         expectedPublicInputsLen =
             7 +
             DEC_RETURN_PREFIX_LEN +
             (DEC_RETURN_COLUMN_COUNT * (_threshold + 1)) +
-            MESSAGE_COEFFS_COUNT;
+            _messageCoeffsCount;
 
         partyIdColOffset = 7 + DEC_RETURN_PREFIX_LEN;
         skColOffset = partyIdColOffset + (_threshold + 1);
@@ -205,7 +217,7 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
             revert CiphertextCommitmentMismatch();
         }
 
-        // Plaintext hash check: 50-coefficient plaintext must hash to the claimed value.
+        // Plaintext hash check: the `messageCoeffsCount`-coefficient plaintext must hash to the claimed value.
         if (!_verifyPlaintextHash(publicInputs, plaintextOutputHash)) {
             revert PlaintextHashMismatch();
         }
@@ -224,7 +236,7 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
     function _validatePublicInputs(
         bytes32[] memory publicInputs
     ) internal view {
-        uint256 messageOffset = expectedPublicInputsLen - MESSAGE_COEFFS_COUNT;
+        uint256 messageOffset = expectedPublicInputsLen - messageCoeffsCount;
         for (uint256 i = 0; i < publicInputs.length; ++i) {
             uint256 value = uint256(publicInputs[i]);
             if (value >= BN254_SCALAR_MODULUS) {
@@ -240,9 +252,9 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
         bytes32[] memory publicInputs,
         bytes32 expected
     ) internal view returns (bool) {
-        uint256 offset = expectedPublicInputsLen - MESSAGE_COEFFS_COUNT;
-        bytes memory plaintext = new bytes(MESSAGE_COEFFS_COUNT * 8);
-        for (uint256 i = 0; i < MESSAGE_COEFFS_COUNT; i++) {
+        uint256 offset = expectedPublicInputsLen - messageCoeffsCount;
+        bytes memory plaintext = new bytes(messageCoeffsCount * 8);
+        for (uint256 i = 0; i < messageCoeffsCount; i++) {
             uint64 coeff = uint64(uint256(publicInputs[offset + i]));
             for (uint256 j = 0; j < 8; j++) {
                 plaintext[i * 8 + j] = bytes1(uint8(coeff >> (j * 8)));

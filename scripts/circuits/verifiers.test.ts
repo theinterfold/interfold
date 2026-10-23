@@ -27,11 +27,11 @@ test('secure-16384 micro has the l-BFV verifier route', () => {
 
 test('retains the exact l-BFV and trBFV on-chain verifier matrix', () => {
   const paths = expectedVerifierRelativePaths()
-  assert.equal(paths.length, 24)
-  assert.equal(paths.filter((path) => path.endsWith('DkgAggregatorV2Verifier.sol')).length, 6)
+  assert.equal(paths.length, 36)
+  assert.equal(paths.filter((path) => path.endsWith('DkgAggregatorV2Verifier.sol')).length, 8)
   assert.ok(paths.some((path) => path.startsWith('secure-16384/small/')))
   assert.ok(paths.some((path) => path.startsWith('secure-16384/micro/')))
-  for (const preset of [CIRCUIT_PRESETS.INSECURE, CIRCUIT_PRESETS.SECURE_16384]) {
+  for (const preset of [CIRCUIT_PRESETS.INSECURE, CIRCUIT_PRESETS.INSECURE_SIMD, CIRCUIT_PRESETS.SECURE_16384]) {
     assert.deepEqual(onChainVerifierCircuits(preset, CIRCUIT_COMMITTEES.MINIMUM), [
       'dkg_aggregator',
       'decryption_aggregator',
@@ -132,8 +132,11 @@ else process.exit(1)
     0o755,
   )
   process.env.PATH = `${root}/bin:${resolve(__dirname, '../../node_modules/.bin')}:${oldPath}`
-  write('circuits/bin/.active-preset.json', '{"preset":"insecure","committee":"minimum"}')
-  write('dist/circuits/insecure/minimum/.build-stamp.json', '{"preset":"insecure","committee":"minimum","sourceHash":"fixture-source"}')
+  write('circuits/bin/.active-preset.json', '{"preset":"insecure-64","committee":"minimum"}')
+  write(
+    'dist/circuits/insecure-64/minimum/.build-stamp.json',
+    '{"preset":"insecure-64","committee":"minimum","sourceHash":"fixture-source"}',
+  )
   write('circuits/bin/recursive_aggregation/dkg_aggregator/Nargo.toml', '[package]\nname = "dkg_aggregator"\n')
   write('circuits/bin/recursive_aggregation/dkg_aggregator/target/dkg_aggregator.json', '{}')
   write('circuits/bin/recursive_aggregation/dkg_aggregator/target/dkg_aggregator.vk', 'synthetic fixture, not a key')

@@ -20,7 +20,6 @@ use e3_events::{
 use e3_fhe_params::{crypto_config_id, encode_bfv_params, BfvParamSet, BfvPreset};
 use e3_trbfv::helpers::calculate_error_size;
 use e3_utils::ArcBytes;
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use tracing::{info, trace, warn};
 
 struct E3RequestedWithChainId(pub IInterfold::E3Requested, pub u64);
@@ -549,15 +548,19 @@ mod tests {
         let expected = [
             (
                 0,
-                "0x7317c190ccb1dccfa505bf5b9b923e341905f6675c16f958e0a7d853795517a5",
-            ),
-            (
-                1,
-                "0xac5490c59e158cbb104642bba0ab7b3fd11ca49dd4bb05ce7bec8089ce3c8c31",
+                "0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9",
             ),
             (
                 2,
-                "0xde3c303973a0bf2b841cd0e7266ae68a7e48f8b271ffd629b245485e52dc8cd8",
+                "0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa",
+            ),
+            (
+                3,
+                "0x9b9181e0304e51388d6edd6eb4d5ae9a8593cbdbf28838734d829d09d0701d86",
+            ),
+            (
+                5,
+                "0x843cc091bc39d046eded5e9f0aed8250848b46f7e36623433d31a1f5d7ef5e35",
             ),
         ];
 
@@ -617,7 +620,7 @@ mod tests {
     }
 
     #[test]
-    fn insecure_v2_config_id_differs_from_origin_v1() {
+    fn insecure_v5_config_id_differs_from_origin_v1() {
         let params = encode_bfv_params(
             &BfvParamSet::from(BfvPreset::from_on_chain_param_set(0).unwrap()).build_arc(),
         );
@@ -632,7 +635,7 @@ mod tests {
 
         assert_eq!(
             crypto_config_id(&params),
-            "0x7317c190ccb1dccfa505bf5b9b923e341905f6675c16f958e0a7d853795517a5"
+            "0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9"
                 .parse::<B256>()
                 .unwrap()
         );

@@ -338,7 +338,10 @@ impl ThresholdPlaintextAggregator {
                 self.bus.publish(
                     PlaintextAggregated {
                         e3_id: self.e3_id.clone(),
-                        decrypted_output: format_decrypted_plaintext(&state.decrypted),
+                        decrypted_output: format_decrypted_plaintext(
+                            &state.decrypted,
+                            self.params_preset,
+                        ),
                         decryption_aggregator_proofs: proofs,
                     },
                     causal_context,

@@ -32,7 +32,7 @@ pub struct Configs {
     pub q_mod_t_centered: BigInt,
     pub q_inverse_mod_t: u64,
     pub bits: Bits,
-    /// Must match MAX_MSG_NON_ZERO_COEFFS in the selected compiled C6/C7 artifacts.
+    /// Equals `BfvPreset::max_msg_non_zero_coeffs`; must match `MAX_MSG_NON_ZERO_COEFFS` in the selected compiled C6/C7 artifacts.
     pub max_msg_non_zero_coeffs: usize,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -80,9 +80,9 @@ impl Configs {
             q_mod_t_centered,
             q_inverse_mod_t,
             bits,
-            // The circuit's message width. Every application shares it, because the width is
-            // compiled into the circuit.
-            max_msg_non_zero_coeffs: crate::MAX_MSG_NON_ZERO_COEFFS,
+            // The circuit's message width. It is compiled into the circuit, so it is a property of
+            // the preset (`BfvPreset::max_msg_non_zero_coeffs`) that every application shares.
+            max_msg_non_zero_coeffs: preset.max_msg_non_zero_coeffs(),
         })
     }
 }
@@ -192,7 +192,7 @@ mod tests {
     use super::*;
     #[test]
     fn rounding_constants_use_the_full_level_zero_modulus() {
-        for preset in [BfvPreset::InsecureThreshold, BfvPreset::SecureThreshold8192] {
+        for preset in [BfvPreset::InsecureThreshold64, BfvPreset::SecureThreshold8192] {
             let configs = Configs::for_preset(preset, CiphernodesCommitteeSize::Minimum).unwrap();
             // Full CRT product is independent of the cached context used by the computation.
             let q: BigUint = configs

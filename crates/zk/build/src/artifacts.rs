@@ -465,7 +465,8 @@ pub fn refresh_anchors(root: &Path, pair: &Path, complete: bool) -> Result<()> {
         let decryption_only = pair
             .parent()
             .and_then(Path::file_name)
-            .is_some_and(|name| name == "secure-16384");
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| !super::policy::has_trbfv(name));
         let hashes = if decryption_only {
             vec![("c6_fold", vk_tree::decryption_hash(pair)?)]
         } else {
@@ -682,7 +683,7 @@ mod tests {
     fn request() -> Request {
         Request {
             operation: super::super::Operation::Build,
-            preset: super::super::PresetSelection::Single(BfvPreset::InsecureThreshold),
+            preset: super::super::PresetSelection::Single(BfvPreset::InsecureThreshold64),
             committee: super::super::CommitteeSelection::Single(
                 e3_committee::CiphernodesCommitteeSize::Minimum,
             ),
@@ -711,7 +712,7 @@ mod tests {
         fs::create_dir_all(root.join("scripts")).unwrap();
         fs::write(
             root.join("scripts/circuits/build-pairs.json"),
-            r#"[["insecure","minimum"],["secure-8192","minimum"]]"#,
+            r#"[["insecure-64","minimum"],["secure-8192","minimum"]]"#,
         )
         .unwrap();
         copy_tree(
@@ -725,7 +726,7 @@ mod tests {
         fs::copy(repo.join(utils), root.join(utils)).unwrap();
         let mut selection = configuration::prepare_selection(
             root,
-            e3_fhe_params::BfvPreset::InsecureThreshold,
+            e3_fhe_params::BfvPreset::InsecureThreshold64,
             e3_committee::CiphernodesCommitteeSize::Minimum,
             false,
         )
@@ -734,10 +735,10 @@ mod tests {
         selection.publish().unwrap();
         for relative in [
             "circuits/lib/src/configs/committee/active.nr",
-            "circuits/lib/src/configs/committee/minimum/parity_insecure.nr",
+            "circuits/lib/src/configs/committee/minimum/parity_insecure_64.nr",
             "circuits/lib/src/configs/committee/minimum/parity_secure_8192.nr",
-            "circuits/lib/src/configs/insecure/dkg.nr",
-            "circuits/lib/src/configs/insecure/threshold.nr",
+            "circuits/lib/src/configs/insecure_64/dkg.nr",
+            "circuits/lib/src/configs/insecure_64/threshold.nr",
         ] {
             let generated =
                 configuration::declarations(&fs::read_to_string(root.join(relative)).unwrap());
@@ -756,7 +757,7 @@ mod tests {
         let before = crate::tests::snapshot(root);
         let mut selection = configuration::prepare_selection(
             root,
-            BfvPreset::InsecureThreshold,
+            BfvPreset::InsecureThreshold64,
             e3_committee::CiphernodesCommitteeSize::Minimum,
             false,
         )
@@ -766,7 +767,7 @@ mod tests {
         assert_eq!(crate::tests::snapshot(root), before);
         crate::tests::write_pins(root);
 
-        let pair = root.join("dist/circuits/insecure/minimum");
+        let pair = root.join("dist/circuits/insecure-64/minimum");
         for (group, name) in [("dkg", "pk"), ("threshold", "pk_generation")] {
             let path = root.join("circuits/bin").join(group).join(name);
             fs::create_dir_all(path.join("src")).unwrap();
@@ -871,7 +872,7 @@ mod tests {
                 .unwrap();
         assert_eq!(manifest["files"].as_object().unwrap().len(), 35);
         let hash =
-            identity::source_hash(root, &request(), Some("insecure"), Some("minimum")).unwrap();
+            identity::source_hash(root, &request(), Some("insecure-64"), Some("minimum")).unwrap();
         let built_stamp = read_stamp(&pair.join(".build-stamp.json"))
             .unwrap()
             .unwrap();
@@ -894,7 +895,7 @@ mod tests {
         .unwrap();
         for marker in dist_markers(&pair)
             .into_iter()
-            .chain(required_bin_markers(root, "insecure"))
+            .chain(required_bin_markers(root, "insecure-64"))
         {
             if !marker.exists() {
                 fs::create_dir_all(marker.parent().unwrap()).unwrap();
@@ -902,15 +903,15 @@ mod tests {
             }
         }
         let hash =
-            identity::source_hash(root, &request(), Some("insecure"), Some("minimum")).unwrap();
+            identity::source_hash(root, &request(), Some("insecure-64"), Some("minimum")).unwrap();
         let mut stamp = Stamp {
-            preset: "insecure".into(),
+            preset: "insecure-64".into(),
             committee: "minimum".into(),
             source_hash: hash.clone(),
             built_at: "published-time".into(),
         };
         write_json(&pair.join(".build-stamp.json"), &stamp).unwrap();
-        active_stamp(root, "insecure", "minimum", &hash).unwrap();
+        active_stamp(root, "insecure-64", "minimum", &hash).unwrap();
         let mut reuse = request();
         reuse.skip_if_built = true;
         let before = crate::tests::snapshot(root);

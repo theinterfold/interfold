@@ -129,6 +129,14 @@ fn fr_to_bigint(f: Fr) -> num_bigint::BigInt {
     num_bigint::BigInt::from_bytes_le(num_bigint::Sign::Plus, &le)
 }
 
+/// Convert raw public signals bytes (32-byte big-endian chunks) to ark_bn254::Fr field elements.
+fn public_signals_to_fields(signals: &[u8]) -> Vec<Fr> {
+    signals
+        .chunks(32)
+        .map(Fr::from_be_bytes_mod_order)
+        .collect()
+}
+
 /// Verify `proof` with bb and fail the test if bb rejects it.
 fn assert_proof_verifies<C: Provable>(
     circuit: &C,
@@ -158,13 +166,13 @@ async fn setup_share_encryption_e_sm_test() -> Option<(
     &'static str,
 )> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold;
+    let preset = BfvPreset::InsecureThreshold64;
     let bb = find_bb().await?;
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
     let sd: e3_fhe_params::PresetSearchDefaults =
-        BfvPreset::InsecureThreshold.search_defaults().unwrap();
+        BfvPreset::InsecureThreshold64.search_defaults().unwrap();
 
     setup_compiled_circuit(&backend, "dkg", "share_encryption").await;
 
@@ -191,46 +199,6 @@ async fn setup_share_encryption_e_sm_test() -> Option<(
     ))
 }
 
-async fn setup_share_encryption_sk_test() -> Option<(
-    ZkBackend,
-    tempfile::TempDir,
-    ZkProver,
-    ShareEncryptionCircuit,
-    ShareEncryptionCircuitData,
-    BfvPreset,
-    &'static str,
-)> {
-    let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold;
-    let bb = find_bb().await?;
-    require_minimum_circuits()?;
-    let (backend, temp) = setup_test_prover(&bb).await;
-
-    let sd: e3_fhe_params::PresetSearchDefaults =
-        BfvPreset::InsecureThreshold.search_defaults().unwrap();
-
-    setup_compiled_circuit(&backend, "dkg", "share_encryption").await;
-
-    let sample = ShareEncryptionCircuitData::generate_sample(
-        preset,
-        committee,
-        DkgInputType::SecretKey,
-        sd.z,
-    )
-    .ok()?;
-    let prover = ZkProver::new(&backend);
-
-    Some((
-        backend,
-        temp,
-        prover,
-        ShareEncryptionCircuit,
-        sample,
-        preset,
-        "1",
-    ))
-}
-
 async fn setup_share_computation_sk_test() -> Option<(
     ZkBackend,
     tempfile::TempDir,
@@ -241,7 +209,7 @@ async fn setup_share_computation_sk_test() -> Option<(
     &'static str,
 )> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold;
+    let preset = BfvPreset::InsecureThreshold64;
     let bb = find_bb().await?;
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
@@ -282,7 +250,7 @@ async fn setup_share_computation_e_sm_test() -> Option<(
     &'static str,
 )> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold;
+    let preset = BfvPreset::InsecureThreshold64;
     let bb = find_bb().await?;
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
@@ -326,7 +294,7 @@ async fn setup_pk_generation_test() -> Option<(
     &'static str,
 )> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold;
+    let preset = BfvPreset::InsecureThreshold64;
     let bb = find_bb().await?;
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
@@ -362,7 +330,7 @@ async fn setup_share_decryption_test() -> Option<(
     &'static str,
 )> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold;
+    let preset = BfvPreset::InsecureThreshold64;
     let bb = find_bb().await?;
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
@@ -395,7 +363,7 @@ async fn setup_c4_c6_e2e_test() -> Option<(
     BfvPreset,
 )> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold;
+    let preset = BfvPreset::InsecureThreshold64;
     let bb = find_bb().await?;
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
@@ -432,7 +400,7 @@ async fn setup_pk_aggregation_test() -> Option<(
     &'static str,
 )> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold;
+    let preset = BfvPreset::InsecureThreshold64;
     let bb = find_bb().await?;
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
@@ -468,7 +436,7 @@ async fn setup_decrypted_shares_aggregation_test() -> Option<(
     &'static str,
 )> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold;
+    let preset = BfvPreset::InsecureThreshold64;
     let bb = find_bb().await?;
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
@@ -504,7 +472,7 @@ async fn setup_pk_test() -> Option<(
     BfvPreset,
     &'static str,
 )> {
-    let preset = BfvPreset::InsecureThreshold;
+    let preset = BfvPreset::InsecureThreshold64;
     let bb = find_bb().await?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
@@ -1066,13 +1034,26 @@ async fn test_c4_c6_sk_commitment_aligned_transcript_e2e() {
         e3_zk_witness::dkg::share_decryption::Inputs::compute(&dkg_config, &dkg_sample).unwrap();
     let agg_sk = aggregate_dkg_decrypted_shares_to_crt(&dkg_inputs.decrypted_shares);
 
-    let sk_poly = agg_sk
-        .to_fhe_polynomial(ctx, moduli)
-        .expect("agg_sk -> Poly");
-    let es_poly = c6_sample
-        .e
-        .to_fhe_polynomial(ctx, moduli)
-        .expect("e -> Poly");
+    // Rebuild the native FHE inputs for this cross-circuit transcript fixture.
+    let to_fhe = |crt: &CrtPolynomial| {
+        use fhe_math::rq::{traits::TryConvertFrom, Poly, PowerBasis};
+        use num_integer::Integer;
+        use num_traits::ToPrimitive;
+        let coefficients: Vec<u64> = crt
+            .limbs
+            .iter()
+            .zip(moduli)
+            .flat_map(|(limb, &qi)| {
+                let qi = num_bigint::BigInt::from(qi);
+                limb.coefficients()
+                    .iter()
+                    .map(move |c| c.mod_floor(&qi).to_u64().unwrap())
+            })
+            .collect();
+        Poly::<PowerBasis>::try_convert_from(coefficients, ctx, false).unwrap()
+    };
+    let sk_poly = to_fhe(&agg_sk).into_ntt();
+    let es_poly = to_fhe(&c6_sample.e);
 
     let share_manager =
         ShareManager::new(committee.n, committee.threshold, threshold_params.clone())
@@ -1223,5 +1204,3 @@ async fn test_decrypted_shares_aggregation_commitment_consistency() {
 
     prover.cleanup(e3_id).unwrap();
 }
-
-use e3_zk_config::MAX_MSG_NON_ZERO_COEFFS;

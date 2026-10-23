@@ -22,10 +22,20 @@ fn sampler_matches(preset: BfvPreset, params: &BfvParameters) -> bool {
     // explicitly selects its smaller CBD variance, which also selects error1 variance.
     let standard = params.variance() == constants::defaults::VARIANCE
         && params.get_error1_variance() == &error1;
-    let insecure_pair = matches!(preset, BfvPreset::InsecureDkg | BfvPreset::InsecureDkgLbfv)
-        && params.variance() == constants::insecure::dkg::VARIANCE as usize
+    let insecure_pair = matches!(
+        preset,
+        BfvPreset::InsecureDkg64 | BfvPreset::InsecureDkgLbfv | BfvPreset::InsecureDkgSimd
+    ) && params.variance() == constants::insecure::dkg::VARIANCE as usize
         && params.get_error1_variance() == &BigUint::from(constants::insecure::dkg::VARIANCE);
     standard || insecure_pair
+}
+
+/// Whether two presets have the same degree, plaintext modulus and moduli.
+pub(crate) fn same_parameters(left: BfvPreset, right: BfvPreset) -> bool {
+    let (left, right) = (BfvParamSet::from(left), BfvParamSet::from(right));
+    left.degree == right.degree
+        && left.plaintext_modulus == right.plaintext_modulus
+        && left.moduli == right.moduli
 }
 
 pub(crate) fn matching_preset(
@@ -112,7 +122,7 @@ mod tests {
 
     #[test]
     fn constructors_reject_other_parameter_families_and_tiers() {
-        let preset = BfvPreset::InsecureThreshold;
+        let preset = BfvPreset::InsecureThreshold64;
         let (threshold_params, dkg_params) = preset.build_pair().unwrap();
         let (_, secure_dkg) = BfvPreset::SecureThreshold8192.build_pair().unwrap();
         let committee = CiphernodesCommitteeSize::Minimum;

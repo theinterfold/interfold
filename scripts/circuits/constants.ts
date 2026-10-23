@@ -39,24 +39,40 @@ export const ALL_VARIANTS: CircuitVariant[] = [CIRCUIT_VARIANTS.DEFAULT, CIRCUIT
 
 /**
  * Circuit parameter presets identify which BFV parameter set the circuits were compiled for.
- * Named as `{security_tier}-{degree}`. Threshold and DKG presets at the same degree share
- * the same compiled circuit artifacts.
+ * Threshold and DKG presets that share a name share the same compiled circuit artifacts.
+ *
+ * - `insecure-64` and `secure-8192` serve the trBFV path only.
+ * - `insecure`, `insecure-simd` and `secure-16384` serve the l-BFV path only. `insecure` is the
+ *   degree-128 l-BFV preset (contract parameter set 4).
  */
 export const CIRCUIT_PRESETS = {
+  INSECURE_64: 'insecure-64',
   INSECURE: 'insecure',
+  INSECURE_SIMD: 'insecure-simd',
   SECURE_8192: 'secure-8192',
   SECURE_16384: 'secure-16384',
 } as const
 
 export type CircuitPreset = (typeof CIRCUIT_PRESETS)[keyof typeof CIRCUIT_PRESETS]
 
-export const ALL_PRESETS: CircuitPreset[] = [CIRCUIT_PRESETS.INSECURE, CIRCUIT_PRESETS.SECURE_8192, CIRCUIT_PRESETS.SECURE_16384]
+export const ALL_PRESETS: CircuitPreset[] = [
+  CIRCUIT_PRESETS.INSECURE_64,
+  CIRCUIT_PRESETS.INSECURE,
+  CIRCUIT_PRESETS.INSECURE_SIMD,
+  CIRCUIT_PRESETS.SECURE_8192,
+  CIRCUIT_PRESETS.SECURE_16384,
+]
 
 /**
  * Maps each preset to the Noir config module it re-exports from `circuits/lib/src/configs/default/mod.nr`.
  */
-export const PRESET_NOIR_CONFIG: Record<CircuitPreset, 'insecure' | 'secure_8192' | 'secure_16384'> = {
+export const PRESET_NOIR_CONFIG: Record<
+  CircuitPreset,
+  'insecure_64' | 'insecure' | 'insecure_simd' | 'secure_8192' | 'secure_16384'
+> = {
+  [CIRCUIT_PRESETS.INSECURE_64]: 'insecure_64',
   [CIRCUIT_PRESETS.INSECURE]: 'insecure',
+  [CIRCUIT_PRESETS.INSECURE_SIMD]: 'insecure_simd',
   [CIRCUIT_PRESETS.SECURE_8192]: 'secure_8192',
   [CIRCUIT_PRESETS.SECURE_16384]: 'secure_16384',
 }

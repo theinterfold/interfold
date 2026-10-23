@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime};
 pub(crate) fn request() -> Request {
     Request {
         operation: Operation::Build,
-        preset: PresetSelection::Single(BfvPreset::InsecureThreshold),
+        preset: PresetSelection::Single(BfvPreset::InsecureThreshold64),
         committee: CommitteeSelection::Single(CiphernodesCommitteeSize::Minimum),
         groups: GroupSelection::All,
         circuits: Vec::new(),
@@ -60,7 +60,7 @@ fn circuit_root_without_tools() -> tempfile::TempDir {
     write(
         root,
         "scripts/circuits/build-pairs.json",
-        r#"[["insecure","minimum"]]"#,
+        r#"[["insecure-64","minimum"]]"#,
     );
     artifacts::copy_tree(
         &repo.join("circuits/lib"),
@@ -132,7 +132,7 @@ fn build_policy_rejects_disabled_pairs_before_tools_and_filters_all_selectors() 
     assert!(!temp.path().join("circuits").exists());
     assert!(!temp.path().join("dist").exists());
     assert_eq!(all.selected_pairs(temp.path()).unwrap(), pairs);
-    for preset in [BfvPreset::InsecureDkg, BfvPreset::SecureDkg8192] {
+    for preset in [BfvPreset::InsecureDkg64, BfvPreset::SecureDkg8192] {
         let mut invalid = request();
         invalid.preset = PresetSelection::Single(preset);
         assert!(execute(temp.path(), &invalid)
@@ -146,25 +146,33 @@ fn build_policy_rejects_disabled_pairs_before_tools_and_filters_all_selectors() 
         .unwrap_err()
         .to_string()
         .contains("Select at least one circuit group"));
-    for options in [
-        {
-            let mut r = request();
-            r.preset = PresetSelection::Single(BfvPreset::SecureThreshold8192);
-            r.committee = CommitteeSelection::All;
-            r
-        },
-        {
-            let mut r = request();
-            r.preset = PresetSelection::All;
-            r.committee = CommitteeSelection::Single(CiphernodesCommitteeSize::Micro);
-            r
-        },
+    for (options, expected) in [
+        (
+            {
+                let mut r = request();
+                r.preset = PresetSelection::Single(BfvPreset::SecureThreshold8192);
+                r.committee = CommitteeSelection::All;
+                r
+            },
+            2,
+        ),
+        // The micro committee builds insecure-64, insecure, secure-16384 and insecure-simd;
+        // secure-8192 is disabled in this policy.
+        (
+            {
+                let mut r = request();
+                r.preset = PresetSelection::All;
+                r.committee = CommitteeSelection::Single(CiphernodesCommitteeSize::Micro);
+                r
+            },
+            4,
+        ),
     ] {
         let selected = options.selected_pairs(temp.path()).unwrap();
         for pair in &selected {
             assert!(pairs.contains(pair));
         }
-        assert_eq!(selected.len(), 2);
+        assert_eq!(selected.len(), expected);
         options.validate(temp.path()).unwrap();
     }
 }
@@ -234,7 +242,7 @@ fn current_selection_sync_preserves_bytes_and_mtimes_without_tools() {
     } else if selector.contains("super::secure_16384::") {
         BfvPreset::SecureThreshold16384
     } else {
-        BfvPreset::InsecureThreshold
+        BfvPreset::InsecureThreshold64
     };
     let active =
         fs::read_to_string(repo.join("circuits/lib/src/configs/committee/active.nr")).unwrap();
@@ -334,8 +342,8 @@ fn source_identity_tracks_inputs_not_generated_selections_or_tests() {
     let root = temp.path();
     identity::tests::seed_sources(root);
     let opts = request();
-    let hash = || identity::source_hash(root, &opts, Some("insecure"), Some("micro")).unwrap();
-    let config = "circuits/lib/src/configs/insecure/threshold.nr";
+    let hash = || identity::source_hash(root, &opts, Some("insecure-64"), Some("micro")).unwrap();
+    let config = "circuits/lib/src/configs/insecure_64/threshold.nr";
     write(root, config, "pub global PK_GENERATION_E_SM_BOUND: Field = 10;\npub global PK_GENERATION_E_SM_QUOTIENT_BOUNDS: [Field; L] =\n    [1, 2];\npub global L: u32 = 2;\n");
     let before = hash();
     write(root, config, "pub global PK_GENERATION_E_SM_BOUND: Field = 20;\npub global PK_GENERATION_E_SM_QUOTIENT_BOUNDS: [Field; L] =\n    [3, 4];\npub global L: u32 = 2;\n");
@@ -368,11 +376,27 @@ fn source_identity_tracks_inputs_not_generated_selections_or_tests() {
         assert_ne!(hash(), before, "generator edit of {path}");
     }
     let selector = "circuits/lib/src/configs/default/mod.nr";
-    write(root, selector, "// preset: insecure\npub use super::insecure::threshold;\npub global MAX_MSG_NON_ZERO_COEFFS: u32 = 50;\n");
+    write(root, selector, "// preset: insecure-64\npub use super::insecure_64::threshold;\npub global MAX_MSG_NON_ZERO_COEFFS: u32 = 50;\n");
     let before = hash();
     write(root, selector, "// preset: secure-8192\npub use super::secure_8192::threshold;\npub global MAX_MSG_NON_ZERO_COEFFS: u32 = 50;\n");
     assert_eq!(hash(), before);
-    write(root, selector, "// preset: secure-8192\npub use super::secure_8192::threshold;\npub global MAX_MSG_NON_ZERO_COEFFS: u32 = 51;\n");
+    // A selection of the 128-width SIMD preset hashes like any other selection: the selector
+    // text is projected away, and the width itself enters through `crates/fhe-params/src`.
+    write(root, selector, "// preset: insecure-simd\npub use super::insecure_simd::threshold;\npub global MAX_MSG_NON_ZERO_COEFFS: u32 = 128;\n");
+    assert_eq!(hash(), before);
+    write(root, selector, "// preset: secure-16384\npub use super::secure_16384::threshold;\npub global MAX_MSG_NON_ZERO_COEFFS: u32 = 51;\n");
+    assert_eq!(hash(), before);
+    write(
+        root,
+        "crates/fhe-params/src/output_cap.rs",
+        "pub const WIDTH: usize = 50;\n",
+    );
+    let before = hash();
+    write(
+        root,
+        "crates/fhe-params/src/output_cap.rs",
+        "pub const WIDTH: usize = 51;\n",
+    );
     assert_ne!(hash(), before);
     for path in [
         "circuits/lib/src/core/dkg/pk.nr",
@@ -388,10 +412,10 @@ fn source_identity_tracks_inputs_not_generated_selections_or_tests() {
         write(root, path, "changed");
         assert_ne!(hash(), before, "{path}");
     }
-    let parity = root.join("circuits/lib/src/configs/committee/micro/parity_insecure.nr");
+    let parity = root.join("circuits/lib/src/configs/committee/micro/parity_insecure_64.nr");
     let updates = vec![(parity.clone(), "generated parity\n".to_owned())];
     let projected =
-        identity::source_hash_with_updates(root, &opts, Some("insecure"), Some("micro"), &updates)
+        identity::source_hash_with_updates(root, &opts, Some("insecure-64"), Some("micro"), &updates)
             .unwrap();
     assert!(
         !parity.exists(),
@@ -452,7 +476,7 @@ fn source_identity_frames_file_boundaries_and_source_roots() {
             }
         }
         let hash = |root| {
-            identity::source_hash(root, &request(), Some("insecure"), Some("minimum")).unwrap()
+            identity::source_hash(root, &request(), Some("insecure-64"), Some("minimum")).unwrap()
         };
         assert_ne!(hash(first.path()), hash(second.path()), "{case}");
     }
@@ -478,7 +502,7 @@ fn source_identity_tracks_external_pins_and_pinned_tools() {
         "crates/zk/prover/versions.json",
         r#"{"required_bb_version":"5.2.0","required_circuits_version":"0.19.0"}"#,
     );
-    let hash = || identity::source_hash(root, &opts, Some("insecure"), Some("minimum")).unwrap();
+    let hash = || identity::source_hash(root, &opts, Some("insecure-64"), Some("minimum")).unwrap();
     let before = hash();
     write(
         root,
@@ -583,7 +607,12 @@ fn checksum_streams_files_of_any_size_to_the_same_digest() {
 fn protocol_generation_preserves_deployed_parameter_hashes() {
     for (preset, expected_hash, expected_id) in [
         (
-            BfvPreset::InsecureThreshold,
+            BfvPreset::InsecureThreshold64,
+            "aff065a7d6e3d8c830dfcd37c2af8a25b3dcc6cd74ba458894075e8264f1ab1e",
+            "92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9",
+        ),
+        (
+            BfvPreset::InsecureThresholdLbfv,
             "0619925361a4d022377f93ccd0022c0164257ffb889b979eb382aa06d401e258",
             "968e91054be28b2b577ac278284e03274ed46bd5c5064e573290312a2323d495",
         ),
@@ -599,7 +628,7 @@ fn protocol_generation_preserves_deployed_parameter_hashes() {
         ),
     ] {
         let material = PresetMaterial::new(preset).unwrap();
-        if preset == BfvPreset::InsecureThreshold {
+        if preset == BfvPreset::InsecureThresholdLbfv {
             assert_eq!(material.threshold.degree(), 128);
             assert_eq!(material.dkg.degree(), 128);
         }
@@ -613,7 +642,7 @@ fn generated_protocol_preserves_network_admission_and_pure_pair_validation() {
     let params = configuration::OperationParams::both().unwrap();
     let contract = compact(
         &configuration::protocol_contract(
-            BfvPreset::InsecureThreshold,
+            BfvPreset::InsecureThreshold64,
             CiphernodesCommitteeSize::Minimum,
             &params,
             &build_pairs(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")).unwrap(),
@@ -645,7 +674,7 @@ fn deployment_rendering_follows_the_build_policy() {
     let render = |pairs: &[[String; 2]]| {
         configuration::protocol_utils(
             &before,
-            BfvPreset::InsecureThreshold,
+            BfvPreset::InsecureThreshold64,
             CiphernodesCommitteeSize::Minimum,
             &params,
             pairs,
@@ -660,7 +689,7 @@ fn deployment_rendering_follows_the_build_policy() {
     assert_eq!(
         configuration::protocol_utils(
             &restricted,
-            BfvPreset::InsecureThreshold,
+            BfvPreset::InsecureThreshold64,
             CiphernodesCommitteeSize::Minimum,
             &params,
             &pairs,
@@ -670,7 +699,7 @@ fn deployment_rendering_follows_the_build_policy() {
     );
     let contract = compact(
         &configuration::protocol_contract(
-            BfvPreset::InsecureThreshold,
+            BfvPreset::InsecureThreshold64,
             CiphernodesCommitteeSize::Minimum,
             &params,
             &pairs,
@@ -728,20 +757,27 @@ fn artifact_policy_preserves_lbfv_selection_and_zk_finalizers() {
         micro.selected_pairs(&root).unwrap(),
         vec![["secure-16384".to_string(), "micro".to_string()]]
     );
-    let mut alias = request();
-    alias.preset = "insecure-lbfv".parse().unwrap();
+    // `insecure` is the degree-128 l-BFV preset; `insecure-64` is the trBFV preset.
+    let mut lbfv = request();
+    lbfv.preset = "insecure".parse().unwrap();
     assert_eq!(
-        alias.selected_pairs(&root).unwrap(),
-        request().selected_pairs(&root).unwrap()
+        lbfv.preset,
+        PresetSelection::Single(BfvPreset::InsecureThresholdLbfv)
     );
+    assert!(lbfv
+        .selected_pairs(&root)
+        .unwrap()
+        .iter()
+        .all(|pair| pair[0] == "insecure"));
+    assert!("insecure-lbfv".parse::<PresetSelection>().is_err());
 }
 
 #[test]
 fn insecure_public_randomness_matches_the_committed_lbfv_rows() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let material = PresetMaterial::new(BfvPreset::InsecureThreshold).unwrap();
+    let material = PresetMaterial::new(BfvPreset::InsecureThresholdLbfv).unwrap();
     let updates =
-        crate::lbfv::public_randomness(&root, BfvPreset::InsecureThreshold, &material.threshold)
+        crate::lbfv::public_randomness(&root, BfvPreset::InsecureThresholdLbfv, &material.threshold)
             .unwrap();
     assert_eq!(updates.len(), 3);
     for (path, generated) in updates {
@@ -783,19 +819,20 @@ fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
         CiphernodesCommitteeSize::Small,
     ] {
         let parity = configuration::parity_files(committee, &params).unwrap();
-        assert_eq!(parity.len(), 4);
+        // One parity matrix per artifact preset, and the smudging file.
+        assert_eq!(parity.len(), 6);
     }
-    let material = params.get(BfvPreset::InsecureThreshold);
+    let material = params.get(BfvPreset::InsecureThreshold64);
     let bounds = configuration::bound_updates(
         root,
-        BfvPreset::InsecureThreshold,
+        BfvPreset::InsecureThreshold64,
         CiphernodesCommitteeSize::Minimum,
         material,
     )
     .unwrap();
     assert_eq!(bounds.len(), 2);
     let contract = configuration::protocol_contract(
-        BfvPreset::InsecureThreshold,
+        BfvPreset::InsecureThreshold64,
         CiphernodesCommitteeSize::Minimum,
         &params,
         &build_pairs(&repo).unwrap(),
@@ -807,7 +844,7 @@ fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
     )));
     let selection = configuration::prepare_selection(
         root,
-        BfvPreset::InsecureThreshold,
+        BfvPreset::InsecureThreshold64,
         CiphernodesCommitteeSize::Minimum,
         true,
     )
@@ -827,18 +864,87 @@ fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
         .trim_end_matches(';')
         .parse::<usize>()
         .unwrap();
-    assert_eq!(width, e3_zk_config::MAX_MSG_NON_ZERO_COEFFS);
+    assert_eq!(
+        width,
+        BfvPreset::InsecureThreshold64.max_msg_non_zero_coeffs()
+    );
+    // The verifier takes the width as a constructor argument, one per parameter set, so no
+    // literal width may remain in the contract.
     let verifier = fs::read_to_string(
         repo.join("packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol"),
     )
     .unwrap();
-    let width = regex::Regex::new(r"\bMESSAGE_COEFFS_COUNT\s*=\s*(\d+)\s*;")
+    assert!(!regex::Regex::new(r"\bMESSAGE_COEFFS_COUNT\b")
         .unwrap()
-        .captures(&verifier)
-        .unwrap()[1]
-        .parse::<usize>()
+        .is_match(&verifier));
+    assert!(verifier.contains("uint256 public immutable messageCoeffsCount;"));
+}
+
+/// The message width written into the Noir selector is the preset's width, so a preset with
+/// another width compiles its own circuits and the others keep theirs.
+#[test]
+fn the_selector_carries_the_message_width_of_each_preset() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    for preset in BfvPreset::PAIR_PRESETS {
+        let selection = configuration::prepare_selection(
+            &root,
+            preset,
+            CiphernodesCommitteeSize::Minimum,
+            true,
+        )
         .unwrap();
-    assert_eq!(width, e3_zk_config::MAX_MSG_NON_ZERO_COEFFS);
+        let selector = &selection
+            .noir
+            .iter()
+            .find(|(path, _)| path.ends_with("configs/default/mod.nr"))
+            .unwrap()
+            .1;
+        assert!(
+            selector.contains(&format!(
+                "pub global MAX_MSG_NON_ZERO_COEFFS: u32 = {};",
+                preset.max_msg_non_zero_coeffs()
+            )),
+            "{preset:?}"
+        );
+    }
+}
+
+/// The deployment scripts pass each preset's message width to the decryption verifier. A drifted
+/// copy in `utils.ts` would deploy a verifier that rejects every proof, so the generator rewrites it.
+#[test]
+fn protocol_utils_rewrites_drifted_message_widths() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let params = configuration::OperationParams::both().unwrap();
+    let pairs = build_pairs(&repo).unwrap();
+    let before =
+        fs::read_to_string(repo.join("packages/interfold-contracts/scripts/utils.ts")).unwrap();
+    let drifted = regex::Regex::new(r"(const [A-Z0-9_]+_MESSAGE_COEFFS_COUNT = )\d+;")
+        .unwrap()
+        .replace_all(&before, "${1}7;")
+        .into_owned();
+    let rendered = configuration::protocol_utils(
+        &drifted,
+        BfvPreset::InsecureThreshold64,
+        CiphernodesCommitteeSize::Minimum,
+        &params,
+        &pairs,
+    )
+    .unwrap();
+    for (prefix, preset) in [
+        ("INSECURE_64", BfvPreset::InsecureThreshold64),
+        ("INSECURE", BfvPreset::InsecureThresholdLbfv),
+        ("INSECURE_SIMD", BfvPreset::InsecureThresholdSimd),
+        ("SECURE", BfvPreset::SecureThreshold8192),
+        ("SECURE_16384", BfvPreset::SecureThreshold16384),
+    ] {
+        assert!(
+            rendered.contains(&format!(
+                "const {prefix}_MESSAGE_COEFFS_COUNT = {};",
+                preset.max_msg_non_zero_coeffs()
+            )),
+            "{prefix}"
+        );
+    }
 }
 
 #[test]
@@ -848,6 +954,10 @@ fn every_pair_replaces_whole_scalar_and_array_bound_declarations() {
     for preset in BfvPreset::PAIR_PRESETS {
         for name in COMMITTEES {
             let committee = name.parse().unwrap();
+            // The preset has no bounds for a committee it does not support.
+            if !configuration::preset_supports_committee(preset, committee) {
+                continue;
+            }
             let material = params.get(preset);
             for (path, updated) in
                 configuration::bound_updates(&root, preset, committee, material).unwrap()
@@ -911,13 +1021,13 @@ fn hydration_accepts_other_source_but_records_actual_artifact_identity() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let opts = request();
-    let pair = root.join("dist/circuits/insecure/minimum");
+    let pair = root.join("dist/circuits/insecure-64/minimum");
     for marker in artifacts::dist_markers(&pair) {
         fs::create_dir_all(marker.parent().unwrap()).unwrap();
         fs::write(marker, b"marker").unwrap();
     }
     let stamp = artifacts::Stamp {
-        preset: "insecure".into(),
+        preset: "insecure-64".into(),
         committee: "minimum".into(),
         source_hash: "published-source".into(),
         built_at: "published-time".into(),
@@ -955,7 +1065,7 @@ fn hydration_accepts_other_source_but_records_actual_artifact_identity() {
         }
     }
     let accepted =
-        artifacts::hydration_stamp(&pair, "insecure", "minimum", "current-source").unwrap();
+        artifacts::hydration_stamp(&pair, "insecure-64", "minimum", "current-source").unwrap();
     artifacts::hydrate(root, &pair, &opts, &accepted).unwrap();
     assert_eq!(
         fs::read_to_string(root.join("circuits/bin/dkg/target/pk.json")).unwrap(),
@@ -986,7 +1096,7 @@ fn hydration_accepts_other_source_but_records_actual_artifact_identity() {
     assert!(artifacts::hydration_stamp(&pair, "secure-8192", "minimum", "current-source").is_err());
     fs::remove_file(pair.join("default/recursive_aggregation/c6_fold/c6_fold.vk_tree_hash"))
         .unwrap();
-    assert!(artifacts::hydration_stamp(&pair, "insecure", "minimum", "current-source").is_err());
+    assert!(artifacts::hydration_stamp(&pair, "insecure-64", "minimum", "current-source").is_err());
 }
 
 const VK_PATHS: &[(&str, &str, &str)] = &[
@@ -1088,7 +1198,7 @@ fn anchors_bind_all_descendants_in_circuit_order_and_reject_noncanonical_keys() 
 fn partial_build_removes_anchors_and_manifests_cover_complete_anchors() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
-    let pair = root.join("dist/circuits/insecure/minimum");
+    let pair = root.join("dist/circuits/insecure-64/minimum");
     seed_anchor_keys(&pair);
     artifacts::refresh_anchors(root, &pair, true).unwrap();
     artifacts::checksums(&root.join("dist/circuits")).unwrap();
@@ -1097,7 +1207,7 @@ fn partial_build_removes_anchors_and_manifests_cover_complete_anchors() {
             .unwrap();
     for name in ["nodes_fold", "c6_fold"] {
         let relative =
-            format!("insecure/minimum/default/recursive_aggregation/{name}/{name}.vk_tree_hash");
+            format!("insecure-64/minimum/default/recursive_aggregation/{name}/{name}.vk_tree_hash");
         let digest = checksum(&root.join("dist/circuits").join(&relative)).unwrap();
         assert_eq!(manifest["files"][&relative], digest);
     }
@@ -1113,5 +1223,34 @@ fn partial_build_removes_anchors_and_manifests_cover_complete_anchors() {
                 "circuits/bin/recursive_aggregation/{name}/target/{name}.vk_tree_hash"
             ))
             .exists());
+    }
+}
+
+/// The insecure SIMD preset supports a committee exactly when its smudging-noise budget holds,
+/// and the shared build policy lists exactly those pairs.
+#[test]
+fn simd_committee_support_follows_smudging_feasibility_and_build_policy() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let params = configuration::OperationParams::both().unwrap();
+    let preset = BfvPreset::InsecureThresholdSimd;
+    let pairs = build_pairs(&root).unwrap();
+    for name in COMMITTEES {
+        let committee: CiphernodesCommitteeSize = name.parse().unwrap();
+        let feasible = e3_zk_config::threshold::pk_generation::Configs::new(
+            preset,
+            &params.get(preset).threshold,
+            committee,
+        )
+        .is_ok();
+        assert_eq!(
+            feasible,
+            configuration::preset_supports_committee(preset, committee),
+            "{name}"
+        );
+        assert_eq!(
+            feasible,
+            pairs.contains(&["insecure-simd".to_string(), name.to_string()]),
+            "{name}"
+        );
     }
 }

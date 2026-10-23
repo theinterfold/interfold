@@ -42,7 +42,12 @@ impl Configs {
         let threshold =
             crate::parameters::matching_preset(threshold_params, ParameterType::THRESHOLD)?;
         let dkg = crate::parameters::matching_preset(dkg_params, ParameterType::DKG)?;
-        if threshold.dkg_counterpart() != Some(dkg) {
+        // Presets that differ only in the plaintext modulus share their DKG parameters, so the
+        // counterpart is compared by parameters, not by preset identity.
+        if !threshold
+            .dkg_counterpart()
+            .is_some_and(|counterpart| crate::parameters::same_parameters(counterpart, dkg))
+        {
             return Err(ConfigError::Other(
                 "DKG and threshold parameters belong to different presets".into(),
             ));

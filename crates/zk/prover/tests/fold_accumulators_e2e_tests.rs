@@ -9,14 +9,11 @@
 //! from the compiled `c3_fold` / `c6_fold` ABI and artifacts staged under [`CircuitVariant::Default`]
 //! (`noir-recursive-no-zk` VKs — see `crates/zk/build`).
 //!
-//! Loads compiled JSON for the node-fold **pipeline** ([`CircuitName::C2abChunkFold`] … [`CircuitName::NodeFold`])
-//! and stages those artifacts; it does **not** run a full correlated `node_fold` proof — use
-//! `node_fold_correlated_e2e_tests.rs` for that.
+//! The node-fold pipeline ([`CircuitName::C2abChunkFold`] … [`CircuitName::NodeFold`]) is proven in
+//! `node_fold_correlated_e2e_tests.rs`.
 //!
 //! - [`c3_fold_sequential_proves_and_verifies`]: two inner `ShareEncryption` proofs → [`generate_sequential_c3_fold`].
 //! - [`c6_fold_sequential_proves_and_verifies`]: two inner `ThresholdShareDecryption` proofs → [`generate_sequential_c6_fold`].
-//! - [`node_fold_pipeline_compiled_json_load`] / [`node_fold_pipeline_recursive_aggregation_artifacts_staged`]:
-//!   pipeline circuits load + staged artifacts for C2abChunk/C3ab/C4ab/NodeFold.
 
 mod common;
 #[path = "common/recursive_vk_substitution.rs"]
@@ -31,7 +28,6 @@ use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{CircuitName, Proof};
 use e3_fhe_params::BfvPreset;
 use e3_zk_config::DkgInputType;
-use e3_zk_config::MAX_MSG_NON_ZERO_COEFFS;
 use e3_zk_prover::test_utils::{fold_witness_field_strings, load_vk_artifacts};
 use e3_zk_prover::{
     generate_sequential_c3_fold, generate_sequential_c6_fold, CircuitVariant, Provable, ZkBackend,
@@ -57,15 +53,7 @@ fn c6_fold_json_path() -> PathBuf {
         .join("circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.json")
 }
 
-/// `c2ab_chunk_fold` → `c3ab_fold` → `c4ab_fold` → inputs to `node_fold` (see `node_fold/src/main.nr`).
-const NODE_FOLD_PIPELINE: &[CircuitName] = &[
-    CircuitName::C2abChunkFold,
-    CircuitName::C3abFold,
-    CircuitName::C4abFold,
-    CircuitName::NodeFold,
-];
-
-/// Reads `C3_SLOTS` from the compiled `c3_fold` ABI (`acc_public_inputs` length is `6 + 3 * C3_SLOTS`).
+/// Reads `C3_SLOTS` from the compiled `c3_fold` ABI (`acc_public_inputs` length is `5 + 3 * C3_SLOTS`).
 fn c3_fold_total_slots_from_compiled_json() -> usize {
     let path = c3_fold_json_path();
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
@@ -88,11 +76,11 @@ fn c3_fold_total_slots_from_compiled_json() -> usize {
         })
         .expect("c3_fold.json: abi.parameters.acc_public_inputs.length") as usize;
     assert!(
-        len >= 6 && (len - 6).is_multiple_of(3),
-        "unexpected acc_public_inputs length {} (expected 6 + 3 * slots)",
+        len >= 5 && (len - 5).is_multiple_of(3),
+        "unexpected acc_public_inputs length {} (expected 5 + 3 * slots)",
         len
     );
-    (len - 6) / 3
+    (len - 5) / 3
 }
 
 /// Reads slot count from the compiled `c6_fold` ABI
@@ -123,175 +111,7 @@ fn c6_fold_total_slots_from_compiled_json() -> usize {
         "unexpected acc_public_inputs length {} (expected 7 + 4 * slots)",
         len
     );
-    (len - 6) / 4
-}
-
-#[test]
-fn c3_fold_compiled_abi_has_consistent_slot_count() {
-    if !c3_fold_json_path().exists() {
-        println!(
-            "skipping: {} not found (run `pnpm build:circuits --group recursive_aggregation`)",
-            c3_fold_json_path().display()
-        );
-        return;
-    }
-    let slots = c3_fold_total_slots_from_compiled_json();
-    assert!(slots > 0, "C3_SLOTS inferred from ABI should be positive");
-    let _ =
-        CompiledCircuit::from_file(&c3_fold_json_path()).expect("load compiled c3_fold circuit");
-}
-
-#[test]
-fn c6_fold_compiled_abi_has_consistent_slot_count() {
-    if !c6_fold_json_path().exists() {
-        println!(
-            "skipping: {} not found (run `pnpm build:circuits --group recursive_aggregation`)",
-            c6_fold_json_path().display()
-        );
-        return;
-    }
-    let slots = c6_fold_total_slots_from_compiled_json();
-    assert!(slots > 0, "C6 slots inferred from ABI should be positive");
-    let _ =
-        CompiledCircuit::from_file(&c6_fold_json_path()).expect("load compiled c6_fold circuit");
-}
-
-#[test]
-fn node_fold_pipeline_compiled_json_load() {
-    let mut missing = Vec::new();
-    for &c in NODE_FOLD_PIPELINE {
-        let p = recursive_aggregation_compiled_json_path(c);
-        if !p.exists() {
-            missing.push(p);
-        }
-    }
-    if !missing.is_empty() {
-        println!(
-            "skipping: missing compiled JSON(s) (run `pnpm build:circuits --group recursive_aggregation`): {:?}",
-            missing
-        );
-        return;
-    }
-    for &c in NODE_FOLD_PIPELINE {
-        let path = recursive_aggregation_compiled_json_path(c);
-        let _ = CompiledCircuit::from_file(&path)
-            .unwrap_or_else(|e| panic!("load compiled {}: {}", c.as_str(), e));
-    }
-}
-
-#[tokio::test]
-async fn recursive_aggregation_default_artifacts_staged() {
-    let Some(bb) = find_bb().await else {
-        println!("skipping: bb not found");
-        return;
-    };
-    if !c3_fold_json_path().exists() {
-        println!("skipping: {} not found", c3_fold_json_path().display());
-        return;
-    }
-
-    let (backend, temp) = setup_test_prover(&bb).await;
-    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C3Fold).await;
-
-    let base = backend
-        .circuits_dir
-        .join("insecure")
-        .join("minimum")
-        .join("default")
-        .join(CircuitName::C3Fold.dir_path());
-    let pkg = CircuitName::C3Fold.as_str();
-    assert!(
-        base.join(format!("{pkg}.json")).exists(),
-        "expected staged {}.json under default/ variant",
-        pkg
-    );
-    assert!(
-        base.join(format!("{pkg}.vk")).exists(),
-        "expected staged {}.vk (noir-recursive-no-zk) under default/ variant",
-        pkg
-    );
-
-    drop(temp);
-}
-
-#[tokio::test]
-async fn recursive_aggregation_c6_fold_kernel_artifacts_staged() {
-    let Some(bb) = find_bb().await else {
-        println!("skipping: bb not found");
-        return;
-    };
-    let kernel_json = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../circuits/bin/recursive_aggregation/c6_fold_kernel/target/c6_fold_kernel.json");
-    if !kernel_json.exists() {
-        println!("skipping: {} not found", kernel_json.display());
-        return;
-    }
-
-    let (backend, temp) = setup_test_prover(&bb).await;
-    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C6FoldKernel).await;
-
-    let base = backend
-        .circuits_dir
-        .join("insecure")
-        .join("minimum")
-        .join("default")
-        .join(CircuitName::C6FoldKernel.dir_path());
-    let pkg = CircuitName::C6FoldKernel.as_str();
-    assert!(
-        base.join(format!("{pkg}.json")).exists(),
-        "expected staged {}.json under default/ variant",
-        pkg
-    );
-    assert!(
-        base.join(format!("{pkg}.vk")).exists(),
-        "expected staged {}.vk (noir-recursive-no-zk) under default/ variant",
-        pkg
-    );
-
-    drop(temp);
-}
-
-#[tokio::test]
-async fn node_fold_pipeline_recursive_aggregation_artifacts_staged() {
-    let Some(bb) = find_bb().await else {
-        println!("skipping: bb not found");
-        return;
-    };
-    let gate = recursive_aggregation_compiled_json_path(CircuitName::NodeFold);
-    if !gate.exists() {
-        println!(
-            "skipping: {} not found (run `pnpm build:circuits --group recursive_aggregation`)",
-            gate.display()
-        );
-        return;
-    }
-
-    let (backend, temp) = setup_test_prover(&bb).await;
-    for &c in NODE_FOLD_PIPELINE {
-        setup_recursive_aggregation_fold_circuit(&backend, c).await;
-    }
-
-    let preset_base = backend
-        .circuits_dir
-        .join("insecure")
-        .join("minimum")
-        .join("default");
-    for &c in NODE_FOLD_PIPELINE {
-        let base = preset_base.join(c.dir_path());
-        let pkg = c.as_str();
-        assert!(
-            base.join(format!("{pkg}.json")).exists(),
-            "expected staged {}.json under default/ variant",
-            pkg
-        );
-        assert!(
-            base.join(format!("{pkg}.vk")).exists(),
-            "expected staged {}.vk (noir-recursive-no-zk) under default/ variant",
-            pkg
-        );
-    }
-
-    drop(temp);
+    (len - 7) / 4
 }
 
 async fn setup_c3_fold_with_inner_share_encryption() -> Option<(
@@ -304,11 +124,11 @@ async fn setup_c3_fold_with_inner_share_encryption() -> Option<(
     BfvPreset,
 )> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold;
+    let preset = BfvPreset::InsecureThreshold64;
     let bb = find_bb().await?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
-    let sd = BfvPreset::InsecureThreshold.search_defaults()?;
+    let sd = BfvPreset::InsecureThreshold64.search_defaults()?;
 
     setup_compiled_circuit(&backend, "dkg", "share_encryption").await;
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C3Fold).await;
@@ -506,6 +326,7 @@ fn assert_final_c6_tree_binding(
     prover: &ZkProver,
     inner: &Proof,
     folded: &Proof,
+    preset: BfvPreset,
     artifacts_dir: &str,
 ) {
     let default_dir = prover.circuits_dir(CircuitVariant::Default, artifacts_dir);
@@ -567,7 +388,7 @@ fn assert_final_c6_tree_binding(
         "1".into(),
         "2".into(),
     ];
-    c7_public.extend(vec!["0".to_owned(); MAX_MSG_NON_ZERO_COEFFS]);
+    c7_public.extend(vec!["0".to_owned(); preset.max_msg_non_zero_coeffs()]);
     let c7 = substitute_proof(
         prover,
         CircuitName::DecryptedSharesAggregation,
@@ -771,7 +592,7 @@ async fn setup_c6_fold_with_inner_threshold_share_decryption() -> Option<(
     BfvPreset,
 )> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold;
+    let preset = BfvPreset::InsecureThreshold64;
     let bb = find_bb().await?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
@@ -879,7 +700,7 @@ async fn c6_fold_sequential_proves_and_verifies() {
         total_slots,
         &artifacts_dir,
     );
-    assert_final_c6_tree_binding(&prover, &inners[0], &folded, &artifacts_dir);
+    assert_final_c6_tree_binding(&prover, &inners[0], &folded, preset, &artifacts_dir);
 
     prover.cleanup(inner_e3_a).unwrap();
     prover.cleanup(inner_e3_b).unwrap();

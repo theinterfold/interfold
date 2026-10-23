@@ -271,6 +271,7 @@ describe("Governance — access control, bounds & events", function () {
           vkHashA,
           vkHashB,
           4,
+          50,
         ],
       );
       const schemeId = ethers.id("wrong-committee");

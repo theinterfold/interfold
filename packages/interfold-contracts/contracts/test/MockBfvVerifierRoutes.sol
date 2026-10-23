@@ -49,6 +49,7 @@ contract MockBfvDecryptionVerifierRoute is IBfvDecryptionVerifierRoute {
     error UnexpectedCall();
 
     uint256 public immutable override threshold;
+    uint256 public immutable override messageCoeffsCount;
     bytes32 public immutable override expectedC6FoldKeyHash;
     bytes32 public immutable override expectedC7KeyHash;
     bool private immutable result;
@@ -58,9 +59,11 @@ contract MockBfvDecryptionVerifierRoute is IBfvDecryptionVerifierRoute {
         uint256 _threshold,
         bytes32 _expectedC6FoldKeyHash,
         bytes32 _expectedC7KeyHash,
-        bool _result
+        bool _result,
+        uint256 _messageCoeffsCount
     ) {
         threshold = _threshold;
+        messageCoeffsCount = _messageCoeffsCount;
         expectedC6FoldKeyHash = _expectedC6FoldKeyHash;
         expectedC7KeyHash = _expectedC7KeyHash;
         result = _result;

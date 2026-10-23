@@ -12,7 +12,9 @@ import {
 import {
   BFV_THRESHOLD_T,
   assertBfvDecryptionVerifierSubCircuitVkHashes,
+  bfvMessageCoeffsCount,
   getBfvDecryptionSubCircuitVkHashPaths,
+  localBfvParamSet,
   readDeploymentArgs,
   readVkRecursiveHash,
   storeDeploymentArgs,
@@ -86,6 +88,7 @@ export const deployAndSaveBfvDecryptionVerifier = async (
     expectedC6FoldKeyHash,
     expectedC7KeyHash,
     BFV_THRESHOLD_T,
+    bfvMessageCoeffsCount(localBfvParamSet()),
   );
 
   await bfvDecryptionVerifier.waitForDeployment();

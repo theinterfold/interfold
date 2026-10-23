@@ -77,7 +77,9 @@ pub fn default_links(preset: BfvPreset) -> Vec<Box<dyn CommitmentLink>> {
             source_prefix_fields: c2_prefix_fields,
             source_suffix_fields: c2_suffix_fields,
         }),
-        Box::new(c6_to_c7::C6ToC7DCommitmentLink),
+        Box::new(c6_to_c7::C6ToC7DCommitmentLink {
+            max_msg_non_zero_coeffs: preset.max_msg_non_zero_coeffs(),
+        }),
         Box::new(c4a_to_c6::C4aToC6SkCommitmentLink),
         Box::new(c4b_to_c6::C4bToC6ESmCommitmentLink),
     ];
@@ -117,7 +119,10 @@ mod tests {
             assert!(pairs.contains(&(ProofType::C2aSkShareComputation, ProofType::RlkGeneration)));
             assert!(pairs.contains(&(ProofType::LbfvPkGeneration, ProofType::RlkGeneration)));
         }
-        for preset in [BfvPreset::SecureThreshold8192, BfvPreset::InsecureThreshold] {
+        for preset in [
+            BfvPreset::SecureThreshold8192,
+            BfvPreset::InsecureThreshold64,
+        ] {
             let pairs = link_pairs(preset);
             assert_eq!(pairs.iter().filter(|pair| touches_c1(pair)).count(), 3);
             assert!(!pairs.contains(&binds_rows_to_c2a), "{preset:?}");

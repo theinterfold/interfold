@@ -9,12 +9,21 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 import {
+  ACTIVE_BFV_CONFIG,
+  bfvHonkDirectory,
   getDeploymentChain,
   readDeploymentArgs,
   storeDeploymentArgs,
 } from "../utils";
 
 const BFV_HONK_VERIFIER_DIR = "contracts/verifiers/bfv/honk";
+
+/**
+ * The verifier directory of the local build. The canonical Honk verifiers at the directory root
+ * are the insecure-64/minimum ones; every other pair has its own directory per committee, where
+ * `pnpm generate:verifiers` writes it.
+ */
+const honkVerifierDir = (): string => bfvHonkDirectory(ACTIVE_BFV_CONFIG);
 
 type HonkLibrary = "ZKTranscriptLib" | "RelationsLib";
 
@@ -26,8 +35,9 @@ const normalizeArtifactFqn = (fqn: string): string =>
 export const selectCanonicalVerifierFqn = (
   fqns: Iterable<string>,
   contractName: string,
+  verifierDir: string = BFV_HONK_VERIFIER_DIR,
 ): string => {
-  const canonicalSuffix = `${BFV_HONK_VERIFIER_DIR}/${contractName}.sol:${contractName}`;
+  const canonicalSuffix = `${verifierDir}/${contractName}.sol:${contractName}`;
   const candidates = Array.from(fqns)
     .filter((fqn) => !fqn.includes("/.benchmark/"))
     .map(normalizeArtifactFqn)
@@ -37,7 +47,7 @@ export const selectCanonicalVerifierFqn = (
 
   if (candidates.length !== 1) {
     throw new Error(
-      `Expected one canonical artifact for ${contractName} in ${BFV_HONK_VERIFIER_DIR}, found ${candidates.length}.`,
+      `Expected one canonical artifact for ${contractName} in ${verifierDir}, found ${candidates.length}.`,
     );
   }
 
@@ -51,6 +61,7 @@ const getContractFqn = async (
   selectCanonicalVerifierFqn(
     await hre.artifacts.getAllFullyQualifiedNames(),
     contractName,
+    honkVerifierDir(),
   );
 
 const getLibraryLinkFqn = async (
@@ -131,13 +142,19 @@ const getInterfoldContractsRoot = (): string => {
 };
 
 /**
- * Discovers Honk/BB verifier contracts in contracts/verifiers/bfv/honk/
- * (excluding BfvDecryptionVerifier which lives in bfv/).
+ * Discovers Honk/BB verifier contracts in the verifier directory of the local build
+ * (`honkVerifierDir`; excluding BfvDecryptionVerifier which lives in bfv/).
  * Uses interfold-contracts package root so discovery works when run from consuming projects (e.g. CRISP).
  */
 export const discoverVerifierContracts = (): string[] => {
-  const honkDir = path.join(getInterfoldContractsRoot(), BFV_HONK_VERIFIER_DIR);
+  const verifierDir = honkVerifierDir();
+  const honkDir = path.join(getInterfoldContractsRoot(), verifierDir);
   if (!fs.existsSync(honkDir)) {
+    if (verifierDir !== BFV_HONK_VERIFIER_DIR) {
+      throw new Error(
+        `Missing ${verifierDir}. From the repo root run: pnpm generate:verifiers --preset ${ACTIVE_BFV_CONFIG.preset} --committee ${ACTIVE_BFV_CONFIG.committee}`,
+      );
+    }
     return [];
   }
 

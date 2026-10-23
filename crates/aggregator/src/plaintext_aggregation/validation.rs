@@ -4,7 +4,7 @@
 
 use super::*;
 use e3_polynomial_fhe::FromFhePolynomial as _;
-use e3_zk_config::{threshold::share_decryption::Configs, MAX_MSG_NON_ZERO_COEFFS};
+use e3_zk_config::threshold::share_decryption::Configs;
 use e3_zk_witness::compute_threshold_decryption_share_commitment;
 use fhe::bfv::BfvParameters;
 use std::sync::Arc;
@@ -13,6 +13,7 @@ use tracing::warn;
 pub(crate) struct C6ShareVerifier {
     params: Arc<BfvParameters>,
     d_native_bit: u32,
+    max_msg_non_zero_coeffs: usize,
 }
 
 impl C6ShareVerifier {
@@ -23,6 +24,7 @@ impl C6ShareVerifier {
         Ok(Self {
             params,
             d_native_bit: config.bits.d_native_bit,
+            max_msg_non_zero_coeffs: config.max_msg_non_zero_coeffs,
         })
     }
 
@@ -47,7 +49,7 @@ impl C6ShareVerifier {
         let commitment = compute_threshold_decryption_share_commitment(
             &crt,
             self.d_native_bit,
-            MAX_MSG_NON_ZERO_COEFFS,
+            self.max_msg_non_zero_coeffs,
         );
         let (_, bytes) = commitment.to_bytes_be();
         let mut padded = [0u8; 32];

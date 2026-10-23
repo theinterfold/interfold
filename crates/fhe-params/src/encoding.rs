@@ -193,7 +193,7 @@ pub fn crypto_config_id_with_label(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::{insecure, secure_8192};
+    use crate::constants::insecure_64;
     use crate::presets::BfvPreset;
     use std::str::FromStr;
 
@@ -207,7 +207,7 @@ mod tests {
         for (param_set, expected) in [
             (
                 0,
-                "0x968e91054be28b2b577ac278284e03274ed46bd5c5064e573290312a2323d495",
+                "0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9",
             ),
             (
                 2,
@@ -220,6 +220,10 @@ mod tests {
             (
                 4,
                 "0x968e91054be28b2b577ac278284e03274ed46bd5c5064e573290312a2323d495",
+            ),
+            (
+                5,
+                "0x843cc091bc39d046eded5e9f0aed8250848b46f7e36623433d31a1f5d7ef5e35",
             ),
         ] {
             let preset = BfvPreset::from_on_chain_param_set(param_set).unwrap();
@@ -256,9 +260,9 @@ mod tests {
         use crate::builder::build_bfv_params;
 
         // Use insecure DKG preset constants for testing arbitrary parameter encoding
-        let degree = insecure::DEGREE;
-        let plaintext_modulus = insecure::dkg::PLAINTEXT_MODULUS;
-        let moduli = insecure::dkg::MODULI;
+        let degree = insecure_64::DEGREE;
+        let plaintext_modulus = insecure_64::dkg::PLAINTEXT_MODULUS;
+        let moduli = insecure_64::dkg::MODULI;
 
         let params = build_bfv_params(degree, plaintext_modulus, moduli, None);
         let encoded = encode_bfv_params(&params);
@@ -270,7 +274,7 @@ mod tests {
         // Verify error1_variance is preserved (defaults to 10 for standard BFV)
         assert_eq!(
             decoded.get_error1_variance(),
-            &num_bigint::BigUint::from_str(insecure::dkg::ERROR1_VARIANCE).unwrap()
+            &num_bigint::BigUint::from_str(insecure_64::dkg::ERROR1_VARIANCE).unwrap()
         );
         assert_eq!(decoded.get_error1_variance(), params.get_error1_variance());
     }
@@ -280,7 +284,7 @@ mod tests {
     fn test_encode_decode_arc_roundtrip() {
         use crate::presets::BfvParamSet;
 
-        let preset = BfvPreset::InsecureThreshold;
+        let preset = BfvPreset::InsecureThreshold64;
         let param_set: BfvParamSet = preset.into();
         let params = param_set.build_arc();
 
@@ -291,47 +295,6 @@ mod tests {
         assert_eq!(decoded.plaintext(), params.plaintext());
         assert_eq!(decoded.moduli(), params.moduli());
         assert_eq!(decoded.get_error1_variance(), params.get_error1_variance());
-    }
-
-    #[cfg(feature = "abi-encoding")]
-    #[test]
-    fn test_encode_decode_arc_roundtrip_arbitrary() {
-        use crate::builder::build_bfv_params_arc;
-
-        // Use insecure DKG preset constants for testing arbitrary parameter encoding with Arc
-        let degree = insecure::DEGREE;
-        let plaintext_modulus = insecure::dkg::PLAINTEXT_MODULUS;
-        let moduli = insecure::dkg::MODULI;
-
-        let params = build_bfv_params_arc(degree, plaintext_modulus, moduli, None);
-        let encoded = encode_bfv_params(&params);
-
-        // Verify we can decode back to the original parameters with Arc
-        let decoded = decode_bfv_params_arc(&encoded).expect("should decode successfully");
-        assert_eq!(decoded.degree(), degree);
-        assert_eq!(decoded.plaintext(), plaintext_modulus);
-        assert_eq!(decoded.moduli(), moduli);
-        // Verify error1_variance is preserved (defaults to 10 for standard BFV)
-        assert_eq!(
-            decoded.get_error1_variance(),
-            &num_bigint::BigUint::from_str(insecure::dkg::ERROR1_VARIANCE).unwrap()
-        );
-        assert_eq!(decoded.get_error1_variance(), params.get_error1_variance());
-    }
-
-    #[cfg(feature = "abi-encoding")]
-    #[test]
-    fn test_encode_deterministic() {
-        use crate::presets::BfvParamSet;
-
-        let preset = BfvPreset::SecureThreshold8192;
-        let param_set: BfvParamSet = preset.into();
-        let params = param_set.build();
-
-        let encoded1 = encode_bfv_params(&params);
-        let encoded2 = encode_bfv_params(&params);
-
-        assert_eq!(encoded1, encoded2, "ABI encoding should be deterministic");
     }
 
     #[cfg(feature = "abi-encoding")]

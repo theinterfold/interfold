@@ -82,7 +82,8 @@ contract BfvPkVerifierV2 is IPkVerifier {
         // The V2 statement exists only on the l-BFV path.
         if (
             _paramSet != ActiveCryptoConfig.SECURE_16384_PARAM_SET &&
-            _paramSet != ActiveCryptoConfig.INSECURE_LBFV_PARAM_SET
+            _paramSet != ActiveCryptoConfig.INSECURE_LBFV_PARAM_SET &&
+            _paramSet != ActiveCryptoConfig.INSECURE_SIMD_PARAM_SET
         ) {
             revert InvalidParamSet(_paramSet);
         }
@@ -111,10 +112,13 @@ contract BfvPkVerifierV2 is IPkVerifier {
         h = _committeeH;
         committeeN = _committeeN;
         expectedParamSet = _paramSet;
-        lbfvRows =
-            _paramSet == ActiveCryptoConfig.SECURE_16384_PARAM_SET ? 5 : 3;
+        lbfvRows = _paramSet == ActiveCryptoConfig.SECURE_16384_PARAM_SET
+            ? 5
+            : 3;
         expectedPublicInputsLen =
-            V2_PUBLIC_INPUTS_FIXED_LEN + (3 * h) + (3 * lbfvRows);
+            V2_PUBLIC_INPUTS_FIXED_LEN +
+            (3 * h) +
+            (3 * lbfvRows);
         ciphernodeRegistry = ICiphernodeRegistry(_ciphernodeRegistry);
         circuitVerifier = ICircuitVerifier(_circuitVerifier);
         expectedNodesFoldKeyHash = _expectedNodesFoldKeyHash;
@@ -176,18 +180,13 @@ contract BfvPkVerifierV2 is IPkVerifier {
             revert VkHashMismatch();
         }
         for (uint256 i = 0; i < LEGACY_VK_BINDING_LEN; ++i) {
-            if (
-                publicInputs[3 + h + i] !=
-                    expectedLegacyVkBinding[i]
-            ) {
+            if (publicInputs[3 + h + i] != expectedLegacyVkBinding[i]) {
                 revert VkHashMismatch();
             }
         }
         uint256 v2VkBindingStart = 28 + (3 * h) + (3 * lbfvRows);
         for (uint256 i = 0; i < V2_VK_BINDING_LEN; ++i) {
-            if (
-                publicInputs[v2VkBindingStart + i] != expectedV2VkBinding[i]
-            ) {
+            if (publicInputs[v2VkBindingStart + i] != expectedV2VkBinding[i]) {
                 revert VkHashMismatch();
             }
         }
@@ -212,10 +211,8 @@ contract BfvPkVerifierV2 is IPkVerifier {
         bytes32 committeeHash
     ) private view {
         if (
-            publicInputs[1 + h] !=
-                CommitteeHashLib.hi(committeeHash) ||
-            publicInputs[2 + h] !=
-                CommitteeHashLib.lo(committeeHash)
+            publicInputs[1 + h] != CommitteeHashLib.hi(committeeHash) ||
+            publicInputs[2 + h] != CommitteeHashLib.lo(committeeHash)
         ) {
             revert DomainBindingMismatch();
         }
@@ -236,16 +233,14 @@ contract BfvPkVerifierV2 is IPkVerifier {
                 )
             );
         }
-        bytes32 acceptedSetHash = keccak256(
-            acceptedSetPreimage
-        );
+        bytes32 acceptedSetHash = keccak256(acceptedSetPreimage);
         uint256 acceptedSetHiIdx = 26 + (3 * h);
         uint256 acceptedSetLoIdx = 27 + (3 * h);
         if (
             publicInputs[acceptedSetHiIdx] !=
-                CommitteeHashLib.hi(acceptedSetHash) ||
+            CommitteeHashLib.hi(acceptedSetHash) ||
             publicInputs[acceptedSetLoIdx] !=
-                CommitteeHashLib.lo(acceptedSetHash)
+            CommitteeHashLib.lo(acceptedSetHash)
         ) {
             revert DomainBindingMismatch();
         }

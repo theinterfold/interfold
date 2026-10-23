@@ -26,13 +26,19 @@ import { stageMockDataAvailabilityObject } from "./mockDataAvailability";
 
 function cryptoConfigIdForParamSet(paramSet: number): string {
   if (paramSet === 0) {
-    return "0x353ab90c0ebe9c13e1b9c2048539b7c2872f3eb12a9f1957f31410aa4bf44718";
+    return "0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9";
+  }
+  if (paramSet === 4) {
+    return "0x968e91054be28b2b577ac278284e03274ed46bd5c5064e573290312a2323d495";
   }
   if (paramSet === 2) {
-    return "0x5ebb3432396f21cd97fca47e006b9dd38c021bf2902d3e555cf74cb91b28e44e";
+    return "0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa";
   }
   if (paramSet === 3) {
-    return "0x9c5c09ac7421582c4407c7e6ad923b8f9126aa708957c2575760fb0a38153655";
+    return "0x9b9181e0304e51388d6edd6eb4d5ae9a8593cbdbf28838734d829d09d0701d86";
+  }
+  if (paramSet === 5) {
+    return "0x843cc091bc39d046eded5e9f0aed8250848b46f7e36623433d31a1f5d7ef5e35";
   }
   throw new Error(`Unsupported BFV parameter set: ${paramSet}`);
 }
@@ -212,7 +218,7 @@ export const requestCommittee = task(
   .addOption({
     name: "paramSet",
     description:
-      "BFV parameter set (0=insecure-64, 2=secure-8192; default: the set of the active circuit build)",
+      "BFV parameter set (0=insecure-64, 2=secure-8192, 3=secure-16384, 4=insecure l-BFV, 5=insecure-simd; default: the set of the active circuit build)",
     defaultValue: ACTIVE_BFV_PARAM_SET,
     type: ArgumentType.INT,
   })
@@ -330,9 +336,6 @@ export const requestCommittee = task(
         "MockE3Program",
         hre.globalOptions.network,
       );
-
-      // paramSet: 0 = Insecure128, 1 = Secure8192
-      const paramSet = 0;
 
       let computeProviderParams = computeParams;
       const mockDecryptionVerifierArgs = readDeploymentArgs(

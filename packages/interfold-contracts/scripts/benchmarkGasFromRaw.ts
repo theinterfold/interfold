@@ -17,6 +17,7 @@ import {
   bfvDecDomainIndices,
   bfvDecPartyColOffsets,
   bfvDkgCommitteeHashIndices,
+  bfvMessageCoeffsCount,
   bfvPkV2PublicInputLayout,
   committeeHashFromLimbs,
   getBfvDecryptionSubCircuitVkHashPaths,
@@ -25,11 +26,11 @@ import {
   getBfvV2SubCircuitVkHashPaths,
   getBfvV2VkBindingHashPaths,
   getRepoRoot,
-  localBfvParamSet,
   readVkRecursiveHash,
 } from "./utils";
 
-const CANONICAL_BFV_PRESET = "insecure";
+const CANONICAL_BFV_PRESET = "insecure-64";
+const CANONICAL_BFV_COMMITTEE: BfvCommittee = "minimum";
 const COMMITTED_HONK_DIR = path.join(
   getRepoRoot(),
   "packages/interfold-contracts/contracts/verifiers/bfv/honk",
@@ -83,13 +84,26 @@ function readBenchmarkPreset(foldedArtifact?: unknown): string {
   }
 }
 
-/**
- * Committed Honk `.sol` files embed the insecure aggregator VK. Secure benchmark
- * proofs need verifiers generated from the active circuits/bin preset.
- */
-function ensureHonkVerifierContractDir(preset: string): string {
-  if (preset === CANONICAL_BFV_PRESET) {
-    return COMMITTED_HONK_DIR;
+function committeeFromFoldedArtifact(
+  artifact: unknown,
+): BfvCommittee | undefined {
+  if (!artifact || typeof artifact !== "object") return undefined;
+
+  const doc = artifact as Record<string, unknown>;
+  const benchmarkConfig =
+    doc.benchmark_config && typeof doc.benchmark_config === "object"
+      ? (doc.benchmark_config as Record<string, unknown>)
+      : undefined;
+  const named = doc.committee ?? benchmarkConfig?.committee;
+  if (typeof named === "string" && named.trim().length > 0) {
+    const committee = named.trim();
+    const match = TESTNET_BFV_CONFIGS.find(
+      (config) => config.committee === committee,
+    );
+    if (!match) {
+      throw new Error(`Unknown benchmark committee: ${committee}`);
+    }
+    return match.committee;
   }
 
   const h = benchmarkConfig?.committee_h;
@@ -153,16 +167,9 @@ function readBenchmarkCommittee(foldedArtifact?: unknown): BfvCommittee {
 function resolveBenchmarkConfig(foldedArtifact?: unknown): ActiveBfvConfig {
   const preset = readBenchmarkPreset(foldedArtifact);
   const committee = readBenchmarkCommittee(foldedArtifact);
-  // The insecure artifacts serve parameter sets 0 (trBFV) and 4 (l-BFV); `BFV_PARAM_SET`
-  // chooses between them. Without it, the first match is the trBFV entry.
-  const paramSet = process.env.BFV_PARAM_SET?.trim()
-    ? localBfvParamSet()
-    : undefined;
   const config = TESTNET_BFV_CONFIGS.find(
     (candidate) =>
-      candidate.preset === preset &&
-      candidate.committee === committee &&
-      (paramSet === undefined || candidate.paramSet === paramSet),
+      candidate.preset === preset && candidate.committee === committee,
   );
   if (!config) {
     throw new Error(
@@ -323,8 +330,8 @@ function hexToBytes32Array(hex: string): string[] {
 function plaintextHashFromPublicInputs(
   publicInputs: string[],
   ethersLib: any,
+  messageCoeffsCount: number,
 ): string {
-  const messageCoeffsCount = 50;
   if (publicInputs.length < messageCoeffsCount) {
     throw new Error(`Not enough public inputs: ${publicInputs.length}`);
   }
@@ -476,7 +483,7 @@ async function main() {
       : dkgPublicInputs[1] !== expectedC5KeyHash)
   ) {
     throw new Error(
-      "DKG aggregator proof public inputs do not match nodes_fold, pk_aggregation, sk_share_computation_chunk, or esm_share_computation_chunk .vk_recursive_hash artifacts",
+      "DKG aggregator public inputs do not match the nodes VK-tree anchor, C5, C2 chunk, or VK-binding hashes",
     );
   }
   if (
@@ -496,7 +503,7 @@ async function main() {
     benchmarkConfig.committee !== CANONICAL_BFV_COMMITTEE
   ) {
     console.log(
-      `[benchmarkGasFromRaw] Using preset ${benchmarkPreset} Honk verifiers (not committed insecure .sol).`,
+      `[benchmarkGasFromRaw] Using ${benchmarkConfig.preset}/${benchmarkConfig.committee} Honk verifiers for this benchmark.`,
     );
   }
 
@@ -641,6 +648,7 @@ async function main() {
     expectedC6FoldKeyHash,
     expectedC7KeyHash,
     benchmarkConfig.t,
+    bfvMessageCoeffsCount(benchmarkConfig.paramSet),
   );
   await bfvDec.waitForDeployment();
 
@@ -666,7 +674,11 @@ async function main() {
     ["bytes", "bytes32[]"],
     [decProofHex, decPublicInputs],
   );
-  const plaintextHash = plaintextHashFromPublicInputs(decPublicInputs, ethers);
+  const plaintextHash = plaintextHashFromPublicInputs(
+    decPublicInputs,
+    ethers,
+    bfvMessageCoeffsCount(benchmarkConfig.paramSet),
+  );
   requirePublicInputLen(
     "decryption_aggregator committee_hash",
     decPublicInputs,

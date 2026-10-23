@@ -54,7 +54,12 @@ requires reconsidering the assumption. C3 and user-data-encryption `k1` are non-
 residues; Rust witnesses, Noir equations, and asymmetric quotient bounds must agree. The workspace
 uses the locked fhe.rs `dev` revision; do not infer sampler behavior from older release labels. The
 additive smudging contract is `2^(lambda+1) * degree * B_C`, with preset/committee-specific bounds
-generated from the matching Rust sampler.
+generated from the matching Rust sampler. The preset search (`crates/fhe-params/src/search`) sizes `q` with
+the same smudging bound and, for `b == 20`, `b_chi == 1`, and tabulated `d`, a lattice-estimator
+128-bit ceiling (`search::security`). Other inputs use the formula fallback and print a warning;
+see [`crates/fhe-params/README.md`](../../crates/fhe-params/README.md) for the limitation;
+`search_reproduces_secure_presets` and `search_reproduces_insecure_presets` keep its moduli,
+plaintext moduli, and `ERROR1_VARIANCE` equal to the preset constants.
 
 Every prover-chosen modular quotient needs a bound. Division/rounding are verified with a quotient
 bound plus the unique remainder interval, not trusted because a hint computed them. In particular:
@@ -88,16 +93,40 @@ openings unless every digit fits its slot. A `u64` cast is not enough when `base
 
 **Injectivity is not canonicality.** `pack_checked` pins `digit < radix`; it transfers an upstream
 creating circuit's canonical bound because the opening must equal the committed value. It does not
-create a canonical bound where no upstream statement proves one. C1's originating `pk0` and C5's
-unanchored `pk0_agg` need explicit centered bounds. C5's per-party keys and C4's received C2 shares
-can inherit them through checked openings. C4 normalizes its derived aggregate in circuit; it does
-not need a second opened-witness bound. Run the binding check **before** commitment comparison.
+create a canonical bound where no upstream statement proves one. C1's originating `pk0`, C0's key,
+and C5's unanchored `pk0_agg` need explicit centered bounds. C0 range-checks its key to the centered
+window instead of only hashing it. Then a malformed key fails its owner's C0, not every dealer's C3.
+C5's per-party keys, C4's received C2 shares, C3's DKG key (bounded by C0), and the l-BFV C3 message
+(bounded by the C2 chunk leaves) inherit bounds through openings. trBFV C4 normalizes its derived
+aggregate in circuit; it does not need a second opened-witness bound. Run the binding check
+**before** commitment comparison.
+
+The l-BFV C3 skips the message `[0, t)` check (`message_bounded_by_opening`) only when all three
+conditions hold. First, it opens the C2 chunk root with checked digits at C2's width
+(`SHARE_ENCRYPTION_BIT_MSG == SHARE_COMPUTATION_BIT_SHARE`). Second, every threshold modulus is at
+most the DKG `t` (asserted in the binary), so C2's `[0, q_l)` lies inside `[0, t)`. Third, the C2→C3
+link holds (`node_fold_chunked` and the off-chain C2→C3 consistency check). trBFV C3 keeps the check.
 
 The review class is **every prover-chosen witness entering the sponge**, not only commitments opened
 from another circuit. C2a/C2b, C4, C5, and three C6 openings were the IF-011 class. IF-013
 additionally found direct `flatten` inputs (C6 d and C3 ciphertexts) and commitments created inside
 ct0/ct1. Use `flatten_checked`/checked commitment helpers unless another constraint already makes
 packing injective. Creating a commitment is not an exemption.
+
+Every circuit that opens a commitment it did not create belongs to the opener class: C2a, C2b, C3
+(C0's key and, on l-BFV, the C2 chunk root of its message), C4, C5, three C6 openings, and the l-BFV
+PK/RLK aggregation. The trBFV circuits open through checked packing (`pack_checked` /
+`flatten_with(.., true)`). The l-BFV C4 and the l-BFV PK/RLK aggregation (`math::packed_sum`) hash the
+creator's packed carriers directly. That binds them to the creator's range-checked digits without a
+per-coefficient check. A new opened commitment joins this class and needs the checked helper or its
+own bound.
+
+A value that the circuit reduces itself needs no opened-witness bound. The l-BFV C4 and PK/RLK
+aggregation derive the aggregate from the packed sum with hints `k_i, c_i`. Each `c_i` is in the exact
+centered window, and each `k_i` is in a carry window narrow enough that every digit `k_i * q + c_i`
+fits one slot. The circuit checks `S == sum R^(3 - i) * (k_i * q + c_i)`, which makes the unpacking
+unique and `c_i` the canonical residue. `reduce_packed_sum` asserts the committee bound that keeps
+the honest carry in its window.
 
 Once the transcript uniquely fixes the witness before gamma, the polynomial evaluation argument can
 force a value to equal a canonical identity. That is why C6 d needs injectivity rather than another
@@ -182,10 +211,14 @@ because its key comes from C0. The missing constraint was established by source 
 negative test, not an end-to-end threshold bypass demonstration.
 
 Before BFV verification, wrappers require canonical BN254 field encodings; message coefficients must
-also fit 64 bits. The output width is exactly 50 u64 coefficients across Noir
-`MAX_MSG_NON_ZERO_COEFFS`, `e3-zk-config`, and Solidity `MESSAGE_COEFFS_COUNT`. The builder emits
-the Noir value from the Rust constant; its shared-material test compares rendered Noir/Solidity
-widths with that constant. C6/C7 preparation uses the same native ascending prefix selected by
+also fit 64 bits. The output width is exactly `BfvPreset::max_msg_non_zero_coeffs()` u64
+coefficients: 128 for `InsecureThresholdSimd` and 50 for every other preset. The width appears in
+Noir `MAX_MSG_NON_ZERO_COEFFS`, in `e3-zk-config`, and in the `messageCoeffsCount` constructor
+argument of the Solidity `BfvDecryptionVerifier` for the preset's parameter set. The builder emits
+the Noir value and the `*_MESSAGE_COEFFS_COUNT` constants in
+`packages/interfold-contracts/scripts/utils.ts`, which the deployment scripts pass to that
+constructor, from the Rust accessor. Its shared-material test compares the rendered Noir width of
+every preset with that accessor. C6/C7 preparation uses the same native ascending prefix selected by
 `config.max_msg_non_zero_coeffs`; a nondefault host width requires matching ABIs and consumers.
 Canonical field checks do not prove parameter-specific plaintext-modulus bounds because the wrapper
 does not store t.
@@ -201,6 +234,21 @@ commitments; RLK rows open fixed URS and CRS commitments and bind both output co
 prover-chosen secret, error, quotient, and key data must reach the transcript before challenge
 derivation. Aggregation opens the creator's range-checked packed carriers and normalizes their sum
 in circuit; checked openings and canonical carry windows remain necessary.
+
+Each PK or RLK generation row commits as a hash of its verified limb commitments
+(`compute_lbfv_pk_row_commitment`, `compute_rlk_row_commitment_from_limbs`) and takes no coefficient
+witness. PK aggregation uses the generated commitment of the fixed CRS row
+(`LBFV_CRS_ROW_COMMITMENTS`) instead of hashing the row. Aggregation opens a row by hashing the packed
+carriers that the row proof produced directly into those limb commitments. Collision resistance makes
+them the creator's carriers, so the centered bound carries over with no per-coefficient check.
+
+`node_fold_chunked` folds C0, C2AB, C3AB, and C4AB (no C1) and exports the C2a secret root.
+`node_fold_v2` requires the generation SK commitment to equal that root and returns the node
+statement as a prefix. A NodeFoldV2 statement has three public-prefix fields and an 84-field return,
+87 fields in total. NodesFoldV2 keeps that statement for each of H parties; its
+secure-16384/minimum accumulator statement has 180 fields. `dkg_aggregator_v2` has no C5 input:
+`legacy_key_hash = H(nodes_fold_key_hash)` and
+`v2_key_hash = H(nodes_fold_key_hash, aggregation_fold_key_hash)`.
 
 Every chunked user-encryption descendant VK reaches an anchor: identity outputs the leaf hash; the
 leg manifest hashes `(identity, leaf, pk_ct)` in that order; the wrapper exports
