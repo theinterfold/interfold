@@ -389,6 +389,13 @@ fn config_loader_binds_the_compiled_digest_and_pair_not_the_active_stamp() {
         "../../../../../crates/zk/prover/tests/fixtures/dummy.json"
     ))
     .unwrap();
+    let compiler_version = document["noir_version"]
+        .as_str()
+        .unwrap()
+        .split('+')
+        .next()
+        .unwrap();
+    let fixture_hash = document["hash"].as_str().unwrap();
     let stamp = serde_json::json!({"schema_version":1,"preset":"secure-8192","committee":"minimum","compiled_sha256":artifacts::digest(&compiled).unwrap(),"compiler_version":document["noir_version"],"sourceHash":"original-config-sources","source_origin":"fresh_local_noir_compile","vk_sha256":{}});
     write_json(&directory.join(".config-benchmark.json"), &stamp).unwrap();
     write_json(&root.join("circuits/bin/.active-preset.json"), &serde_json::json!({"preset":"secure-8192","committee":"micro","sourceHash":"different-hydrated-build"})).unwrap();
@@ -405,7 +412,7 @@ fn config_loader_binds_the_compiled_digest_and_pair_not_the_active_stamp() {
             pair,
             Case::Config,
             e3_zk_prover::CircuitVariant::Recursive,
-            "1.0.0-beta.26",
+            compiler_version,
             need_vk,
         )
     };
@@ -440,12 +447,9 @@ fn config_loader_binds_the_compiled_digest_and_pair_not_the_active_stamp() {
     )
     .unwrap();
     assert!(load("secure-8192/minimum", true).is_ok());
-    fs::write(
-        &compiled,
-        include_str!("../../../../../crates/zk/prover/tests/fixtures/dummy.json")
-            .replace("2159294962516643373", "2159294962516643374"),
-    )
-    .unwrap();
+    let altered = include_str!("../../../../../crates/zk/prover/tests/fixtures/dummy.json")
+        .replace(fixture_hash, &format!("{fixture_hash}0"));
+    fs::write(&compiled, altered).unwrap();
     assert!(load("secure-8192/minimum", false)
         .unwrap_err()
         .to_string()

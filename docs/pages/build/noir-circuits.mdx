@@ -134,13 +134,13 @@ match the prover or the committed verifiers.
 This table describes repository source builds. Released binaries keep the versions pinned at their
 release.
 
-| Component                            | Version                  | Pinned in                                                                                                          |
-| ------------------------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| `nargo`                              | `1.0.0-beta.26`          | `NOIR_TOOLCHAIN` in `.github/workflows/ci.yml`. The Noir crates in `crates/zk/prover/Cargo.toml` use the same tag. |
-| `bb`                                 | `5.2.0`                  | `required_bb_version` in `crates/zk/prover/versions.json`, and `BB_VERSION` in `ci.yml`                            |
-| Circuit artifacts for source builds  | Build from this checkout | `pnpm build:circuits`                                                                                              |
-| `bb_proof_verification` (Noir)       | `v5.2.0`                 | The `Nargo.toml` of each package that verifies a proof                                                             |
-| `@aztec/bb.js`, `@noir-lang/noir_js` | `5.2.0`, `1.0.0-beta.26` | `packages/interfold-sdk/package.json`                                                                              |
+| Component                                       | Version                  | Pinned in                                                                                                          |
+| ----------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `nargo`                                         | `1.0.0-rc.3`             | `NOIR_TOOLCHAIN` in `.github/workflows/ci.yml`. The Noir crates in `crates/zk/prover/Cargo.toml` use the same tag. |
+| `bb`                                            | `6.0.0`                  | `required_bb_version` in `crates/zk/prover/versions.json`, and `BB_VERSION` in `ci.yml`                            |
+| Circuit artifacts for source builds             | Build from this checkout | `pnpm build:circuits`                                                                                              |
+| `bb_proof_verification` (Noir)                  | `v6.0.0`                 | The `Nargo.toml` of each package that verifies a proof                                                             |
+| `@aztec-foundation/bb.js`, `@noir-lang/noir_js` | `6.0.0`, `1.0.0-rc.3`    | `packages/interfold-sdk/package.json`                                                                              |
 
 For a source build, compile the circuits from the same checkout. `interfold noir setup` installs the
 CLI's release archive; it does not compile the checkout. Do not reuse an archive built with a
@@ -155,7 +155,7 @@ Install `noirup`, then use it to install the pinned compiler:
 ```bash
 curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
 export PATH="$PATH:$HOME/.nargo/bin"
-noirup -v v1.0.0-beta.26
+noirup -v v1.0.0-rc.3
 ```
 
 The installer adds `~/.nargo/bin` to your shell profile. The `export` line makes it available in the
@@ -164,7 +164,7 @@ current shell.
 ### Install bb
 
 For this checkout, install the binary for your platform from the
-[Barretenberg 5.2.0 release](https://github.com/AztecProtocol/aztec-packages/releases/tag/v5.2.0).
+[Barretenberg 6.0.0 release](https://github.com/AztecProtocol/aztec-packages/releases/tag/v6.0.0).
 
 For a released node, run `interfold noir setup`. It downloads the CLI's pinned `bb`, checks it
 against the checksum in `versions.json`, and installs that release's circuit archive:
@@ -179,7 +179,7 @@ and `version.json`. With a config file, it uses `.interfold/noir` next to that f
 ### Put bb on your PATH
 
 The repository scripts call `bb` from your `PATH`. For a source build, add the directory with the
-5.2.0 binary. To use the copy installed by a matching released CLI, add its directory:
+6.0.0 binary. To use the copy installed by a matching released CLI, add its directory:
 
 ```bash
 export PATH="$HOME/.interfold/noir/bin:$PATH"
@@ -192,7 +192,7 @@ nargo --version
 bb --version
 ```
 
-For source builds, `nargo` reports `1.0.0-beta.26` and `bb` reports `5.2.0`.
+For source builds, `nargo` reports `1.0.0-rc.3` and `bb` reports `6.0.0`.
 
 </Steps>
 
