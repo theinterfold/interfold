@@ -28,6 +28,7 @@ pub struct Configs {
     pub committee: CiphernodesCommitteeSize,
     preset: BfvPreset,
     pub bits: Bits,
+    pub chunks: ChunkLayout,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Bits {
@@ -43,6 +44,7 @@ impl Configs {
     ) -> Result<Self, ConfigError> {
         crate::parameters::require_threshold_preset(preset, threshold_params)?;
         let bits = Bits::new(threshold_params);
+        let chunks = ChunkLayout::new(threshold_params.degree(), bits.bit_share)?;
 
         Ok(Configs {
             params: threshold_params.clone(),
@@ -50,9 +52,54 @@ impl Configs {
             preset,
 
             bits,
+            chunks,
         })
     }
 }
+/// How chunked C2 splits the degree: `n_chunks - 1` chunks of `chunk_size` coefficients, then
+/// one of `last_chunk_size`, verified `chunks_per_batch` at a time.
+///
+/// A chunk other than the last holds whole share carriers and whole sponge blocks (rate 3), so
+/// `chunk_size` is a multiple of three packing groups and every chunk starts each sponge on a block
+/// boundary. The target of 16 chunks keeps a chunk near 2^21 gates at 39 parties.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChunkLayout {
+    pub chunk_size: usize,
+    pub last_chunk_size: usize,
+    pub n_chunks: usize,
+    pub chunks_per_batch: usize,
+    pub n_batches: usize,
+}
+
+impl ChunkLayout {
+    const TARGET_CHUNKS: usize = 16;
+    const MIN_CHUNKS: usize = 4;
+    const CHUNKS_PER_BATCH: usize = 4;
+
+    pub fn new(degree: usize, bit_share: u32) -> Result<Self, ConfigError> {
+        let nibble_bits = bit_share.div_ceil(4) * 4;
+        let group = (254 / (nibble_bits + 4)) as usize;
+        let target = (degree / 16).clamp(Self::MIN_CHUNKS, Self::TARGET_CHUNKS);
+        let block = 3 * group;
+        let chunk_size = degree.div_ceil(target).div_ceil(block) * block;
+        let n_chunks = degree.div_ceil(chunk_size);
+        let last_chunk_size = degree - (n_chunks - 1) * chunk_size;
+        if n_chunks % Self::CHUNKS_PER_BATCH != 0 {
+            return Err(ConfigError::Other(format!(
+                "degree {degree} splits into {n_chunks} C2 chunks, not a multiple of {}",
+                Self::CHUNKS_PER_BATCH
+            )));
+        }
+        Ok(ChunkLayout {
+            chunk_size,
+            last_chunk_size,
+            n_chunks,
+            chunks_per_batch: Self::CHUNKS_PER_BATCH,
+            n_batches: n_chunks / Self::CHUNKS_PER_BATCH,
+        })
+    }
+}
+
 impl Bits {
     fn new(threshold_params: &Arc<BfvParameters>) -> Self {
         let bit_share = compute_native_crt_coeff_bit(threshold_params.moduli());
@@ -112,6 +159,18 @@ pub global {}_E_SM_BIT_SECRET: u32 = {};
 // verify_shares - configs
 pub global {}_E_SM_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
     ShareComputationConfigs::new(QIS_THRESHOLD);
+
+/************************************
+-------------------------------------
+share_computation chunks (chunked C2a and C2b)
+-------------------------------------
+************************************/
+
+pub global {}_CHUNK_SIZE: u32 = {};
+pub global {}_LAST_CHUNK_SIZE: u32 = {};
+pub global {}_N_CHUNKS: u32 = {};
+pub global {}_CHUNKS_PER_BATCH: u32 = {};
+pub global {}_N_BATCHES: u32 = {};
 "#,
             config_name,
             configs.params.degree(),
@@ -124,6 +183,16 @@ pub global {}_E_SM_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
             prefix,
             bits.bit_e_sm_secret,
             prefix,
+            prefix,
+            self.chunks.chunk_size,
+            prefix,
+            self.chunks.last_chunk_size,
+            prefix,
+            self.chunks.n_chunks,
+            prefix,
+            self.chunks.chunks_per_batch,
+            prefix,
+            self.chunks.n_batches,
         );
 
         Ok(configs)
@@ -139,5 +208,30 @@ impl Configs {
             .build_pair()
             .map_err(|e| ConfigError::Other(e.to_string()))?;
         Self::new(preset, &threshold_params, committee)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ChunkLayout;
+
+    #[test]
+    fn chunk_layouts_cover_the_degree_with_whole_carriers() {
+        // 60-bit shares pack three per carrier.
+        for (degree, chunk_size, last_chunk_size, n_chunks) in
+            [(8192, 513, 497, 16), (64, 18, 10, 4)]
+        {
+            let layout = ChunkLayout::new(degree, 60).unwrap();
+            assert_eq!(
+                (layout.chunk_size, layout.last_chunk_size, layout.n_chunks),
+                (chunk_size, last_chunk_size, n_chunks)
+            );
+            assert_eq!(layout.chunk_size % 9, 0);
+            assert_eq!(
+                (layout.n_chunks - 1) * layout.chunk_size + layout.last_chunk_size,
+                degree
+            );
+            assert_eq!(layout.n_batches * layout.chunks_per_batch, layout.n_chunks);
+        }
     }
 }

@@ -20,8 +20,8 @@ impl Case {
             "threshold/user_data_encryption" => Ok(Self::Ude),
             _ => [
                 CircuitName::PkBfv,
-                CircuitName::SkShareComputation,
-                CircuitName::ESmShareComputation,
+                CircuitName::SkShareComputationChain,
+                CircuitName::ESmShareComputationChain,
                 CircuitName::ShareEncryption,
                 CircuitName::DkgShareDecryption,
                 CircuitName::PkGeneration,

@@ -1026,6 +1026,9 @@ fn handle_dkg_share_decryption_proof(
 }
 
 /// ZK-verify a share proof (inner recursive circuits).
+///
+/// A C2 proof is the final circuit of a chunk chain: it verifies its chunk and batch proofs
+/// against keys it only exposes, so the exposed key tree must match this node's chain circuits.
 fn zk_verify_share_proof_bundle(
     prover: &ZkProver,
     proof: &Proof,
@@ -1033,7 +1036,20 @@ fn zk_verify_share_proof_bundle(
     party_id: u64,
     artifacts_dir: &str,
 ) -> Result<bool, ZkError> {
-    prover.verify_proof(proof, e3_id_str, party_id, artifacts_dir)
+    if !prover.verify_proof(proof, e3_id_str, party_id, artifacts_dir)? {
+        return Ok(false);
+    }
+    if matches!(
+        proof.circuit,
+        e3_events::CircuitName::SkShareComputation | e3_events::CircuitName::ESmShareComputation
+    ) {
+        return crate::circuits::aggregation::c2_chain::check_key_tree(
+            prover,
+            proof,
+            artifacts_dir,
+        );
+    }
+    Ok(true)
 }
 
 fn handle_verify_share_proofs(

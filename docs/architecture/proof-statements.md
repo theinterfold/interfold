@@ -13,7 +13,7 @@ or audit remediation is not completeness evidence.
 | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | C0      | BFV share-encryption public key is correctly generated.                                                                                                                                   |
 | C1      | Threshold public share derives from SK; integer smudging bound is enforced; output commits to SK, PK, and ESM residues.                                                                   |
-| C2a/C2b | Correct Shamir splitting of SK/ESM, linked to C1 secrets.                                                                                                                                 |
+| C2a/C2b | Correct Shamir splitting of SK/ESM, linked to C1 secrets. Proven as a chunk chain whose final proof keeps C2's commitments.                                                               |
 | C3a/C3b | Correct recipient encryption of those shares under the C0 key, linked to C2 messages.                                                                                                     |
 | C4a/C4b | The H selected received shares open their C2 commitments and form the normalized summed SK/ESM anchors.                                                                                   |
 | C5      | Aggregate PK derives from exactly the H canonical dealer shares.                                                                                                                          |
@@ -159,7 +159,9 @@ selected row.
 The trust tree uses ordered SAFE `DS_VK_HASH` hashing:
 
 ```text
-C2 tree    = hash(C2a, C2b)
+C2a chain  = hash(c2_chain_batch, sk_share_computation_chain, sk_share_computation_chain_last)
+C2b chain  = hash(c2_chain_batch, e_sm_share_computation_chain, e_sm_share_computation_chain_last)
+C2 tree    = hash(C2a, C2a chain, C2b, C2b chain)
 C3 chain   = hash(c3_fold, c3_fold_kernel, C3)
 C3 tree    = hash(C3a chain, C3b chain)
 C4 tree    = hash(C4a, C4b)
@@ -186,6 +188,29 @@ widths with that constant. C6/C7 preparation uses the same native ascending pref
 `config.max_msg_non_zero_coeffs`; a nondefault host width requires matching ABIs and consumers.
 Canonical field checks do not prove parameter-specific plaintext-modulus bounds because the wrapper
 does not store t.
+
+## Chunked C2
+
+C2 is split by coefficient range so its proofs stay near 2^21 gates at large committees. Each share
+commitment is one SAFE sponge over the share's packed coefficients, highest degree first. A chunk
+runs C2's per-coefficient checks (Shamir finite differences, share ranges, the `sk` column equal
+across limbs) and continues every party's sponge from a carried `(state, absorb_pos)`. SAFE merges
+consecutive ABSORB words into one tag, so the chain computes exactly the unchunked commitment and
+C1, C3, C4 and the node fold are unchanged. A full chunk holds whole packing carriers; only the last
+may end on a partial one.
+
+Each chunk proves `h_out` from `h_in`, hashes of every carried sponge
+(`DS_SHARE_COMPUTATION_CHAIN_STATE`). `c2_chain_batch` links its chunks and pins each chunk key by
+position: the chain's last place takes the last-chunk key, every other place the full-chunk key. The
+final `sk_share_computation` or `e_sm_share_computation` circuit checks batch indices and links,
+starts the chain from fresh sponges, ends it on the commitments it returns, and opens C1's secret
+commitment exactly as the unchunked C2 did. The chunks also absorb the secret column into a chain
+sponge (`DS_SHARE_COMPUTATION_CHAIN_SECRET`), and the final circuit requires the opened secret to
+hash to that digest, so the shares are dealt from C1's secret.
+
+The final proof exposes the hash of the batch and chunk keys as its last public field. `c2ab_fold`
+folds it into the VK tree above. A peer verifying a C2 proof directly must compare it with its own
+chunk and batch keys (`zk_verify_share_proof_bundle`); the proof alone does not pin them.
 
 ## Evidence and change review
 

@@ -20,7 +20,7 @@ use std::path::PathBuf;
 
 use common::{
     find_bb, require_minimum_circuits, setup_compiled_circuit,
-    setup_recursive_aggregation_fold_circuit, setup_test_prover,
+    setup_recursive_aggregation_fold_circuit, setup_share_computation_circuits, setup_test_prover,
 };
 use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{CircuitName, Proof};
@@ -361,6 +361,7 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
         };
         setup_compiled_circuit(&backend, "dkg", name).await;
     }
+    setup_share_computation_circuits(&backend).await;
     setup_compiled_circuit(&backend, "threshold", "pk_generation").await;
 
     for c in [

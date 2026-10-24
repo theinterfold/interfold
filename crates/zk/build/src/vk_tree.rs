@@ -33,9 +33,26 @@ fn field_from_file(path: &Path) -> Result<Fr> {
 
 pub fn hashes(root: &Path) -> Result<[(&'static str, [u8; 32]); 2]> {
     let fold = |name| load(root, "default", "recursive_aggregation", name);
+    // Each final C2 exposes the hash of its batch key and its two chunk keys; `c2ab_fold` hashes
+    // it next to that C2's key.
+    let c2_chain = |full, last| -> Result<Fr> {
+        Ok(compute_vk_hash(vec![
+            fold("c2_chain_batch")?,
+            load(root, "default", "dkg", full)?,
+            load(root, "default", "dkg", last)?,
+        ]))
+    };
     let c2 = compute_vk_hash(vec![
         load(root, "recursive", "dkg", "sk_share_computation")?,
+        c2_chain(
+            "sk_share_computation_chain",
+            "sk_share_computation_chain_last",
+        )?,
         load(root, "recursive", "dkg", "e_sm_share_computation")?,
+        c2_chain(
+            "e_sm_share_computation_chain",
+            "e_sm_share_computation_chain_last",
+        )?,
     ]);
     let c3_chain = compute_vk_hash(vec![
         fold("c3_fold")?,

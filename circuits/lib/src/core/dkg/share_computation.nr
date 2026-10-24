@@ -112,15 +112,9 @@ impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32
     /// coefficient of 240 or more overflows into the next and gives the commitment a second
     /// opening -- the prover could Shamir-split a secret other than the one in the public key.
     fn verify_secret_commitment(self) {
-        let mut reversed_coeffs: [Field; N] = [0; N];
-        for i in 0..N {
-            reversed_coeffs[i] = self.sk_secret.coefficients[N - 1 - i];
-        }
-        let reversed_sk = Polynomial::new(reversed_coeffs);
-        assert(
-            compute_share_computation_sk_commitment_checked::<N, BIT_SECRET>(reversed_sk)
-                == self.expected_secret_commitment,
-            "SK commitment mismatch",
+        verify_sk_secret_commitment::<N, BIT_SECRET>(
+            self.sk_secret,
+            self.expected_secret_commitment,
         );
     }
 
@@ -187,25 +181,10 @@ impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32
     /// `radix = 2^64` and `base = 2^60`, so a digit can exceed it. Asserting the digit fits forces
     /// the witness to equal the centered residues C1 committed and bounded.
     fn verify_secret_commitment(self) {
-        let mut normalized: [Polynomial<N>; L] = [Polynomial::new([0; N]); L];
-        for j in 0..L {
-            let q = self.configs.qis[j];
-            let half = (q - 1) / 2;
-            let mut coeffs: [Field; N] = [0; N];
-            for i in 0..N {
-                // Reverse: position i gets the coefficient from N-1-i.
-                let c = self.e_sm_secret[j].coefficients[N - 1 - i];
-                // Center: shift [0, q) to [-(q-1)/2, (q-1)/2].
-                // c = e_sm_secret coeff in [0, q) < 2^62; half < 2^61: u64 saves 22 gates.
-                let centered = if (c as u64) > (half as u64) { c - q } else { c };
-                coeffs[i] = centered;
-            }
-            normalized[j] = Polynomial::new(coeffs);
-        }
-        assert(
-            compute_share_computation_e_sm_commitment_checked::<N, L, BIT_SECRET>(normalized)
-                == self.expected_secret_commitment,
-            "ESM commitment mismatch",
+        verify_e_sm_secret_commitment::<N, L, BIT_SECRET>(
+            self.configs.qis,
+            self.e_sm_secret,
+            self.expected_secret_commitment,
         );
     }
 
@@ -232,6 +211,59 @@ impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32
             }
         }
     }
+}
+
+/// Opens C1's `sk` commitment with `sk_secret`, which C2a holds lowest-degree first.
+///
+/// Reverses the coefficients to C1's highest-degree-first order, then hashes with the checked
+/// packing helper (see [`SecretKeyShareComputation::verify_secret_commitment`] for why the digit
+/// asserts are needed).
+pub fn verify_sk_secret_commitment<let N: u32, let BIT_SECRET: u32>(
+    sk_secret: Polynomial<N>,
+    expected_secret_commitment: Field,
+) {
+    let mut reversed_coeffs: [Field; N] = [0; N];
+    for i in 0..N {
+        reversed_coeffs[i] = sk_secret.coefficients[N - 1 - i];
+    }
+    let reversed_sk = Polynomial::new(reversed_coeffs);
+    assert(
+        compute_share_computation_sk_commitment_checked::<N, BIT_SECRET>(reversed_sk)
+            == expected_secret_commitment,
+        "SK commitment mismatch",
+    );
+}
+
+/// Opens C1's `e_sm` commitment with `e_sm_secret`, whose limbs C2b holds in `[0, q)` and
+/// lowest-degree first.
+///
+/// Reverses and centers each limb to C1's convention, then hashes with the checked packing helper
+/// (see [`SmudgingNoiseShareComputation::verify_secret_commitment`]).
+pub fn verify_e_sm_secret_commitment<let N: u32, let L: u32, let BIT_SECRET: u32>(
+    qis: [Field; L],
+    e_sm_secret: [Polynomial<N>; L],
+    expected_secret_commitment: Field,
+) {
+    let mut normalized: [Polynomial<N>; L] = [Polynomial::new([0; N]); L];
+    for j in 0..L {
+        let q = qis[j];
+        let half = (q - 1) / 2;
+        let mut coeffs: [Field; N] = [0; N];
+        for i in 0..N {
+            // Reverse: position i gets the coefficient from N-1-i.
+            let c = e_sm_secret[j].coefficients[N - 1 - i];
+            // Center: shift [0, q) to [-(q-1)/2, (q-1)/2].
+            // c = e_sm_secret coeff in [0, q) < 2^62; half < 2^61: u64 saves 22 gates.
+            let centered = if (c as u64) > (half as u64) { c - q } else { c };
+            coeffs[i] = centered;
+        }
+        normalized[j] = Polynomial::new(coeffs);
+    }
+    assert(
+        compute_share_computation_e_sm_commitment_checked::<N, L, BIT_SECRET>(normalized)
+            == expected_secret_commitment,
+        "ESM commitment mismatch",
+    );
 }
 
 /// Performs range checks on secret key and share values.

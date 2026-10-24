@@ -250,6 +250,60 @@ impl<const L: usize> SafeSponge<L> {
     }
 }
 
+/// The state a sponge for `io_pattern` and `domain_separator` starts its first ABSORB from, with
+/// absorb position 0. Matches Noir `lib::math::safe::initial_state`.
+pub fn initial_state<const L: usize>(
+    io_pattern: [u32; L],
+    domain_separator: [u8; 64],
+) -> [Field; STATE_SIZE] {
+    let mut state = [Field::zero(); STATE_SIZE];
+    state[0] = compute_tag(io_pattern, domain_separator);
+    state
+}
+
+/// Continues one ABSORB from a carried `(state, absorb_pos)` and returns the new pair. Absorbing a
+/// stream piece by piece this way equals one [`SafeSponge::absorb`] of the whole stream. Matches
+/// Noir `lib::math::safe::absorb_from`.
+pub fn absorb_from(
+    mut state: [Field; STATE_SIZE],
+    mut absorb_pos: usize,
+    input: &[Field],
+) -> ([Field; STATE_SIZE], usize) {
+    for value in input {
+        if absorb_pos == RATE {
+            state = poseidon2_permutation(&state);
+            absorb_pos = 0;
+        }
+        state[absorb_pos + CAPACITY] += value;
+        absorb_pos += 1;
+    }
+    (state, absorb_pos)
+}
+
+/// Squeezes the single digest of `io_pattern = [ABSORB | total, 1]` from the pair an
+/// [`absorb_from`] chain ended on. Matches Noir `lib::math::safe::squeeze_one_after_absorb`.
+pub fn squeeze_one_after_absorb(
+    io_pattern: [u32; 2],
+    state: [Field; STATE_SIZE],
+    absorb_pos: usize,
+) -> Field {
+    assert!(
+        io_pattern[0] & ABSORB_FLAG != 0,
+        "Expected ABSORB operation"
+    );
+    let mut sponge = SafeSponge {
+        state,
+        tag: Field::zero(),
+        absorb_pos,
+        squeeze_pos: RATE,
+        io_pattern,
+        io_count: 1,
+    };
+    let digests = sponge.squeeze();
+    sponge.finish();
+    digests[0]
+}
+
 /// Computes a unique tag for a sponge instance based on its IO pattern and domain separator.
 /// The tag is used to ensure that distinct instances behave like distinct functions.
 ///
@@ -369,6 +423,29 @@ pub fn compute_tag<const L: usize>(io_pattern: [u32; L], domain_separator: [u8; 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn absorbing_in_pieces_from_a_carried_state_matches_one_absorb() {
+        let domain_separator = [0x41u8; 64];
+        let elements: Vec<Field> = [3u64, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9]
+            .into_iter()
+            .map(Field::from)
+            .collect();
+        let io_pattern = [ABSORB_FLAG | elements.len() as u32, 1];
+        let mut sponge = SafeSponge::start(io_pattern, domain_separator);
+        sponge.absorb(elements.clone());
+        let expected = sponge.squeeze()[0];
+        sponge.finish();
+
+        let (state, pos) = absorb_from(
+            initial_state(io_pattern, domain_separator),
+            0,
+            &elements[..2],
+        );
+        let (state, pos) = absorb_from(state, pos, &elements[2..9]);
+        let (state, pos) = absorb_from(state, pos, &elements[9..]);
+        assert_eq!(squeeze_one_after_absorb(io_pattern, state, pos), expected);
+    }
+
     use super::*;
 
     /// Helper function to create a field element from a u64 value

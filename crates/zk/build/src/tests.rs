@@ -835,6 +835,11 @@ const VK_PATHS: &[(&str, &str, &str)] = &[
     ("default", "recursive_aggregation", "c6_fold"),
     ("default", "recursive_aggregation", "c6_fold_kernel"),
     ("recursive", "threshold", "share_decryption"),
+    ("default", "recursive_aggregation", "c2_chain_batch"),
+    ("default", "dkg", "sk_share_computation_chain"),
+    ("default", "dkg", "sk_share_computation_chain_last"),
+    ("default", "dkg", "e_sm_share_computation_chain"),
+    ("default", "dkg", "e_sm_share_computation_chain_last"),
 ];
 pub(crate) fn seed_anchor_keys(pair: &Path) {
     for i in 0..VK_PATHS.len() {
@@ -860,7 +865,12 @@ fn anchors_bind_all_descendants_in_circuit_order_and_reject_noncanonical_keys() 
     for (i, key) in keys.iter().enumerate() {
         write(root, &key_path(i), field_bytes(*key));
     }
-    let c2 = compute_vk_hash(vec![keys[0], keys[1]]);
+    let c2 = compute_vk_hash(vec![
+        keys[0],
+        compute_vk_hash(vec![keys[17], keys[18], keys[19]]),
+        keys[1],
+        compute_vk_hash(vec![keys[17], keys[20], keys[21]]),
+    ]);
     let c3_chain = compute_vk_hash(vec![keys[2], keys[3], keys[4]]);
     let node = compute_vk_hash(vec![
         keys[6],
@@ -884,18 +894,12 @@ fn anchors_bind_all_descendants_in_circuit_order_and_reject_noncanonical_keys() 
     ];
     assert_eq!(vk_tree::hashes(root).unwrap(), expected);
     for (i, key) in keys.iter().enumerate() {
+        // Keys 14..=16 are the C6 chain; every other key is under the node fold.
+        let c6 = usize::from((14..=16).contains(&i));
         write(root, &key_path(i), field_bytes(Fr::from(99_u64)));
         let changed = vk_tree::hashes(root).unwrap();
-        assert_ne!(
-            changed[usize::from(i >= 14)].1,
-            expected[usize::from(i >= 14)].1,
-            "{}",
-            key_path(i)
-        );
-        assert_eq!(
-            changed[usize::from(i < 14)].1,
-            expected[usize::from(i < 14)].1
-        );
+        assert_ne!(changed[c6].1, expected[c6].1, "{}", key_path(i));
+        assert_eq!(changed[1 - c6].1, expected[1 - c6].1);
         write(root, &key_path(i), field_bytes(*key));
     }
     write(root, &key_path(0), [0xff; 32]);

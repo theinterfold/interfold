@@ -314,3 +314,62 @@ mod share_encryption {
         assert!(error.to_string().contains("level zero"));
     }
 }
+
+mod share_computation_chain {
+    use ark_ff::{BigInteger, PrimeField};
+    use e3_committee::CiphernodesCommitteeSize;
+    use e3_fhe_params::BfvPreset;
+    use e3_polynomial::Polynomial;
+    use e3_zk_config::dkg::share_computation::Configs;
+    use e3_zk_config::DkgInputType;
+    use e3_zk_witness::commitments::compute_share_encryption_commitment_from_message;
+    use e3_zk_witness::dkg::share_computation::Inputs;
+    use e3_zk_witness::dkg::share_computation_chain::Chain;
+    use num_bigint::{BigInt, BigUint};
+
+    /// The chain's commitments are the unchunked C2 commitments, and its chunks cover the degree.
+    #[test]
+    fn chain_outputs_equal_the_unchunked_share_commitments() {
+        let preset = BfvPreset::InsecureThreshold64;
+        let config = Configs::for_preset(preset, CiphernodesCommitteeSize::Micro).unwrap();
+        let degree = config.params.degree();
+        let num_moduli = config.params.moduli().len();
+        let n_parties = config.committee.values().n;
+        for input_type in [DkgInputType::SecretKey, DkgInputType::SmudgingNoise] {
+            let sample =
+                e3_zk_samples::dkg::share_computation::generate(&config, preset, input_type)
+                    .unwrap();
+            let inputs = Inputs::compute(&config, &sample).unwrap();
+            let chain = Chain::compute(&config, &inputs).unwrap();
+
+            assert_eq!(chain.chunks.len(), config.chunks.n_chunks);
+            assert_eq!(chain.chunks[0].h_in, chain.start_hash);
+            assert!(chain.chunks.last().unwrap().is_last);
+            assert_eq!(
+                chain.chunks.iter().map(|c| c.y_chunk.len()).sum::<usize>(),
+                degree
+            );
+            for party_idx in 0..n_parties {
+                for mod_idx in 0..num_moduli {
+                    let mut message: Vec<BigInt> = inputs
+                        .y
+                        .iter()
+                        .map(|row| row[mod_idx][party_idx + 1].clone())
+                        .collect();
+                    message.reverse();
+                    let expected = compute_share_encryption_commitment_from_message(
+                        &Polynomial::new(message),
+                        config.bits.bit_share,
+                    );
+                    let got = chain.outputs[1 + party_idx * num_moduli + mod_idx];
+                    let got =
+                        BigInt::from(BigUint::from_bytes_le(&got.into_bigint().to_bytes_le()));
+                    assert_eq!(
+                        got, expected,
+                        "{input_type:?} party {party_idx} limb {mod_idx}"
+                    );
+                }
+            }
+        }
+    }
+}
