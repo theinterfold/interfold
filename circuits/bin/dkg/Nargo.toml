@@ -9,5 +9,8 @@ members = [
     "sk_share_computation_chain_last",
     "e_sm_share_computation_chain",
     "e_sm_share_computation_chain_last",
+    "share_decryption_limb_0",
+    "share_decryption_limb_1",
+    "share_decryption_limb_2",
 ]
 

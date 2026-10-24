@@ -50,6 +50,10 @@ const NODE_LEAVES: &[CircuitName] = &[
     CircuitName::ESmShareComputationChain,
     CircuitName::ESmShareComputationChainLast,
     CircuitName::ShareEncryption,
+    // C4 is proven through its three limb circuits; `DkgShareDecryption` is the final circuit.
+    CircuitName::DkgShareDecryptionLimb0,
+    CircuitName::DkgShareDecryptionLimb1,
+    CircuitName::DkgShareDecryptionLimb2,
     CircuitName::DkgShareDecryption,
 ];
 

@@ -8,7 +8,9 @@
 
 pub mod c2_chain;
 pub mod c3_accumulator;
+pub mod c4_chain;
 pub mod c6_accumulator;
+pub mod chain_keys;
 pub mod helpers;
 pub mod node_dkg_fold;
 pub mod nodes_fold_accumulator;

@@ -157,6 +157,12 @@ pub enum CircuitName {
     ESmShareComputationChain,
     /// Chunked C2b: the last chunk.
     ESmShareComputationChainLast,
+    /// Chunked C4: CRT limb 0 (non-ZK, verified by the final C4 circuit).
+    DkgShareDecryptionLimb0,
+    /// Chunked C4: CRT limb 1.
+    DkgShareDecryptionLimb1,
+    /// Chunked C4: CRT limb 2.
+    DkgShareDecryptionLimb2,
 }
 
 impl CircuitName {
@@ -187,6 +193,9 @@ impl CircuitName {
             CircuitName::SkShareComputationChainLast => "sk_share_computation_chain_last",
             CircuitName::ESmShareComputationChain => "e_sm_share_computation_chain",
             CircuitName::ESmShareComputationChainLast => "e_sm_share_computation_chain_last",
+            CircuitName::DkgShareDecryptionLimb0 => "share_decryption_limb_0",
+            CircuitName::DkgShareDecryptionLimb1 => "share_decryption_limb_1",
+            CircuitName::DkgShareDecryptionLimb2 => "share_decryption_limb_2",
         }
     }
 
@@ -198,7 +207,10 @@ impl CircuitName {
             CircuitName::SkShareComputationChain
             | CircuitName::SkShareComputationChainLast
             | CircuitName::ESmShareComputationChain
-            | CircuitName::ESmShareComputationChainLast => "dkg",
+            | CircuitName::ESmShareComputationChainLast
+            | CircuitName::DkgShareDecryptionLimb0
+            | CircuitName::DkgShareDecryptionLimb1
+            | CircuitName::DkgShareDecryptionLimb2 => "dkg",
             CircuitName::ShareEncryption => "dkg",
             CircuitName::DkgShareDecryption => "dkg",
             CircuitName::PkGeneration => "threshold",
@@ -266,7 +278,10 @@ impl CircuitName {
             | CircuitName::SkShareComputationChain
             | CircuitName::SkShareComputationChainLast
             | CircuitName::ESmShareComputationChain
-            | CircuitName::ESmShareComputationChainLast => CircuitOutputLayout::None,
+            | CircuitName::ESmShareComputationChainLast
+            | CircuitName::DkgShareDecryptionLimb0
+            | CircuitName::DkgShareDecryptionLimb1
+            | CircuitName::DkgShareDecryptionLimb2 => CircuitOutputLayout::None,
         }
     }
 

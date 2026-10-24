@@ -59,8 +59,15 @@ pub fn hashes(root: &Path) -> Result<[(&'static str, [u8; 32]); 2]> {
         load(root, "recursive", "dkg", "share_encryption")?,
     ]);
     let c3 = compute_vk_hash(vec![c3_chain, c3_chain]);
+    // Each final C4 exposes the hash of its three limb keys; `c4ab_fold` hashes it next to the C4
+    // key, for C4a and C4b alike.
     let c4_key = load(root, "recursive", "dkg", "share_decryption")?;
-    let c4 = compute_vk_hash(vec![c4_key, c4_key]);
+    let c4_chain = compute_vk_hash(vec![
+        load(root, "default", "dkg", "share_decryption_limb_0")?,
+        load(root, "default", "dkg", "share_decryption_limb_1")?,
+        load(root, "default", "dkg", "share_decryption_limb_2")?,
+    ]);
+    let c4 = compute_vk_hash(vec![c4_key, c4_chain, c4_key, c4_chain]);
     let node = compute_vk_hash(vec![
         load(root, "recursive", "dkg", "pk")?,
         load(root, "recursive", "threshold", "pk_generation")?,

@@ -839,6 +839,9 @@ const VK_PATHS: &[(&str, &str, &str)] = &[
     ("default", "dkg", "sk_share_computation_chain_last"),
     ("default", "dkg", "e_sm_share_computation_chain"),
     ("default", "dkg", "e_sm_share_computation_chain_last"),
+    ("default", "dkg", "share_decryption_limb_0"),
+    ("default", "dkg", "share_decryption_limb_1"),
+    ("default", "dkg", "share_decryption_limb_2"),
 ];
 pub(crate) fn seed_anchor_keys(pair: &Path) {
     for i in 0..VK_PATHS.len() {
@@ -879,7 +882,10 @@ fn anchors_bind_all_descendants_in_circuit_order_and_reject_noncanonical_keys() 
         keys[9],
         compute_vk_hash(vec![c3_chain, c3_chain]),
         keys[10],
-        compute_vk_hash(vec![keys[5], keys[5]]),
+        {
+            let limbs = compute_vk_hash(vec![keys[21], keys[22], keys[23]]);
+            compute_vk_hash(vec![keys[5], limbs, keys[5], limbs])
+        },
     ]);
     let expected = [
         (

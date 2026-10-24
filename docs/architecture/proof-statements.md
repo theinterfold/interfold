@@ -15,7 +15,7 @@ or audit remediation is not completeness evidence.
 | C1      | Threshold public share derives from SK; integer smudging bound is enforced; output commits to SK, PK, and ESM residues.                                                                   |
 | C2a/C2b | Correct Shamir splitting of SK/ESM, linked to C1 secrets. Proven as a chunk chain whose final proof keeps C2's commitments.                                                               |
 | C3a/C3b | Correct recipient encryption of those shares under the C0 key, linked to C2 messages.                                                                                                     |
-| C4a/C4b | The H selected received shares open their C2 commitments and form the normalized summed SK/ESM anchors.                                                                                   |
+| C4a/C4b | The H selected received shares open their C2 commitments and form the normalized summed SK/ESM anchors. Proven one CRT limb per proof under a final proof that keeps C4's commitment.     |
 | C5      | Aggregate PK derives from exactly the H canonical dealer shares.                                                                                                                          |
 | C6      | The decryption share derives from the anchored SK/ESM and ciphertext, in one canonical E3 domain. Full `d` enters Fiat-Shamir; the C7-facing commitment binds the configured native tail. |
 | C7      | Exactly T+1 distinct ordered shares reconstruct every claimed message coefficient, including zeros.                                                                                       |
@@ -164,7 +164,8 @@ C2b chain  = hash(e_sm_share_computation_chain, e_sm_share_computation_chain_las
 C2 tree    = hash(C2a, C2a chain, C2b, C2b chain)
 C3 chain   = hash(c3_fold, c3_fold_kernel, C3)
 C3 tree    = hash(C3a chain, C3b chain)
-C4 tree    = hash(C4a, C4b)
+C4 chain   = hash(share_decryption_limb_0, share_decryption_limb_1, share_decryption_limb_2)
+C4 tree    = hash(C4a, C4 chain, C4b, C4 chain)
 node tree  = hash(C0, C1, c2ab_fold, C2 tree, c3ab_fold, C3 tree, c4ab_fold, C4 tree)
 nodes tree = hash(nodes_fold, nodes_fold_kernel, node_fold, node tree)
 C6 tree    = hash(c6_fold, c6_fold_kernel, C6)
@@ -212,6 +213,20 @@ C1's secret.
 The final proof exposes the hash of the two chunk keys as its last public field. `c2ab_fold` folds
 it into the VK tree above. A peer verifying a C2 proof directly must compare it with its own chunk
 keys (`zk_verify_share_proof_bundle`); the proof alone does not pin them.
+
+## Chunked C4
+
+C4's openings and sums are independent per CRT limb, and the aggregate commitment C6 reads is one
+SAFE sponge over the normalized limbs in order. So limb `l`'s proof runs C4's statement for that
+limb (`aggregate_limb`: open every honest party's limb-`l` share commitment with checked packing,
+sum, reverse and center) and continues the aggregate sponge from the state limb `l - 1` left; the
+last limb squeezes the unchunked C4 commitment. Each limb packs into its own carriers and can start
+mid-block, and its start position follows from the limb index, so each limb has its own circuit.
+
+The final `share_decryption` circuit verifies the three limb proofs, each with its own key, links
+them from the fresh aggregate sponge (`DS_SHARE_DECRYPTION_CHAIN_STATE`), and returns the aggregate
+commitment then the hash of the limb keys. `c4ab_fold` folds that hash into the VK tree; a peer
+verifying a C4 directly compares it with its own limb keys.
 
 ## Evidence and change review
 
