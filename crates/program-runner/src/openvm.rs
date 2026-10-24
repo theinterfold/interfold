@@ -8,32 +8,18 @@
 //! answers with a real OpenVM receipt. The worker, its configuration and the deadlines come from
 //! the environment that `interfold program start` sets; see `e3_openvm_host::WorkerConfig`.
 
-use anyhow::{Context, Result};
+use crate::{bind_addr, env_or};
+use anyhow::Result;
 use e3_compute_provider::{FHEProcessor, InputPolicy};
 use e3_openvm_host::{ComputeDomain, Prover, WorkerConfig};
 use e3_program_server::E3ProgramServer;
 use std::sync::Arc;
 use std::time::Duration;
 
-fn env_or<T: std::str::FromStr>(name: &str, default: T) -> Result<T> {
-    match std::env::var(name) {
-        Ok(value) if !value.is_empty() => value
-            .parse()
-            .map_err(|_| anyhow::anyhow!("{name} has an invalid value")),
-        _ => Ok(default),
-    }
-}
-
 pub(crate) async fn serve(processor: FHEProcessor, policy: InputPolicy) -> Result<()> {
     let prover = Arc::new(Prover::start(WorkerConfig::from_env()?).await?);
 
-    let bind = env_or("OPENVM_BIND_ADDR", "127.0.0.1:13151".to_string())?;
-    let (host, port) = bind
-        .rsplit_once(':')
-        .context("OPENVM_BIND_ADDR must be host:port")?;
-    let port: u16 = port
-        .parse()
-        .context("OPENVM_BIND_ADDR has an invalid port")?;
+    let (host, port) = bind_addr("OPENVM_BIND_ADDR", "127.0.0.1:13151")?;
 
     let server = E3ProgramServer::builder(move |job| {
         let prover = Arc::clone(&prover);
