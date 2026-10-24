@@ -330,12 +330,18 @@ impl ZkProver {
         let output = run_bb(&self.bb_binary, &args, &job_dir, self.bb_timeout)?;
 
         if !output.status.success() {
-            let stderr = bounded_process_output(&output.stderr);
-            let stdout = bounded_process_output(&output.stdout);
-            return Err(ZkError::ProveFailed(format!(
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let message = format!(
                 "bb prove failed:\nstderr: {}\nstdout: {}",
-                stderr, stdout
-            )));
+                bounded_process_output(&output.stderr),
+                bounded_process_output(&output.stdout)
+            );
+            return Err(if verifier_reported_invalid_proof(&stderr, &stdout) {
+                ZkError::ProofRejected(message)
+            } else {
+                ZkError::ProveFailed(message)
+            });
         }
 
         let proof_path = output_dir.join("proof");

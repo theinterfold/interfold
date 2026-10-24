@@ -44,6 +44,7 @@ pub fn witness(path: &Path, input: &Value) -> Result<Vec<u8>, ZkError> {
 }
 
 /// Recursive opcodes defer verification to Barretenberg, so witness success is not proof acceptance.
+/// bb rejects an unsatisfied recursive statement while proving or, failing that, in `verify`.
 pub fn assert_fold_rejected(
     prover: &ZkProver,
     circuit: CircuitName,
@@ -57,9 +58,16 @@ pub fn assert_fold_rejected(
         Err(ZkError::WitnessGenerationFailed(_)) => return,
         Err(error) => panic!("{case}: unexpected witness error: {error}"),
     };
-    let proof = prover
-        .generate_recursive_aggregation_bin_proof(circuit, &witness, case, artifacts_dir)
-        .unwrap_or_else(|error| panic!("{case}: proof process failed: {error}"));
+    let proof = match prover.generate_recursive_aggregation_bin_proof(
+        circuit,
+        &witness,
+        case,
+        artifacts_dir,
+    ) {
+        Ok(proof) => proof,
+        Err(ZkError::ProofRejected(_)) => return,
+        Err(error) => panic!("{case}: proof process failed: {error}"),
+    };
     assert!(
         !prover
             .verify_fold_proof(&proof, case, 0, artifacts_dir)

@@ -8,7 +8,7 @@ description = "Development benchmark owner for circuit leaves, protocol phases, 
 publish = false
 
 [dependencies]
-acir = { git = "https://github.com/noir-lang/noir", tag = "v1.0.0-beta.26" }
+acir = { git = "https://github.com/noir-lang/noir", tag = "v1.0.0-rc.3" }
 anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
@@ -23,7 +23,7 @@ e3-zk-samples.workspace = true
 e3-zk-witness.workspace = true
 fhe.workspace = true
 hex.workspace = true
-noirc_abi = { git = "https://github.com/noir-lang/noir", tag = "v1.0.0-beta.26" }
+noirc_abi = { git = "https://github.com/noir-lang/noir", tag = "v1.0.0-rc.3" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

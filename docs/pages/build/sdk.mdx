@@ -45,7 +45,7 @@ Both packages are in this repository.
         '@interfold/wasm',
         '@interfold/contracts',
         'viem',
-        '@aztec/bb.js',
+        '@aztec-foundation/bb.js',
         '@noir-lang/noir_js',
       ],
     },
@@ -301,7 +301,7 @@ configuration. The standalone function takes the preset name as its last argumen
 | `encryptNumberAndGenProof(value, pk)`   | `encryptNumberAndGenProof(value, pk, preset)`   | `{ encryptedData, proof }`                                             |
 | `encryptVectorAndGenProof(values, pk)`  | `encryptVectorAndGenProof(values, pk, preset)`  | `{ encryptedData, proof }`                                             |
 | `getThresholdBfvParamsSet()`            | `getThresholdBfvParamsSet(preset)`              | `BfvParams` (`degree`, `plaintextModulus`, `moduli`, `error1Variance`) |
-| None                                    | `generateProof(circuitInputs)`                  | A `ProofData` proof from `@aztec/bb.js`.                               |
+| None                                    | `generateProof(circuitInputs)`                  | A `ProofData` proof from `@aztec-foundation/bb.js`.                    |
 
 A key from `generatePublicKey` is not a committee key. The committee cannot decrypt data that is
 encrypted to it. For the full encrypt and submit flow, see

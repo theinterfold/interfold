@@ -30,6 +30,11 @@ pub enum ZkError {
     #[error("Proof generation failed: {0}")]
     ProveFailed(String),
 
+    /// bb 6 verifies each proof it writes; failure means the witness does not satisfy the circuit
+    /// (for example, an unauthorized recursive verification key).
+    #[error("Generated proof failed Barretenberg verification: {0}")]
+    ProofRejected(String),
+
     #[error("Proof verification failed: {0}")]
     VerifyFailed(String),
 

@@ -38,12 +38,12 @@ Generated provenance headers retain their original spelling across tooling moves
 bytes requires a coordinated generated-source refresh; renaming a script alone must not make CI's
 source-regeneration comparison fail. Maintained documentation links identify the current owner.
 
-Toolchain is one compatibility unit: Nargo/Rust Noir beta.26, witness serialization, bb 5.2.0,
-archive, VKs, SDK noir_js/bb.js, and generated verifiers. **Gap:** no script compares every version
-pin across CI, release, `versions.json`, Cargo, and SDK. Rust witness stacks use
-`WitnessStack::serialize()` (beta.26 MessagePack), never bincode. A valid archive checksum cannot
-make older ACIR/serialization compatible. Rebuild/publish matching archives and regenerate
-keys/verifiers before changing required circuit version.
+Toolchain is one compatibility unit: Nargo/Rust Noir rc.3, witness serialization, bb 6.0.0, archive,
+VKs, SDK noir_js/bb.js, and generated verifiers. **Gap:** no script compares every version pin
+across CI, release, `versions.json`, Cargo, and SDK. Rust witness stacks use
+`WitnessStack::serialize()` (rc.3 MessagePack), never bincode. A valid archive checksum cannot make
+older ACIR/serialization compatible. Rebuild/publish matching archives and regenerate keys/verifiers
+before changing required circuit version.
 
 Build and benchmark share exact-version parsing in `crates/zk/build/src/toolchain.rs`. Pair
 SOURCE_HASH covers compiling Noir, library entry/dependency manifests, shared constants, pinned
