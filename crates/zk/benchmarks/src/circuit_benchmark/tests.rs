@@ -479,10 +479,7 @@ fn fresh_config_compilation_records_local_sources_not_hydrated_source_identity()
     let stale = package.join("target/config.json");
     fs::write(&stale, b"unrelated stale config artifact").unwrap();
     write_json(&root.join("circuits/bin/.active-preset.json"), &serde_json::json!({"preset":"secure-8192","committee":"minimum","sourceHash":"old-archived-source"})).unwrap();
-    let noir_pin = e3_zk_build::pinned_noir_version(include_str!(
-        "../../../../../crates/zk/prover/Cargo.toml"
-    ))
-    .unwrap();
+    let noir_pin = noir_pin(&super::root()).unwrap();
     artifacts::compile_config(root, "secure-8192/minimum", &noir_pin).unwrap();
     let stamp = protocol::read_json(&package.join("target/.config-benchmark.json")).unwrap();
     assert_eq!(stamp["source_origin"], "fresh_local_noir_compile");
