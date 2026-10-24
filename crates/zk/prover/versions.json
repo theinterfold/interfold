@@ -1,6 +1,6 @@
 {
   "required_bb_version": "6.0.0",
-  "required_circuits_version": "0.20.0-dev.3",
+  "required_circuits_version": "0.20.0-dev.2",
   "bb_download_url": "https://github.com/AztecProtocol/aztec-packages/releases/download/v{version}/barretenberg-{arch}-{os}.tar.gz",
   "bb_checksums": {
     "amd64-linux": "6a310ede6457cf47e6dcf11f8d6b59dd709328c272a70c03afb1417c5a798b67",
