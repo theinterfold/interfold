@@ -60,8 +60,8 @@
     "vite-plugin-dts": "^4.5.3"
   },
   "dependencies": {
-    "@aztec/bb.js": "5.2.0",
-    "@noir-lang/noir_js": "1.0.0-beta.26",
+    "@aztec-foundation/bb.js": "6.0.0",
+    "@noir-lang/noir_js": "1.0.0-rc.3",
     "@interfold/wasm": "workspace:*",
     "@interfold/contracts": "workspace:*",
     "comlink": "^4.4.2",

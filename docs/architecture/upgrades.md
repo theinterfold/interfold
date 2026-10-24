@@ -63,7 +63,7 @@ fork). This compensates estimation timing, not a substitute for receipt validati
 
 ## v0.19 protocol/crypto cutover
 
-The current source declares protocol **8**, generation **2**, circuit domain `interfold-bfv-v5`. The
+The v0.19 source declared protocol **8**, generation **2**, circuit domain `interfold-bfv-v5`. The
 signed DKG layouts require storage schema 8, threshold-keyshare recovery schema 8, gossip major 5,
 sync major 4. ThresholdShareCreated/DecryptionKeyShared bundle signatures change log/recovery/DHT
 bytes; there is no unsigned-layout migration. Drain-and-resync, rebuild all six artifact pairs, and
@@ -109,6 +109,16 @@ During an ordered legacy CRISP server cutover, missing `earliestVotingStart()` c
 back to live protocol windows. Install/register new program and update server/DAO addresses before
 resume; old servers do not schedule the required separate voting start and cannot make valid new
 rounds.
+
+## Aztec v6 toolchain cutover
+
+The current source declares protocol **9**, generation **2**. `bb` 6.0.0 and Noir `v1.0.0-rc.3`
+change every verification key, VK tree anchor, and Honk verifier; proofs do not verify across
+toolchains, so a mixed fleet attests honest peers' proofs as invalid. Use the contract/protocol
+rollout: pause/drain, publish all six artifact pairs, replace PK/decryption wrappers and routers in
+the governance batch that raises the required protocol version, and upgrade every node before
+resume. Persisted peer proofs from in-flight E3s are not foldable under bb 6; drain them first.
+Storage schema and gossip/sync wire majors are unchanged.
 
 ## Dependency replacement
 

@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import type { ProofData } from '@aztec/bb.js'
+import type { ProofData } from '@aztec-foundation/bb.js'
 import { assertSdkMinimumCircuits } from '../circuits/assert-minimum-circuits'
 
 // Conversion to Noir types

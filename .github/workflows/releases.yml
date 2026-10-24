@@ -19,7 +19,7 @@ env:
   CIPHERNODE_DOCKERFILE_PATH: crates/Dockerfile
   CIPHERNODE_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ciphernode
   NPM_VERSION: '11.19.1'
-  NOIR_TOOLCHAIN: v1.0.0-beta.26
+  NOIR_TOOLCHAIN: v1.0.0-rc.3
   MNEMONIC: 'test test test test test test test test test test test junk'
   INFURA_API_KEY: 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'
   ETHERSCAN_API_KEY: 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'
@@ -215,7 +215,7 @@ jobs:
       # circuits via `nargo` (packages/interfold-sdk/scripts/compile-circuits.sh).
       # Without nargo on PATH the build fails with "nargo is not installed".
       - name: Install Nargo
-        uses: noir-lang/noirup@v0.1.4
+        uses: noir-lang/noirup@v0.1.5
         with:
           toolchain: ${{ env.NOIR_TOOLCHAIN }}
 
