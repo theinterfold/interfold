@@ -1,0 +1,65 @@
+{
+  "name": "@interfold/sealed-cca",
+  "version": "0.1.0",
+  "description": "Sealed CCA token sale on Interfold: slot layout and output decoder, clearing math, sale parameter and bid encoding, the bid prover and the claim prover",
+  "private": true,
+  "license": "LGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./layout": {
+      "types": "./dist/layout.d.ts",
+      "import": "./dist/layout.js",
+      "default": "./dist/layout.js"
+    },
+    "./prover": {
+      "types": "./dist/prover.d.ts",
+      "import": "./dist/prover.js",
+      "default": "./dist/prover.js"
+    },
+    "./circuits/*": "./circuits/*",
+    "./package.json": "./package.json",
+    "./clearing": {
+      "types": "./dist/clearing.d.ts",
+      "import": "./dist/clearing.js",
+      "default": "./dist/clearing.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "circuits"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/theinterfold/interfold.git",
+    "directory": "examples/sealed-cca/sdk"
+  },
+  "scripts": {
+    "prebuild": "node scripts/copy-circuits.mjs",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist circuits",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aztec/bb.js": "5.2.0",
+    "@interfold/sdk": "workspace:*",
+    "@noir-lang/noir_js": "1.0.0-beta.26",
+    "viem": "2.38.1"
+  },
+  "devDependencies": {
+    "@interfold/config": "workspace:*",
+    "@interfold/user-data-encryption-prover": "workspace:*",
+    "tsup": "^8.5.0",
+    "typescript": "^5.8.3",
+    "vitest": "^1.6.1"
+  }
+}

@@ -1,0 +1,7 @@
+[app_vm_config.rv32i]
+[app_vm_config.rv32m]
+[app_vm_config.io]
+[app_vm_config.sha2]
+[app_vm_config.keccak]
+[app_vm_config.modular]
+supported_moduli = ["21888242871839275222246405745257275088548364400416034343698204186575808495617"]
