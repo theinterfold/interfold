@@ -199,7 +199,8 @@ across limbs) and continues every party's sponge from a carried `(state, absorb_
 consecutive ABSORB words into one tag, so the chain computes exactly the unchunked commitment and
 C1, C3, C4 and the node fold are unchanged. A full chunk holds whole packing carriers and whole
 sponge blocks, so every chunk starts each sponge at a known position; only the last may end on a
-partial carrier. Degree 8192 splits into five chunks, which fill 2^22 at 39 parties.
+partial carrier. At degree 8192 C2a takes five chunks and C2b, which also hashes every secret limb,
+six; each fills at most 2^22 at 39 parties.
 
 Each chunk proves `h_out` from `h_in`, hashes of every carried sponge
 (`DS_SHARE_COMPUTATION_CHAIN_STATE`). The final `sk_share_computation` or `e_sm_share_computation`

@@ -28,7 +28,10 @@ pub struct Configs {
     pub committee: CiphernodesCommitteeSize,
     preset: BfvPreset,
     pub bits: Bits,
-    pub chunks: ChunkLayout,
+    /// C2a's chunks.
+    pub sk_chunks: ChunkLayout,
+    /// C2b's chunks.
+    pub e_sm_chunks: ChunkLayout,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Bits {
@@ -44,7 +47,10 @@ impl Configs {
     ) -> Result<Self, ConfigError> {
         crate::parameters::require_threshold_preset(preset, threshold_params)?;
         let bits = Bits::new(threshold_params);
-        let chunks = ChunkLayout::new(threshold_params.degree(), bits.bit_share)?;
+        let degree = threshold_params.degree();
+        let sk_chunks = ChunkLayout::new(degree, bits.bit_share, ChunkLayout::SK_TARGET_CHUNKS)?;
+        let e_sm_chunks =
+            ChunkLayout::new(degree, bits.bit_share, ChunkLayout::E_SM_TARGET_CHUNKS)?;
 
         Ok(Configs {
             params: threshold_params.clone(),
@@ -52,7 +58,8 @@ impl Configs {
             preset,
 
             bits,
-            chunks,
+            sk_chunks,
+            e_sm_chunks,
         })
     }
 }
@@ -63,9 +70,10 @@ impl Configs {
 /// `chunk_size` is a multiple of three packing groups and every chunk starts each sponge on a block
 /// boundary.
 ///
-/// Five chunks at degree 8192 fill 2^22 at 39 parties (about 3.9M gates) and 2^21 at 19, which
-/// costs less proving than more, smaller chunks plus the batch proofs they need. It also keeps
-/// C2a's and C2b's chunks to ten, within one Chonk stack.
+/// The targets keep every chunk inside 2^22 at 39 parties with as few chunks as possible, which
+/// costs less proving than more, smaller chunks. At degree 8192, C2a takes five chunks of 1647
+/// (4.14M gates). C2b also hashes every secret limb, so five chunks would cross 2^22; it takes six
+/// of 1368 (about 3.5M). Eleven chunks for C2a and C2b fit within one Chonk stack.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChunkLayout {
     pub chunk_size: usize,
@@ -74,13 +82,14 @@ pub struct ChunkLayout {
 }
 
 impl ChunkLayout {
-    const TARGET_CHUNKS: usize = 5;
+    pub const SK_TARGET_CHUNKS: usize = 5;
+    pub const E_SM_TARGET_CHUNKS: usize = 6;
     const MIN_CHUNKS: usize = 2;
 
-    pub fn new(degree: usize, bit_share: u32) -> Result<Self, ConfigError> {
+    pub fn new(degree: usize, bit_share: u32, target_chunks: usize) -> Result<Self, ConfigError> {
         let nibble_bits = bit_share.div_ceil(4) * 4;
         let group = (254 / (nibble_bits + 4)) as usize;
-        let target = (degree / 16).clamp(Self::MIN_CHUNKS, Self::TARGET_CHUNKS);
+        let target = (degree / 16).clamp(Self::MIN_CHUNKS, target_chunks);
         let block = 3 * group;
         let chunk_size = degree.div_ceil(target).div_ceil(block) * block;
         let n_chunks = degree.div_ceil(chunk_size);
@@ -164,9 +173,12 @@ share_computation chunks (chunked C2a and C2b)
 -------------------------------------
 ************************************/
 
-pub global {}_CHUNK_SIZE: u32 = {};
-pub global {}_LAST_CHUNK_SIZE: u32 = {};
-pub global {}_N_CHUNKS: u32 = {};
+pub global {}_SK_CHUNK_SIZE: u32 = {};
+pub global {}_SK_LAST_CHUNK_SIZE: u32 = {};
+pub global {}_SK_N_CHUNKS: u32 = {};
+pub global {}_E_SM_CHUNK_SIZE: u32 = {};
+pub global {}_E_SM_LAST_CHUNK_SIZE: u32 = {};
+pub global {}_E_SM_N_CHUNKS: u32 = {};
 "#,
             config_name,
             configs.params.degree(),
@@ -180,11 +192,17 @@ pub global {}_N_CHUNKS: u32 = {};
             bits.bit_e_sm_secret,
             prefix,
             prefix,
-            self.chunks.chunk_size,
+            self.sk_chunks.chunk_size,
             prefix,
-            self.chunks.last_chunk_size,
+            self.sk_chunks.last_chunk_size,
             prefix,
-            self.chunks.n_chunks,
+            self.sk_chunks.n_chunks,
+            prefix,
+            self.e_sm_chunks.chunk_size,
+            prefix,
+            self.e_sm_chunks.last_chunk_size,
+            prefix,
+            self.e_sm_chunks.n_chunks,
         );
 
         Ok(configs)
@@ -210,10 +228,12 @@ mod tests {
     #[test]
     fn chunk_layouts_cover_the_degree_with_whole_carriers() {
         // 60-bit shares pack three per carrier.
-        for (degree, chunk_size, last_chunk_size, n_chunks) in
-            [(8192, 1647, 1604, 5), (64, 18, 10, 4)]
-        {
-            let layout = ChunkLayout::new(degree, 60).unwrap();
+        for (degree, target, chunk_size, last_chunk_size, n_chunks) in [
+            (8192, ChunkLayout::SK_TARGET_CHUNKS, 1647, 1604, 5),
+            (8192, ChunkLayout::E_SM_TARGET_CHUNKS, 1368, 1352, 6),
+            (64, ChunkLayout::E_SM_TARGET_CHUNKS, 18, 10, 4),
+        ] {
+            let layout = ChunkLayout::new(degree, 60, target).unwrap();
             assert_eq!(
                 (layout.chunk_size, layout.last_chunk_size, layout.n_chunks),
                 (chunk_size, last_chunk_size, n_chunks)

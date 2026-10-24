@@ -342,7 +342,11 @@ mod share_computation_chain {
             let inputs = Inputs::compute(&config, &sample).unwrap();
             let chain = Chain::compute(&config, &inputs).unwrap();
 
-            assert_eq!(chain.chunks.len(), config.chunks.n_chunks);
+            let layout = match input_type {
+                DkgInputType::SecretKey => &config.sk_chunks,
+                DkgInputType::SmudgingNoise => &config.e_sm_chunks,
+            };
+            assert_eq!(chain.chunks.len(), layout.n_chunks);
             assert_eq!(chain.chunks[0].h_in, chain.start_hash);
             assert!(chain.chunks.last().unwrap().is_last);
             assert_eq!(

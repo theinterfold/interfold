@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! C2b over a verified chunk chain. Verifies the `SHARE_COMPUTATION_N_CHUNKS` chunk proofs (the
+//! C2b over a verified chunk chain. Verifies the `SHARE_COMPUTATION_E_SM_N_CHUNKS` chunk proofs (the
 //! last with the last-chunk key, the others with the full-chunk key), opens C1's `e_sm` commitment
 //! and checks the chain dealt that `e_sm`, from fresh sponges to the share commitments it returns.
 //! See `lib::core::dkg::share_computation_chain`.
@@ -14,7 +14,7 @@
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use lib::configs::default::dkg::{
     L_THRESHOLD, N, SHARE_COMPUTATION_BIT_SHARE, SHARE_COMPUTATION_E_SM_BIT_SECRET,
-    SHARE_COMPUTATION_E_SM_CONFIGS, SHARE_COMPUTATION_N_CHUNKS,
+    SHARE_COMPUTATION_E_SM_CONFIGS, SHARE_COMPUTATION_E_SM_N_CHUNKS,
 };
 use lib::configs::default::N_PARTIES;
 use lib::core::dkg::share_computation_chain::e_sm_share_computation_final;
@@ -28,15 +28,15 @@ fn main(
     full_key_hash: Field,
     last_vk: UltraHonkVerificationKey,
     last_key_hash: Field,
-    chunk_proofs: [UltraHonkProof; SHARE_COMPUTATION_N_CHUNKS],
-    chunk_links: [[Field; 2]; SHARE_COMPUTATION_N_CHUNKS],
+    chunk_proofs: [UltraHonkProof; SHARE_COMPUTATION_E_SM_N_CHUNKS],
+    chunk_links: [[Field; 2]; SHARE_COMPUTATION_E_SM_N_CHUNKS],
     chain_outputs: [Field; N_PARTIES * L_THRESHOLD + 1],
 ) -> pub ([[Field; L_THRESHOLD]; N_PARTIES], Field) {
     // The chunk's place fixes its key: only the chain's last place takes the last-chunk circuit.
-    for c in 0..SHARE_COMPUTATION_N_CHUNKS - 1 {
+    for c in 0..SHARE_COMPUTATION_E_SM_N_CHUNKS - 1 {
         verify_honk_proof_non_zk(full_vk, chunk_proofs[c], chunk_links[c], full_key_hash);
     }
-    let last = SHARE_COMPUTATION_N_CHUNKS - 1;
+    let last = SHARE_COMPUTATION_E_SM_N_CHUNKS - 1;
     verify_honk_proof_non_zk(
         last_vk,
         chunk_proofs[last],
@@ -44,7 +44,7 @@ fn main(
         last_key_hash,
     );
 
-    let shares = e_sm_share_computation_final::<SHARE_COMPUTATION_N_CHUNKS, N, L_THRESHOLD, N_PARTIES, SHARE_COMPUTATION_E_SM_BIT_SECRET, SHARE_COMPUTATION_BIT_SHARE>(
+    let shares = e_sm_share_computation_final::<SHARE_COMPUTATION_E_SM_N_CHUNKS, N, L_THRESHOLD, N_PARTIES, SHARE_COMPUTATION_E_SM_BIT_SECRET, SHARE_COMPUTATION_BIT_SHARE>(
         SHARE_COMPUTATION_E_SM_CONFIGS,
         expected_secret_commitment,
         e_sm_secret,

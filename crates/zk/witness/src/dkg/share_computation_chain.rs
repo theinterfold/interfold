@@ -73,16 +73,15 @@ pub struct Chain {
 }
 
 impl Chain {
-    /// The chain for `inputs` as `config.chunks` splits it.
+    /// The chain for `inputs` as its secret's chunk layout splits it.
     pub fn compute(config: &Configs, inputs: &Inputs) -> Result<Self, WitnessError> {
         let degree = config.params.degree();
         let num_moduli = config.params.moduli().len();
         let n_parties = config.committee.values().n;
-        let layout = &config.chunks;
         let bit_share = config.bits.bit_share;
-        let secret_limbs = match inputs.dkg_input_type {
-            DkgInputType::SecretKey => 1,
-            DkgInputType::SmudgingNoise => num_moduli,
+        let (layout, secret_limbs) = match inputs.dkg_input_type {
+            DkgInputType::SecretKey => (&config.sk_chunks, 1),
+            DkgInputType::SmudgingNoise => (&config.e_sm_chunks, num_moduli),
         };
         if inputs.y.len() != degree {
             return Err(WitnessError::Other(format!(
