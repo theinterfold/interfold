@@ -5,7 +5,10 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! The unproved development runner: runs the program natively and answers with a mock proof.
+//! It listens on `DEV_RUNNER_BIND_ADDR` (`host:port`, default `0.0.0.0:13151`), so that two
+//! projects can run their runners on one host.
 
+use crate::bind_addr;
 use anyhow::Result;
 use e3_compute_provider::{
     ComputeInput, ComputeManager, ComputeProvider, ComputeResult, FHEProcessor, InputPolicy,
@@ -58,9 +61,11 @@ fn encode_mock_compute_proof(seal: &[u8], result: &ComputeResult) -> Result<Vec<
 }
 
 pub(crate) async fn serve(processor: FHEProcessor, policy: InputPolicy) -> Result<()> {
+    let (host, port) = bind_addr("DEV_RUNNER_BIND_ADDR", "0.0.0.0:13151")?;
     let server = E3ProgramServer::builder(move |job| async move {
         // `with_published`, not `new`: a program whose policy reads the commitment or the slot
         // needs what the E3 program published, and `new` supplies none of it.
+        let committee_public_key_hash = job.domain.committee_public_key_hash;
         let mut manager = ComputeManager::with_published(
             MockProofProvider {
                 committee_public_key_hash,
@@ -76,6 +81,8 @@ pub(crate) async fn serve(processor: FHEProcessor, policy: InputPolicy) -> Resul
 
         Ok((proof, ciphertext))
     })
+    .with_host(host)
+    .with_port(port)
     .build()?;
 
     server.run().await

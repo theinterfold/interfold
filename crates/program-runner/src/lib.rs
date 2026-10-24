@@ -19,7 +19,7 @@
 mod dev;
 mod openvm;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use std::ffi::OsString;
 
 pub use e3_compute_provider::{FHEProcessor, InputPolicy};
@@ -43,6 +43,28 @@ fn mode_from(args: impl IntoIterator<Item = OsString>) -> Result<Mode> {
         Some("openvm") => Ok(Mode::OpenVm),
         _ => bail!("Usage: {} dev|openvm", binary.to_string_lossy()),
     }
+}
+
+/// The value of the env variable `name`, or `default` when it is unset or empty.
+fn env_or<T: std::str::FromStr>(name: &str, default: T) -> Result<T> {
+    match std::env::var(name) {
+        Ok(value) if !value.is_empty() => value
+            .parse()
+            .map_err(|_| anyhow::anyhow!("{name} has an invalid value")),
+        _ => Ok(default),
+    }
+}
+
+/// The `host:port` listener in the env variable `name`, or `default` when it is unset or empty.
+fn bind_addr(name: &str, default: &str) -> Result<(String, u16)> {
+    let bind = env_or(name, default.to_string())?;
+    let (host, port) = bind
+        .rsplit_once(':')
+        .with_context(|| format!("{name} must be host:port"))?;
+    let port = port
+        .parse()
+        .with_context(|| format!("{name} has an invalid port"))?;
+    Ok((host.to_string(), port))
 }
 
 /// Serves `processor` under `policy` in the mode that the first command-line argument names.

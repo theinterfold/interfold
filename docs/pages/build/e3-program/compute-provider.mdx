@@ -152,15 +152,15 @@ The program server does not send transactions. It computes, then posts the resul
 `callback_url` of the request. The coordination server receives that webhook and calls
 `publishCiphertextOutput`.
 
-| Setting       | Development runner                               | OpenVM service                                         |
-| ------------- | ------------------------------------------------ | ------------------------------------------------------ |
-| Bind address  | `0.0.0.0:13151`                                  | `127.0.0.1:13151`; set `OPENVM_BIND_ADDR` to change it |
-| Endpoints     | `POST /run_compute`, `GET /health`               | The same                                               |
-| Body limit    | 10 MiB                                           | 128 MiB; set `OPENVM_MAX_REQUEST_BYTES` to change it   |
-| Body deadline | 120 s                                            | 120 s; set `OPENVM_BODY_TIMEOUT_SECS` to change it     |
-| Parallel jobs | 1                                                | 1; set `MAX_CONCURRENT_COMPUTATIONS` to change it      |
-| Webhook       | Up to five attempts                              | Up to five attempts                                    |
-| Response      | `{"status":"processing","e3_id":"<id>"}` at once |
+| Setting       | Development runner                                       | OpenVM service                                         |
+| ------------- | -------------------------------------------------------- | ------------------------------------------------------ |
+| Bind address  | `0.0.0.0:13151`; set `DEV_RUNNER_BIND_ADDR` to change it | `127.0.0.1:13151`; set `OPENVM_BIND_ADDR` to change it |
+| Endpoints     | `POST /run_compute`, `GET /health`                       | The same                                               |
+| Body limit    | 10 MiB                                                   | 128 MiB; set `OPENVM_MAX_REQUEST_BYTES` to change it   |
+| Body deadline | 120 s                                                    | 120 s; set `OPENVM_BODY_TIMEOUT_SECS` to change it     |
+| Parallel jobs | 1                                                        | 1; set `MAX_CONCURRENT_COMPUTATIONS` to change it      |
+| Webhook       | Up to five attempts                                      | Up to five attempts                                    |
+| Response      | `{"status":"processing","e3_id":"<id>"}` at once         |
 
 A request is admitted before its body is read. A request over the job limit gets HTTP 429, a body
 over the limit gets HTTP 413, and a body that does not arrive by the deadline gets HTTP 408. The
