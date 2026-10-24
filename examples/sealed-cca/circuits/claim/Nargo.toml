@@ -1,0 +1,8 @@
+[package]
+name = "sealed_cca_claim"
+type = "bin"
+version = "0.1.0"
+authors = ["Gnosis Guild / Interfold"]
+
+[dependencies]
+poseidon = { tag = "v0.3.0", git = "https://github.com/noir-lang/poseidon" }
