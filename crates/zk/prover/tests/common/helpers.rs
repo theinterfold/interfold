@@ -134,8 +134,7 @@ pub async fn setup_compiled_circuit_for_committee(
 /// `pnpm build:circuits` writes `{package}.vk_recursive` (+ `_hash`) under `circuits/bin/recursive_aggregation/<name>/target/`.
 /// [`CircuitName::DkgAggregator`] also gets `{package}.vk` / `.vk_hash` (`bb write_vk -t evm`); when present, they are
 /// copied into `insecure-64/evm/...` for [`CircuitVariant::Evm`] proving.
-/// Sets up both C2 circuits with the chunk chain they are proven through: the four chunk
-/// circuits and `c2_chain_batch`.
+/// Sets up both C2 circuits with the four chunk circuits they are proven through.
 #[allow(dead_code)]
 pub async fn setup_share_computation_circuits(backend: &ZkBackend) {
     for circuit in [
@@ -148,7 +147,6 @@ pub async fn setup_share_computation_circuits(backend: &ZkBackend) {
     ] {
         setup_compiled_circuit(backend, circuit.group(), circuit.as_str()).await;
     }
-    setup_recursive_aggregation_fold_circuit(backend, CircuitName::C2ChainBatch).await;
 }
 
 pub async fn setup_recursive_aggregation_fold_circuit(backend: &ZkBackend, circuit: CircuitName) {

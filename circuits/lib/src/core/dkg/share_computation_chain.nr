@@ -23,9 +23,9 @@
 //! hashes to the same chain digest, so the chunks shared C1's secret.
 //!
 //! **Links.** A chunk proves `h_out` from `h_in`, each a hash of every carried sponge. Collision
-//! resistance makes consecutive chunks agree on the whole carried state. The batch circuit links
-//! chunks and pins their keys by position; the final circuit links batches, starts the chain from
-//! fresh sponges and ends it on the commitments it exposes.
+//! resistance makes consecutive chunks agree on the whole carried state. The final circuit verifies
+//! every chunk (the last with the last-chunk key, the others with the full-chunk key), links them,
+//! starts the chain from fresh sponges and ends it on the commitments it exposes.
 
 use crate::core::dkg::share_computation::{
     check_range_bounds, Configs, verify_e_sm_secret_commitment, verify_shamir_finite_differences,
@@ -230,47 +230,20 @@ fn chain_outputs<let N: u32, let L: u32, let N_PARTIES: u32, let BIT_SHARE: u32,
     outputs
 }
 
-/// Links the `CPB` chunks of batch `batch_idx` and pins each chunk's verification key by its
-/// place in the chain: the chain's last chunk uses `last_key_hash`, every other `full_key_hash`.
-/// Returns the batch's `(h_in, h_out)`.
-pub fn link_chunk_batch<let CPB: u32, let N_CHUNKS: u32>(
-    batch_idx: u32,
-    links: [[Field; 2]; CPB],
-    key_hashes: [Field; CPB],
-    full_key_hash: Field,
-    last_key_hash: Field,
-) -> (Field, Field) {
-    for i in 0..CPB {
-        let expected = if batch_idx * CPB + i == N_CHUNKS - 1 {
-            last_key_hash
-        } else {
-            full_key_hash
-        };
-        assert(key_hashes[i] == expected, "Chunk key mismatch");
-    }
-    for i in 0..CPB - 1 {
-        assert(links[i][1] == links[i + 1][0], "Chunk link mismatch");
-    }
-    (links[0][0], links[CPB - 1][1])
-}
-
-/// Checks the batches cover the chain in order, from fresh sponges to `outputs`.
-pub fn check_chain<let N_BATCHES: u32, let N: u32, let L: u32, let N_PARTIES: u32, let BIT_SHARE: u32, let SECRET_LIMBS: u32>(
-    batch_indices: [Field; N_BATCHES],
-    batch_links: [[Field; 2]; N_BATCHES],
+/// Checks the chunks' `(h_in, h_out)` links cover the chain in order, from fresh sponges to
+/// `outputs`. The caller verified chunk `c`'s proof against `links[c]`.
+pub fn check_chain<let N_CHUNKS: u32, let N: u32, let L: u32, let N_PARTIES: u32, let BIT_SHARE: u32, let SECRET_LIMBS: u32>(
+    links: [[Field; 2]; N_CHUNKS],
     outputs: [Field; N_PARTIES * L + 1],
 ) {
-    for b in 0..N_BATCHES {
-        assert(batch_indices[b] == b as Field, "Batch index mismatch");
-    }
     assert(
-        batch_links[0][0] == chain_start_hash::<N, L, N_PARTIES, BIT_SHARE, SECRET_LIMBS>(),
+        links[0][0] == chain_start_hash::<N, L, N_PARTIES, BIT_SHARE, SECRET_LIMBS>(),
         "Chain must start from fresh sponges",
     );
-    for b in 0..N_BATCHES - 1 {
-        assert(batch_links[b][1] == batch_links[b + 1][0], "Batch link mismatch");
+    for c in 0..N_CHUNKS - 1 {
+        assert(links[c][1] == links[c + 1][0], "Chunk link mismatch");
     }
-    assert(batch_links[N_BATCHES - 1][1] == chain_output_hash(outputs), "Chain output mismatch");
+    assert(links[N_CHUNKS - 1][1] == chain_output_hash(outputs), "Chain output mismatch");
 }
 
 /// The secret chain digest of `sk`, absorbed in the chunks' order: `sk[N - 1 - m]` at position `m`.
@@ -308,27 +281,25 @@ fn share_commitments<let L: u32, let N_PARTIES: u32>(
 
 /// C2a's statement over a verified chunk chain: the chain dealt C1's `sk`, and these are its share
 /// commitments.
-pub fn sk_share_computation_final<let N_BATCHES: u32, let N: u32, let L: u32, let N_PARTIES: u32, let BIT_SECRET: u32, let BIT_SHARE: u32>(
+pub fn sk_share_computation_final<let N_CHUNKS: u32, let N: u32, let L: u32, let N_PARTIES: u32, let BIT_SECRET: u32, let BIT_SHARE: u32>(
     expected_secret_commitment: Field,
     sk_secret: Polynomial<N>,
-    batch_indices: [Field; N_BATCHES],
-    batch_links: [[Field; 2]; N_BATCHES],
+    links: [[Field; 2]; N_CHUNKS],
     outputs: [Field; N_PARTIES * L + 1],
 ) -> [[Field; L]; N_PARTIES] {
     verify_sk_secret_commitment::<N, BIT_SECRET>(sk_secret, expected_secret_commitment);
     assert(outputs[0] == sk_secret_digest(sk_secret), "Secret consistency check failed");
-    check_chain::<N_BATCHES, N, L, N_PARTIES, BIT_SHARE, 1>(batch_indices, batch_links, outputs);
+    check_chain::<N_CHUNKS, N, L, N_PARTIES, BIT_SHARE, 1>(links, outputs);
     share_commitments(outputs)
 }
 
 /// C2b's statement over a verified chunk chain: the chain dealt C1's `e_sm`, and these are its
 /// share commitments.
-pub fn e_sm_share_computation_final<let N_BATCHES: u32, let N: u32, let L: u32, let N_PARTIES: u32, let BIT_SECRET: u32, let BIT_SHARE: u32>(
+pub fn e_sm_share_computation_final<let N_CHUNKS: u32, let N: u32, let L: u32, let N_PARTIES: u32, let BIT_SECRET: u32, let BIT_SHARE: u32>(
     configs: Configs<L>,
     expected_secret_commitment: Field,
     e_sm_secret: [Polynomial<N>; L],
-    batch_indices: [Field; N_BATCHES],
-    batch_links: [[Field; 2]; N_BATCHES],
+    links: [[Field; 2]; N_CHUNKS],
     outputs: [Field; N_PARTIES * L + 1],
 ) -> [[Field; L]; N_PARTIES] {
     verify_e_sm_secret_commitment::<N, L, BIT_SECRET>(
@@ -337,7 +308,7 @@ pub fn e_sm_share_computation_final<let N_BATCHES: u32, let N: u32, let L: u32, 
         expected_secret_commitment,
     );
     assert(outputs[0] == e_sm_secret_digest(e_sm_secret), "Secret consistency check failed");
-    check_chain::<N_BATCHES, N, L, N_PARTIES, BIT_SHARE, L>(batch_indices, batch_links, outputs);
+    check_chain::<N_CHUNKS, N, L, N_PARTIES, BIT_SHARE, L>(links, outputs);
     share_commitments(outputs)
 }
 
@@ -471,7 +442,7 @@ fn the_final_check_accepts_the_chain_of_the_dealt_secret() {
         }
     }
     let links = [[chain_start_hash::<19, 2, 3, 60, 1>(), run_test_chain(y)]];
-    check_chain::<1, 19, 2, 3, 60, 1>([0], links, outputs);
+    check_chain::<1, 19, 2, 3, 60, 1>(links, outputs);
     assert(outputs[0] == sk_secret_digest(sk));
 }
 
@@ -509,16 +480,14 @@ fn the_final_check_rejects_a_chain_that_does_not_start_fresh() {
     let (y, sk) = test_sharing();
     let mut outputs = [0; 7];
     outputs[0] = sk_secret_digest(sk);
-    check_chain::<1, 19, 2, 3, 60, 1>([0], [[1, run_test_chain(y)]], outputs);
+    check_chain::<1, 19, 2, 3, 60, 1>([[1, run_test_chain(y)]], outputs);
 }
 
-#[test(should_fail_with = "Chunk key mismatch")]
-fn a_batch_rejects_a_full_chunk_key_in_the_last_place() {
-    let _ = link_chunk_batch::<2, 4>(1, [[1, 2], [2, 3]], [7, 7], 7, 8);
-}
-
-#[test]
-fn a_batch_pins_the_last_key_only_in_the_chains_last_place() {
-    let (h_in, h_out) = link_chunk_batch::<2, 4>(1, [[1, 2], [2, 3]], [7, 8], 7, 8);
-    assert((h_in, h_out) == (1, 3));
+#[test(should_fail_with = "Chunk link mismatch")]
+fn the_final_check_rejects_chunks_that_do_not_link() {
+    let (y, sk) = test_sharing();
+    let mut outputs = [0; 7];
+    outputs[0] = sk_secret_digest(sk);
+    let start = chain_start_hash::<19, 2, 3, 60, 1>();
+    check_chain::<2, 19, 2, 3, 60, 1>([[start, 5], [6, run_test_chain(y)]], outputs);
 }

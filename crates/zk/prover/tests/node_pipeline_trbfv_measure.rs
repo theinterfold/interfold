@@ -44,6 +44,11 @@ const NODE_LEAVES: &[CircuitName] = &[
     CircuitName::PkGeneration,
     CircuitName::SkShareComputation,
     CircuitName::ESmShareComputation,
+    // C2 is proven through these chunk circuits; the two names above are the final circuits.
+    CircuitName::SkShareComputationChain,
+    CircuitName::SkShareComputationChainLast,
+    CircuitName::ESmShareComputationChain,
+    CircuitName::ESmShareComputationChainLast,
     CircuitName::ShareEncryption,
     CircuitName::DkgShareDecryption,
 ];

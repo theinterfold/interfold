@@ -57,24 +57,25 @@ impl Configs {
     }
 }
 /// How chunked C2 splits the degree: `n_chunks - 1` chunks of `chunk_size` coefficients, then
-/// one of `last_chunk_size`, verified `chunks_per_batch` at a time.
+/// one of `last_chunk_size`. The final C2 circuit verifies every chunk.
 ///
 /// A chunk other than the last holds whole share carriers and whole sponge blocks (rate 3), so
 /// `chunk_size` is a multiple of three packing groups and every chunk starts each sponge on a block
-/// boundary. The target of 16 chunks keeps a chunk near 2^21 gates at 39 parties.
+/// boundary.
+///
+/// Five chunks at degree 8192 fill 2^22 at 39 parties (about 3.9M gates) and 2^21 at 19, which
+/// costs less proving than more, smaller chunks plus the batch proofs they need. It also keeps
+/// C2a's and C2b's chunks to ten, within one Chonk stack.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChunkLayout {
     pub chunk_size: usize,
     pub last_chunk_size: usize,
     pub n_chunks: usize,
-    pub chunks_per_batch: usize,
-    pub n_batches: usize,
 }
 
 impl ChunkLayout {
-    const TARGET_CHUNKS: usize = 16;
-    const MIN_CHUNKS: usize = 4;
-    const CHUNKS_PER_BATCH: usize = 4;
+    const TARGET_CHUNKS: usize = 5;
+    const MIN_CHUNKS: usize = 2;
 
     pub fn new(degree: usize, bit_share: u32) -> Result<Self, ConfigError> {
         let nibble_bits = bit_share.div_ceil(4) * 4;
@@ -84,18 +85,15 @@ impl ChunkLayout {
         let chunk_size = degree.div_ceil(target).div_ceil(block) * block;
         let n_chunks = degree.div_ceil(chunk_size);
         let last_chunk_size = degree - (n_chunks - 1) * chunk_size;
-        if n_chunks % Self::CHUNKS_PER_BATCH != 0 {
+        if n_chunks < 2 {
             return Err(ConfigError::Other(format!(
-                "degree {degree} splits into {n_chunks} C2 chunks, not a multiple of {}",
-                Self::CHUNKS_PER_BATCH
+                "degree {degree} gives one C2 chunk; the chain needs a last chunk after full ones"
             )));
         }
         Ok(ChunkLayout {
             chunk_size,
             last_chunk_size,
             n_chunks,
-            chunks_per_batch: Self::CHUNKS_PER_BATCH,
-            n_batches: n_chunks / Self::CHUNKS_PER_BATCH,
         })
     }
 }
@@ -169,8 +167,6 @@ share_computation chunks (chunked C2a and C2b)
 pub global {}_CHUNK_SIZE: u32 = {};
 pub global {}_LAST_CHUNK_SIZE: u32 = {};
 pub global {}_N_CHUNKS: u32 = {};
-pub global {}_CHUNKS_PER_BATCH: u32 = {};
-pub global {}_N_BATCHES: u32 = {};
 "#,
             config_name,
             configs.params.degree(),
@@ -189,10 +185,6 @@ pub global {}_N_BATCHES: u32 = {};
             self.chunks.last_chunk_size,
             prefix,
             self.chunks.n_chunks,
-            prefix,
-            self.chunks.chunks_per_batch,
-            prefix,
-            self.chunks.n_batches,
         );
 
         Ok(configs)
@@ -219,7 +211,7 @@ mod tests {
     fn chunk_layouts_cover_the_degree_with_whole_carriers() {
         // 60-bit shares pack three per carrier.
         for (degree, chunk_size, last_chunk_size, n_chunks) in
-            [(8192, 513, 497, 16), (64, 18, 10, 4)]
+            [(8192, 1647, 1604, 5), (64, 18, 10, 4)]
         {
             let layout = ChunkLayout::new(degree, 60).unwrap();
             assert_eq!(
@@ -231,7 +223,6 @@ mod tests {
                 (layout.n_chunks - 1) * layout.chunk_size + layout.last_chunk_size,
                 degree
             );
-            assert_eq!(layout.n_batches * layout.chunks_per_batch, layout.n_chunks);
         }
     }
 }

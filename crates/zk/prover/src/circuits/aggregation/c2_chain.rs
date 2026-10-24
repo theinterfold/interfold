@@ -4,10 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Chunked C2: proves the chunk chain of `lib::core::dkg::share_computation_chain`, its batches,
-//! then the final `sk_share_computation` / `e_sm_share_computation` proof that peers and
-//! `c2ab_fold` consume. The chunk and batch proofs never leave this node, so they are non-ZK; the
-//! final proof is a ZK proof of the same circuit name as the unchunked C2.
+//! Chunked C2: proves the chunk chain of `lib::core::dkg::share_computation_chain`, then the final
+//! `sk_share_computation` / `e_sm_share_computation` proof that verifies every chunk and that peers
+//! and `c2ab_fold` consume. The chunk proofs never leave this node, so they are non-ZK; the final
+//! proof is a ZK proof of the same circuit name as the unchunked C2.
 
 use crate::circuits::utils::{bytes_to_field_strings, inputs_json_to_input_map};
 use crate::circuits::vk;
@@ -81,13 +81,13 @@ pub fn prove_share_computation_chain(
     let default_dir = prover.circuits_dir(CircuitVariant::Default, artifacts_dir);
     let full_vk = vk::load_vk_artifacts(&default_dir, full)?;
     let last_vk = vk::load_vk_artifacts(&default_dir, last)?;
-    let batch_vk = vk::load_vk_artifacts(&default_dir, CircuitName::C2ChainBatch)?;
     let tag = match inputs.dkg_input_type {
         DkgInputType::SecretKey => "c2a",
         DkgInputType::SmudgingNoise => "c2b",
     };
 
     let mut chunk_proofs = Vec::with_capacity(chain.chunks.len());
+    let mut chunk_links = Vec::with_capacity(chain.chunks.len());
     for (c, chunk) in chain.chunks.iter().enumerate() {
         let circuit = if chunk.is_last { last } else { full };
         let job_id = format!("{e3_id}-{tag}-chunk-{c}");
@@ -100,46 +100,8 @@ pub fn prove_share_computation_chain(
             artifacts_dir,
         )?;
         let _ = prover.cleanup(&job_id);
-        chunk_proofs.push(proof);
-    }
-
-    let per_batch = config.chunks.chunks_per_batch;
-    let mut batch_proofs = Vec::with_capacity(config.chunks.n_batches);
-    for (b, batch) in chunk_proofs.chunks(per_batch).enumerate() {
-        let mut vks = Vec::with_capacity(per_batch);
-        let mut proofs = Vec::with_capacity(per_batch);
-        let mut publics = Vec::with_capacity(per_batch);
-        let mut key_hashes = Vec::with_capacity(per_batch);
-        for (i, proof) in batch.iter().enumerate() {
-            let chunk_vk = if b * per_batch + i + 1 == chain.chunks.len() {
-                &last_vk
-            } else {
-                &full_vk
-            };
-            vks.push(chunk_vk.verification_key.clone());
-            proofs.push(bytes_to_field_strings(&proof.data)?);
-            publics.push(bytes_to_field_strings(&proof.public_signals)?);
-            key_hashes.push(chunk_vk.key_hash.clone());
-        }
-        let job_id = format!("{e3_id}-{tag}-batch-{b}");
-        let proof = prove_circuit(
-            prover,
-            CircuitName::C2ChainBatch,
-            CircuitVariant::Default,
-            &json!({
-                "chunk_vks": vks,
-                "chunk_proofs": proofs,
-                "chunk_publics": publics,
-                "chunk_key_hashes": key_hashes,
-                "batch_idx": b,
-                "full_key_hash": full_vk.key_hash,
-                "last_key_hash": last_vk.key_hash,
-            }),
-            &job_id,
-            artifacts_dir,
-        )?;
-        let _ = prover.cleanup(&job_id);
-        batch_proofs.push(proof);
+        chunk_proofs.push(bytes_to_field_strings(&proof.data)?);
+        chunk_links.push(bytes_to_field_strings(&proof.public_signals)?);
     }
 
     let mut final_inputs = inputs.to_json();
@@ -147,22 +109,12 @@ pub fn prove_share_computation_chain(
         .as_object_mut()
         .expect("C2 inputs serialize as an object");
     fields.remove("y");
-    fields.insert("batch_vk".into(), json!(batch_vk.verification_key));
-    fields.insert("batch_key_hash".into(), json!(batch_vk.key_hash));
-    fields.insert(
-        "batch_proofs".into(),
-        json!(batch_proofs
-            .iter()
-            .map(|p| bytes_to_field_strings(&p.data))
-            .collect::<Result<Vec<_>, _>>()?),
-    );
-    fields.insert(
-        "batch_publics".into(),
-        json!(batch_proofs
-            .iter()
-            .map(|p| bytes_to_field_strings(&p.public_signals))
-            .collect::<Result<Vec<_>, _>>()?),
-    );
+    fields.insert("full_vk".into(), json!(full_vk.verification_key));
+    fields.insert("full_key_hash".into(), json!(full_vk.key_hash));
+    fields.insert("last_vk".into(), json!(last_vk.verification_key));
+    fields.insert("last_key_hash".into(), json!(last_vk.key_hash));
+    fields.insert("chunk_proofs".into(), json!(chunk_proofs));
+    fields.insert("chunk_links".into(), json!(chunk_links));
     fields.insert("chain_outputs".into(), json!(chain.outputs_json()));
 
     prove_circuit(
@@ -175,8 +127,8 @@ pub fn prove_share_computation_chain(
     )
 }
 
-/// The key tree a final C2 proof must expose last: the hash of the batch key and the two chunk
-/// keys for `circuit`'s secret, as the final circuit computes it.
+/// The key tree a final C2 proof must expose last: the hash of the full-chunk and last-chunk keys
+/// for `circuit`'s secret, as the final circuit computes it.
 pub fn expected_key_tree(
     prover: &ZkProver,
     circuit: CircuitName,
@@ -194,7 +146,6 @@ pub fn expected_key_tree(
     let (full, last) = chunk_circuits(input_type);
     let default_dir = prover.circuits_dir(CircuitVariant::Default, artifacts_dir);
     let hashes = [
-        vk::load_vk_artifacts(&default_dir, CircuitName::C2ChainBatch)?.key_hash,
         vk::load_vk_artifacts(&default_dir, full)?.key_hash,
         vk::load_vk_artifacts(&default_dir, last)?.key_hash,
     ]
@@ -204,9 +155,9 @@ pub fn expected_key_tree(
     Ok(e3_zk_witness::compute_vk_hash(hashes))
 }
 
-/// Checks a verified final C2 proof was built from this node's chunk and batch circuits.
+/// Checks a verified final C2 proof was built from this node's chunk circuits.
 ///
-/// The final circuit verifies its batches against whatever keys the prover passes and exposes
+/// The final circuit verifies its chunks against whatever keys the prover passes and exposes
 /// their hash, so a C2 proof alone does not pin them. `c2ab_fold` anchors them in the VK tree for
 /// the on-chain path; a peer checking a C2 directly compares the hash here.
 pub fn check_key_tree(
@@ -248,8 +199,8 @@ mod tests {
         out
     }
 
-    /// A C2 proof passes only when its last public field is the hash of this node's batch key and
-    /// the two chunk keys for its secret.
+    /// A C2 proof passes only when its last public field is the hash of this node's two chunk keys
+    /// for its secret.
     #[test]
     fn key_tree_check_pins_the_chain_keys() {
         let temp = get_tempdir().unwrap();
@@ -262,7 +213,6 @@ mod tests {
         let artifacts_dir = "insecure-64/minimum";
         let default_dir = prover.circuits_dir(CircuitVariant::Default, artifacts_dir);
         for (i, circuit) in [
-            CircuitName::C2ChainBatch,
             CircuitName::SkShareComputationChain,
             CircuitName::SkShareComputationChainLast,
         ]
@@ -278,8 +228,7 @@ mod tests {
             )
             .unwrap();
         }
-        let tree =
-            e3_zk_witness::compute_vk_hash(vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)]);
+        let tree = e3_zk_witness::compute_vk_hash(vec![Fr::from(1u64), Fr::from(2u64)]);
         let proof = |last: Fr| {
             let mut signals = field_bytes(Fr::from(7u64));
             signals.extend(field_bytes(last));

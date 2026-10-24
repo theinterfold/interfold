@@ -149,7 +149,7 @@ pub enum CircuitName {
     DkgAggregator,
     /// Phase-7 decryption aggregator (folded C6 via `c6_fold` + C7).
     DecryptionAggregator,
-    /// Chunked C2a: a chunk other than the last (non-ZK, verified by `c2_chain_batch`).
+    /// Chunked C2a: a chunk other than the last (non-ZK, verified by the final C2 circuit).
     SkShareComputationChain,
     /// Chunked C2a: the last chunk.
     SkShareComputationChainLast,
@@ -157,8 +157,6 @@ pub enum CircuitName {
     ESmShareComputationChain,
     /// Chunked C2b: the last chunk.
     ESmShareComputationChainLast,
-    /// Verifies and links a batch of C2 chunks; the final C2 circuit verifies the batches.
-    C2ChainBatch,
 }
 
 impl CircuitName {
@@ -189,7 +187,6 @@ impl CircuitName {
             CircuitName::SkShareComputationChainLast => "sk_share_computation_chain_last",
             CircuitName::ESmShareComputationChain => "e_sm_share_computation_chain",
             CircuitName::ESmShareComputationChainLast => "e_sm_share_computation_chain_last",
-            CircuitName::C2ChainBatch => "c2_chain_batch",
         }
     }
 
@@ -219,8 +216,7 @@ impl CircuitName {
             | CircuitName::NodesFold
             | CircuitName::NodesFoldKernel
             | CircuitName::DkgAggregator
-            | CircuitName::DecryptionAggregator
-            | CircuitName::C2ChainBatch => "recursive_aggregation",
+            | CircuitName::DecryptionAggregator => "recursive_aggregation",
         }
     }
 
@@ -270,8 +266,7 @@ impl CircuitName {
             | CircuitName::SkShareComputationChain
             | CircuitName::SkShareComputationChainLast
             | CircuitName::ESmShareComputationChain
-            | CircuitName::ESmShareComputationChainLast
-            | CircuitName::C2ChainBatch => CircuitOutputLayout::None,
+            | CircuitName::ESmShareComputationChainLast => CircuitOutputLayout::None,
         }
     }
 

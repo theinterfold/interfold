@@ -1027,8 +1027,8 @@ fn handle_dkg_share_decryption_proof(
 
 /// ZK-verify a share proof (inner recursive circuits).
 ///
-/// A C2 proof is the final circuit of a chunk chain: it verifies its chunk and batch proofs
-/// against keys it only exposes, so the exposed key tree must match this node's chain circuits.
+/// A C2 proof is the final circuit of a chunk chain: it verifies its chunk proofs against keys it
+/// only exposes, so the exposed key tree must match this node's chain circuits.
 fn zk_verify_share_proof_bundle(
     prover: &ZkProver,
     proof: &Proof,

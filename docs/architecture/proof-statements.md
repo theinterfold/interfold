@@ -159,8 +159,8 @@ selected row.
 The trust tree uses ordered SAFE `DS_VK_HASH` hashing:
 
 ```text
-C2a chain  = hash(c2_chain_batch, sk_share_computation_chain, sk_share_computation_chain_last)
-C2b chain  = hash(c2_chain_batch, e_sm_share_computation_chain, e_sm_share_computation_chain_last)
+C2a chain  = hash(sk_share_computation_chain, sk_share_computation_chain_last)
+C2b chain  = hash(e_sm_share_computation_chain, e_sm_share_computation_chain_last)
 C2 tree    = hash(C2a, C2a chain, C2b, C2b chain)
 C3 chain   = hash(c3_fold, c3_fold_kernel, C3)
 C3 tree    = hash(C3a chain, C3b chain)
@@ -196,21 +196,22 @@ commitment is one SAFE sponge over the share's packed coefficients, highest degr
 runs C2's per-coefficient checks (Shamir finite differences, share ranges, the `sk` column equal
 across limbs) and continues every party's sponge from a carried `(state, absorb_pos)`. SAFE merges
 consecutive ABSORB words into one tag, so the chain computes exactly the unchunked commitment and
-C1, C3, C4 and the node fold are unchanged. A full chunk holds whole packing carriers; only the last
-may end on a partial one.
+C1, C3, C4 and the node fold are unchanged. A full chunk holds whole packing carriers and whole
+sponge blocks, so every chunk starts each sponge at a known position; only the last may end on a
+partial carrier. Degree 8192 splits into five chunks, which fill 2^22 at 39 parties.
 
 Each chunk proves `h_out` from `h_in`, hashes of every carried sponge
-(`DS_SHARE_COMPUTATION_CHAIN_STATE`). `c2_chain_batch` links its chunks and pins each chunk key by
-position: the chain's last place takes the last-chunk key, every other place the full-chunk key. The
-final `sk_share_computation` or `e_sm_share_computation` circuit checks batch indices and links,
-starts the chain from fresh sponges, ends it on the commitments it returns, and opens C1's secret
-commitment exactly as the unchunked C2 did. The chunks also absorb the secret column into a chain
-sponge (`DS_SHARE_COMPUTATION_CHAIN_SECRET`), and the final circuit requires the opened secret to
-hash to that digest, so the shares are dealt from C1's secret.
+(`DS_SHARE_COMPUTATION_CHAIN_STATE`). The final `sk_share_computation` or `e_sm_share_computation`
+circuit verifies every chunk, pinning each key by place (the last place takes the last-chunk key,
+every other place the full-chunk key), links them, starts the chain from fresh sponges, ends it on
+the commitments it returns, and opens C1's secret commitment exactly as the unchunked C2 did. The
+chunks also absorb the secret column into a chain sponge (`DS_SHARE_COMPUTATION_CHAIN_SECRET`), and
+the final circuit requires the opened secret to hash to that digest, so the shares are dealt from
+C1's secret.
 
-The final proof exposes the hash of the batch and chunk keys as its last public field. `c2ab_fold`
-folds it into the VK tree above. A peer verifying a C2 proof directly must compare it with its own
-chunk and batch keys (`zk_verify_share_proof_bundle`); the proof alone does not pin them.
+The final proof exposes the hash of the two chunk keys as its last public field. `c2ab_fold` folds
+it into the VK tree above. A peer verifying a C2 proof directly must compare it with its own chunk
+keys (`zk_verify_share_proof_bundle`); the proof alone does not pin them.
 
 ## Evidence and change review
 

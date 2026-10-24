@@ -66,11 +66,9 @@ share_computation chunks (chunked C2a and C2b)
 -------------------------------------
 ************************************/
 
-pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = 513;
-pub global SHARE_COMPUTATION_LAST_CHUNK_SIZE: u32 = 497;
-pub global SHARE_COMPUTATION_N_CHUNKS: u32 = 16;
-pub global SHARE_COMPUTATION_CHUNKS_PER_BATCH: u32 = 4;
-pub global SHARE_COMPUTATION_N_BATCHES: u32 = 4;
+pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = 1647;
+pub global SHARE_COMPUTATION_LAST_CHUNK_SIZE: u32 = 1604;
+pub global SHARE_COMPUTATION_N_CHUNKS: u32 = 5;
 
 /************************************
 -------------------------------------

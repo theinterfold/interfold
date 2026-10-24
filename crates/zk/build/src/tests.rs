@@ -835,7 +835,6 @@ const VK_PATHS: &[(&str, &str, &str)] = &[
     ("default", "recursive_aggregation", "c6_fold"),
     ("default", "recursive_aggregation", "c6_fold_kernel"),
     ("recursive", "threshold", "share_decryption"),
-    ("default", "recursive_aggregation", "c2_chain_batch"),
     ("default", "dkg", "sk_share_computation_chain"),
     ("default", "dkg", "sk_share_computation_chain_last"),
     ("default", "dkg", "e_sm_share_computation_chain"),
@@ -867,9 +866,9 @@ fn anchors_bind_all_descendants_in_circuit_order_and_reject_noncanonical_keys() 
     }
     let c2 = compute_vk_hash(vec![
         keys[0],
-        compute_vk_hash(vec![keys[17], keys[18], keys[19]]),
+        compute_vk_hash(vec![keys[17], keys[18]]),
         keys[1],
-        compute_vk_hash(vec![keys[17], keys[20], keys[21]]),
+        compute_vk_hash(vec![keys[19], keys[20]]),
     ]);
     let c3_chain = compute_vk_hash(vec![keys[2], keys[3], keys[4]]);
     let node = compute_vk_hash(vec![
