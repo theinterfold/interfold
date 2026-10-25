@@ -433,17 +433,20 @@ pk_generation (CIRCUIT 1 - PUBLIC KEY THRESHOLD BFV)
 pub global PK_GENERATION_BIT_EEK: u32 = 5;
 pub global PK_GENERATION_BIT_SK: u32 = 1;
 pub global PK_GENERATION_BIT_E_SM: u32 = 55;
-pub global PK_GENERATION_BIT_E_SM_LIFTED: u32 = 140;
-pub global PK_GENERATION_BIT_E_SM_QUOTIENT: u32 = 84;
+pub global PK_GENERATION_BIT_E_SM_LIFTED: u32 = 154;
+pub global PK_GENERATION_BIT_E_SM_QUOTIENT: u32 = 98;
 pub global PK_GENERATION_BIT_R: u32 = 7;
 pub global PK_GENERATION_BIT_PK: u32 = 55;
 pub global PK_GENERATION_EEK_BOUND: Field = 20;
 pub global PK_GENERATION_SK_BOUND: Field = 1;
-pub global PK_GENERATION_E_SM_BOUND: Field = 1136048301080691227597600770590795143577600;
+pub global PK_GENERATION_E_SM_BOUND: Field = 11571770106242089058199708741321959747593175040;
 pub global PK_GENERATION_E_SM_LIMB_BOUNDS: [Field; L] =
     [36028797018956544, 36028797018956160, 36028797018952320];
-pub global PK_GENERATION_E_SM_QUOTIENT_BOUNDS: [Field; L] =
-    [15765837261829192303178403, 15765837261829360337695497, 15765837261831040682866433];
+pub global PK_GENERATION_E_SM_QUOTIENT_BOUNDS: [Field; L] = [
+    160590570095271353101478068391,
+    160590570095273064698423260286,
+    160590570095290180667875181237,
+];
 pub global PK_GENERATION_R_BOUNDS: [Field; L] = [64, 64, 64];
 pub global PK_GENERATION_B_ENC: Field = 389120;
 pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfigs::new(
@@ -462,7 +465,7 @@ lbfv_pk_generation (l-BFV PUBLIC KEY ROW)
 -------------------------------------
 ************************************/
 
-pub global LBFV_PK_GENERATION_BIT_R: u32 = 8;
+pub global LBFV_PK_GENERATION_BIT_R: u32 = 7;
 pub global LBFV_PK_GENERATION_R_BOUNDS: [Field; L] = [64, 64, 64];
 
 /************************************
@@ -505,7 +508,7 @@ pub global RLK_GENERATION_CONFIGS: RlkGenerationConfigs<N, L> = RlkGenerationCon
     RLK_GENERATION_RD2_BOUNDS,
 );
 
-pub global RLK_AGGREGATION_BIT_D: u32 = PK_GENERATION_BIT_PK;
+pub global RLK_AGGREGATION_BIT_D: u32 = 55;
 pub global RLK_AGGREGATION_CONFIGS: RlkAggregationConfigs<L> = RlkAggregationConfigs::new(QIS);
 
 /************************************

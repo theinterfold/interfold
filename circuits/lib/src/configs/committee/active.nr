@@ -30,6 +30,7 @@ pub use crate::configs::committee::minimum::parity_insecure_simd::PARITY_MATRIX 
 pub use crate::configs::committee::minimum::parity_secure_16384::PARITY_MATRIX as PARITY_MATRIX_SECURE_16384;
 pub use crate::configs::committee::minimum::parity_secure_8192::PARITY_MATRIX as PARITY_MATRIX_SECURE_8192;
 pub use crate::configs::committee::minimum::smudging::{
-    INSECURE_E_SM_BIT, INSECURE_E_SM_BOUND, INSECURE_SIMD_E_SM_BIT, INSECURE_SIMD_E_SM_BOUND,
-    SECURE_16384_E_SM_BIT, SECURE_16384_E_SM_BOUND, SECURE_8192_E_SM_BIT, SECURE_8192_E_SM_BOUND,
+    INSECURE_64_E_SM_BIT, INSECURE_64_E_SM_BOUND, INSECURE_E_SM_BIT, INSECURE_E_SM_BOUND,
+    INSECURE_SIMD_E_SM_BIT, INSECURE_SIMD_E_SM_BOUND, SECURE_16384_E_SM_BIT,
+    SECURE_16384_E_SM_BOUND, SECURE_8192_E_SM_BIT, SECURE_8192_E_SM_BOUND,
 };

@@ -4,20 +4,18 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-pub use crate::configs::insecure_64::threshold::{
-    L as L_THRESHOLD, QIS as QIS_THRESHOLD,
-    THRESHOLD_SHARE_DECRYPTION_BIT_SK as SHARE_DECRYPTION_BIT_AGG,
-};
+pub use crate::configs::insecure_64::threshold::{L as L_THRESHOLD, QIS as QIS_THRESHOLD};
 use crate::core::dkg::share_computation::Configs as ShareComputationConfigs;
 use crate::core::dkg::share_encryption::Configs as ShareEncryptionConfigs;
 
-// Global configs for DKG insecure-64 preset
+// Global configs for DKG insecure_64 preset
 pub global N: u32 = 64;
 pub global L: u32 = 2;
 pub global QIS: [Field; L] = [536852993, 536854657];
 pub global PLAINTEXT_MODULUS: Field = 134217089;
 pub global Q_MOD_T: Field = 76240648;
 pub global Q_MOD_T_CENTERED: Field = -57976441;
+pub global DKG_ERROR_BOUND: Field = 20;
 
 // Parity matrix is sized for the active committee and the insecure-64 threshold QIS;
 // see `committee/{name}/parity_insecure_64.nr`. Re-exported via `committee::active`.
@@ -29,29 +27,36 @@ pk (CIRCUIT 0)
 -------------------------------------
 ************************************/
 
-// pk - bit parameters
 pub global PK_BIT_PK: u32 = 28;
 
 /************************************
 -------------------------------------
+share_computation chunk grid (l-BFV)
+-------------------------------------
+************************************/
+
+pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = 64;
+pub global SHARE_COMPUTATION_N_CHUNKS: u32 = N / SHARE_COMPUTATION_CHUNK_SIZE;
+pub global SHARE_COMPUTATION_CHUNKS_PER_BATCH: u32 = if SHARE_COMPUTATION_N_CHUNKS < 4 {
+    SHARE_COMPUTATION_N_CHUNKS
+} else {
+    4
+};
+pub global SHARE_COMPUTATION_N_BATCHES: u32 =
+    SHARE_COMPUTATION_N_CHUNKS / SHARE_COMPUTATION_CHUNKS_PER_BATCH;
+
+/************************************
+-------------------------------------
 share_computation_sk (CIRCUIT 2a)
+share_computation_e_sm (CIRCUIT 2b)
 -------------------------------------
 ************************************/
 
 pub global SHARE_COMPUTATION_BIT_SHARE: u32 = 27;
 pub global SHARE_COMPUTATION_SK_BIT_SECRET: u32 = 1;
-
 pub global SHARE_COMPUTATION_SK_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
     ShareComputationConfigs::new(QIS_THRESHOLD);
-
-/************************************
--------------------------------------
-share_computation_e_sm (CIRCUIT 2b)
--------------------------------------
-************************************/
-
 pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 26;
-
 pub global SHARE_COMPUTATION_E_SM_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
     ShareComputationConfigs::new(QIS_THRESHOLD);
 
@@ -70,7 +75,6 @@ pub global SHARE_ENCRYPTION_BIT_E1: u32 = 5;
 pub global SHARE_ENCRYPTION_BIT_MSG: u32 = 27;
 pub global SHARE_ENCRYPTION_CT0_BIT_R: u32 = 26;
 pub global SHARE_ENCRYPTION_CT1_BIT_R: u32 = 6;
-
 pub global SHARE_ENCRYPTION_K0IS: [Field; L] = [71356754, 202412899];
 pub global SHARE_ENCRYPTION_PK_BOUNDS: [Field; L] = [268426496, 268427328];
 pub global SHARE_ENCRYPTION_E0_BOUND: Field = 20;
@@ -79,10 +83,6 @@ pub global SHARE_ENCRYPTION_U_BOUND: Field = 1;
 pub global SHARE_ENCRYPTION_CT0_R_BOUNDS: [Field; L] = [17839731, 50604548];
 pub global SHARE_ENCRYPTION_CT1_R_BOUNDS: [Field; L] = [32, 32];
 pub global SHARE_ENCRYPTION_MSG_BOUND: Field = 134217089;
-
-// Scaled-quotient form of the `k0 * k1` term. `SCALED_QUOTIENT` is false for parameter sets that
-// cannot use it (notably L = 1, where `DELTA < q`); the circuit then keeps the direct `k1` path and
-// the constants below go unused.
 pub global SHARE_ENCRYPTION_SCALED_QUOTIENT: bool = true;
 pub global SHARE_ENCRYPTION_SCALE_K: Field = 4;
 pub global SHARE_ENCRYPTION_DELTA: Field = 2147357177;
@@ -99,7 +99,6 @@ pub global SHARE_ENCRYPTION_BIT_Q0_DIFF: u32 = 11;
 pub global SHARE_ENCRYPTION_Q0_DIFF_OFFSET: Field = 66;
 pub global SHARE_ENCRYPTION_BIT_Q1: u32 = 7;
 pub global SHARE_ENCRYPTION_Q1_OFFSET: Field = 33;
-
 pub global SHARE_ENCRYPTION_CONFIGS: ShareEncryptionConfigs<L> = ShareEncryptionConfigs::new(
     PLAINTEXT_MODULUS,
     Q_MOD_T,
@@ -129,4 +128,4 @@ share_decryption_e_sm (CIRCUIT 4b - BFV DECRYPTION E_SM)
 ************************************/
 
 pub global SHARE_DECRYPTION_BIT_MSG: u32 = 27;
-// SHARE_DECRYPTION_BIT_AGG: see `pub use` of `THRESHOLD_SHARE_DECRYPTION_BIT_SK` (C6 `BIT_SK`).
+pub global SHARE_DECRYPTION_BIT_AGG: u32 = 26;

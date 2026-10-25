@@ -9,6 +9,8 @@
 //
 // C1 and C2b must use the same smudging-noise width as Rust witness generation.
 
+pub global INSECURE_64_E_SM_BIT: u32 = 26;
+pub global INSECURE_64_E_SM_BOUND: Field = 256275302400000;
 pub global INSECURE_E_SM_BIT: u32 = 55;
 pub global INSECURE_E_SM_BOUND: Field = 275979874704502571911560855695560921975357440;
 pub global INSECURE_SIMD_E_SM_BIT: u32 = 55;
