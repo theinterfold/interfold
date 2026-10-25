@@ -59,6 +59,19 @@ export function checkReleaseSafeguards(rootDir = ROOT_DIR) {
     }
   }
   command('validate-and-prepare', 'node scripts/release/index.mjs prepare')
+  // The tag trigger keeps its two patterns. The only other trigger is a dispatch with one label input.
+  if (JSON.stringify(release.on?.push?.tags) !== JSON.stringify(['v*.*.*', 'v*.*.*-*']) || release.on?.push?.branches)
+    fail('release workflow must run from tag pushes only, apart from the test release dispatch')
+  const triggers = Object.keys(release.on ?? {})
+  if (triggers.length !== 2 || !triggers.includes('push') || !triggers.includes('workflow_dispatch'))
+    fail('release workflow triggers must be tag pushes and the test release dispatch')
+  if (Object.keys(release.on.workflow_dispatch?.inputs ?? {}).join() !== 'label')
+    fail('the test release dispatch must have only the label input')
+  for (const name of ['build-ciphernode-image-release', 'build-binaries', 'publish-npm-packages']) {
+    const apply = job(name).steps.find((step) => step.run?.startsWith('node scripts/release/index.mjs apply-test-version'))
+    if (apply?.if !== "needs.validate-and-prepare.outputs.test_release == 'true'")
+      fail(`${name} must apply the test release version only for a test release`)
+  }
   for (const publisher of ['build-ciphernode-image-release', 'publish-npm-packages']) {
     requires(publisher, ['release-candidate-gate'])
     if (job(publisher).if !== undefined) fail(`${publisher} must retain implicit dependency success gating`)
@@ -101,6 +114,10 @@ export function checkReleaseSafeguards(rootDir = ROOT_DIR) {
   const promote = steps.findIndex((step) => step.run?.startsWith('node scripts/release/index.mjs promote-stable'))
   if (promote < 0 || create <= promote) fail('the stable release must be created after its stable tag is promoted')
   command('create-github-release', 'aliases=(--tag "${CIPHERNODE_IMAGE_NAME}:dev")')
+  if (steps[promote].if !== "needs.validate-and-prepare.outputs.is_prerelease == 'false'")
+    fail('only a stable release can move the stable tag')
+  if (job('build-dappnode-package-release').if !== "needs.validate-and-prepare.outputs.is_prerelease == 'false'")
+    fail('only a stable release can build the DAppNode packages')
 
   if (packageJson.scripts['release:tag'] !== 'node scripts/release/index.mjs tag') {
     fail('release:tag does not use the protected release command')

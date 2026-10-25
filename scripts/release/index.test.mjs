@@ -11,11 +11,15 @@ import { parse, stringify } from 'yaml'
 
 import {
   ROOT_DIR,
+  applyTestReleaseVersion,
   checkReleaseSafeguards,
   normalizeVersion,
+  prepareRelease,
   prepareReleaseAssets,
   promoteStableTag,
   publishNpmPackage,
+  testReleaseLabel,
+  testReleaseVersion,
   validateReleaseVersion,
   verifyPublications,
   verifyReleaseCandidate,
@@ -407,4 +411,221 @@ test('publication CLI still loads without development dependencies installed', (
     },
   })
   assert.match(result, /Every required release publication succeeded/)
+})
+
+describe('branch test releases', () => {
+  const SHA = '0123456789abcdef0123456789abcdef01234567'
+
+  // A copy of every file that holds the release version.
+  function versionFixture() {
+    const rootDir = temporaryDirectory('interfold-test-release')
+    for (const file of [
+      'Cargo.toml',
+      'Cargo.lock',
+      'package.json',
+      'packages/interfold-config/package.json',
+      'packages/interfold-contracts/package.json',
+      'crates/wasm/package.json',
+      'packages/interfold-sdk/package.json',
+      'packages/interfold-react/package.json',
+      'packages/interfold-mcp/package.json',
+      'crates/zk/prover/versions.json',
+    ]) {
+      mkdirSync(join(rootDir, file, '..'), { recursive: true })
+      copyFileSync(join(ROOT_DIR, file), join(rootDir, file))
+    }
+    return rootDir
+  }
+
+  test('derives a unique SemVer version from the current core version, the label and the commit', () => {
+    assert.equal(testReleaseVersion('0.20.0-dev.2', 'lbfv', SHA), '0.20.0-lbfv.g0123456')
+    assert.equal(testReleaseVersion('0.20.0', 'lbfv', SHA), '0.20.0-lbfv.g0123456')
+    assert.equal(testReleaseLabel('0.20.0-lbfv.g0123456'), 'lbfv')
+    for (const version of ['0.20.0', '0.20.0-dev.2', '0.19.0-test.2', '1.0.0-beta.1', '0.20.0-lbfv.1', '0.20.0-lbfv.g012345']) {
+      assert.equal(testReleaseLabel(version), undefined, version)
+    }
+  })
+
+  test('refuses a label that names a stable or dev channel, or that npm could read as a version', () => {
+    for (const label of ['latest', 'dev', 'stable', 'main', 'next', 'beta', 'x', 'v1', 'LBFV', 'lbfv.1', 'a-b', '', 'abcdefghijklmnopq'])
+      assert.throws(() => testReleaseVersion('0.20.0', label, SHA), /test release label/, label)
+    assert.throws(() => testReleaseLabel('0.20.0-dev.g0123456'), /reserved/)
+  })
+
+  test('publishes to npm only under the label of the version', () => {
+    const rootDir = temporaryDirectory('interfold-test-release-npm')
+    const packageDir = join(rootDir, 'package')
+    mkdirSync(packageDir)
+    writeFileSync(
+      join(packageDir, 'package.json'),
+      `${JSON.stringify({ name: '@interfold/release-test', version: '1.2.3-lbfv.g0123456' })}\n`,
+    )
+    const calls = []
+    const execute = (command, args) => {
+      calls.push(args.join(' '))
+      if (args[0] === 'pack')
+        return {
+          status: 0,
+          stdout: JSON.stringify([{ name: '@interfold/release-test', filename: 'a.tgz', integrity: 'sha512-x' }]),
+          stderr: '',
+        }
+      if (args[0] === 'view') return { status: 1, stdout: '', stderr: 'npm ERR! code E404' }
+      return { status: 0, stdout: '', stderr: '' }
+    }
+    for (const tag of ['latest', 'dev', 'other'])
+      assert.throws(() => publishNpmPackage(packageDir, tag, { execute, rootDir }), /belongs to the lbfv channel/, tag)
+    assert.equal(publishNpmPackage(packageDir, 'lbfv', { execute, rootDir }), 'published')
+    assert.ok(calls.some((call) => call.startsWith('publish') && call.includes('--tag lbfv')))
+  })
+
+  test('applies the version to every file that the build and the publication read', () => {
+    const rootDir = versionFixture()
+    const before = readFileSync(join(rootDir, 'Cargo.lock'), 'utf8')
+    const previous = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8')).version
+    const version = testReleaseVersion(previous, 'lbfv', SHA)
+    applyTestReleaseVersion(version, rootDir)
+
+    assert.doesNotThrow(() => validateReleaseVersion(version, rootDir))
+    const after = readFileSync(join(rootDir, 'Cargo.lock'), 'utf8')
+    assert.ok(after.includes(`version = "${version}"`))
+    assert.ok(!after.includes(`version = "${previous}"`), 'a local package kept the previous version')
+    // Only the local packages change: every registry package keeps its lines.
+    const registry = (lock) => lock.split('\n\n').filter((block) => /^source = /m.test(block))
+    assert.deepEqual(registry(after), registry(before))
+    assert.throws(() => applyTestReleaseVersion('1.2.3', rootDir), /not a branch test release version/)
+  })
+
+  describe('prepare', () => {
+    function repository(branch) {
+      const rootDir = versionFixture()
+      git(rootDir, 'init', '--quiet', '--initial-branch', branch)
+      git(rootDir, 'config', 'user.email', 'release@example.test')
+      git(rootDir, 'config', 'user.name', 'Release Test')
+      git(rootDir, 'add', '.')
+      git(rootDir, 'commit', '--quiet', '--message', 'candidate')
+      const sha = git(rootDir, 'rev-parse', 'HEAD')
+      const outputFile = join(rootDir, '.github-output')
+      writeFileSync(outputFile, '')
+      const environment = {
+        GITHUB_EVENT_NAME: 'workflow_dispatch',
+        GITHUB_OUTPUT: outputFile,
+        GITHUB_REF: `refs/heads/${branch}`,
+        GITHUB_REF_NAME: branch,
+        GITHUB_SHA: sha,
+        RELEASE_TEST_LABEL: 'lbfv',
+      }
+      return { environment, outputFile, rootDir, sha }
+    }
+
+    test('names the version, the dist-tag and the candidate from the dispatched branch commit', () => {
+      const { environment, outputFile, rootDir, sha } = repository('lbfv-branch')
+      prepareRelease(environment, rootDir)
+      const outputs = Object.fromEntries(
+        readFileSync(outputFile, 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => line.split('=')),
+      )
+      assert.deepEqual(outputs, {
+        version: `0.20.0-lbfv.g${sha.slice(0, 7)}`,
+        is_prerelease: 'true',
+        channel: 'lbfv',
+        candidate_sha: sha,
+        test_release: 'true',
+      })
+    })
+
+    test('refuses main, a tag ref, a moved checkout, and a reserved label', () => {
+      const { environment, rootDir } = repository('lbfv-branch')
+      for (const change of [
+        { GITHUB_REF: 'refs/heads/main' },
+        { GITHUB_REF: 'refs/tags/v0.20.0-lbfv.g0123456' },
+        { GITHUB_SHA: SHA },
+        { RELEASE_TEST_LABEL: 'dev' },
+        { RELEASE_TEST_LABEL: 'latest' },
+        { RELEASE_TEST_LABEL: '' },
+      ])
+        assert.throws(() => prepareRelease({ ...environment, ...change }, rootDir), undefined, JSON.stringify(change))
+    })
+
+    test('a tag push never takes the test release shape', () => {
+      const { environment, rootDir } = repository('main')
+      assert.throws(
+        () =>
+          prepareRelease(
+            {
+              ...environment,
+              GITHUB_EVENT_NAME: 'push',
+              GITHUB_REF: 'refs/tags/v0.20.0-lbfv.g0123456',
+              GITHUB_REF_NAME: 'v0.20.0-lbfv.g0123456',
+            },
+            rootDir,
+          ),
+        /version shape of a branch test release/,
+      )
+    })
+  })
+
+  test('test release notes and provenance name the branch, and no stable or dev install', () => {
+    const rootDir = temporaryDirectory('interfold-test-release-assets')
+    const distDir = join(rootDir, 'dist', 'downloads')
+    mkdirSync(distDir, { recursive: true })
+    mkdirSync(join(rootDir, 'deployments'))
+    const version = '1.2.3-lbfv.g0123456'
+    for (const archive of [...RELEASE_BINARIES, `circuits-${version}.tar.gz`]) writeFileSync(join(distDir, archive), archive)
+    writeFileSync(join(rootDir, 'deployments/manifest.json'), '{}\n')
+
+    prepareReleaseAssets(
+      {
+        candidateSha: 'abc123',
+        circuitSourceHash: 'circuit-source',
+        isPrerelease: true,
+        tagName: `v${version}`,
+        testRelease: { label: 'lbfv', sourceRef: 'lbfv-branch' },
+        version,
+        workflowRunId: '456',
+      },
+      rootDir,
+    )
+    const notes = readFileSync(join(rootDir, 'release_notes.md'), 'utf8')
+    assert.match(notes, /test release from the `lbfv-branch` branch/)
+    assert.match(notes, /@interfold\/sdk@lbfv/)
+    assert.doesNotMatch(notes, /@interfold\/sdk@(latest|dev)/)
+    assert.equal(
+      JSON.parse(readFileSync(join(rootDir, 'release-assets/release-provenance.json'), 'utf8')).testRelease.sourceRef,
+      'lbfv-branch',
+    )
+  })
+
+  test('the stable tag never moves in a dispatched run', () => {
+    assert.throws(
+      () => promoteStableTag('HEAD', { GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_TOKEN: 'token' }),
+      /never moves the stable tag/,
+    )
+  })
+
+  test('workflow checks reject a test release path to the stable names', () => {
+    const root = temporaryDirectory('interfold-test-release-workflow')
+    mkdirSync(join(root, '.github/workflows'), { recursive: true })
+    copyFileSync(join(ROOT_DIR, 'package.json'), join(root, 'package.json'))
+    const original = readFileSync(join(ROOT_DIR, '.github/workflows/releases.yml'), 'utf8')
+    for (const [change, message] of [
+      [(workflow) => (workflow.on.push.branches = ['main']), /tag pushes only/],
+      [(workflow) => delete workflow.on.workflow_dispatch, /triggers must be/],
+      [(workflow) => (workflow.on.workflow_dispatch.inputs.tag = { type: 'string' }), /only the label input/],
+      [
+        (workflow) => delete workflow.jobs['publish-npm-packages'].steps.find((step) => step.run?.includes('apply-test-version')).if,
+        /only for a test release/,
+      ],
+      [
+        (workflow) => delete workflow.jobs['create-github-release'].steps.find((step) => step.run?.includes('promote-stable')).if,
+        /stable tag/,
+      ],
+    ]) {
+      const workflow = parse(original)
+      change(workflow)
+      writeFileSync(join(root, '.github/workflows/releases.yml'), stringify(workflow))
+      assert.throws(() => checkReleaseSafeguards(root), message)
+    }
+  })
 })

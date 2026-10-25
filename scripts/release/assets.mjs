@@ -95,14 +95,16 @@ function copyArchives(distDir, assetsDir) {
 }
 
 function releaseNotes(options, requiredAssets, assetsDir, rootDir) {
-  const { candidateSha, circuitSourceHash, isPrerelease, version } = options
+  const { candidateSha, circuitSourceHash, isPrerelease, testRelease, version } = options
   const changelogPath = join(rootDir, 'CHANGELOG.md')
   const changelog = existsSync(changelogPath) ? changelogForRelease(readFileSync(changelogPath, 'utf8'), version) : ''
   const upgrade = upgradeNote(version, rootDir)
-  const npmTag = releaseChannel(version)
-  const warning = isPrerelease
-    ? '> **This is a pre-release version.**\n> Pre-release versions can contain bugs and breaking changes.\n\n'
-    : ''
+  const npmTag = testRelease ? testRelease.label : releaseChannel(version)
+  const warning = testRelease
+    ? `> **This is a test release from the \`${testRelease.sourceRef}\` branch. Do not use it in production.**\n> It has no stable or dev channel. Its npm distribution tag and container tag are \`${testRelease.label}\`.\n\n`
+    : isPrerelease
+      ? '> **This is a pre-release version.**\n> Pre-release versions can contain bugs and breaking changes.\n\n'
+      : ''
   const checksums = requiredAssets
     .map((asset) => `${checksum(join(assetsDir, asset))}  ${asset}`)
     .sort()
@@ -170,7 +172,7 @@ Source hash: \`${circuitSourceHash}\`
 }
 
 export function prepareReleaseAssets(options, rootDir = ROOT_DIR) {
-  const { candidateSha, circuitSourceHash, tagName, version, workflowRunId } = options
+  const { candidateSha, circuitSourceHash, tagName, testRelease, version, workflowRunId } = options
   const assetsDir = join(rootDir, 'release-assets')
   const requiredAssets = [...REQUIRED_BINARIES, `circuits-${version}.tar.gz`]
 
@@ -195,7 +197,7 @@ export function prepareReleaseAssets(options, rootDir = ROOT_DIR) {
   }
   copyFileSync(manifest, join(assetsDir, 'manifest.json'))
 
-  const provenance = { candidateSha, circuitSourceHash, tag: tagName, workflowRunId }
+  const provenance = { candidateSha, circuitSourceHash, tag: tagName, workflowRunId, ...(testRelease && { testRelease }) }
   writeFileSync(join(assetsDir, 'release-provenance.json'), `${JSON.stringify(provenance, null, 2)}\n`)
   writeFileSync(join(rootDir, 'release_notes.md'), releaseNotes(options, requiredAssets, assetsDir, rootDir))
 
