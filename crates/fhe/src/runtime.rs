@@ -254,20 +254,41 @@ impl SecretKeySerializer {
 mod tests {
     use super::*;
 
-    const LEGACY_SECURE_8192_PARAMS: &[u8] = &[
-        8, 128, 64, 18, 27, 129, 128, 128, 134, 128, 128, 128, 128, 4, 129, 128, 144, 133, 128,
-        128, 128, 128, 4, 129, 128, 228, 132, 128, 128, 128, 128, 4, 24, 192, 132, 61, 32, 10,
-    ];
+    /// Serialized secure-8192 parameters in the legacy snapshot layout: the current preset's
+    /// degree, plaintext modulus and moduli, without the error1-variance field (protobuf field 6).
+    fn legacy_secure_8192_params() -> Vec<u8> {
+        let preset = BfvParamSet::from(BfvPreset::SecureThreshold8192);
+        let encoded = preset.build().to_bytes();
+        let mut legacy = Vec::new();
+        let mut cursor = 0;
+        while cursor < encoded.len() {
+            let start = cursor;
+            let key = read_protobuf_varint(&encoded, &mut cursor).unwrap();
+            assert!(skip_protobuf_value(
+                &encoded,
+                &mut cursor,
+                key & 0x07,
+                key >> 3
+            ));
+            if key >> 3 != 6 {
+                legacy.extend_from_slice(&encoded[start..cursor]);
+            }
+        }
+        assert!(protobuf_has_length_delimited_field(&encoded, 6));
+        assert!(!protobuf_has_length_delimited_field(&legacy, 6));
+        legacy
+    }
 
     #[test]
     fn restores_preset_variance_from_legacy_snapshot_params() {
+        let legacy_params = legacy_secure_8192_params();
         let expected = BfvParamSet::from(BfvPreset::SecureThreshold8192).build();
-        let decoded = BfvParameters::try_deserialize(LEGACY_SECURE_8192_PARAMS).unwrap();
+        let decoded = BfvParameters::try_deserialize(&legacy_params).unwrap();
         assert_ne!(
             decoded.get_error1_variance(),
             expected.get_error1_variance()
         );
-        let restored = deserialize_snapshot_params(LEGACY_SECURE_8192_PARAMS).unwrap();
+        let restored = deserialize_snapshot_params(&legacy_params).unwrap();
         assert_eq!(
             restored.get_error1_variance(),
             expected.get_error1_variance()

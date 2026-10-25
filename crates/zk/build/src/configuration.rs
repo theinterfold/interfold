@@ -701,14 +701,22 @@ pub fn protocol_utils(
     }
     for (prefix, message_prefix, preset) in [
         ("INSECURE", "INSECURE_64", BfvPreset::InsecureThreshold64),
-        ("INSECURE_LBFV", "INSECURE", BfvPreset::InsecureThresholdLbfv),
+        (
+            "INSECURE_LBFV",
+            "INSECURE",
+            BfvPreset::InsecureThresholdLbfv,
+        ),
         (
             "INSECURE_SIMD",
             "INSECURE_SIMD",
             BfvPreset::InsecureThresholdSimd,
         ),
         ("SECURE", "SECURE", BfvPreset::SecureThreshold8192),
-        ("SECURE_16384", "SECURE_16384", BfvPreset::SecureThreshold16384),
+        (
+            "SECURE_16384",
+            "SECURE_16384",
+            BfvPreset::SecureThreshold16384,
+        ),
     ] {
         let material = params.get(preset);
         for (suffix, value) in [

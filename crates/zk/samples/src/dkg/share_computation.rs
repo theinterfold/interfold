@@ -151,11 +151,11 @@ mod tests {
         assert_eq!(sample.dkg_input_type, DkgInputType::SecretKey);
         assert_eq!(
             sample.secret_sss.len(),
-            e3_fhe_params::constants::insecure::threshold::MODULI.len()
+            e3_fhe_params::constants::insecure_64::threshold::MODULI.len()
         );
         assert_eq!(
             sample.secret.limbs.len(),
-            e3_fhe_params::constants::insecure::threshold::MODULI.len()
+            e3_fhe_params::constants::insecure_64::threshold::MODULI.len()
         );
     }
 
@@ -177,11 +177,11 @@ mod tests {
         assert_eq!(sample.dkg_input_type, DkgInputType::SmudgingNoise);
         assert_eq!(
             sample.secret_sss.len(),
-            e3_fhe_params::constants::insecure::threshold::MODULI.len()
+            e3_fhe_params::constants::insecure_64::threshold::MODULI.len()
         );
         assert_eq!(
             sample.secret.limbs.len(),
-            e3_fhe_params::constants::insecure::threshold::MODULI.len()
+            e3_fhe_params::constants::insecure_64::threshold::MODULI.len()
         );
     }
 }

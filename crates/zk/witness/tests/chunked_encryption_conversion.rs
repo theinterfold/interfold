@@ -18,7 +18,8 @@ mod tests {
 
     #[test]
     fn test_bfv_public_key_to_greco() {
-        let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThresholdLbfv).unwrap();
+        let (threshold_params, _) =
+            build_pair_for_preset(BfvPreset::InsecureThresholdLbfv).unwrap();
         let sample =
             e3_zk_samples::threshold::user_data_encryption::generate(&threshold_params).unwrap();
 
@@ -50,7 +51,8 @@ mod tests {
     /// *something*, and the circuit would reject the ballot with no indication why.
     #[test]
     fn conversion_centers_both_components_and_is_repeatable() {
-        let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThresholdLbfv).unwrap();
+        let (threshold_params, _) =
+            build_pair_for_preset(BfvPreset::InsecureThresholdLbfv).unwrap();
         let sample =
             e3_zk_samples::threshold::user_data_encryption::generate(&threshold_params).unwrap();
         let config =
@@ -95,7 +97,8 @@ mod tests {
     /// decryption then rejects the padded ciphertext and the round fails.
     #[test]
     fn ciphertext_with_more_than_two_components_is_rejected() {
-        let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThresholdLbfv).unwrap();
+        let (threshold_params, _) =
+            build_pair_for_preset(BfvPreset::InsecureThresholdLbfv).unwrap();
         let sample =
             e3_zk_samples::threshold::user_data_encryption::generate(&threshold_params).unwrap();
         let config =
@@ -136,7 +139,8 @@ mod tests {
 
     #[test]
     fn test_bfv_ciphertext_to_greco() {
-        let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThresholdLbfv).unwrap();
+        let (threshold_params, _) =
+            build_pair_for_preset(BfvPreset::InsecureThresholdLbfv).unwrap();
 
         let sample =
             e3_zk_samples::threshold::user_data_encryption::generate(&threshold_params).unwrap();

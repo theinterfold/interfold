@@ -15,8 +15,7 @@ use crate::constants::{
     defaults::MIN_SECURE_LAMBDA,
     defaults::SECURE_16384_MULT_DEPTH,
     defaults::SECURE_8192_MULT_DEPTH,
-    insecure,
-    insecure_64,
+    insecure, insecure_64,
     insecure_lbfv_search_defaults::{
         B as INSECURE_LBFV_B, B_CHI as INSECURE_LBFV_B_CHI, SEARCH_K as INSECURE_LBFV_SEARCH_K,
         SEARCH_N as INSECURE_LBFV_SEARCH_N, SEARCH_Z as INSECURE_LBFV_SEARCH_Z,
@@ -631,9 +630,7 @@ impl BfvPreset {
     pub fn artifacts_dir(&self) -> String {
         let meta = self.metadata();
         match self {
-            BfvPreset::InsecureThresholdLbfv | BfvPreset::InsecureDkgLbfv => {
-                "insecure".to_string()
-            }
+            BfvPreset::InsecureThresholdLbfv | BfvPreset::InsecureDkgLbfv => "insecure".to_string(),
             BfvPreset::InsecureThresholdSimd | BfvPreset::InsecureDkgSimd => {
                 "insecure-simd".to_string()
             }
@@ -1077,10 +1074,7 @@ mod tests {
             "insecure-64"
         );
         assert_eq!(BfvPreset::InsecureDkg64.artifacts_dir(), "insecure-64");
-        assert_eq!(
-            BfvPreset::InsecureThresholdLbfv.artifacts_dir(),
-            "insecure"
-        );
+        assert_eq!(BfvPreset::InsecureThresholdLbfv.artifacts_dir(), "insecure");
         assert_eq!(BfvPreset::InsecureDkgLbfv.artifacts_dir(), "insecure");
         assert_eq!(
             BfvPreset::SecureThreshold8192.artifacts_dir(),

@@ -342,22 +342,22 @@ describe("BfvVkBindingIntegration", function () {
 
   const deployDkgAggregatorV2 = async () => {
     const libFactory = await ethers.getContractFactory(
-      "contracts/verifiers/bfv/honk/DkgAggregatorV2Verifier.sol:ZKTranscriptLib",
+      "contracts/verifiers/bfv/honk/insecure/minimum/DkgAggregatorV2Verifier.sol:ZKTranscriptLib",
     );
     const zkTranscriptLib = await libFactory.deploy();
     await zkTranscriptLib.waitForDeployment();
     const relationsLibFactory = await ethers.getContractFactory(
-      "contracts/verifiers/bfv/honk/DkgAggregatorV2Verifier.sol:RelationsLib",
+      "contracts/verifiers/bfv/honk/insecure/minimum/DkgAggregatorV2Verifier.sol:RelationsLib",
     );
     const relationsLib = await relationsLibFactory.deploy();
     await relationsLib.waitForDeployment();
     const dkgAggFactory = await ethers.getContractFactory(
-      "contracts/verifiers/bfv/honk/DkgAggregatorV2Verifier.sol:DkgAggregatorV2Verifier",
+      "contracts/verifiers/bfv/honk/insecure/minimum/DkgAggregatorV2Verifier.sol:DkgAggregatorV2Verifier",
       {
         libraries: {
-          "project/contracts/verifiers/bfv/honk/DkgAggregatorV2Verifier.sol:ZKTranscriptLib":
+          "project/contracts/verifiers/bfv/honk/insecure/minimum/DkgAggregatorV2Verifier.sol:ZKTranscriptLib":
             await zkTranscriptLib.getAddress(),
-          "project/contracts/verifiers/bfv/honk/DkgAggregatorV2Verifier.sol:RelationsLib":
+          "project/contracts/verifiers/bfv/honk/insecure/minimum/DkgAggregatorV2Verifier.sol:RelationsLib":
             await relationsLib.getAddress(),
         },
       },

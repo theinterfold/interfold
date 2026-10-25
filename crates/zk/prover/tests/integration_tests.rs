@@ -117,7 +117,10 @@ async fn test_full_flow_download_circuits_prove_and_verify() {
     let result = download_integration_circuits(&backend).await;
     assert!(result.is_ok(), "download_circuits failed: {:?}", result);
 
-    let presets = [BfvPreset::InsecureThreshold64, BfvPreset::SecureThreshold8192];
+    let presets = [
+        BfvPreset::InsecureThreshold64,
+        BfvPreset::SecureThreshold8192,
+    ];
     for preset in &presets {
         let preset_dir = preset_committee_dir(&backend.circuits_dir, preset);
         for artifact in [

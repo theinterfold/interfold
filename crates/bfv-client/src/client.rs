@@ -825,9 +825,11 @@ mod tests {
 
         // No SIMD slots at t = 100.
         let no_slots: BfvParamSet = BfvPreset::InsecureThresholdLbfv.into();
-        assert!(
-            simd_decode(&vec![0u64; no_slots.degree], BfvPreset::InsecureThresholdLbfv).is_err()
-        );
+        assert!(simd_decode(
+            &vec![0u64; no_slots.degree],
+            BfvPreset::InsecureThresholdLbfv
+        )
+        .is_err());
         // The length must be the degree.
         assert!(simd_decode(&zeros[1..], preset).is_err());
         assert!(simd_decode(&[zeros.clone(), vec![0]].concat(), preset).is_err());

@@ -192,7 +192,10 @@ mod tests {
     use super::*;
     #[test]
     fn rounding_constants_use_the_full_level_zero_modulus() {
-        for preset in [BfvPreset::InsecureThreshold64, BfvPreset::SecureThreshold8192] {
+        for preset in [
+            BfvPreset::InsecureThreshold64,
+            BfvPreset::SecureThreshold8192,
+        ] {
             let configs = Configs::for_preset(preset, CiphernodesCommitteeSize::Minimum).unwrap();
             // Full CRT product is independent of the cached context used by the computation.
             let q: BigUint = configs

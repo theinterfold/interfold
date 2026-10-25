@@ -377,9 +377,11 @@ pub fn source_hash_with_updates(
             )?
             .replace_all(&source, "preset: <selected>")
             .into_owned();
-            source = Regex::new(r"super::(insecure_64|insecure_simd|insecure|secure_8192|secure_16384)::")?
-                .replace_all(&source, "super::<selected>::")
-                .into_owned();
+            source = Regex::new(
+                r"super::(insecure_64|insecure_simd|insecure|secure_8192|secure_16384)::",
+            )?
+            .replace_all(&source, "super::<selected>::")
+            .into_owned();
             // The width is the selected preset's `max_msg_non_zero_coeffs`, which the hashed
             // `crates/fhe-params/src` already carries; the selector copy must not vary the hash.
             source = Regex::new(r"(pub global MAX_MSG_NON_ZERO_COEFFS: u32 = )\d+;")?

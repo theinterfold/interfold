@@ -693,7 +693,7 @@ mod scaled_quotient_tests {
 
     #[test]
     fn insecure_is_excluded_rather_than_approximated() {
-        let (sq, moduli, _) = derive_for(BfvPreset::InsecureThreshold64);
+        let (sq, moduli, _) = derive_for(BfvPreset::InsecureThresholdLbfv);
         assert_eq!(moduli.len(), 2);
         assert!(
             !sq.available,

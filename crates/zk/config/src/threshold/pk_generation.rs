@@ -14,7 +14,6 @@ use e3_fhe_params::utils::*;
 use e3_fhe_params::{BfvPreset, ParameterType};
 use fhe::bfv::{BfvParameters, SecretKey};
 use num_bigint::BigUint;
-use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 pub mod crp;
@@ -212,11 +211,7 @@ impl Configs {
 
         let crp_matrix_str = crp_matrix_constant_string(threshold_params)?;
 
-        let variance = threshold_params.get_error1_variance();
-        let b_enc = match variance.to_u64() {
-            Some(v) if v < 16 => BigUint::from(2 * v),
-            _ => (BigUint::from(3u32) * variance).sqrt(),
-        };
+        let b_enc = error_sampler_bound(threshold_params.get_error1_variance());
 
         Ok(format!(
             r#"use crate::core::threshold::pk_generation::Configs as PkGenerationConfigs;

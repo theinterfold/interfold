@@ -157,17 +157,17 @@ mod tests {
         assert_eq!(
             sample.u_rns.coefficients().len(),
             BfvPreset::InsecureThreshold64.metadata().degree
-                * e3_fhe_params::constants::insecure::dkg::MODULI.len()
+                * e3_fhe_params::constants::insecure_64::dkg::MODULI.len()
         );
         assert_eq!(
             sample.e0_rns.coefficients().len(),
             BfvPreset::InsecureThreshold64.metadata().degree
-                * e3_fhe_params::constants::insecure::dkg::MODULI.len()
+                * e3_fhe_params::constants::insecure_64::dkg::MODULI.len()
         );
         assert_eq!(
             sample.e1_rns.coefficients().len(),
             BfvPreset::InsecureThreshold64.metadata().degree
-                * e3_fhe_params::constants::insecure::dkg::MODULI.len()
+                * e3_fhe_params::constants::insecure_64::dkg::MODULI.len()
         );
     }
 
@@ -191,17 +191,17 @@ mod tests {
         assert_eq!(
             sample.u_rns.coefficients().len(),
             BfvPreset::InsecureThreshold64.metadata().degree
-                * e3_fhe_params::constants::insecure::dkg::MODULI.len()
+                * e3_fhe_params::constants::insecure_64::dkg::MODULI.len()
         );
         assert_eq!(
             sample.e0_rns.coefficients().len(),
             BfvPreset::InsecureThreshold64.metadata().degree
-                * e3_fhe_params::constants::insecure::dkg::MODULI.len()
+                * e3_fhe_params::constants::insecure_64::dkg::MODULI.len()
         );
         assert_eq!(
             sample.e1_rns.coefficients().len(),
             BfvPreset::InsecureThreshold64.metadata().degree
-                * e3_fhe_params::constants::insecure::dkg::MODULI.len()
+                * e3_fhe_params::constants::insecure_64::dkg::MODULI.len()
         );
     }
 }

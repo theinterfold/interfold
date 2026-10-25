@@ -78,7 +78,7 @@ mod tests {
         assert_eq!(
             modulus_bound,
             BigUint::from(
-                (e3_fhe_params::constants::insecure::dkg::MODULI
+                (e3_fhe_params::constants::insecure_64::dkg::MODULI
                     .iter()
                     .max()
                     .unwrap()

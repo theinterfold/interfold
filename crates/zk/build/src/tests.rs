@@ -414,9 +414,14 @@ fn source_identity_tracks_inputs_not_generated_selections_or_tests() {
     }
     let parity = root.join("circuits/lib/src/configs/committee/micro/parity_insecure_64.nr");
     let updates = vec![(parity.clone(), "generated parity\n".to_owned())];
-    let projected =
-        identity::source_hash_with_updates(root, &opts, Some("insecure-64"), Some("micro"), &updates)
-            .unwrap();
+    let projected = identity::source_hash_with_updates(
+        root,
+        &opts,
+        Some("insecure-64"),
+        Some("micro"),
+        &updates,
+    )
+    .unwrap();
     assert!(
         !parity.exists(),
         "projected identity published a missing source"
@@ -776,9 +781,12 @@ fn artifact_policy_preserves_lbfv_selection_and_zk_finalizers() {
 fn insecure_public_randomness_matches_the_committed_lbfv_rows() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let material = PresetMaterial::new(BfvPreset::InsecureThresholdLbfv).unwrap();
-    let updates =
-        crate::lbfv::public_randomness(&root, BfvPreset::InsecureThresholdLbfv, &material.threshold)
-            .unwrap();
+    let updates = crate::lbfv::public_randomness(
+        &root,
+        BfvPreset::InsecureThresholdLbfv,
+        &material.threshold,
+    )
+    .unwrap();
     assert_eq!(updates.len(), 3);
     for (path, generated) in updates {
         let committed = fs::read_to_string(path).unwrap();

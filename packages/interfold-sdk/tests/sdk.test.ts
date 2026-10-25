@@ -14,7 +14,8 @@ import { generatePublicKey, encryptNumber as standaloneEncryptNumber, encryptVec
 
 describe('crypto configuration IDs', () => {
   it('uses the v2 circuit identity for every BFV parameter set', () => {
-    expect(cryptoConfigIdForParamSet(0)).to.equal('0x968e91054be28b2b577ac278284e03274ed46bd5c5064e573290312a2323d495')
+    expect(cryptoConfigIdForParamSet(0)).to.equal('0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9')
+    expect(cryptoConfigIdForParamSet(4)).to.equal('0x968e91054be28b2b577ac278284e03274ed46bd5c5064e573290312a2323d495')
     expect(cryptoConfigIdForParamSet(2)).to.equal('0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa')
     expect(cryptoConfigIdForParamSet(3)).to.equal('0x9b9181e0304e51388d6edd6eb4d5ae9a8593cbdbf28838734d829d09d0701d86')
   })
@@ -76,13 +77,13 @@ describe('encryptNumber', () => {
     it('should encrypt a number using standalone functions', async () => {
       const ct = await standaloneEncryptNumber(10n, publicKey, 'INSECURE_THRESHOLD_64')
       expect(ct).to.be.an.instanceof(Uint8Array)
-      expect(ct.length).to.equal(5_398)
+      expect(ct.length).to.equal(1_316)
     })
 
     it('should encrypt a vector using standalone functions', async () => {
       const ct = await standaloneEncryptVector(new BigUint64Array([1n, 2n]), publicKey, 'INSECURE_THRESHOLD_64')
       expect(ct).to.be.an.instanceof(Uint8Array)
-      expect(ct.length).to.equal(5_398)
+      expect(ct.length).to.equal(1_316)
     })
   })
 })

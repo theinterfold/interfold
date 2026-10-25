@@ -29,7 +29,7 @@ fn test_bound_and_bits_computation_consistency() {
     assert_eq!(
         max_pk_bound.clone(),
         BigUint::from(
-            (e3_fhe_params::constants::insecure::threshold::MODULI
+            (e3_fhe_params::constants::insecure_64::threshold::MODULI
                 .iter()
                 .max()
                 .unwrap()
@@ -42,7 +42,7 @@ fn test_bound_and_bits_computation_consistency() {
 
 #[test]
 fn insecure_e0_bound_matches_error1_sampler() {
-    let preset = BfvPreset::InsecureThreshold64;
+    let preset = BfvPreset::InsecureThresholdLbfv;
     let bounds = Configs::for_preset(preset)
         .map(|config| config.bounds)
         .unwrap();
@@ -58,7 +58,10 @@ fn insecure_e0_bound_matches_error1_sampler() {
 #[test]
 fn exact_encryption_material_is_repeatable_and_closes_both_reduced_identities() {
     use fhe_traits::{FheDecoder, Serialize};
-    for preset in [BfvPreset::InsecureThreshold64, BfvPreset::SecureThreshold8192] {
+    for preset in [
+        BfvPreset::InsecureThreshold64,
+        BfvPreset::SecureThreshold8192,
+    ] {
         let config = Configs::for_preset(preset).unwrap();
         let sample =
             e3_zk_samples::threshold::user_data_encryption::generate(&config.params).unwrap();

@@ -87,7 +87,12 @@ mod tests {
     #[test]
     fn test_generate_sample() {
         for preset in BfvPreset::PAIR_PRESETS {
-            let committee = CiphernodesCommitteeSize::Small;
+            // The SIMD preset's smudging-noise budget excludes the small committee.
+            let committee = if preset == BfvPreset::InsecureThresholdSimd {
+                CiphernodesCommitteeSize::Micro
+            } else {
+                CiphernodesCommitteeSize::Small
+            };
             let config = Configs::for_preset(preset, committee).unwrap();
             let sample = generate(&config).unwrap();
             let inputs = Inputs::compute(&config, &sample).unwrap();

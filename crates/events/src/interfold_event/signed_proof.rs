@@ -675,7 +675,10 @@ mod tests {
             expected.map(|(proof_type, _, _)| proof_type)
         );
         for (proof_type, trbfv, lbfv) in expected {
-            for preset in [BfvPreset::InsecureThreshold64, BfvPreset::SecureThreshold8192] {
+            for preset in [
+                BfvPreset::InsecureThreshold64,
+                BfvPreset::SecureThreshold8192,
+            ] {
                 assert_eq!(
                     proof_type.circuit_names_for(preset),
                     vec![trbfv],

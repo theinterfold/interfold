@@ -9,7 +9,8 @@ mod decrypted_shares_aggregation {
     use e3_zk_witness::threshold::decrypted_shares_aggregation::Inputs;
 
     /// A plaintext with 128 non-zero coefficients fits the SIMD preset's cap and exceeds the
-    /// 50-coefficient cap of every other preset.
+    /// 50-coefficient cap of the other degree-128 preset (a degree-64 preset rejects it earlier,
+    /// as longer than its polynomial degree).
     #[test]
     fn the_cap_is_per_preset() {
         let simd = BfvPreset::InsecureThresholdSimd;
@@ -23,7 +24,7 @@ mod decrypted_shares_aggregation {
         let inputs = Inputs::compute(&simd_config, &sample).unwrap();
         assert_eq!(inputs.message.coefficients().len(), 128);
 
-        let capped = BfvPreset::InsecureThreshold64;
+        let capped = BfvPreset::InsecureThresholdLbfv;
         let capped_config = Configs::for_preset(capped, CiphernodesCommitteeSize::Minimum).unwrap();
         assert_eq!(capped_config.max_msg_non_zero_coeffs, 50);
         let error = Inputs::compute(&capped_config, &sample)
