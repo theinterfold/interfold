@@ -5,8 +5,11 @@ permissions:
   contents: write
   packages: write
 
+# A tag release has one group, so promotions are serialized. A test release has a group per label: a
+# second dispatch can replace a pending test release, never a pending stable release.
 concurrency:
-  group: release-promotion-${{ github.repository }}
+  group:
+    release-promotion-${{ github.repository }}${{ github.event_name == 'workflow_dispatch' && format('-test-{0}', inputs.label) || '' }}
   cancel-in-progress: false
 
 on:
@@ -14,6 +17,14 @@ on:
     tags:
       - 'v*.*.*'
       - 'v*.*.*-*' # Pre-release tags like v1.0.0-beta.1
+  # A test release from a branch. Only a maintainer with write access can dispatch it. It never takes
+  # the latest or dev name: see "Test releases from a branch" in RELEASING.md.
+  workflow_dispatch:
+    inputs:
+      label:
+        description: 'Test release label, 2 to 16 lowercase letters (for example lbfv). It names the npm dist-tag and the container tag.'
+        required: true
+        type: string
 
 env:
   CIPHERNODE_DOCKERFILE_PATH: crates/Dockerfile
@@ -26,13 +37,14 @@ env:
 
 jobs:
   validate-and-prepare:
-    name: Validate Tag and Prepare Release
+    name: Validate Tag or Test Branch and Prepare Release
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.release.outputs.version }}
       is_prerelease: ${{ steps.release.outputs.is_prerelease }}
       channel: ${{ steps.release.outputs.channel }}
       candidate_sha: ${{ steps.release.outputs.candidate_sha }}
+      test_release: ${{ steps.release.outputs.test_release }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -41,6 +53,8 @@ jobs:
 
       - name: Validate release candidate
         id: release
+        env:
+          RELEASE_TEST_LABEL: ${{ inputs.label }}
         run: node scripts/release/index.mjs prepare
 
   build-ciphernode-image-release:
@@ -51,6 +65,11 @@ jobs:
       CIPHERNODE_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ciphernode
     steps:
       - uses: actions/checkout@v6
+
+      # A test release builds the dispatched commit under its test version. Nothing is committed.
+      - name: Apply test release version
+        if: needs.validate-and-prepare.outputs.test_release == 'true'
+        run: node scripts/release/index.mjs apply-test-version ${{ needs.validate-and-prepare.outputs.version }}
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
@@ -132,6 +151,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Apply test release version
+        if: needs.validate-and-prepare.outputs.test_release == 'true'
+        run: node scripts/release/index.mjs apply-test-version ${{ needs.validate-and-prepare.outputs.version }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -222,6 +245,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # After the install: the frozen lockfile belongs to the committed version.
+      - name: Apply test release version
+        if: needs.validate-and-prepare.outputs.test_release == 'true'
+        run: node scripts/release/index.mjs apply-test-version ${{ needs.validate-and-prepare.outputs.version }}
+
       - name: Build packages
         run: pnpm build:ts
 
@@ -309,7 +337,7 @@ jobs:
     needs: [validate-and-prepare, build-binaries, download-circuits]
     steps:
       - name: Confirm candidate qualification
-        run: echo "Candidate ${{ needs.validate-and-prepare.outputs.candidate_sha }} is on main and passed release artifact checks."
+        run: echo "Candidate ${{ needs.validate-and-prepare.outputs.candidate_sha }} passed release artifact checks."
 
   publication-gate:
     name: Verify Every Release Publication
@@ -372,6 +400,7 @@ jobs:
           RELEASE_IS_PRERELEASE: ${{ needs.validate-and-prepare.outputs.is_prerelease }}
           RELEASE_CANDIDATE_SHA: ${{ needs.validate-and-prepare.outputs.candidate_sha }}
           CIRCUIT_SOURCE_HASH: ${{ needs.download-circuits.outputs.source_hash }}
+          RELEASE_TEST: ${{ needs.validate-and-prepare.outputs.test_release }}
         run: node scripts/release/index.mjs prepare-assets
 
       - name: Set up Buildx for channel aliases
@@ -385,15 +414,20 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Every release moves the `dev` aliases, so `dev` is the most recently published release. A
-      # stable release also moves the `latest` aliases.
+      # stable release also moves the `latest` aliases. A test release moves only its own label alias.
       - name: Promote channel container aliases
         env:
           CHANNEL: ${{ needs.validate-and-prepare.outputs.channel }}
           VERSION: ${{ needs.validate-and-prepare.outputs.version }}
+          TEST_RELEASE: ${{ needs.validate-and-prepare.outputs.test_release }}
         run: |
-          aliases=(--tag "${CIPHERNODE_IMAGE_NAME}:dev")
-          if [ "${CHANNEL}" = latest ]; then
-            aliases+=(--tag "${CIPHERNODE_IMAGE_NAME}:latest")
+          if [ "${TEST_RELEASE}" = true ]; then
+            aliases=(--tag "${CIPHERNODE_IMAGE_NAME}:${CHANNEL}")
+          else
+            aliases=(--tag "${CIPHERNODE_IMAGE_NAME}:dev")
+            if [ "${CHANNEL}" = latest ]; then
+              aliases+=(--tag "${CIPHERNODE_IMAGE_NAME}:latest")
+            fi
           fi
           docker buildx imagetools create "${aliases[@]}" "${CIPHERNODE_IMAGE_NAME}:${VERSION}"
 
@@ -411,6 +445,9 @@ jobs:
           body_path: release_notes.md
           draft: false
           prerelease: ${{ needs.validate-and-prepare.outputs.is_prerelease }}
+          # A test release has no tag yet. Create it on the dispatched commit, not on the default branch.
+          target_commitish:
+            ${{ needs.validate-and-prepare.outputs.test_release == 'true' && needs.validate-and-prepare.outputs.candidate_sha || '' }}
           generate_release_notes: false
           files: release-assets/*
         env:

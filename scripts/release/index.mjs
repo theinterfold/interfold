@@ -8,13 +8,14 @@ import { fail } from './core.mjs'
 import { checkReleaseSafeguards, verifyPublications } from './gates.mjs'
 import { prepareRelease, promoteStableTag, tagRelease } from './git.mjs'
 import { publishNpmPackage } from './npm.mjs'
+import { applyTestReleaseVersion, testReleaseLabel } from './version.mjs'
 
 export { prepareReleaseAssets } from './assets.mjs'
 export { ROOT_DIR } from './core.mjs'
 export { checkReleaseSafeguards, verifyPublications } from './gates.mjs'
 export { prepareRelease, promoteStableTag, tagRelease, verifyReleaseCandidate } from './git.mjs'
 export { publishNpmPackage } from './npm.mjs'
-export { normalizeVersion, validateReleaseVersion } from './version.mjs'
+export { applyTestReleaseVersion, normalizeVersion, testReleaseLabel, testReleaseVersion, validateReleaseVersion } from './version.mjs'
 
 function releaseOptionsFromEnvironment(environment) {
   const required = {
@@ -29,6 +30,13 @@ function releaseOptionsFromEnvironment(environment) {
     if (!value) {
       fail(`prepare-assets requires ${name}`)
     }
+  }
+
+  if (environment.RELEASE_TEST === 'true') {
+    // A branch test release has no tag push: the tag is created from the version when the release is.
+    const label = testReleaseLabel(required.version)
+    if (label === undefined) fail(`prepare-assets cannot prepare ${required.version} as a test release`)
+    return { ...required, isPrerelease: true, tagName: `v${required.version}`, testRelease: { label, sourceRef: required.tagName } }
   }
 
   return { ...required, isPrerelease: environment.RELEASE_IS_PRERELEASE === 'true' }
@@ -62,12 +70,20 @@ export function main(args = process.argv.slice(2), environment = process.env) {
       if (commandArgs.length !== 1) fail('usage: node scripts/release/index.mjs promote-stable <candidate-sha>')
       promoteStableTag(commandArgs[0], environment)
       break
+    case 'apply-test-version':
+      if (commandArgs.length !== 1) fail('usage: node scripts/release/index.mjs apply-test-version <version>')
+      // Only the dispatched test release rewrites the checkout. A tag release builds the committed files.
+      if (environment.GITHUB_EVENT_NAME !== 'workflow_dispatch') fail('apply-test-version runs only in a dispatched test release')
+      applyTestReleaseVersion(commandArgs[0])
+      break
     case 'check':
       if (commandArgs.length !== 0) fail('usage: node scripts/release/index.mjs check')
       checkReleaseSafeguards()
       break
     default:
-      fail('usage: node scripts/release/index.mjs <tag|prepare|publish-npm|verify-publications|prepare-assets|promote-stable|check>')
+      fail(
+        'usage: node scripts/release/index.mjs <tag|prepare|apply-test-version|publish-npm|verify-publications|prepare-assets|promote-stable|check>',
+      )
   }
 }
 

@@ -10,7 +10,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 import { bumpDappnodeVersions, dappnodeVersionFiles } from './dappnode.mjs'
-import { CARGO_WORKSPACES, PACKAGE_FILES, normalizeVersion, releaseChannel } from './version.mjs'
+import { CARGO_WORKSPACES, PACKAGE_FILES, bumpCargoManifest, normalizeVersion, releaseChannel } from './version.mjs'
 
 export interface BumpOptions {
   commit?: boolean
@@ -21,27 +21,6 @@ export interface BumpOptions {
 type Execute = (command: string, args: string[], cwd: string) => string
 const executeCommand: Execute = (command, args, cwd) =>
   execFileSync(command, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] })
-
-/** Change only the workspace package and local path dependencies, never registry pins. */
-export function bumpCargoManifest(content: string, version: string): string {
-  let section = ''
-  let foundVersion = false
-  const result = content
-    .split('\n')
-    .map((line) => {
-      if (/^\s*\[/.test(line)) section = line.trim()
-      if (section === '[workspace.package]' && /^version\s*=/.test(line)) {
-        foundVersion = true
-        return line.replace(/"[^"]*"/, `"${version}"`)
-      }
-      if (section === '[workspace.dependencies]' && /\bpath\s*=\s*"/.test(line))
-        return line.replace(/\bversion\s*=\s*"[^"]*"/, `version = "${version}"`)
-      return line
-    })
-    .join('\n')
-  if (!foundVersion) throw new Error('Cargo.toml does not contain workspace.package.version')
-  return result
-}
 
 function core(version: string): number[] {
   return normalizeVersion(version).split(/[+-]/)[0].split('.').map(Number)

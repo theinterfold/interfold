@@ -5,7 +5,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync,
 import { basename, join } from 'node:path'
 
 import { ROOT_DIR, fail } from './core.mjs'
-import { releaseChannel } from './version.mjs'
+import { isTestReleaseVersion, releaseChannel } from './version.mjs'
 
 // The test-only archive holds a CLI built with `test-only-skip-proof-aggregation`. The install script
 // and `interfold update` select `interfold-<platform>.tar.gz`, so they never install it.
@@ -58,7 +58,8 @@ export function changelogForRelease(changelog, version) {
     const prerelease = new RegExp(`^#+ \\[?v?(${escapeRegularExpression(version)}-[0-9A-Za-z.-]+)`)
     for (const line of changelog.split('\n')) {
       const match = prerelease.exec(line)
-      if (match) versions.push(match[1])
+      // A branch test release is not a step toward a stable release.
+      if (match && !isTestReleaseVersion(match[1])) versions.push(match[1])
     }
   }
   const sections = versions.map((name) => ({ name, text: changelogForVersion(changelog, name) })).filter((section) => section.text)
@@ -95,14 +96,16 @@ function copyArchives(distDir, assetsDir) {
 }
 
 function releaseNotes(options, requiredAssets, assetsDir, rootDir) {
-  const { candidateSha, circuitSourceHash, isPrerelease, version } = options
+  const { candidateSha, circuitSourceHash, isPrerelease, testRelease, version } = options
   const changelogPath = join(rootDir, 'CHANGELOG.md')
   const changelog = existsSync(changelogPath) ? changelogForRelease(readFileSync(changelogPath, 'utf8'), version) : ''
   const upgrade = upgradeNote(version, rootDir)
-  const npmTag = releaseChannel(version)
-  const warning = isPrerelease
-    ? '> **This is a pre-release version.**\n> Pre-release versions can contain bugs and breaking changes.\n\n'
-    : ''
+  const npmTag = testRelease ? testRelease.label : releaseChannel(version)
+  const warning = testRelease
+    ? `> **This is a test release from the \`${testRelease.sourceRef}\` branch. Do not use it in production.**\n> It has no stable or dev channel. Its npm distribution tag and container tag are \`${testRelease.label}\`.\n\n`
+    : isPrerelease
+      ? '> **This is a pre-release version.**\n> Pre-release versions can contain bugs and breaking changes.\n\n'
+      : ''
   const checksums = requiredAssets
     .map((asset) => `${checksum(join(assetsDir, asset))}  ${asset}`)
     .sort()
@@ -170,7 +173,7 @@ Source hash: \`${circuitSourceHash}\`
 }
 
 export function prepareReleaseAssets(options, rootDir = ROOT_DIR) {
-  const { candidateSha, circuitSourceHash, tagName, version, workflowRunId } = options
+  const { candidateSha, circuitSourceHash, tagName, testRelease, version, workflowRunId } = options
   const assetsDir = join(rootDir, 'release-assets')
   const requiredAssets = [...REQUIRED_BINARIES, `circuits-${version}.tar.gz`]
 
@@ -195,7 +198,7 @@ export function prepareReleaseAssets(options, rootDir = ROOT_DIR) {
   }
   copyFileSync(manifest, join(assetsDir, 'manifest.json'))
 
-  const provenance = { candidateSha, circuitSourceHash, tag: tagName, workflowRunId }
+  const provenance = { candidateSha, circuitSourceHash, tag: tagName, workflowRunId, ...(testRelease && { testRelease }) }
   writeFileSync(join(assetsDir, 'release-provenance.json'), `${JSON.stringify(provenance, null, 2)}\n`)
   writeFileSync(join(rootDir, 'release_notes.md'), releaseNotes(options, requiredAssets, assetsDir, rootDir))
 

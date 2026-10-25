@@ -8,18 +8,18 @@ decisions; this directory contains its executable implementation.
 
 ## Map
 
-| File                           | Responsibility                                                                       |
-| ------------------------------ | ------------------------------------------------------------------------------------ |
-| [`bump.ts`](bump.ts)           | Updates manifests, lockfiles, circuit archive pin, DAppNode metadata, and changelog. |
-| [`index.mjs`](index.mjs)       | Dispatches tag, preparation, publication, asset, and promotion commands.             |
-| [`version.mjs`](version.mjs)   | Shared package/workspace inventory, version validation, and channels.                |
-| [`dappnode.mjs`](dappnode.mjs) | DAppNode upstream pin and wrapper versions for both network packages.                |
-| [`git.mjs`](git.mjs)           | Candidate ancestry, release tags, and stable-tag promotion.                          |
-| [`npm.mjs`](npm.mjs)           | Package publication and rerun handling using archive integrity.                      |
-| [`assets.mjs`](assets.mjs)     | Required archives, checksums, provenance, and release-note assembly.                 |
-| [`gates.mjs`](gates.mjs)       | Publication results and structural workflow checks.                                  |
-| [`core.mjs`](core.mjs)         | Shared Git, JSON, and error helpers.                                                 |
-| [`notes/`](notes/)             | Authored version-specific upgrade notes included in releases.                        |
+| File                           | Responsibility                                                                         |
+| ------------------------------ | -------------------------------------------------------------------------------------- |
+| [`bump.ts`](bump.ts)           | Updates manifests, lockfiles, circuit archive pin, DAppNode metadata, and changelog.   |
+| [`index.mjs`](index.mjs)       | Dispatches tag, preparation, test-version, publication, asset, and promotion commands. |
+| [`version.mjs`](version.mjs)   | Shared package/workspace inventory, version validation, channels, and test versions.   |
+| [`dappnode.mjs`](dappnode.mjs) | DAppNode upstream pin and wrapper versions for both network packages.                  |
+| [`git.mjs`](git.mjs)           | Candidate ancestry, release tags, stable-tag promotion, and branch test releases.      |
+| [`npm.mjs`](npm.mjs)           | Package publication and rerun handling using archive integrity.                        |
+| [`assets.mjs`](assets.mjs)     | Required archives, checksums, provenance, and release-note assembly.                   |
+| [`gates.mjs`](gates.mjs)       | Publication results and structural workflow checks.                                    |
+| [`core.mjs`](core.mjs)         | Shared Git, JSON, and error helpers.                                                   |
+| [`notes/`](notes/)             | Authored version-specific upgrade notes included in releases.                          |
 
 ## Usage
 
