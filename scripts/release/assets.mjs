@@ -5,7 +5,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync,
 import { basename, join } from 'node:path'
 
 import { ROOT_DIR, fail } from './core.mjs'
-import { releaseChannel } from './version.mjs'
+import { isTestReleaseVersion, releaseChannel } from './version.mjs'
 
 // The test-only archive holds a CLI built with `test-only-skip-proof-aggregation`. The install script
 // and `interfold update` select `interfold-<platform>.tar.gz`, so they never install it.
@@ -58,7 +58,8 @@ export function changelogForRelease(changelog, version) {
     const prerelease = new RegExp(`^#+ \\[?v?(${escapeRegularExpression(version)}-[0-9A-Za-z.-]+)`)
     for (const line of changelog.split('\n')) {
       const match = prerelease.exec(line)
-      if (match) versions.push(match[1])
+      // A branch test release is not a step toward a stable release.
+      if (match && !isTestReleaseVersion(match[1])) versions.push(match[1])
     }
   }
   const sections = versions.map((name) => ({ name, text: changelogForVersion(changelog, name) })).filter((section) => section.text)

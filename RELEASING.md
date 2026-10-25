@@ -161,6 +161,12 @@ interfold update --version v0.20.0-lbfv.g1a2b3c4
 docker pull ghcr.io/theinterfold/ciphernode:lbfv
 ```
 
+A test release package depends on the exact version of the other test release packages, not on a
+range. `interfold update --version dev` and the install script do not select a test release. They
+select a test release only when you give its exact version. The changelog and the notes of the next
+stable release do not list test releases. A dispatch has its own concurrency group for each label,
+so it cannot cancel a pending tag release.
+
 The label tags move to the newest test release that has that label. The full version never moves.
 The release notes and `release-provenance.json` name the branch. Do not use a test release in
 production. Do not use a test release to decide a protocol rollout.

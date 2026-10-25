@@ -46,7 +46,10 @@ export function checkReleaseSafeguards(rootDir = ROOT_DIR) {
       fail(`${name} must execute ${text}`)
   }
 
-  if (release.concurrency?.group !== 'release-promotion-${{ github.repository }}' || release.concurrency?.['cancel-in-progress'] !== false)
+  // A tag release keeps the shared group. Only a dispatch adds a suffix, so it cannot cancel a tag release.
+  const sharedGroup =
+    "release-promotion-${{ github.repository }}${{ github.event_name == 'workflow_dispatch' && format('-test-{0}', inputs.label) || '' }}"
+  if (release.concurrency?.group !== sharedGroup || release.concurrency?.['cancel-in-progress'] !== false)
     fail('release promotions must be serialized without cancellation')
   if (!/^\d+\.\d+\.\d+$/.test(release.env?.NPM_VERSION ?? '')) fail('release workflow does not pin an exact npm version')
   for (const entry of Object.values(release.jobs)) {

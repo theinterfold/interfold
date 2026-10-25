@@ -53,6 +53,20 @@ export function validateTestReleaseLabel(label) {
   return label
 }
 
+/** True for a branch test release version. Install tooling and changelogs skip these versions. */
+export function isTestReleaseVersion(version) {
+  return TEST_RELEASE_VERSION.test(version)
+}
+
+/**
+ * The range that a published package uses for an Interfold package that it depends on. A stable or dev
+ * release accepts later compatible versions. A test release needs the exact build, because a caret range
+ * of a prerelease also matches other test builds with the same label and later versions of the same core.
+ */
+export function internalDependencyRange(version) {
+  return isTestReleaseVersion(version) ? version : `^${version}`
+}
+
 /** The label of a branch test release version, or undefined for any other version. */
 export function testReleaseLabel(version) {
   const label = TEST_RELEASE_VERSION.exec(version)?.[1]

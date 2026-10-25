@@ -5,8 +5,11 @@ permissions:
   contents: write
   packages: write
 
+# A tag release has one group, so promotions are serialized. A test release has a group per label: a
+# second dispatch can replace a pending test release, never a pending stable release.
 concurrency:
-  group: release-promotion-${{ github.repository }}
+  group:
+    release-promotion-${{ github.repository }}${{ github.event_name == 'workflow_dispatch' && format('-test-{0}', inputs.label) || '' }}
   cancel-in-progress: false
 
 on:

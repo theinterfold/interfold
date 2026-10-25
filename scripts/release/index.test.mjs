@@ -25,6 +25,8 @@ import {
   verifyReleaseCandidate,
 } from './index.mjs'
 import { bumpDappnodeVersions, validateDappnodeVersions } from './dappnode.mjs'
+import { PACKAGE_FILES, bumpCargoLock, bumpCargoManifest, internalDependencyRange, workspaceVersion } from './version.mjs'
+import { changelogForRelease } from './assets.mjs'
 
 const temporaryDirectories = []
 
@@ -416,8 +418,9 @@ test('publication CLI still loads without development dependencies installed', (
 describe('branch test releases', () => {
   const SHA = '0123456789abcdef0123456789abcdef01234567'
 
-  // A copy of every file that holds the release version.
-  function versionFixture() {
+  // A copy of every file that holds the release version, and of the DAppNode files that a stable version
+  // needs. `baseVersion` moves the copy to another current version, for example a stable one.
+  function versionFixture(baseVersion) {
     const rootDir = temporaryDirectory('interfold-test-release')
     for (const file of [
       'Cargo.toml',
@@ -433,6 +436,22 @@ describe('branch test releases', () => {
     ]) {
       mkdirSync(join(rootDir, file, '..'), { recursive: true })
       copyFileSync(join(ROOT_DIR, file), join(rootDir, file))
+    }
+    cpSync(join(ROOT_DIR, 'dappnode'), join(rootDir, 'dappnode'), {
+      recursive: true,
+      filter: (source) => !source.includes('node_modules'),
+    })
+    if (baseVersion) {
+      const previous = workspaceVersion(rootDir)
+      const write = (file, change) => writeFileSync(join(rootDir, file), change(readFileSync(join(rootDir, file), 'utf8')))
+      write('Cargo.toml', (text) => bumpCargoManifest(text, baseVersion))
+      write('Cargo.lock', (text) => bumpCargoLock(text, previous, baseVersion))
+      for (const file of [...PACKAGE_FILES, 'crates/zk/prover/versions.json'])
+        write(file, (text) =>
+          text.replace(new RegExp(`("(?:version|required_circuits_version)": ")${previous.replaceAll('.', '\\.')}"`), `$1${baseVersion}"`),
+        )
+      const wrapper = JSON.parse(readFileSync(join(rootDir, 'dappnode/dappnode_package.json'), 'utf8')).version
+      bumpDappnodeVersions(rootDir, baseVersion, wrapper)
     }
     return rootDir
   }
@@ -496,8 +515,8 @@ describe('branch test releases', () => {
   })
 
   describe('prepare', () => {
-    function repository(branch) {
-      const rootDir = versionFixture()
+    function repository(branch, baseVersion) {
+      const rootDir = versionFixture(baseVersion)
       git(rootDir, 'init', '--quiet', '--initial-branch', branch)
       git(rootDir, 'config', 'user.email', 'release@example.test')
       git(rootDir, 'config', 'user.name', 'Release Test')
@@ -527,7 +546,7 @@ describe('branch test releases', () => {
           .map((line) => line.split('=')),
       )
       assert.deepEqual(outputs, {
-        version: `0.20.0-lbfv.g${sha.slice(0, 7)}`,
+        version: `${workspaceVersion(rootDir).split('-')[0]}-lbfv.g${sha.slice(0, 7)}`,
         is_prerelease: 'true',
         channel: 'lbfv',
         candidate_sha: sha,
@@ -535,17 +554,24 @@ describe('branch test releases', () => {
       })
     })
 
+    test('derives the version from a stable base version as well as from a dev one', () => {
+      const { environment, outputFile, rootDir, sha } = repository('lbfv-branch', '1.2.3')
+      assert.equal(workspaceVersion(rootDir), '1.2.3')
+      prepareRelease(environment, rootDir)
+      assert.match(readFileSync(outputFile, 'utf8'), new RegExp(`^version=1\\.2\\.3-lbfv\\.g${sha.slice(0, 7)}$`, 'm'))
+    })
+
     test('refuses main, a tag ref, a moved checkout, and a reserved label', () => {
       const { environment, rootDir } = repository('lbfv-branch')
-      for (const change of [
-        { GITHUB_REF: 'refs/heads/main' },
-        { GITHUB_REF: 'refs/tags/v0.20.0-lbfv.g0123456' },
-        { GITHUB_SHA: SHA },
-        { RELEASE_TEST_LABEL: 'dev' },
-        { RELEASE_TEST_LABEL: 'latest' },
-        { RELEASE_TEST_LABEL: '' },
+      for (const [change, message] of [
+        [{ GITHUB_REF: 'refs/heads/main' }, /branch other than main/],
+        [{ GITHUB_REF: 'refs/tags/v0.20.0-lbfv.g0123456' }, /branch other than main/],
+        [{ GITHUB_SHA: SHA }, /not event commit/],
+        [{ RELEASE_TEST_LABEL: 'dev' }, /"dev" is reserved/],
+        [{ RELEASE_TEST_LABEL: 'latest' }, /"latest" is reserved/],
+        [{ RELEASE_TEST_LABEL: '' }, /requires GITHUB_OUTPUT/],
       ])
-        assert.throws(() => prepareRelease({ ...environment, ...change }, rootDir), undefined, JSON.stringify(change))
+        assert.throws(() => prepareRelease({ ...environment, ...change }, rootDir), message, JSON.stringify(change))
     })
 
     test('a tag push never takes the test release shape', () => {
@@ -604,6 +630,32 @@ describe('branch test releases', () => {
     )
   })
 
+  test('published packages pin the exact test build, and a normal release keeps the caret range', () => {
+    assert.equal(internalDependencyRange('0.20.0-lbfv.g0123456'), '0.20.0-lbfv.g0123456')
+    assert.equal(internalDependencyRange('0.20.0'), '^0.20.0')
+    assert.equal(internalDependencyRange('0.20.0-dev.2'), '^0.20.0-dev.2')
+  })
+
+  test('the changelog of a stable release skips test release headings', () => {
+    const changelog = [
+      '#### [v1.3.0](compare)\n\nStable changes.\n',
+      '#### [v1.3.0-lbfv.g0123456](compare)\n\nBranch test changes.\n',
+      '#### [v1.3.0-test.1](compare)\n\nFirst test changes.\n',
+      '#### [v1.2.3](compare)\n\nOld changes.\n',
+    ].join('\n')
+    const notes = changelogForRelease(changelog, '1.3.0')
+    assert.ok(notes.includes('Stable changes.'))
+    assert.ok(notes.includes('First test changes.'))
+    assert.doesNotMatch(notes, /Branch test changes\./)
+  })
+
+  test('the changelog generator ignores test release tags', () => {
+    const { tagPattern } = JSON.parse(readFileSync(join(ROOT_DIR, '.auto-changelog'), 'utf8'))
+    const pattern = new RegExp(tagPattern)
+    for (const tag of ['v0.20.0', 'v0.20.0-dev.2', 'v0.19.0-test.2', 'v1.0.0-beta.1']) assert.ok(pattern.test(tag), tag)
+    for (const tag of ['v0.20.0-lbfv.g0123456', 'stable']) assert.ok(!pattern.test(tag), tag)
+  })
+
   test('workflow checks reject a test release path to the stable names', () => {
     const root = temporaryDirectory('interfold-test-release-workflow')
     mkdirSync(join(root, '.github/workflows'), { recursive: true })
@@ -621,6 +673,7 @@ describe('branch test releases', () => {
         (workflow) => delete workflow.jobs['create-github-release'].steps.find((step) => step.run?.includes('promote-stable')).if,
         /stable tag/,
       ],
+      [(workflow) => (workflow.concurrency.group = 'release-promotion-${{ github.repository }}'), /serialized/],
     ]) {
       const workflow = parse(original)
       change(workflow)
