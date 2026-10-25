@@ -6,12 +6,36 @@ use crate::{
     calculate_decryption_key::calculate_decryption_key,
     calculate_decryption_share::calculate_decryption_share,
     calculate_threshold_decryption::calculate_threshold_decryption, gen_esi_sss::gen_esi_sss,
+    gen_lbfv_key_shares::gen_lbfv_key_shares,
     gen_pk_share_and_sk_sss::gen_pk_share_and_sk_sss, TrBFVError, TrBFVFailure, TrBFVRequest,
     TrBFVResponse,
 };
-use e3_crypto::Cipher;
+use e3_crypto::{Cipher, SensitiveBytes};
 use e3_utils::SharedRng;
+use rand_chacha::rand_core::SeedableRng;
+use rand_chacha::ChaCha20Rng;
 use tracing::{error, warn};
+use zeroize::Zeroize;
+
+/// Build the per-job generator of an l-BFV key-share request from its encrypted 32-byte seed.
+///
+/// The seed makes the request's output a function of the request, so a retried or recovered job
+/// returns the same shares and does not touch the shared generator.
+fn lbfv_generation_rng(
+    cipher: &Cipher,
+    encrypted_seed: &SensitiveBytes,
+) -> anyhow::Result<ChaCha20Rng> {
+    let seed_bytes = encrypted_seed.access(cipher)?;
+    anyhow::ensure!(
+        seed_bytes.len() == 32,
+        "l-BFV generation seed must contain exactly 32 bytes"
+    );
+    let mut seed = [0_u8; 32];
+    seed.copy_from_slice(&seed_bytes);
+    let rng = ChaCha20Rng::from_seed(seed);
+    seed.zeroize();
+    Ok(rng)
+}
 
 impl TrBFVRequest {
     /// Stable diagnostic operation label, independent of transport or worker implementation.
@@ -22,6 +46,7 @@ impl TrBFVRequest {
             Self::CalculateDecryptionKey(_) => "calculate_decryption_key",
             Self::CalculateDecryptionShare(_) => "calculate_decryption_share",
             Self::CalculateThresholdDecryption(_) => "calculate_threshold_decryption",
+            Self::GenLbfvKeyShares(_) => "gen_lbfv_key_shares",
         }
     }
 
@@ -36,6 +61,7 @@ impl TrBFVRequest {
             Self::CalculateThresholdDecryption(_) => {
                 TrBFVError::CalculateThresholdDecryption(failure)
             }
+            Self::GenLbfvKeyShares(_) => TrBFVError::GenLbfvKeyShares(failure),
         }
     }
 
@@ -66,6 +92,11 @@ impl TrBFVRequest {
                 .map(TrBFVResponse::CalculateDecryptionShare),
             Self::CalculateThresholdDecryption(req) => calculate_threshold_decryption(req.clone())
                 .map(TrBFVResponse::CalculateThresholdDecryption),
+            Self::GenLbfvKeyShares(req) => req
+                .validate_operation_id()
+                .and_then(|()| lbfv_generation_rng(cipher, &req.generation_seed))
+                .and_then(|mut job_rng| gen_lbfv_key_shares(&mut job_rng, cipher, req.clone()))
+                .map(TrBFVResponse::GenLbfvKeyShares),
         };
         result.map_err(|error| self.failure(TrBFVFailure::from_error(&error)))
     }
@@ -109,6 +140,7 @@ mod tests {
             crp: ArcBytes::from_bytes(&crp.to_bytes()),
             lambda: preset.lambda_config(),
             num_ciphertexts: 1,
+            mult_depth: preset.search_defaults().unwrap().mult_depth,
         });
         let TrBFVResponse::GenPkShareAndSkSss(material) = request.execute(&rng, &cipher).unwrap()
         else {
@@ -132,6 +164,23 @@ mod tests {
             .decrypt(&cipher)
             .unwrap();
         assert_eq!(shares.moduli_data().len(), params.moduli().len());
+    }
+
+    #[tokio::test]
+    async fn lbfv_generation_rng_uses_the_encrypted_request_seed() {
+        let cipher = Cipher::from_password("lbfv-generation-seed-test")
+            .await
+            .unwrap();
+        let seed = SensitiveBytes::new([42; 32], &cipher).unwrap();
+        let mut first = lbfv_generation_rng(&cipher, &seed).unwrap();
+        let mut second = lbfv_generation_rng(&cipher, &seed).unwrap();
+        let first_bytes: [u8; 64] = rand::Rng::random(&mut first);
+        let second_bytes: [u8; 64] = rand::Rng::random(&mut second);
+
+        assert_eq!(first_bytes, second_bytes);
+        assert!(
+            lbfv_generation_rng(&cipher, &SensitiveBytes::new([1; 31], &cipher).unwrap()).is_err()
+        );
     }
 
     #[test]

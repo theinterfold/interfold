@@ -27,6 +27,12 @@ fn main() {
         e3_user_program::policy(),
     )
     .expect("Invalid round");
+    process
+        .bind_committee_key(
+            &header.committee_key,
+            Some(header.domain.committee_public_key_hash),
+        )
+        .expect("Invalid committee key");
     for _ in 0..inputs {
         process
             .absorb(&openvm::io::read_vec())
