@@ -13,8 +13,8 @@
     "id": "A2",
     "supported": true,
     "refs": [
-      "packages/interfold-sdk/src/crypto/encrypt.ts@53@bfv_encrypt_number(data, pk",
-      "packages/interfold-sdk/src/committee-public-key.ts@36@class CommitteePublicKeyAssembler"
+      "packages/interfold-sdk/src/crypto/encrypt.ts@90@bfv_encrypt_number(data, pk",
+      "packages/interfold-sdk/src/committee-public-key.ts@49@class CommitteePublicKeyAssembler"
     ],
     "line_text": [
       "return bfv_encrypt_number(data, pk, params.degree, params.plaintextModulus, BigUint64Array.from(params.moduli))",
@@ -25,7 +25,7 @@
   {
     "id": "A3",
     "supported": true,
-    "refs": ["packages/interfold-sdk/src/crypto/encrypt.ts@7@initializeWasm", "crates/wasm/src/lib.rs@15@#[wasm_bindgen]"],
+    "refs": ["packages/interfold-sdk/src/crypto/encrypt.ts@7@initializeWasm", "crates/wasm/src/lib.rs@18@#[wasm_bindgen]"],
     "line_text": ["import initializeWasm from '@interfold/wasm/init'", "#[wasm_bindgen]"],
     "note": "The SDK imports the @interfold/wasm build (encrypt.ts lines 7 and 17), and crates/wasm exports bfv_encrypt_number through wasm-bindgen."
   },
@@ -58,7 +58,7 @@
     "supported": true,
     "refs": [
       "templates/default/server/index.ts@245@sdk.publishCiphertextOutput(",
-      "crates/evm-helpers/src/contracts.rs@550@contract.publishCiphertextOutput("
+      "crates/evm-helpers/src/contracts.rs@553@contract.publishCiphertextOutput("
     ],
     "line_text": [
       "await sdk.publishCiphertextOutput(BigInt(e3_id), {",
@@ -81,7 +81,7 @@
     "supported": true,
     "refs": [
       "crates/program-server/src/lib.rs@111@pub fn new<F, Fut>(callback: F)",
-      "crates/program-runner/src/dev.rs@63@ComputeManager::with_published("
+      "crates/program-runner/src/dev.rs@69@ComputeManager::with_published("
     ],
     "line_text": ["pub fn new<F, Fut>(callback: F) -> Self", "let mut manager = ComputeManager::with_published("],
     "note": "program-server hosts /run_compute and hands each job to the callback it is built with; program-runner supplies that callback and calls compute-provider (dev runner ComputeManager, OpenVM service via openvm-host)."
@@ -90,7 +90,7 @@
     "id": "A10",
     "supported": true,
     "refs": [
-      "crates/compute-provider/src/secure_process.rs@225@let output = processor(FHEProcessorInput {",
+      "crates/compute-provider/src/secure_process.rs@270@let output = processor(FHEProcessorInput {",
       "templates/default/program/src/lib.rs@28@pub fn fhe_processor("
     ],
     "line_text": ["let output = processor(FHEProcessorInput {", "pub fn fhe_processor(fhe_inputs: FHEProcessorInput<'_>) -> Vec<u8> {"],
@@ -108,7 +108,7 @@
     "supported": true,
     "refs": [
       "packages/interfold-sdk/src/contracts/contract-client.ts@137@public async requestE3(",
-      "crates/evm-helpers/src/contracts.rs@499@contract.request(e3_request)"
+      "crates/evm-helpers/src/contracts.rs@502@contract.request(e3_request)"
     ],
     "line_text": [
       "public async requestE3(params: E3RequestParams): Promise<Hash> {",
@@ -131,7 +131,7 @@
     "supported": true,
     "refs": [
       "crates/indexer/src/indexer.rs@415@create_contract_listener(rpc_url, addresses)",
-      "crates/indexer/src/indexer.rs@1138@event_listener.listen()"
+      "crates/indexer/src/indexer.rs@1142@event_listener.listen()"
     ],
     "line_text": [
       "let event_listener = EventListener::create_contract_listener(rpc_url, addresses).await?;",
@@ -156,9 +156,9 @@
     "id": "A18",
     "supported": true,
     "refs": [
-      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@605@onlyBondOwner(operator) {",
-      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@670@onlyBondOwner(operator) {",
-      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1374@require(msg.sender == bondOwner"
+      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@620@onlyBondOwner(operator) {",
+      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@685@onlyBondOwner(operator) {",
+      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1389@require(msg.sender == bondOwner"
     ],
     "line_text": [
       ") external noExitInProgress(operator) onlyBondOwner(operator) {",
@@ -181,8 +181,8 @@
     "id": "A20",
     "supported": true,
     "refs": [
-      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol@3248@contract DkgAggregatorVerifier is",
-      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol@3248@contract DecryptionAggregatorVerifier is"
+      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol@3285@contract DkgAggregatorVerifier is",
+      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol@3285@contract DecryptionAggregatorVerifier is"
     ],
     "line_text": ["contract DkgAggregatorVerifier is", "contract DecryptionAggregatorVerifier is"],
     "note": "Both generated Honk verifier contracts are declared at line 3248 of their generated files."

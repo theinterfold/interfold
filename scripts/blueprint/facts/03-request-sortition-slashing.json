@@ -139,7 +139,7 @@
       "read_first": [
         {
           "why": "Wiring: the node builds E3Router and installs the router extensions",
-          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@239@Ok(E3Router::builder(bus, storage.store.clone())"
+          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@241@Ok(E3Router::builder(bus, storage.store.clone())"
         },
         { "why": "The router actor and what it holds per E3", "ref": "crates/request/src/routing/actor.rs@95@pub struct E3Router {" },
         {
@@ -214,7 +214,7 @@
         {
           "name": "CiphernodeSelector",
           "role": "Bus subscriber that turns a ranking result into TicketGenerated and a finalized roster into CiphernodeSelected; it also tracks aggregator failover.",
-          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@127@impl Actor for CiphernodeSelector {"
+          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@125@impl Actor for CiphernodeSelector {"
         }
       ],
       "consumes": [
@@ -288,7 +288,7 @@
         {
           "name": "AggregatorChanged",
           "by": "CiphernodeSelector",
-          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@383@let event = AggregatorChanged {"
+          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@381@let event = AggregatorChanged {"
         },
         {
           "name": "CommitteeMemberExpelled (re-published with party id)",
@@ -406,7 +406,7 @@
         {
           "pattern": "actix-timer",
           "note": "The selector arms its aggregator failover timer with run_later.",
-          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@630@let handle = ctx.run_later(delay, move |actor, ctx| {"
+          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@628@let handle = ctx.run_later(delay, move |actor, ctx| {"
         },
         {
           "pattern": "iterator-chain",
@@ -440,7 +440,7 @@
         {
           "name": "CommitmentConsistencyChecker",
           "role": "Per-E3 actor that caches verified proof outputs, checks cross-circuit commitment links before and after ZK, and publishes violations.",
-          "ref": "crates/slashing/src/commitment_consistency/actor.rs@153@impl Actor for CommitmentConsistencyChecker {"
+          "ref": "crates/slashing/src/commitment_consistency/actor.rs@161@impl Actor for CommitmentConsistencyChecker {"
         }
       ],
       "consumes": [
@@ -482,17 +482,17 @@
         {
           "name": "CommitmentConsistencyCheckRequested (pre-ZK gate, returns inconsistent parties)",
           "by": "CommitmentConsistencyChecker",
-          "ref": "crates/slashing/src/commitment_consistency/actor.rs@241@impl Handler<TypedEvent<CommitmentConsistencyCheckRequested>> for CommitmentConsistencyChecker {"
+          "ref": "crates/slashing/src/commitment_consistency/actor.rs@249@impl Handler<TypedEvent<CommitmentConsistencyCheckRequested>> for CommitmentConsistencyChecker {"
         },
         {
           "name": "ProofVerificationPassed (cross-circuit check after ZK)",
           "by": "CommitmentConsistencyChecker",
-          "ref": "crates/slashing/src/commitment_consistency/actor.rs@222@impl Handler<TypedEvent<ProofVerificationPassed>> for CommitmentConsistencyChecker {"
+          "ref": "crates/slashing/src/commitment_consistency/actor.rs@230@impl Handler<TypedEvent<ProofVerificationPassed>> for CommitmentConsistencyChecker {"
         },
         {
           "name": "CommitmentRosterSelected (fixes the C4 roster used to map rows)",
           "by": "CommitmentConsistencyChecker",
-          "ref": "crates/slashing/src/commitment_consistency/actor.rs@203@impl Handler<TypedEvent<CommitmentRosterSelected>> for CommitmentConsistencyChecker {"
+          "ref": "crates/slashing/src/commitment_consistency/actor.rs@211@impl Handler<TypedEvent<CommitmentRosterSelected>> for CommitmentConsistencyChecker {"
         }
       ],
       "emits": [
@@ -519,12 +519,12 @@
         {
           "name": "CommitmentConsistencyViolation",
           "by": "CommitmentConsistencyChecker",
-          "ref": "crates/slashing/src/commitment_consistency/actor.rs@215@if let Err(err) = self.bus.publish(violation, ec.clone()) {"
+          "ref": "crates/slashing/src/commitment_consistency/actor.rs@223@if let Err(err) = self.bus.publish(violation, ec.clone()) {"
         },
         {
           "name": "CommitmentConsistencyCheckComplete (pre-ZK response)",
           "by": "CommitmentConsistencyChecker",
-          "ref": "crates/slashing/src/commitment_consistency/actor.rs@262@if let Err(err) = self.bus.publish(outcome.complete, ec) {"
+          "ref": "crates/slashing/src/commitment_consistency/actor.rs@270@if let Err(err) = self.bus.publish(outcome.complete, ec) {"
         }
       ],
       "state": [
@@ -541,24 +541,24 @@
         {
           "name": "saved pending accusations, admitted votes, absolute timeouts, evidence, and accused proofs",
           "where": "disk",
-          "ref": "crates/slashing/src/accusation_voting/state.rs@66@pub(crate) struct AccusationVotesSnapshot {"
+          "ref": "crates/slashing/src/accusation_voting/state.rs@67@pub(crate) struct AccusationVotesSnapshot {"
         },
         {
-          "name": "verified proof cache keyed by (address, proof type)",
+          "name": "verified proof cache keyed by (address, proof identity)",
           "where": "memory",
-          "ref": "crates/slashing/src/commitment_consistency/workflow.rs@119@verified: HashMap<(Address, ProofType), Vec<VerifiedProofData>>,"
+          "ref": "crates/slashing/src/commitment_consistency/workflow.rs@123@verified: HashMap<(Address, ProofIdentity), Vec<VerifiedProofData>>,"
         },
         {
           "name": "commitment checker snapshot repository (written after each change)",
           "where": "disk",
-          "ref": "crates/slashing/src/commitment_consistency/actor.rs@57@snapshot_repo: Option<Repository<CommitmentConsistencySnapshot>>,"
+          "ref": "crates/slashing/src/commitment_consistency/actor.rs@58@snapshot_repo: Option<Repository<CommitmentConsistencySnapshot>>,"
         }
       ],
       "key_types": [
         {
           "name": "AccusationVoting",
           "what": "Plain synchronous quorum service: admits accusations and votes, and returns VoteActions for the actor to run.",
-          "ref": "crates/slashing/src/accusation_voting/state.rs@126@pub(crate) struct AccusationVoting {"
+          "ref": "crates/slashing/src/accusation_voting/state.rs@128@pub(crate) struct AccusationVoting {"
         },
         {
           "name": "accusation_vote_quorum",
@@ -588,7 +588,7 @@
         {
           "name": "CommitmentConsistency",
           "what": "Plain service that caches verified outputs, maps C2 rows through the C4 roster, and returns violations.",
-          "ref": "crates/slashing/src/commitment_consistency/workflow.rs@110@pub(crate) struct CommitmentConsistency {"
+          "ref": "crates/slashing/src/commitment_consistency/workflow.rs@112@pub(crate) struct CommitmentConsistency {"
         },
         {
           "name": "AccusationManagerExtension",
@@ -603,7 +603,7 @@
         },
         {
           "why": "How a local proof failure starts an accusation and its own vote",
-          "ref": "crates/slashing/src/accusation_voting/transitions/initiate_accusation.rs@174@pub(super) fn initiate_accusation("
+          "ref": "crates/slashing/src/accusation_voting/transitions/initiate_accusation.rs@211@pub(super) fn initiate_accusation("
         },
         {
           "why": "Quorum decision: H agreeing votes, one data hash or several",
@@ -637,7 +637,7 @@
         {
           "pattern": "trait-object-dyn",
           "note": "CommitmentConsistency holds its rules as boxed CommitmentLink trait objects.",
-          "ref": "crates/slashing/src/commitment_consistency/workflow.rs@112@links: Vec<Box<dyn CommitmentLink>>,"
+          "ref": "crates/slashing/src/commitment_consistency/workflow.rs@114@links: Vec<Box<dyn CommitmentLink>>,"
         },
         {
           "pattern": "enum-match",

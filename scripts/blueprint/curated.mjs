@@ -174,7 +174,7 @@ function system({ units, tag }) {
         label: 'events in · transactions out',
         refs: [
           'crates/evm/src/event_decoding/catalog.rs@142@"E3Requested"',
-          'crates/evm/src/ciphernode_registry/effects.rs@56@send_tx_idempotent("submitTicket"',
+          'crates/evm/src/ciphernode_registry/effects.rs@68@send_tx_idempotent("submitTicket"',
           'crates/evm/src/interfold_writing/effects.rs@272@.publishPlaintextOutput(e3_id, decrypted_output, proof)',
         ],
       },
@@ -968,7 +968,7 @@ function ciphernode({ units }) {
         label: 'remote events',
         refs: [
           H('crates/net/src/event_translation/actor.rs', 263, '.publish_from_remote(data, ec.ts(), None, EventSource::Net)'),
-          H('crates/net/src/event_conversion/actor.rs', 71, 'self.bus.publish(evt, ctx)?;'),
+          H('crates/net/src/event_conversion/actor.rs', 82, 'self.bus.publish(evt, ctx)?;'),
         ],
       },
       { from: 'sync', to: 'bus', fs: 'r', ts: 'l', label: 'replay', refs: ev('B20') },
@@ -1004,7 +1004,7 @@ function ciphernode({ units }) {
         refs: [
           H(
             'crates/keyshare/src/threshold_keyshare/handlers.rs',
-            177,
+            181,
             'impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare',
           ),
           ...ev('B9'),
@@ -1020,7 +1020,7 @@ function ciphernode({ units }) {
         refs: [
           H(
             'crates/aggregator/src/public_key_aggregation/handlers.rs',
-            142,
+            185,
             'impl Handler<TypedEvent<KeyshareCreated>> for PublicKeyAggregator',
           ),
           ...ev('B11', 'B12'),
@@ -1057,7 +1057,7 @@ function ciphernode({ units }) {
         label: 'creates actors\nper E3',
         refs: [
           'crates/keyshare/src/ext.rs@66@InterfoldEventData::CiphernodeSelected',
-          'crates/aggregator/src/ext.rs@98@InterfoldEventData::CiphernodeSelected',
+          'crates/aggregator/src/ext.rs@110@InterfoldEventData::CiphernodeSelected',
           'crates/slashing/src/accusation_manager_ext.rs@211@InterfoldEventData::CommitteeFinalized',
         ],
       },
@@ -1240,7 +1240,7 @@ function apps() {
         w: 340,
         h: 90,
         title: 'e3-compute-provider',
-        lines: ['run_selected'],
+        lines: ['run_bound_selected'],
         mono: true,
         drill: 'crate:e3-compute-provider',
       },
@@ -1343,8 +1343,8 @@ function apps() {
         label: 'OpenVM runner',
         tip: 'The OpenVM service builds the program server with a callback that calls prover.prove(...)',
         refs: [
-          H('crates/program-runner/src/openvm.rs', 38, 'E3ProgramServer::builder(move |job| {'),
-          H('crates/program-runner/src/openvm.rs', 49, '.prove('),
+          H('crates/program-runner/src/openvm.rs', 24, 'E3ProgramServer::builder(move |job| {'),
+          H('crates/program-runner/src/openvm.rs', 35, '.prove('),
         ],
       },
       {
@@ -1359,15 +1359,15 @@ function apps() {
         label: 'dev',
         lp: 'left',
         tip: 'The dev runner calls compute-provider directly, with no proof',
-        refs: [H('crates/program-runner/src/dev.rs', 63, 'ComputeManager::with_published(')],
+        refs: [H('crates/program-runner/src/dev.rs', 69, 'ComputeManager::with_published(')],
       },
       {
         from: 'ovm',
         to: 'cp',
         fs: 'b',
         ts: 't',
-        label: 'run_selected',
-        refs: [H('crates/openvm-host/src/lib.rs', 331, '.run_selected('), ...ev('A11')],
+        label: 'run_bound_selected',
+        refs: [H('crates/openvm-host/src/lib.rs', 333, '.run_bound_selected('), ...ev('A11')],
       },
       { from: 'cp', to: 'prog', fs: 'b', ts: 't', label: 'fhe_processor', refs: ev('A10') },
       {

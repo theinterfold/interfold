@@ -14,7 +14,7 @@
         {
           "name": "ThresholdKeyshare",
           "role": "DKG and decryption state machine for one E3; owns the persisted phase and sends the TrBFV compute requests",
-          "ref": "crates/keyshare/src/threshold_keyshare/actor.rs@204@pub struct ThresholdKeyshare {"
+          "ref": "crates/keyshare/src/threshold_keyshare/actor.rs@210@pub struct ThresholdKeyshare {"
         },
         {
           "name": "EncryptionKeyCollector",
@@ -41,12 +41,12 @@
         {
           "name": "CiphernodeSelected",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/handlers.rs@177@impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {"
+          "ref": "crates/keyshare/src/threshold_keyshare/handlers.rs@181@impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {"
         },
         {
           "name": "EncryptionKeyCreated",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/effects/route_events.rs@85@InterfoldEventData::EncryptionKeyCreated(data) => {"
+          "ref": "crates/keyshare/src/threshold_keyshare/effects/route_events.rs@118@InterfoldEventData::EncryptionKeyCreated(data) => {"
         },
         {
           "name": "ThresholdShareCreated",
@@ -56,7 +56,7 @@
         {
           "name": "ShareVerificationComplete",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/handlers.rs@246@impl Handler<TypedEvent<ShareVerificationComplete>> for ThresholdKeyshare {"
+          "ref": "crates/keyshare/src/threshold_keyshare/handlers.rs@250@impl Handler<TypedEvent<ShareVerificationComplete>> for ThresholdKeyshare {"
         },
         {
           "name": "DecryptionKeyShared",
@@ -66,12 +66,12 @@
         {
           "name": "ComputeResponse",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/handlers.rs@115@impl Handler<TypedEvent<ComputeResponse>> for ThresholdKeyshare {"
+          "ref": "crates/keyshare/src/threshold_keyshare/handlers.rs@119@impl Handler<TypedEvent<ComputeResponse>> for ThresholdKeyshare {"
         },
         {
           "name": "CiphertextOutputPublished",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/handlers.rs@293@impl Handler<TypedEvent<CiphertextOutputPublished>> for ThresholdKeyshare {"
+          "ref": "crates/keyshare/src/threshold_keyshare/handlers.rs@297@impl Handler<TypedEvent<CiphertextOutputPublished>> for ThresholdKeyshare {"
         }
       ],
       "emits": [
@@ -118,12 +118,12 @@
         {
           "name": "KeyshareCreated",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/effects/verify_decryption_key.rs@288@KeyshareCreated {"
+          "ref": "crates/keyshare/src/threshold_keyshare/effects/verify_decryption_key.rs@300@KeyshareCreated {"
         },
         {
           "name": "E3Failed",
           "by": "ThresholdKeyshare",
-          "ref": "crates/keyshare/src/threshold_keyshare/handlers.rs@90@self.bus.publish_without_context(E3Failed {"
+          "ref": "crates/keyshare/src/threshold_keyshare/handlers.rs@94@self.bus.publish_without_context(E3Failed {"
         }
       ],
       "state": [
@@ -140,7 +140,7 @@
         {
           "name": "PendingKeyshareWork (in-flight requests and parked verdicts)",
           "where": "memory",
-          "ref": "crates/keyshare/src/threshold_keyshare/actor.rs@230@pending: PendingKeyshareWork,"
+          "ref": "crates/keyshare/src/threshold_keyshare/actor.rs@237@pending: PendingKeyshareWork,"
         }
       ],
       "key_types": [
@@ -173,12 +173,12 @@
         {
           "pattern": "actix-actor",
           "note": "ThresholdKeyshare is an actix Actor, so each DKG step runs in its mailbox",
-          "ref": "crates/keyshare/src/threshold_keyshare/actor.rs@364@impl Actor for ThresholdKeyshare {"
+          "ref": "crates/keyshare/src/threshold_keyshare/actor.rs@391@impl Actor for ThresholdKeyshare {"
         },
         {
           "pattern": "actix-handler",
           "note": "one typed Handler per bus event, starting with CiphernodeSelected",
-          "ref": "crates/keyshare/src/threshold_keyshare/handlers.rs@177@impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {"
+          "ref": "crates/keyshare/src/threshold_keyshare/handlers.rs@181@impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {"
         },
         {
           "pattern": "enum-match",
@@ -222,7 +222,7 @@
         {
           "name": "PublicKeyAggregator",
           "role": "public-key state machine: verifies C1 proofs, aggregates the keyshares, proves C5, publishes PublicKeyAggregated",
-          "ref": "crates/aggregator/src/public_key_aggregation/actor.rs@42@pub struct PublicKeyAggregator {"
+          "ref": "crates/aggregator/src/public_key_aggregation/actor.rs@77@pub struct PublicKeyAggregator {"
         },
         {
           "name": "ThresholdPlaintextAggregator",
@@ -247,17 +247,17 @@
         {
           "name": "DeferredPlaintextAggregator",
           "role": "holds saved state and a history range until chain authority permits recovery, then starts the plaintext aggregator",
-          "ref": "crates/aggregator/src/ext.rs@715@struct DeferredPlaintextAggregator {"
+          "ref": "crates/aggregator/src/ext.rs@1029@struct DeferredPlaintextAggregator {"
         },
         {
           "name": "CiphernodeSelector (e3-sortition, outside this crate)",
           "role": "decides is_aggregator for each E3 and publishes AggregatorChanged",
-          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@112@pub struct CiphernodeSelector {"
+          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@110@pub struct CiphernodeSelector {"
         },
         {
           "name": "CiphernodeRegistrySolWriter (e3-evm, outside this crate)",
           "role": "takes PublicKeyAggregated and submits publishCommittee on chain",
-          "ref": "crates/evm/src/ciphernode_registry/handlers.rs@638@Handler<PublicKeyAggregated>"
+          "ref": "crates/evm/src/ciphernode_registry/handlers.rs@695@Handler<PublicKeyAggregated>"
         },
         {
           "name": "InterfoldSolWriter (e3-evm, outside this crate)",
@@ -269,22 +269,22 @@
         {
           "name": "KeyshareCreated",
           "by": "PublicKeyAggregator",
-          "ref": "crates/aggregator/src/public_key_aggregation/handlers.rs@142@impl Handler<TypedEvent<KeyshareCreated>> for PublicKeyAggregator {"
+          "ref": "crates/aggregator/src/public_key_aggregation/handlers.rs@185@impl Handler<TypedEvent<KeyshareCreated>> for PublicKeyAggregator {"
         },
         {
           "name": "ShareVerificationComplete",
           "by": "PublicKeyAggregator",
-          "ref": "crates/aggregator/src/public_key_aggregation/handlers.rs@181@impl Handler<TypedEvent<ShareVerificationComplete>> for PublicKeyAggregator {"
+          "ref": "crates/aggregator/src/public_key_aggregation/handlers.rs@262@impl Handler<TypedEvent<ShareVerificationComplete>> for PublicKeyAggregator {"
         },
         {
           "name": "PkAggregationProofSigned",
           "by": "PublicKeyAggregator",
-          "ref": "crates/aggregator/src/public_key_aggregation/handlers.rs@200@impl Handler<TypedEvent<PkAggregationProofSigned>> for PublicKeyAggregator {"
+          "ref": "crates/aggregator/src/public_key_aggregation/handlers.rs@289@impl Handler<TypedEvent<PkAggregationProofSigned>> for PublicKeyAggregator {"
         },
         {
           "name": "AggregatorChanged",
           "by": "PublicKeyAggregator",
-          "ref": "crates/aggregator/src/public_key_aggregation/handlers.rs@121@impl Handler<TypedEvent<AggregatorChanged>> for PublicKeyAggregator {"
+          "ref": "crates/aggregator/src/public_key_aggregation/handlers.rs@149@impl Handler<TypedEvent<AggregatorChanged>> for PublicKeyAggregator {"
         },
         {
           "name": "CommitteeFinalized",
@@ -306,17 +306,17 @@
         {
           "name": "PublicKeyAggregated",
           "by": "PublicKeyAggregator",
-          "ref": "crates/aggregator/src/public_key_aggregation/effects/publish_result.rs@130@let event = PublicKeyAggregated {"
+          "ref": "crates/aggregator/src/public_key_aggregation/effects/publish_result.rs@135@let event = PublicKeyAggregated {"
         },
         {
           "name": "ShareVerificationDispatched (C1)",
           "by": "PublicKeyAggregator",
-          "ref": "crates/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@140@ShareVerificationDispatched {"
+          "ref": "crates/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@143@ShareVerificationDispatched {"
         },
         {
           "name": "PkAggregationProofPending (C5)",
           "by": "PublicKeyAggregator",
-          "ref": "crates/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@375@PkAggregationProofPending {"
+          "ref": "crates/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@378@PkAggregationProofPending {"
         },
         {
           "name": "ShareVerificationDispatched (C6)",
@@ -326,7 +326,7 @@
         {
           "name": "ComputeRequest (TrBFV CalculateThresholdDecryption)",
           "by": "ThresholdPlaintextAggregator",
-          "ref": "crates/aggregator/src/plaintext_aggregation/effects/verify_decryption_shares.rs@315@let request = ComputeRequest::trbfv("
+          "ref": "crates/aggregator/src/plaintext_aggregation/effects/verify_decryption_shares.rs@317@let request = ComputeRequest::trbfv("
         },
         {
           "name": "AggregationProofPending (C7)",
@@ -348,12 +348,12 @@
         {
           "name": "PublicKeyAggregatorState and its recovery record",
           "where": "disk",
-          "ref": "crates/aggregator/src/repo.rs@52@fn publickey(&self, e3_id: &E3id) -> Repository<PublicKeyAggregatorState> {"
+          "ref": "crates/aggregator/src/repo.rs@61@fn publickey(&self, e3_id: &E3id) -> Repository<PublicKeyAggregatorState> {"
         },
         {
           "name": "ThresholdPlaintextAggregatorState and its recovery record",
           "where": "disk",
-          "ref": "crates/aggregator/src/repo.rs@34@fn trbfv_plaintext(&self, e3_id: &E3id) -> Repository<ThresholdPlaintextAggregatorState> {"
+          "ref": "crates/aggregator/src/repo.rs@43@fn trbfv_plaintext(&self, e3_id: &E3id) -> Repository<ThresholdPlaintextAggregatorState> {"
         },
         {
           "name": "registered committee (topNodes) for decryption, read from the chain",
@@ -376,11 +376,11 @@
       "read_first": [
         {
           "why": "where the active-aggregator flag from AggregatorChanged is stored for the E3's actors",
-          "ref": "crates/aggregator/src/ext.rs@55@pub struct AggregatorRoleExtension {"
+          "ref": "crates/aggregator/src/ext.rs@57@pub struct AggregatorRoleExtension {"
         },
         {
           "why": "can_run_aggregation_effects decides which node runs the aggregation effects",
-          "ref": "crates/aggregator/src/public_key_aggregation/actor.rs@139@fn can_run_aggregation_effects(&self) -> bool {"
+          "ref": "crates/aggregator/src/public_key_aggregation/actor.rs@225@fn can_run_aggregation_effects(&self) -> bool {"
         },
         {
           "why": "the decryption actor, which holds the decryption work",
@@ -388,11 +388,11 @@
         },
         {
           "why": "crate surface: CommitteeFinalizer, recovery/state types and repositories are public; key/plaintext actors stay crate-private",
-          "ref": "crates/aggregator/src/lib.rs@21@pub use actors::{"
+          "ref": "crates/aggregator/src/lib.rs@23@pub use actors::{"
         },
         {
           "why": "committee hashing is owned by e3-committee-hash, not a local aggregator wrapper",
-          "ref": "crates/committee-hash/src/lib.rs@42@pub fn hash_committee_addresses"
+          "ref": "crates/committee-hash/src/lib.rs@67@pub fn hash_committee_addresses"
         }
       ],
       "rust_patterns": [
@@ -404,12 +404,12 @@
         {
           "pattern": "actix-handler",
           "note": "the AggregatorChanged handler flips the flag and resumes work only if allowed",
-          "ref": "crates/aggregator/src/public_key_aggregation/handlers.rs@121@impl Handler<TypedEvent<AggregatorChanged>> for PublicKeyAggregator {"
+          "ref": "crates/aggregator/src/public_key_aggregation/handlers.rs@149@impl Handler<TypedEvent<AggregatorChanged>> for PublicKeyAggregator {"
         },
         {
           "pattern": "pattern-destructuring",
           "note": "one match arm binds the event and its inner struct together",
-          "ref": "crates/aggregator/src/public_key_aggregation/handlers.rs@74@InterfoldEventData::CommitteeMemberExpelled(CommitteeMemberExpelled {"
+          "ref": "crates/aggregator/src/public_key_aggregation/handlers.rs@98@InterfoldEventData::CommitteeMemberExpelled(CommitteeMemberExpelled {"
         }
       ],
       "depends_on": [

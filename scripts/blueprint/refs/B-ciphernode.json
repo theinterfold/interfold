@@ -28,8 +28,8 @@
     "id": "B3",
     "supported": true,
     "refs": [
-      "crates/evm/src/ciphernode_registry/effects.rs@69@.submitTicket(e3_id_u256, ticket_number_u256)",
-      "crates/evm/src/ciphernode_registry/effects.rs@334@.publishCommittee(e3_id_u256, pk_commitment_b256, proof, attestation_bundle)"
+      "crates/evm/src/ciphernode_registry/effects.rs@81@.submitTicket(e3_id_u256, ticket_number_u256)",
+      "crates/evm/src/ciphernode_registry/effects.rs@346@.publishCommittee(e3_id_u256, pk_commitment_b256, proof, attestation_bundle)"
     ],
     "line_text": [
       ".submitTicket(e3_id_u256, ticket_number_u256)",
@@ -52,8 +52,8 @@
     "supported": false,
     "refs": [
       "crates/net/src/event_translation/actor.rs@263@.publish_from_remote(data, ec.ts(), None, EventSource::Net)",
-      "crates/net/src/event_conversion/actor.rs@69@decode_received(&msg.meta, &msg.value)",
-      "crates/net/src/event_conversion/actor.rs@71@self.bus.publish(evt, ctx)?;"
+      "crates/net/src/event_conversion/actor.rs@80@decode_received(&msg.meta, &msg.value)",
+      "crates/net/src/event_conversion/actor.rs@82@self.bus.publish(evt, ctx)?;"
     ],
     "line_text": [
       ".publish_from_remote(data, ec.ts(), None, EventSource::Net)",
@@ -66,10 +66,10 @@
     "id": "B6",
     "supported": true,
     "refs": [
-      "crates/net/src/document_publishing/effects.rs@83@NetCommand::DhtStoreLocal {",
-      "crates/net/src/document_publishing/effects.rs@214@NetCommand::DhtPutRecord {",
+      "crates/net/src/document_publishing/effects.rs@92@NetCommand::DhtStoreLocal {",
+      "crates/net/src/document_publishing/effects.rs@301@NetCommand::DhtPutRecord {",
       "crates/net/src/net_interface.rs@2237@.put_record(record, Quorum::One)",
-      "crates/net/src/document_publishing/effects.rs@275@NetCommand::gossip_republish("
+      "crates/net/src/document_publishing/effects.rs@362@NetCommand::gossip_republish("
     ],
     "line_text": [
       "NetCommand::DhtStoreLocal {",
@@ -86,7 +86,7 @@
       "crates/request/src/routing/handlers.rs@185@self.contexts.entry(e3_id.clone()).or_insert_with(|| {",
       "crates/request/src/routing/handlers.rs@202@extension.on_event(context, &msg);",
       "crates/request/src/routing/actor.rs@73@fn on_event(&self, ctx: &mut E3Context, evt: &InterfoldEvent);",
-      "crates/keyshare/src/ext.rs@119@ThresholdKeyshare::new(ThresholdKeyshareParams {"
+      "crates/keyshare/src/ext.rs@139@ThresholdKeyshare::new(ThresholdKeyshareParams {"
     ],
     "line_text": [
       "let context = self.contexts.entry(e3_id.clone()).or_insert_with(|| {",
@@ -106,7 +106,7 @@
   {
     "id": "B9",
     "supported": true,
-    "refs": ["crates/keyshare/src/threshold_keyshare/effects/verify_decryption_key.rs@288@KeyshareCreated {"],
+    "refs": ["crates/keyshare/src/threshold_keyshare/effects/verify_decryption_key.rs@300@KeyshareCreated {"],
     "line_text": ["KeyshareCreated {"],
     "note": "publish_keyshare_created publishes KeyshareCreated with the public key share and the signed C1 proof."
   },
@@ -125,8 +125,8 @@
     "id": "B11",
     "supported": true,
     "refs": [
-      "crates/aggregator/src/public_key_aggregation/effects/publish_result.rs@130@let event = PublicKeyAggregated {",
-      "crates/aggregator/src/public_key_aggregation/effects/publish_result.rs@145@self.bus.publish(event, ec.clone())?;"
+      "crates/aggregator/src/public_key_aggregation/effects/publish_result.rs@135@let event = PublicKeyAggregated {",
+      "crates/aggregator/src/public_key_aggregation/effects/publish_result.rs@150@self.bus.publish(event, ec.clone())?;"
     ],
     "line_text": ["let event = PublicKeyAggregated {", "self.bus.publish(event, ec.clone())?;"],
     "note": "PublicKeyAggregator builds the PublicKeyAggregated event and publishes it on the bus."
@@ -146,7 +146,7 @@
     "supported": true,
     "refs": [
       "crates/slashing/src/accusation_voting/effects/apply_actions.rs@37@self.bus.publish(quorum, ec)",
-      "crates/slashing/src/accusation_voting/transitions/vote.rs@226@quorum: AccusationQuorumReached {",
+      "crates/slashing/src/accusation_voting/transitions/vote.rs@239@quorum: AccusationQuorumReached {",
       "crates/slashing/src/accusation_voting/actor.rs@100@pub struct AccusationManager {"
     ],
     "line_text": [

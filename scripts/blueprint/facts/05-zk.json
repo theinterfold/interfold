@@ -34,7 +34,7 @@
         {
           "name": "NodeProofAggregator",
           "role": "Buffers a node's inner DKG proofs and dispatches one NodeDkgFold fold when the share set is ready",
-          "ref": "crates/zk/prover/src/node_proof_aggregation/actor.rs@32@pub struct NodeProofAggregator"
+          "ref": "crates/zk/prover/src/node_proof_aggregation/actor.rs@37@pub struct NodeProofAggregator"
         }
       ],
       "consumes": [
@@ -96,12 +96,12 @@
         {
           "name": "DKGInnerProofReady",
           "by": "NodeProofAggregator",
-          "ref": "crates/zk/prover/src/node_proof_aggregation/actor.rs@119@EventType::DKGInnerProofReady"
+          "ref": "crates/zk/prover/src/node_proof_aggregation/actor.rs@137@EventType::DKGInnerProofReady"
         },
         {
           "name": "ThresholdSharePending",
           "by": "NodeProofAggregator",
-          "ref": "crates/zk/prover/src/node_proof_aggregation/actor.rs@118@EventType::ThresholdSharePending"
+          "ref": "crates/zk/prover/src/node_proof_aggregation/actor.rs@135@EventType::ThresholdSharePending"
         },
         {
           "name": "ZkVerificationRequest (message)",
@@ -128,12 +128,12 @@
         {
           "name": "ThresholdShareCreated",
           "by": "ProofRequestActor",
-          "ref": "crates/zk/prover/src/proof_request/effects/publish_threshold_shares.rs@158@ThresholdShareCreated {"
+          "ref": "crates/zk/prover/src/proof_request/effects/publish_threshold_shares.rs@162@ThresholdShareCreated {"
         },
         {
           "name": "DkgProofSigned",
           "by": "ProofRequestActor",
-          "ref": "crates/zk/prover/src/proof_request/effects/publish_threshold_shares.rs@90@DkgProofSigned {"
+          "ref": "crates/zk/prover/src/proof_request/effects/publish_threshold_shares.rs@94@DkgProofSigned {"
         },
         {
           "name": "DecryptionShareProofSigned",
@@ -163,27 +163,27 @@
         {
           "name": "ComputeRequest (ZkRequest::VerifyShareProofs, VerifyShareDecryptionProofs)",
           "by": "ShareVerificationActor",
-          "ref": "crates/zk/prover/src/share_verification/effects/consistency.rs@59@ComputeRequest::zk("
+          "ref": "crates/zk/prover/src/share_verification/effects/consistency.rs@63@ComputeRequest::zk("
         },
         {
           "name": "CommitmentConsistencyCheckRequested",
           "by": "ShareVerificationActor",
-          "ref": "crates/zk/prover/src/share_verification/effects/ecdsa.rs@82@CommitmentConsistencyCheckRequested {"
+          "ref": "crates/zk/prover/src/share_verification/effects/ecdsa.rs@85@CommitmentConsistencyCheckRequested {"
         },
         {
           "name": "ShareVerificationComplete",
           "by": "ShareVerificationActor",
-          "ref": "crates/zk/prover/src/share_verification/effects/complete_verification.rs@16@ShareVerificationComplete {"
+          "ref": "crates/zk/prover/src/share_verification/effects/complete_verification.rs@17@ShareVerificationComplete {"
         },
         {
           "name": "ComputeRequest (ZkRequest::NodeDkgFold)",
           "by": "NodeProofAggregator",
-          "ref": "crates/zk/prover/src/node_proof_aggregation/effects.rs@245@ZkRequest::NodeDkgFold(req)"
+          "ref": "crates/zk/prover/src/node_proof_aggregation/effects.rs@315@ZkRequest::NodeDkgFold(req)"
         },
         {
           "name": "DKGRecursiveAggregationComplete",
           "by": "NodeProofAggregator",
-          "ref": "crates/zk/prover/src/node_proof_aggregation/effects.rs@31@DKGRecursiveAggregationComplete {"
+          "ref": "crates/zk/prover/src/node_proof_aggregation/effects.rs@64@DKGRecursiveAggregationComplete {"
         },
         {
           "name": "ZkVerificationResponse (message to the sender)",
@@ -210,7 +210,7 @@
         {
           "name": "node-fold inner proofs and fold metadata in Repositories",
           "where": "disk",
-          "ref": "crates/zk/prover/src/node_proof_aggregation/actor.rs@45@recovery_repositories: Option<Repositories>"
+          "ref": "crates/zk/prover/src/node_proof_aggregation/actor.rs@56@recovery_repositories: Option<Repositories>"
         },
         {
           "name": "pending C0 verifications keyed by E3 and party",
@@ -257,17 +257,17 @@
         {
           "name": "CircuitName",
           "what": "C0-C7 and fold circuit identifiers; dir_path gives the artifact folder",
-          "ref": "crates/events/src/interfold_event/proof.rs@109@pub enum CircuitName"
+          "ref": "crates/events/src/interfold_event/proof.rs@118@pub enum CircuitName"
         },
         {
           "name": "CircuitVariant",
           "what": "Default (noir-recursive-no-zk), Recursive (inner ZK proofs), Evm (on-chain)",
-          "ref": "crates/events/src/interfold_event/proof.rs@72@pub enum CircuitVariant"
+          "ref": "crates/events/src/interfold_event/proof.rs@77@pub enum CircuitVariant"
         },
         {
           "name": "Proof",
           "what": "proof bytes, public signals and the circuit name",
-          "ref": "crates/events/src/interfold_event/proof.rs@17@pub struct Proof"
+          "ref": "crates/events/src/interfold_event/proof.rs@22@pub struct Proof"
         },
         {
           "name": "ZkError",
@@ -290,11 +290,11 @@
         },
         {
           "why": "the exact bb prove arguments",
-          "ref": "crates/zk/prover/src/prover.rs@312@let mut args = vec!["
+          "ref": "crates/zk/prover/src/prover.rs@314@let mut args = vec!["
         },
         {
           "why": "protocol request adaptation, witness decryption and prover execution without actor scheduling",
-          "ref": "crates/zk/prover/src/request_execution.rs@98@pub fn execute_zk_request("
+          "ref": "crates/zk/prover/src/request_execution.rs@139@pub fn execute_zk_request("
         }
       ],
       "rust_patterns": [
@@ -370,7 +370,7 @@
       "state": [],
       "key_types": [],
       "read_first": [
-        { "why": "Configuration metadata and layout exports", "ref": "crates/zk/config/src/lib.rs@16@pub use metadata::CircuitMetadata;" }
+        { "why": "Configuration metadata and layout exports", "ref": "crates/zk/config/src/lib.rs@18@pub use metadata::CircuitMetadata;" }
       ],
       "rust_patterns": [],
       "depends_on": ["e3-committee", "e3-fhe-params", "e3-polynomial", "e3-polynomial-fhe", "e3-parity-matrix"],
@@ -427,13 +427,13 @@
         {
           "name": "Request",
           "what": "Typed build operation, selection, output, and artifact controls",
-          "ref": "crates/zk/build/src/lib.rs@201@pub struct Request {"
+          "ref": "crates/zk/build/src/lib.rs@212@pub struct Request {"
         }
       ],
       "read_first": [
         {
           "why": "Admit a typed request and execute the owning operation",
-          "ref": "crates/zk/build/src/lib.rs@391@pub fn execute(root: &Path, request: &Request) -> Result<()> {"
+          "ref": "crates/zk/build/src/lib.rs@411@pub fn execute(root: &Path, request: &Request) -> Result<()> {"
         }
       ],
       "rust_patterns": [],

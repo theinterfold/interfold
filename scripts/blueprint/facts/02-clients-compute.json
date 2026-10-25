@@ -19,7 +19,7 @@
         {
           "name": "200 with status processing, before the job runs",
           "by": "handle_compute",
-          "ref": "crates/program-server/src/lib.rs@699@Ok(HttpResponse::Ok().json(ProcessingResponse {"
+          "ref": "crates/program-server/src/lib.rs@700@Ok(HttpResponse::Ok().json(ProcessingResponse {"
         },
         {
           "name": "WebhookPayload (completed or failed) POSTed to callback_url",
@@ -41,7 +41,7 @@
         {
           "name": "detached tokio task per admitted job; the permit lives until the task ends",
           "where": "memory",
-          "ref": "crates/program-server/src/lib.rs@681@tokio::spawn(async move {"
+          "ref": "crates/program-server/src/lib.rs@682@tokio::spawn(async move {"
         }
       ],
       "key_types": [
@@ -68,7 +68,7 @@
         {
           "name": "WebhookPayload",
           "what": "callback body tagged by status: completed (ciphertext, proof, ciphertext_commitment) or failed (error)",
-          "ref": "crates/program-server/src/types.rs@57@pub enum WebhookPayload {"
+          "ref": "crates/program-server/src/types.rs@59@pub enum WebhookPayload {"
         }
       ],
       "read_first": [
@@ -97,7 +97,7 @@
         {
           "pattern": "tokio-spawn",
           "note": "an admitted job runs as a detached task that owns its semaphore permit",
-          "ref": "crates/program-server/src/lib.rs@681@tokio::spawn(async move {"
+          "ref": "crates/program-server/src/lib.rs@682@tokio::spawn(async move {"
         },
         {
           "pattern": "arc-shared",
@@ -135,14 +135,14 @@
         {
           "name": "the OpenVM prover handle, shared by all jobs of the openvm mode",
           "where": "memory",
-          "ref": "crates/program-runner/src/openvm.rs@28@let prover = Arc::new(Prover::start(WorkerConfig::from_env()?).await?);"
+          "ref": "crates/program-runner/src/openvm.rs@20@let prover = Arc::new(Prover::start(WorkerConfig::from_env()?).await?);"
         }
       ],
       "key_types": [
         {
           "name": "MockProofProvider",
           "what": "ComputeProvider of the dev mode: runs the processor under the caller policy and returns the ComputeResult that the mock proof wraps",
-          "ref": "crates/program-runner/src/dev.rs@15@struct MockProofProvider {"
+          "ref": "crates/program-runner/src/dev.rs@18@struct MockProofProvider {"
         }
       ],
       "read_first": [
@@ -152,28 +152,28 @@
         },
         {
           "why": "the dev mode: mock proof server",
-          "ref": "crates/program-runner/src/dev.rs@59@pub(crate) async fn serve(processor: FHEProcessor, policy: InputPolicy) -> Result<()> {"
+          "ref": "crates/program-runner/src/dev.rs@63@pub(crate) async fn serve(processor: FHEProcessor, policy: InputPolicy) -> Result<()> {"
         },
         {
           "why": "the OpenVM mode: reads its settings from the environment and proves each job",
-          "ref": "crates/program-runner/src/openvm.rs@27@pub(crate) async fn serve(processor: FHEProcessor, policy: InputPolicy) -> Result<()> {"
+          "ref": "crates/program-runner/src/openvm.rs@19@pub(crate) async fn serve(processor: FHEProcessor, policy: InputPolicy) -> Result<()> {"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "closure",
           "note": "each mode hands E3ProgramServer a closure that runs one job",
-          "ref": "crates/program-runner/src/dev.rs@60@let server = E3ProgramServer::builder(move |job| async move {"
+          "ref": "crates/program-runner/src/dev.rs@65@let server = E3ProgramServer::builder(move |job| async move {"
         },
         {
           "pattern": "arc-shared",
           "note": "the prover is shared between concurrent jobs through an Arc",
-          "ref": "crates/program-runner/src/openvm.rs@39@let prover = Arc::clone(&prover);"
+          "ref": "crates/program-runner/src/openvm.rs@25@let prover = Arc::clone(&prover);"
         },
         {
           "pattern": "unit-test",
           "note": "checks that the mock proof uses the current Solidity envelope",
-          "ref": "crates/program-runner/src/dev.rs@84@fn mock_proof_uses_the_current_solidity_envelope() {"
+          "ref": "crates/program-runner/src/dev.rs@96@fn mock_proof_uses_the_current_solidity_envelope() {"
         }
       ],
       "depends_on": ["e3-compute-provider", "e3-openvm-host", "e3-program-server"],
@@ -194,7 +194,7 @@
         {
           "name": "SecureProcess",
           "what": "one round's first pass: absorbs every input, builds the leaves and tree, and applies the selection",
-          "ref": "crates/compute-provider/src/secure_process.rs@38@pub struct SecureProcess {"
+          "ref": "crates/compute-provider/src/secure_process.rs@40@pub struct SecureProcess {"
         },
         {
           "name": "ComputeManager",
@@ -204,7 +204,7 @@
         {
           "name": "FHEInputs",
           "what": "ciphertexts with their on-chain indices, plus the BFV parameter bytes",
-          "ref": "crates/compute-provider/src/compute_input.rs@35@pub struct FHEInputs {"
+          "ref": "crates/compute-provider/src/compute_input.rs@38@pub struct FHEInputs {"
         },
         {
           "name": "InputPolicy",
@@ -219,7 +219,7 @@
         {
           "name": "ComputeInput",
           "what": "the full Secure Process input: FHEInputs plus the published data, in the same order",
-          "ref": "crates/compute-provider/src/compute_input.rs@65@pub struct ComputeInput {"
+          "ref": "crates/compute-provider/src/compute_input.rs@71@pub struct ComputeInput {"
         },
         {
           "name": "ComputeProvider",
@@ -229,7 +229,7 @@
         {
           "name": "ComputeError",
           "what": "failures inside the Secure Process; some variants name the input index",
-          "ref": "crates/compute-provider/src/compute_input.rs@80@pub enum ComputeError {"
+          "ref": "crates/compute-provider/src/compute_input.rs@86@pub enum ComputeError {"
         },
         {
           "name": "Batching",
@@ -244,26 +244,26 @@
         },
         {
           "why": "first pass: absorb one input at a time, keeping only its hash and commitment",
-          "ref": "crates/compute-provider/src/secure_process.rs@89@pub fn absorb(&mut self, ciphertext: &[u8]) -> Result<(), ComputeError> {"
+          "ref": "crates/compute-provider/src/secure_process.rs@132@pub fn absorb(&mut self, ciphertext: &[u8]) -> Result<(), ComputeError> {"
         },
         {
           "why": "end of the first pass: build the tree, apply the selection and keep every leaf",
-          "ref": "crates/compute-provider/src/secure_process.rs@131@pub fn select(self) -> Result<Selected, ComputeError> {"
+          "ref": "crates/compute-provider/src/secure_process.rs@174@pub fn select(self) -> Result<Selected, ComputeError> {"
         },
         {
           "why": "host entry point that runs a whole round natively and returns the selected indices",
-          "ref": "crates/compute-provider/src/compute_input.rs@151@pub fn run_selected("
+          "ref": "crates/compute-provider/src/compute_input.rs@198@pub fn run_selected("
         },
         {
           "why": "the prover-facing entry point: start() returns the proof and the ciphertext to publish",
-          "ref": "crates/compute-provider/src/compute_manager.rs@58@pub fn start(&mut self, policy: InputPolicy)"
+          "ref": "crates/compute-provider/src/compute_manager.rs@69@pub fn start(&mut self, policy: InputPolicy)"
         }
       ],
       "rust_patterns": [
         {
           "pattern": "thiserror-enum",
           "note": "ComputeError derives thiserror::Error, so each variant carries its own message",
-          "ref": "crates/compute-provider/src/compute_input.rs@79@#[derive(Debug, thiserror::Error)]"
+          "ref": "crates/compute-provider/src/compute_input.rs@85@#[derive(Debug, thiserror::Error)]"
         },
         {
           "pattern": "trait-def",
@@ -273,12 +273,12 @@
         {
           "pattern": "trait-impl",
           "note": "Checked implements Iterator, yielding each selected ciphertext only after its hash check",
-          "ref": "crates/compute-provider/src/secure_process.rs@262@impl<R> Iterator for Checked<'_, R>"
+          "ref": "crates/compute-provider/src/secure_process.rs@308@impl<R> Iterator for Checked<'_, R>"
         },
         {
           "pattern": "enum-match",
           "note": "the batching schedule is chosen by matching the enum; the sequential case maps to 0",
-          "ref": "crates/compute-provider/src/secure_process.rs@301@let batch_size = match batching {"
+          "ref": "crates/compute-provider/src/secure_process.rs@347@let batch_size = match batching {"
         }
       ],
       "depends_on": ["e3-bfv-client", "e3-fhe-params"],
@@ -336,27 +336,27 @@
         {
           "name": "CommitteePublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/indexer/src/indexer.rs@686@move |e: CommitteePublished, ctx| async move {"
+          "ref": "crates/indexer/src/indexer.rs@690@move |e: CommitteePublished, ctx| async move {"
         },
         {
           "name": "CommitteePublicKeyChunkPublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/indexer/src/indexer.rs@698@move |event: CommitteePublicKeyChunkPublished, ctx| async move {"
+          "ref": "crates/indexer/src/indexer.rs@702@move |event: CommitteePublicKeyChunkPublished, ctx| async move {"
         },
         {
           "name": "CiphertextOutputPublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/indexer/src/indexer.rs@774@self.add_event_handler(move |e: CiphertextOutputPublished, ctx| async move {"
+          "ref": "crates/indexer/src/indexer.rs@778@self.add_event_handler(move |e: CiphertextOutputPublished, ctx| async move {"
         },
         {
           "name": "CiphertextOutputReferencePublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/indexer/src/indexer.rs@797@move |event: CiphertextOutputReferencePublished, ctx| async move {"
+          "ref": "crates/indexer/src/indexer.rs@801@move |event: CiphertextOutputReferencePublished, ctx| async move {"
         },
         {
           "name": "PlaintextOutputPublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/indexer/src/indexer.rs@819@self.add_event_handler(move |e: PlaintextOutputPublished, ctx| async move {"
+          "ref": "crates/indexer/src/indexer.rs@823@self.add_event_handler(move |e: PlaintextOutputPublished, ctx| async move {"
         }
       ],
       "emits": [],
@@ -411,19 +411,19 @@
         },
         {
           "why": "construction: reads the chain id, wires the listeners and registers the handlers",
-          "ref": "crates/indexer/src/indexer.rs@584@pub async fn new("
+          "ref": "crates/indexer/src/indexer.rs@588@pub async fn new("
         },
         {
           "why": "opt-in catch-up and cursor, with the reason for the opt-in in the doc",
-          "ref": "crates/indexer/src/indexer.rs@939@pub fn configure_backfill(&self, start_block: Option<u64>, chunk: Option<u64>) {"
+          "ref": "crates/indexer/src/indexer.rs@943@pub fn configure_backfill(&self, start_block: Option<u64>, chunk: Option<u64>) {"
         },
         {
           "why": "committee key handling: the on-chain commitment check before storage",
-          "ref": "crates/indexer/src/indexer.rs@508@if let Err(error) = validate_pk_commitment("
+          "ref": "crates/indexer/src/indexer.rs@510@validate_pk_commitment("
         },
         {
           "why": "the live loop: backfill, subscribe, overlap replay, restart on error",
-          "ref": "crates/indexer/src/indexer.rs@1036@pub async fn listen(&self) -> Result<()> {"
+          "ref": "crates/indexer/src/indexer.rs@1040@pub async fn listen(&self) -> Result<()> {"
         }
       ],
       "rust_patterns": [
@@ -440,12 +440,12 @@
         {
           "pattern": "tokio-select",
           "note": "listen() races the event listener, the block listener and the overlap replay, and restarts when one ends",
-          "ref": "crates/indexer/src/indexer.rs@1137@let res = tokio::select! {"
+          "ref": "crates/indexer/src/indexer.rs@1141@let res = tokio::select! {"
         },
         {
           "pattern": "arc-shared",
           "note": "handlers hold a Weak reference to the context, so the context and its listeners can be dropped",
-          "ref": "crates/indexer/src/indexer.rs@632@let ctx_weak = Arc::downgrade(&ctx);"
+          "ref": "crates/indexer/src/indexer.rs@636@let ctx_weak = Arc::downgrade(&ctx);"
         }
       ],
       "depends_on": ["e3-bfv-client", "e3-evm-helpers", "e3-fhe-params"],
@@ -485,12 +485,12 @@
         {
           "name": "request and registerE3Program transactions, sent through send_with_next_nonce",
           "by": "InterfoldContract",
-          "ref": "crates/evm-helpers/src/contracts.rs@499@let receipt = send_with_next_nonce(contract.request(e3_request), wallet_addr)"
+          "ref": "crates/evm-helpers/src/contracts.rs@502@let receipt = send_with_next_nonce(contract.request(e3_request), wallet_addr)"
         },
         {
           "name": "publishCiphertextOutput and publishPlaintextOutput transactions, sent through send_with_next_nonce",
           "by": "InterfoldContract",
-          "ref": "crates/evm-helpers/src/contracts.rs@549@let receipt = send_with_next_nonce("
+          "ref": "crates/evm-helpers/src/contracts.rs@552@let receipt = send_with_next_nonce("
         }
       ],
       "state": [
@@ -514,7 +514,7 @@
         {
           "name": "InterfoldContract",
           "what": "typed handle to the Interfold contract, read-only or read-write by its marker type",
-          "ref": "crates/evm-helpers/src/contracts.rs@252@pub struct InterfoldContract<T: ProviderType> {"
+          "ref": "crates/evm-helpers/src/contracts.rs@255@pub struct InterfoldContract<T: ProviderType> {"
         },
         {
           "name": "EventListener",
@@ -529,17 +529,17 @@
         {
           "name": "InterfoldRead",
           "what": "read-only trait over the Interfold contract: E3 record, stage, failure reason, deadlines and quotes",
-          "ref": "crates/evm-helpers/src/contracts.rs@155@pub trait InterfoldRead {"
+          "ref": "crates/evm-helpers/src/contracts.rs@158@pub trait InterfoldRead {"
         },
         {
           "name": "InterfoldWrite",
           "what": "write trait for read-write handles: request, register program, publish outputs",
-          "ref": "crates/evm-helpers/src/contracts.rs@198@pub trait InterfoldWrite {"
+          "ref": "crates/evm-helpers/src/contracts.rs@201@pub trait InterfoldWrite {"
         },
         {
           "name": "ProviderType",
           "what": "marker trait; ReadOnly and ReadWrite select the provider behind InterfoldContract",
-          "ref": "crates/evm-helpers/src/contracts.rs@233@pub trait ProviderType: Clone + Send + Sync + 'static {"
+          "ref": "crates/evm-helpers/src/contracts.rs@236@pub trait ProviderType: Clone + Send + Sync + 'static {"
         },
         {
           "name": "ThresholdQueue",
@@ -550,11 +550,11 @@
       "read_first": [
         {
           "why": "the Interfold ABI as Rust sees it: the sol! contract with request and publish functions",
-          "ref": "crates/evm-helpers/src/contracts.rs@129@contract Interfold {"
+          "ref": "crates/evm-helpers/src/contracts.rs@132@contract Interfold {"
         },
         {
           "why": "read operations and their trait",
-          "ref": "crates/evm-helpers/src/contracts.rs@155@pub trait InterfoldRead {"
+          "ref": "crates/evm-helpers/src/contracts.rs@158@pub trait InterfoldRead {"
         },
         {
           "why": "the log subscription loop; it marks the subscription live so that an owner can replay the gap after it",
@@ -574,7 +574,7 @@
         {
           "pattern": "trait-impl",
           "note": "InterfoldRead is implemented once for every InterfoldContract, whatever its provider type",
-          "ref": "crates/evm-helpers/src/contracts.rs@361@impl<T: Send + Sync> InterfoldRead for InterfoldContract<T>"
+          "ref": "crates/evm-helpers/src/contracts.rs@364@impl<T: Send + Sync> InterfoldRead for InterfoldContract<T>"
         },
         {
           "pattern": "tokio-spawn",
@@ -584,7 +584,7 @@
         {
           "pattern": "option-combinators",
           "note": "a missing wallet becomes an error through ok_or_else, then ?",
-          "ref": "crates/evm-helpers/src/contracts.rs@540@.ok_or_else(|| eyre::eyre!("
+          "ref": "crates/evm-helpers/src/contracts.rs@543@.ok_or_else(|| eyre::eyre!("
         }
       ],
       "depends_on": ["e3-utils"],
@@ -611,21 +611,21 @@
         {
           "name": "BfvParamSetJs",
           "what": "serde struct returned to JS: degree, plaintext_modulus, moduli and error1_variance",
-          "ref": "crates/wasm/src/lib.rs@241@pub struct BfvParamSetJs {"
+          "ref": "crates/wasm/src/lib.rs@363@pub struct BfvParamSetJs {"
         }
       ],
       "read_first": [
         {
           "why": "the first export: encrypt one u64 under a public key",
-          "ref": "crates/wasm/src/lib.rs@33@pub fn bfv_encrypt_number("
+          "ref": "crates/wasm/src/lib.rs@36@pub fn bfv_encrypt_number("
         },
         {
           "why": "key generation and the commitment exports",
-          "ref": "crates/wasm/src/lib.rs@47@pub fn generate_public_key("
+          "ref": "crates/wasm/src/lib.rs@50@pub fn generate_public_key("
         },
         {
           "why": "parameter presets: name lookup and the JS object shape",
-          "ref": "crates/wasm/src/lib.rs@215@pub fn get_bfv_params(name: &str) -> Result<JsValue, JsValue> {"
+          "ref": "crates/wasm/src/lib.rs@337@pub fn get_bfv_params(name: &str) -> Result<JsValue, JsValue> {"
         },
         {
           "why": "the TypeScript signature of the default init function",
@@ -636,22 +636,22 @@
         {
           "pattern": "impl-from",
           "note": "BfvParamSetJs is built from a BfvParamSet by From, so the JS shape is one conversion",
-          "ref": "crates/wasm/src/lib.rs@248@impl From<&BfvParamSet> for BfvParamSetJs {"
+          "ref": "crates/wasm/src/lib.rs@370@impl From<&BfvParamSet> for BfvParamSetJs {"
         },
         {
           "pattern": "serde-derive",
           "note": "the JS struct derives Serialize and Deserialize for serde-wasm-bindgen",
-          "ref": "crates/wasm/src/lib.rs@240@#[derive(Serialize, Deserialize)]"
+          "ref": "crates/wasm/src/lib.rs@362@#[derive(Serialize, Deserialize)]"
         },
         {
           "pattern": "result-question-mark",
           "note": "a bfv-client error becomes a JsValue and returns early",
-          "ref": "crates/wasm/src/lib.rs@216@let preset = BfvPreset::from_name(name).map_err(|e| JsValue::from_str(&e.to_string()))?;"
+          "ref": "crates/wasm/src/lib.rs@338@let preset = BfvPreset::from_name(name).map_err(|e| JsValue::from_str(&e.to_string()))?;"
         },
         {
           "pattern": "closure",
           "note": "the preset list is mapped to owned strings in one iterator chain",
-          "ref": "crates/wasm/src/lib.rs@236@.map(|name| name.to_string())"
+          "ref": "crates/wasm/src/lib.rs@358@.map(|name| name.to_string())"
         }
       ],
       "depends_on": ["e3-bfv-client", "e3-fhe-params"],
@@ -711,17 +711,17 @@
         {
           "name": "Fhe",
           "what": "BFV parameters, common random polynomial and shared RNG, with key-share, decryption and aggregation methods",
-          "ref": "crates/fhe/src/runtime.rs@39@pub struct Fhe {"
+          "ref": "crates/fhe/src/runtime.rs@41@pub struct Fhe {"
         },
         {
           "name": "FheSnapshot",
           "what": "serializable params and CRP bytes that rebuild a Fhe in hydrate",
-          "ref": "crates/fhe/src/runtime.rs@149@pub struct FheSnapshot {"
+          "ref": "crates/fhe/src/runtime.rs@233@pub struct FheSnapshot {"
         },
         {
           "name": "DecryptCiphertext",
           "what": "input to decrypt_ciphertext: the secret-key bytes and one ciphertext",
-          "ref": "crates/fhe/src/runtime.rs@32@pub struct DecryptCiphertext {"
+          "ref": "crates/fhe/src/runtime.rs@34@pub struct DecryptCiphertext {"
         }
       ],
       "read_first": [
@@ -739,7 +739,7 @@
         },
         {
           "why": "the fhe.rs adaptor and its key-share step",
-          "ref": "crates/fhe/src/runtime.rs@73@pub fn generate_keyshare(&self) -> Result<(Vec<u8>, ArcBytes)> {"
+          "ref": "crates/fhe/src/runtime.rs@75@pub fn generate_keyshare(&self) -> Result<(Vec<u8>, ArcBytes)> {"
         }
       ],
       "rust_patterns": [
@@ -756,12 +756,12 @@
         {
           "pattern": "anyhow-context",
           "note": "a ciphertext that fails to deserialize gets a context message",
-          "ref": "crates/fhe/src/runtime.rs@93@.context(\"Error deserializing ciphertext\")?,"
+          "ref": "crates/fhe/src/runtime.rs@95@.context(\"Error deserializing ciphertext\")?,"
         },
         {
           "pattern": "iterator-chain",
           "note": "public-key shares are deserialized and aggregated in one chain",
-          "ref": "crates/fhe/src/runtime.rs@104@.map(|k| PublicKeyShare::deserialize(k, &self.params, self.crp.clone()))"
+          "ref": "crates/fhe/src/runtime.rs@106@.map(|k| PublicKeyShare::deserialize(k, &self.params, self.crp.clone()))"
         }
       ],
       "depends_on": ["e3-data", "e3-events", "e3-utils", "e3-request", "e3-bfv-client", "e3-fhe-params"],
@@ -785,7 +785,7 @@
         {
           "name": "ComputeEffectGate",
           "role": "holds requests until EffectsEnabled and replays or deduplicates outcomes by request key",
-          "ref": "crates/multithread/src/effect_gate.rs@100@pub(crate) struct ComputeEffectGate {"
+          "ref": "crates/multithread/src/effect_gate.rs@112@pub(crate) struct ComputeEffectGate {"
         },
         {
           "name": "MultithreadReport",
@@ -797,12 +797,12 @@
         {
           "name": "ComputeRequest (a TrBFV or ZK job)",
           "by": "ComputeEffectGate",
-          "ref": "crates/multithread/src/effect_gate.rs@491@InterfoldEventData::ComputeRequest(_) if self.enabled => {"
+          "ref": "crates/multithread/src/effect_gate.rs@536@InterfoldEventData::ComputeRequest(_) if self.enabled => {"
         },
         {
           "name": "EffectsEnabled, which releases the queued requests",
           "by": "ComputeEffectGate",
-          "ref": "crates/multithread/src/effect_gate.rs@498@InterfoldEventData::EffectsEnabled(_) => self.enable(),"
+          "ref": "crates/multithread/src/effect_gate.rs@543@InterfoldEventData::EffectsEnabled(_) => self.enable(),"
         },
         {
           "name": "E3Failed, E3StageChanged and E3RequestComplete, which cancel the E3's task groups",
@@ -824,7 +824,7 @@
         {
           "name": "stored outcomes sent to the other request IDs waiting on the same work",
           "by": "ComputeEffectGate",
-          "ref": "crates/multithread/src/effect_gate.rs@386@ComputeOutcome::Response(response) => bus.publish("
+          "ref": "crates/multithread/src/effect_gate.rs@427@ComputeOutcome::Response(response) => bus.publish("
         }
       ],
       "state": [
@@ -836,12 +836,12 @@
         {
           "name": "requests the worker is running, counted per correlation ID",
           "where": "memory",
-          "ref": "crates/multithread/src/effect_gate.rs@49@pub(crate) struct RunningJobs(Arc<Mutex<HashMap<CorrelationId, usize>>>);"
+          "ref": "crates/multithread/src/effect_gate.rs@61@pub(crate) struct RunningJobs(Arc<Mutex<HashMap<CorrelationId, usize>>>);"
         },
         {
           "name": "pending, forwarded and replayed-outcome maps in the gate",
           "where": "memory",
-          "ref": "crates/multithread/src/effect_gate.rs@104@pending: HashMap<RequestKey, InterfoldEvent>,"
+          "ref": "crates/multithread/src/effect_gate.rs@116@pending: HashMap<RequestKey, InterfoldEvent>,"
         }
       ],
       "key_types": [
@@ -863,7 +863,7 @@
         {
           "name": "ComputeOutcome",
           "what": "a response or an error that the gate keeps for requests waiting on the same work",
-          "ref": "crates/multithread/src/effect_gate.rs@25@enum ComputeOutcome {"
+          "ref": "crates/multithread/src/effect_gate.rs@33@enum ComputeOutcome {"
         }
       ],
       "read_first": [
@@ -873,7 +873,7 @@
         },
         {
           "why": "the gate: when a request goes to the worker, and when a stored result is reused",
-          "ref": "crates/multithread/src/effect_gate.rs@250@fn forward(&mut self, event: InterfoldEvent) -> bool {"
+          "ref": "crates/multithread/src/effect_gate.rs@290@fn forward(&mut self, event: InterfoldEvent) -> bool {"
         },
         {
           "why": "the actor's request handler and its retry loop",
@@ -942,24 +942,24 @@
         {
           "name": "TrBFVRequest variants: generate, sum, share and combine",
           "by": "handle_trbfv_request in crates/multithread",
-          "ref": "crates/trbfv/src/trbfv_request.rs@27@pub enum TrBFVRequest {"
+          "ref": "crates/trbfv/src/trbfv_request.rs@32@pub enum TrBFVRequest {"
         },
         {
           "name": "collected Shamir shares, held as Encrypted values under the node's own Cipher",
           "by": "calculate_decryption_key",
-          "ref": "crates/trbfv/src/calculate_decryption_key.rs@27@pub sk_sss_collected: Vec<Encrypted<ShamirShare>>,"
+          "ref": "crates/trbfv/src/calculate_decryption_key.rs@28@pub sk_sss_collected: Vec<Encrypted<ShamirShare>>,"
         }
       ],
       "emits": [
         {
           "name": "TrBFVResponse variants",
           "by": "TrBFVRequest::execute",
-          "ref": "crates/trbfv/src/trbfv_request.rs@37@pub enum TrBFVResponse {"
+          "ref": "crates/trbfv/src/trbfv_request.rs@59@pub enum TrBFVResponse {"
         },
         {
           "name": "TrBFVError, carrying a TrBFVFailure",
           "by": "TrBFVRequest::execute and failure",
-          "ref": "crates/trbfv/src/trbfv_request.rs@46@pub enum TrBFVError {"
+          "ref": "crates/trbfv/src/trbfv_request.rs@79@pub enum TrBFVError {"
         }
       ],
       "state": [],
@@ -988,19 +988,19 @@
       "read_first": [
         {
           "why": "the native execution boundary over typed requests, caller RNG and cipher",
-          "ref": "crates/trbfv/src/request_execution.rs@45@pub fn execute(&self, rng: &SharedRng, cipher: &Cipher) -> Result<TrBFVResponse, TrBFVError> {"
+          "ref": "crates/trbfv/src/request_execution.rs@70@pub fn execute(&self, rng: &SharedRng, cipher: &Cipher) -> Result<TrBFVResponse, TrBFVError> {"
         },
         {
           "why": "DKG: the public-key share and the secret Shamir shares",
-          "ref": "crates/trbfv/src/gen_pk_share_and_sk_sss.rs@111@pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>("
+          "ref": "crates/trbfv/src/gen_pk_share_and_sk_sss.rs@117@pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>("
         },
         {
           "why": "summing the shares a node collected",
-          "ref": "crates/trbfv/src/calculate_decryption_key.rs@107@pub fn calculate_decryption_key("
+          "ref": "crates/trbfv/src/calculate_decryption_key.rs@108@pub fn calculate_decryption_key("
         },
         {
           "why": "one decryption share per ciphertext",
-          "ref": "crates/trbfv/src/calculate_decryption_share.rs@102@pub fn calculate_decryption_share("
+          "ref": "crates/trbfv/src/calculate_decryption_share.rs@105@pub fn calculate_decryption_share("
         },
         {
           "why": "combining the shares of a threshold of nodes into plaintext",
@@ -1011,27 +1011,27 @@
         {
           "pattern": "trait-impl",
           "note": "each request converts into an InnerRequest with TryFrom, so the wire type and the math type differ",
-          "ref": "crates/trbfv/src/calculate_decryption_key.rs@38@impl TryFrom<(&Cipher, CalculateDecryptionKeyRequest)> for InnerRequest {"
+          "ref": "crates/trbfv/src/calculate_decryption_key.rs@39@impl TryFrom<(&Cipher, CalculateDecryptionKeyRequest)> for InnerRequest {"
         },
         {
           "pattern": "impl-from",
           "note": "an internal response converts into its serializable form with From",
-          "ref": "crates/trbfv/src/calculate_decryption_share.rs@90@impl From<InnerResponse> for CalculateDecryptionShareResponse {"
+          "ref": "crates/trbfv/src/calculate_decryption_share.rs@93@impl From<InnerResponse> for CalculateDecryptionShareResponse {"
         },
         {
           "pattern": "iterator-chain",
           "note": "per-ciphertext aggregation is collected into one Result",
-          "ref": "crates/trbfv/src/calculate_decryption_key.rs@134@.collect::<Result<Vec<_>>>()?;"
+          "ref": "crates/trbfv/src/calculate_decryption_key.rs@133@.collect::<Result<Vec<_>>>()?;"
         },
         {
           "pattern": "anyhow-context",
           "note": "a failed aggregation names the step that failed",
-          "ref": "crates/trbfv/src/calculate_decryption_key.rs@132@.context(\"Failed to aggregate es_sss\")"
+          "ref": "crates/trbfv/src/calculate_decryption_key.rs@131@.context(\"Failed to aggregate es_sss\")"
         },
         {
           "pattern": "serde-derive",
           "note": "requests and responses derive serde so they can cross the worker boundary",
-          "ref": "crates/trbfv/src/calculate_decryption_key.rs@22@#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]"
+          "ref": "crates/trbfv/src/calculate_decryption_key.rs@23@#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]"
         },
         {
           "pattern": "async-test",
@@ -1057,12 +1057,12 @@
         {
           "name": "VerifiableEncryptionResult",
           "what": "ciphertext bytes plus the circuit inputs as a JSON string",
-          "ref": "crates/bfv-client/src/client.rs@72@pub struct VerifiableEncryptionResult {"
+          "ref": "crates/bfv-client/src/client.rs@151@pub struct VerifiableEncryptionResult {"
         },
         {
           "name": "Error",
           "what": "PlaintextDecodeFailed or BadEncoding, for the byte helpers in lib.rs",
-          "ref": "crates/bfv-client/src/lib.rs@20@pub enum Error {"
+          "ref": "crates/bfv-client/src/lib.rs@28@pub enum Error {"
         }
       ],
       "read_first": [
@@ -1072,46 +1072,46 @@
         },
         {
           "why": "encryption under a public key",
-          "ref": "crates/bfv-client/src/client.rs@45@pub fn bfv_encrypt<T>("
+          "ref": "crates/bfv-client/src/client.rs@99@pub fn bfv_encrypt<T>("
         },
         {
           "why": "verifiable encryption, with the circuit inputs",
-          "ref": "crates/bfv-client/src/client.rs@96@pub fn bfv_verifiable_encrypt<T>("
+          "ref": "crates/bfv-client/src/client.rs@175@pub fn bfv_verifiable_encrypt<T>("
         },
         {
           "why": "the public-key commitment check used before a key is trusted",
-          "ref": "crates/bfv-client/src/client.rs@197@pub fn validate_pk_commitment("
+          "ref": "crates/bfv-client/src/client.rs@401@pub fn validate_pk_commitment("
         },
         {
           "why": "the ciphertext commitment, with a variant that reuses built parameters",
-          "ref": "crates/bfv-client/src/client.rs@221@pub fn compute_ct_commitment("
+          "ref": "crates/bfv-client/src/client.rs@431@pub fn compute_ct_commitment("
         }
       ],
       "rust_patterns": [
         {
           "pattern": "thiserror-enum",
           "note": "the crate's Error derives thiserror::Error with a message per variant",
-          "ref": "crates/bfv-client/src/lib.rs@19@#[derive(ThisError, Debug)]"
+          "ref": "crates/bfv-client/src/lib.rs@27@#[derive(ThisError, Debug)]"
         },
         {
           "pattern": "generic-where",
           "note": "the encrypt functions take any value T that fhe.rs can encode, through a where bound",
-          "ref": "crates/bfv-client/src/client.rs@53@Plaintext: for<'a> FheEncoder<&'a T, Error = FheError>,"
+          "ref": "crates/bfv-client/src/client.rs@107@Plaintext: for<'a> FheEncoder<&'a T, Error = FheError>,"
         },
         {
           "pattern": "result-question-mark",
           "note": "building the parameters returns early on error",
-          "ref": "crates/bfv-client/src/client.rs@55@build_client_params(degree, plaintext_modulus, moduli, None)?;"
+          "ref": "crates/bfv-client/src/client.rs@134@build_client_params(degree, plaintext_modulus, moduli, None)?;"
         },
         {
           "pattern": "option-combinators",
           "note": "an unsupported parameter tuple becomes an anyhow error through ok_or_else",
-          "ref": "crates/bfv-client/src/client.rs@107@.ok_or_else(|| {"
+          "ref": "crates/bfv-client/src/client.rs@209@.ok_or_else(|| {"
         },
         {
           "pattern": "unit-test",
           "note": "the encryption round trips are plain #[test] functions",
-          "ref": "crates/bfv-client/src/client.rs@382@fn test_bfv_encrypt_a64() {"
+          "ref": "crates/bfv-client/src/client.rs@645@fn test_bfv_encrypt_a64() {"
         }
       ],
       "depends_on": ["e3-fhe-params", "e3-zk-config", "e3-zk-witness", "e3-polynomial"],

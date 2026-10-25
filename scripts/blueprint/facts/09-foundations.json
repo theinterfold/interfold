@@ -66,31 +66,31 @@
         {
           "name": "BfvPreset",
           "what": "the four named presets: insecure or secure, threshold or DKG",
-          "ref": "crates/fhe-params/src/presets.rs@40@pub enum BfvPreset"
+          "ref": "crates/fhe-params/src/presets.rs@59@pub enum BfvPreset"
         },
         {
           "name": "BfvParamSet",
           "what": "one preset's degree, plaintext modulus and moduli, ready to build BFV parameters",
-          "ref": "crates/fhe-params/src/presets.rs@249@pub struct BfvParamSet {"
+          "ref": "crates/fhe-params/src/presets.rs@316@pub struct BfvParamSet {"
         },
         {
           "name": "PresetError",
           "what": "error type: unknown preset, missing threshold or DKG pair, or an insecure lambda",
-          "ref": "crates/fhe-params/src/presets.rs@206@pub enum PresetError {"
+          "ref": "crates/fhe-params/src/presets.rs@274@pub enum PresetError {"
         }
       ],
       "read_first": [
         {
           "why": "crate entry: the public re-exports of presets, builders and CRP helpers",
-          "ref": "crates/fhe-params/src/lib.rs@25@pub use presets::{"
+          "ref": "crates/fhe-params/src/lib.rs@35@pub use presets::{"
         },
         {
           "why": "the preset enum and the default preset constant",
-          "ref": "crates/fhe-params/src/presets.rs@40@pub enum BfvPreset"
+          "ref": "crates/fhe-params/src/presets.rs@59@pub enum BfvPreset"
         },
         {
           "why": "the insecure 64 constants: degree, moduli and party count per threshold or DKG set",
-          "ref": "crates/fhe-params/src/constants.rs@13@pub mod insecure_64 {"
+          "ref": "crates/fhe-params/src/constants.rs@15@pub mod insecure_64 {"
         },
         {
           "why": "turns a preset into its threshold and DKG BFV parameter pair",
@@ -101,17 +101,17 @@
         {
           "pattern": "enum-match",
           "note": "metadata() maps each preset to its degree, modulus count, party count and security tier",
-          "ref": "crates/fhe-params/src/presets.rs@387@pub fn metadata(&self) -> PresetMetadata"
+          "ref": "crates/fhe-params/src/presets.rs@505@pub fn metadata(&self) -> PresetMetadata"
         },
         {
           "pattern": "thiserror-enum",
           "note": "PresetError derives Debug and the thiserror Error impl through the ThisError alias",
-          "ref": "crates/fhe-params/src/presets.rs@205@#[derive(ThisError, Debug)]"
+          "ref": "crates/fhe-params/src/presets.rs@273@#[derive(ThisError, Debug)]"
         },
         {
           "pattern": "impl-from",
           "note": "a preset converts into its BfvParamSet with From",
-          "ref": "crates/fhe-params/src/presets.rs@497@impl From<BfvPreset> for BfvParamSet {"
+          "ref": "crates/fhe-params/src/presets.rs@727@impl From<BfvPreset> for BfvParamSet {"
         },
         {
           "pattern": "builder-pattern",
@@ -121,7 +121,7 @@
         {
           "pattern": "serde-derive",
           "note": "presets derive Serialize and Deserialize",
-          "ref": "crates/fhe-params/src/presets.rs@39@#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]"
+          "ref": "crates/fhe-params/src/presets.rs@58@#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]"
         }
       ],
       "depends_on": [],
@@ -145,31 +145,31 @@
         {
           "name": "CommitteeHashLimbs",
           "what": "the committee hash split into hi and lo 128-bit halves, each as a bytes32 word",
-          "ref": "crates/committee-hash/src/lib.rs@20@pub struct CommitteeHashLimbs {"
+          "ref": "crates/committee-hash/src/lib.rs@24@pub struct CommitteeHashLimbs {"
         },
         {
           "name": "DecryptionDomainContext",
           "what": "the Interfold address, committee hash and committee public key that a domain hash binds",
-          "ref": "crates/committee-hash/src/lib.rs@28@pub struct DecryptionDomainContext {"
+          "ref": "crates/committee-hash/src/lib.rs@32@pub struct DecryptionDomainContext {"
         },
         {
           "name": "DecryptionDomainLimbs",
           "what": "the decryption-domain hash split into two u128 values",
-          "ref": "crates/committee-hash/src/lib.rs@36@pub struct DecryptionDomainLimbs {"
+          "ref": "crates/committee-hash/src/lib.rs@40@pub struct DecryptionDomainLimbs {"
         }
       ],
       "read_first": [
         {
           "why": "the committee hash: keccak256 over the raw addresses in order",
-          "ref": "crates/committee-hash/src/lib.rs@42@pub fn hash_committee_addresses"
+          "ref": "crates/committee-hash/src/lib.rs@67@pub fn hash_committee_addresses"
         },
         {
           "why": "the E3 decryption domain: the ABI-encoded fields hashed together",
-          "ref": "crates/committee-hash/src/lib.rs@82@pub fn hash_decryption_domain("
+          "ref": "crates/committee-hash/src/lib.rs@107@pub fn hash_decryption_domain("
         },
         {
           "why": "the limb split that feeds the Noir public inputs",
-          "ref": "crates/committee-hash/src/lib.rs@52@pub fn split_committee_hash"
+          "ref": "crates/committee-hash/src/lib.rs@77@pub fn split_committee_hash"
         },
         {
           "why": "the Solidity library the committee hash must match",
@@ -180,17 +180,17 @@
         {
           "pattern": "iterator-chain",
           "note": "the addresses are flattened into one byte buffer before hashing",
-          "ref": "crates/committee-hash/src/lib.rs@45@.flat_map(|addr| addr.into_array())"
+          "ref": "crates/committee-hash/src/lib.rs@70@.flat_map(|addr| addr.into_array())"
         },
         {
           "pattern": "serde-derive",
           "note": "the domain context and the limbs derive Serialize and Deserialize",
-          "ref": "crates/committee-hash/src/lib.rs@27@#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]"
+          "ref": "crates/committee-hash/src/lib.rs@31@#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]"
         },
         {
           "pattern": "unit-test",
           "note": "unit tests sit in the same file",
-          "ref": "crates/committee-hash/src/lib.rs@133@#[test]"
+          "ref": "crates/committee-hash/src/lib.rs@254@#[test]"
         }
       ],
       "depends_on": [],
@@ -806,7 +806,7 @@
         {
           "name": "StoredEvents",
           "role": "test-only actor that answers one event-store query by sending the events back on a oneshot channel",
-          "ref": "crates/tests/tests/integration.rs@3064@struct StoredEvents("
+          "ref": "crates/tests/tests/integration.rs@3757@struct StoredEvents("
         }
       ],
       "consumes": [],
@@ -827,15 +827,15 @@
       "read_first": [
         {
           "why": "a full multi-node test: test_trbfv_actor",
-          "ref": "crates/tests/tests/integration.rs@1329@async fn test_trbfv_actor()"
+          "ref": "crates/tests/tests/integration.rs@1705@async fn test_trbfv_actor()"
         },
         {
           "why": "the simulated network is switched on for the node group",
-          "ref": "crates/tests/tests/integration.rs@1615@.simulate_libp2p()"
+          "ref": "crates/tests/tests/integration.rs@1996@.simulate_libp2p()"
         },
         {
           "why": "how the zk backend is chosen: a local bb binary or the CI install",
-          "ref": "crates/tests/tests/integration.rs@366@async fn setup_test_zk_backend("
+          "ref": "crates/tests/tests/integration.rs@480@async fn setup_test_zk_backend("
         },
         {
           "why": "the layout-lock test that compares the persisted layouts with the fixture",
@@ -846,17 +846,17 @@
         {
           "pattern": "async-test",
           "note": "integration tests run under actix::test and are serialized with serial_test",
-          "ref": "crates/tests/tests/integration.rs@1327@#[actix::test]"
+          "ref": "crates/tests/tests/integration.rs@1088@#[actix::test]"
         },
         {
           "pattern": "builder-pattern",
           "note": "the node groups are assembled with CiphernodeSystemBuilder",
-          "ref": "crates/tests/tests/integration.rs@1507@let mut nodes = CiphernodeSystemBuilder::new()"
+          "ref": "crates/tests/tests/integration.rs@1888@let mut nodes = CiphernodeSystemBuilder::new()"
         },
         {
           "pattern": "actix-actor",
           "note": "StoredEvents is a small actor that answers one query",
-          "ref": "crates/tests/tests/integration.rs@3066@impl actix::Actor for StoredEvents {"
+          "ref": "crates/tests/tests/integration.rs@3759@impl actix::Actor for StoredEvents {"
         },
         {
           "pattern": "unit-test",
@@ -1016,7 +1016,7 @@
         },
         {
           "why": "wraps the seal and journal for the receipt verifier",
-          "ref": "crates/openvm-host/src/lib.rs@376@pub fn encode_compute_proof("
+          "ref": "crates/openvm-host/src/lib.rs@386@pub fn encode_compute_proof("
         }
       ],
       "rust_patterns": [
@@ -1069,12 +1069,12 @@
         {
           "name": "ComputeJournal",
           "what": "the nine 32-byte words the guest reveals",
-          "ref": "crates/openvm-types/src/lib.rs@72@pub struct ComputeJournal {"
+          "ref": "crates/openvm-types/src/lib.rs@75@pub struct ComputeJournal {"
         },
         {
           "name": "ItemReader",
           "what": "reads length-prefixed items one at a time",
-          "ref": "crates/openvm-types/src/lib.rs@150@pub struct ItemReader<R> {"
+          "ref": "crates/openvm-types/src/lib.rs@153@pub struct ItemReader<R> {"
         }
       ],
       "read_first": [
@@ -1088,11 +1088,11 @@
         },
         {
           "why": "the journal the verifier reads",
-          "ref": "crates/openvm-types/src/lib.rs@72@pub struct ComputeJournal {"
+          "ref": "crates/openvm-types/src/lib.rs@75@pub struct ComputeJournal {"
         },
         {
           "why": "write_items: the framing the host writes",
-          "ref": "crates/openvm-types/src/lib.rs@129@pub fn write_items<'a, W: Write>("
+          "ref": "crates/openvm-types/src/lib.rs@132@pub fn write_items<'a, W: Write>("
         }
       ],
       "rust_patterns": [
@@ -1104,17 +1104,17 @@
         {
           "pattern": "impl-trait-arg",
           "note": "write_items takes any exact-size iterator of byte slices",
-          "ref": "crates/openvm-types/src/lib.rs@131@items: impl ExactSizeIterator<Item = &'a [u8]>,"
+          "ref": "crates/openvm-types/src/lib.rs@134@items: impl ExactSizeIterator<Item = &'a [u8]>,"
         },
         {
           "pattern": "result-question-mark",
           "note": "a count that does not fit in u32 is reported with ? as an io error",
-          "ref": "crates/openvm-types/src/lib.rs@133@let count = u32::try_from(items.len())"
+          "ref": "crates/openvm-types/src/lib.rs@136@let count = u32::try_from(items.len())"
         },
         {
           "pattern": "unit-test",
           "note": "unit tests sit in the same file",
-          "ref": "crates/openvm-types/src/lib.rs@213@#[test]"
+          "ref": "crates/openvm-types/src/lib.rs@216@#[test]"
         }
       ],
       "depends_on": ["e3-compute-provider"],

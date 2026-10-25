@@ -21,7 +21,7 @@
       "circuits/bin/recursive_aggregation/c3_fold_kernel/src/main.nr@36@verify_honk_proof(inner_vk, inner_proof, c3_public_inputs",
       "circuits/bin/recursive_aggregation/c3ab_fold/src/main.nr@36@verify_honk_proof_non_zk(c3a_vk, c3a_proof",
       "circuits/bin/recursive_aggregation/c3ab_fold/src/main.nr@37@verify_honk_proof_non_zk(c3b_vk, c3b_proof",
-      "crates/zk/prover/src/circuits/aggregation/c3_accumulator.rs@125@if proof.circuit != CircuitName::ShareEncryption {"
+      "crates/zk/prover/src/circuits/aggregation/c3_accumulator.rs@129@if proof.circuit != CircuitName::ShareEncryption {"
     ],
     "line_text": [
       "verify_honk_proof(inner_vk, inner_proof, c3_public_inputs, inner_key_hash);",
@@ -52,8 +52,8 @@
     "refs": [
       "circuits/bin/recursive_aggregation/c6_fold/src/main.nr@43@verify_honk_proof(inner_vk, inner_proof, c6_public_inputs",
       "circuits/bin/recursive_aggregation/c6_fold/src/main.nr@52@verify_honk_proof_non_zk(acc_vk, acc_proof",
-      "circuits/bin/recursive_aggregation/c6_fold_kernel/src/main.nr@40@verify_honk_proof(inner_vk, inner_proof, c6_public_inputs",
-      "crates/zk/prover/src/circuits/aggregation/c6_accumulator.rs@120@if proof.circuit != CircuitName::ThresholdShareDecryption {"
+      "circuits/bin/recursive_aggregation/c6_fold_kernel/src/main.nr@39@verify_honk_proof(inner_vk, inner_proof, c6_public_inputs",
+      "crates/zk/prover/src/circuits/aggregation/c6_accumulator.rs@121@if proof.circuit != CircuitName::ThresholdShareDecryption {"
     ],
     "line_text": [
       "verify_honk_proof(inner_vk, inner_proof, c6_public_inputs, inner_key_hash);",
@@ -121,8 +121,8 @@
     "supported": true,
     "refs": [
       "packages/interfold-contracts/contracts/registry/CiphernodeRegistryOwnable.sol@431@e3.pkVerifier.verify(",
-      "packages/interfold-contracts/contracts/verifiers/bfv/BfvPkVerifier.sol@152@circuitVerifier.verify(rawProof, publicInputs)",
-      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol@3248@contract DkgAggregatorVerifier is"
+      "packages/interfold-contracts/contracts/verifiers/bfv/BfvPkVerifier.sol@153@circuitVerifier.verify(rawProof, publicInputs)",
+      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol@3285@contract DkgAggregatorVerifier is"
     ],
     "line_text": ["!e3.pkVerifier.verify(", "if (!circuitVerifier.verify(rawProof, publicInputs)) {", "contract DkgAggregatorVerifier is"],
     "note": "The registry calls e3.pkVerifier (BfvPkVerifier for the BFV scheme), which forwards the proof to its immutable circuitVerifier, the DkgAggregatorVerifier Honk contract."
@@ -132,9 +132,9 @@
     "supported": true,
     "refs": [
       "packages/interfold-contracts/contracts/Interfold.sol@487@address(e3.decryptionVerifier),",
-      "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@332@IDecryptionVerifier(verifierAddress).verify(",
-      "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@218@circuitVerifier.verify(rawProof, publicInputs)",
-      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol@3248@contract DecryptionAggregatorVerifier is"
+      "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@334@IDecryptionVerifier(verifierAddress).verify(",
+      "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@230@circuitVerifier.verify(rawProof, publicInputs)",
+      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol@3285@contract DecryptionAggregatorVerifier is"
     ],
     "line_text": [
       "address(e3.decryptionVerifier),",
@@ -150,11 +150,11 @@
     "refs": [
       "circuits/bin/config/src/main.nr@22@use lib::configs::secure_8192::dkg::{",
       "circuits/bin/config/src/main.nr@34@use lib::configs::secure_8192::threshold::{",
-      "circuits/bin/config/src/main.nr@88@fn main() {",
-      "circuits/bin/config/src/main.nr@128@DKG Q_MOD_T verification failed",
-      "circuits/bin/config/src/main.nr@207@SHARE_ENCRYPTION_E0_BOUND == 20",
-      "circuits/bin/config/src/main.nr@603@assert(DKG_N == THRESHOLD_N",
-      "circuits/bin/config/src/main.nr@606@assert(L_THRESHOLD == THRESHOLD_L"
+      "circuits/bin/config/src/main.nr@89@fn main() {",
+      "circuits/bin/config/src/main.nr@129@DKG Q_MOD_T verification failed",
+      "circuits/bin/config/src/main.nr@208@SHARE_ENCRYPTION_E0_BOUND == 20",
+      "circuits/bin/config/src/main.nr@613@assert(DKG_N == THRESHOLD_N",
+      "circuits/bin/config/src/main.nr@616@assert(L_THRESHOLD == THRESHOLD_L"
     ],
     "line_text": [
       "use lib::configs::secure_8192::dkg::{",
@@ -172,13 +172,13 @@
     "supported": true,
     "refs": [
       "crates/zk/prover/src/proof_request/effects/dkg_proofs.rs@25@ZkRequest::PkBfv(PkBfvProofRequest::new(",
-      "crates/zk/prover/src/proof_request/transitions.rs@31@ZkRequest::PkGeneration(proof_request)",
-      "crates/zk/prover/src/proof_request/transitions.rs@36@ZkRequest::ShareComputation(sk_share_computation_request)",
-      "crates/zk/prover/src/proof_request/transitions.rs@41@ZkRequest::ShareComputation(e_sm_share_computation_request)",
-      "crates/zk/prover/src/proof_request/transitions.rs@52@ZkRequest::ShareEncryption(req)",
-      "crates/zk/prover/src/proof_request/transitions.rs@65@ZkRequest::ShareEncryption(req)",
-      "crates/zk/prover/src/proof_request/transitions.rs@91@ZkRequest::DkgShareDecryption(sk_request)",
-      "crates/zk/prover/src/proof_request/transitions.rs@97@ZkRequest::DkgShareDecryption(esm_req)"
+      "crates/zk/prover/src/proof_request/transitions.rs@34@ZkRequest::PkGeneration(proof_request)",
+      "crates/zk/prover/src/proof_request/transitions.rs@40@ZkRequest::ShareComputation(sk_share_computation_request)",
+      "crates/zk/prover/src/proof_request/transitions.rs@45@ZkRequest::ShareComputation(e_sm_share_computation_request)",
+      "crates/zk/prover/src/proof_request/transitions.rs@56@ZkRequest::ShareEncryption(req)",
+      "crates/zk/prover/src/proof_request/transitions.rs@69@ZkRequest::ShareEncryption(req)",
+      "crates/zk/prover/src/proof_request/transitions.rs@95@ZkRequest::DkgShareDecryption(sk_request)",
+      "crates/zk/prover/src/proof_request/transitions.rs@101@ZkRequest::DkgShareDecryption(esm_req)"
     ],
     "line_text": [
       "ZkRequest::PkBfv(PkBfvProofRequest::new(",
@@ -197,10 +197,10 @@
     "supported": true,
     "refs": [
       "crates/aggregator/src/public_key_aggregation/state.rs@76@GeneratingC5Proof {",
-      "crates/aggregator/src/public_key_aggregation/handlers.rs@189@if !self.can_continue_aggregation_effects() {",
-      "crates/aggregator/src/public_key_aggregation/actor.rs@146@fn can_continue_aggregation_effects",
-      "crates/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@373@Publishing PkAggregationProofPending for C5 proof generation",
-      "crates/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@375@PkAggregationProofPending {",
+      "crates/aggregator/src/public_key_aggregation/handlers.rs@270@if !self.can_continue_aggregation_effects() {",
+      "crates/aggregator/src/public_key_aggregation/actor.rs@232@fn can_continue_aggregation_effects",
+      "crates/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@425@Publishing PkAggregationProofPending for C5 proof generation",
+      "crates/aggregator/src/public_key_aggregation/effects/verify_key_proofs.rs@378@PkAggregationProofPending {",
       "crates/zk/prover/src/proof_request/effects/aggregation_proofs.rs@39@ZkRequest::PkAggregation(msg.proof_request)"
     ],
     "line_text": [

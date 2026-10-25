@@ -64,7 +64,7 @@
         {
           "name": "DataAvailabilityCoordinator",
           "role": "Assembles committee-key chunks from chain events and retrieves ciphertext outputs through e3-data-availability.",
-          "ref": "crates/evm/src/data_availability/actor.rs@200@pub struct DataAvailabilityCoordinator {"
+          "ref": "crates/evm/src/data_availability/actor.rs@204@pub struct DataAvailabilityCoordinator {"
         },
         {
           "name": "CiphernodeRegistrySolWriter",
@@ -91,7 +91,7 @@
         {
           "name": "PublicKeyAggregated",
           "by": "CiphernodeRegistrySolWriter",
-          "ref": "crates/evm/src/ciphernode_registry/handlers.rs@124@InterfoldEventData::PublicKeyAggregated(data) => {"
+          "ref": "crates/evm/src/ciphernode_registry/handlers.rs@137@InterfoldEventData::PublicKeyAggregated(data) => {"
         },
         {
           "name": "AccusationQuorumReached",
@@ -101,12 +101,12 @@
         {
           "name": "CommitteePublicKeyChunkPublished",
           "by": "DataAvailabilityCoordinator",
-          "ref": "crates/evm/src/data_availability/actor.rs@417@InterfoldEventData::CommitteePublicKeyChunkPublished(event) => {"
+          "ref": "crates/evm/src/data_availability/actor.rs@421@InterfoldEventData::CommitteePublicKeyChunkPublished(event) => {"
         },
         {
           "name": "CiphertextOutputReferencePublished",
           "by": "DataAvailabilityCoordinator",
-          "ref": "crates/evm/src/data_availability/actor.rs@459@InterfoldEventData::CiphertextOutputReferencePublished(event) => {"
+          "ref": "crates/evm/src/data_availability/actor.rs@463@InterfoldEventData::CiphertextOutputReferencePublished(event) => {"
         }
       ],
       "emits": [
@@ -123,12 +123,12 @@
         {
           "name": "CommitteePublished (key assembled from chunks)",
           "by": "DataAvailabilityCoordinator",
-          "ref": "crates/evm/src/data_availability/actor.rs@332@let event = CommitteePublished {"
+          "ref": "crates/evm/src/data_availability/actor.rs@336@let event = CommitteePublished {"
         },
         {
           "name": "CiphertextOutputPublished (bytes retrieved from DA)",
           "by": "DataAvailabilityCoordinator",
-          "ref": "crates/evm/src/data_availability/actor.rs@529@let event = CiphertextOutputPublished {"
+          "ref": "crates/evm/src/data_availability/actor.rs@533@let event = CiphertextOutputPublished {"
         },
         {
           "name": "committee request (after RandomnessFulfilled and registry acceptance)",
@@ -138,22 +138,22 @@
         {
           "name": "tx submitTicket(e3Id, ticketNumber)",
           "by": "CiphernodeRegistrySolWriter",
-          "ref": "crates/evm/src/ciphernode_registry/effects.rs@69@.submitTicket(e3_id_u256, ticket_number_u256)"
+          "ref": "crates/evm/src/ciphernode_registry/effects.rs@81@.submitTicket(e3_id_u256, ticket_number_u256)"
         },
         {
           "name": "tx finalizeCommittee(e3Id)",
           "by": "CiphernodeRegistrySolWriter",
-          "ref": "crates/evm/src/ciphernode_registry/effects.rs@234@finalizeCommittee(e3_id_u256)"
+          "ref": "crates/evm/src/ciphernode_registry/effects.rs@246@finalizeCommittee(e3_id_u256)"
         },
         {
           "name": "tx publishCommittee(e3Id, pkCommitment, proof, attestation)",
           "by": "CiphernodeRegistrySolWriter",
-          "ref": "crates/evm/src/ciphernode_registry/effects.rs@334@publishCommittee(e3_id_u256"
+          "ref": "crates/evm/src/ciphernode_registry/effects.rs@346@publishCommittee(e3_id_u256"
         },
         {
           "name": "tx publishCommitteePublicKey(chunk), one call per chunk",
           "by": "CiphernodeRegistrySolWriter",
-          "ref": "crates/evm/src/ciphernode_registry/effects.rs@406@.publishCommitteePublicKey("
+          "ref": "crates/evm/src/ciphernode_registry/effects.rs@405@.publishCommitteePublicKey("
         },
         {
           "name": "tx publishPlaintextOutput(e3Id, plaintext, proof)",
@@ -185,7 +185,7 @@
         {
           "name": "Data-availability recovery state: key chunks, pending outputs, terminal E3s",
           "where": "disk",
-          "ref": "crates/evm/src/data_availability/actor.rs@215@recovery: Repository<DataAvailabilityRecoveryState>,"
+          "ref": "crates/evm/src/data_availability/actor.rs@219@recovery: Repository<DataAvailabilityRecoveryState>,"
         },
         {
           "name": "Ingestion heartbeat file per chain (health check only, not a resume cursor)",

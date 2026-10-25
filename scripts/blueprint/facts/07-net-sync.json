@@ -16,7 +16,7 @@
         {
           "name": "DocumentPublisher",
           "role": "Announces the documents this node publishes (DHT store plus gossip notice), uploads replicas, and fetches documents that peers name.",
-          "ref": "crates/net/src/document_publishing/actor.rs@148@pub struct DocumentPublisher {"
+          "ref": "crates/net/src/document_publishing/actor.rs@149@pub struct DocumentPublisher {"
         },
         {
           "name": "NetEventTranslator",
@@ -43,12 +43,12 @@
         {
           "name": "PublishDocumentRequested",
           "by": "DocumentPublisher",
-          "ref": "crates/net/src/document_publishing/handlers.rs@87@impl Handler<TypedEvent<PublishDocumentRequested>> for DocumentPublisher {"
+          "ref": "crates/net/src/document_publishing/handlers.rs@90@impl Handler<TypedEvent<PublishDocumentRequested>> for DocumentPublisher {"
         },
         {
           "name": "DocumentIngress",
           "by": "DocumentPublisher",
-          "ref": "crates/net/src/document_publishing/handlers.rs@268@impl Handler<DocumentIngress> for DocumentPublisher {"
+          "ref": "crates/net/src/document_publishing/handlers.rs@291@impl Handler<DocumentIngress> for DocumentPublisher {"
         },
         {
           "name": "all bus events, filtered to the forwardable allowlist",
@@ -95,7 +95,7 @@
         {
           "name": "DocumentReceived",
           "by": "DocumentPublisher",
-          "ref": "crates/net/src/document_publishing/handlers.rs@378@.publish_from_remote(document, notification.ts, None, EventSource::Net)"
+          "ref": "crates/net/src/document_publishing/handlers.rs@410@.publish_from_remote(document, notification.ts, None, EventSource::Net)"
         },
         {
           "name": "accepted peer events (publish_from_remote)",
@@ -105,12 +105,12 @@
         {
           "name": "PublishDocumentRequested",
           "by": "EventConverter",
-          "ref": "crates/net/src/event_conversion/actor.rs@44@self.bus.publish(request, ctx)?;"
+          "ref": "crates/net/src/event_conversion/actor.rs@45@self.bus.publish(request, ctx)?;"
         },
         {
           "name": "ThresholdShareCreated, EncryptionKeyReceived, DecryptionKeyShared (decoded from a document)",
           "by": "EventConverter",
-          "ref": "crates/net/src/event_conversion/actor.rs@71@self.bus.publish(evt, ctx)?;"
+          "ref": "crates/net/src/event_conversion/actor.rs@82@self.bus.publish(evt, ctx)?;"
         }
       ],
       "state": [
@@ -127,7 +127,7 @@
         {
           "name": "publications waiting to be announced and uploaded",
           "where": "memory",
-          "ref": "crates/net/src/document_publishing/actor.rs@163@publications: HashMap<DocumentId, Publication>,"
+          "ref": "crates/net/src/document_publishing/actor.rs@164@publications: HashMap<DocumentId, Publication>,"
         },
         {
           "name": "documents received after restart, kept until SyncEnded",
@@ -207,7 +207,7 @@
         },
         {
           "why": "How a publish request becomes a DHT store, a gossip notice and an upload.",
-          "ref": "crates/net/src/document_publishing/handlers.rs@87@impl Handler<TypedEvent<PublishDocumentRequested>> for DocumentPublisher {"
+          "ref": "crates/net/src/document_publishing/handlers.rs@90@impl Handler<TypedEvent<PublishDocumentRequested>> for DocumentPublisher {"
         },
         {
           "why": "How an accepted gossip event passes the allowlist and reaches the bus.",
@@ -228,12 +228,12 @@
         {
           "pattern": "actix-message",
           "note": "A private message type that carries a publication key into the actor.",
-          "ref": "crates/net/src/document_publishing/actor.rs@94@struct AnnounceDocument(DocumentId);"
+          "ref": "crates/net/src/document_publishing/actor.rs@95@struct AnnounceDocument(DocumentId);"
         },
         {
           "pattern": "tokio-spawn",
           "note": "A tokio task forwards broadcast NetEvents into the actor mailbox.",
-          "ref": "crates/net/src/document_publishing/actor.rs@340@tokio::spawn({"
+          "ref": "crates/net/src/document_publishing/actor.rs@343@tokio::spawn({"
         },
         {
           "pattern": "derive-macro",
@@ -396,7 +396,7 @@
         },
         {
           "why": "The schema check that runs before any state is written.",
-          "ref": "crates/sync/src/sync/preflight.rs@45@pub async fn preflight_schema_version("
+          "ref": "crates/sync/src/sync/preflight.rs@54@pub async fn preflight_schema_version("
         },
         {
           "why": "The replay loop: fan-out of each merged event, then a barrier.",
