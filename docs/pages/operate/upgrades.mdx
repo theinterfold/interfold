@@ -50,6 +50,10 @@ The `bb` 6.0.0 toolchain uses protocol version 9. Its proofs and verification ke
 against `bb` 5.2.0 nodes or verifiers, so upgrade every node together during the paused cutover,
 after active E3 work completes. No storage reset is needed.
 
+The l-BFV proof tree uses protocol version 10. It changes proofs, verifiers, and the DKG, so it
+does not work with protocol version 9 nodes or verifiers. Upgrade every node and verifier together
+after active E3 work completes.
+
 ## The on-chain release gate
 
 The Interfold contract points to a node release registry (`INodeReleaseRegistry`). The registry
