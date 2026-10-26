@@ -13,6 +13,10 @@ import { SealedCcaProgram__factory } from '../types/factories/contracts'
 import { type SaleParams, encodeSaleParams, filled } from './helpers'
 
 export const E3_ID = 7n
+/** The BN254 scalar field: a Noir `Field` and a Honk public input are below it. */
+export const BN254_R = 21888242871839275222246405745257275088548364400416034343698204186575808495617n
+/** A real l-BFV E3 id: 256 bits and above `BN254_R`, as 81% of them are. */
+export const E3_ID_ABOVE_FIELD = 68460186016439450058677660870455064315333898776819568879520586884256307871744n
 export const KEY = filled(0xab)
 export const VK_ANCHOR = filled(0xcd)
 export const U18 = 10n ** 18n
@@ -41,8 +45,22 @@ async function deployMockVerifier(ethers: HardhatEthers) {
   return ethers.deployContract('MockBidVerifier')
 }
 
-/** Deploys the program with mock verifiers and a mock Interfold, and no sale. */
-export async function deployFixture(): Promise<Fixture> {
+/** Deploys a generated Honk verifier with the two libraries it links. */
+export async function deployGeneratedVerifier(ethers: HardhatEthers, kind: 'Bid' | 'Claim') {
+  const source = `contracts/verifiers/SealedCca${kind}Verifier.sol`
+  const libraries: Record<string, string> = {}
+  for (const library of ['ZKTranscriptLib', 'RelationsLib']) {
+    const deployed = await ethers.deployContract(`${source}:${library}${kind}`)
+    libraries[`project/${source}:${library}${kind}`] = await deployed.getAddress()
+  }
+  return ethers.deployContract(`${source}:SealedCca${kind}Verifier`, [], { libraries })
+}
+
+/**
+ * Deploys the program with mock verifiers and a mock Interfold, and no sale. With `realClaimVerifier` the program
+ * calls the generated claim verifier instead of the mock; `Fixture.claimVerifier` stays the unused mock.
+ */
+export async function deployFixture(options: { realClaimVerifier?: boolean } = {}): Promise<Fixture> {
   const { ethers } = await hre.network.connect()
   const [creator, relayer, ...actors] = await ethers.getSigners()
   const interfold = await ethers.deployContract('MockInterfold')
@@ -69,7 +87,7 @@ export async function deployFixture(): Promise<Fixture> {
     await receiptVerifier.getAddress(),
     await receiptVerifier.imageId(),
     await bidVerifier.getAddress(),
-    await claimVerifier.getAddress(),
+    await (options.realClaimVerifier ? await deployGeneratedVerifier(ethers, 'Claim') : claimVerifier).getAddress(),
     VK_ANCHOR,
     await availability.getAddress(),
   )

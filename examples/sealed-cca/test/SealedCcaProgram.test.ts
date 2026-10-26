@@ -5,10 +5,15 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import { expect } from 'chai'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { type Hex, encodeAbiParameters, keccak256, parseAbiParameters, zeroAddress } from 'viem'
 import {
+  BN254_R,
   ESCROW,
   E3_ID,
+  E3_ID_ABOVE_FIELD,
   KEY,
   PRICES,
   SUPPLY,
@@ -50,13 +55,13 @@ function makeBid(bidder: string, seed: number) {
   }
 }
 
-/** The public inputs of the bid proof, in the order of `circuits/PUBLIC_INPUTS.md`. */
+/** The public inputs of the bid proof, in the order of `circuits/PUBLIC_INPUTS.md`: `e3_id` is `e3Id mod r`. */
 function bidPublicInputs(bid: ReturnType<typeof makeBid>, e3Id: bigint, levels: number, index: number, version: number): Hex[] {
   return [
     bid.ctCommitment,
     bid.bidCommitment,
     bytes32(bid.bidder),
-    bytes32(e3Id),
+    bytes32(e3Id % BN254_R),
     bytes32(levels),
     bytes32(index),
     bytes32(version),
@@ -76,8 +81,8 @@ async function deposit(fixture: Fixture, actor: Fixture['actors'][number], e3Id 
   await (await fixture.program.connect(actor).deposit(e3Id, '0x')).wait()
 }
 
-async function bid(fixture: Fixture, actor: Fixture['actors'][number], seed: number, e3Id = E3_ID) {
-  const made = makeBid(actor.address, seed)
+async function bid(fixture: Fixture, actor: Fixture['actors'][number], seed: number, e3Id = E3_ID, bidCommitment?: Hex) {
+  const made = { ...makeBid(actor.address, seed), ...(bidCommitment && { bidCommitment }) }
   await (await fixture.program.connect(actor).publishInput(e3Id, encodeBidInput(made))).wait()
   return made
 }
@@ -300,6 +305,24 @@ describe('SealedCcaProgram', () => {
       expect(leaf).to.not.equal(0n)
     })
 
+    it('passes e3Id mod r to the bid verifier when the E3 id is above the field', async () => {
+      const fixture = await deployFixture()
+      const { program, bidVerifier, actors } = fixture
+      expect(E3_ID_ABOVE_FIELD >= BN254_R).to.equal(true)
+      const e3Id = await createSale(fixture, { e3Id: E3_ID_ABOVE_FIELD })
+      const [alice] = actors
+      await deposit(fixture, alice, e3Id)
+      const made = makeBid(alice.address, 3)
+      // The circuit takes a field element, so the verifier must see the reduced id, not the 256-bit one.
+      await (await bidVerifier.expect(bidPublicInputs(made, e3Id, 4, 0, 1))).wait()
+      await expect(program.connect(alice).publishInput(e3Id, encodeBidInput(made)))
+        .to.emit(program, 'BidSubmitted')
+        .withArgs(e3Id, alice.address, 1n, 0n, made.ciphertext, made.ctCommitment, made.bidCommitment)
+      // Storage and events keep the full id.
+      expect(await program.bidCount(e3Id, alice.address)).to.equal(1n)
+      expect(await program.bidCommitments(e3Id, alice.address, 1n)).to.equal(made.bidCommitment)
+    })
+
     it('numbers the versions of updates and allows three bids', async () => {
       const fixture = await deployFixture()
       const { program, bidVerifier, actors } = fixture
@@ -430,14 +453,19 @@ describe('SealedCcaProgram', () => {
   async function playSale(
     fixture: Fixture,
     steps: number[],
-    options: { e3Id?: bigint; countedVersions?: number[]; extraBids?: Record<number, number> } = {},
+    options: {
+      e3Id?: bigint
+      countedVersions?: number[]
+      extraBids?: Record<number, number>
+      firstBidCommitments?: Record<number, Hex>
+    } = {},
   ) {
     const e3Id = await createSale(fixture, { e3Id: options.e3Id })
     const made = []
     for (let i = 0; i < steps.length; i++) {
       const actor = fixture.actors[i]
       await deposit(fixture, actor, e3Id)
-      made.push([await bid(fixture, actor, i + 1, e3Id)])
+      made.push([await bid(fixture, actor, i + 1, e3Id, options.firstBidCommitments?.[i])])
       for (let extra = 0; extra < (options.extraBids?.[i] ?? 0); extra++) made[i].push(await bid(fixture, actor, 40 + 3 * i + extra, e3Id))
     }
     const counted = options.countedVersions ?? steps.map(() => 1)
@@ -493,7 +521,9 @@ describe('SealedCcaProgram', () => {
 
       // A winner claims with a proof of cmp: the verifier must see the counted commitment, bidder, e3Id, k and cmp.
       const k = expected.step
-      await (await claimVerifier.expect([made[1][0].bidCommitment, bytes32(bob.address), bytes32(e3Id), bytes32(k), bytes32(2)])).wait()
+      await (
+        await claimVerifier.expect([made[1][0].bidCommitment, bytes32(bob.address), bytes32(e3Id % BN254_R), bytes32(k), bytes32(2)])
+      ).wait()
       const bobOutcome = referenceOutcome(expected, 2, ESCROW, U18)
       await expect(program.connect(creator).claim(e3Id, bob.address, encodeClaim(compare(2, k))))
         .to.emit(program, 'Claimed')
@@ -602,6 +632,40 @@ describe('SealedCcaProgram', () => {
       expect(await usdc.balanceOf(programAddress)).to.equal(0n)
     })
 
+    it('verifies a real claim proof for an E3 id above the field', async () => {
+      const vectors = JSON.parse(
+        readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../sdk/test-vectors/claims-e3-above-field.json'), 'utf8'),
+      ) as {
+        e3Id: string
+        bidder: Hex
+        bidCommitment: Hex
+        claims: { b: number; k: number; cmp: number; proof: Hex; publicInputs: Hex[] }[]
+      }
+      expect(BigInt(vectors.e3Id)).to.equal(E3_ID_ABOVE_FIELD)
+      // The proofs come from the SDK with the real claim circuit; the program verifies them with the generated verifier.
+      const fixture = await deployFixture({ realClaimVerifier: true })
+      const { program, actors } = fixture
+      const [alice] = actors
+      expect(alice.address).to.equal(vectors.bidder)
+      // Alice bids the step of the vectors; her commitment is the one the SDK computed with `e3Id mod r`.
+      const steps = [vectors.claims[0].b, 3, 2, 0]
+      const { e3Id } = await playSale(fixture, steps, { e3Id: E3_ID_ABOVE_FIELD, firstBidCommitments: { 0: vectors.bidCommitment } })
+      await (await program.clear(e3Id)).wait()
+      const k = Number((await program.clearing(e3Id)).step)
+      const proven = vectors.claims.find((claim) => claim.k === k)!
+      expect(proven.cmp).to.equal(compare(steps[0], k))
+      expect(BigInt(proven.publicInputs[2])).to.equal(E3_ID_ABOVE_FIELD % BN254_R)
+      await expect(program.claim(e3Id, alice.address, encodeClaim(proven.cmp, proven.proof)))
+        .to.emit(program, 'Claimed')
+        .withArgs(
+          e3Id,
+          alice.address,
+          (tokens: bigint) => tokens > 0n,
+          (paid: bigint) => paid > 0n,
+          (refund: bigint) => refund >= 0n,
+        )
+    })
+
     it('uses the bid commitment of the counted version of an updated bid', async () => {
       const fixture = await deployFixture()
       const { program, actors, claimVerifier } = fixture
@@ -612,7 +676,13 @@ describe('SealedCcaProgram', () => {
       expect(await program.countedVersion(e3Id, alice.address)).to.equal(2n)
       const k = Number((await program.clearing(e3Id)).step)
       await (
-        await claimVerifier.expect([made[0][1].bidCommitment, bytes32(alice.address), bytes32(e3Id), bytes32(k), bytes32(compare(2, k))])
+        await claimVerifier.expect([
+          made[0][1].bidCommitment,
+          bytes32(alice.address),
+          bytes32(e3Id % BN254_R),
+          bytes32(k),
+          bytes32(compare(2, k)),
+        ])
       ).wait()
       await (await program.claim(e3Id, alice.address, encodeClaim(compare(2, k)))).wait()
     })

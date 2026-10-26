@@ -416,7 +416,8 @@ contract SealedCcaProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ow
   }
 
   /// @dev Public inputs of `sealed_cca_bid`: `ct_commitment, bid_commitment, bidder, e3_id, levels,
-  /// bidder_index, version, pk_commitment, vk_anchor`. See `circuits/PUBLIC_INPUTS.md`.
+  /// bidder_index, version, pk_commitment, vk_anchor`. See `circuits/PUBLIC_INPUTS.md`. `e3_id` is
+  /// `e3Id mod r`: an E3 id is 256 bits and can be above the BN254 scalar field.
   function _verifyBidProof(
     uint256 e3Id,
     BidInput memory bid,
@@ -429,7 +430,7 @@ contract SealedCcaProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ow
     publicInputs[0] = bid.ctCommitment;
     publicInputs[1] = bid.bidCommitment;
     publicInputs[2] = bytes32(uint256(uint160(bid.bidder)));
-    publicInputs[3] = bytes32(e3Id);
+    publicInputs[3] = bytes32(e3Id % SNARK_SCALAR_FIELD);
     publicInputs[4] = bytes32(uint256(levels));
     publicInputs[5] = bytes32(index);
     publicInputs[6] = bytes32(uint256(version));
@@ -557,12 +558,12 @@ contract SealedCcaProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ow
     emit Claimed(e3Id, bidder, tokens, paid, refund);
   }
 
-  /// @dev Public inputs of `sealed_cca_claim`: `bid_commitment, bidder, e3_id, k, cmp`.
+  /// @dev Public inputs of `sealed_cca_claim`: `bid_commitment, bidder, e3_id, k, cmp`. `e3_id` is `e3Id mod r`.
   function _verifyClaimProof(uint256 e3Id, address bidder, bytes32 bidCommitment, uint8 step, uint8 cmp, bytes memory proof) private view {
     bytes32[] memory publicInputs = new bytes32[](5);
     publicInputs[0] = bidCommitment;
     publicInputs[1] = bytes32(uint256(uint160(bidder)));
-    publicInputs[2] = bytes32(e3Id);
+    publicInputs[2] = bytes32(e3Id % SNARK_SCALAR_FIELD);
     publicInputs[3] = bytes32(uint256(step));
     publicInputs[4] = bytes32(uint256(cmp));
     if (!claimVerifier.verify(proof, publicInputs)) revert InvalidClaimProof();

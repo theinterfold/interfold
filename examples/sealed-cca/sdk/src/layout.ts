@@ -149,6 +149,16 @@ export async function decodeOutput(plaintextOutput: string): Promise<SaleOutput>
   return readOutputSlots(await decodePlaintextSlots(`0x${hex}`, PRESET))
 }
 
+/** The BN254 scalar field `r`: the modulus of a Noir `Field` and of a Honk public input. */
+export const BN254_R = 21888242871839275222246405745257275088548364400416034343698204186575808495617n
+
+/**
+ * An E3 id as a field element: `e3Id mod r`. An E3 id has 256 bits and is above `r` with a probability of about 81%,
+ * so the circuits and the commitment take it reduced, as `SealedCcaProgram` passes it to the verifiers. The contract
+ * storage, the events and the EIP-712 `Bid` keep the full `e3Id`.
+ */
+export const e3Field = (e3Id: bigint): bigint => e3Id % BN254_R
+
 /** A random value below the BN254 field, for the salt of a bid commitment: 31 random bytes as `0x` hex of 32 bytes. */
 export function bidSalt(): Hex {
   const bytes = new Uint8Array(31)
@@ -252,7 +262,7 @@ export interface BidInput {
   ciphertext: Hex
   /** The SAFE commitment of the ciphertext (`bytes32`). */
   ctCommitment: Hex
-  /** The commitment of the bid (`bytes32`): `poseidon2(b, salt, bidder, e3Id)`. */
+  /** The commitment of the bid (`bytes32`): `poseidon2([BID_DOMAIN, b, salt, bidder, e3Field(e3Id)])`. */
   bidCommitment: Hex
   /** The bid proof. */
   proof: Hex

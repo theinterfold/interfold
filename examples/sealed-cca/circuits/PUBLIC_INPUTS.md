@@ -23,7 +23,7 @@ One circuit, one proof. It has fewer than 2^21 gates, so a browser can prove it.
 | 0   | `ct_commitment`  | The commitment of the bid ciphertext (`ctCommitment` in the `publishInput` data). | the bidder, checked by the leaf |
 | 1   | `bid_commitment` | `poseidon2([DOMAIN_BID, b, salt, bidder, e3_id], 5)` (`bidCommitment`).           | the bidder                      |
 | 2   | `bidder`         | `uint160(bidder)`: the sender, or the signer of a relayed bid.                    | the contract                    |
-| 3   | `e3_id`          | `e3Id`.                                                                           | the contract                    |
+| 3   | `e3_id`          | `e3Id mod r` (see below).                                                         | the contract                    |
 | 4   | `levels`         | The number of price steps of the sale (2 to 16).                                  | the contract (from the sale)    |
 | 5   | `bidder_index`   | The index `i` of the bidder (0 to 111), assigned by `deposit`.                    | the contract (from storage)     |
 | 6   | `version`        | The version of this bid (1 to 3).                                                 | the contract (`bidCount + 1`)   |
@@ -32,6 +32,13 @@ One circuit, one proof. It has fewer than 2^21 gates, so a browser can prove it.
 
 Inputs 0 to 6 are `pub` parameters of `main`. Inputs 7 and 8 are its return value.
 
+- `e3_id` is `e3Id mod r`, with
+  `r = 21888242871839275222246405745257275088548364400416034343698204186575808495617` the BN254
+  scalar field. An E3 id is a 256-bit value and is above `r` with a probability of about 81%, so it
+  cannot be a field element as it is. The bid and the claim circuit, the contract
+  (`SNARK_SCALAR_FIELD`) and the SDK (`e3Field`) all use the reduced value, also inside
+  `bid_commitment`. Everything else keeps the full `e3Id`: the storage keys, the events, the EIP-712
+  `Bid(uint256 e3Id, ...)` and the compute-hash binding.
 - `DOMAIN_BID` is the ASCII bytes of `scca-bid-v1` as one big-endian integer:
   `0x736363612d6269642d7631` (`BID_DOMAIN` in `circuits/bid/src/main.nr`). The claim circuit uses
   the same value.
@@ -56,7 +63,7 @@ Solidity verifier: `contracts/verifiers/SealedCcaClaimVerifier.sol`, contract
 | --- | ---------------- | ------------------------------------------------------------------ | ------------------------------------ |
 | 0   | `bid_commitment` | The `bidCommitment` the contract stored for the counted version.   | the contract                         |
 | 1   | `bidder`         | `uint160(bidder)`.                                                 | the contract                         |
-| 2   | `e3_id`          | `e3Id`.                                                            | the contract                         |
+| 2   | `e3_id`          | `e3Id mod r` (see the bid proof above).                            | the contract                         |
 | 3   | `k`              | The step of the clearing: `s` (capped) or `l` (uncapped). 0 to 15. | the contract (from the clearing)     |
 | 4   | `cmp`            | `0` if `b < k`, `1` if `b == k`, `2` if `b > k`.                   | the claimant: the circuit returns it |
 
