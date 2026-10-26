@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import React, { useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useParams } from 'react-router-dom'
 import { AUCTION_TYPE_DESCRIPTIONS, AUCTION_TYPE_LABELS, MAX_BIDDERS_BY_TYPE, isRatioType } from '@interfold/auction'
 import { useAuction } from '@/hooks/useAuctions'
 import { useChainTime } from '@/hooks/useChainTime'
@@ -22,6 +22,7 @@ import { Pips } from '@/components/AuctionCard'
 import BidPanel from '@/components/BidPanel'
 import CopyId from '@/components/CopyId'
 import { AddressLink } from '@/components/Explorer'
+import { PictureControl, PictureHero, usePicture } from '@/components/AuctionPicture'
 import PhaseTimeline from '@/components/PhaseTimeline'
 import ResultPanel from '@/components/ResultPanel'
 import Section from '@/components/Section'
@@ -42,6 +43,10 @@ const AuctionPage: React.FC = () => {
   const committeeKey = useCommitteeKey(e3Id, phase === 'awaiting-key' || phase === 'bidding')
 
   const allowlist = useAllowlist(auction?.gate, e3Id)
+  // A replaced picture has a new URL, so a cache cannot show the old one.
+  const [pictureVersion, setPictureVersion] = useState<number | undefined>(undefined)
+  const picture = usePicture(e3Id, pictureVersion)
+  const location = useLocation()
 
   // The bids of this browser change only when a submission lands, which moves the bid count.
   const myVersions = useMemo(
@@ -77,6 +82,9 @@ const AuctionPage: React.FC = () => {
   if (phase === null) return null
 
   const { e3Program } = getContractAddresses()
+  const isCreator = wallet.ready && wallet.address !== undefined && wallet.address.toLowerCase() === auction.creator.toLowerCase()
+  // The create page navigates here with the error of a picture upload that failed after the auction was created.
+  const pictureError = typeof location.state?.pictureError === 'string' ? location.state.pictureError : undefined
   const maxBidders = MAX_BIDDERS_BY_TYPE[auction.auctionType]
   const gateKind = gateKindOf(auction.gate)
 
@@ -103,6 +111,21 @@ const AuctionPage: React.FC = () => {
         </div>
         <p className='lede'>{AUCTION_TYPE_DESCRIPTIONS[auction.auctionType]}</p>
       </header>
+
+      {picture.status !== 'loading' && (picture.status === 'present' || isCreator) && (
+        <section className='space-y-3' aria-label='Picture'>
+          {picture.status === 'present' && picture.url && <PictureHero url={picture.url} title={auction.title} />}
+          {isCreator && wallet.address && (
+            <PictureControl
+              e3Id={auction.e3Id}
+              account={wallet.address}
+              hasPicture={picture.status === 'present'}
+              initialError={pictureError}
+              onUploaded={() => setPictureVersion(Date.now())}
+            />
+          )}
+        </section>
+      )}
 
       <dl className='card grid grid-cols-2 gap-x-6 gap-y-5 md:grid-cols-3 lg:grid-cols-4'>
         <Fact label='Bidders'>
