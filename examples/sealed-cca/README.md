@@ -93,7 +93,10 @@ proof (`sealed_cca_bid`, below 2^21 gates, proved in the browser) shows:
 - The ciphertext is a valid encryption under the E3 committee key.
 - Its plaintext is the thermometer of `b` in the slots 0 to 15, `b < levels`, and the version in the
   slot `16 + i`. All other slots are 0.
-- `bidCommitment = poseidon2(DOMAIN_BID, b, salt, bidder, e3Id)`.
+- `bidCommitment = poseidon2(DOMAIN_BID, b, salt, bidder, e3Id mod r)`. An E3 id has 256 bits and
+  can be above the BN254 scalar field `r`, so the circuits take `e3_id = e3Id mod r`. The contract
+  and the SDK (`e3Field`) reduce it the same way. Storage, events and the EIP-712 `Bid` keep the
+  full `e3Id`.
 
 The contract does not trust the bidder for the index and the version. It takes both from its storage
 and puts them in the public inputs. So a bidder cannot count in the slot of another bidder. The

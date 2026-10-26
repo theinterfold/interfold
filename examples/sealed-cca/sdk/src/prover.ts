@@ -12,7 +12,18 @@ import { proveUserDataEncryptionTree } from '@interfold/user-data-encryption-pro
 import { type Address, type Hex, toHex as viemToHex } from 'viem'
 import bidCircuitJson from '../circuits/sealed_cca_bid.json'
 import claimCircuitJson from '../circuits/sealed_cca_claim.json'
-import { assertBid, assertBidderIndex, assertVersion, bidSalt, bidSlots, encodeClaimData, LEVELS, MIN_LEVELS, PRESET } from './layout'
+import {
+  assertBid,
+  assertBidderIndex,
+  assertVersion,
+  bidSalt,
+  bidSlots,
+  e3Field,
+  encodeClaimData,
+  LEVELS,
+  MIN_LEVELS,
+  PRESET,
+} from './layout'
 
 export { PRESET, bidSalt }
 /** The insecure SIMD parameters on the l-BFV path: param set 5. */
@@ -70,17 +81,18 @@ export interface BidOpening {
   b: number
   salt: Hex | bigint
   bidder: Address
+  /** The full E3 id; the commitment uses `e3Field(e3Id)`. */
   e3Id: bigint
 }
 
 /**
- * `poseidon2([BID_DOMAIN, b, salt, bidder, e3Id])`, as the bid and claim circuits compute it
+ * `poseidon2([BID_DOMAIN, b, salt, bidder, e3Field(e3Id)])`, as the bid and claim circuits compute it
  * (`compute_bid_commitment`): the commitment the contract stores for each bid version.
  */
 export async function computeBidCommitment(opening: BidOpening, api?: Barretenberg): Promise<Hex> {
   const own = api ?? (await Barretenberg.new({ threads: 1 }))
   try {
-    const inputs = [BID_DOMAIN, BigInt(opening.b), toBigint(opening.salt), BigInt(opening.bidder), opening.e3Id].map(fieldBytes)
+    const inputs = [BID_DOMAIN, BigInt(opening.b), toBigint(opening.salt), BigInt(opening.bidder), e3Field(opening.e3Id)].map(fieldBytes)
     const { hash } = await own.poseidon2Hash({ inputs })
     return toHex(hash)
   } finally {
@@ -209,7 +221,7 @@ export class BidProver {
       ct_commitment: ctCommitment,
       bid_commitment: bidCommitment,
       bidder: BigInt(bidder).toString(),
-      e3_id: e3Id.toString(),
+      e3_id: e3Field(e3Id).toString(),
       levels,
       bidder_index: bidderIndex,
       version,
@@ -319,7 +331,7 @@ export class ClaimProver {
     const inputs = {
       bid_commitment: input.bidCommitment,
       bidder: BigInt(input.bidder).toString(),
-      e3_id: input.e3Id.toString(),
+      e3_id: e3Field(input.e3Id).toString(),
       k: input.k,
       b: input.b.toString(),
       salt: toBigint(input.salt).toString(),
