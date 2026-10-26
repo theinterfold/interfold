@@ -46,6 +46,69 @@ fn source_hash_matches_the_formatted_build_projection_for_every_pair() {
     }
 }
 
+#[test]
+#[ignore = "requires pinned nargo; exercises source selection only, with no circuit compilation"]
+fn source_refresh_normalizes_matrix_selections_without_touching_artifacts() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    artifacts::copy_tree(
+        &repo.join("circuits/lib"),
+        &root.join("circuits/lib"),
+        &["target", "Prover.toml", "Witness.toml"],
+    )
+    .unwrap();
+    for file in [
+        "scripts/circuits/build-pairs.json",
+        "packages/interfold-contracts/scripts/utils.ts",
+        "packages/interfold-contracts/contracts/lib/BfvProtocol.sol",
+    ] {
+        write(root, file, fs::read(repo.join(file)).unwrap());
+    }
+    write_pins(root);
+    write(
+        root,
+        "dist/circuits/saved/.build-stamp.json",
+        "original artifact stamp",
+    );
+    write(
+        root,
+        "dist/circuits/saved/compiled.json",
+        "original compiled bytes",
+    );
+    let archived = snapshot(&root.join("dist"));
+    for [preset, committee] in build_pairs(root).unwrap() {
+        let mut selection = configuration::prepare_selection(
+            root,
+            super::preset(&preset).unwrap(),
+            committee.parse().unwrap(),
+            false,
+        )
+        .unwrap();
+        selection.format(root).unwrap();
+        selection.publish().unwrap();
+    }
+    let selected_utils =
+        fs::read(root.join("packages/interfold-contracts/scripts/utils.ts")).unwrap();
+    let error = configuration::check(root, &request())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("differs from generated configuration"),
+        "{error}"
+    );
+    configuration::sync_sources(root).unwrap();
+    configuration::check(root, &request()).unwrap();
+    assert_eq!(
+        fs::read(root.join("packages/interfold-contracts/scripts/utils.ts")).unwrap(),
+        selected_utils
+    );
+    assert_eq!(snapshot(&root.join("dist")), archived);
+    let normalized = snapshot(root);
+    configuration::sync_sources(root).unwrap();
+    assert_eq!(snapshot(root), normalized);
+}
+
 pub(crate) fn request() -> Request {
     Request {
         operation: Operation::Build,
@@ -405,7 +468,6 @@ fn source_identity_tracks_inputs_not_generated_selections_or_tests() {
         "circuits/lib/Nargo.toml",
         "circuits/lib/src/configs/committee/micro/mod.nr",
         "scripts/circuits/build-pairs.json",
-        "crates/zk/build/templates/active_crypto_config.sol.in",
         "crates/zk/build/templates/committee_active.nr.in",
     ] {
         write(root, path, "original");

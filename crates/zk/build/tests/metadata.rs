@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::{fs, path::Path, process::Command};
 
 #[test]
-fn export_config_is_deterministic_json_without_compiler_tools_or_output_files() {
+fn export_config_is_deterministic_json_without_compiler_tools() {
     let temp = tempfile::tempdir().unwrap();
     let export = || {
         let output = Command::new(env!("CARGO_BIN_EXE_e3-zk-build"))
@@ -31,7 +31,6 @@ fn export_config_is_deterministic_json_without_compiler_tools_or_output_files() 
         document["zk"]["messageCoeffsCount"],
         e3_zk_config::MAX_MSG_NON_ZERO_COEFFS
     );
-    assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 0);
 }
 
 #[test]

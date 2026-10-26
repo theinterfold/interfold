@@ -109,8 +109,8 @@ export function getRepoRoot(): string {
 export const ACTIVE_BFV_PRESET: BfvArtifactPreset = "insecure-64";
 export const ACTIVE_BFV_COMMITTEE: BfvCommittee = "minimum";
 
-export type BfvArtifactPreset = "insecure-64" | "secure-8192";
-export type BfvCommittee = "minimum" | "micro" | "small";
+export type BfvArtifactPreset = keyof typeof BFV_PRESETS;
+export type BfvCommittee = keyof typeof COMMITTEES;
 
 export interface ActiveBfvConfig {
   preset: BfvArtifactPreset;
@@ -209,7 +209,7 @@ export const ACTIVE_BFV_COMMITTEE_N = ACTIVE_BFV_CONFIG.n;
  * Names a circuit directory in the release-archive layout (`<preset>/<committee>/default/...`):
  * the `circuits/` directory of `circuits-<version>.tar.gz`, or the directory that
  * `interfold noir setup` installs, from the release of this package. Only a package installed
- * outside the monorepo reads it; the monorepo reads its own release-verified circuit build.
+ * outside the monorepo reads it; the monorepo reads its own selected circuit build.
  */
 const CIRCUITS_DIR_ENV = "INTERFOLD_CIRCUITS_DIR";
 
@@ -454,50 +454,57 @@ function readVkCommitmentValues(
     : process.env[CIRCUITS_DIR_ENV];
   if (!artifacts)
     throw new Error(`Set ${CIRCUITS_DIR_ENV} to the release circuit directory`);
-  const packaged = path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "../vk-commitments.json",
-  );
-  const manifestPath = repo
-    ? path.join(repo, "circuits/vk-commitments.json")
-    : packaged;
-  if (!fs.existsSync(manifestPath))
-    throw new Error(
-      `Missing VK commitment manifest: ${manifestPath}; run pnpm generate:vk-commitments after preparing the circuit artifacts`,
-    );
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
-    formatVersion: number;
-    pairs: VkCommitmentPair[];
-  };
-  if (manifest.formatVersion !== 1 || !Array.isArray(manifest.pairs))
-    throw new Error("Unsupported VK commitment manifest");
-  const pairs = manifest.pairs.filter(
-    (pair) =>
-      pair.preset === selected.preset && pair.committee === selected.committee,
-  );
-  if (pairs.length !== 1)
-    throw new Error(
-      `Expected one VK commitment pair for ${selected.preset}/${selected.committee}`,
-    );
-  const pair = pairs[0];
   const pairDirectory = path.join(
     artifacts,
     selected.preset,
     selected.committee,
   );
-  const slice = JSON.parse(
+  // A complete local build writes its own pair metadata; local edits must not require rebuilding
+  // the release matrix. Installed packages still require their immutable catalogue to match.
+  const pair = JSON.parse(
     fs.readFileSync(path.join(pairDirectory, "vk-commitments.json"), "utf8"),
-  );
-  if (!isDeepStrictEqual(slice, pair))
+  ) as VkCommitmentPair;
+  if (pair.preset !== selected.preset || pair.committee !== selected.committee)
     throw new Error(
-      "Circuit archive VK commitment slice differs from the package manifest",
+      "VK commitment pair differs from the selected configuration",
     );
+  if (!repo) {
+    const manifestPath = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../vk-commitments.json",
+    );
+    if (!fs.existsSync(manifestPath))
+      throw new Error(
+        `Missing VK commitment manifest: ${manifestPath}; use matching release assets`,
+      );
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
+      formatVersion: number;
+      pairs: VkCommitmentPair[];
+    };
+    if (manifest.formatVersion !== 1 || !Array.isArray(manifest.pairs))
+      throw new Error("Unsupported VK commitment manifest");
+    const pairs = manifest.pairs.filter(
+      (entry) =>
+        entry.preset === selected.preset &&
+        entry.committee === selected.committee,
+    );
+    if (pairs.length !== 1)
+      throw new Error(
+        `Expected one VK commitment pair for ${selected.preset}/${selected.committee}`,
+      );
+    if (!isDeepStrictEqual(pair, pairs[0]))
+      throw new Error(
+        "Circuit archive VK commitment slice differs from the package manifest",
+      );
+  }
   const stamp = JSON.parse(
     fs.readFileSync(path.join(pairDirectory, ".build-stamp.json"), "utf8"),
   );
   if (
     stamp.preset !== selected.preset ||
-    stamp.committee !== selected.committee
+    stamp.committee !== selected.committee ||
+    typeof stamp.sourceHash !== "string" ||
+    !stamp.sourceHash
   )
     throw new Error(
       "VK commitment pair stamp differs from the selected configuration",

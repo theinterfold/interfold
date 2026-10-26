@@ -1,9 +1,9 @@
 # Path filters for the circuit jobs, in the dorny/paths-filter format. The `detect_changes` job in
-# `workflows/ci.yml` reads this file. `.husky/pre-push` reads every pattern in it as one list, and
-# runs `check:verifiers` when a pushed branch changes a matching path.
+# `workflows/ci.yml` reads this file. `.husky/pre-push` reads only `circuits` and `verifiers`
+# for the expensive verifier check; consumer/checker paths belong to `crypto_config` instead.
 #
 # Put one single-quoted pattern on each list line, because the hook reads the patterns with sed.
-# Give every filter the same `!` patterns, because the hook applies each one to the whole list.
+# The hook combines the two compiler filters, so keep their exclusions identical.
 
 # The Noir circuits and the scripts that build, lint, and test them.
 # Add new generator/check inputs explicitly; scripts/circuits/ is not matched wholesale.
@@ -11,7 +11,7 @@ circuits:
   - 'circuits/**'
   - 'scripts/circuits/lint.sh'
   - 'scripts/circuits/test.sh'
-  - 'scripts/circuits/verifiers*.ts'
+  - 'scripts/circuits/verifiers.ts'
   - 'scripts/circuits/constants.ts'
   - 'scripts/circuits/build-pairs.json'
   - 'crates/zk/build/**'
@@ -49,6 +49,12 @@ verifiers:
   - 'crates/fhe-params/**'
   - 'crates/committee/**'
   - 'crates/polynomial/**'
+  - 'crates/fhe/**'
+  - 'crates/parity-matrix/**'
+  - 'crates/safe/**'
+  - 'packages/interfold-contracts/bfv.ts'
+  - 'packages/interfold-contracts/crypto-config.json'
+  - 'packages/interfold-contracts/scripts/protocol/constants.ts'
   # scripts/circuits/verifiers.ts formats contracts with this config and the prettier
   # and prettier-plugin-solidity versions in the lockfile.
   - 'packages/interfold-contracts/.prettierrc.yml'

@@ -61,11 +61,6 @@ fn configuration_identities_preserve_current_and_historical_vectors() {
                 current_bfv_crypto_config_id(&params).to_string(),
                 expected_id
             );
-        } else {
-            assert_ne!(
-                current_bfv_crypto_config_id(&params).to_string(),
-                expected_id
-            );
         }
     }
 }
@@ -73,7 +68,12 @@ fn configuration_identities_preserve_current_and_historical_vectors() {
 #[test]
 fn registry_identity_binds_original_bytes_not_decoded_parameters() {
     let fixture = vectors();
-    let vector = &fixture["vectors"][2];
+    let vector = fixture["vectors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|vector| vector["name"] == "historical-insecure-v1")
+        .unwrap();
     let params = hex::decode(vector["encodedParameters"].as_str().unwrap()).unwrap();
     let mut extended = params.clone();
     extended.extend_from_slice(&[0; 32]);

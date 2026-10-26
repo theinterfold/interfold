@@ -167,7 +167,7 @@
     "clean": "rimraf ./artifacts ./cache ./coverage ./types ./dist ./coverage.json",
     "clean:deployments": "hardhat utils:clean-deployments",
     "build": "pnpm compile",
-    "compile": "pnpm -w generate:crypto-bindings && pnpm compile:contracts && pnpm compile:ts",
+    "compile": "pnpm compile:contracts && pnpm compile:ts",
     "compile:contracts": "cross-env TS_NODE_TRANSPILE_ONLY=true hardhat compile",
     "compile:ts": "tsc && pnpm build:bfv && tsx scripts/writeNodeRelease.ts",
     "build:bfv": "tsup bfv.ts --format esm,cjs --dts --platform browser --target es2022 --out-dir dist",

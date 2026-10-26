@@ -67,6 +67,7 @@ jobs:
       openvm_worker: ${{ steps.jobs.outputs.openvm_worker }}
       openvm_guest: ${{ steps.jobs.outputs.openvm_guest }}
       build_circuits: ${{ steps.jobs.outputs.build_circuits }}
+      crypto_sources: ${{ steps.jobs.outputs.crypto_sources }}
       noir_checks: ${{ steps.jobs.outputs.noir_checks }}
       integration_prebuild: ${{ steps.jobs.outputs.integration_prebuild }}
       zk_prover_integration: ${{ steps.jobs.outputs.zk_prover_integration }}
@@ -250,8 +251,9 @@ jobs:
           echo "build_e3_support_dev=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CIRCUITS $SDK $CI $TOOLING)" >> $GITHUB_OUTPUT
           echo "openvm_worker=$(any $FORCE $OPENVM_WORKER $CI)" >> $GITHUB_OUTPUT
           echo "openvm_guest=$(any $FORCE $OPENVM_GUEST $CI)" >> $GITHUB_OUTPUT
-          # All source owners, generated outputs, consumers, and checker inputs share hook routing.
-          echo "build_circuits=$(any $FORCE $RUST $CIRCUITS $VERIFIERS $CRYPTO_CONFIG $CI $TOOLING)" >> $GITHUB_OUTPUT
+          # Source checks run separately; only compiler/verifier inputs need a circuit rebuild.
+          echo "build_circuits=$(any $FORCE $CIRCUITS $VERIFIERS)" >> $GITHUB_OUTPUT
+          echo "crypto_sources=$(any $FORCE $CIRCUITS $VERIFIERS $CRYPTO_CONFIG)" >> $GITHUB_OUTPUT
           # nargo reads only the circuit paths, so Rust and tooling changes skip the Noir checks.
           echo "noir_checks=$(any $FORCE $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           echo "integration_prebuild=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI $TOOLING)" >> $GITHUB_OUTPUT
@@ -1036,6 +1038,29 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+  crypto_sources:
+    needs: [detect_changes]
+    if: needs.detect_changes.outputs.crypto_sources == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: ./.github/actions/cache-dependencies
+      - uses: noir-lang/noirup@bedac8fbe6a059177c35e565f9f76db54a795976 # v0.1.5
+        with:
+          toolchain: ${{ env.NOIR_TOOLCHAIN }}
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check:crypto-config
+      - run: pnpm test:circuit-tooling
+
   build_circuits:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.build_circuits == 'true'
@@ -1101,9 +1126,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Check complete generated crypto sources
-        run: pnpm check:crypto-config
-
       - name: Build circuits
         run: pnpm build:circuits
 
@@ -1118,7 +1140,7 @@ jobs:
             packages/interfold-contracts/scripts/utils.ts
 
       - name: Test circuit artifact validation and verifier selection
-        run: pnpm test:circuit-build -- --include-ignored && pnpm test:circuit-tooling
+        run: pnpm test:circuit-build -- --include-ignored
 
       - name: Check named VK commitments
         run: pnpm build:circuits check-vk-commitments
@@ -1205,9 +1227,6 @@ jobs:
 
       - name: Hydrate the insecure-64/minimum circuits
         run: pnpm build:circuits --preset insecure-64 --committee minimum --hydrate-bin-only --no-clean-targets
-
-      - name: Prepare published VK commitment metadata
-        run: pnpm build:circuits prepare-vk-commitments
 
       - name: Verify circuit artifacts
         run: |

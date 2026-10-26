@@ -37,7 +37,7 @@ impl BfvMetadata {
                 crypto_config_id: current_bfv_crypto_config_id(&encoded_params).to_string(),
                 search: preset
                     .search_config()
-                    .ok_or(PresetError::MissingPair(preset.name()))?
+                    .ok_or(PresetError::MissingSearchConfig(preset.name()))?
                     .into(),
             });
         }
@@ -102,18 +102,32 @@ pub struct SearchMetadata {
 
 impl From<BfvSearchConfig> for SearchMetadata {
     fn from(config: BfvSearchConfig) -> Self {
+        let BfvSearchConfig {
+            n,
+            z,
+            k,
+            lambda,
+            b,
+            b_chi,
+            min_margin,
+            d,
+            insecure,
+            mult_depth,
+            min_prime_bits,
+            verbose: _, // Search logging is not part of the parameter recipe.
+        } = config;
         Self {
-            n: config.n.to_string(),
-            z: config.z.to_string(),
-            k: config.k.to_string(),
-            lambda: config.lambda,
-            b: config.b.to_string(),
-            b_chi: config.b_chi.to_string(),
-            min_margin: config.min_margin,
-            d: config.d.map(|degree| degree.to_string()),
-            insecure: config.insecure,
-            mult_depth: config.mult_depth,
-            min_prime_bits: config.min_prime_bits,
+            n: n.to_string(),
+            z: z.to_string(),
+            k: k.to_string(),
+            lambda,
+            b: b.to_string(),
+            b_chi: b_chi.to_string(),
+            min_margin,
+            d: d.map(|degree| degree.to_string()),
+            insecure,
+            mult_depth,
+            min_prime_bits,
         }
     }
 }

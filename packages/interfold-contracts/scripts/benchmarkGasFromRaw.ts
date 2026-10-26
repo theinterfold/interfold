@@ -19,10 +19,8 @@ import {
   bfvDecPartyColOffsets,
   bfvDkgCommitteeHashIndices,
   committeeHashFromLimbs,
-  getBfvDecryptionSubCircuitVkHashPaths,
-  getBfvPkSubCircuitVkHashPaths,
+  getBfvVkCommitments,
   getRepoRoot,
-  readVkRecursiveHash,
 } from "./utils";
 
 const CANONICAL_BFV_PRESET = "insecure-64";
@@ -424,22 +422,12 @@ async function main() {
   );
 
   const benchmarkConfig = resolveBenchmarkConfig(foldedDoc);
-  const expectedNodesFoldKeyHash = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths(benchmarkConfig).nodesFold,
-    benchmarkConfig,
-  );
-  const expectedC5KeyHash = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths(benchmarkConfig).c5,
-    benchmarkConfig,
-  );
-  const expectedC6FoldKeyHash = readVkRecursiveHash(
-    getBfvDecryptionSubCircuitVkHashPaths(benchmarkConfig).c6Fold,
-    benchmarkConfig,
-  );
-  const expectedC7KeyHash = readVkRecursiveHash(
-    getBfvDecryptionSubCircuitVkHashPaths(benchmarkConfig).c7,
-    benchmarkConfig,
-  );
+  const {
+    nodesFold: expectedNodesFoldKeyHash,
+    c5: expectedC5KeyHash,
+    c6Fold: expectedC6FoldKeyHash,
+    c7: expectedC7KeyHash,
+  } = getBfvVkCommitments(benchmarkConfig);
 
   if (
     dkgPublicInputs[0] !== expectedNodesFoldKeyHash ||

@@ -219,6 +219,8 @@ pub enum PresetError {
     UnknownPreset(String),
     #[error("Preset does not define a Threshold (trBFV) / DKG (BFV) pair: {0}")]
     MissingPair(&'static str),
+    #[error("Preset does not define a BFV search configuration: {0}")]
+    MissingSearchConfig(&'static str),
     #[error("Preset lambda is not secure: {0}")]
     InsecureLambda(String),
 }
