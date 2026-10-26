@@ -22,7 +22,7 @@ const REVEALED = [
   'The clearing step and its price, when the round sells out',
   'How many bidders counted, and which version of each bid counted',
   'Which addresses deposited and how many versions each sent',
-  'When a bidder claims: whether its price is below, at, or above the clearing step',
+  'When a bidder claims: whether its price is below, at, or above the clearing step. A bidder at the step shows that it bid exactly that step when it registers. Its deposit index is public already.',
 ]
 
 const LIFECYCLE = [
@@ -64,7 +64,7 @@ const LIFECYCLE = [
   ],
   [
     'Settle',
-    'After phase 2 each registered bidder settles. The lots that phase 1 left are shared in equal parts, and nobody gets more than one lot. The rest of the escrow is refunded. Bidders below the step claim the refund at any time. The claim window lasts 30 days from the clearing. After it, the creator sweeps what is left.',
+    'After phase 2 each registered bidder settles. The lots that phase 1 left go to the first registered bidders by deposit order, one whole lot each, at the clearing price. The other registered bidders get their whole escrow back. A lot is never split. Bidders below the step claim the refund at any time. The claim window lasts 30 days from the clearing. After it, the creator sweeps what is left.',
   ],
 ] as const
 
@@ -132,8 +132,8 @@ const About: React.FC = () => (
         <em>b</em> at or above <em>r</em>. Nothing sells and everyone is refunded. If the reserve is met and fewer than <em>K</em> bidders
         have <em>b</em> at or above <em>r</em>, the round is <strong>undersubscribed</strong>: every bidder at or above the reserve gets one
         lot at the reserve price. If <em>K</em> bidders or more accept the reserve, the round <strong>sells out</strong> at the highest step{' '}
-        <em>l*</em> that <em>K</em> bidders still accept. Bidders above <em>l*</em> get a lot. Bidders at <em>l*</em> share the lots that
-        are left.
+        <em>l*</em> that <em>K</em> bidders still accept. Bidders above <em>l*</em> get a lot. Bidders at <em>l*</em> compete for the lots
+        that are left: the first ones by deposit order get a whole lot.
       </p>
       <p className='prose-ed max-w-3xl'>
         Everyone who gets a lot pays the same price. Nobody pays more than the escrow, and nobody pays more than their own highest price.

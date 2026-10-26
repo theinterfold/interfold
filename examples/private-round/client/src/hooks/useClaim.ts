@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useWalletClient } from 'wagmi'
 import { type Address, parseEventLogs } from 'viem'
-import { Outcome, compareBid } from '@interfold/private-round'
+import { Outcome, compareBid, cost, marginalRank } from '@interfold/private-round'
 import { ClaimProver } from '@interfold/private-round/prover'
 import { PrivateRoundProgram__factory } from '@contract-types/factories/contracts/PrivateRoundProgram__factory'
 import { type StoredVersion, loadVersions } from '@/utils/bid-storage'
@@ -30,8 +30,8 @@ export interface Amounts {
 /**
  * What the contract does with a claim of this account:
  * - `full`: one lot at the clearing price.
- * - `marginal`: the account bid exactly at the clearing step of a sold-out round. It registers in phase 2 and the contract settles it
- *   after phase 2 with a share of the lots that are left.
+ * - `marginal`: the account bid exactly at the clearing step of a sold-out round. It registers in phase 2. After phase 2 the contract
+ *   gives the lots that are left to the first registered bidders by deposit order, one whole lot each, and refunds the others.
  * - `refund`: the whole escrow back, no lot.
  */
 export type ClaimClass = 'full' | 'marginal' | 'refund'
@@ -60,8 +60,14 @@ export interface MyOutcome {
   cmp: 0 | 1 | 2 | null
   /** The class that the contract's `previewClaim` names: 0 refund, 1 full lot, 2 marginal registration. `null` when there is nothing to preview. */
   previewClass: 0 | 1 | 2 | null
-  /** The amounts of the preview. For a marginal bidder it is what the settlement pays with today's counts. */
+  /** The amounts of the preview. For a marginal bidder it is what the settlement pays with today's registrations: a lot or the refund. */
   preview: Amounts | null
+  /**
+   * For a marginal bidder: the place among the registered bidders by deposit order (0 is first), and whether that place gets a lot
+   * today. It changes until phase 2 ends. `null` for the other bidders.
+   */
+  rank: number | null
+  filled: boolean | null
   /** Registered as a marginal bidder in phase 2. */
   registered: boolean
   claimed: boolean
@@ -152,7 +158,7 @@ export function actionOf(outcome: MyOutcome, clearing: Clearing, escrow: bigint,
     return {
       kind: 'settle',
       label: 'Settle',
-      note: 'Phase 2 is over: the contract pays your share of the lots that are left, and refunds the rest of your escrow.',
+      note: 'Phase 2 is over. The contract gives a whole lot to you if you are among the first registered bidders by deposit order. Otherwise it refunds your whole escrow.',
     }
   }
   const forfeit =
@@ -189,15 +195,18 @@ export function useClaim(sale: SaleState, clearing: Clearing | null, account: Ad
   const [error, setError] = useState<string | null>(null)
   const e3Id = sale.e3Id
   const escrow = sale.escrow
-  const target = useRef({ e3Id, account, clearing, escrow })
+  const lot = sale.lot
+  const lots = sale.lots
+  const saleDecimals = sale.saleToken.decimals
+  const target = useRef({ e3Id, account, clearing, escrow, lot, lots, saleDecimals })
   const paidResult = useRef<Amounts | null>(null)
 
   useEffect(() => {
-    target.current = { e3Id, account, clearing, escrow }
-  }, [e3Id, account, clearing, escrow])
+    target.current = { e3Id, account, clearing, escrow, lot, lots, saleDecimals }
+  }, [e3Id, account, clearing, escrow, lot, lots, saleDecimals])
 
   const refresh = useCallback(async () => {
-    const { e3Id: id, account: bidder, clearing: cleared, escrow: held } = target.current
+    const { e3Id: id, account: bidder, clearing: cleared, escrow: held, lot, lots, saleDecimals } = target.current
     if (!bidder || !cleared) return
     const read = { address: e3Program, abi: PrivateRoundProgram__factory.abi } as const
     const [deposited, counted, claimed, registered] = await Promise.all([
@@ -229,6 +238,8 @@ export function useClaim(sale: SaleState, clearing: Clearing | null, account: Ad
 
     let previewClass: MyOutcome['previewClass'] = null
     let preview: Amounts | null = null
+    let rank: number | null = null
+    let filled: boolean | null = null
     if (standing === 'failed' || standing === 'not-counted') {
       // The refund of the whole escrow needs no proof, and so no preview.
       previewClass = 0
@@ -241,6 +252,20 @@ export function useClaim(sale: SaleState, clearing: Clearing | null, account: Ad
       })
       previewClass = cls as 0 | 1 | 2
       preview = { tokens, paid, refund }
+      if (previewClass === 2) {
+        // The lots that are left go to the first registered bidders by deposit order. Count this account in, even before it registers.
+        const [mask, index] = await Promise.all([
+          publicClient.readContract({ ...read, functionName: 'marginalMask', args: [id] }),
+          publicClient.readContract({ ...read, functionName: 'bidderIndex', args: [id, bidder] }),
+        ])
+        const mine = Number(index)
+        const registeredIndices: number[] = []
+        for (let bit = 0; bit < 16; bit++) if (bit !== mine && (Number(mask) >> bit) & 1) registeredIndices.push(bit)
+        rank = marginalRank(registeredIndices, mine)
+        filled = rank < lots - Number(cleared.aboveClaimed)
+        const lotPaid = cost(lot, cleared.pStar, saleDecimals)
+        preview = filled ? { tokens: lot, paid: lotPaid, refund: held - lotPaid } : { tokens: 0n, paid: 0n, refund: held }
+      }
     }
     const result = claimed ? (paidResult.current ?? (await readClaimed(id, bidder).catch(() => null))) : null
     if (target.current.e3Id !== id || target.current.account !== bidder) return
@@ -253,6 +278,8 @@ export function useClaim(sale: SaleState, clearing: Clearing | null, account: Ad
       cmp,
       previewClass,
       preview,
+      rank,
+      filled,
       registered,
       claimed,
       result,
@@ -270,7 +297,7 @@ export function useClaim(sale: SaleState, clearing: Clearing | null, account: Ad
     return () => clearInterval(timer)
     // `clearing` is an object that the clearing hook rebuilds on each poll; its fields are what matter.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [e3Id, account, clearing?.outcome, clearing?.step, clearing?.aboveClaimed, clearing?.marginalRegistered, refresh])
+  }, [e3Id, account, clearing?.outcome, clearing?.step, clearing?.aboveClaimed, clearing?.marginalRegistered, clearing?.pStar, refresh])
 
   /** Send one transaction of the account, then keep the amounts that its `Claimed` event holds. */
   const send = useCallback(

@@ -60,6 +60,7 @@ import {
   encodeBidInput,
   encodeSaleParams,
   escrowOf,
+  marginalRank,
   MAX_BIDS_PER_BIDDER,
   Outcome,
   plainOutcome,
@@ -131,8 +132,9 @@ interface Scenario {
 
 /**
  * - sold_out: 2 lots, minimum raise 1, reserve step 1. Bids 5, 4, 4, 2, 0: one bidder above the clearing
- *   step 4, two at it (they share the one lot that is left, half each), one below it and one below the
- *   reserve. With 3 or more bidders at the step, the last one does not register and gets the refund only.
+ *   step 4, two at it (the first one by deposit order gets the one lot that is left, the other gets the
+ *   refund), one below it and one below the reserve. The marginal bidders register in reverse order, to show
+ *   that the deposit order decides. With 3 or more bidders at the step, the last one does not register and gets the refund only.
  * - undersubscribed: 3 lots, minimum raise 2, reserve step 1. Bids 3, 1 and a dropped bidder: two
  *   bidders at or above the reserve, fewer than the 3 lots.
  * - not_met: 2 lots, minimum raise 2, reserve step 2. Only one bidder is at the reserve.
@@ -820,7 +822,7 @@ describe('Private round', () => {
         // With three bidders at the step or more, the last one does not register: it forfeits the lot.
         const forfeiter = marginalBidders.length >= 3 ? marginalBidders[marginalBidders.length - 1] : null
         const registering = marginalBidders.filter((bidder) => bidder !== forfeiter)
-        for (const bidder of registering) {
+        for (const bidder of [...registering].reverse()) {
           const { data, cmp } = await claimData(bidder)
           expect(cmp).toBe(1)
           const receipt = await send(creatorWallet, { ...program, functionName: 'claim', args: [e3Id, addresses[bidder], data] })
@@ -835,6 +837,9 @@ describe('Private round', () => {
         }
         const afterPhase2Start = await publicClient.readContract({ ...program, functionName: 'clearing', args: [e3Id] })
         expect(afterPhase2Start[9]).toBe(BigInt(registering.length))
+        // The mask of the registrations has one bit for each registered bidder index.
+        const mask = await publicClient.readContract({ ...program, functionName: 'marginalMask', args: [e3Id] })
+        expect(mask).toBe(registering.reduce((bits, bidder) => bits | (1 << bidder), 0))
         // Settlement is closed until phase 2 ends.
         if (registering.length > 0) {
           await expect(
@@ -847,19 +852,29 @@ describe('Private round', () => {
           ).rejects.toThrow(/SettlementNotOpen/)
         }
         await warpTo(phase2End)
-        const phase2 = { aboveClaimed: claimedAbove.length, marginalRegistered: registering.length }
+        // The lots that phase 1 left go to the first registered bidders by deposit order, one whole lot each.
+        const lotsLeft = scenario.lots - claimedAbove.length
+        let filled = 0
         for (const bidder of registering) {
+          const rank = marginalRank(registering, bidder)
+          const allocation = allocationOf(sale, mirror, 'marginal', { aboveClaimed: claimedAbove.length, rank })
+          expect(allocation.tokens, `bidder ${bidder} at rank ${rank} of ${lotsLeft} lots`).toBe(rank < lotsLeft ? lot : 0n)
           // The preview of the contract is the final allocation now.
-          const [cls, tokens, paid, refund] = await publicClient.readContract({
+          const [, tokens, paid, refund] = await publicClient.readContract({
             ...program,
             functionName: 'previewClaim',
             args: [e3Id, addresses[bidder], 1],
           })
-          const allocation = allocationOf(sale, mirror, 'marginal', phase2)
-          expect(cls).toBe(2)
           expect({ tokens, paid, refund }, 'preview of a registered marginal bidder').toEqual(allocation)
+          // Settle in a different order than the deposits: the rank does not depend on it.
+        }
+        for (const bidder of [...registering].reverse()) {
+          const rank = marginalRank(registering, bidder)
+          const allocation = allocationOf(sale, mirror, 'marginal', { aboveClaimed: claimedAbove.length, rank })
+          if (allocation.tokens > 0n) filled++
           await payOut(bidder, 'settle', '0x', allocation, 'marginal')
         }
+        expect(filled).toBe(Math.min(lotsLeft, registering.length))
         if (forfeiter !== null) {
           // It did not register in phase 2: the proof of equality only earns the refund.
           const { data } = await claimData(forfeiter)

@@ -32,7 +32,7 @@ function outcomeText(sale: SaleState, outcome: Outcome, step: number): { title: 
     case Outcome.SoldOut:
       return {
         title: `Sold out at ${formatPriceValue(sale, sale.prices[step])} ${sale.paymentToken.symbol}`,
-        body: `At least ${sale.lots} bidders accepted this price step or a higher one. Everyone who gets a lot pays the price of step ${step}. Bidders above step ${step} get a lot. Bidders at step ${step} share the lots that are left.`,
+        body: `At least ${sale.lots} bidders accepted this price step or a higher one. Everyone who gets a lot pays the price of step ${step}. Bidders above step ${step} get a lot. Bidders at step ${step} compete for the lots that are left: the first ones by deposit order get a whole lot.`,
       }
     case Outcome.Undersubscribed:
       return {
@@ -171,7 +171,8 @@ const PublicPanel: React.FC<{ sale: SaleState; outcome: Outcome; step: number; c
       <p className='text-sm text-ink-2'>
         There is no demand curve. The program does not publish how many bidders accept each price. It does not publish any price that a
         bidder named, and not the order of the bids. The claims show a little more over time: an above or a marginal claim shows that its
-        bidder bid above or at the clearing step.
+        bidder bid above or at the clearing step. A bidder at the clearing step shows that it bid exactly that step when it registers. Its
+        deposit index is public already.
       </p>
     </div>
   )
@@ -216,7 +217,7 @@ const ClaimWindows: React.FC<{ sale: SaleState; clearing: Clearing; now: bigint 
         {
           key: 'settle',
           title: 'Settlement of the marginal bidders',
-          text: `After phase 2 each registered bidder settles. The ${sale.lots - clearing.aboveClaimed} lots that are left are shared in equal parts, one lot at most for each bidder.`,
+          text: `After phase 2 the ${sale.lots - clearing.aboveClaimed} lots that are left go to the first registered bidders by deposit order, one whole lot each, at the clearing price. The other registered bidders get their whole escrow back. A lot is never split.`,
           active: now > clearing.phase2End && now <= clearing.claimDeadline,
           done: false,
         },
@@ -271,11 +272,16 @@ interface MyOutcomeProps {
   onSettle: () => void
 }
 
+/** The place of a bidder in the deposit order of the registered bidders: `rank` counts from 0. */
+function ordinal(rank: number | null): string {
+  return rank === null ? 'your place' : `place ${rank + 1}`
+}
+
 const CLASS_TEXT = {
   full: { head: 'You get a lot.', body: 'You get one lot at the clearing price, and the rest of your escrow back.' },
   marginal: {
     head: 'You are at the clearing step.',
-    body: 'You bid exactly the clearing step. You share the lots that the bidders above the step leave, so you may get a whole lot, a part of one, or no lot. You register in phase 2 and settle after it.',
+    body: 'You bid exactly the clearing step. The bidders above the step take their lots first. The lots that are left go to the first registered bidders by deposit order: one whole lot each. If you are not among them, you get your whole escrow back. You register in phase 2 and settle after it. When you register, everyone sees that you bid exactly the clearing step. Your deposit index is public already.',
   },
   refund: { head: 'No lot for you.', body: 'You get your whole escrow back.' },
 } as const
@@ -344,7 +350,12 @@ const MyOutcomePanel: React.FC<MyOutcomeProps> = ({ sale, clearing, now, outcome
             </div>
           </dl>
           {!outcome.claimed && cls === 'marginal' && (
-            <p className='muted text-xs'>This is your share with the counts of now. It is final when phase 2 ends.</p>
+            <p className='muted text-xs'>
+              {outcome.filled
+                ? `Filled for now: ${ordinal(outcome.rank)} of the registered bidders by deposit order gets a lot.`
+                : `Refund for now: ${ordinal(outcome.rank)} of the registered bidders by deposit order, and no lot is left for that place.`}{' '}
+              This changes while bidders register. It is final when phase 2 ends.
+            </p>
           )}
         </div>
       )}
