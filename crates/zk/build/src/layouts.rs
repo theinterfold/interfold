@@ -6,7 +6,7 @@ use e3_zk_config::{output_layout::DecryptionAggregatorLayout, MAX_MSG_NON_ZERO_C
 use serde_json::Value;
 use std::{fs, path::Path};
 
-// bb 5.2.0's EVM verifier counts the pairing-point accumulator in its VK metadata, but callers
+// The EVM verifier counts the pairing-point accumulator in its VK metadata, but callers
 // supply only the Noir application fields. This is not part of the circuit's public ABI.
 const HONK_PAIRING_POINT_FIELDS: usize = 8;
 
