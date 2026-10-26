@@ -10,7 +10,7 @@ import { type Address, parseAbi, parseEventLogs } from 'viem'
 import { CommitteeSize, DEFAULT_COMPUTE_PROVIDER_PARAMS, calculateInputWindow, encodeComputeProviderParams } from '@interfold/sdk'
 import { encodeNegotiationParams, negotiationProgramAbi } from '@interfold/negotiation'
 import { PARAM_SET } from '@interfold/negotiation/prover'
-import { TEST_TOKEN_SOURCE, chain, createSdk, publicClient } from '@/utils/chain'
+import { TEST_TOKEN_SOURCE, chain, createSdk, publicClient, waitForWalletSync } from '@/utils/chain'
 import { FAUCET_ADDRESS, getContractAddresses } from '@/utils/env-config'
 import { formatError } from '@/utils/error-formatting'
 import { allowanceOf, balanceOf, erc20Abi, mintTestTokens, readTokenInfo, type TokenInfo } from '@/utils/tokens'
@@ -139,7 +139,9 @@ export function useCreateNegotiation(account: `0x${string}` | undefined): UseCre
 
         if (feeAllowance < quote) {
           setStep('approving-fee')
-          await publicClient.waitForTransactionReceipt({ hash: await sdk.approveFeeToken(quote) })
+          const approval = await publicClient.waitForTransactionReceipt({ hash: await sdk.approveFeeToken(quote) })
+          if (approval.status !== 'success') throw new Error('The fee approval transaction reverted')
+          await waitForWalletSync(walletClient, account, approval)
         }
 
         setStep('requesting')
@@ -178,6 +180,7 @@ export function useCreateNegotiation(account: `0x${string}` | undefined): UseCre
         })
         const receipt = await publicClient.waitForTransactionReceipt({ hash: await walletClient.writeContract(request) })
         if (receipt.status !== 'success') throw new Error('The transaction reverted')
+        await waitForWalletSync(walletClient, account, receipt)
       } else {
         await mintTestTokens(walletClient, shortfall.token.address, account, shortfall.needed - shortfall.balance)
       }

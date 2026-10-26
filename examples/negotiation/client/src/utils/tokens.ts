@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import { type Address, type WalletClient, formatUnits, parseAbi } from 'viem'
-import { publicClient } from './chain'
+import { publicClient, waitForWalletSync } from './chain'
 
 /** What the app calls on the fee token. `mint` exists on the mock token only. */
 export const erc20Abi = parseAbi([
@@ -67,4 +67,5 @@ export async function mintTestTokens(walletClient: WalletClient, token: Address,
   const hash = await walletClient.writeContract(request)
   const receipt = await publicClient.waitForTransactionReceipt({ hash })
   if (receipt.status !== 'success') throw new Error('The mint transaction reverted')
+  await waitForWalletSync(walletClient, account, receipt)
 }
