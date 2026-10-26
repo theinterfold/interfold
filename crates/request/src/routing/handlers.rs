@@ -4,12 +4,10 @@
 
 use super::effects::advance_request_router_cursor;
 use super::*;
+use crate::RequestRouterCheckpoint;
 use actix::AsyncContext;
 use anyhow::Context as _;
-use e3_events::{
-    E3Stage, E3StageChanged, EventContext, InterfoldEventData, RequestRouterCheckpoint, Sequenced,
-    SyncEffect,
-};
+use e3_events::{E3Stage, E3StageChanged, EventContext, InterfoldEventData, Sequenced, SyncEffect};
 use tracing::{debug, info};
 
 impl E3Router {

@@ -11,6 +11,7 @@ use crate::E3MetaExtension;
 use crate::EventBuffer;
 use crate::PostForward;
 use crate::RequestRouter;
+use crate::RequestRouterCheckpoint;
 use crate::RouterRepositoryFactory;
 use crate::RoutingDecision;
 use crate::UnadmittedInputs;
@@ -28,9 +29,7 @@ use e3_events::BusHandle;
 use e3_events::E3RequestComplete;
 use e3_events::EType;
 use e3_events::EventType;
-use e3_events::{
-    AggregateId, CiphernodeSelected, E3Stage, E3id, InterfoldEvent, RequestRouterCheckpoint,
-};
+use e3_events::{AggregateId, CiphernodeSelected, E3Stage, E3id, InterfoldEvent};
 use e3_utils::MAILBOX_LIMIT;
 use serde::Deserialize;
 use serde::Serialize;

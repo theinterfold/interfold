@@ -27,9 +27,9 @@ use e3_events::{
     DkgCoordinationKind, DkgDealer, DkgProofSigned, E3Stage, E3StageChanged, E3id, EffectsEnabled,
     EncryptionKey, EncryptionKeyCreated, Event, EventBus, EventBusConfig, EventSource, EventType,
     FailureReason, Get, GetEvents, HistoryCollector, Insert, InterfoldEvent, InterfoldEventData,
-    OrderedSet, PkGenerationProofSigned, Proof, ProofPayload, ProofType, PublicKeyAggregated,
-    Remove, Sequencer, SignedProofPayload, StoreEventRequested, StoreEventResponse, TakeEvents,
-    TestEvent, Unsequenced, VerificationKind,
+    PkGenerationProofSigned, Proof, ProofPayload, ProofType, PublicKeyAggregated, Remove,
+    Sequencer, SignedProofPayload, StoreEventRequested, StoreEventResponse, TakeEvents, TestEvent,
+    Unsequenced, VerificationKind,
 };
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset, DEFAULT_BFV_PRESET};
 use e3_request::{
@@ -40,6 +40,7 @@ use e3_request::{
 use e3_trbfv::{
     gen_esi_sss::GenEsiSssRequest, TrBFVConfig, TrBFVError, TrBFVFailure, TrBFVRequest,
 };
+use e3_utils::OrderedSet;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 

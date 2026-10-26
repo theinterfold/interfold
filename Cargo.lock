@@ -3952,7 +3952,6 @@ dependencies = [
  "e3-committee",
  "e3-committee-hash",
  "e3-crypto",
- "e3-event-system",
  "e3-events",
  "e3-fhe-params",
  "e3-test-helpers",

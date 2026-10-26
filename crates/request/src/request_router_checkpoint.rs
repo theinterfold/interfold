@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{AggregateId, E3id};
+use e3_events::{AggregateId, E3id};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 

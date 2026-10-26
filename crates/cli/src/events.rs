@@ -10,8 +10,10 @@ use e3_config::AppConfig;
 use e3_console::{log, Console};
 use e3_entrypoint::helpers::datastore::get_eventstore_reader;
 use e3_event_system::global_eventstore_cache::EventStoreReader;
-use e3_events::{compute_seq_cursor, CorrelationId, InterfoldEvent, SeqAgg, SeqCursor};
-use e3_events::{AggregateId, EventStoreQueryBy, EventStoreQueryResponse};
+use e3_events::{
+    AggregateId, CorrelationId, EventContextSeq, EventStoreQueryBy, EventStoreQueryResponse,
+    InterfoldEvent, SeqAgg,
+};
 use e3_utils::actix::channel as actix_toolbox;
 use std::collections::HashMap;
 
@@ -87,4 +89,49 @@ fn print_events(out: Console, events: Vec<InterfoldEvent>) -> Result<()> {
         log!(out, "{}", serde_json::to_string(&event)?);
     }
     Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+enum SeqCursor {
+    Done,
+    Next(u64),
+}
+
+fn compute_seq_cursor<T: EventContextSeq>(events: &[T], limit: usize) -> SeqCursor {
+    if events.len() == limit {
+        let last_seq = events.last().map(|e| e.seq()).unwrap_or(0);
+        SeqCursor::Next(last_seq)
+    } else {
+        SeqCursor::Done
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct MockEvent(u64);
+    impl EventContextSeq for MockEvent {
+        fn seq(&self) -> u64 {
+            self.0
+        }
+    }
+
+    #[test]
+    fn the_cursor_is_done_below_the_limit_and_points_at_the_last_seq_at_it() {
+        let cases: [(&[u64], usize, SeqCursor); 3] = [
+            (&[], 10, SeqCursor::Done),
+            (&[1, 2], 10, SeqCursor::Done),
+            (&[100, 200, 300], 3, SeqCursor::Next(300)),
+        ];
+
+        for (seqs, limit, expected) in cases {
+            let events: Vec<MockEvent> = seqs.iter().copied().map(MockEvent).collect();
+            assert_eq!(
+                compute_seq_cursor(&events, limit),
+                expected,
+                "seqs={seqs:?} limit={limit}"
+            );
+        }
+    }
 }

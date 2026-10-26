@@ -14,6 +14,7 @@ decisions live in their owning crates.
 | [`actix/`](src/actix)                                                                                                              | Recipient/channel/one-shot adapters and synchronous handler bridging.             |
 | [`retry.rs`](src/retry.rs), [`transaction.rs`](src/transaction.rs)                                                                 | Retry classification/backoff and receipt-status checks.                           |
 | [`helpers.rs`](src/helpers.rs), [`path.rs`](src/path.rs), [`formatters.rs`](src/formatters.rs)                                     | Ordered extraction, one-time ownership, enumerated paths, and bounded formatting. |
+| [`ordered_set.rs`](src/ordered_set.rs)                                                                                             | Sorted set with order-independent equality and hash, serialized as a sequence.    |
 
 These are independent leaf helpers, not a runtime pipeline. Callers select explicit byte budgets,
 retry policy, and acknowledgment behavior; no capability policy is inferred by the utility layer.

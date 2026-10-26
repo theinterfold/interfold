@@ -388,11 +388,11 @@ mod tests {
     use e3_events::prelude::*;
     use e3_events::{
         DkgFoldAttestationContext, DkgFoldAttestationContextEstablished, E3id, EffectsEnabled,
-        EventSource, InterfoldEvent, OrderedSet, PublicKeyAggregated, TakeEvents, Unsequenced,
+        EventSource, InterfoldEvent, PublicKeyAggregated, TakeEvents, Unsequenced,
         DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
     };
     use e3_test_helpers::get_common_setup;
-    use e3_utils::ArcBytes;
+    use e3_utils::{ArcBytes, OrderedSet};
     use std::collections::HashMap;
 
     #[test]
