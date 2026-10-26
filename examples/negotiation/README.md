@@ -166,6 +166,14 @@ skips an E3 with a missing role.
 - An `interfold` CLI built from this checkout with the feature `test-only-skip-proof-aggregation`
   (`pnpm dev:setup` installs it).
 
+Proof aggregation of the committee (the recursive folds of the nodes and the `DkgAggregatorV2` proof
+of the aggregator) dominates the key generation time. `pnpm dev:ciphernodes` skips it when the
+installed CLI has the feature: it exports `E3_NODES__CN1..5__SKIP_PROOF_AGGREGATION=true`, deploys
+the mock DKG and decryption verifiers and the aggregator publishes a placeholder proof that only the
+mock verifiers accept. Set `NEGOTIATION_REAL_PROOFS_AGG=1` to aggregate the proofs and deploy the
+real verifiers. A CLI without the feature takes this path too. The feature is for the local chain
+only.
+
 ## Run it
 
 > **Status: the local stack has not been run end to end.** The circuits compile, the contracts, the
@@ -222,7 +230,8 @@ Run these commands in this order, in this directory unless stated otherwise.
 2. **Get test tokens** (fee token for the E3 request).
 3. **Create** a negotiation: title, seller address, buyer address, range `[min, max, step]` of 2 to
    16 levels (for example 48 to 63 with step 1), window in minutes. Copy the link `/n/<e3Id>`. Key
-   generation takes some minutes.
+   generation takes about 11 minutes with full proof aggregation and less with the skipped one (see
+   Prerequisites).
 4. Open the link as the seller and as the buyer. Enter a price on the grid (the seller 50, the
    buyer 60) and select **Seal my price**. The page shows the 3 encryptions, the 3 encryption
    proofs, the lanes proof and the offer proof. Each proof takes about 1 to 2 minutes in Node. Then
@@ -305,4 +314,7 @@ linear in the coefficients. The program contract is 20.6 KB.
   not build without `cargo openvm build`, as in `examples/auction-e2e`.
 - The browser proof of one offer takes minutes (3 encryption proofs, one lanes proof, one offer
   proof).
+- With the skipped proof aggregation the committee key and the decryption are not proven on chain;
+  the mock verifiers accept any well-formed placeholder. Use `NEGOTIATION_REAL_PROOFS_AGG=1` to
+  check the real path.
 - This example was not run on Sepolia.

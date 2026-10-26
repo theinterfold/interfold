@@ -8,6 +8,14 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 source "$(dirname "${BASH_SOURCE[0]}")/lib/dev_config.sh"
 load_template_dev_config
 
+if [[ "${NEGOTIATION_SKIP_PROOF_AGG}" == "1" ]]; then
+  echo "Proof aggregation is skipped (test-only): mock DKG and decryption verifiers." >&2
+  echo "Set NEGOTIATION_REAL_PROOFS_AGG=1 for real aggregation and the real verifiers (slow)." >&2
+else
+  echo "Proof aggregation is on: real DKG and decryption verifiers (key generation takes about 11 minutes)." >&2
+  echo "An interfold CLI built with the feature test-only-skip-proof-aggregation skips it." >&2
+fi
+
 SIGNAL_FILE=/tmp/interfold_ciphernodes_ready
 
 cleanup() {

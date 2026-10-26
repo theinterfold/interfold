@@ -15,10 +15,32 @@ load_template_dev_config() {
   # path with a plaintext modulus that supports SIMD: parameter set 5 runs it on the insecure SIMD
   # circuit artifacts (degree 128, t = 257).
   export BFV_PARAM_SET=5
-  # Nodes aggregate their proofs (the l-BFV key aggregator has no skip path), so deploy the real
-  # DKG and decryption verifiers: the mock key verifier only reads the V1 public-input layout and
-  # rejects the l-BFV DkgAggregatorV2 proof with PkCommitmentMismatch.
-  export ENABLE_ZK_VERIFICATION=true
+  # Key generation is slow because every committee node folds its DKG proofs recursively (C3/C4
+  # chunk folds, the legacy node fold, the V2 fold) and the aggregator proves the row, fold and
+  # DkgAggregatorV2 chain. When the installed `interfold` carries the test-only feature
+  # `test-only-skip-proof-aggregation`, the local stack skips all of it: the nodes skip proof
+  # aggregation, the aggregator publishes a mock-only placeholder DKG proof, and the deploy keeps
+  # the mock verifiers (ENABLE_ZK_VERIFICATION unset), whose key verifier reads the l-BFV
+  # DkgAggregatorV2 layout. Without the feature, or with NEGOTIATION_REAL_PROOFS_AGG=1, the nodes
+  # aggregate and the deploy uses the real DKG and decryption verifiers instead.
+  NEGOTIATION_REAL_PROOFS_AGG="${NEGOTIATION_REAL_PROOFS_AGG:-0}"
+  if [[ "$NEGOTIATION_REAL_PROOFS_AGG" != "1" ]] &&
+    template_cli_has_feature test-only-skip-proof-aggregation; then
+    NEGOTIATION_SKIP_PROOF_AGG=1
+    unset ENABLE_ZK_VERIFICATION
+    for node in 1 2 3 4 5; do
+      export "E3_NODES__CN${node}__SKIP_PROOF_AGGREGATION=true"
+    done
+  else
+    NEGOTIATION_SKIP_PROOF_AGG=0
+    export ENABLE_ZK_VERIFICATION=true
+    # A node refuses to start with the setting when the binary lacks the feature, and with
+    # NEGOTIATION_REAL_PROOFS_AGG=1 the swarm must aggregate.
+    for node in 1 2 3 4 5; do
+      unset "E3_NODES__CN${node}__SKIP_PROOF_AGGREGATION"
+    done
+  fi
+  export NEGOTIATION_REAL_PROOFS_AGG NEGOTIATION_SKIP_PROOF_AGG
 
   case "$BFV_PRESET" in
     insecure-simd) ;;

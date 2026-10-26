@@ -19,10 +19,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 source "$(dirname "${BASH_SOURCE[0]}")/lib/dev_config.sh"
 load_template_dev_config
 
-# Proof aggregation stays on. The template skips it in CI, but the l-BFV public-key aggregator has
-# no skip path: it publishes the committee key only with a real DkgAggregatorV2 proof, so with
-# SKIP_PROOF_AGGREGATION the key is never published
-# (crates/aggregator/src/public_key_aggregation/effects/publish_result.rs).
+# Proof aggregation follows `load_template_dev_config`: skipped (mock verifiers) when the installed
+# CLI has the feature `test-only-skip-proof-aggregation`, on (real verifiers) otherwise or with
+# NEGOTIATION_REAL_PROOFS_AGG=1.
 export E3_PROGRAM__DEV=true
 export TEMPLATE_UNPROVED_TEST=1
 
