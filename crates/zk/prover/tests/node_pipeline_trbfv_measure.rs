@@ -29,8 +29,8 @@ use e3_events::CircuitName;
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_zk_config::DkgInputType;
 use e3_zk_prover::{
-    DkgShareDecryptionCircuit as ShareDecryptionCircuit, NodeDkgFoldInput, PkAggregationCircuit,
-    PkCircuit, PkGenerationCircuit, Provable, ShareComputationCircuit,
+    generate_c3_chonk_chain, DkgShareDecryptionCircuit as ShareDecryptionCircuit, NodeDkgFoldInput,
+    PkAggregationCircuit, PkCircuit, PkGenerationCircuit, Provable, ShareComputationCircuit,
 };
 use e3_zk_witness::dkg::share_computation::Inputs as ShareComputationInputs;
 use fhe::bfv::{PublicKey, SecretKey};
@@ -247,6 +247,115 @@ async fn trbfv_node_dkg_pipeline_measure() {
     });
 
     phases.finish();
+}
+
+/// C3 Chonk stack size: proves one secret's C3 set once, then times the C3 chain for every app
+/// build listed in `MEASURE_C3_APPS` (comma-separated directories, each holding a built
+/// `c3_chonk_app.{json,vk_recursive,vk_recursive_hash}` with its own `C3_CHONK_LEAVES`). Needs
+/// `MEASURE_C3_STACKS=1`.
+#[tokio::test]
+async fn trbfv_c3_chonk_stack_measure() {
+    let Some((committee_size, committee_name)) = pipeline::gate(PRESET, Some("MEASURE_C3_STACKS"))
+    else {
+        return;
+    };
+    let apps: Vec<std::path::PathBuf> = std::env::var("MEASURE_C3_APPS")
+        .expect("MEASURE_C3_APPS lists the app builds to compare")
+        .split(',')
+        .map(std::path::PathBuf::from)
+        .collect();
+    pipeline::install_bb_trace();
+    let committee = committee_size.values();
+    let bb = find_bb().await.expect("bb");
+    let (backend, _temp) = setup_test_prover(&bb).await;
+    let prover = pipeline::prover(&backend);
+    let artifacts_dir = prover.resolve_artifacts_dir(PRESET, &committee_name);
+    pipeline::stage(
+        &backend,
+        &artifacts_dir,
+        &[CircuitName::ShareEncryption],
+        &[
+            CircuitName::C3ChonkApp,
+            CircuitName::C3ChonkInitKernel,
+            CircuitName::C3ChonkTailKernel,
+            CircuitName::C3ChonkHidingKernel,
+            CircuitName::C3ChonkTube,
+            CircuitName::C3ChonkAccumulate,
+        ],
+    )
+    .await;
+
+    let dkg_pk = prep("dkg key", || {
+        let (_, dkg_params) = build_pair_for_preset(PRESET).expect("DKG parameters");
+        let mut dkg_rng = rng();
+        PublicKey::new(&SecretKey::random(&dkg_params, &mut dkg_rng), &mut dkg_rng)
+    });
+    let sk_inputs = prep("own C2a inputs", || {
+        let (key_data, _, secret_key) =
+            node_fold_witness::pk_generation_sample_with_esi(PRESET, committee.clone())
+                .expect("key data");
+        let share_sk = node_fold_witness::share_computation_sk_from_pk(
+            PRESET,
+            committee.clone(),
+            &key_data,
+            &secret_key,
+        )
+        .expect("C2a data");
+        let config =
+            e3_zk_config::dkg::share_computation::Configs::for_preset(PRESET, committee_size)
+                .expect("C2 configuration");
+        ShareComputationInputs::compute(&config, &share_sk).expect("C2a inputs")
+    });
+    let (c3_proofs, c3_slots) = measure("c3_set", || {
+        Ok::<_, String>(pipeline::prove_c3_set(
+            &prover,
+            PRESET,
+            &committee,
+            &sk_inputs,
+            &dkg_pk,
+            DkgInputType::SecretKey,
+            "c3a",
+            &artifacts_dir,
+        ))
+    });
+    let total_slots = committee.n * PRESET.metadata().num_moduli;
+    println!(
+        "STEP c3 proofs={} total_slots={total_slots}",
+        c3_proofs.len()
+    );
+
+    let app_dir = backend
+        .circuits_dir
+        .join(&artifacts_dir)
+        .join("default")
+        .join(CircuitName::C3ChonkApp.dir_path());
+    for app in &apps {
+        let name = CircuitName::C3ChonkApp.as_str();
+        for (from, to) in [
+            ("json", "json"),
+            ("vk_recursive", "vk"),
+            ("vk_recursive_hash", "vk_hash"),
+        ] {
+            std::fs::copy(
+                app.join(format!("{name}.{from}")),
+                app_dir.join(format!("{name}.{to}")),
+            )
+            .unwrap_or_else(|e| panic!("stage {} app: {e}", app.display()));
+        }
+        let label = app
+            .file_name()
+            .map_or("app".into(), |n| n.to_string_lossy().into_owned());
+        measure(&format!("c3_chain {label}"), || {
+            generate_c3_chonk_chain(
+                &prover,
+                &c3_proofs,
+                &c3_slots,
+                total_slots,
+                &format!("measure-c3-{label}"),
+                &artifacts_dir,
+            )
+        });
+    }
 }
 
 /// Threshold decryption on the trBFV preset: the node's C6, and with `MEASURE_AGGREGATOR=1` the

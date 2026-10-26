@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! C3 over Chonk (see `circuits/lib/src/math/chonk.nr`). The inner `ShareEncryption` proofs go
-//! into stacks of [`C3_CHONK_LEAVES`]; each stack is an app and three kernels proved as one Chonk
+//! into stacks of `lib::math::chonk::C3_CHONK_LEAVES`; each stack is an app and three kernels proved as one Chonk
 //! proof, which a [`CircuitName::C3ChonkTube`] rollup proof verifies. A chain of
 //! [`CircuitName::C3ChonkAccumulate`] proofs merges the tubes in order, and `c3ab_fold` closes
 //! the last accumulator's IPA claim. A chain always has at least two stacks, so it ends on an
@@ -23,11 +23,9 @@ use crate::error::ZkError;
 use crate::prover::ZkProver;
 use crate::witness::{CompiledCircuit, WitnessGenerator};
 use e3_events::{CircuitName, CircuitVariant, Proof};
+use noirc_abi::AbiType;
 use serde::Serialize;
 use std::fs;
-
-/// Inner C3 proofs one stack's app verifies (`lib::math::chonk::C3_CHONK_LEAVES`).
-pub const C3_CHONK_LEAVES: usize = 16;
 
 /// Key hashes a tube or accumulate proof exposes before its rows
 /// (`lib::math::chonk::C3_CHONK_KEYS`).
@@ -51,6 +49,9 @@ struct StackCircuit {
 }
 
 struct C3ChonkCircuits {
+    /// Inner C3 proofs one app verifies, read from its ABI so the Rust side never disagrees with
+    /// the compiled `C3_CHONK_LEAVES`.
+    leaves_per_stack: usize,
     leaf: VkArtifacts,
     stack: Vec<StackCircuit>,
     tube: VkArtifacts,
@@ -60,7 +61,7 @@ struct C3ChonkCircuits {
 impl C3ChonkCircuits {
     fn load(prover: &ZkProver, artifacts_dir: &str) -> Result<Self, ZkError> {
         let default = prover.circuits_dir(CircuitVariant::Default, artifacts_dir);
-        let stack = STACK
+        let stack: Vec<StackCircuit> = STACK
             .iter()
             .map(|&circuit| {
                 let dir = default.join(circuit.dir_path());
@@ -76,7 +77,9 @@ impl C3ChonkCircuits {
                 })
             })
             .collect::<Result<_, ZkError>>()?;
+        let leaves_per_stack = app_leaves(&stack)?;
         Ok(Self {
+            leaves_per_stack,
             leaf: vk::load_vk_artifacts(
                 &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
                 CircuitName::ShareEncryption,
@@ -86,6 +89,22 @@ impl C3ChonkCircuits {
             accumulate: vk::load_vk_artifacts(&default, CircuitName::C3ChonkAccumulate)?,
         })
     }
+}
+
+/// The length of the app's `slot_indices` parameter.
+fn app_leaves(stack: &[StackCircuit]) -> Result<usize, ZkError> {
+    stack[0]
+        .compiled
+        .abi
+        .parameters
+        .iter()
+        .find(|parameter| parameter.name == "slot_indices")
+        .and_then(|parameter| match &parameter.typ {
+            AbiType::Array { length, .. } => Some(*length as usize),
+            _ => None,
+        })
+        .filter(|&length| length > 0)
+        .ok_or_else(|| ZkError::InvalidInput("c3_chonk_app has no slot_indices array".into()))
 }
 
 /// Inner C3 public transcript: two inputs + `ct_commitment` output.
@@ -164,7 +183,7 @@ fn mega_key(circuit: &StackCircuit) -> MegaKey {
     }
 }
 
-/// Proves one stack over `leaves`, at most [`C3_CHONK_LEAVES`] `(inner proof, slot)` pairs, and
+/// Proves one stack over `leaves`, at most `leaves_per_stack` `(inner proof, slot)` pairs, and
 /// its tube. Returns the tube proof.
 fn prove_stack_and_tube(
     prover: &ZkProver,
@@ -181,10 +200,11 @@ fn prove_stack_and_tube(
     };
     let zero = format!("0x{}", "0".repeat(64));
     let mut rows = vec![zero; 3 * total_slots];
-    let mut proofs = Vec::with_capacity(C3_CHONK_LEAVES);
-    let mut c3_public_inputs = Vec::with_capacity(C3_CHONK_LEAVES);
-    let mut slot_indices = Vec::with_capacity(C3_CHONK_LEAVES);
-    for k in 0..C3_CHONK_LEAVES {
+    let per_stack = circuits.leaves_per_stack;
+    let mut proofs = Vec::with_capacity(per_stack);
+    let mut c3_public_inputs = Vec::with_capacity(per_stack);
+    let mut slot_indices = Vec::with_capacity(per_stack);
+    for k in 0..per_stack {
         // An empty place repeats the stack's first leaf under the sentinel slot, which the app
         // verifies and does not write.
         let (proof, slot) = leaves
@@ -407,7 +427,7 @@ pub fn generate_c3_chonk_chain(
         .zip(slot_indices.iter().copied())
         .collect();
     // The fewest stacks that hold every leaf, at least two, sized as evenly as possible.
-    let stacks = leaves.len().div_ceil(C3_CHONK_LEAVES).max(2);
+    let stacks = leaves.len().div_ceil(circuits.leaves_per_stack).max(2);
     let size = leaves.len().div_ceil(stacks);
     let mut tubes = leaves.chunks(size).enumerate().map(|(i, group)| {
         prove_stack_and_tube(
