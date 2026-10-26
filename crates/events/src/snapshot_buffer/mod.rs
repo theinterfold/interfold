@@ -22,4 +22,3 @@ pub struct FlushPendingSnapshots;
 
 pub use aggregate_config::*;
 pub use snapshot_buffer::*;
-pub use timelock_queue::Tick;

@@ -9,10 +9,6 @@ use crate::{AggregateId, E3id};
 pub struct StoreKeys;
 
 impl StoreKeys {
-    pub fn keyshare(e3_id: &E3id) -> String {
-        format!("//keyshare/{e3_id}")
-    }
-
     pub fn threshold_keyshare(e3_id: &E3id) -> String {
         format!("{}{e3_id}", Self::THRESHOLD_KEYSHARE_PREFIX)
     }

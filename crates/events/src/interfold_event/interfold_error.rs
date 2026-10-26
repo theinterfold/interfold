@@ -16,10 +16,6 @@ use crate::{BusHandle, ErrorDispatcher};
 
 use super::{InterfoldEvent, Unsequenced};
 
-pub trait FromError {
-    fn from_error(err_type: EType, error: impl Into<String>) -> Self;
-}
-
 #[derive(Message, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[rtype(result = "()")]
 pub struct InterfoldError {
@@ -55,15 +51,6 @@ impl InterfoldError {
         Self {
             err_type,
             message: message.into().to_string(),
-        }
-    }
-}
-
-impl FromError for InterfoldError {
-    fn from_error(err_type: EType, error: impl Into<String>) -> Self {
-        Self {
-            err_type,
-            message: error.into(),
         }
     }
 }
