@@ -1,0 +1,17 @@
+# The binary that `interfold program compile` builds and `interfold program start` runs. It serves
+# ./program to the ciphernodes. A crate of its own, so the server's dependencies stay out of the
+# OpenVM guest, which links ./program too.
+[package]
+name = "e3-user-program-runner"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "program-runner"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+e3-program-runner = { workspace = true }
+e3-user-program = { workspace = true }
