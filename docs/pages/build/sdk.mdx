@@ -175,6 +175,7 @@ of the E3.
 | `SECURE_THRESHOLD_16384`   | 3          | 16384       | 5              | l-BFV with a `minimum` committee; not on mainnet    |
 | `INSECURE_THRESHOLD_LBFV`  | 4          | 128         | 3              | Test-only l-BFV path with the insecure parameters   |
 | `INSECURE_THRESHOLD_SIMD`  | 5          | 128         | 3              | Test-only l-BFV path with plaintext modulus 257     |
+| `SECURE_THRESHOLD_16384_SIMD` | 6       | 16384       | 5              | l-BFV with 16384 SIMD slots (plaintext modulus 65537) and a `minimum`, `micro` or `small` committee; not on mainnet |
 
 The insecure presets have no production security. Use them only for tests.
 `ThresholdBfvParamsPresetNames` lists these names, and
@@ -316,10 +317,17 @@ encrypted to it. For the full encrypt and submit flow, see
 `{ encoding: 'poly' | 'simd' }`. The default is `'poly'`: `values[i]` is the coefficient of `X^i`.
 With `'simd'`, `values[i]` is slot `i`, and an operation on a ciphertext acts on all slots at once.
 The preset must have a plaintext modulus that is prime and 1 mod 2N, for example
-`INSECURE_THRESHOLD_SIMD`. Other presets reject `'simd'`.
+`INSECURE_THRESHOLD_SIMD` or `SECURE_THRESHOLD_16384_SIMD`. Other presets reject `'simd'`.
 
 The plaintext output of an E3 is always in the poly basis. Use `decodePlaintextSlots(hex, preset)`
 to get the slot values.
+
+`SECURE_THRESHOLD_16384_SIMD` publishes only the first 50 of its 16384 plaintext coefficients, so
+`decodePlaintextSlots` does not apply to it. A SIMD plaintext with few non-zero slots is dense in the
+poly basis, and the 50 coefficients are a window of it. When the program fixes which slots can be
+non-zero, use `decodePlaintextSparseSlots(hex, preset, slots)` to read those slots from the window.
+The call needs at most 50 slots. It fails when the window does not fit the slots, which a spare
+coefficient can detect, and which no check can detect when exactly 50 slots are given.
 
 ### Encryption proofs
 
@@ -331,7 +339,7 @@ them with the `insecure-64` preset and the `minimum` committee
 The circuit depends on the key type of the preset. For a trBFV preset (`INSECURE_THRESHOLD_64`, `SECURE_THRESHOLD_8192`), the
 SDK proves one circuit, `user_data_encryption`, which proves both ciphertext legs. Its public inputs
 are `pk_commitment`, `ct_commitment`, and `k1_commitment`. For an l-BFV preset
-(`INSECURE_THRESHOLD_LBFV`, `INSECURE_THRESHOLD_SIMD`, `SECURE_THRESHOLD_16384`), the SDK proves the chunked proof tree and the
+(`INSECURE_THRESHOLD_LBFV`, `INSECURE_THRESHOLD_SIMD`, `SECURE_THRESHOLD_16384`, `SECURE_THRESHOLD_16384_SIMD`), the SDK proves the chunked proof tree and the
 `user_data_encryption_chunked` wrapper.
 
 <Callout type='warning'>

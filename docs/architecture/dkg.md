@@ -14,7 +14,8 @@ Owners: [keyshare](../../crates/keyshare/src/threshold_keyshare/),
 ## Identities and dimensions
 
 There are two proof paths. `insecure-64` (parameter set 0) and `secure-8192` use trBFV; `secure-16384`,
-`insecure-simd` (parameter set 5), and the insecure l-BFV parameter set 4 (`insecure`) use l-BFV.
+`secure-16384-simd` (parameter set 6), `insecure-simd` (parameter set 5), and the insecure l-BFV
+parameter set 4 (`insecure`) use l-BFV.
 `insecure-64` and `insecure` have different degrees, and their protocol paths are not
 interchangeable. The C1/C5 and singleton C2 descriptions below describe trBFV unless stated otherwise.
 
@@ -41,12 +42,12 @@ sizes. [Shape tests](../../crates/zk/prover/src/share_verification/workflow_test
 distinction for both presets.
 
 The trBFV presets `insecure-64` and `secure-8192` use three threshold Shamir rows. The l-BFV path
-uses chunked C2/C3 proofs; `secure-16384` has five threshold rows. Do not infer one path's proof
+uses chunked C2/C3 proofs; `secure-16384` and `secure-16384-simd` have five threshold rows. Do not infer one path's proof
 shape from the other.
 
 The l-BFV C2 chunk size is `c2_chunk_size(degree, n_parties)` in `e3-zk-config`. At degree 16384 it is
 8192 coefficients for up to 4 parties and 2048 above. Other degrees use the smaller of 512 and the
-degree. A batch holds up to four chunks. The generated `dkg.nr` of `secure-16384` writes the chunk
+degree. A batch holds up to four chunks. The generated `dkg.nr` of `secure-16384` and `secure-16384-simd` writes the chunk
 size as an expression over the active committee's `N_PARTIES`, so the compiled circuits follow the
 same rule. The other presets write fixed values. A non-default `--chunk-size` gives artifacts that
 are valid only after the C2/C3/C4 circuits are recompiled against the generated configuration.
@@ -214,7 +215,7 @@ arrival-order quorum.
 generation secret to the chunked node's C2a root; `nodes_fold_v2` contains exactly H parties.
 `dkg_aggregator_v2` binds independent legacy and V2 VK manifests, the session, accepted set,
 committee, and operational key-envelope commitment. The final public-input length is
-`39 + 3*H + 3*rows` (60 for secure-16384/minimum), not the trBFV C5 layout. Aggregator ID is
+`39 + 3*H + 3*rows` (60 for secure-16384/minimum and secure-16384-simd/minimum), not the trBFV C5 layout. Aggregator ID is
 statement metadata; publication remains permissionless.
 
 Persist both operational keys reconstructed from accepted contribution documents before final V2

@@ -148,8 +148,8 @@ discriminants under schema 8, so the schema marker cannot reject them. Before st
 fresh testnet stack, testnet nodes must run `interfold node reset-data` under the guards below.
 Redeploy a testnet that holds degree-512 index-0 E3s; do not upgrade it in place or reinterpret
 those E3s with degree-64 parameters. This requirement does not replace mainnet's secure index-2
-cutover procedure. The insecure l-BFV presets (`insecure`, `insecure-simd`) use appended
-`BfvPreset` variants and on-chain indices 4 and 5. They do not reuse index 0.
+cutover procedure. The l-BFV presets (`insecure`, `insecure-simd`, `secure-16384-simd`) use appended
+`BfvPreset` variants and on-chain indices 4, 5 and 6. They do not reuse index 0.
 
 ### Identity and active-state guards
 
