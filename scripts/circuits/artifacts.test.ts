@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { isPresetCommitteeSupported } from './constants'
 import {
+  artifactBranch,
   findArtifactRevision,
   RELEASE_REQUIRED_PAIRS,
   requiredArtifactMarkers,
@@ -19,6 +20,15 @@ import {
 function sourceHash(preset: string, committee: string): string {
   return `source:${preset}:${committee}`
 }
+
+test('the store branch is circuit-artifacts unless a test-release store is named', () => {
+  assert.equal(artifactBranch(undefined), 'circuit-artifacts')
+  assert.equal(artifactBranch(''), 'circuit-artifacts')
+  assert.equal(artifactBranch('circuit-artifacts-lbfv'), 'circuit-artifacts-lbfv')
+  for (const branch of ['main', 'circuit-artifacts-', 'circuit-artifacts-LBFV', 'circuit-artifacts-x', 'circuit-artifacts-lbfv/x']) {
+    assert.throws(() => artifactBranch(branch), /CIRCUIT_ARTIFACTS_BRANCH/)
+  }
+})
 
 test('every release pair is a supported build pair', () => {
   assert.ok(RELEASE_REQUIRED_PAIRS.length > 0)

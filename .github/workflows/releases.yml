@@ -278,6 +278,12 @@ jobs:
     name: Download Circuit Artifacts
     runs-on: ubuntu-latest
     needs: validate-and-prepare
+    # A test release reads its own store, circuit-artifacts-<label>, so its builds never reach the tip
+    # of circuit-artifacts that main's CI pulls with --latest.
+    env:
+      CIRCUIT_ARTIFACTS_BRANCH:
+        ${{ needs.validate-and-prepare.outputs.test_release == 'true' && format('circuit-artifacts-{0}', inputs.label) ||
+        'circuit-artifacts' }}
     outputs:
       source_hash: ${{ steps.pull.outputs.source_hash }}
       archive_sha256: ${{ steps.archive.outputs.sha256 }}
@@ -294,7 +300,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # The newest circuit-artifacts revision whose SOURCE_HASH is this tree's, not the branch tip,
+      # The newest revision of the store branch whose SOURCE_HASH is this tree's, not the branch tip,
       # which can hold a build of another tree. The hash covers the sources and the toolchain pins.
       - name: Pull circuit artifacts
         id: pull
@@ -302,8 +308,8 @@ jobs:
           SOURCE_HASH=$(pnpm --silent build:circuits hash)
           echo "source_hash=$SOURCE_HASH" >> "$GITHUB_OUTPUT"
 
-          if ! git fetch origin circuit-artifacts; then
-            echo "::error::Required circuit-artifacts branch is missing."
+          if ! git fetch origin "$CIRCUIT_ARTIFACTS_BRANCH"; then
+            echo "::error::Required $CIRCUIT_ARTIFACTS_BRANCH branch is missing."
             exit 1
           fi
           pnpm store:circuits pull

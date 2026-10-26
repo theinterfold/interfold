@@ -126,8 +126,11 @@ Before you start:
 1. Merge or rebase main into the branch. The workflow file and the release scripts come from the
    branch that you dispatch, so the branch must contain the test release mode. GitHub runs a manual
    workflow only if the workflow file with the `workflow_dispatch` trigger is also on main.
-2. Build the circuits of the branch tree and run `pnpm store:circuits push`. The workflow pulls only
-   circuit artifacts that have the `SOURCE_HASH` of the dispatched commit. It fails when none exist.
+2. Build the circuits of the branch tree and push them to the store of the label:
+   `CIRCUIT_ARTIFACTS_BRANCH=circuit-artifacts-<label> pnpm store:circuits push`. The workflow pulls
+   a test release from `circuit-artifacts-<label>`, not from `circuit-artifacts`, so main's CI never
+   pulls the branch's circuits. It takes only artifacts that have the `SOURCE_HASH` of the
+   dispatched commit, and it fails when none exist.
 3. Make sure the branch has `deployments/manifest.json`, and that its version files agree. Do not
    bump the version. The workflow does not commit anything.
 
@@ -150,7 +153,7 @@ core of the version in the branch. The `g` is part of the version. Then the work
 | npm dist-tag      | The label only. `latest` and `dev` do not change.                               |
 | Container tags    | The full version and the label. `latest` and `dev` do not change.               |
 | GitHub release    | Prerelease with tag `v<version>` on the commit. Not latest. Stable tag is kept. |
-| Circuit artifacts | The revision that was built from the same source tree as the commit.            |
+| Circuit artifacts | From `circuit-artifacts-<label>`: the revision built from the same source tree. |
 | DAppNode packages | Not built.                                                                      |
 
 To install a test release, use the exact version, the label, or the container tag:

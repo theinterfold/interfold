@@ -188,7 +188,9 @@ not need a circuit rebuild.
 ### What it does
 
 - **Push**: Merges local `dist/circuits/` into the `circuit-artifacts` branch, refreshes
-  `SHA256SUMS` and `checksums.json`, then pushes to origin
+  `SHA256SUMS` and `checksums.json`, then pushes to origin. `CIRCUIT_ARTIFACTS_BRANCH` selects
+  another store for every command: a test release uses `circuit-artifacts-<label>` (see
+  [RELEASING.md](../../RELEASING.md#test-releases-from-a-branch))
 - **Checksums**: `pnpm store:circuits checksums --dir <path>` writes `SHA256SUMS` and
   `checksums.json` for exactly the staged directory. CI runs this before packaging the
   circuit-download fixture

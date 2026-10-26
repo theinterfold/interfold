@@ -15,7 +15,19 @@ import requiredLbfvArtifacts from '../../crates/zk/prover/required-artifacts-lbf
 import requiredTrbfvArtifacts from '../../crates/zk/prover/required-artifacts-trbfv.json'
 import supportedConfigurations from '../../crates/zk/prover/supported-configurations.json'
 
-const BRANCH = 'circuit-artifacts'
+/**
+ * The store branch. `CIRCUIT_ARTIFACTS_BRANCH` selects a separate store for a test release, for example
+ * `circuit-artifacts-lbfv`, so that its builds never reach the tip that main's CI pulls with `--latest`.
+ */
+export function artifactBranch(value = process.env.CIRCUIT_ARTIFACTS_BRANCH): string {
+  const branch = value === undefined || value === '' ? 'circuit-artifacts' : value
+  if (!/^circuit-artifacts(-[a-z]{2,16})?$/.test(branch)) {
+    throw new Error(`CIRCUIT_ARTIFACTS_BRANCH must be circuit-artifacts or circuit-artifacts-<2 to 16 lowercase letters>, got ${branch}`)
+  }
+  return branch
+}
+
+const BRANCH = artifactBranch()
 const ROOT = resolve(__dirname, '../..')
 const DIST = join(ROOT, 'dist', 'circuits')
 const METADATA_FILES = new Set(['.git', 'SOURCE_HASH', 'SHA256SUMS', 'checksums.json'])
@@ -188,13 +200,13 @@ function argValue(name: string): string | undefined {
 function validateSourceHash(dir: string, expectedHash: string): void {
   const sourceHashPath = join(dir, 'SOURCE_HASH')
   if (!existsSync(sourceHashPath)) {
-    throw new Error('circuit-artifacts branch is missing SOURCE_HASH; cannot verify it matches the released source.')
+    throw new Error(`${BRANCH} branch is missing SOURCE_HASH; cannot verify it matches the released source.`)
   }
 
   const pulledHash = readFileSync(sourceHashPath, 'utf8').trim()
   if (pulledHash !== expectedHash) {
     throw new Error(
-      `circuit-artifacts is stale (SOURCE_HASH=${pulledHash}, expected ${expectedHash}). ` +
+      `${BRANCH} is stale (SOURCE_HASH=${pulledHash}, expected ${expectedHash}). ` +
         'Rebuild and re-push the required preset/committee pairs, then run: pnpm store:circuits push',
     )
   }
@@ -295,7 +307,7 @@ async function restamp() {
   const published = readFileSync(join(tmp, 'SOURCE_HASH'), 'utf8').trim()
   if (published !== previousHash) {
     console.error(
-      `❌ circuit-artifacts records SOURCE_HASH=${published}, not ${previousHash}. That branch holds another build; rebuild it instead.`,
+      `❌ ${BRANCH} records SOURCE_HASH=${published}, not ${previousHash}. That branch holds another build; rebuild it instead.`,
     )
     process.exit(1)
   }
