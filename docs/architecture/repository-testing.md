@@ -31,8 +31,8 @@ The old package's normal edges to aggregator, data, FHE, keyshare, multithread, 
 sortition, and bincode have no direct fixture consumer. Transitive feature enablement is not a
 contract: fixture bins explicitly request parameter `abi-encoding`, and each event-fixture consumer
 opts into its feature. Sync has no helper source use and needs no replacement dependency. The
-repository containment check keeps both support packages unpublished and dev-only, rejects internal
-normal/build dependencies from them, and prevents production dependencies on system tests.
+repository containment check keeps both support packages unpublished and dev-only, rejects all
+internal dependencies from them, and prevents production dependencies on system tests.
 
 This is test placement/dependency isolation only: no persisted/wire layout, cryptographic statement,
 parameter, event identity, or deployed verifier changes. Neither `protocol_version` nor

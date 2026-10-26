@@ -128,8 +128,16 @@ def main() -> int:
             failures.append(f"{relative}: enables {TARGET} on a dependency")
 
         owner = data.get("package", {}).get("name")
-        if owner in TEST_SUPPORT and data["package"].get("publish") is not False:
-            failures.append(f"{relative}: {owner} must remain unpublished")
+        if owner in TEST_SUPPORT:
+            if data["package"].get("publish") is not False:
+                failures.append(f"{relative}: {owner} must remain unpublished")
+            for table in dependency_tables(data):
+                for name, dependency in table.items():
+                    if isinstance(dependency, dict) and dependency.get("workspace"):
+                        dependency = workspace_dependencies.get(name, dependency)
+                    package = dependency.get("package", name) if isinstance(dependency, dict) else name
+                    if package.startswith("e3-"):
+                        failures.append(f"{relative}: shared fixture support cannot depend on internal crate {package}")
         if owner == SAMPLES and data["package"].get("publish") is not False:
             failures.append(f"{relative}: {SAMPLES} must remain unpublished")
         runtime_owner = SAMPLES_RUNTIME_OWNERS.get(relative)
@@ -148,8 +156,6 @@ def main() -> int:
                     )
                 if package in TEST_SUPPORT:
                     failures.append(f"{relative}: {package} is only allowed in dev-dependencies")
-                if owner in TEST_SUPPORT and package.startswith("e3-"):
-                    failures.append(f"{relative}: shared fixture support cannot depend on internal crate {package}")
                 if package == "e3-tests":
                     failures.append(f"{relative}: system-test composition cannot be a production dependency")
                 if package == SAMPLES and runtime_owner is None:

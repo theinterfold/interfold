@@ -68,7 +68,7 @@ test('shared fixture support stays dev-only, unpublished and independent of inte
   for (const name of ['e3-test-support', 'e3-bfv-test-support']) {
     writeFileSync(
       join(dir, 'Cargo.toml'),
-      `[workspace]\n[workspace.dependencies]\nfixtures = { package = "${name}", path = "crates/support" }\n`,
+      `[workspace]\n[workspace.dependencies]\nfixtures = { package = "${name}", path = "crates/support" }\nnode = { package = "e3-ciphernode-builder", path = "crates/builder" }\n`,
     )
     writeFileSync(support, `[package]\nname = "${name}"\nversion = "0.1.0"\npublish = false\n`)
     for (const table of ['dev-dependencies', "target.'cfg(unix)'.dev-dependencies"]) {
@@ -85,11 +85,29 @@ test('shared fixture support stays dev-only, unpublished and independent of inte
     writeFileSync(consumer, '[package]\nname = "consumer"\nversion = "0.1.0"\n')
     writeFileSync(support, `[package]\nname = "${name}"\nversion = "0.1.0"\n`)
     assert.match(check().stdout, /must remain unpublished/)
-    writeFileSync(
-      support,
-      `[package]\nname = "${name}"\nversion = "0.1.0"\npublish = false\n[target.'cfg(unix)'.dependencies]\nnode = { package = "e3-ciphernode-builder", path = "../builder" }\n`,
-    )
-    assert.match(check().stdout, /cannot depend on internal crate e3-ciphernode-builder/)
+    for (const table of [
+      'dependencies',
+      'dev-dependencies',
+      'build-dependencies',
+      "target.'cfg(unix)'.dependencies",
+      "target.'cfg(unix)'.dev-dependencies",
+      "target.'cfg(unix)'.build-dependencies",
+    ]) {
+      const manifest = `[package]\nname = "${name}"\nversion = "0.1.0"\npublish = false\n[${table}]\n`
+      writeFileSync(support, `${manifest}rand = "0.8"\n`)
+      const external = check()
+      assert.equal(external.status, 0, external.stdout + external.stderr)
+      for (const dependency of [
+        'e3-ciphernode-builder = "0.1.0"',
+        'node = { package = "e3-zk-prover", path = "../prover" }',
+        'node = { workspace = true }',
+      ]) {
+        writeFileSync(support, `${manifest}${dependency}\n`)
+        const result = check()
+        assert.equal(result.status, 1, `${name} [${table}]: ${dependency}\n${result.stdout}${result.stderr}`)
+        assert.match(result.stdout, /cannot depend on internal crate e3-(ciphernode-builder|zk-prover)/)
+      }
+    }
   }
   writeFileSync(support, '[package]\nname = "e3-test-support"\nversion = "0.1.0"\npublish = false\n')
   writeFileSync(
