@@ -256,15 +256,20 @@ async fn stage_leaf(preset_dir: &Path, circuit: CircuitName) {
     .await;
 }
 
-/// A `recursive_aggregation` fold circuit: `default` gets the noir-recursive-no-zk VK (and the
+/// A `recursive_aggregation` or `chonk` circuit: `default` gets the noir-recursive-no-zk VK (and the
 /// VK-tree anchor for `nodes_fold` / `c6_fold`), `evm` the EVM VK when the build emits one (as
 /// `setup_recursive_aggregation_fold_circuit` does).
 async fn stage_fold(preset_dir: &Path, circuit: CircuitName) {
     let name = circuit.as_str();
-    let target = circuits_build_root()
-        .join(circuit.group())
-        .join(name)
-        .join("target");
+    // The Chonk stack circuits share their workspace's target directory.
+    let target = if circuit.group() == "chonk" {
+        circuits_build_root().join("chonk").join("target")
+    } else {
+        circuits_build_root()
+            .join(circuit.group())
+            .join(name)
+            .join("target")
+    };
     let file = |ext: &str| target.join(format!("{name}.{ext}"));
     let json = file("json");
     let vk_recursive = file("vk_recursive");
@@ -608,7 +613,7 @@ pub fn c4_data(
 pub fn prove_node_fold(prover: &ZkProver, input: &NodeDkgFoldInput, artifacts_dir: &str) -> Proof {
     note(
         "node_dkg_fold runs c2ab || c3a chain || c3b chain concurrently (rayon::join, as in production); \
-         its per-proof times are the BB lines (c3_fold_kernel*, c3_fold*, c2ab*, c3ab*, c4ab_fold, node_fold*)",
+         its per-proof times are the BB lines (c3_chonk_tube*, c3_chonk_accumulate*, c2ab*, c3ab*, c4ab_fold, node_fold*)",
     );
     let result = measure("node_dkg_fold", || {
         prove_node_dkg_fold(prover, input, "measure-node-fold", artifacts_dir)

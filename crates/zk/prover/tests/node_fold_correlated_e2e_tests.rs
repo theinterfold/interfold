@@ -19,8 +19,8 @@ mod recursive_vk_substitution;
 use std::path::PathBuf;
 
 use common::{
-    find_bb, require_minimum_circuits, setup_chunked_dkg_circuits, setup_compiled_circuit,
-    setup_recursive_aggregation_fold_circuit, setup_test_prover,
+    find_bb, require_minimum_circuits, setup_c3_chonk_circuits, setup_chunked_dkg_circuits,
+    setup_compiled_circuit, setup_recursive_aggregation_fold_circuit, setup_test_prover,
 };
 use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{CircuitName, Proof};
@@ -29,7 +29,7 @@ use e3_zk_config::DkgInputType;
 use e3_zk_prover::test_utils::{
     fold_witness_field_strings, fold_witness_input_map, load_vk_artifacts,
 };
-use e3_zk_prover::{generate_sequential_c3_fold, CircuitVariant, Provable, ZkProver};
+use e3_zk_prover::{generate_c3_chonk_chain, CircuitVariant, Provable, ZkProver};
 use e3_zk_prover::{CompiledCircuit, WitnessGenerator};
 use e3_zk_prover::{
     DkgShareDecryptionCircuit as ShareDecryptionCircuit, PkCircuit, PkGenerationCircuit,
@@ -54,13 +54,14 @@ fn recursive_aggregation_compiled_json_path(circuit: CircuitName) -> PathBuf {
         .join(format!("{}.json", circuit.as_str()))
 }
 
-fn c3_fold_json_path() -> PathBuf {
+fn c3_chonk_tube_json_path() -> PathBuf {
     e3_zk_prover::test_utils::workspace_root()
-        .join("circuits/bin/recursive_aggregation/c3_fold/target/c3_fold.json")
+        .join("circuits/bin/recursive_aggregation/c3_chonk_tube/target/c3_chonk_tube.json")
 }
 
-fn c3_fold_total_slots_from_compiled_json() -> usize {
-    let path = c3_fold_json_path();
+/// Reads `C3_SLOTS` from the compiled `c3_chonk_tube` ABI (`stack_outputs` is `3 * C3_SLOTS + 4`).
+fn c3_total_slots_from_compiled_json() -> usize {
+    let path = c3_chonk_tube_json_path();
     let raw =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
     let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -68,13 +69,11 @@ fn c3_fold_total_slots_from_compiled_json() -> usize {
         .as_array()
         .and_then(|ps| {
             ps.iter()
-                .find(|p| {
-                    p.get("name") == Some(&serde_json::Value::String("acc_public_inputs".into()))
-                })
+                .find(|p| p.get("name") == Some(&serde_json::Value::String("stack_outputs".into())))
                 .and_then(|p| p.get("type")?.get("length")?.as_u64())
         })
-        .expect("c3_fold acc_public_inputs length") as usize;
-    (len - (4 + e3_zk_prover::C3_FOLD_LEAVES)) / 3
+        .expect("c3_chonk_tube stack_outputs length") as usize;
+    (len - 4) / 3
 }
 
 fn field_str_zero() -> String {
@@ -332,8 +331,8 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
             gate.display()
         );
     }
-    if !c3_fold_json_path().exists() {
-        panic!("missing required test prerequisite: c3_fold.json not found");
+    if !c3_chonk_tube_json_path().exists() {
+        panic!("missing required test prerequisite: c3_chonk_tube.json not found");
     }
 
     let committee = CiphernodesCommitteeSize::Minimum.values();
@@ -362,12 +361,11 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
         setup_compiled_circuit(&backend, "dkg", name).await;
     }
     setup_chunked_dkg_circuits(&backend).await;
+    setup_c3_chonk_circuits(&backend).await;
     setup_compiled_circuit(&backend, "threshold", "pk_generation").await;
 
     for c in [
         CircuitName::C2abFold,
-        CircuitName::C3Fold,
-        CircuitName::C3FoldKernel,
         CircuitName::C3abFold,
         CircuitName::C4abFold,
         CircuitName::NodeFold,
@@ -536,7 +534,7 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
     let dkg_sk = fhe::bfv::SecretKey::random(&dkg_dkg, &mut rng);
     let dkg_pk = fhe::bfv::PublicKey::new(&dkg_sk, &mut rng);
 
-    let total_slots = c3_fold_total_slots_from_compiled_json();
+    let total_slots = c3_total_slots_from_compiled_json();
     assert_eq!(
         total_slots,
         committee.n * dkg_th.moduli().len(),
@@ -594,35 +592,35 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
     let peer_slots: Vec<u32> = (slots_per_party as u32..total_slots as u32).collect();
     assert_eq!(slot_indices, peer_slots);
 
-    let c3a_folded = generate_sequential_c3_fold(
+    let c3a_folded = generate_c3_chonk_chain(
         &prover,
         &c3a_inners,
         &slot_indices,
         total_slots,
-        "e3-nf-c3fold-a",
+        "e3-nf-c3chonk-a",
         &artifacts_dir,
     )
-    .expect("c3 fold sk chain");
-    let c3b_folded = generate_sequential_c3_fold(
+    .expect("c3 chonk sk chain");
+    let c3b_folded = generate_c3_chonk_chain(
         &prover,
         &c3b_inners,
         &slot_indices,
         total_slots,
-        "e3-nf-c3fold-b",
+        "e3-nf-c3chonk-b",
         &artifacts_dir,
     )
-    .expect("c3 fold e_sm chain");
+    .expect("c3 chonk e_sm chain");
 
     let c3a_vk = load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Default, &artifacts_dir),
-        CircuitName::C3Fold,
+        CircuitName::C3ChonkAccumulate,
     )
-    .expect("c3a fold vk");
+    .expect("c3a accumulate vk");
     let c3b_vk = load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Default, &artifacts_dir),
-        CircuitName::C3Fold,
+        CircuitName::C3ChonkAccumulate,
     )
-    .expect("c3b fold vk");
+    .expect("c3b accumulate vk");
 
     let c3a_pub = proof_public_fields(&c3a_folded);
     let c3b_pub = proof_public_fields(&c3b_folded);

@@ -304,6 +304,35 @@ pub fn squeeze_one_after_absorb(
     digests[0]
 }
 
+/// Barretenberg's Poseidon2 field-sponge hash (`crypto::Poseidon2::hash`), which Barretenberg uses
+/// for verification-key hashes such as a Chonk kernel's `MegaVerificationKey.hash`.
+///
+/// Unlike SAFE, the capacity element is the last of the state and starts at `len << 64`, and the
+/// rate cache is added to the state before each permutation.
+pub fn bb_poseidon2_hash(inputs: &[Field]) -> Field {
+    let mut state = [Field::zero(); STATE_SIZE];
+    state[RATE] = Field::from(shl64(inputs.len() as u64));
+    let mut cache: Vec<Field> = Vec::with_capacity(RATE);
+    for input in inputs {
+        if cache.len() == RATE {
+            for (i, value) in cache.drain(..).enumerate() {
+                state[i] += value;
+            }
+            state = poseidon2_permutation(&state);
+        }
+        cache.push(*input);
+    }
+    for (i, value) in cache.drain(..).enumerate() {
+        state[i] += value;
+    }
+    poseidon2_permutation(&state)[0]
+}
+
+/// `value << 64` as a field element.
+fn shl64(value: u64) -> ark_ff::BigInt<4> {
+    ark_ff::BigInt::<4>([0, value, 0, 0])
+}
+
 /// Computes a unique tag for a sponge instance based on its IO pattern and domain separator.
 /// The tag is used to ensure that distinct instances behave like distinct functions.
 ///
@@ -423,6 +452,25 @@ pub fn compute_tag<const L: usize>(io_pattern: [u32; L], domain_separator: [u8; 
 
 #[cfg(test)]
 mod tests {
+    /// Matches the hash bb 5.2.0's `Poseidon2Hash` gives for a Mega verification key.
+    #[test]
+    fn bb_poseidon2_hash_matches_barretenberg() {
+        use ark_ff::PrimeField;
+        let vk = include_bytes!("../tests/fixtures/mega_vk.bin");
+        let fields: Vec<Field> = vk.chunks(32).map(Field::from_be_bytes_mod_order).collect();
+        let expected = Field::from_be_bytes_mod_order(&hex_literal(
+            "0e9eafdbf5dd43fd962894c5ec42d0f29a65644ed23eaff397b5cec210106f19",
+        ));
+        assert_eq!(bb_poseidon2_hash(&fields), expected);
+    }
+
+    fn hex_literal(hex: &str) -> Vec<u8> {
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
     #[test]
     fn absorbing_in_pieces_from_a_carried_state_matches_one_absorb() {
         let domain_separator = [0x41u8; 64];

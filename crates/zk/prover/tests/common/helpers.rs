@@ -154,6 +154,47 @@ pub async fn setup_chunked_dkg_circuits(backend: &ZkBackend) {
     }
 }
 
+/// Installs the C3 Chonk circuits: the four stack circuits from the `chonk` workspace, then the
+/// tube and accumulate rollups.
+#[allow(dead_code)]
+pub async fn setup_c3_chonk_circuits(backend: &ZkBackend) {
+    let target_dir = circuits_build_root().join("chonk").join("target");
+    for circuit in [
+        CircuitName::C3ChonkApp,
+        CircuitName::C3ChonkInitKernel,
+        CircuitName::C3ChonkTailKernel,
+        CircuitName::C3ChonkHidingKernel,
+    ] {
+        let pkg = circuit.as_str();
+        let default_dir = backend
+            .circuits_dir
+            .join("insecure-64")
+            .join("minimum")
+            .join("default")
+            .join(circuit.group())
+            .join(pkg);
+        fs::create_dir_all(&default_dir).await.unwrap();
+        for (from, to) in [
+            ("json", "json"),
+            ("vk_recursive", "vk"),
+            ("vk_recursive_hash", "vk_hash"),
+        ] {
+            let source = target_dir.join(format!("{pkg}.{from}"));
+            fs::copy(&source, default_dir.join(format!("{pkg}.{to}")))
+                .await
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "{}: {e} (run `pnpm build:circuits --group chonk`)",
+                        source.display()
+                    )
+                });
+        }
+    }
+    for circuit in [CircuitName::C3ChonkTube, CircuitName::C3ChonkAccumulate] {
+        setup_recursive_aggregation_fold_circuit(backend, circuit).await;
+    }
+}
+
 pub async fn setup_recursive_aggregation_fold_circuit(backend: &ZkBackend, circuit: CircuitName) {
     let pkg = circuit.as_str();
     let target_dir = circuits_build_root()

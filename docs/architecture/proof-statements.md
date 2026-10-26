@@ -150,16 +150,27 @@ CRT reconstruction. Host validation is not a substitute for those circuit constr
 
 ## Recursive trust and exported values
 
-Sequential C3, C6, and nodes folds keep `(leaf, fold, genesis)` VK hashes constant across
-predecessors. The first step verifies genesis; continuation verifies the fold; the final consumer
-binds the declared fold hash to the verified VK. C3ab covers both complete C3 chains.
+Sequential C6 and nodes folds keep `(leaf, fold, genesis)` VK hashes constant across predecessors.
+The first step verifies genesis; continuation verifies the fold; the final consumer binds the
+declared fold hash to the verified VK. C3ab covers both complete C3 chains.
 
-`c3_fold_kernel` and `c3_fold` verify four C3 proofs per step (`lib::math::c3_fold`), which fills
-2^22 and halves the fold cost per leaf against one leaf per 2^21 step. Every slot index is public. A
-place with nothing to fold carries the sentinel slot `C3_SLOTS` and writes nothing; its proof
-position repeats a real leaf of the step, so it is verified but adds no row. Every written slot must
-be empty, so a step cannot overwrite or duplicate a row. Node-fold covers child folds and their
-nested keys. DKG aggregation requires one node-tree hash across every selected row.
+C3 chains run over Chonk (`lib::math::chonk`). A stack is `c3_chonk_app`, which verifies
+`C3_CHONK_LEAVES` C3 proofs, then the init, tail and hiding kernels; `c3_chonk_tube` verifies the
+stack's Chonk proof as a rollup proof, and `c3_chonk_accumulate` merges an accumulator or tube on
+the left with a tube on the right. `c3ab_fold` verifies each chain's last accumulator as a root
+rollup, which closes its IPA claim. Every stage verifies against a witness key and appends that
+key's hash to the data it passes on, so each tube or accumulator exposes seven key hashes: its own,
+the tube, the hiding kernel's Chonk key, then C3, app, init and tail. Merging requires equal keys on
+both sides; `c3ab_fold` hashes each chain's seven keys into the C3 tree, which the anchor pins. The
+Chonk and Mega key hashes are Barretenberg's Poseidon2 hash of the key fields, which the builder
+writes beside `write_vk --scheme chonk` output. A chain has at least two stacks, so it ends on an
+accumulator.
+
+Every slot index is public. A place with nothing to verify carries the sentinel slot `C3_SLOTS` and
+writes nothing; its proof position repeats a real leaf of the stack, so it is verified but adds no
+row. Within a stack every written slot must be empty, and merging rejects a slot filled on both
+sides, so no row is overwritten or duplicated. Node-fold covers child folds and their nested keys.
+DKG aggregation requires one node-tree hash across every selected row.
 
 The trust tree uses ordered SAFE `DS_VK_HASH` hashing:
 
@@ -167,7 +178,7 @@ The trust tree uses ordered SAFE `DS_VK_HASH` hashing:
 C2a chain  = hash(sk_share_computation_chain, sk_share_computation_chain_last)
 C2b chain  = hash(e_sm_share_computation_chain, e_sm_share_computation_chain_last)
 C2 tree    = hash(C2a, C2a chain, C2b, C2b chain)
-C3 chain   = hash(c3_fold, c3_fold_kernel, C3)
+C3 chain   = hash(c3_chonk_accumulate, c3_chonk_tube, hiding kernel, C3, app, init, tail)
 C3 tree    = hash(C3a chain, C3b chain)
 C4 chain   = hash(share_decryption_limb_0, share_decryption_limb_1, share_decryption_limb_2)
 C4 tree    = hash(C4a, C4 chain, C4b, C4 chain)

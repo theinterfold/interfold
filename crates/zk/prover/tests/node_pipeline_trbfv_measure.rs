@@ -59,8 +59,12 @@ const NODE_LEAVES: &[CircuitName] = &[
 
 const NODE_FOLDS: &[CircuitName] = &[
     CircuitName::C2abFold,
-    CircuitName::C3FoldKernel,
-    CircuitName::C3Fold,
+    CircuitName::C3ChonkApp,
+    CircuitName::C3ChonkInitKernel,
+    CircuitName::C3ChonkTailKernel,
+    CircuitName::C3ChonkHidingKernel,
+    CircuitName::C3ChonkTube,
+    CircuitName::C3ChonkAccumulate,
     CircuitName::C3abFold,
     CircuitName::C4abFold,
     CircuitName::NodeFold,

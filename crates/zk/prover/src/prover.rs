@@ -183,6 +183,11 @@ impl ZkProver {
         &self.bb_binary
     }
 
+    /// Wall-clock cap of one bb run.
+    pub fn bb_timeout(&self) -> Duration {
+        self.bb_timeout
+    }
+
     pub fn generate_proof(
         &self,
         circuit: CircuitName,
@@ -249,8 +254,27 @@ impl ZkProver {
             witness_data,
             e3_id,
             dir_path,
-            variant,
+            variant.verifier_target(),
             self.circuits_dir(variant, artifacts_dir),
+        )
+    }
+
+    /// Proof for a rollup bin circuit (`noir-rollup-no-zk`): a Default-variant artifact whose
+    /// proof carries an IPA claim for a later root rollup to close.
+    pub fn generate_rollup_proof(
+        &self,
+        circuit: CircuitName,
+        witness_data: &[u8],
+        e3_id: &str,
+        artifacts_dir: &str,
+    ) -> Result<Proof, ZkError> {
+        self.generate_proof_impl_with_dir(
+            circuit,
+            witness_data,
+            e3_id,
+            &circuit.dir_path(),
+            "noir-rollup-no-zk",
+            self.circuits_dir(CircuitVariant::Default, artifacts_dir),
         )
     }
 
@@ -260,14 +284,12 @@ impl ZkProver {
         witness_data: &[u8],
         e3_id: &str,
         dir_path: &str,
-        variant: CircuitVariant,
+        verifier_target: &str,
         base_dir: std::path::PathBuf,
     ) -> Result<Proof, ZkError> {
         if !self.bb_binary.exists() {
             return Err(ZkError::BbNotInstalled);
         }
-
-        let verifier_target = variant.verifier_target();
 
         let circuit_dir = base_dir.join(dir_path);
         let circuit_path = circuit_dir.join(format!("{}.json", circuit.as_str()));

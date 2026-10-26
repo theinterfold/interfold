@@ -53,10 +53,16 @@ pub fn hashes(root: &Path) -> Result<[(&'static str, [u8; 32]); 2]> {
             "e_sm_share_computation_chain_last",
         )?,
     ]);
+    // `c3ab_fold` hashes each chain's seven key hashes in the order its proof exposes them.
+    let chonk = |name| load(root, "default", "chonk", name);
     let c3_chain = compute_vk_hash(vec![
-        fold("c3_fold")?,
-        fold("c3_fold_kernel")?,
+        fold("c3_chonk_accumulate")?,
+        fold("c3_chonk_tube")?,
+        chonk("c3_chonk_hiding_kernel")?,
         load(root, "recursive", "dkg", "share_encryption")?,
+        chonk("c3_chonk_app")?,
+        chonk("c3_chonk_init_kernel")?,
+        chonk("c3_chonk_tail_kernel")?,
     ]);
     let c3 = compute_vk_hash(vec![c3_chain, c3_chain]);
     // Each final C4 exposes the hash of its three limb keys; `c4ab_fold` hashes it next to the C4

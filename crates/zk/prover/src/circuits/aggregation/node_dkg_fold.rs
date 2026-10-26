@@ -7,7 +7,7 @@
 //! Production witness builders and provers for the per-node DKG fold pipeline and aggregator
 //! proofs ([`CircuitName::NodeFold`], [`CircuitName::DkgAggregator`], [`CircuitName::DecryptionAggregator`]).
 
-use crate::circuits::aggregation::c3_accumulator::generate_sequential_c3_fold;
+use crate::circuits::aggregation::c3_chonk::generate_c3_chonk_chain;
 use crate::circuits::aggregation::c6_accumulator::generate_sequential_c6_fold;
 use crate::circuits::aggregation::helpers::{address_to_field_hex, u64_to_field_hex};
 use crate::circuits::aggregation::nodes_fold_accumulator::generate_sequential_nodes_fold;
@@ -164,9 +164,9 @@ fn push_step(timings: &mut Vec<FoldProveStepTiming>, step: &str, started: Instan
     });
 }
 
-/// Run C2abFold || (C3a fold || C3b fold) → C3abFold → C4abFold → NodeFold; returns a [`CircuitName::NodeFold`] proof.
+/// Run C2abFold || (C3a Chonk chain || C3b Chonk chain) → C3abFold → C4abFold → NodeFold; returns a [`CircuitName::NodeFold`] proof.
 ///
-/// C2abFold and the two C3 fold chains are mutually independent and run concurrently via
+/// C2abFold and the two C3 Chonk chains are mutually independent and run concurrently via
 /// `rayon::join`. C3a and C3b are also independent of each other and run as a nested join.
 pub fn prove_node_dkg_fold(
     prover: &ZkProver,
@@ -214,7 +214,7 @@ pub fn prove_node_dkg_fold(
                 rayon::join(
                     || {
                         let t = Instant::now();
-                        let r = generate_sequential_c3_fold(
+                        let r = generate_c3_chonk_chain(
                             prover,
                             input.c3a_inner_proofs,
                             input.c3_slot_indices_a,
@@ -226,7 +226,7 @@ pub fn prove_node_dkg_fold(
                     },
                     || {
                         let t = Instant::now();
-                        let r = generate_sequential_c3_fold(
+                        let r = generate_c3_chonk_chain(
                             prover,
                             input.c3b_inner_proofs,
                             input.c3_slot_indices_b,
@@ -258,7 +258,7 @@ pub fn prove_node_dkg_fold(
 
     let c3_fold_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::C3Fold,
+        CircuitName::C3ChonkAccumulate,
     )?;
     let c3ab = C3abFoldWitness {
         c3a_vk: c3_fold_vk.verification_key.clone(),

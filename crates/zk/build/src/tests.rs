@@ -206,6 +206,13 @@ fn dry_run_lists_selections_without_tools_or_writes() {
         Group::Dkg,
         Group::RecursiveAggregation,
     ]);
+    assert!(!dry.groups.is_complete());
+    dry.groups = GroupSelection::Selected(vec![
+        Group::Threshold,
+        Group::Dkg,
+        Group::Chonk,
+        Group::RecursiveAggregation,
+    ]);
     assert!(dry.groups.is_complete());
 }
 
@@ -820,8 +827,8 @@ fn hydration_accepts_other_source_but_records_actual_artifact_identity() {
 const VK_PATHS: &[(&str, &str, &str)] = &[
     ("recursive", "dkg", "sk_share_computation"),
     ("recursive", "dkg", "e_sm_share_computation"),
-    ("default", "recursive_aggregation", "c3_fold"),
-    ("default", "recursive_aggregation", "c3_fold_kernel"),
+    ("default", "recursive_aggregation", "c3_chonk_accumulate"),
+    ("default", "recursive_aggregation", "c3_chonk_tube"),
     ("recursive", "dkg", "share_encryption"),
     ("recursive", "dkg", "share_decryption"),
     ("recursive", "dkg", "pk"),
@@ -842,6 +849,10 @@ const VK_PATHS: &[(&str, &str, &str)] = &[
     ("default", "dkg", "share_decryption_limb_0"),
     ("default", "dkg", "share_decryption_limb_1"),
     ("default", "dkg", "share_decryption_limb_2"),
+    ("default", "chonk", "c3_chonk_hiding_kernel"),
+    ("default", "chonk", "c3_chonk_app"),
+    ("default", "chonk", "c3_chonk_init_kernel"),
+    ("default", "chonk", "c3_chonk_tail_kernel"),
 ];
 pub(crate) fn seed_anchor_keys(pair: &Path) {
     for i in 0..VK_PATHS.len() {
@@ -873,7 +884,9 @@ fn anchors_bind_all_descendants_in_circuit_order_and_reject_noncanonical_keys() 
         keys[1],
         compute_vk_hash(vec![keys[19], keys[20]]),
     ]);
-    let c3_chain = compute_vk_hash(vec![keys[2], keys[3], keys[4]]);
+    let c3_chain = compute_vk_hash(vec![
+        keys[2], keys[3], keys[24], keys[4], keys[25], keys[26], keys[27],
+    ]);
     let node = compute_vk_hash(vec![
         keys[6],
         keys[7],
