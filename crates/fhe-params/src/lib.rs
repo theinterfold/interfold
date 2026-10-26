@@ -11,6 +11,8 @@ pub mod constants;
 pub mod crp;
 #[cfg(feature = "abi-encoding")]
 pub mod encoding;
+#[cfg(feature = "abi-encoding")]
+pub mod metadata;
 pub mod presets;
 pub mod search;
 pub mod utils;

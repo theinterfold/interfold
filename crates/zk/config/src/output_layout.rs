@@ -14,8 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Size of a single Noir `Field` element in bytes (BN254 scalar).
-pub const FIELD_BYTE_LEN: usize = 32;
+pub use crate::constants::FIELD_BYTE_LEN;
 
 /// A named output field of a circuit proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

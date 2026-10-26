@@ -74,6 +74,7 @@ pub mod search_defaults {
 /// These match the parameters used when `circuits/lib/src/configs/insecure/` was generated,
 /// so the compiled `E_SM_BIT_SECRET` / `SHARE_ENCRYPTION_*` bounds remain consistent at runtime.
 pub mod insecure_search_defaults {
+    pub const MIN_PRIME_BITS: u8 = 12;
     pub const B: u128 = 20;
     pub const B_CHI: u128 = 1;
     pub const SEARCH_N: u128 = 19;

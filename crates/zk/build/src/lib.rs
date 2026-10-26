@@ -3,6 +3,7 @@
 mod artifacts;
 mod configuration;
 mod identity;
+pub mod metadata;
 mod toolchain;
 mod vk_tree;
 
@@ -56,6 +57,7 @@ pub enum Operation {
     SyncConfig,
     SyncPreset,
     Check,
+    ExportConfig,
 }
 
 impl FromStr for Operation {
@@ -67,8 +69,9 @@ impl FromStr for Operation {
             "sync-config" => Ok(Self::SyncConfig),
             "sync-preset" => Ok(Self::SyncPreset),
             "check" => Ok(Self::Check),
+            "export-config" => Ok(Self::ExportConfig),
             other => Err(format!(
-                "unknown build operation {other}; expected build, hash, sync-config, sync-preset, or check"
+                "unknown build operation {other}; expected build, hash, sync-config, sync-preset, check, or export-config"
             )),
         }
     }
@@ -82,6 +85,7 @@ impl fmt::Display for Operation {
             Self::SyncConfig => "sync-config",
             Self::SyncPreset => "sync-preset",
             Self::Check => "check",
+            Self::ExportConfig => "export-config",
         })
     }
 }
@@ -417,6 +421,12 @@ pub fn execute(root: &Path, request: &Request) -> Result<()> {
             configuration::sync_preset(root, request.single_preset()?, request.single_committee()?)?
         }
         Operation::Check => configuration::check(root, request)?,
+        Operation::ExportConfig => {
+            let metadata = metadata::collect(root)?;
+            let mut stdout = std::io::stdout().lock();
+            serde_json::to_writer_pretty(&mut stdout, &metadata)?;
+            writeln!(stdout)?;
+        }
         Operation::Build => artifacts::build(root, request)?,
     }
     Ok(())

@@ -33,8 +33,32 @@ pub struct CiphernodesCommittee {
     pub threshold: usize,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitteeMetadata {
+    pub name: &'static str,
+    pub committee_size: u8,
+    pub n: usize,
+    pub t: usize,
+    pub h: usize,
+}
+
+impl From<CiphernodesCommitteeSize> for CommitteeMetadata {
+    fn from(committee: CiphernodesCommitteeSize) -> Self {
+        let values = committee.values();
+        Self {
+            name: committee.as_str(),
+            committee_size: committee as u8,
+            n: values.n,
+            t: values.threshold,
+            h: values.h,
+        }
+    }
+}
+
 impl CiphernodesCommitteeSize {
-    const ALL: [Self; 3] = [Self::Minimum, Self::Micro, Self::Small];
+    /// Supported committees in their serialized declaration order.
+    pub const ALL: [Self; 3] = [Self::Minimum, Self::Micro, Self::Small];
 
     /// Derives the committee size from threshold values (M, N).
     pub fn from_threshold(threshold_m: usize, threshold_n: usize) -> Result<Self> {
