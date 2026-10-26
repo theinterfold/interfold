@@ -9,6 +9,7 @@ import { IDecryptionVerifier } from "../../interfaces/IDecryptionVerifier.sol";
 import { ICircuitVerifier } from "../../interfaces/ICircuitVerifier.sol";
 import { ICiphernodeRegistry } from "../../interfaces/ICiphernodeRegistry.sol";
 import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
+import { BfvProtocol } from "../../lib/BfvProtocol.sol";
 
 /**
  * @title BfvDecryptionVerifier
@@ -61,7 +62,8 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
         21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
     /// @dev Message is always the last 50 public inputs (50 uint64 coeffs = 400 bytes plaintext).
-    uint256 internal constant MESSAGE_COEFFS_COUNT = 50;
+    uint256 internal constant MESSAGE_COEFFS_COUNT =
+        BfvProtocol.MESSAGE_COEFFS_COUNT;
 
     /// @dev `decryption_aggregator` return tail: `1 + 3*(T+1) + MESSAGE_COEFFS_COUNT` fields.
     uint256 internal constant DEC_RETURN_PREFIX_LEN = 1;

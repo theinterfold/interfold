@@ -14,7 +14,7 @@
 #   4. circuits/lib/src/configs/committee/active.nr (Noir-side active committee)
 #   5. packages/interfold-contracts/scripts/utils.ts (deployment hashes and committee values)
 #   6. crates/committee/src/lib.rs (committee enum values)
-#   7. packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol
+#   7. packages/interfold-contracts/contracts/lib/BfvProtocol.sol
 #
 # `circuits/bin/.active-preset.json` is only a local hydrated cache. It can point at Sepolia's
 # fast insecure-minimum artifacts while the checked-in production config points at secure-small.
@@ -36,7 +36,7 @@ PROTOCOL_CONSTANTS_TS="packages/interfold-contracts/scripts/protocol/constants.t
 CRYPTO_CONFIG_JSON="packages/interfold-contracts/crypto-config.json"
 FHE_CONSTANTS_RS="crates/fhe-params/src/constants.rs"
 COMMITTEE_RS="crates/committee/src/lib.rs"
-ACTIVE_SOL="packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol"
+PROTOCOL_SOL="packages/interfold-contracts/contracts/lib/BfvProtocol.sol"
 TASKS_TS="packages/interfold-contracts/tasks/interfold.ts"
 SDK_UTILS_TS="packages/interfold-sdk/src/utils.ts"
 EVM_HELPERS_RS="crates/evm-helpers/src/contracts.rs"
@@ -52,7 +52,7 @@ for required_file in \
   "$PROTOCOL_CONSTANTS_TS" \
   "$CRYPTO_CONFIG_JSON" \
   "$FHE_CONSTANTS_RS" \
-  "$ACTIVE_SOL" \
+  "$PROTOCOL_SOL" \
   "$TASKS_TS" \
   "$SDK_UTILS_TS" \
   "$EVM_HELPERS_RS"; do
@@ -99,14 +99,14 @@ Run: pnpm build:circuits --committee $ACTIVE_COMMITTEE"
 fi
 
 # 4. The Solidity constants must include each supported on-chain committee shape.
-[[ -f "$ACTIVE_SOL" ]] || fail "missing $ACTIVE_SOL"
+[[ -f "$PROTOCOL_SOL" ]] || fail "missing $PROTOCOL_SOL"
 sol_u32() {
   local name="$1"
-  grep -E "uint32 internal constant $name = [0-9]+" "$ACTIVE_SOL" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1
+  grep -E "uint32 internal constant $name = [0-9]+" "$PROTOCOL_SOL" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1
 }
 sol_u8() {
   local name="$1"
-  grep -E "uint8 internal constant $name = [0-9]+" "$ACTIVE_SOL" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1
+  grep -E "uint8 internal constant $name = [0-9]+" "$PROTOCOL_SOL" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1
 }
 check_sol_committee() {
   local committee="$1"
@@ -122,7 +122,7 @@ check_sol_committee() {
   sol_h=$(sol_u32 "${prefix}_H")
   sol_t=$(sol_u32 "${prefix}_T")
   if [[ "$sol_size" != "$size" || "$sol_n" != "$noir_n" || "$sol_h" != "$noir_h" || "$sol_t" != "$noir_t" ]]; then
-    fail "drift: $ACTIVE_SOL ${prefix} has (size=$sol_size, N=$sol_n, T=$sol_t, H=$sol_h), expected (size=$size, N=$noir_n, T=$noir_t, H=$noir_h)"
+    fail "drift: $PROTOCOL_SOL ${prefix} has (size=$sol_size, N=$sol_n, T=$sol_t, H=$sol_h), expected (size=$size, N=$noir_n, T=$noir_t, H=$noir_h)"
   fi
 }
 check_sol_committee minimum MINIMUM 0
@@ -249,11 +249,11 @@ check_bfv_preset insecure-64 insecure_64 insecure
 check_bfv_preset secure-8192 secure_8192 secure
 
 # 6. Every chain-supported route in utils.ts must match the Noir committee shape and the
-#    parameter/configuration hashes compiled into ActiveCryptoConfig.sol. Keep this check
+#    parameter/configuration hashes in BfvProtocol.sol. Keep this check
 #    dependency-free because Repository Checks runs it before Node dependencies are installed.
 sol_bytes32() {
   local name="$1"
-  grep -A1 -E "bytes32 internal constant $name" "$ACTIVE_SOL" \
+  grep -A1 -E "bytes32 internal constant $name" "$PROTOCOL_SOL" \
     | grep -oE '0x[0-9a-fA-F]+' \
     | head -n1
 }
@@ -271,7 +271,7 @@ for prefix in INSECURE SECURE; do
   sol_param_hash=$(sol_bytes32 "${prefix}_PARAM_SET_HASH")
   sol_config_id=$(sol_bytes32 "${prefix}_CONFIG_ID")
   if [[ "$utils_param_hash" != "$sol_param_hash" || "$utils_config_id" != "$sol_config_id" ]]; then
-    fail "drift: $UTILS_TS ${prefix} hashes do not match $ACTIVE_SOL"
+    fail "drift: $UTILS_TS ${prefix} hashes do not match $PROTOCOL_SOL"
   fi
 done
 
@@ -316,7 +316,7 @@ for prefix_and_param_set in INSECURE:0 SECURE:2; do
   binding_id=$(binding_config_id "$param_set")
   evm_helper_id=$(extract_rust_config_id "$EVM_HELPERS_RS" "$param_set")
   if [[ "$binding_id" != "$expected_id" || "$evm_helper_id" != "$expected_id" ]]; then
-    fail "drift: paramSet=${param_set} config ID must match $ACTIVE_SOL in shared bindings and EVM helpers"
+    fail "drift: paramSet=${param_set} config ID must match $PROTOCOL_SOL in shared bindings and EVM helpers"
   fi
 done
 

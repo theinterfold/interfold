@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 mod artifacts;
+mod bindings;
 mod configuration;
 mod identity;
 pub mod metadata;
@@ -58,6 +59,8 @@ pub enum Operation {
     SyncPreset,
     Check,
     ExportConfig,
+    SyncBindings,
+    CheckBindings,
 }
 
 impl FromStr for Operation {
@@ -70,8 +73,10 @@ impl FromStr for Operation {
             "sync-preset" => Ok(Self::SyncPreset),
             "check" => Ok(Self::Check),
             "export-config" => Ok(Self::ExportConfig),
+            "sync-bindings" => Ok(Self::SyncBindings),
+            "check-bindings" => Ok(Self::CheckBindings),
             other => Err(format!(
-                "unknown build operation {other}; expected build, hash, sync-config, sync-preset, check, or export-config"
+                "unknown build operation {other}; expected build, hash, sync-config, sync-preset, check, export-config, sync-bindings, or check-bindings"
             )),
         }
     }
@@ -86,6 +91,8 @@ impl fmt::Display for Operation {
             Self::SyncPreset => "sync-preset",
             Self::Check => "check",
             Self::ExportConfig => "export-config",
+            Self::SyncBindings => "sync-bindings",
+            Self::CheckBindings => "check-bindings",
         })
     }
 }
@@ -421,6 +428,8 @@ pub fn execute(root: &Path, request: &Request) -> Result<()> {
             configuration::sync_preset(root, request.single_preset()?, request.single_committee()?)?
         }
         Operation::Check => configuration::check(root, request)?,
+        Operation::SyncBindings => bindings::sync(root, false)?,
+        Operation::CheckBindings => bindings::sync(root, true)?,
         Operation::ExportConfig => {
             let metadata = metadata::collect(root)?;
             let mut stdout = std::io::stdout().lock();

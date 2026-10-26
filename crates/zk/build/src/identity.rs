@@ -31,6 +31,7 @@ const SOURCE_FILES: &[&str] = &[
     "circuits/lib/Nargo.toml",
     "circuits/lib/src/lib.nr",
     "circuits/lib/src/configs/mod.nr",
+    "circuits/lib/src/configs/protocol.nr",
     "circuits/lib/src/configs/committee/mod.nr",
     "circuits/lib/src/configs/default/mod.nr",
     "crates/zk/build/Cargo.toml",
@@ -331,6 +332,18 @@ pub fn source_hash_with_updates(
             source = Regex::new(r"super::(insecure|secure)::")?
                 .replace_all(&source, "super::<selected>::")
                 .into_owned();
+            // Noir sorts imports lexically: `protocol` follows `insecure`, but precedes `secure`.
+            // Normalize that incidental order after masking the selected preset name.
+            let imports = Regex::new(r"(?m)^pub use [^;\n]+;$")?;
+            let mut ordered = imports
+                .find_iter(&source)
+                .map(|item| item.as_str().to_owned())
+                .collect::<Vec<_>>();
+            ordered.sort();
+            let mut ordered = ordered.into_iter();
+            source = imports
+                .replace_all(&source, |_: &regex::Captures| ordered.next().unwrap())
+                .into_owned();
         }
         if path == "Cargo.lock" {
             source = external_pins(&source)?;
@@ -408,21 +421,29 @@ pub(crate) mod tests {
             let error = result.expect_err(path);
             assert!(format!("{error:#}").contains(path), "{path}: {error:#}");
         }
-        let selector = root.join("circuits/lib/src/configs/default/mod.nr");
-        let contents = fs::read_to_string(&selector).unwrap();
-        let expected = hash().unwrap();
-        fs::remove_file(&selector).unwrap();
-        assert_eq!(
-            source_hash_with_updates(
-                &root,
-                &request,
-                Some("insecure-64"),
-                Some("minimum"),
-                &[(selector, contents)]
-            )
-            .unwrap(),
-            expected
-        );
+        for relative in [
+            "circuits/lib/src/configs/default/mod.nr",
+            crate::bindings::NOIR_PATH,
+        ] {
+            let path = root.join(relative);
+            let contents = fs::read_to_string(&path).unwrap();
+            let expected = hash().unwrap();
+            fs::remove_file(&path).unwrap();
+            assert_eq!(
+                source_hash_with_updates(
+                    &root,
+                    &request,
+                    Some("insecure-64"),
+                    Some("minimum"),
+                    &[(path.clone(), contents.clone())]
+                )
+                .unwrap(),
+                expected
+            );
+            fs::write(&path, format!("{contents}\n// changed protocol source\n")).unwrap();
+            assert_ne!(hash().unwrap(), expected);
+            fs::write(path, contents).unwrap();
+        }
     }
 
     #[test]
