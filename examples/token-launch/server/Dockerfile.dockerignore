@@ -1,0 +1,14 @@
+# Used by `docker build -f examples/token-launch/server/Dockerfile .` from the repository root.
+.git
+**/node_modules
+**/target
+**/.DS_Store
+**/*.log
+examples/token-launch/artifacts
+examples/token-launch/cache
+examples/token-launch/.interfold
+examples/token-launch/guest
+# Never send local secrets to an image.
+**/.env
+**/.env.*
+!**/.env.example
