@@ -10,6 +10,7 @@ use e3_fhe_params::ParameterType;
 use serde::Serialize;
 
 use crate::constants::{FIELD_BYTE_LEN, MAX_MSG_NON_ZERO_COEFFS, MESSAGE_COEFF_BYTE_LEN};
+use crate::output_layout::DecryptionAggregatorLayout;
 
 #[derive(Debug, Clone, Copy)]
 pub struct CircuitMetadata {
@@ -34,6 +35,23 @@ impl CircuitDimensions {
             message_coeffs_count: MAX_MSG_NON_ZERO_COEFFS,
             message_coeff_byte_len: MESSAGE_COEFF_BYTE_LEN,
             plaintext_byte_len: MAX_MSG_NON_ZERO_COEFFS * MESSAGE_COEFF_BYTE_LEN,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ZkMetadata {
+    #[serde(flatten)]
+    pub dimensions: CircuitDimensions,
+    pub decryption_aggregator: DecryptionAggregatorLayout,
+}
+
+impl ZkMetadata {
+    pub const fn current() -> Self {
+        Self {
+            dimensions: CircuitDimensions::current(),
+            decryption_aggregator: DecryptionAggregatorLayout::current(),
         }
     }
 }

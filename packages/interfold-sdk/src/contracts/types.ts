@@ -12,7 +12,7 @@ export interface ContractAddresses {
   feeToken: `0x${string}`
 }
 
-/** On-chain `IInterfold.CommitteeSize`: Minimum (N=3), Micro (N=9), Small (N=19). */
+/** On-chain `IInterfold.CommitteeSize`; these enum values are part of the published SDK ABI. */
 export enum CommitteeSize {
   Minimum = 0,
   Micro = 1,

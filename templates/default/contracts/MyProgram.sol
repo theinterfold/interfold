@@ -10,6 +10,7 @@ import { IE3Program } from "@interfold/contracts/contracts/interfaces/IE3Program
 import { IInterfold } from "@interfold/contracts/contracts/interfaces/IInterfold.sol";
 import { E3 } from "@interfold/contracts/contracts/interfaces/IE3.sol";
 import { OpenVmComputeProof } from "@interfold/contracts/contracts/lib/OpenVmComputeProof.sol";
+import { BfvProtocol } from "@interfold/contracts/contracts/lib/BfvProtocol.sol";
 import { IDataAvailabilityVerifier, IE3ProgramDataAvailability } from "@interfold/contracts/contracts/interfaces/IDataAvailabilityVerifier.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
@@ -18,7 +19,7 @@ import { LazyIMTData, InternalLazyIMT } from "@zk-kit/lazy-imt.sol/InternalLazyI
 contract MyProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownable {
   using InternalLazyIMT for LazyIMTData;
   // Constants
-  bytes32 public constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
+  bytes32 public constant ENCRYPTION_SCHEME_ID = BfvProtocol.ENCRYPTION_SCHEME_ID;
 
   uint8 public constant TREE_DEPTH = 20;
 

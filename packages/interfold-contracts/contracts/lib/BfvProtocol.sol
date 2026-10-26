@@ -41,4 +41,15 @@ library BfvProtocol {
     uint256 internal constant MESSAGE_COEFF_BYTE_LEN = 8;
     uint256 internal constant FIELD_BYTE_LEN = 32;
     uint256 internal constant PLAINTEXT_BYTE_LEN = 400;
+
+    uint256 internal constant DEC_PUBLIC_INPUT_COUNT = 7;
+    uint256 internal constant DEC_RETURN_PREFIX_LEN = 1;
+    uint256 internal constant DEC_RETURN_COLUMN_COUNT = 3;
+    uint256 internal constant DEC_C6_FOLD_KEY_HASH_IDX = 0;
+    uint256 internal constant DEC_C7_KEY_HASH_IDX = 1;
+    uint256 internal constant DEC_COMMITTEE_HASH_HI_IDX = 2;
+    uint256 internal constant DEC_COMMITTEE_HASH_LO_IDX = 3;
+    uint256 internal constant DEC_DOMAIN_HI_IDX = 4;
+    uint256 internal constant DEC_DOMAIN_LO_IDX = 5;
+    uint256 internal constant DEC_CIPHERTEXT_COMMITMENT_IDX = 6;
 }

@@ -19,10 +19,10 @@ preset/committee pair has its own H-shaped PK and T-shaped decryption public-inp
 BFV tuples across deployment constants/Rust/preset Noir, and configuration IDs across contracts,
 tasks, SDK, and EVM helpers. Drift can register a tuple nodes/circuits do not implement. The
 committed default is insecure-64/minimum; CI rebuilds that selection and rejects diffs. Local
-active-preset cache mismatch is only a note. **Limits:** the gate does not compare
-`scripts/circuits/constants.ts` committee values; manually review those. With Nargo available, the
-gate runs `pnpm build:circuits check --committee all`. The Rust owner renders/formats an isolated
-library copy and compares generated files without swapping live files. Circuit CI also rejects
+active-preset cache mismatch is only a note. **Limits:** these source checks do not establish
+verification-key or proof compatibility. With Nargo available, the gate runs
+`pnpm build:circuits check --committee all`. The Rust owner renders/formats an isolated library copy
+and compares generated files without swapping live files. Circuit CI also rejects
 committed-selection drift after rebuilding.
 
 C1/C2 `PK_GENERATION_*`/`SHARE_COMPUTATION_*` bounds are derived from preset+committee. Generator

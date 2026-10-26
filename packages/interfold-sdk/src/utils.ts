@@ -4,8 +4,9 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { bfvPresetForParamSet } from '@interfold/contracts/bfv'
+import { COMMITTEES, bfvPresetForParamSet } from '@interfold/contracts/bfv'
 import { type Address, type Hash, type Log, PublicClient, encodeAbiParameters } from 'viem'
+import type { CommitteeSize } from './contracts/types'
 import type { BfvParams } from './types'
 
 export class SDKError extends Error {
@@ -79,7 +80,7 @@ export const DEFAULT_COMPUTE_PROVIDER_PARAMS: ComputeProviderParams = {
 
 // Default E3 configuration (`committeeSize` is `IInterfold.CommitteeSize`, not circuit N_PARTIES).
 export const DEFAULT_E3_CONFIG = {
-  committeeSize: 0, // CommitteeSize.Minimum
+  committeeSize: COMMITTEES.minimum.committeeSize as CommitteeSize.Minimum,
   duration: 1800, // 30 minutes in seconds
   payment_amount: '0', // 0 ETH in wei
 } as const

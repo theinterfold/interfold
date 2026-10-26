@@ -119,15 +119,15 @@ fn metadata_preserves_frozen_identities_exact_integers_and_owner_dimensions() {
         secure_8192::dkg::PLAINTEXT_MODULUS
     );
     assert_eq!(
-        metadata.zk.field_byte_len,
+        metadata.zk.dimensions.field_byte_len,
         e3_zk_config::output_layout::FIELD_BYTE_LEN
     );
     assert_eq!(
-        metadata.zk.message_coeffs_count,
+        metadata.zk.dimensions.message_coeffs_count,
         e3_zk_config::MAX_MSG_NON_ZERO_COEFFS
     );
     assert_eq!(
-        metadata.zk.plaintext_byte_len,
+        metadata.zk.dimensions.plaintext_byte_len,
         e3_zk_config::MAX_MSG_NON_ZERO_COEFFS * std::mem::size_of::<u64>()
     );
     assert_eq!(

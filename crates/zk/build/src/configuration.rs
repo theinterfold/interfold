@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-use super::{bindings, preset_name, run, tier, Request, COMMITTEES};
+use super::{bindings, preset_name, run, tier, Request};
 use alloy_primitives::B256;
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use e3_committee::CiphernodesCommitteeSize;
 use e3_fhe_params::{
     bfv_parameter_hash, current_bfv_crypto_config_id, encode_bfv_params, BfvPreset,
@@ -476,55 +476,27 @@ pub fn protocol_utils(
     before: &str,
     preset: BfvPreset,
     committee: CiphernodesCommitteeSize,
-    params: &OperationParams,
 ) -> Result<String> {
-    let values = committee.values();
-    let size = COMMITTEES
-        .iter()
-        .position(|name| *name == committee.to_string())
-        .context("committee index")?;
-    let param_set = preset
-        .on_chain_param_set()
-        .context("Missing current parameter-set index")?;
     let mut after = before.to_string();
-    for (name, value) in [
-        ("BFV_DKG_H", values.h),
-        ("BFV_THRESHOLD_T", values.threshold),
-        ("ACTIVE_BFV_PARAM_SET", usize::from(param_set)),
-        ("ACTIVE_BFV_COMMITTEE_SIZE", size),
-        ("ACTIVE_BFV_COMMITTEE_N", values.n),
+    for (name, ty, value) in [
+        (
+            "ACTIVE_BFV_PRESET",
+            "BfvArtifactPreset",
+            preset_name(preset).to_string(),
+        ),
+        (
+            "ACTIVE_BFV_COMMITTEE",
+            "BfvCommittee",
+            committee.to_string(),
+        ),
     ] {
         after = replace_required(
             &after,
-            &format!(r"export const {name} = \d+"),
-            &format!("export const {name} = {value}"),
+            &format!(r#"export const {name}: {ty} = "[^"]+""#),
+            &format!("export const {name}: {ty} = \"{value}\""),
         )?;
     }
-    for (prefix, preset) in [
-        ("INSECURE", BfvPreset::InsecureThreshold64),
-        ("SECURE", BfvPreset::SecureThreshold8192),
-    ] {
-        let material = params.get(preset);
-        for (suffix, value) in [
-            ("PARAM_SET_HASH", material.parameter_hash),
-            ("CONFIG_ID", material.config_id),
-        ] {
-            let name = format!("{prefix}_{suffix}");
-            after = replace_required(
-                &after,
-                &format!(r#"const {name} =\s*\n\s*"0x[0-9a-fA-F]+""#),
-                &format!("const {name} =\n  \"{value:#x}\""),
-            )?;
-        }
-    }
-    let name = committee.to_string();
-    let capitalized = format!("{}{}", name[..1].to_uppercase(), &name[1..]);
-    let doc = format!("/**\n * <generated-committee-doc>\n * Active {} / {committee} committee layout for BFV aggregator verifiers.\n * Must match `lib::configs::default::{{H, T}}` in compiled circuits.\n * {capitalized} committee: N={}, T={}, H={}.\n * </generated-committee-doc>\n */", preset_name(preset), values.n, values.threshold, values.h);
-    replace_required(
-        &after,
-        r"/\*\*\s*\n \* <generated-committee-doc>[\s\S]*?</generated-committee-doc>\s*\n \*/",
-        &doc,
-    )
+    Ok(after)
 }
 
 pub fn sync_protocol(
@@ -550,7 +522,7 @@ fn protocol_updates(
     let path = root.join("packages/interfold-contracts/scripts/utils.ts");
     if !skip_utils && path.exists() {
         let before = fs::read_to_string(&path)?;
-        let updated = protocol_utils(&before, preset, committee, params)?;
+        let updated = protocol_utils(&before, preset, committee)?;
         updates.push((path, updated));
     }
     let path = root.join(bindings::SOLIDITY_PATH);

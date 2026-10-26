@@ -5,6 +5,7 @@ use anyhow::{bail, Context, Result};
 use e3_committee::{CiphernodesCommitteeSize, CommitteeMetadata};
 use e3_fhe_params::{BfvPreset, BFV_ENCRYPTION_SCHEME, INTERFOLD_BFV_VERSION};
 use e3_zk_config::metadata::CircuitDimensions;
+use e3_zk_config::output_layout::DecryptionAggregatorLayout;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -30,7 +31,16 @@ pub fn solidity(params: &OperationParams) -> Result<String> {
         text.push_str(&format!("\n    uint8 internal constant {label}_COMMITTEE_SIZE = {};\n    uint32 internal constant {label}_T = {};\n    uint32 internal constant {label}_H = {};\n    uint32 internal constant {label}_N = {};\n", record.committee_size, record.t, record.h, record.n));
     }
     let dimensions = CircuitDimensions::current();
-    text.push_str(&format!("\n    uint256 internal constant MESSAGE_COEFFS_COUNT = {};\n    uint256 internal constant MESSAGE_COEFF_BYTE_LEN = {};\n    uint256 internal constant FIELD_BYTE_LEN = {};\n    uint256 internal constant PLAINTEXT_BYTE_LEN = {};\n}}\n", dimensions.message_coeffs_count, dimensions.message_coeff_byte_len, dimensions.field_byte_len, dimensions.plaintext_byte_len));
+    text.push_str(&format!("\n    uint256 internal constant MESSAGE_COEFFS_COUNT = {};\n    uint256 internal constant MESSAGE_COEFF_BYTE_LEN = {};\n    uint256 internal constant FIELD_BYTE_LEN = {};\n    uint256 internal constant PLAINTEXT_BYTE_LEN = {};\n", dimensions.message_coeffs_count, dimensions.message_coeff_byte_len, dimensions.field_byte_len, dimensions.plaintext_byte_len));
+    let layout = DecryptionAggregatorLayout::current();
+    text.push_str(&format!("\n    uint256 internal constant DEC_PUBLIC_INPUT_COUNT = {};\n    uint256 internal constant DEC_RETURN_PREFIX_LEN = {};\n    uint256 internal constant DEC_RETURN_COLUMN_COUNT = {};\n", layout.public_inputs.len(), layout.return_prefix.len(), layout.columns.len()));
+    for (index, field) in layout.public_inputs.iter().enumerate() {
+        text.push_str(&format!(
+            "    uint256 internal constant DEC_{}_IDX = {index};\n",
+            field.name.to_uppercase()
+        ));
+    }
+    text.push_str("}\n");
     Ok(text)
 }
 
@@ -85,11 +95,14 @@ mod tests {
         assert!(sync(root, true).is_err());
         assert_eq!(fs::read_dir(root).unwrap().count(), 0);
         sync(root, false).unwrap();
-        fs::write(
-            root.join("packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol"),
-            "// Independently maintained admission policy.\n",
-        )
-        .unwrap();
+        for name in ["ActiveCryptoConfig.sol", "BfvDecryptionLayout.sol"] {
+            fs::write(
+                root.join("packages/interfold-contracts/contracts/lib")
+                    .join(name),
+                "// Independently maintained Solidity.\n",
+            )
+            .unwrap();
+        }
         let before = crate::tests::snapshot(root);
         sync(root, false).unwrap();
         sync(root, true).unwrap();

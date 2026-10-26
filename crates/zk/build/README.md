@@ -38,7 +38,8 @@ fails instead of silently reducing provenance.
 
 Use `pnpm build:circuits --help` for flags and the
 [circuit tooling guide](../../../scripts/circuits/README.md#circuit-builder) for complete commands.
-`sync-config` writes TS/Solidity constants; `sync-preset` regenerates preset declarations.
+`sync-config` selects deployment preset/committee names and refreshes Solidity constants;
+`sync-preset` regenerates preset declarations.
 
 Run `pnpm test:circuit-build`. Native tests cover typed admission, source framing/inputs, generated
 bytes, hydration, anchors, checksums, and tool failures. Explicit ignored cases need pinned tools

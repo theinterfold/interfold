@@ -15,6 +15,13 @@ import type { HardhatRuntimeEnvironment } from "hardhat/types/hre";
 import { fileURLToPath } from "node:url";
 import path from "path";
 
+import {
+  BFV_PRESETS,
+  COMMITTEES,
+  DECRYPTION_INPUT_INDICES,
+  decryptionAggregatorLayout,
+} from "../bfv.js";
+
 /**
  * Reconstruct `keccak256(abi.encodePacked(topNodes))` from aggregator public-input
  * limbs. Each limb is a bytes32 with 128 bits right-aligned (`CommitteeHashLib`).
@@ -97,18 +104,9 @@ export function getRepoRoot(): string {
   return _repoRoot;
 }
 
-/**
- * <generated-committee-doc>
- * Active insecure-64 / minimum committee layout for BFV aggregator verifiers.
- * Must match `lib::configs::default::{H, T}` in compiled circuits.
- * Minimum committee: N=3, T=1, H=2.
- * </generated-committee-doc>
- */
-export const BFV_DKG_H = 2;
-export const BFV_THRESHOLD_T = 1;
-export const ACTIVE_BFV_PARAM_SET = 0;
-export const ACTIVE_BFV_COMMITTEE_SIZE = 0;
-export const ACTIVE_BFV_COMMITTEE_N = 3;
+// The circuit builder switches these names; all numerical values come from the shared binding.
+export const ACTIVE_BFV_PRESET: BfvArtifactPreset = "insecure-64";
+export const ACTIVE_BFV_COMMITTEE: BfvCommittee = "minimum";
 
 export type BfvArtifactPreset = "insecure-64" | "secure-8192";
 export type BfvCommittee = "minimum" | "micro" | "small";
@@ -125,65 +123,53 @@ export interface ActiveBfvConfig {
   n: number;
 }
 
-const INSECURE_PARAM_SET_HASH =
-  "0xaff065a7d6e3d8c830dfcd37c2af8a25b3dcc6cd74ba458894075e8264f1ab1e";
-const INSECURE_CONFIG_ID =
-  "0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9";
-const SECURE_PARAM_SET_HASH =
-  "0x1b2620f6a5919d5ee19a51f34026369816f479efd0404b56585ad37d31c52317";
-const SECURE_CONFIG_ID =
-  "0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa";
-
 function bfvConfig(
   preset: BfvArtifactPreset,
   committee: BfvCommittee,
-  params: Pick<ActiveBfvConfig, "committeeSize" | "h" | "t" | "n">,
 ): ActiveBfvConfig {
-  const secure = preset === "secure-8192";
+  const parameters = BFV_PRESETS[preset];
+  const members = COMMITTEES[committee];
   return {
     preset,
     committee,
-    paramSet: secure ? 2 : 0,
-    paramSetHash: secure ? SECURE_PARAM_SET_HASH : INSECURE_PARAM_SET_HASH,
-    configId: secure ? SECURE_CONFIG_ID : INSECURE_CONFIG_ID,
-    ...params,
+    paramSet: parameters.paramSet,
+    paramSetHash: parameters.paramSetHash,
+    configId: parameters.configId,
+    committeeSize: members.committeeSize,
+    h: members.h,
+    t: members.t,
+    n: members.n,
   };
 }
 
 export const INSECURE_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "insecure-64",
   "minimum",
-  { committeeSize: 0, h: 2, t: 1, n: 3 },
 );
 
 export const INSECURE_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "insecure-64",
   "micro",
-  { committeeSize: 1, h: 5, t: 4, n: 9 },
 );
 
 export const INSECURE_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "insecure-64",
   "small",
-  { committeeSize: 2, h: 14, t: 9, n: 19 },
 );
 
 export const SECURE_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "secure-8192",
   "minimum",
-  { committeeSize: 0, h: 2, t: 1, n: 3 },
 );
 
 export const SECURE_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "secure-8192",
   "micro",
-  { committeeSize: 1, h: 5, t: 4, n: 9 },
 );
 
 export const SECURE_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "secure-8192",
   "small",
-  { committeeSize: 2, h: 14, t: 9, n: 19 },
 );
 
 export const PRODUCTION_BFV_CONFIG: ActiveBfvConfig = SECURE_SMALL_BFV_CONFIG;
@@ -205,12 +191,18 @@ export const TESTNET_BFV_CONFIGS: readonly ActiveBfvConfig[] = [
   SECURE_SMALL_BFV_CONFIG,
 ] as const;
 
-/** The pair of the generated `ACTIVE_BFV_*` constants, which `ActiveCryptoConfig.sol` matches. */
+/** Local artifact selection, independent of the production/testnet admission defaults. */
 const ACTIVE_BFV_CONFIG = TESTNET_BFV_CONFIGS.find(
   (config) =>
-    config.paramSet === ACTIVE_BFV_PARAM_SET &&
-    config.committeeSize === ACTIVE_BFV_COMMITTEE_SIZE,
+    config.preset === ACTIVE_BFV_PRESET &&
+    config.committee === ACTIVE_BFV_COMMITTEE,
 )!;
+
+export const BFV_DKG_H = ACTIVE_BFV_CONFIG.h;
+export const BFV_THRESHOLD_T = ACTIVE_BFV_CONFIG.t;
+export const ACTIVE_BFV_PARAM_SET = ACTIVE_BFV_CONFIG.paramSet;
+export const ACTIVE_BFV_COMMITTEE_SIZE = ACTIVE_BFV_CONFIG.committeeSize;
+export const ACTIVE_BFV_COMMITTEE_N = ACTIVE_BFV_CONFIG.n;
 
 /**
  * Names a circuit directory in the release-archive layout (`<preset>/<committee>/default/...`):
@@ -288,12 +280,15 @@ export function bfvDkgCommitteeHashIndices(h: number): {
 
 /** `decryption_aggregator` EVM public-input count for BFV threshold `t`. */
 export function bfvDecExpectedPublicInputsLen(threshold: number): number {
-  return 61 + 3 * threshold;
+  return decryptionAggregatorLayout(threshold).publicInputsLength;
 }
 
 /** `publicInputs` indices for decryption-aggregator committee hash limbs. */
 export function bfvDecCommitteeHashIndices(): { hi: number; lo: number } {
-  return { hi: 2, lo: 3 };
+  return {
+    hi: DECRYPTION_INPUT_INDICES.committee_hash_hi,
+    lo: DECRYPTION_INPUT_INDICES.committee_hash_lo,
+  };
 }
 
 /**
@@ -306,20 +301,25 @@ export function bfvDecPartyColOffsets(threshold: number): {
   sk: number;
   esm: number;
 } {
-  const partyId = 8; // 7 domain/VK/committee/commitment inputs + DEC_RETURN_PREFIX_LEN
-  const sk = partyId + (threshold + 1);
-  const esm = sk + (threshold + 1);
-  return { partyId, sk, esm };
+  const layout = decryptionAggregatorLayout(threshold);
+  return {
+    partyId: layout.partyIdOffset,
+    sk: layout.skOffset,
+    esm: layout.esmOffset,
+  };
 }
 
 /** `publicInputs` indices for decryption-aggregator E3 domain limbs. */
 export function bfvDecDomainIndices(): { hi: number; lo: number } {
-  return { hi: 4, lo: 5 };
+  return {
+    hi: DECRYPTION_INPUT_INDICES.domain_hi,
+    lo: DECRYPTION_INPUT_INDICES.domain_lo,
+  };
 }
 
 /** `publicInputs` index for the final circuit-compatible ciphertext commitment. */
 export function bfvDecCiphertextCommitmentIndex(): number {
-  return 6;
+  return DECRYPTION_INPUT_INDICES.ciphertext_commitment;
 }
 
 /**

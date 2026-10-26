@@ -132,6 +132,11 @@ BFV verifiers or aggregate proofs.
 constants change and the prebuilt circuit artifacts already exist. It does not compile Noir circuits
 or regenerate verification keys.
 
+`pnpm check:decryption-layout` requires compiled EVM decryption aggregators and checks their public
+ABI against the shared layout, separately from Honk's extra pairing-point fields. Add
+`--preset all --committee all` to inspect every build-policy pair. It is read-only and does not
+prepare artifacts or qualify their source identity, verification keys, or proof acceptance.
+
 ### Prerequisites
 
 - `nargo` - Noir compiler ([install](https://noir-lang.org/docs/installation))

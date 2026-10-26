@@ -70,12 +70,20 @@ if [[ -z "${ACTIVE_COMMITTEE:-}" ]]; then
   fail "could not infer committee from $ACTIVE_NR (regex match failed)"
 fi
 
-# 2. Extract (H, T) from utils.ts.
+# 2. Read the selected committee's dimensions from the shared snapshot.
 if [[ ! -f "$UTILS_TS" ]]; then
   fail "missing $UTILS_TS"
 fi
-UTILS_H=$(grep -E '^export const BFV_DKG_H = [0-9]+' "$UTILS_TS" | grep -oE '[0-9]+' | head -n1)
-UTILS_T=$(grep -E '^export const BFV_THRESHOLD_T = [0-9]+' "$UTILS_TS" | grep -oE '[0-9]+' | head -n1)
+UTILS_COMMITTEE=$(grep -E '^export const ACTIVE_BFV_COMMITTEE:' "$UTILS_TS" | sed -E 's/.*= "([a-z]+)";.*/\1/')
+[[ "$UTILS_COMMITTEE" == "$ACTIVE_COMMITTEE" ]] || fail "$UTILS_TS selects committee=$UTILS_COMMITTEE, but $ACTIVE_NR selects $ACTIVE_COMMITTEE"
+IFS=';' read -r UTILS_H UTILS_T < <(node --input-type=module - "$CRYPTO_CONFIG_JSON" "$UTILS_COMMITTEE" <<'NODE'
+import { readFileSync } from 'node:fs';
+const config = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+const committee = config.committees.find(committee => committee.name === process.argv[3]);
+if (!committee) throw new Error(`Missing committee: ${process.argv[3]}`);
+process.stdout.write(`${committee.h};${committee.t}\n`);
+NODE
+)
 if [[ -z "${UTILS_H:-}" || -z "${UTILS_T:-}" ]]; then
   fail "could not parse BFV_DKG_H / BFV_THRESHOLD_T from $UTILS_TS"
 fi
@@ -258,16 +266,17 @@ sol_bytes32() {
     | head -n1
 }
 
-ts_bytes32() {
-  local name="$1"
-  grep -A1 -E "^const $name" "$UTILS_TS" \
-    | grep -oE '0x[0-9a-fA-F]+' \
-    | head -n1
-}
-
-for prefix in INSECURE SECURE; do
-  utils_param_hash=$(ts_bytes32 "${prefix}_PARAM_SET_HASH")
-  utils_config_id=$(ts_bytes32 "${prefix}_CONFIG_ID")
+for prefix_and_preset in INSECURE:insecure-64 SECURE:secure-8192; do
+  prefix="${prefix_and_preset%%:*}"
+  preset="${prefix_and_preset#*:}"
+  IFS=';' read -r utils_param_hash utils_config_id < <(node --input-type=module - "$CRYPTO_CONFIG_JSON" "$preset" <<'NODE'
+import { readFileSync } from 'node:fs';
+const config = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+const preset = config.bfv.presets.find(preset => preset.preset === process.argv[3]);
+if (!preset) throw new Error(`Missing preset: ${process.argv[3]}`);
+process.stdout.write(`${preset.parameterHash};${preset.cryptoConfigId}\n`);
+NODE
+  )
   sol_param_hash=$(sol_bytes32 "${prefix}_PARAM_SET_HASH")
   sol_config_id=$(sol_bytes32 "${prefix}_CONFIG_ID")
   if [[ "$utils_param_hash" != "$sol_param_hash" || "$utils_config_id" != "$sol_config_id" ]]; then
@@ -285,9 +294,9 @@ process.stdout.write(preset.cryptoConfigId);
 NODE
 }
 
-node --input-type=module - "$TASKS_TS" "$SDK_UTILS_TS" <<'NODE'
+node --input-type=module - "$TASKS_TS" "$SDK_UTILS_TS" "$UTILS_TS" "$EVM_HELPERS_RS" <<'NODE'
 import { readFileSync } from 'node:fs';
-for (const [index, file] of process.argv.slice(2).entries()) {
+for (const [index, file] of process.argv.slice(2, 4).entries()) {
   const source = readFileSync(file, 'utf8');
   const imported = /import\s*\{[^}]*\bbfvPresetForParamSet\b[^}]*\}\s*from\s*["']([^"']+)["']/.exec(source);
   const expected = index === 0 ? '../bfv.js' : '@interfold/contracts/bfv';
@@ -298,25 +307,39 @@ for (const [index, file] of process.argv.slice(2).entries()) {
     throw new Error(`${file} contains an independent configuration-ID literal`);
   }
 }
-NODE
-
-extract_rust_config_id() {
-  local file="$1"
-  local param_set="$2"
-  sed -n '/^fn crypto_config_id_for_param_set/,/^}/p' "$file" \
-    | grep -E "^[[:space:]]*${param_set} =>" \
-    | grep -oE '0x[0-9a-fA-F]{64}' \
-    | head -n1
+const utils = readFileSync(process.argv[4], 'utf8');
+for (const imported of ['BFV_PRESETS', 'COMMITTEES']) {
+  if (!new RegExp(`import\\s*\\{[^}]*\\b${imported}\\b[^}]*\\}\\s*from\\s*["']\\.\\./bfv\\.js["']`).test(utils)) {
+    throw new Error(`Deployment utils must import ${imported} from the shared binding`);
+  }
 }
+for (const [name, field] of [['BFV_DKG_H', 'h'], ['BFV_THRESHOLD_T', 't'], ['ACTIVE_BFV_PARAM_SET', 'paramSet'], ['ACTIVE_BFV_COMMITTEE_SIZE', 'committeeSize'], ['ACTIVE_BFV_COMMITTEE_N', 'n']]) {
+  if (!new RegExp(`export const ${name} = ACTIVE_BFV_CONFIG\\.${field};`).test(utils)) {
+    throw new Error(`${name} must follow the selected shared configuration`);
+  }
+}
+if (/0x[0-9a-fA-F]{64}/.test(utils)) throw new Error('Deployment utils contain an independent protocol hash');
+const projection = /function bfvConfig\([\s\S]*?^}/m.exec(utils)?.[0] ?? '';
+for (const expected of [
+  'const parameters = BFV_PRESETS[preset]', 'const members = COMMITTEES[committee]',
+  'paramSet: parameters.paramSet', 'paramSetHash: parameters.paramSetHash', 'configId: parameters.configId',
+  'committeeSize: members.committeeSize', 'h: members.h', 't: members.t', 'n: members.n',
+]) {
+  if (!projection.includes(expected)) throw new Error(`Deployment configuration must use ${expected}`);
+}
+const rust = readFileSync(process.argv[5], 'utf8');
+if (/0x[0-9a-fA-F]{64}/.test(rust) || !rust.includes('BfvPreset::from_on_chain_param_set(param_set)') || !rust.includes('current_bfv_crypto_config_id(&encode_bfv_params(&threshold))')) {
+  throw new Error('EVM request helpers must derive configuration IDs from the BFV owner');
+}
+NODE
 
 for prefix_and_param_set in INSECURE:0 SECURE:2; do
   prefix="${prefix_and_param_set%%:*}"
   param_set="${prefix_and_param_set##*:}"
   expected_id=$(sol_bytes32 "${prefix}_CONFIG_ID")
   binding_id=$(binding_config_id "$param_set")
-  evm_helper_id=$(extract_rust_config_id "$EVM_HELPERS_RS" "$param_set")
-  if [[ "$binding_id" != "$expected_id" || "$evm_helper_id" != "$expected_id" ]]; then
-    fail "drift: paramSet=${param_set} config ID must match $PROTOCOL_SOL in shared bindings and EVM helpers"
+  if [[ "$binding_id" != "$expected_id" ]]; then
+    fail "drift: paramSet=${param_set} config ID must match $PROTOCOL_SOL in shared bindings"
   fi
 done
 
@@ -324,28 +347,21 @@ check_utils_route() {
   local symbol="$1"
   local preset="$2"
   local committee="$3"
-  local expected_size="$4"
-  local block mod_file noir_n noir_h noir_t expected_shape
+  local block expected_call
   block=$(sed -n "/^export const ${symbol}_BFV_CONFIG:/,/^);/p" "$UTILS_TS")
   [[ -n "$block" ]] || fail "missing ${symbol}_BFV_CONFIG in $UTILS_TS"
-  mod_file="circuits/lib/src/configs/committee/$committee/mod.nr"
-  noir_n=$(grep -E 'pub global N_PARTIES: u32 = [0-9]+' "$mod_file" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
-  noir_h=$(grep -E 'pub global H: u32 = [0-9]+' "$mod_file" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
-  noir_t=$(grep -E 'pub global T: u32 = [0-9]+' "$mod_file" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
-  expected_shape="{ committeeSize: $expected_size, h: $noir_h, t: $noir_t, n: $noir_n },"
-  if ! grep -Fq "\"$preset\"" <<< "$block" || \
-     ! grep -Fq "\"$committee\"" <<< "$block" || \
-     ! grep -Fq "$expected_shape" <<< "$block"; then
-    fail "drift: ${symbol}_BFV_CONFIG must define $preset/$committee with $expected_shape"
+  expected_call="exportconst${symbol}_BFV_CONFIG:ActiveBfvConfig=bfvConfig(\"$preset\",\"$committee\");"
+  if [[ "$(tr -d '[:space:]' <<< "$block" | sed 's/,);/);/')" != "$expected_call" ]]; then
+    fail "drift: ${symbol}_BFV_CONFIG must select $preset/$committee from the shared binding"
   fi
 }
 
-check_utils_route INSECURE_MINIMUM insecure-64 minimum 0
-check_utils_route INSECURE_MICRO insecure-64 micro 1
-check_utils_route INSECURE_SMALL insecure-64 small 2
-check_utils_route SECURE_MINIMUM secure-8192 minimum 0
-check_utils_route SECURE_MICRO secure-8192 micro 1
-check_utils_route SECURE_SMALL secure-8192 small 2
+check_utils_route INSECURE_MINIMUM insecure-64 minimum
+check_utils_route INSECURE_MICRO insecure-64 micro
+check_utils_route INSECURE_SMALL insecure-64 small
+check_utils_route SECURE_MINIMUM secure-8192 minimum
+check_utils_route SECURE_MICRO secure-8192 micro
+check_utils_route SECURE_SMALL secure-8192 small
 
 route_list() {
   local array_name="$1"

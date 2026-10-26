@@ -38,6 +38,8 @@ const SOURCE_FILES: &[&str] = &[
     "scripts/circuits/constants.ts",
     "scripts/circuits/build-pairs.json",
     "packages/interfold-contracts/scripts/protocol/constants.ts",
+    "packages/interfold-contracts/bfv.ts",
+    "packages/interfold-contracts/crypto-config.json",
     "Cargo.lock",
 ];
 
