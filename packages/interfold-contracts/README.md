@@ -345,15 +345,23 @@ directories:
 - The `circuits` directory that `interfold noir setup` of the same release
   installs.
 
-The deploy uses the preset and committee of the generated `ACTIVE_BFV_*`
-constants in `scripts/utils.ts`, which `ActiveCryptoConfig.sol` also uses.
-Inside the monorepo, the deploy ignores `INTERFOLD_CIRCUITS_DIR` and reads its
-own circuit build.
+The deploy uses chain-admitted routes from `scripts/utils.ts`: secure-only on
+mainnet, both parameter sets on Sepolia/local chains. Its `ACTIVE_BFV_*`
+selection supplies local build dimensions, not mainnet admission defaults.
+`ActiveCryptoConfig.sol` enforces the on-chain parameter/configuration policy.
+Inside the monorepo, deployment ignores `INTERFOLD_CIRCUITS_DIR` and reads each
+selected pair's local build metadata and raw hash files. A single-pair local
+build does not require refreshing the full published catalogue.
 
 The package's `dist/vk-commitments.json` must match the selected archive's
 `vk-commitments.json` and hash files. Runtime-compatible older archives may lack
 the metadata required for deployment; use matching release assets. These
 comparisons do not establish source provenance or proof acceptance.
+
+JavaScript/package compilation uses the checked-in bindings and does not require
+Rust. After changing Rust configuration owners in this repository, explicitly
+run `pnpm generate:crypto-config`; `pnpm check:crypto-config` checks them
+without repairing generated files.
 
 ## Configuration
 

@@ -86,7 +86,7 @@
     "mcp:build": "cd packages/interfold-mcp && pnpm build",
     "mcp:release": "cd packages/interfold-mcp && pnpm release",
     "react:build": "cd packages/interfold-react && pnpm build",
-    "sdk:build": "pnpm generate:crypto-bindings && pnpm -C packages/interfold-contracts build:bfv && pnpm -C packages/interfold-sdk build",
+    "sdk:build": "pnpm -C packages/interfold-contracts build:bfv && pnpm -C packages/interfold-sdk build",
     "sdk:test": "pnpm -C packages/interfold-contracts build:bfv && pnpm -C packages/interfold-sdk test",
     "sdk:test:proofs": "cd packages/interfold-sdk && pnpm test:proofs",
     "sdk:test:proofs:prepared": "pnpm -C packages/interfold-sdk test:proofs:prepared",

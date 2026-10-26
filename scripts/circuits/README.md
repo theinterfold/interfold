@@ -70,6 +70,9 @@ pnpm build:circuits check --committee all
 
 # Prepare all pairs explicitly (this switches live selectors)
 pnpm build:circuits --preset all --committee all
+# Normalize unselected preset declarations after the last pair; retain its active selection.
+# This refreshes sources only, not compiled artifacts or their stamps.
+pnpm generate:crypto-config
 pnpm generate:vk-commitments
 pnpm check:crypto-config --full
 
@@ -95,8 +98,8 @@ Wildcards preserve manifest order; unsupported explicit pairs fail before tools 
 release matrix is a separate required subset. The Rust builder calls `e3-zk-config` to generate
 Reed-Solomon parity matrices; files on disk are derived artifacts, not hand-tuned data.
 
-The currently-active selection is written to `circuits/bin/.active-preset.json` and checked by
-`pnpm check:committee` (pre-push hook) against `active.nr`, `utils.ts`, and the parity files.
+The local artifact cache selection is written to `circuits/bin/.active-preset.json`. Source checks
+compare `active.nr`, `utils.ts`, and the parity files; a different hydrated cache is only a note.
 Switching committee always goes through `pnpm build:circuits --committee` — never edit `active.nr`,
 `utils.ts`, or any `parity_*.nr` by hand; the check will reject pushes where they drift from what
 the generator would produce.

@@ -25,8 +25,8 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
     const artifactDir = artifactIndex === -1 ? undefined : args[artifactIndex + 1]
     if (artifactIndex !== -1 && (!artifactDir || artifactDir.startsWith('--'))) throw new Error('--artifacts-dir requires a directory')
     const flags = artifactIndex === -1 ? args : args.filter((_, index) => index !== artifactIndex && index !== artifactIndex + 1)
-    if (flags.some((arg) => !['--check', '--sources', '--full', '--bindings-only', '--qualify'].includes(arg)))
-      throw new Error('Usage: crypto-config.mjs [--check] [--sources | --full | --bindings-only] [--qualify] [--artifacts-dir path]')
+    if (flags.some((arg) => !['--check', '--sources', '--full', '--qualify'].includes(arg)))
+      throw new Error('Usage: crypto-config.mjs [--check] [--sources | --full] [--qualify] [--artifacts-dir path]')
     const root = fileURLToPath(new URL('../..', import.meta.url))
     const metadata = JSON.parse(
       execFileSync('cargo', ['run', '--quiet', '--locked', '-p', 'e3-zk-build', '--', 'export-config'], {
@@ -36,8 +36,8 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
       }),
     )
     const check = flags.includes('--check')
-    const full = flags.includes('--full') && !flags.includes('--bindings-only')
-    const sources = full || flags.includes('--sources') || flags.includes('--bindings-only')
+    const full = flags.includes('--full')
+    const sources = full || flags.includes('--sources')
     const qualify = flags.includes('--qualify')
     if (full && !check) throw new Error('Full mode is check-only; prepare artifacts explicitly')
     if (qualify && !full) throw new Error('--qualify requires --check --full')

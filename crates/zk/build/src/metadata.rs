@@ -32,3 +32,25 @@ pub fn collect(root: &Path) -> Result<CryptoMetadata> {
         build_pairs,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn collecting_metadata_does_not_write_to_its_input_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let directory = root.join("scripts/circuits");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("build-pairs.json"),
+            r#"[["insecure-64","minimum"]]"#,
+        )
+        .unwrap();
+        let before = crate::tests::snapshot(root);
+        collect(root).unwrap();
+        assert_eq!(crate::tests::snapshot(root), before);
+    }
+}

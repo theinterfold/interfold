@@ -8,8 +8,17 @@ pragma solidity 0.8.28;
 import { ActiveCryptoConfig } from "../lib/ActiveCryptoConfig.sol";
 import { BfvProtocol } from "../lib/BfvProtocol.sol";
 import { BfvDecryptionLayout } from "../lib/BfvDecryptionLayout.sol";
+import { IInterfold } from "../interfaces/IInterfold.sol";
 
 contract BfvProtocolHarness {
+    function committeeOrdinals() external pure returns (uint8[3] memory) {
+        return [
+            uint8(IInterfold.CommitteeSize.Minimum),
+            uint8(IInterfold.CommitteeSize.Micro),
+            uint8(IInterfold.CommitteeSize.Small)
+        ];
+    }
+
     function identity(
         uint8 paramSet
     )

@@ -243,7 +243,7 @@ For each pair, the Rust build owner does these steps (`crates/zk/build`):
 1. It writes `configs/default/mod.nr` and `configs/committee/active.nr` for the pair.
 2. It regenerates the parity matrices and the C1 and C2 bounds with the Rust generators.
 3. It updates `packages/interfold-contracts/scripts/utils.ts` and
-   `packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol`.
+   `packages/interfold-contracts/contracts/lib/BfvProtocol.sol`.
 4. It compiles every package in `bin/dkg`, `bin/threshold`, and `bin/recursive_aggregation` with
    `nargo compile`.
 5. It writes verification keys with `bb write_vk`. Each base circuit gets `evm`,
@@ -299,7 +299,7 @@ Other circuit commands:
 | `pnpm build:circuits --dry-run`                                | Lists the circuits that a build compiles, and stops.                                                                                                                                         |
 | `pnpm build:circuits --group dkg --skip-vk`                    | Compiles one group and skips the verification keys.                                                                                                                                          |
 | `pnpm build:circuits hash`                                     | Prints the source hash that identifies a build.                                                                                                                                              |
-| `pnpm build:circuits sync-config --preset <p> --committee <c>` | Updates `utils.ts` and `ActiveCryptoConfig.sol` only. It does not compile.                                                                                                                   |
+| `pnpm build:circuits sync-config --preset <p> --committee <c>` | Updates `utils.ts` and `BfvProtocol.sol` only. It does not compile.                                                                                                                          |
 | `pnpm check:committee`                                         | Checks that the committee and BFV values agree across Noir, Rust, TypeScript, and Solidity.                                                                                                  |
 | `pnpm noir:lint` (`scripts/circuits/lint.sh`)                  | Runs `nargo fmt --check` and `nargo check` on the library and each package. It exits with success if `nargo` is missing.                                                                     |
 | `pnpm noir:test` (`scripts/circuits/test.sh`)                  | Runs `nargo test` on `circuits/lib` and `decryption_aggregator`, then `nargo execute` on `bin/config`, then the `dkg_aggregator` and `node_fold` tests for three preset and committee pairs. |

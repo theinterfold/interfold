@@ -4660,7 +4660,6 @@ name = "e3-zk-build"
 version = "0.20.0-dev.2"
 dependencies = [
  "alloy-primitives",
- "alloy-sol-types",
  "anyhow",
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",

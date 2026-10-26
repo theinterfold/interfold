@@ -186,6 +186,43 @@ test('a failed native export preserves the snapshot and its exit status', () => 
   }
 })
 
+test('unsupported wrapper flags fail before invoking native tools', () => {
+  const result = spawnSync(process.execPath, ['scripts/circuits/crypto-config.mjs', '--check', '--full', '--bindings-only'], {
+    cwd: root,
+    env: { ...process.env, PATH: '' },
+    encoding: 'utf8',
+  })
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /Usage:/)
+  assert.doesNotMatch(result.stderr, /cargo/)
+})
+
+test('binding lookups reject missing preset, committee, and public-input names when loaded', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'interfold-bfv-lookups-'))
+  try {
+    copyFileSync(join(packageRoot, 'bfv.ts'), join(temp, 'bfv.ts'))
+    const metadata = JSON.parse(readFileSync(join(packageRoot, 'crypto-config.json'), 'utf8'))
+    for (const [key, field, name, message] of [
+      ['presets', 'preset', 'insecure-64', /Missing BFV preset/],
+      ['committees', 'name', 'minimum', /Missing committee/],
+      ['publicInputs', 'name', 'domain_hi', /Missing decryption public input/],
+    ] as const) {
+      const changed = structuredClone(metadata)
+      const owner = key === 'presets' ? changed.bfv : key === 'publicInputs' ? changed.zk.decryptionAggregator : changed
+      owner[key] = owner[key].filter((record) => record[field] !== name)
+      writeFileSync(join(temp, 'crypto-config.json'), JSON.stringify(changed))
+      const result = spawnSync('pnpm', ['exec', 'tsx', '-e', `require(${JSON.stringify(join(temp, 'bfv.ts'))})`], {
+        cwd: root,
+        encoding: 'utf8',
+      })
+      assert.notEqual(result.status, 0)
+      assert.match(result.stderr, message)
+    }
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
 test('the aggregate source check fails without Noir instead of using the lightweight fallback', () => {
   const temp = mkdtempSync(join(tmpdir(), 'interfold-source-tools-'))
   const snapshot = join(packageRoot, 'crypto-config.json')
@@ -255,7 +292,7 @@ test('decryption layout preserves independent application counts, offsets, and t
   })
 })
 
-test('the dependency-free committee gate rejects binding drift and independent consumer IDs', () => {
+test('the dependency-free committee gate compares binding values, not consumer implementation text', () => {
   const temp = mkdtempSync(join(tmpdir(), 'interfold-committee-check-'))
   try {
     const files = [
@@ -288,14 +325,9 @@ test('the dependency-free committee gate rejects binding drift and independent c
     check()
     const utils = join(temp, 'packages/interfold-contracts/scripts/utils.ts')
     const originalUtils = readFileSync(utils, 'utf8')
-    writeFileSync(utils, originalUtils.replace('h: members.h', 'h: 999'))
-    assert.throws(check)
+    writeFileSync(utils, `${originalUtils}\nconst unrelatedHash = "0x${'12'.repeat(32)}";\n`)
+    check()
     writeFileSync(utils, originalUtils)
-    const helper = join(temp, 'crates/evm-helpers/src/contracts.rs')
-    const originalHelper = readFileSync(helper, 'utf8')
-    writeFileSync(helper, `${originalHelper}\nconst COPIED_CONFIG: &str = ${JSON.stringify(fixture.vectors[0].cryptoConfigId)};\n`)
-    assert.throws(check)
-    writeFileSync(helper, originalHelper)
     const binding = join(temp, 'packages/interfold-contracts/crypto-config.json')
     const source = readFileSync(binding, 'utf8')
     const stale = JSON.parse(source)
@@ -308,27 +340,33 @@ test('the dependency-free committee gate rejects binding drift and independent c
     writeFileSync(binding, JSON.stringify(stale))
     assert.throws(check)
     writeFileSync(binding, source)
-    const sdk = join(temp, 'packages/interfold-sdk/src/utils.ts')
-    writeFileSync(sdk, `${readFileSync(sdk, 'utf8')}\nconst copiedId = ${JSON.stringify(fixture.vectors[0].cryptoConfigId)};\n`)
-    assert.throws(check)
-    copyFileSync(join(root, 'packages/interfold-sdk/src/utils.ts'), sdk)
-    const task = join(temp, 'packages/interfold-contracts/tasks/interfold.ts')
-    writeFileSync(task, readFileSync(task, 'utf8').replace('../bfv.js', '../wrong-bfv.js'))
-    assert.throws(check)
+    for (const committee of ['minimum', 'micro', 'small']) {
+      const changed = JSON.parse(source)
+      changed.committees.find((record) => record.name === committee).h += 1
+      writeFileSync(binding, JSON.stringify(changed))
+      assert.throws(check)
+    }
   } finally {
     rmSync(temp, { recursive: true, force: true })
   }
 })
 
-test('the packed BFV subpath supports browser builds, ESM, CJS, and both declaration formats', () => {
+test('the packed BFV subpath builds browser-targeted bundles, ESM, CJS, and declarations in isolation', () => {
   const temp = mkdtempSync(join(tmpdir(), 'interfold-bfv-package-'))
   try {
-    // Match compile:ts: emit the adapter first, then bundle JSON for both public and relative imports.
-    const tsconfig = join(temp, 'tsconfig.bfv.json')
-    writeFileSync(tsconfig, JSON.stringify({ extends: join(packageRoot, 'tsconfig.json'), include: [join(packageRoot, 'bfv.ts')] }))
-    execFileSync('pnpm', ['exec', 'tsc', '--project', tsconfig], { cwd: packageRoot, stdio: 'pipe' })
-    execFileSync('pnpm', ['build:bfv'], { cwd: packageRoot, stdio: 'pipe' })
-    execFileSync('pnpm', ['pack', '--pack-destination', temp], { cwd: packageRoot, stdio: 'pipe' })
+    // Exercise the real package commands without changing the checkout's dist/ or needing Rust.
+    const staged = join(temp, 'source')
+    mkdirSync(staged)
+    for (const file of ['package.json', 'bfv.ts', 'crypto-config.json']) copyFileSync(join(packageRoot, file), join(staged, file))
+    symlinkSync(join(packageRoot, 'node_modules'), join(staged, 'node_modules'), 'dir')
+    const tsconfig = join(staged, 'tsconfig.json')
+    writeFileSync(
+      tsconfig,
+      JSON.stringify({ ...JSON.parse(readFileSync(join(packageRoot, 'tsconfig.json'), 'utf8')), include: ['bfv.ts'] }),
+    )
+    execFileSync('pnpm', ['exec', 'tsc', '--project', tsconfig], { cwd: staged, stdio: 'pipe' })
+    execFileSync('pnpm', ['build:bfv'], { cwd: staged, stdio: 'pipe' })
+    execFileSync('pnpm', ['pack', '--pack-destination', temp], { cwd: staged, stdio: 'pipe' })
     const archive = readdirSync(temp).find((file) => file.endsWith('.tgz'))
     assert.ok(archive)
     const installed = join(temp, 'node_modules/@interfold/contracts')
@@ -341,7 +379,14 @@ test('the packed BFV subpath supports browser builds, ESM, CJS, and both declara
       stdio: 'pipe',
     })
     execFileSync(process.execPath, ['-e', `const bfv = require('@interfold/contracts/bfv'); ${check}`], { cwd: temp, stdio: 'pipe' })
-    const consumer = `const degree: bigint = bfv.bfvPresetForParamSet(${secure.paramSet})!.threshold.degree; const id: \`0x\${string}\` | undefined = bfv.bfvPresetForParamSet(${secure.paramSet})?.configId; void degree; void id;`
+    const consumer = `const degree: bigint = bfv.bfvPresetForParamSet(${secure.paramSet})!.threshold.degree; const id: \`0x\${string}\` | undefined = bfv.bfvPresetForParamSet(${secure.paramSet})?.configId; void degree; void id;
+// @ts-expect-error unknown preset keys are not supported
+bfv.BFV_PRESETS.missing;
+// @ts-expect-error unknown committee keys are not supported
+bfv.COMMITTEES.missing;
+// @ts-expect-error public-input names are checked
+bfv.DECRYPTION_INPUT_INDICES.domain_hii;
+`
     writeFileSync(join(temp, 'consumer.mts'), `import * as bfv from '@interfold/contracts/bfv'; ${consumer}`)
     writeFileSync(join(temp, 'consumer.cts'), `import bfv = require('@interfold/contracts/bfv'); ${consumer}`)
     writeFileSync(

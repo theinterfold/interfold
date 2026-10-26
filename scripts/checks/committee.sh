@@ -24,12 +24,8 @@ cd "$REPO_ROOT"
 ACTIVE_NR="circuits/lib/src/configs/committee/active.nr"
 STAMP="circuits/bin/.active-preset.json"
 UTILS_TS="packages/interfold-contracts/scripts/utils.ts"
-PROTOCOL_CONSTANTS_TS="packages/interfold-contracts/scripts/protocol/constants.ts"
 CRYPTO_CONFIG_JSON="packages/interfold-contracts/crypto-config.json"
 PROTOCOL_SOL="packages/interfold-contracts/contracts/lib/BfvProtocol.sol"
-TASKS_TS="packages/interfold-contracts/tasks/interfold.ts"
-SDK_UTILS_TS="packages/interfold-sdk/src/utils.ts"
-EVM_HELPERS_RS="crates/evm-helpers/src/contracts.rs"
 RAN_STAMP_CHECK=false
 RAN_PARITY_CHECK=false
 
@@ -39,12 +35,8 @@ fail() {
 }
 
 for required_file in \
-  "$PROTOCOL_CONSTANTS_TS" \
   "$CRYPTO_CONFIG_JSON" \
-  "$PROTOCOL_SOL" \
-  "$TASKS_TS" \
-  "$SDK_UTILS_TS" \
-  "$EVM_HELPERS_RS"; do
+  "$PROTOCOL_SOL"; do
   [[ -f "$required_file" ]] || fail "missing $required_file"
 done
 
@@ -74,7 +66,7 @@ process.stdout.write(`${committee.h};${committee.t}\n`);
 NODE
 )
 if [[ -z "${UTILS_H:-}" || -z "${UTILS_T:-}" ]]; then
-  fail "could not parse BFV_DKG_H / BFV_THRESHOLD_T from $UTILS_TS"
+  fail "could not read H / T for $UTILS_COMMITTEE from $CRYPTO_CONFIG_JSON"
 fi
 
 # 3. Read expected (H, T) from the active committee's leaf module; do not copy its numbers.
@@ -91,7 +83,7 @@ fi
 
 if [[ "$UTILS_H" != "$EXPECTED_H" || "$UTILS_T" != "$EXPECTED_T" ]]; then
   fail "drift: $ACTIVE_NR says committee=$ACTIVE_COMMITTEE (expects H=$EXPECTED_H, T=$EXPECTED_T) \
-but $UTILS_TS has BFV_DKG_H=$UTILS_H, BFV_THRESHOLD_T=$UTILS_T. \
+but $CRYPTO_CONFIG_JSON has H=$UTILS_H, T=$UTILS_T. \
 Run: pnpm build:circuits --committee $ACTIVE_COMMITTEE"
 fi
 
@@ -128,19 +120,6 @@ check_sol_committee small SMALL 2
 
 # 5. The complete threshold parameter tuple must match across deployment tooling, ciphernodes,
 #    and Noir. The error variance is represented in Noir by the generated encryption bound.
-hex_csv_to_decimal() {
-  local input="$1"
-  local output=""
-  local item decimal
-  local -a items
-  IFS=',' read -r -a items <<< "$input"
-  for item in "${items[@]}"; do
-    decimal=$(printf '%u' "$((item))")
-    output="${output}${output:+,}${decimal}"
-  done
-  printf '%s' "$output"
-}
-
 error_bound_for_variance() {
   node -e '
 const variance = BigInt(process.argv[1]);
@@ -177,7 +156,7 @@ const config = JSON.parse(readFileSync(process.argv[2], 'utf8'));
 const preset = config.bfv.presets.find(preset => preset.preset === process.argv[3]);
 if (!preset) throw new Error(`Missing BFV preset: ${process.argv[3]}`);
 const p = preset.threshold;
-process.stdout.write([p.degree, p.plaintextModulus, p.moduli.map(value => `0x${BigInt(value).toString(16)}`).join(','), p.error1Variance].join(';'));
+process.stdout.write([p.degree, p.plaintextModulus, p.moduli.join(','), p.error1Variance].join(';'));
 NODE
   )
   noir_file="circuits/lib/src/configs/${noir_name}/threshold.nr"
@@ -196,7 +175,7 @@ NODE
   expected_error_bound=$(error_bound_for_variance "$ts_error")
 
   if [[ "$ts_degree" != "$noir_degree" || "$ts_plaintext" != "$noir_plaintext" || \
-        "$(hex_csv_to_decimal "$ts_moduli")" != "$noir_moduli" || \
+        "$ts_moduli" != "$noir_moduli" || \
         "$expected_error_bound" != "$noir_error_bound" ]]; then
     fail "drift: ${label} BFV parameters differ between $CRYPTO_CONFIG_JSON and $noir_file"
   fi
@@ -223,8 +202,8 @@ process.stdout.write(`${qModT},${(x % t + t) % t}\n`);
 check_bfv_preset insecure-64 insecure
 check_bfv_preset secure-8192 secure
 
-# 6. Every chain-supported route in utils.ts must match the Noir committee shape and the
-#    parameter/configuration hashes in BfvProtocol.sol. Keep this check
+# 6. The owner snapshot must match the parameter/configuration hashes in BfvProtocol.sol.
+#    Consumer behavior is covered by binding, SDK, contract, and native tests. Keep this check
 #    dependency-free because Repository Checks runs it before Node dependencies are installed.
 sol_bytes32() {
   local name="$1"
@@ -247,7 +226,7 @@ NODE
   sol_param_hash=$(sol_bytes32 "${prefix}_PARAM_SET_HASH")
   sol_config_id=$(sol_bytes32 "${prefix}_CONFIG_ID")
   if [[ "$utils_param_hash" != "$sol_param_hash" || "$utils_config_id" != "$sol_config_id" ]]; then
-    fail "drift: $UTILS_TS ${prefix} hashes do not match $PROTOCOL_SOL"
+    fail "drift: $CRYPTO_CONFIG_JSON ${prefix} hashes do not match $PROTOCOL_SOL"
   fi
 done
 
@@ -260,45 +239,6 @@ if (!preset) throw new Error(`Unsupported BFV parameter set: ${process.argv[3]}`
 process.stdout.write(preset.cryptoConfigId);
 NODE
 }
-
-node --input-type=module - "$TASKS_TS" "$SDK_UTILS_TS" "$UTILS_TS" "$EVM_HELPERS_RS" <<'NODE'
-import { readFileSync } from 'node:fs';
-for (const [index, file] of process.argv.slice(2, 4).entries()) {
-  const source = readFileSync(file, 'utf8');
-  const imported = /import\s*\{[^}]*\bbfvPresetForParamSet\b[^}]*\}\s*from\s*["']([^"']+)["']/.exec(source);
-  const expected = index === 0 ? '../bfv.js' : '@interfold/contracts/bfv';
-  if (imported?.[1] !== expected) {
-    throw new Error(`${file} must import the shared BFV preset lookup`);
-  }
-  if (/0x[0-9a-fA-F]{64}/.test(source)) {
-    throw new Error(`${file} contains an independent configuration-ID literal`);
-  }
-}
-const utils = readFileSync(process.argv[4], 'utf8');
-for (const imported of ['BFV_PRESETS', 'COMMITTEES']) {
-  if (!new RegExp(`import\\s*\\{[^}]*\\b${imported}\\b[^}]*\\}\\s*from\\s*["']\\.\\./bfv\\.js["']`).test(utils)) {
-    throw new Error(`Deployment utils must import ${imported} from the shared binding`);
-  }
-}
-for (const [name, field] of [['BFV_DKG_H', 'h'], ['BFV_THRESHOLD_T', 't'], ['ACTIVE_BFV_PARAM_SET', 'paramSet'], ['ACTIVE_BFV_COMMITTEE_SIZE', 'committeeSize'], ['ACTIVE_BFV_COMMITTEE_N', 'n']]) {
-  if (!new RegExp(`export const ${name} = ACTIVE_BFV_CONFIG\\.${field};`).test(utils)) {
-    throw new Error(`${name} must follow the selected shared configuration`);
-  }
-}
-if (/0x[0-9a-fA-F]{64}/.test(utils)) throw new Error('Deployment utils contain an independent protocol hash');
-const projection = /function bfvConfig\([\s\S]*?^}/m.exec(utils)?.[0] ?? '';
-for (const expected of [
-  'const parameters = BFV_PRESETS[preset]', 'const members = COMMITTEES[committee]',
-  'paramSet: parameters.paramSet', 'paramSetHash: parameters.paramSetHash', 'configId: parameters.configId',
-  'committeeSize: members.committeeSize', 'h: members.h', 't: members.t', 'n: members.n',
-]) {
-  if (!projection.includes(expected)) throw new Error(`Deployment configuration must use ${expected}`);
-}
-const rust = readFileSync(process.argv[5], 'utf8');
-if (/0x[0-9a-fA-F]{64}/.test(rust) || !rust.includes('BfvPreset::from_on_chain_param_set(param_set)') || !rust.includes('current_bfv_crypto_config_id(&encode_bfv_params(&threshold))')) {
-  throw new Error('EVM request helpers must derive configuration IDs from the BFV owner');
-}
-NODE
 
 for prefix_and_param_set in INSECURE:0 SECURE:2; do
   prefix="${prefix_and_param_set%%:*}"

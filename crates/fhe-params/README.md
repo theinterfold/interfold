@@ -39,6 +39,10 @@ Consumers resolve a named preset to metadata, build its threshold/DKG pair as ne
 scalar bounds/CRP at this shared boundary. Searching custom parameters is an exploratory workflow,
 not installation of matching Noir circuits or deployed verifiers.
 
+For repository code generation, `pnpm build:circuits export-config` exports current parameter pairs,
+search recipes, and protocol hashes alongside committee and circuit metadata. It runs no search or
+compiler and writes nothing; large integers are decimal strings.
+
 ## Modules
 
 ### Presets (`presets`)

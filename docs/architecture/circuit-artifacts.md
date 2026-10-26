@@ -15,12 +15,13 @@ constants, verifier output, local `.active-preset.json`, or prepared OpenVM iden
 Canonical committees `(N,T,H)` are minimum `(3,1,2)`, micro `(9,4,5)`, small `(19,9,14)`. Every
 preset/committee pair has its own H-shaped PK and T-shaped decryption public-input layout.
 
-`pnpm check:committee` compares committee Noir/Rust/BfvProtocol/deployment utils, complete threshold
-BFV tuples across deployment constants/Rust/preset Noir, and configuration IDs across contracts,
-tasks, SDK, and EVM helpers. Drift can register a tuple nodes/circuits do not implement. The
-committed default is insecure-64/minimum; CI checks its selectors without switching the live tree.
-Local active-preset cache mismatch is only a note. **Limits:** these source checks do not establish
-verification-key or proof compatibility. With Nargo available, the gate runs
+`pnpm check:committee` compares owner metadata with Noir/BfvProtocol, complete threshold BFV tuples,
+and deployment selections/routes. Binding, SDK, contract, and EVM-helper tests compare consumer
+behavior against frozen protocol IDs instead of requiring particular imports or implementation text.
+Drift can register a tuple nodes/circuits do not implement. The committed default is
+insecure-64/minimum; CI checks its selectors without switching the live tree. Local active-preset
+cache mismatch is only a note. **Limits:** these source checks do not establish verification-key or
+proof compatibility. With Nargo available, the gate runs
 `pnpm build:circuits check --committee all`. The Rust owner renders/formats an isolated library copy
 and compares complete preset/committee declarations without swapping live files.
 

@@ -5,20 +5,13 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
 
-import {
-  BFV_DKG_H,
-  getBfvPkSubCircuitVkHashPaths,
-  readVkRecursiveHash,
-} from "../../scripts/utils";
+import { BFV_DKG_H, getBfvVkCommitments } from "../../scripts/utils";
 import dkgAggregatorVerifierModule from "./dkgAggregatorVerifier";
 
 export default buildModule("BfvPkVerifier", (m) => {
   const { dkgAggregatorVerifier } = m.useModule(dkgAggregatorVerifierModule);
 
-  const nodesFoldKeyHash = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths().nodesFold,
-  );
-  const c5KeyHash = readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().c5);
+  const { nodesFold: nodesFoldKeyHash, c5: c5KeyHash } = getBfvVkCommitments();
 
   const bfvPkVerifier = m.contract("BfvPkVerifier", [
     dkgAggregatorVerifier,

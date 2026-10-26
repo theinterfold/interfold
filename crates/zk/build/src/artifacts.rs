@@ -309,19 +309,27 @@ fn compiled_path(root: &Path, circuit: &Circuit) -> Result<PathBuf> {
 }
 
 fn sanitize_paths(path: &Path) -> Result<()> {
-    let mut compiled: serde_json::Value = serde_json::from_slice(&fs::read(path)?)?;
-    let files = compiled["file_map"]
-        .as_object_mut()
-        .context("Compiled circuit has no source file map")?;
-    for file in files.values_mut() {
-        let source = file["path"]
-            .as_str()
-            .context("Compiler source path")?
-            .replace('\\', "/");
-        let canonical = if let Some((_, suffix)) = source.split_once("/github.com/") {
-            format!("nargo/github.com/{suffix}")
-        } else if let Some((_, suffix)) = source.rsplit_once("/circuits/") {
+    #[derive(Deserialize)]
+    struct Compiled<'a> {
+        #[serde(borrow)]
+        file_map: BTreeMap<String, SourceFile<'a>>,
+    }
+    #[derive(Deserialize)]
+    struct SourceFile<'a> {
+        #[serde(borrow)]
+        path: &'a serde_json::value::RawValue,
+    }
+    let original = fs::read_to_string(path)?;
+    let compiled: Compiled<'_> = serde_json::from_str(&original)?;
+    let mut replacements = Vec::new();
+    for file in compiled.file_map.values() {
+        let decoded: String = serde_json::from_str(file.path.get())?;
+        let source = decoded.replace('\\', "/");
+        // Repository paths can themselves live under ghq/Go's github.com hierarchy.
+        let canonical = if let Some((_, suffix)) = source.rsplit_once("/circuits/") {
             format!("interfold/circuits/{suffix}")
+        } else if let Some((_, suffix)) = source.split_once("/github.com/") {
+            format!("nargo/github.com/{suffix}")
         } else {
             anyhow::ensure!(
                 !source.starts_with('/') && source.as_bytes().get(1) != Some(&b':'),
@@ -329,10 +337,25 @@ fn sanitize_paths(path: &Path) -> Result<()> {
             );
             source
         };
-        file["path"] = canonical.into();
+        if canonical != decoded {
+            // RawValue borrows the original token, so replace only that range, not compiler JSON
+            // key order, whitespace, ABI, bytecode, or source text containing similar paths.
+            let start = file.path.get().as_ptr() as usize - original.as_ptr() as usize;
+            replacements.push((
+                start,
+                file.path.get().len(),
+                serde_json::to_string(&canonical)?,
+            ));
+        }
     }
-    // Canonical JSON and dependency paths keep digests independent of checkout/cache locations.
-    fs::write(path, serde_json::to_vec(&compiled)?)?;
+    if !replacements.is_empty() {
+        replacements.sort_unstable_by_key(|(start, _, _)| std::cmp::Reverse(*start));
+        let mut normalized = original.clone();
+        for (start, length, replacement) in replacements {
+            normalized.replace_range(start..start + length, &replacement);
+        }
+        fs::write(path, normalized)?;
+    }
     Ok(())
 }
 
@@ -636,6 +659,14 @@ mod tests {
             ("/Users/alice/worktree", "/Users/alice/nargo"),
             ("/home/runner/work/project", "/home/runner/.nargo"),
             ("C:\\worktree", "C:\\Users\\bob\\nargo"),
+            (
+                "/home/alice/ghq/github.com/theinterfold/interfold",
+                "/home/alice/.nargo",
+            ),
+            (
+                "/home/bob/go/src/github.com/theinterfold/interfold",
+                "/home/bob/.nargo",
+            ),
         ] {
             fs::write(
                 &path,
@@ -658,6 +689,22 @@ mod tests {
             .to_string()
             .contains("Unrecognized absolute"));
         assert_eq!(fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn path_sanitization_preserves_compiler_json_bytes_except_source_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("compiled.json");
+        let original = "{\n  \"z\": 1, \"file_map\": {\"1\": {\"source\": \"fn main() {}\", \"path\": \"/checkout/circuits/lib/src/lib.nr\"}},\n  \"abi\": {\"z\": 2, \"a\": 1}\n}\n";
+        fs::write(&path, original).unwrap();
+        sanitize_paths(&path).unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            original.replace("/checkout/circuits/", "interfold/circuits/")
+        );
+        let modified = fs::metadata(&path).unwrap().modified().unwrap();
+        sanitize_paths(&path).unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
     }
 
     fn request() -> Request {

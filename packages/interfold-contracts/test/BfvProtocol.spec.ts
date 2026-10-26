@@ -72,6 +72,11 @@ describe("BFV protocol bindings", function () {
     const harness = await (
       await ethers.getContractFactory("BfvProtocolHarness")
     ).deploy();
+    expect(await harness.committeeOrdinals()).to.deep.equal(
+      Object.values(COMMITTEES).map((committee) =>
+        BigInt(committee.committeeSize),
+      ),
+    );
     for (const committee of Object.values(COMMITTEES)) {
       expect(await harness.committee(committee.committeeSize)).to.deep.equal([
         BigInt(committee.t),
