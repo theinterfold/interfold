@@ -34,6 +34,8 @@ deployed_contracts.json
 *.last-run.json
 examples/auction-e2e/contracts/verifiers/AuctionVerifier*.sol
 examples/sealed-cca/contracts/verifiers/SealedCca*Verifier.sol
+examples/token-launch/contracts/verifiers/TokenLaunch*Verifier.sol
+examples/token-launch/sdk/test-vectors/layout.json
 
 # test results
 test-results/

@@ -17,6 +17,9 @@ packages:
   - examples/sealed-cca
   - examples/sealed-cca/client
   - examples/sealed-cca/sdk
+  - examples/token-launch
+  - examples/token-launch/client
+  - examples/token-launch/sdk
 linkWorkspacePackages: true
 overrides:
   '@nomicfoundation/hardhat-keystore': 3.0.3
