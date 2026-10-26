@@ -1,0 +1,22 @@
+[package]
+name = "private-round-circuit-tools"
+version = "0.1.0"
+edition = "2024"
+license = "LGPL-3.0-only"
+publish = false
+description = "Generators for the private-round circuits: the bid table, the VK hash, and a local l-BFV key"
+
+# A package of its own: it is a build tool and not part of the program workspace.
+[workspace]
+
+[dependencies]
+anyhow = "1.0.86"
+ark-bn254 = "0.5.0"
+ark-ff = "0.5.0"
+e3-bfv-client = { path = "../../../../crates/bfv-client" }
+e3-fhe-params = { path = "../../../../crates/fhe-params" }
+e3-zk-witness = { path = "../../../../crates/zk/witness" }
+fhe = { git = "https://github.com/gnosisguild/fhe.rs", branch = "dev", features = ["experimental-mbfv"] }
+fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", branch = "dev" }
+hex = "=0.4.3"
+rand = "0.9"
