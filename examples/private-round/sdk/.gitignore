@@ -1,0 +1,3 @@
+dist
+# Copied from the circuit build outputs by `scripts/copy-circuits.mjs`.
+/circuits
