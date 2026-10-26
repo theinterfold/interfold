@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 // Shared test constants. Importable by every spec file.
+import { BFV_ENCRYPTION_SCHEME_ID, INTERFOLD_BFV_VERSION } from "../../bfv.js";
 import { BFV_PARAMS } from "../../scripts/protocol/constants";
 import { ethers } from "./connection";
 
@@ -22,10 +23,8 @@ export const THIRTY_DAYS = 30 * ONE_DAY;
 export const SORTITION_SUBMISSION_WINDOW = 60;
 
 // ── Encryption scheme ───────────────────────────────────────────────────────
-// Derived from the same string the BFV verifier wrappers and
-// `MockE3Program` use (`keccak256("fhe.rs:BFV")`) so the test constant
-// stays aligned with the contracts if either side ever changes.
-export const ENCRYPTION_SCHEME_ID = ethers.id("fhe.rs:BFV");
+// Fixture inputs follow the binding; independent expected hashes live in the protocol vectors.
+export const ENCRYPTION_SCHEME_ID: string = BFV_ENCRYPTION_SCHEME_ID;
 
 // ── Fake ciphertext / proof payloads used across spec files ──────────────────
 export const DATA = "0xda7a";
@@ -68,7 +67,7 @@ export const ACTIVE_CRYPTO_CONFIG_ID = ethers.keccak256(
     [
       ENCRYPTION_SCHEME_ID,
       ethers.keccak256(BFV_PARAMS_DEFAULT),
-      ethers.id("interfold-bfv-v5"),
+      ethers.id(INTERFOLD_BFV_VERSION),
     ],
   ),
 );
@@ -80,7 +79,7 @@ export const PRODUCTION_CRYPTO_CONFIG_ID = ethers.keccak256(
     [
       ENCRYPTION_SCHEME_ID,
       ethers.keccak256(BFV_PARAMS_SECURE),
-      ethers.id("interfold-bfv-v5"),
+      ethers.id(INTERFOLD_BFV_VERSION),
     ],
   ),
 );
