@@ -16,7 +16,6 @@ import {
   LOTS,
   PRICES,
   U18,
-  type Fixture,
   bid,
   bidData,
   bidPublicInputs,
