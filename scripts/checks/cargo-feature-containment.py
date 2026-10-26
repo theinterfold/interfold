@@ -30,6 +30,8 @@ SAMPLES_RUNTIME_OWNERS = {
 }
 BENCHMARK_OWNER = "e3-zk-benchmarks"
 TEST_SUPPORT = {"e3-test-support", "e3-bfv-test-support"}
+# Fixture executables need BFV clients/codecs, not the system-test node assembly.
+FIXTURE_BIN_DEPENDENCIES = {"e3-bfv-client", "e3-fhe-params"}
 
 
 def reaches_target(features: dict[str, list[str]]) -> bool:
@@ -136,6 +138,14 @@ def main() -> int:
                 if isinstance(dependency, dict) and dependency.get("workspace"):
                     dependency = workspace_dependencies.get(name, dependency)
                 package = dependency.get("package", name) if isinstance(dependency, dict) else name
+                if (
+                    owner == "e3-tests"
+                    and package.startswith("e3-")
+                    and package not in FIXTURE_BIN_DEPENDENCIES
+                ):
+                    failures.append(
+                        f"{relative}: fixture bins cannot depend on {package}; keep node assembly in dev-dependencies"
+                    )
                 if package in TEST_SUPPORT:
                     failures.append(f"{relative}: {package} is only allowed in dev-dependencies")
                 if owner in TEST_SUPPORT and package.startswith("e3-"):

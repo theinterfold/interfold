@@ -100,3 +100,46 @@ test('shared fixture support stays dev-only, unpublished and independent of inte
   assert.equal(system.status, 1, system.stdout + system.stderr)
   assert.match(system.stdout, /system-test composition cannot be a production dependency/)
 })
+
+test('fixture-bin dependencies exclude node assembly, including aliases and target tables', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'interfold-fixture-bin-boundary-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  for (const path of ['scripts/checks', 'crates/tests']) mkdirSync(join(dir, path), { recursive: true })
+  copyFileSync(new URL('cargo-feature-containment.py', import.meta.url), join(dir, 'scripts/checks/check.py'))
+  writeFileSync(
+    join(dir, 'Cargo.toml'),
+    '[workspace]\n[workspace.dependencies]\nnode = { package = "e3-ciphernode-builder", path = "crates/builder" }\n',
+  )
+  assert.equal(spawnSync('git', ['init', '--quiet'], { cwd: dir }).status, 0)
+  const python = ['python3', 'python3.13', 'python3.12', 'python3.11', 'python3.10', 'python3.9'].find(
+    (candidate) =>
+      spawnSync(candidate, ['-c', 'import importlib.util as u, sys; sys.exit(0 if u.find_spec("tomllib") or u.find_spec("tomli") else 1)'])
+        .status === 0,
+  )
+  assert.ok(python, 'install Python with tomllib or tomli')
+  const check = (table, dependency) => {
+    writeFileSync(
+      join(dir, 'crates/tests/Cargo.toml'),
+      `[package]\nname = "e3-tests"\nversion = "0.1.0"\npublish = false\n[${table}]\n${dependency}\n`,
+    )
+    return spawnSync(python, ['scripts/checks/check.py'], { cwd: dir, encoding: 'utf8' })
+  }
+  for (const table of ['dependencies', 'build-dependencies', "target.'cfg(unix)'.dependencies", "target.'cfg(unix)'.build-dependencies"]) {
+    const allowed = check(table, 'e3-bfv-client = "0.1.0"\ne3-fhe-params = "0.1.0"\nclap = "4"')
+    assert.equal(allowed.status, 0, allowed.stdout + allowed.stderr)
+    for (const name of ['e3-zk-prover', 'e3-ciphernode-builder', 'e3-events']) {
+      const rejected = check(table, `${name} = "0.1.0"`)
+      assert.equal(rejected.status, 1, `${table}: ${name}\n${rejected.stdout}${rejected.stderr}`)
+      assert.match(rejected.stdout, new RegExp(`fixture bins cannot depend on ${name}`))
+    }
+    for (const dependency of ['node = { workspace = true }', 'node = { package = "e3-zk-prover", path = "../prover" }']) {
+      const aliased = check(table, dependency)
+      assert.equal(aliased.status, 1, aliased.stdout + aliased.stderr)
+      assert.match(aliased.stdout, /fixture bins cannot depend on e3-(ciphernode-builder|zk-prover)/)
+    }
+  }
+  for (const table of ['dev-dependencies', "target.'cfg(unix)'.dev-dependencies"]) {
+    const dev = check(table, 'node = { workspace = true }\ne3-zk-prover = "0.1.0"')
+    assert.equal(dev.status, 0, dev.stdout + dev.stderr)
+  }
+})
