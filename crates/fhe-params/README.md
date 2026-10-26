@@ -59,14 +59,20 @@ Pre-configured BFV parameter sets for PVSS (Public Verifiable Secret Sharing) pr
   encoding with 128 slots
 - **`BfvPreset::SecureThreshold16384`** / **`BfvPreset::SecureDkg16384`**: Secure l-BFV
   parameters (degree 16384, multiplicative depth 3, on-chain parameter set 3)
+- **`BfvPreset::SecureThreshold16384Simd`** / **`BfvPreset::SecureDkg16384Simd`**: Secure l-BFV
+  parameters with SIMD slots (degree 16384, plaintext modulus 65537, multiplicative depth 3,
+  five 56-bit threshold moduli, on-chain parameter set 6). The plaintext has 16384 slots, and the
+  decryption circuits publish 50 coefficients, from which a reader recovers up to 50 known
+  non-zero slots (`e3_bfv_client::simd_recover_sparse`)
 
 The trBFV presets are `InsecureThreshold64` and `SecureThreshold8192`; the l-BFV presets are the
 other threshold presets. `supports_lbfv` and `is_lbfv_path` name the protocol path of a preset, and
 `BfvPreset::artifacts_dir` and `BfvPreset::noir_config_module` name its circuit artifacts
-(`insecure-64`, `insecure`, `insecure-simd`, `secure-8192`, `secure-16384`). The l-BFV presets
+(`insecure-64`, `insecure`, `insecure-simd`, `secure-8192`, `secure-16384`, `secure-16384-simd`). The l-BFV presets
 also carry fixed CRS and URS seeds (`lbfv` module). `BfvPreset::max_msg_non_zero_coeffs` gives the
-number of plaintext coefficients that the decryption circuits publish (128 for the SIMD preset,
-50 for the others).
+number of plaintext coefficients that the decryption circuits publish (128 for the degree-128 SIMD
+preset, 50 for the others, including `secure-16384-simd`; `BfvPreset::is_simd` marks the SIMD
+presets).
 
 The insecure-64 and secure-8192 threshold presets use plaintext modulus 17,000,000, three CRT limbs,
 and `SEARCH_Z = 100,000`. Degree 64 is not secure and is only for development/tests. Reusing the old

@@ -1174,6 +1174,35 @@ mod tests {
     }
 
     #[test]
+    fn search_reproduces_secure_16384_simd_preset() {
+        use crate::constants::secure_16384_simd;
+        use crate::search::utils::variance_uniform_sym;
+
+        let preset = crate::presets::BfvPreset::SecureThreshold16384Simd;
+        let mut config = preset_config(preset);
+        config.d = Some(secure_16384_simd::DEGREE as u64);
+        config.mult_depth = preset.search_defaults().unwrap().mult_depth;
+        let first = bfv_search(&config).expect("secure-16384-simd threshold set must be feasible");
+        assert_eq!(first.d, secure_16384_simd::DEGREE as u64);
+        assert_eq!(first.qi_values(), secure_16384_simd::threshold::MODULI);
+        assert_eq!(
+            first.k_plain_eff,
+            secure_16384_simd::threshold::PLAINTEXT_MODULUS as u128
+        );
+        assert_eq!(
+            variance_uniform_sym(&first.benc_min).to_str_radix(10),
+            secure_16384_simd::threshold::ERROR1_VARIANCE
+        );
+        let second = bfv_search_second_param(&config, &first)
+            .expect("secure-16384-simd DKG set must be feasible");
+        assert_eq!(second.qi_values(), secure_16384_simd::dkg::MODULI);
+        assert_eq!(
+            second.k_plain_eff,
+            secure_16384_simd::dkg::PLAINTEXT_MODULUS as u128
+        );
+    }
+
+    #[test]
     fn search_keeps_q_under_the_estimator_limit() {
         // At λ = 66 the smallest correct q at d = 8192 has log2(q) = 220. The formula
         // log2(B) + (d-75)/37.5 accepts it (limit 220.8), but it has about 124 bits of

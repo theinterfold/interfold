@@ -31,6 +31,7 @@ pub use encoding::{
 pub use lbfv::{
     is_lbfv_path, is_supported_lbfv_row_count, lbfv_crs_seed, lbfv_row_count, lbfv_urs_seed,
     supports_lbfv, LBFV_CONSTANTS_VERSION, SECURE_16384_LBFV_CRS_SEED, SECURE_16384_LBFV_URS_SEED,
+    SECURE_16384_SIMD_LBFV_CRS_SEED, SECURE_16384_SIMD_LBFV_URS_SEED,
 };
 pub use presets::{
     default_param_set, BfvParamSet, BfvPreset, LambdaConfig, ParameterType, PresetError,

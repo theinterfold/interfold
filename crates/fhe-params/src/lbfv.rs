@@ -55,6 +55,18 @@ pub const SECURE_16384_LBFV_URS_SEED: [u8; 32] = [
     0xc3, 0x96, 0xab, 0x27, 0x9a, 0xed, 0x56, 0x92, 0xb0, 0x23, 0x5b, 0xfc, 0xcd, 0x77, 0x88, 0x4b,
 ];
 
+/// SHA-256 of `interfold/lbfv/secure-16384-simd/v1/crs`.
+pub const SECURE_16384_SIMD_LBFV_CRS_SEED: [u8; 32] = [
+    0xee, 0xc2, 0x78, 0x7b, 0x89, 0xd6, 0x5e, 0xd8, 0x8e, 0xca, 0xbb, 0x90, 0xd6, 0x53, 0x59, 0xb1,
+    0x2f, 0x66, 0x7d, 0x76, 0xc4, 0x47, 0x5a, 0x85, 0x9d, 0x6d, 0xef, 0x57, 0x50, 0x96, 0x90, 0x3f,
+];
+
+/// SHA-256 of `interfold/lbfv/secure-16384-simd/v1/urs`.
+pub const SECURE_16384_SIMD_LBFV_URS_SEED: [u8; 32] = [
+    0x74, 0x51, 0xb1, 0xae, 0x09, 0xd7, 0x4d, 0x85, 0x3b, 0x8a, 0xc2, 0x76, 0x28, 0x1b, 0x60, 0xa8,
+    0xde, 0x9c, 0x63, 0x94, 0xfa, 0xb9, 0x4c, 0xa1, 0x90, 0xb0, 0x34, 0x27, 0xf4, 0xf8, 0x16, 0xcc,
+];
+
 /// SHA-256 of `interfold/lbfv/insecure/v1/crs`.
 pub const INSECURE_LBFV_CRS_SEED: [u8; 32] = [
     0x7c, 0x5d, 0x1d, 0xda, 0xff, 0x9b, 0x83, 0x6d, 0x39, 0x08, 0x50, 0xe2, 0xc7, 0x2d, 0x0b, 0x2b,
@@ -86,6 +98,7 @@ pub const fn lbfv_crs_seed(preset: BfvPreset) -> Option<[u8; 32]> {
         BfvPreset::InsecureThresholdLbfv => Some(INSECURE_LBFV_CRS_SEED),
         BfvPreset::InsecureThresholdSimd => Some(INSECURE_SIMD_LBFV_CRS_SEED),
         BfvPreset::SecureThreshold16384 => Some(SECURE_16384_LBFV_CRS_SEED),
+        BfvPreset::SecureThreshold16384Simd => Some(SECURE_16384_SIMD_LBFV_CRS_SEED),
         _ => None,
     }
 }
@@ -97,6 +110,7 @@ pub const fn lbfv_urs_seed(preset: BfvPreset) -> Option<[u8; 32]> {
         BfvPreset::InsecureThresholdLbfv => Some(INSECURE_LBFV_URS_SEED),
         BfvPreset::InsecureThresholdSimd => Some(INSECURE_SIMD_LBFV_URS_SEED),
         BfvPreset::SecureThreshold16384 => Some(SECURE_16384_LBFV_URS_SEED),
+        BfvPreset::SecureThreshold16384Simd => Some(SECURE_16384_SIMD_LBFV_URS_SEED),
         _ => None,
     }
 }
@@ -109,6 +123,12 @@ mod tests {
     #[test]
     fn fixed_seeds_are_domain_separated() {
         assert_ne!(SECURE_16384_LBFV_CRS_SEED, SECURE_16384_LBFV_URS_SEED);
+        assert_ne!(
+            SECURE_16384_SIMD_LBFV_CRS_SEED,
+            SECURE_16384_SIMD_LBFV_URS_SEED
+        );
+        assert_ne!(SECURE_16384_SIMD_LBFV_CRS_SEED, SECURE_16384_LBFV_CRS_SEED);
+        assert_ne!(SECURE_16384_SIMD_LBFV_URS_SEED, SECURE_16384_LBFV_URS_SEED);
     }
 
     #[test]
@@ -126,15 +146,19 @@ mod tests {
         assert!(lbfv_urs_seed(BfvPreset::InsecureThresholdLbfv).is_some());
         assert!(lbfv_crs_seed(BfvPreset::SecureThreshold16384).is_some());
         assert!(lbfv_urs_seed(BfvPreset::SecureThreshold16384).is_some());
+        assert!(lbfv_crs_seed(BfvPreset::SecureThreshold16384Simd).is_some());
+        assert!(lbfv_urs_seed(BfvPreset::SecureThreshold16384Simd).is_some());
         assert!(lbfv_crs_seed(BfvPreset::SecureThreshold8192).is_none());
         assert!(lbfv_urs_seed(BfvPreset::InsecureDkg64).is_none());
         assert!(is_lbfv_path(BfvPreset::InsecureDkgLbfv));
         assert!(is_lbfv_path(BfvPreset::SecureDkg16384));
+        assert!(is_lbfv_path(BfvPreset::SecureDkg16384Simd));
         assert!(!is_lbfv_path(BfvPreset::InsecureDkg64));
         assert!(!is_lbfv_path(BfvPreset::SecureDkg8192));
         assert_eq!(lbfv_row_count(BfvPreset::InsecureThresholdLbfv), Some(3));
         assert_eq!(lbfv_row_count(BfvPreset::InsecureThreshold64), None);
         assert_eq!(lbfv_row_count(BfvPreset::SecureThreshold16384), Some(5));
+        assert_eq!(lbfv_row_count(BfvPreset::SecureThreshold16384Simd), Some(5));
         assert_eq!(lbfv_row_count(BfvPreset::SecureThreshold8192), None);
         assert!(is_supported_lbfv_row_count(3));
         assert!(is_supported_lbfv_row_count(5));

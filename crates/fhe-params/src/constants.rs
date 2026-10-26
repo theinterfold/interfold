@@ -136,6 +136,40 @@ pub mod secure_16384 {
     }
 }
 
+/// Secure SIMD preset constants (degree 16384, plaintext modulus 65537), the l-BFV preset for
+/// multiplicative depth 3 with 16384 SIMD slots.
+///
+/// `PLAINTEXT_MODULUS` is prime and 1 mod 2N, so the plaintext ring splits into N SIMD slots. The
+/// parameters come from `search_params --d 16384 --n 20 --k 65537 --z 3 --lambda 31 --b 20
+/// --b-chi 1 --mult-depth 3`, the inputs in `secure_16384_simd_search_defaults`. The set has 5
+/// primes of 56 bits, log2(q) = 276, well below the RLWE limit of this degree. One set covers every
+/// committee up to n = 20. The DKG set follows the search: its plaintext modulus is the largest
+/// prime of the threshold set and its two 58-bit moduli hold the shares.
+pub mod secure_16384_simd {
+    pub const DEGREE: usize = 16384;
+    pub const NUM_PARTIES: u128 = 20; // real - used in the search default
+
+    /// Threshold BFV parameters
+    pub mod threshold {
+        pub const PLAINTEXT_MODULUS: u64 = 65537;
+        pub const MODULI: &[u64] = &[
+            0x00800000009d0001,
+            0x0080000000850001,
+            0x0080000000770001,
+            0x0080000000730001,
+            0x00800000005e0001,
+        ];
+        pub const ERROR1_VARIANCE: &str = "264093875047547801360979058141866";
+    }
+
+    /// DKG parameters
+    pub mod dkg {
+        pub const PLAINTEXT_MODULUS: u64 = 36028797029253121;
+        pub const MODULI: &[u64] = &[0x02000000002b0001, 0x02000000003a0001];
+        pub const ERROR1_VARIANCE: &str = "10";
+    }
+}
+
 /// Common search defaults shared across presets
 /// Search defaults for the SecureThreshold8192 preset (production scale).
 /// The insecure presets use their own smaller values (see `insecure_search_defaults`)
@@ -192,6 +226,17 @@ pub mod secure_16384_search_defaults {
     pub const SEARCH_Z: u128 = 3;
 }
 
+/// Search defaults for the SecureThreshold16384Simd preset (production scale).
+/// `SEARCH_Z` is the number of summed ciphertexts (smudging `m`); the runtime multiplicative depth
+/// is `SECURE_16384_SIMD_MULT_DEPTH` (= 3). `SEARCH_K` is the SIMD plaintext modulus.
+pub mod secure_16384_simd_search_defaults {
+    pub const B: u128 = 20;
+    pub const B_CHI: u128 = 1;
+    pub const SEARCH_N: u128 = 20;
+    pub const SEARCH_K: u128 = 65537;
+    pub const SEARCH_Z: u128 = 3;
+}
+
 /// Default values for BFV parameters
 pub mod defaults {
     /// Default variance for BFV parameters when not explicitly set
@@ -207,6 +252,8 @@ pub mod defaults {
     pub const DEFAULT_SECURE_LAMBDA: usize = 45;
     /// Statistical security parameter (λ) for the 16384 presets.
     pub const DEFAULT_SECURE_16384_LAMBDA: usize = 31;
+    /// Statistical security parameter (λ) for the 16384 SIMD presets.
+    pub const DEFAULT_SECURE_16384_SIMD_LAMBDA: usize = 31;
 
     /// Multiplicative depth for the insecure-64 preset (trBFV only, no l-BFV support).
     pub const INSECURE_64_MULT_DEPTH: u32 = 0;
@@ -218,4 +265,6 @@ pub mod defaults {
     ///
     /// Depth 3 is feasible with the regenerated (larger-q) parameters.
     pub const SECURE_16384_MULT_DEPTH: u32 = 3;
+    /// Multiplicative depth for the secure-16384-simd preset.
+    pub const SECURE_16384_SIMD_MULT_DEPTH: u32 = 3;
 }

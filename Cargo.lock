@@ -4080,6 +4080,7 @@ dependencies = [
  "fhe",
  "fhe-math",
  "fhe-traits",
+ "ndarray",
  "num-bigint 0.5.1",
  "num-integer",
  "num-traits",
