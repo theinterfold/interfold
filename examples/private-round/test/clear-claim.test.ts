@@ -407,7 +407,7 @@ describe('Clear and claim', () => {
       const { program, relayer, actors } = fixture
       const played = await play([3, 2, 2])
       const { e3Id } = played
-      const encoded = (cmp: number, proof: Hex) => encodeClaimData(cmp, proof)
+      const encoded = (cmp: number, proof: Hex) => encodeClaimData(cmp as 0 | 1 | 2, proof)
       await expect(program.connect(relayer).claim(e3Id, actors[0].address, encoded(2, '0x02'))).to.be.revertedWithCustomError(
         fixture.claimVerifier,
         'ProofRejected',
