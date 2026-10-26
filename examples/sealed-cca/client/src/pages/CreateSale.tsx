@@ -97,18 +97,17 @@ const CreateSale: React.FC = () => {
   const unit = saleInfo ? 10n ** BigInt(saleInfo.decimals) : null
 
   return (
-    <div className='page'>
-      <header className='mb-10 max-w-3xl space-y-4'>
-        <p className='mono muted'>New sale</p>
-        <h1 className='h1'>Create a token sale</h1>
+    <div className='page !pt-0'>
+      <header className='page-intro wide'>
+        <h1 className='display'>Create a token sale</h1>
         <p className='lede'>
           Sell a fixed supply of a token in one sealed batch. Each bidder picks its highest price and locks the same escrow. The sale clears
           at one price for everyone, up to {MAX_BIDDERS} bidders.
         </p>
       </header>
 
-      <div className='grid items-start gap-10 lg:grid-cols-[1.4fr_1fr]'>
-        <form onSubmit={(event) => void submit(event)} className='card space-y-7 !p-5 md:!p-8'>
+      <div className='grid items-start gap-6 lg:grid-cols-[1.4fr_1fr]'>
+        <form onSubmit={(event) => void submit(event)} className='card space-y-7'>
           <div>
             <label htmlFor='title' className='label'>
               Title
@@ -121,7 +120,7 @@ const CreateSale: React.FC = () => {
               placeholder='What is being sold'
               className='field'
             />
-            <p className={`mt-1 text-xs ${bytes > MAX_TITLE_BYTES ? 'text-danger' : 'text-ink-soft'}`}>
+            <p className={`mt-1 text-xs ${bytes > MAX_TITLE_BYTES ? 'text-negative' : 'text-muted'}`}>
               {bytes}/{MAX_TITLE_BYTES} bytes
             </p>
           </div>
@@ -141,7 +140,7 @@ const CreateSale: React.FC = () => {
                 className='field font-mono text-xs'
               />
               <p
-                className={`mt-1 text-xs ${saleToken.status === 'invalid' || saleToken.status === 'missing' ? 'text-danger' : 'text-ink-soft'}`}
+                className={`mt-1 text-xs ${saleToken.status === 'invalid' || saleToken.status === 'missing' ? 'text-negative' : 'text-muted'}`}
               >
                 {lookupNote(saleToken)}
               </p>
@@ -157,7 +156,7 @@ const CreateSale: React.FC = () => {
                 onChange={(event) => setSupplyText(event.target.value.trim())}
                 className='field font-mono'
               />
-              <p className={`mt-1 text-xs ${saleInfo && !supplyValid ? 'text-danger' : 'text-ink-soft'}`}>
+              <p className={`mt-1 text-xs ${saleInfo && !supplyValid ? 'text-negative' : 'text-muted'}`}>
                 {saleInfo && !supplyValid
                   ? `The supply is a number above zero with at most ${saleInfo.decimals} decimals.`
                   : 'The program takes this supply from your account when the sale is created.'}
@@ -180,7 +179,7 @@ const CreateSale: React.FC = () => {
                 className='field font-mono text-xs'
               />
               <p
-                className={`mt-1 text-xs ${paymentToken.status === 'invalid' || paymentToken.status === 'missing' ? 'text-danger' : 'text-ink-soft'}`}
+                className={`mt-1 text-xs ${paymentToken.status === 'invalid' || paymentToken.status === 'missing' ? 'text-negative' : 'text-muted'}`}
               >
                 {lookupNote(paymentToken)}
               </p>
@@ -196,7 +195,7 @@ const CreateSale: React.FC = () => {
                 onChange={(event) => setEscrowText(event.target.value.trim())}
                 className='field font-mono'
               />
-              <p className={`mt-1 text-xs ${paymentInfo && !escrowValid ? 'text-danger' : 'text-ink-soft'}`}>
+              <p className={`mt-1 text-xs ${paymentInfo && !escrowValid ? 'text-negative' : 'text-muted'}`}>
                 {paymentInfo && !escrowValid
                   ? `The escrow is a number above zero with at most ${paymentInfo.decimals} decimals.`
                   : 'Every bidder locks this amount, whatever its price. A bid buys at most the escrow divided by the clearing price. The rest is refunded.'}
@@ -217,7 +216,7 @@ const CreateSale: React.FC = () => {
               <p className='label !mb-0'>What one escrow buys</p>
               <div className='overflow-x-auto'>
                 <table className='w-full text-left font-mono text-xs'>
-                  <thead className='text-ink-soft'>
+                  <thead className='text-muted'>
                     <tr>
                       <th className='pr-4 font-normal'>Step</th>
                       <th className='pr-4 font-normal'>Price ({paymentInfo.symbol})</th>
@@ -255,7 +254,7 @@ const CreateSale: React.FC = () => {
                 </option>
               ))}
             </select>
-            <p className='mt-1 text-xs text-ink-soft'>
+            <p className='mt-1 text-xs text-muted'>
               The duration counts from the request. Key generation takes several minutes and bids open only once the key is published, so
               bidding gets less than the full time. A bidder deposits, proves and submits: leave room for it.
             </p>
@@ -287,7 +286,7 @@ const CreateSale: React.FC = () => {
           )}
           {create.error && <div className='note bad'>{create.error}</div>}
 
-          <button type='submit' disabled={!canSubmit} className='btn accent lg block'>
+          <button type='submit' disabled={!canSubmit} className='btn accent block'>
             {busy ? (
               <>
                 <Spinner size={14} /> {STEP_LABELS[create.step as Exclude<typeof create.step, 'idle'>]}
@@ -296,18 +295,18 @@ const CreateSale: React.FC = () => {
               'Create sale'
             )}
           </button>
-          <p className='text-center text-xs text-ink-soft'>
+          <p className='text-center text-xs text-muted'>
             Creating a sale pays the E3 fee in the fee token and deposits the supply. Bidders pay only gas.
           </p>
         </form>
 
-        <aside className='card flat space-y-5 lg:sticky lg:top-8'>
+        <aside className='card flat space-y-5 lg:sticky lg:top-24'>
           <p className='mono muted'>What happens next</p>
           <ol className='steps'>
             {NEXT_STEPS.map((text, index) => (
               <li key={text} className='step'>
                 <span className='pin'>{index + 1}</span>
-                <p className='text-sm text-ink-2'>{text}</p>
+                <p className='text-sm text-ink'>{text}</p>
               </li>
             ))}
           </ol>

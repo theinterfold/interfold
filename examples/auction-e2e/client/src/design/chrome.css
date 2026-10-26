@@ -1,0 +1,319 @@
+/* SPDX-License-Identifier: LGPL-3.0-only
+ *
+ * This file is provided WITHOUT ANY WARRANTY;
+ * without even the implied warranty of MERCHANTABILITY
+ * or FITNESS FOR A PARTICULAR PURPOSE.
+ *
+ * Header and footer of The Interfold governance app (its shared `site-header` package): the same
+ * dimensions, Gramercy type, brand-green ink and 1052px content frame, on the darker page ground.
+ * Both demo clients carry this file unchanged.
+ */
+
+.site-header-grid,
+.site-footer-grid {
+  box-sizing: border-box;
+  width: calc(100% - 2 * var(--site-content-gutter));
+  max-width: var(--site-content-width);
+  margin-inline: auto;
+}
+
+/* ---------- Header ---------- */
+.site-header-chrome {
+  --site-chrome-font: var(--font-serif);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  width: 100%;
+  color: var(--site-chrome-ink);
+  background: var(--page-ground-shade);
+  user-select: none;
+}
+.site-header-grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0 var(--ui-space-controls);
+  min-height: 60px;
+}
+.site-header-brand {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  color: var(--site-chrome-ink);
+  white-space: nowrap;
+  font: 400 22px/1.05 var(--site-chrome-font);
+  letter-spacing: -0.66px;
+  font-feature-settings:
+    'liga' 1,
+    'clig' 1;
+  transition: color 200ms;
+}
+.site-header-brand:hover,
+.site-header-brand:focus-visible {
+  color: var(--site-chrome-hover);
+}
+:is(.site-header-brand, .site-header-symbol, .site-header-link):focus-visible {
+  outline: 2px solid var(--site-chrome-hover);
+  outline-offset: 4px;
+  border-radius: 2px;
+}
+.site-header-wordmark {
+  display: block;
+  align-self: center;
+  width: 112px;
+  height: 16px;
+  overflow: visible;
+}
+.site-header-product {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.site-header-symbol {
+  display: none;
+  width: 46px;
+  height: 35px;
+  color: var(--site-chrome-ink);
+  transition: color 200ms;
+}
+.site-header-symbol:hover,
+.site-header-symbol:focus-visible {
+  color: var(--site-chrome-hover);
+}
+.site-header-symbol svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.site-header-navigation {
+  display: flex;
+  flex-basis: 100%;
+  order: 3;
+  align-items: center;
+  gap: 0;
+  padding-bottom: 10px;
+  font: 400 22px/1.05 var(--site-chrome-font);
+  letter-spacing: -0.66px;
+  color: var(--site-chrome-ink);
+}
+.site-header-links {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.site-header-link {
+  --nav-link-pad: 0.5rem;
+  position: relative;
+  display: inline-flex;
+  align-items: baseline;
+  padding-inline: var(--nav-link-pad);
+  color: inherit;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: color 200ms;
+}
+.site-header-link:first-child {
+  padding-left: 0;
+}
+.site-header-link:hover,
+.site-header-link:focus-visible {
+  color: var(--site-chrome-hover);
+}
+/* The underline grows from the left, as in the governance navigation. */
+.site-header-link::after {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  left: var(--nav-link-pad);
+  right: var(--nav-link-pad);
+  height: 1px;
+  background: currentColor;
+  opacity: 0;
+  transform: scaleX(0);
+  transform-origin: left center;
+}
+.site-header-link:first-child::after {
+  left: 0;
+}
+.site-header-link.is-active::after {
+  animation: top-nav-line-in 420ms var(--if-ui-ease) 120ms both;
+}
+.site-header-link:not(.is-active):hover::after,
+.site-header-link:not(.is-active):focus-visible::after {
+  animation: top-nav-line-in 420ms var(--if-ui-ease) both;
+}
+@keyframes top-nav-line-in {
+  from {
+    opacity: 1;
+    transform: scaleX(0);
+  }
+  to {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+.site-header-action {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: var(--ui-space-tight);
+  margin-left: auto;
+  padding-block: 8px;
+}
+
+/* Below 768px the right-hand group dissolves: the wallet sits beside the brand and the
+   navigation takes a row of its own. */
+.site-header-right {
+  display: contents;
+}
+
+@media (min-width: 768px) {
+  .site-header-chrome {
+    --site-symbol-width: 46px;
+    --site-symbol-height: 35px;
+  }
+  .site-header-grid {
+    display: grid;
+    flex-wrap: nowrap;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    gap: 16px;
+    height: 63px;
+    min-height: 0;
+  }
+  .site-header-wordmark {
+    width: 120px;
+    height: 17px;
+  }
+  .site-header-symbol {
+    display: block;
+    justify-self: center;
+  }
+  .site-header-right {
+    display: flex;
+    align-items: center;
+    justify-self: end;
+    min-width: 0;
+  }
+  .site-header-navigation {
+    flex-basis: auto;
+    order: 0;
+    padding-bottom: 0;
+  }
+  .site-header-action {
+    margin-left: 8px;
+    padding-block: 0;
+  }
+}
+
+/* ---------- Footer ---------- */
+.site-footer {
+  --site-chrome-font: var(--font-serif);
+  position: relative;
+  width: 100%;
+  margin-top: auto;
+  background: var(--page-ground-shade);
+  color: var(--if-brand-green);
+}
+.site-footer-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 40px;
+  padding-block: 24px;
+}
+.site-footer-grid > * {
+  min-width: 0;
+}
+.site-footer-wordmark {
+  margin: 0;
+  color: inherit;
+  font: 400 40px/0.87 var(--site-chrome-font);
+  letter-spacing: -1.92px;
+  font-feature-settings:
+    'liga' 1,
+    'clig' 1;
+}
+.site-footer-wordmark span {
+  display: block;
+}
+.site-footer-wordmark span + span {
+  padding-left: 8px;
+}
+.site-footer-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.site-footer-label {
+  margin: 0;
+  color: var(--if-brand-green);
+  font: 500 14px/1.075 var(--font-mono);
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.site-footer-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: inherit;
+  font: 500 16px/1.5 var(--site-chrome-font);
+  letter-spacing: -0.66px;
+  text-decoration: none;
+  transition: color 150ms;
+}
+.site-footer-links a:hover,
+.site-footer-links a:focus-visible {
+  color: var(--site-chrome-hover);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+.site-footer-links a:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 4px;
+}
+.site-footer-copyright {
+  margin: 0;
+  font: 500 12px/1.4 var(--font-mono);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+@media (min-width: 768px) {
+  .site-footer-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-rows: 1fr auto;
+    min-height: 280px;
+    gap: 40px 32px;
+  }
+  .site-footer-brand {
+    grid-area: 1 / 1 / auto / span 2;
+  }
+  .site-footer-wordmark {
+    font-size: 64px;
+  }
+  .site-footer-wordmark span + span {
+    padding-left: 12px;
+  }
+  .site-footer-legal {
+    grid-area: 1 / 3;
+  }
+  .site-footer-social {
+    grid-area: 1 / 4;
+  }
+  .site-footer-copyright {
+    grid-area: 2 / 1 / auto / span 4;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .site-header-link.is-active::after,
+  .site-header-link:not(.is-active):hover::after,
+  .site-header-link:not(.is-active):focus-visible::after {
+    animation: none;
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}

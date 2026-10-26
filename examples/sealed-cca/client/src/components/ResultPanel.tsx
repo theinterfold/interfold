@@ -68,21 +68,21 @@ const ResultPanel: React.FC<ResultPanelProps> = ({ sale, account }) => {
     <div className='space-y-8'>
       {clearing ? (
         <div className='grid gap-4 sm:grid-cols-3'>
-          <div className='border border-ink bg-card p-5 sm:col-span-1'>
-            <p className='mono-sm muted'>Clearing price</p>
-            <p className='mt-1 font-serif text-4xl leading-none'>{formatPriceValue(sale, clearing.pStar)}</p>
+          <div className='inset strong p-5 sm:col-span-1'>
+            <p className='meta muted'>Clearing price</p>
+            <p className='value mt-1'>{formatPriceValue(sale, clearing.pStar)}</p>
             <p className='muted mt-2 text-xs'>
               {sale.paymentToken.symbol} for one {sale.saleToken.symbol}. Everyone pays this price.
             </p>
           </div>
-          <div className='border border-accent bg-accent-soft p-5'>
-            <p className='mono-sm muted'>Sold</p>
-            <p className='mt-1 font-serif text-3xl leading-none'>{formatSaleTokens(sale, clearing.soldTotal)}</p>
+          <div className='inset ok p-5'>
+            <p className='meta muted'>Sold</p>
+            <p className='value md mt-1'>{formatSaleTokens(sale, clearing.soldTotal)}</p>
             <p className='muted mt-2 text-xs'>of {formatSaleTokens(sale, sale.supply)}</p>
           </div>
-          <div className='border border-rule-strong bg-card p-5'>
-            <p className='mono-sm muted'>{KIND_TEXT[clearing.kind].title}</p>
-            <p className='mt-2 text-xs text-ink-2'>{KIND_TEXT[clearing.kind].body}</p>
+          <div className='inset p-5'>
+            <p className='meta muted'>{KIND_TEXT[clearing.kind].title}</p>
+            <p className='mt-2 text-xs text-ink'>{KIND_TEXT[clearing.kind].body}</p>
           </div>
         </div>
       ) : (
@@ -101,7 +101,7 @@ const ResultPanel: React.FC<ResultPanelProps> = ({ sale, account }) => {
             )}
           </button>
           {!account && <p className='text-xs'>Connect a wallet to send the transaction.</p>}
-          {clearError && <p className='text-xs text-danger'>{clearError}</p>}
+          {clearError && <p className='text-xs text-negative'>{clearError}</p>}
         </div>
       )}
 
@@ -125,7 +125,7 @@ const ResultPanel: React.FC<ResultPanelProps> = ({ sale, account }) => {
 
       <div className='overflow-x-auto'>
         <table className='w-full text-left font-mono text-xs'>
-          <thead className='text-ink-soft'>
+          <thead className='text-muted'>
             <tr>
               <th className='py-1 pr-4 font-normal'>Step</th>
               <th className='py-1 pr-4 font-normal'>Price ({sale.paymentToken.symbol})</th>
@@ -137,7 +137,9 @@ const ResultPanel: React.FC<ResultPanelProps> = ({ sale, account }) => {
             {Array.from({ length: levels }, (_, level) => (
               <tr
                 key={level}
-                className={clearing && level === clearing.step && clearing.kind !== 'undersubscribed' ? 'font-semibold text-accent' : ''}
+                className={
+                  clearing && level === clearing.step && clearing.kind !== 'undersubscribed' ? 'font-semibold text-brand-green' : ''
+                }
               >
                 <td className='py-1 pr-4'>{level}</td>
                 <td className='py-1 pr-4'>{formatStepPrice(sale, level)}</td>
@@ -224,16 +226,16 @@ const MyOutcomePanel: React.FC<MyOutcomeProps> = ({ sale, claimClosed, outcome, 
       {amounts && (
         <dl className='grid grid-cols-3 gap-4'>
           <div>
-            <dt className='mono-sm muted'>Tokens</dt>
-            <dd className='mt-1 font-serif text-2xl'>{formatSaleTokens(sale, amounts.tokens)}</dd>
+            <dt className='meta muted'>Tokens</dt>
+            <dd className='value sm mt-1'>{formatSaleTokens(sale, amounts.tokens)}</dd>
           </div>
           <div>
-            <dt className='mono-sm muted'>You pay</dt>
-            <dd className='mt-1 font-serif text-2xl'>{formatPayment(sale, amounts.paid)}</dd>
+            <dt className='meta muted'>You pay</dt>
+            <dd className='value sm mt-1'>{formatPayment(sale, amounts.paid)}</dd>
           </div>
           <div>
-            <dt className='mono-sm muted'>Refund</dt>
-            <dd className='mt-1 font-serif text-2xl'>{formatPayment(sale, amounts.refund)}</dd>
+            <dt className='meta muted'>Refund</dt>
+            <dd className='value sm mt-1'>{formatPayment(sale, amounts.refund)}</dd>
           </div>
         </dl>
       )}
@@ -244,7 +246,7 @@ const MyOutcomePanel: React.FC<MyOutcomeProps> = ({ sale, claimClosed, outcome, 
         outcome.role !== 'unknown' && (
           <div className='space-y-2'>
             {error && <div className='note bad'>{error}</div>}
-            <button onClick={onClaim} disabled={step !== null || claimClosed} className='btn accent lg block'>
+            <button onClick={onClaim} disabled={step !== null || claimClosed} className='btn accent block'>
               {step ? (
                 <>
                   <Spinner size={14} /> {CLAIM_STEP_LABELS[step]}

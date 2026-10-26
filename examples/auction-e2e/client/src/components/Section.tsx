@@ -12,13 +12,12 @@ interface SectionProps {
   children: React.ReactNode
 }
 
-/** A titled card: a mono eyebrow, a serif title and the content below a rule. */
+/** A titled panel: the title and its running number over a hairline, the content below. */
 const Section: React.FC<SectionProps> = ({ eyebrow, title, children }) => (
-  <section className='card space-y-5 !p-5 md:!p-7'>
-    <header className='space-y-2'>
-      <p className='mono muted'>{eyebrow}</p>
-      <h2 className='h2'>{title}</h2>
-      <div className='hr' />
+  <section className='card'>
+    <header className='panel-header'>
+      <h2>{title}</h2>
+      <span className='meta'>{eyebrow}</span>
     </header>
     {children}
   </section>

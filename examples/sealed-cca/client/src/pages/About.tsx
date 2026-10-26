@@ -63,9 +63,8 @@ const Block: React.FC<{ eyebrow: string; title: string; children: React.ReactNod
 )
 
 const About: React.FC = () => (
-  <div className='page space-y-14'>
-    <header className='max-w-3xl space-y-5'>
-      <p className='mono muted'>How it works</p>
+  <div className='page space-y-14 !pt-0'>
+    <header className='page-intro wide'>
       <h1 className='h1'>A sealed token sale: what stays hidden, what is revealed</h1>
       <p className='lede'>
         A sealed-bid sale needs bids that nobody can read until the sale is fixed. Interfold gives that with encryption that can be computed
@@ -76,7 +75,7 @@ const About: React.FC = () => (
     <Block eyebrow='Nº 01' title='Hidden and revealed'>
       <div className='card grid gap-6 sm:grid-cols-2'>
         <div className='space-y-2'>
-          <p className='mono-sm muted'>Hidden</p>
+          <p className='meta muted'>Hidden</p>
           <ul className='list-disc space-y-1 pl-5 text-sm'>
             {HIDDEN.map((item) => (
               <li key={item}>{item}</li>
@@ -84,7 +83,7 @@ const About: React.FC = () => (
           </ul>
         </div>
         <div className='space-y-2'>
-          <p className='mono-sm text-accent'>Revealed</p>
+          <p className='meta text-brand-green'>Revealed</p>
           <ul className='list-disc space-y-1 pl-5 text-sm'>
             {REVEALED.map((item) => (
               <li key={item}>{item}</li>
@@ -101,7 +100,7 @@ const About: React.FC = () => (
             <span className='pin'>{index + 1}</span>
             <div>
               <p className='font-semibold'>{title}</p>
-              <p className='text-sm text-ink-2'>{body}</p>
+              <p className='text-sm text-ink'>{body}</p>
             </div>
           </li>
         ))}
@@ -129,7 +128,7 @@ const About: React.FC = () => (
         <div className='card flat space-y-2'>
           <p className='mono muted'>Bid proof</p>
           <h3 className='h3'>The bid is well formed</h3>
-          <p className='text-sm text-ink-2'>
+          <p className='text-sm text-ink'>
             The ciphertext holds a valid price step below the number of steps. It also holds the place number and the version of the bid.
             The proof is bound to your address and to this sale, so nobody can copy it. It runs in your browser and takes a few minutes.
           </p>
@@ -137,7 +136,7 @@ const About: React.FC = () => (
         <div className='card flat space-y-2'>
           <p className='mono muted'>Claim proof</p>
           <h3 className='h3'>Your outcome</h3>
-          <p className='text-sm text-ink-2'>
+          <p className='text-sm text-ink'>
             After the sale clears, you prove in your browser whether your price is below, at, or above the clearing step. The contract does
             not learn more. It checks the proof against the commitment of your counted bid. The proof takes a few seconds. Keep the salt in
             this browser: without it you cannot claim a winning bid, and the contract refunds you in full as a loser.
@@ -152,7 +151,7 @@ const About: React.FC = () => (
     </Block>
 
     <div role='note' className='note warn flex gap-3'>
-      <WarningIcon size={22} weight='fill' className='mt-0.5 shrink-0 text-warm' />
+      <WarningIcon size={22} weight='fill' className='mt-0.5 shrink-0 text-warn' />
       <div className='space-y-2'>
         <p className='font-semibold'>Demo on insecure parameters</p>
         <p>
@@ -164,7 +163,7 @@ const About: React.FC = () => (
     </div>
 
     <div className='flex flex-wrap items-center gap-4'>
-      <Link to='/create' className='btn lg'>
+      <Link to='/create' className='btn'>
         Create a sale
       </Link>
       <a href={GITHUB_URL} target='_blank' rel='noreferrer' className='linkish'>

@@ -173,13 +173,13 @@ export const ResultView: React.FC<ResultViewProps> = ({ auction, account, myVers
   return (
     <div className='space-y-7'>
       <div className='grid gap-4 sm:grid-cols-2'>
-        <div className='border border-accent bg-accent-soft p-5'>
-          <p className='mono-sm muted'>Winner{youWon ? ' (you)' : ''}</p>
+        <div className='inset ok p-5'>
+          <p className='meta muted'>Winner{youWon ? ' (you)' : ''}</p>
           <p className='mt-2 text-lg'>{winnerAddress ? <AddressLink address={winnerAddress} full /> : 'unreadable'}</p>
         </div>
-        <div className='border border-ink bg-card p-5'>
-          <p className='mono-sm muted'>Price</p>
-          <p className='mt-1 font-serif text-4xl leading-none'>{priceLabel}</p>
+        <div className='inset strong p-5'>
+          <p className='meta muted'>Price</p>
+          <p className='value mt-1'>{priceLabel}</p>
           <p className='muted mt-2 text-xs'>
             {PRICE_CAPTION[auction.auctionType]}
             {price !== null && `: step ${price} of ${auction.prices.length - 1}`}
@@ -221,7 +221,7 @@ export const ResultView: React.FC<ResultViewProps> = ({ auction, account, myVers
         </div>
       )}
 
-      <p className='text-sm text-ink-2'>{PRICE_EXPLANATION[auction.auctionType]}</p>
+      <p className='text-sm text-ink'>{PRICE_EXPLANATION[auction.auctionType]}</p>
       {result.kind === 'lane' ? (
         <LaneView auction={auction} account={account} bidders={bidders} result={result} />
       ) : (
@@ -242,7 +242,7 @@ const CountedBids: React.FC<{ account: `0x${string}` | undefined; bidders: Selec
   return (
     <div className='space-y-3'>
       <h3 className='h3'>Which bids counted</h3>
-      <p className='text-sm text-ink-soft'>
+      <p className='text-sm text-muted'>
         A bidder can update its bid, and the program computes over the latest version that is valid. The program hashes the bytes of every
         ciphertext again and checks that they open the commitment the bidder published; a bid with any ciphertext that does not open is
         ignored whole. This page repeats that check in your browser.
@@ -270,7 +270,7 @@ const CountedBids: React.FC<{ account: `0x${string}` | undefined; bidders: Selec
       {dropped.length > 0 && (
         <>
           <h3 className='h3'>Dropped bidders</h3>
-          <p className='text-sm text-ink-soft'>
+          <p className='text-sm text-muted'>
             These bidders sent bytes that do not open their commitments in any version. Nothing of their bids was used.
           </p>
           <ul className='space-y-2'>
@@ -333,7 +333,7 @@ const LaneView: React.FC<{
     <div className='space-y-6'>
       <div className='space-y-1'>
         <h3 className='h3'>How the result is read</h3>
-        <p className='text-sm text-ink-soft'>
+        <p className='text-sm text-muted'>
           The committee published one lane of {levels} slots, one per price step, and not one row per bidder. Above the price every slot is
           zero. At the price step the slot holds the set of bidders that tied for the top bid. Below it every slot is random.
           {copies > 1 && ` The program repeats the lane in ${copies} copies. The page reads each copy and checks that they agree.`}
@@ -364,26 +364,26 @@ const LaneView: React.FC<{
           <i className='slots-swatch rand' /> Random value
         </span>
         <span>
-          <i style={{ background: 'var(--card)' }} /> Zero
+          <i style={{ background: 'var(--paper)' }} /> Zero
         </span>
         <span>
-          <i style={{ background: 'var(--accent)', borderColor: 'var(--accent)' }} /> The set of tied bidders, at the price
+          <i style={{ background: 'var(--vote-action)', borderColor: 'var(--vote-action)' }} /> The set of tied bidders, at the price
         </span>
         <span>
-          <i style={{ boxShadow: '0 0 0 2px var(--warm)' }} /> Price step
+          <i style={{ boxShadow: '0 0 0 2px var(--ink)' }} /> Price step
         </span>
       </div>
 
       {tieSet.length > 0 && (
         <div className='space-y-3'>
           <h3 className='h3'>{tieSet.length > 1 ? `${tieSet.length} bidders tied for the top bid` : 'No tie'}</h3>
-          <p className='text-sm text-ink-soft'>
+          <p className='text-sm text-muted'>
             The tie set is the group of bidders that bid the top step. The result publishes it, so everyone sees who tied, but not any other
             bid. If the set holds one bidder, that bidder wins. If it holds more, the winner is picked at random from the set.
           </p>
           {tieSet.length > 1 ? (
             <>
-              <p className='text-sm text-ink-soft'>
+              <p className='text-sm text-muted'>
                 The random pick uses a number the committee publishes in one extra slot. It is the sum of the random masks of all bidders,
                 so nobody can choose it or try again. The winner is the tied bidder at the place (number mod {tieSet.length}) in the list
                 below. The list is in the order the bidders bid.
@@ -408,7 +408,7 @@ const LaneView: React.FC<{
               </ol>
             </>
           ) : (
-            <p className='text-sm text-ink-soft'>
+            <p className='text-sm text-muted'>
               Here one bidder holds the top bid, so that bidder won and no random pick was needed.{' '}
               {auction.auctionType === AuctionType.RatioSecondPrice
                 ? 'The winning bid stays secret: only the second-highest bid, the price, is public.'
@@ -436,7 +436,7 @@ const SlotGrid: React.FC<{
     <div className='space-y-4'>
       <div className='space-y-1'>
         <h3 className='h3'>How the result is read</h3>
-        <p className='text-sm text-ink-soft'>
+        <p className='text-sm text-muted'>
           The committee published {levels} slots per bidder, one per price step. Slots hold a random value unless the program zeroed them.{' '}
           {firstPrice
             ? 'Exactly one slot is zero: the winner’s, at the winning bid.'
@@ -457,7 +457,7 @@ const SlotGrid: React.FC<{
             const mine = sameAddress(address, account)
             return (
               <React.Fragment key={address}>
-                <span className={`row-name ${position === winner ? 'font-semibold text-accent' : ''}`}>
+                <span className={`row-name ${position === winner ? 'font-semibold text-brand-green' : ''}`}>
                   <AddressLink address={address} />
                   {mine && <span className='tag muted'>you</span>}
                   {position === winner && <span className='tag live'>winner</span>}
@@ -483,13 +483,13 @@ const SlotGrid: React.FC<{
           <i className='slots-swatch rand' /> Random value
         </span>
         <span>
-          <i style={{ background: 'var(--card)' }} /> Zero
+          <i style={{ background: 'var(--paper)' }} /> Zero
         </span>
         <span>
-          <i style={{ background: 'var(--accent)', borderColor: 'var(--accent)' }} /> The reading: the winner’s zero at the price
+          <i style={{ background: 'var(--vote-action)', borderColor: 'var(--vote-action)' }} /> The reading: the winner’s zero at the price
         </span>
         <span>
-          <i style={{ boxShadow: '0 0 0 2px var(--warm)' }} /> Price step
+          <i style={{ boxShadow: '0 0 0 2px var(--ink)' }} /> Price step
         </span>
       </div>
       <p className='muted text-xs'>

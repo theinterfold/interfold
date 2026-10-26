@@ -9,46 +9,38 @@ import { Link } from 'react-router-dom'
 import { MAX_BIDDERS } from '@interfold/sealed-cca'
 import { type SaleState, phaseOf, timeLeftLabel } from '@/utils/sale'
 import { shorten } from '@/utils/error-formatting'
+import { shortId } from '@/utils/format'
 import { formatAmount } from '@/utils/tokens'
 import StatusBadge from './StatusBadge'
 
-const Fact: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
-  <div className='min-w-0'>
-    <dt className='mono-sm muted'>{label}</dt>
-    <dd className='mt-1 text-sm'>{children}</dd>
-  </div>
-)
-
+/** A sale as a row of the list: status and id, title, supply and creator, then time and bidders. */
 const SaleCard: React.FC<{ sale: SaleState; now: bigint }> = ({ sale, now }) => {
   const phase = phaseOf(sale, now)
   return (
-    <Link to={`/sale/${sale.e3Id}`} className='card link flex h-full flex-col gap-5'>
-      <div className='flex items-start justify-between gap-3'>
-        <span className='mono muted'>Nº {sale.e3Id.toString().padStart(3, '0')}</span>
-        <StatusBadge phase={phase} />
-      </div>
-      <div className='space-y-1'>
+    <Link to={`/sale/${sale.e3Id}`} className='list-row'>
+      <div className='row-main space-y-2'>
+        <div className='flex min-w-0 flex-wrap items-center gap-3'>
+          <StatusBadge phase={phase} />
+          <span className='id muted min-w-0 truncate' title={sale.e3Id.toString()}>
+            Nº {shortId(sale.e3Id)}
+          </span>
+        </div>
         <h3 className='h3'>{sale.title}</h3>
         <p className='muted text-sm'>
-          {formatAmount(sale.supply, sale.saleToken.decimals)} {sale.saleToken.symbol} · {sale.prices.length} price steps
+          {formatAmount(sale.supply, sale.saleToken.decimals)} {sale.saleToken.symbol} · {sale.prices.length} price steps · by{' '}
+          <span className='addr'>{shorten(sale.creator, 6, 4)}</span>
         </p>
       </div>
-      <div className='hr-soft mt-auto' />
-      <dl className='grid grid-cols-3 gap-3'>
-        <Fact label='Bidders'>
-          <span className='font-mono text-xs'>
-            {sale.bidderCount}/{MAX_BIDDERS}
-          </span>
-        </Fact>
-        <Fact label='Time'>{timeLeftLabel(sale, phase, now)}</Fact>
-        <Fact label='By'>
-          <span className='addr'>{shorten(sale.creator, 6, 4)}</span>
-        </Fact>
-      </dl>
+      <div className='row-side'>
+        <span className='meta text-ink'>{timeLeftLabel(sale, phase, now)}</span>
+        <span className='font-mono text-xs text-muted'>
+          {sale.bidderCount}/{MAX_BIDDERS} bidders
+        </span>
+      </div>
     </Link>
   )
 }
 
-export const SaleCardSkeleton: React.FC = () => <div className='skeleton h-48' aria-hidden />
+export const SaleCardSkeleton: React.FC = () => <div className='skeleton h-24' aria-hidden />
 
 export default SaleCard

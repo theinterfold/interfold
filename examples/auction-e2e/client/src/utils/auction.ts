@@ -11,6 +11,7 @@ import { AuctionProgram__factory } from '@contract-types/factories/contracts/Auc
 import { getContractAddresses } from './env-config'
 import { scanLogs } from './logs'
 import { getReadSdk, publicClient } from './chain'
+import { shortId } from './format'
 
 /** Everything the UI shows about one auction, read from the chain. */
 export interface AuctionState {
@@ -111,7 +112,7 @@ export async function loadAuction(e3Id: bigint): Promise<AuctionState | null> {
   ])
   const [auctionType, levels, creator, title, gate] = config
   if (creator === zeroAddress) return null
-  if (!isAuctionType(auctionType)) throw new Error(`Auction ${e3Id} has the unknown type ${auctionType}`)
+  if (!isAuctionType(auctionType)) throw new Error(`Auction ${shortId(e3Id)} has the unknown type ${auctionType}`)
 
   const [e3, stage] = await Promise.all([sdk.getE3(e3Id), sdk.getE3Stage(e3Id)])
   const failureReason = stage === E3Stage.Failed ? await sdk.getFailureReason(e3Id) : null

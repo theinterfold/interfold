@@ -9,14 +9,8 @@ import { Link } from 'react-router-dom'
 import { AUCTION_TYPE_LABELS, MAX_BIDDERS_BY_TYPE } from '@interfold/auction'
 import { type AuctionState, phaseOf, timeLeftLabel } from '@/utils/auction'
 import { shorten } from '@/utils/error-formatting'
+import { shortId } from '@/utils/format'
 import StatusBadge from './StatusBadge'
-
-const Fact: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
-  <div className='min-w-0'>
-    <dt className='mono-sm muted'>{label}</dt>
-    <dd className='mt-1 text-sm'>{children}</dd>
-  </div>
-)
 
 export const Pips: React.FC<{ filled: number; total: number }> = ({ filled, total }) => (
   <span className='pips' aria-hidden>
@@ -26,40 +20,38 @@ export const Pips: React.FC<{ filled: number; total: number }> = ({ filled, tota
   </span>
 )
 
+/** An auction as a row of the list: status and id, title, type and creator, then time and bidders. */
 const AuctionCard: React.FC<{ auction: AuctionState; now: bigint }> = ({ auction, now }) => {
   const phase = phaseOf(auction, now)
   const maxBidders = MAX_BIDDERS_BY_TYPE[auction.auctionType]
   return (
-    <Link to={`/auction/${auction.e3Id}`} className='card link flex h-full flex-col gap-5'>
-      <div className='flex items-start justify-between gap-3'>
-        <span className='mono muted'>Nº {auction.e3Id.toString().padStart(3, '0')}</span>
-        <StatusBadge phase={phase} />
-      </div>
-      <div className='space-y-1'>
+    <Link to={`/auction/${auction.e3Id}`} className='list-row'>
+      <div className='row-main space-y-2'>
+        <div className='flex min-w-0 flex-wrap items-center gap-3'>
+          <StatusBadge phase={phase} />
+          <span className='id muted min-w-0 truncate' title={auction.e3Id.toString()}>
+            Nº {shortId(auction.e3Id)}
+          </span>
+        </div>
         <h3 className='h3'>{auction.title}</h3>
         <p className='muted text-sm'>
-          {AUCTION_TYPE_LABELS[auction.auctionType]} · {auction.prices.length} steps
+          {AUCTION_TYPE_LABELS[auction.auctionType]} · {auction.prices.length} steps · by{' '}
+          <span className='addr'>{shorten(auction.creator, 6, 4)}</span>
         </p>
       </div>
-      <div className='hr-soft mt-auto' />
-      <dl className='grid grid-cols-3 gap-3'>
-        <Fact label='Bidders'>
-          <span className='flex items-center gap-2'>
-            <Pips filled={auction.bidderCount} total={maxBidders} />
-            <span className='font-mono text-xs'>
-              {auction.bidderCount}/{maxBidders}
-            </span>
+      <div className='row-side'>
+        <span className='meta text-ink'>{timeLeftLabel(auction, phase, now)}</span>
+        <span className='flex items-center gap-2'>
+          <Pips filled={auction.bidderCount} total={maxBidders} />
+          <span className='font-mono text-xs text-muted'>
+            {auction.bidderCount}/{maxBidders}
           </span>
-        </Fact>
-        <Fact label='Time'>{timeLeftLabel(auction, phase, now)}</Fact>
-        <Fact label='By'>
-          <span className='addr'>{shorten(auction.creator, 6, 4)}</span>
-        </Fact>
-      </dl>
+        </span>
+      </div>
     </Link>
   )
 }
 
-export const AuctionCardSkeleton: React.FC = () => <div className='skeleton h-48' aria-hidden />
+export const AuctionCardSkeleton: React.FC = () => <div className='skeleton h-24' aria-hidden />
 
 export default AuctionCard

@@ -91,14 +91,14 @@ const CreatorPanel: React.FC<{ sale: SaleState }> = ({ sale }) => {
 
   return (
     <div className='space-y-5'>
-      <p className='text-sm text-ink-2'>
+      <p className='text-sm text-ink'>
         You created this sale. The program pays you the payments of the claims made so far, and the tokens that no bidder can claim. Tokens
         of winners who have not claimed yet stay in the program until they claim.
       </p>
       <div className='grid gap-4 sm:grid-cols-2'>
-        <div className='space-y-3 border border-rule-strong bg-card p-4'>
-          <p className='mono-sm muted'>Proceeds to withdraw</p>
-          <p className='font-serif text-3xl'>{available ? formatPayment(sale, available.proceeds) : '…'}</p>
+        <div className='inset space-y-3 p-4'>
+          <p className='meta muted'>Proceeds to withdraw</p>
+          <p className='value md'>{available ? formatPayment(sale, available.proceeds) : '…'}</p>
           <button
             onClick={() => void withdraw('proceeds')}
             disabled={busy !== null || !walletClient || !available || available.proceeds === 0n}
@@ -107,9 +107,9 @@ const CreatorPanel: React.FC<{ sale: SaleState }> = ({ sale }) => {
             {busy === 'proceeds' ? <Spinner size={12} /> : 'Withdraw proceeds'}
           </button>
         </div>
-        <div className='space-y-3 border border-rule-strong bg-card p-4'>
-          <p className='mono-sm muted'>Unsold tokens to withdraw</p>
-          <p className='font-serif text-3xl'>{available ? formatSaleTokens(sale, available.unsold) : '…'}</p>
+        <div className='inset space-y-3 p-4'>
+          <p className='meta muted'>Unsold tokens to withdraw</p>
+          <p className='value md'>{available ? formatSaleTokens(sale, available.unsold) : '…'}</p>
           <button
             onClick={() => void withdraw('unsold')}
             disabled={busy !== null || !walletClient || !available || available.unsold === 0n}
@@ -119,21 +119,21 @@ const CreatorPanel: React.FC<{ sale: SaleState }> = ({ sale }) => {
           </button>
         </div>
       </div>
-      <div className='space-y-3 border border-rule-strong bg-card p-4'>
-        <p className='mono-sm muted'>Unclaimed funds</p>
+      <div className='inset space-y-3 p-4'>
+        <p className='meta muted'>Unclaimed funds</p>
         {swept ? (
           <p className='text-sm'>
             Swept: {formatSaleTokens(sale, swept.saleTokens)} and {formatPayment(sale, swept.paymentTokens)} went to you.
           </p>
         ) : claimDeadline === null ? (
-          <p className='text-sm text-ink-soft'>The sale is not cleared on chain yet.</p>
+          <p className='text-sm text-muted'>The sale is not cleared on chain yet.</p>
         ) : now > claimDeadline ? (
           <p className='text-sm'>
             The claim window closed on {formatDateTime(claimDeadline)}. You can take every remaining token, every unclaimed escrow and the
             unwithdrawn proceeds, once.
           </p>
         ) : (
-          <p className='text-sm text-ink-soft'>
+          <p className='text-sm text-muted'>
             Bidders can claim for another {formatDuration(claimDeadline - now)} (until {formatDateTime(claimDeadline)}). After that you can
             sweep what is left.
           </p>

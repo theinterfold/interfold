@@ -92,9 +92,8 @@ const Block: React.FC<{ eyebrow: string; title: string; children: React.ReactNod
 )
 
 const About: React.FC = () => (
-  <div className='page space-y-14'>
-    <header className='max-w-3xl space-y-5'>
-      <p className='mono muted'>How it works</p>
+  <div className='page space-y-14 !pt-0'>
+    <header className='page-intro wide'>
       <h1 className='h1'>What stays hidden, what is revealed, and why you can trust it</h1>
       <p className='lede'>
         A sealed-bid auction needs bids that nobody can read until the outcome is fixed. Interfold provides that with encryption that can be
@@ -113,7 +112,7 @@ const About: React.FC = () => (
             <div className='hr-soft' />
             <div className='grid gap-4 sm:grid-cols-2'>
               <div className='space-y-2'>
-                <p className='mono-sm muted'>Hidden</p>
+                <p className='meta muted'>Hidden</p>
                 <ul className='list-disc space-y-1 pl-5 text-sm'>
                   {HIDDEN_REVEALED[type].hidden.map((item) => (
                     <li key={item}>{item}</li>
@@ -121,7 +120,7 @@ const About: React.FC = () => (
                 </ul>
               </div>
               <div className='space-y-2'>
-                <p className='mono-sm text-accent'>Revealed</p>
+                <p className='meta text-brand-green'>Revealed</p>
                 <ul className='list-disc space-y-1 pl-5 text-sm'>
                   {HIDDEN_REVEALED[type].revealed.map((item) => (
                     <li key={item}>{item}</li>
@@ -147,7 +146,7 @@ const About: React.FC = () => (
             <span className='pin'>{index + 1}</span>
             <div>
               <p className='font-semibold'>{title}</p>
-              <p className='text-sm text-ink-2'>{body}</p>
+              <p className='text-sm text-ink'>{body}</p>
             </div>
           </li>
         ))}
@@ -165,7 +164,7 @@ const About: React.FC = () => (
           <div key={title} className='card flat space-y-2'>
             <p className='mono muted'>Proof {index + 1}</p>
             <h3 className='h3'>{title}</h3>
-            <p className='text-sm text-ink-2'>{body}</p>
+            <p className='text-sm text-ink'>{body}</p>
           </div>
         ))}
       </div>
@@ -228,7 +227,7 @@ const About: React.FC = () => (
     </Block>
 
     <div role='note' className='note warn flex gap-3'>
-      <WarningIcon size={22} weight='fill' className='mt-0.5 shrink-0 text-warm' />
+      <WarningIcon size={22} weight='fill' className='mt-0.5 shrink-0 text-warn' />
       <div className='space-y-2'>
         <p className='font-semibold'>Demo on insecure parameters</p>
         <p>
@@ -241,7 +240,7 @@ const About: React.FC = () => (
     </div>
 
     <div className='flex flex-wrap items-center gap-4'>
-      <Link to='/create' className='btn lg'>
+      <Link to='/create' className='btn'>
         Create an auction
       </Link>
       <a href={GITHUB_URL} target='_blank' rel='noreferrer' className='linkish'>

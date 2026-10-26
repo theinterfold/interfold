@@ -11,6 +11,7 @@ import { SealedCcaProgram__factory } from '@contract-types/factories/contracts/S
 import { getContractAddresses } from './env-config'
 import { scanLogs } from './logs'
 import { getReadSdk, publicClient } from './chain'
+import { shortId } from './format'
 import { type TokenInfo, formatAmount, readTokenInfo } from './tokens'
 
 /** Everything the UI shows about one sale, read from the chain. */
@@ -112,7 +113,7 @@ export async function loadSale(e3Id: bigint): Promise<SaleState | null> {
   ])
   const [revealMode, levels, creator, title, saleTokenAddress, paymentTokenAddress, supply, escrow, gate] = config
   if (creator === zeroAddress) return null
-  if (revealMode !== 0) throw new Error(`Sale ${e3Id} has the reveal mode ${revealMode}, which this app cannot show`)
+  if (revealMode !== 0) throw new Error(`Sale ${shortId(e3Id)} has the reveal mode ${revealMode}, which this app cannot show`)
 
   const [e3, stage, saleToken, paymentToken] = await Promise.all([
     sdk.getE3(e3Id),
