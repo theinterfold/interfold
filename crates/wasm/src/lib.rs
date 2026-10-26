@@ -9,6 +9,7 @@ use e3_bfv_client::client::{
     bfv_verifiable_encrypt_with_encoding, compute_ct_commitment as _compute_ct_commitment,
     compute_pk_commitment as _compute_pk_commitment, generate_public_key as _generate_public_key,
     open_lbfv_key_envelope as _open_lbfv_key_envelope, simd_decode as _simd_decode,
+    simd_recover_sparse as _simd_recover_sparse,
 };
 use e3_bfv_client::Encoding;
 use e3_fhe_params::{BfvParamSet, BfvPreset};
@@ -306,6 +307,35 @@ pub fn simd_decode(coefficients: Vec<u64>, preset_name: &str) -> Result<Vec<u64>
     let preset =
         BfvPreset::from_name(preset_name).map_err(|e| JsValue::from_str(&e.to_string()))?;
     _simd_decode(&coefficients, preset).map_err(|e| JsValue::from_str(&format!("{}", e)))
+}
+
+#[wasm_bindgen]
+/// Recovers the SIMD slot values at known positions from the published window of coefficients.
+///
+/// A SIMD plaintext with few non-zero slots is dense in the poly basis, so a preset that publishes
+/// a prefix of the polynomial (the secure-16384-simd preset publishes 50 coefficients of 16384)
+/// gives a window, not the whole plaintext. The window fixes the slots when every non-zero slot is
+/// in `support` and `support` is no longer than the window.
+///
+/// # Arguments
+///
+/// * `window` - The published coefficients (a BigUint64Array), each below the plaintext modulus
+/// * `preset_name` - The BFV preset name, for example "SECURE_THRESHOLD_16384_SIMD"
+/// * `support` - The slot positions that can be non-zero (a Uint32Array), without repeats
+///
+/// # Returns
+///
+/// The values at `support`, in its order, or an error if the window does not fit the support.
+pub fn simd_recover_sparse(
+    window: Vec<u64>,
+    preset_name: &str,
+    support: Vec<u32>,
+) -> Result<Vec<u64>, JsValue> {
+    let preset =
+        BfvPreset::from_name(preset_name).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let support: Vec<usize> = support.into_iter().map(|slot| slot as usize).collect();
+    _simd_recover_sparse(&window, preset, &support)
+        .map_err(|e| JsValue::from_str(&format!("{}", e)))
 }
 
 /// The BFV parameters of a named preset.

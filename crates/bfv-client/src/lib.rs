@@ -15,7 +15,7 @@ pub use client::VerifiableEncryptionResult;
 pub use client::{
     bfv_encrypt, bfv_encrypt_with_encoding, bfv_verifiable_encrypt,
     bfv_verifiable_encrypt_with_encoding, compute_ct_commitment, compute_ct_commitment_with_params,
-    compute_pk_commitment, simd_decode, validate_pk_commitment,
+    compute_pk_commitment, simd_decode, simd_recover_sparse, validate_pk_commitment,
 };
 pub use fhe::bfv::Encoding;
 pub use lbfv_key_envelope::{

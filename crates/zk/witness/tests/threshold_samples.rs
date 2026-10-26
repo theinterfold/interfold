@@ -34,6 +34,29 @@ mod decrypted_shares_aggregation {
         assert!(error.contains("(50)"), "{error}");
     }
 
+    /// A SIMD plaintext is dense in the polynomial basis, so every SIMD preset accepts a tail of
+    /// non-zero coefficients past the published window; the first `max_msg_non_zero_coeffs` are
+    /// published and `simd_recover_sparse` reads the slots from them. A non-SIMD preset refuses it.
+    #[test]
+    fn a_simd_preset_accepts_a_dense_plaintext_past_its_window() {
+        let simd = BfvPreset::SecureThreshold16384Simd;
+        let config = Configs::for_preset(simd, CiphernodesCommitteeSize::Minimum).unwrap();
+        assert_eq!(config.max_msg_non_zero_coeffs, 50);
+        let mut sample =
+            e3_zk_samples::threshold::decrypted_shares_aggregation::generate(&config, simd)
+                .unwrap();
+        sample.message_vec = (0..16384u64).map(|i| 1 + i % 65536).collect();
+        let inputs = Inputs::compute(&config, &sample).unwrap();
+        assert_eq!(inputs.message.coefficients().len(), 50);
+
+        let capped = BfvPreset::SecureThreshold16384;
+        let capped_config = Configs::for_preset(capped, CiphernodesCommitteeSize::Minimum).unwrap();
+        let error = Inputs::compute(&capped_config, &sample)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("non-zero coefficient(s)"), "{error}");
+    }
+
     #[test]
     fn an_extra_polynomial_or_party_id_is_refused() {
         let preset = BfvPreset::InsecureThreshold64;

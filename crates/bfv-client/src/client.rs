@@ -299,20 +299,155 @@ pub fn simd_decode(coefficients: &[u64], preset: BfvPreset) -> Result<Vec<u64>> 
     let mut values = coefficients.to_vec();
     ntt.forward(&mut values);
 
-    // `matrix_reps_index_map` of fhe.rs: slot `i` reads NTT position `map[i]`.
+    let positions = simd_slot_positions(degree);
+    Ok(positions.iter().map(|position| values[*position]).collect())
+}
+
+/// Where each SIMD slot sits in the forward NTT of the plaintext: slot `i` reads position
+/// `positions[i]`. This is `matrix_reps_index_map` of fhe.rs (the SEAL slot order).
+fn simd_slot_positions(degree: usize) -> Vec<usize> {
     let row_size = degree >> 1;
     let m = degree << 1;
     let shift = degree.leading_zeros() + 1;
-    let mut slots = vec![0u64; degree];
+    let mut positions = vec![0usize; degree];
     let mut pos = 1usize;
     for i in 0..row_size {
         let index1 = (pos - 1) >> 1;
         let index2 = (m - pos - 1) >> 1;
-        slots[i] = values[index1.reverse_bits() >> shift];
-        slots[row_size | i] = values[index2.reverse_bits() >> shift];
+        positions[i] = index1.reverse_bits() >> shift;
+        positions[row_size | i] = index2.reverse_bits() >> shift;
         pos = (pos * 3) & (m - 1);
     }
-    Ok(slots)
+    positions
+}
+
+/// The SIMD slot values at known positions, given only the published window of coefficients.
+///
+/// A program output has one decryption per E3 and the proof publishes only the first
+/// `max_msg_non_zero_coeffs` coefficients of the plaintext polynomial. A SIMD plaintext with few
+/// non-zero slots is dense in the polynomial basis, so the window is a prefix, not the whole
+/// plaintext. When every non-zero slot lies in a set `support` that the reader knows (a program
+/// layout is public) and `support.len()` is at most the window length, the window fixes the slot
+/// values: coefficient `j` is `sum_s v_s * M[j][s]`, where column `s` of `M` is the polynomial of
+/// the unit vector at slot `s`. The columns form a Vandermonde system in the NTT points of the
+/// slots, which has full column rank, so the system has one solution modulo `t`.
+///
+/// Returns the values at `support`, in the order of `support`.
+///
+/// # Errors
+/// Returns an error if the preset has no SIMD support, if `window` is shorter than `support`, if a
+/// position is repeated or not below `degree`, if an entry is not below `t`, or if the window
+/// does not match any assignment of the support. A square system (`support.len()` equal to the
+/// window length) always has a solution, so a non-zero slot outside `support` goes unseen there;
+/// each spare coefficient adds one check.
+pub fn simd_recover_sparse(
+    window: &[u64],
+    preset: BfvPreset,
+    support: &[usize],
+) -> Result<Vec<u64>> {
+    let parameters = BfvParamSet::from(preset);
+    let degree = parameters.degree;
+    let t = parameters.plaintext_modulus;
+
+    ensure!(
+        support.len() <= window.len(),
+        "{} unknown slots need at least as many coefficients, got {}",
+        support.len(),
+        window.len()
+    );
+    ensure!(
+        window.len() <= degree,
+        "The window of {} coefficients is longer than the degree {degree}",
+        window.len()
+    );
+    if let Some(index) = window.iter().position(|c| *c >= t) {
+        return Err(anyhow!(
+            "Plaintext coefficient {index} is not below the plaintext modulus {t}"
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for slot in support {
+        ensure!(
+            *slot < degree,
+            "Slot {slot} is not below the degree {degree}"
+        );
+        ensure!(seen.insert(*slot), "Slot {slot} is listed twice");
+    }
+
+    let modulus =
+        fhe_math::zq::Modulus::new(t).map_err(|e| anyhow!("Invalid plaintext modulus {t}: {e}"))?;
+    let ntt = fhe_math::ntt::NttOperator::new(&modulus, degree).ok_or_else(|| {
+        anyhow!("The plaintext modulus {t} does not support SIMD encoding at degree {degree}")
+    })?;
+    let positions = simd_slot_positions(degree);
+
+    // Augmented matrix, one row per published coefficient: columns are the support, then `window`.
+    // Column `s` is the polynomial of the unit vector at slot `s`: the inverse NTT of a unit vector
+    // at the NTT position of that slot.
+    let rows = window.len();
+    let cols = support.len();
+    let mut matrix = vec![vec![0u64; cols + 1]; rows];
+    for (column, slot) in support.iter().enumerate() {
+        let mut polynomial = vec![0u64; degree];
+        polynomial[positions[*slot]] = 1;
+        ntt.backward(&mut polynomial);
+        for (row, line) in matrix.iter_mut().enumerate() {
+            line[column] = polynomial[row];
+        }
+    }
+    for (row, line) in matrix.iter_mut().enumerate() {
+        line[cols] = window[row];
+    }
+
+    solve_modulo(&mut matrix, cols, t)
+        .ok_or_else(|| anyhow!("The window does not match any assignment of the given slots"))
+}
+
+/// Solve `A x = b` modulo the prime `t` by Gauss-Jordan elimination on the augmented matrix
+/// (`cols` unknown columns plus the right side). `None` if the system has no solution or the
+/// unknowns are not determined.
+fn solve_modulo(matrix: &mut [Vec<u64>], cols: usize, t: u64) -> Option<Vec<u64>> {
+    let mul = |a: u64, b: u64| ((a as u128 * b as u128) % t as u128) as u64;
+    let sub = |a: u64, b: u64| (a + t - b) % t;
+    let invert = |a: u64| {
+        // Fermat: `t` is prime.
+        let (mut result, mut base, mut exponent) = (1u64, a % t, t - 2);
+        while exponent > 0 {
+            if exponent & 1 == 1 {
+                result = mul(result, base);
+            }
+            base = mul(base, base);
+            exponent >>= 1;
+        }
+        result
+    };
+
+    let rows = matrix.len();
+    let mut pivot_row = 0;
+    for column in 0..cols {
+        let found = (pivot_row..rows).find(|row| matrix[*row][column] != 0)?;
+        matrix.swap(pivot_row, found);
+        let inverse = invert(matrix[pivot_row][column]);
+        for entry in matrix[pivot_row].iter_mut() {
+            *entry = mul(*entry, inverse);
+        }
+        let pivot = matrix[pivot_row].clone();
+        for (row, line) in matrix.iter_mut().enumerate() {
+            if row != pivot_row && line[column] != 0 {
+                let factor = line[column];
+                for (entry, from) in line.iter_mut().zip(pivot.iter()) {
+                    *entry = sub(*entry, mul(factor, *from));
+                }
+            }
+        }
+        pivot_row += 1;
+    }
+
+    // Rows below the pivots must read `0 = 0`.
+    if matrix[pivot_row..].iter().any(|line| line[cols] != 0) {
+        return None;
+    }
+    Some((0..cols).map(|row| matrix[row][cols]).collect())
 }
 
 /// Generates a new public/secret key pair and returns the public key.
@@ -815,6 +950,77 @@ mod tests {
             .try_decrypt(&Ciphertext::from_bytes(&poly, &params).unwrap())
             .unwrap();
         assert_eq!(decode_plaintext_to_vec_u64(&pt).unwrap(), slots);
+    }
+
+    #[test]
+    fn simd_recover_sparse_reads_the_published_window_at_degree_16384() {
+        use fhe_traits::FheDecrypter;
+
+        let preset = BfvPreset::SecureThreshold16384Simd;
+        let parameters: BfvParamSet = preset.into();
+        let window = preset.max_msg_non_zero_coeffs();
+        assert_eq!(window, 50);
+        let params = build_bfv_params_from_set_arc(parameters);
+        let mut rng = rng();
+        let sk = SecretKey::random(&params, &mut rng);
+        let pk = PublicKey::new(&sk, &mut rng);
+        // What a decryption publishes: the poly-basis coefficients of the SIMD plaintext.
+        let published = |slots: &[u64]| {
+            let encrypted = bfv_encrypt_with_encoding(
+                slots.to_vec(),
+                pk.to_bytes(),
+                parameters.degree,
+                parameters.plaintext_modulus,
+                parameters.moduli,
+                Encoding::simd(),
+            )
+            .unwrap();
+            let pt = sk
+                .try_decrypt(&Ciphertext::from_bytes(&encrypted, &params).unwrap())
+                .unwrap();
+            decode_plaintext_to_vec_u64(&pt).unwrap()
+        };
+
+        // 50 non-zero slots, spread over both rows of the plaintext, others zero.
+        let support: Vec<usize> = (0..50).map(|i| i * 313 + 7).collect();
+        let values: Vec<u64> = (0..50)
+            .map(|i| (i * 1297 + 3) % parameters.plaintext_modulus)
+            .collect();
+        let mut slots = vec![0u64; parameters.degree];
+        for (slot, value) in support.iter().zip(values.iter()) {
+            slots[*slot] = *value;
+        }
+        let coefficients = published(&slots);
+        // The published window is a prefix of a dense polynomial.
+        assert!(coefficients[window..].iter().any(|c| *c != 0));
+
+        let recovered = simd_recover_sparse(&coefficients[..window], preset, &support).unwrap();
+        assert_eq!(recovered, values);
+
+        // With one spare coefficient, a non-zero slot outside the declared support is detected.
+        let declared = &support[..49];
+        assert!(simd_recover_sparse(&coefficients[..window], preset, declared).is_err());
+        assert_eq!(
+            simd_recover_sparse(&coefficients[..window], preset, &support[..]).unwrap(),
+            values
+        );
+    }
+
+    #[test]
+    fn simd_recover_sparse_rejects_bad_input() {
+        let preset = BfvPreset::SecureThreshold16384Simd;
+        let window = vec![0u64; 50];
+        assert!(simd_recover_sparse(&window, preset, &[0, 1]).is_ok());
+        // More unknowns than coefficients.
+        let support: Vec<usize> = (0..51).collect();
+        assert!(simd_recover_sparse(&window, preset, &support).is_err());
+        // A repeated or out-of-range position.
+        assert!(simd_recover_sparse(&window, preset, &[3, 3]).is_err());
+        assert!(simd_recover_sparse(&window, preset, &[16384]).is_err());
+        // An entry at or above t.
+        let mut bad = window.clone();
+        bad[0] = 65537;
+        assert!(simd_recover_sparse(&bad, preset, &[0]).is_err());
     }
 
     #[test]

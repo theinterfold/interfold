@@ -75,6 +75,9 @@ impl Inputs {
             ));
         }
 
+        // A SIMD plaintext has dense polynomial coefficients: the inverse NTT of a few non-zero
+        // slots fills the whole ring. The published window is then a prefix by design, and the
+        // consumer recovers the slots from it (`e3_bfv_client::simd_recover_sparse`).
         let dropped_non_zero = data
             .message_vec
             .iter()
@@ -82,7 +85,7 @@ impl Inputs {
             .skip(max_msg_non_zero_coeffs)
             .filter(|(_, v)| **v != 0)
             .count();
-        if dropped_non_zero > 0 {
+        if dropped_non_zero > 0 && !config.preset.is_simd() {
             return Err(WitnessError::Other(format!(
                 "message_vec has {} non-zero coefficient(s) at index >= the preset's max_msg_non_zero_coeffs ({}); they would be silently dropped by truncation",
                 dropped_non_zero, max_msg_non_zero_coeffs
