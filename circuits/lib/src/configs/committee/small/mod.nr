@@ -16,4 +16,5 @@ pub mod parity_insecure_64;
 pub mod parity_insecure_simd;
 pub mod parity_secure_8192;
 pub mod parity_secure_16384;
+pub mod parity_secure_16384_simd;
 pub mod smudging;

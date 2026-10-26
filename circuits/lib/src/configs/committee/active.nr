@@ -23,14 +23,16 @@ pub global T: u32 = crate::configs::committee::minimum::T;
 pub global H: u32 = crate::configs::committee::minimum::H;
 
 /// Parity matrices for the secret-sharing scheme, sized for the active committee.
-/// `configs::{insecure_64,insecure,insecure_simd,secure_8192,secure_16384}::dkg` re-exports the relevant one as `PARITY_MATRIX`.
+/// `configs::{insecure_64,insecure,insecure_simd,secure_8192,secure_16384,secure_16384_simd}::dkg` re-exports the relevant one as `PARITY_MATRIX`.
 pub use crate::configs::committee::minimum::parity_insecure::PARITY_MATRIX as PARITY_MATRIX_INSECURE;
 pub use crate::configs::committee::minimum::parity_insecure_64::PARITY_MATRIX as PARITY_MATRIX_INSECURE_64;
 pub use crate::configs::committee::minimum::parity_insecure_simd::PARITY_MATRIX as PARITY_MATRIX_INSECURE_SIMD;
 pub use crate::configs::committee::minimum::parity_secure_16384::PARITY_MATRIX as PARITY_MATRIX_SECURE_16384;
+pub use crate::configs::committee::minimum::parity_secure_16384_simd::PARITY_MATRIX as PARITY_MATRIX_SECURE_16384_SIMD;
 pub use crate::configs::committee::minimum::parity_secure_8192::PARITY_MATRIX as PARITY_MATRIX_SECURE_8192;
 pub use crate::configs::committee::minimum::smudging::{
     INSECURE_64_E_SM_BIT, INSECURE_64_E_SM_BOUND, INSECURE_E_SM_BIT, INSECURE_E_SM_BOUND,
     INSECURE_SIMD_E_SM_BIT, INSECURE_SIMD_E_SM_BOUND, SECURE_16384_E_SM_BIT,
-    SECURE_16384_E_SM_BOUND, SECURE_8192_E_SM_BIT, SECURE_8192_E_SM_BOUND,
+    SECURE_16384_E_SM_BOUND, SECURE_16384_SIMD_E_SM_BIT, SECURE_16384_SIMD_E_SM_BOUND,
+    SECURE_8192_E_SM_BIT, SECURE_8192_E_SM_BOUND,
 };

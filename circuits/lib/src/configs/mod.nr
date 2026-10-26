@@ -11,3 +11,4 @@ pub mod insecure_64;
 pub mod insecure_simd;
 pub mod secure_8192;
 pub mod secure_16384;
+pub mod secure_16384_simd;
