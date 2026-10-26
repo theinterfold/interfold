@@ -29,9 +29,9 @@ use e3_events::CircuitName;
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_zk_config::DkgInputType;
 use e3_zk_prover::{
-    generate_c3_chonk_chain, DkgShareDecryptionCircuit as ShareDecryptionCircuit, NodeDkgFoldInput,
-    PkAggregationCircuit, PkCircuit, PkGenerationCircuit, Provable, ShareComputationCircuit,
-    ShareEncryptionCircuit,
+    generate_c3_chonk_chain, generate_sequential_nodes_fold,
+    DkgShareDecryptionCircuit as ShareDecryptionCircuit, NodeDkgFoldInput, PkAggregationCircuit,
+    PkCircuit, PkGenerationCircuit, Provable, ShareComputationCircuit, ShareEncryptionCircuit,
 };
 use e3_zk_witness::dkg::share_computation::Inputs as ShareComputationInputs;
 use fhe::bfv::{PublicKey, SecretKey};
@@ -69,6 +69,8 @@ const NODE_FOLDS: &[CircuitName] = &[
     CircuitName::C3abFold,
     CircuitName::C4abFold,
     CircuitName::NodeFold,
+    CircuitName::NodesFoldKernel,
+    CircuitName::NodesFold,
 ];
 
 #[tokio::test]
@@ -226,7 +228,7 @@ async fn trbfv_node_dkg_pipeline_measure() {
     });
     drop((c4a_data, c4b_data));
 
-    phases.run("node_folds", || {
+    let node_proof = phases.run("node_folds", || {
         pipeline::prove_node_fold(
             &prover,
             &NodeDkgFoldInput {
@@ -248,6 +250,23 @@ async fn trbfv_node_dkg_pipeline_measure() {
     });
 
     phases.finish();
+
+    // The aggregator's fold over `H` node proofs, outside the node's total. Copies of this node's
+    // proof give the same circuit cost; the fold does not compare rows, the DKG aggregator does.
+    if pipeline::env_flag("MEASURE_NODES_FOLD") {
+        let slots: Vec<u32> = (0..committee.h as u32).collect();
+        let nodes = vec![node_proof; committee.h];
+        measure("nodes_fold_chain", || {
+            generate_sequential_nodes_fold(
+                &prover,
+                &nodes,
+                &slots,
+                committee.h,
+                "measure-nodes-fold",
+                &artifacts_dir,
+            )
+        });
+    }
 }
 
 /// C3 Chonk stack size: proves one secret's C3 set once, then times the C3 chain for every app
