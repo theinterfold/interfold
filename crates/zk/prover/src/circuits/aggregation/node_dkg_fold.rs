@@ -8,7 +8,9 @@
 //! proofs ([`CircuitName::NodeFold`], [`CircuitName::DkgAggregator`], [`CircuitName::DecryptionAggregator`]).
 
 use crate::circuits::aggregation::c3_chonk::generate_c3_chonk_chain;
-use crate::circuits::aggregation::c6_accumulator::generate_sequential_c6_fold;
+use crate::circuits::aggregation::c6_accumulator::{
+    generate_sequential_c6_fold, C6_FOLD_DOMAIN_HI, C6_FOLD_PREFIX_LEN,
+};
 use crate::circuits::aggregation::helpers::{address_to_field_hex, u64_to_field_hex};
 use crate::circuits::aggregation::nodes_fold_accumulator::generate_sequential_nodes_fold;
 use crate::circuits::utils::{bytes_to_field_strings, inputs_json_to_input_map};
@@ -618,14 +620,16 @@ pub fn prove_decryption_aggregation_jobs(
             artifacts_dir,
         )?;
         let c6_fold_public = proof_public_field_strings(&c6_fold)?;
-        let domain_hi = c6_fold_public.get(5).cloned().ok_or_else(|| {
-            ZkError::InvalidInput("C6 fold proof is missing domain_hi at public input 5".into())
-        })?;
-        let domain_lo = c6_fold_public.get(6).cloned().ok_or_else(|| {
-            ZkError::InvalidInput("C6 fold proof is missing domain_lo at public input 6".into())
-        })?;
+        let domain_hi = c6_fold_public
+            .get(C6_FOLD_DOMAIN_HI)
+            .cloned()
+            .ok_or_else(|| ZkError::InvalidInput("C6 fold proof is missing domain_hi".into()))?;
+        let domain_lo = c6_fold_public
+            .get(C6_FOLD_DOMAIN_HI + 1)
+            .cloned()
+            .ok_or_else(|| ZkError::InvalidInput("C6 fold proof is missing domain_lo".into()))?;
         let ciphertext_commitment = c6_fold_public
-            .get(7 + (2 * c6_total_slots))
+            .get(C6_FOLD_PREFIX_LEN + (2 * c6_total_slots))
             .cloned()
             .ok_or_else(|| {
                 ZkError::InvalidInput(

@@ -154,6 +154,13 @@ Sequential C6 and nodes folds keep `(leaf, fold, genesis)` VK hashes constant ac
 The first step verifies genesis; continuation verifies the fold; the final consumer binds the
 declared fold hash to the verified VK. C3ab covers both complete C3 chains.
 
+`c6_fold_kernel` and `c6_fold` verify four C6 proofs per step (`lib::math::c6_fold`), which costs
+about half as much per leaf as one leaf per 2^21 step. Every leaf must carry the chain's domain. A
+place with nothing to fold carries the sentinel slot `T + 1` and repeats a real leaf of the step;
+the decryption aggregator requires the ciphertext commitment in every slot, so no slot stays empty.
+`nodes_fold` still takes one node per step because the aggregator streams it one
+`NodesFoldStepRequest` per node.
+
 C3 chains run over Chonk (`lib::math::chonk`). A stack is `c3_chonk_app`, which verifies
 `C3_CHONK_LEAVES` C3 proofs, then the init, tail and hiding kernels; `c3_chonk_tube` verifies the
 stack's Chonk proof as a rollup proof, and `c3_chonk_accumulate` merges an accumulator or tube on

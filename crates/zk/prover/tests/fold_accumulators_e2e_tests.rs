@@ -106,12 +106,12 @@ fn c6_fold_total_slots_from_compiled_json() -> usize {
                 .and_then(|p| p.get("type")?.get("length")?.as_u64())
         })
         .expect("c6_fold.json: abi.parameters.acc_public_inputs.length") as usize;
+    let prefix = 6 + e3_zk_prover::C6_FOLD_LEAVES;
     assert!(
-        len >= 7 && (len - 7).is_multiple_of(4),
-        "unexpected acc_public_inputs length {} (expected 7 + 4 * slots)",
-        len
+        len >= prefix && (len - prefix).is_multiple_of(4),
+        "unexpected acc_public_inputs length {len} (expected 6 + C6_FOLD_LEAVES + 4 * slots)"
     );
-    (len - 7) / 4
+    (len - prefix) / 4
 }
 
 async fn setup_c3_fold_with_inner_share_encryption() -> Option<(
@@ -192,23 +192,10 @@ fn assert_recursive_vk_binding(
     let kernel_path = default_dir
         .join(kernel.dir_path())
         .join(format!("{}.json", kernel.as_str()));
-    // C3 steps verify `C3_FOLD_LEAVES` leaves; this check places one real leaf and fills the other
-    // places with it under the sentinel slot. C6 steps verify one leaf.
-    let multi = fold == CircuitName::C3Fold;
+    // Steps verify several leaves; this check places one real leaf and fills the other places with
+    // it under the sentinel slot.
     let set_leaf = |input: &mut serde_json::Value, proof_data: &[u8], public: Vec<String>, slot| {
-        let proof = fold_witness_field_strings(proof_data).unwrap();
-        if multi {
-            let k = e3_zk_prover::C3_FOLD_LEAVES;
-            let mut slots = vec![total_slots as u32; k];
-            slots[0] = slot;
-            input["inner_proofs"] = json!(vec![proof; k]);
-            input["c3_public_inputs"] = json!(vec![public; k]);
-            input["slot_indices"] = json!(slots);
-        } else {
-            input["inner_proof"] = json!(proof);
-            input["c6_public_inputs"] = json!(public);
-            input["slot_index"] = json!(slot);
-        }
+        set_leaves(input, fold, total_slots, proof_data, public, slot);
     };
     // The kernel proves the chain's first leaf at slot 0.
     let mut input = json!({
@@ -310,11 +297,7 @@ fn assert_recursive_vk_binding(
             "leaf",
         );
         let mut changed_leaf = step.clone();
-        let slot = if multi {
-            changed_leaf["slot_indices"][0].as_u64().unwrap() as u32
-        } else {
-            changed_leaf["slot_index"].as_u64().unwrap() as u32
-        };
+        let slot = changed_leaf["slot_indices"][0].as_u64().unwrap() as u32;
         set_leaf(
             &mut changed_leaf,
             &fake_leaf.proof.data,
@@ -336,6 +319,29 @@ fn assert_recursive_vk_binding(
             );
         }
     }
+}
+
+/// Puts one real leaf in the first place of a multi-leaf fold step's witness and repeats it under
+/// the sentinel slot `total_slots` in the others.
+fn set_leaves(
+    input: &mut serde_json::Value,
+    fold: CircuitName,
+    total_slots: usize,
+    proof_data: &[u8],
+    public: Vec<String>,
+    slot: u32,
+) {
+    let (leaves, public_name) = if fold == CircuitName::C3Fold {
+        (e3_zk_prover::C3_FOLD_LEAVES, "c3_public_inputs")
+    } else {
+        (e3_zk_prover::C6_FOLD_LEAVES, "c6_public_inputs")
+    };
+    let proof = fold_witness_field_strings(proof_data).unwrap();
+    let mut slots = vec![total_slots as u32; leaves];
+    slots[0] = slot;
+    input["inner_proofs"] = json!(vec![proof; leaves]);
+    input[public_name] = json!(vec![public; leaves]);
+    input["slot_indices"] = json!(slots);
 }
 
 fn assert_final_c6_tree_binding(
@@ -379,13 +385,16 @@ fn assert_final_c6_tree_binding(
         kernel_vk.key_hash.clone(),
     ]);
     // Every fold step checks the predecessor's domain and keeps its rows, the first one included, so
-    // the substituted genesis carries the leaf in slot 0 as a real kernel proof would. Layout: seven
-    // prefix fields, then the sk, e_sm, ct and d columns of `slots` entries each.
-    genesis_public[5] = leaf_public[3].clone();
-    genesis_public[6] = leaf_public[4].clone();
-    let slots = (genesis_public.len() - 7) / 4;
+    // the substituted genesis carries the leaf in slot 0 as a real kernel proof would. Layout: four
+    // fold fields, one slot index per leaf, the two domain limbs, then the sk, e_sm, ct and d columns
+    // of `slots` entries each.
+    let leaves = e3_zk_prover::C6_FOLD_LEAVES;
+    let prefix = 6 + leaves;
+    genesis_public[4 + leaves] = leaf_public[3].clone();
+    genesis_public[5 + leaves] = leaf_public[4].clone();
+    let slots = (genesis_public.len() - prefix) / 4;
     for (column, leaf_field) in [0, 1, 2, 5].into_iter().enumerate() {
-        genesis_public[7 + column * slots] = leaf_public[leaf_field].clone();
+        genesis_public[prefix + column * slots] = leaf_public[leaf_field].clone();
     }
     let fake_genesis = substitute_proof(
         prover,
@@ -420,8 +429,6 @@ fn assert_final_c6_tree_binding(
     for replace_genesis in [true, false] {
         let mut step = json!({
             "inner_vk": if replace_genesis { &leaf_vk.verification_key } else { &fake_leaf.vk },
-            "inner_proof": fold_witness_field_strings(if replace_genesis { &inner.data } else { &fake_leaf.proof.data }).unwrap(),
-            "c6_public_inputs": leaf_public,
             "acc_vk": kernel_vk.verification_key,
             "acc_proof": vec!["0"; folded.data.len() / 32],
             "acc_public_inputs": vec!["0"; fields(folded).len()],
@@ -429,8 +436,19 @@ fn assert_final_c6_tree_binding(
             "fold_key_hash": fold_vk.key_hash,
             "kernel_key_hash": if replace_genesis { &fake_genesis.key_hash } else { &kernel_vk.key_hash },
             "is_first_step": true,
-            "slot_index": 0,
         });
+        set_leaves(
+            &mut step,
+            CircuitName::C6Fold,
+            slots,
+            if replace_genesis {
+                &inner.data
+            } else {
+                &fake_leaf.proof.data
+            },
+            leaf_public.clone(),
+            0,
+        );
         let genesis = if replace_genesis {
             fake_genesis.proof.clone()
         } else {
@@ -452,7 +470,7 @@ fn assert_final_c6_tree_binding(
         // The first fold step fills the second slot on top of the genesis proof.
         step["acc_proof"] = json!(fold_witness_field_strings(&genesis.data).unwrap());
         step["acc_public_inputs"] = json!(fields(&genesis));
-        step["slot_index"] = json!(1);
+        step["slot_indices"][0] = json!(1);
         let second_witness = witness(&fold_path, &step).unwrap();
         let changed_fold = prover
             .generate_recursive_aggregation_bin_proof(

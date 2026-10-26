@@ -18,15 +18,17 @@ use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_hon
 use lib::configs::default::MAX_MSG_NON_ZERO_COEFFS;
 use lib::configs::default::N_PARTIES;
 use lib::configs::default::T;
+use lib::math::c6_fold::C6_FOLD_LEAVES;
 use lib::math::commitments::compute_vk_hash;
 use lib::math::committee_hash::committee_hash_limbs;
 use lib::math::recursive_vk::sequential_fold_vk_hash;
 
-/// Must match `c6_fold::C6_FOLD_PUBLIC_LEN`: pub params, common domain limbs,
-/// and flattened `(out_sk, out_esm, out_ct, out_d)`.
-pub global C6_FOLD_PUBLIC_LEN: u32 = 7 + (4 * (T + 1));
-
-pub global C6_FOLD_PREFIX_LEN: u32 = C6_FOLD_PUBLIC_LEN - (4 * (T + 1));
+/// Must match `c6_fold::C6_FOLD_PUBLIC_LEN`: three key hashes, `is_first_step`, one slot index per
+/// leaf, the common domain limbs, and flattened `(out_sk, out_esm, out_ct, out_d)`.
+pub global C6_FOLD_PREFIX_LEN: u32 = 6 + C6_FOLD_LEAVES;
+pub global C6_FOLD_PUBLIC_LEN: u32 = C6_FOLD_PREFIX_LEN + (4 * (T + 1));
+pub global C6_FOLD_DOMAIN_HI: u32 = 4 + C6_FOLD_LEAVES;
+pub global C6_FOLD_DOMAIN_LO: u32 = 5 + C6_FOLD_LEAVES;
 
 /// Column offsets inside the `c6_fold` flattened tail (after `C6_FOLD_PREFIX_LEN`):
 /// `(out_sk, out_esm, out_ct, out_d)`, each `C6_FOLD_COL_WIDTH = T + 1` long.
@@ -97,8 +99,8 @@ fn main(
 
     // The C6 fold only accepts secret-bearing leaf proofs carrying one common
     // domain. Expose that domain in the final EVM proof for on-chain checking.
-    assert(c6_fold_public[5] == domain_hi);
-    assert(c6_fold_public[6] == domain_lo);
+    assert(c6_fold_public[C6_FOLD_DOMAIN_HI] == domain_hi);
+    assert(c6_fold_public[C6_FOLD_DOMAIN_LO] == domain_lo);
 
     // Every C6 leaf commits to the same decoded BFV ciphertext. Expose that
     // canonical commitment as a final public input for the EVM wrapper.
