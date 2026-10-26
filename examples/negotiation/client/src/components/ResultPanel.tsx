@@ -63,7 +63,7 @@ const ResultPanel: React.FC<ResultPanelProps> = ({ negotiation, phase, account, 
           )}
         </button>
         {!account && <p className='text-xs'>Connect a wallet to send the transaction.</p>}
-        {error && <p className='text-xs text-danger'>{error}</p>}
+        {error && <p className='text-xs text-negative'>{error}</p>}
       </div>
     )
   }
@@ -84,22 +84,22 @@ const ResultPanel: React.FC<ResultPanelProps> = ({ negotiation, phase, account, 
   return (
     <div className='space-y-8'>
       {matched ? (
-        <div className='border border-accent bg-accent-soft p-6'>
-          <p className='mono-sm muted'>Agreed price</p>
-          <p className='mt-1 font-serif text-5xl leading-none'>{formatPrice(negotiation, price)}</p>
+        <div className='inset ok p-6'>
+          <p className='meta muted'>Agreed price</p>
+          <p className='value mt-1'>{formatPrice(negotiation, price)}</p>
           <p className='muted mt-3 text-sm'>The buyer’s maximum is at least this price and the seller’s minimum is at most this price.</p>
         </div>
       ) : (
-        <div className='border border-ink bg-card p-6'>
-          <p className='mono-sm muted'>Result</p>
-          <p className='mt-1 font-serif text-5xl leading-none'>No match</p>
+        <div className='inset strong p-6'>
+          <p className='meta muted'>Result</p>
+          <p className='value mt-1'>No match</p>
           <p className='muted mt-3 text-sm'>The buyer’s maximum is below the seller’s minimum.</p>
         </div>
       )}
 
       <div className='grid gap-6 sm:grid-cols-2'>
         <div className='card flat space-y-2'>
-          <p className='mono-sm muted'>What {role === null ? 'the parties' : 'you'} learned</p>
+          <p className='meta muted'>What {role === null ? 'the parties' : 'you'} learned</p>
           <ul className='list-disc space-y-1 pl-5 text-sm'>
             {learned(negotiation, role).map((line) => (
               <li key={line}>{line}</li>
@@ -107,7 +107,7 @@ const ResultPanel: React.FC<ResultPanelProps> = ({ negotiation, phase, account, 
           </ul>
         </div>
         <div className='card flat space-y-2'>
-          <p className='mono-sm muted'>What stays private</p>
+          <p className='meta muted'>What stays private</p>
           <ul className='list-disc space-y-1 pl-5 text-sm'>
             {(matched ? STAYS_PRIVATE_MATCH : STAYS_PRIVATE_NO_MATCH).map((line) => (
               <li key={line}>{line}</li>

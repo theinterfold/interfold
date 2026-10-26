@@ -33,11 +33,11 @@ function useElapsed(startedAt: number | undefined, running: boolean): number {
 
 const StepIcon: React.FC<{ status: StepRow['status'] }> = ({ status }) =>
   status === 'done' ? (
-    <CheckCircleIcon size={16} weight='fill' className='text-accent' />
+    <CheckCircleIcon size={16} weight='fill' className='text-brand-green' />
   ) : status === 'active' ? (
     <Spinner size={14} />
   ) : status === 'error' ? (
-    <WarningCircleIcon size={16} weight='fill' className='text-danger' />
+    <WarningCircleIcon size={16} weight='fill' className='text-negative' />
   ) : (
     <CircleIcon size={16} />
   )
@@ -116,7 +116,7 @@ const OfferPanel: React.FC<OfferPanelProps> = ({ negotiation, phase, wallet, com
       </p>
 
       {sealed ? (
-        <div className='border border-accent bg-accent-soft p-5'>
+        <div className='inset ok p-5'>
           <p className='flex items-center gap-2 font-semibold'>
             <LockKeyIcon size={20} weight='fill' /> Your offer is sealed
           </p>
@@ -125,11 +125,11 @@ const OfferPanel: React.FC<OfferPanelProps> = ({ negotiation, phase, wallet, com
           </p>
           {offer.stored ? (
             <div className='mt-3 space-y-1'>
-              <p className='mono-sm muted'>{PRICE_LABEL[role].label}</p>
+              <p className='meta muted'>{PRICE_LABEL[role].label}</p>
               {revealed ? (
-                <p className='font-serif text-4xl'>{formatLevel(negotiation, offer.stored.step)}</p>
+                <p className='value'>{formatLevel(negotiation, offer.stored.step)}</p>
               ) : (
-                <p className='font-serif text-4xl tracking-widest' aria-label='hidden'>
+                <p className='value tracking-widest' aria-label='hidden'>
                   ••••
                 </p>
               )}
@@ -163,7 +163,7 @@ const OfferPanel: React.FC<OfferPanelProps> = ({ negotiation, phase, wallet, com
               placeholder={negotiation.minPrice.toString()}
               className='field font-mono'
             />
-            <p className={`mt-1 text-xs ${stepError ? 'text-danger' : 'text-ink-soft'}`}>
+            <p className={`mt-1 text-xs ${stepError ? 'text-negative' : 'text-muted'}`}>
               {stepError ??
                 `${PRICE_LABEL[role].hint} Choose a price on the grid: ${formatLevel(negotiation, 0)} to ${formatLevel(negotiation, negotiation.levels - 1)}, in steps of ${formatPrice(negotiation, negotiation.stepPrice)}.`}
             </p>
@@ -178,9 +178,7 @@ const OfferPanel: React.FC<OfferPanelProps> = ({ negotiation, phase, wallet, com
                   type='button'
                   disabled={offer.submitting}
                   onClick={() => setPriceText(value.toString())}
-                  className={`border px-2 py-2.5 text-center font-mono text-sm transition-colors disabled:cursor-not-allowed ${
-                    price === value ? 'border-ink bg-ink text-paper' : 'border-rule-strong bg-card hover:border-ink'
-                  }`}
+                  className={`opt px-2 text-center ${price === value ? 'on' : ''}`}
                 >
                   {value.toLocaleString('en-US')}
                 </button>
@@ -215,7 +213,7 @@ const OfferPanel: React.FC<OfferPanelProps> = ({ negotiation, phase, wallet, com
           <button
             onClick={() => typeof step === 'number' && void offer.submit(step, relayed)}
             disabled={!canSubmit}
-            className='btn accent lg block'
+            className='btn accent block'
           >
             {offer.submitting ? (
               <>
@@ -241,11 +239,11 @@ const OfferPanel: React.FC<OfferPanelProps> = ({ negotiation, phase, wallet, com
                   : ''}
             </p>
           </div>
-          <ol className='space-y-1.5 border border-rule-strong bg-card p-4 text-sm'>
+          <ol className='inset space-y-1.5 p-4 text-sm'>
             {offer.steps.map((row) => (
               <li
                 key={row.id}
-                className={`flex items-center gap-2 ${row.status === 'active' ? 'font-semibold' : row.status === 'pending' ? 'text-ink-soft' : 'text-ink-2'}`}
+                className={`flex items-center gap-2 ${row.status === 'active' ? 'font-semibold' : row.status === 'pending' ? 'text-muted' : 'text-ink'}`}
               >
                 <StepIcon status={row.status} />
                 {row.label}

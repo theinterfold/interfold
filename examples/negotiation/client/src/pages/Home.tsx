@@ -42,15 +42,14 @@ const Group: React.FC<{ title: string; note: string; items: NegotiationState[]; 
   now,
   account,
 }) => (
-  <section className='space-y-5'>
+  <section className='space-y-4'>
     <div className='flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1'>
-      <h2 className='h2'>
-        {title} <span className='muted font-mono text-base'>{items.length}</span>
-      </h2>
+      <h3 className='flex items-center gap-2 text-base font-semibold'>
+        {title} <span className='ui-count'>{items.length}</span>
+      </h3>
       <p className='muted text-sm'>{note}</p>
     </div>
-    <div className='hr' />
-    <div className='grid gap-5 md:grid-cols-2 lg:grid-cols-3'>
+    <div className='list'>
       {items.map((item) => (
         <NegotiationCard key={item.e3Id.toString()} negotiation={item} now={now} account={account} />
       ))}
@@ -67,56 +66,54 @@ const Home: React.FC = () => {
   const others = negotiations.filter((item) => roleOf(item, address) === null).slice(0, RECENT_LIMIT)
 
   return (
-    <>
-      <section className='page'>
-        <div className='grid items-start gap-10 lg:grid-cols-[1.25fr_1fr] lg:gap-16'>
-          <div className='space-y-8'>
-            <div className='space-y-5'>
-              <p className='mono muted'>Sealed price negotiation on Interfold</p>
-              <h1 className='display'>
-                Name your price in private. <em>Learn one price.</em>
-              </h1>
-              <p className='lede'>
-                A seller has a private minimum price. A buyer has a private maximum price. Interfold compares them on encrypted data and a
-                committee decrypts only the result: one agreed price, or no match.
-              </p>
-            </div>
-            <ul className='space-y-4'>
-              {PRINCIPLES.map(({ icon: Icon, label, body }) => (
-                <li key={label} className='flex items-start gap-4'>
-                  <Icon size={26} weight='light' className='mt-0.5 shrink-0' />
-                  <p>
-                    <span className='font-semibold text-accent'>{label}</span> <span className='muted'>{body}</span>
-                  </p>
-                </li>
-              ))}
-            </ul>
-            <div className='flex flex-wrap items-center gap-4'>
-              <Link to='/create' className='btn lg'>
-                Create a negotiation
-              </Link>
-              <Link to='/about' className='linkish'>
-                How it works
-              </Link>
-            </div>
-          </div>
-
-          <div className='card space-y-4 lg:sticky lg:top-8'>
-            <div className='flex items-center justify-between gap-3'>
-              <span className='mono muted'>Your price, encrypted</span>
-              <span className='tag live dot'>FHE</span>
-            </div>
-            <Cipher seed={11} length={300} />
-            <div className='hr-soft' />
-            <p className='mono-sm muted'>This is all anyone sees of an offer while the negotiation runs.</p>
-          </div>
+    <div className='page !pt-0'>
+      <section className='page-intro'>
+        <h1 className='display'>
+          Name your price in private. <em>Learn one price.</em>
+        </h1>
+        <p className='lede'>
+          A seller has a private minimum price. A buyer has a private maximum price. Interfold compares them on encrypted data and a
+          committee decrypts only the result: one agreed price, or no match.
+        </p>
+        <div className='actions'>
+          <Link to='/create' className='btn'>
+            Create a negotiation
+          </Link>
+          <Link to='/about' className='linkish'>
+            How it works
+          </Link>
         </div>
       </section>
 
-      <section className='page space-y-12 !pt-0'>
-        <div className='flex flex-wrap items-end justify-between gap-4'>
-          <h2 className='h1'>Negotiations</h2>
-          <Link to='/create' className='btn ghost'>
+      <section className='mb-16 grid items-start gap-6 lg:grid-cols-[1.25fr_1fr]'>
+        <ul className='list'>
+          {PRINCIPLES.map(({ icon: Icon, label, body }) => (
+            <li key={label} className='flex items-start gap-4 p-5'>
+              <Icon size={26} weight='light' className='mt-0.5 shrink-0' />
+              <p>
+                <span className='block font-semibold'>{label}</span> <span className='muted'>{body}</span>
+              </p>
+            </li>
+          ))}
+        </ul>
+        <div className='card space-y-4'>
+          <div className='flex items-center justify-between gap-3'>
+            <span className='mono muted'>Your price, encrypted</span>
+            <span className='tag live dot'>FHE</span>
+          </div>
+          <Cipher seed={11} length={300} />
+          <div className='hr-soft' />
+          <p className='meta muted'>This is all anyone sees of an offer while the negotiation runs.</p>
+        </div>
+      </section>
+
+      <section className='space-y-10'>
+        <div className='page-head !mb-0'>
+          <div>
+            <h2>Negotiations</h2>
+            <p>Open a negotiation to send your offer or to read its result.</p>
+          </div>
+          <Link to='/create' className='btn ghost sm'>
             Create a negotiation
           </Link>
         </div>
@@ -124,7 +121,7 @@ const Home: React.FC = () => {
         {error && <div className='note bad'>Could not load the negotiations: {error}</div>}
 
         {loading ? (
-          <div className='grid gap-5 md:grid-cols-2 lg:grid-cols-3'>
+          <div className='space-y-3'>
             <NegotiationCardSkeleton />
             <NegotiationCardSkeleton />
             <NegotiationCardSkeleton />
@@ -154,7 +151,7 @@ const Home: React.FC = () => {
           </>
         )}
       </section>
-    </>
+    </div>
   )
 }
 

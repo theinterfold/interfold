@@ -14,6 +14,7 @@ import { chain } from '@/utils/chain'
 import { joinTitle } from '@/utils/negotiation'
 import { formatAmount } from '@/utils/tokens'
 import { ConnectPrompt } from '@/components/ConnectPrompt'
+import CopyId from '@/components/CopyId'
 import Spinner from '@/components/Spinner'
 
 /** The title and its unit label share one string on chain, so the UI limits the whole string. */
@@ -114,15 +115,15 @@ const CreateNegotiation: React.FC = () => {
   if (createdId !== null && link !== null) {
     return (
       <div className='page'>
-        <div className='card max-w-3xl space-y-6 !p-5 md:!p-8'>
-          <p className='mono muted'>Nº {createdId.toString().padStart(3, '0')}</p>
+        <div className='card max-w-3xl space-y-6'>
+          <CopyId id={createdId} />
           <h1 className='h1'>The negotiation is created</h1>
           <p className='lede'>
             Send this link to the seller and to the buyer. Each connects its own wallet and seals one price. The offers open once the
             committee has generated its key, which takes several minutes.
           </p>
           <div className='note space-y-3'>
-            <p className='mono-sm muted'>Link to share</p>
+            <p className='meta muted'>Link to share</p>
             <p className='addr break-all'>{link}</p>
             <button
               type='button'
@@ -137,7 +138,7 @@ const CreateNegotiation: React.FC = () => {
               {copied ? 'Link copied' : 'Copy link'}
             </button>
           </div>
-          <Link to={`/n/${createdId}`} className='btn accent lg block'>
+          <Link to={`/n/${createdId}`} className='btn accent block'>
             Open the negotiation
           </Link>
         </div>
@@ -149,22 +150,21 @@ const CreateNegotiation: React.FC = () => {
   const fee = (value: bigint, token: { symbol: string; decimals: number }) =>
     `${formatAmount(value, token.decimals)} ${token.symbol}`.trim()
   const fieldNote = (invalid: boolean, text: string, fallback: string) => (
-    <p className={`mt-1 text-xs ${invalid ? 'text-danger' : 'text-ink-soft'}`}>{invalid ? text : fallback}</p>
+    <p className={`mt-1 text-xs ${invalid ? 'text-negative' : 'text-muted'}`}>{invalid ? text : fallback}</p>
   )
 
   return (
-    <div className='page'>
-      <header className='mb-10 max-w-3xl space-y-4'>
-        <p className='mono muted'>New negotiation</p>
-        <h1 className='h1'>Create a sealed negotiation</h1>
+    <div className='page !pt-0'>
+      <header className='page-intro wide'>
+        <h1 className='display'>Create a sealed negotiation</h1>
         <p className='lede'>
           A seller and a buyer each seal one price. If the buyer&rsquo;s maximum is at least the seller&rsquo;s minimum, both learn one
           agreed price. Otherwise both learn only that there is no match. Neither price is ever revealed.
         </p>
       </header>
 
-      <div className='grid items-start gap-10 lg:grid-cols-[1.4fr_1fr]'>
-        <form onSubmit={(event) => void submit(event)} className='card space-y-7 !p-5 md:!p-8'>
+      <div className='grid items-start gap-6 lg:grid-cols-[1.4fr_1fr]'>
+        <form onSubmit={(event) => void submit(event)} className='card space-y-7'>
           <fieldset className='space-y-5' disabled={busy}>
             <legend className='label'>What is negotiated</legend>
             <div>
@@ -302,7 +302,7 @@ const CreateNegotiation: React.FC = () => {
             {levels !== null && min !== null && stepSize !== null && (
               <div className='flex flex-wrap gap-2' aria-label='Price levels'>
                 {Array.from({ length: levels }, (_, level) => (
-                  <span key={level} className='border border-rule-strong bg-card px-2 py-1 font-mono text-xs'>
+                  <span key={level} className='inset px-2 py-1 font-mono text-xs'>
                     {priceAt(min, stepSize, level).toLocaleString('en-US')}
                   </span>
                 ))}
@@ -354,7 +354,7 @@ const CreateNegotiation: React.FC = () => {
           )}
           {create.error && <div className='note bad'>{create.error}</div>}
 
-          <button type='submit' disabled={!canSubmit} className='btn accent lg block'>
+          <button type='submit' disabled={!canSubmit} className='btn accent block'>
             {busy ? (
               <>
                 <Spinner size={14} /> {STEP_LABELS[create.step as Exclude<typeof create.step, 'idle'>]}
@@ -363,18 +363,18 @@ const CreateNegotiation: React.FC = () => {
               'Create negotiation'
             )}
           </button>
-          <p className='text-center text-xs text-ink-soft'>
+          <p className='text-center text-xs text-muted'>
             Creating a negotiation pays the E3 fee in the fee token. The parties pay only gas.
           </p>
         </form>
 
-        <aside className='card flat space-y-5 lg:sticky lg:top-8'>
+        <aside className='card flat space-y-5 lg:sticky lg:top-24'>
           <p className='mono muted'>What happens next</p>
           <ol className='steps'>
             {NEXT_STEPS.map((text, index) => (
               <li key={text} className='step'>
                 <span className='pin'>{index + 1}</span>
-                <p className='text-sm text-ink-2'>{text}</p>
+                <p className='text-sm text-ink'>{text}</p>
               </li>
             ))}
           </ol>

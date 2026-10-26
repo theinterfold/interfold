@@ -11,7 +11,9 @@ import { useChainTime } from '@/hooks/useChainTime'
 import { useCommitteeKey } from '@/hooks/useCommitteeKey'
 import { useWallet } from '@/hooks/useWallet'
 import { ROLE_NAMES, formatDateTime, formatLevel, formatPrice, phaseOf, roleOf, timeLeftLabel } from '@/utils/negotiation'
+import { shortId } from '@/utils/format'
 import { getContractAddresses } from '@/utils/env-config'
+import CopyId from '@/components/CopyId'
 import { AddressLink } from '@/components/Explorer'
 import OfferPanel from '@/components/OfferPanel'
 import PhaseTimeline from '@/components/PhaseTimeline'
@@ -56,7 +58,7 @@ const NegotiationPage: React.FC = () => {
       </div>
     )
   }
-  if (negotiation === null) return <NotFound text={`There is no negotiation Nº ${e3Id} on this deployment.`} />
+  if (negotiation === null) return <NotFound text={`There is no negotiation Nº ${shortId(e3Id)} on this deployment.`} />
   if (phase === null) return null
 
   const { e3Program } = getContractAddresses()
@@ -65,13 +67,18 @@ const NegotiationPage: React.FC = () => {
   return (
     <div className='page space-y-10'>
       <header className='space-y-4'>
-        <Link to='/' className='linkish'>
-          All negotiations
-        </Link>
+        <nav className='breadcrumb' aria-label='Breadcrumb'>
+          <Link to='/'>All negotiations</Link>
+          <span aria-hidden>/</span>
+          <span aria-current='page'>Negotiation</span>
+        </nav>
         <div className='flex flex-wrap items-start justify-between gap-4'>
-          <div className='min-w-0 space-y-3'>
-            <p className='mono muted'>Nº {negotiation.e3Id.toString().padStart(3, '0')} · sealed price negotiation</p>
-            <h1 className='h1'>{negotiation.title}</h1>
+          <div className='min-w-0 flex-1 space-y-3'>
+            <div className='flex min-w-0 flex-wrap items-center gap-3'>
+              <p className='mono muted'>Sealed price negotiation</p>
+              <CopyId id={negotiation.e3Id} />
+            </div>
+            <h1 className='title'>{negotiation.title}</h1>
           </div>
           <div className='flex items-center gap-3'>
             <StatusBadge phase={phase} />
@@ -89,7 +96,7 @@ const NegotiationPage: React.FC = () => {
         )}
       </header>
 
-      <dl className='card grid grid-cols-2 gap-x-6 gap-y-5 !p-5 md:grid-cols-3 lg:grid-cols-4'>
+      <dl className='card grid grid-cols-2 gap-x-6 gap-y-5 md:grid-cols-3 lg:grid-cols-4'>
         <Fact label='Seller'>
           <AddressLink address={negotiation.seller} />
           <OfferMark sealed={negotiation.offered.seller} />
@@ -146,14 +153,14 @@ const NegotiationPage: React.FC = () => {
 
 const Fact: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
   <div className='min-w-0'>
-    <dt className='mono-sm muted'>{label}</dt>
-    <dd className='mt-1 space-y-1 text-sm'>{children}</dd>
+    <dt className='meta muted'>{label}</dt>
+    <dd className='mt-1 space-y-1 text-sm font-medium'>{children}</dd>
   </div>
 )
 
 /** Whether a party has sent its offer. The chain shows this; the offer itself stays encrypted. */
 const OfferMark: React.FC<{ sealed: boolean }> = ({ sealed }) => (
-  <p className={`text-xs ${sealed ? 'text-accent' : 'text-ink-soft'}`}>{sealed ? 'Offer sealed' : 'No offer yet'}</p>
+  <p className={`text-xs ${sealed ? 'text-brand-green' : 'text-muted'}`}>{sealed ? 'Offer sealed' : 'No offer yet'}</p>
 )
 
 const CopyLinkButton: React.FC = () => {

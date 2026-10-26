@@ -62,9 +62,8 @@ const Block: React.FC<{ eyebrow: string; title: string; children: React.ReactNod
 )
 
 const About: React.FC = () => (
-  <div className='page space-y-14'>
-    <header className='max-w-3xl space-y-5'>
-      <p className='mono muted'>How it works</p>
+  <div className='page space-y-14 !pt-0'>
+    <header className='page-intro wide'>
       <h1 className='h1'>A sealed price negotiation: what stays hidden, what is revealed</h1>
       <p className='lede'>
         A seller has a private minimum price. A buyer has a private maximum price. If the maximum is at least the minimum, both learn one
@@ -75,7 +74,7 @@ const About: React.FC = () => (
     <Block eyebrow='Nº 01' title='Hidden and revealed'>
       <div className='card grid gap-6 sm:grid-cols-2'>
         <div className='space-y-2'>
-          <p className='mono-sm muted'>Hidden</p>
+          <p className='meta muted'>Hidden</p>
           <ul className='list-disc space-y-1 pl-5 text-sm'>
             {HIDDEN.map((item) => (
               <li key={item}>{item}</li>
@@ -83,7 +82,7 @@ const About: React.FC = () => (
           </ul>
         </div>
         <div className='space-y-2'>
-          <p className='mono-sm text-accent'>Revealed</p>
+          <p className='meta text-brand-green'>Revealed</p>
           <ul className='list-disc space-y-1 pl-5 text-sm'>
             {REVEALED.map((item) => (
               <li key={item}>{item}</li>
@@ -105,7 +104,7 @@ const About: React.FC = () => (
             <span className='pin'>{index + 1}</span>
             <div>
               <p className='font-semibold'>{title}</p>
-              <p className='text-sm text-ink-2'>{body}</p>
+              <p className='text-sm text-ink'>{body}</p>
             </div>
           </li>
         ))}
@@ -121,23 +120,21 @@ const About: React.FC = () => (
       </p>
       <div className='card grid gap-6 sm:grid-cols-3'>
         <div className='space-y-1'>
-          <p className='mono-sm muted'>Match bit</p>
-          <p className='font-serif text-3xl'>Exact</p>
-          <p className='text-sm text-ink-2'>There is a match if and only if the maximum is at least the minimum.</p>
+          <p className='meta muted'>Match bit</p>
+          <p className='value md'>Exact</p>
+          <p className='text-sm text-ink'>There is a match if and only if the maximum is at least the minimum.</p>
         </div>
         <div className='space-y-1'>
-          <p className='mono-sm muted'>Agreed price</p>
-          <p className='font-serif text-3xl'>Almost uniform</p>
-          <p className='text-sm text-ink-2'>
+          <p className='meta muted'>Agreed price</p>
+          <p className='value md'>Almost uniform</p>
+          <p className='text-sm text-ink'>
             The distance to the uniform law is at most 0.42 (total variation) over all intervals of 16 levels. The mean is 0.14.
           </p>
         </div>
         <div className='space-y-1'>
-          <p className='mono-sm muted'>Extra leak</p>
-          <p className='font-serif text-3xl'>0.12 bits</p>
-          <p className='text-sm text-ink-2'>
-            This is the mutual information over the ideal mechanism, with a uniform prior on both prices.
-          </p>
+          <p className='meta muted'>Extra leak</p>
+          <p className='value md'>0.12 bits</p>
+          <p className='text-sm text-ink'>This is the mutual information over the ideal mechanism, with a uniform prior on both prices.</p>
         </div>
       </div>
       <p className='prose-ed max-w-3xl'>
@@ -155,7 +152,7 @@ const About: React.FC = () => (
       <div className='card flat max-w-3xl space-y-2'>
         <p className='mono muted'>Offer proof</p>
         <h3 className='h3'>The offer is well formed</h3>
-        <p className='text-sm text-ink-2'>
+        <p className='text-sm text-ink'>
           The browser proves that the {OFFER_CIPHERTEXTS} ciphertexts encrypt a valid price on the grid, a random share, and a mask. The
           mask hides the output of the combination, so the decrypted slots show only the result. The proof is bound to the committee key, to
           your role and to this negotiation, so nobody can copy it. It runs in your browser and takes several minutes. The price stays in
@@ -165,7 +162,7 @@ const About: React.FC = () => (
     </Block>
 
     <div role='note' className='note warn flex gap-3'>
-      <WarningIcon size={22} weight='fill' className='mt-0.5 shrink-0 text-warm' />
+      <WarningIcon size={22} weight='fill' className='mt-0.5 shrink-0 text-warn' />
       <div className='space-y-2'>
         <p className='font-semibold'>Demo on insecure parameters</p>
         <p>
@@ -177,7 +174,7 @@ const About: React.FC = () => (
     </div>
 
     <div className='flex flex-wrap items-center gap-4'>
-      <Link to='/create' className='btn lg'>
+      <Link to='/create' className='btn'>
         Create a negotiation
       </Link>
       <a href={GITHUB_URL} target='_blank' rel='noreferrer' className='linkish'>

@@ -4,25 +4,52 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-// Tailwind carries layout and spacing; the colours are the CSS variables of `src/design/editorial.css`,
-// so a utility (`text-ink-soft`) and a design class (`.note`) always agree.
+// Tailwind carries layout and spacing; the values are the Interfold governance tokens of
+// `src/design/tokens.css`, so a utility (`text-muted`) and a design class (`.note`) always agree.
+// Both demo clients carry this file unchanged.
 const config = {
   content: ['./index.html', './src/**/*.{js,jsx,ts,tsx,mdx}'],
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Inter', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
-        serif: ['Source Serif 4', 'Source Serif Pro', 'Iowan Old Style', 'Georgia', 'serif'],
-        mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+        sans: ['var(--font-sans)'],
+        serif: ['var(--font-serif)'],
+        mono: ['var(--font-mono)'],
       },
       colors: {
-        paper: { DEFAULT: 'var(--paper)', 2: 'var(--paper-2)' },
-        card: 'var(--card)',
-        ink: { DEFAULT: 'var(--ink)', 2: 'var(--ink-2)', soft: 'var(--ink-soft)' },
+        ink: 'var(--ink)',
+        paper: 'var(--paper)',
+        muted: { DEFAULT: 'var(--muted)', 2: 'var(--muted-2)' },
+        surface: { muted: 'var(--surface-muted)', selected: 'var(--surface-selected)', hover: 'var(--surface-hover)' },
         rule: { DEFAULT: 'var(--rule)', strong: 'var(--rule-strong)' },
-        accent: { DEFAULT: 'var(--accent)', tint: 'var(--accent-tint)', soft: 'var(--accent-soft)' },
-        warm: { DEFAULT: 'var(--warm)', tint: 'var(--warm-tint)' },
-        danger: { DEFAULT: 'var(--danger)', tint: 'var(--danger-tint)' },
+        brand: { green: 'var(--if-brand-green)', mint: 'var(--mint)', 'mint-pale': 'var(--mint-pale)', 'mint-line': 'var(--mint-line)' },
+        vote: 'var(--vote-action)',
+        negative: { DEFAULT: 'var(--negative)', tint: 'var(--status-bad-bg)' },
+        warn: { DEFAULT: 'var(--status-warn-fg)', tint: 'var(--status-warn-bg)' },
+      },
+      borderRadius: {
+        DEFAULT: 'var(--ui-radius)',
+        ui: 'var(--ui-radius)',
+      },
+      spacing: {
+        tight: 'var(--ui-space-tight)',
+        related: 'var(--ui-space-related)',
+        controls: 'var(--ui-space-controls)',
+        section: 'var(--ui-space-section)',
+      },
+      maxWidth: {
+        content: 'var(--site-content-width)',
+      },
+      minHeight: {
+        action: 'var(--action-height)',
+      },
+      transitionDuration: {
+        ui: 'var(--if-ui-duration)',
+        page: 'var(--if-page-duration)',
+      },
+      transitionTimingFunction: {
+        ui: 'var(--if-ui-ease)',
+        page: 'var(--if-page-ease)',
       },
     },
   },
