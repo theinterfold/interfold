@@ -6,6 +6,7 @@
 
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useWalletClient } from 'wagmi'
 import { formatUnits, zeroAddress } from 'viem'
 import {
   AUCTION_TYPES,
@@ -24,9 +25,12 @@ import { useWallet } from '@/hooks/useWallet'
 import { parseAllowlist } from '@/utils/allowlist-input'
 import { chain } from '@/utils/chain'
 import { ALLOWLIST_GATE_ADDRESS } from '@/utils/env-config'
+import { formatError } from '@/utils/error-formatting'
+import { uploadImage } from '@/utils/image'
 import { ConnectPrompt } from '@/components/ConnectPrompt'
 import { INITIAL_PRICE_FORM, PriceLevelsField, pricesOf } from '@/components/PriceLevelsField'
 import Spinner from '@/components/Spinner'
+import { PictureField } from '@/components/PictureField'
 
 /** The contract rejects titles outside 1..80 bytes of UTF-8. */
 const MAX_TITLE_BYTES = 80
@@ -45,12 +49,15 @@ const NEXT_STEPS = [
   'After the window closes the result is computed and decrypted. Share the auction link with the bidders.',
 ]
 
+const UPLOAD_LABELS = { signing: 'Sign the picture in your wallet…', uploading: 'Uploading the picture…' } as const
+
 const titleBytes = (title: string) => new TextEncoder().encode(title).length
 
 const CreateAuction: React.FC = () => {
   const navigate = useNavigate()
   const { address, wrongChain, ready } = useWallet()
   const create = useCreateAuction(address)
+  const { data: walletClient } = useWalletClient({ chainId: chain.id })
 
   const [title, setTitle] = useState('')
   const [auctionType, setAuctionType] = useState<AuctionType>(AuctionType.SecondPrice)
@@ -58,12 +65,15 @@ const CreateAuction: React.FC = () => {
   const [durationSeconds, setDurationSeconds] = useState<number>(DURATIONS[2].seconds)
   const [who, setWho] = useState<'anyone' | 'allowlist'>('anyone')
   const [allowlistText, setAllowlistText] = useState('')
+  const [picture, setPicture] = useState<Blob | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [upload, setUpload] = useState<'signing' | 'uploading' | null>(null)
 
   const trimmed = title.trim()
   const bytes = titleBytes(trimmed)
   const titleValid = bytes > 0 && bytes <= MAX_TITLE_BYTES
   const priced = pricesOf(priceForm)
-  const busy = create.step !== 'idle'
+  const busy = create.step !== 'idle' || submitting
   const listed = parseAllowlist(allowlistText)
   const listError =
     who !== 'allowlist'
@@ -81,15 +91,32 @@ const CreateAuction: React.FC = () => {
     event.preventDefault()
     if (!canSubmit || !('prices' in priced)) return
     const gate = who === 'allowlist' ? ALLOWLIST_GATE_ADDRESS : undefined
-    const e3Id = await create.create({
-      title: trimmed,
-      auctionType,
-      prices: priced.prices,
-      gate: gate ?? zeroAddress,
-      gateConfig: gate ? encodeAllowlistConfig(listed.members) : '0x',
-      durationSeconds,
-    })
-    if (e3Id !== null) navigate(`/auction/${e3Id}`)
+    setSubmitting(true)
+    try {
+      const e3Id = await create.create({
+        title: trimmed,
+        auctionType,
+        prices: priced.prices,
+        gate: gate ?? zeroAddress,
+        gateConfig: gate ? encodeAllowlistConfig(listed.members) : '0x',
+        durationSeconds,
+      })
+      if (e3Id === null) return
+      // The auction exists now. A failed upload must not undo it: the auction page lets the creator add the picture again.
+      let pictureError: string | undefined
+      if (picture && walletClient && address) {
+        try {
+          await uploadImage(walletClient, address, e3Id, picture, setUpload)
+        } catch (err) {
+          pictureError = formatError(err)
+        } finally {
+          setUpload(null)
+        }
+      }
+      navigate(`/auction/${e3Id}`, { state: pictureError ? { pictureError } : undefined })
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   const fee = (amount: bigint) => `${formatUnits(amount, create.feeToken?.decimals ?? 6)} ${create.feeToken?.symbol ?? ''}`.trim()
@@ -122,6 +149,8 @@ const CreateAuction: React.FC = () => {
               {bytes}/{MAX_TITLE_BYTES} bytes
             </p>
           </div>
+
+          <PictureField value={picture} onChange={setPicture} disabled={busy} />
 
           <fieldset className='space-y-3' disabled={busy}>
             <legend className='label'>Auction type</legend>
@@ -247,7 +276,8 @@ const CreateAuction: React.FC = () => {
           <button type='submit' disabled={!canSubmit} className='btn accent block'>
             {busy ? (
               <>
-                <Spinner size={14} /> {STEP_LABELS[create.step as Exclude<typeof create.step, 'idle'>]}
+                <Spinner size={14} />{' '}
+                {create.step !== 'idle' ? STEP_LABELS[create.step] : upload ? UPLOAD_LABELS[upload] : 'Creating the auction…'}
               </>
             ) : (
               'Create auction'

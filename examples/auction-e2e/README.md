@@ -421,8 +421,10 @@ it works**.
    start price and a step) or **Custom list** (one price for each step, increasing, for example a
    1-2-5 scale). Under **Who can bid**, select **Anyone** or **Allowlist**. For an allowlist, enter
    the addresses. The page sorts them and removes duplicates. The **Allowlist** choice needs
-   `VITE_ALLOWLIST_GATE_ADDRESS`. Key generation takes some minutes. Bidding opens when the
-   committee publishes the key, and it closes at the end of the duration.
+   `VITE_ALLOWLIST_GATE_ADDRESS`. Optionally, select **Choose a picture** (PNG, JPEG or WebP). The
+   page shrinks it, and the wallet signs the upload after the request is mined. Key generation takes
+   some minutes. Bidding opens when the committee publishes the key, and it closes at the end of the
+   duration.
 4. **Bid.** Open the auction page from another account. Select one of the prices that the creator
    set (the steps 0 to `levels - 1`). Select **Submit bid**. A bid is 3 ciphertexts: the bid
    thermometer "at least", the bid thermometer "above" and a random mask. A ratio-lane second-price
@@ -633,7 +635,7 @@ docker run -p 8080:8080 -v auction-data:/data --env-file examples/auction-e2e/se
 | `DATA_AVAILABILITY_MODE`                                                           | `mock_http` (default) or `avail`.                                                                                                                                              |
 | `AVAIL_RPC_URL`, `AVAIL_APP_ID`, `AVAIL_SEED`, `AVAIL_BRIDGE_API_URL`              | The Avail settings of `avail` mode. `DESTINATION_CHAIN_ID` is `CHAIN_ID`.                                                                                                      |
 | `AVAIL_PROOF_POLL_INTERVAL_SECONDS`, `AUCTION_DA_BIN`                              | The proof poll interval (default 60) and the path of `auction-da`.                                                                                                             |
-| `DATA_DIRECTORY`                                                                   | The directory of the published objects and the Avail records. Keep it on a volume.                                                                                             |
+| `DATA_DIRECTORY`                                                                   | The directory of the published objects, the Avail records and the pictures (`images/`). Keep it on a volume.                                                                   |
 | `RELAYER_PRIVATE_KEY`                                                              | The account that pays the gas of `POST /relay`. On the local chain it defaults to Anvil account 9, which no bidder or ciphernode uses. On Sepolia the relay is off without it. |
 
 The server does this:
@@ -664,7 +666,55 @@ The server does this:
   public server needs its own funded key and a rate limit in front.
 
 Run `pnpm test:server` for the unit tests of the configuration, the log chunks, the publication
-steps, the input metadata, the relay and the bid selection.
+steps, the input metadata, the relay, the pictures and the bid selection.
+
+### The auction picture
+
+An auction can have one picture. The creator adds it, and every visitor sees it in the list and on
+the auction page. The picture is not on chain. The server stores it in `DATA_DIRECTORY/images/`.
+This directory needs no new setting, and it is on the same volume as the other server data. A
+reverse proxy such as Caddy must pass the `PUT` and `OPTIONS` methods, the header
+`x-auction-image-signature` and a request body of 1 MiB. Caddy does this by default.
+
+`PUT /auctions/:e3Id/image` stores the picture. The body is the image bytes. The request header
+`x-auction-image-signature` holds the signature of the creator (`personal_sign`, hex). The signed
+text has five lines:
+
+```text
+Interfold auction image
+chain: <chain id>
+program: <AuctionProgram address, checksum form>
+e3Id: <decimal>
+sha256: 0x<hex SHA-256 of the exact body bytes>
+```
+
+The server answers with these statuses:
+
+| Status | Cause                                                                                 |
+| ------ | ------------------------------------------------------------------------------------- |
+| 400    | `e3Id` is not a decimal number, the body is empty, or the signature is missing or bad |
+| 413    | The body is larger than 1 MiB (1 048 576 bytes)                                       |
+| 415    | The first bytes are not PNG, JPEG or WebP. SVG is refused.                            |
+| 404    | `auctions(e3Id)` on chain has the zero address as creator                             |
+| 403    | The signer is not the creator, or the signature covers other bytes                    |
+| 204    | The server stored the picture. It replaced an earlier picture of this auction.        |
+
+The server reads the type from the first bytes and ignores the content type of the request. It
+writes the file to a temporary name and then renames it, so a reader never gets half a file. The
+size limit of 1 MiB applies to this route only.
+
+`GET /auctions/:e3Id/image` returns the bytes. It sets `Content-Type` to the type that it found,
+`X-Content-Type-Options: nosniff`, `Cache-Control: public, max-age=60` and `ETag` (the SHA-256 of
+the file). It answers 304 when `If-None-Match` matches. It answers 404 when the auction has no
+picture. Any page can call both routes (CORS is open, as for `POST /relay`). The response also sets
+`Cross-Origin-Resource-Policy: cross-origin`, because the web app is cross-origin isolated.
+
+The web app shrinks the picture before it uploads it. It scales the picture to 1280 pixels on the
+long side, and encodes WebP (JPEG if the browser cannot encode WebP). This removes the metadata and
+transparency. After the create transaction is mined, the wallet asks for the signature. If the
+upload fails, the auction stays and the page shows the error. The creator can then select **Add
+picture** (or **Replace picture**) on the auction page. The web app reads the server URL from
+`VITE_SERVER_URL`, as for the relay.
 
 ### 6. Run the program runner
 
@@ -728,31 +778,31 @@ older figures were for a proof of each ciphertext, and they do not apply.
 
 ## Layout
 
-| Path                            | What                                                                                                             |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `sdk/`                          | `@interfold/auction` (private): the four files below. `pnpm build:sdk` builds `sdk/dist` and `sdk/circuits`      |
-| `sdk/src/layout.ts`             | the slot encoding, the roles and limits of each type, the tie priority and the result decoders                   |
-| `sdk/src/prover.ts`             | `BidProver`: encrypt, the encryption proofs, the pair, masks and bid proofs                                      |
-| `sdk/src/selection.ts`          | `selectBids`: the TypeScript form of the input policy (which bids count)                                         |
-| `sdk/src/allowlist.ts`          | `allowlistRoot` and `allowlistProof`: the allowlist tree of `MerkleAllowlistGate`                                |
-| `circuits/bid/`                 | `auction_bid`: the library with the bid rules shared by the four circuits, and the tables of the honest bids     |
-| `circuits/pair/`, `masks/`      | `auction_bid_pair` (roles 0 and 1, the bid) and `auction_bid_masks` (roles 2 and 3, the pair mask): recursive    |
-| `circuits/bid3/`, `bid4/`       | `auction_bid3` and `auction_bid4`: the proofs the contract verifies; `scripts/compile_circuits.sh` builds all    |
-| `contracts/AuctionProgram.sol`  | auction config, bids and updates, relayed-bid signatures, gate check, bid proof check, leaves, DA check          |
-| `contracts/interfaces/`         | `IBidderGate` and `IBidVerifier`                                                                                 |
-| `contracts/gates/`              | `MerkleAllowlistGate`: the example gate                                                                          |
-| `contracts/verifiers/`          | `AuctionVerifier3.sol` and `AuctionVerifier4.sol`: generated by `scripts/compile_circuits.sh`. Do not edit them. |
-| `program/src/lib.rs`            | the FHE processor and the input policy (the leaf and the selection; all four auction types)                      |
-| `program/examples/bid_table.rs` | the generator of `circuits/bid/src/constants.nr`                                                                 |
-| `program/examples/vk_hash.rs`   | the hash of ordered VK hashes, for the VK anchor                                                                 |
-| `runner/`                       | the program server (`program-runner`) that serves `program/`                                                     |
-| `guest/`                        | the OpenVM guest that proves the program                                                                         |
-| `server/`                       | the coordination server: events, compute, relay (`POST /relay`), output publication, `/health`                   |
-| `da/`                           | `auction-da`: the Avail helper of the server (Rust)                                                              |
-| `deploy/default.ts`             | the deployment of the program and of the allowlist gate, for the local chain and Sepolia                         |
-| `client/`                       | the web app                                                                                                      |
-| `test/`                         | the Hardhat tests of the contract and the gate                                                                   |
-| `tests/`                        | the integration test and its input helper                                                                        |
+| Path                            | What                                                                                                                               |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `sdk/`                          | `@interfold/auction` (private): the four files below. `pnpm build:sdk` builds `sdk/dist` and `sdk/circuits`                        |
+| `sdk/src/layout.ts`             | the slot encoding, the roles and limits of each type, the tie priority and the result decoders                                     |
+| `sdk/src/prover.ts`             | `BidProver`: encrypt, the encryption proofs, the pair, masks and bid proofs                                                        |
+| `sdk/src/selection.ts`          | `selectBids`: the TypeScript form of the input policy (which bids count)                                                           |
+| `sdk/src/allowlist.ts`          | `allowlistRoot` and `allowlistProof`: the allowlist tree of `MerkleAllowlistGate`                                                  |
+| `circuits/bid/`                 | `auction_bid`: the library with the bid rules shared by the four circuits, and the tables of the honest bids                       |
+| `circuits/pair/`, `masks/`      | `auction_bid_pair` (roles 0 and 1, the bid) and `auction_bid_masks` (roles 2 and 3, the pair mask): recursive                      |
+| `circuits/bid3/`, `bid4/`       | `auction_bid3` and `auction_bid4`: the proofs the contract verifies; `scripts/compile_circuits.sh` builds all                      |
+| `contracts/AuctionProgram.sol`  | auction config, bids and updates, relayed-bid signatures, gate check, bid proof check, leaves, DA check                            |
+| `contracts/interfaces/`         | `IBidderGate` and `IBidVerifier`                                                                                                   |
+| `contracts/gates/`              | `MerkleAllowlistGate`: the example gate                                                                                            |
+| `contracts/verifiers/`          | `AuctionVerifier3.sol` and `AuctionVerifier4.sol`: generated by `scripts/compile_circuits.sh`. Do not edit them.                   |
+| `program/src/lib.rs`            | the FHE processor and the input policy (the leaf and the selection; all four auction types)                                        |
+| `program/examples/bid_table.rs` | the generator of `circuits/bid/src/constants.nr`                                                                                   |
+| `program/examples/vk_hash.rs`   | the hash of ordered VK hashes, for the VK anchor                                                                                   |
+| `runner/`                       | the program server (`program-runner`) that serves `program/`                                                                       |
+| `guest/`                        | the OpenVM guest that proves the program                                                                                           |
+| `server/`                       | the coordination server: events, compute, relay (`POST /relay`), pictures (`/auctions/:e3Id/image`), output publication, `/health` |
+| `da/`                           | `auction-da`: the Avail helper of the server (Rust)                                                                                |
+| `deploy/default.ts`             | the deployment of the program and of the allowlist gate, for the local chain and Sepolia                                           |
+| `client/`                       | the web app                                                                                                                        |
+| `test/`                         | the Hardhat tests of the contract and the gate                                                                                     |
+| `tests/`                        | the integration test and its input helper                                                                                          |
 
 ## Limits
 
@@ -781,6 +831,9 @@ older figures were for a proof of each ciphertext, and they do not apply.
   can supply the bytes.
 - A relayed bid shows the bidder address on chain, as a direct bid does. `POST /relay` has no
   authentication and no rate limit.
+- The server stores the picture of an auction without a rate limit. A creator can upload 1 MiB for
+  each auction that the creator owns, and the file stays on the disk of the server. The picture is
+  public. An EOA wallet must sign the upload: the server does not check ERC-1271 signatures.
 - A region type resolves a tie at the top with the tie priority: the tied bidder with the higher
   priority wins. The result does not show that a tie happened. The priority comes from the `ge`
   ciphertexts of the selected bids. A bidder can encrypt again with new randomness until the
