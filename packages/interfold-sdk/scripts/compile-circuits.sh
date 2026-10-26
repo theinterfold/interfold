@@ -17,7 +17,7 @@ TARGET="${REPO_ROOT}/circuits/bin/threshold/target"
 DIST="${SCRIPT_DIR}/../circuits/dist"
 # The l-BFV proof trees of each preset. The trBFV circuit follows them, so that insecure-64 stays the
 # local active selection.
-PRESETS=(secure-8192 secure-16384 insecure-simd insecure)
+PRESETS=(secure-8192 secure-16384 secure-16384-simd insecure-simd insecure)
 # The proof tree: the prover also imports each one's recursive key (`<circuit>.vk.json`).
 TREE_ARTIFACTS=(
   ct0_chunk_main
@@ -35,7 +35,7 @@ rm -rf "${DIST}"
 for PRESET in "${PRESETS[@]}"; do
   BUILD_COMMITTEE="${COMMITTEE}"
   # Secure-16384 currently has a verifier route only for the minimum committee.
-  if [[ "${PRESET}" == "secure-16384" ]]; then
+  if [[ "${PRESET}" == "secure-16384" || "${PRESET}" == "secure-16384-simd" ]]; then
     BUILD_COMMITTEE="minimum"
   fi
 
@@ -69,6 +69,7 @@ for PRESET in "${PRESETS[@]}"; do
     insecure-simd) EXPECTED_DEGREE=128 ;;
     secure-8192) EXPECTED_DEGREE=8192 ;;
     secure-16384) EXPECTED_DEGREE=16384 ;;
+    secure-16384-simd) EXPECTED_DEGREE=16384 ;;
   esac
   node --input-type=module - "${PRESET_DIST}/ct0_pk_ct_commit.json" "${EXPECTED_DEGREE}" <<'NODE'
 import { readFileSync } from 'node:fs'

@@ -39,6 +39,10 @@
     "./internal/presets/secure-16384": {
       "types": "./dist/crypto/presets/secure-16384.d.ts",
       "import": "./dist/crypto/presets/secure-16384.js"
+    },
+    "./internal/presets/secure-16384-simd": {
+      "types": "./dist/crypto/presets/secure-16384-simd.d.ts",
+      "import": "./dist/crypto/presets/secure-16384-simd.js"
     }
   },
   "main": "./dist/index.cjs",

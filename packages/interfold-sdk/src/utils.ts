@@ -6,7 +6,7 @@
 
 import { type Address, type Hash, type Log, PublicClient, encodeAbiParameters } from 'viem'
 import initializeWasm from '@interfold/wasm/init'
-import { simd_decode } from '@interfold/wasm'
+import { simd_decode, simd_recover_sparse } from '@interfold/wasm'
 import type { ThresholdBfvParamsPresetName } from './crypto/types'
 import type { BfvParams } from './types'
 
@@ -101,6 +101,9 @@ export function cryptoConfigIdForParamSet(paramSet: number): Hash {
   }
   if (paramSet === 5) {
     return '0x843cc091bc39d046eded5e9f0aed8250848b46f7e36623433d31a1f5d7ef5e35'
+  }
+  if (paramSet === 6) {
+    return '0xd053da3859a277a18b1d0bce3f59f7afb5dda18833e3e0fc32c204d066d4e65e'
   }
   throw new SDKError(`Unsupported BFV parameter set: ${paramSet}`, 'UNSUPPORTED_CRYPTO_CONFIG')
 }
@@ -250,6 +253,29 @@ export async function decodePlaintextSlots(plaintextOutput: string, presetName: 
   const coefficients = decodePlaintextCoefficients(plaintextOutput)
   await initializeWasm()
   return Array.from(simd_decode(BigUint64Array.from(coefficients), presetName))
+}
+
+/**
+ * Recover the SIMD slot values at known positions from a published window of coefficients.
+ *
+ * A SIMD plaintext with few non-zero slots is dense in the poly basis. A preset that publishes only
+ * a prefix of the polynomial (`SECURE_THRESHOLD_16384_SIMD` publishes 50 of 16384 coefficients)
+ * therefore gives a window, not the whole plaintext. The window fixes the slots when every non-zero
+ * slot is in `support` and `support` is no longer than the window. With spare coefficients, a
+ * non-zero slot outside `support` makes the call fail.
+ * @param plaintextOutput - The published plaintext output, as hex
+ * @param presetName - A SIMD preset, e.g. `SECURE_THRESHOLD_16384_SIMD`
+ * @param support - The slot positions that can be non-zero, without repeats
+ * @returns The slot values at `support`, in the order of `support`
+ */
+export async function decodePlaintextSparseSlots(
+  plaintextOutput: string,
+  presetName: ThresholdBfvParamsPresetName,
+  support: number[],
+): Promise<bigint[]> {
+  const coefficients = decodePlaintextCoefficients(plaintextOutput)
+  await initializeWasm()
+  return Array.from(simd_recover_sparse(BigUint64Array.from(coefficients), presetName, Uint32Array.from(support)))
 }
 
 // Helper function to convert proof bytes to field elements

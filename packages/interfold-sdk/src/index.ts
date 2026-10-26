@@ -110,5 +110,6 @@ export {
   decodePlaintextOutput,
   decodePlaintextCoefficients,
   decodePlaintextSlots,
+  decodePlaintextSparseSlots,
   type ComputeProviderParams,
 } from './utils'
