@@ -170,19 +170,30 @@ fn assert_final_dkg_tree_binding(
         None,
         "dkg-tree-c5",
     );
+    // Two slots. A step verifies `NODES_FOLD_LEAVES` nodes; these steps place one real node and
+    // repeat it under the sentinel slot 2 in the other places.
+    let leaves = e3_zk_prover::NODES_FOLD_LEAVES;
+    let set_node = |step: &mut serde_json::Value, proof: &Proof, slot: u32| {
+        let mut slots = vec![2u32; leaves];
+        slots[0] = slot;
+        step["inner_proofs"] = json!(vec![
+            fold_witness_field_strings(&proof.data).unwrap();
+            leaves
+        ]);
+        step["node_fold_public_inputs"] = json!(vec![fields(proof); leaves]);
+        step["slot_indices"] = json!(slots);
+    };
     let mut step = json!({
         "inner_vk": first_node.vk,
-        "inner_proof": fold_witness_field_strings(&first_node.proof.data).unwrap(),
-        "node_fold_public_inputs": fields(&first_node.proof),
         "acc_vk": kernel_vk.verification_key,
         "acc_proof": vec!["0"; 410],
-        "acc_public_inputs": vec!["0"; 5 + 2 * row.len()],
+        "acc_public_inputs": vec!["0"; 4 + leaves + 2 * row.len()],
         "inner_key_hash": first_node.key_hash,
         "fold_key_hash": fold_vk.key_hash,
         "kernel_key_hash": kernel_vk.key_hash,
         "is_first_step": true,
-        "slot_index": 0,
     });
+    set_node(&mut step, &first_node.proof, 0);
     let genesis_witness = witness(&kernel_path, &step).unwrap();
     let genesis = prover
         .generate_recursive_aggregation_bin_proof(
@@ -221,9 +232,7 @@ fn assert_final_dkg_tree_binding(
         );
         assert_eq!(second_node.key_hash, first_node.key_hash);
         // With two slots the first fold step, on top of the kernel proof, is the final one.
-        step["inner_proof"] = json!(fold_witness_field_strings(&second_node.proof.data).unwrap());
-        step["node_fold_public_inputs"] = json!(fields(&second_node.proof));
-        step["slot_index"] = json!(1);
+        set_node(&mut step, &second_node.proof, 1);
         let second_witness = witness(&fold_path, &step).unwrap();
         let folded = prover
             .generate_recursive_aggregation_bin_proof(
@@ -251,7 +260,7 @@ fn assert_final_dkg_tree_binding(
                 "nodes-substituted-genesis",
             );
             let mut reused_slot = step.clone();
-            reused_slot["slot_index"] = json!(0);
+            reused_slot["slot_indices"][0] = json!(0);
             assert!(
                 witness(&fold_path, &reused_slot).is_err(),
                 "the first nodes_fold step must not refill the kernel's slot"

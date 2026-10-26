@@ -466,13 +466,14 @@ fn handle_nodes_fold_step_proof(
 ) -> Result<ComputeResponse, ComputeRequestError> {
     let artifacts_dir =
         prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+    let first_slot = req.slot_indices.first().copied().unwrap_or_default();
     let accumulator_proof = generate_nodes_fold_step(
         prover,
-        &req.inner_proof,
+        &req.inner_proofs,
+        &req.slot_indices,
         req.prior_accumulator.as_ref(),
-        req.slot_index,
         req.total_slots,
-        &format!("{}-nodesfold-step-{}", req.e3_id, req.slot_index),
+        &format!("{}-nodesfold-step-{first_slot}", req.e3_id),
         artifacts_dir.as_str(),
     )
     .map_err(|e| {

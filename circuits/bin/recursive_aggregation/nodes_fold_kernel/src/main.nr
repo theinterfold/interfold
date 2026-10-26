@@ -4,13 +4,14 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Same IO as [`nodes_fold`](../nodes_fold/src/main.nr) but **only** verifies the inner `node_fold` proof. It
-//! proves the chain's first leaf on its own: its proof carries that leaf's row and is the
+//! Same IO as [`nodes_fold`](../nodes_fold/src/main.nr) but **only** verifies its inner `node_fold`
+//! proofs. It proves the chain's first nodes on their own: its proof carries their rows and is the
 //! accumulator the first `nodes_fold` step verifies (with `is_first_step`, under this circuit's key).
 
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use lib::configs::default::dkg::L_THRESHOLD;
 use lib::configs::default::{H, N_PARTIES};
+use lib::math::nodes_fold::{NODES_FOLD_LEAVES, place_nodes};
 
 pub global C2_PUBLIC_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
 pub global C2AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C2_PUBLIC_LEN);
@@ -23,13 +24,14 @@ pub global C4AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C4_PUBLIC_LEN);
 /// Must match `node_fold::NODE_FOLD_PUBLIC_LEN`.
 pub global NODE_FOLD_PUBLIC_LEN: u32 = 11 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
 
-/// Five public parameters and `H` complete `node_fold` public rows.
-pub global NODES_FOLD_PUBLIC_LEN: u32 = 5 + (H * NODE_FOLD_PUBLIC_LEN);
+/// Three key hashes, `is_first_step`, one slot index per leaf, and `H` complete `node_fold` public
+/// rows.
+pub global NODES_FOLD_PUBLIC_LEN: u32 = 4 + NODES_FOLD_LEAVES + (H * NODE_FOLD_PUBLIC_LEN);
 
 fn main(
     inner_vk: UltraHonkVerificationKey,
-    inner_proof: UltraHonkProof,
-    node_fold_public_inputs: [Field; NODE_FOLD_PUBLIC_LEN],
+    inner_proofs: [UltraHonkProof; NODES_FOLD_LEAVES],
+    node_fold_public_inputs: [[Field; NODE_FOLD_PUBLIC_LEN]; NODES_FOLD_LEAVES],
     acc_vk: UltraHonkVerificationKey,
     acc_proof: UltraHonkProof,
     acc_public_inputs: [Field; NODES_FOLD_PUBLIC_LEN],
@@ -37,30 +39,25 @@ fn main(
     fold_key_hash: pub Field,
     kernel_key_hash: pub Field,
     is_first_step: pub bool,
-    slot_index: pub u32,
+    slot_indices: pub [u32; NODES_FOLD_LEAVES],
 ) -> pub [[Field; NODE_FOLD_PUBLIC_LEN]; H] {
-    assert(slot_index < H);
-
-    verify_honk_proof_non_zk(
-        inner_vk,
-        inner_proof,
-        node_fold_public_inputs,
-        inner_key_hash,
-    );
+    for k in 0..NODES_FOLD_LEAVES {
+        verify_honk_proof_non_zk(
+            inner_vk,
+            inner_proofs[k],
+            node_fold_public_inputs[k],
+            inner_key_hash,
+        );
+    }
 
     // Signature parity with `nodes_fold`: see `c3_fold_kernel`.
     let _ = (acc_vk, acc_proof, fold_key_hash, kernel_key_hash, acc_public_inputs);
 
     assert(is_first_step);
 
-    let mut out: [[Field; NODE_FOLD_PUBLIC_LEN]; H] = [[0; NODE_FOLD_PUBLIC_LEN]; H];
-
-    for i in 0..H {
-        let idx = i as u32;
-        if idx == slot_index {
-            out[i] = node_fold_public_inputs;
-        }
-    }
-
-    out
+    place_nodes(
+        [[0; NODE_FOLD_PUBLIC_LEN]; H],
+        node_fold_public_inputs,
+        slot_indices,
+    )
 }

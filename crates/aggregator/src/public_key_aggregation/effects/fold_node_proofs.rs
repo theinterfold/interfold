@@ -5,9 +5,9 @@
 use super::super::*;
 
 impl PublicKeyAggregator {
-    /// Dispatch the next [`ZkRequest::NodesFoldStep`] if the next slot's proof is buffered
-    /// and no step is currently in flight. When all H slots are done, calls
-    /// [`try_dispatch_dkg_aggregation`].
+    /// Dispatch the next [`ZkRequest::NodesFoldStep`] when the proofs of every slot it takes
+    /// ([`nodes_fold_step_len`]) are buffered and no step is in flight. When all H slots are done,
+    /// calls [`try_dispatch_dkg_aggregation`].
     pub(in crate::actors::publickey_aggregator) fn try_dispatch_nodes_fold_step(
         &mut self,
         ec: &EventContext<Sequenced>,
@@ -41,24 +41,26 @@ impl PublicKeyAggregator {
             return self.try_dispatch_dkg_aggregation(ec);
         }
 
-        let Some(&party_id) = honest_party_ids.iter().nth(next_slot as usize) else {
-            return Ok(());
-        };
-
-        let Some(Some(inner_proof)) = dkg_node_proofs.get(&party_id) else {
-            return Ok(());
-        };
-
-        let inner_proof = inner_proof.clone();
+        // A step takes the next slots in canonical order, so it waits for each of their proofs;
+        // folding one slot at a time waited the same way, one slot at a time.
+        let len = nodes_fold_step_len(next_slot as usize, total_slots);
+        let mut inner_proofs = Vec::with_capacity(len);
+        for party_id in honest_party_ids.iter().skip(next_slot as usize).take(len) {
+            let Some(Some(inner_proof)) = dkg_node_proofs.get(party_id) else {
+                return Ok(());
+            };
+            inner_proofs.push(inner_proof.clone());
+        }
+        let slot_indices: Vec<u32> = (next_slot..next_slot + len as u32).collect();
         let prior_accumulator = nodes_fold_accumulator.clone();
 
         let corr = CorrelationId::new();
         self.bus.publish(
             ComputeRequest::zk(
                 ZkRequest::NodesFoldStep(NodesFoldStepRequest {
-                    inner_proof,
+                    inner_proofs,
                     prior_accumulator,
-                    slot_index: next_slot,
+                    slot_indices,
                     total_slots,
                     e3_id: self.e3_id.to_string(),
                     params_preset: self.params_preset,
@@ -71,8 +73,11 @@ impl PublicKeyAggregator {
         )?;
 
         info!(
-            "PublicKeyAggregator: dispatched NodesFoldStep slot={}/{} for E3 {}",
-            next_slot, total_slots, self.e3_id
+            "PublicKeyAggregator: dispatched NodesFoldStep slots={}..{}/{} for E3 {}",
+            next_slot,
+            next_slot as usize + len,
+            total_slots,
+            self.e3_id
         );
 
         self.state.try_mutate(ec, |state| {
@@ -132,6 +137,7 @@ impl PublicKeyAggregator {
         let Some(PublicKeyAggregatorState::GeneratingC5Proof {
             nodes_fold_step_correlation,
             nodes_fold_completed_slots,
+            honest_party_ids,
             last_ec,
             ..
         }) = state.as_ref()
@@ -143,7 +149,10 @@ impl PublicKeyAggregator {
             return Ok(());
         }
 
-        let completed = nodes_fold_completed_slots + 1;
+        // The step in flight took exactly the slots `nodes_fold_step_len` gives for this point.
+        let completed = nodes_fold_completed_slots
+            + nodes_fold_step_len(*nodes_fold_completed_slots as usize, honest_party_ids.len())
+                as u32;
         let Some(ec) = last_ec.clone() else {
             return Err(anyhow::anyhow!(
                 "No EventContext for NodesFoldStep response"
@@ -151,9 +160,8 @@ impl PublicKeyAggregator {
         };
 
         info!(
-            "PublicKeyAggregator: NodesFoldStep complete (slot {} done) for E3 {}",
-            completed - 1,
-            self.e3_id
+            "PublicKeyAggregator: NodesFoldStep complete ({} slots done) for E3 {}",
+            completed, self.e3_id
         );
 
         self.state.try_mutate_without_context(|state| {
