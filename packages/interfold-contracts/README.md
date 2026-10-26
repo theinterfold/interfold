@@ -350,6 +350,11 @@ constants in `scripts/utils.ts`, which `ActiveCryptoConfig.sol` also uses.
 Inside the monorepo, the deploy ignores `INTERFOLD_CIRCUITS_DIR` and reads its
 own circuit build.
 
+The package's `dist/vk-commitments.json` must match the selected archive's
+`vk-commitments.json` and hash files. Runtime-compatible older archives may lack
+the metadata required for deployment; use matching release assets. These
+comparisons do not establish source provenance or proof acceptance.
+
 ## Configuration
 
 ### Using Environment Variables (Development)

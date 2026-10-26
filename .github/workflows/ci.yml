@@ -195,21 +195,6 @@ jobs:
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
-            # Binding generation/packaging and artifact-tooling checks share this job. These paths
-            # do not feed check:verifiers, so they stay out of its shared pre-push filter.
-            circuit_build:
-              - 'scripts/circuits/artifacts.ts'
-              - 'scripts/circuits/artifacts.test.ts'
-              - 'packages/interfold-contracts/scripts/protocol/constants.ts'
-              - 'packages/interfold-contracts/bfv.ts'
-              - 'packages/interfold-contracts/crypto-config.json'
-              - 'packages/interfold-contracts/contracts/lib/BfvProtocol.sol'
-              - 'packages/interfold-contracts/.prettierrc.yml'
-              - 'packages/interfold-contracts/package.json'
-              - 'packages/interfold-contracts/tsconfig.json'
-              - 'scripts/circuits/bfv-bindings.test.ts'
-              - 'scripts/circuits/crypto-config.mjs'
-              - 'scripts/checks/committee.sh'
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         if: ${{ !inputs.release_candidate }}
         id: circuit_filter
@@ -224,7 +209,7 @@ jobs:
           BINDINGS="${{ steps.filter.outputs.bindings }}"
           CIRCUITS="${{ steps.circuit_filter.outputs.circuits }}"
           VERIFIERS="${{ steps.circuit_filter.outputs.verifiers }}"
-          CIRCUIT_BUILD="${{ steps.filter.outputs.circuit_build }}"
+          CRYPTO_CONFIG="${{ steps.circuit_filter.outputs.crypto_config }}"
           TEMPLATES="${{ steps.filter.outputs.templates }}"
           SDK="${{ steps.filter.outputs.sdk }}"
           REACT="${{ steps.filter.outputs.react }}"
@@ -265,9 +250,8 @@ jobs:
           echo "build_e3_support_dev=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CIRCUITS $SDK $CI $TOOLING)" >> $GITHUB_OUTPUT
           echo "openvm_worker=$(any $FORCE $OPENVM_WORKER $CI)" >> $GITHUB_OUTPUT
           echo "openvm_guest=$(any $FORCE $OPENVM_GUEST $CI)" >> $GITHUB_OUTPUT
-          # build_circuits runs check:verifiers, so every input of the generated verifiers runs it.
-          # CIRCUIT_BUILD adds the other files that the job runs or hashes.
-          echo "build_circuits=$(any $FORCE $RUST $CIRCUITS $VERIFIERS $CIRCUIT_BUILD $CI $TOOLING)" >> $GITHUB_OUTPUT
+          # All source owners, generated outputs, consumers, and checker inputs share hook routing.
+          echo "build_circuits=$(any $FORCE $RUST $CIRCUITS $VERIFIERS $CRYPTO_CONFIG $CI $TOOLING)" >> $GITHUB_OUTPUT
           # nargo reads only the circuit paths, so Rust and tooling changes skip the Noir checks.
           echo "noir_checks=$(any $FORCE $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           echo "integration_prebuild=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI $TOOLING)" >> $GITHUB_OUTPUT
@@ -774,6 +758,9 @@ jobs:
       # Without coverage instrumentation. No step reads the coverage report, instrumentation makes
       # the suite several times slower, and under `--coverage` BfvVkBindingIntegration skips the
       # on-chain Honk verification because instrumented verifiers run out of gas.
+      - name: Build deployment utilities for installed-package tests
+        run: pnpm -C packages/interfold-contracts compile:ts
+
       - name: 'Test the contracts'
         run: 'pnpm evm:test'
 
@@ -1063,10 +1050,15 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
-          # Keeps the token out of .git/config, where install and build scripts could read it and use
-          # this job's actions: write. The cancel step gets the token on its own.
+          # Keep the cancellation token out of install/build script credentials.
           persist-credentials: false
           submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - uses: ./.github/actions/cache-dependencies
 
       - name: Install Nargo
         uses: noir-lang/noirup@bedac8fbe6a059177c35e565f9f76db54a795976 # v0.1.5
@@ -1109,8 +1101,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Check generated crypto bindings
-        run: pnpm check:crypto-bindings
+      - name: Check complete generated crypto sources
+        run: pnpm check:crypto-config
 
       - name: Build circuits
         run: pnpm build:circuits
@@ -1128,12 +1120,9 @@ jobs:
       - name: Test circuit artifact validation and verifier selection
         run: pnpm test:circuit-build -- --include-ignored && pnpm test:circuit-tooling
 
-      # The generated verifier contracts must match the freshly built verification keys. A drift
-      # means the deployed verifier accepts a different circuit from the one in this tree.
-      #
-      # `--no-compile`: without it the checker deletes every nargo target directory first, its guard
-      # against comparing stale artifacts, and recompiles them. The step above has just built these
-      # circuits, so there is nothing stale to guard against.
+      - name: Check named VK commitments
+        run: pnpm build:circuits check-vk-commitments
+
       - name: Check generated verifiers are in sync
         run: pnpm check:verifiers --no-compile
 
@@ -1216,6 +1205,9 @@ jobs:
 
       - name: Hydrate the insecure-64/minimum circuits
         run: pnpm build:circuits --preset insecure-64 --committee minimum --hydrate-bin-only --no-clean-targets
+
+      - name: Prepare published VK commitment metadata
+        run: pnpm build:circuits prepare-vk-commitments
 
       - name: Verify circuit artifacts
         run: |

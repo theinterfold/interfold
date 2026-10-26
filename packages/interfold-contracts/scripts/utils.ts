@@ -13,6 +13,7 @@ import {
 import fs from "fs";
 import type { HardhatRuntimeEnvironment } from "hardhat/types/hre";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import path from "path";
 
 import {
@@ -431,6 +432,144 @@ export function readVkRecursiveHash(
   return `0x${raw.toString("hex")}`;
 }
 
+interface VkCommitmentKey {
+  circuit: string;
+  proofVariant: "default" | "recursive" | "evm";
+  hashKind: "bb-vk-hash" | "recursive-tree-commitment";
+}
+
+interface VkCommitmentPair {
+  preset: string;
+  committee: string;
+  commitments: Record<string, string>;
+}
+
+function readVkCommitmentValues(
+  requested: VkCommitmentKey[],
+  selected: ActiveBfvConfig = ACTIVE_BFV_CONFIG,
+): string[] {
+  const repo = findMonorepoRoot();
+  const artifacts = repo
+    ? path.join(repo, "dist/circuits")
+    : process.env[CIRCUITS_DIR_ENV];
+  if (!artifacts)
+    throw new Error(`Set ${CIRCUITS_DIR_ENV} to the release circuit directory`);
+  const packaged = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../vk-commitments.json",
+  );
+  const manifestPath = repo
+    ? path.join(repo, "circuits/vk-commitments.json")
+    : packaged;
+  if (!fs.existsSync(manifestPath))
+    throw new Error(
+      `Missing VK commitment manifest: ${manifestPath}; run pnpm generate:vk-commitments after preparing the circuit artifacts`,
+    );
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
+    formatVersion: number;
+    pairs: VkCommitmentPair[];
+  };
+  if (manifest.formatVersion !== 1 || !Array.isArray(manifest.pairs))
+    throw new Error("Unsupported VK commitment manifest");
+  const pairs = manifest.pairs.filter(
+    (pair) =>
+      pair.preset === selected.preset && pair.committee === selected.committee,
+  );
+  if (pairs.length !== 1)
+    throw new Error(
+      `Expected one VK commitment pair for ${selected.preset}/${selected.committee}`,
+    );
+  const pair = pairs[0];
+  const pairDirectory = path.join(
+    artifacts,
+    selected.preset,
+    selected.committee,
+  );
+  const slice = JSON.parse(
+    fs.readFileSync(path.join(pairDirectory, "vk-commitments.json"), "utf8"),
+  );
+  if (!isDeepStrictEqual(slice, pair))
+    throw new Error(
+      "Circuit archive VK commitment slice differs from the package manifest",
+    );
+  const stamp = JSON.parse(
+    fs.readFileSync(path.join(pairDirectory, ".build-stamp.json"), "utf8"),
+  );
+  if (
+    stamp.preset !== selected.preset ||
+    stamp.committee !== selected.committee
+  )
+    throw new Error(
+      "VK commitment pair stamp differs from the selected configuration",
+    );
+  return requested.map((request) => {
+    if (
+      !/^(threshold|recursive_aggregation)\/[a-z][a-z0-9_]*$/.test(
+        request.circuit,
+      )
+    )
+      throw new Error("Invalid VK commitment name");
+    const key = `${request.hashKind}/${request.proofVariant}/${request.circuit}`;
+    const value = pair.commitments?.[key];
+    if (!value) throw new Error(`Missing named VK commitment ${key}`);
+    if (!/^0x[0-9a-f]{64}$/.test(value))
+      throw new Error("Invalid VK commitment value");
+    const name = request.circuit.split("/").pop()!;
+    const extension =
+      request.hashKind === "bb-vk-hash" ? "vk_hash" : "vk_tree_hash";
+    const filename = path.join(
+      pairDirectory,
+      request.proofVariant,
+      request.circuit,
+      `${name}.${extension}`,
+    );
+    if (readVkRecursiveHash(filename, selected) !== value)
+      throw new Error("Circuit VK hash differs from the named VK commitment");
+    return value;
+  });
+}
+
+export function readBfvVkCommitment(
+  circuit: string,
+  proofVariant: VkCommitmentKey["proofVariant"],
+  hashKind: VkCommitmentKey["hashKind"],
+  config?: ActiveBfvConfig,
+): string {
+  return readVkCommitmentValues(
+    [{ circuit, proofVariant, hashKind }],
+    config,
+  )[0];
+}
+
+export function getBfvVkCommitments(config?: ActiveBfvConfig) {
+  const [nodesFold, c5, c6Fold, c7] = readVkCommitmentValues(
+    [
+      {
+        circuit: "recursive_aggregation/nodes_fold",
+        proofVariant: "default",
+        hashKind: "recursive-tree-commitment",
+      },
+      {
+        circuit: "threshold/pk_aggregation",
+        proofVariant: "default",
+        hashKind: "bb-vk-hash",
+      },
+      {
+        circuit: "recursive_aggregation/c6_fold",
+        proofVariant: "default",
+        hashKind: "recursive-tree-commitment",
+      },
+      {
+        circuit: "threshold/decrypted_shares_aggregation",
+        proofVariant: "default",
+        hashKind: "bb-vk-hash",
+      },
+    ],
+    config,
+  );
+  return { nodesFold, c5, c6Fold, c7 };
+}
+
 /** On-chain `BfvPkVerifier` sub-circuit VK immutables (for deploy-time staleness checks). */
 export interface BfvPkVerifierVkReader {
   expectedNodesFoldKeyHash(): Promise<string>;
@@ -452,14 +591,8 @@ export async function assertBfvPkVerifierSubCircuitVkHashes(
   address: string,
   config?: ActiveBfvConfig,
 ): Promise<void> {
-  const expectedNodesFold = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths(config).nodesFold,
-    config,
-  );
-  const expectedC5 = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths(config).c5,
-    config,
-  );
+  const { nodesFold: expectedNodesFold, c5: expectedC5 } =
+    getBfvVkCommitments(config);
   const [onChainNodesFold, onChainC5] = await Promise.all([
     verifier.expectedNodesFoldKeyHash(),
     verifier.expectedC5KeyHash(),
@@ -485,14 +618,8 @@ export async function assertBfvDecryptionVerifierSubCircuitVkHashes(
   address: string,
   config?: ActiveBfvConfig,
 ): Promise<void> {
-  const expectedC6Fold = readVkRecursiveHash(
-    getBfvDecryptionSubCircuitVkHashPaths(config).c6Fold,
-    config,
-  );
-  const expectedC7 = readVkRecursiveHash(
-    getBfvDecryptionSubCircuitVkHashPaths(config).c7,
-    config,
-  );
+  const { c6Fold: expectedC6Fold, c7: expectedC7 } =
+    getBfvVkCommitments(config);
   const [onChainC6Fold, onChainC7] = await Promise.all([
     verifier.expectedC6FoldKeyHash(),
     verifier.expectedC7KeyHash(),

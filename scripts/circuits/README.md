@@ -41,7 +41,7 @@ needed for actual circuit/verifier work.
 pnpm build:circuits
 
 # Switch the active committee size (regenerates committee/active.nr,
-# default/mod.nr, and patches BFV_DKG_H / BFV_THRESHOLD_T in utils.ts atomically)
+# default/mod.nr, and selects deployment preset/committee names atomically)
 pnpm build:circuits --committee micro
 
 # Combine preset + committee
@@ -67,6 +67,14 @@ pnpm build:circuits sync-preset --preset insecure-64 --committee minimum
 
 # Compare generated files in an isolated copy
 pnpm build:circuits check --committee all
+
+# Prepare all pairs explicitly (this switches live selectors)
+pnpm build:circuits --preset all --committee all
+pnpm generate:vk-commitments
+pnpm check:crypto-config --full
+
+# Optional independent key/verifier rederivation over the prepared matrix
+pnpm qualify:crypto-config
 
 # Benchmark production preparation and Noir execution with artificial inputs
 pnpm bench:circuits run --mode insecure --committee minimum --circuit dkg/pk --leaf-only
@@ -106,7 +114,7 @@ the generator would produce.
 
 - `--preset <name>` - Parameter preset: `insecure-64` (default), `secure-8192`, or `all`
 - `--committee <name>` - Committee size: `minimum` (default), `micro`, `small`
-- `--skip-utils-patch` - Skip rewriting committee values and BFV configuration hashes in
+- `--skip-utils-patch` - Skip selecting deployment preset/committee names in
   `packages/interfold-contracts/scripts/utils.ts`
 - `--group <groups>` - Circuit groups (comma-separated: dkg,threshold)
 - `--circuit <name>` - Build specific circuit(s)
@@ -127,6 +135,20 @@ Only a complete build with verification keys writes the `nodes_fold.vk_tree_hash
 a failed circuit, removes both anchors from the pair and from `circuits/bin/`. An old anchor can
 hash a key that no longer matches the compiled circuits. Run a complete build before you deploy the
 BFV verifiers or aggregate proofs.
+
+After preparing every build-policy pair, run `pnpm generate:vk-commitments`. Partial or failed
+builds invalidate affected archive metadata, not the committed catalogue. Generation preserves old
+source stamps; it does not qualify them against current sources.
+
+For published archives, `pnpm build:circuits prepare-vk-commitments` fills the archive metadata only
+if its VK commitments match the committed catalogue. It never refreshes those expectations or source
+stamps.
+
+`pnpm check:crypto-config` needs Cargo and pinned Nargo but no compiled artifacts. Add `--full` to
+validate a prepared matrix, or use `pnpm qualify:crypto-config` for backend key/verifier
+rederivation. Neither prepares or repairs artifacts. Use `--artifacts-dir <directory>` for a custom
+output (`--output` during generation). Source checks and default-pair CI are not complete-matrix
+qualification or proof acceptance.
 
 `sync-config` updates only `scripts/utils.ts` and `BfvProtocol.sol`. Use it when BFV parameter
 constants change and the prebuilt circuit artifacts already exist. It does not compile Noir circuits

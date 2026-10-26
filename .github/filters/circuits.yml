@@ -19,8 +19,28 @@ circuits:
   - '!**/*.md'
   - '!**/*.mdx'
 
-# The other inputs of the generated verifier contracts. In CI they start only `build_circuits`,
-# which runs `check:verifiers`.
+# Configuration/consumer inputs outside the Noir compiler.
+crypto_config:
+  - 'scripts/circuits/**'
+  - 'scripts/checks/committee.sh'
+  - 'scripts/hooks/**'
+  - '.husky/pre-push'
+  - '.github/filters/circuits.yml'
+  - '.github/workflows/ci.yml'
+  - 'Cargo.toml'
+  - 'Cargo.lock'
+  - 'package.json'
+  - 'crates/fhe/**'
+  - 'crates/parity-matrix/**'
+  - 'crates/safe/**'
+  - 'packages/interfold-contracts/**'
+  - 'packages/interfold-sdk/**'
+  - 'packages/interfold-dashboard/**'
+  - 'templates/**'
+  - '!**/*.md'
+  - '!**/*.mdx'
+
+# Other inputs of the generated verifier contracts.
 verifiers:
   - 'packages/interfold-contracts/contracts/verifiers/**'
   - 'crates/zk/prover/versions.json'

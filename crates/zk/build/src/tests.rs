@@ -725,6 +725,185 @@ fn deployment_selection_switches_only_names_and_is_idempotent_for_every_pair() {
 }
 
 #[test]
+fn complete_preset_generation_preserves_each_existing_pair_statement() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let params = configuration::OperationParams::both().unwrap();
+    for preset in BfvPreset::PAIR_PRESETS {
+        for committee in CiphernodesCommitteeSize::ALL {
+            let original =
+                configuration::bound_updates(&root, preset, committee, params.get(preset)).unwrap();
+            for (path, full) in
+                configuration::preset_updates(&root, preset, committee, params.get(preset)).unwrap()
+            {
+                let previous = &original.iter().find(|(old, _)| *old == path).unwrap().1;
+                let normalized = |source: &str| {
+                    configuration::declarations(source)
+                        .into_iter()
+                        .map(|(k, v)| (k, compact(&v).replace(",]", "]").replace(",)", ")")))
+                        .collect::<std::collections::BTreeMap<_, _>>()
+                };
+                assert_eq!(
+                    normalized(&full),
+                    normalized(previous),
+                    "{preset:?}/{committee}: full generation changed a circuit statement"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn ownership_checks_reject_new_consumer_copies_even_with_a_generated_header() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    write(
+        root,
+        "packages/new-consumer/value.ts",
+        "export const width = CIRCUIT_DIMENSIONS.messageCoeffsCount;\n",
+    );
+    configuration::check_ownership(root).unwrap();
+    for copy in [
+        format!(
+            "// Generated. Do not edit.\nexport const MESSAGE_COEFFS_COUNT = {};\n",
+            e3_zk_config::MAX_MSG_NON_ZERO_COEFFS
+        ),
+        format!(
+            "export const DOMAIN = {:?};\n",
+            e3_fhe_params::INTERFOLD_BFV_VERSION
+        ),
+        format!(
+            "export const SCHEME = {:?};\n",
+            e3_fhe_params::BFV_ENCRYPTION_SCHEME
+        ),
+    ] {
+        write(root, "packages/new-consumer/value.ts", copy);
+        assert!(configuration::check_ownership(root)
+            .unwrap_err()
+            .to_string()
+            .contains("new-consumer"));
+    }
+    write(
+        root,
+        "packages/new-consumer/value.ts",
+        "export const width = CIRCUIT_DIMENSIONS.messageCoeffsCount;\n",
+    );
+    write(
+        root,
+        "packages/new-consumer/types/config.ts",
+        format!(
+            "export const MESSAGE_COEFFS_COUNT = {};\n",
+            e3_zk_config::MAX_MSG_NON_ZERO_COEFFS
+        ),
+    );
+    assert!(configuration::check_ownership(root)
+        .unwrap_err()
+        .to_string()
+        .contains("types/config.ts"));
+}
+
+#[test]
+fn full_source_checks_detect_stale_missing_and_wrong_alias_declarations_without_repair() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    artifacts::copy_tree(
+        &repo.join("circuits/lib"),
+        &root.join("circuits/lib"),
+        &["target", "Prover.toml", "Witness.toml"],
+    )
+    .unwrap();
+    for path in [
+        "packages/interfold-contracts/scripts/utils.ts",
+        "packages/interfold-contracts/contracts/lib/BfvProtocol.sol",
+    ] {
+        write(root, path, fs::read(repo.join(path)).unwrap());
+    }
+    write_pins(root);
+    configuration::check(root, &request()).expect("unmodified sources must pass");
+    let threshold = root.join("circuits/lib/src/configs/insecure/threshold.nr");
+    let original = fs::read_to_string(&threshold).unwrap();
+    let declaration = configuration::declarations(&original)["USER_DATA_ENCRYPTION_BIT_U"].clone();
+    for (replacement, expected) in [
+        (
+            "pub global USER_DATA_ENCRYPTION_BIT_U: u32 = 99;",
+            "differs from generated configuration",
+        ),
+        ("", "Missing USER_DATA_ENCRYPTION_BIT_U"),
+    ] {
+        fs::write(&threshold, original.replace(&declaration, replacement)).unwrap();
+        let before = snapshot(root);
+        let error = configuration::check(root, &request())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(expected), "{error}");
+        assert_eq!(snapshot(root), before);
+        fs::write(&threshold, &original).unwrap();
+    }
+    configuration::check(root, &request()).expect("restored sources must pass");
+    let dkg = root.join("circuits/lib/src/configs/insecure/dkg.nr");
+    let original = fs::read_to_string(&dkg).unwrap();
+    fs::write(
+        &dkg,
+        original.replace(
+            "THRESHOLD_SHARE_DECRYPTION_BIT_SK as SHARE_DECRYPTION_BIT_AGG",
+            "PK_AGGREGATION_BIT_PK as SHARE_DECRYPTION_BIT_AGG",
+        ),
+    )
+    .unwrap();
+    let before = snapshot(root);
+    let error = configuration::check(root, &request())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("DKG aggregate width must re-export THRESHOLD_SHARE_DECRYPTION_BIT_SK"),
+        "{error}"
+    );
+    assert_eq!(snapshot(root), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn successful_compiler_process_with_bug_diagnostic_is_not_accepted() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let compiler = temp.path().join("nargo");
+    for stream in ["", ">&2"] {
+        for message in ["bug: unconstrained output", "  bug: unconstrained output"] {
+            fs::write(
+                &compiler,
+                format!("#!/bin/sh\nprintf '%s\\n' '{message}' {stream}\nexit 0\n"),
+            )
+            .unwrap();
+            fs::set_permissions(&compiler, fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(run(Command::new(&compiler).arg("compile"))
+                .unwrap_err()
+                .to_string()
+                .contains("bug diagnostic"));
+        }
+        for message in [
+            "debug: compiled successfully",
+            "warning: unused variable\n  12 | let label = \"bug: a string\";",
+            "warning: unused variable\n  12 | // debug: trace input",
+        ] {
+            fs::write(
+                &compiler,
+                format!("#!/bin/sh\nprintf '%s\\n' '{message}' {stream}\nexit 0\n"),
+            )
+            .unwrap();
+            assert!(
+                run(Command::new(&compiler).arg("compile")).is_ok(),
+                "{message}"
+            );
+        }
+    }
+    fs::write(&compiler, "#!/bin/sh\nprintf 'compiled'\n").unwrap();
+    assert_eq!(
+        run(Command::new(&compiler).arg("compile")).unwrap(),
+        "compiled"
+    );
+}
+
+#[test]
 fn every_pair_replaces_whole_scalar_and_array_bound_declarations() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let params = configuration::OperationParams::both().unwrap();

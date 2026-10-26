@@ -18,12 +18,11 @@ preset/committee pair has its own H-shaped PK and T-shaped decryption public-inp
 `pnpm check:committee` compares committee Noir/Rust/BfvProtocol/deployment utils, complete threshold
 BFV tuples across deployment constants/Rust/preset Noir, and configuration IDs across contracts,
 tasks, SDK, and EVM helpers. Drift can register a tuple nodes/circuits do not implement. The
-committed default is insecure-64/minimum; CI rebuilds that selection and rejects diffs. Local
-active-preset cache mismatch is only a note. **Limits:** these source checks do not establish
+committed default is insecure-64/minimum; CI checks its selectors without switching the live tree.
+Local active-preset cache mismatch is only a note. **Limits:** these source checks do not establish
 verification-key or proof compatibility. With Nargo available, the gate runs
 `pnpm build:circuits check --committee all`. The Rust owner renders/formats an isolated library copy
-and compares generated files without swapping live files. Circuit CI also rejects
-committed-selection drift after rebuilding.
+and compares complete preset/committee declarations without swapping live files.
 
 C1/C2 `PK_GENERATION_*`/`SHARE_COMPUTATION_*` bounds are derived from preset+committee. Generator
 replaces whole declarations including array dimensions and rejects unknown prefixed globals, because
@@ -125,11 +124,10 @@ Each supported pair has concrete BfvPkVerifier/BfvDecryptionVerifier; immutable 
 public-input length and VK anchors. Selecting an already installed matching pair needs no
 replacement; missing routes or changed VKs require matching wrappers and replacement routers before
 mapping updates. Constructor code checks/nonzero VK anchors are mandatory. Deployment compares
-immutables with built artifacts. Generated verifiers must match built VKs: pre-push reads circuit
-filter paths and checked-out insecure pair (local committee/default minimum), refusing dirty
-relevant files; CI source builds compile/check the selected default pair using the same filter.
-Releases require the complete supported matrix. A wrapper name alone does not identify its accepted
-statement.
+immutables with built artifacts. Generated verifiers must match built VKs: relevant pre-push changes
+retain the selected-pair verifier check, and ordinary circuit CI builds/checks the default pair.
+Release validation still requires every release-required source-matched pair. A wrapper name alone
+does not identify its accepted statement.
 
 Published `@interfold/contracts` deploys do not require a checkout. Outside the monorepo,
 node-release metadata comes from `dist/node-release.json`, written by `compile:ts`, and BFV VK paths

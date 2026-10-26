@@ -74,6 +74,10 @@
         "default": "./dist/scripts/index.js"
       }
     },
+    "./scripts/utils": {
+      "types": "./dist/scripts/utils.d.ts",
+      "default": "./dist/scripts/utils.js"
+    },
     "./contracts/*": "./contracts/*",
     "./artifacts/*": "./artifacts/*",
     "./types": {
