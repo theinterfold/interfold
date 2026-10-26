@@ -98,10 +98,21 @@ fn verifier_reported_invalid_proof(stderr: &str, stdout: &str) -> bool {
 /// Runs bb and kills it at `timeout`. Output goes to files in `job_dir` so a full pipe
 /// cannot stall bb, and `JobDirGuard` removes them. The timeout error carries the elapsed time
 /// and the end of bb's stderr, because the job directory is gone once the caller returns.
-fn run_bb(bb: &Path, args: &[&str], job_dir: &Path, timeout: Duration) -> io::Result<Output> {
+/// `threads` caps bb's worker threads (`HARDWARE_CONCURRENCY`); `None` lets bb use every core.
+fn run_bb(
+    bb: &Path,
+    args: &[&str],
+    job_dir: &Path,
+    timeout: Duration,
+    threads: Option<usize>,
+) -> io::Result<Output> {
     let stdout_path = job_dir.join("bb.stdout");
     let stderr_path = job_dir.join("bb.stderr");
-    let mut child = StdCommand::new(bb)
+    let mut command = StdCommand::new(bb);
+    if let Some(threads) = threads {
+        command.env("HARDWARE_CONCURRENCY", threads.to_string());
+    }
+    let mut child = command
         .args(args)
         .stdin(Stdio::null())
         .stdout(fs::File::create(&stdout_path)?)
@@ -146,6 +157,8 @@ pub struct ZkProver {
     slow_low_memory: bool,
     /// Wall-clock cap of one bb run, from the backend.
     bb_timeout: Duration,
+    /// bb worker threads for this prover's runs; `None` uses every core.
+    bb_threads: Option<usize>,
 }
 
 impl ZkProver {
@@ -156,6 +169,16 @@ impl ZkProver {
             work_dir: backend.work_dir.clone(),
             slow_low_memory: false,
             bb_timeout: backend.bb_timeout,
+            bb_threads: None,
+        }
+    }
+
+    /// Return a prover whose bb runs use `threads` worker threads, for a job that shares the
+    /// machine with others of its kind.
+    pub fn with_bb_threads(&self, threads: usize) -> Self {
+        Self {
+            bb_threads: Some(threads.max(1)),
+            ..self.clone()
         }
     }
 
@@ -349,7 +372,13 @@ impl ZkProver {
             args.push("--slow_low_memory");
         }
 
-        let output = run_bb(&self.bb_binary, &args, &job_dir, self.bb_timeout)?;
+        let output = run_bb(
+            &self.bb_binary,
+            &args,
+            &job_dir,
+            self.bb_timeout,
+            self.bb_threads,
+        )?;
 
         if !output.status.success() {
             let stderr = bounded_process_output(&output.stderr);
@@ -508,7 +537,13 @@ impl ZkProver {
             verifier_target,
         ];
 
-        let output = run_bb(&self.bb_binary, &args, &job_dir, self.bb_timeout)?;
+        let output = run_bb(
+            &self.bb_binary,
+            &args,
+            &job_dir,
+            self.bb_timeout,
+            self.bb_threads,
+        )?;
 
         if !output.status.success() {
             let stderr = bounded_process_output(&output.stderr);
@@ -647,6 +682,7 @@ mod tests {
             &["-c", "echo 'proving step 3' >&2; sleep 30"],
             temp.path(),
             Duration::from_millis(300),
+            None,
         );
 
         let error = result.unwrap_err();
@@ -790,11 +826,26 @@ mod tests {
             &["proof-ok"],
             temp.path(),
             DEFAULT_BB_TIMEOUT,
+            None,
         )
         .unwrap();
 
         assert!(output.status.success());
         assert_eq!(output.stdout, b"proof-ok\n");
+    }
+
+    #[test]
+    fn a_thread_cap_reaches_bb_through_its_environment() {
+        let temp = tempfile::tempdir().unwrap();
+        let output = run_bb(
+            Path::new("/bin/sh"),
+            &["-c", "echo \"$HARDWARE_CONCURRENCY\""],
+            temp.path(),
+            DEFAULT_BB_TIMEOUT,
+            Some(3),
+        )
+        .unwrap();
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "3");
     }
 
     #[test]
@@ -806,6 +857,7 @@ mod tests {
             &["-c", "sleep 0.1; echo proof-ok"],
             temp.path(),
             Duration::from_secs(u64::MAX),
+            None,
         )
         .unwrap();
 
