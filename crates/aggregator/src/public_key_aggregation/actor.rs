@@ -7,7 +7,8 @@
 use crate::domain::committee::committee_addresses_in_party_order;
 use crate::workflow::publickey_aggregation::{
     check_c1_keyshare_commitments, extract_lbfv_key_envelope_commitment, extract_pk_commitment,
-    verify_dkg_fold_attestation, C1Dispatch, HonestSelection, PublicKeyAggregation,
+    placeholder_dkg_aggregator_v2_proof, verify_dkg_fold_attestation, C1Dispatch, HonestSelection,
+    PublicKeyAggregation,
 };
 use crate::{
     LbfvAggregationStateV1, LbfvContributionVerificationStateV1, LbfvPublicKeyPublicationStateV1,
@@ -91,6 +92,9 @@ pub struct PublicKeyAggregator {
     /// demotes it does not discard that work: the chain accepts the first valid key publication.
     started_as_aggregator: bool,
     effects_enabled: bool,
+    /// Test-only: `false` skips the l-BFV row aggregation, fold chain and `DkgAggregationV2`,
+    /// publishing a mock-only placeholder DKG proof instead. Always `true` in production.
+    proof_aggregation_enabled: bool,
     lbfv_retry_clock: Arc<dyn LbfvRetryClock>,
     lbfv_retry_timer: Option<SpawnHandle>,
     /// Canonical publication is independent of this node's local DKG phase.
@@ -135,6 +139,7 @@ pub struct PublicKeyAggregatorParams {
     pub initial_is_aggregator: bool,
     pub initial_stage: E3Stage,
     pub effects_enabled: bool,
+    pub proof_aggregation_enabled: bool,
 }
 
 /// Aggregate PublicKey for a committee of nodes. This actor listens for KeyshareCreated events
@@ -178,6 +183,7 @@ impl PublicKeyAggregator {
             is_aggregator: params.initial_is_aggregator,
             started_as_aggregator,
             effects_enabled: params.effects_enabled,
+            proof_aggregation_enabled: params.proof_aggregation_enabled,
             lbfv_retry_clock,
             lbfv_retry_timer: None,
             key_published: false,

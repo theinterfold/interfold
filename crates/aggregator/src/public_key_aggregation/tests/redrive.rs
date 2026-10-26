@@ -50,6 +50,7 @@ fn redrive_fixture(
             initial_is_aggregator: true,
             initial_stage: E3Stage::None,
             effects_enabled: true,
+            proof_aggregation_enabled: true,
         },
         test_state(lbfv_generating_state(CorrelationId::new())),
         Arc::new(FixedClock(now)),

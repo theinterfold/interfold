@@ -13,6 +13,10 @@ impl NodeProofAggregator {
         msg: TypedEvent<LbfvKeyShareDocumentCreated>,
     ) {
         let (msg, _) = msg.into_components();
+        // Only the generation fold reads the row proofs; a skipped node never builds one.
+        if !self.proof_aggregation_enabled {
+            return;
+        }
         let e3_id = msg.document.e3_id().clone();
         let role = msg.document.role();
         let entry = self

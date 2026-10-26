@@ -245,6 +245,11 @@ impl PublicKeyAggregator {
         if self.can_continue_aggregation_effects() {
             self.try_dispatch_nodes_fold_step(&ec)?;
         }
+        // The skipped l-BFV path has no fold step to advance: the last honest node's empty
+        // fold is what completes the roster, so publication is attempted here.
+        if self.is_lbfv() && !self.proof_aggregation_enabled {
+            self.try_dispatch_lbfv_aggregation_rows(&ec)?;
+        }
         Ok(())
     }
 }

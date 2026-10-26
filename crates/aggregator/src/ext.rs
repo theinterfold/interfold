@@ -84,6 +84,7 @@ pub struct PublicKeyAggregatorExtension {
     bus: BusHandle,
     interfold_addresses: HashMap<u64, Address>,
     signer: Address,
+    proof_aggregation_enabled: bool,
 }
 
 impl PublicKeyAggregatorExtension {
@@ -91,11 +92,13 @@ impl PublicKeyAggregatorExtension {
         bus: &BusHandle,
         interfold_addresses: HashMap<u64, Address>,
         signer: Address,
+        proof_aggregation_enabled: bool,
     ) -> Box<Self> {
         Box::new(Self {
             bus: bus.clone(),
             interfold_addresses,
             signer,
+            proof_aggregation_enabled,
         })
     }
 }
@@ -238,6 +241,7 @@ impl E3Extension for PublicKeyAggregatorExtension {
                 initial_is_aggregator: load_is_active_aggregator(ctx),
                 initial_stage: E3Stage::CommitteeFinalized,
                 effects_enabled: true,
+                proof_aggregation_enabled: self.proof_aggregation_enabled,
             },
             sync_state,
         );
@@ -372,6 +376,7 @@ impl E3Extension for PublicKeyAggregatorExtension {
                 initial_is_aggregator: load_is_active_aggregator(ctx),
                 initial_stage,
                 effects_enabled: false,
+                proof_aggregation_enabled: self.proof_aggregation_enabled,
             },
             sync_state,
         );
@@ -1560,6 +1565,7 @@ mod tests {
             &bus,
             HashMap::from([(1, Address::repeat_byte(0x11))]),
             signer,
+            true,
         )
         .hydrate(&mut ctx, &snapshot)
         .await?;
@@ -1646,6 +1652,7 @@ mod tests {
             &bus,
             HashMap::from([(1, Address::repeat_byte(0x11))]),
             signer,
+            true,
         )
         .hydrate(&mut ctx, &snapshot)
         .await

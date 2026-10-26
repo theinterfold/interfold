@@ -71,6 +71,7 @@ async fn c1_result_waits_for_replayed_inputs() -> Result<()> {
             initial_is_aggregator: true,
             initial_stage: E3Stage::None,
             effects_enabled: true,
+            proof_aggregation_enabled: true,
         },
         test_state(state),
     );
@@ -266,6 +267,7 @@ async fn pk_aggregation_proof_pending_carries_canonical_committee_dims() -> Resu
             initial_is_aggregator: true,
             initial_stage: E3Stage::None,
             effects_enabled: true,
+            proof_aggregation_enabled: true,
         },
         test_state(initial_state),
     );
@@ -341,6 +343,7 @@ async fn early_exclusion_keeps_full_committee_for_final_proof_binding() -> Resul
             initial_is_aggregator: true,
             initial_stage: E3Stage::None,
             effects_enabled: true,
+            proof_aggregation_enabled: true,
         },
         test_state(state),
     );

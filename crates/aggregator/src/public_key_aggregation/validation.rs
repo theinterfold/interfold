@@ -113,6 +113,44 @@ pub(crate) fn extract_lbfv_key_envelope_commitment(
         .expect("the V2 commitment slice has a fixed length"))
 }
 
+/// Build the mock-only `DkgAggregatorV2` statement published when proof aggregation is disabled
+/// for testing. It fills the slots the registry layout readers and the mock key verifier
+/// consume: honest party IDs, the committee-hash limbs and the key-envelope commitment. Every
+/// other slot (verification-key bindings, aggregate commitments, session domain) stays zero, and
+/// the proof bytes are a single zero byte, so no production verifier accepts it.
+pub(crate) fn placeholder_dkg_aggregator_v2_proof(
+    honest_party_ids: &[u64],
+    committee_addresses: &[alloy::primitives::Address],
+    key_envelope_commitment: [u8; 32],
+    lbfv_row_count: usize,
+) -> Proof {
+    let layout = e3_zk_config::output_layout::DkgAggregatorV2PublicLayout::new(
+        honest_party_ids.len(),
+        lbfv_row_count,
+    );
+    let width = e3_zk_config::FIELD_BYTE_LEN;
+    let mut signals = vec![0u8; layout.field_count * width];
+    let mut put = |index: usize, value: &[u8]| {
+        let start = index * width;
+        signals[start..start + width].copy_from_slice(value);
+    };
+    for (slot, party_id) in honest_party_ids.iter().enumerate() {
+        put(
+            layout.party_ids.start + slot,
+            &alloy::primitives::U256::from(*party_id).to_be_bytes::<32>(),
+        );
+    }
+    let hash = e3_committee_hash::committee_hash_limbs_from_addresses(committee_addresses);
+    put(layout.committee_hash_hi, &hash.hi.0);
+    put(layout.committee_hash_lo, &hash.lo.0);
+    put(layout.key_envelope_commitment, &key_envelope_commitment);
+    Proof::new(
+        CircuitName::DkgAggregatorV2,
+        ArcBytes::from_bytes(&[0]),
+        ArcBytes::from_bytes(&signals),
+    )
+}
+
 /// Outcome of cross-checking each honest party's keyshare against its signed C1
 /// `pk_commitment` public signal.
 pub(crate) struct C1CommitmentAudit {
@@ -264,5 +302,51 @@ mod tests {
         let err = extract_lbfv_key_envelope_commitment(&proof, 2, 5)
             .expect_err("an incompatible public-signal shape must fail");
         assert!(err.to_string().contains("expected 1920"));
+    }
+
+    #[test]
+    fn placeholder_fills_exactly_the_slots_registry_readers_consume() {
+        let (h, rows) = (2, 3);
+        let committee = [
+            Address::repeat_byte(1),
+            Address::repeat_byte(2),
+            Address::repeat_byte(3),
+        ];
+        let commitment = [0xcd_u8; 32];
+
+        let proof = placeholder_dkg_aggregator_v2_proof(&[0, 2], &committee, commitment, rows);
+
+        let layout = e3_zk_config::output_layout::DkgAggregatorV2PublicLayout::new(h, rows);
+        let width = e3_zk_config::FIELD_BYTE_LEN;
+        assert_eq!(proof.circuit, CircuitName::DkgAggregatorV2);
+        assert_eq!(proof.public_signals.len(), layout.field_count * width);
+        // MockPkVerifier.sol reads the commitment at 21 + 3h.
+        assert_eq!(layout.key_envelope_commitment, 21 + 3 * h);
+        assert_eq!(
+            extract_lbfv_key_envelope_commitment(&proof, h, rows).unwrap(),
+            commitment
+        );
+
+        let slot = |index: usize| &proof.public_signals[index * width..(index + 1) * width];
+        let mut expected_party = [0u8; 32];
+        expected_party[31] = 2;
+        assert_eq!(slot(layout.party_ids.start), [0u8; 32]);
+        assert_eq!(slot(layout.party_ids.start + 1), expected_party);
+        let limbs = e3_committee_hash::committee_hash_limbs_from_addresses(&committee);
+        assert_eq!(slot(layout.committee_hash_hi), limbs.hi.0);
+        assert_eq!(slot(layout.committee_hash_lo), limbs.lo.0);
+
+        let filled = [
+            layout.party_ids.clone().collect::<Vec<_>>(),
+            vec![
+                layout.committee_hash_hi,
+                layout.committee_hash_lo,
+                layout.key_envelope_commitment,
+            ],
+        ]
+        .concat();
+        for index in (0..layout.field_count).filter(|index| !filled.contains(index)) {
+            assert_eq!(slot(index), [0u8; 32], "slot {index} must stay zero");
+        }
     }
 }
