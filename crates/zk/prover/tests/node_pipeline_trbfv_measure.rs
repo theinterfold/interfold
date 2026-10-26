@@ -31,6 +31,7 @@ use e3_zk_config::DkgInputType;
 use e3_zk_prover::{
     generate_c3_chonk_chain, DkgShareDecryptionCircuit as ShareDecryptionCircuit, NodeDkgFoldInput,
     PkAggregationCircuit, PkCircuit, PkGenerationCircuit, Provable, ShareComputationCircuit,
+    ShareEncryptionCircuit,
 };
 use e3_zk_witness::dkg::share_computation::Inputs as ShareComputationInputs;
 use fhe::bfv::{PublicKey, SecretKey};
@@ -356,6 +357,105 @@ async fn trbfv_c3_chonk_stack_measure() {
             )
         });
     }
+}
+
+/// C3 proving throughput: proves the same `MEASURE_C3_COUNT` (default 24) C3 slots with 1, 2 and 4
+/// proofs at a time, splitting `MEASURE_THREADS` (default 16) bb threads evenly between them. Needs
+/// `MEASURE_C3_CONCURRENCY=1`.
+#[tokio::test]
+async fn trbfv_c3_concurrency_measure() {
+    let Some((committee_size, committee_name)) =
+        pipeline::gate(PRESET, Some("MEASURE_C3_CONCURRENCY"))
+    else {
+        return;
+    };
+    let count: usize = std::env::var("MEASURE_C3_COUNT")
+        .map(|v| v.parse().expect("MEASURE_C3_COUNT"))
+        .unwrap_or(24);
+    let threads: usize = std::env::var("MEASURE_THREADS")
+        .map(|v| v.parse().expect("MEASURE_THREADS"))
+        .unwrap_or(16);
+    pipeline::install_bb_trace();
+    let committee = committee_size.values();
+    let bb = find_bb().await.expect("bb");
+    let (backend, _temp) = setup_test_prover(&bb).await;
+    let prover = pipeline::prover(&backend);
+    let artifacts_dir = prover.resolve_artifacts_dir(PRESET, &committee_name);
+    pipeline::stage(
+        &backend,
+        &artifacts_dir,
+        &[CircuitName::ShareEncryption],
+        &[],
+    )
+    .await;
+
+    let dkg_pk = prep("dkg key", || {
+        let (_, dkg_params) = build_pair_for_preset(PRESET).expect("DKG parameters");
+        let mut dkg_rng = rng();
+        PublicKey::new(&SecretKey::random(&dkg_params, &mut dkg_rng), &mut dkg_rng)
+    });
+    let sk_inputs = prep("own C2a inputs", || {
+        let (key_data, _, secret_key) =
+            node_fold_witness::pk_generation_sample_with_esi(PRESET, committee.clone())
+                .expect("key data");
+        let share_sk = node_fold_witness::share_computation_sk_from_pk(
+            PRESET,
+            committee.clone(),
+            &key_data,
+            &secret_key,
+        )
+        .expect("C2a data");
+        let config =
+            e3_zk_config::dkg::share_computation::Configs::for_preset(PRESET, committee_size)
+                .expect("C2 configuration");
+        ShareComputationInputs::compute(&config, &share_sk).expect("C2a inputs")
+    });
+    let slots_per_party = PRESET.metadata().num_moduli;
+    let config =
+        e3_zk_config::dkg::share_encryption::Configs::for_preset(PRESET).expect("C3 configuration");
+    let data: Vec<_> = prep("C3 witness data", || {
+        (slots_per_party..slots_per_party + count)
+            .map(|slot| {
+                node_fold_witness::share_encryption_for_slot(
+                    PRESET,
+                    &dkg_pk,
+                    &sk_inputs,
+                    slot,
+                    DkgInputType::SecretKey,
+                )
+                .expect("C3 witness data")
+            })
+            .collect()
+    });
+
+    for parallel in [1usize, 2, 4] {
+        let per_proof = (threads / parallel).max(1);
+        // Every bb process reads its thread count from the environment it inherits.
+        std::env::set_var("HARDWARE_CONCURRENCY", per_proof.to_string());
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(parallel)
+            .build()
+            .expect("pool");
+        let label = format!("c3_x{parallel}_t{per_proof}");
+        measure(&label, || {
+            pool.install(|| {
+                use rayon::prelude::*;
+                data.par_iter()
+                    .enumerate()
+                    .map(|(i, d)| {
+                        ShareEncryptionCircuit.prove(
+                            &prover,
+                            &config,
+                            d,
+                            &format!("measure-{label}-{i}"),
+                            &artifacts_dir,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+        });
+    }
+    std::env::set_var("HARDWARE_CONCURRENCY", threads.to_string());
 }
 
 /// Threshold decryption on the trBFV preset: the node's C6, and with `MEASURE_AGGREGATOR=1` the
