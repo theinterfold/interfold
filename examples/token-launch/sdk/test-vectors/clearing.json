@@ -1,0 +1,9270 @@
+{
+  "description": "Probe search, clearing and claim payouts, from the Solidity libraries (test/clearing.test.ts; UPDATE_VECTORS=1 rewrites this file). `sums1` and `sums2` are the revealed sums of the two rounds (0 at levels that were not revealed). `claims` give the immediate payout of a claim with the comparison `cmp`; a capped claim with cmp 1 pays nothing there (it registers and is filled by `marginalFills`).",
+  "cases": [
+    {
+      "name": "random-1",
+      "input": {
+        "prices": [
+          "17750000",
+          "39620000",
+          "58620000",
+          "71260000",
+          "83970000",
+          "106020000",
+          "109180000",
+          "110090000",
+          "123030000",
+          "132470000",
+          "156260000",
+          "169210000",
+          "175260000",
+          "187120000",
+          "193880000"
+        ],
+        "supply": "1492075",
+        "budgetUnit": "10000",
+        "saleDecimals": 6,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "15660",
+          "0",
+          "0",
+          "0",
+          "9156",
+          "0",
+          "0",
+          "0",
+          "1689",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "13010",
+          "11383",
+          "10375",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 4,
+          "hi": 8,
+          "probeMask2": 224
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 5,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "0",
+            "15660",
+            "13010",
+            "11383",
+            "10375",
+            "9156",
+            "0",
+            "0",
+            "0",
+            "1689",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 5,
+          "pStar": "87194009",
+          "sold": "1492074",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "114",
+            "paid": "9941",
+            "refund": "990059"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "4243",
+            "paid": "369965",
+            "refund": "630035"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "11468",
+            "paid": "999941",
+            "refund": "59"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "114",
+            "paid": "9941",
+            "refund": "990059"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "4243",
+            "paid": "369965",
+            "refund": "630035"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "11468",
+            "paid": "999941",
+            "refund": "59"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-2",
+      "input": {
+        "prices": [
+          "21000",
+          "43100",
+          "236500",
+          "386100",
+          "448300",
+          "737000",
+          "925600",
+          "1004700",
+          "1042300",
+          "1046800",
+          "1257100"
+        ],
+        "supply": "2432264736297828335",
+        "budgetUnit": "100",
+        "saleDecimals": 18,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "53122",
+          "0",
+          "0",
+          "29480",
+          "0",
+          "0",
+          "13534",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "22452",
+          "18115",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 6,
+          "hi": 9,
+          "probeMask2": 384
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 6,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "53122",
+            "0",
+            "0",
+            "29480",
+            "22452",
+            "18115",
+            "13534",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 6,
+          "pStar": "925600",
+          "sold": "2432264736297828335",
+          "remaining": "6594900515633003"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "108038029386343",
+            "paid": "100",
+            "refund": "9900"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "3997407087294727",
+            "paid": "3700",
+            "refund": "6300"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "10803802938634399",
+            "paid": "10000",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-3",
+      "input": {
+        "prices": [
+          "364500",
+          "490000",
+          "686900",
+          "859700",
+          "1156900",
+          "1213800",
+          "1259300",
+          "1408500"
+        ],
+        "supply": "25",
+        "budgetUnit": "100",
+        "saleDecimals": 0,
+        "sums1": [
+          "0",
+          "0",
+          "72541",
+          "0",
+          "54536",
+          "0",
+          "26693",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "93701",
+          "85312",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 2,
+          "probeMask2": 3
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 0,
+          "sums": [
+            "93701",
+            "85312",
+            "72541",
+            "0",
+            "54536",
+            "0",
+            "26693",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 0,
+          "pStar": "364500",
+          "sold": "25",
+          "remaining": "2"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-4",
+      "input": {
+        "prices": [
+          "2080",
+          "4369",
+          "6372",
+          "8332",
+          "10655",
+          "11905",
+          "13930",
+          "16122",
+          "17660",
+          "18909",
+          "20458",
+          "22576",
+          "23362"
+        ],
+        "supply": "4318470",
+        "budgetUnit": "1",
+        "saleDecimals": 6,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "37777",
+          "0",
+          "0",
+          "0",
+          "19000",
+          "0",
+          "0",
+          "0",
+          "4868",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "32100",
+          "31804",
+          "23349",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 4,
+          "hi": 8,
+          "probeMask2": 224
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 4,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "0",
+            "37777",
+            "32100",
+            "31804",
+            "23349",
+            "19000",
+            "0",
+            "0",
+            "0",
+            "4868",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 4,
+          "pStar": "8748",
+          "sold": "4318358",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "114",
+            "paid": "1",
+            "refund": "99"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "4229",
+            "paid": "37",
+            "refund": "63"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "11431",
+            "paid": "100",
+            "refund": "0"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "114",
+            "paid": "1",
+            "refund": "99"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "4229",
+            "paid": "37",
+            "refund": "63"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "11431",
+            "paid": "100",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-5",
+      "input": {
+        "prices": [
+          "514000000",
+          "837000000",
+          "2874000000",
+          "5066000000",
+          "6740000000",
+          "8672000000",
+          "9267000000",
+          "12159000000",
+          "12778000000"
+        ],
+        "supply": "167373540856031128404",
+        "budgetUnit": "1000000",
+        "saleDecimals": 18,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "52516",
+          "0",
+          "0",
+          "27765",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "86030",
+          "69459",
+          "58893",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 3,
+          "probeMask2": 7
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 0,
+          "sums": [
+            "86030",
+            "69459",
+            "58893",
+            "52516",
+            "0",
+            "0",
+            "27765",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 0,
+          "pStar": "514000000",
+          "sold": "167373540856031128404",
+          "remaining": "32239299610894941634"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "1945525291828793",
+            "paid": "1000000",
+            "refund": "99000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "71984435797665369",
+            "paid": "37000000",
+            "refund": "63000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "194552529182879377",
+            "paid": "100000000",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-6",
+      "input": {
+        "prices": [
+          "39490000",
+          "53070000",
+          "73780000",
+          "98020000",
+          "108260000",
+          "134400000",
+          "156050000",
+          "161970000",
+          "188970000",
+          "213490000",
+          "223450000",
+          "240120000",
+          "259180000",
+          "284170000"
+        ],
+        "supply": "2",
+        "budgetUnit": "10000",
+        "saleDecimals": 0,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "20330",
+          "0",
+          "0",
+          "0",
+          "9841",
+          "0",
+          "0",
+          "0",
+          "2448",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "20330",
+          "18080",
+          "13442",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 4,
+          "hi": 8,
+          "probeMask2": 224
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 4,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "0",
+            "20330",
+            "20330",
+            "18080",
+            "13442",
+            "9841",
+            "0",
+            "0",
+            "0",
+            "2448",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 4,
+          "pStar": "101650000",
+          "sold": "2",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-7",
+      "input": {
+        "prices": [
+          "23840000",
+          "47760000",
+          "68810000",
+          "95370000",
+          "99120000",
+          "102070000",
+          "109420000",
+          "122350000",
+          "140160000",
+          "155700000",
+          "162900000"
+        ],
+        "supply": "5407355",
+        "budgetUnit": "10000",
+        "saleDecimals": 6,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "19447",
+          "0",
+          "0",
+          "12862",
+          "0",
+          "0",
+          "6698",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "22053",
+          "20734",
+          "20650",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 3,
+          "probeMask2": 7
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 1,
+          "sums": [
+            "22053",
+            "20734",
+            "20650",
+            "19447",
+            "0",
+            "0",
+            "12862",
+            "0",
+            "0",
+            "6698",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 1,
+          "pStar": "38344071",
+          "sold": "5407354",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "260",
+            "paid": "9970",
+            "refund": "990030"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "9649",
+            "paid": "369982",
+            "refund": "630018"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "26079",
+            "paid": "999976",
+            "refund": "24"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "260",
+            "paid": "9970",
+            "refund": "990030"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "9649",
+            "paid": "369982",
+            "refund": "630018"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "26079",
+            "paid": "999976",
+            "refund": "24"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-8",
+      "input": {
+        "prices": [
+          "81900",
+          "124500",
+          "338500",
+          "627300",
+          "899800",
+          "997500",
+          "1228000",
+          "1427300",
+          "1513600",
+          "1579200",
+          "1623500",
+          "1745100",
+          "1747800",
+          "1810200",
+          "1996000",
+          "2233700"
+        ],
+        "supply": "2223910840932117527",
+        "budgetUnit": "100",
+        "saleDecimals": 18,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "49856",
+          "0",
+          "0",
+          "0",
+          "28673",
+          "0",
+          "0",
+          "0",
+          "16551",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "46666",
+          "41509",
+          "35425",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 4,
+          "hi": 8,
+          "probeMask2": 224
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 7,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "0",
+            "49856",
+            "46666",
+            "41509",
+            "35425",
+            "28673",
+            "0",
+            "0",
+            "0",
+            "16551",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 7,
+          "pStar": "1427300",
+          "sold": "2223910840932117527",
+          "remaining": "215012921784075770"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "70062355496391",
+            "paid": "100",
+            "refund": "9900"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "2592307153366496",
+            "paid": "3700",
+            "refund": "6300"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "7006235549639178",
+            "paid": "10000",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-9",
+      "input": {
+        "prices": [
+          "4254",
+          "5714",
+          "7888",
+          "8008",
+          "10084",
+          "11742",
+          "12616",
+          "15309",
+          "18253",
+          "21010",
+          "21176",
+          "23667"
+        ],
+        "supply": "2",
+        "budgetUnit": "1",
+        "saleDecimals": 0,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "17463",
+          "0",
+          "0",
+          "13516",
+          "0",
+          "0",
+          "9911",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "14967",
+          "13516",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 3,
+          "hi": 6,
+          "probeMask2": 48
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 3,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "17463",
+            "14967",
+            "13516",
+            "13516",
+            "0",
+            "0",
+            "9911",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 3,
+          "pStar": "8008",
+          "sold": "2",
+          "remaining": "1"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-10",
+      "input": {
+        "prices": [
+          "2689000000",
+          "5183000000",
+          "7391000000",
+          "7743000000",
+          "9170000000",
+          "11510000000",
+          "13954000000",
+          "14347000000",
+          "16372000000"
+        ],
+        "supply": "1400601",
+        "budgetUnit": "1000000",
+        "saleDecimals": 6,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "47216",
+          "0",
+          "0",
+          "27516",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "16739",
+          "9817",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 6,
+          "hi": 9,
+          "probeMask2": 384
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 6,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "47216",
+            "0",
+            "0",
+            "27516",
+            "16739",
+            "9817",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 6,
+          "pStar": "13954000000",
+          "sold": "1400601",
+          "remaining": "201017"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "71",
+            "paid": "990734",
+            "refund": "99009266"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "2651",
+            "paid": "36992054",
+            "refund": "63007946"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "7166",
+            "paid": "99994364",
+            "refund": "5636"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-11",
+      "input": {
+        "prices": [
+          "1124000000",
+          "1652000000",
+          "3894000000",
+          "4478000000",
+          "5255000000",
+          "5277000000",
+          "6291000000",
+          "7385000000",
+          "8491000000",
+          "9452000000",
+          "12065000000",
+          "14105000000",
+          "14312000000",
+          "15123000000"
+        ],
+        "supply": "6270907473309608540",
+        "budgetUnit": "1000000",
+        "saleDecimals": 18,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "6864",
+          "0",
+          "0",
+          "0",
+          "6553",
+          "0",
+          "0",
+          "0",
+          "2946",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "14097",
+          "9204",
+          "8916",
+          "8876",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 4,
+          "probeMask2": 15
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 1,
+          "sums": [
+            "14097",
+            "9204",
+            "8916",
+            "8876",
+            "6864",
+            "0",
+            "0",
+            "0",
+            "6553",
+            "0",
+            "0",
+            "0",
+            "2946",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 1,
+          "pStar": "1467730156",
+          "sold": "6270907470541880724",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "681324149341794",
+            "paid": "1000000",
+            "refund": "99000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "25208993525646413",
+            "paid": "37000000",
+            "refund": "63000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "68132414934179495",
+            "paid": "100000000",
+            "refund": "0"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "681324149341794",
+            "paid": "1000000",
+            "refund": "99000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "25208993525646413",
+            "paid": "37000000",
+            "refund": "63000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "68132414934179495",
+            "paid": "100000000",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-12",
+      "input": {
+        "prices": [
+          "45590000",
+          "61210000",
+          "83970000",
+          "92130000",
+          "93410000",
+          "100440000",
+          "126280000",
+          "144220000",
+          "146090000",
+          "146720000"
+        ],
+        "supply": "1",
+        "budgetUnit": "10000",
+        "saleDecimals": 0,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "42362",
+          "0",
+          "0",
+          "32121",
+          "0",
+          "0",
+          "16923",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 9,
+          "hi": 10,
+          "probeMask2": 0
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 9,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "42362",
+            "0",
+            "0",
+            "32121",
+            "0",
+            "0",
+            "16923",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 9,
+          "pStar": "146720000",
+          "sold": "1",
+          "remaining": "1"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-13",
+      "input": {
+        "prices": [
+          "299400",
+          "559000",
+          "790000",
+          "894800",
+          "1142600",
+          "1281100",
+          "1396500",
+          "1645900",
+          "1872800",
+          "2089200",
+          "2295200",
+          "2454000",
+          "2586800",
+          "2780400",
+          "2836300"
+        ],
+        "supply": "15473544",
+        "budgetUnit": "100",
+        "saleDecimals": 6,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "52647",
+          "0",
+          "0",
+          "0",
+          "40612",
+          "0",
+          "0",
+          "0",
+          "13433",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "81494",
+          "75821",
+          "64990",
+          "53713",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 4,
+          "probeMask2": 15
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 1,
+          "sums": [
+            "81494",
+            "75821",
+            "64990",
+            "53713",
+            "52647",
+            "0",
+            "0",
+            "0",
+            "40612",
+            "0",
+            "0",
+            "0",
+            "13433",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 1,
+          "pStar": "490005",
+          "sold": "15473515",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "204",
+            "paid": "100",
+            "refund": "9900"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "7550",
+            "paid": "3700",
+            "refund": "6300"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "20407",
+            "paid": "10000",
+            "refund": "0"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "204",
+            "paid": "100",
+            "refund": "9900"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "7550",
+            "paid": "3700",
+            "refund": "6300"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "20407",
+            "paid": "10000",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-14",
+      "input": {
+        "prices": [
+          "1429",
+          "2060",
+          "4405",
+          "5686",
+          "7515",
+          "9582",
+          "12306",
+          "12501",
+          "13851",
+          "15117",
+          "16901",
+          "19764"
+        ],
+        "supply": "6578443113772455089",
+        "budgetUnit": "1",
+        "saleDecimals": 18,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "24654",
+          "0",
+          "0",
+          "19608",
+          "0",
+          "0",
+          "8106",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "32958",
+          "32958",
+          "26017",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 3,
+          "probeMask2": 7
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 2,
+          "sums": [
+            "32958",
+            "32958",
+            "26017",
+            "24654",
+            "0",
+            "0",
+            "19608",
+            "0",
+            "0",
+            "8106",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 2,
+          "pStar": "3955",
+          "sold": "6578255372945638432",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "252844500632111",
+            "paid": "1",
+            "refund": "99"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "9355246523388116",
+            "paid": "37",
+            "refund": "63"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "25284450063211125",
+            "paid": "100",
+            "refund": "0"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "252844500632111",
+            "paid": "1",
+            "refund": "99"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "9355246523388116",
+            "paid": "37",
+            "refund": "63"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "25284450063211125",
+            "paid": "100",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-15",
+      "input": {
+        "prices": [
+          "4864",
+          "6529",
+          "8908",
+          "10421",
+          "11601",
+          "14349",
+          "15643",
+          "16538"
+        ],
+        "supply": "8476473786904647",
+        "budgetUnit": "1",
+        "saleDecimals": 18,
+        "sums1": [
+          "0",
+          "0",
+          "265",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 2,
+          "hi": 4,
+          "probeMask2": 8
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 2,
+          "sums": [
+            "0",
+            "0",
+            "265",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 2,
+          "pStar": "8908",
+          "sold": "8476473786904647",
+          "remaining": "8476473786904647"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "112258643915581",
+            "paid": "1",
+            "refund": "99"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "4153569824876515",
+            "paid": "37",
+            "refund": "63"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "11225864391558149",
+            "paid": "100",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-16",
+      "input": {
+        "prices": [
+          "3299000000",
+          "5998000000",
+          "8411000000",
+          "10156000000",
+          "10686000000",
+          "11116000000",
+          "13979000000",
+          "15574000000",
+          "18086000000",
+          "20555000000",
+          "21785000000",
+          "24197000000",
+          "25705000000"
+        ],
+        "supply": "13",
+        "budgetUnit": "1000000",
+        "saleDecimals": 0,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "37854",
+          "0",
+          "0",
+          "0",
+          "17262",
+          "0",
+          "0",
+          "0",
+          "5808",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "54366",
+          "50621",
+          "43739",
+          "42470",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 4,
+          "probeMask2": 15
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 1,
+          "sums": [
+            "54366",
+            "50621",
+            "43739",
+            "42470",
+            "37854",
+            "0",
+            "0",
+            "0",
+            "17262",
+            "0",
+            "0",
+            "0",
+            "5808",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 1,
+          "pStar": "3893923077",
+          "sold": "12",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-17",
+      "input": {
+        "prices": [
+          "17340000",
+          "24670000",
+          "49140000",
+          "68910000",
+          "97720000",
+          "108830000",
+          "123160000",
+          "146110000",
+          "162040000",
+          "177750000"
+        ],
+        "supply": "6435325",
+        "budgetUnit": "10000",
+        "saleDecimals": 6,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "41144",
+          "0",
+          "0",
+          "21003",
+          "0",
+          "0",
+          "3675",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "39841",
+          "29808",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 3,
+          "hi": 6,
+          "probeMask2": 48
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 3,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "41144",
+            "39841",
+            "29808",
+            "21003",
+            "0",
+            "0",
+            "3675",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 3,
+          "pStar": "63934611",
+          "sold": "6435324",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "156",
+            "paid": "9974",
+            "refund": "990026"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "5787",
+            "paid": "369990",
+            "refund": "630010"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "15640",
+            "paid": "999938",
+            "refund": "62"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "156",
+            "paid": "9974",
+            "refund": "990026"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "5787",
+            "paid": "369990",
+            "refund": "630010"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "15640",
+            "paid": "999938",
+            "refund": "62"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-18",
+      "input": {
+        "prices": [
+          "16900",
+          "193600",
+          "441700",
+          "662600",
+          "885700",
+          "1065000",
+          "1065300",
+          "1364900",
+          "1432300",
+          "1499600",
+          "1567300",
+          "1763400",
+          "2026300",
+          "2051200",
+          "2277300"
+        ],
+        "supply": "12166760563380281690",
+        "budgetUnit": "100",
+        "saleDecimals": 18,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "28558",
+          "0",
+          "0",
+          "0",
+          "17641",
+          "0",
+          "0",
+          "0",
+          "9574",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "43192",
+          "35241",
+          "30258",
+          "30258",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 4,
+          "probeMask2": 15
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 2,
+          "sums": [
+            "43192",
+            "35241",
+            "30258",
+            "30258",
+            "28558",
+            "0",
+            "0",
+            "0",
+            "17641",
+            "0",
+            "0",
+            "0",
+            "9574",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 2,
+          "pStar": "248694",
+          "sold": "12166759149798547612",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "402100573395417",
+            "paid": "100",
+            "refund": "9900"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "14877721215630453",
+            "paid": "3700",
+            "refund": "6300"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "40210057339541766",
+            "paid": "10000",
+            "refund": "0"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "402100573395417",
+            "paid": "100",
+            "refund": "9900"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "14877721215630453",
+            "paid": "3700",
+            "refund": "6300"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "40210057339541766",
+            "paid": "10000",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-19",
+      "input": {
+        "prices": [
+          "360300",
+          "640400",
+          "892000",
+          "1136100",
+          "1294300",
+          "1541800",
+          "1699100",
+          "1768700",
+          "2044300",
+          "2321800",
+          "2361900"
+        ],
+        "supply": "1",
+        "budgetUnit": "100",
+        "saleDecimals": 0,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "28553",
+          "0",
+          "0",
+          "17336",
+          "0",
+          "0",
+          "14605",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "14605",
+          "14605",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 6,
+          "hi": 9,
+          "probeMask2": 384
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 6,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "28553",
+            "0",
+            "0",
+            "17336",
+            "14605",
+            "14605",
+            "14605",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 6,
+          "pStar": "1699100",
+          "sold": "1",
+          "remaining": "1"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-20",
+      "input": {
+        "prices": [
+          "2038",
+          "2873",
+          "5423",
+          "8096",
+          "9029",
+          "9185",
+          "9328",
+          "10724",
+          "12561",
+          "14437",
+          "14561",
+          "16070",
+          "16819",
+          "18193",
+          "19934",
+          "22648"
+        ],
+        "supply": "51168725",
+        "budgetUnit": "1",
+        "saleDecimals": 6,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "66527",
+          "0",
+          "0",
+          "0",
+          "48813",
+          "0",
+          "0",
+          "0",
+          "26929",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "92496",
+          "89475",
+          "83536",
+          "73146",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 4,
+          "probeMask2": 15
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 0,
+          "sums": [
+            "92496",
+            "89475",
+            "83536",
+            "73146",
+            "66527",
+            "0",
+            "0",
+            "0",
+            "48813",
+            "0",
+            "0",
+            "0",
+            "26929",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 0,
+          "step": 0,
+          "pStar": "2038",
+          "sold": "45385672",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "490",
+            "paid": "1",
+            "refund": "99"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "18155",
+            "paid": "37",
+            "refund": "63"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "49067",
+            "paid": "100",
+            "refund": "0"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "490",
+            "paid": "1",
+            "refund": "99"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "18155",
+            "paid": "37",
+            "refund": "63"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "49067",
+            "paid": "100",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-21",
+      "input": {
+        "prices": [
+          "473000000",
+          "2342000000",
+          "4926000000",
+          "7831000000",
+          "8114000000",
+          "8952000000",
+          "10665000000",
+          "12761000000",
+          "13679000000",
+          "14657000000",
+          "17504000000",
+          "20288000000",
+          "23097000000"
+        ],
+        "supply": "131270511017346460",
+        "budgetUnit": "1000000",
+        "saleDecimals": 18,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "3195",
+          "0",
+          "0",
+          "0",
+          "381",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "1421",
+          "381",
+          "381",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 4,
+          "hi": 8,
+          "probeMask2": 224
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 5,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "0",
+            "3195",
+            "1421",
+            "381",
+            "381",
+            "381",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 5,
+          "pStar": "8952000000",
+          "sold": "131270511017346460",
+          "remaining": "88710189301528766"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "111706881143878",
+            "paid": "1000000",
+            "refund": "99000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "4133154602323503",
+            "paid": "37000000",
+            "refund": "63000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "11170688114387846",
+            "paid": "100000000",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-22",
+      "input": {
+        "prices": [
+          "39080000",
+          "68120000",
+          "94300000",
+          "95670000",
+          "122010000",
+          "137210000",
+          "140030000",
+          "168000000",
+          "197990000"
+        ],
+        "supply": "21",
+        "budgetUnit": "10000",
+        "saleDecimals": 0,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "34359",
+          "0",
+          "0",
+          "25359",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "67271",
+          "53159",
+          "45998",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 3,
+          "probeMask2": 7
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 0,
+          "sums": [
+            "67271",
+            "53159",
+            "45998",
+            "34359",
+            "0",
+            "0",
+            "25359",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 0,
+          "step": 0,
+          "pStar": "39080000",
+          "sold": "17",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-23",
+      "input": {
+        "prices": [
+          "23430000",
+          "32810000",
+          "59330000",
+          "63020000",
+          "82870000",
+          "104880000",
+          "123400000",
+          "128370000",
+          "149170000",
+          "170980000",
+          "193920000",
+          "217250000",
+          "226550000",
+          "242160000"
+        ],
+        "supply": "10547163",
+        "budgetUnit": "10000",
+        "saleDecimals": 6,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "29390",
+          "0",
+          "0",
+          "0",
+          "16160",
+          "0",
+          "0",
+          "0",
+          "2957",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "43384",
+          "41920",
+          "36504",
+          "31374",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 4,
+          "probeMask2": 15
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 2,
+          "sums": [
+            "43384",
+            "41920",
+            "36504",
+            "31374",
+            "29390",
+            "0",
+            "0",
+            "0",
+            "16160",
+            "0",
+            "0",
+            "0",
+            "2957",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 2,
+          "pStar": "34610255",
+          "sold": "10547162",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "288",
+            "paid": "9968",
+            "refund": "990032"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "10690",
+            "paid": "369984",
+            "refund": "630016"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "28893",
+            "paid": "999995",
+            "refund": "5"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "288",
+            "paid": "9968",
+            "refund": "990032"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "10690",
+            "paid": "369984",
+            "refund": "630016"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "28893",
+            "paid": "999995",
+            "refund": "5"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-24",
+      "input": {
+        "prices": [
+          "77800",
+          "275000",
+          "543700",
+          "603800",
+          "737300",
+          "1025600",
+          "1067800",
+          "1187500",
+          "1303600",
+          "1431900",
+          "1633700"
+        ],
+        "supply": "10173809085892955674",
+        "budgetUnit": "100",
+        "saleDecimals": 18,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "45749",
+          "0",
+          "0",
+          "26825",
+          "0",
+          "0",
+          "4400",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "55315",
+          "50365",
+          "50365",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 3,
+          "probeMask2": 7
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 2,
+          "sums": [
+            "55315",
+            "50365",
+            "50365",
+            "45749",
+            "0",
+            "0",
+            "26825",
+            "0",
+            "0",
+            "4400",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 2,
+          "pStar": "495046",
+          "sold": "10173802030518376070",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "202001430170125",
+            "paid": "100",
+            "refund": "9900"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "7474052916294647",
+            "paid": "3700",
+            "refund": "6300"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "20200143017012560",
+            "paid": "10000",
+            "refund": "0"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "202001430170125",
+            "paid": "100",
+            "refund": "9900"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "7474052916294647",
+            "paid": "3700",
+            "refund": "6300"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "20200143017012560",
+            "paid": "10000",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-25",
+      "input": {
+        "prices": [
+          "4213",
+          "4219",
+          "6940",
+          "7773",
+          "8459",
+          "9023",
+          "11015",
+          "12913",
+          "13156",
+          "13541",
+          "15282",
+          "17164",
+          "19214",
+          "21900",
+          "22343",
+          "22447"
+        ],
+        "supply": "3",
+        "budgetUnit": "1",
+        "saleDecimals": 0,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "61342",
+          "0",
+          "0",
+          "0",
+          "44761",
+          "0",
+          "0",
+          "0",
+          "23219",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "44761",
+          "39273",
+          "34761",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 8,
+          "hi": 12,
+          "probeMask2": 3584
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 9,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "0",
+            "61342",
+            "0",
+            "0",
+            "0",
+            "44761",
+            "44761",
+            "39273",
+            "34761",
+            "23219",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 9,
+          "pStar": "13541",
+          "sold": "3",
+          "remaining": "1"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-26",
+      "input": {
+        "prices": [
+          "2648000000",
+          "3688000000",
+          "6443000000",
+          "7508000000",
+          "7544000000",
+          "8790000000",
+          "9352000000",
+          "11950000000",
+          "14274000000",
+          "16761000000",
+          "18225000000",
+          "18381000000"
+        ],
+        "supply": "6049075",
+        "budgetUnit": "1000000",
+        "saleDecimals": 6,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "30607",
+          "0",
+          "0",
+          "20585",
+          "0",
+          "0",
+          "12645",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "57563",
+          "45166",
+          "37909",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 3,
+          "probeMask2": 7
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 2,
+          "sums": [
+            "57563",
+            "45166",
+            "37909",
+            "30607",
+            "0",
+            "0",
+            "20585",
+            "0",
+            "0",
+            "12645",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 2,
+          "pStar": "6266908577",
+          "sold": "6049074",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "159",
+            "paid": "996439",
+            "refund": "99003561"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "5904",
+            "paid": "36999829",
+            "refund": "63000171"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "15956",
+            "paid": "99994794",
+            "refund": "5206"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "159",
+            "paid": "996439",
+            "refund": "99003561"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "5904",
+            "paid": "36999829",
+            "refund": "63000171"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "15956",
+            "paid": "99994794",
+            "refund": "5206"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-27",
+      "input": {
+        "prices": [
+          "1083000000",
+          "3157000000",
+          "5946000000",
+          "7243000000",
+          "9630000000",
+          "11558000000",
+          "13690000000",
+          "13988000000",
+          "15393000000"
+        ],
+        "supply": "28717244235813889272",
+        "budgetUnit": "1000000",
+        "saleDecimals": 18,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "46791",
+          "0",
+          "0",
+          "25610",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "69333",
+          "62090",
+          "55693",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 3,
+          "probeMask2": 7
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 1,
+          "sums": [
+            "69333",
+            "62090",
+            "55693",
+            "46791",
+            "0",
+            "0",
+            "25610",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 1,
+          "pStar": "2162115540",
+          "sold": "28717244222757864272",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "462509972986920",
+            "paid": "1000000",
+            "refund": "99000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "17112869000516040",
+            "paid": "37000000",
+            "refund": "63000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "46250997298692002",
+            "paid": "100000000",
+            "refund": "0"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "462509972986920",
+            "paid": "1000000",
+            "refund": "99000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "17112869000516040",
+            "paid": "37000000",
+            "refund": "63000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "46250997298692002",
+            "paid": "100000000",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-28",
+      "input": {
+        "prices": [
+          "45180000",
+          "46260000",
+          "74490000",
+          "89780000",
+          "107160000",
+          "133250000",
+          "140260000",
+          "150240000",
+          "155100000",
+          "162000000",
+          "171110000",
+          "198160000",
+          "220470000",
+          "249210000"
+        ],
+        "supply": "11",
+        "budgetUnit": "10000",
+        "saleDecimals": 0,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "46264",
+          "0",
+          "0",
+          "0",
+          "27922",
+          "0",
+          "0",
+          "0",
+          "4003",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "57817",
+          "54265",
+          "52655",
+          "47121",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 4,
+          "probeMask2": 15
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 2,
+          "sums": [
+            "57817",
+            "54265",
+            "52655",
+            "47121",
+            "46264",
+            "0",
+            "0",
+            "0",
+            "27922",
+            "0",
+            "0",
+            "0",
+            "4003",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 2,
+          "pStar": "47868182",
+          "sold": "10",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-29",
+      "input": {
+        "prices": [
+          "295300",
+          "409500",
+          "695300",
+          "871400",
+          "980200",
+          "1009300",
+          "1236400",
+          "1406300",
+          "1663000",
+          "1942200"
+        ],
+        "supply": "1947464",
+        "budgetUnit": "100",
+        "saleDecimals": 6,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "63587",
+          "0",
+          "0",
+          "32112",
+          "0",
+          "0",
+          "2883",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "22547",
+          "12132",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 6,
+          "hi": 9,
+          "probeMask2": 384
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 6,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "63587",
+            "0",
+            "0",
+            "32112",
+            "22547",
+            "12132",
+            "2883",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 6,
+          "pStar": "1236400",
+          "sold": "1947464",
+          "remaining": "123864"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "80",
+            "paid": "99",
+            "refund": "9901"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "2992",
+            "paid": "3700",
+            "refund": "6300"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "8087",
+            "paid": "9999",
+            "refund": "1"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-30",
+      "input": {
+        "prices": [
+          "1388",
+          "3565",
+          "6457",
+          "8450",
+          "8889",
+          "9862",
+          "10703",
+          "13102",
+          "14751",
+          "16644",
+          "17002",
+          "19256",
+          "19607",
+          "20606",
+          "22750"
+        ],
+        "supply": "11117042912344925767",
+        "budgetUnit": "1",
+        "saleDecimals": 18,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "83253",
+          "0",
+          "0",
+          "0",
+          "58794",
+          "0",
+          "0",
+          "0",
+          "21068",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "109325",
+          "99031",
+          "96900",
+          "90381",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 4,
+          "probeMask2": 15
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 3,
+          "sums": [
+            "109325",
+            "99031",
+            "96900",
+            "90381",
+            "83253",
+            "0",
+            "0",
+            "0",
+            "58794",
+            "0",
+            "0",
+            "0",
+            "21068",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 3,
+          "pStar": "8130",
+          "sold": "11116974169741697416",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "123001230012300",
+            "paid": "1",
+            "refund": "99"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "4551045510455104",
+            "paid": "37",
+            "refund": "63"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "12300123001230012",
+            "paid": "100",
+            "refund": "0"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "123001230012300",
+            "paid": "1",
+            "refund": "99"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "4551045510455104",
+            "paid": "37",
+            "refund": "63"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "12300123001230012",
+            "paid": "100",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-31",
+      "input": {
+        "prices": [
+          "4823",
+          "5034",
+          "7960",
+          "10186",
+          "12975",
+          "14629",
+          "17040",
+          "17139",
+          "17869",
+          "18864",
+          "18945",
+          "19473"
+        ],
+        "supply": "1",
+        "budgetUnit": "1",
+        "saleDecimals": 0,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "41603",
+          "0",
+          "0",
+          "33810",
+          "0",
+          "0",
+          "10366",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "23625",
+          "19305",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 6,
+          "hi": 9,
+          "probeMask2": 384
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 8,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "41603",
+            "0",
+            "0",
+            "33810",
+            "23625",
+            "19305",
+            "10366",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 8,
+          "pStar": "17869",
+          "sold": "1",
+          "remaining": "1"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-32",
+      "input": {
+        "prices": [
+          "3257000000",
+          "4502000000",
+          "7462000000",
+          "9920000000",
+          "12060000000",
+          "14396000000",
+          "15377000000",
+          "16177000000"
+        ],
+        "supply": "8499965",
+        "budgetUnit": "1000000",
+        "saleDecimals": 6,
+        "sums1": [
+          "0",
+          "0",
+          "62194",
+          "0",
+          "40473",
+          "0",
+          "19384",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "46426",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 2,
+          "hi": 4,
+          "probeMask2": 8
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 2,
+          "sums": [
+            "0",
+            "0",
+            "62194",
+            "46426",
+            "40473",
+            "0",
+            "19384",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 2,
+          "pStar": "7316971306",
+          "sold": "8499964",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "136",
+            "paid": "995109",
+            "refund": "99004891"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "5056",
+            "paid": "36994607",
+            "refund": "63005393"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "13666",
+            "paid": "99993730",
+            "refund": "6270"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "136",
+            "paid": "995109",
+            "refund": "99004891"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "5056",
+            "paid": "36994607",
+            "refund": "63005393"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "13666",
+            "paid": "99993730",
+            "refund": "6270"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-33",
+      "input": {
+        "prices": [
+          "16920000",
+          "39710000",
+          "69650000",
+          "96550000",
+          "111460000",
+          "111630000",
+          "137140000",
+          "152140000",
+          "171060000",
+          "193050000",
+          "218330000",
+          "219100000",
+          "224420000"
+        ],
+        "supply": "9642730",
+        "budgetUnit": "10000",
+        "saleDecimals": 6,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "4049",
+          "0",
+          "0",
+          "0",
+          "2465",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "10877",
+          "10877",
+          "9293",
+          "5633",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 4,
+          "probeMask2": 15
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 0,
+          "sums": [
+            "10877",
+            "10877",
+            "9293",
+            "5633",
+            "4049",
+            "0",
+            "0",
+            "0",
+            "2465",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 0,
+          "step": 0,
+          "pStar": "16920000",
+          "sold": "6428486",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "591",
+            "paid": "10000",
+            "refund": "990000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "21867",
+            "paid": "369990",
+            "refund": "630010"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "59101",
+            "paid": "999989",
+            "refund": "11"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "591",
+            "paid": "10000",
+            "refund": "990000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "21867",
+            "paid": "369990",
+            "refund": "630010"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "59101",
+            "paid": "999989",
+            "refund": "11"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-34",
+      "input": {
+        "prices": [
+          "12700",
+          "44000",
+          "46900",
+          "339100",
+          "423200",
+          "493100",
+          "605200",
+          "825200",
+          "922500",
+          "1052500"
+        ],
+        "supply": "38895163668534355647",
+        "budgetUnit": "100",
+        "saleDecimals": 18,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "62779",
+          "0",
+          "0",
+          "33273",
+          "0",
+          "0",
+          "12264",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "53750",
+          "41568",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 3,
+          "hi": 6,
+          "probeMask2": 48
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 3,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "62779",
+            "53750",
+            "41568",
+            "33273",
+            "0",
+            "0",
+            "12264",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 3,
+          "pStar": "161406",
+          "sold": "38895084445435733491",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "619555654684460",
+            "paid": "100",
+            "refund": "9900"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "22923559223325031",
+            "paid": "3700",
+            "refund": "6300"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "61955565468446030",
+            "paid": "10000",
+            "refund": "0"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "619555654684460",
+            "paid": "100",
+            "refund": "9900"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "22923559223325031",
+            "paid": "3700",
+            "refund": "6300"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "61955565468446030",
+            "paid": "10000",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-35",
+      "input": {
+        "prices": [
+          "356200",
+          "490900",
+          "497200",
+          "512600",
+          "531800",
+          "669900",
+          "938900",
+          "1228900",
+          "1234300",
+          "1274500",
+          "1472000",
+          "1734600",
+          "1899900",
+          "2131000",
+          "2215600"
+        ],
+        "supply": "1",
+        "budgetUnit": "100",
+        "saleDecimals": 0,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "12137",
+          "0",
+          "0",
+          "0",
+          "11314",
+          "0",
+          "0",
+          "0",
+          "7854",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "11473",
+          "11473",
+          "11473",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 4,
+          "hi": 8,
+          "probeMask2": 224
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 7,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "0",
+            "12137",
+            "11473",
+            "11473",
+            "11473",
+            "11314",
+            "0",
+            "0",
+            "0",
+            "7854",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 7,
+          "pStar": "1147300",
+          "sold": "1",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-36",
+      "input": {
+        "prices": [
+          "1997",
+          "4378",
+          "4475",
+          "4861",
+          "7403",
+          "9465",
+          "10725",
+          "11326",
+          "13462",
+          "15966",
+          "17664"
+        ],
+        "supply": "2044495",
+        "budgetUnit": "1",
+        "saleDecimals": 6,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "20965",
+          "0",
+          "0",
+          "15482",
+          "0",
+          "0",
+          "9962",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "18013",
+          "17944",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 3,
+          "hi": 6,
+          "probeMask2": 48
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 5,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "20965",
+            "18013",
+            "17944",
+            "15482",
+            "0",
+            "0",
+            "9962",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 5,
+          "pStar": "8777",
+          "sold": "2044434",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "113",
+            "paid": "1",
+            "refund": "99"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "4215",
+            "paid": "37",
+            "refund": "63"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "11393",
+            "paid": "100",
+            "refund": "0"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "113",
+            "paid": "1",
+            "refund": "99"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "4215",
+            "paid": "37",
+            "refund": "63"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "11393",
+            "paid": "100",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-37",
+      "input": {
+        "prices": [
+          "432000000",
+          "848000000",
+          "979000000",
+          "1597000000",
+          "3490000000",
+          "6234000000",
+          "9064000000",
+          "10365000000",
+          "11582000000",
+          "13187000000",
+          "14609000000",
+          "16784000000",
+          "19557000000",
+          "19993000000",
+          "20319000000",
+          "20760000000"
+        ],
+        "supply": "46580188679245283",
+        "budgetUnit": "1000000",
+        "saleDecimals": 18,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "79",
+          "79",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 4,
+          "probeMask2": 15
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 1,
+          "sums": [
+            "79",
+            "79",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 1,
+          "pStar": "848000000",
+          "sold": "46580188679245283",
+          "remaining": "46580188679245283"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "1179245283018867",
+            "paid": "1000000",
+            "refund": "99000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "43632075471698113",
+            "paid": "37000000",
+            "refund": "63000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "117924528301886792",
+            "paid": "100000000",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-38",
+      "input": {
+        "prices": [
+          "38670000",
+          "53170000",
+          "54820000",
+          "63320000",
+          "75760000",
+          "80010000",
+          "94010000",
+          "114020000",
+          "117000000",
+          "124070000",
+          "135520000",
+          "140010000",
+          "158340000"
+        ],
+        "supply": "18",
+        "budgetUnit": "10000",
+        "saleDecimals": 0,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "54156",
+          "0",
+          "0",
+          "0",
+          "27908",
+          "0",
+          "0",
+          "0",
+          "1466",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "70766",
+          "64285",
+          "61229",
+          "54190",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 4,
+          "probeMask2": 15
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 0,
+          "sums": [
+            "70766",
+            "64285",
+            "61229",
+            "54190",
+            "54156",
+            "0",
+            "0",
+            "0",
+            "27908",
+            "0",
+            "0",
+            "0",
+            "1466",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 0,
+          "pStar": "38670000",
+          "sold": "18",
+          "remaining": "2"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-39",
+      "input": {
+        "prices": [
+          "23020000",
+          "47860000",
+          "49860000",
+          "60680000",
+          "66620000",
+          "77690000",
+          "107390000",
+          "134400000",
+          "158190000"
+        ],
+        "supply": "19472981",
+        "budgetUnit": "10000",
+        "saleDecimals": 6,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "61679",
+          "0",
+          "0",
+          "21786",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "86486",
+          "78218",
+          "67895",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 3,
+          "probeMask2": 7
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 1,
+          "sums": [
+            "86486",
+            "78218",
+            "67895",
+            "61679",
+            "0",
+            "0",
+            "21786",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 1,
+          "pStar": "40167451",
+          "sold": "19472980",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "248",
+            "paid": "9962",
+            "refund": "990038"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "9211",
+            "paid": "369983",
+            "refund": "630017"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "24895",
+            "paid": "999969",
+            "refund": "31"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "248",
+            "paid": "9962",
+            "refund": "990038"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "9211",
+            "paid": "369983",
+            "refund": "630017"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "24895",
+            "paid": "999969",
+            "refund": "31"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-40",
+      "input": {
+        "prices": [
+          "73700",
+          "125500",
+          "148900",
+          "280300",
+          "574800",
+          "753700",
+          "907700",
+          "947900",
+          "1093900",
+          "1285000",
+          "1344200",
+          "1644000",
+          "1939400",
+          "2001700"
+        ],
+        "supply": "2870819706720118155",
+        "budgetUnit": "100",
+        "saleDecimals": 18,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "40135",
+          "0",
+          "0",
+          "0",
+          "21249",
+          "0",
+          "0",
+          "0",
+          "7976",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "39393",
+          "33563",
+          "31133",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 4,
+          "hi": 8,
+          "probeMask2": 224
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 7,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "0",
+            "40135",
+            "39393",
+            "33563",
+            "31133",
+            "21249",
+            "0",
+            "0",
+            "0",
+            "7976",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 7,
+          "pStar": "947900",
+          "sold": "2870819706720118155",
+          "remaining": "629127545099694060"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "105496360375567",
+            "paid": "100",
+            "refund": "9900"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "3903365333895980",
+            "paid": "3700",
+            "refund": "6300"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "10549636037556704",
+            "paid": "10000",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-41",
+      "input": {
+        "prices": [
+          "4172",
+          "5724",
+          "5992",
+          "7538",
+          "9833",
+          "12303",
+          "12412",
+          "13514",
+          "14056",
+          "15068",
+          "15383"
+        ],
+        "supply": "24",
+        "budgetUnit": "1",
+        "saleDecimals": 0,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "85472",
+          "0",
+          "0",
+          "47711",
+          "0",
+          "0",
+          "23134",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "103687",
+          "96386",
+          "91648",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 3,
+          "probeMask2": 7
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 0,
+          "sums": [
+            "103687",
+            "96386",
+            "91648",
+            "85472",
+            "0",
+            "0",
+            "47711",
+            "0",
+            "0",
+            "23134",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 0,
+          "pStar": "4172",
+          "sold": "24",
+          "remaining": "1"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-42",
+      "input": {
+        "prices": [
+          "2607000000",
+          "5193000000",
+          "5495000000",
+          "7273000000",
+          "8919000000",
+          "9071000000",
+          "10750000000",
+          "12552000000",
+          "15175000000",
+          "15289000000",
+          "15328000000",
+          "17875000000",
+          "18949000000",
+          "20697000000",
+          "22725000000",
+          "23556000000"
+        ],
+        "supply": "1892658",
+        "budgetUnit": "1000000",
+        "saleDecimals": 6,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "68373",
+          "0",
+          "0",
+          "0",
+          "42507",
+          "0",
+          "0",
+          "0",
+          "22577",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "39020",
+          "35439",
+          "31279",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 8,
+          "hi": 12,
+          "probeMask2": 3584
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 11,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "0",
+            "68373",
+            "0",
+            "0",
+            "0",
+            "42507",
+            "39020",
+            "35439",
+            "31279",
+            "22577",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 11,
+          "pStar": "16526493429",
+          "sold": "1892657",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "60",
+            "paid": "991590",
+            "refund": "99008410"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "2238",
+            "paid": "36986293",
+            "refund": "63013707"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "6050",
+            "paid": "99985286",
+            "refund": "14714"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "60",
+            "paid": "991590",
+            "refund": "99008410"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "2238",
+            "paid": "36986293",
+            "refund": "63013707"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "6050",
+            "paid": "99985286",
+            "refund": "14714"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-43",
+      "input": {
+        "prices": [
+          "1042000000",
+          "1662000000",
+          "1998000000",
+          "4008000000",
+          "5005000000",
+          "5839000000",
+          "6088000000",
+          "8591000000",
+          "10295000000",
+          "12511000000",
+          "15273000000",
+          "16094000000"
+        ],
+        "supply": "421978021978021978",
+        "budgetUnit": "1000000",
+        "saleDecimals": 18,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "704",
+          "0",
+          "0",
+          "704",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "704",
+          "704",
+          "704",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 3,
+          "probeMask2": 7
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 2,
+          "sums": [
+            "704",
+            "704",
+            "704",
+            "704",
+            "0",
+            "0",
+            "704",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 2,
+          "pStar": "1668333334",
+          "sold": "421978021809399391",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "599400599161078",
+            "paid": "1000000",
+            "refund": "99000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "22177822168959911",
+            "paid": "37000000",
+            "refund": "63000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "59940059916107868",
+            "paid": "100000000",
+            "refund": "0"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "599400599161078",
+            "paid": "1000000",
+            "refund": "99000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "22177822168959911",
+            "paid": "37000000",
+            "refund": "63000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "59940059916107868",
+            "paid": "100000000",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-44",
+      "input": {
+        "prices": [
+          "44770000",
+          "61310000",
+          "65020000",
+          "87440000",
+          "90910000",
+          "106060000",
+          "124250000",
+          "126280000"
+        ],
+        "supply": "6",
+        "budgetUnit": "10000",
+        "saleDecimals": 0,
+        "sums1": [
+          "0",
+          "0",
+          "117190",
+          "0",
+          "80997",
+          "0",
+          "30990",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "49153",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 4,
+          "hi": 6,
+          "probeMask2": 32
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 4,
+          "sums": [
+            "0",
+            "0",
+            "117190",
+            "0",
+            "80997",
+            "49153",
+            "30990",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 4,
+          "pStar": "90910000",
+          "sold": "6",
+          "remaining": "1"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-45",
+      "input": {
+        "prices": [
+          "291200",
+          "560100",
+          "600600",
+          "848000",
+          "1117800",
+          "1337500",
+          "1376400",
+          "1466700",
+          "1753300",
+          "1795200",
+          "2016100",
+          "2053100",
+          "2178600",
+          "2372200"
+        ],
+        "supply": "2535797",
+        "budgetUnit": "100",
+        "saleDecimals": 6,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "23154",
+          "0",
+          "0",
+          "0",
+          "15940",
+          "0",
+          "0",
+          "0",
+          "6608",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "21911",
+          "21324",
+          "19254",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 4,
+          "hi": 8,
+          "probeMask2": 224
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 4,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "0",
+            "23154",
+            "21911",
+            "21324",
+            "19254",
+            "15940",
+            "0",
+            "0",
+            "0",
+            "6608",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 4,
+          "pStar": "913086",
+          "sold": "2535796",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "109",
+            "paid": "100",
+            "refund": "9900"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "4052",
+            "paid": "3700",
+            "refund": "6300"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "10951",
+            "paid": "10000",
+            "refund": "0"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "109",
+            "paid": "100",
+            "refund": "9900"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "4052",
+            "paid": "3700",
+            "refund": "6300"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "10951",
+            "paid": "10000",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-46",
+      "input": {
+        "prices": [
+          "1346",
+          "2069",
+          "2508",
+          "5214",
+          "7262",
+          "10140",
+          "12099",
+          "13702",
+          "15649",
+          "18170"
+        ],
+        "supply": "90355497771173848439",
+        "budgetUnit": "1",
+        "saleDecimals": 18,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "49018",
+          "0",
+          "0",
+          "33760",
+          "0",
+          "0",
+          "6367",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "81079",
+          "74880",
+          "60663",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 3,
+          "probeMask2": 7
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 0,
+          "sums": [
+            "81079",
+            "74880",
+            "60663",
+            "49018",
+            "0",
+            "0",
+            "33760",
+            "0",
+            "0",
+            "6367",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 0,
+          "step": 0,
+          "pStar": "1346",
+          "sold": "60236998514115898959",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "742942050520059",
+            "paid": "1",
+            "refund": "99"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "27488855869242199",
+            "paid": "37",
+            "refund": "63"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "74294205052005943",
+            "paid": "100",
+            "refund": "0"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "742942050520059",
+            "paid": "1",
+            "refund": "99"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "27488855869242199",
+            "paid": "37",
+            "refund": "63"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "74294205052005943",
+            "paid": "100",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-47",
+      "input": {
+        "prices": [
+          "4781",
+          "6538",
+          "7011",
+          "9950",
+          "11349",
+          "11909",
+          "12438",
+          "14742",
+          "15771",
+          "17394",
+          "19050",
+          "21969",
+          "24344",
+          "24405",
+          "25134"
+        ],
+        "supply": "1",
+        "budgetUnit": "1",
+        "saleDecimals": 0,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "67301",
+          "0",
+          "0",
+          "0",
+          "36012",
+          "0",
+          "0",
+          "0",
+          "6996",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "27421",
+          "22081",
+          "11831",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 8,
+          "hi": 12,
+          "probeMask2": 3584
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 10,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "0",
+            "67301",
+            "0",
+            "0",
+            "0",
+            "36012",
+            "27421",
+            "22081",
+            "11831",
+            "6996",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 10,
+          "pStar": "19050",
+          "sold": "1",
+          "remaining": "1"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-48",
+      "input": {
+        "prices": [
+          "3216000000",
+          "6007000000",
+          "6514000000",
+          "6685000000",
+          "7435000000",
+          "8677000000",
+          "10775000000",
+          "10779000000",
+          "10889000000",
+          "11613000000",
+          "12992000000",
+          "14186000000"
+        ],
+        "supply": "4340618",
+        "budgetUnit": "1000000",
+        "saleDecimals": 6,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "18365",
+          "0",
+          "0",
+          "9094",
+          "0",
+          "0",
+          "5245",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "31510",
+          "28098",
+          "23207",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 3,
+          "probeMask2": 7
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 1,
+          "sums": [
+            "31510",
+            "28098",
+            "23207",
+            "18365",
+            "0",
+            "0",
+            "9094",
+            "0",
+            "0",
+            "5245",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 1,
+          "pStar": "6007000000",
+          "sold": "4340618",
+          "remaining": "477292"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "166",
+            "paid": "997162",
+            "refund": "99002838"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "6159",
+            "paid": "36997113",
+            "refund": "63002887"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "16647",
+            "paid": "99998529",
+            "refund": "1471"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-49",
+      "input": {
+        "prices": [
+          "16510000",
+          "24760000",
+          "30180000",
+          "34210000",
+          "35210000",
+          "54440000",
+          "61120000",
+          "68160000"
+        ],
+        "supply": "5144012471986748514",
+        "budgetUnit": "10000",
+        "saleDecimals": 18,
+        "sums1": [
+          "0",
+          "0",
+          "37603",
+          "0",
+          "26214",
+          "0",
+          "14650",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "18500",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 4,
+          "hi": 6,
+          "probeMask2": 32
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 5,
+          "sums": [
+            "0",
+            "0",
+            "37603",
+            "0",
+            "26214",
+            "18500",
+            "14650",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 5,
+          "pStar": "35964143",
+          "sold": "5144012468196447778",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "278054728010618",
+            "paid": "10000",
+            "refund": "990000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "10288024936392895",
+            "paid": "370000",
+            "refund": "630000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "27805472801061879",
+            "paid": "1000000",
+            "refund": "0"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "278054728010618",
+            "paid": "10000",
+            "refund": "990000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "10288024936392895",
+            "paid": "370000",
+            "refund": "630000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "27805472801061879",
+            "paid": "1000000",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-50",
+      "input": {
+        "prices": [
+          "8600",
+          "194500",
+          "252100",
+          "315600",
+          "560700",
+          "821200",
+          "1045000",
+          "1185500",
+          "1312700",
+          "1505500",
+          "1588100",
+          "1662300",
+          "1917900"
+        ],
+        "supply": "13",
+        "budgetUnit": "100",
+        "saleDecimals": 0,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "82508",
+          "0",
+          "0",
+          "0",
+          "52676",
+          "0",
+          "0",
+          "0",
+          "19485",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "73139",
+          "68661",
+          "59210",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 4,
+          "hi": 8,
+          "probeMask2": 224
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 5,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "0",
+            "82508",
+            "73139",
+            "68661",
+            "59210",
+            "52676",
+            "0",
+            "0",
+            "0",
+            "19485",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 5,
+          "pStar": "562608",
+          "sold": "12",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-51",
+      "input": {
+        "prices": [
+          "352100",
+          "641400",
+          "702400",
+          "789100",
+          "969200",
+          "997900",
+          "1078700",
+          "1289200",
+          "1324500",
+          "1427400"
+        ],
+        "supply": "2",
+        "budgetUnit": "100",
+        "saleDecimals": 0,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "15389",
+          "0",
+          "0",
+          "7130",
+          "0",
+          "0",
+          "2206",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "12636",
+          "9883",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 3,
+          "hi": 6,
+          "probeMask2": 48
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 3,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "15389",
+            "12636",
+            "9883",
+            "7130",
+            "0",
+            "0",
+            "2206",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 3,
+          "pStar": "769450",
+          "sold": "2",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-52",
+      "input": {
+        "prices": [
+          "1956",
+          "2883",
+          "3527",
+          "4626",
+          "5778",
+          "6746",
+          "9124",
+          "11929",
+          "14363",
+          "14494",
+          "14767",
+          "15058",
+          "15734",
+          "17107",
+          "19537"
+        ],
+        "supply": "2551312",
+        "budgetUnit": "1",
+        "saleDecimals": 6,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "16156",
+          "0",
+          "0",
+          "0",
+          "10987",
+          "0",
+          "0",
+          "0",
+          "2826",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "16156",
+          "16156",
+          "13700",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 4,
+          "hi": 8,
+          "probeMask2": 224
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 5,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "0",
+            "16156",
+            "16156",
+            "16156",
+            "13700",
+            "10987",
+            "0",
+            "0",
+            "0",
+            "2826",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 5,
+          "pStar": "6333",
+          "sold": "2551081",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "157",
+            "paid": "1",
+            "refund": "99"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "5842",
+            "paid": "37",
+            "refund": "63"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "15790",
+            "paid": "100",
+            "refund": "0"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "157",
+            "paid": "1",
+            "refund": "99"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "5842",
+            "paid": "37",
+            "refund": "63"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "15790",
+            "paid": "100",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-53",
+      "input": {
+        "prices": [
+          "391000000",
+          "2353000000",
+          "3031000000",
+          "4362000000",
+          "4865000000",
+          "6515000000",
+          "7463000000",
+          "7968000000",
+          "9484000000",
+          "11717000000",
+          "14713000000"
+        ],
+        "supply": "45053463754522310062",
+        "budgetUnit": "1000000",
+        "saleDecimals": 18,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "88436",
+          "0",
+          "0",
+          "59998",
+          "0",
+          "0",
+          "29555",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "112078",
+          "100955",
+          "99403",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 3,
+          "probeMask2": 7
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 1,
+          "sums": [
+            "112078",
+            "100955",
+            "99403",
+            "88436",
+            "0",
+            "0",
+            "59998",
+            "0",
+            "0",
+            "29555",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 1,
+          "pStar": "2240782209",
+          "sold": "45053463738920644027",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "446272732791051",
+            "paid": "1000000",
+            "refund": "99000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "16512091113268920",
+            "paid": "37000000",
+            "refund": "63000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "44627273279105189",
+            "paid": "100000000",
+            "refund": "0"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "446272732791051",
+            "paid": "1000000",
+            "refund": "99000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "16512091113268920",
+            "paid": "37000000",
+            "refund": "63000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "44627273279105189",
+            "paid": "100000000",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-54",
+      "input": {
+        "prices": [
+          "38260000",
+          "68220000",
+          "75350000",
+          "90980000",
+          "119510000",
+          "142820000",
+          "167990000",
+          "180050000",
+          "186020000",
+          "199370000",
+          "226570000",
+          "254970000",
+          "272940000",
+          "297920000",
+          "317030000",
+          "328710000"
+        ],
+        "supply": "1",
+        "budgetUnit": "10000",
+        "saleDecimals": 0,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "7381",
+          "0",
+          "0",
+          "0",
+          "3576",
+          "0",
+          "0",
+          "0",
+          "1164",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "10615",
+          "9752",
+          "9752",
+          "9752",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 4,
+          "probeMask2": 15
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 3,
+          "sums": [
+            "10615",
+            "9752",
+            "9752",
+            "9752",
+            "7381",
+            "0",
+            "0",
+            "0",
+            "3576",
+            "0",
+            "0",
+            "0",
+            "1164",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 3,
+          "pStar": "90980000",
+          "sold": "1",
+          "remaining": "1"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-55",
+      "input": {
+        "prices": [
+          "22610000",
+          "32910000",
+          "40380000",
+          "58330000",
+          "80370000",
+          "80500000",
+          "91370000",
+          "110430000",
+          "137210000",
+          "141570000",
+          "166000000",
+          "177150000",
+          "185720000"
+        ],
+        "supply": "5814949",
+        "budgetUnit": "10000",
+        "saleDecimals": 6,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "7434",
+          "0",
+          "0",
+          "0",
+          "6579",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "19137",
+          "16296",
+          "10301",
+          "7434",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 4,
+          "probeMask2": 15
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 1,
+          "sums": [
+            "19137",
+            "16296",
+            "10301",
+            "7434",
+            "7434",
+            "0",
+            "0",
+            "0",
+            "6579",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 1,
+          "pStar": "28024322",
+          "sold": "5814948",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "356",
+            "paid": "9977",
+            "refund": "990023"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "13202",
+            "paid": "369978",
+            "refund": "630022"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "35683",
+            "paid": "999992",
+            "refund": "8"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "356",
+            "paid": "9977",
+            "refund": "990023"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "13202",
+            "paid": "369978",
+            "refund": "630022"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "35683",
+            "paid": "999992",
+            "refund": "8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-56",
+      "input": {
+        "prices": [
+          "69600",
+          "276000",
+          "354100",
+          "556800",
+          "712200",
+          "781700",
+          "1047400",
+          "1308000",
+          "1483900"
+        ],
+        "supply": "12346360496354100038",
+        "budgetUnit": "100",
+        "saleDecimals": 18,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "33719",
+          "0",
+          "0",
+          "13754",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "64341",
+          "50668",
+          "41306",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 0,
+          "hi": 3,
+          "probeMask2": 7
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 2,
+          "sums": [
+            "64341",
+            "50668",
+            "41306",
+            "33719",
+            "0",
+            "0",
+            "13754",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 2,
+          "pStar": "334561",
+          "sold": "12346328472236752042",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "10000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "298899154414292",
+            "paid": "100",
+            "refund": "9900"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "11059268713328809",
+            "paid": "3700",
+            "refund": "6300"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "29889915441429216",
+            "paid": "10000",
+            "refund": "0"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "298899154414292",
+            "paid": "100",
+            "refund": "9900"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "11059268713328809",
+            "paid": "3700",
+            "refund": "6300"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "29889915441429216",
+            "paid": "10000",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-57",
+      "input": {
+        "prices": [
+          "4131",
+          "4229",
+          "5044",
+          "7303",
+          "8208",
+          "9584",
+          "10811",
+          "11117",
+          "11957",
+          "13597",
+          "15487",
+          "16150",
+          "18127",
+          "20813"
+        ],
+        "supply": "8",
+        "budgetUnit": "1",
+        "saleDecimals": 0,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "83169",
+          "0",
+          "0",
+          "0",
+          "63944",
+          "0",
+          "0",
+          "0",
+          "19879",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "80551",
+          "70703",
+          "67453",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 4,
+          "hi": 8,
+          "probeMask2": 224
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 5,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "0",
+            "83169",
+            "80551",
+            "70703",
+            "67453",
+            "63944",
+            "0",
+            "0",
+            "0",
+            "19879",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 5,
+          "pStar": "9584",
+          "sold": "8",
+          "remaining": "1"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-58",
+      "input": {
+        "prices": [
+          "2566000000",
+          "3698000000",
+          "4547000000",
+          "7038000000",
+          "7294000000",
+          "9352000000",
+          "12149000000",
+          "13156000000",
+          "16078000000",
+          "16819000000",
+          "18432000000"
+        ],
+        "supply": "4117241",
+        "budgetUnit": "1000000",
+        "saleDecimals": 6,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "56120",
+          "0",
+          "0",
+          "31005",
+          "0",
+          "0",
+          "10634",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "49145",
+          "38507",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 3,
+          "hi": 6,
+          "probeMask2": 48
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 5,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "56120",
+            "49145",
+            "38507",
+            "31005",
+            "0",
+            "0",
+            "10634",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 5,
+          "pStar": "9352000000",
+          "sold": "4117241",
+          "remaining": "801908"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "106",
+            "paid": "991312",
+            "refund": "99008688"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "3956",
+            "paid": "36996512",
+            "refund": "63003488"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "10692",
+            "paid": "99991584",
+            "refund": "8416"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-59",
+      "input": {
+        "prices": [
+          "1001000000",
+          "3167000000",
+          "4051000000",
+          "6774000000",
+          "9380000000",
+          "12120000000",
+          "13487000000",
+          "15194000000",
+          "17197000000",
+          "20040000000",
+          "21377000000",
+          "21589000000",
+          "21687000000",
+          "22498000000",
+          "23110000000",
+          "24668000000"
+        ],
+        "supply": "1669571915031619912",
+        "budgetUnit": "1000000",
+        "saleDecimals": 18,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "64303",
+          "0",
+          "0",
+          "0",
+          "46221",
+          "0",
+          "0",
+          "0",
+          "13088",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "44597",
+          "27136",
+          "19313",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 8,
+          "hi": 12,
+          "probeMask2": 3584
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 9,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "0",
+            "64303",
+            "0",
+            "0",
+            "0",
+            "46221",
+            "44597",
+            "27136",
+            "19313",
+            "13088",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 1,
+          "step": 9,
+          "pStar": "20040000000",
+          "sold": "1669571915031619912",
+          "remaining": "315480098664354443"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "100000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "49900199600798",
+            "paid": "1000000",
+            "refund": "99000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "1846307385229540",
+            "paid": "37000000",
+            "refund": "63000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "4990019960079840",
+            "paid": "100000000",
+            "refund": "0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "random-60",
+      "input": {
+        "prices": [
+          "44350000",
+          "46350000",
+          "55530000",
+          "85080000",
+          "104650000",
+          "108860000",
+          "138220000",
+          "162290000",
+          "173130000",
+          "192580000",
+          "203180000",
+          "218050000"
+        ],
+        "supply": "8",
+        "budgetUnit": "10000",
+        "saleDecimals": 0,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "55400",
+          "0",
+          "0",
+          "25393",
+          "0",
+          "0",
+          "12567",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "54661",
+          "41753",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": true,
+          "lo": 3,
+          "hi": 6,
+          "probeMask2": 48
+        },
+        "round2": {
+          "valid": true,
+          "lstar": 3,
+          "sums": [
+            "0",
+            "0",
+            "0",
+            "55400",
+            "54661",
+            "41753",
+            "25393",
+            "0",
+            "0",
+            "12567",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        "clearing": {
+          "kind": 2,
+          "step": 3,
+          "pStar": "69250000",
+          "sold": "8",
+          "remaining": "0"
+        },
+        "claims": [
+          {
+            "cmp": 0,
+            "budgetUnits": 0,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 1,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 1,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 37,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          },
+          {
+            "cmp": 2,
+            "budgetUnits": 100,
+            "escrowUnits": 100,
+            "tokens": "0",
+            "paid": "0",
+            "refund": "1000000"
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid-round-1",
+      "input": {
+        "prices": [
+          "1000",
+          "2000",
+          "3000",
+          "4000",
+          "5000",
+          "6000",
+          "7000",
+          "8000",
+          "9000",
+          "10000",
+          "11000",
+          "12000",
+          "13000",
+          "14000",
+          "15000",
+          "16000"
+        ],
+        "supply": "10",
+        "budgetUnit": "1",
+        "saleDecimals": 0,
+        "sums1": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "10",
+          "0",
+          "0",
+          "0",
+          "11",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "sums2": [
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      "expected": {
+        "round1": {
+          "valid": false,
+          "lo": 0,
+          "hi": 0,
+          "probeMask2": 0
+        },
+        "round2": null,
+        "clearing": null,
+        "claims": []
+      }
+    }
+  ]
+}
