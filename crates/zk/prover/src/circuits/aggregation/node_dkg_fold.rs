@@ -8,8 +8,8 @@
 //! proofs ([`CircuitName::NodeFold`], [`CircuitName::DkgAggregator`], [`CircuitName::DecryptionAggregator`]).
 
 use crate::circuits::aggregation::c3_chonk::generate_c3_chonk_chain;
-use crate::circuits::aggregation::c6_accumulator::{
-    generate_sequential_c6_fold, C6_FOLD_DOMAIN_HI, C6_FOLD_PREFIX_LEN,
+use crate::circuits::aggregation::c6_chonk::{
+    generate_c6_chonk, C6ChonkCircuits, C6_ROOT_COLUMNS, C6_ROOT_DOMAIN_HI,
 };
 use crate::circuits::aggregation::helpers::{address_to_field_hex, u64_to_field_hex};
 use crate::circuits::aggregation::nodes_fold_accumulator::generate_sequential_nodes_fold;
@@ -549,14 +549,14 @@ pub struct DecryptionAggregationJob<'a> {
 
 #[derive(Serialize)]
 struct DecryptionAggregatorWitness {
-    c6_fold_vk: Vec<String>,
-    c6_fold_vk_hash: String,
-    c6_fold_proof: Vec<String>,
-    c6_fold_public: Vec<String>,
+    c6_root_vk: Vec<String>,
+    c6_root_vk_hash: String,
+    c6_root_proof: Vec<String>,
+    c6_root_public: Vec<String>,
     c7_vk: Vec<String>,
     c7_proof: Vec<String>,
     c7_public: Vec<String>,
-    c6_fold_key_hash: String,
+    c6_key_hash: String,
     c7_key_hash: String,
     committee_members: Vec<String>,
     committee_hash_hi: String,
@@ -566,7 +566,7 @@ struct DecryptionAggregatorWitness {
     ciphertext_commitment: String,
 }
 
-/// Prove [`CircuitName::DecryptionAggregator`] for each job (C6 fold + C7), with
+/// Prove [`CircuitName::DecryptionAggregator`] for each job (C6 Chonk root + C7), with
 /// [`CircuitVariant::Evm`] for on-chain verification.
 pub fn prove_decryption_aggregation_jobs(
     prover: &ZkProver,
@@ -580,10 +580,7 @@ pub fn prove_decryption_aggregation_jobs(
     let artifacts_dir = prover.resolve_artifacts_dir(preset, committee.as_str());
     let artifacts_dir = artifacts_dir.as_str();
     // VKs and the compiled circuit are job-independent: load once, reuse per ciphertext.
-    let c6_fold_vk = vk::load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::C6Fold,
-    )?;
+    let c6_circuits = C6ChonkCircuits::load(prover, artifacts_dir)?;
     let c7_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
         CircuitName::DecryptedSharesAggregation,
@@ -611,41 +608,43 @@ pub fn prove_decryption_aggregation_jobs(
 
     let mut out = Vec::with_capacity(jobs.len());
     for (i, job) in jobs.iter().enumerate() {
-        let c6_fold = generate_sequential_c6_fold(
+        let c6_root = generate_c6_chonk(
             prover,
+            &c6_circuits,
             job.c6_inner_proofs,
             job.c6_slot_indices,
             c6_total_slots,
-            &format!("{e3_id}-c6fold-{i}"),
+            &format!("{e3_id}-c6chonk-{i}"),
             artifacts_dir,
         )?;
-        let c6_fold_public = proof_public_field_strings(&c6_fold)?;
-        let domain_hi = c6_fold_public
-            .get(C6_FOLD_DOMAIN_HI)
+        let c6_root_public = proof_public_field_strings(&c6_root)?;
+        let domain_hi = c6_root_public
+            .get(C6_ROOT_DOMAIN_HI)
             .cloned()
-            .ok_or_else(|| ZkError::InvalidInput("C6 fold proof is missing domain_hi".into()))?;
-        let domain_lo = c6_fold_public
-            .get(C6_FOLD_DOMAIN_HI + 1)
+            .ok_or_else(|| ZkError::InvalidInput("C6 root proof is missing domain_hi".into()))?;
+        let domain_lo = c6_root_public
+            .get(C6_ROOT_DOMAIN_HI + 1)
             .cloned()
-            .ok_or_else(|| ZkError::InvalidInput("C6 fold proof is missing domain_lo".into()))?;
-        let ciphertext_commitment = c6_fold_public
-            .get(C6_FOLD_PREFIX_LEN + (2 * c6_total_slots))
+            .ok_or_else(|| ZkError::InvalidInput("C6 root proof is missing domain_lo".into()))?;
+        let ciphertext_commitment = c6_root_public
+            .get(C6_ROOT_COLUMNS + (2 * c6_total_slots))
             .cloned()
             .ok_or_else(|| {
                 ZkError::InvalidInput(
-                    "C6 fold proof is missing the ciphertext commitment column".into(),
+                    "C6 root proof is missing the ciphertext commitment column".into(),
                 )
             })?;
 
         let witness = DecryptionAggregatorWitness {
-            c6_fold_vk: c6_fold_vk.verification_key.clone(),
-            c6_fold_vk_hash: c6_fold_vk.key_hash.clone(),
-            c6_fold_proof: proof_field_strings(&c6_fold)?,
-            c6_fold_public,
+            c6_root_vk: c6_circuits.root.verification_key.clone(),
+            c6_root_vk_hash: c6_circuits.root.key_hash.clone(),
+            c6_root_proof: proof_field_strings(&c6_root)?,
+            c6_root_public,
             c7_vk: c7_vk.verification_key.clone(),
             c7_proof: proof_field_strings(job.c7_proof)?,
             c7_public: proof_public_field_strings(job.c7_proof)?,
-            c6_fold_key_hash: vk::load_vk_tree_hash(
+            // The C6 tree anchor keeps its `c6_fold` artifact path.
+            c6_key_hash: vk::load_vk_tree_hash(
                 &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
                 CircuitName::C6Fold,
             )?,

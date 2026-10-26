@@ -41,7 +41,7 @@ use e3_events::{CircuitName, Proof};
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_zk_config::DkgInputType;
 use e3_zk_prover::{
-    generate_sequential_c6_fold, prove_node_dkg_fold, DecryptedSharesAggregationCircuit,
+    generate_c6_chonk_root, prove_node_dkg_fold, DecryptedSharesAggregationCircuit,
     FoldProveStepTiming, NodeDkgFoldInput, Provable, ShareEncryptionCircuit,
     ThresholdShareDecryptionCircuit, ZkBackend, ZkProver,
 };
@@ -678,14 +678,14 @@ pub fn run_decryption(
         }));
     }
     let slot_indices: Vec<u32> = (0..slots as u32).collect();
-    aggregator.run("c6_fold", || {
-        measure("c6_fold_chain", || {
-            generate_sequential_c6_fold(
+    aggregator.run("c6_chonk", || {
+        measure("c6_chonk_root", || {
+            generate_c6_chonk_root(
                 prover,
                 &inner,
                 &slot_indices,
                 slots,
-                "measure-c6-fold",
+                "measure-c6-chonk",
                 artifacts_dir,
             )
         })

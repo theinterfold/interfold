@@ -839,8 +839,8 @@ const VK_PATHS: &[(&str, &str, &str)] = &[
     ("default", "recursive_aggregation", "nodes_fold"),
     ("default", "recursive_aggregation", "nodes_fold_kernel"),
     ("default", "recursive_aggregation", "node_fold"),
-    ("default", "recursive_aggregation", "c6_fold"),
-    ("default", "recursive_aggregation", "c6_fold_kernel"),
+    ("default", "recursive_aggregation", "c6_chonk_root"),
+    ("default", "recursive_aggregation", "c6_chonk_tube"),
     ("recursive", "threshold", "share_decryption"),
     ("default", "dkg", "sk_share_computation_chain"),
     ("default", "dkg", "sk_share_computation_chain_last"),
@@ -853,6 +853,10 @@ const VK_PATHS: &[(&str, &str, &str)] = &[
     ("default", "chonk", "c3_chonk_app"),
     ("default", "chonk", "c3_chonk_init_kernel"),
     ("default", "chonk", "c3_chonk_tail_kernel"),
+    ("default", "chonk", "c6_chonk_hiding_kernel"),
+    ("default", "chonk", "c6_chonk_app"),
+    ("default", "chonk", "c6_chonk_init_kernel"),
+    ("default", "chonk", "c6_chonk_tail_kernel"),
 ];
 pub(crate) fn seed_anchor_keys(pair: &Path) {
     for i in 0..VK_PATHS.len() {
@@ -907,13 +911,18 @@ fn anchors_bind_all_descendants_in_circuit_order_and_reject_noncanonical_keys() 
         ),
         (
             "c6_fold",
-            field_bytes(compute_vk_hash(vec![keys[14], keys[15], keys[16]])),
+            field_bytes(compute_vk_hash(vec![
+                keys[14],
+                compute_vk_hash(vec![
+                    keys[15], keys[15], keys[28], keys[16], keys[29], keys[30], keys[31],
+                ]),
+            ])),
         ),
     ];
     assert_eq!(vk_tree::hashes(root).unwrap(), expected);
     for (i, key) in keys.iter().enumerate() {
-        // Keys 14..=16 are the C6 chain; every other key is under the node fold.
-        let c6 = usize::from((14..=16).contains(&i));
+        // Keys 14..=16 and 28.. are the C6 chain; every other key is under the node fold.
+        let c6 = usize::from((14..=16).contains(&i) || i >= 28);
         write(root, &key_path(i), field_bytes(Fr::from(99_u64)));
         let changed = vk_tree::hashes(root).unwrap();
         assert_ne!(changed[c6].1, expected[c6].1, "{}", key_path(i));

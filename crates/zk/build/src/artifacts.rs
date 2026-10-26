@@ -330,7 +330,7 @@ pub fn variants(circuit: &Circuit) -> Vec<(&'static str, &'static str, &'static 
         // The tube and accumulate proofs carry an IPA claim that `c3ab_fold` closes.
         if matches!(
             circuit.name.as_str(),
-            "c3_chonk_tube" | "c3_chonk_accumulate"
+            "c3_chonk_tube" | "c3_chonk_accumulate" | "c6_chonk_tube"
         ) {
             return vec![("default", "noir-rollup-no-zk", "vk_recursive")];
         }

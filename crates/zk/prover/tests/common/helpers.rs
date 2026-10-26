@@ -158,13 +158,43 @@ pub async fn setup_chunked_dkg_circuits(backend: &ZkBackend) {
 /// tube and accumulate rollups.
 #[allow(dead_code)]
 pub async fn setup_c3_chonk_circuits(backend: &ZkBackend) {
+    setup_chonk_stack(
+        backend,
+        [
+            CircuitName::C3ChonkApp,
+            CircuitName::C3ChonkInitKernel,
+            CircuitName::C3ChonkTailKernel,
+            CircuitName::C3ChonkHidingKernel,
+        ],
+    )
+    .await;
+    for circuit in [CircuitName::C3ChonkTube, CircuitName::C3ChonkAccumulate] {
+        setup_recursive_aggregation_fold_circuit(backend, circuit).await;
+    }
+}
+
+/// Installs the C6 Chonk circuits: the four stack circuits, then the tube and root.
+#[allow(dead_code)]
+pub async fn setup_c6_chonk_circuits(backend: &ZkBackend) {
+    setup_chonk_stack(
+        backend,
+        [
+            CircuitName::C6ChonkApp,
+            CircuitName::C6ChonkInitKernel,
+            CircuitName::C6ChonkTailKernel,
+            CircuitName::C6ChonkHidingKernel,
+        ],
+    )
+    .await;
+    for circuit in [CircuitName::C6ChonkTube, CircuitName::C6ChonkRoot] {
+        setup_recursive_aggregation_fold_circuit(backend, circuit).await;
+    }
+}
+
+/// Installs four stack circuits from the `chonk` workspace's shared target directory.
+async fn setup_chonk_stack(backend: &ZkBackend, stack: [CircuitName; 4]) {
     let target_dir = circuits_build_root().join("chonk").join("target");
-    for circuit in [
-        CircuitName::C3ChonkApp,
-        CircuitName::C3ChonkInitKernel,
-        CircuitName::C3ChonkTailKernel,
-        CircuitName::C3ChonkHidingKernel,
-    ] {
+    for circuit in stack {
         let pkg = circuit.as_str();
         let default_dir = backend
             .circuits_dir
@@ -189,9 +219,6 @@ pub async fn setup_c3_chonk_circuits(backend: &ZkBackend) {
                     )
                 });
         }
-    }
-    for circuit in [CircuitName::C3ChonkTube, CircuitName::C3ChonkAccumulate] {
-        setup_recursive_aggregation_fold_circuit(backend, circuit).await;
     }
 }
 

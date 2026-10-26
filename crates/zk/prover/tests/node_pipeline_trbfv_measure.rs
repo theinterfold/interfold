@@ -482,7 +482,14 @@ async fn trbfv_decryption_measure() {
         &[CircuitName::ThresholdShareDecryption]
     };
     let folds: &[CircuitName] = if aggregator {
-        &[CircuitName::C6FoldKernel, CircuitName::C6Fold]
+        &[
+            CircuitName::C6ChonkApp,
+            CircuitName::C6ChonkInitKernel,
+            CircuitName::C6ChonkTailKernel,
+            CircuitName::C6ChonkHidingKernel,
+            CircuitName::C6ChonkTube,
+            CircuitName::C6ChonkRoot,
+        ]
     } else {
         &[]
     };

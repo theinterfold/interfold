@@ -14,46 +14,25 @@
 //! A stack with fewer leaves fills its empty places with a repeat of its first leaf under the
 //! sentinel slot `total_slots`, which the app verifies and does not write.
 
-use crate::chonk::{prove_stack, ChonkStackCircuit};
+use crate::circuits::aggregation::chonk_stack::{load_compiled, witness, ChonkStack};
 use crate::circuits::aggregation::helpers::extract_single_field;
 use crate::circuits::aggregation::helpers::field_keys;
-use crate::circuits::utils::{bytes_to_field_strings, inputs_json_to_input_map};
+use crate::circuits::utils::bytes_to_field_strings;
 use crate::circuits::vk::{self, VkArtifacts};
 use crate::error::ZkError;
 use crate::prover::ZkProver;
-use crate::witness::{CompiledCircuit, WitnessGenerator};
 use e3_events::{CircuitName, CircuitVariant, Proof};
-use noirc_abi::AbiType;
 use serde::Serialize;
-use std::fs;
 
 /// Key hashes a tube or accumulate proof exposes before its rows
 /// (`lib::math::chonk::C3_CHONK_KEYS`).
 const C3_CHONK_KEYS: usize = 7;
 
-/// Fields of a Chonk proof after its public inputs (`lib::math::chonk::CHONK_PROOF_LENGTH`).
-const CHONK_PROOF_LENGTH: usize = 1270;
-
-/// The stack circuits in accumulation order.
-const STACK: [CircuitName; 4] = [
-    CircuitName::C3ChonkApp,
-    CircuitName::C3ChonkInitKernel,
-    CircuitName::C3ChonkTailKernel,
-    CircuitName::C3ChonkHidingKernel,
-];
-
-struct StackCircuit {
-    compiled: CompiledCircuit,
-    key: Vec<u8>,
-    vk: VkArtifacts,
-}
-
 struct C3ChonkCircuits {
-    /// Inner C3 proofs one app verifies, read from its ABI so the Rust side never disagrees with
-    /// the compiled `C3_CHONK_LEAVES`.
+    /// Inner C3 proofs one app verifies (`C3_CHONK_LEAVES`).
     leaves_per_stack: usize,
     leaf: VkArtifacts,
-    stack: Vec<StackCircuit>,
+    stack: ChonkStack,
     tube: VkArtifacts,
     accumulate: VkArtifacts,
 }
@@ -61,25 +40,18 @@ struct C3ChonkCircuits {
 impl C3ChonkCircuits {
     fn load(prover: &ZkProver, artifacts_dir: &str) -> Result<Self, ZkError> {
         let default = prover.circuits_dir(CircuitVariant::Default, artifacts_dir);
-        let stack: Vec<StackCircuit> = STACK
-            .iter()
-            .map(|&circuit| {
-                let dir = default.join(circuit.dir_path());
-                let key_path = dir.join(format!("{}.vk", circuit.as_str()));
-                Ok(StackCircuit {
-                    compiled: CompiledCircuit::from_file(
-                        &dir.join(format!("{}.json", circuit.as_str())),
-                    )?,
-                    key: fs::read(&key_path).map_err(|e| {
-                        ZkError::CircuitNotFound(format!("{}: {e}", key_path.display()))
-                    })?,
-                    vk: vk::load_vk_artifacts(&default, circuit)?,
-                })
-            })
-            .collect::<Result<_, ZkError>>()?;
-        let leaves_per_stack = app_leaves(&stack)?;
+        let stack = ChonkStack::load(
+            prover,
+            artifacts_dir,
+            [
+                CircuitName::C3ChonkApp,
+                CircuitName::C3ChonkInitKernel,
+                CircuitName::C3ChonkTailKernel,
+                CircuitName::C3ChonkHidingKernel,
+            ],
+        )?;
         Ok(Self {
-            leaves_per_stack,
+            leaves_per_stack: stack.app_leaves()?,
             leaf: vk::load_vk_artifacts(
                 &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
                 CircuitName::ShareEncryption,
@@ -89,22 +61,6 @@ impl C3ChonkCircuits {
             accumulate: vk::load_vk_artifacts(&default, CircuitName::C3ChonkAccumulate)?,
         })
     }
-}
-
-/// The length of the app's `slot_indices` parameter.
-fn app_leaves(stack: &[StackCircuit]) -> Result<usize, ZkError> {
-    stack[0]
-        .compiled
-        .abi
-        .parameters
-        .iter()
-        .find(|parameter| parameter.name == "slot_indices")
-        .and_then(|parameter| match &parameter.typ {
-            AbiType::Array { length, .. } => Some(*length as usize),
-            _ => None,
-        })
-        .filter(|&length| length > 0)
-        .ok_or_else(|| ZkError::InvalidInput("c3_chonk_app has no slot_indices array".into()))
 }
 
 /// Inner C3 public transcript: two inputs + `ct_commitment` output.
@@ -133,24 +89,6 @@ struct AppInput {
 }
 
 #[derive(Serialize)]
-struct MegaKey {
-    key: Vec<String>,
-    hash: String,
-}
-
-#[derive(Serialize)]
-struct InitKernelInput {
-    app_outputs: Vec<String>,
-    app_vk: MegaKey,
-}
-
-#[derive(Serialize)]
-struct KernelInput {
-    prev_outputs: Vec<String>,
-    kernel_vk: MegaKey,
-}
-
-#[derive(Serialize)]
 struct TubeInput {
     chonk_vk: Vec<String>,
     chonk_key_hash: String,
@@ -168,19 +106,6 @@ struct AccumulateInput {
     right_proof: Vec<String>,
     right_public: Vec<String>,
     own_key_hash: String,
-}
-
-fn witness<T: Serialize>(compiled: &CompiledCircuit, input: &T) -> Result<Vec<u8>, ZkError> {
-    let json =
-        serde_json::to_value(input).map_err(|e| ZkError::SerializationError(e.to_string()))?;
-    WitnessGenerator::new().generate_witness(compiled, inputs_json_to_input_map(&json)?)
-}
-
-fn mega_key(circuit: &StackCircuit) -> MegaKey {
-    MegaKey {
-        key: circuit.vk.verification_key.clone(),
-        hash: circuit.vk.key_hash.clone(),
-    }
 }
 
 /// Proves one stack over `leaves`, at most `leaves_per_stack` `(inner proof, slot)` pairs, and
@@ -222,14 +147,10 @@ fn prove_stack_and_tube(
         slot_indices.push(slot);
     }
 
-    // Each stage passes on the data before it plus the hash of the key it verified.
-    let [app, init, tail, hiding] = &circuits.stack[..] else {
-        unreachable!("four stack circuits");
-    };
     let mut outputs = rows;
     outputs.push(circuits.leaf.key_hash.clone());
-    let app_witness = witness(
-        &app.compiled,
+    let (outputs, proof) = circuits.stack.prove(
+        prover,
         &AppInput {
             leaf_vk: circuits.leaf.verification_key.clone(),
             leaf_key_hash: circuits.leaf.key_hash.clone(),
@@ -237,71 +158,17 @@ fn prove_stack_and_tube(
             c3_public_inputs,
             slot_indices,
         },
-    )?;
-    let init_witness = witness(
-        &init.compiled,
-        &InitKernelInput {
-            app_outputs: outputs.clone(),
-            app_vk: mega_key(app),
-        },
-    )?;
-    outputs.push(app.vk.key_hash.clone());
-    let tail_witness = witness(
-        &tail.compiled,
-        &KernelInput {
-            prev_outputs: outputs.clone(),
-            kernel_vk: mega_key(init),
-        },
-    )?;
-    outputs.push(init.vk.key_hash.clone());
-    let hiding_witness = witness(
-        &hiding.compiled,
-        &KernelInput {
-            prev_outputs: outputs.clone(),
-            kernel_vk: mega_key(tail),
-        },
-    )?;
-    outputs.push(tail.vk.key_hash.clone());
-
-    let witnesses = [app_witness, init_witness, tail_witness, hiding_witness];
-    let stack: Vec<_> = STACK
-        .iter()
-        .zip(&circuits.stack)
-        .zip(&witnesses)
-        .map(|((&circuit, stage), witness)| ChonkStackCircuit {
-            circuit,
-            compiled: &stage.compiled,
-            verification_key: &stage.key,
-            witness,
-        })
-        .collect();
-    let chonk = bytes_to_field_strings(&prove_stack(
-        prover.bb_binary(),
-        &stack,
+        outputs,
         job_id,
-        prover.bb_timeout(),
-    )?)?;
-    if chonk.len() != outputs.len() + CHONK_PROOF_LENGTH {
-        return Err(ZkError::ProveFailed(format!(
-            "Chonk proof has {} fields; expected {} public and {CHONK_PROOF_LENGTH} proof fields",
-            chonk.len(),
-            outputs.len()
-        )));
-    }
-    let (public, proof) = chonk.split_at(outputs.len());
-    if public != outputs.as_slice() {
-        return Err(ZkError::ProveFailed(
-            "Chonk proof public inputs differ from the stack outputs".into(),
-        ));
-    }
+    )?;
 
     let tube_circuit = CircuitName::C3ChonkTube;
     let tube_witness = witness(
         &load_compiled(prover, tube_circuit, artifacts_dir)?,
         &TubeInput {
-            chonk_vk: hiding.vk.verification_key.clone(),
-            chonk_key_hash: hiding.vk.key_hash.clone(),
-            proof: proof.to_vec(),
+            chonk_vk: circuits.stack.chonk_key().verification_key.clone(),
+            chonk_key_hash: circuits.stack.chonk_key().key_hash.clone(),
+            proof,
             stack_outputs: outputs,
             own_key_hash: circuits.tube.key_hash.clone(),
         },
@@ -309,19 +176,6 @@ fn prove_stack_and_tube(
     let tube = prover.generate_rollup_proof(tube_circuit, &tube_witness, job_id, artifacts_dir)?;
     let _ = prover.cleanup(job_id);
     Ok(tube)
-}
-
-fn load_compiled(
-    prover: &ZkProver,
-    circuit: CircuitName,
-    artifacts_dir: &str,
-) -> Result<CompiledCircuit, ZkError> {
-    CompiledCircuit::from_file(
-        &prover
-            .circuits_dir(CircuitVariant::Default, artifacts_dir)
-            .join(circuit.dir_path())
-            .join(format!("{}.json", circuit.as_str())),
-    )
 }
 
 /// Merges `left` (a tube or accumulator) with the tube `right`.

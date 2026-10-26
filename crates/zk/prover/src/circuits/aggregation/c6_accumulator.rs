@@ -28,9 +28,7 @@ pub const C6_FOLD_LEAVES: usize = 4;
 
 /// Public-signal layout of `c6_fold`: three key hashes, `is_first_step`, one slot index per leaf,
 /// the two common domain limbs, then four columns of slots.
-pub(crate) const C6_FOLD_PREFIX_LEN: usize = 6 + C6_FOLD_LEAVES;
-/// Index of `domain_hi` in `c6_fold`'s public signals; `domain_lo` follows it.
-pub(crate) const C6_FOLD_DOMAIN_HI: usize = 4 + C6_FOLD_LEAVES;
+const C6_FOLD_PREFIX_LEN: usize = 6 + C6_FOLD_LEAVES;
 const C6_FOLD_SLOT_WIDTH: usize = 4;
 
 /// `total_slots` = `T + 1` (one slot per party index in the C6 leaf layout).

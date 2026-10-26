@@ -150,14 +150,20 @@ CRT reconstruction. Host validation is not a substitute for those circuit constr
 
 ## Recursive trust and exported values
 
-Sequential C6 and nodes folds keep `(leaf, fold, genesis)` VK hashes constant across predecessors.
-The first step verifies genesis; continuation verifies the fold; the final consumer binds the
-declared fold hash to the verified VK. C3ab covers both complete C3 chains.
+The sequential nodes fold keeps `(leaf, fold, genesis)` VK hashes constant across predecessors. The
+first step verifies genesis; continuation verifies the fold; the final consumer binds the declared
+fold hash to the verified VK. C3ab covers both complete C3 chains.
 
-`c6_fold_kernel` and `c6_fold` verify four C6 proofs per step (`lib::math::c6_fold`), which costs
-about half as much per leaf as one leaf per 2^21 step. Every leaf must carry the chain's domain. A
-place with nothing to fold carries the sentinel slot `T + 1` and repeats a real leaf of the step;
-the decryption aggregator requires the ciphertext commitment in every slot, so no slot stays empty.
+A decryption's C6 proofs run over Chonk in one stack: `c6_chonk_app` verifies all `T + 1` of them,
+checks they share the first leaf's domain and places their sk, esm, ct and d commitments by slot
+(`lib::math::c6_fold`), so `T + 1` must stay within the stack's ECCVM bound (24 C3-sized proofs).
+`c6_chonk_tube` verifies the stack as a rollup proof and `c6_chonk_root` closes its IPA claim. A
+root rollup closes exactly two claims, so the root takes the tube twice under the tube key and
+states only the first; its final IPA check fails unless both claims are valid. The root ends by
+exposing the hash of the tube's seven key hashes before the data. The decryption aggregator verifies
+the root and requires `hash(root key, key-list hash)` to equal the anchored C6 tree, and the
+ciphertext commitment in every slot, so no slot stays empty. The C6 tree anchor keeps its `c6_fold`
+artifact path. The four-leaf `c6_fold` circuits remain but no longer feed the aggregator.
 `nodes_fold_kernel` and `nodes_fold` verify three `node_fold` proofs per step
 (`lib::math::nodes_fold`); a row must be all zero before it is written. Each node statement carries
 every party's rows, so a fourth node takes a step just past 2^22 at n = 39 (4.28M gates). The
@@ -196,7 +202,8 @@ C4 chain   = hash(share_decryption_limb_0, share_decryption_limb_1, share_decryp
 C4 tree    = hash(C4a, C4 chain, C4b, C4 chain)
 node tree  = hash(C0, C1, c2ab_fold, C2 tree, c3ab_fold, C3 tree, c4ab_fold, C4 tree)
 nodes tree = hash(nodes_fold, nodes_fold_kernel, node_fold, node tree)
-C6 tree    = hash(c6_fold, c6_fold_kernel, C6)
+C6 chain   = hash(c6_chonk_tube, c6_chonk_tube, hiding kernel, C6, app, init, tail)
+C6 tree    = hash(c6_chonk_root, C6 chain)
 ```
 
 Final public input zero is the complete nodes/C6 tree, pinned immutably from `.vk_tree_hash`, not

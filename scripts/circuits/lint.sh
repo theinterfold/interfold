@@ -22,6 +22,8 @@ DIRS=(
   "bin/recursive_aggregation/c3ab_fold"
   "bin/recursive_aggregation/c3_chonk_tube"
   "bin/recursive_aggregation/c3_chonk_accumulate"
+  "bin/recursive_aggregation/c6_chonk_tube"
+  "bin/recursive_aggregation/c6_chonk_root"
   "bin/recursive_aggregation/c4ab_fold"
   "bin/recursive_aggregation/node_fold"
   "bin/recursive_aggregation/nodes_fold"

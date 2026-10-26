@@ -20,6 +20,8 @@
 //! **Rollups.** The tube and `c3_chonk_accumulate` are rollup proofs: each carries an IPA claim,
 //! the accumulate step merges two into one, and `c3ab_fold` closes both chains' claims once.
 
+use crate::configs::default::T;
+
 /// A Mega verification key and its hash, as a kernel verifies the circuit before it.
 pub global MEGA_VK_LENGTH: u32 = 163;
 /// The hiding kernel's Chonk key, as `c3_chonk_tube` verifies the stack.
@@ -47,6 +49,12 @@ pub global C3_CHONK_LEAVES: u32 = 24;
 pub global C3_CHONK_KEYS: u32 = 7;
 pub global C3_CHONK_OWN_KEY: u32 = 0;
 pub global C3_CHONK_TUBE_KEY: u32 = 1;
+
+/// C6 proofs one `c6_chonk_app` verifies: a decryption's whole chain, one per slot, so one stack
+/// holds it while `T + 1` stays under the ECCVM bound of `C3_CHONK_LEAVES`-sized stacks.
+pub global C6_CHONK_LEAVES: u32 = T + 1;
+/// Data a C6 Chonk stack carries: the two domain limbs, then the sk, esm, ct and d columns.
+pub global C6_CHONK_DATA_LEN: u32 = 2 + 4 * (T + 1);
 
 /// Merges two disjoint row sets. A slot may be filled on at most one side.
 pub fn merge_rows<let ROWS: u32>(left: [Field; ROWS], right: [Field; ROWS]) -> [Field; ROWS] {

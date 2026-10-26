@@ -90,10 +90,20 @@ pub fn hashes(root: &Path) -> Result<[(&'static str, [u8; 32]); 2]> {
         fold("node_fold")?,
         node,
     ]);
+    // The decryption aggregator binds the root key next to the hash of the C6 stack's key list, in
+    // the order the tube exposes it (its own key twice, then Chonk, C6, app, init and tail).
+    let c6_tube = fold("c6_chonk_tube")?;
     let c6 = compute_vk_hash(vec![
-        fold("c6_fold")?,
-        fold("c6_fold_kernel")?,
-        load(root, "recursive", "threshold", "share_decryption")?,
+        fold("c6_chonk_root")?,
+        compute_vk_hash(vec![
+            c6_tube,
+            c6_tube,
+            chonk("c6_chonk_hiding_kernel")?,
+            load(root, "recursive", "threshold", "share_decryption")?,
+            chonk("c6_chonk_app")?,
+            chonk("c6_chonk_init_kernel")?,
+            chonk("c6_chonk_tail_kernel")?,
+        ]),
     ]);
     let encode = |value: Fr| {
         let repr = value.into_bigint().to_bytes_be();
