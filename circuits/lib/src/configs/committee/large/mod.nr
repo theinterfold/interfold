@@ -4,11 +4,11 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Large committee size: N=39, T=14, H=28.
+//! Large committee size: N=39, T=19, H=28.
 //! Parity matrices are auto-generated; switch with `pnpm build:circuits --committee large`.
 
 pub global N_PARTIES: u32 = 39;
-pub global T: u32 = 14;
+pub global T: u32 = 19;
 pub global H: u32 = 28;
 
 pub mod parity_insecure;

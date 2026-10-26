@@ -171,7 +171,7 @@ export const INSECURE_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
 export const INSECURE_LARGE_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "insecure-64",
   "large",
-  { committeeSize: 3, h: 28, t: 14, n: 39 },
+  { committeeSize: 3, h: 28, t: 19, n: 39 },
 );
 
 export const SECURE_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
@@ -195,7 +195,7 @@ export const SECURE_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
 export const SECURE_LARGE_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "secure-8192",
   "large",
-  { committeeSize: 3, h: 28, t: 14, n: 39 },
+  { committeeSize: 3, h: 28, t: 19, n: 39 },
 );
 
 export const PRODUCTION_BFV_CONFIG: ActiveBfvConfig = SECURE_SMALL_BFV_CONFIG;

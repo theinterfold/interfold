@@ -96,7 +96,7 @@ impl CiphernodesCommitteeSize {
             CiphernodesCommitteeSize::Large => CiphernodesCommittee {
                 n: 39,
                 h: 28,
-                threshold: 14,
+                threshold: 19,
             },
         }
     }
@@ -151,7 +151,7 @@ mod tests {
                 CiphernodesCommitteeSize::Large,
                 "Large",
                 [3, 0, 0, 0],
-                (39, 28, 14),
+                (39, 28, 19),
             ),
         ] {
             assert_eq!(bincode::serialize(&size).unwrap(), bytes);

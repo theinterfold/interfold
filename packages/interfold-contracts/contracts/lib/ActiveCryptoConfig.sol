@@ -42,7 +42,7 @@ library ActiveCryptoConfig {
     uint32 internal constant SMALL_N = 19;
 
     uint8 internal constant LARGE_COMMITTEE_SIZE = 3;
-    uint32 internal constant LARGE_T = 14;
+    uint32 internal constant LARGE_T = 19;
     uint32 internal constant LARGE_H = 28;
     uint32 internal constant LARGE_N = 39;
 
