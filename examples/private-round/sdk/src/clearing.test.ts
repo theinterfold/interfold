@@ -13,6 +13,7 @@ import {
   compareBid,
   cost,
   escrowOf,
+  marginalRank,
   plainClaims,
   plainOutcome,
   type RoundSale,
@@ -128,27 +129,23 @@ describe('claims', () => {
     expect(allocationOf(SALE, result, 'full')).toEqual({ tokens: 1_000_000n, paid: 350n, refund: 100n })
   })
 
-  it('shares the remaining lots among the registered marginal bidders, at most one lot each', () => {
+  it('gives the lots that are left to the first registered marginal bidders by index', () => {
     const result = clearBids(SALE, [7, 5, 5, 5, 2])
-    // 3 lots, 1 above: 2 lots for 3 marginal bidders.
-    expect(allocationOf(SALE, result, 'marginal', { aboveClaimed: 1, marginalRegistered: 3 })).toEqual({
-      tokens: 666_666n,
-      paid: 234n, // ceil(666666 * 350 / 10^6)
-      refund: 216n,
-    })
-    // Two registered: a lot each.
-    expect(allocationOf(SALE, result, 'marginal', { aboveClaimed: 1, marginalRegistered: 2 }).tokens).toBe(1_000_000n)
+    // 3 lots, 1 above: 2 lots for 3 marginal bidders. The first two (ranks 0 and 1) get a lot each.
+    const filled = { tokens: 1_000_000n, paid: 350n, refund: 100n }
+    expect(allocationOf(SALE, result, 'marginal', { aboveClaimed: 1, rank: 0 })).toEqual(filled)
+    expect(allocationOf(SALE, result, 'marginal', { aboveClaimed: 1, rank: 1 })).toEqual(filled)
+    // The third gets the escrow back. A lot is never split.
+    expect(allocationOf(SALE, result, 'marginal', { aboveClaimed: 1, rank: 2 })).toEqual({ tokens: 0n, paid: 0n, refund: 450n })
     // An above bidder that forfeits leaves a lot for the marginal bidders.
-    expect(allocationOf(SALE, result, 'marginal', { aboveClaimed: 0, marginalRegistered: 3 }).tokens).toBe(1_000_000n)
+    expect(allocationOf(SALE, result, 'marginal', { aboveClaimed: 0, rank: 2 })).toEqual(filled)
   })
 
-  it('refunds a marginal bidder when nobody registers', () => {
-    const result = clearBids(SALE, [7, 5, 5, 5, 2])
-    expect(allocationOf(SALE, result, 'marginal', { aboveClaimed: 1, marginalRegistered: 0 })).toEqual({
-      tokens: 0n,
-      paid: 0n,
-      refund: 450n,
-    })
+  it('ranks a marginal bidder by the registered bidders with a lower index', () => {
+    expect(marginalRank([4, 1, 9], 4)).toBe(1)
+    expect(marginalRank([4, 1, 9], 0)).toBe(0)
+    expect(marginalRank([4, 1, 9], 12)).toBe(3)
+    expect(marginalRank([], 3)).toBe(0)
   })
 
   it('gives every bidder at or above the reserve a lot when undersubscribed', () => {
@@ -182,17 +179,18 @@ describe('invariants on random rounds', () => {
       const result = clearBids(sale, bids)
       const { above, marginal } = plainClaims(result, bids)
       let tokens = 0n
+      let rank = 0
       for (const b of bids) {
         const cls = claimClass(result, claimComparison(result, b))
-        const allocation = allocationOf(sale, result, cls, { aboveClaimed: above, marginalRegistered: marginal })
+        // Every marginal bidder registers; the bids are in the order of the bidder index.
+        const allocation = allocationOf(sale, result, cls, { aboveClaimed: above, rank: cls === 'marginal' ? rank++ : 0 })
         expect(allocation.paid + allocation.refund).toBe(result.escrow)
         tokens += allocation.tokens
       }
       expect(tokens).toBeLessThanOrEqual(supplyOf(sale))
-      if (result.outcome === Outcome.SoldOut) {
-        // A sell-out hands out all lots, up to the rounding of the shares.
-        expect(tokens).toBeGreaterThan(supplyOf(sale) - BigInt(marginal))
-      }
+      // A sell-out hands out every lot.
+      if (result.outcome === Outcome.SoldOut) expect(marginal).toBeGreaterThan(0)
+      if (result.outcome === Outcome.SoldOut) expect(tokens).toBe(supplyOf(sale))
     }
   })
 })

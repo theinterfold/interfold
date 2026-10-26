@@ -14,13 +14,14 @@
  * if c_rho < m:                     NOT_MET         everyone gets the escrow back
  * else if c_rho < K:                UNDERSUBSCRIBED price p_rho; every bidder with b >= rho gets one lot
  * else:                             SOLD_OUT        l* = max{ l >= rho : c_l >= K }, price p_{l*}
- *                                                   b > l*: one lot ("above"), b == l*: share what is left ("marginal")
+ *                                                   b > l*: one lot ("above"), b == l*: the first of the rest ("marginal")
  * ```
  *
- * The committee reveals only the outcome and `l*`. The contract learns how many bidders are above
- * or marginal from the claims: bidders above `l*` claim first (phase 1), the marginal bidders register in
- * phase 2, and after phase 2 each registered bidder gets `min(lot, floor(lot * R / M))`, with
- * `R = K - aboveClaimed` and `M = marginalRegistered`.
+ * The committee reveals only the outcome and `l*`. The contract learns who is above or marginal
+ * from the claims: bidders above `l*` claim first (phase 1) and the marginal bidders register in
+ * phase 2. After phase 2, the registered marginal bidders fill the `R = K - aboveClaimed` lots that
+ * are left in the order of their bidder index (the order of their deposits): the first `R` get one
+ * lot, and the others get the escrow back. A lot is never split.
  *
  * `U = 10^saleDecimals`. A bidder pays `cost(t) = ceil(t * pStar / U)` for `t` tokens. The escrow of
  * every bidder is `ceil(lot * p_{L-1} / U)`, so `cost(lot) <= escrow` at every price.
@@ -148,17 +149,23 @@ export function refundAllocation(result: Clearing): Allocation {
 }
 
 /**
- * The tokens of one marginal bidder after phase 2: `R = lots - aboveClaimed` lots are shared by
- * `marginalRegistered` bidders, and nobody gets more than one lot. `R` is at least 1: fewer than `lots`
- * bidders are above `l*`.
+ * The tokens of one marginal bidder after phase 2: `R = lots - aboveClaimed` lots go to the first
+ * `R` registered marginal bidders by bidder index. `rank` is the number of registered marginal bidders
+ * with a lower index. `R` is at least 1: fewer than `lots` bidders are above `l*`.
  */
-export function marginalAllocation(sale: RoundSale, result: Clearing, aboveClaimed: number, marginalRegistered: number): Allocation {
-  if (marginalRegistered === 0) return refundAllocation(result)
-  const remaining = BigInt(sale.lots - aboveClaimed)
-  const registered = BigInt(marginalRegistered)
-  const share = registered <= remaining ? result.lot : (result.lot * remaining) / registered
-  const paid = cost(share, result.pStar, sale.saleDecimals)
-  return { tokens: share, paid, refund: result.escrow - paid }
+export function marginalAllocation(sale: RoundSale, result: Clearing, aboveClaimed: number, rank: number): Allocation {
+  if (rank >= sale.lots - aboveClaimed) return refundAllocation(result)
+  return fullAllocation(result)
+}
+
+/**
+ * The number of registered marginal bidders with a lower bidder index than `bidderIndex`.
+ * `registeredIndices` are the bidder indices that registered (`marginalMask` of the contract).
+ */
+export function marginalRank(registeredIndices: Iterable<number>, bidderIndex: number): number {
+  let rank = 0
+  for (const index of registeredIndices) if (index < bidderIndex) rank++
+  return rank
 }
 
 /** The allocation of a claim of the class `cls`, after phase 2 for `marginal`. */
@@ -166,13 +173,13 @@ export function allocationOf(
   sale: RoundSale,
   result: Clearing,
   cls: ClaimClass,
-  phase2: { aboveClaimed: number; marginalRegistered: number } = { aboveClaimed: 0, marginalRegistered: 0 },
+  phase2: { aboveClaimed: number; rank: number } = { aboveClaimed: 0, rank: 0 },
 ): Allocation {
   switch (cls) {
     case 'full':
       return fullAllocation(result)
     case 'marginal':
-      return marginalAllocation(sale, result, phase2.aboveClaimed, phase2.marginalRegistered)
+      return marginalAllocation(sale, result, phase2.aboveClaimed, phase2.rank)
     case 'refund':
       return refundAllocation(result)
   }
