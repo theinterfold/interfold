@@ -426,7 +426,7 @@ jobs:
       # The source-identity regression compares against Noir's actual formatted selector.
       - name: Install Nargo for formatted source identity tests
         if: matrix.suite == 'lib'
-        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f
+        uses: noir-lang/noirup@bedac8fbe6a059177c35e565f9f76db54a795976 # v0.1.5
         with:
           toolchain: ${{ env.NOIR_TOOLCHAIN }}
 
