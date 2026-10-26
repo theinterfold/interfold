@@ -167,9 +167,9 @@ its response handler agree without extra state. A chain of at most three nodes s
 rest, so it never ends on the kernel.
 
 C3 chains run over Chonk (`lib::math::chonk`). A stack is `c3_chonk_app`, which verifies
-`C3_CHONK_LEAVES` C3 proofs, then the init, tail and hiding kernels; `c3_chonk_tube` verifies the
-stack's Chonk proof as a rollup proof, and `c3_chonk_accumulate` merges an accumulator or tube on
-the left with a tube on the right. `c3ab_fold` verifies each chain's last accumulator as a root
+`C3_CHONK_LEAVES` (24) C3 proofs, then the init, tail and hiding kernels; `c3_chonk_tube` verifies
+the stack's Chonk proof as a rollup proof, and `c3_chonk_accumulate` merges an accumulator or tube
+on the left with a tube on the right. `c3ab_fold` verifies each chain's last accumulator as a root
 rollup, which closes its IPA claim. Every stage verifies against a witness key and appends that
 key's hash to the data it passes on, so each tube or accumulator exposes seven key hashes: its own,
 the tube, the hiding kernel's Chonk key, then C3, app, init and tail. Merging requires equal keys on

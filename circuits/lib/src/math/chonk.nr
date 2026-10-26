@@ -37,9 +37,10 @@ pub struct MegaVerificationKey {
     pub hash: Field,
 }
 
-/// Leaves one `c3_chonk_app` verifies. The stack's ECCVM work grows with it; see the C3 Chonk
-/// measurements in `docs/architecture/proof-statements.md`.
-pub global C3_CHONK_LEAVES: u32 = 16;
+/// Leaves one `c3_chonk_app` verifies. Each stack adds a tube and an accumulate proof, so larger
+/// stacks are faster, but the stack's ECCVM trace grows with them: bb 5.2.0 proves 24 and rejects
+/// 28 (ECCVM_FIXED_SIZE 2^15).
+pub global C3_CHONK_LEAVES: u32 = 24;
 
 /// Key hashes a tube or accumulate proof exposes before the rows: its own key, the tube key, the
 /// stack's Chonk key, then the C3 leaf, app, init kernel and tail kernel keys.
