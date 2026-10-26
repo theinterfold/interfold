@@ -152,9 +152,14 @@ CRT reconstruction. Host validation is not a substitute for those circuit constr
 
 Sequential C3, C6, and nodes folds keep `(leaf, fold, genesis)` VK hashes constant across
 predecessors. The first step verifies genesis; continuation verifies the fold; the final consumer
-binds the declared fold hash to the verified VK. C3ab covers both complete C3 chains. Node-fold
-covers child folds and their nested keys. DKG aggregation requires one node-tree hash across every
-selected row.
+binds the declared fold hash to the verified VK. C3ab covers both complete C3 chains.
+
+`c3_fold_kernel` and `c3_fold` verify four C3 proofs per step (`lib::math::c3_fold`), which fills
+2^22 and halves the fold cost per leaf against one leaf per 2^21 step. Every slot index is public. A
+place with nothing to fold carries the sentinel slot `C3_SLOTS` and writes nothing; its proof
+position repeats a real leaf of the step, so it is verified but adds no row. Every written slot must
+be empty, so a step cannot overwrite or duplicate a row. Node-fold covers child folds and their
+nested keys. DKG aggregation requires one node-tree hash across every selected row.
 
 The trust tree uses ordered SAFE `DS_VK_HASH` hashing:
 

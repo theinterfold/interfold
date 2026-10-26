@@ -9,6 +9,7 @@
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use lib::configs::default::dkg::L_THRESHOLD;
 use lib::configs::default::N_PARTIES;
+use lib::math::c3_fold::C3_FOLD_LEAVES;
 use lib::math::commitments::compute_vk_hash;
 use lib::math::recursive_vk::sequential_fold_vk_hash;
 
@@ -16,7 +17,7 @@ use lib::math::recursive_vk::sequential_fold_vk_hash;
 pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;
 
 /// Must match `c3_fold`: `5 + 3*C3_SLOTS` public fields per final proof.
-pub global C3_FOLD_PUBLIC_LEN: u32 = 5 + (3 * C3_SLOTS);
+pub global C3_FOLD_PUBLIC_LEN: u32 = 4 + C3_FOLD_LEAVES + (3 * C3_SLOTS);
 
 pub global C3_FOLD_PREFIX_LEN: u32 = C3_FOLD_PUBLIC_LEN - (3 * C3_SLOTS);
 

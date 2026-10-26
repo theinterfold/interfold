@@ -52,7 +52,7 @@ fn c6_fold_json_path() -> PathBuf {
         .join("circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.json")
 }
 
-/// Reads `C3_SLOTS` from the compiled `c3_fold` ABI (`acc_public_inputs` length is `5 + 3 * C3_SLOTS`).
+/// Reads `C3_SLOTS` from the compiled `c3_fold` ABI (`acc_public_inputs` length is `4 + C3_FOLD_LEAVES + 3 * C3_SLOTS`).
 fn c3_fold_total_slots_from_compiled_json() -> usize {
     let path = c3_fold_json_path();
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
@@ -75,11 +75,12 @@ fn c3_fold_total_slots_from_compiled_json() -> usize {
         })
         .expect("c3_fold.json: abi.parameters.acc_public_inputs.length") as usize;
     assert!(
-        len >= 5 && (len - 5).is_multiple_of(3),
-        "unexpected acc_public_inputs length {} (expected 5 + 3 * slots)",
+        len >= 4 + e3_zk_prover::C3_FOLD_LEAVES
+            && (len - (4 + e3_zk_prover::C3_FOLD_LEAVES)).is_multiple_of(3),
+        "unexpected acc_public_inputs length {} (expected 4 + C3_FOLD_LEAVES + 3 * slots)",
         len
     );
-    (len - 5) / 3
+    (len - (4 + e3_zk_prover::C3_FOLD_LEAVES)) / 3
 }
 
 /// Reads slot count from the compiled `c6_fold` ABI
@@ -191,15 +192,27 @@ fn assert_recursive_vk_binding(
     let kernel_path = default_dir
         .join(kernel.dir_path())
         .join(format!("{}.json", kernel.as_str()));
-    let public_name = if fold == CircuitName::C3Fold {
-        "c3_public_inputs"
-    } else {
-        "c6_public_inputs"
+    // C3 steps verify `C3_FOLD_LEAVES` leaves; this check places one real leaf and fills the other
+    // places with it under the sentinel slot. C6 steps verify one leaf.
+    let multi = fold == CircuitName::C3Fold;
+    let set_leaf = |input: &mut serde_json::Value, proof_data: &[u8], public: Vec<String>, slot| {
+        let proof = fold_witness_field_strings(proof_data).unwrap();
+        if multi {
+            let k = e3_zk_prover::C3_FOLD_LEAVES;
+            let mut slots = vec![total_slots as u32; k];
+            slots[0] = slot;
+            input["inner_proofs"] = json!(vec![proof; k]);
+            input["c3_public_inputs"] = json!(vec![public; k]);
+            input["slot_indices"] = json!(slots);
+        } else {
+            input["inner_proof"] = json!(proof);
+            input["c6_public_inputs"] = json!(public);
+            input["slot_index"] = json!(slot);
+        }
     };
     // The kernel proves the chain's first leaf at slot 0.
     let mut input = json!({
         "inner_vk": leaf_vk.verification_key,
-        "inner_proof": fold_witness_field_strings(&inners[0].data).unwrap(),
         "acc_vk": kernel_vk.verification_key,
         "acc_proof": vec!["0"; folded.data.len() / 32],
         "acc_public_inputs": vec!["0"; fields(folded).len()],
@@ -207,9 +220,8 @@ fn assert_recursive_vk_binding(
         "fold_key_hash": fold_vk.key_hash,
         "kernel_key_hash": kernel_vk.key_hash,
         "is_first_step": true,
-        "slot_index": 0,
     });
-    input[public_name] = json!(fields(&inners[0]));
+    set_leaf(&mut input, &inners[0].data, fields(&inners[0]), 0);
     let kernel_witness = witness(&kernel_path, &input).expect("honest genesis witness");
     let genesis = prover
         .generate_recursive_aggregation_bin_proof(
@@ -223,9 +235,7 @@ fn assert_recursive_vk_binding(
     // The first fold step adds the second leaf at slot 1 on top of the kernel proof.
     input["acc_proof"] = json!(fold_witness_field_strings(&genesis.data).unwrap());
     input["acc_public_inputs"] = json!(fields(&genesis));
-    input["inner_proof"] = json!(fold_witness_field_strings(&inners[1].data).unwrap());
-    input[public_name] = json!(fields(&inners[1]));
-    input["slot_index"] = json!(1);
+    set_leaf(&mut input, &inners[1].data, fields(&inners[1]), 1);
     let first_witness = witness(&fold_path, &input).expect("honest first-step witness");
     let first = prover
         .generate_recursive_aggregation_bin_proof(
@@ -237,7 +247,7 @@ fn assert_recursive_vk_binding(
         .expect("honest first-step proof");
 
     let mut reused_slot = input.clone();
-    reused_slot["slot_index"] = json!(0);
+    set_leaf(&mut reused_slot, &inners[1].data, fields(&inners[1]), 0);
     assert!(
         witness(&fold_path, &reused_slot).is_err(),
         "the first fold step must not refill the kernel's slot"
@@ -271,10 +281,8 @@ fn assert_recursive_vk_binding(
         continuation["acc_vk"] = json!(fold_vk.verification_key);
         continuation["acc_proof"] = json!(fold_witness_field_strings(&first.data).unwrap());
         continuation["acc_public_inputs"] = json!(fields(&first));
-        continuation["inner_proof"] = json!(fold_witness_field_strings(&inners[0].data).unwrap());
-        continuation[public_name] = json!(fields(&inners[0]));
+        set_leaf(&mut continuation, &inners[0].data, fields(&inners[0]), 2);
         continuation["is_first_step"] = json!(false);
-        continuation["slot_index"] = json!(2);
         witness(&fold_path, &continuation).expect("honest continuation witness");
 
         let mut fake_prior = continuation.clone();
@@ -302,9 +310,18 @@ fn assert_recursive_vk_binding(
             "leaf",
         );
         let mut changed_leaf = step.clone();
+        let slot = if multi {
+            changed_leaf["slot_indices"][0].as_u64().unwrap() as u32
+        } else {
+            changed_leaf["slot_index"].as_u64().unwrap() as u32
+        };
+        set_leaf(
+            &mut changed_leaf,
+            &fake_leaf.proof.data,
+            fields(&inners[leaf]),
+            slot,
+        );
         changed_leaf["inner_vk"] = json!(fake_leaf.vk);
-        changed_leaf["inner_proof"] =
-            json!(fold_witness_field_strings(&fake_leaf.proof.data).unwrap());
         changed_leaf["inner_key_hash"] = json!(fake_leaf.key_hash);
         assert!(
             witness(&fold_path, &changed_leaf).is_err(),

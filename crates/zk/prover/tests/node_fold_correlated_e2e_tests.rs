@@ -74,7 +74,7 @@ fn c3_fold_total_slots_from_compiled_json() -> usize {
                 .and_then(|p| p.get("type")?.get("length")?.as_u64())
         })
         .expect("c3_fold acc_public_inputs length") as usize;
-    (len - 5) / 3
+    (len - (4 + e3_zk_prover::C3_FOLD_LEAVES)) / 3
 }
 
 fn field_str_zero() -> String {
