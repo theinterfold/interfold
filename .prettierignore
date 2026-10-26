@@ -34,6 +34,7 @@ deployed_contracts.json
 *.last-run.json
 examples/auction-e2e/contracts/verifiers/AuctionVerifier*.sol
 examples/sealed-cca/contracts/verifiers/SealedCca*Verifier.sol
+examples/negotiation/contracts/verifiers/Negotiation*Verifier.sol
 
 # test results
 test-results/

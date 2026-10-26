@@ -67,7 +67,7 @@ const STEP_PRICE = 1n
  * 2. Else `NEGOTIATIONS=n`: the first negotiation has `SELLER_STEP` and `BUYER_STEP` (default 2 and 12), and
  *    the other `n - 1` have random steps. With no variable the run has one negotiation, 2 and 12.
  */
-function negotiationCases(env: NodeJS.ProcessEnv): Array<[number, number]> {
+function negotiationCases(env: Record<string, string | undefined>): Array<[number, number]> {
   const step = (name: string, value: string | undefined): number => {
     const parsed = Number(value)
     if (!Number.isInteger(parsed) || parsed < 0 || parsed >= LEVELS)
