@@ -1,0 +1,14 @@
+# Used by `docker build -f examples/private-round/server/Dockerfile .` from the repository root.
+.git
+**/node_modules
+**/target
+**/.DS_Store
+**/*.log
+examples/private-round/artifacts
+examples/private-round/cache
+examples/private-round/.interfold
+examples/private-round/guest
+# Never send local secrets to an image.
+**/.env
+**/.env.*
+!**/.env.example
