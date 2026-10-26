@@ -62,11 +62,11 @@ walkdir = "2.5"
 [dev-dependencies]
 e3-zk-samples.workspace = true
 num-integer.workspace = true
-e3-event-system = { workspace = true }
+e3-event-system = { workspace = true, features = ["test-support"] }
 e3-net = { workspace = true }
 e3-sync = { workspace = true }
 e3-sortition = { workspace = true }
-e3-test-helpers = { workspace = true }
+e3-test-support = { workspace = true }
 e3-layout-lock = { workspace = true }
 e3-evm = { workspace = true }
 ark-bn254 = { workspace = true }

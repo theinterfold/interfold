@@ -469,7 +469,7 @@ mod tests {
     use e3_events::SyncEnded;
     use e3_events::TsAgg;
     use e3_events::{StoreEventResponse, Unsequenced};
-    use e3_test_helpers::with_tracing;
+    use e3_test_support::with_tracing;
     use std::time::Duration;
     use tracing::info;
 

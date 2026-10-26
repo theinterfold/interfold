@@ -887,7 +887,7 @@ mod tests {
                 .send(Some(value))
         }
         let (bus, _, seed, _, _, _, _) =
-            e3_test_helpers::get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
+            crate::test_support::get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
         let selector = CiphernodeSelector::new(
             &bus,
             persist(Default::default()),

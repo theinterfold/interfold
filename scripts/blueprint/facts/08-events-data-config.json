@@ -273,7 +273,7 @@
       "read_first": [
         {
           "why": "crate exports: runtime assembly and process-local shared access",
-          "ref": "crates/event-system/src/lib.rs@11@pub use event_system::*;"
+          "ref": "crates/event-system/src/lib.rs@13@pub use event_system::*;"
         },
         {
           "why": "in-memory construction, used by tests and standalone helpers",

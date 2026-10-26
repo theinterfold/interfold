@@ -75,7 +75,8 @@ E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 cargo check --locked -p e3-zk-prover --tests
 ```
 
 This skips fixture preparation only. It neither skips proof tests nor supplies valid artifacts. The
-dependency graph can also need [Solidity fixtures](../../test-helpers/README.md).
+dependency graph can also need
+[Solidity fixtures](../../tests/README.md#prerequisites-and-assurance).
 
 ## Tests
 

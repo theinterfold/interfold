@@ -36,7 +36,8 @@ tracing = { workspace = true }
 [dev-dependencies]
 bincode = { workspace = true }
 e3-sync = { workspace = true }
-e3-test-helpers = { workspace = true }
+e3-test-support = { workspace = true }
+e3-event-system = { workspace = true, features = ["test-support"] }
 fhe-math = { workspace = true }
 fhe-traits = { workspace = true }
 futures = { workspace = true }

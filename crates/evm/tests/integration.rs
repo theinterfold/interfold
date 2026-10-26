@@ -347,7 +347,7 @@ async fn a_chain_without_a_contract_route_is_rejected() -> Result<()> {
 
 #[actix::test]
 async fn ensure_historical_events() -> Result<()> {
-    let _guard = e3_test_helpers::with_tracing("info");
+    let _guard = e3_test_support::with_tracing("info");
 
     // Create a WS provider
     // NOTE: Anvil must be available on $PATH

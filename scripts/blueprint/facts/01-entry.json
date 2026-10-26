@@ -270,7 +270,6 @@
         "e3-sortition",
         "e3-sync",
         "e3-utils",
-        "e3-test-helpers",
         "e3-zk-prover"
       ],
       "tests": "Unit tests in src/ (fence.rs, store_record.rs, validate.rs, nodes/, start/start.rs, wallet/set.rs) and integration tests in tests/ (purge_guard.rs, reset_data_guard.rs, validate_older_schema.rs, validate_snapshot_errors.rs); run: cargo test -p e3-entrypoint",

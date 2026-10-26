@@ -61,9 +61,10 @@ different shares.
 
 ## Tests
 
-Run `cargo test --locked -p e3-trbfv` with [test-helper prerequisites](../test-helpers/README.md).
-Inline cases cover encrypted share serialization/indices and structured error extraction;
-[`tests/integration.rs`](tests/integration.rs) exercises threshold computation in isolation. See
+Run `cargo test --locked -p e3-trbfv`; no EVM/prover fixture setup is required. Inline cases cover
+encrypted share serialization/indices and structured error extraction;
+[`tests/integration.rs`](tests/integration.rs) exercises threshold computation in isolation, using
+private share fixtures under `tests/common` and shared [ballots](../bfv-test-support/README.md). See
 [DKG](../../docs/architecture/dkg.md) and
 [threshold decryption](../../docs/architecture/threshold-decryption.md) for dimensions and proofs.
 See [AGENTS.md](AGENTS.md) for mathematical/indexing change rules.

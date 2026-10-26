@@ -96,8 +96,8 @@ cargo test --locked -p e3-ciphernode-builder
 
 This runs the crate's startup, profile, recovery, and handle tests. The finalized-lifecycle tests
 start Anvil, so Foundry is required. Prepare the
-[shared test prerequisites](../test-helpers/README.md#prerequisites-before-invoking-cargo) first;
-the dependency graph includes Solidity fixtures and build-time Noir preparation.
+[system test prerequisites](../tests/README.md#prerequisites-and-assurance) first; the dependency
+graph includes Solidity fixtures and build-time Noir preparation.
 
 Multi-node scenarios live in [e3-tests](../tests/README.md), which also uses this builder. List its
 scenarios with `cargo test --locked -p e3-tests --test integration -- --list`, then select the

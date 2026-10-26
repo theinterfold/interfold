@@ -221,7 +221,7 @@ mod tests {
     };
     use actix::{Actor, Handler, ResponseFuture};
     use anyhow::{Context, Result};
-    use e3_test_helpers::with_tracing;
+    use e3_test_support::with_tracing;
     use std::collections::{HashMap, HashSet};
     use std::sync::{
         atomic::{AtomicBool, Ordering},

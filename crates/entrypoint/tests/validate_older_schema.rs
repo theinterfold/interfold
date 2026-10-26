@@ -106,7 +106,7 @@ async fn startup_rejects_older_schema_before_log_recovery() -> Result<()> {
             let path = older_store(&config, fixture, schema)?;
             let before = log_files(&path)?;
             let error = CiphernodeBuilder::bootstrap(
-                e3_test_helpers::derive_shared_rng(1, 1),
+                e3_test_support::derive_shared_rng(1, 1),
                 cipher.clone(),
             )
             .with_persistence(&config.log_file(), &config.db_file())

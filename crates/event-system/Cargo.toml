@@ -16,9 +16,12 @@ e3-utils.workspace = true
 once_cell.workspace = true
 tokio.workspace = true
 
+[features]
+test-support = []
+
 [dev-dependencies]
 bincode.workspace = true
 e3-events = { workspace = true, features = ["test-helpers"] }
-e3-test-helpers.workspace = true
+e3-test-support.workspace = true
 tempfile.workspace = true
 tracing.workspace = true

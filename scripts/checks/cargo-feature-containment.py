@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-only
-"""Keep proof skipping and artificial ZK samples out of production dependencies."""
+"""Keep proof skipping and fixture support out of production dependencies."""
 
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ SAMPLES_RUNTIME_OWNERS = {
     Path("crates/zk/benchmarks/Cargo.toml"): "e3-zk-benchmarks",
 }
 BENCHMARK_OWNER = "e3-zk-benchmarks"
+TEST_SUPPORT = {"e3-test-support", "e3-bfv-test-support"}
 
 
 def reaches_target(features: dict[str, list[str]]) -> bool:
@@ -125,6 +126,8 @@ def main() -> int:
             failures.append(f"{relative}: enables {TARGET} on a dependency")
 
         owner = data.get("package", {}).get("name")
+        if owner in TEST_SUPPORT and data["package"].get("publish") is not False:
+            failures.append(f"{relative}: {owner} must remain unpublished")
         if owner == SAMPLES and data["package"].get("publish") is not False:
             failures.append(f"{relative}: {SAMPLES} must remain unpublished")
         runtime_owner = SAMPLES_RUNTIME_OWNERS.get(relative)
@@ -133,6 +136,12 @@ def main() -> int:
                 if isinstance(dependency, dict) and dependency.get("workspace"):
                     dependency = workspace_dependencies.get(name, dependency)
                 package = dependency.get("package", name) if isinstance(dependency, dict) else name
+                if package in TEST_SUPPORT:
+                    failures.append(f"{relative}: {package} is only allowed in dev-dependencies")
+                if owner in TEST_SUPPORT and package.startswith("e3-"):
+                    failures.append(f"{relative}: shared fixture support cannot depend on internal crate {package}")
+                if package == "e3-tests":
+                    failures.append(f"{relative}: system-test composition cannot be a production dependency")
                 if package == SAMPLES and runtime_owner is None:
                     failures.append(f"{relative}: {SAMPLES} is only allowed in dev-dependencies")
                 if package == BENCHMARK_OWNER:
@@ -154,7 +163,8 @@ def main() -> int:
         print(f"  - {failure}")
     print(
         "  Only crates/tests can enable proof skipping. ZK samples require dev-dependencies,"
-        " except in the unpublished development benchmark owner."
+        " except in the unpublished development benchmark owner. Mechanical/BFV support must remain"
+        " unpublished, dev-only and independent of internal crates."
     )
     return 1
 

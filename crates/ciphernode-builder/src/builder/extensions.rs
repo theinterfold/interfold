@@ -390,7 +390,7 @@ mod tests {
         let cipher =
             Arc::new(e3_crypto::Cipher::from_password("test-only-bootstrap-router").await?);
         let builder =
-            CiphernodeBuilder::bootstrap(e3_test_helpers::derive_shared_rng(1, 1), cipher.clone());
+            CiphernodeBuilder::bootstrap(e3_test_support::derive_shared_rng(1, 1), cipher.clone());
         let addr = Address::from([0xab; 20]).to_string();
         let repositories = Arc::new(store.repositories());
         let (sortition, selector_state) = setup_sortition(&bus, &repositories, &addr).await?;

@@ -49,9 +49,7 @@ for bounds and known recovery gaps.
 
 ## Tests
 
-Run `cargo test --locked -p e3-sync` after the
-[test-helper prerequisites](../test-helpers/README.md); its dev-dependency graph brings chain and
-prover fixture builds even for replay-focused targets.
+Run `cargo test --locked -p e3-sync`; replay-focused targets do not need EVM/prover fixture builds.
 
 [`sync/tests/`](src/sync/tests) separates schema/role admission, history failures, gates, and
 checkpoint/replay scenarios. Replay-spool tests use actual paged load/replay and temporary storage,
