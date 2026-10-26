@@ -190,6 +190,12 @@ using Solidity ABI format:
 
 This enables serialization for smart contracts and cross-platform parameter exchange.
 
+Hash registry parameters as received: decoding and re-encoding can preserve their meaning but change
+their identity. Hash derivation is not admission; current consumers still check supported presets,
+while the indexer selects historical domains explicitly. Message width and DKG parameters are not
+bound by the threshold parameter hash, so statement changes still require an explicit version
+decision. See [upgrade compatibility](../../docs/architecture/upgrades.md).
+
 ## Usage
 
 ### Using Presets
@@ -368,5 +374,7 @@ assert_eq!(decoded_params.moduli(), params.moduli());
 Run `cargo test --locked -p e3-fhe-params --features abi-encoding` from the root. Inline suites
 cover exact preset lookup/pairs, fallible construction, deterministic CRP, ABI round trips,
 full-width scalar arithmetic, prime selection, and search validation. These native tests do not run
-a prover. [Circuit artifacts](../../docs/architecture/circuit-artifacts.md) describes matching
-generated outputs; [AGENTS.md](AGENTS.md) covers parameter-compatibility changes.
+a prover. Frozen [compatibility vectors](tests/fixtures/README.md) were calculated independently; do
+not regenerate them to make a failing implementation pass.
+[Circuit artifacts](../../docs/architecture/circuit-artifacts.md) describes matching generated
+outputs; [AGENTS.md](AGENTS.md) covers parameter-compatibility changes.

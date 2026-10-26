@@ -9,6 +9,12 @@
 //! This module contains all hardcoded values used in preset definitions.
 //! Centralizing these values makes it easier to maintain and update presets.
 
+/// Encryption scheme name used in the on-chain configuration identity.
+pub const BFV_ENCRYPTION_SCHEME: &str = "fhe.rs:BFV";
+
+/// Circuit statement domain used in current BFV configuration identities.
+pub const INTERFOLD_BFV_VERSION: &str = "interfold-bfv-v5";
+
 /// Insecure preset constants (degree 64) - DO NOT USE IN PRODUCTION
 pub mod insecure_64 {
     pub const DEGREE: usize = 64;

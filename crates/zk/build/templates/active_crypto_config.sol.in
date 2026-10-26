@@ -11,7 +11,7 @@ import { IInterfold } from "../interfaces/IInterfold.sol";
 // Mainnet supports secure BFV with minimum, micro, and small committees. Sepolia and local chains
 // support insecure and secure BFV with every committee size.
 library ActiveCryptoConfig {
-    bytes32 internal constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
+    bytes32 internal constant ENCRYPTION_SCHEME_ID = keccak256("@ENCRYPTION_SCHEME@");
     bytes32 internal constant CIRCUIT_VERSION = keccak256("@CIRCUIT_VERSION@");
 
     bytes32 internal constant INSECURE_CONFIG_ID =

@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 use super::{preset_name, run, tier, Request, COMMITTEES};
-use alloy_primitives::{keccak256, B256};
-use alloy_sol_types::SolValue;
+use alloy_primitives::B256;
 use anyhow::{bail, Context, Result};
 use e3_committee::CiphernodesCommitteeSize;
-use e3_fhe_params::{encode_bfv_params, BfvPreset};
+use e3_fhe_params::{
+    bfv_parameter_hash, current_bfv_crypto_config_id, encode_bfv_params, BfvPreset,
+    BFV_ENCRYPTION_SCHEME, INTERFOLD_BFV_VERSION,
+};
 use e3_zk_config::{dkg, threshold};
 use fhe::bfv::BfvParameters;
 use regex::Regex;
@@ -16,8 +18,6 @@ use std::{
     process::Command,
     sync::Arc,
 };
-
-const CIRCUIT_VERSION: &str = "interfold-bfv-v5";
 
 /// The BFV parameter pair and protocol hashes of one preset, built once per operation.
 pub struct PresetMaterial {
@@ -30,15 +30,9 @@ pub struct PresetMaterial {
 impl PresetMaterial {
     pub fn new(preset: BfvPreset) -> Result<Self> {
         let (threshold, dkg) = preset.build_pair()?;
-        let parameter_hash = keccak256(encode_bfv_params(&threshold));
-        let config_id = keccak256(
-            (
-                keccak256(b"fhe.rs:BFV"),
-                parameter_hash,
-                keccak256(CIRCUIT_VERSION.as_bytes()),
-            )
-                .abi_encode(),
-        );
+        let encoded_params = encode_bfv_params(&threshold);
+        let parameter_hash = bfv_parameter_hash(&encoded_params);
+        let config_id = current_bfv_crypto_config_id(&encoded_params);
         Ok(Self {
             threshold,
             dkg,
@@ -479,7 +473,8 @@ pub fn protocol_contract(
             "@selection@",
             &format!("{}/{}", preset_name(preset), committee),
         )
-        .replace("@CIRCUIT_VERSION@", CIRCUIT_VERSION);
+        .replace("@ENCRYPTION_SCHEME@", BFV_ENCRYPTION_SCHEME)
+        .replace("@CIRCUIT_VERSION@", INTERFOLD_BFV_VERSION);
     for (label, preset, param_set) in [
         ("INSECURE", BfvPreset::InsecureThreshold64, 0),
         ("SECURE", BfvPreset::SecureThreshold8192, 2),

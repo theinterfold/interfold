@@ -576,21 +576,26 @@ fn checksum_streams_files_of_any_size_to_the_same_digest() {
 
 #[test]
 fn protocol_generation_preserves_deployed_parameter_hashes() {
-    for (preset, expected_hash, expected_id) in [
-        (
-            BfvPreset::InsecureThreshold64,
-            "aff065a7d6e3d8c830dfcd37c2af8a25b3dcc6cd74ba458894075e8264f1ab1e",
-            "92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9",
-        ),
-        (
-            BfvPreset::SecureThreshold8192,
-            "1b2620f6a5919d5ee19a51f34026369816f479efd0404b56585ad37d31c52317",
-            "a174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa",
-        ),
-    ] {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../fhe-params/tests/fixtures/bfv_protocol.json"
+    ))
+    .unwrap();
+    for vector in fixture["vectors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|vector| vector["preset"].is_string())
+    {
+        let preset = BfvPreset::from_name(vector["preset"].as_str().unwrap()).unwrap();
         let material = PresetMaterial::new(preset).unwrap();
-        assert_eq!(hex::encode(material.parameter_hash), expected_hash);
-        assert_eq!(hex::encode(material.config_id), expected_id);
+        assert_eq!(
+            material.parameter_hash.to_string(),
+            vector["parameterHash"].as_str().unwrap()
+        );
+        assert_eq!(
+            material.config_id.to_string(),
+            vector["cryptoConfigId"].as_str().unwrap()
+        );
     }
 }
 
