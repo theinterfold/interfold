@@ -76,7 +76,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
         ],
         { cwd: root, stdio: 'inherit' },
       )
-      for (const operation of ['check-identities', 'check-layouts', ...(qualify ? ['qualify-identities'] : [])]) {
+      for (const operation of ['check-vk-commitments', 'check-layouts', ...(qualify ? ['qualify-vk-commitments'] : [])]) {
         execFileSync(
           'cargo',
           [
@@ -100,7 +100,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
       console.log(
         qualify
           ? 'Qualified the prepared matrix with independent VK and Solidity verifier rederivation.'
-          : 'Checked prepared source stamps, artifact inventory/checksums, named identities, and compiled layouts. Backend keys were not rederived.',
+          : 'Checked prepared source stamps, artifact inventory/checksums, named VK commitments, and compiled layouts. Backend keys were not rederived.',
       )
     }
   } catch (error) {

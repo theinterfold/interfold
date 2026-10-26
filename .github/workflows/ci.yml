@@ -1120,8 +1120,8 @@ jobs:
       - name: Test circuit artifact validation and verifier selection
         run: pnpm test:circuit-build -- --include-ignored && pnpm test:circuit-tooling
 
-      - name: Check named identities
-        run: pnpm build:circuits check-identities
+      - name: Check named VK commitments
+        run: pnpm build:circuits check-vk-commitments
 
       - name: Check generated verifiers are in sync
         run: pnpm check:verifiers --no-compile
@@ -1206,8 +1206,8 @@ jobs:
       - name: Hydrate the insecure-64/minimum circuits
         run: pnpm build:circuits --preset insecure-64 --committee minimum --hydrate-bin-only --no-clean-targets
 
-      - name: Prepare published circuit identity metadata
-        run: pnpm build:circuits prepare-identities
+      - name: Prepare published VK commitment metadata
+        run: pnpm build:circuits prepare-vk-commitments
 
       - name: Verify circuit artifacts
         run: |

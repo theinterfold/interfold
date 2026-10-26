@@ -54,9 +54,9 @@ describe("verifier artifact selection", function () {
     );
   });
 
-  it("resolves named identities from the matching package/archive pair and raw hashes", function () {
+  it("resolves named VK commitments from the matching package/archive pair and raw hashes", function () {
     const temp = fs.mkdtempSync(
-      path.join(tmpdir(), "interfold-named-identities-"),
+      path.join(tmpdir(), "interfold-vk-commitments-"),
     );
     try {
       const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -91,7 +91,7 @@ describe("verifier artifact selection", function () {
       const pair = {
         preset: "insecure-64",
         committee: "minimum",
-        identities: { [key]: value },
+        commitments: { [key]: value },
       };
       const stamp = path.join(pairDirectory, ".build-stamp.json");
       fs.writeFileSync(
@@ -104,11 +104,11 @@ describe("verifier artifact selection", function () {
       );
       const publish = (data: unknown) => {
         fs.writeFileSync(
-          path.join(installed, "dist/circuit-identities.json"),
+          path.join(installed, "dist/vk-commitments.json"),
           JSON.stringify({ formatVersion: 1, pairs: [data] }),
         );
         fs.writeFileSync(
-          path.join(pairDirectory, "identities.json"),
+          path.join(pairDirectory, "vk-commitments.json"),
           JSON.stringify(data),
         );
       };
@@ -118,7 +118,7 @@ describe("verifier artifact selection", function () {
           [
             "--input-type=module",
             "-e",
-            `import { readBfvCircuitIdentity } from ${JSON.stringify(pathToFileURL(path.join(installed, "dist/scripts/utils.js")).href)}; console.log(readBfvCircuitIdentity(${JSON.stringify(circuit)}, "default", "bb-vk-hash"));`,
+            `import { readBfvVkCommitment } from ${JSON.stringify(pathToFileURL(path.join(installed, "dist/scripts/utils.js")).href)}; console.log(readBfvVkCommitment(${JSON.stringify(circuit)}, "default", "bb-vk-hash"));`,
           ],
           {
             cwd: temp,
@@ -130,23 +130,21 @@ describe("verifier artifact selection", function () {
 
       publish(pair);
       expect(check()).to.equal(value);
-      fs.rmSync(path.join(installed, "dist/circuit-identities.json"));
-      expect(() => check()).to.throw(/Missing circuit identity manifest/);
+      fs.rmSync(path.join(installed, "dist/vk-commitments.json"));
+      expect(() => check()).to.throw(/Missing VK commitment manifest/);
       publish(pair);
       fs.writeFileSync(hash, Buffer.alloc(32));
       expect(() => check()).to.throw(/VK hash differs/);
       fs.writeFileSync(hash, Buffer.from(value.slice(2), "hex"));
       fs.writeFileSync(
-        path.join(pairDirectory, "identities.json"),
-        JSON.stringify({ ...pair, identities: {} }),
+        path.join(pairDirectory, "vk-commitments.json"),
+        JSON.stringify({ ...pair, commitments: {} }),
       );
       expect(() => check()).to.throw(/slice differs/);
-      publish({ ...pair, identities: {} });
-      expect(() => check()).to.throw(/Missing named circuit identity/);
+      publish({ ...pair, commitments: {} });
+      expect(() => check()).to.throw(/Missing named VK commitment/);
       publish(pair);
-      expect(() => check("../escape")).to.throw(
-        /Invalid circuit identity name/,
-      );
+      expect(() => check("../escape")).to.throw(/Invalid VK commitment name/);
       fs.writeFileSync(
         stamp,
         JSON.stringify({

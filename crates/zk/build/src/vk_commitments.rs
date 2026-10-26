@@ -5,8 +5,8 @@ use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fs, path::Path, process::Command};
 
-pub const PAIR_FILE: &str = "identities.json";
-pub const MANIFEST: &str = "circuits/identities.json";
+pub const PAIR_FILE: &str = "vk-commitments.json";
+pub const MANIFEST: &str = "circuits/vk-commitments.json";
 
 // The deployment wrappers and CRISP are the consumers of this catalogue. Other keys remain in
 // their existing artifact files; the catalogue is not another artifact inventory or trust graph.
@@ -23,7 +23,7 @@ const LEAVES: &[&str] = &[
 pub struct Pair {
     pub preset: String,
     pub committee: String,
-    pub identities: BTreeMap<String, String>,
+    pub commitments: BTreeMap<String, String>,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,14 +47,14 @@ pub fn collect_pair(output: &Path, preset: &str, committee: &str) -> Result<Pair
         stamp.preset == preset && stamp.committee == committee && !stamp.source_hash.is_empty(),
         "Artifact stamp does not identify {preset}/{committee}"
     );
-    let mut identities = BTreeMap::new();
+    let mut commitments = BTreeMap::new();
     for circuit in LEAVES {
         let name = circuit.rsplit('/').next().unwrap();
         let path = pair
             .join("default")
             .join(circuit)
             .join(format!("{name}.vk_hash"));
-        identities.insert(format!("bb-vk-hash/default/{circuit}"), hash_file(&path)?);
+        commitments.insert(format!("bb-vk-hash/default/{circuit}"), hash_file(&path)?);
     }
     // Use the existing ordered SAFE implementation, including repeated descendants.
     for (name, value) in vk_tree::hashes(&pair)? {
@@ -68,7 +68,7 @@ pub fn collect_pair(output: &Path, preset: &str, committee: &str) -> Result<Pair
             "Stale ordered tree anchor {}",
             path.display()
         );
-        identities.insert(
+        commitments.insert(
             format!("recursive-tree-commitment/default/recursive_aggregation/{name}"),
             expected,
         );
@@ -76,7 +76,7 @@ pub fn collect_pair(output: &Path, preset: &str, committee: &str) -> Result<Pair
     Ok(Pair {
         preset: preset.into(),
         committee: committee.into(),
-        identities,
+        commitments,
     })
 }
 
@@ -86,7 +86,7 @@ fn write_changed(path: &Path, value: &impl Serialize) -> Result<bool> {
     if fs::read(path).ok().as_deref() == Some(bytes.as_slice()) {
         return Ok(false);
     }
-    fs::create_dir_all(path.parent().context("Identity parent")?)?;
+    fs::create_dir_all(path.parent().context("VK commitment parent")?)?;
     fs::write(path, bytes)?;
     Ok(true)
 }
@@ -117,7 +117,7 @@ fn sync(root: &Path, output: &Path, update_expected: bool) -> Result<()> {
         let expected: Manifest = serde_json::from_slice(&fs::read(root.join(MANIFEST))?)?;
         ensure!(
             manifest == expected,
-            "Prepared circuit identities differ from the committed catalogue; use matching artifacts"
+            "Prepared VK commitments differ from the committed catalogue; use matching artifacts"
         );
     }
     let mut changed = false;
@@ -166,7 +166,7 @@ pub fn check(root: &Path, request: &Request) -> Result<()> {
         )?)?;
         ensure!(
             stored == expected,
-            "Stale named identities for {preset}/{committee}"
+            "Stale named VK commitments for {preset}/{committee}"
         );
         pairs.push(expected);
     }
@@ -179,12 +179,12 @@ pub fn check(root: &Path, request: &Request) -> Result<()> {
             let stored: Manifest = serde_json::from_slice(&fs::read(&path)?)?;
             ensure!(
                 stored == expected,
-                "Stale named identity catalogue {}",
+                "Stale named VK commitment catalogue {}",
                 path.display()
             );
         }
     }
-    println!("Checked {} named identity pair(s). Use the existing artifact validator for source/inventory checks; keys were not rederived.", selected.len());
+    println!("Checked {} named VK commitment pair(s). Use the existing artifact validator for source/inventory checks; keys were not rederived.", selected.len());
     Ok(())
 }
 
@@ -274,14 +274,14 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_contains_only_consumer_identities_and_preserves_provenance() {
+    fn catalogue_contains_only_consumer_commitments_and_preserves_provenance() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
         let output = root.join("dist/circuits");
         let pair = seed(root, &output);
         let stamp = fs::read(pair.join(".build-stamp.json")).unwrap();
         let catalogue = collect_pair(&output, "insecure-64", "minimum").unwrap();
-        assert_eq!(catalogue.identities.len(), 7);
+        assert_eq!(catalogue.commitments.len(), 7);
         assert_eq!(fs::read(pair.join(".build-stamp.json")).unwrap(), stamp);
         write_pair(&pair, &catalogue).unwrap();
         let before = crate::tests::snapshot(root);
@@ -308,9 +308,9 @@ mod tests {
         .unwrap();
         generate(root, &output).unwrap();
         check(root, &crate::tests::request()).unwrap();
-        let path = output.join("insecure-64/minimum/identities.json");
+        let path = output.join("insecure-64/minimum/vk-commitments.json");
         let mut stored: Pair = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        stored.identities.clear();
+        stored.commitments.clear();
         write_changed(&path, &stored).unwrap();
         let before = crate::tests::snapshot(root);
         assert!(check(root, &crate::tests::request()).is_err());
@@ -341,7 +341,7 @@ mod tests {
 
         let before = crate::tests::snapshot(root);
         let mut request = crate::tests::request();
-        request.operation = "prepare-identities".parse().unwrap();
+        request.operation = "prepare-vk-commitments".parse().unwrap();
         crate::execute(root, &request).unwrap();
         let after = crate::tests::snapshot(root);
         for (path, original) in &before {

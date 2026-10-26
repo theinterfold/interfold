@@ -12,7 +12,7 @@ import {
 import {
   BFV_DKG_H,
   assertBfvPkVerifierSubCircuitVkHashes,
-  getBfvCircuitIdentities,
+  getBfvVkCommitments,
   readDeploymentArgs,
   storeDeploymentArgs,
 } from "../utils";
@@ -62,7 +62,7 @@ export const deployAndSaveBfvPkVerifier = async (
   }
 
   const { nodesFold: expectedNodesFoldKeyHash, c5: expectedC5KeyHash } =
-    getBfvCircuitIdentities();
+    getBfvVkCommitments();
 
   const bfvPkVerifierFactory = await ethers.getContractFactory("BfvPkVerifier");
   const bfvPkVerifier = await bfvPkVerifierFactory.deploy(

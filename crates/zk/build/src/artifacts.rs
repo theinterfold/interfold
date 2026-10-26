@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 use super::{
-    configuration, github_output, identities, identity, preset, run, vk_tree, write_json, Request,
+    configuration, github_output, identity, preset, run, vk_commitments, vk_tree, write_json,
+    Request,
 };
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -408,7 +409,7 @@ fn build_circuit(root: &Path, pair: &Path, circuit: &Circuit, skip_vk: bool) -> 
 }
 
 pub fn refresh_anchors(root: &Path, pair: &Path, complete: bool) -> Result<()> {
-    identities::invalidate(pair)?;
+    vk_commitments::invalidate(pair)?;
     for name in ["nodes_fold", "c6_fold"] {
         for path in [
             pair.join("default/recursive_aggregation")
@@ -546,7 +547,7 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
             // pinned versions before any destructive build step.
             identity::check_tools(root, true, !request.skip_vk)?;
             started = true;
-            identities::invalidate(&pair)?;
+            vk_commitments::invalidate(&pair)?;
             selection.publish()?;
             if !request.no_clean {
                 remove_dir(&pair)?;
@@ -580,15 +581,15 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
             };
             write_json(&pair.join(".build-stamp.json"), &stamp)?;
             if complete {
-                let manifest = identities::collect_pair(&output, preset_name, committee)?;
-                identities::write_pair(&pair, &manifest)?;
+                let manifest = vk_commitments::collect_pair(&output, preset_name, committee)?;
+                vk_commitments::write_pair(&pair, &manifest)?;
             }
             active_stamp(root, preset_name, committee, &hash)
         })();
         if let Err(error) = result {
             if started {
-                if let Err(cleanup) =
-                    refresh_anchors(root, &pair, false).and_then(|_| identities::invalidate(&pair))
+                if let Err(cleanup) = refresh_anchors(root, &pair, false)
+                    .and_then(|_| vk_commitments::invalidate(&pair))
                 {
                     errors.push(format!("{preset_name}/{committee}: failed to invalidate incomplete outputs: {cleanup:#}"));
                 }
@@ -818,12 +819,12 @@ mod tests {
             "duplicate groups compiled twice"
         );
         let before = crate::tests::snapshot(root);
-        identities::qualify(root, &partial).unwrap();
+        vk_commitments::qualify(root, &partial).unwrap();
         assert_eq!(crate::tests::snapshot(root), before);
         let key = pair.join("evm/dkg/pk/pk.vk");
         let original_key = fs::read(&key).unwrap();
         fs::write(&key, "stale key").unwrap();
-        assert!(identities::qualify(root, &partial)
+        assert!(vk_commitments::qualify(root, &partial)
             .unwrap_err()
             .to_string()
             .contains("VK bytes differ"));

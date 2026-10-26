@@ -3,11 +3,11 @@
 mod artifacts;
 mod bindings;
 mod configuration;
-mod identities;
 mod identity;
 mod layouts;
 pub mod metadata;
 mod toolchain;
+mod vk_commitments;
 mod vk_tree;
 
 pub use identity::checksum;
@@ -64,10 +64,10 @@ pub enum Operation {
     SyncBindings,
     CheckBindings,
     CheckLayouts,
-    SyncIdentities,
-    PrepareIdentities,
-    CheckIdentities,
-    QualifyIdentities,
+    SyncVkCommitments,
+    PrepareVkCommitments,
+    CheckVkCommitments,
+    QualifyVkCommitments,
     SyncSources,
 }
 
@@ -84,13 +84,13 @@ impl FromStr for Operation {
             "sync-bindings" => Ok(Self::SyncBindings),
             "check-bindings" => Ok(Self::CheckBindings),
             "check-layouts" => Ok(Self::CheckLayouts),
-            "sync-identities" => Ok(Self::SyncIdentities),
-            "prepare-identities" => Ok(Self::PrepareIdentities),
-            "check-identities" => Ok(Self::CheckIdentities),
-            "qualify-identities" => Ok(Self::QualifyIdentities),
+            "sync-vk-commitments" => Ok(Self::SyncVkCommitments),
+            "prepare-vk-commitments" => Ok(Self::PrepareVkCommitments),
+            "check-vk-commitments" => Ok(Self::CheckVkCommitments),
+            "qualify-vk-commitments" => Ok(Self::QualifyVkCommitments),
             "sync-sources" => Ok(Self::SyncSources),
             other => Err(format!(
-                "unknown build operation {other}; expected build, hash, sync-config, sync-preset, check, export-config, sync-bindings, check-bindings, check-layouts, sync-identities, prepare-identities, check-identities, qualify-identities, or sync-sources"
+                "unknown build operation {other}; expected build, hash, sync-config, sync-preset, check, export-config, sync-bindings, check-bindings, check-layouts, sync-vk-commitments, prepare-vk-commitments, check-vk-commitments, qualify-vk-commitments, or sync-sources"
             )),
         }
     }
@@ -108,10 +108,10 @@ impl fmt::Display for Operation {
             Self::SyncBindings => "sync-bindings",
             Self::CheckBindings => "check-bindings",
             Self::CheckLayouts => "check-layouts",
-            Self::SyncIdentities => "sync-identities",
-            Self::PrepareIdentities => "prepare-identities",
-            Self::CheckIdentities => "check-identities",
-            Self::QualifyIdentities => "qualify-identities",
+            Self::SyncVkCommitments => "sync-vk-commitments",
+            Self::PrepareVkCommitments => "prepare-vk-commitments",
+            Self::CheckVkCommitments => "check-vk-commitments",
+            Self::QualifyVkCommitments => "qualify-vk-commitments",
             Self::SyncSources => "sync-sources",
         })
     }
@@ -467,10 +467,12 @@ pub fn execute(root: &Path, request: &Request) -> Result<()> {
         Operation::SyncBindings => bindings::sync(root, false)?,
         Operation::CheckBindings => bindings::sync(root, true)?,
         Operation::CheckLayouts => layouts::check(root, request)?,
-        Operation::SyncIdentities => identities::generate(root, &request.output_dir(root))?,
-        Operation::PrepareIdentities => identities::prepare(root, &request.output_dir(root))?,
-        Operation::CheckIdentities => identities::check(root, request)?,
-        Operation::QualifyIdentities => identities::qualify(root, request)?,
+        Operation::SyncVkCommitments => vk_commitments::generate(root, &request.output_dir(root))?,
+        Operation::PrepareVkCommitments => {
+            vk_commitments::prepare(root, &request.output_dir(root))?
+        }
+        Operation::CheckVkCommitments => vk_commitments::check(root, request)?,
+        Operation::QualifyVkCommitments => vk_commitments::qualify(root, request)?,
         Operation::SyncSources => configuration::sync_sources(root)?,
         Operation::ExportConfig => {
             let metadata = metadata::collect(root)?;

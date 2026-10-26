@@ -70,7 +70,7 @@ pnpm build:circuits check --committee all
 
 # Prepare all pairs explicitly (this switches live selectors)
 pnpm build:circuits --preset all --committee all
-pnpm generate:circuit-identities
+pnpm generate:vk-commitments
 pnpm check:crypto-config --full
 
 # Optional independent key/verifier rederivation over the prepared matrix
@@ -136,12 +136,12 @@ a failed circuit, removes both anchors from the pair and from `circuits/bin/`. A
 hash a key that no longer matches the compiled circuits. Run a complete build before you deploy the
 BFV verifiers or aggregate proofs.
 
-After preparing every build-policy pair, run `pnpm generate:circuit-identities`. Partial or failed
+After preparing every build-policy pair, run `pnpm generate:vk-commitments`. Partial or failed
 builds invalidate affected archive metadata, not the committed catalogue. Generation preserves old
 source stamps; it does not qualify them against current sources.
 
-For published archives, `pnpm build:circuits prepare-identities` fills the archive metadata only if
-its identities match the committed catalogue. It never refreshes those expectations or source
+For published archives, `pnpm build:circuits prepare-vk-commitments` fills the archive metadata only
+if its VK commitments match the committed catalogue. It never refreshes those expectations or source
 stamps.
 
 `pnpm check:crypto-config` needs Cargo and pinned Nargo but no compiled artifacts. Add `--full` to

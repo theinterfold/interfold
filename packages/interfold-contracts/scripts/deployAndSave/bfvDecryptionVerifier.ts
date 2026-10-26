@@ -12,7 +12,7 @@ import {
 import {
   BFV_THRESHOLD_T,
   assertBfvDecryptionVerifierSubCircuitVkHashes,
-  getBfvCircuitIdentities,
+  getBfvVkCommitments,
   readDeploymentArgs,
   storeDeploymentArgs,
 } from "../utils";
@@ -70,7 +70,7 @@ export const deployAndSaveBfvDecryptionVerifier = async (
   }
 
   const { c6Fold: expectedC6FoldKeyHash, c7: expectedC7KeyHash } =
-    getBfvCircuitIdentities();
+    getBfvVkCommitments();
 
   const bfvDecryptionVerifierFactory = await ethers.getContractFactory(
     "BfvDecryptionVerifier",

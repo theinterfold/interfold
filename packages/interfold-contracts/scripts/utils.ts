@@ -432,20 +432,20 @@ export function readVkRecursiveHash(
   return `0x${raw.toString("hex")}`;
 }
 
-interface CircuitIdentityKey {
+interface VkCommitmentKey {
   circuit: string;
   proofVariant: "default" | "recursive" | "evm";
   hashKind: "bb-vk-hash" | "recursive-tree-commitment";
 }
 
-interface CircuitIdentityPair {
+interface VkCommitmentPair {
   preset: string;
   committee: string;
-  identities: Record<string, string>;
+  commitments: Record<string, string>;
 }
 
-function readIdentityValues(
-  requested: CircuitIdentityKey[],
+function readVkCommitmentValues(
+  requested: VkCommitmentKey[],
   selected: ActiveBfvConfig = ACTIVE_BFV_CONFIG,
 ): string[] {
   const repo = findMonorepoRoot();
@@ -456,28 +456,28 @@ function readIdentityValues(
     throw new Error(`Set ${CIRCUITS_DIR_ENV} to the release circuit directory`);
   const packaged = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
-    "../circuit-identities.json",
+    "../vk-commitments.json",
   );
   const manifestPath = repo
-    ? path.join(repo, "circuits/identities.json")
+    ? path.join(repo, "circuits/vk-commitments.json")
     : packaged;
   if (!fs.existsSync(manifestPath))
     throw new Error(
-      `Missing circuit identity manifest: ${manifestPath}; run pnpm generate:circuit-identities after preparing the circuit artifacts`,
+      `Missing VK commitment manifest: ${manifestPath}; run pnpm generate:vk-commitments after preparing the circuit artifacts`,
     );
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
     formatVersion: number;
-    pairs: CircuitIdentityPair[];
+    pairs: VkCommitmentPair[];
   };
   if (manifest.formatVersion !== 1 || !Array.isArray(manifest.pairs))
-    throw new Error("Unsupported circuit identity manifest");
+    throw new Error("Unsupported VK commitment manifest");
   const pairs = manifest.pairs.filter(
     (pair) =>
       pair.preset === selected.preset && pair.committee === selected.committee,
   );
   if (pairs.length !== 1)
     throw new Error(
-      `Expected one circuit identity pair for ${selected.preset}/${selected.committee}`,
+      `Expected one VK commitment pair for ${selected.preset}/${selected.committee}`,
     );
   const pair = pairs[0];
   const pairDirectory = path.join(
@@ -486,11 +486,11 @@ function readIdentityValues(
     selected.committee,
   );
   const slice = JSON.parse(
-    fs.readFileSync(path.join(pairDirectory, "identities.json"), "utf8"),
+    fs.readFileSync(path.join(pairDirectory, "vk-commitments.json"), "utf8"),
   );
   if (!isDeepStrictEqual(slice, pair))
     throw new Error(
-      "Circuit archive identity slice differs from the package manifest",
+      "Circuit archive VK commitment slice differs from the package manifest",
     );
   const stamp = JSON.parse(
     fs.readFileSync(path.join(pairDirectory, ".build-stamp.json"), "utf8"),
@@ -500,7 +500,7 @@ function readIdentityValues(
     stamp.committee !== selected.committee
   )
     throw new Error(
-      "Circuit identity pair stamp differs from the selected configuration",
+      "VK commitment pair stamp differs from the selected configuration",
     );
   return requested.map((request) => {
     if (
@@ -508,12 +508,12 @@ function readIdentityValues(
         request.circuit,
       )
     )
-      throw new Error("Invalid circuit identity name");
+      throw new Error("Invalid VK commitment name");
     const key = `${request.hashKind}/${request.proofVariant}/${request.circuit}`;
-    const value = pair.identities?.[key];
-    if (!value) throw new Error(`Missing named circuit identity ${key}`);
+    const value = pair.commitments?.[key];
+    if (!value) throw new Error(`Missing named VK commitment ${key}`);
     if (!/^0x[0-9a-f]{64}$/.test(value))
-      throw new Error("Invalid circuit identity value");
+      throw new Error("Invalid VK commitment value");
     const name = request.circuit.split("/").pop()!;
     const extension =
       request.hashKind === "bb-vk-hash" ? "vk_hash" : "vk_tree_hash";
@@ -524,22 +524,25 @@ function readIdentityValues(
       `${name}.${extension}`,
     );
     if (readVkRecursiveHash(filename, selected) !== value)
-      throw new Error("Circuit VK hash differs from the named identity");
+      throw new Error("Circuit VK hash differs from the named VK commitment");
     return value;
   });
 }
 
-export function readBfvCircuitIdentity(
+export function readBfvVkCommitment(
   circuit: string,
-  proofVariant: CircuitIdentityKey["proofVariant"],
-  hashKind: CircuitIdentityKey["hashKind"],
+  proofVariant: VkCommitmentKey["proofVariant"],
+  hashKind: VkCommitmentKey["hashKind"],
   config?: ActiveBfvConfig,
 ): string {
-  return readIdentityValues([{ circuit, proofVariant, hashKind }], config)[0];
+  return readVkCommitmentValues(
+    [{ circuit, proofVariant, hashKind }],
+    config,
+  )[0];
 }
 
-export function getBfvCircuitIdentities(config?: ActiveBfvConfig) {
-  const [nodesFold, c5, c6Fold, c7] = readIdentityValues(
+export function getBfvVkCommitments(config?: ActiveBfvConfig) {
+  const [nodesFold, c5, c6Fold, c7] = readVkCommitmentValues(
     [
       {
         circuit: "recursive_aggregation/nodes_fold",
@@ -589,7 +592,7 @@ export async function assertBfvPkVerifierSubCircuitVkHashes(
   config?: ActiveBfvConfig,
 ): Promise<void> {
   const { nodesFold: expectedNodesFold, c5: expectedC5 } =
-    getBfvCircuitIdentities(config);
+    getBfvVkCommitments(config);
   const [onChainNodesFold, onChainC5] = await Promise.all([
     verifier.expectedNodesFoldKeyHash(),
     verifier.expectedC5KeyHash(),
@@ -616,7 +619,7 @@ export async function assertBfvDecryptionVerifierSubCircuitVkHashes(
   config?: ActiveBfvConfig,
 ): Promise<void> {
   const { c6Fold: expectedC6Fold, c7: expectedC7 } =
-    getBfvCircuitIdentities(config);
+    getBfvVkCommitments(config);
   const [onChainC6Fold, onChainC7] = await Promise.all([
     verifier.expectedC6FoldKeyHash(),
     verifier.expectedC7KeyHash(),

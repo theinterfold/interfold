@@ -121,10 +121,14 @@ mod tests {
             parse(&["check-layouts"]).unwrap().operation,
             Operation::CheckLayouts
         );
-        assert_eq!(
-            parse(&["prepare-identities"]).unwrap().operation,
-            Operation::PrepareIdentities
-        );
+        for (command, operation) in [
+            ("sync-vk-commitments", Operation::SyncVkCommitments),
+            ("prepare-vk-commitments", Operation::PrepareVkCommitments),
+            ("check-vk-commitments", Operation::CheckVkCommitments),
+            ("qualify-vk-commitments", Operation::QualifyVkCommitments),
+        ] {
+            assert_eq!(parse(&[command]).unwrap().operation, operation);
+        }
         let request = parse(&[
             "build",
             "--committee",

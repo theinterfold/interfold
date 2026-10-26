@@ -18,13 +18,13 @@ fs.writeFileSync(
   `${JSON.stringify(readRepoNodeRelease(getRepoRoot()), null, 2)}\n`,
 );
 console.log(`Wrote ${output.pathname}`);
-const identities = path.join(getRepoRoot(), "circuits/identities.json");
-const packagedIdentities = new URL(
-  "../dist/circuit-identities.json",
+const commitments = path.join(getRepoRoot(), "circuits/vk-commitments.json");
+const packagedCommitments = new URL(
+  "../dist/vk-commitments.json",
   import.meta.url,
 );
-if (fs.existsSync(identities)) {
-  fs.copyFileSync(identities, packagedIdentities);
+if (fs.existsSync(commitments)) {
+  fs.copyFileSync(commitments, packagedCommitments);
 } else {
-  fs.rmSync(packagedIdentities, { force: true });
+  fs.rmSync(packagedCommitments, { force: true });
 }

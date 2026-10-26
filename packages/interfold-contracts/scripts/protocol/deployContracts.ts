@@ -4,7 +4,7 @@ import {
   ActiveBfvConfig,
   activeBfvConfigForChain,
   bfvConfigsForChain,
-  getBfvCircuitIdentities,
+  getBfvVkCommitments,
 } from "../utils";
 import { ADDRESS_ONE } from "./constants";
 import { deployNodeReleaseRegistry } from "./nodeRelease";
@@ -27,7 +27,7 @@ export async function deployProtocolContracts(
   assertMockDeploymentAllowed(config);
   if (config.verifiers?.deploy) {
     for (const selected of bfvConfigsForChain(config.chainId))
-      getBfvCircuitIdentities(selected);
+      getBfvVkCommitments(selected);
   }
   const poseidonT3 = await ensurePoseidonT3(ethers);
 
@@ -348,12 +348,12 @@ export async function deployBfvVerifierRoutes(
 
   const qualified = configs.map((config) => ({
     config,
-    identities: getBfvCircuitIdentities(config),
+    commitments: getBfvVkCommitments(config),
   }));
   const routes = [];
-  for (const { config, identities } of qualified) {
+  for (const { config, commitments } of qualified) {
     routes.push(
-      await deployBfvVerifierRoute(ethers, registry, config, identities),
+      await deployBfvVerifierRoute(ethers, registry, config, commitments),
     );
   }
 
@@ -397,7 +397,7 @@ async function deployBfvVerifierRoute(
   ethers: any,
   registry: string,
   config: ActiveBfvConfig,
-  identities: ReturnType<typeof getBfvCircuitIdentities>,
+  commitments: ReturnType<typeof getBfvVkCommitments>,
 ) {
   const dkgSource = bfvHonkSource(config, "DkgAggregatorVerifier");
   const decryptionSource = bfvHonkSource(
@@ -459,8 +459,8 @@ async function deployBfvVerifierRoute(
   const pkFactory = await ethers.getContractFactory("BfvPkVerifier");
   const pk = await pkFactory.deploy(
     dkgAggregatorVerifier,
-    identities.nodesFold,
-    identities.c5,
+    commitments.nodesFold,
+    commitments.c5,
     config.h,
   );
   await pk.waitForDeployment();
@@ -472,8 +472,8 @@ async function deployBfvVerifierRoute(
   const decryption = await decryptionFactory.deploy(
     decryptionAggregatorVerifier,
     registry,
-    identities.c6Fold,
-    identities.c7,
+    commitments.c6Fold,
+    commitments.c7,
     config.t,
   );
   await decryption.waitForDeployment();

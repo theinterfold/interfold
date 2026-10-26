@@ -4,7 +4,7 @@
     {
       "preset": "insecure-64",
       "committee": "minimum",
-      "identities": {
+      "commitments": {
         "bb-vk-hash/default/threshold/decrypted_shares_aggregation": "0x2e3ed571c38b0de76769bbd8159602a73ee2802cf280123066c2f74a2756fa4e",
         "bb-vk-hash/default/threshold/pk_aggregation": "0x070c5fad1cb98d7173666aeabf80e970be5480864e5e2a5fa0e186d6b0ef64e0",
         "bb-vk-hash/default/threshold/user_data_encryption": "0x279a55ddd9c454176d2a4fc4b3b903ed75b6c53617138b7fa0cf3c339e9b295a",
@@ -17,7 +17,7 @@
     {
       "preset": "insecure-64",
       "committee": "micro",
-      "identities": {
+      "commitments": {
         "bb-vk-hash/default/threshold/decrypted_shares_aggregation": "0x17d437f1e6f61b4b51f8909046e7bf8648ce74af61584de1d864203b3668dd7b",
         "bb-vk-hash/default/threshold/pk_aggregation": "0x0fea4c0757b373b72617df0e0af2b4eb5c85d50d5fc50f35dd8e00769f86e80d",
         "bb-vk-hash/default/threshold/user_data_encryption": "0x279a55ddd9c454176d2a4fc4b3b903ed75b6c53617138b7fa0cf3c339e9b295a",
@@ -30,7 +30,7 @@
     {
       "preset": "insecure-64",
       "committee": "small",
-      "identities": {
+      "commitments": {
         "bb-vk-hash/default/threshold/decrypted_shares_aggregation": "0x2b8931175a57d19f1bb41036406d7847768f40656e7747ed1e07dd36c185056e",
         "bb-vk-hash/default/threshold/pk_aggregation": "0x2a1cc527e977397fa9b3723e1bec742555a90eb84d0ee3bfd92d9b3080f50326",
         "bb-vk-hash/default/threshold/user_data_encryption": "0x279a55ddd9c454176d2a4fc4b3b903ed75b6c53617138b7fa0cf3c339e9b295a",
@@ -43,7 +43,7 @@
     {
       "preset": "secure-8192",
       "committee": "minimum",
-      "identities": {
+      "commitments": {
         "bb-vk-hash/default/threshold/decrypted_shares_aggregation": "0x1aa19b5c1c7fe5b1c0a24b00fc9206eb0588079656d231a2497dcf21439e798d",
         "bb-vk-hash/default/threshold/pk_aggregation": "0x06b8b089ed341146e56c7a3feca5458eaf002fe9471a473edc8d6f704a0cb608",
         "bb-vk-hash/default/threshold/user_data_encryption": "0x279a55ddd9c454176d2a4fc4b3b903ed75b6c53617138b7fa0cf3c339e9b295a",
@@ -56,7 +56,7 @@
     {
       "preset": "secure-8192",
       "committee": "micro",
-      "identities": {
+      "commitments": {
         "bb-vk-hash/default/threshold/decrypted_shares_aggregation": "0x173fd38d9a28fb727de56110dc12c9ce31f33677f6c5301a6b71f8ab6347159d",
         "bb-vk-hash/default/threshold/pk_aggregation": "0x22b80edd65add3a454b4f3dd09205c20234e1dceee9eaa083e8f324df64f4fe2",
         "bb-vk-hash/default/threshold/user_data_encryption": "0x279a55ddd9c454176d2a4fc4b3b903ed75b6c53617138b7fa0cf3c339e9b295a",
@@ -69,7 +69,7 @@
     {
       "preset": "secure-8192",
       "committee": "small",
-      "identities": {
+      "commitments": {
         "bb-vk-hash/default/threshold/decrypted_shares_aggregation": "0x0584dc38705e18d40b2cdeff7f7419e3aa2be4c2822a2fa202a7cf79fc8ec665",
         "bb-vk-hash/default/threshold/pk_aggregation": "0x278a97248a55fb9e7b79c98255c6082bb3fa989c6dad65163e20cc89f12dc230",
         "bb-vk-hash/default/threshold/user_data_encryption": "0x279a55ddd9c454176d2a4fc4b3b903ed75b6c53617138b7fa0cf3c339e9b295a",

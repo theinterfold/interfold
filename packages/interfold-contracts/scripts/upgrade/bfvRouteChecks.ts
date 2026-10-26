@@ -6,7 +6,7 @@ import {
   activeBfvConfigForChain,
   bfvConfigsForChain,
   bfvDecExpectedPublicInputsLen,
-  getBfvCircuitIdentities,
+  getBfvVkCommitments,
 } from "../utils";
 
 export function equalAddress(
@@ -149,21 +149,21 @@ export async function validateBfvRoutes(
       installed.registry,
       `decryption route ${index} registry`,
     );
-    const identities = getBfvCircuitIdentities(expected);
+    const commitments = getBfvVkCommitments(expected);
     equalValue(
       pkRoute[2],
-      identities.nodesFold,
+      commitments.nodesFold,
       `PK route ${index} nodes-fold VK`,
     );
-    equalValue(pkRoute[3], identities.c5, `PK route ${index} C5 VK`);
+    equalValue(pkRoute[3], commitments.c5, `PK route ${index} C5 VK`);
     equalValue(
       decryptionRoute[2],
-      identities.c6Fold,
+      commitments.c6Fold,
       `decryption route ${index} C6-fold VK`,
     );
     equalValue(
       decryptionRoute[3],
-      identities.c7,
+      commitments.c7,
       `decryption route ${index} C7 VK`,
     );
   }
