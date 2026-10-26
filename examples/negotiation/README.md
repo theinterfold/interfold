@@ -158,7 +158,57 @@ program of depth 3 or less. `research/measurements.md` has the numbers and the c
 The server (`server/`) is the sealed-cca server without the deposit relay. It reads
 `NegotiationCreated` and `OfferSubmitted`, builds the input tree in log order, calls the runner at
 the end of the window, publishes the output and relays offers (`POST /relay { e3Id, data }`). It
-skips an E3 with a missing role.
+skips an E3 with a missing role. It also stores the picture of a negotiation (see below).
+
+### The negotiation picture
+
+A negotiation can have one picture. The creator adds it, and every visitor sees it in the list and
+on the negotiation page. The picture is not on chain. The server stores it in
+`DATA_DIRECTORY/images/`. This directory needs no new setting, and it is on the same volume as the
+other server data. A reverse proxy such as Caddy must pass the `PUT` and `OPTIONS` methods, the
+header `x-negotiation-image-signature` and a request body of 1 MiB. Caddy does this by default.
+
+`PUT /negotiations/:e3Id/image` stores the picture. The body is the image bytes. The request header
+`x-negotiation-image-signature` holds the signature of the creator (`personal_sign`, hex). The
+creator is the `creator` field of `negotiation(e3Id)` on chain: the account that requested the E3.
+It is not always the seller or the buyer. The signed text has five lines:
+
+```text
+Interfold negotiation image
+chain: <chain id>
+program: <NegotiationProgram address, checksum form>
+e3Id: <decimal>
+sha256: 0x<hex SHA-256 of the exact body bytes>
+```
+
+The server answers with these statuses:
+
+| Status | Cause                                                                                 |
+| ------ | ------------------------------------------------------------------------------------- |
+| 400    | `e3Id` is not a decimal number, the body is empty, or the signature is missing or bad |
+| 413    | The body is larger than 1 MiB (1 048 576 bytes)                                       |
+| 415    | The first bytes are not PNG, JPEG or WebP. SVG is refused.                            |
+| 404    | `negotiation(e3Id)` on chain has the zero address as creator                          |
+| 403    | The signer is not the creator, or the signature covers other bytes                    |
+| 204    | The server stored the picture. It replaced an earlier picture of this negotiation.    |
+
+The server reads the type from the first bytes and ignores the content type of the request. It
+writes the file to a temporary name and then renames it, so a reader never gets half a file. The
+size limit of 1 MiB applies to this route only.
+
+`GET /negotiations/:e3Id/image` returns the bytes. It sets `Content-Type` to the type that it found,
+`X-Content-Type-Options: nosniff`, `Cache-Control: public, max-age=60`, a restrictive
+`Content-Security-Policy` and `ETag` (the SHA-256 of the file). It answers 304 when `If-None-Match`
+matches. It answers 404 when the negotiation has no picture. Any page can call both routes (CORS is
+open, as for `POST /relay`). The response also sets `Cross-Origin-Resource-Policy: cross-origin`,
+because the web app is cross-origin isolated.
+
+The web app shrinks the picture before it uploads it. It scales the picture to 1280 pixels on the
+long side, and encodes WebP (JPEG if the browser cannot encode WebP). This removes the metadata and
+transparency. After the create transaction is mined, the wallet asks for the signature. If the
+upload fails, the negotiation stays and the page shows the error. The creator can then select **Add
+picture** (or **Replace picture**) on the negotiation page. The web app reads the server URL from
+`VITE_SERVER_URL`, as for the relay.
 
 ## Prerequisites
 
@@ -229,9 +279,10 @@ Run these commands in this order, in this directory unless stated otherwise.
    only.
 2. **Get test tokens** (fee token for the E3 request).
 3. **Create** a negotiation: title, seller address, buyer address, range `[min, max, step]` of 2 to
-   16 levels (for example 48 to 63 with step 1), window in minutes. Copy the link `/n/<e3Id>`. Key
-   generation takes about 11 minutes with full proof aggregation and less with the skipped one (see
-   Prerequisites).
+   16 levels (for example 48 to 63 with step 1), window in minutes. Optionally choose a picture
+   (PNG, JPEG or WebP): the page shrinks it, and the wallet signs the upload after the request is
+   mined. Copy the link `/n/<e3Id>`. Key generation takes about 11 minutes with full proof
+   aggregation and less with the skipped one (see Prerequisites).
 4. Open the link as the seller and as the buyer. Enter a price on the grid (the seller 50, the
    buyer 60) and select **Seal my price**. The page shows the 3 encryptions, the 3 encryption
    proofs, the lanes proof and the offer proof. Each proof takes about 1 to 2 minutes in Node. Then
@@ -261,7 +312,7 @@ The variables are in the header of `scripts/test_integration.sh` (`NEGOTIATIONS`
 
 ```sh
 pnpm test                            # Hardhat: program contract, output decoder, generated verifier
-pnpm test:server                     # vitest: server and SDK (layout, encoders, uniformity)
+pnpm test:server                     # vitest: server and SDK (layout, encoders, uniformity, pictures)
 pnpm -C sdk uniformity               # the exact law of the price and its distance to the uniform law
 (cd circuits/lib && nargo test)      # circuit encoding rules against the shared vectors
 cargo test -p e3-user-program        # the FHE program against the shared vectors
@@ -286,7 +337,7 @@ linear in the coefficients. The program contract is 20.6 KB.
 | `contracts/verifiers/`                 | The generated Honk verifier of `negotiation_offer`                                     |
 | `circuits/{lib,lanes,offer}`           | The encoding rules and tests; the lanes proof; the top (EVM) proof                     |
 | `program/`, `guest/`, `runner/`, `da/` | The FHE program, the OpenVM guest, the dev runner, the data-availability helper        |
-| `server/`                              | Coordination server: inputs, scheduling, relay                                         |
+| `server/`                              | Coordination server: inputs, scheduling, relay, pictures                               |
 | `client/`                              | The web app (Vite, React)                                                              |
 | `sdk/`                                 | `@interfold/negotiation`: layout, uniformity, encoders, `OfferProver`, test vectors    |
 | `research/`                            | `alternatives.py` (families of priorities), `measurements.md` (noise, distribution)    |
@@ -317,4 +368,8 @@ linear in the coefficients. The program contract is 20.6 KB.
 - With the skipped proof aggregation the committee key and the decryption are not proven on chain;
   the mock verifiers accept any well-formed placeholder. Use `NEGOTIATION_REAL_PROOFS_AGG=1` to
   check the real path.
+- The server stores the picture of a negotiation without a rate limit. A creator can upload 1 MiB
+  for each negotiation that the creator owns, and the file stays on the disk of the server. The
+  picture is public. An EOA wallet must sign the upload: the server does not check ERC-1271
+  signatures.
 - This example was not run on Sepolia.

@@ -6,15 +6,19 @@
 
 import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useWalletClient } from 'wagmi'
 import { isAddress } from 'viem'
 import { LEVELS, MIN_LEVELS, gridFor, priceAt } from '@interfold/negotiation'
 import { STEP_LABELS, useCreateNegotiation } from '@/hooks/useCreateNegotiation'
 import { useWallet } from '@/hooks/useWallet'
 import { chain } from '@/utils/chain'
+import { formatError } from '@/utils/error-formatting'
+import { uploadImage } from '@/utils/image'
 import { joinTitle } from '@/utils/negotiation'
 import { formatAmount } from '@/utils/tokens'
 import { ConnectPrompt } from '@/components/ConnectPrompt'
 import CopyId from '@/components/CopyId'
+import { PictureField } from '@/components/PictureField'
 import Spinner from '@/components/Spinner'
 
 /** The title and its unit label share one string on chain, so the UI limits the whole string. */
@@ -33,6 +37,8 @@ const NEXT_STEPS = [
   'Anyone settles the result on chain. Both parties learn the agreed price, or that there is no match.',
 ]
 
+const UPLOAD_LABELS = { signing: 'Sign the picture in your wallet…', uploading: 'Uploading the picture…' } as const
+
 const titleBytes = (title: string) => new TextEncoder().encode(title).length
 
 /** A whole number typed in a field, or `null`. */
@@ -45,6 +51,7 @@ function parsePrice(text: string): bigint | null {
 const CreateNegotiation: React.FC = () => {
   const { address, wrongChain, ready } = useWallet()
   const create = useCreateNegotiation(address)
+  const { data: walletClient } = useWalletClient({ chainId: chain.id })
 
   const [title, setTitle] = useState('')
   const [unit, setUnit] = useState('')
@@ -56,6 +63,11 @@ const CreateNegotiation: React.FC = () => {
   const [minutesText, setMinutesText] = useState('30')
   const [createdId, setCreatedId] = useState<bigint | null>(null)
   const [copied, setCopied] = useState(false)
+  const [picture, setPicture] = useState<Blob | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [upload, setUpload] = useState<'signing' | 'uploading' | null>(null)
+  /** The outcome of the picture upload after creation: `null` when there was no picture. */
+  const [pictureResult, setPictureResult] = useState<{ error: string | null } | null>(null)
 
   const trimmedTitle = title.trim()
   const trimmedUnit = unit.trim()
@@ -80,7 +92,7 @@ const CreateNegotiation: React.FC = () => {
   const minutes = /^\d+$/.test(minutesText) ? Number(minutesText) : null
   const minutesValid = minutes !== null && minutes >= MIN_MINUTES && minutes <= MAX_MINUTES
 
-  const busy = create.step !== 'idle'
+  const busy = create.step !== 'idle' || submitting
   const canSubmit =
     ready &&
     titleValid &&
@@ -98,16 +110,33 @@ const CreateNegotiation: React.FC = () => {
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
     if (!canSubmit || levels === null || min === null || stepSize === null || minutes === null) return
-    const e3Id = await create.create({
-      title: stored,
-      seller: seller as `0x${string}`,
-      buyer: buyer as `0x${string}`,
-      levels,
-      minPrice: min,
-      stepPrice: stepSize,
-      durationSeconds: minutes * 60,
-    })
-    if (e3Id !== null) setCreatedId(e3Id)
+    setSubmitting(true)
+    try {
+      const e3Id = await create.create({
+        title: stored,
+        seller: seller as `0x${string}`,
+        buyer: buyer as `0x${string}`,
+        levels,
+        minPrice: min,
+        stepPrice: stepSize,
+        durationSeconds: minutes * 60,
+      })
+      if (e3Id === null) return
+      // The negotiation exists now. A failed upload must not undo it: the negotiation page lets the creator add the picture again.
+      if (picture && walletClient && address) {
+        try {
+          await uploadImage(walletClient, address, e3Id, picture, setUpload)
+          setPictureResult({ error: null })
+        } catch (err) {
+          setPictureResult({ error: formatError(err) })
+        } finally {
+          setUpload(null)
+        }
+      }
+      setCreatedId(e3Id)
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   const link = createdId === null ? null : `${window.location.origin}/n/${createdId}`
@@ -138,6 +167,13 @@ const CreateNegotiation: React.FC = () => {
               {copied ? 'Link copied' : 'Copy link'}
             </button>
           </div>
+          {pictureResult && (
+            <div className={`note ${pictureResult.error ? 'warn' : 'ok'}`}>
+              {pictureResult.error
+                ? `The picture was not uploaded: ${pictureResult.error}. Open the negotiation and select Add picture to try again.`
+                : 'The picture is uploaded.'}
+            </div>
+          )}
           <Link to={`/n/${createdId}`} className='btn accent block'>
             Open the negotiation
           </Link>
@@ -203,6 +239,8 @@ const CreateNegotiation: React.FC = () => {
               )}
             </div>
           </fieldset>
+
+          <PictureField value={picture} onChange={setPicture} disabled={busy} />
 
           <fieldset className='space-y-5' disabled={busy}>
             <legend className='label'>The two parties</legend>
@@ -357,7 +395,8 @@ const CreateNegotiation: React.FC = () => {
           <button type='submit' disabled={!canSubmit} className='btn accent block'>
             {busy ? (
               <>
-                <Spinner size={14} /> {STEP_LABELS[create.step as Exclude<typeof create.step, 'idle'>]}
+                <Spinner size={14} />{' '}
+                {create.step !== 'idle' ? STEP_LABELS[create.step] : upload ? UPLOAD_LABELS[upload] : 'Creating the negotiation…'}
               </>
             ) : (
               'Create negotiation'

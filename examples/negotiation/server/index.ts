@@ -4,13 +4,14 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+import { join } from 'node:path'
 import express, { NextFunction, Request, Response } from 'express'
 import { CommitteePublicKeyAssembler, InterfoldSDK } from '@interfold/sdk'
 import type { CiphertextOutputReference, CommitteePublicKeyChunkPublishedData } from '@interfold/sdk'
 import { E3Stage } from '@interfold/sdk/contracts'
 import { RegistryEventType } from '@interfold/sdk/events'
 import { Interfold__factory } from '@interfold/contracts/types'
-import { bytesToHex, createWalletClient, hexToBytes, http, keccak256 } from 'viem'
+import { type Address, bytesToHex, createWalletClient, hexToBytes, http, keccak256, zeroAddress } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { loadConfig, type ServerConfig } from './config'
 import { callFheRunner } from './runner'
@@ -22,6 +23,7 @@ import { getLogsChunked } from './logs'
 import { NegotiationProgram__factory } from '../types/factories/contracts'
 import { completeRoles, negotiationInputs, opensCommitment, ROLES, type ProgramInputs, type SubmittedOffer } from './inputs'
 import { parseRelayRequest, relayOffer, RelayRequestError, RelayRevertError } from './relay'
+import { imageRouter } from './image'
 
 // The coordination server orchestrates the FHE run automatically: it watches for
 // each E3's committee to publish, schedules the compute for when the input window
@@ -525,6 +527,17 @@ async function handleRelay(req: Request, res: Response) {
   }
 }
 
+/** The creator of a negotiation (the requester of its E3), read from the program on chain, or `undefined` if the program has no such negotiation. */
+async function readCreator(e3Id: bigint): Promise<Address | undefined> {
+  const [creator] = await sdk.getPublicClient().readContract({
+    address: config.program,
+    abi: NegotiationProgram__factory.abi,
+    functionName: 'negotiation',
+    args: [e3Id],
+  })
+  return creator === zeroAddress ? undefined : creator
+}
+
 const app = express()
 
 app.get('/health', (_req, res) => {
@@ -535,6 +548,8 @@ app.post('/callback/:e3Id/:token', authenticateCallback, express.json({ limit: C
 // The relayer sends a signed offer for a party who has no gas. A browser at another origin calls it.
 app.use('/relay', allowAnyOrigin)
 app.post('/relay', express.json({ limit: RELAY_BODY_LIMIT }), handleRelay)
+// The creator of a negotiation uploads its picture, signed, and every page reads it. The image files live in the data directory.
+app.use(imageRouter({ chainId: config.chain.id, program: config.program, directory: join(config.dataDirectory, 'images'), readCreator }))
 app.get('/availability/objects/:contentHash', async (req, res) => {
   const contentHash = req.params.contentHash
   if (!/^0x[a-fA-F0-9]{64}$/.test(contentHash)) {

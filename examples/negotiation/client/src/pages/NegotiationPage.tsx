@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import React, { useCallback, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useParams } from 'react-router-dom'
 import { useNegotiation } from '@/hooks/useNegotiations'
 import { useChainTime } from '@/hooks/useChainTime'
 import { useCommitteeKey } from '@/hooks/useCommitteeKey'
@@ -15,6 +15,7 @@ import { shortId } from '@/utils/format'
 import { getContractAddresses } from '@/utils/env-config'
 import CopyId from '@/components/CopyId'
 import { AddressLink } from '@/components/Explorer'
+import { PictureControl, PictureHero, usePicture } from '@/components/NegotiationPicture'
 import OfferPanel from '@/components/OfferPanel'
 import PhaseTimeline from '@/components/PhaseTimeline'
 import ResultPanel from '@/components/ResultPanel'
@@ -28,6 +29,10 @@ const NegotiationPage: React.FC = () => {
   const { negotiation, error, refresh } = useNegotiation(e3Id)
   const now = useChainTime()
   const wallet = useWallet()
+  // A replaced picture has a new URL, so a cache cannot show the old one.
+  const [pictureVersion, setPictureVersion] = useState<number | undefined>(undefined)
+  const picture = usePicture(e3Id, pictureVersion)
+  const location = useLocation()
 
   const phase = negotiation ? phaseOf(negotiation, now) : null
   const role = negotiation ? roleOf(negotiation, wallet.address) : null
@@ -63,6 +68,9 @@ const NegotiationPage: React.FC = () => {
 
   const { e3Program } = getContractAddresses()
   const last = negotiation.levels - 1
+  const isCreator = wallet.ready && wallet.address !== undefined && wallet.address.toLowerCase() === negotiation.creator.toLowerCase()
+  // The create page can pass the error of a picture upload that failed after the negotiation was created.
+  const pictureError = typeof location.state?.pictureError === 'string' ? location.state.pictureError : undefined
 
   return (
     <div className='page space-y-10'>
@@ -95,6 +103,21 @@ const NegotiationPage: React.FC = () => {
           </p>
         )}
       </header>
+
+      {picture.status !== 'loading' && (picture.status === 'present' || isCreator) && (
+        <section className='space-y-3' aria-label='Picture'>
+          {picture.status === 'present' && picture.url && <PictureHero url={picture.url} title={negotiation.title} />}
+          {isCreator && wallet.address && (
+            <PictureControl
+              e3Id={negotiation.e3Id}
+              account={wallet.address}
+              hasPicture={picture.status === 'present'}
+              initialError={pictureError}
+              onUploaded={() => setPictureVersion(Date.now())}
+            />
+          )}
+        </section>
+      )}
 
       <dl className='card grid grid-cols-2 gap-x-6 gap-y-5 md:grid-cols-3 lg:grid-cols-4'>
         <Fact label='Seller'>
