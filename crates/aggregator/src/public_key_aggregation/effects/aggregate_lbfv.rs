@@ -29,6 +29,9 @@ impl PublicKeyAggregator {
             );
             return Ok(());
         }
+        if !self.proof_aggregation_enabled {
+            return self.try_complete_lbfv_without_proofs(ec);
+        }
         let Some(mut state) = self.lbfv_aggregation_state()? else {
             info!(
                 e3_id = %self.e3_id,
@@ -291,6 +294,9 @@ impl PublicKeyAggregator {
         if !self.is_lbfv() || !self.can_run_aggregation_effects() {
             return Ok(());
         }
+        if !self.proof_aggregation_enabled {
+            return Ok(());
+        }
         let Some(mut state) = self.lbfv_aggregation_state()? else {
             return Ok(());
         };
@@ -333,6 +339,59 @@ impl PublicKeyAggregator {
         )?;
         self.note_lbfv_aggregation_dispatch(correlation, ec);
         Ok(())
+    }
+
+    /// Test-only skip (`proof_aggregation_enabled == false`): derive the operational keys from
+    /// the accepted documents without any row, fold or final aggregation proof, then publish the
+    /// placeholder. A production build never reaches this: the flag is `true` there.
+    fn try_complete_lbfv_without_proofs(&mut self, ec: &EventContext<Sequenced>) -> Result<()> {
+        let Some(mut state) = self.lbfv_aggregation_state()? else {
+            return Ok(());
+        };
+        state.validate_loaded()?;
+        if state.is_failed() {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            state.accepted_party_ids.len() == self.committee_size.values().h,
+            "l-BFV aggregation sidecar accepted set does not match H"
+        );
+        if state
+            .accepted_party_ids
+            .iter()
+            .any(|party_id| !state.public_key_documents.contains_key(party_id))
+            || state
+                .accepted_party_ids
+                .iter()
+                .any(|party_id| !state.rlk_documents.contains_key(party_id))
+        {
+            return Ok(());
+        }
+        if state.operational_public_key.is_none() || state.operational_rlk.is_none() {
+            let public_key_shares = document_shares(
+                &state,
+                |document| document.role() == e3_events::LbfvKeyShareDocumentRole::PublicKey,
+                "public-key",
+            )?;
+            let rlk_shares = document_shares(
+                &state,
+                |document| {
+                    document.role() == e3_events::LbfvKeyShareDocumentRole::RelinearizationKey
+                },
+                "relinearization-key",
+            )?;
+            let operational_keys = e3_trbfv::aggregate_lbfv::aggregate_lbfv_keys(
+                self.params_preset,
+                &public_key_shares,
+                &rlk_shares,
+            )?;
+            state.set_operational_keys(
+                operational_keys.public_key,
+                operational_keys.relinearization_key,
+            )?;
+            self.set_lbfv_aggregation(state, ec)?;
+        }
+        self.try_publish_complete()
     }
 
     pub(in crate::actors::publickey_aggregator) fn persist_operational_lbfv_rlk(

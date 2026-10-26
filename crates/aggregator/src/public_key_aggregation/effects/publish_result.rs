@@ -194,6 +194,7 @@ impl PublicKeyAggregator {
             nodes,
             party_nodes,
             honest_party_ids,
+            dkg_node_proofs,
             dkg_fold_attestations,
             last_ec,
             ..
@@ -205,7 +206,11 @@ impl PublicKeyAggregator {
             return Ok(());
         };
 
-        self.try_dispatch_dkg_aggregation(&ec)?;
+        // With proof aggregation disabled for testing, the final aggregation proof is never
+        // dispatched, and its readiness probe would re-enter this method.
+        if self.proof_aggregation_enabled {
+            self.try_dispatch_dkg_aggregation(&ec)?;
+        }
 
         if let Some(publication) = self
             .lbfv_publication_state()?
@@ -224,23 +229,38 @@ impl PublicKeyAggregator {
         if aggregation.operational_public_key.is_none() || aggregation.operational_rlk.is_none() {
             return Ok(());
         }
-        let Some(dkg_aggregator_v2_proof) = aggregation.dkg_aggregated_proof else {
-            return Ok(());
+        let dkg_aggregator_v2_proof = if self.proof_aggregation_enabled {
+            let Some(proof) = aggregation.dkg_aggregated_proof else {
+                return Ok(());
+            };
+            anyhow::ensure!(
+                proof.circuit == e3_events::CircuitName::DkgAggregatorV2,
+                "l-BFV publication requires a DkgAggregatorV2 proof"
+            );
+            Some(proof)
+        } else {
+            // Every honest node reports an empty fold when it skips aggregation; wait for all
+            // of them so the placeholder carries the same roster as a real proof.
+            if !honest_party_ids
+                .iter()
+                .all(|party_id| dkg_node_proofs.contains_key(party_id))
+            {
+                return Ok(());
+            }
+            if dkg_node_proofs.values().any(Option::is_some) {
+                warn!(
+                    e3_id = %self.e3_id,
+                    "Mixed skipped and aggregated DKG node proofs; refusing the l-BFV test-only publication"
+                );
+                return Ok(());
+            }
+            None
         };
-        anyhow::ensure!(
-            dkg_aggregator_v2_proof.circuit == e3_events::CircuitName::DkgAggregatorV2,
-            "l-BFV publication requires a DkgAggregatorV2 proof"
-        );
         let committee_h = self.committee_size.values().h;
         let lbfv_row_count =
             e3_fhe_params::lbfv_row_count(self.params_preset).ok_or_else(|| {
                 anyhow::anyhow!("l-BFV row count is unavailable for the active preset")
             })?;
-        let pk_commitment = extract_lbfv_key_envelope_commitment(
-            &dkg_aggregator_v2_proof,
-            committee_h,
-            lbfv_row_count,
-        )?;
         let operational_public_key = aggregation
             .operational_public_key
             .as_ref()
@@ -254,16 +274,6 @@ impl PublicKeyAggregator {
             operational_rlk,
             self.params_preset,
         )?;
-        e3_bfv_client::validate_lbfv_key_envelope(
-            &key_envelope,
-            pk_commitment,
-            self.params_preset,
-        )?;
-        let dkg_attestation_bundle = e3_zk_prover::encode_dkg_attestation_bundle(
-            &honest_party_ids,
-            &party_nodes,
-            &dkg_fold_attestations,
-        )?;
 
         let mut full_committee_party_ids: Vec<u64> = party_nodes.keys().copied().collect();
         full_committee_party_ids.sort_unstable();
@@ -272,6 +282,39 @@ impl PublicKeyAggregator {
         let honest_party_ids_vec: Vec<u64> = honest_party_ids.iter().copied().collect();
         let honest_committee_addresses =
             committee_addresses_in_party_order(&honest_party_ids_vec, &party_nodes)?;
+
+        let (dkg_aggregator_v2_proof, pk_commitment, dkg_attestation_bundle) =
+            match dkg_aggregator_v2_proof {
+                Some(proof) => {
+                    let pk_commitment =
+                        extract_lbfv_key_envelope_commitment(&proof, committee_h, lbfv_row_count)?;
+                    e3_bfv_client::validate_lbfv_key_envelope(
+                        &key_envelope,
+                        pk_commitment,
+                        self.params_preset,
+                    )?;
+                    let bundle = e3_zk_prover::encode_dkg_attestation_bundle(
+                        &honest_party_ids,
+                        &party_nodes,
+                        &dkg_fold_attestations,
+                    )?;
+                    (proof, pk_commitment, bundle)
+                }
+                None => {
+                    let (commitments, _) = e3_bfv_client::inspect_lbfv_key_envelope(
+                        &key_envelope,
+                        self.params_preset,
+                    )?;
+                    let proof = placeholder_dkg_aggregator_v2_proof(
+                        &honest_party_ids_vec,
+                        &committee_addresses,
+                        commitments.envelope,
+                        lbfv_row_count,
+                    );
+                    // The mock fold-attestation verifier requires only a non-empty payload.
+                    (proof, commitments.envelope, vec![1].into())
+                }
+            };
         let publication = LbfvPublicKeyAggregated {
             pubkey: ArcBytes::from_bytes(&key_envelope),
             e3_id: self.e3_id.clone(),

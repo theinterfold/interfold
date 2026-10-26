@@ -702,4 +702,125 @@ mod tests {
             .is_none());
         Ok(())
     }
+
+    fn lbfv_threshold_share_pending(e3_id: E3id) -> e3_events::ThresholdSharePending {
+        use e3_events::{PkGenerationProofRequest, ShareComputationProofRequest, ThresholdShare};
+        use e3_zk_config::DkgInputType;
+        use std::sync::Arc;
+        let preset = e3_fhe_params::BfvPreset::InsecureThresholdLbfv;
+        let sensitive = || e3_crypto::SensitiveBytes::from_encrypted(&[]);
+        let share_request = || ShareComputationProofRequest {
+            secret_raw: sensitive(),
+            secret_sss_raw: sensitive(),
+            dkg_input_type: DkgInputType::SecretKey,
+            params_preset: preset,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+        };
+        e3_events::ThresholdSharePending {
+            e3_id,
+            full_share: Arc::new(ThresholdShare {
+                party_id: 4,
+                pk_share: e3_utils::ArcBytes::from_bytes(&[1]),
+                sk_sss: e3_trbfv::shares::BfvEncryptedShares::default(),
+                esi_sss: vec![],
+            }),
+            proof_request: PkGenerationProofRequest {
+                pk0_share: e3_utils::ArcBytes::from_bytes(&[1]),
+                sk: sensitive(),
+                eek: sensitive(),
+                e_sm: sensitive(),
+                params_preset: preset,
+                committee_size: CiphernodesCommitteeSize::Minimum,
+            },
+            sk_share_computation_request: share_request(),
+            e_sm_share_computation_request: share_request(),
+            sk_share_encryption_requests: vec![],
+            e_sm_share_encryption_requests: vec![],
+            recipient_party_ids: vec![4],
+        }
+    }
+
+    fn lbfv_rlk_document(e3_id: E3id) -> LbfvKeyShareDocumentCreated {
+        LbfvKeyShareDocumentCreated {
+            document: e3_events::LbfvKeyShareDocument::RelinearizationKeyV2(
+                e3_events::LbfvRelinearizationKeyShareDocumentV2 {
+                    context: e3_events::LbfvKeyShareDocumentContextV1 {
+                        e3_id,
+                        proof_domain: e3_committee_hash::LbfvProofDomainContext {
+                            protocol_version: 10,
+                            chain_id: 1,
+                            interfold_address: Address::repeat_byte(0x11),
+                            e3_id: alloy::primitives::U256::from(49),
+                            crypto_config_id: alloy::primitives::B256::repeat_byte(0x22),
+                            finalized_committee_hash: alloy::primitives::B256::repeat_byte(0x33),
+                            lbfv_constants_version: 1,
+                            ciphertext_level: 0,
+                            key_level: 0,
+                        },
+                        proof_session_id: alloy::primitives::B256::repeat_byte(0x44),
+                        party_id: 4,
+                    },
+                    share: e3_utils::ArcBytes::from_bytes(&[2]),
+                    signed_row_proofs: Vec::new(),
+                },
+            ),
+        }
+    }
+
+    #[actix::test]
+    async fn skipped_lbfv_node_publishes_an_empty_fold_and_builds_no_fold_state() -> Result<()> {
+        let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+        let mut aggregator =
+            NodeProofAggregator::new(&bus, test_signer(), HashMap::new(), HashMap::new(), false);
+        let e3_id = E3id::new("49", 1);
+
+        let document = lbfv_rlk_document(e3_id.clone());
+        aggregator.handle_lbfv_document(TypedEvent::new(document.clone(), test_ctx(document)));
+        let pending = lbfv_threshold_share_pending(e3_id.clone());
+        aggregator
+            .handle_threshold_share_pending(TypedEvent::new(pending.clone(), test_ctx(pending)));
+
+        assert_eq!(
+            next_event(&history).await?.into_data(),
+            DKGRecursiveAggregationComplete {
+                e3_id: e3_id.clone(),
+                party_id: 4,
+                aggregated_proof: None,
+                fold_attestation: None,
+            }
+            .into()
+        );
+        assert!(aggregator.generation_fold_rows.is_empty());
+        assert!(aggregator.states.is_empty());
+        actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+        let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+        assert!(events
+            .iter()
+            .all(|event| !matches!(event.get_data(), InterfoldEventData::ComputeRequest(_))));
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn enabled_lbfv_node_collects_rows_and_waits_for_inner_proofs() -> Result<()> {
+        let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+        let mut aggregator =
+            NodeProofAggregator::new(&bus, test_signer(), HashMap::new(), HashMap::new(), true);
+        let e3_id = E3id::new("49", 1);
+
+        let document = lbfv_rlk_document(e3_id.clone());
+        aggregator.handle_lbfv_document(TypedEvent::new(document.clone(), test_ctx(document)));
+        let pending = lbfv_threshold_share_pending(e3_id.clone());
+        aggregator
+            .handle_threshold_share_pending(TypedEvent::new(pending.clone(), test_ctx(pending)));
+
+        assert!(aggregator.generation_fold_rows.contains_key(&e3_id));
+        assert!(aggregator.states.contains_key(&e3_id));
+        actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+        let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+        assert!(events.iter().all(|event| !matches!(
+            event.get_data(),
+            InterfoldEventData::DKGRecursiveAggregationComplete(_)
+        )));
+        Ok(())
+    }
 }

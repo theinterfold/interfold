@@ -105,7 +105,12 @@ impl CiphernodeBuilder {
         info!("Setting up PublicKeyAggregationExtension");
         e3_builder = e3_builder.with_recipient(
             "publickey",
-            PublicKeyAggregatorExtension::create(bus, interfold_addresses, addr.parse()?),
+            PublicKeyAggregatorExtension::create(
+                bus,
+                interfold_addresses,
+                addr.parse()?,
+                self.proof_aggregation_enabled,
+            ),
         );
 
         // ── Threshold plaintext aggregation ──

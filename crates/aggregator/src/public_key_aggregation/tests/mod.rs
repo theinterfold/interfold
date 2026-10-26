@@ -138,6 +138,7 @@ async fn build_public_key_aggregator_with_committee(
             initial_is_aggregator: true,
             initial_stage: E3Stage::None,
             effects_enabled: true,
+            proof_aggregation_enabled: true,
         },
         test_state(initial_state),
     );
@@ -277,6 +278,7 @@ fn micro_aggregator(
             initial_is_aggregator,
             initial_stage: E3Stage::None,
             effects_enabled: true,
+            proof_aggregation_enabled: true,
         },
         repository.send(Some(state)),
     );
@@ -377,6 +379,7 @@ fn booted_micro_aggregator(
             initial_is_aggregator,
             initial_stage: E3Stage::None,
             effects_enabled: true,
+            proof_aggregation_enabled: true,
         },
         state,
     )
@@ -610,6 +613,7 @@ async fn secure_16384_restart_redrives_publication_intent() -> Result<()> {
             initial_is_aggregator: true,
             initial_stage: E3Stage::None,
             effects_enabled: true,
+            proof_aggregation_enabled: true,
         },
         test_state(complete_state()),
     );
@@ -656,6 +660,7 @@ async fn secure_16384_waits_for_both_operational_keys() -> Result<()> {
             initial_is_aggregator: true,
             initial_stage: E3Stage::None,
             effects_enabled: true,
+            proof_aggregation_enabled: true,
         },
         test_state(initial_state),
     );
@@ -707,6 +712,7 @@ async fn secure_16384_restart_redrives_terminal_aggregation_failure() -> Result<
             initial_is_aggregator: true,
             initial_stage: E3Stage::None,
             effects_enabled: true,
+            proof_aggregation_enabled: true,
         },
         test_state(generating_c5_state(CorrelationId::new())),
     );
@@ -949,6 +955,7 @@ async fn standby_retains_dkg_fold_for_failover() -> Result<()> {
             initial_is_aggregator: false,
             initial_stage: E3Stage::None,
             effects_enabled: true,
+            proof_aggregation_enabled: true,
         },
         state,
     )
@@ -1194,6 +1201,7 @@ async fn mock_publication_carries_registry_roster() -> Result<()> {
 mod attestations;
 mod failures;
 mod redrive;
+mod skip_aggregation;
 
 #[actix::test]
 async fn secure_16384_never_dispatches_standalone_c1_verification() -> Result<()> {
@@ -1231,6 +1239,7 @@ async fn secure_16384_never_dispatches_standalone_c1_verification() -> Result<()
             initial_is_aggregator: true,
             initial_stage: E3Stage::None,
             effects_enabled: true,
+            proof_aggregation_enabled: true,
         },
         test_state(PublicKeyAggregatorState::init(
             3,
@@ -1299,6 +1308,7 @@ async fn secure_16384_publishes_inputs_ready_after_a_durable_quorum() -> Result<
             initial_is_aggregator: false,
             initial_stage: E3Stage::None,
             effects_enabled: true,
+            proof_aggregation_enabled: true,
         },
         test_state(PublicKeyAggregatorState::VerifyingC1 {
             c1_proofs: vec![None; submissions.len()],
@@ -1398,6 +1408,7 @@ async fn secure_16384_waits_for_the_selected_roster_before_sealing_a_quorum() ->
             initial_is_aggregator: false,
             initial_stage: E3Stage::None,
             effects_enabled: true,
+            proof_aggregation_enabled: true,
         },
         test_state(state),
     )
@@ -1479,6 +1490,7 @@ async fn restart_validates_documents_durable_lbfv_bundles() -> Result<()> {
             initial_is_aggregator: false,
             initial_stage: E3Stage::None,
             effects_enabled: false,
+            proof_aggregation_enabled: true,
         },
         test_state(PublicKeyAggregatorState::VerifyingC1 {
             submission_order: vec![(
@@ -1573,6 +1585,7 @@ async fn restart_redrives_due_lbfv_fetches() -> Result<()> {
             initial_is_aggregator: false,
             initial_stage: E3Stage::None,
             effects_enabled: true,
+            proof_aggregation_enabled: true,
         },
         test_state(PublicKeyAggregatorState::init(
             3,
@@ -1652,6 +1665,7 @@ async fn lbfv_retry_timer_dispatches_without_another_event() -> Result<()> {
             initial_is_aggregator: false,
             initial_stage: E3Stage::None,
             effects_enabled: false,
+            proof_aggregation_enabled: true,
         },
         test_state(PublicKeyAggregatorState::init(
             3,
@@ -1739,6 +1753,7 @@ async fn lbfv_expulsion_durably_invalidates_an_in_flight_dispatch() -> Result<()
             initial_is_aggregator: false,
             initial_stage: E3Stage::None,
             effects_enabled: false,
+            proof_aggregation_enabled: true,
         },
         test_state(PublicKeyAggregatorState::VerifyingC1 {
             c1_proofs: vec![None; submissions.len()],
@@ -1856,6 +1871,7 @@ async fn lbfv_stale_verification_completion_is_ignored() -> Result<()> {
             initial_is_aggregator: true,
             initial_stage: E3Stage::None,
             effects_enabled: true,
+            proof_aggregation_enabled: true,
         },
         test_state(PublicKeyAggregatorState::VerifyingC1 {
             c1_proofs: vec![None; submissions.len()],
@@ -1961,6 +1977,7 @@ async fn sealed_sidecar_recovery_applies_the_exact_accepted_set() -> Result<()> 
             initial_is_aggregator: true,
             initial_stage: E3Stage::None,
             effects_enabled: false,
+            proof_aggregation_enabled: true,
         },
         test_state(PublicKeyAggregatorState::VerifyingC1 {
             submission_order: submissions,
@@ -2048,6 +2065,7 @@ async fn concurrent_document_roles_do_not_overwrite_sidecar_updates() -> Result<
             initial_is_aggregator: false,
             initial_stage: E3Stage::None,
             effects_enabled: false,
+            proof_aggregation_enabled: true,
         },
         test_state(PublicKeyAggregatorState::init(
             3,
