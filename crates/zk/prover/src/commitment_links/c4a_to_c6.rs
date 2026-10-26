@@ -66,8 +66,8 @@ mod tests {
     #[test]
     fn extract_commitment_from_c4a() {
         let link = C4aToC6SkCommitmentLink;
-        // C4 has no public inputs, just one output: commitment
-        let signals = make_field(42);
+        // C4 has no public inputs; its outputs are the commitment, then its limb-key tree.
+        let signals = [make_field(42), make_field(1)].concat();
         let values = link.extract_source_values(&signals);
         assert_eq!(values.len(), 1);
         assert_eq!(values[0], make_field(42));
