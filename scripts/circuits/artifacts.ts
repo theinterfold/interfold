@@ -117,7 +117,7 @@ function stampFiles(dir: string): string[] {
 // Preset directories that serve the l-BFV path only. Every other preset (`insecure-64`,
 // `secure-8192`) serves the trBFV path only. The Rust installer applies the same rule
 // (`required_artifacts` in `crates/zk/prover/src/backend/download.rs`).
-const LBFV_PRESET_DIRS = new Set(['insecure', 'insecure-simd', 'secure-16384'])
+const LBFV_PRESET_DIRS = new Set(['insecure', 'insecure-simd', 'secure-16384', 'secure-16384-simd'])
 
 export function requiredArtifactMarkers(preset: string, committee: string): string[] {
   const artifacts = [...requiredArtifacts, ...(LBFV_PRESET_DIRS.has(preset) ? requiredLbfvArtifacts : requiredTrbfvArtifacts)]

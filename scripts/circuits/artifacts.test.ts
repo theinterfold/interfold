@@ -28,7 +28,7 @@ test('every release pair is a supported build pair', () => {
 })
 
 test('l-BFV pairs require row, chunk and v2 artifacts, but the trBFV pairs do not', () => {
-  for (const preset of ['insecure', 'insecure-simd', 'secure-16384']) {
+  for (const preset of ['insecure', 'insecure-simd', 'secure-16384', 'secure-16384-simd']) {
     const markers = requiredArtifactMarkers(preset, 'minimum')
     for (const circuit of ['lbfv_pk_generation', 'lbfv_pk_aggregation', 'rlk_generation', 'rlk_aggregation']) {
       for (const variant of ['default', 'recursive', 'evm']) {
@@ -93,7 +93,7 @@ function makeCompleteMatrix(): string {
 test('checksums command covers exactly the staged circuit configurations', () => {
   const dir = makeCompleteMatrix()
   try {
-    for (const preset of ['insecure', 'insecure-simd', 'secure-16384']) rmSync(join(dir, preset), { recursive: true })
+    for (const preset of ['insecure', 'insecure-simd', 'secure-16384', 'secure-16384-simd']) rmSync(join(dir, preset), { recursive: true })
     for (const preset of ['insecure-64', 'secure-8192']) {
       for (const committee of ['micro', 'small']) rmSync(join(dir, preset, committee), { recursive: true })
     }

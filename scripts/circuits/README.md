@@ -106,8 +106,9 @@ the generator would produce.
 
 - `--preset <name>` - Parameter preset: `insecure-64` (degree 64, default), `insecure` (the
   degree-128 l-BFV preset), `insecure-simd`, `secure-8192`,
-  `secure-16384`, or `all`. `insecure-64` and `secure-8192` build the trBFV circuits only.
-  `insecure`, `insecure-simd` and `secure-16384` build the l-BFV circuits only. Secure-16384 and
+  `secure-16384`, `secure-16384-simd`, or `all`. `insecure-64` and `secure-8192` build the trBFV
+  circuits only. `insecure`, `insecure-simd`, `secure-16384` and `secure-16384-simd` build the
+  l-BFV circuits only. Secure-16384, secure-16384-simd (degree 16384, plaintext modulus 65537) and
   `insecure` support minimum, micro, and small. Insecure-simd (degree 128, plaintext modulus 257)
   supports minimum and micro only.
 - `--committee <name>` - Committee size: `minimum` (default), `micro`, `small`
@@ -167,6 +168,9 @@ pnpm build:circuits --preset secure-8192 --committee small
 pnpm build:circuits --preset secure-16384 --committee minimum
 pnpm build:circuits --preset secure-16384 --committee micro
 pnpm build:circuits --preset secure-16384 --committee small
+pnpm build:circuits --preset secure-16384-simd --committee minimum
+pnpm build:circuits --preset secure-16384-simd --committee micro
+pnpm build:circuits --preset secure-16384-simd --committee small
 pnpm store:circuits push
 
 # Pull circuits from git branch (used by releases)
@@ -237,6 +241,7 @@ The release archive must include:
 - `secure-8192/{minimum,micro,small}` for Sepolia secure-parameter tests and mainnet committees
 - `secure-16384/{minimum,micro,small}` for the l-BFV V2 configurations
 - `insecure-simd/{minimum,micro}` for the l-BFV SIMD configurations
+- `secure-16384-simd/{minimum,micro,small}` for the secure l-BFV SIMD configurations
 
 Nodes download one archive and select the artifact directory from the E3's on-chain BFV parameter
 set and committee size.
