@@ -51,6 +51,20 @@ export const BFV_PARAMS = {
     ],
     error1Variance: "264093875047547791978479834453333",
   },
+  // The secure-16384 degree with a SIMD plaintext modulus (prime, 1 mod 2N) and 56-bit moduli:
+  // on-chain parameter set 6.
+  secure16384Simd: {
+    degree: 16384n,
+    plaintextModulus: 65537n,
+    moduli: [
+      0x00800000009d0001n,
+      0x0080000000850001n,
+      0x0080000000770001n,
+      0x0080000000730001n,
+      0x00800000005e0001n,
+    ],
+    error1Variance: "264093875047547801360979058141866",
+  },
 } as const;
 
 /**
@@ -71,6 +85,8 @@ export function bfvParamsForParamSet(
       return BFV_PARAMS.secure16384;
     case 5:
       return BFV_PARAMS.insecureSimd;
+    case 6:
+      return BFV_PARAMS.secure16384Simd;
     default:
       throw new Error(`Unsupported BFV parameter set: ${paramSet}`);
   }

@@ -280,7 +280,7 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         uint256 publicInputLength
     ) private pure returns (uint256 v2H, uint256 v2N) {
         // `dkg_aggregator_v2`: 39 + 3h + 3 * rows, with 3 rows (insecure l-BFV) or 5 rows
-        // (secure-16384).
+        // (secure-16384 and secure-16384-simd).
         if (publicInputLength == 54 || publicInputLength == 60) {
             return (2, 3);
         }

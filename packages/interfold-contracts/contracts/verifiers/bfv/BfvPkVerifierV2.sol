@@ -83,7 +83,8 @@ contract BfvPkVerifierV2 is IPkVerifier {
         if (
             _paramSet != ActiveCryptoConfig.SECURE_16384_PARAM_SET &&
             _paramSet != ActiveCryptoConfig.INSECURE_LBFV_PARAM_SET &&
-            _paramSet != ActiveCryptoConfig.INSECURE_SIMD_PARAM_SET
+            _paramSet != ActiveCryptoConfig.INSECURE_SIMD_PARAM_SET &&
+            _paramSet != ActiveCryptoConfig.SECURE_16384_SIMD_PARAM_SET
         ) {
             revert InvalidParamSet(_paramSet);
         }
@@ -112,7 +113,8 @@ contract BfvPkVerifierV2 is IPkVerifier {
         h = _committeeH;
         committeeN = _committeeN;
         expectedParamSet = _paramSet;
-        lbfvRows = _paramSet == ActiveCryptoConfig.SECURE_16384_PARAM_SET
+        lbfvRows = (_paramSet == ActiveCryptoConfig.SECURE_16384_PARAM_SET ||
+            _paramSet == ActiveCryptoConfig.SECURE_16384_SIMD_PARAM_SET)
             ? 5
             : 3;
         expectedPublicInputsLen =

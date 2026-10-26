@@ -115,7 +115,8 @@ export type BfvArtifactPreset =
   | "insecure-64"
   | "insecure-simd"
   | "secure-8192"
-  | "secure-16384";
+  | "secure-16384"
+  | "secure-16384-simd";
 export type BfvCommittee = "minimum" | "micro" | "small";
 
 export interface ActiveBfvConfig {
@@ -150,6 +151,10 @@ const INSECURE_SIMD_PARAM_SET_HASH =
   "0xa5324db0b69c6f2f152b04917d2ec47630b625562fd094d2428c04dd885081e3";
 const INSECURE_SIMD_CONFIG_ID =
   "0x843cc091bc39d046eded5e9f0aed8250848b46f7e36623433d31a1f5d7ef5e35";
+const SECURE_16384_SIMD_PARAM_SET_HASH =
+  "0x7bb0115496a871fa95c282abe46f910d53ff22270e7c225e2468f9420570fe53";
+const SECURE_16384_SIMD_CONFIG_ID =
+  "0xd053da3859a277a18b1d0bce3f59f7afb5dda18833e3e0fc32c204d066d4e65e";
 
 // Generated from `BfvPreset::max_msg_non_zero_coeffs` by `pnpm build:circuits`.
 const INSECURE_64_MESSAGE_COEFFS_COUNT = 50;
@@ -157,6 +162,7 @@ const INSECURE_MESSAGE_COEFFS_COUNT = 50;
 const INSECURE_SIMD_MESSAGE_COEFFS_COUNT = 128;
 const SECURE_MESSAGE_COEFFS_COUNT = 50;
 const SECURE_16384_MESSAGE_COEFFS_COUNT = 50;
+const SECURE_16384_SIMD_MESSAGE_COEFFS_COUNT = 50;
 
 /**
  * On-chain index of the insecure degree-128 parameters, which run the l-BFV path. Index 0 is the
@@ -167,18 +173,29 @@ export const INSECURE_LBFV_PARAM_SET = 4;
 /** On-chain index of the insecure SIMD parameters (plaintext modulus 257, l-BFV path). */
 export const INSECURE_SIMD_PARAM_SET = 5;
 
-/** Parameter sets on the l-BFV path: secure-16384 (3), insecure l-BFV (4) and insecure SIMD (5). */
+/**
+ * On-chain index of the secure SIMD parameters (degree 16384, plaintext modulus 65537, l-BFV
+ * path).
+ */
+export const SECURE_16384_SIMD_PARAM_SET = 6;
+
+/**
+ * Parameter sets on the l-BFV path: secure-16384 (3), insecure l-BFV (4), insecure SIMD (5) and
+ * secure-16384-simd (6).
+ */
 export function isLbfvParamSet(paramSet: number): boolean {
   return (
     paramSet === 3 ||
     paramSet === INSECURE_LBFV_PARAM_SET ||
-    paramSet === INSECURE_SIMD_PARAM_SET
+    paramSet === INSECURE_SIMD_PARAM_SET ||
+    paramSet === SECURE_16384_SIMD_PARAM_SET
   );
 }
 
 /**
  * The decrypted-output cap of a parameter set (`MAX_MSG_NON_ZERO_COEFFS`), which is the
- * `BfvDecryptionVerifier` constructor argument. The SIMD set publishes every ring slot.
+ * `BfvDecryptionVerifier` constructor argument. The insecure SIMD set publishes every ring slot;
+ * the secure SIMD set publishes 50 coefficients, which recover up to 50 non-zero slots.
  */
 export function bfvMessageCoeffsCount(paramSet: number): number {
   switch (paramSet) {
@@ -192,6 +209,8 @@ export function bfvMessageCoeffsCount(paramSet: number): number {
       return SECURE_16384_MESSAGE_COEFFS_COUNT;
     case INSECURE_SIMD_PARAM_SET:
       return INSECURE_SIMD_MESSAGE_COEFFS_COUNT;
+    case SECURE_16384_SIMD_PARAM_SET:
+      return SECURE_16384_SIMD_MESSAGE_COEFFS_COUNT;
     default:
       throw new Error(
         `No decrypted-output cap for BFV parameter set ${paramSet}`,
@@ -219,6 +238,7 @@ const PRESET_PARAM_SETS: Record<BfvArtifactPreset, number> = {
   "insecure-simd": INSECURE_SIMD_PARAM_SET,
   "secure-8192": 2,
   "secure-16384": 3,
+  "secure-16384-simd": SECURE_16384_SIMD_PARAM_SET,
 };
 
 const PRESET_HASHES: Record<
@@ -244,6 +264,10 @@ const PRESET_HASHES: Record<
   "secure-16384": {
     paramSetHash: SECURE_16384_PARAM_SET_HASH,
     configId: SECURE_16384_CONFIG_ID,
+  },
+  "secure-16384-simd": {
+    paramSetHash: SECURE_16384_SIMD_PARAM_SET_HASH,
+    configId: SECURE_16384_SIMD_CONFIG_ID,
   },
 };
 
@@ -347,6 +371,24 @@ export const INSECURE_SIMD_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   { committeeSize: 1, h: 5, t: 4, n: 9 },
 );
 
+export const SECURE_16384_SIMD_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "secure-16384-simd",
+  "minimum",
+  { committeeSize: 0, h: 2, t: 1, n: 3 },
+);
+
+export const SECURE_16384_SIMD_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "secure-16384-simd",
+  "micro",
+  { committeeSize: 1, h: 5, t: 4, n: 9 },
+);
+
+export const SECURE_16384_SIMD_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
+  "secure-16384-simd",
+  "small",
+  { committeeSize: 2, h: 14, t: 9, n: 19 },
+);
+
 export const PRODUCTION_BFV_CONFIG: ActiveBfvConfig = SECURE_SMALL_BFV_CONFIG;
 
 export const TESTNET_BFV_CONFIG: ActiveBfvConfig = INSECURE_MINIMUM_BFV_CONFIG;
@@ -372,6 +414,9 @@ export const TESTNET_BFV_CONFIGS: readonly ActiveBfvConfig[] = [
   SECURE_16384_SMALL_BFV_CONFIG,
   INSECURE_SIMD_MINIMUM_BFV_CONFIG,
   INSECURE_SIMD_MICRO_BFV_CONFIG,
+  SECURE_16384_SIMD_MINIMUM_BFV_CONFIG,
+  SECURE_16384_SIMD_MICRO_BFV_CONFIG,
+  SECURE_16384_SIMD_SMALL_BFV_CONFIG,
 ] as const;
 
 /** The pair of the generated `ACTIVE_BFV_*` constants, which `ActiveCryptoConfig.sol` matches. */

@@ -566,6 +566,10 @@ mod tests {
                 5,
                 "0x843cc091bc39d046eded5e9f0aed8250848b46f7e36623433d31a1f5d7ef5e35",
             ),
+            (
+                6,
+                "0xd053da3859a277a18b1d0bce3f59f7afb5dda18833e3e0fc32c204d066d4e65e",
+            ),
         ];
 
         for (param_set, expected_id) in expected {
