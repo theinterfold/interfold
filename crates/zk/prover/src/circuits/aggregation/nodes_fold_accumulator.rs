@@ -25,7 +25,7 @@ use e3_events::{CircuitName, CircuitVariant, Proof};
 use serde::Serialize;
 
 /// Node proofs each kernel or fold step verifies (`lib::math::nodes_fold::NODES_FOLD_LEAVES`).
-pub const NODES_FOLD_LEAVES: usize = 4;
+pub const NODES_FOLD_LEAVES: usize = 3;
 
 /// Public-signal layout of `nodes_fold`: three key hashes, `is_first_step`, one slot index per
 /// leaf, then complete node statements.
@@ -330,8 +330,8 @@ mod tests {
             assert_eq!(done, total);
             assert!(steps.len() >= 2, "total={total} ends on the kernel");
         }
-        assert_eq!(nodes_fold_step_len(0, 28), 4);
-        assert_eq!(nodes_fold_step_len(24, 28), 4);
+        assert_eq!(nodes_fold_step_len(0, 28), 3);
+        assert_eq!(nodes_fold_step_len(27, 28), 1);
         assert_eq!(nodes_fold_step_len(0, 3), 1);
         assert_eq!(nodes_fold_step_len(1, 3), 2);
     }

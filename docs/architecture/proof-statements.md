@@ -158,12 +158,13 @@ declared fold hash to the verified VK. C3ab covers both complete C3 chains.
 about half as much per leaf as one leaf per 2^21 step. Every leaf must carry the chain's domain. A
 place with nothing to fold carries the sentinel slot `T + 1` and repeats a real leaf of the step;
 the decryption aggregator requires the ciphertext commitment in every slot, so no slot stays empty.
-`nodes_fold_kernel` and `nodes_fold` likewise verify four `node_fold` proofs per step
-(`lib::math::nodes_fold`); a row must be all zero before it is written. The aggregator streams the
-steps: each `NodesFoldStepRequest` takes the next slots in canonical order once all their proofs are
-buffered, and `nodes_fold_step_len` fixes that count so the dispatcher and its response handler
-agree without extra state. A chain of at most four nodes splits one and the rest, so it never ends
-on the kernel.
+`nodes_fold_kernel` and `nodes_fold` verify three `node_fold` proofs per step
+(`lib::math::nodes_fold`); a row must be all zero before it is written. Each node statement carries
+every party's rows, so a fourth node takes a step just past 2^22 at n = 39 (4.28M gates). The
+aggregator streams the steps: each `NodesFoldStepRequest` takes the next slots in canonical order
+once all their proofs are buffered, and `nodes_fold_step_len` fixes that count so the dispatcher and
+its response handler agree without extra state. A chain of at most three nodes splits one and the
+rest, so it never ends on the kernel.
 
 C3 chains run over Chonk (`lib::math::chonk`). A stack is `c3_chonk_app`, which verifies
 `C3_CHONK_LEAVES` C3 proofs, then the init, tail and hiding kernels; `c3_chonk_tube` verifies the
