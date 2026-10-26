@@ -333,28 +333,34 @@ The integration test (`tests/integration.spec.ts`) selects its scenarios with `R
 (`sold_out`, `undersubscribed`, `not_met`, `all`), the bidders with `ROUND_BIDDERS`, and the number
 of bid proofs in parallel with `ROUND_PROOF_CONCURRENCY`.
 
-## Local end-to-end run: status
+## Local end-to-end run: NOT YET RUN END TO END
 
-**The end-to-end smoke run (several bidders, reserve met and not met, clearing, claims) did NOT
-complete on this branch.** The stack stopped before the first E3, so there is no recorded output of
-a full round. These are the exact commands and what happened:
+**This app has not been run end to end.** No full local round (several bidders, reserve met and not
+met, clearing, claims) has been recorded. By decision of the repository owner the local stack run is
+deferred. `tests/integration.spec.ts` is ready and type-checks. To run it:
 
 ```sh
-# CLI built from this checkout (bb target 6.0.0): cargo build --release -p e3-cli  (7 min 56 s)
-export PATH=/tmp/prd-cli/bin:$PATH
+# 1. Switch the repository to the insecure SIMD preset (it rewrites ActiveCryptoConfig.sol,
+#    scripts/utils.ts and circuits/lib/src/configs/*: do not commit those files).
+#    e3-zk-build bakes its repository root in at compile time: use your own CARGO_TARGET_DIR.
+CARGO_TARGET_DIR=$PWD/target-zk pnpm build:circuits --preset insecure-simd --committee minimum
+pnpm -C packages/interfold-contracts compile:ts
+# 2. A CLI whose bb target is 6.0.0, built from this checkout (7 min 56 s on an M3 Pro):
+cargo build --release -p e3-cli && export PATH=$PWD/target/release:$PATH
+# 3. The local run (about 1 to 2 hours: one bid proof takes about 265 s)
 cd examples/private-round
 interfold noir setup --circuits-archive /tmp/prd-circuits.tar.gz \
-  --circuits-configuration insecure-simd/minimum --allow-unpinned-archive   # bb 6.0.0, circuits 0.20.0-dev.2
+  --circuits-configuration insecure-simd/minimum --allow-unpinned-archive
 ROUND_SCENARIO=all ROUND_PROOF_CONCURRENCY=3 ./scripts/test_integration.sh
 ```
 
-The script stops in `deploy-local.ts` with
-`BFV_PARAM_SET=5 does not match the active circuit artifacts (parameter set 0)`. The checked-in
-`ACTIVE_BFV_PARAM_SET` of `packages/interfold-contracts/scripts/utils.ts` is 0 (`insecure-64`). The
-build step `pnpm build:circuits --preset insecure-simd --committee minimum` patches it to 5 (and
-`ActiveCryptoConfig.sol`) and rebuilds `packages/interfold-contracts/dist`. The author of this
-branch did not run that build, because a shared machine ran other large circuit builds. Run it as
-step 1 of "Run it" and then run `pnpm test:integration`.
+Without step 1, `deploy-local.ts` stops with
+`BFV_PARAM_SET=5 does not match the active circuit artifacts (parameter set 0)`: the checked-in
+`ACTIVE_BFV_PARAM_SET` is 0 (`insecure-64`). Observed during preparation: with the preset switched
+and the contracts rebuilt, `hardhat compile` ends with `MalformedAbiError: Not a valid ABI` while it
+cleans the artifacts (the compile itself succeeds). The committed
+`circuits/lib/src/configs/ insecure_simd/threshold.nr` also differs from what the generator writes
+(`PK_GENERATION_E_SM_BOUND`).
 
 What was run and passed on this branch instead:
 
