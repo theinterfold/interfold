@@ -1,0 +1,37 @@
+{
+  "schema_version": 2,
+  "benchmark_mode": "secure",
+  "bfv_preset_subdir": "secure-16384",
+  "committee": "minimum",
+  "committee_size_n": 3,
+  "committee_threshold_t": 1,
+  "committee_size_h": 2,
+  "variant": "recursive",
+  "artifact_stamp": {
+    "builtAt": "2026-10-26T13:55:00.000Z",
+    "committee": "minimum",
+    "preset": "secure-16384",
+    "sourceHash": "e20eeb82ced1a8dc"
+  },
+  "git_commit": "4db6f1863b2417be8acc3c1704cdc3763eac3831",
+  "git_branch": "feat/lbfv-secure-16384-simd",
+  "git_dirty": true,
+  "timestamp": "2026-10-26T13:53:35.306722+00:00",
+  "bb_version": "6.0.0",
+  "bb_binary": "/Users/ctrlc03/.bb/bb",
+  "rust_noir_version": "1.0.0-rc.3",
+  "rust_build_profile": "optimized",
+  "runner_sha256": "67c83b41fcd493aa73e3289b5809e177b61977ad5983aa07b5ff5a6a2b2033ea",
+  "os": "macos",
+  "arch": "aarch64",
+  "logical_cpus": 11,
+  "proof_aggregation": false,
+  "multithread_jobs": 1,
+  "verbose": false,
+  "compilation": {
+    "time_seconds": null,
+    "success": null,
+    "metric": "canonical_build_command_wall"
+  },
+  "shared_preparations": []
+}

@@ -157,17 +157,18 @@ impl Config {
                 continue;
             }
             // The l-BFV-only artifact directories build no trBFV circuits.
-            if matches!(preset, "insecure" | "insecure-simd" | "secure-16384")
-                && matches!(
-                    path.as_str(),
-                    "dkg/share_encryption"
-                        | "dkg/share_decryption"
-                        | "threshold/user_data_encryption"
-                        | "threshold/pk_generation"
-                        | "threshold/pk_aggregation"
-                        | "threshold/decrypted_shares_aggregation"
-                )
-            {
+            if matches!(
+                preset,
+                "insecure" | "insecure-simd" | "secure-16384" | "secure-16384-simd"
+            ) && matches!(
+                path.as_str(),
+                "dkg/share_encryption"
+                    | "dkg/share_decryption"
+                    | "threshold/user_data_encryption"
+                    | "threshold/pk_generation"
+                    | "threshold/pk_aggregation"
+                    | "threshold/decrypted_shares_aggregation"
+            ) {
                 continue;
             }
             let case = Case::parse(path)?;

@@ -37,7 +37,8 @@ pnpm test:circuit-bench
 `circuits/benchmarks/config.json` selects the leaf cases and their permitted modes/presets; unknown
 or restricted selections fail. The insecure mode runs `insecure-64` (trBFV) by default. `--preset`
 selects `insecure-64`, `insecure` (l-BFV, also `insecure-lbfv`), `insecure-simd` (l-BFV),
-`secure-8192` (trBFV), or `secure-16384` (l-BFV); each name is its artifact directory. Historical
+`secure-8192` (trBFV), `secure-16384` (l-BFV), or `secure-16384-simd` (l-BFV with 16384 SIMD
+slots); each name is its artifact directory. Historical
 result directories and that config stay under `circuits/benchmarks/`.
 
 ## Measurement rules
