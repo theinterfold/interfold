@@ -1,0 +1,3524 @@
+[
+  {
+    "name": "not met",
+    "levels": 4,
+    "prices": [
+      "1000000",
+      "2000000",
+      "3000000",
+      "4000000"
+    ],
+    "lot": "10000000000000000000",
+    "lots": 3,
+    "reserveStep": 1,
+    "minLots": 2,
+    "saleDecimals": 18,
+    "outcome": 0,
+    "step": null,
+    "expect": {
+      "escrow": "40000000",
+      "pStar": "0",
+      "k": null,
+      "lotCost": "0",
+      "claims": [
+        {
+          "b": null,
+          "cmp": null,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        }
+      ],
+      "marginal": []
+    }
+  },
+  {
+    "name": "aborted",
+    "levels": 4,
+    "prices": [
+      "1000000",
+      "2000000",
+      "3000000",
+      "4000000"
+    ],
+    "lot": "10000000000000000000",
+    "lots": 3,
+    "reserveStep": 0,
+    "minLots": 1,
+    "saleDecimals": 18,
+    "outcome": 3,
+    "step": null,
+    "expect": {
+      "escrow": "40000000",
+      "pStar": "0",
+      "k": null,
+      "lotCost": "0",
+      "claims": [
+        {
+          "b": null,
+          "cmp": null,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        }
+      ],
+      "marginal": []
+    }
+  },
+  {
+    "name": "undersubscribed, reserve 0",
+    "levels": 4,
+    "prices": [
+      "1000000",
+      "2000000",
+      "3000000",
+      "4000000"
+    ],
+    "lot": "10000000000000000000",
+    "lots": 3,
+    "reserveStep": 0,
+    "minLots": 1,
+    "saleDecimals": 18,
+    "outcome": 1,
+    "step": 0,
+    "expect": {
+      "escrow": "40000000",
+      "pStar": "1000000",
+      "k": null,
+      "lotCost": "10000000",
+      "claims": [
+        {
+          "b": null,
+          "cmp": null,
+          "class": "full",
+          "tokens": "10000000000000000000",
+          "paid": "10000000",
+          "refund": "30000000"
+        }
+      ],
+      "marginal": []
+    }
+  },
+  {
+    "name": "undersubscribed, reserve 2",
+    "levels": 4,
+    "prices": [
+      "1000000",
+      "2000000",
+      "3000000",
+      "4000000"
+    ],
+    "lot": "10000000000000000000",
+    "lots": 4,
+    "reserveStep": 2,
+    "minLots": 2,
+    "saleDecimals": 18,
+    "outcome": 1,
+    "step": 2,
+    "expect": {
+      "escrow": "40000000",
+      "pStar": "3000000",
+      "k": 1,
+      "lotCost": "30000000",
+      "claims": [
+        {
+          "b": 0,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "b": 1,
+          "cmp": 1,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "b": 2,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "10000000000000000000",
+          "paid": "30000000",
+          "refund": "10000000"
+        },
+        {
+          "b": 3,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "10000000000000000000",
+          "paid": "30000000",
+          "refund": "10000000"
+        }
+      ],
+      "marginal": []
+    }
+  },
+  {
+    "name": "sold out at the reserve",
+    "levels": 4,
+    "prices": [
+      "1000000",
+      "2000000",
+      "3000000",
+      "4000000"
+    ],
+    "lot": "10000000000000000000",
+    "lots": 3,
+    "reserveStep": 0,
+    "minLots": 1,
+    "saleDecimals": 18,
+    "outcome": 2,
+    "step": 0,
+    "expect": {
+      "escrow": "40000000",
+      "pStar": "1000000",
+      "k": 0,
+      "lotCost": "10000000",
+      "claims": [
+        {
+          "b": 1,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "10000000000000000000",
+          "paid": "10000000",
+          "refund": "30000000"
+        },
+        {
+          "b": 2,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "10000000000000000000",
+          "paid": "10000000",
+          "refund": "30000000"
+        },
+        {
+          "b": 3,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "10000000000000000000",
+          "paid": "10000000",
+          "refund": "30000000"
+        }
+      ],
+      "marginal": [
+        {
+          "aboveClaimed": 0,
+          "rank": 0,
+          "tokens": "10000000000000000000",
+          "paid": "10000000",
+          "refund": "30000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 1,
+          "tokens": "10000000000000000000",
+          "paid": "10000000",
+          "refund": "30000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 2,
+          "tokens": "10000000000000000000",
+          "paid": "10000000",
+          "refund": "30000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 3,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 4,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 0,
+          "tokens": "10000000000000000000",
+          "paid": "10000000",
+          "refund": "30000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 1,
+          "tokens": "10000000000000000000",
+          "paid": "10000000",
+          "refund": "30000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 2,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 3,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "aboveClaimed": 2,
+          "rank": 0,
+          "tokens": "10000000000000000000",
+          "paid": "10000000",
+          "refund": "30000000"
+        },
+        {
+          "aboveClaimed": 2,
+          "rank": 1,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "aboveClaimed": 2,
+          "rank": 2,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "aboveClaimed": 2,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        }
+      ]
+    }
+  },
+  {
+    "name": "sold out at the top step",
+    "levels": 4,
+    "prices": [
+      "1000000",
+      "2000000",
+      "3000000",
+      "4000000"
+    ],
+    "lot": "10000000000000000000",
+    "lots": 2,
+    "reserveStep": 1,
+    "minLots": 1,
+    "saleDecimals": 18,
+    "outcome": 2,
+    "step": 3,
+    "expect": {
+      "escrow": "40000000",
+      "pStar": "4000000",
+      "k": 3,
+      "lotCost": "40000000",
+      "claims": [
+        {
+          "b": 0,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "b": 1,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "b": 2,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        }
+      ],
+      "marginal": [
+        {
+          "aboveClaimed": 0,
+          "rank": 0,
+          "tokens": "10000000000000000000",
+          "paid": "40000000",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 1,
+          "tokens": "10000000000000000000",
+          "paid": "40000000",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 2,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 3,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 0,
+          "tokens": "10000000000000000000",
+          "paid": "40000000",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 1,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 2,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        }
+      ]
+    }
+  },
+  {
+    "name": "sold out, 12 lots",
+    "levels": 4,
+    "prices": [
+      "1000000",
+      "2000000",
+      "3000000",
+      "4000000"
+    ],
+    "lot": "10000000000000000000",
+    "lots": 12,
+    "reserveStep": 0,
+    "minLots": 12,
+    "saleDecimals": 18,
+    "outcome": 2,
+    "step": 2,
+    "expect": {
+      "escrow": "40000000",
+      "pStar": "3000000",
+      "k": 2,
+      "lotCost": "30000000",
+      "claims": [
+        {
+          "b": 0,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "b": 1,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "b": 3,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "10000000000000000000",
+          "paid": "30000000",
+          "refund": "10000000"
+        }
+      ],
+      "marginal": [
+        {
+          "aboveClaimed": 0,
+          "rank": 0,
+          "tokens": "10000000000000000000",
+          "paid": "30000000",
+          "refund": "10000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 1,
+          "tokens": "10000000000000000000",
+          "paid": "30000000",
+          "refund": "10000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 11,
+          "tokens": "10000000000000000000",
+          "paid": "30000000",
+          "refund": "10000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 0,
+          "tokens": "10000000000000000000",
+          "paid": "30000000",
+          "refund": "10000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 1,
+          "tokens": "10000000000000000000",
+          "paid": "30000000",
+          "refund": "10000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 10,
+          "tokens": "10000000000000000000",
+          "paid": "30000000",
+          "refund": "10000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 11,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "aboveClaimed": 11,
+          "rank": 0,
+          "tokens": "10000000000000000000",
+          "paid": "30000000",
+          "refund": "10000000"
+        },
+        {
+          "aboveClaimed": 11,
+          "rank": 1,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "aboveClaimed": 11,
+          "rank": 2,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        },
+        {
+          "aboveClaimed": 11,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "40000000"
+        }
+      ]
+    }
+  },
+  {
+    "name": "six decimals and an odd lot",
+    "levels": 3,
+    "prices": [
+      "1000003",
+      "1999999",
+      "7654321"
+    ],
+    "lot": "333333",
+    "lots": 5,
+    "reserveStep": 0,
+    "minLots": 2,
+    "saleDecimals": 6,
+    "outcome": 2,
+    "step": 1,
+    "expect": {
+      "escrow": "2551438",
+      "pStar": "1999999",
+      "k": 1,
+      "lotCost": "666666",
+      "claims": [
+        {
+          "b": 0,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2551438"
+        },
+        {
+          "b": 2,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "333333",
+          "paid": "666666",
+          "refund": "1884772"
+        }
+      ],
+      "marginal": [
+        {
+          "aboveClaimed": 0,
+          "rank": 0,
+          "tokens": "333333",
+          "paid": "666666",
+          "refund": "1884772"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 1,
+          "tokens": "333333",
+          "paid": "666666",
+          "refund": "1884772"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 4,
+          "tokens": "333333",
+          "paid": "666666",
+          "refund": "1884772"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 5,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2551438"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 6,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2551438"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2551438"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 0,
+          "tokens": "333333",
+          "paid": "666666",
+          "refund": "1884772"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 1,
+          "tokens": "333333",
+          "paid": "666666",
+          "refund": "1884772"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 3,
+          "tokens": "333333",
+          "paid": "666666",
+          "refund": "1884772"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 4,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2551438"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 5,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2551438"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2551438"
+        },
+        {
+          "aboveClaimed": 4,
+          "rank": 0,
+          "tokens": "333333",
+          "paid": "666666",
+          "refund": "1884772"
+        },
+        {
+          "aboveClaimed": 4,
+          "rank": 1,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2551438"
+        },
+        {
+          "aboveClaimed": 4,
+          "rank": 2,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2551438"
+        },
+        {
+          "aboveClaimed": 4,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2551438"
+        }
+      ]
+    }
+  },
+  {
+    "name": "largest amounts",
+    "levels": 2,
+    "prices": [
+      "1",
+      "5192296858534827628530496329220096"
+    ],
+    "lot": "432691404877902302377541360768341",
+    "lots": 12,
+    "reserveStep": 0,
+    "minLots": 1,
+    "saleDecimals": 0,
+    "outcome": 2,
+    "step": 1,
+    "expect": {
+      "escrow": "2246662222262553316222251257251634158704142523602504863259857780736",
+      "pStar": "5192296858534827628530496329220096",
+      "k": 1,
+      "lotCost": "2246662222262553316222251257251634158704142523602504863259857780736",
+      "claims": [
+        {
+          "b": 0,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2246662222262553316222251257251634158704142523602504863259857780736"
+        }
+      ],
+      "marginal": [
+        {
+          "aboveClaimed": 0,
+          "rank": 0,
+          "tokens": "432691404877902302377541360768341",
+          "paid": "2246662222262553316222251257251634158704142523602504863259857780736",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 1,
+          "tokens": "432691404877902302377541360768341",
+          "paid": "2246662222262553316222251257251634158704142523602504863259857780736",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 11,
+          "tokens": "432691404877902302377541360768341",
+          "paid": "2246662222262553316222251257251634158704142523602504863259857780736",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2246662222262553316222251257251634158704142523602504863259857780736"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 0,
+          "tokens": "432691404877902302377541360768341",
+          "paid": "2246662222262553316222251257251634158704142523602504863259857780736",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 1,
+          "tokens": "432691404877902302377541360768341",
+          "paid": "2246662222262553316222251257251634158704142523602504863259857780736",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 10,
+          "tokens": "432691404877902302377541360768341",
+          "paid": "2246662222262553316222251257251634158704142523602504863259857780736",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 11,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2246662222262553316222251257251634158704142523602504863259857780736"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2246662222262553316222251257251634158704142523602504863259857780736"
+        },
+        {
+          "aboveClaimed": 11,
+          "rank": 0,
+          "tokens": "432691404877902302377541360768341",
+          "paid": "2246662222262553316222251257251634158704142523602504863259857780736",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 11,
+          "rank": 1,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2246662222262553316222251257251634158704142523602504863259857780736"
+        },
+        {
+          "aboveClaimed": 11,
+          "rank": 2,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2246662222262553316222251257251634158704142523602504863259857780736"
+        },
+        {
+          "aboveClaimed": 11,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2246662222262553316222251257251634158704142523602504863259857780736"
+        }
+      ]
+    }
+  },
+  {
+    "name": "random 1",
+    "levels": 6,
+    "prices": [
+      "1000",
+      "10738",
+      "641378",
+      "641379",
+      "1191668",
+      "1452975"
+    ],
+    "lot": "7651380000000",
+    "lots": 8,
+    "reserveStep": 0,
+    "minLots": 3,
+    "saleDecimals": 2,
+    "outcome": 2,
+    "step": 5,
+    "expect": {
+      "escrow": "111172638555000000",
+      "pStar": "1452975",
+      "k": 5,
+      "lotCost": "111172638555000000",
+      "claims": [
+        {
+          "b": 0,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "111172638555000000"
+        },
+        {
+          "b": 1,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "111172638555000000"
+        },
+        {
+          "b": 2,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "111172638555000000"
+        },
+        {
+          "b": 3,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "111172638555000000"
+        },
+        {
+          "b": 4,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "111172638555000000"
+        }
+      ],
+      "marginal": [
+        {
+          "aboveClaimed": 0,
+          "rank": 0,
+          "tokens": "7651380000000",
+          "paid": "111172638555000000",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 1,
+          "tokens": "7651380000000",
+          "paid": "111172638555000000",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 7,
+          "tokens": "7651380000000",
+          "paid": "111172638555000000",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 8,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "111172638555000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 9,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "111172638555000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "111172638555000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 0,
+          "tokens": "7651380000000",
+          "paid": "111172638555000000",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 1,
+          "tokens": "7651380000000",
+          "paid": "111172638555000000",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 6,
+          "tokens": "7651380000000",
+          "paid": "111172638555000000",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 7,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "111172638555000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 8,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "111172638555000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "111172638555000000"
+        },
+        {
+          "aboveClaimed": 7,
+          "rank": 0,
+          "tokens": "7651380000000",
+          "paid": "111172638555000000",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 7,
+          "rank": 1,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "111172638555000000"
+        },
+        {
+          "aboveClaimed": 7,
+          "rank": 2,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "111172638555000000"
+        },
+        {
+          "aboveClaimed": 7,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "111172638555000000"
+        }
+      ]
+    }
+  },
+  {
+    "name": "random 2",
+    "levels": 7,
+    "prices": [
+      "1000",
+      "92662",
+      "747460",
+      "1053007",
+      "1387440",
+      "1387441",
+      "1610554"
+    ],
+    "lot": "79271100",
+    "lots": 7,
+    "reserveStep": 3,
+    "minLots": 6,
+    "saleDecimals": 4,
+    "outcome": 3,
+    "step": null,
+    "expect": {
+      "escrow": "12767038719",
+      "pStar": "0",
+      "k": null,
+      "lotCost": "0",
+      "claims": [
+        {
+          "b": null,
+          "cmp": null,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "12767038719"
+        }
+      ],
+      "marginal": []
+    }
+  },
+  {
+    "name": "random 3",
+    "levels": 8,
+    "prices": [
+      "1000",
+      "174585",
+      "174586",
+      "748561",
+      "1583208",
+      "1583209",
+      "1647286",
+      "1647287"
+    ],
+    "lot": "9062550000",
+    "lots": 5,
+    "reserveStep": 7,
+    "minLots": 2,
+    "saleDecimals": 10,
+    "outcome": 3,
+    "step": null,
+    "expect": {
+      "escrow": "1492863",
+      "pStar": "0",
+      "k": null,
+      "lotCost": "0",
+      "claims": [
+        {
+          "b": null,
+          "cmp": null,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1492863"
+        }
+      ],
+      "marginal": []
+    }
+  },
+  {
+    "name": "random 4",
+    "levels": 9,
+    "prices": [
+      "1000",
+      "256509",
+      "256510",
+      "444115",
+      "444116",
+      "1746530",
+      "1746531",
+      "1746532",
+      "1746533"
+    ],
+    "lot": "4826480000000000",
+    "lots": 1,
+    "reserveStep": 7,
+    "minLots": 1,
+    "saleDecimals": 15,
+    "outcome": 2,
+    "step": 8,
+    "expect": {
+      "escrow": "8429607",
+      "pStar": "1746533",
+      "k": 8,
+      "lotCost": "8429607",
+      "claims": [
+        {
+          "b": 0,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "8429607"
+        },
+        {
+          "b": 1,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "8429607"
+        },
+        {
+          "b": 2,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "8429607"
+        },
+        {
+          "b": 3,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "8429607"
+        },
+        {
+          "b": 4,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "8429607"
+        },
+        {
+          "b": 5,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "8429607"
+        },
+        {
+          "b": 6,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "8429607"
+        },
+        {
+          "b": 7,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "8429607"
+        }
+      ],
+      "marginal": [
+        {
+          "aboveClaimed": 0,
+          "rank": 0,
+          "tokens": "4826480000000000",
+          "paid": "8429607",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 1,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "8429607"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 2,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "8429607"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "8429607"
+        }
+      ]
+    }
+  },
+  {
+    "name": "random 5",
+    "levels": 10,
+    "prices": [
+      "1000",
+      "338432",
+      "338433",
+      "338434",
+      "374748",
+      "511045",
+      "1720744",
+      "1720745",
+      "1720746",
+      "1720747"
+    ],
+    "lot": "6016220000000000",
+    "lots": 11,
+    "reserveStep": 4,
+    "minLots": 10,
+    "saleDecimals": 3,
+    "outcome": 0,
+    "step": null,
+    "expect": {
+      "escrow": "10352392516340000000",
+      "pStar": "0",
+      "k": null,
+      "lotCost": "0",
+      "claims": [
+        {
+          "b": null,
+          "cmp": null,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "10352392516340000000"
+        }
+      ],
+      "marginal": []
+    }
+  },
+  {
+    "name": "random 6",
+    "levels": 11,
+    "prices": [
+      "1000",
+      "20356",
+      "371784",
+      "1035223",
+      "1035224",
+      "1275565",
+      "1757476",
+      "1757477",
+      "1757478",
+      "1757479",
+      "3613010"
+    ],
+    "lot": "6769760000000000",
+    "lots": 3,
+    "reserveStep": 6,
+    "minLots": 1,
+    "saleDecimals": 2,
+    "outcome": 2,
+    "step": 8,
+    "expect": {
+      "escrow": "244592105776000000000",
+      "pStar": "1757478",
+      "k": 8,
+      "lotCost": "118977042652800000000",
+      "claims": [
+        {
+          "b": 0,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "244592105776000000000"
+        },
+        {
+          "b": 1,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "244592105776000000000"
+        },
+        {
+          "b": 2,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "244592105776000000000"
+        },
+        {
+          "b": 3,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "244592105776000000000"
+        },
+        {
+          "b": 4,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "244592105776000000000"
+        },
+        {
+          "b": 5,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "244592105776000000000"
+        },
+        {
+          "b": 6,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "244592105776000000000"
+        },
+        {
+          "b": 7,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "244592105776000000000"
+        },
+        {
+          "b": 9,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "6769760000000000",
+          "paid": "118977042652800000000",
+          "refund": "125615063123200000000"
+        },
+        {
+          "b": 10,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "6769760000000000",
+          "paid": "118977042652800000000",
+          "refund": "125615063123200000000"
+        }
+      ],
+      "marginal": [
+        {
+          "aboveClaimed": 0,
+          "rank": 0,
+          "tokens": "6769760000000000",
+          "paid": "118977042652800000000",
+          "refund": "125615063123200000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 1,
+          "tokens": "6769760000000000",
+          "paid": "118977042652800000000",
+          "refund": "125615063123200000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 2,
+          "tokens": "6769760000000000",
+          "paid": "118977042652800000000",
+          "refund": "125615063123200000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 3,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "244592105776000000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 4,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "244592105776000000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "244592105776000000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 0,
+          "tokens": "6769760000000000",
+          "paid": "118977042652800000000",
+          "refund": "125615063123200000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 1,
+          "tokens": "6769760000000000",
+          "paid": "118977042652800000000",
+          "refund": "125615063123200000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 2,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "244592105776000000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 3,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "244592105776000000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "244592105776000000000"
+        },
+        {
+          "aboveClaimed": 2,
+          "rank": 0,
+          "tokens": "6769760000000000",
+          "paid": "118977042652800000000",
+          "refund": "125615063123200000000"
+        },
+        {
+          "aboveClaimed": 2,
+          "rank": 1,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "244592105776000000000"
+        },
+        {
+          "aboveClaimed": 2,
+          "rank": 2,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "244592105776000000000"
+        },
+        {
+          "aboveClaimed": 2,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "244592105776000000000"
+        }
+      ]
+    }
+  },
+  {
+    "name": "random 7",
+    "levels": 12,
+    "prices": [
+      "1000",
+      "102279",
+      "477866",
+      "730777",
+      "766292",
+      "766293",
+      "1794208",
+      "1794209",
+      "1794210",
+      "1794211",
+      "3723300",
+      "4237441"
+    ],
+    "lot": "910546000000000000000",
+    "lots": 12,
+    "reserveStep": 10,
+    "minLots": 7,
+    "saleDecimals": 10,
+    "outcome": 2,
+    "step": 11,
+    "expect": {
+      "escrow": "385838495278600000",
+      "pStar": "4237441",
+      "k": 11,
+      "lotCost": "385838495278600000",
+      "claims": [
+        {
+          "b": 0,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "385838495278600000"
+        },
+        {
+          "b": 1,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "385838495278600000"
+        },
+        {
+          "b": 2,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "385838495278600000"
+        },
+        {
+          "b": 3,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "385838495278600000"
+        },
+        {
+          "b": 4,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "385838495278600000"
+        },
+        {
+          "b": 5,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "385838495278600000"
+        },
+        {
+          "b": 6,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "385838495278600000"
+        },
+        {
+          "b": 7,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "385838495278600000"
+        },
+        {
+          "b": 8,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "385838495278600000"
+        },
+        {
+          "b": 9,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "385838495278600000"
+        },
+        {
+          "b": 10,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "385838495278600000"
+        }
+      ],
+      "marginal": [
+        {
+          "aboveClaimed": 0,
+          "rank": 0,
+          "tokens": "910546000000000000000",
+          "paid": "385838495278600000",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 1,
+          "tokens": "910546000000000000000",
+          "paid": "385838495278600000",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 11,
+          "tokens": "910546000000000000000",
+          "paid": "385838495278600000",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "385838495278600000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 0,
+          "tokens": "910546000000000000000",
+          "paid": "385838495278600000",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 1,
+          "tokens": "910546000000000000000",
+          "paid": "385838495278600000",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 10,
+          "tokens": "910546000000000000000",
+          "paid": "385838495278600000",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 11,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "385838495278600000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "385838495278600000"
+        },
+        {
+          "aboveClaimed": 11,
+          "rank": 0,
+          "tokens": "910546000000000000000",
+          "paid": "385838495278600000",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 11,
+          "rank": 1,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "385838495278600000"
+        },
+        {
+          "aboveClaimed": 11,
+          "rank": 2,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "385838495278600000"
+        },
+        {
+          "aboveClaimed": 11,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "385838495278600000"
+        }
+      ]
+    }
+  },
+  {
+    "name": "random 8",
+    "levels": 13,
+    "prices": [
+      "1000",
+      "184203",
+      "583948",
+      "583949",
+      "962060",
+      "962061",
+      "1830940",
+      "1830941",
+      "1830942",
+      "1830943",
+      "3833590",
+      "3833591",
+      "3833592"
+    ],
+    "lot": "28181300000",
+    "lots": 12,
+    "reserveStep": 7,
+    "minLots": 12,
+    "saleDecimals": 5,
+    "outcome": 1,
+    "step": 7,
+    "expect": {
+      "escrow": "1080356062296",
+      "pStar": "1830941",
+      "k": 6,
+      "lotCost": "515982976033",
+      "claims": [
+        {
+          "b": 0,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1080356062296"
+        },
+        {
+          "b": 1,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1080356062296"
+        },
+        {
+          "b": 2,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1080356062296"
+        },
+        {
+          "b": 3,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1080356062296"
+        },
+        {
+          "b": 4,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1080356062296"
+        },
+        {
+          "b": 5,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1080356062296"
+        },
+        {
+          "b": 6,
+          "cmp": 1,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1080356062296"
+        },
+        {
+          "b": 7,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "28181300000",
+          "paid": "515982976033",
+          "refund": "564373086263"
+        },
+        {
+          "b": 8,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "28181300000",
+          "paid": "515982976033",
+          "refund": "564373086263"
+        },
+        {
+          "b": 9,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "28181300000",
+          "paid": "515982976033",
+          "refund": "564373086263"
+        },
+        {
+          "b": 10,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "28181300000",
+          "paid": "515982976033",
+          "refund": "564373086263"
+        },
+        {
+          "b": 11,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "28181300000",
+          "paid": "515982976033",
+          "refund": "564373086263"
+        },
+        {
+          "b": 12,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "28181300000",
+          "paid": "515982976033",
+          "refund": "564373086263"
+        }
+      ],
+      "marginal": []
+    }
+  },
+  {
+    "name": "random 9",
+    "levels": 14,
+    "prices": [
+      "1000",
+      "266126",
+      "690028",
+      "690029",
+      "1157832",
+      "1569115",
+      "1867666",
+      "1867667",
+      "3179832",
+      "3179833",
+      "3943880",
+      "3943881",
+      "4219732",
+      "4219733"
+    ],
+    "lot": "393936000000000000000000",
+    "lots": 8,
+    "reserveStep": 2,
+    "minLots": 8,
+    "saleDecimals": 10,
+    "outcome": 2,
+    "step": 11,
+    "expect": {
+      "escrow": "166230473908800000000",
+      "pStar": "3943881",
+      "k": 11,
+      "lotCost": "155363670561600000000",
+      "claims": [
+        {
+          "b": 0,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "166230473908800000000"
+        },
+        {
+          "b": 1,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "166230473908800000000"
+        },
+        {
+          "b": 2,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "166230473908800000000"
+        },
+        {
+          "b": 3,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "166230473908800000000"
+        },
+        {
+          "b": 4,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "166230473908800000000"
+        },
+        {
+          "b": 5,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "166230473908800000000"
+        },
+        {
+          "b": 6,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "166230473908800000000"
+        },
+        {
+          "b": 7,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "166230473908800000000"
+        },
+        {
+          "b": 8,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "166230473908800000000"
+        },
+        {
+          "b": 9,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "166230473908800000000"
+        },
+        {
+          "b": 10,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "166230473908800000000"
+        },
+        {
+          "b": 12,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "393936000000000000000000",
+          "paid": "155363670561600000000",
+          "refund": "10866803347200000000"
+        },
+        {
+          "b": 13,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "393936000000000000000000",
+          "paid": "155363670561600000000",
+          "refund": "10866803347200000000"
+        }
+      ],
+      "marginal": [
+        {
+          "aboveClaimed": 0,
+          "rank": 0,
+          "tokens": "393936000000000000000000",
+          "paid": "155363670561600000000",
+          "refund": "10866803347200000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 1,
+          "tokens": "393936000000000000000000",
+          "paid": "155363670561600000000",
+          "refund": "10866803347200000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 7,
+          "tokens": "393936000000000000000000",
+          "paid": "155363670561600000000",
+          "refund": "10866803347200000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 8,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "166230473908800000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 9,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "166230473908800000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "166230473908800000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 0,
+          "tokens": "393936000000000000000000",
+          "paid": "155363670561600000000",
+          "refund": "10866803347200000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 1,
+          "tokens": "393936000000000000000000",
+          "paid": "155363670561600000000",
+          "refund": "10866803347200000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 6,
+          "tokens": "393936000000000000000000",
+          "paid": "155363670561600000000",
+          "refund": "10866803347200000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 7,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "166230473908800000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 8,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "166230473908800000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "166230473908800000000"
+        },
+        {
+          "aboveClaimed": 7,
+          "rank": 0,
+          "tokens": "393936000000000000000000",
+          "paid": "155363670561600000000",
+          "refund": "10866803347200000000"
+        },
+        {
+          "aboveClaimed": 7,
+          "rank": 1,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "166230473908800000000"
+        },
+        {
+          "aboveClaimed": 7,
+          "rank": 2,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "166230473908800000000"
+        },
+        {
+          "aboveClaimed": 7,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "166230473908800000000"
+        }
+      ]
+    }
+  },
+  {
+    "name": "random 10",
+    "levels": 15,
+    "prices": [
+      "1000",
+      "348050",
+      "796110",
+      "1017439",
+      "1353600",
+      "1353601",
+      "1904398",
+      "1904399",
+      "2970616",
+      "2970617",
+      "2970618",
+      "2970619",
+      "2970620",
+      "2970621",
+      "3336150"
+    ],
+    "lot": "8105200000000000000",
+    "lots": 12,
+    "reserveStep": 0,
+    "minLots": 12,
+    "saleDecimals": 2,
+    "outcome": 1,
+    "step": 0,
+    "expect": {
+      "escrow": "270401629800000000000000",
+      "pStar": "1000",
+      "k": null,
+      "lotCost": "81052000000000000000",
+      "claims": [
+        {
+          "b": null,
+          "cmp": null,
+          "class": "full",
+          "tokens": "8105200000000000000",
+          "paid": "81052000000000000000",
+          "refund": "270320577800000000000000"
+        }
+      ],
+      "marginal": []
+    }
+  },
+  {
+    "name": "random 11",
+    "levels": 16,
+    "prices": [
+      "1000",
+      "29973",
+      "102190",
+      "712996",
+      "1549372",
+      "1549373",
+      "1941130",
+      "1941131",
+      "2761400",
+      "2761401",
+      "2761402",
+      "2761403",
+      "3679768",
+      "3679769",
+      "3679770",
+      "4909090"
+    ],
+    "lot": "420986000000000000000000",
+    "lots": 5,
+    "reserveStep": 12,
+    "minLots": 4,
+    "saleDecimals": 14,
+    "outcome": 0,
+    "step": null,
+    "expect": {
+      "escrow": "20666581627400000",
+      "pStar": "0",
+      "k": null,
+      "lotCost": "0",
+      "claims": [
+        {
+          "b": null,
+          "cmp": null,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "20666581627400000"
+        }
+      ],
+      "marginal": []
+    }
+  },
+  {
+    "name": "random 12",
+    "levels": 2,
+    "prices": [
+      "1000",
+      "111897"
+    ],
+    "lot": "930830000000000000000",
+    "lots": 4,
+    "reserveStep": 0,
+    "minLots": 3,
+    "saleDecimals": 15,
+    "outcome": 0,
+    "step": null,
+    "expect": {
+      "escrow": "104157084510",
+      "pStar": "0",
+      "k": null,
+      "lotCost": "0",
+      "claims": [
+        {
+          "b": null,
+          "cmp": null,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "104157084510"
+        }
+      ],
+      "marginal": []
+    }
+  },
+  {
+    "name": "random 13",
+    "levels": 4,
+    "prices": [
+      "1000",
+      "193820",
+      "314354",
+      "314355"
+    ],
+    "lot": "2046180000000000000",
+    "lots": 3,
+    "reserveStep": 1,
+    "minLots": 2,
+    "saleDecimals": 1,
+    "outcome": 3,
+    "step": null,
+    "expect": {
+      "escrow": "64322691390000000000000",
+      "pStar": "0",
+      "k": null,
+      "lotCost": "0",
+      "claims": [
+        {
+          "b": null,
+          "cmp": null,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "64322691390000000000000"
+        }
+      ],
+      "marginal": []
+    }
+  },
+  {
+    "name": "random 14",
+    "levels": 5,
+    "prices": [
+      "1000",
+      "275743",
+      "420434",
+      "999658",
+      "999659"
+    ],
+    "lot": "54445500",
+    "lots": 9,
+    "reserveStep": 4,
+    "minLots": 3,
+    "saleDecimals": 1,
+    "outcome": 2,
+    "step": 4,
+    "expect": {
+      "escrow": "5442693408450",
+      "pStar": "999659",
+      "k": 4,
+      "lotCost": "5442693408450",
+      "claims": [
+        {
+          "b": 0,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "5442693408450"
+        },
+        {
+          "b": 1,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "5442693408450"
+        },
+        {
+          "b": 2,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "5442693408450"
+        },
+        {
+          "b": 3,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "5442693408450"
+        }
+      ],
+      "marginal": [
+        {
+          "aboveClaimed": 0,
+          "rank": 0,
+          "tokens": "54445500",
+          "paid": "5442693408450",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 1,
+          "tokens": "54445500",
+          "paid": "5442693408450",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 8,
+          "tokens": "54445500",
+          "paid": "5442693408450",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 9,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "5442693408450"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 10,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "5442693408450"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "5442693408450"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 0,
+          "tokens": "54445500",
+          "paid": "5442693408450",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 1,
+          "tokens": "54445500",
+          "paid": "5442693408450",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 7,
+          "tokens": "54445500",
+          "paid": "5442693408450",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 8,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "5442693408450"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 9,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "5442693408450"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "5442693408450"
+        },
+        {
+          "aboveClaimed": 8,
+          "rank": 0,
+          "tokens": "54445500",
+          "paid": "5442693408450",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 8,
+          "rank": 1,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "5442693408450"
+        },
+        {
+          "aboveClaimed": 8,
+          "rank": 2,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "5442693408450"
+        },
+        {
+          "aboveClaimed": 8,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "5442693408450"
+        }
+      ]
+    }
+  },
+  {
+    "name": "random 15",
+    "levels": 6,
+    "prices": [
+      "1000",
+      "357667",
+      "526516",
+      "695212",
+      "732452",
+      "732453"
+    ],
+    "lot": "1511500",
+    "lots": 11,
+    "reserveStep": 1,
+    "minLots": 6,
+    "saleDecimals": 15,
+    "outcome": 2,
+    "step": 3,
+    "expect": {
+      "escrow": "1",
+      "pStar": "695212",
+      "k": 3,
+      "lotCost": "1",
+      "claims": [
+        {
+          "b": 0,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1"
+        },
+        {
+          "b": 1,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1"
+        },
+        {
+          "b": 2,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1"
+        },
+        {
+          "b": 4,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "1511500",
+          "paid": "1",
+          "refund": "0"
+        },
+        {
+          "b": 5,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "1511500",
+          "paid": "1",
+          "refund": "0"
+        }
+      ],
+      "marginal": [
+        {
+          "aboveClaimed": 0,
+          "rank": 0,
+          "tokens": "1511500",
+          "paid": "1",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 1,
+          "tokens": "1511500",
+          "paid": "1",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 10,
+          "tokens": "1511500",
+          "paid": "1",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 11,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 0,
+          "tokens": "1511500",
+          "paid": "1",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 1,
+          "tokens": "1511500",
+          "paid": "1",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 9,
+          "tokens": "1511500",
+          "paid": "1",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 10,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 11,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1"
+        },
+        {
+          "aboveClaimed": 10,
+          "rank": 0,
+          "tokens": "1511500",
+          "paid": "1",
+          "refund": "0"
+        },
+        {
+          "aboveClaimed": 10,
+          "rank": 1,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1"
+        },
+        {
+          "aboveClaimed": 10,
+          "rank": 2,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1"
+        },
+        {
+          "aboveClaimed": 10,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1"
+        }
+      ]
+    }
+  },
+  {
+    "name": "random 16",
+    "levels": 7,
+    "prices": [
+      "1000",
+      "39590",
+      "632598",
+      "632599",
+      "928224",
+      "928225",
+      "2124784"
+    ],
+    "lot": "840101000000000000000000",
+    "lots": 10,
+    "reserveStep": 3,
+    "minLots": 10,
+    "saleDecimals": 12,
+    "outcome": 2,
+    "step": 3,
+    "expect": {
+      "escrow": "1785033163184000000",
+      "pStar": "632599",
+      "k": 3,
+      "lotCost": "531447052499000000",
+      "claims": [
+        {
+          "b": 0,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1785033163184000000"
+        },
+        {
+          "b": 1,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1785033163184000000"
+        },
+        {
+          "b": 2,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1785033163184000000"
+        },
+        {
+          "b": 4,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "840101000000000000000000",
+          "paid": "531447052499000000",
+          "refund": "1253586110685000000"
+        },
+        {
+          "b": 5,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "840101000000000000000000",
+          "paid": "531447052499000000",
+          "refund": "1253586110685000000"
+        },
+        {
+          "b": 6,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "840101000000000000000000",
+          "paid": "531447052499000000",
+          "refund": "1253586110685000000"
+        }
+      ],
+      "marginal": [
+        {
+          "aboveClaimed": 0,
+          "rank": 0,
+          "tokens": "840101000000000000000000",
+          "paid": "531447052499000000",
+          "refund": "1253586110685000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 1,
+          "tokens": "840101000000000000000000",
+          "paid": "531447052499000000",
+          "refund": "1253586110685000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 9,
+          "tokens": "840101000000000000000000",
+          "paid": "531447052499000000",
+          "refund": "1253586110685000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 10,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1785033163184000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 11,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1785033163184000000"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1785033163184000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 0,
+          "tokens": "840101000000000000000000",
+          "paid": "531447052499000000",
+          "refund": "1253586110685000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 1,
+          "tokens": "840101000000000000000000",
+          "paid": "531447052499000000",
+          "refund": "1253586110685000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 8,
+          "tokens": "840101000000000000000000",
+          "paid": "531447052499000000",
+          "refund": "1253586110685000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 9,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1785033163184000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 10,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1785033163184000000"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1785033163184000000"
+        },
+        {
+          "aboveClaimed": 9,
+          "rank": 0,
+          "tokens": "840101000000000000000000",
+          "paid": "531447052499000000",
+          "refund": "1253586110685000000"
+        },
+        {
+          "aboveClaimed": 9,
+          "rank": 1,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1785033163184000000"
+        },
+        {
+          "aboveClaimed": 9,
+          "rank": 2,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1785033163184000000"
+        },
+        {
+          "aboveClaimed": 9,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1785033163184000000"
+        }
+      ]
+    }
+  },
+  {
+    "name": "random 17",
+    "levels": 8,
+    "prices": [
+      "1000",
+      "121514",
+      "738678",
+      "738679",
+      "1123992",
+      "1685250",
+      "2161510",
+      "2161511"
+    ],
+    "lot": "60424300000000",
+    "lots": 6,
+    "reserveStep": 5,
+    "minLots": 1,
+    "saleDecimals": 12,
+    "outcome": 0,
+    "step": null,
+    "expect": {
+      "escrow": "130607790",
+      "pStar": "0",
+      "k": null,
+      "lotCost": "0",
+      "claims": [
+        {
+          "b": null,
+          "cmp": null,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "130607790"
+        }
+      ],
+      "marginal": []
+    }
+  },
+  {
+    "name": "random 18",
+    "levels": 9,
+    "prices": [
+      "1000",
+      "203437",
+      "203438",
+      "981874",
+      "1319764",
+      "1319765",
+      "2198242",
+      "2198243",
+      "2198244"
+    ],
+    "lot": "87268300",
+    "lots": 10,
+    "reserveStep": 2,
+    "minLots": 7,
+    "saleDecimals": 11,
+    "outcome": 1,
+    "step": 2,
+    "expect": {
+      "escrow": "1919",
+      "pStar": "203438",
+      "k": 1,
+      "lotCost": "178",
+      "claims": [
+        {
+          "b": 0,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1919"
+        },
+        {
+          "b": 1,
+          "cmp": 1,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "1919"
+        },
+        {
+          "b": 2,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "87268300",
+          "paid": "178",
+          "refund": "1741"
+        },
+        {
+          "b": 3,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "87268300",
+          "paid": "178",
+          "refund": "1741"
+        },
+        {
+          "b": 4,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "87268300",
+          "paid": "178",
+          "refund": "1741"
+        },
+        {
+          "b": 5,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "87268300",
+          "paid": "178",
+          "refund": "1741"
+        },
+        {
+          "b": 6,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "87268300",
+          "paid": "178",
+          "refund": "1741"
+        },
+        {
+          "b": 7,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "87268300",
+          "paid": "178",
+          "refund": "1741"
+        },
+        {
+          "b": 8,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "87268300",
+          "paid": "178",
+          "refund": "1741"
+        }
+      ],
+      "marginal": []
+    }
+  },
+  {
+    "name": "random 19",
+    "levels": 10,
+    "prices": [
+      "1000",
+      "285361",
+      "285362",
+      "677428",
+      "1515536",
+      "1515537",
+      "2234974",
+      "2234975",
+      "2234976",
+      "2922418"
+    ],
+    "lot": "267265000000000000",
+    "lots": 4,
+    "reserveStep": 1,
+    "minLots": 2,
+    "saleDecimals": 6,
+    "outcome": 1,
+    "step": 1,
+    "expect": {
+      "escrow": "781060046770000000",
+      "pStar": "285361",
+      "k": 0,
+      "lotCost": "76267007665000000",
+      "claims": [
+        {
+          "b": 0,
+          "cmp": 1,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "781060046770000000"
+        },
+        {
+          "b": 1,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "267265000000000000",
+          "paid": "76267007665000000",
+          "refund": "704793039105000000"
+        },
+        {
+          "b": 2,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "267265000000000000",
+          "paid": "76267007665000000",
+          "refund": "704793039105000000"
+        },
+        {
+          "b": 3,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "267265000000000000",
+          "paid": "76267007665000000",
+          "refund": "704793039105000000"
+        },
+        {
+          "b": 4,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "267265000000000000",
+          "paid": "76267007665000000",
+          "refund": "704793039105000000"
+        },
+        {
+          "b": 5,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "267265000000000000",
+          "paid": "76267007665000000",
+          "refund": "704793039105000000"
+        },
+        {
+          "b": 6,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "267265000000000000",
+          "paid": "76267007665000000",
+          "refund": "704793039105000000"
+        },
+        {
+          "b": 7,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "267265000000000000",
+          "paid": "76267007665000000",
+          "refund": "704793039105000000"
+        },
+        {
+          "b": 8,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "267265000000000000",
+          "paid": "76267007665000000",
+          "refund": "704793039105000000"
+        },
+        {
+          "b": 9,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "267265000000000000",
+          "paid": "76267007665000000",
+          "refund": "704793039105000000"
+        }
+      ],
+      "marginal": []
+    }
+  },
+  {
+    "name": "random 20",
+    "levels": 11,
+    "prices": [
+      "1000",
+      "367284",
+      "367285",
+      "372985",
+      "372986",
+      "1978805",
+      "2271706",
+      "2271707",
+      "2271708",
+      "3114694",
+      "3114695"
+    ],
+    "lot": "67636900000",
+    "lots": 11,
+    "reserveStep": 8,
+    "minLots": 9,
+    "saleDecimals": 2,
+    "outcome": 1,
+    "step": 8,
+    "expect": {
+      "escrow": "2106683142455000",
+      "pStar": "2271708",
+      "k": 7,
+      "lotCost": "1536512868252000",
+      "claims": [
+        {
+          "b": 0,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2106683142455000"
+        },
+        {
+          "b": 1,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2106683142455000"
+        },
+        {
+          "b": 2,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2106683142455000"
+        },
+        {
+          "b": 3,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2106683142455000"
+        },
+        {
+          "b": 4,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2106683142455000"
+        },
+        {
+          "b": 5,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2106683142455000"
+        },
+        {
+          "b": 6,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2106683142455000"
+        },
+        {
+          "b": 7,
+          "cmp": 1,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2106683142455000"
+        },
+        {
+          "b": 8,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "67636900000",
+          "paid": "1536512868252000",
+          "refund": "570170274203000"
+        },
+        {
+          "b": 9,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "67636900000",
+          "paid": "1536512868252000",
+          "refund": "570170274203000"
+        },
+        {
+          "b": 10,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "67636900000",
+          "paid": "1536512868252000",
+          "refund": "570170274203000"
+        }
+      ],
+      "marginal": []
+    }
+  },
+  {
+    "name": "random 21",
+    "levels": 12,
+    "prices": [
+      "1000",
+      "49208",
+      "363004",
+      "363005",
+      "363006",
+      "743320",
+      "2308432",
+      "2308433",
+      "2308434",
+      "3306961",
+      "3306962",
+      "3306963"
+    ],
+    "lot": "108286000000000000",
+    "lots": 3,
+    "reserveStep": 6,
+    "minLots": 2,
+    "saleDecimals": 11,
+    "outcome": 2,
+    "step": 6,
+    "expect": {
+      "escrow": "3580977954180",
+      "pStar": "2308432",
+      "k": 6,
+      "lotCost": "2499708675520",
+      "claims": [
+        {
+          "b": 0,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "3580977954180"
+        },
+        {
+          "b": 1,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "3580977954180"
+        },
+        {
+          "b": 2,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "3580977954180"
+        },
+        {
+          "b": 3,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "3580977954180"
+        },
+        {
+          "b": 4,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "3580977954180"
+        },
+        {
+          "b": 5,
+          "cmp": 0,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "3580977954180"
+        },
+        {
+          "b": 7,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "108286000000000000",
+          "paid": "2499708675520",
+          "refund": "1081269278660"
+        },
+        {
+          "b": 8,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "108286000000000000",
+          "paid": "2499708675520",
+          "refund": "1081269278660"
+        },
+        {
+          "b": 9,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "108286000000000000",
+          "paid": "2499708675520",
+          "refund": "1081269278660"
+        },
+        {
+          "b": 10,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "108286000000000000",
+          "paid": "2499708675520",
+          "refund": "1081269278660"
+        },
+        {
+          "b": 11,
+          "cmp": 2,
+          "class": "full",
+          "tokens": "108286000000000000",
+          "paid": "2499708675520",
+          "refund": "1081269278660"
+        }
+      ],
+      "marginal": [
+        {
+          "aboveClaimed": 0,
+          "rank": 0,
+          "tokens": "108286000000000000",
+          "paid": "2499708675520",
+          "refund": "1081269278660"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 1,
+          "tokens": "108286000000000000",
+          "paid": "2499708675520",
+          "refund": "1081269278660"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 2,
+          "tokens": "108286000000000000",
+          "paid": "2499708675520",
+          "refund": "1081269278660"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 3,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "3580977954180"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 4,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "3580977954180"
+        },
+        {
+          "aboveClaimed": 0,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "3580977954180"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 0,
+          "tokens": "108286000000000000",
+          "paid": "2499708675520",
+          "refund": "1081269278660"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 1,
+          "tokens": "108286000000000000",
+          "paid": "2499708675520",
+          "refund": "1081269278660"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 2,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "3580977954180"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 3,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "3580977954180"
+        },
+        {
+          "aboveClaimed": 1,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "3580977954180"
+        },
+        {
+          "aboveClaimed": 2,
+          "rank": 0,
+          "tokens": "108286000000000000",
+          "paid": "2499708675520",
+          "refund": "1081269278660"
+        },
+        {
+          "aboveClaimed": 2,
+          "rank": 1,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "3580977954180"
+        },
+        {
+          "aboveClaimed": 2,
+          "rank": 2,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "3580977954180"
+        },
+        {
+          "aboveClaimed": 2,
+          "rank": 12,
+          "tokens": "0",
+          "paid": "0",
+          "refund": "3580977954180"
+        }
+      ]
+    }
+  },
+  {
+    "name": "random 22",
+    "levels": 13,
+    "prices": [
+      "1000",
+      "131131",
+      "469086",
+      "964093",
+      "964094",
+      "1507840",
+      "2345164",
+      "2355506",
+      "2355507",
+      "3499237",
+      "3499238",
+      "3499239",
+      "3499240"
+    ],
+    "lot": "47955300",
+    "lots": 8,
+    "reserveStep": 9,
+    "minLots": 7,
+    "saleDecimals": 6,
+    "outcome": 3,
+    "step": null,
+    "expect": {
+      "escrow": "167807104",
+      "pStar": "0",
+      "k": null,
+      "lotCost": "0",
+      "claims": [
+        {
+          "b": null,
+          "cmp": null,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "167807104"
+        }
+      ],
+      "marginal": []
+    }
+  },
+  {
+    "name": "random 23",
+    "levels": 14,
+    "prices": [
+      "1000",
+      "213055",
+      "575166",
+      "659647",
+      "698616",
+      "698617",
+      "2381896",
+      "2381897",
+      "2381898",
+      "2381899",
+      "2381900",
+      "2381901",
+      "2381902",
+      "3865458"
+    ],
+    "lot": "6167820000",
+    "lots": 9,
+    "reserveStep": 10,
+    "minLots": 1,
+    "saleDecimals": 9,
+    "outcome": 3,
+    "step": null,
+    "expect": {
+      "escrow": "23841450",
+      "pStar": "0",
+      "k": null,
+      "lotCost": "0",
+      "claims": [
+        {
+          "b": null,
+          "cmp": null,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "23841450"
+        }
+      ],
+      "marginal": []
+    }
+  },
+  {
+    "name": "random 24",
+    "levels": 15,
+    "prices": [
+      "1000",
+      "294978",
+      "681248",
+      "681249",
+      "894384",
+      "1036875",
+      "1036876",
+      "2440297",
+      "2440298",
+      "2440299",
+      "2440300",
+      "4195256",
+      "4195257",
+      "4484128",
+      "4484129"
+    ],
+    "lot": "64269800000000000000",
+    "lots": 8,
+    "reserveStep": 3,
+    "minLots": 5,
+    "saleDecimals": 2,
+    "outcome": 0,
+    "step": null,
+    "expect": {
+      "escrow": "2881940740042000000000000",
+      "pStar": "0",
+      "k": null,
+      "lotCost": "0",
+      "claims": [
+        {
+          "b": null,
+          "cmp": null,
+          "class": "refund",
+          "tokens": "0",
+          "paid": "0",
+          "refund": "2881940740042000000000000"
+        }
+      ],
+      "marginal": []
+    }
+  }
+]
