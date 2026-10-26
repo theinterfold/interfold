@@ -60,6 +60,7 @@ pub fn enabled(circuit: &Circuit, preset: BfvPreset) -> bool {
         // The insecure, SIMD and 16384-bit archives serve only the l-BFV path.
         BfvPreset::InsecureThresholdLbfv
         | BfvPreset::SecureThreshold16384
+        | BfvPreset::SecureThreshold16384Simd
         | BfvPreset::InsecureThresholdSimd => {
             LBFV.contains(&circuit.name.as_str())
                 || SHARED.contains(&format!("{}/{}", circuit.group, circuit.name).as_str())
@@ -69,7 +70,10 @@ pub fn enabled(circuit: &Circuit, preset: BfvPreset) -> bool {
 }
 
 pub fn has_lbfv(preset: &str) -> bool {
-    matches!(preset, "insecure" | "insecure-simd" | "secure-16384")
+    matches!(
+        preset,
+        "insecure" | "insecure-simd" | "secure-16384" | "secure-16384-simd"
+    )
 }
 
 /// The l-BFV-only archives hold no trBFV circuits and anchor the VK tree at C6.

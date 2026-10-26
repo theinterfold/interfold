@@ -15,11 +15,14 @@ hydration. `scripts/circuits/build-pairs.json` owns supported build pairs. Relea
 in the separate runtime release matrix. Hydration accepts a different artifact source hash and
 records the original hash. Release validation remains source-bound.
 
-Artifact labels are `insecure-64`, `insecure`, `insecure-simd`, `secure-8192`, and `secure-16384`.
+Artifact labels are `insecure-64`, `insecure`, `insecure-simd`, `secure-8192`, `secure-16384`, and `secure-16384-simd`.
 `insecure-64` and `secure-8192` serve the trBFV path. The degree-128 `insecure` archive serves the
 l-BFV path only. `insecure-64` is the default build preset.
 Secure-16384 builds the l-BFV path for minimum, micro, and small committees. Its only legacy tree
 anchor is C6; the V2 DKG verifier binds its complete chunk/row VK genealogy separately.
+Secure-16384-simd has the degree, committees and V2 layout of secure-16384, plaintext modulus 65537,
+and 56-bit moduli. Its C7 is `decrypted_shares_aggregation_wide`, which holds `Q` and `u` as U384
+values because `Q` (276 bits) is above the field.
 Insecure-simd has plaintext modulus 257 and builds the l-BFV path for minimum and micro committees.
 The small committee exceeds its smudging-noise budget. Its legacy tree anchor is also C6.
 

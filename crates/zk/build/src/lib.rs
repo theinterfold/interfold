@@ -24,13 +24,15 @@ use std::{
 
 const COMMITTEES: &[&str] = &["minimum", "micro", "small"];
 // Every preset with its own artifact directory and Noir module. `insecure-64` and `secure-8192`
-// serve the trBFV path; `insecure`, `insecure-simd` and `secure-16384` serve the l-BFV path.
-const ARTIFACT_PRESETS: [BfvPreset; 5] = [
+// serve the trBFV path; `insecure`, `insecure-simd`, `secure-16384` and `secure-16384-simd` serve the
+// l-BFV path.
+const ARTIFACT_PRESETS: [BfvPreset; 6] = [
     BfvPreset::InsecureThreshold64,
     BfvPreset::InsecureThresholdLbfv,
     BfvPreset::InsecureThresholdSimd,
     BfvPreset::SecureThreshold8192,
     BfvPreset::SecureThreshold16384,
+    BfvPreset::SecureThreshold16384Simd,
 ];
 
 pub fn build_pairs(root: &Path) -> Result<Vec<[String; 2]>> {
@@ -348,6 +350,7 @@ fn preset(value: &str) -> Result<BfvPreset> {
         "insecure-simd" => Ok(BfvPreset::InsecureThresholdSimd),
         "secure-8192" => Ok(BfvPreset::SecureThreshold8192),
         "secure-16384" => Ok(BfvPreset::SecureThreshold16384),
+        "secure-16384-simd" => Ok(BfvPreset::SecureThreshold16384Simd),
         _ => bail!("Select one supported preset, not {value}"),
     }
 }
@@ -358,6 +361,7 @@ fn tier(preset: BfvPreset) -> &'static str {
         BfvPreset::InsecureThresholdSimd => "insecure_simd",
         BfvPreset::SecureThreshold8192 => "secure_8192",
         BfvPreset::SecureThreshold16384 => "secure_16384",
+        BfvPreset::SecureThreshold16384Simd => "secure_16384_simd",
         _ => unreachable!("build selects threshold presets"),
     }
 }
@@ -368,6 +372,7 @@ fn preset_name(preset: BfvPreset) -> &'static str {
         BfvPreset::InsecureThresholdSimd => "insecure-simd",
         BfvPreset::SecureThreshold8192 => "secure-8192",
         BfvPreset::SecureThreshold16384 => "secure-16384",
+        BfvPreset::SecureThreshold16384Simd => "secure-16384-simd",
         _ => unreachable!("build selects threshold presets"),
     }
 }

@@ -156,8 +156,8 @@ fn build_policy_rejects_disabled_pairs_before_tools_and_filters_all_selectors() 
             },
             2,
         ),
-        // The micro committee builds insecure-64, insecure, secure-16384 and insecure-simd;
-        // secure-8192 is disabled in this policy.
+        // The micro committee builds insecure-64, insecure, secure-16384, insecure-simd and
+        // secure-16384-simd; secure-8192 is disabled in this policy.
         (
             {
                 let mut r = request();
@@ -165,7 +165,7 @@ fn build_policy_rejects_disabled_pairs_before_tools_and_filters_all_selectors() 
                 r.committee = CommitteeSelection::Single(CiphernodesCommitteeSize::Micro);
                 r
             },
-            4,
+            5,
         ),
     ] {
         let selected = options.selected_pairs(temp.path()).unwrap();
@@ -385,6 +385,8 @@ fn source_identity_tracks_inputs_not_generated_selections_or_tests() {
     write(root, selector, "// preset: insecure-simd\npub use super::insecure_simd::threshold;\npub global MAX_MSG_NON_ZERO_COEFFS: u32 = 128;\n");
     assert_eq!(hash(), before);
     write(root, selector, "// preset: secure-16384\npub use super::secure_16384::threshold;\npub global MAX_MSG_NON_ZERO_COEFFS: u32 = 51;\n");
+    assert_eq!(hash(), before);
+    write(root, selector, "// preset: secure-16384-simd\npub use super::secure_16384_simd::threshold;\npub global MAX_MSG_NON_ZERO_COEFFS: u32 = 50;\n");
     assert_eq!(hash(), before);
     write(
         root,
@@ -828,7 +830,7 @@ fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
     ] {
         let parity = configuration::parity_files(committee, &params).unwrap();
         // One parity matrix per artifact preset, and the smudging file.
-        assert_eq!(parity.len(), 6);
+        assert_eq!(parity.len(), 7);
     }
     let material = params.get(BfvPreset::InsecureThreshold64);
     let bounds = configuration::bound_updates(
@@ -944,6 +946,7 @@ fn protocol_utils_rewrites_drifted_message_widths() {
         ("INSECURE_SIMD", BfvPreset::InsecureThresholdSimd),
         ("SECURE", BfvPreset::SecureThreshold8192),
         ("SECURE_16384", BfvPreset::SecureThreshold16384),
+        ("SECURE_16384_SIMD", BfvPreset::SecureThreshold16384Simd),
     ] {
         assert!(
             rendered.contains(&format!(
@@ -1234,31 +1237,35 @@ fn partial_build_removes_anchors_and_manifests_cover_complete_anchors() {
     }
 }
 
-/// The insecure SIMD preset supports a committee exactly when its smudging-noise budget holds,
-/// and the shared build policy lists exactly those pairs.
+/// A SIMD preset supports a committee exactly when its smudging-noise budget holds, and the shared
+/// build policy lists exactly those pairs.
 #[test]
 fn simd_committee_support_follows_smudging_feasibility_and_build_policy() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let params = configuration::OperationParams::both().unwrap();
-    let preset = BfvPreset::InsecureThresholdSimd;
     let pairs = build_pairs(&root).unwrap();
-    for name in COMMITTEES {
-        let committee: CiphernodesCommitteeSize = name.parse().unwrap();
-        let feasible = e3_zk_config::threshold::pk_generation::Configs::new(
-            preset,
-            &params.get(preset).threshold,
-            committee,
-        )
-        .is_ok();
-        assert_eq!(
-            feasible,
-            configuration::preset_supports_committee(preset, committee),
-            "{name}"
-        );
-        assert_eq!(
-            feasible,
-            pairs.contains(&["insecure-simd".to_string(), name.to_string()]),
-            "{name}"
-        );
+    for (preset, dir) in [
+        (BfvPreset::InsecureThresholdSimd, "insecure-simd"),
+        (BfvPreset::SecureThreshold16384Simd, "secure-16384-simd"),
+    ] {
+        for name in COMMITTEES {
+            let committee: CiphernodesCommitteeSize = name.parse().unwrap();
+            let feasible = e3_zk_config::threshold::pk_generation::Configs::new(
+                preset,
+                &params.get(preset).threshold,
+                committee,
+            )
+            .is_ok();
+            assert_eq!(
+                feasible,
+                configuration::preset_supports_committee(preset, committee),
+                "{dir}/{name}"
+            );
+            assert_eq!(
+                feasible,
+                pairs.contains(&[dir.to_string(), name.to_string()]),
+                "{dir}/{name}"
+            );
+        }
     }
 }
