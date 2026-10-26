@@ -1,0 +1,174 @@
+/* SPDX-License-Identifier: LGPL-3.0-only
+ *
+ * This file is provided WITHOUT ANY WARRANTY;
+ * without even the implied warranty of MERCHANTABILITY
+ * or FITNESS FOR A PARTICULAR PURPOSE.
+ *
+ * Design tokens of The Interfold governance app (its generated `tokens.css`, `:root` role mapping
+ * and fonts), so this demo reads as the same product. One light theme, as in governance: Interfold
+ * Black on white panels over a faint grey ground, brand green for deliberate accents only.
+ * Both demo clients carry this file unchanged; tailwind.config.js maps the same variables.
+ */
+
+/* Self-hosted: Inter for the interface, ABC Gramercy for editorial titles and the wordmark,
+   Office Code Pro for technical labels. Same-origin files, so cross-origin isolation is unaffected.
+   Inter's licence is in public/fonts/Inter-LICENSE.txt. */
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/InterVariable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'ABC Gramercy';
+  src: url('/fonts/ABCGramercy-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'Office Code Pro';
+  src: url('/fonts/OfficeCodePro-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: block;
+}
+
+html {
+  font-synthesis: none;
+}
+
+:root {
+  /* ---- Shared Interfold tokens (governance vendor/interfold-design/tokens.css) ---- */
+  --if-ink: #121718;
+  --if-paper: #ffffff;
+  --if-muted: #596364;
+  --if-muted-secondary: #737d7e;
+  --if-brand-mint: #d9fce8;
+  --if-brand-mint-pale: #eafdf1;
+  --if-brand-mint-line: #a9e3bf;
+  --if-brand-mint-shade: #c1f0d4;
+  --if-brand-green: #3a5e3c;
+  --if-surface-muted: #f4f5f4;
+  --if-surface-selected: #f0f1f1;
+  --if-surface-hover: #e8eaea;
+  --if-action-hover: #303638;
+  --if-negative: #a84932;
+  --if-abstain: #7a7d77;
+  --if-radius: 6px;
+  --if-space-tight: 8px;
+  --if-space-related: 12px;
+  --if-space-controls: 16px;
+  --if-space-section: 24px;
+  --if-action-height: 46px;
+  --if-action-compact-height: 40px;
+  --if-stroke-mix: 16%;
+  --if-stroke-hover-mix: 32%;
+  --if-page-ground-mix: 6%;
+  --if-page-ground-shade-mix: 10%;
+  --if-font-sans: 'Inter', system-ui, sans-serif;
+  --if-font-serif: 'ABC Gramercy', Georgia, serif;
+  --if-font-mono: 'Office Code Pro', ui-monospace, 'SF Mono', Menlo, monospace;
+  --if-action-padding: 12px 20px;
+  --if-ui-duration: 320ms;
+  --if-page-duration: 720ms;
+  --if-ui-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --if-page-ease: cubic-bezier(0.55, 0, 0.1, 1);
+
+  /* ---- Application roles (governance pages/globals.css `:root`) ---- */
+  --ink: var(--if-ink);
+  --paper: var(--if-paper);
+  --muted: var(--if-muted);
+  --muted-2: var(--if-muted-secondary);
+  --mint: var(--if-brand-mint);
+  --mint-pale: var(--if-brand-mint-pale);
+  --mint-line: var(--if-brand-mint-line);
+  --surface-muted: var(--if-surface-muted);
+  --surface-selected: var(--if-surface-selected);
+  --surface-hover: var(--if-surface-hover);
+  --action-hover: var(--if-action-hover);
+  --vote-action: var(--if-brand-green);
+  --vote-action-hover: color-mix(in srgb, var(--if-brand-green) 80%, var(--ink));
+  --negative: var(--if-negative);
+  --page-ground: color-mix(in srgb, var(--ink) var(--if-page-ground-mix), var(--paper));
+  --page-ground-shade: color-mix(in srgb, var(--ink) var(--if-page-ground-shade-mix), var(--paper));
+
+  /* One corner and one neutral stroke for every rectangular surface. Mixed with paper, not
+     transparency, so the stroke is the same on white and on grey. */
+  --ui-radius: var(--if-radius);
+  --ui-radius-inner: calc(var(--ui-radius) - 1px);
+  --ui-stroke: color-mix(in srgb, var(--ink) var(--if-stroke-mix), var(--paper));
+  --ui-stroke-hover: color-mix(in srgb, var(--ink) var(--if-stroke-hover-mix), var(--paper));
+  --rule: var(--ui-stroke);
+  --rule-strong: var(--ui-stroke-hover);
+
+  --font-sans: var(--if-font-sans);
+  --font-serif: var(--if-font-serif);
+  --font-mono: var(--if-font-mono);
+  --ui-label-font: 500 12px/1.4 var(--font-sans);
+  --ui-section-font: 600 16px/1.4 var(--font-sans);
+  --ui-title-font: 500 24px/1.2 var(--font-sans);
+  --ui-body-font: 400 14px/1.5 var(--font-sans);
+  --ui-value-font: 600 20px/1.4 var(--font-sans);
+  --ui-status-font: 600 12px/1.4 var(--font-sans);
+
+  --ui-space-tight: var(--if-space-tight);
+  --ui-space-related: var(--if-space-related);
+  --ui-space-controls: var(--if-space-controls);
+  --ui-space-section: var(--if-space-section);
+
+  --action-radius: var(--ui-radius);
+  --action-height: var(--if-action-height);
+  --action-compact-height: var(--if-action-compact-height);
+  --action-compact-padding: 8px 12px;
+  --action-padding: var(--if-action-padding);
+  --action-font: 600 14px/20px var(--font-sans);
+
+  /* Type ladder: the sizes the Interfold sites set, stepping at md (768) and lg (1024). */
+  --type-h1: 40px;
+  --type-h1-md: 64px;
+  --type-h1-leading: 0.87;
+  --type-h1-tracking: -1.92px;
+  --type-h2: 24px;
+  --type-h2-md: 28px;
+  --type-h2-leading: 0.95;
+  --type-h2-tracking: -0.96px;
+  --type-h3: 24px;
+  --type-h3-leading: 1.1;
+  --type-h3-tracking: -0.72px;
+  --type-support: 16px;
+  --type-support-md: 18px;
+  --type-support-leading: 1.2;
+
+  --interfold-ui-duration: var(--if-ui-duration);
+  --interfold-ui-ease: var(--if-ui-ease);
+  --interfold-page-duration: var(--if-page-duration);
+  --interfold-page-ease: var(--if-page-ease);
+
+  /* ---- Status fills (governance `.badge.*`, which sets these as literals) ---- */
+  --status-pending-bg: #e5e8e5;
+  --status-pending-fg: #58625c;
+  --status-warn-bg: #f0dfb7;
+  --status-warn-fg: #795822;
+  --status-info-bg: #cfdfeb;
+  --status-info-fg: #33566f;
+  --status-bad-bg: #f1d4ca;
+  --status-bad-fg: #864632;
+
+  /* ---- Site chrome (governance vendor/site-header/styles.css) ---- */
+  --site-symbol-width: 32px;
+  --site-symbol-height: 28px;
+  --site-chrome-ink: var(--if-brand-green);
+  --site-chrome-hover: #173e23;
+  --site-content-width: 1052px;
+  --site-content-gutter: 16px;
+}
+
+@media (min-width: 768px) {
+  :root {
+    --site-content-gutter: 32px;
+  }
+}

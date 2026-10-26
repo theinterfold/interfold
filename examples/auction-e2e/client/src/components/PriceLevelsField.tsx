@@ -101,11 +101,11 @@ export const PriceLevelsField: React.FC<Props> = ({ form, onChange, disabled }) 
             max={LEVELS}
             value={form.levels}
             onChange={(event) => setLevels(Number(event.target.value))}
-            className='h-2 min-w-0 flex-1 cursor-pointer accent-[var(--accent)] disabled:cursor-not-allowed'
+            className='h-2 min-w-0 flex-1 cursor-pointer disabled:cursor-not-allowed'
           />
           <output className='w-10 shrink-0 text-right font-mono text-2xl'>{form.levels}</output>
         </div>
-        <p className='mt-1 text-xs text-ink-soft'>
+        <p className='mt-1 text-xs text-muted'>
           A bid is one of these steps, numbered 0 to {form.levels - 1}. Choose {MIN_LEVELS} to {LEVELS}. With few bidders, fewer steps make
           ties more likely.
         </p>
@@ -121,9 +121,7 @@ export const PriceLevelsField: React.FC<Props> = ({ form, onChange, disabled }) 
               role='radio'
               aria-checked={form.mode === mode}
               onClick={() => selectMode(mode)}
-              className={`border px-3 py-2 text-sm transition-colors disabled:cursor-not-allowed ${
-                form.mode === mode ? 'border-ink bg-ink text-paper' : 'border-rule-strong bg-card hover:border-ink'
-              }`}
+              className={`opt px-3 ${form.mode === mode ? 'on' : ''}`}
             >
               {MODE_LABELS[mode]}
             </button>
@@ -162,7 +160,7 @@ export const PriceLevelsField: React.FC<Props> = ({ form, onChange, disabled }) 
             <div className='grid grid-cols-2 gap-2 sm:grid-cols-4'>
               {form.custom.map((text, step) => (
                 <label key={step} className='flex items-center gap-2'>
-                  <span className='w-6 shrink-0 text-right font-mono text-xs text-ink-soft'>{step}</span>
+                  <span className='w-6 shrink-0 text-right font-mono text-xs text-muted'>{step}</span>
                   <input
                     aria-label={`Price of step ${step}`}
                     inputMode='numeric'
@@ -179,7 +177,7 @@ export const PriceLevelsField: React.FC<Props> = ({ form, onChange, disabled }) 
           </div>
         )}
 
-        <p className={`text-xs ${'prices' in result ? 'text-ink-soft' : 'text-danger'}`}>
+        <p className={`text-xs ${'prices' in result ? 'text-muted' : 'text-negative'}`}>
           {'prices' in result
             ? `${form.levels} steps, from ${result.prices[0].toLocaleString('en-US')} up to ${result.prices[form.levels - 1].toLocaleString(
                 'en-US',

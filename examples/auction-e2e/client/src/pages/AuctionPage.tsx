@@ -14,11 +14,13 @@ import { useAllowlist, gateKind as gateKindOf } from '@/hooks/useAllowlist'
 import { useBidCount } from '@/hooks/useBidCount'
 import { useWallet } from '@/hooks/useWallet'
 import { formatDateTime, phaseOf, timeLeftLabel } from '@/utils/auction'
+import { shortId } from '@/utils/format'
 import { loadVersions } from '@/utils/bid-storage'
 import { chain } from '@/utils/chain'
 import { getContractAddresses } from '@/utils/env-config'
 import { Pips } from '@/components/AuctionCard'
 import BidPanel from '@/components/BidPanel'
+import CopyId from '@/components/CopyId'
 import { AddressLink } from '@/components/Explorer'
 import PhaseTimeline from '@/components/PhaseTimeline'
 import ResultPanel from '@/components/ResultPanel'
@@ -71,7 +73,7 @@ const AuctionPage: React.FC = () => {
       </div>
     )
   }
-  if (auction === null) return <NotFound text={`There is no auction Nº ${e3Id} on this deployment.`} />
+  if (auction === null) return <NotFound text={`There is no auction Nº ${shortId(e3Id)} on this deployment.`} />
   if (phase === null) return null
 
   const { e3Program } = getContractAddresses()
@@ -81,15 +83,18 @@ const AuctionPage: React.FC = () => {
   return (
     <div className='page space-y-10'>
       <header className='space-y-4'>
-        <Link to='/' className='linkish'>
-          All auctions
-        </Link>
+        <nav className='breadcrumb' aria-label='Breadcrumb'>
+          <Link to='/'>All auctions</Link>
+          <span aria-hidden>/</span>
+          <span aria-current='page'>Auction</span>
+        </nav>
         <div className='flex flex-wrap items-start justify-between gap-4'>
-          <div className='min-w-0 space-y-3'>
-            <p className='mono muted'>
-              Auction Nº {auction.e3Id.toString().padStart(3, '0')} · {AUCTION_TYPE_LABELS[auction.auctionType]}
-            </p>
-            <h1 className='h1'>{auction.title}</h1>
+          <div className='min-w-0 flex-1 space-y-3'>
+            <div className='flex min-w-0 flex-wrap items-center gap-3'>
+              <p className='mono muted'>{AUCTION_TYPE_LABELS[auction.auctionType]}</p>
+              <CopyId id={auction.e3Id} />
+            </div>
+            <h1 className='title'>{auction.title}</h1>
           </div>
           <div className='flex items-center gap-3'>
             <StatusBadge phase={phase} />
@@ -99,7 +104,7 @@ const AuctionPage: React.FC = () => {
         <p className='lede'>{AUCTION_TYPE_DESCRIPTIONS[auction.auctionType]}</p>
       </header>
 
-      <dl className='card grid grid-cols-2 gap-x-6 gap-y-5 !p-5 md:grid-cols-3 lg:grid-cols-4'>
+      <dl className='card grid grid-cols-2 gap-x-6 gap-y-5 md:grid-cols-3 lg:grid-cols-4'>
         <Fact label='Bidders'>
           <span className='flex items-center gap-2'>
             <Pips filled={auction.bidderCount} total={maxBidders} />
@@ -181,8 +186,8 @@ const AuctionPage: React.FC = () => {
 
 const Fact: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
   <div className='min-w-0'>
-    <dt className='mono-sm muted'>{label}</dt>
-    <dd className='mt-1 text-sm'>{children}</dd>
+    <dt className='meta muted'>{label}</dt>
+    <dd className='mt-1 text-sm font-medium'>{children}</dd>
   </div>
 )
 

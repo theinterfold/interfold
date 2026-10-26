@@ -35,11 +35,11 @@ function useElapsed(startedAt: number | undefined, running: boolean): number {
 
 const StepIcon: React.FC<{ status: StepRow['status'] }> = ({ status }) =>
   status === 'done' ? (
-    <CheckCircleIcon size={16} weight='fill' className='text-accent' />
+    <CheckCircleIcon size={16} weight='fill' className='text-brand-green' />
   ) : status === 'active' ? (
     <Spinner size={14} />
   ) : status === 'error' ? (
-    <WarningCircleIcon size={16} weight='fill' className='text-danger' />
+    <WarningCircleIcon size={16} weight='fill' className='text-negative' />
   ) : (
     <CircleIcon size={16} />
   )
@@ -150,7 +150,7 @@ const BidPanel: React.FC<BidPanelProps> = ({ sale, phase, wallet, committeeKey, 
             )}
             {depositBlocked && !short && <div className='note'>{depositBlocked}</div>}
             {deposit.error && <div className='note bad'>{deposit.error}</div>}
-            <button onClick={() => void deposit.deposit(relayed)} disabled={!canDeposit} className='btn lg block'>
+            <button onClick={() => void deposit.deposit(relayed)} disabled={!canDeposit} className='btn block'>
               {deposit.step ? (
                 <>
                   <Spinner size={14} /> {DEPOSIT_STEP_LABELS[deposit.step]}
@@ -170,13 +170,13 @@ const BidPanel: React.FC<BidPanelProps> = ({ sale, phase, wallet, committeeKey, 
         <p className='label !mb-0'>2. Bid</p>
 
         {count > 0 && (
-          <div className='border border-accent bg-accent-soft p-4'>
-            <p className='mono-sm muted'>
+          <div className='inset ok p-4'>
+            <p className='meta muted'>
               Your bid · version {count} of up to {MAX_BIDS_PER_BIDDER}
             </p>
             {current ? (
               <>
-                <p className='font-serif text-4xl'>
+                <p className='value'>
                   {formatStepPrice(sale, current.level)} <span className='text-lg'>{sale.paymentToken.symbol}</span>
                 </p>
                 <p className='muted mt-1 text-xs'>
@@ -212,9 +212,7 @@ const BidPanel: React.FC<BidPanelProps> = ({ sale, phase, wallet, committeeKey, 
                   aria-checked={level === l}
                   disabled={bid.submitting}
                   onClick={() => setLevel(l)}
-                  className={`border px-2 py-2.5 text-center font-mono text-sm transition-colors disabled:cursor-not-allowed ${
-                    level === l ? 'border-ink bg-ink text-paper' : 'border-rule-strong bg-card hover:border-ink'
-                  }`}
+                  className={`opt px-2 text-center ${level === l ? 'on' : ''}`}
                 >
                   {formatStepPrice(sale, l)}
                 </button>
@@ -249,7 +247,7 @@ const BidPanel: React.FC<BidPanelProps> = ({ sale, phase, wallet, committeeKey, 
                 </span>
               </span>
             </label>
-            <button onClick={() => void bid.submit(level, relayed)} disabled={!canSubmit} className='btn accent lg block'>
+            <button onClick={() => void bid.submit(level, relayed)} disabled={!canSubmit} className='btn accent block'>
               {bid.submitting ? (
                 <>
                   <Spinner size={14} /> Proving and submitting…
@@ -272,11 +270,11 @@ const BidPanel: React.FC<BidPanelProps> = ({ sale, phase, wallet, committeeKey, 
                 {bid.run?.elapsedMs != null ? `done in ${formatElapsed(bid.run.elapsedMs)}` : bid.submitting ? formatElapsed(elapsed) : ''}
               </p>
             </div>
-            <ol className='space-y-1.5 border border-rule-strong bg-card p-4 text-sm'>
+            <ol className='inset space-y-1.5 p-4 text-sm'>
               {bid.steps.map((step) => (
                 <li
                   key={step.id}
-                  className={`flex items-center gap-2 ${step.status === 'active' ? 'font-semibold' : step.status === 'pending' ? 'text-ink-soft' : 'text-ink-2'}`}
+                  className={`flex items-center gap-2 ${step.status === 'active' ? 'font-semibold' : step.status === 'pending' ? 'text-muted' : 'text-ink'}`}
                 >
                   <StepIcon status={step.status} />
                   {step.label}

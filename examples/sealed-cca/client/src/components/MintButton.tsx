@@ -55,7 +55,7 @@ const MintButton: React.FC<MintButtonProps> = ({ token, account, amount, onMinte
           (label ?? `Mint ${formatAmount(amount, token.decimals)} test ${token.symbol}`)
         )}
       </button>
-      {error && <p className='text-xs text-danger'>{error}</p>}
+      {error && <p className='text-xs text-negative'>{error}</p>}
     </div>
   )
 }

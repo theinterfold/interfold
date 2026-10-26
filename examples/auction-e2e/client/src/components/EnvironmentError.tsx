@@ -14,16 +14,16 @@ interface EnvironmentErrorProps {
 /** Shown instead of the app when a contract address is not configured. */
 const EnvironmentError: React.FC<EnvironmentErrorProps> = ({ missingVars }) => (
   <div className='flex min-h-screen items-center justify-center p-4'>
-    <div className='card w-full max-w-2xl space-y-6 !p-8'>
+    <div className='card w-full max-w-2xl space-y-6'>
       <div className='flex items-center gap-3'>
-        <WarningIcon size={28} className='text-danger' />
+        <WarningIcon size={28} className='text-negative' />
         <h1 className='h2'>Configuration required</h1>
       </div>
-      <p className='text-ink-2'>These environment variables must be set before the app can run:</p>
+      <p className='text-ink'>These environment variables must be set before the app can run:</p>
       <ul className='space-y-2'>
         {missingVars.map((name) => (
           <li key={name}>
-            <code className='addr bg-danger-tint px-2 py-1 text-danger'>{name}</code>
+            <code className='addr bg-negative-tint px-2 py-1 text-negative'>{name}</code>
           </li>
         ))}
       </ul>

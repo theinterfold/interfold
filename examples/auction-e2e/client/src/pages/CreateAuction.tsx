@@ -95,18 +95,17 @@ const CreateAuction: React.FC = () => {
   const fee = (amount: bigint) => `${formatUnits(amount, create.feeToken?.decimals ?? 6)} ${create.feeToken?.symbol ?? ''}`.trim()
 
   return (
-    <div className='page'>
-      <header className='mb-10 max-w-3xl space-y-4'>
-        <p className='mono muted'>New auction</p>
-        <h1 className='h1'>Create an auction</h1>
+    <div className='page !pt-0'>
+      <header className='page-intro wide'>
+        <h1 className='display'>Create an auction</h1>
         <p className='lede'>
           Choose what the auction reveals, how many price steps a bid can pick from, and the price of each step. Each type has its own limit
           on the number of bidders; the ratio types take the most.
         </p>
       </header>
 
-      <div className='grid items-start gap-10 lg:grid-cols-[1.4fr_1fr]'>
-        <form onSubmit={(event) => void submit(event)} className='card space-y-7 !p-5 md:!p-8'>
+      <div className='grid items-start gap-6 lg:grid-cols-[1.4fr_1fr]'>
+        <form onSubmit={(event) => void submit(event)} className='card space-y-7'>
           <div>
             <label htmlFor='title' className='label'>
               Title
@@ -119,7 +118,7 @@ const CreateAuction: React.FC = () => {
               placeholder='What is being auctioned'
               className='field'
             />
-            <p className={`mt-1 text-xs ${bytes > MAX_TITLE_BYTES ? 'text-danger' : 'text-ink-soft'}`}>
+            <p className={`mt-1 text-xs ${bytes > MAX_TITLE_BYTES ? 'text-negative' : 'text-muted'}`}>
               {bytes}/{MAX_TITLE_BYTES} bytes
             </p>
           </div>
@@ -131,14 +130,14 @@ const CreateAuction: React.FC = () => {
                 <input type='radio' name='auction-type' checked={auctionType === type} onChange={() => setAuctionType(type)} />
                 <span className='space-y-1'>
                   <span className='block font-semibold'>{AUCTION_TYPE_LABELS[type]}</span>
-                  <span className='block text-sm text-ink-soft'>{AUCTION_TYPE_DESCRIPTIONS[type]}</span>
-                  <span className='block font-mono text-xs text-ink-soft'>
+                  <span className='block text-sm text-muted'>{AUCTION_TYPE_DESCRIPTIONS[type]}</span>
+                  <span className='block font-mono text-xs text-muted'>
                     {MIN_BIDDERS} to {MAX_BIDDERS_BY_TYPE[type]} bidders · {rolesFor(type).length} ciphertexts for each bid
                   </span>
                 </span>
               </label>
             ))}
-            <p className='text-sm text-ink-soft' aria-live='polite'>
+            <p className='text-sm text-muted' aria-live='polite'>
               {isRatioType(auctionType)
                 ? `If the top bids tie, a public random draw picks the winner among the tied bidders. The tie becomes public: the result names every bidder that tied. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders, more than the ${MAX_BIDDERS_BY_TYPE[AuctionType.FirstPrice]} of the other types.`
                 : `If the top bids tie, a priority taken from a hash of the published ciphertexts picks the winner. Nothing about the tie is revealed. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders.`}
@@ -153,7 +152,7 @@ const CreateAuction: React.FC = () => {
               <input type='radio' name='who' checked={who === 'anyone'} onChange={() => setWho('anyone')} />
               <span className='space-y-1'>
                 <span className='block font-semibold'>Anyone</span>
-                <span className='block text-sm text-ink-soft'>Any address can bid, up to the limit of the auction type.</span>
+                <span className='block text-sm text-muted'>Any address can bid, up to the limit of the auction type.</span>
               </span>
             </label>
             <label className={`choice ${who === 'allowlist' ? 'on' : ''} ${ALLOWLIST_GATE_ADDRESS ? '' : 'opacity-60'}`}>
@@ -166,11 +165,11 @@ const CreateAuction: React.FC = () => {
               />
               <span className='space-y-1'>
                 <span className='block font-semibold'>Allowlist</span>
-                <span className='block text-sm text-ink-soft'>
+                <span className='block text-sm text-muted'>
                   Only the addresses you list can bid. The list is public on chain, and the contract checks a Merkle proof of each bid.
                 </span>
                 {!ALLOWLIST_GATE_ADDRESS && (
-                  <span className='block font-mono text-xs text-ink-soft'>Not available: this deployment has no allowlist gate.</span>
+                  <span className='block font-mono text-xs text-muted'>Not available: this deployment has no allowlist gate.</span>
                 )}
               </span>
             </label>
@@ -188,7 +187,7 @@ const CreateAuction: React.FC = () => {
                   placeholder='One address per line, or separated by commas'
                   className='field font-mono text-xs'
                 />
-                <p className={`mt-1 text-xs ${listError && allowlistText.trim() !== '' ? 'text-danger' : 'text-ink-soft'}`}>
+                <p className={`mt-1 text-xs ${listError && allowlistText.trim() !== '' ? 'text-negative' : 'text-muted'}`}>
                   {listError && allowlistText.trim() !== ''
                     ? listError
                     : `${listed.count} unique ${listed.count === 1 ? 'address' : 'addresses'} (at most ${MAX_ALLOWLIST_MEMBERS}). Sorted and deduplicated before they are sent.`}
@@ -214,7 +213,7 @@ const CreateAuction: React.FC = () => {
                 </option>
               ))}
             </select>
-            <p className='mt-1 text-xs text-ink-soft'>
+            <p className='mt-1 text-xs text-muted'>
               The duration counts from the request. Key generation takes several minutes and bids open only once the key is published, so
               bidding gets less than the full time. Proving a bid takes several minutes too: leave room for it.
             </p>
@@ -245,7 +244,7 @@ const CreateAuction: React.FC = () => {
           )}
           {create.error && <div className='note bad'>{create.error}</div>}
 
-          <button type='submit' disabled={!canSubmit} className='btn accent lg block'>
+          <button type='submit' disabled={!canSubmit} className='btn accent block'>
             {busy ? (
               <>
                 <Spinner size={14} /> {STEP_LABELS[create.step as Exclude<typeof create.step, 'idle'>]}
@@ -254,19 +253,19 @@ const CreateAuction: React.FC = () => {
               'Create auction'
             )}
           </button>
-          <p className='text-center text-xs text-ink-soft'>
+          <p className='text-center text-xs text-muted'>
             Creating an auction pays the E3 fee in the fee token{create.feeToken ? ` (${create.feeToken.symbol})` : ''}. Bidders pay only
             gas.
           </p>
         </form>
 
-        <aside className='card flat space-y-5 lg:sticky lg:top-8'>
+        <aside className='card flat space-y-5 lg:sticky lg:top-24'>
           <p className='mono muted'>What happens next</p>
           <ol className='steps'>
             {NEXT_STEPS.map((text, index) => (
               <li key={text} className='step'>
                 <span className='pin'>{index + 1}</span>
-                <p className='text-sm text-ink-2'>{text}</p>
+                <p className='text-sm text-ink'>{text}</p>
               </li>
             ))}
           </ol>

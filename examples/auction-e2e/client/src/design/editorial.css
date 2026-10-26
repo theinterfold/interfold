@@ -4,102 +4,115 @@
  * without even the implied warranty of MERCHANTABILITY
  * or FITNESS FOR A PARTICULAR PURPOSE.
  *
- * Design primitives of the auction app: warm ledger paper, ink rules, a forest-green accent and an
- * amber for "in progress". Same editorial family as CRISP (serif display, mono labels, square
- * corners, hard-offset hover shadow) with its own palette. Layout stays in Tailwind utilities.
+ * Component classes of the demo, in the visual language of The Interfold governance app: white
+ * panels with one hairline stroke and a 6px corner, Interfold Black actions, Inter for the
+ * interface, Gramercy for editorial titles and Office Code Pro for technical labels. No shadows.
+ * The values come from `tokens.css`; layout stays in Tailwind utilities. Both demo clients carry
+ * this file unchanged.
  */
 
-:root {
-  --paper: #f4efe4;
-  --paper-2: #ebe4d3;
-  --card: #fbf8f0;
-  --ink: #12150f;
-  --ink-2: #2b2f27;
-  --ink-soft: #6a6e62;
-  --rule: #12150f1f;
-  --rule-strong: #12150f4d;
-  --accent: #1f5a3a;
-  --accent-tint: #cfe3d2;
-  --accent-soft: #e3efe4;
-  --warm: #a8651a;
-  --warm-tint: #f1dcb8;
-  --danger: #8b2a14;
-  --danger-tint: #f3d5cb;
-
-  --f-serif: 'Source Serif 4', 'Source Serif Pro', 'Iowan Old Style', Georgia, serif;
-  --f-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --f-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
-
-  --pad-x: clamp(20px, 4vw, 64px);
-}
-
 /* ---------- Type ---------- */
+/* Tracked mono kicker, as the governance `.kicker` and the faucet strip network label. */
 .mono {
-  font-family: var(--f-mono);
-  font-size: 11px;
-  letter-spacing: 0.14em;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.4;
+  letter-spacing: 1px;
   text-transform: uppercase;
   font-weight: 500;
 }
-.mono-sm {
-  font-family: var(--f-mono);
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+/* Metadata: 12px/500 Inter. */
+.meta {
+  font: var(--ui-label-font);
 }
 .display {
-  font-family: var(--f-serif);
+  font-family: var(--font-serif);
   font-weight: 400;
-  font-size: clamp(44px, 7.4vw, 104px);
-  line-height: 0.98;
-  letter-spacing: -0.02em;
+  font-size: var(--type-h1);
+  line-height: var(--type-h1-leading);
+  letter-spacing: var(--type-h1-tracking);
   margin: 0;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
 }
 .display em {
-  font-style: italic;
-  color: var(--accent);
+  font-style: normal;
+  color: var(--vote-action);
 }
+@media (min-width: 768px) {
+  .display {
+    font-size: var(--type-h1-md);
+  }
+}
+/* Editorial page title, as `.governance-page-intro h1`. */
 .h1 {
   text-wrap: balance;
-  font-family: var(--f-serif);
+  font-family: var(--font-serif);
   font-weight: 400;
-  font-size: clamp(34px, 4.6vw, 60px);
-  line-height: 1.04;
-  letter-spacing: -0.015em;
+  font-size: 36px;
+  line-height: 0.95;
+  letter-spacing: -1.08px;
   margin: 0;
   overflow-wrap: anywhere;
 }
+@media (min-width: 768px) {
+  .h1 {
+    font-size: 48px;
+    letter-spacing: -1.44px;
+  }
+}
+/* A title the user typed: Inter 24/500, as the governance proposal titles. */
+.title {
+  font: var(--ui-title-font);
+  letter-spacing: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+@media (min-width: 768px) {
+  .title {
+    font-size: 28px;
+  }
+}
 .h2 {
   text-wrap: balance;
-  font-family: var(--f-serif);
+  font-family: var(--font-serif);
   font-weight: 400;
-  font-size: clamp(26px, 3vw, 38px);
-  line-height: 1.1;
-  letter-spacing: -0.01em;
+  font-size: var(--type-h2);
+  line-height: var(--type-h2-leading);
+  letter-spacing: var(--type-h2-tracking);
   margin: 0;
 }
+@media (min-width: 768px) {
+  .h2 {
+    font-size: var(--type-h2-md);
+  }
+}
 .h3 {
-  font-family: var(--f-serif);
-  font-weight: 500;
-  font-size: 21px;
-  line-height: 1.2;
+  font: 500 20px/1.2 var(--font-sans);
+  letter-spacing: 0;
   margin: 0;
   overflow-wrap: anywhere;
 }
 .lede {
-  font-family: var(--f-serif);
-  font-size: 19px;
+  font-family: var(--font-sans);
+  font-size: var(--type-support);
   line-height: 1.5;
-  color: var(--ink-2);
-  max-width: 58ch;
+  color: var(--muted);
+  max-width: 62ch;
+}
+@media (min-width: 768px) {
+  .lede {
+    font-size: var(--type-support-md);
+  }
 }
 .muted {
-  color: var(--ink-soft);
+  color: var(--muted);
 }
 .prose-ed p {
   margin: 0 0 14px;
+  font-size: 15px;
   line-height: 1.6;
-  color: var(--ink-2);
+  color: var(--ink);
 }
 .prose-ed p:last-child {
   margin-bottom: 0;
@@ -107,15 +120,20 @@
 
 /* ---------- Shell ---------- */
 .page {
-  width: 100%;
-  max-width: 1160px;
+  width: calc(100% - 2 * var(--site-content-gutter));
+  max-width: var(--site-content-width);
   margin: 0 auto;
-  padding: clamp(24px, 3.4vw, 52px) var(--pad-x);
+  padding-block: 24px 80px;
+}
+@media (min-width: 768px) {
+  .page {
+    padding-top: 40px;
+  }
 }
 .hr {
   height: 1px;
   width: 100%;
-  background: var(--rule-strong);
+  background: var(--rule);
 }
 .hr-soft {
   height: 1px;
@@ -123,101 +141,77 @@
   background: var(--rule);
 }
 
-.topbar {
+/* Centred page introduction: kicker, serif title, supporting line. */
+/* Page introduction, as the governance `.governance-page-intro`: centred title and supporting line. */
+.page-intro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-block: 64px;
+  text-align: center;
+}
+.page-intro .lede {
+  max-width: 320px;
+  margin: var(--ui-space-tight) auto 0;
+}
+.page-intro .actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 14px 28px;
-  padding: 16px var(--pad-x);
-  background: var(--paper-2);
-  border-bottom: 1px solid var(--rule-strong);
+  justify-content: center;
+  gap: var(--ui-space-controls);
+  margin-top: var(--ui-space-section);
 }
-.brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  font-family: var(--f-serif);
-  font-size: 25px;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
+.page-intro.wide .lede {
+  max-width: 560px;
 }
-.brand .glyph {
-  width: 13px;
-  height: 13px;
-  background: var(--accent);
-  transform: rotate(45deg);
-}
-.topnav {
-  display: flex;
-  gap: 22px;
-}
-.topnav a {
-  position: relative;
-  padding: 6px 2px;
-  font-family: var(--f-mono);
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--ink-soft);
-  font-weight: 500;
-}
-.topnav a:hover,
-.topnav a.active {
-  color: var(--ink);
-}
-.topnav a.active::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -17px;
-  height: 2px;
-  background: var(--ink);
-}
-.topbar-right {
-  margin-left: auto;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-}
-@media (max-width: 720px) {
-  .topnav {
-    order: 3;
-    width: 100%;
-    gap: 18px;
+@media (min-width: 768px) {
+  .page-intro {
+    padding-block: 112px 96px;
   }
-  .topnav a.active::after {
-    bottom: -8px;
+  .page-intro.wide .lede {
+    max-width: 640px;
   }
-  .topbar-right {
-    margin-left: 0;
+  .page-intro .lede {
+    max-width: 440px;
+    margin-top: var(--ui-space-related);
   }
 }
 
-.footer {
-  margin-top: auto;
+/* Section head outside the panels, as governance "Governance activity": 20/600 title, a note and a
+   hairline, with the section action at the end. */
+.page-head {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 12px 28px;
-  padding: 24px var(--pad-x);
-  border-top: 1px solid var(--rule-strong);
-  background: var(--paper-2);
-  font-family: var(--f-mono);
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink-soft);
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--ui-space-tight) var(--ui-space-section);
+  margin-bottom: var(--ui-space-section);
+  padding-bottom: var(--ui-space-controls);
+  border-bottom: 1px solid var(--rule);
 }
-.footer .links {
+.page-head h2 {
+  font: 600 20px/1.2 var(--font-sans);
+  letter-spacing: 0;
+}
+.page-head p {
+  margin-top: var(--ui-space-tight);
+  color: var(--muted);
+  font: var(--ui-body-font);
+}
+
+.breadcrumb {
   display: flex;
+  align-items: baseline;
   flex-wrap: wrap;
-  gap: 8px 24px;
-  margin-left: auto;
+  gap: 12px;
+  color: var(--muted);
+  font: 400 13px/1.5 var(--font-sans);
 }
-.footer a:hover {
+.breadcrumb a:hover {
   color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 /* ---------- Buttons and links ---------- */
@@ -226,152 +220,249 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 13px 22px;
+  gap: 8px;
+  min-height: var(--action-height);
+  padding: var(--action-padding);
   border: 1px solid var(--ink);
+  border-radius: var(--action-radius);
   background: var(--ink);
   color: var(--paper);
-  font-family: var(--f-mono);
-  font-size: 12px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  font-weight: 500;
+  font: var(--action-font);
+  letter-spacing: 0;
   cursor: pointer;
-  border-radius: 0;
   text-align: center;
   transition:
-    transform 0.15s,
-    box-shadow 0.15s,
-    background 0.15s,
-    color 0.15s;
+    background-color 160ms,
+    border-color 160ms,
+    opacity 160ms;
 }
 .btn:not(:disabled):hover {
-  transform: translate(-1px, -1px);
-  box-shadow: 3px 3px 0 0 var(--ink);
+  background: var(--action-hover);
+  border-color: var(--action-hover);
 }
-.btn:not(:disabled):active {
-  transform: none;
-  box-shadow: none;
+.btn:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
 }
+/* Secondary action: white with the hairline stroke. */
 .btn.ghost {
-  background: transparent;
+  background: var(--paper);
+  border-color: var(--ui-stroke);
   color: var(--ink);
 }
 .btn.ghost:not(:disabled):hover {
-  background: var(--ink);
-  color: var(--paper);
-  box-shadow: none;
-  transform: none;
+  background: var(--surface-muted);
+  border-color: var(--ui-stroke-hover);
 }
+/* The deliberate brand-green action, as the governance vote button. */
 .btn.accent {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--vote-action);
+  border-color: var(--vote-action);
+  color: var(--paper);
 }
 .btn.accent:not(:disabled):hover {
-  box-shadow: 3px 3px 0 0 var(--ink);
+  background: var(--vote-action-hover);
+  border-color: var(--vote-action-hover);
 }
 .btn.sm {
-  padding: 8px 14px;
-  font-size: 10px;
+  min-height: var(--action-compact-height);
+  padding: var(--action-compact-padding);
 }
-.btn.lg {
-  padding: 17px 30px;
-  font-size: 13px;
+@media (max-width: 767px), (pointer: coarse) {
+  .btn.sm {
+    min-height: 44px;
+  }
 }
 .btn.block {
   width: 100%;
 }
 .btn:disabled {
   cursor: not-allowed;
-  background: var(--paper-2);
-  border-color: var(--rule-strong);
-  color: var(--ink-soft);
+  background: #eef1ef;
+  border-color: #e2e7e3;
+  color: #738079;
 }
 
 .linkish {
   display: inline-block;
-  padding-bottom: 2px;
+  padding-bottom: 3px;
   border-bottom: 1px solid currentColor;
-  font-family: var(--f-mono);
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font: 600 13px/1.4 var(--font-sans);
 }
 .linkish:hover {
-  color: var(--accent);
+  color: var(--vote-action);
 }
 .addr {
-  font-family: var(--f-mono);
-  font-size: 0.86em;
+  font-family: var(--font-mono);
+  font-size: 0.92em;
   letter-spacing: 0;
-}
-a.addr {
-  border-bottom: 1px dotted var(--ink-soft);
+  overflow-wrap: anywhere;
 }
 a.addr:hover {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
+/* The connected wallet, as `.interfold-header-wallet`. */
 .wallet {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
   gap: 10px;
-  padding: 8px 14px;
-  border: 1px solid var(--ink);
-  background: var(--card);
-  font-family: var(--f-mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
+  min-height: var(--action-compact-height);
+  padding: 8px 12px;
+  border: 1px solid var(--ui-stroke);
+  border-radius: var(--action-radius);
+  background: rgb(255 255 255 / 0.4);
+  color: var(--site-chrome-ink);
+  font: 500 14px/1.4 var(--font-sans);
+  white-space: nowrap;
   cursor: pointer;
+  transition:
+    background-color 150ms,
+    border-color 150ms;
 }
 .wallet:hover {
-  background: var(--ink);
-  color: var(--paper);
+  background: rgb(255 255 255 / 0.75);
+  border-color: var(--ui-stroke-hover);
 }
-.wallet .blockie {
-  width: 14px;
-  height: 14px;
-  background: conic-gradient(from 12deg, var(--accent) 0 25%, var(--warm) 0 50%, var(--ink) 0 75%, var(--accent-tint) 0 100%);
-  border: 1px solid var(--ink);
+.wallet:focus-visible {
+  outline: 2px solid var(--site-chrome-ink);
+  outline-offset: 3px;
+}
+.wallet > svg {
+  flex-shrink: 0;
+}
+.wallet-address {
+  font: 500 12px/1.4 var(--font-mono);
+}
+
+/* Testnet strip under the header, on the page content column, as the governance faucet strip. */
+.faucet-strip {
+  width: 100%;
+  border-bottom: 1px solid var(--ui-stroke);
+}
+.faucet-strip-content {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-space-tight) var(--ui-space-controls);
+  padding-block: var(--ui-space-tight);
+  color: var(--muted);
+  font: var(--ui-body-font);
+}
+.faucet-strip-content p {
+  margin: 0;
+}
+.faucet-strip-network {
+  margin-right: var(--ui-space-tight);
+  color: var(--ink);
+  font: 500 12px/1.4 var(--font-mono);
+  letter-spacing: 1px;
+  text-transform: uppercase;
 }
 
 /* ---------- Surfaces ---------- */
+/* A panel: white, one hairline, one corner, no shadow. */
 .card {
-  background: var(--card);
-  border: 1px solid var(--ink);
-  padding: 24px;
-  box-shadow: 0 1px 0 0 #12150f0d;
-}
-.card.link {
-  transition:
-    transform 0.15s,
-    box-shadow 0.15s;
-}
-.card.link:hover {
-  transform: translate(-2px, -2px);
-  box-shadow: 4px 4px 0 0 var(--ink);
+  min-width: 0;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--ui-radius);
+  padding: var(--ui-space-section);
 }
 .card.flat {
-  border-color: var(--rule-strong);
-  box-shadow: none;
+  background: var(--surface-muted);
 }
 .card.tint {
-  background: var(--accent-soft);
+  background: var(--surface-selected);
 }
 
+/* Panel heading: 20/600 title and a hairline, as `.ui-panel-header`. */
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-space-controls);
+  margin-bottom: 20px;
+  padding-bottom: var(--ui-space-controls);
+  border-bottom: 1px solid var(--rule);
+}
+.panel-header h2 {
+  margin: 0;
+  font: 600 20px/1.2 var(--font-sans);
+  overflow-wrap: anywhere;
+}
+.panel-header .meta {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* A list of links in one bordered surface, as the governance proposal list. */
+.list {
+  min-width: 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--ui-radius);
+  background: var(--paper);
+  overflow: hidden;
+}
+.list > * + * {
+  border-top: 1px solid var(--rule);
+}
+.list-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px var(--ui-space-section);
+  align-items: start;
+  padding: 20px var(--ui-space-section);
+  transition: background-color 160ms;
+}
+a.list-row:hover,
+a.list-row:focus-visible {
+  background: var(--surface-muted);
+}
+a.list-row:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+.list-row .row-main {
+  min-width: 0;
+}
+.list-row .row-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  min-width: 0;
+  text-align: right;
+}
+@media (max-width: 639px) {
+  .list-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .list-row .row-side {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-start;
+    text-align: left;
+  }
+}
+
+/* Status badge, as the governance `.badge`. */
 .tag {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px;
-  border: 1px solid var(--ink);
-  background: var(--paper);
-  font-family: var(--f-mono);
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--ui-radius);
+  background: var(--status-pending-bg);
+  color: var(--status-pending-fg);
+  font: var(--ui-status-font);
+  letter-spacing: 0;
   white-space: nowrap;
 }
 .tag.dot::before {
@@ -382,31 +473,27 @@ a.addr:hover {
   background: currentColor;
 }
 .tag.live {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--vote-action);
+  color: var(--paper);
 }
 .tag.live.dot::before {
   animation: pulse 1.4s ease-in-out infinite;
 }
 .tag.wait {
-  background: var(--warm-tint);
-  border-color: var(--warm);
-  color: #5c3510;
+  background: var(--status-warn-bg);
+  color: var(--status-warn-fg);
 }
 .tag.done {
-  background: var(--ink);
-  color: var(--paper);
+  background: var(--surface-selected);
+  color: var(--vote-action);
 }
 .tag.muted {
-  background: var(--paper-2);
-  border-color: var(--rule-strong);
-  color: var(--ink-soft);
+  background: var(--status-pending-bg);
+  color: var(--status-pending-fg);
 }
 .tag.bad {
-  background: var(--danger-tint);
-  border-color: var(--danger);
-  color: var(--danger);
+  background: var(--status-bad-bg);
+  color: var(--status-bad-fg);
 }
 @keyframes pulse {
   0%,
@@ -418,74 +505,106 @@ a.addr:hover {
   }
 }
 
+/* A message: neutral surface, hairline, a clear indication where it matters. */
 .note {
-  padding: 14px 16px;
-  border: 1px solid var(--rule-strong);
-  border-left-width: 4px;
-  background: var(--card);
-  font-size: 14px;
-  line-height: 1.5;
-  color: var(--ink-2);
+  padding: 12px var(--ui-space-controls);
+  border: 1px solid var(--rule);
+  border-radius: var(--action-radius);
+  background: var(--surface-muted);
+  font: var(--ui-body-font);
+  color: var(--ink);
   overflow-wrap: anywhere;
 }
 .note.ok {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  background: var(--surface-selected);
+  border-color: var(--ui-stroke-hover);
+  box-shadow: inset 3px 0 0 var(--vote-action);
 }
 .note.warn {
-  border-color: var(--warm);
-  background: #f8ecd3;
+  background: var(--status-warn-bg);
+  border-color: transparent;
+  color: var(--status-warn-fg);
 }
 .note.bad {
-  border-color: var(--danger);
-  background: var(--danger-tint);
-  color: var(--danger);
+  background: color-mix(in srgb, var(--negative) 8%, var(--paper));
+  border-color: var(--negative);
+  color: var(--status-bad-fg);
 }
 
 /* ---------- Forms ---------- */
 .field {
+  display: block;
   width: 100%;
-  padding: 11px 12px;
-  border: 1px solid var(--ink);
-  border-radius: 0;
-  background: var(--card);
+  min-height: var(--action-height);
+  padding: 12px var(--ui-space-controls);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--action-radius);
+  background: var(--paper);
   color: var(--ink);
-  font-family: var(--f-sans);
-  font-size: 15px;
+  font: 400 14px/1.4 var(--font-sans);
+  transition: border-color 180ms;
+}
+.field::placeholder {
+  color: var(--muted);
+  opacity: 0.75;
+}
+.field:hover:not(:disabled) {
+  border-color: var(--ink);
 }
 .field:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  outline: none;
+  border-color: var(--ink);
+  box-shadow: 0 0 0 1px var(--ink);
 }
 .field:disabled {
-  background: var(--paper-2);
-  color: var(--ink-soft);
+  background: var(--surface-muted);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+textarea.field {
+  min-height: 88px;
+  resize: vertical;
+}
+select.field {
+  appearance: none;
+  padding-right: 44px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1 1.5l5 5 5-5' stroke='%23121718' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 18px center;
 }
 .label {
   display: block;
-  margin-bottom: 6px;
-  font-family: var(--f-mono);
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  font-weight: 500;
+  margin-bottom: var(--ui-space-tight);
+  font: var(--ui-label-font);
+  color: var(--muted);
 }
+/* A framed choice: a white card, a neutral stroke; selection is the dark stroke, not a tint. */
 .choice {
   display: flex;
+  align-items: flex-start;
   gap: 14px;
-  padding: 14px 16px;
+  min-height: 62px;
+  padding: 14px var(--ui-space-controls);
   border: 1px solid var(--rule-strong);
-  background: var(--card);
+  border-radius: var(--ui-radius);
+  background: var(--paper);
   cursor: pointer;
+  transition: border-color 180ms;
+}
+.choice:hover {
+  border-color: var(--ink);
 }
 .choice.on {
   border-color: var(--ink);
-  background: var(--accent-soft);
-  box-shadow: 3px 3px 0 0 var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
+.choice:has(input:focus-visible) {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
 }
 .choice input {
   margin-top: 4px;
-  accent-color: var(--accent);
+  accent-color: var(--ink);
 }
 
 /* ---------- Timeline ---------- */
@@ -524,10 +643,10 @@ a.addr:hover {
   width: 28px;
   height: 28px;
   border: 1px solid var(--rule-strong);
-  background: var(--card);
-  color: var(--ink-soft);
-  font-family: var(--f-mono);
-  font-size: 11px;
+  border-radius: var(--ui-radius);
+  background: var(--paper);
+  color: var(--muted);
+  font: 500 12px/1 var(--font-mono);
 }
 .step.done .pin {
   background: var(--ink);
@@ -535,12 +654,12 @@ a.addr:hover {
   color: var(--paper);
 }
 .step.active .pin {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--vote-action);
+  border-color: var(--vote-action);
+  color: var(--paper);
 }
 .step.todo {
-  color: var(--ink-soft);
+  color: var(--muted);
 }
 
 /* ---------- Spinner, skeleton, progress ---------- */
@@ -558,10 +677,10 @@ a.addr:hover {
   }
 }
 .skeleton {
-  background: linear-gradient(90deg, var(--paper-2) 25%, var(--card) 50%, var(--paper-2) 75%);
+  border-radius: var(--ui-radius);
+  background: linear-gradient(90deg, var(--surface-muted) 25%, var(--surface-hover) 50%, var(--surface-muted) 75%);
   background-size: 200% 100%;
   animation: shimmer 1.4s linear infinite;
-  border: 1px solid var(--rule);
 }
 @keyframes shimmer {
   to {
@@ -577,6 +696,7 @@ a.addr:hover {
   width: 10px;
   height: 10px;
   border: 1px solid var(--ink);
+  border-radius: 2px;
 }
 .pips i.on {
   background: var(--ink);
@@ -584,10 +704,10 @@ a.addr:hover {
 
 /* ---------- Ciphertext visual ---------- */
 .cipher {
-  font-family: var(--f-mono);
-  font-size: 10.5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
   line-height: 1.55;
-  color: var(--ink-soft);
+  color: var(--muted);
   word-break: break-all;
 }
 .cipher .blk {
@@ -597,8 +717,8 @@ a.addr:hover {
   animation: blk-in 0.5s ease forwards;
 }
 .cipher .hot {
-  color: var(--accent);
-  font-weight: 600;
+  color: var(--vote-action);
+  font-weight: 500;
 }
 @keyframes blk-in {
   to {
@@ -616,42 +736,42 @@ a.addr:hover {
   position: relative;
   height: 22px;
   border: 1px solid var(--rule-strong);
+  border-radius: 2px;
 }
 .slots .cell.rand {
-  background: repeating-linear-gradient(45deg, var(--ink-soft) 0 1px, transparent 1px 4px);
-  background-color: var(--paper-2);
+  background: repeating-linear-gradient(45deg, var(--muted-2) 0 1px, transparent 1px 4px);
+  background-color: var(--surface-muted);
 }
 .slots .cell.zero {
-  background: var(--card);
+  background: var(--paper);
 }
 .slots .cell.read {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--vote-action);
+  border-color: var(--vote-action);
 }
 .slots .col-price {
-  box-shadow: 0 0 0 2px var(--warm);
+  box-shadow: 0 0 0 2px var(--ink);
   z-index: 1;
 }
 .slots .axis {
-  font-family: var(--f-mono);
-  font-size: 10px;
+  font: 500 11px/1.4 var(--font-mono);
   text-align: center;
-  color: var(--ink-soft);
+  color: var(--muted);
 }
 .slots .row-name {
   display: flex;
   align-items: center;
   gap: 6px;
   padding-right: 12px;
-  font-size: 12px;
+  font: var(--ui-label-font);
   white-space: nowrap;
 }
 .legend {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 22px;
-  font-size: 12px;
-  color: var(--ink-soft);
+  font: var(--ui-label-font);
+  color: var(--muted);
 }
 .legend span {
   display: inline-flex;
@@ -659,14 +779,15 @@ a.addr:hover {
   gap: 8px;
 }
 .legend .slots-swatch.rand {
-  background: repeating-linear-gradient(45deg, var(--ink-soft) 0 1px, transparent 1px 4px);
-  background-color: var(--paper-2);
+  background: repeating-linear-gradient(45deg, var(--muted-2) 0 1px, transparent 1px 4px);
+  background-color: var(--surface-muted);
 }
 .legend i {
   display: block;
   width: 18px;
   height: 14px;
   border: 1px solid var(--rule-strong);
+  border-radius: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -676,4 +797,112 @@ a.addr:hover {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* A long id, shortened, with its copy button. */
+.id-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--ui-stroke);
+  border-radius: var(--ui-radius);
+  background: var(--paper);
+  color: var(--muted);
+  font: 500 12px/1.4 var(--font-mono);
+  cursor: pointer;
+  transition:
+    background-color 150ms,
+    border-color 150ms,
+    color 150ms;
+}
+.id-chip:hover {
+  background: var(--surface-muted);
+  border-color: var(--ui-stroke-hover);
+  color: var(--ink);
+}
+.id-chip:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+/* An id shown as plain text in a row or a fact. */
+.id {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Inset, option, value ---------- */
+/* A bordered box inside a panel. The highlighted result is a neutral selected surface, not a tint. */
+.inset {
+  min-width: 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--ui-radius);
+  background: var(--paper);
+}
+.inset.ok {
+  background: var(--surface-selected);
+  border-color: var(--ui-stroke-hover);
+}
+.inset.strong {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
+/* A pick among a few options (a price step, a mode): white, neutral stroke, dark stroke when selected. */
+.opt {
+  min-height: var(--action-compact-height);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--ui-radius);
+  background: var(--paper);
+  color: var(--ink);
+  font: 600 14px/1.4 var(--font-sans);
+  font-variant-numeric: tabular-nums lining-nums;
+  cursor: pointer;
+  transition: border-color 180ms;
+}
+.opt:hover:not(:disabled) {
+  border-color: var(--ink);
+}
+.opt.on {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
+.opt:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.opt:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+/* A figure that is the point of its panel: Inter 600, tabular, as the governance review amounts. */
+.value {
+  font: 600 36px/1.1 var(--font-sans);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+.value.md {
+  font-size: 28px;
+}
+.value.sm {
+  font-size: 20px;
+  line-height: 1.4;
+}
+
+/* A count beside a heading, as the governance `.ui-panel-count`. */
+.ui-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 24px;
+  padding-inline: 7px;
+  border-radius: var(--ui-radius);
+  background: var(--surface-hover);
+  color: var(--muted);
+  font: var(--ui-status-font);
 }

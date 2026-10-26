@@ -13,7 +13,7 @@ export const ConnectPrompt: React.FC<{ children: React.ReactNode }> = ({ childre
     <span>{children}</span>
     <ConnectKitButton.Custom>
       {({ show, isConnecting }) => (
-        <button type='button' onClick={show} className='btn sm'>
+        <button type='button' onClick={show} className='btn ghost sm'>
           {isConnecting ? 'Connecting…' : 'Connect wallet'}
         </button>
       )}

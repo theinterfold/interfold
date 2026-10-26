@@ -1,3 +1,5 @@
+@import './design/tokens.css';
+@import './design/chrome.css';
 @import './design/editorial.css';
 
 @tailwind base;
@@ -10,16 +12,22 @@ body,
   min-height: 100vh;
 }
 
+html {
+  background-color: var(--page-ground);
+}
+
 body {
   margin: 0;
   overflow-x: hidden;
-  background: var(--paper);
+  background: var(--page-ground);
   color: var(--ink);
-  font-family: var(--f-sans);
-  font-size: 15px;
-  line-height: 1.5;
+  font: var(--ui-body-font);
+  font-optical-sizing: auto;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  /* A long id, hash or address wraps instead of widening the page. */
+  overflow-wrap: break-word;
 }
 
 #root {
@@ -32,9 +40,15 @@ a {
   text-decoration: none;
 }
 
+input[type='range'],
+input[type='checkbox'],
+input[type='radio'] {
+  accent-color: var(--ink);
+}
+
 ::selection {
-  background: var(--accent);
-  color: #fff;
+  background: var(--mint-line);
+  color: var(--ink);
 }
 
 input[type='number']::-webkit-outer-spin-button,

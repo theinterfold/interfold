@@ -13,8 +13,10 @@ import { useCommitteeKey } from '@/hooks/useCommitteeKey'
 import { useBidCount } from '@/hooks/useBidCount'
 import { useWallet } from '@/hooks/useWallet'
 import { formatDateTime, formatPayment, formatSaleTokens, formatStepPrice, phaseOf, timeLeftLabel } from '@/utils/sale'
+import { shortId } from '@/utils/format'
 import { getContractAddresses } from '@/utils/env-config'
 import BidPanel from '@/components/BidPanel'
+import CopyId from '@/components/CopyId'
 import CreatorPanel from '@/components/CreatorPanel'
 import { AddressLink } from '@/components/Explorer'
 import PhaseTimeline from '@/components/PhaseTimeline'
@@ -57,7 +59,7 @@ const SalePage: React.FC = () => {
       </div>
     )
   }
-  if (sale === null) return <NotFound text={`There is no sale Nº ${e3Id} on this deployment.`} />
+  if (sale === null) return <NotFound text={`There is no sale Nº ${shortId(e3Id)} on this deployment.`} />
   if (phase === null) return null
 
   const { e3Program } = getContractAddresses()
@@ -69,13 +71,18 @@ const SalePage: React.FC = () => {
   return (
     <div className='page space-y-10'>
       <header className='space-y-4'>
-        <Link to='/' className='linkish'>
-          All sales
-        </Link>
+        <nav className='breadcrumb' aria-label='Breadcrumb'>
+          <Link to='/'>All sales</Link>
+          <span aria-hidden>/</span>
+          <span aria-current='page'>Sale</span>
+        </nav>
         <div className='flex flex-wrap items-start justify-between gap-4'>
-          <div className='min-w-0 space-y-3'>
-            <p className='mono muted'>Sale Nº {sale.e3Id.toString().padStart(3, '0')} · sealed one-batch uniform price</p>
-            <h1 className='h1'>{sale.title}</h1>
+          <div className='min-w-0 flex-1 space-y-3'>
+            <div className='flex min-w-0 flex-wrap items-center gap-3'>
+              <p className='mono muted'>Sealed one-batch uniform price</p>
+              <CopyId id={sale.e3Id} />
+            </div>
+            <h1 className='title'>{sale.title}</h1>
           </div>
           <div className='flex items-center gap-3'>
             <StatusBadge phase={phase} />
@@ -88,7 +95,7 @@ const SalePage: React.FC = () => {
         </p>
       </header>
 
-      <dl className='card grid grid-cols-2 gap-x-6 gap-y-5 !p-5 md:grid-cols-3 lg:grid-cols-4'>
+      <dl className='card grid grid-cols-2 gap-x-6 gap-y-5 md:grid-cols-3 lg:grid-cols-4'>
         <Fact label='Bidders'>
           <span className='font-mono text-xs'>
             {sale.bidderCount}/{MAX_BIDDERS}
@@ -160,8 +167,8 @@ const SalePage: React.FC = () => {
 
 const Fact: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
   <div className='min-w-0'>
-    <dt className='mono-sm muted'>{label}</dt>
-    <dd className='mt-1 text-sm'>{children}</dd>
+    <dt className='meta muted'>{label}</dt>
+    <dd className='mt-1 text-sm font-medium'>{children}</dd>
   </div>
 )
 

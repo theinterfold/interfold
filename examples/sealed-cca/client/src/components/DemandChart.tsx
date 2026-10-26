@@ -69,7 +69,7 @@ const DemandChart: React.FC<Props> = ({ sale, counts, clearing, myLevel }) => {
         {ticks.map((tick) => (
           <g key={tick}>
             <line x1={MARGIN.left} x2={WIDTH - MARGIN.right} y1={y(tick)} y2={y(tick)} stroke='var(--rule)' />
-            <text x={MARGIN.left - 8} y={y(tick) + 4} textAnchor='end' className='fill-ink-soft font-mono' fontSize={10}>
+            <text x={MARGIN.left - 8} y={y(tick) + 4} textAnchor='end' className='fill-muted font-mono' fontSize={10}>
               {formatAmount(BigInt(Math.round(tick)), 0)}
             </text>
           </g>
@@ -81,8 +81,8 @@ const DemandChart: React.FC<Props> = ({ sale, counts, clearing, myLevel }) => {
               y={y(value)}
               width={band * 0.68}
               height={Math.max(y(0) - y(value), 0)}
-              fill={filled(level) ? 'var(--accent)' : 'var(--accent-tint)'}
-              stroke='var(--accent)'
+              fill={filled(level) ? 'var(--vote-action)' : 'var(--surface-hover)'}
+              stroke='var(--vote-action)'
             >
               <title>
                 {`Step ${level}: price ${formatStepPrice(sale, level)} ${sale.paymentToken.symbol}. ${counts[level]} bidders want ${formatSaleTokens(sale, BigInt(Math.round(value * 10 ** sale.saleToken.decimals)))}`}
@@ -91,11 +91,11 @@ const DemandChart: React.FC<Props> = ({ sale, counts, clearing, myLevel }) => {
             <text x={x(level)} y={y(value) - 6} textAnchor='middle' className='fill-ink font-mono' fontSize={11}>
               {counts[level].toString()}
             </text>
-            <text x={x(level)} y={HEIGHT - MARGIN.bottom + 16} textAnchor='middle' className='fill-ink-soft font-mono' fontSize={10}>
+            <text x={x(level)} y={HEIGHT - MARGIN.bottom + 16} textAnchor='middle' className='fill-muted font-mono' fontSize={10}>
               {formatStepPrice(sale, level)}
             </text>
             {myLevel === level && (
-              <text x={x(level)} y={HEIGHT - MARGIN.bottom + 32} textAnchor='middle' className='fill-warm font-mono' fontSize={10}>
+              <text x={x(level)} y={HEIGHT - MARGIN.bottom + 32} textAnchor='middle' className='fill-ink font-mono' fontSize={10}>
                 ▲ you
               </text>
             )}
@@ -106,28 +106,28 @@ const DemandChart: React.FC<Props> = ({ sale, counts, clearing, myLevel }) => {
           x2={WIDTH - MARGIN.right}
           y1={y(supply)}
           y2={y(supply)}
-          stroke='var(--danger)'
+          stroke='var(--negative)'
           strokeWidth={1.5}
           strokeDasharray='6 4'
         />
-        <text x={WIDTH - MARGIN.right} y={y(supply) - 6} textAnchor='end' className='fill-danger font-mono' fontSize={10}>
+        <text x={WIDTH - MARGIN.right} y={y(supply) - 6} textAnchor='end' className='fill-negative font-mono' fontSize={10}>
           supply {formatAmount(sale.supply, sale.saleToken.decimals)}
         </text>
         {priceX !== null && clearing && (
           <g>
-            <line x1={priceX} x2={priceX} y1={MARGIN.top - 8} y2={y(0)} stroke='var(--warm)' strokeWidth={2} />
-            <text x={priceX} y={MARGIN.top - 12} textAnchor='middle' className='fill-warm font-mono' fontSize={10}>
+            <line x1={priceX} x2={priceX} y1={MARGIN.top - 8} y2={y(0)} stroke='var(--ink)' strokeWidth={2} />
+            <text x={priceX} y={MARGIN.top - 12} textAnchor='middle' className='fill-ink font-mono' fontSize={10}>
               clears at {formatPriceValue(sale, clearing.pStar)}
             </text>
           </g>
         )}
-        <text x={MARGIN.left + plotW / 2} y={HEIGHT - 6} textAnchor='middle' className='fill-ink-soft font-mono' fontSize={10}>
+        <text x={MARGIN.left + plotW / 2} y={HEIGHT - 6} textAnchor='middle' className='fill-muted font-mono' fontSize={10}>
           price step ({sale.paymentToken.symbol} per {sale.saleToken.symbol})
         </text>
         <text
           transform={`translate(14 ${MARGIN.top + plotH / 2}) rotate(-90)`}
           textAnchor='middle'
-          className='fill-ink-soft font-mono'
+          className='fill-muted font-mono'
           fontSize={10}
         >
           {sale.saleToken.symbol} wanted
