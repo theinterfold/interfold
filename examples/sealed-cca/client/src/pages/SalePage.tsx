@@ -59,7 +59,7 @@ const SalePage: React.FC = () => {
       </div>
     )
   }
-  if (sale === null) return <NotFound text={`There is no sale Nº ${shortId(e3Id)} on this deployment.`} />
+  if (sale === null) return <NotFound text={`There is no sale ${shortId(e3Id)} on this deployment.`} />
   if (phase === null) return null
 
   const { e3Program } = getContractAddresses()
@@ -132,15 +132,15 @@ const SalePage: React.FC = () => {
       {error && <div className='note bad'>Could not refresh the sale: {error}</div>}
 
       <div className='grid items-start gap-8 lg:grid-cols-[1fr_1.25fr]'>
-        <Section eyebrow='Nº 01' title='Progress'>
+        <Section title='Progress'>
           <PhaseTimeline phase={phase} sale={sale} />
         </Section>
-        <Section eyebrow='Nº 02' title='Your bid'>
+        <Section title='Your bid'>
           <BidPanel sale={sale} phase={phase} wallet={wallet} committeeKey={committeeKey} bidCount={bidCount} onSubmitted={onSubmitted} />
         </Section>
       </div>
 
-      <Section eyebrow='Nº 03' title='Result'>
+      <Section title='Result'>
         {phase === 'complete' ? (
           <ResultPanel sale={sale} account={wallet.address} />
         ) : phase === 'failed' ? (
@@ -157,7 +157,7 @@ const SalePage: React.FC = () => {
       </Section>
 
       {isCreator && phase === 'complete' && (
-        <Section eyebrow='Nº 04' title='Creator'>
+        <Section title='Creator'>
           <CreatorPanel sale={sale} />
         </Section>
       )}

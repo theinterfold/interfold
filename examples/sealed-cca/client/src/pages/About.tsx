@@ -51,10 +51,9 @@ const LIFECYCLE = [
   ],
 ] as const
 
-const Block: React.FC<{ eyebrow: string; title: string; children: React.ReactNode }> = ({ eyebrow, title, children }) => (
+const Block: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
   <section className='space-y-5'>
     <div className='space-y-2'>
-      <p className='mono muted'>{eyebrow}</p>
       <h2 className='h2'>{title}</h2>
       <div className='hr' />
     </div>
@@ -72,7 +71,7 @@ const About: React.FC = () => (
       </p>
     </header>
 
-    <Block eyebrow='Nº 01' title='Hidden and revealed'>
+    <Block title='Hidden and revealed'>
       <div className='card grid gap-6 sm:grid-cols-2'>
         <div className='space-y-2'>
           <p className='meta muted'>Hidden</p>
@@ -93,7 +92,7 @@ const About: React.FC = () => (
       </div>
     </Block>
 
-    <Block eyebrow='Nº 02' title='Life of a sale'>
+    <Block title='Life of a sale'>
       <ol className='steps'>
         {LIFECYCLE.map(([title, body], index) => (
           <li key={title} className='step done'>
@@ -107,7 +106,7 @@ const About: React.FC = () => (
       </ol>
     </Block>
 
-    <Block eyebrow='Nº 03' title='How the price is set'>
+    <Block title='How the price is set'>
       <p className='prose-ed max-w-3xl'>
         Each bidder locks the same escrow <em>E</em>. A bidder with a highest price at or above a price <em>p</em> is active at <em>p</em>{' '}
         and wants <em>E / p</em> tokens. The sale clears at the lowest price where the demand is at most the supply. If the demand at a
@@ -123,7 +122,7 @@ const About: React.FC = () => (
       </p>
     </Block>
 
-    <Block eyebrow='Nº 04' title='Proofs'>
+    <Block title='Proofs'>
       <div className='grid gap-5 md:grid-cols-2'>
         <div className='card flat space-y-2'>
           <p className='mono muted'>Bid proof</p>

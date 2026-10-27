@@ -131,7 +131,7 @@ const BidPanel: React.FC<BidPanelProps> = ({ sale, phase, wallet, committeeKey, 
           <div className='skeleton h-10' />
         ) : deposited ? (
           <div className='note ok'>
-            Escrow of {formatPayment(sale, sale.escrow)} locked. Your place is Nº {deposit.state.deposited ? deposit.state.index : ''}.
+            Escrow of {formatPayment(sale, sale.escrow)} locked. Your bidder index is {deposit.state.deposited ? deposit.state.index : ''}.
           </div>
         ) : (
           <>

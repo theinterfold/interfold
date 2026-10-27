@@ -22,7 +22,7 @@ const SaleCard: React.FC<{ sale: SaleState; now: bigint }> = ({ sale, now }) => 
         <div className='flex min-w-0 flex-wrap items-center gap-3'>
           <StatusBadge phase={phase} />
           <span className='id muted min-w-0 truncate' title={sale.e3Id.toString()}>
-            Nº {shortId(sale.e3Id)}
+            {shortId(sale.e3Id)}
           </span>
         </div>
         <h3 className='h3'>{sale.title}</h3>
