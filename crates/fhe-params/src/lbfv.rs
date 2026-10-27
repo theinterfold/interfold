@@ -67,6 +67,18 @@ pub const SECURE_16384_SIMD_LBFV_URS_SEED: [u8; 32] = [
     0xde, 0x9c, 0x63, 0x94, 0xfa, 0xb9, 0x4c, 0xa1, 0x90, 0xb0, 0x34, 0x27, 0xf4, 0xf8, 0x16, 0xcc,
 ];
 
+/// SHA-256 of `interfold/lbfv/secure-16384-simd-d6/v1/crs`.
+pub const SECURE_16384_SIMD_D6_LBFV_CRS_SEED: [u8; 32] = [
+    0xac, 0xdb, 0x45, 0x47, 0x9e, 0xf8, 0xd8, 0xb8, 0x40, 0x51, 0x43, 0xd3, 0x17, 0x81, 0x4a, 0x4d,
+    0xc7, 0x64, 0x9f, 0xa2, 0x43, 0x24, 0x51, 0xe9, 0x07, 0x27, 0x8e, 0x8b, 0x52, 0xdc, 0x9f, 0x98,
+];
+
+/// SHA-256 of `interfold/lbfv/secure-16384-simd-d6/v1/urs`.
+pub const SECURE_16384_SIMD_D6_LBFV_URS_SEED: [u8; 32] = [
+    0x13, 0x8b, 0xff, 0x9b, 0x7b, 0x54, 0x79, 0x75, 0xbd, 0x76, 0x2e, 0x25, 0x59, 0x71, 0x6a, 0x9b,
+    0x07, 0x81, 0x0c, 0x87, 0x6f, 0xe7, 0x33, 0xcd, 0xbc, 0xf6, 0x13, 0x02, 0xb4, 0xc3, 0x14, 0xf8,
+];
+
 /// SHA-256 of `interfold/lbfv/insecure/v1/crs`.
 pub const INSECURE_LBFV_CRS_SEED: [u8; 32] = [
     0x7c, 0x5d, 0x1d, 0xda, 0xff, 0x9b, 0x83, 0x6d, 0x39, 0x08, 0x50, 0xe2, 0xc7, 0x2d, 0x0b, 0x2b,
@@ -99,6 +111,7 @@ pub const fn lbfv_crs_seed(preset: BfvPreset) -> Option<[u8; 32]> {
         BfvPreset::InsecureThresholdSimd => Some(INSECURE_SIMD_LBFV_CRS_SEED),
         BfvPreset::SecureThreshold16384 => Some(SECURE_16384_LBFV_CRS_SEED),
         BfvPreset::SecureThreshold16384Simd => Some(SECURE_16384_SIMD_LBFV_CRS_SEED),
+        BfvPreset::SecureThreshold16384SimdD6 => Some(SECURE_16384_SIMD_D6_LBFV_CRS_SEED),
         _ => None,
     }
 }
@@ -111,6 +124,7 @@ pub const fn lbfv_urs_seed(preset: BfvPreset) -> Option<[u8; 32]> {
         BfvPreset::InsecureThresholdSimd => Some(INSECURE_SIMD_LBFV_URS_SEED),
         BfvPreset::SecureThreshold16384 => Some(SECURE_16384_LBFV_URS_SEED),
         BfvPreset::SecureThreshold16384Simd => Some(SECURE_16384_SIMD_LBFV_URS_SEED),
+        BfvPreset::SecureThreshold16384SimdD6 => Some(SECURE_16384_SIMD_D6_LBFV_URS_SEED),
         _ => None,
     }
 }
@@ -129,6 +143,18 @@ mod tests {
         );
         assert_ne!(SECURE_16384_SIMD_LBFV_CRS_SEED, SECURE_16384_LBFV_CRS_SEED);
         assert_ne!(SECURE_16384_SIMD_LBFV_URS_SEED, SECURE_16384_LBFV_URS_SEED);
+        assert_ne!(
+            SECURE_16384_SIMD_D6_LBFV_CRS_SEED,
+            SECURE_16384_SIMD_D6_LBFV_URS_SEED
+        );
+        assert_ne!(
+            SECURE_16384_SIMD_D6_LBFV_CRS_SEED,
+            SECURE_16384_SIMD_LBFV_CRS_SEED
+        );
+        assert_ne!(
+            SECURE_16384_SIMD_D6_LBFV_URS_SEED,
+            SECURE_16384_SIMD_LBFV_URS_SEED
+        );
     }
 
     #[test]
@@ -148,17 +174,24 @@ mod tests {
         assert!(lbfv_urs_seed(BfvPreset::SecureThreshold16384).is_some());
         assert!(lbfv_crs_seed(BfvPreset::SecureThreshold16384Simd).is_some());
         assert!(lbfv_urs_seed(BfvPreset::SecureThreshold16384Simd).is_some());
+        assert!(lbfv_crs_seed(BfvPreset::SecureThreshold16384SimdD6).is_some());
+        assert!(lbfv_urs_seed(BfvPreset::SecureThreshold16384SimdD6).is_some());
         assert!(lbfv_crs_seed(BfvPreset::SecureThreshold8192).is_none());
         assert!(lbfv_urs_seed(BfvPreset::InsecureDkg64).is_none());
         assert!(is_lbfv_path(BfvPreset::InsecureDkgLbfv));
         assert!(is_lbfv_path(BfvPreset::SecureDkg16384));
         assert!(is_lbfv_path(BfvPreset::SecureDkg16384Simd));
+        assert!(is_lbfv_path(BfvPreset::SecureDkg16384SimdD6));
         assert!(!is_lbfv_path(BfvPreset::InsecureDkg64));
         assert!(!is_lbfv_path(BfvPreset::SecureDkg8192));
         assert_eq!(lbfv_row_count(BfvPreset::InsecureThresholdLbfv), Some(3));
         assert_eq!(lbfv_row_count(BfvPreset::InsecureThreshold64), None);
         assert_eq!(lbfv_row_count(BfvPreset::SecureThreshold16384), Some(5));
         assert_eq!(lbfv_row_count(BfvPreset::SecureThreshold16384Simd), Some(5));
+        assert_eq!(
+            lbfv_row_count(BfvPreset::SecureThreshold16384SimdD6),
+            Some(8)
+        );
         assert_eq!(lbfv_row_count(BfvPreset::SecureThreshold8192), None);
         assert!(is_supported_lbfv_row_count(3));
         assert!(is_supported_lbfv_row_count(5));

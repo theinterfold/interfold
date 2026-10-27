@@ -64,14 +64,23 @@ Pre-configured BFV parameter sets for PVSS (Public Verifiable Secret Sharing) pr
   five 56-bit threshold moduli, on-chain parameter set 6). The plaintext has 16384 slots, and the
   decryption circuits publish 50 coefficients, from which a reader recovers up to 50 known
   non-zero slots (`e3_bfv_client::simd_recover_sparse`)
+- **`BfvPreset::SecureThreshold16384SimdD6`** / **`BfvPreset::SecureDkg16384SimdD6`**: Secure l-BFV
+  parameters with SIMD slots for multiplicative depth 6 (degree 16384, plaintext modulus 65537,
+  eight 54-bit threshold moduli, two 56-bit DKG moduli, on-chain parameter set 7). The plaintext has
+  16384 slots, and the decryption circuits publish 50 coefficients, as for set 6. The search needed
+  8 primes: 7 primes cover committees of at most 17 nodes only. The repo estimator limit at
+  d = 16384 is 430.6 bits of q, and the 424-bit q is 6.6 bits below it. The correctness margin
+  `log2(Δ) - log2(LHS)` at a committee of 20 nodes is 3.64 bits. The l-BFV key envelope has
+  21,234,096 bytes (20.25 MiB), so the committee public key cap is 24 MiB.
 
 The trBFV presets are `InsecureThreshold64` and `SecureThreshold8192`; the l-BFV presets are the
 other threshold presets. `supports_lbfv` and `is_lbfv_path` name the protocol path of a preset, and
 `BfvPreset::artifacts_dir` and `BfvPreset::noir_config_module` name its circuit artifacts
-(`insecure-64`, `insecure`, `insecure-simd`, `secure-8192`, `secure-16384`, `secure-16384-simd`). The l-BFV presets
+(`insecure-64`, `insecure`, `insecure-simd`, `secure-8192`, `secure-16384`, `secure-16384-simd`,
+`secure-16384-simd-d6`). The l-BFV presets
 also carry fixed CRS and URS seeds (`lbfv` module). `BfvPreset::max_msg_non_zero_coeffs` gives the
 number of plaintext coefficients that the decryption circuits publish (128 for the degree-128 SIMD
-preset, 50 for the others, including `secure-16384-simd`; `BfvPreset::is_simd` marks the SIMD
+preset, 50 for the others, including `secure-16384-simd` and `secure-16384-simd-d6`; `BfvPreset::is_simd` marks the SIMD
 presets).
 
 The insecure-64 and secure-8192 threshold presets use plaintext modulus 17,000,000, three CRT limbs,
@@ -178,12 +187,18 @@ cargo run --bin search_params --package e3-fhe-params -- \
     --n 20 --k 1000 --z 3 --mult-depth 3 --lambda 50
 ```
 
+```bash
+# 3 additions, then depth 6: 8 × 54-bit primes at d = 16384 (preset secure-16384-simd-d6)
+cargo run --bin search_params --package e3-fhe-params -- \
+    --d 16384 --n 20 --k 65537 --z 3 --lambda 31 --b 20 --b-chi 1 --mult-depth 6
+```
+
 #### Search Algorithm
 
 The `bfv_search()` function implements a search algorithm that:
 
 1. Iterates through polynomial degrees `d` (powers of 2), or uses the given `d`
-2. Tries 3 to 6 primes, and for each count the prime bit-lengths from `min_prime_bits` up to 60
+2. Tries 3 to 8 primes, and for each count the prime bit-lengths from `min_prime_bits` up to 60
 3. In each bit-length, takes the largest primes whose product q is under the Eq4 limit
 4. Validates that q against Eq1 (noise bound). If it fails, moves to the next bit-length
 

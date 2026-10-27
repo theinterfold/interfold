@@ -5,7 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::constants::{
-    insecure, insecure_64, insecure_simd, secure_16384, secure_16384_simd, secure_8192,
+    insecure, insecure_64, insecure_simd, secure_16384, secure_16384_simd, secure_16384_simd_d6,
+    secure_8192,
 };
 use crate::presets::{BfvParamSet, BfvPreset, PresetError};
 use fhe::bfv::{BfvParameters, BfvParametersBuilder};
@@ -129,6 +130,25 @@ pub fn build_pair_for_preset(
                 .set_degree(secure_16384_simd::DEGREE)
                 .set_plaintext_modulus(secure_16384_simd::dkg::PLAINTEXT_MODULUS)
                 .set_moduli(secure_16384_simd::dkg::MODULI)
+                .build_arc()
+                .unwrap();
+
+            Ok((params_threshold, params_dkg))
+        }
+        BfvPreset::SecureThreshold16384SimdD6 => {
+            let params_threshold = BfvParametersBuilder::new()
+                .set_degree(secure_16384_simd_d6::DEGREE)
+                .set_plaintext_modulus(secure_16384_simd_d6::threshold::PLAINTEXT_MODULUS)
+                .set_moduli(secure_16384_simd_d6::threshold::MODULI)
+                .set_error1_variance_str(secure_16384_simd_d6::threshold::ERROR1_VARIANCE)
+                .unwrap()
+                .build_arc()
+                .unwrap();
+
+            let params_dkg = BfvParametersBuilder::new()
+                .set_degree(secure_16384_simd_d6::DEGREE)
+                .set_plaintext_modulus(secure_16384_simd_d6::dkg::PLAINTEXT_MODULUS)
+                .set_moduli(secure_16384_simd_d6::dkg::MODULI)
                 .build_arc()
                 .unwrap();
 
@@ -447,6 +467,38 @@ mod tests {
             SmudgingNoiseGenerator::new(config)
                 .unwrap_or_else(|e| panic!("n = {n} must satisfy the noise budget: {e}"));
         }
+    }
+
+    /// The depth-6 secure SIMD preset accepts every committee (n = 3, 9, 19, 20) at `m = z = 3`,
+    /// `mult_depth = 6`, `lambda = 31`, and refuses depth 7: the smudging check
+    /// `2*(B_C + n*B_sm) < Delta` fails one level deeper.
+    #[test]
+    fn test_secure_16384_simd_d6_smudging_bound_covers_depth_6_and_refuses_depth_7() {
+        use fhe::trbfv::{SmudgingConfig, SmudgingNoiseGenerator};
+
+        let preset = BfvPreset::SecureThreshold16384SimdD6;
+        let params = build_bfv_params_from_set_arc(BfvParamSet::from(preset));
+        let defaults = preset.search_defaults().unwrap();
+        assert_eq!(defaults.mult_depth, 6);
+
+        let generator_for = |n: usize, mult_depth: u32| {
+            let mut config = SmudgingConfig::new(
+                params.clone(),
+                n,
+                defaults.z as usize,
+                defaults.lambda as usize,
+            )?;
+            config.mult_depth = mult_depth;
+            SmudgingNoiseGenerator::new(config)
+        };
+        for n in [3, 9, 19, defaults.n as usize] {
+            generator_for(n, defaults.mult_depth)
+                .unwrap_or_else(|e| panic!("n = {n} must satisfy the noise budget: {e}"));
+        }
+        assert!(
+            generator_for(3, defaults.mult_depth + 1).is_err(),
+            "depth 7 must exceed the noise budget even for 3 parties"
+        );
     }
 
     /// The insecure SIMD preset (t = 257) satisfies the depth-3 noise budget for the Minimum

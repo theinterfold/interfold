@@ -16,6 +16,7 @@ use crate::constants::{
     defaults::MIN_SECURE_LAMBDA,
     defaults::SECURE_16384_MULT_DEPTH,
     defaults::SECURE_16384_SIMD_MULT_DEPTH,
+    defaults::SECURE_16384_SIMD_D6_MULT_DEPTH,
     defaults::SECURE_8192_MULT_DEPTH,
     insecure, insecure_64,
     insecure_lbfv_search_defaults::{
@@ -42,6 +43,12 @@ use crate::constants::{
         B as SECURE_16384_SIMD_B, B_CHI as SECURE_16384_SIMD_B_CHI,
         SEARCH_K as SECURE_16384_SIMD_K, SEARCH_N as SECURE_16384_SIMD_N,
         SEARCH_Z as SECURE_16384_SIMD_Z,
+    },
+    secure_16384_simd_d6,
+    secure_16384_simd_d6_search_defaults::{
+        B as SECURE_16384_SIMD_D6_B, B_CHI as SECURE_16384_SIMD_D6_B_CHI,
+        SEARCH_K as SECURE_16384_SIMD_D6_K, SEARCH_N as SECURE_16384_SIMD_D6_N,
+        SEARCH_Z as SECURE_16384_SIMD_D6_Z,
     },
     secure_8192,
 };
@@ -140,6 +147,17 @@ pub enum BfvPreset {
     SecureThreshold16384Simd,
     /// The DKG counterpart of [`BfvPreset::SecureThreshold16384Simd`] (degree 16384)
     SecureDkg16384Simd,
+    /// Secure SIMD threshold BFV parameters (degree 16384, plaintext modulus 65537), on the l-BFV
+    /// protocol path, for multiplicative depth up to 6.
+    ///
+    /// The plaintext modulus is prime and 1 mod 2N, so plaintexts can use SIMD encoding with
+    /// 16384 slots. One set of 8 moduli covers every committee up to 20 nodes (Minimum, Micro and
+    /// Small). The decryption circuits publish the first 50 plaintext coefficients, which recover
+    /// up to 50 non-zero slots. On-chain parameter set 7. Declared after the earlier variants so
+    /// their serialized indices do not change.
+    SecureThreshold16384SimdD6,
+    /// The DKG counterpart of [`BfvPreset::SecureThreshold16384SimdD6`] (degree 16384)
+    SecureDkg16384SimdD6,
 }
 
 impl BfvPreset {
@@ -153,6 +171,7 @@ impl BfvPreset {
             4 => Some(BfvPreset::InsecureThresholdLbfv),
             5 => Some(BfvPreset::InsecureThresholdSimd),
             6 => Some(BfvPreset::SecureThreshold16384Simd),
+            7 => Some(BfvPreset::SecureThreshold16384SimdD6),
             _ => None,
         }
     }
@@ -286,7 +305,7 @@ pub struct PresetSearchDefaults {
     /// Multiplicative depth for l-BFV smudging noise computation.
     ///
     /// Set to 0 for presets without l-BFV support (insecure, secure-8192).
-    /// Set to 3 for secure-16384 and secure-16384-simd.
+    /// Set to 3 for secure-16384 and secure-16384-simd, and 6 for secure-16384-simd-d6.
     pub mult_depth: u32,
 }
 
@@ -369,7 +388,7 @@ impl BfvParamSet {
 }
 
 impl BfvPreset {
-    pub const ALL: [BfvPreset; 12] = [
+    pub const ALL: [BfvPreset; 14] = [
         BfvPreset::InsecureThreshold64,
         BfvPreset::InsecureThresholdLbfv,
         BfvPreset::InsecureThresholdSimd,
@@ -382,15 +401,18 @@ impl BfvPreset {
         BfvPreset::SecureDkg16384,
         BfvPreset::SecureThreshold16384Simd,
         BfvPreset::SecureDkg16384Simd,
+        BfvPreset::SecureThreshold16384SimdD6,
+        BfvPreset::SecureDkg16384SimdD6,
     ];
 
-    pub const PAIR_PRESETS: [BfvPreset; 6] = [
+    pub const PAIR_PRESETS: [BfvPreset; 7] = [
         BfvPreset::InsecureThreshold64,
         BfvPreset::InsecureThresholdLbfv,
         BfvPreset::InsecureThresholdSimd,
         BfvPreset::SecureThreshold8192,
         BfvPreset::SecureThreshold16384,
         BfvPreset::SecureThreshold16384Simd,
+        BfvPreset::SecureThreshold16384SimdD6,
     ];
 
     pub fn from_name(name: &str) -> Result<Self, PresetError> {
@@ -408,6 +430,8 @@ impl BfvPreset {
             "SECURE_DKG_16384" => Ok(Self::SecureDkg16384),
             "SECURE_THRESHOLD_16384_SIMD" => Ok(Self::SecureThreshold16384Simd),
             "SECURE_DKG_16384_SIMD" => Ok(Self::SecureDkg16384Simd),
+            "SECURE_THRESHOLD_16384_SIMD_D6" => Ok(Self::SecureThreshold16384SimdD6),
+            "SECURE_DKG_16384_SIMD_D6" => Ok(Self::SecureDkg16384SimdD6),
             _ => Err(PresetError::UnknownPreset(name.to_string())),
         }
     }
@@ -426,11 +450,13 @@ impl BfvPreset {
             BfvPreset::SecureDkg16384 => "SECURE_DKG_16384",
             BfvPreset::SecureThreshold16384Simd => "SECURE_THRESHOLD_16384_SIMD",
             BfvPreset::SecureDkg16384Simd => "SECURE_DKG_16384_SIMD",
+            BfvPreset::SecureThreshold16384SimdD6 => "SECURE_THRESHOLD_16384_SIMD_D6",
+            BfvPreset::SecureDkg16384SimdD6 => "SECURE_DKG_16384_SIMD_D6",
         }
     }
 
     /// Parses `insecure-64`, `insecure` (l-BFV), `insecure-simd`, `secure-8192`, `secure-16384`,
-    /// `secure-16384-simd`, or a preset λ into the threshold preset.
+    /// `secure-16384-simd`, `secure-16384-simd-d6`, or a preset λ into the threshold preset.
     pub fn from_security_config_name(name: &str) -> Result<Self, PresetError> {
         let s = name.trim();
         if let Ok(lambda) = s.parse::<usize>() {
@@ -447,6 +473,7 @@ impl BfvPreset {
             "secure-8192" => Ok(Self::SecureThreshold8192),
             "secure-16384" => Ok(Self::SecureThreshold16384),
             "secure-16384-simd" => Ok(Self::SecureThreshold16384Simd),
+            "secure-16384-simd-d6" => Ok(Self::SecureThreshold16384SimdD6),
             _ => Err(PresetError::UnknownPreset(name.to_string())),
         }
     }
@@ -503,12 +530,14 @@ impl BfvPreset {
             BfvPreset::SecureThreshold8192 => Some(BfvPreset::SecureDkg8192),
             BfvPreset::SecureThreshold16384 => Some(BfvPreset::SecureDkg16384),
             BfvPreset::SecureThreshold16384Simd => Some(BfvPreset::SecureDkg16384Simd),
+            BfvPreset::SecureThreshold16384SimdD6 => Some(BfvPreset::SecureDkg16384SimdD6),
             BfvPreset::InsecureDkg64
             | BfvPreset::InsecureDkgLbfv
             | BfvPreset::InsecureDkgSimd
             | BfvPreset::SecureDkg8192
             | BfvPreset::SecureDkg16384
-            | BfvPreset::SecureDkg16384Simd => None,
+            | BfvPreset::SecureDkg16384Simd
+            | BfvPreset::SecureDkg16384SimdD6 => None,
         }
     }
 
@@ -525,12 +554,14 @@ impl BfvPreset {
             BfvPreset::SecureDkg8192 => Some(BfvPreset::SecureThreshold8192),
             BfvPreset::SecureDkg16384 => Some(BfvPreset::SecureThreshold16384),
             BfvPreset::SecureDkg16384Simd => Some(BfvPreset::SecureThreshold16384Simd),
+            BfvPreset::SecureDkg16384SimdD6 => Some(BfvPreset::SecureThreshold16384SimdD6),
             BfvPreset::InsecureThreshold64
             | BfvPreset::InsecureThresholdLbfv
             | BfvPreset::InsecureThresholdSimd
             | BfvPreset::SecureThreshold8192
             | BfvPreset::SecureThreshold16384
-            | BfvPreset::SecureThreshold16384Simd => None,
+            | BfvPreset::SecureThreshold16384Simd
+            | BfvPreset::SecureThreshold16384SimdD6 => None,
         }
     }
 
@@ -644,6 +675,24 @@ impl BfvPreset {
                 parameter_type: ParameterType::DKG,
                 security: SecurityTier::SECURE,
             },
+            BfvPreset::SecureThreshold16384SimdD6 => PresetMetadata {
+                name: self.name(),
+                degree: secure_16384_simd_d6::DEGREE,
+                num_moduli: secure_16384_simd_d6::threshold::MODULI.len(),
+                num_parties: secure_16384_simd_d6::NUM_PARTIES,
+                lambda: DEFAULT_SECURE_16384_SIMD_LAMBDA,
+                parameter_type: ParameterType::THRESHOLD,
+                security: SecurityTier::SECURE,
+            },
+            BfvPreset::SecureDkg16384SimdD6 => PresetMetadata {
+                name: self.name(),
+                degree: secure_16384_simd_d6::DEGREE,
+                num_moduli: secure_16384_simd_d6::dkg::MODULI.len(),
+                num_parties: secure_16384_simd_d6::NUM_PARTIES,
+                lambda: DEFAULT_SECURE_16384_SIMD_LAMBDA,
+                parameter_type: ParameterType::DKG,
+                security: SecurityTier::SECURE,
+            },
         }
     }
 
@@ -687,6 +736,9 @@ impl BfvPreset {
             BfvPreset::SecureThreshold16384Simd | BfvPreset::SecureDkg16384Simd => {
                 "secure-16384-simd".to_string()
             }
+            BfvPreset::SecureThreshold16384SimdD6 | BfvPreset::SecureDkg16384SimdD6 => {
+                "secure-16384-simd-d6".to_string()
+            }
             _ => format!("{}-{}", meta.security.as_config_str(), meta.degree),
         }
     }
@@ -712,6 +764,9 @@ impl BfvPreset {
             BfvPreset::SecureThreshold16384 | BfvPreset::SecureDkg16384 => "secure_16384",
             BfvPreset::SecureThreshold16384Simd | BfvPreset::SecureDkg16384Simd => {
                 "secure_16384_simd"
+            }
+            BfvPreset::SecureThreshold16384SimdD6 | BfvPreset::SecureDkg16384SimdD6 => {
+                "secure_16384_simd_d6"
             }
         }
     }
@@ -779,6 +834,15 @@ impl BfvPreset {
                 b: SECURE_16384_SIMD_B,
                 b_chi: SECURE_16384_SIMD_B_CHI,
                 mult_depth: SECURE_16384_SIMD_MULT_DEPTH,
+            }),
+            BfvPreset::SecureThreshold16384SimdD6 => Some(PresetSearchDefaults {
+                n: SECURE_16384_SIMD_D6_N,
+                k: SECURE_16384_SIMD_D6_K,
+                z: SECURE_16384_SIMD_D6_Z,
+                lambda: DEFAULT_SECURE_16384_SIMD_LAMBDA as u32,
+                b: SECURE_16384_SIMD_D6_B,
+                b_chi: SECURE_16384_SIMD_D6_B_CHI,
+                mult_depth: SECURE_16384_SIMD_D6_MULT_DEPTH,
             }),
             _ => None,
         }
@@ -863,6 +927,18 @@ impl From<BfvPreset> for BfvParamSet {
                 plaintext_modulus: secure_16384_simd::dkg::PLAINTEXT_MODULUS,
                 moduli: secure_16384_simd::dkg::MODULI,
                 error1_variance: Some(secure_16384_simd::dkg::ERROR1_VARIANCE),
+            },
+            BfvPreset::SecureThreshold16384SimdD6 => BfvParamSet {
+                degree: secure_16384_simd_d6::DEGREE,
+                plaintext_modulus: secure_16384_simd_d6::threshold::PLAINTEXT_MODULUS,
+                moduli: secure_16384_simd_d6::threshold::MODULI,
+                error1_variance: Some(secure_16384_simd_d6::threshold::ERROR1_VARIANCE),
+            },
+            BfvPreset::SecureDkg16384SimdD6 => BfvParamSet {
+                degree: secure_16384_simd_d6::DEGREE,
+                plaintext_modulus: secure_16384_simd_d6::dkg::PLAINTEXT_MODULUS,
+                moduli: secure_16384_simd_d6::dkg::MODULI,
+                error1_variance: Some(secure_16384_simd_d6::dkg::ERROR1_VARIANCE),
             },
         }
     }
@@ -1120,7 +1196,7 @@ mod tests {
             BfvPreset::from_on_chain_param_set(5),
             Some(BfvPreset::InsecureThresholdSimd)
         );
-        assert_eq!(BfvPreset::from_on_chain_param_set(7), None);
+        assert_eq!(BfvPreset::from_on_chain_param_set(8), None);
     }
 
     #[test]
@@ -1209,5 +1285,36 @@ mod tests {
             "insecure-simd"
         );
         assert_eq!(BfvPreset::InsecureDkgSimd.artifacts_dir(), "insecure-simd");
+    }
+
+    /// The depth-6 secure SIMD preset is on-chain parameter set 7. It pairs with its own DKG
+    /// preset, keeps its own circuit directory, and builds with 8 threshold moduli.
+    #[test]
+    fn secure_16384_simd_d6_is_registered_as_parameter_set_7() {
+        let preset = BfvPreset::SecureThreshold16384SimdD6;
+        assert_eq!(BfvPreset::from_on_chain_param_set(7), Some(preset));
+        assert_eq!(
+            BfvPreset::from_security_config_name("secure-16384-simd-d6").unwrap(),
+            preset
+        );
+        assert_eq!(preset.dkg_counterpart(), Some(BfvPreset::SecureDkg16384SimdD6));
+        assert_eq!(
+            BfvPreset::SecureDkg16384SimdD6.threshold_counterpart(),
+            Some(preset)
+        );
+        assert_eq!(preset.artifacts_dir(), "secure-16384-simd-d6");
+        assert_eq!(preset.noir_config_module(), "secure_16384_simd_d6");
+        assert_eq!(preset.lbfv_label(), Some(preset));
+        assert_eq!(preset.search_defaults().unwrap().mult_depth, 6);
+
+        let (threshold, dkg) = preset.build_pair().unwrap();
+        assert_eq!(threshold.degree(), secure_16384_simd_d6::DEGREE);
+        assert_eq!(threshold.plaintext(), 65537);
+        assert_eq!(threshold.moduli(), secure_16384_simd_d6::threshold::MODULI);
+        assert_eq!(dkg.plaintext(), secure_16384_simd_d6::dkg::PLAINTEXT_MODULUS);
+        assert_eq!(dkg.moduli(), secure_16384_simd_d6::dkg::MODULI);
+        // The DKG plaintext modulus is the largest threshold modulus, as the search derives it.
+        let largest = threshold.moduli().iter().max().copied();
+        assert_eq!(largest, Some(dkg.plaintext()));
     }
 }

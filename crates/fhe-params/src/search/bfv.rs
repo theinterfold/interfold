@@ -34,7 +34,10 @@ const RING_DIM: u64 = 8192;
 /// (centered-RNS gap requirement). `BfvSearchConfig::min_prime_bits` sets the floor of both sets.
 const FIRST_MAX_PRIME_BITS: u8 = 60;
 const FIRST_TARGET_NUM_PRIMES: usize = 3;
-const FIRST_MAX_NUM_PRIMES: usize = 6;
+/// The relinearization noise grows with the gadget base (the largest modulus) and with l^2, so a
+/// depth-6 set at 20 parties needs 8 smaller moduli: seven moduli below 2^61 reach q = 427 bits,
+/// short of the 428.8 bits that the bound needs with a 2^61 gadget base.
+const FIRST_MAX_NUM_PRIMES: usize = 8;
 
 /// Second-set search bounds.
 const SECOND_MAX_PRIME_BITS: u8 = 62;
@@ -126,7 +129,7 @@ impl BfvSearchResult {
 ///
 /// This function implements a search algorithm that:
 /// 1. Iterates through polynomial degrees d (powers of 2), or uses `BfvSearchConfig::d`
-/// 2. For each prime count from 3 to 6, scans the prime bit-lengths from smallest to largest
+/// 2. For each prime count from 3 to 8, scans the prime bit-lengths from smallest to largest
 /// 3. Pass 1 takes the largest primes of each bit-length under the Eq4 limit and validates them
 ///    against Eq1. Pass 2, only when pass 1 finds nothing, tries every window under the limit
 ///
@@ -1199,6 +1202,42 @@ mod tests {
         assert_eq!(
             second.k_plain_eff,
             secure_16384_simd::dkg::PLAINTEXT_MODULUS as u128
+        );
+    }
+
+    /// Depth 6 at 20 parties needs 8 moduli: the relinearization noise grows with the largest
+    /// modulus and l^2, and 7 moduli under 2^61 give q = 427 bits against the 428.8 bits that the
+    /// bound needs. The set must stay under the estimator limit of this degree.
+    #[test]
+    fn search_reproduces_secure_16384_simd_d6_preset() {
+        use crate::constants::secure_16384_simd_d6;
+        use crate::search::security::max_log2_q;
+        use crate::search::utils::variance_uniform_sym;
+
+        let preset = crate::presets::BfvPreset::SecureThreshold16384SimdD6;
+        let mut config = preset_config(preset);
+        config.d = Some(secure_16384_simd_d6::DEGREE as u64);
+        config.mult_depth = preset.search_defaults().unwrap().mult_depth;
+        let first =
+            bfv_search(&config).expect("secure-16384-simd-d6 threshold set must be feasible");
+        assert_eq!(first.d, secure_16384_simd_d6::DEGREE as u64);
+        assert_eq!(first.qi_values(), secure_16384_simd_d6::threshold::MODULI);
+        assert_eq!(
+            first.k_plain_eff,
+            secure_16384_simd_d6::threshold::PLAINTEXT_MODULUS as u128
+        );
+        assert_eq!(
+            variance_uniform_sym(&first.benc_min).to_str_radix(10),
+            secure_16384_simd_d6::threshold::ERROR1_VARIANCE
+        );
+        let (limit, _) = max_log2_q(config.b, config.b_chi, first.d);
+        assert!(log2_big(&first.q_bfv) <= limit);
+        let second = bfv_search_second_param(&config, &first)
+            .expect("secure-16384-simd-d6 DKG set must be feasible");
+        assert_eq!(second.qi_values(), secure_16384_simd_d6::dkg::MODULI);
+        assert_eq!(
+            second.k_plain_eff,
+            secure_16384_simd_d6::dkg::PLAINTEXT_MODULUS as u128
         );
     }
 

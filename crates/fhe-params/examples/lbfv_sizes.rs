@@ -7,11 +7,12 @@
 //! Measures an l-BFV preset with fhe.rs: the key and ciphertext sizes, the time of one
 //! ciphertext-by-ciphertext multiplication and one relinearization, and a threshold check.
 //!
-//! The threshold check builds a committee key from three parties, multiplies eight SIMD
-//! ciphertexts in a tree of depth 3 (each product relinearized), and decrypts the product with
-//! two of the three parties' decryption shares, with smudging noise as the protocol adds it. The
-//! decrypted slots must equal the slot-wise product of the eight inputs. A preset without SIMD
-//! slots checks the constant term of the polynomial products instead.
+//! The threshold check builds a committee key from three parties, multiplies 2^d SIMD ciphertexts
+//! in a tree of depth d, the multiplicative depth of the preset (each product relinearized), and
+//! decrypts the product with two of the three parties' decryption shares, with smudging noise as
+//! the protocol adds it. The decrypted slots must equal the slot-wise product of the inputs. A
+//! preset without SIMD slots checks the constant term of the polynomial products instead. The
+//! example prints the noise after each level and the noise budget that remains at the end.
 //!
 //! ```text
 //! cargo run --release -p e3-fhe-params --example lbfv_sizes -- secure_threshold_16384_simd
@@ -36,8 +37,8 @@ const REPEATS: usize = 5;
 /// Committee of the threshold check: three parties, any two reconstruct.
 const PARTIES: usize = 3;
 const THRESHOLD: usize = 1;
-/// Number of factors of the product: a tree of depth 3.
-const FACTORS: usize = 8;
+/// Cap on the depth of the product tree, to bound the number of encryptions of the check.
+const MAX_CHECK_DEPTH: u32 = 6;
 
 fn median(mut samples: Vec<f64>) -> f64 {
     samples.sort_by(|a, b| a.partial_cmp(b).expect("timings are finite"));
@@ -91,11 +92,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let started = Instant::now();
     let secret_key = SecretKey::random(&params, &mut rng);
     let public_key_share = PublicKeyShare::contribute_with_crp(&secret_key, &crs, &mut rng)?;
+    let public_key_share_bytes = public_key_share.to_bytes().len();
     let public_key: LBFVPublicKey = [public_key_share].into_iter().aggregate()?;
     let public_key_seconds = started.elapsed().as_secs_f64();
 
     let started = Instant::now();
     let rlk_share = RelinKeyShare::contribution_with_crp(&secret_key, &urs, &crs, 0, 0, &mut rng)?;
+    let rlk_share_bytes = rlk_share.to_bytes().len();
     let rlk = aggregate_relinearization_key(&[rlk_share], &public_key)?;
     let rlk_seconds = started.elapsed().as_secs_f64();
 
@@ -146,6 +149,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         rlk.to_bytes().len(),
         kib(rlk.to_bytes().len())
     );
+    println!("public_key_share_bytes: {public_key_share_bytes}");
+    println!("relinearization_key_share_bytes: {rlk_share_bytes}");
     println!("public_key_generation_seconds: {public_key_seconds:.3}");
     println!("relinearization_key_generation_seconds: {rlk_seconds:.3}");
     println!("encrypt_seconds_median: {:.4}", median(encrypt));
@@ -153,7 +158,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("relinearize_seconds_median: {:.4}", median(relinearize));
     println!("repeats: {REPEATS}");
 
-    // Part 2: a committee key and a depth-3 product, decrypted by a quorum.
+    // Part 2: a committee key and a product tree of the preset's depth, decrypted by a quorum.
     let sks: Vec<SecretKey> = (0..PARTIES)
         .map(|_| SecretKey::random(&params, &mut rng))
         .collect();
@@ -176,7 +181,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let joint_key = SecretKey::new(joint_coefficients, &params);
 
     // The message: slot-wise values, or a constant polynomial where the preset has no slots.
-    let factor_values: Vec<Vec<u64>> = (0..FACTORS)
+    let defaults = preset
+        .search_defaults()
+        .ok_or("the preset has no search defaults")?;
+    assert!(
+        defaults.mult_depth <= MAX_CHECK_DEPTH,
+        "the check encrypts 2^depth ciphertexts"
+    );
+    let factors = 1usize << defaults.mult_depth;
+    let factor_values: Vec<Vec<u64>> = (0..factors)
         .map(|_| {
             if simd {
                 (0..degree)
@@ -226,6 +239,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let started = Instant::now();
     let mut depth = 0;
+    let mut final_noise = noise_bits(&level[0])?;
     while level.len() > 1 {
         depth += 1;
         let mut next = Vec::with_capacity(level.len() / 2);
@@ -234,18 +248,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             rlk.relinearizes(&mut product)?;
             next.push(product);
         }
-        println!("noise_bits_after_depth_{depth}: {}", noise_bits(&next[0])?);
+        final_noise = noise_bits(&next[0])?;
+        println!("noise_bits_after_depth_{depth}: {final_noise}");
         level = next;
     }
+    assert_eq!(depth, defaults.mult_depth, "the tree depth is the preset depth");
     let product_seconds = started.elapsed().as_secs_f64();
     let product = Arc::new(level.remove(0));
-    println!("depth_3_product_seconds: {product_seconds:.3}");
+    println!("depth_{depth}_product_seconds: {product_seconds:.3}");
+    let delta_bits = params
+        .moduli()
+        .iter()
+        .map(|&q| (q as f64).log2())
+        .sum::<f64>()
+        - (plaintext_modulus as f64).log2();
+    println!(
+        "noise_budget_bits_left: {:.1}",
+        delta_bits - 1.0 - final_noise as f64
+    );
 
     // Shamir shares of each secret key and of one smudging polynomial per party.
     let manager = ShareManager::new(PARTIES, THRESHOLD, params.clone())?;
-    let defaults = preset
-        .search_defaults()
-        .ok_or("the preset has no search defaults")?;
     let lambda = preset.lambda()?;
     let moduli = params.moduli().len();
     let mut sk_dealt = Vec::new();

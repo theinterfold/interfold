@@ -31,6 +31,8 @@ impl BfvPreset {
                 | BfvPreset::InsecureDkgSimd
                 | BfvPreset::SecureThreshold16384Simd
                 | BfvPreset::SecureDkg16384Simd
+                | BfvPreset::SecureThreshold16384SimdD6
+                | BfvPreset::SecureDkg16384SimdD6
         )
     }
 
@@ -53,7 +55,9 @@ impl BfvPreset {
             | BfvPreset::SecureDkg8192
             | BfvPreset::SecureDkg16384
             | BfvPreset::SecureThreshold16384Simd
-            | BfvPreset::SecureDkg16384Simd => DEFAULT_MAX_MSG_NON_ZERO_COEFFS,
+            | BfvPreset::SecureDkg16384Simd
+            | BfvPreset::SecureThreshold16384SimdD6
+            | BfvPreset::SecureDkg16384SimdD6 => DEFAULT_MAX_MSG_NON_ZERO_COEFFS,
         }
     }
 }
@@ -76,6 +80,8 @@ mod tests {
         for preset in [
             BfvPreset::SecureThreshold16384Simd,
             BfvPreset::SecureDkg16384Simd,
+            BfvPreset::SecureThreshold16384SimdD6,
+            BfvPreset::SecureDkg16384SimdD6,
         ] {
             assert!(preset.is_simd());
             assert_eq!(preset.max_msg_non_zero_coeffs(), 50);
