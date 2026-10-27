@@ -42,9 +42,11 @@ export const ALL_VARIANTS: CircuitVariant[] = [CIRCUIT_VARIANTS.DEFAULT, CIRCUIT
  * Threshold and DKG presets that share a name share the same compiled circuit artifacts.
  *
  * - `insecure-64` and `secure-8192` serve the trBFV path only.
- * - `insecure`, `insecure-simd`, `secure-16384` and `secure-16384-simd` serve the l-BFV path only.
- *   `insecure` is the degree-128 l-BFV preset (contract parameter set 4); `secure-16384-simd` is
- *   the degree-16384 SIMD preset with plaintext modulus 65537 (contract parameter set 6).
+ * - `insecure`, `insecure-simd`, `secure-16384`, `secure-16384-simd` and `secure-16384-simd-d6` serve
+ *   the l-BFV path only. `insecure` is the degree-128 l-BFV preset (contract parameter set 4);
+ *   `secure-16384-simd` is the degree-16384 SIMD preset with plaintext modulus 65537 (contract
+ *   parameter set 6); `secure-16384-simd-d6` is the same degree and plaintext modulus at
+ *   multiplicative depth 6 (contract parameter set 7).
  */
 export const CIRCUIT_PRESETS = {
   INSECURE_64: 'insecure-64',
@@ -53,6 +55,7 @@ export const CIRCUIT_PRESETS = {
   SECURE_8192: 'secure-8192',
   SECURE_16384: 'secure-16384',
   SECURE_16384_SIMD: 'secure-16384-simd',
+  SECURE_16384_SIMD_D6: 'secure-16384-simd-d6',
 } as const
 
 export type CircuitPreset = (typeof CIRCUIT_PRESETS)[keyof typeof CIRCUIT_PRESETS]
@@ -64,6 +67,7 @@ export const ALL_PRESETS: CircuitPreset[] = [
   CIRCUIT_PRESETS.SECURE_8192,
   CIRCUIT_PRESETS.SECURE_16384,
   CIRCUIT_PRESETS.SECURE_16384_SIMD,
+  CIRCUIT_PRESETS.SECURE_16384_SIMD_D6,
 ]
 
 /**
@@ -71,7 +75,13 @@ export const ALL_PRESETS: CircuitPreset[] = [
  */
 export const PRESET_NOIR_CONFIG: Record<
   CircuitPreset,
-  'insecure_64' | 'insecure' | 'insecure_simd' | 'secure_8192' | 'secure_16384' | 'secure_16384_simd'
+  | 'insecure_64'
+  | 'insecure'
+  | 'insecure_simd'
+  | 'secure_8192'
+  | 'secure_16384'
+  | 'secure_16384_simd'
+  | 'secure_16384_simd_d6'
 > = {
   [CIRCUIT_PRESETS.INSECURE_64]: 'insecure_64',
   [CIRCUIT_PRESETS.INSECURE]: 'insecure',
@@ -79,6 +89,7 @@ export const PRESET_NOIR_CONFIG: Record<
   [CIRCUIT_PRESETS.SECURE_8192]: 'secure_8192',
   [CIRCUIT_PRESETS.SECURE_16384]: 'secure_16384',
   [CIRCUIT_PRESETS.SECURE_16384_SIMD]: 'secure_16384_simd',
+  [CIRCUIT_PRESETS.SECURE_16384_SIMD_D6]: 'secure_16384_simd_d6',
 }
 
 /**

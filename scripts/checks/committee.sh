@@ -10,7 +10,7 @@
 #
 #   1. packages/interfold-contracts/scripts/protocol/constants.ts (deployment parameters)
 #   2. crates/fhe-params/src/constants.rs (ciphernode parameters)
-#   3. circuits/lib/src/configs/{insecure_64,insecure,insecure_simd,secure_8192,secure_16384,secure_16384_simd}/threshold.nr (circuit parameters)
+#   3. circuits/lib/src/configs/{insecure_64,insecure,insecure_simd,secure_8192,secure_16384,secure_16384_simd,secure_16384_simd_d6}/threshold.nr (circuit parameters)
 #   4. circuits/lib/src/configs/committee/active.nr (Noir-side active committee)
 #   5. packages/interfold-contracts/scripts/utils.ts (deployment hashes and committee values)
 #   6. crates/committee/src/lib.rs (committee enum values)
@@ -65,7 +65,7 @@ for required_file in \
 done
 
 for committee in minimum micro small; do
-  for artifact in parity_insecure_64.nr parity_insecure.nr parity_insecure_simd.nr parity_secure_8192.nr parity_secure_16384.nr parity_secure_16384_simd.nr smudging.nr; do
+  for artifact in parity_insecure_64.nr parity_insecure.nr parity_insecure_simd.nr parity_secure_8192.nr parity_secure_16384.nr parity_secure_16384_simd.nr parity_secure_16384_simd_d6.nr smudging.nr; do
     [[ -f "circuits/lib/src/configs/committee/$committee/$artifact" ]] \
       || fail "missing generated committee artifact: $committee/$artifact"
   done
@@ -261,6 +261,7 @@ check_bfv_preset insecure-simd insecureSimd insecure_simd insecure_simd
 check_bfv_preset secure-8192 secure8192 secure_8192 secure_8192
 check_bfv_preset secure-16384 secure16384 secure_16384 secure_16384
 check_bfv_preset secure-16384-simd secure16384Simd secure_16384_simd secure_16384_simd
+check_bfv_preset secure-16384-simd-d6 secure16384SimdD6 secure_16384_simd_d6 secure_16384_simd_d6
 
 # 6. Every chain-supported route in utils.ts must match the Noir committee shape and the
 #    parameter/configuration hashes compiled into ActiveCryptoConfig.sol. Keep this check
@@ -295,7 +296,7 @@ ts_bytes32() {
     | head -n1
 }
 
-for prefix in INSECURE INSECURE_LBFV INSECURE_SIMD SECURE SECURE_16384 SECURE_16384_SIMD; do
+for prefix in INSECURE INSECURE_LBFV INSECURE_SIMD SECURE SECURE_16384 SECURE_16384_SIMD SECURE_16384_SIMD_D6; do
   utils_param_hash=$(ts_bytes32 "${prefix}_PARAM_SET_HASH")
   utils_config_id=$(ts_bytes32 "${prefix}_CONFIG_ID")
   sol_param_hash=$(sol_bytes32 "${prefix}_PARAM_SET_HASH")
@@ -323,7 +324,7 @@ extract_rust_config_id() {
     | head -n1
 }
 
-for prefix_and_param_set in INSECURE:0 INSECURE_LBFV:4 INSECURE_SIMD:5 SECURE:2 SECURE_16384:3 SECURE_16384_SIMD:6; do
+for prefix_and_param_set in INSECURE:0 INSECURE_LBFV:4 INSECURE_SIMD:5 SECURE:2 SECURE_16384:3 SECURE_16384_SIMD:6 SECURE_16384_SIMD_D6:7; do
   prefix="${prefix_and_param_set%%:*}"
   param_set="${prefix_and_param_set##*:}"
   expected_id=$(sol_bytes32 "${prefix}_CONFIG_ID")
@@ -378,16 +379,19 @@ check_utils_route INSECURE_SIMD_MICRO insecure-simd micro 1
 check_utils_route SECURE_16384_SIMD_MINIMUM secure-16384-simd minimum 0
 check_utils_route SECURE_16384_SIMD_MICRO secure-16384-simd micro 1
 check_utils_route SECURE_16384_SIMD_SMALL secure-16384-simd small 2
+check_utils_route SECURE_16384_SIMD_D6_MINIMUM secure-16384-simd-d6 minimum 0
+check_utils_route SECURE_16384_SIMD_D6_MICRO secure-16384-simd-d6 micro 1
+check_utils_route SECURE_16384_SIMD_D6_SMALL secure-16384-simd-d6 small 2
 
 route_list() {
   local array_name="$1"
   sed -n "/^export const ${array_name}:.*= \[/,/^\] as const;/p" "$UTILS_TS" \
-    | grep -oE '(INSECURE(_LBFV|_SIMD)?|SECURE(_16384(_SIMD)?)?)_(MINIMUM|MICRO|SMALL)_BFV_CONFIG' \
+    | grep -oE '(INSECURE(_LBFV|_SIMD)?|SECURE(_16384(_SIMD(_D6)?)?)?)_(MINIMUM|MICRO|SMALL)_BFV_CONFIG' \
     | paste -sd, -
 }
 
 TESTNET_ROUTES=$(route_list TESTNET_BFV_CONFIGS)
-EXPECTED_TESTNET_ROUTES="INSECURE_MINIMUM_BFV_CONFIG,INSECURE_MICRO_BFV_CONFIG,INSECURE_SMALL_BFV_CONFIG,INSECURE_LBFV_MINIMUM_BFV_CONFIG,INSECURE_LBFV_MICRO_BFV_CONFIG,INSECURE_LBFV_SMALL_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_SMALL_BFV_CONFIG,SECURE_16384_MINIMUM_BFV_CONFIG,SECURE_16384_MICRO_BFV_CONFIG,SECURE_16384_SMALL_BFV_CONFIG,INSECURE_SIMD_MINIMUM_BFV_CONFIG,INSECURE_SIMD_MICRO_BFV_CONFIG,SECURE_16384_SIMD_MINIMUM_BFV_CONFIG,SECURE_16384_SIMD_MICRO_BFV_CONFIG,SECURE_16384_SIMD_SMALL_BFV_CONFIG"
+EXPECTED_TESTNET_ROUTES="INSECURE_MINIMUM_BFV_CONFIG,INSECURE_MICRO_BFV_CONFIG,INSECURE_SMALL_BFV_CONFIG,INSECURE_LBFV_MINIMUM_BFV_CONFIG,INSECURE_LBFV_MICRO_BFV_CONFIG,INSECURE_LBFV_SMALL_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_SMALL_BFV_CONFIG,SECURE_16384_MINIMUM_BFV_CONFIG,SECURE_16384_MICRO_BFV_CONFIG,SECURE_16384_SMALL_BFV_CONFIG,INSECURE_SIMD_MINIMUM_BFV_CONFIG,INSECURE_SIMD_MICRO_BFV_CONFIG,SECURE_16384_SIMD_MINIMUM_BFV_CONFIG,SECURE_16384_SIMD_MICRO_BFV_CONFIG,SECURE_16384_SIMD_SMALL_BFV_CONFIG,SECURE_16384_SIMD_D6_MINIMUM_BFV_CONFIG,SECURE_16384_SIMD_D6_MICRO_BFV_CONFIG,SECURE_16384_SIMD_D6_SMALL_BFV_CONFIG"
 [[ "$TESTNET_ROUTES" == "$EXPECTED_TESTNET_ROUTES" ]] \
   || fail "$UTILS_TS testnet routes must contain the exact supported-pair matrix; got $TESTNET_ROUTES"
 

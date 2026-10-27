@@ -50,11 +50,11 @@ if [ -n "$unlisted" ]; then
   exit 1
 fi
 
-# select_preset PRESET: point the default config at one preset (insecure_64, insecure, secure_8192, secure_16384, secure_16384_simd).
+# select_preset PRESET: point the default config at one preset (insecure_64, insecure, secure_8192, secure_16384, secure_16384_simd, secure_16384_simd_d6).
 select_preset() {
   sed -E \
-    -e "s/preset: (insecure-64|insecure-simd|insecure|secure-8192|secure-16384-simd|secure-16384)/preset: ${1//_/-}/g" \
-    -e "s/super::(insecure_64|insecure_simd|insecure|secure_8192|secure_16384_simd|secure_16384)::/super::$1::/g" \
+    -e "s/preset: (insecure-64|insecure-simd|insecure|secure-8192|secure-16384-simd-d6|secure-16384-simd|secure-16384)/preset: ${1//_/-}/g" \
+    -e "s/super::(insecure_64|insecure_simd|insecure|secure_8192|secure_16384_simd_d6|secure_16384_simd|secure_16384)::/super::$1::/g" \
     "$BACKUP_DIR/default.nr" > "$ACTIVE_PRESET"
 }
 

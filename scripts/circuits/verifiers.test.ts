@@ -27,16 +27,18 @@ test('secure-16384 micro has the l-BFV verifier route', () => {
 
 test('retains the exact l-BFV and trBFV on-chain verifier matrix', () => {
   const paths = expectedVerifierRelativePaths()
-  assert.equal(paths.length, 45)
-  assert.equal(paths.filter((path) => path.endsWith('DkgAggregatorV2Verifier.sol')).length, 11)
+  assert.equal(paths.length, 54)
+  assert.equal(paths.filter((path) => path.endsWith('DkgAggregatorV2Verifier.sol')).length, 14)
   assert.ok(paths.some((path) => path.startsWith('secure-16384/small/')))
   assert.ok(paths.some((path) => path.startsWith('secure-16384/micro/')))
   assert.ok(paths.some((path) => path.startsWith('secure-16384-simd/small/')))
+  assert.ok(paths.some((path) => path.startsWith('secure-16384-simd-d6/small/')))
   for (const preset of [
     CIRCUIT_PRESETS.INSECURE,
     CIRCUIT_PRESETS.INSECURE_SIMD,
     CIRCUIT_PRESETS.SECURE_16384,
     CIRCUIT_PRESETS.SECURE_16384_SIMD,
+    CIRCUIT_PRESETS.SECURE_16384_SIMD_D6,
   ]) {
     assert.deepEqual(onChainVerifierCircuits(preset, CIRCUIT_COMMITTEES.MINIMUM), [
       'dkg_aggregator',
