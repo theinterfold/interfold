@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+import { BFV_ENCRYPTION_SCHEME_ID } from '@interfold/contracts/bfv'
 import {
   compiledOpenVmEnvironment,
   deployOpenVmReceiptVerifier,
@@ -68,7 +69,7 @@ export const deployTemplate = async () => {
   )
   const ciphertextVerifier = await ethers.deployContract('OpenVmBfvCiphertextVerifier', [await verifier.getAddress(), programId])
   await ciphertextVerifier.waitForDeployment()
-  const encryptionSchemeId = ethers.keccak256(ethers.toUtf8Bytes('fhe.rs:BFV'))
+  const encryptionSchemeId = BFV_ENCRYPTION_SCHEME_ID
   await (await interfold.setCiphertextVerifier(encryptionSchemeId, await ciphertextVerifier.getAddress())).wait()
 
   const e3ProgramFactory = await ethers.getContractFactory(

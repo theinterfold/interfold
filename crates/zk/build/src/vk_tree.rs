@@ -12,23 +12,19 @@ fn load(root: &Path, variant: &str, group: &str, name: &str) -> Result<Fr> {
         .join(group)
         .join(name)
         .join(format!("{name}.vk_hash"));
-    field_from_file(&path)
+    let bytes = fs::read(&path).with_context(|| format!("Read {}", path.display()))?;
+    validate_field(&bytes).map_err(|error| anyhow::anyhow!("{}: {error}", path.display()))
 }
 
-fn field_from_file(path: &Path) -> Result<Fr> {
-    let bytes = fs::read(&path).with_context(|| format!("Read {}", path.display()))?;
+pub fn validate_field(bytes: &[u8]) -> Result<Fr> {
     if bytes.len() != 32 {
-        bail!("{}: expected 32 bytes, got {}", path.display(), bytes.len());
+        bail!("expected 32 bytes, got {}", bytes.len());
     }
     let limbs = std::array::from_fn(|i| {
         u64::from_be_bytes(bytes[(3 - i) * 8..(4 - i) * 8].try_into().unwrap())
     });
-    Fr::from_bigint(ark_ff::BigInt::<4>::new(limbs)).with_context(|| {
-        format!(
-            "{}: vk_hash is not in the canonical range [0, p)",
-            path.display()
-        )
-    })
+    Fr::from_bigint(ark_ff::BigInt::<4>::new(limbs))
+        .context("vk_hash is not in the canonical range [0, p)")
 }
 
 pub fn hashes(root: &Path) -> Result<[(&'static str, [u8; 32]); 2]> {

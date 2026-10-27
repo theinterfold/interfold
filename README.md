@@ -139,17 +139,17 @@ pnpm test:integration --no-prebuild
 				</a>
 			</td>
 			<td align="center">
-				<a href="https://github.com/ryardley">
-					<img src="https://avatars.githubusercontent.com/u/1256409?v=4" width="100;" alt="ryardley"/>
-					<br />
-					<sub><b>гλ</b></sub>
-				</a>
-			</td>
-			<td align="center">
 				<a href="https://github.com/ctrlc03">
 					<img src="https://avatars.githubusercontent.com/u/93448202?v=4" width="100;" alt="ctrlc03"/>
 					<br />
 					<sub><b>ctrlc03</b></sub>
+				</a>
+			</td>
+			<td align="center">
+				<a href="https://github.com/ryardley">
+					<img src="https://avatars.githubusercontent.com/u/1256409?v=4" width="100;" alt="ryardley"/>
+					<br />
+					<sub><b>гλ</b></sub>
 				</a>
 			</td>
 			<td align="center">

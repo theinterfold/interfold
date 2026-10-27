@@ -39,6 +39,10 @@ Consumers resolve a named preset to metadata, build its threshold/DKG pair as ne
 scalar bounds/CRP at this shared boundary. Searching custom parameters is an exploratory workflow,
 not installation of matching Noir circuits or deployed verifiers.
 
+For repository code generation, `pnpm build:circuits export-config` exports current parameter pairs,
+search recipes, and protocol hashes alongside committee and circuit metadata. It runs no search or
+compiler and writes nothing; large integers are decimal strings.
+
 ## Modules
 
 ### Presets (`presets`)
@@ -189,6 +193,12 @@ using Solidity ABI format:
 - `decode_bfv_params()` / `decode_bfv_params_arc()`: Decode ABI bytes to parameters
 
 This enables serialization for smart contracts and cross-platform parameter exchange.
+
+Hash registry parameters as received: decoding and re-encoding can preserve their meaning but change
+their identity. Hash derivation is not admission; current consumers still check supported presets,
+while the indexer selects historical domains explicitly. Message width and DKG parameters are not
+bound by the threshold parameter hash, so statement changes still require an explicit version
+decision. See [upgrade compatibility](../../docs/architecture/upgrades.md).
 
 ## Usage
 
@@ -368,5 +378,7 @@ assert_eq!(decoded_params.moduli(), params.moduli());
 Run `cargo test --locked -p e3-fhe-params --features abi-encoding` from the root. Inline suites
 cover exact preset lookup/pairs, fallible construction, deterministic CRP, ABI round trips,
 full-width scalar arithmetic, prime selection, and search validation. These native tests do not run
-a prover. [Circuit artifacts](../../docs/architecture/circuit-artifacts.md) describes matching
-generated outputs; [AGENTS.md](AGENTS.md) covers parameter-compatibility changes.
+a prover. Frozen [compatibility vectors](tests/fixtures/README.md) were calculated independently; do
+not regenerate them to make a failing implementation pass.
+[Circuit artifacts](../../docs/architecture/circuit-artifacts.md) describes matching generated
+outputs; [AGENTS.md](AGENTS.md) covers parameter-compatibility changes.

@@ -18,19 +18,61 @@ use alloy::{
     sol,
 };
 use async_trait::async_trait;
+use e3_fhe_params::{current_bfv_crypto_config_id, encode_bfv_params, BfvParamSet, BfvPreset};
 use eyre::Result;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::events::E3Requested;
 use crate::nonce::send_with_next_nonce;
 
 fn crypto_config_id_for_param_set(param_set: u8) -> Result<B256> {
-    match param_set {
-        0 => Ok("0xa3bd5ecc8eede945ef4c08d5454022649137c7696ef8ad2f984f2b9ece35dd32".parse()?),
-        2 => Ok("0xfb73fe2faf11760fd19a2374e7077fdf5e7f7d8324a36b3acb0c05d56ca6307a".parse()?),
-        _ => Err(eyre::eyre!("unsupported BFV parameter set: {}", param_set)),
+    static IDS: [OnceLock<B256>; BfvPreset::ON_CHAIN_PARAMETER_SETS.len()] =
+        [const { OnceLock::new() }; BfvPreset::ON_CHAIN_PARAMETER_SETS.len()];
+    let (index, (_, preset)) = BfvPreset::ON_CHAIN_PARAMETER_SETS
+        .iter()
+        .enumerate()
+        .find(|(_, (id, _))| *id == param_set)
+        .ok_or_else(|| eyre::eyre!("unsupported BFV parameter set: {}", param_set))?;
+    Ok(*IDS[index].get_or_init(|| {
+        let threshold = BfvParamSet::from(*preset).build();
+        current_bfv_crypto_config_id(&encode_bfv_params(&threshold))
+    }))
+}
+
+#[cfg(test)]
+mod crypto_config_tests {
+    use super::*;
+
+    #[test]
+    fn request_identities_match_frozen_vectors_without_admitting_historical_slots() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../fhe-params/tests/fixtures/bfv_protocol.json"
+        ))
+        .unwrap();
+        for vector in fixture["vectors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|vector| vector["preset"].is_string())
+        {
+            let param_set = vector["paramSet"].as_u64().unwrap() as u8;
+            assert_eq!(
+                crypto_config_id_for_param_set(param_set)
+                    .unwrap()
+                    .to_string(),
+                vector["cryptoConfigId"].as_str().unwrap()
+            );
+        }
+        for param_set in [1, 255] {
+            assert_eq!(
+                crypto_config_id_for_param_set(param_set)
+                    .unwrap_err()
+                    .to_string(),
+                format!("unsupported BFV parameter set: {param_set}")
+            );
+        }
     }
 }
 

@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
+import { readFileSync as readFixture } from 'node:fs'
+import { COMMITTEES } from '@interfold/contracts/bfv'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { assertSdkMinimumCircuits } from '../src/circuits/assert-minimum-circuits'
-import { ParamSet } from '../src/contracts/types'
-import { cryptoConfigIdForParamSet } from '../src/utils'
+import { CommitteeSize, ParamSet } from '../src/contracts/types'
+import { DEFAULT_E3_CONFIG, cryptoConfigIdForParamSet } from '../src/utils'
 
 const { readFileSync } = vi.hoisted(() => ({ readFileSync: vi.fn() }))
 vi.mock('node:fs', async () => {
@@ -16,11 +18,26 @@ vi.mock('node:fs', async () => {
 })
 
 describe('SDK circuit selection', () => {
-  it('uses v5 configuration IDs and routes secure requests to slot 2', () => {
-    expect(ParamSet.Secure8192).toBe(2)
-    expect(cryptoConfigIdForParamSet(ParamSet.Insecure64)).toBe('0xa3bd5ecc8eede945ef4c08d5454022649137c7696ef8ad2f984f2b9ece35dd32')
-    expect(cryptoConfigIdForParamSet(ParamSet.Secure8192)).toBe('0xfb73fe2faf11760fd19a2374e7077fdf5e7f7d8324a36b3acb0c05d56ca6307a')
+  it('preserves public committee enum values and the minimum-committee default', () => {
+    for (const [name, value] of [
+      ['minimum', CommitteeSize.Minimum],
+      ['micro', CommitteeSize.Micro],
+      ['small', CommitteeSize.Small],
+      ['large', CommitteeSize.Large],
+    ] as const) {
+      expect(value).toBe(COMMITTEES[name].committeeSize)
+    }
+    expect(DEFAULT_E3_CONFIG.committeeSize).toBe(CommitteeSize.Minimum)
+  })
+
+  it('uses current configuration IDs and the current secure registry entry', () => {
+    const fixture = JSON.parse(readFixture(new URL('../../../crates/fhe-params/tests/fixtures/bfv_protocol.json', import.meta.url), 'utf8'))
+    expect(ParamSet.Secure8192).toBe(fixture.vectors.find((vector: { name: string }) => vector.name === 'current-secure').paramSet)
+    for (const vector of fixture.vectors.filter((vector: { preset: string | null }) => vector.preset !== null)) {
+      expect(cryptoConfigIdForParamSet(vector.paramSet)).toBe(vector.cryptoConfigId)
+    }
     expect(() => cryptoConfigIdForParamSet(1)).toThrow('Unsupported BFV parameter set: 1')
+    expect(() => cryptoConfigIdForParamSet(1)).toThrowError(expect.objectContaining({ code: 'UNSUPPORTED_CRYPTO_CONFIG' }))
   })
 
   beforeEach(() => {

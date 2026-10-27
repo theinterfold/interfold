@@ -18,3 +18,7 @@ once_cell.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 e3-utils.workspace = true
+e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
+
+[dev-dependencies]
+serde_json.workspace = true

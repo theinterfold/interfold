@@ -120,7 +120,7 @@
     "refs": [
       "packages/interfold-contracts/contracts/registry/CiphernodeRegistryOwnable.sol@431@e3.pkVerifier.verify(",
       "packages/interfold-contracts/contracts/verifiers/bfv/BfvPkVerifier.sol@152@circuitVerifier.verify(rawProof, publicInputs)",
-      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol@3248@contract DkgAggregatorVerifier is"
+      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol@3285@contract DkgAggregatorVerifier is"
     ],
     "line_text": ["!e3.pkVerifier.verify(", "if (!circuitVerifier.verify(rawProof, publicInputs)) {", "contract DkgAggregatorVerifier is"],
     "note": "The registry calls e3.pkVerifier (BfvPkVerifier for the BFV scheme), which forwards the proof to its immutable circuitVerifier, the DkgAggregatorVerifier Honk contract."
@@ -131,8 +131,8 @@
     "refs": [
       "packages/interfold-contracts/contracts/Interfold.sol@487@address(e3.decryptionVerifier),",
       "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@332@IDecryptionVerifier(verifierAddress).verify(",
-      "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@218@circuitVerifier.verify(rawProof, publicInputs)",
-      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol@3248@contract DecryptionAggregatorVerifier is"
+      "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@221@circuitVerifier.verify(rawProof, publicInputs)",
+      "packages/interfold-contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol@3285@contract DecryptionAggregatorVerifier is"
     ],
     "line_text": [
       "address(e3.decryptionVerifier),",

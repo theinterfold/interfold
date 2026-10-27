@@ -27,7 +27,7 @@ witness, samples, or runtime orchestration.
 | [configuration.rs](src/configuration.rs) | Shared material, rendering, isolated checks, and configuration synchronization. |
 | [identity.rs](src/identity.rs), [toolchain.rs](src/toolchain.rs) | Framed source identities, required inputs, and exact tool pins. |
 | [artifacts.rs](src/artifacts.rs), [vk_tree.rs](src/vk_tree.rs) | Discovery, staging, hydration, checksums, and recursive anchors. |
-| [templates/](templates) | Stable generated Solidity and committee selectors. |
+| [templates/](templates) | Stable committee selector template. |
 
 The CLI parses a Request, admits supported pairs, validates the tools required by that operation,
 then renders or executes the selected work. `check` formats an isolated library copy and compares
@@ -38,7 +38,11 @@ fails instead of silently reducing provenance.
 
 Use `pnpm build:circuits --help` for flags and the
 [circuit tooling guide](../../../scripts/circuits/README.md#circuit-builder) for complete commands.
-`sync-config` writes TS/Solidity constants; `sync-preset` regenerates preset declarations.
+`sync-config` selects deployment preset/committee names and refreshes Solidity constants;
+`sync-preset` regenerates preset declarations.
+`export-config` prints the owner metadata as JSON without compiler tools or writes. After a matrix
+build, `sync-sources` normalizes unselected preset declarations while retaining the active pair;
+it does not change compiled artifacts or their stamps.
 
 Run `pnpm test:circuit-build`. Native tests cover typed admission, source framing/inputs, generated
 bytes, hydration, anchors, checksums, and tool failures. Explicit ignored cases need pinned tools

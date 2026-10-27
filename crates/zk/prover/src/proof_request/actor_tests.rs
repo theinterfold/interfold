@@ -9,6 +9,7 @@ use alloy::signers::local::PrivateKeySigner;
 use anyhow::Result;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_crypto::SensitiveBytes;
+use e3_event_system::test_support::EventFixture;
 use e3_events::{
     CircuitName, ComputeRequestErrorKind, ComputeRequestKind, DkgShareDecryptionProofRequest,
     E3Failed, E3Stage, EncryptionKey, Event, EventConstructorWithTimestamp, FailureReason,
@@ -16,7 +17,6 @@ use e3_events::{
     ThresholdShare, ThresholdSharePending, Unsequenced, ZkError,
 };
 use e3_fhe_params::BfvPreset;
-use e3_test_helpers::get_common_setup;
 use e3_trbfv::{shares::BfvEncryptedShares, TrBFVError, TrBFVFailure};
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_config::DkgInputType;
@@ -36,7 +36,7 @@ async fn assert_no_events(history: &Addr<HistoryCollector<InterfoldEvent>>) -> R
 
 #[actix::test]
 async fn c0_compute_error_preserves_pending_work_without_failing_the_round() -> Result<()> {
-    let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
     let e3_id = E3id::new("44", 1);
     let correlation_id = CorrelationId::new();
@@ -77,7 +77,7 @@ async fn c0_compute_error_preserves_pending_work_without_failing_the_round() -> 
 
 #[actix::test]
 async fn c0_signing_error_preserves_work_without_failing_the_round() -> Result<()> {
-    let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
     let e3_id = E3id::new("not-a-uint256", 1);
     let correlation_id = CorrelationId::new();
@@ -113,7 +113,7 @@ async fn c0_signing_error_preserves_work_without_failing_the_round() -> Result<(
 /// converted into evidence of invalid committee data.
 #[actix::test]
 async fn c0_trbfv_compute_error_preserves_pending_work() -> Result<()> {
-    let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
     let e3_id = E3id::new("46", 1);
     let correlation_id = CorrelationId::new();
@@ -156,7 +156,7 @@ async fn c0_trbfv_compute_error_preserves_pending_work() -> Result<()> {
 
 #[actix::test]
 async fn own_c0_reaches_the_node_fold_before_encryption_key_created() -> Result<()> {
-    let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
     let e3_id = E3id::new("47", 1);
     let correlation_id = CorrelationId::new();
@@ -256,7 +256,7 @@ fn recovered_threshold_proofs(e3_id: E3id, count: usize) -> HashMap<E3id, BTreeM
 
 #[actix::test]
 async fn restart_reuses_complete_persisted_threshold_proofs() -> Result<()> {
-    let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
     let e3_id = E3id::new("45", 1);
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true)
         .with_recovered_inner_proofs(recovered_threshold_proofs(e3_id.clone(), 3));
@@ -277,7 +277,7 @@ async fn restart_reuses_complete_persisted_threshold_proofs() -> Result<()> {
 
 #[actix::test]
 async fn restart_dispatches_only_missing_threshold_proofs() -> Result<()> {
-    let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
     let e3_id = E3id::new("partially-recovered-threshold", 1);
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true)
         .with_recovered_inner_proofs(recovered_threshold_proofs(e3_id.clone(), 2));
@@ -299,7 +299,7 @@ async fn restart_dispatches_only_missing_threshold_proofs() -> Result<()> {
 
 #[actix::test]
 async fn replayed_threshold_work_invalidates_old_correlations() -> Result<()> {
-    let (bus, _rng, _seed, _params, _crp, _errors, _history) = get_common_setup(None)?;
+    let EventFixture { bus, .. } = EventFixture::new()?;
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), false);
     let e3_id = E3id::new("duplicate-threshold", 1);
     let ec = test_ctx(E3Failed {
@@ -348,7 +348,7 @@ async fn replayed_threshold_work_invalidates_old_correlations() -> Result<()> {
 
 #[actix::test]
 async fn c4_dispatch_before_the_seq_layout_is_held_until_threshold_share_pending() -> Result<()> {
-    let (bus, _rng, _seed, _params, _crp, _errors, _history) = get_common_setup(None)?;
+    let EventFixture { bus, .. } = EventFixture::new()?;
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
     let e3_id = E3id::new("held-c4", 1);
     let request = |dkg_input_type| DkgShareDecryptionProofRequest {
@@ -448,7 +448,11 @@ fn c6_fixture(
 
 #[actix::test]
 async fn a_redelivered_c6_request_asks_for_the_proof_again() -> Result<()> {
-    let (bus, _rng, _seed, _params, _crp, errors, history) = get_common_setup(None)?;
+    let EventFixture {
+        bus,
+        errors,
+        history,
+    } = EventFixture::new()?;
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
     let id = E3id::new("84", 1);
     let (keys, pending) = c6_fixture(&id)?;
@@ -542,7 +546,7 @@ async fn a_redelivered_c6_request_asks_for_the_proof_again() -> Result<()> {
 
 #[actix::test]
 async fn a_c6_request_after_the_e3_ended_is_ignored() -> Result<()> {
-    let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+    let EventFixture { bus, history, .. } = EventFixture::new()?;
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
     let id = E3id::new("84", 1);
     let (keys, pending) = c6_fixture(&id)?;
@@ -599,8 +603,9 @@ async fn replayed_c6_intent_is_repaired_before_deduplication() -> Result<()> {
     use e3_events::{
         AggregateConfig, AggregateId, EventConstructorWithTimestamp, EvmEventConfig,
         EvmEventConfigChain, HistoricalEvmEventsReceived, HistoricalNetSyncEventsReceived,
-        NetReady, RequestRouterCheckpoint,
+        NetReady,
     };
+    use e3_request::RequestRouterCheckpoint;
     use e3_sync::SyncRepositoryFactory;
     use std::time::Duration;
     let id = E3id::new("83", 1);

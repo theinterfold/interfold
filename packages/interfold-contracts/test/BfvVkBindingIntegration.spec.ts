@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { CIRCUIT_DIMENSIONS } from "../bfv.js";
 import MockCiphernodeRegistryModule from "../ignition/modules/mockCiphernodeRegistry";
 import {
   BFV_DKG_H,
@@ -133,13 +134,15 @@ const HONK_VERIFY_GAS_LIMIT = 1_000_000_000n;
 const isCoverageRun = process.argv.includes("--coverage");
 
 function plaintextHashFromPublicInputs(publicInputs: string[]): string {
-  const messageCoeffsCount = 50;
+  const messageCoeffsCount = CIRCUIT_DIMENSIONS.messageCoeffsCount;
   const offset = publicInputs.length - messageCoeffsCount;
-  const plaintext = new Uint8Array(messageCoeffsCount * 8);
+  const plaintext = new Uint8Array(CIRCUIT_DIMENSIONS.plaintextByteLen);
   for (let i = 0; i < messageCoeffsCount; i++) {
     const coeff = BigInt(publicInputs[offset + i]);
-    for (let j = 0; j < 8; j++) {
-      plaintext[i * 8 + j] = Number((coeff >> BigInt(j * 8)) & 0xffn);
+    for (let j = 0; j < CIRCUIT_DIMENSIONS.messageCoeffByteLen; j++) {
+      plaintext[i * CIRCUIT_DIMENSIONS.messageCoeffByteLen + j] = Number(
+        (coeff >> BigInt(j * 8)) & 0xffn,
+      );
     }
   }
   return ethers.keccak256(plaintext);

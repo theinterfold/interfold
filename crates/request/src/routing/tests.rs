@@ -7,7 +7,7 @@
 use super::*;
 use crate::{
     ContextRepositoryFactory, DkgFoldAttestationContextRepositoryFactory, E3ContextSnapshot,
-    E3MetaExtension, DKG_FOLD_ATTESTATION_CONTEXT_KEY,
+    E3MetaExtension, RequestRouterCheckpoint, DKG_FOLD_ATTESTATION_CONTEXT_KEY,
 };
 use actix::Actor;
 use async_trait::async_trait;
@@ -16,8 +16,7 @@ use e3_events::{
     hlc_factory::HlcFactory, BusHandle, CiphernodeSelected, CommitteeFinalized,
     DkgFoldAttestationContext, DkgFoldAttestationContextEstablished, E3Failed, E3Requested,
     E3Stage, EffectsEnabled, EventBus, EventSource, EventStore, FailureReason, InterfoldEventData,
-    RequestRouterCheckpoint, Sequencer, SyncEffect, TestEvent, Unsequenced,
-    DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+    Sequencer, SyncEffect, TestEvent, Unsequenced, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use std::sync::{
     atomic::{AtomicUsize, Ordering},

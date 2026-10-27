@@ -5,8 +5,19 @@ edition.workspace = true
 license.workspace = true
 description = "E3 - Interfold Ciphernode Tests"
 repository.workspace = true
+publish = false
 
 [dependencies]
+clap.workspace = true
+e3-bfv-client.workspace = true
+e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
+fhe.workspace = true
+fhe-traits.workspace = true
+hex.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+
+[dev-dependencies]
 e3-committee = { workspace = true }
 actix = { workspace = true }
 alloy = { workspace = true }
@@ -15,14 +26,13 @@ anyhow = { workspace = true }
 async-std = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
-clap = { workspace = true }
 e3-aggregator = { workspace = true }
 e3-config = { workspace = true }
 e3-crypto = { workspace = true }
 e3-ciphernode-builder = { workspace = true, features = ["test-helpers", "test-only-skip-proof-aggregation"] }
 e3-event-system = { workspace = true }
 e3-data = { workspace = true }
-e3-events = { workspace = true }
+e3-events = { workspace = true, features = ["test-helpers"] }
 e3-evm = { workspace = true }
 e3-fhe = { workspace = true }
 e3-keyshare = { workspace = true }
@@ -32,19 +42,14 @@ e3-net = { workspace = true }
 e3-request = { workspace = true }
 e3-sdk = { workspace = true }
 e3-sortition = { workspace = true }
-e3-test-helpers = { workspace = true }
+e3-test-support = { workspace = true }
+e3-bfv-test-support = { workspace = true }
 e3-trbfv = { workspace = true }
-e3-bfv-client = { workspace = true }
-e3-fhe-params = { workspace = true }
 e3-utils = { workspace = true }
 e3-zk-prover = { workspace = true }
 e3-zk-config = { workspace = true }
-fhe-traits = { workspace = true }
 fhe-util = { workspace = true }
-fhe = { workspace = true }
 num-bigint = { workspace = true }
-rand = { workspace = true }
-rand_chacha = { workspace = true }
 serde_json = { workspace = true }
 serial_test = { workspace = true }
 tempfile = { workspace = true }
@@ -52,11 +57,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 zeroize = { workspace = true }
-
-[dev-dependencies]
-e3-events = { workspace = true, features = ["test-helpers"] }
 e3-layout-lock = { workspace = true }
 e3-sync = { workspace = true }
-hex = { workspace = true }
 libp2p = { workspace = true }
 serde = { workspace = true }

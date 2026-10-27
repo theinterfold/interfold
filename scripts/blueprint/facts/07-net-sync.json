@@ -315,12 +315,12 @@
         {
           "name": "schema version marker (u32)",
           "where": "disk",
-          "ref": "crates/sync/src/repo.rs@44@fn schema_version(&self) -> Repository<u32> {"
+          "ref": "crates/sync/src/repo.rs@45@fn schema_version(&self) -> Repository<u32> {"
         },
         {
           "name": "node role marker (full or bootstrap)",
           "where": "disk",
-          "ref": "crates/sync/src/repo.rs@48@fn node_role(&self) -> Repository<NodeRole> {"
+          "ref": "crates/sync/src/repo.rs@49@fn node_role(&self) -> Repository<NodeRole> {"
         },
         {
           "name": "per-aggregate cursors: sequence, block and HLC timestamp",
@@ -330,7 +330,7 @@
         {
           "name": "request-router checkpoint with its replay cursors",
           "where": "disk",
-          "ref": "crates/sync/src/repo.rs@40@fn request_router_checkpoint(&self) -> Repository<RequestRouterCheckpoint> {"
+          "ref": "crates/sync/src/repo.rs@41@fn request_router_checkpoint(&self) -> Repository<RequestRouterCheckpoint> {"
         },
         {
           "name": "replay spool: sorted runs in temporary files, deleted on every exit path",
@@ -347,7 +347,7 @@
         {
           "name": "SyncRepositoryFactory",
           "what": "Typed repository keys for the schema, role, cursor and checkpoint records.",
-          "ref": "crates/sync/src/repo.rs@13@pub trait SyncRepositoryFactory {"
+          "ref": "crates/sync/src/repo.rs@14@pub trait SyncRepositoryFactory {"
         },
         {
           "name": "SnapshotMeta",

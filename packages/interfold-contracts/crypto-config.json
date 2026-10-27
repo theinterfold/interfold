@@ -1,0 +1,201 @@
+{
+  "formatVersion": 1,
+  "bfv": {
+    "encryptionScheme": "fhe.rs:BFV",
+    "encryptionSchemeId": "0x2c2a814a0495f913a3a312fc4771e37552bc14f8a2d4075a08122d356f0849c6",
+    "circuitVersion": "interfold-bfv-v5",
+    "presets": [
+      {
+        "preset": "insecure-64",
+        "paramSet": 0,
+        "threshold": {
+          "name": "INSECURE_THRESHOLD_64",
+          "degree": "64",
+          "plaintextModulus": "17000000",
+          "moduli": [
+            "134217089",
+            "134215681",
+            "134215553"
+          ],
+          "error1Variance": "53162936320"
+        },
+        "dkg": {
+          "name": "INSECURE_DKG_64",
+          "degree": "64",
+          "plaintextModulus": "134217089",
+          "moduli": [
+            "536852993",
+            "536854657"
+          ],
+          "error1Variance": "10"
+        },
+        "parameterHash": "0x0c989bf49a85bd9e3bee06d72073c5e060e0f3260cbfc583407519959e74cbe4",
+        "cryptoConfigId": "0xa3bd5ecc8eede945ef4c08d5454022649137c7696ef8ad2f984f2b9ece35dd32",
+        "search": {
+          "n": "39",
+          "z": "100000",
+          "k": "17000000",
+          "lambda": 2,
+          "b": "20",
+          "bChi": "1",
+          "minMargin": 2,
+          "d": "64",
+          "insecure": true,
+          "multDepth": 0,
+          "minPrimeBits": 12
+        }
+      },
+      {
+        "preset": "secure-8192",
+        "paramSet": 2,
+        "threshold": {
+          "name": "SECURE_THRESHOLD_8192",
+          "degree": "8192",
+          "plaintextModulus": "17000000",
+          "moduli": [
+            "576460752317792257",
+            "576460752317399041",
+            "576460752316776449"
+          ],
+          "error1Variance": "67391859386295234756372897751812360110080"
+        },
+        "dkg": {
+          "name": "SECURE_DKG_8192",
+          "degree": "8192",
+          "plaintextModulus": "576460752317792257",
+          "moduli": [
+            "2305843009214758913",
+            "2305843009214988289"
+          ],
+          "error1Variance": "10"
+        },
+        "parameterHash": "0x79f1d3a1594ca78e3232c804c49c2a404303ae1c539fb25c57971d7a582de2e2",
+        "cryptoConfigId": "0xfb73fe2faf11760fd19a2374e7077fdf5e7f7d8324a36b3acb0c05d56ca6307a",
+        "search": {
+          "n": "39",
+          "z": "100000",
+          "k": "17000000",
+          "lambda": 45,
+          "b": "20",
+          "bChi": "1",
+          "minMargin": 2,
+          "d": null,
+          "insecure": false,
+          "multDepth": 0,
+          "minPrimeBits": 50
+        }
+      }
+    ]
+  },
+  "zk": {
+    "fieldByteLen": 32,
+    "messageCoeffsCount": 50,
+    "messageCoeffByteLen": 8,
+    "plaintextByteLen": 400,
+    "decryptionAggregator": {
+      "publicInputs": [
+        {
+          "name": "c6_fold_key_hash"
+        },
+        {
+          "name": "c7_key_hash"
+        },
+        {
+          "name": "committee_hash_hi"
+        },
+        {
+          "name": "committee_hash_lo"
+        },
+        {
+          "name": "domain_hi"
+        },
+        {
+          "name": "domain_lo"
+        },
+        {
+          "name": "ciphertext_commitment"
+        }
+      ],
+      "returnPrefix": [
+        {
+          "name": "key_hash"
+        }
+      ],
+      "columns": [
+        {
+          "name": "party_ids"
+        },
+        {
+          "name": "expected_sk"
+        },
+        {
+          "name": "expected_esm"
+        }
+      ]
+    }
+  },
+  "committees": [
+    {
+      "name": "minimum",
+      "committeeSize": 0,
+      "n": 3,
+      "t": 1,
+      "h": 2
+    },
+    {
+      "name": "micro",
+      "committeeSize": 1,
+      "n": 9,
+      "t": 4,
+      "h": 5
+    },
+    {
+      "name": "small",
+      "committeeSize": 2,
+      "n": 19,
+      "t": 9,
+      "h": 14
+    },
+    {
+      "name": "large",
+      "committeeSize": 3,
+      "n": 39,
+      "t": 19,
+      "h": 28
+    }
+  ],
+  "buildPairs": [
+    [
+      "insecure-64",
+      "minimum"
+    ],
+    [
+      "insecure-64",
+      "micro"
+    ],
+    [
+      "insecure-64",
+      "small"
+    ],
+    [
+      "insecure-64",
+      "large"
+    ],
+    [
+      "secure-8192",
+      "minimum"
+    ],
+    [
+      "secure-8192",
+      "micro"
+    ],
+    [
+      "secure-8192",
+      "small"
+    ],
+    [
+      "secure-8192",
+      "large"
+    ]
+  ]
+}

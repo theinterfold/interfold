@@ -956,7 +956,7 @@ function ciphernode({ units }) {
         ta: 0.85,
         label: 'decoded events',
         lp: 'left',
-        refs: [...ev('B1'), H('crates/events/src/bus_handle.rs', 260, 'self.sequencer.do_send(event);')],
+        refs: [...ev('B1'), H('crates/events/src/bus_handle.rs', 251, 'self.sequencer.do_send(event);')],
       },
       { from: 'peers', to: 'net', fs: 'r', ts: 'l', both: true, label: 'gossipsub\nKademlia', refs: [...ev('A23'), ...ev('B6')] },
       {
@@ -1109,7 +1109,7 @@ function apps() {
         style: 'tagged',
         title: 'MyProgram',
         lines: ['the E3 program'],
-        ref: 'templates/default/contracts/MyProgram.sol@89@function publishInput(',
+        ref: 'templates/default/contracts/MyProgram.sol@90@function publishInput(',
       },
       { id: 'avail', x: 1880, y: 1000, w: 210, h: 90, title: 'Avail', lines: ['data availability'] },
       {

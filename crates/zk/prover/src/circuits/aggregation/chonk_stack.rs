@@ -9,7 +9,7 @@
 //! verified, so the stack's public outputs are the app's data, the leaf key hash, then the app,
 //! init and tail key hashes.
 
-use crate::chonk::{prove_stack, ChonkStackCircuit};
+use crate::chonk::{prove_stack, ChonkKind, ChonkStackCircuit};
 use crate::circuits::utils::{bytes_to_field_strings, inputs_json_to_input_map};
 use crate::circuits::vk::{self, VkArtifacts};
 use crate::error::ZkError;
@@ -21,7 +21,7 @@ use serde::Serialize;
 use std::fs;
 
 /// Fields of a Chonk proof after its public inputs (`lib::math::chonk::CHONK_PROOF_LENGTH`).
-const CHONK_PROOF_LENGTH: usize = 1270;
+const CHONK_PROOF_LENGTH: usize = 1221;
 
 pub(crate) struct StackCircuit {
     compiled: CompiledCircuit,
@@ -172,13 +172,21 @@ impl ChonkStack {
         outputs.push(tail.vk.key_hash.clone());
 
         let witnesses = [app_witness, init_witness, tail_witness, hiding_witness];
+        let kinds = [
+            ChonkKind::App,
+            ChonkKind::Kernel,
+            ChonkKind::Kernel,
+            ChonkKind::Hiding,
+        ];
         let stack: Vec<_> = self
             .circuits
             .iter()
             .zip(&self.stages)
             .zip(&witnesses)
-            .map(|((&circuit, stage), witness)| ChonkStackCircuit {
+            .zip(kinds)
+            .map(|(((&circuit, stage), witness), kind)| ChonkStackCircuit {
                 circuit,
+                kind,
                 compiled: &stage.compiled,
                 verification_key: &stage.key,
                 witness,

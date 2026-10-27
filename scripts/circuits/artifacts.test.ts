@@ -33,8 +33,15 @@ test('build tooling excludes a disabled pair from the shared policy', () => {
     const pairs: string[][] = JSON.parse(readFileSync(join(__dirname, 'build-pairs.json'), 'utf8'))
     const allowed = pairs.filter(([preset, committee]) => preset !== 'secure-8192' || committee !== 'micro')
     assert.equal(allowed.length, pairs.length - 1)
-    copyFileSync(join(__dirname, 'constants.ts'), join(dir, 'constants.ts'))
-    writeFileSync(join(dir, 'build-pairs.json'), JSON.stringify(allowed))
+    const isolated = join(dir, 'scripts/circuits')
+    const contracts = join(dir, 'packages/interfold-contracts')
+    mkdirSync(isolated, { recursive: true })
+    mkdirSync(contracts, { recursive: true })
+    copyFileSync(join(__dirname, 'constants.ts'), join(isolated, 'constants.ts'))
+    for (const file of ['bfv.ts', 'crypto-config.json']) {
+      copyFileSync(join(__dirname, '../../packages/interfold-contracts', file), join(contracts, file))
+    }
+    writeFileSync(join(isolated, 'build-pairs.json'), JSON.stringify(allowed))
     const result = JSON.parse(
       execFileSync(
         'pnpm',
@@ -42,7 +49,7 @@ test('build tooling excludes a disabled pair from the shared policy', () => {
           'tsx',
           '-e',
           'const policy = require(process.argv[1]); console.log(JSON.stringify({ supported: policy.isPresetCommitteeSupported("secure-8192", "micro"), pairs: policy.SUPPORTED_PRESET_COMMITTEE_PAIRS }));',
-          join(dir, 'constants.ts'),
+          join(isolated, 'constants.ts'),
         ],
         { encoding: 'utf8' },
       ),

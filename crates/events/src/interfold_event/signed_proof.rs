@@ -72,23 +72,6 @@ impl ProofType {
         }
     }
 
-    /// Slash reason identifier for on-chain policies
-    pub fn slash_reason(&self) -> &'static str {
-        match self {
-            ProofType::C0PkBfv
-            | ProofType::C1PkGeneration
-            | ProofType::C2aSkShareComputation
-            | ProofType::C2bESmShareComputation
-            | ProofType::C3aSkShareEncryption
-            | ProofType::C3bESmShareEncryption
-            | ProofType::C4aSkShareDecryption
-            | ProofType::C4bESmShareDecryption => "E3_BAD_DKG_PROOF",
-            ProofType::C6ThresholdShareDecryption => "E3_BAD_DECRYPTION_PROOF",
-            ProofType::C7DecryptedSharesAggregation => "E3_BAD_AGGREGATION_PROOF",
-            ProofType::C5PkAggregation => "E3_BAD_PK_AGGREGATION_PROOF",
-        }
-    }
-
     /// Derive the Lane A policy key used by `SlashingManager._proposeSlash`.
     pub fn attestation_slash_reason(&self) -> FixedBytes<32> {
         keccak256(U256::from(*self as u8).to_be_bytes::<32>())

@@ -6,11 +6,11 @@
 
 //! Chonk hiding kernel for C6: verifies the tail kernel, appends its key hash and ends the stack.
 
-use lib::math::chonk::{C6_CHONK_DATA_LEN, MegaVerificationKey, PROOF_TYPE_HN_FINAL};
+use lib::math::chonk::{C6_CHONK_DATA_LEN, KernelVerificationKey, PROOF_TYPE_HN_FINAL};
 
 fn main(
     prev_outputs: call_data(0) [Field; C6_CHONK_DATA_LEN + 3],
-    kernel_vk: MegaVerificationKey,
+    kernel_vk: KernelVerificationKey,
 ) -> pub [Field; C6_CHONK_DATA_LEN + 4] {
     std::verify_proof_with_type(kernel_vk.key, [], [], kernel_vk.hash, PROOF_TYPE_HN_FINAL);
     let mut out = [0; C6_CHONK_DATA_LEN + 4];

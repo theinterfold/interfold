@@ -39,6 +39,7 @@ import {
   loadConfig,
   requireContract,
 } from "../protocol/values";
+import { verifyRecordedDeployments } from "../sourceVerification";
 import { deployUpgradeImplementation } from "./safeProxyUpgrade";
 
 function planPath(config: ProtocolConfigFile): string {
@@ -373,7 +374,9 @@ VRF sortition upgrade prepared
 `);
 }
 
-prepareVrfSortitionUpgrade().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+prepareVrfSortitionUpgrade()
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  })
+  .finally(verifyRecordedDeployments);

@@ -69,6 +69,7 @@ import {
   loadConfig,
   requireContract,
 } from "../protocol/values";
+import { verifyRecordedDeployments } from "../sourceVerification";
 import {
   PRODUCTION_BFV_CONFIG,
   activeBfvConfigForChain,
@@ -1251,9 +1252,11 @@ if (
     );
     process.exitCode = 1;
   } else {
-    run().catch((error) => {
-      console.error(error);
-      process.exitCode = 1;
-    });
+    run()
+      .catch((error) => {
+        console.error(error);
+        process.exitCode = 1;
+      })
+      .finally(verifyRecordedDeployments);
   }
 }

@@ -162,7 +162,8 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
     }
 
     /// Query events by timestamp. Returns events at or after the given timestamp.
-    pub fn query_by_ts(
+    #[cfg(test)]
+    fn query_by_ts(
         &self,
         query: u128,
         filter: Option<EventStoreFilter>,
@@ -211,7 +212,7 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
     /// hold an older timestamp after a newer one, so a scan in log order from the first matching
     /// record could miss records. The progress says which timestamp the page read through and
     /// whether the store holds more.
-    pub fn query_history_page(
+    fn query_history_page(
         &self,
         since: u128,
         limit: usize,
@@ -263,7 +264,8 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
     }
 
     /// Query events by sequence number. Returns events at or after the given sequence.
-    pub fn query_by_seq(
+    #[cfg(test)]
+    fn query_by_seq(
         &self,
         query: u64,
         filter: Option<EventStoreFilter>,

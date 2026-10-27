@@ -11,6 +11,7 @@ mod domain;
 mod hetrogenous_map;
 mod meta;
 mod repo;
+mod request_router_checkpoint;
 
 pub use actors::*;
 pub use context::*;
@@ -18,3 +19,4 @@ pub use domain::*;
 pub use hetrogenous_map::*;
 pub use meta::*;
 pub use repo::*;
+pub use request_router_checkpoint::*;

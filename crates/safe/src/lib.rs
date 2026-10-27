@@ -452,7 +452,8 @@ pub fn compute_tag<const L: usize>(io_pattern: [u32; L], domain_separator: [u8; 
 
 #[cfg(test)]
 mod tests {
-    /// Matches the hash bb 5.2.0's `Poseidon2Hash` gives for a Mega verification key.
+    /// Matches the hash bb's `Poseidon2Hash` gives for a Mega verification key (recorded with bb
+    /// 5.2.0; bb 6.0.0 checks the same hash in-circuit).
     #[test]
     fn bb_poseidon2_hash_matches_barretenberg() {
         use ark_ff::PrimeField;

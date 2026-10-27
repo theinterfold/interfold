@@ -85,6 +85,13 @@ pub(crate) fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
+/// The Noir release the prover's Rust crates pin; every compiled circuit must report it.
+fn noir_pin(root: &Path) -> Result<String> {
+    e3_zk_build::pinned_noir_version(&fs::read_to_string(
+        root.join("crates/zk/prover/Cargo.toml"),
+    )?)
+}
+
 fn resolve(root: &Path, path: &Path) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
@@ -303,9 +310,7 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<()> {
         } else {
             artifacts::validate_pair(&artifact_root, preset_name, committee_name)?
         };
-    let noir_pin = e3_zk_build::pinned_noir_version(&fs::read_to_string(
-        root.join("crates/zk/prover/Cargo.toml"),
-    )?)?;
+    let noir_pin = noir_pin(root)?;
     let bb_version = run(Command::new(prover.bb_binary()).arg("--version"))?;
     if !e3_zk_build::reports_version(&bb_version, &backend.config.required_bb_version) {
         bail!(

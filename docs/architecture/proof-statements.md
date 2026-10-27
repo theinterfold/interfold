@@ -180,8 +180,9 @@ key's hash to the data it passes on, so each tube or accumulator exposes seven k
 the tube, the hiding kernel's Chonk key, then C3, app, init and tail. Merging requires equal keys on
 both sides; `c3ab_fold` hashes each chain's seven keys into the C3 tree, which the anchor pins. The
 Chonk and Mega key hashes are Barretenberg's Poseidon2 hash of the key fields, which the builder
-writes beside `write_vk --scheme chonk` output. A chain has at least two stacks, so it ends on an
-accumulator.
+writes beside `write_vk --scheme chonk --circuit_kind app|kernel|hiding` output (bb 6 derives app,
+kernel and hiding keys against separate Mega flavors). A chain has at least two stacks, so it ends
+on an accumulator.
 
 Every slot index is public. A place with nothing to verify carries the sentinel slot `C3_SLOTS` and
 writes nothing; its proof position repeats a real leaf of the stack, so it is verified but adds no

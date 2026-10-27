@@ -370,7 +370,7 @@
       "state": [],
       "key_types": [],
       "read_first": [
-        { "why": "Configuration metadata and layout exports", "ref": "crates/zk/config/src/lib.rs@16@pub use metadata::CircuitMetadata;" }
+        { "why": "Configuration metadata and layout exports", "ref": "crates/zk/config/src/lib.rs@18@pub use metadata::CircuitMetadata;" }
       ],
       "rust_patterns": [],
       "depends_on": ["e3-committee", "e3-fhe-params", "e3-polynomial", "e3-polynomial-fhe", "e3-parity-matrix"],
@@ -427,13 +427,13 @@
         {
           "name": "Request",
           "what": "Typed build operation, selection, output, and artifact controls",
-          "ref": "crates/zk/build/src/lib.rs@209@pub struct Request {"
+          "ref": "crates/zk/build/src/lib.rs@240@pub struct Request {"
         }
       ],
       "read_first": [
         {
           "why": "Admit a typed request and execute the owning operation",
-          "ref": "crates/zk/build/src/lib.rs@399@pub fn execute(root: &Path, request: &Request) -> Result<()> {"
+          "ref": "crates/zk/build/src/lib.rs@446@pub fn execute(root: &Path, request: &Request) -> Result<()> {"
         }
       ],
       "rust_patterns": [],

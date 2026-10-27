@@ -14,7 +14,7 @@ use alloy::consensus::BlockHeader;
 use alloy::hex;
 use alloy::primitives::{keccak256, Address, Uint, B256};
 use alloy::providers::Provider;
-use alloy::sol_types::{SolEvent, SolValue};
+use alloy::sol_types::SolEvent;
 use async_trait::async_trait;
 use e3_bfv_client::validate_pk_commitment;
 use e3_evm_helpers::{
@@ -29,7 +29,10 @@ use e3_evm_helpers::{
         CommitteePublicKeyChunkPublished, CommitteePublished, PlaintextOutputPublished,
     },
 };
-use e3_fhe_params::{decode_bfv_params, encode_bfv_params, BfvParamSet, BfvPreset};
+use e3_fhe_params::{
+    bfv_crypto_config_id, bfv_encryption_scheme_id, current_bfv_crypto_config_id,
+    decode_bfv_params, encode_bfv_params, BfvParamSet, BfvPreset,
+};
 use eyre::eyre;
 use eyre::Result;
 use serde::{de::DeserializeOwned, Serialize};
@@ -427,20 +430,9 @@ fn request_bfv_params(
     request_config_id: B256,
     historical_params: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
-    let config_id = |params: &[u8], version: &[u8]| {
-        keccak256(
-            (
-                keccak256(b"fhe.rs:BFV"),
-                keccak256(params),
-                keccak256(version),
-            )
-                .abi_encode(),
-        )
-    };
-
     if let Some(preset) = BfvPreset::from_on_chain_param_set(param_set) {
         let params = encode_bfv_params(&BfvParamSet::from(preset).build_arc());
-        if request_config_id == config_id(&params, b"interfold-bfv-v5") {
+        if request_config_id == current_bfv_crypto_config_id(&params) {
             return Ok(params);
         }
     }
@@ -454,7 +446,7 @@ fn request_bfv_params(
         .ok_or_else(|| eyre!("historical BFV parameter set {param_set} is not registered"))?;
     decode_bfv_params(params)
         .map_err(|error| eyre!("invalid historical BFV parameters: {error}"))?;
-    if request_config_id != config_id(params, b"interfold-bfv-v1") {
+    if request_config_id != bfv_crypto_config_id(params, "interfold-bfv-v1") {
         return Err(eyre!(
             "local circuit configuration does not match request-time config for parameter set {param_set}"
         ));
@@ -502,7 +494,7 @@ async fn store_committee_public_key<S: DataStore, R: ProviderType>(
         }
         Err(error) => return Err(error),
     };
-    if e3.encryptionSchemeId == keccak256("fhe.rs:BFV") {
+    if e3.encryptionSchemeId == bfv_encryption_scheme_id() {
         let decoded_params = decode_bfv_params(&e3_params)
             .map_err(|error| eyre!("invalid BFV parameters for E3 {e3_id}: {error}"))?;
         if let Err(error) = validate_pk_commitment(
@@ -1208,7 +1200,10 @@ mod public_key_chunk_tests {
     use alloy::primitives::{keccak256, Address, B256, U256};
     use alloy::sol_types::SolValue;
     use e3_bfv_client::{compute_pk_commitment, validate_pk_commitment};
-    use e3_fhe_params::{decode_bfv_params, encode_bfv_params, BfvParamSet, BfvPreset};
+    use e3_fhe_params::{
+        bfv_crypto_config_id, current_bfv_crypto_config_id, decode_bfv_params, encode_bfv_params,
+        BfvParamSet, BfvPreset,
+    };
     use fhe::bfv::{PublicKey, SecretKey};
     use fhe_traits::Serialize;
     use std::sync::Arc;
@@ -1225,14 +1220,7 @@ mod public_key_chunk_tests {
         )
             .abi_encode();
         assert!(decode_bfv_params(&params).is_ok());
-        let id = keccak256(
-            (
-                keccak256(b"fhe.rs:BFV"),
-                keccak256(&params),
-                keccak256(b"interfold-bfv-v1"),
-            )
-                .abi_encode(),
-        );
+        let id = bfv_crypto_config_id(&params, "interfold-bfv-v1");
 
         assert_eq!(
             id.to_string(),
@@ -1243,16 +1231,19 @@ mod public_key_chunk_tests {
         assert!(request_bfv_params(0, id, Some(&params[..params.len() - 1])).is_err());
         assert!(request_bfv_params(2, id, Some(&params)).is_err());
 
+        let mut extended = params.clone();
+        extended.extend_from_slice(&[0; 32]);
+        let extended_id = bfv_crypto_config_id(&extended, "interfold-bfv-v1");
+        assert_eq!(
+            request_bfv_params(0, extended_id, Some(&extended)).unwrap(),
+            extended
+        );
+        assert!(request_bfv_params(0, id, Some(&extended)).is_err());
+        assert!(request_bfv_params(0, extended_id, Some(&params)).is_err());
+
         let current =
             encode_bfv_params(&BfvParamSet::from(BfvPreset::InsecureThreshold64).build_arc());
-        let current_id = keccak256(
-            (
-                keccak256(b"fhe.rs:BFV"),
-                keccak256(&current),
-                keccak256(b"interfold-bfv-v5"),
-            )
-                .abi_encode(),
-        );
+        let current_id = current_bfv_crypto_config_id(&current);
         assert_eq!(request_bfv_params(0, current_id, None).unwrap(), current);
         assert!(request_bfv_params(1, current_id, Some(&current)).is_err());
     }
@@ -1308,14 +1299,7 @@ mod public_key_chunk_tests {
     fn current_secure_slot_requires_the_current_configuration_id() {
         let params =
             encode_bfv_params(&BfvParamSet::from(BfvPreset::SecureThreshold8192).build_arc());
-        let id = keccak256(
-            (
-                keccak256(b"fhe.rs:BFV"),
-                keccak256(&params),
-                keccak256(b"interfold-bfv-v5"),
-            )
-                .abi_encode(),
-        );
+        let id = current_bfv_crypto_config_id(&params);
 
         assert_eq!(request_bfv_params(2, id, None).unwrap(), params);
         assert!(request_bfv_params(2, keccak256(b"interfold-bfv-v1"), None).is_err());

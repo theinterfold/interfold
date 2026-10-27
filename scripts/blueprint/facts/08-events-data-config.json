@@ -26,12 +26,12 @@
         {
           "name": "EventStoreRouter",
           "role": "Routes each store request to its aggregate's EventStore; an unconfigured aggregate signals fatal storage failure without dispatch or misrouting",
-          "ref": "crates/events/src/eventstore_router.rs@155@pub struct EventStoreRouter<I: SequenceIndex, L: EventLog> {"
+          "ref": "crates/events/src/eventstore_router.rs@150@pub struct EventStoreRouter<I: SequenceIndex, L: EventLog> {"
         },
         {
           "name": "SnapshotBuffer",
           "role": "Pre-fanout recipient; its BatchRouter groups actor snapshot writes by aggregate and sequence and sends each batch to the store as InsertBatch",
-          "ref": "crates/events/src/snapshot_buffer/snapshot_buffer.rs@44@pub struct SnapshotBuffer {"
+          "ref": "crates/events/src/snapshot_buffer/snapshot_buffer.rs@40@pub struct SnapshotBuffer {"
         }
       ],
       "consumes": [
@@ -43,19 +43,19 @@
         {
           "name": "StoreEventRequested",
           "by": "EventStore",
-          "ref": "crates/events/src/eventstore.rs@447@impl<I: SequenceIndex, L: EventLog> Handler<StoreEventRequested> for EventStore<I, L> {"
+          "ref": "crates/events/src/eventstore.rs@449@impl<I: SequenceIndex, L: EventLog> Handler<StoreEventRequested> for EventStore<I, L> {"
         },
         {
           "name": "InterfoldEvent<Sequenced>",
           "by": "EventBus",
-          "ref": "crates/events/src/eventbus.rs@276@impl<E: Event> Handler<E> for EventBus<E> {"
+          "ref": "crates/events/src/eventbus.rs@272@impl<E: Event> Handler<E> for EventBus<E> {"
         }
       ],
       "emits": [
         {
           "name": "StoreEventResponse",
           "by": "EventStore",
-          "ref": "crates/events/src/eventstore.rs@452@msg.sender.do_send(StoreEventResponse(sequenced));"
+          "ref": "crates/events/src/eventstore.rs@454@msg.sender.do_send(StoreEventResponse(sequenced));"
         },
         {
           "name": "InterfoldEvent<Sequenced>",
@@ -65,12 +65,12 @@
         {
           "name": "Shutdown",
           "by": "BusHandle",
-          "ref": "crates/events/src/bus_handle.rs@283@let event = self.event_from(Shutdown, None)?;"
+          "ref": "crates/events/src/bus_handle.rs@274@let event = self.event_from(Shutdown, None)?;"
         },
         {
           "name": "InterfoldError",
           "by": "BusHandle",
-          "ref": "crates/events/src/bus_handle.rs@336@match self.event_from_error(err_type, error, self.get_ctx()) {"
+          "ref": "crates/events/src/bus_handle.rs@327@match self.event_from_error(err_type, error, self.get_ctx()) {"
         }
       ],
       "state": [
@@ -180,11 +180,11 @@
       "read_first": [
         {
           "why": "crate surface: the module list and re-exports; start from the bus",
-          "ref": "crates/events/src/lib.rs@47@pub use eventbus::*;"
+          "ref": "crates/events/src/lib.rs@43@pub use eventbus::*;"
         },
         {
           "why": "publishing: BusHandle stamps a local event with the HLC and hands it to the Sequencer",
-          "ref": "crates/events/src/bus_handle.rs@318@fn publish_local("
+          "ref": "crates/events/src/bus_handle.rs@309@fn publish_local("
         },
         {
           "why": "sequencing: the Sequencer receives each unsequenced event and asks the store router to persist it",
@@ -196,7 +196,7 @@
         },
         {
           "why": "fan-out: the EventBus delivers each sequenced event to the subscribers of its type",
-          "ref": "crates/events/src/eventbus.rs@276@impl<E: Event> Handler<E> for EventBus<E> {"
+          "ref": "crates/events/src/eventbus.rs@272@impl<E: Event> Handler<E> for EventBus<E> {"
         }
       ],
       "rust_patterns": [
@@ -208,7 +208,7 @@
         {
           "pattern": "actix-message",
           "note": "Subscribe derives Message and carries an event type string plus a Recipient",
-          "ref": "crates/events/src/eventbus.rs@370@pub struct Subscribe<E: Event> {"
+          "ref": "crates/events/src/eventbus.rs@366@pub struct Subscribe<E: Event> {"
         },
         {
           "pattern": "actix-recipient",
@@ -273,7 +273,7 @@
       "read_first": [
         {
           "why": "crate exports: runtime assembly and process-local shared access",
-          "ref": "crates/event-system/src/lib.rs@11@pub use event_system::*;"
+          "ref": "crates/event-system/src/lib.rs@13@pub use event_system::*;"
         },
         {
           "why": "in-memory construction, used by tests and standalone helpers",

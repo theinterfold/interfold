@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
@@ -58,7 +58,7 @@ test('the pre-push path helper stops a pushed branch that differs from HEAD in a
   assert.equal(push('feature').status, 0)
 })
 
-test('the production verifier filter excludes artifact transport and gas setup but retains generator inputs', (t) => {
+test('verifier routing covers compiler inputs without rebuilding for unrelated consumers or checks', (t) => {
   const repo = mkdtempSync(join(tmpdir(), 'interfold-verifier-filter-'))
   t.after(() => rmSync(repo, { recursive: true, force: true }))
   const env = {
@@ -81,11 +81,28 @@ test('the production verifier filter excludes artifact transport and gas setup b
     ['scripts/circuits/constants.ts', 0],
     ['scripts/circuits/build-pairs.json', 0],
     ['scripts/circuits/verifiers.ts', 0],
-    ['scripts/circuits/verifiers.test.ts', 0],
+    ['scripts/circuits/verifiers.test.ts', 1],
     ['scripts/circuits/lint.sh', 0],
     ['scripts/circuits/test.sh', 0],
     ['crates/zk/build/src/identity.rs', 0],
     ['circuits/lib/src/core/circuit.nr', 0],
+    ['crates/fhe-params/src/constants.rs', 0],
+    ['crates/zk/config/src/constants.rs', 0],
+    ['crates/committee/src/lib.rs', 0],
+    ['packages/interfold-contracts/bfv.ts', 0],
+    ['packages/interfold-contracts/crypto-config.json', 0],
+    ['packages/interfold-contracts/contracts/lib/BfvDecryptionLayout.sol', 1],
+    ['packages/interfold-contracts/scripts/protocol/constants.ts', 0],
+    ['crates/fhe/src/lib.rs', 0],
+    ['crates/parity-matrix/src/lib.rs', 0],
+    ['crates/safe/src/lib.rs', 0],
+    ['packages/interfold-sdk/src/utils.ts', 1],
+    ['packages/interfold-dashboard/src/lib/adapt.ts', 1],
+    ['templates/default/contracts/MyProgram.sol', 1],
+    ['scripts/circuits/crypto-config.mjs', 1],
+    ['.husky/pre-push', 1],
+    ['.github/workflows/ci.yml', 1],
+    ['Cargo.lock', 1],
   ]
   git('init', '--quiet', '-b', 'main')
   for (const [path] of cases) {
@@ -105,5 +122,29 @@ test('the production verifier filter excludes artifact transport and gas setup b
       { cwd: repo, env, input: '', encoding: 'utf8' },
     )
     assert.equal(result.status, expected, `${path}: ${result.stdout}${result.stderr}`)
+  }
+})
+
+test('CI compiles circuits for compiler/verifier inputs or explicit runs, not every Rust or tooling change', (t) => {
+  const temp = mkdtempSync(join(tmpdir(), 'interfold-circuit-ci-'))
+  t.after(() => rmSync(temp, { recursive: true, force: true }))
+  const workflow = readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8')
+  const script = workflow.split('      - name: Compute job filters\n')[1].match(/        run: \|\n((?:          .*\n|\n)+)/)[1]
+  for (const enabled of ['rust', 'crypto_config', 'ci', 'tooling', 'sdk', 'templates', 'circuits', 'verifiers', 'force']) {
+    const output = join(temp, enabled)
+    const selected = script.replace(/\$\{\{\s*(.*?)\s*\}\}/g, (_, expression) => {
+      const filter = /steps\.(?:circuit_filter|filter)\.outputs\.(\w+)/.exec(expression)
+      return String((filter?.[1] ?? 'force') === enabled)
+    })
+    const result = spawnSync('bash', ['-e', '-c', selected], { env: { ...process.env, GITHUB_OUTPUT: output }, encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr)
+    const jobs = Object.fromEntries(
+      readFileSync(output, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => line.split('=')),
+    )
+    assert.equal(jobs.build_circuits, String(['circuits', 'verifiers', 'force'].includes(enabled)), enabled)
+    assert.equal(jobs.crypto_sources, String(['circuits', 'verifiers', 'crypto_config', 'force'].includes(enabled)), enabled)
   }
 })

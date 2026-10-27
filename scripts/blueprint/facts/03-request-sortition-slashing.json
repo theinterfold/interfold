@@ -11,7 +11,7 @@
         {
           "name": "E3Router",
           "role": "Subscribes to every bus event, routes each one to its E3 context through RequestRouter, creates contexts lazily, and publishes E3RequestComplete.",
-          "ref": "crates/request/src/routing/handlers.rs@103@impl Actor for E3Router {"
+          "ref": "crates/request/src/routing/handlers.rs@101@impl Actor for E3Router {"
         },
         {
           "name": "E3LifecycleCoordinator",
@@ -33,7 +33,7 @@
         {
           "name": "SyncEffect (reconciles recovered selections, writes checkpoint)",
           "by": "E3Router",
-          "ref": "crates/request/src/routing/handlers.rs@116@if matches!(msg.get_data(), InterfoldEventData::SyncEffect(SyncEffect)) {"
+          "ref": "crates/request/src/routing/handlers.rs@114@if matches!(msg.get_data(), InterfoldEventData::SyncEffect(SyncEffect)) {"
         },
         {
           "name": "per-E3 events such as E3Requested (create or route to a context)",
@@ -66,17 +66,17 @@
           "ref": "crates/request/src/lifecycle/actor.rs@72@subscriptions.push(EventType::Shutdown);"
         }
       ],
-      "emits": [{ "name": "E3RequestComplete", "by": "E3Router", "ref": "crates/request/src/routing/handlers.rs@226@E3RequestComplete {" }],
+      "emits": [{ "name": "E3RequestComplete", "by": "E3Router", "ref": "crates/request/src/routing/handlers.rs@224@E3RequestComplete {" }],
       "state": [
         {
           "name": "live contexts keyed by E3 id",
           "where": "memory",
-          "ref": "crates/request/src/routing/actor.rs@97@contexts: HashMap<E3id, E3Context>,"
+          "ref": "crates/request/src/routing/actor.rs@96@contexts: HashMap<E3id, E3Context>,"
         },
         {
           "name": "router recovery checkpoint (contexts, completed set, replay cursors)",
           "where": "disk",
-          "ref": "crates/request/src/routing/actor.rs@114@recovery_store: Repository<RequestRouterCheckpoint>,"
+          "ref": "crates/request/src/routing/actor.rs@113@recovery_store: Repository<RequestRouterCheckpoint>,"
         },
         {
           "name": "per-E3 context snapshot (recipient and dependency keys)",
@@ -98,7 +98,7 @@
         {
           "name": "E3Router",
           "what": "Actix actor that owns the per-E3 contexts, the extension list, the event buffer, and the checkpoint store.",
-          "ref": "crates/request/src/routing/actor.rs@95@pub struct E3Router {"
+          "ref": "crates/request/src/routing/actor.rs@94@pub struct E3Router {"
         },
         {
           "name": "E3Context",
@@ -108,7 +108,7 @@
         {
           "name": "E3Extension",
           "what": "Plugin trait: on_event runs on each routed event and may create actors; hydrate rebuilds them after restart.",
-          "ref": "crates/request/src/routing/actor.rs@63@pub trait E3Extension: Send + Sync + 'static {"
+          "ref": "crates/request/src/routing/actor.rs@62@pub trait E3Extension: Send + Sync + 'static {"
         },
         {
           "name": "RequestRouter",
@@ -141,10 +141,10 @@
           "why": "Wiring: the node builds E3Router and installs the router extensions",
           "ref": "crates/ciphernode-builder/src/builder/extensions.rs@239@Ok(E3Router::builder(bus, storage.store.clone())"
         },
-        { "why": "The router actor and what it holds per E3", "ref": "crates/request/src/routing/actor.rs@95@pub struct E3Router {" },
+        { "why": "The router actor and what it holds per E3", "ref": "crates/request/src/routing/actor.rs@94@pub struct E3Router {" },
         {
           "why": "Per-event handler: create or route the context, run extensions, forward, publish completion",
-          "ref": "crates/request/src/routing/handlers.rs@111@impl Handler<InterfoldEvent> for E3Router {"
+          "ref": "crates/request/src/routing/handlers.rs@109@impl Handler<InterfoldEvent> for E3Router {"
         },
         { "why": "Pure routing decision for each event", "ref": "crates/request/src/routing/workflow.rs@60@pub fn route_with_context(" },
         {
@@ -156,12 +156,12 @@
         {
           "pattern": "actix-actor",
           "note": "E3Router implements the actix Actor trait and sets its mailbox capacity at start.",
-          "ref": "crates/request/src/routing/handlers.rs@103@impl Actor for E3Router {"
+          "ref": "crates/request/src/routing/handlers.rs@101@impl Actor for E3Router {"
         },
         {
           "pattern": "actix-handler",
           "note": "One Handler<InterfoldEvent> receives every bus event and decides what to do with it.",
-          "ref": "crates/request/src/routing/handlers.rs@111@impl Handler<InterfoldEvent> for E3Router {"
+          "ref": "crates/request/src/routing/handlers.rs@109@impl Handler<InterfoldEvent> for E3Router {"
         },
         {
           "pattern": "actix-recipient",
@@ -171,12 +171,12 @@
         {
           "pattern": "trait-def",
           "note": "E3Extension is the plugin trait: on_event and async hydrate.",
-          "ref": "crates/request/src/routing/actor.rs@63@pub trait E3Extension: Send + Sync + 'static {"
+          "ref": "crates/request/src/routing/actor.rs@62@pub trait E3Extension: Send + Sync + 'static {"
         },
         {
           "pattern": "trait-object-dyn",
           "note": "Extensions are shared as a vector of boxed trait objects.",
-          "ref": "crates/request/src/routing/actor.rs@101@extensions: Arc<Vec<Box<dyn E3Extension>>>,"
+          "ref": "crates/request/src/routing/actor.rs@100@extensions: Arc<Vec<Box<dyn E3Extension>>>,"
         },
         {
           "pattern": "builder-pattern",

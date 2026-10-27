@@ -23,7 +23,10 @@ handlers then update projections or request effects with the delivered causal co
 
 ## Event model
 
-`InterfoldEventData` holds domain payloads and `EventType` selects subscriptions.
+`InterfoldEventData` holds domain payloads and `EventType` selects subscriptions. Both come from one
+variant list in [`event_data.rs`](src/interfold_event/event_data.rs). That list is the persisted
+enum order: append new variants at the end. `get_e3_id` names every variant, because the E3 chain
+selects the aggregate. [`envelope.rs`](src/interfold_event/envelope.rs) holds `InterfoldEvent<S>`.
 `InterfoldEvent<S>` pairs a payload with `EventContext<S>`: logical ID, causation/origin, timestamp,
 aggregate, source, and sequence state. `E3id` includes the chain ID, so equal numeric request IDs on
 different chains are distinct. Import `e3_events::prelude::*` for the event
@@ -59,11 +62,13 @@ without the signal does not obtain process-level monitoring.
 
 ## Tests
 
-Run `cargo test --locked -p e3-events` with the
-[test-helper prerequisites](../test-helpers/README.md). Serialization compatibility spans saved
-events and network envelopes; see [upgrades](../../docs/architecture/upgrades.md).
+Run `cargo test --locked -p e3-events`; no EVM/prover fixture setup is required. Serialization
+compatibility spans saved events and network envelopes; see
+[upgrades](../../docs/architecture/upgrades.md).
 
 Tests are colocated with pipeline modules: stores cover append/query/failure behavior; bus tests
 cover delivery/barriers; snapshot-buffer tests cover batching/timing; HLC tests cover
-ordering/drift. Production health monitoring and whole-node restart are separate consumer tests. See
-[AGENTS.md](AGENTS.md) for identity, encoding, and pipeline changes.
+ordering/drift. Scenarios that need an assembled `EventSystem` live in
+[e3-event-system](../event-system/README.md#tests). Production health monitoring and whole-node
+restart are separate consumer tests. See [AGENTS.md](AGENTS.md) for identity, encoding, and pipeline
+changes.

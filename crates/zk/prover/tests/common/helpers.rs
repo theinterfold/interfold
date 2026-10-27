@@ -7,11 +7,29 @@
 use e3_config::BBPath;
 use e3_events::CircuitName;
 #[allow(unused_imports)]
-pub use e3_test_helpers::{find_anvil, find_bb};
+pub use e3_test_support::find_bb;
 use e3_zk_prover::{ZkBackend, ZkConfig};
 use std::{env, path::PathBuf};
 use tempfile::TempDir;
 use tokio::fs;
+
+pub async fn find_anvil() -> bool {
+    if let Ok(output) = tokio::process::Command::new("which")
+        .arg("anvil")
+        .output()
+        .await
+    {
+        if output.status.success() {
+            return true;
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        if std::path::Path::new(&format!("{}/.foundry/bin/anvil", home)).exists() {
+            return true;
+        }
+    }
+    false
+}
 
 /// Root of the compiled circuit artifacts: `{workspace}/circuits/bin/`.
 fn circuits_build_root() -> PathBuf {

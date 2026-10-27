@@ -16,7 +16,7 @@ It does not own the cryptographic statements implemented by those recipients.
 | [`routing/effects/`](src/routing/effects)                                                                  | Context construction, hydration, checkpoints, and snapshots.   |
 | [`context.rs`](src/context.rs), [`meta.rs`](src/meta.rs), [`hetrogenous_map.rs`](src/hetrogenous_map.rs)   | Per-E3 recipients, metadata, and typed dependencies.           |
 | [`lifecycle/`](src/lifecycle), [`canonical_key.rs`](src/canonical_key.rs)                                  | Node-wide stage projection and shared confirmed-key authority. |
-| [`repo.rs`](src/repo.rs)                                                                                   | Router/context/lifecycle persistence accessors.                |
+| [`repo.rs`](src/repo.rs), [`request_router_checkpoint.rs`](src/request_router_checkpoint.rs)               | Router checkpoint and router/context/lifecycle repositories.   |
 
 Chain admission creates a context; extensions add dependencies and recipients as prerequisites
 arrive. Deferred history reaches a new recipient before the creating event. Hydration restores

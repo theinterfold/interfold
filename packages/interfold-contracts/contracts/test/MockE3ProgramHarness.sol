@@ -7,6 +7,7 @@ pragma solidity 0.8.28;
 
 import { IE3Program } from "../interfaces/IE3Program.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
+import { BfvProtocol } from "../lib/BfvProtocol.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {
     IDataAvailabilityVerifier,
@@ -26,7 +27,8 @@ contract MockE3ProgramHarness is IE3Program, IERC165 {
     error E3AlreadyInitialized();
     error InvalidInput();
 
-    bytes32 public constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
+    bytes32 public constant ENCRYPTION_SCHEME_ID =
+        BfvProtocol.ENCRYPTION_SCHEME_ID;
 
     IInterfold public interfold;
     bool public reenterPlaintextPublication;

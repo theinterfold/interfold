@@ -9,13 +9,13 @@
 
 use lib::configs::default::dkg::L_THRESHOLD;
 use lib::configs::default::N_PARTIES;
-use lib::math::chonk::{MegaVerificationKey, PROOF_TYPE_HN_FINAL};
+use lib::math::chonk::{KernelVerificationKey, PROOF_TYPE_HN_FINAL};
 
 pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;
 
 fn main(
     prev_outputs: call_data(0) [Field; 3 * C3_SLOTS + 3],
-    kernel_vk: MegaVerificationKey,
+    kernel_vk: KernelVerificationKey,
 ) -> pub [Field; 3 * C3_SLOTS + 4] {
     std::verify_proof_with_type(kernel_vk.key, [], [], kernel_vk.hash, PROOF_TYPE_HN_FINAL);
     let mut out = [0; 3 * C3_SLOTS + 4];

@@ -448,7 +448,7 @@ mod tests {
     ) -> Result<(std::sync::Arc<e3_data::Repositories>, Vec<E3id>)> {
         use actix::Actor;
         use e3_data::{DataStore, InMemStore, RepositoriesFactory};
-        use e3_events::RequestRouterCheckpoint;
+        use e3_request::RequestRouterCheckpoint;
 
         let repositories = std::sync::Arc::new(
             DataStore::from_in_mem(&InMemStore::new(false).start()).repositories(),
@@ -599,9 +599,9 @@ mod tests {
         };
         use e3_data::RepositoriesFactory;
         use e3_events::{
-            E3Requested, EventConstructorWithTimestamp, EventSource, InterfoldEvent,
-            RequestRouterCheckpoint, Unsequenced,
+            E3Requested, EventConstructorWithTimestamp, EventSource, InterfoldEvent, Unsequenced,
         };
+        use e3_request::RequestRouterCheckpoint;
 
         let anvil = Anvil::new().try_spawn()?;
         let chain_head = ProviderBuilder::new().connect_http(anvil.endpoint_url());

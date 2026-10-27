@@ -5,6 +5,19 @@
 Cross-capability and multi-node ciphernode test harness. `src/main.rs` intentionally does no work;
 use Cargo's named integration targets, not `cargo run`, to exercise the system.
 
+Mock transport/restart behavior lives privately in `tests/ciphernode_system/libp2p_mock.rs`;
+synthetic registration lives in `tests/common`. Neither establishes peer authorization or proof
+validity. The fixture ownership decisions are recorded in the
+[testing domain](../../docs/architecture/repository-testing.md#fixture-ownership-2325).
+
+The external integration scripts build `fake_encrypt` and `pack_e3_params` from this package's
+`src/bin`. Their CLI names/arguments are unchanged; they reuse production parameter codecs and
+commitments. Build them without the dev-only node graph:
+
+```sh
+cargo build --locked -p e3-tests --bin fake_encrypt --bin pack_e3_params
+```
+
 ## Map
 
 | Location                                                                 | Responsibility                                                           |
@@ -48,9 +61,10 @@ build-time fixture side effects. Even the layout target compiles the runtime dep
 may skip when tools are absent, and ignored scenarios need explicit selection.
 
 This harness enables builder `test-helpers` and `test-only-skip-proof-aggregation`. Cargo feature
-unification can enable them throughout a workspace test graph; successful tests do not establish
-production feature containment or recursive proof verification. Deterministic RNGs and mocked
-transport are isolated per node but do not model all distributed failures. See
+selection is dev-only; fixture-bin builds do not enable those features. Test feature unification can
+enable them throughout a workspace test graph; successful tests do not establish production feature
+containment or recursive proof verification. Deterministic RNGs and mocked transport are isolated
+per node but do not model all distributed failures. See
 [persistence and replay](../../docs/architecture/persistence-and-replay.md) for current
 restart/overflow assurance limits. See [AGENTS.md](AGENTS.md) for isolation and regression-design
 guidance.

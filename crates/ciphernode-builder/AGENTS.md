@@ -17,7 +17,7 @@ copying their rules. `builder/startup.rs` documents the dependency order of Stor
 - Validate new numeric options in `ensure_startup_options`; keep test-only options under
   `test-helpers` with `_for_testing`. Proof-skip support also requires its dedicated test-only
   feature.
-- Do not make `e3-test-helpers` depend on this crate: lower-level tests would pull the complete
+- Do not make shared test support depend on this crate: lower-level tests would pull the complete
   stack and can cycle through event-system. Multi-node composition belongs in `crates/tests`.
 
 [Persistence](../../docs/architecture/persistence-and-replay.md) owns startup and failure-signal

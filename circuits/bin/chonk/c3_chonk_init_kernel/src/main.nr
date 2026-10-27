@@ -8,13 +8,13 @@
 
 use lib::configs::default::dkg::L_THRESHOLD;
 use lib::configs::default::N_PARTIES;
-use lib::math::chonk::{MegaVerificationKey, PROOF_TYPE_OINK};
+use lib::math::chonk::{AppVerificationKey, PROOF_TYPE_OINK};
 
 pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;
 
 fn main(
     app_outputs: call_data(1) [Field; 3 * C3_SLOTS + 1],
-    app_vk: MegaVerificationKey,
+    app_vk: AppVerificationKey,
 ) -> return_data [Field; 3 * C3_SLOTS + 2] {
     std::verify_proof_with_type(app_vk.key, [], [], app_vk.hash, PROOF_TYPE_OINK);
     let mut out = [0; 3 * C3_SLOTS + 2];

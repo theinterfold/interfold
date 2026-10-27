@@ -22,26 +22,39 @@
 
 use crate::configs::default::T;
 
-/// A Mega verification key and its hash, as a kernel verifies the circuit before it.
-pub global MEGA_VK_LENGTH: u32 = 163;
+/// Mega verification keys, as a kernel verifies the circuit before it. bb 6 derives app keys
+/// (`MegaAppFlavor`) and kernel keys (`MegaKernelFlavor`) separately; both are 151 fields.
+pub global MEGA_APP_VK_LENGTH: u32 = 151;
+pub global MEGA_KERNEL_VK_LENGTH: u32 = 151;
 /// The hiding kernel's Chonk key, as `c3_chonk_tube` verifies the stack.
-pub global CHONK_VK_LENGTH: u32 = 115;
-/// A Chonk proof without its public inputs.
-pub global CHONK_PROOF_LENGTH: u32 = 1270;
+pub global CHONK_VK_LENGTH: u32 = 119;
+/// A Chonk proof without the stack's own outputs: in bb 6 the hiding kernel's fixed IO (28 fields)
+/// and the proof proper (1193 fields), as Aztec's `CHONK_PROOF_LENGTH` counts it.
+pub global CHONK_PROOF_LENGTH: u32 = 1221;
 
+/// bb 6 proof types (`acir_format::PROOF_TYPE`): the init kernel verifies the app with `OINK`, the
+/// tail kernel the init kernel with `HN`, the hiding kernel the tail kernel with `HN_FINAL`, and a
+/// tube the stack with `CHONK`.
 pub global PROOF_TYPE_OINK: u32 = 1;
+pub global PROOF_TYPE_HN: u32 = 2;
 pub global PROOF_TYPE_HN_FINAL: u32 = 7;
-pub global PROOF_TYPE_HN_TAIL: u32 = 8;
-pub global PROOF_TYPE_CHONK: u32 = 9;
+pub global PROOF_TYPE_CHONK: u32 = 8;
 
-pub struct MegaVerificationKey {
-    pub key: [Field; MEGA_VK_LENGTH],
+/// The app's key and its hash, as the init kernel verifies the app.
+pub struct AppVerificationKey {
+    pub key: [Field; MEGA_APP_VK_LENGTH],
+    pub hash: Field,
+}
+
+/// A kernel's key and its hash, as the tail and hiding kernels verify the kernel before them.
+pub struct KernelVerificationKey {
+    pub key: [Field; MEGA_KERNEL_VK_LENGTH],
     pub hash: Field,
 }
 
 /// Leaves one `c3_chonk_app` verifies. Each stack adds a tube and an accumulate proof, so larger
-/// stacks are faster, but the stack's ECCVM trace grows with them: bb 5.2.0 proves 24 and rejects
-/// 28 (ECCVM_FIXED_SIZE 2^15).
+/// stacks are faster, but the stack's ECCVM trace grows with them: bb 5.2.0 proved 24 and rejected
+/// 28 (ECCVM_FIXED_SIZE 2^15); bb 6.0.0 proves 24.
 pub global C3_CHONK_LEAVES: u32 = 24;
 
 /// Key hashes a tube or accumulate proof exposes before the rows: its own key, the tube key, the

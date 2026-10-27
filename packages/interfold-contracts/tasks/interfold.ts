@@ -19,18 +19,15 @@ import { task } from "hardhat/config";
 import { ArgumentType } from "hardhat/types/arguments";
 import path from "path";
 
+import { bfvPresetForParamSet } from "../bfv.js";
 import { ACTIVE_BFV_PARAM_SET, readDeploymentArgs } from "../scripts/utils";
 import { assertCommitteeOwnerCapacity } from "./committeeCapacity";
 import { assembleUniqueCommitteePublicKey } from "./committeePublicKey";
 import { stageMockDataAvailabilityObject } from "./mockDataAvailability";
 
 function cryptoConfigIdForParamSet(paramSet: number): string {
-  if (paramSet === 0) {
-    return "0xa3bd5ecc8eede945ef4c08d5454022649137c7696ef8ad2f984f2b9ece35dd32";
-  }
-  if (paramSet === 2) {
-    return "0xfb73fe2faf11760fd19a2374e7077fdf5e7f7d8324a36b3acb0c05d56ca6307a";
-  }
+  const preset = bfvPresetForParamSet(paramSet);
+  if (preset) return preset.configId;
   throw new Error(`Unsupported BFV parameter set: ${paramSet}`);
 }
 

@@ -4,10 +4,8 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{PostForward, RequestRouter, RoutingDecision};
-use e3_events::{
-    AggregateId, EventContextAccessors, EventContextSeq, InterfoldEvent, RequestRouterCheckpoint,
-};
+use crate::{PostForward, RequestRouter, RequestRouterCheckpoint, RoutingDecision};
+use e3_events::{AggregateId, EventContextAccessors, EventContextSeq, InterfoldEvent};
 use std::collections::HashMap;
 
 /// Record the highest durable sequence observed for one aggregate.

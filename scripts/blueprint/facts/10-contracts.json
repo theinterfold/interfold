@@ -1450,12 +1450,12 @@
         {
           "name": "BfvDecryptionVerifier.ciphernodeRegistry: source of the DKG anchors",
           "where": "chain",
-          "ref": "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@108@ICiphernodeRegistry public immutable ciphernodeRegistry;"
+          "ref": "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@109@ICiphernodeRegistry public immutable ciphernodeRegistry;"
         },
         {
           "name": "BfvDecryptionVerifier.expectedC6FoldKeyHash: VK anchor for the decryption circuit",
           "where": "chain",
-          "ref": "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@113@bytes32 public immutable expectedC6FoldKeyHash;"
+          "ref": "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@114@bytes32 public immutable expectedC6FoldKeyHash;"
         },
         {
           "name": "BfvPkVerifierRouter.routes: verifier builds the router can dispatch to",
@@ -1477,7 +1477,7 @@
         },
         {
           "why": "the decryption proof check and its public input layout",
-          "ref": "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@54@contract BfvDecryptionVerifier is IDecryptionVerifier {"
+          "ref": "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@56@contract BfvDecryptionVerifier is IDecryptionVerifier {"
         },
         {
           "why": "how the router chooses a build by VK anchors",

@@ -26,6 +26,26 @@ function proofWithAnchors(
 }
 
 describe("BFV verifier routers", function () {
+  it("preserves decryption route lengths for all committees and non-preset positive thresholds", async function () {
+    for (const [threshold, expected] of [
+      [1, 64],
+      [4, 73],
+      [9, 88],
+      [2, 67],
+    ]) {
+      const route = await ethers.deployContract(
+        "MockBfvDecryptionVerifierRoute",
+        [threshold, HASH_A, HASH_B, true],
+      );
+      const router = await ethers.deployContract(
+        "BfvDecryptionVerifierRouter",
+        [[await route.getAddress()], threshold],
+      );
+      const [, count] = await router.routeAt(0);
+      expect(count).to.equal(expected);
+    }
+  });
+
   it("routes PK proofs by public-input length and VK anchors", async function () {
     const [, nodeOne, nodeTwo] = await ethers.getSigners();
     const sortedNodes = [

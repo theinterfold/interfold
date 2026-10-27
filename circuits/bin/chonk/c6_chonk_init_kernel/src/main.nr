@@ -6,11 +6,11 @@
 
 //! Chonk init kernel for C6: verifies the app and appends the app key hash.
 
-use lib::math::chonk::{C6_CHONK_DATA_LEN, MegaVerificationKey, PROOF_TYPE_OINK};
+use lib::math::chonk::{AppVerificationKey, C6_CHONK_DATA_LEN, PROOF_TYPE_OINK};
 
 fn main(
     app_outputs: call_data(1) [Field; C6_CHONK_DATA_LEN + 1],
-    app_vk: MegaVerificationKey,
+    app_vk: AppVerificationKey,
 ) -> return_data [Field; C6_CHONK_DATA_LEN + 2] {
     std::verify_proof_with_type(app_vk.key, [], [], app_vk.hash, PROOF_TYPE_OINK);
     let mut out = [0; C6_CHONK_DATA_LEN + 2];

@@ -28,9 +28,18 @@ use tracing::{debug, info};
 /// The prover's tracing target and messages, so a stack is timed like a `bb prove` run.
 const TRACE_TARGET: &str = "e3_zk_prover::prover";
 
+/// A Chonk circuit's Mega flavor, as bb 6 numbers it (`CircuitKind`).
+#[derive(Clone, Copy)]
+pub(crate) enum ChonkKind {
+    App = 0,
+    Kernel = 1,
+    Hiding = 2,
+}
+
 /// One circuit of a Chonk stack, in accumulation order.
 pub(crate) struct ChonkStackCircuit<'a> {
     pub circuit: CircuitName,
+    pub kind: ChonkKind,
     pub compiled: &'a CompiledCircuit,
     /// The circuit's Mega key as `write_vk --scheme chonk` writes it.
     pub verification_key: &'a [u8],
@@ -40,7 +49,7 @@ pub(crate) struct ChonkStackCircuit<'a> {
 
 #[derive(Serialize)]
 struct ChonkStart {
-    num_circuits: u32,
+    kinds: Vec<u8>,
 }
 
 #[derive(Serialize)]
@@ -53,6 +62,7 @@ struct CircuitInput<'a> {
 #[derive(Serialize)]
 struct ChonkLoad<'a> {
     circuit: CircuitInput<'a>,
+    kind: u8,
 }
 
 #[derive(Serialize)]
@@ -186,7 +196,7 @@ pub(crate) fn prove_stack(
         let _: IgnoredAny = session.call(
             "ChonkStart",
             &ChonkStart {
-                num_circuits: stack.len() as u32,
+                kinds: stack.iter().map(|entry| entry.kind as u8).collect(),
             },
         )?;
         for entry in stack {
@@ -201,6 +211,7 @@ pub(crate) fn prove_stack(
                         bytecode: ByteBuf::from(gunzip(&bytecode)?),
                         verification_key: ByteBuf::from(entry.verification_key.to_vec()),
                     },
+                    kind: entry.kind as u8,
                 },
             )?;
             let _: IgnoredAny = session.call(

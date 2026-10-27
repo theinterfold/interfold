@@ -336,27 +336,27 @@
         {
           "name": "CommitteePublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/indexer/src/indexer.rs@686@move |e: CommitteePublished, ctx| async move {"
+          "ref": "crates/indexer/src/indexer.rs@678@move |e: CommitteePublished, ctx| async move {"
         },
         {
           "name": "CommitteePublicKeyChunkPublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/indexer/src/indexer.rs@698@move |event: CommitteePublicKeyChunkPublished, ctx| async move {"
+          "ref": "crates/indexer/src/indexer.rs@690@move |event: CommitteePublicKeyChunkPublished, ctx| async move {"
         },
         {
           "name": "CiphertextOutputPublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/indexer/src/indexer.rs@774@self.add_event_handler(move |e: CiphertextOutputPublished, ctx| async move {"
+          "ref": "crates/indexer/src/indexer.rs@766@self.add_event_handler(move |e: CiphertextOutputPublished, ctx| async move {"
         },
         {
           "name": "CiphertextOutputReferencePublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/indexer/src/indexer.rs@797@move |event: CiphertextOutputReferencePublished, ctx| async move {"
+          "ref": "crates/indexer/src/indexer.rs@789@move |event: CiphertextOutputReferencePublished, ctx| async move {"
         },
         {
           "name": "PlaintextOutputPublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/indexer/src/indexer.rs@819@self.add_event_handler(move |e: PlaintextOutputPublished, ctx| async move {"
+          "ref": "crates/indexer/src/indexer.rs@811@self.add_event_handler(move |e: PlaintextOutputPublished, ctx| async move {"
         }
       ],
       "emits": [],
@@ -364,24 +364,24 @@
         {
           "name": "E3 record under the key _e3:<id> in the crate's InMemoryStore",
           "where": "memory",
-          "ref": "crates/indexer/src/indexer.rs@142@pub struct InMemoryStore {"
+          "ref": "crates/indexer/src/indexer.rs@145@pub struct InMemoryStore {"
         },
         {
           "name": "callback queue and cursor flags (backfill_enabled, cursor_high, caught_up)",
           "where": "memory",
-          "ref": "crates/indexer/src/indexer.rs@286@callbacks: CallbackQueue,"
+          "ref": "crates/indexer/src/indexer.rs@289@callbacks: CallbackQueue,"
         }
       ],
       "key_types": [
         {
           "name": "InterfoldIndexer",
           "what": "owns the IndexerContext and the listen loop, which restarts the listeners after an error",
-          "ref": "crates/indexer/src/indexer.rs@255@pub struct InterfoldIndexer<S: DataStore, R: ProviderType> {"
+          "ref": "crates/indexer/src/indexer.rs@258@pub struct InterfoldIndexer<S: DataStore, R: ProviderType> {"
         },
         {
           "name": "IndexerContext",
           "what": "shared by every handler: store, listeners, contract handle, callback queue and cursor flags",
-          "ref": "crates/indexer/src/indexer.rs@279@pub struct IndexerContext<S: DataStore, R: ProviderType> {"
+          "ref": "crates/indexer/src/indexer.rs@282@pub struct IndexerContext<S: DataStore, R: ProviderType> {"
         },
         {
           "name": "DataStore",
@@ -411,19 +411,19 @@
         },
         {
           "why": "construction: reads the chain id, wires the listeners and registers the handlers",
-          "ref": "crates/indexer/src/indexer.rs@584@pub async fn new("
+          "ref": "crates/indexer/src/indexer.rs@576@pub async fn new("
         },
         {
           "why": "opt-in catch-up and cursor, with the reason for the opt-in in the doc",
-          "ref": "crates/indexer/src/indexer.rs@939@pub fn configure_backfill(&self, start_block: Option<u64>, chunk: Option<u64>) {"
+          "ref": "crates/indexer/src/indexer.rs@931@pub fn configure_backfill(&self, start_block: Option<u64>, chunk: Option<u64>) {"
         },
         {
           "why": "committee key handling: the on-chain commitment check before storage",
-          "ref": "crates/indexer/src/indexer.rs@508@if let Err(error) = validate_pk_commitment("
+          "ref": "crates/indexer/src/indexer.rs@500@if let Err(error) = validate_pk_commitment("
         },
         {
           "why": "the live loop: backfill, subscribe, overlap replay, restart on error",
-          "ref": "crates/indexer/src/indexer.rs@1036@pub async fn listen(&self) -> Result<()> {"
+          "ref": "crates/indexer/src/indexer.rs@1028@pub async fn listen(&self) -> Result<()> {"
         }
       ],
       "rust_patterns": [
@@ -435,17 +435,17 @@
         {
           "pattern": "trait-impl",
           "note": "InMemoryStore implements DataStore, storing values as bincode bytes",
-          "ref": "crates/indexer/src/indexer.rs@161@impl DataStore for InMemoryStore {"
+          "ref": "crates/indexer/src/indexer.rs@164@impl DataStore for InMemoryStore {"
         },
         {
           "pattern": "tokio-select",
           "note": "listen() races the event listener, the block listener and the overlap replay, and restarts when one ends",
-          "ref": "crates/indexer/src/indexer.rs@1137@let res = tokio::select! {"
+          "ref": "crates/indexer/src/indexer.rs@1129@let res = tokio::select! {"
         },
         {
           "pattern": "arc-shared",
           "note": "handlers hold a Weak reference to the context, so the context and its listeners can be dropped",
-          "ref": "crates/indexer/src/indexer.rs@632@let ctx_weak = Arc::downgrade(&ctx);"
+          "ref": "crates/indexer/src/indexer.rs@624@let ctx_weak = Arc::downgrade(&ctx);"
         }
       ],
       "depends_on": ["e3-bfv-client", "e3-evm-helpers", "e3-fhe-params"],
@@ -485,12 +485,12 @@
         {
           "name": "request and registerE3Program transactions, sent through send_with_next_nonce",
           "by": "InterfoldContract",
-          "ref": "crates/evm-helpers/src/contracts.rs@499@let receipt = send_with_next_nonce(contract.request(e3_request), wallet_addr)"
+          "ref": "crates/evm-helpers/src/contracts.rs@541@let receipt = send_with_next_nonce(contract.request(e3_request), wallet_addr)"
         },
         {
           "name": "publishCiphertextOutput and publishPlaintextOutput transactions, sent through send_with_next_nonce",
           "by": "InterfoldContract",
-          "ref": "crates/evm-helpers/src/contracts.rs@549@let receipt = send_with_next_nonce("
+          "ref": "crates/evm-helpers/src/contracts.rs@541@let receipt = send_with_next_nonce("
         }
       ],
       "state": [
@@ -514,7 +514,7 @@
         {
           "name": "InterfoldContract",
           "what": "typed handle to the Interfold contract, read-only or read-write by its marker type",
-          "ref": "crates/evm-helpers/src/contracts.rs@252@pub struct InterfoldContract<T: ProviderType> {"
+          "ref": "crates/evm-helpers/src/contracts.rs@294@pub struct InterfoldContract<T: ProviderType> {"
         },
         {
           "name": "EventListener",
@@ -529,17 +529,17 @@
         {
           "name": "InterfoldRead",
           "what": "read-only trait over the Interfold contract: E3 record, stage, failure reason, deadlines and quotes",
-          "ref": "crates/evm-helpers/src/contracts.rs@155@pub trait InterfoldRead {"
+          "ref": "crates/evm-helpers/src/contracts.rs@197@pub trait InterfoldRead {"
         },
         {
           "name": "InterfoldWrite",
           "what": "write trait for read-write handles: request, register program, publish outputs",
-          "ref": "crates/evm-helpers/src/contracts.rs@198@pub trait InterfoldWrite {"
+          "ref": "crates/evm-helpers/src/contracts.rs@240@pub trait InterfoldWrite {"
         },
         {
           "name": "ProviderType",
           "what": "marker trait; ReadOnly and ReadWrite select the provider behind InterfoldContract",
-          "ref": "crates/evm-helpers/src/contracts.rs@233@pub trait ProviderType: Clone + Send + Sync + 'static {"
+          "ref": "crates/evm-helpers/src/contracts.rs@275@pub trait ProviderType: Clone + Send + Sync + 'static {"
         },
         {
           "name": "ThresholdQueue",
@@ -550,11 +550,11 @@
       "read_first": [
         {
           "why": "the Interfold ABI as Rust sees it: the sol! contract with request and publish functions",
-          "ref": "crates/evm-helpers/src/contracts.rs@129@contract Interfold {"
+          "ref": "crates/evm-helpers/src/contracts.rs@171@contract Interfold {"
         },
         {
           "why": "read operations and their trait",
-          "ref": "crates/evm-helpers/src/contracts.rs@155@pub trait InterfoldRead {"
+          "ref": "crates/evm-helpers/src/contracts.rs@197@pub trait InterfoldRead {"
         },
         {
           "why": "the log subscription loop; it marks the subscription live so that an owner can replay the gap after it",
@@ -574,7 +574,7 @@
         {
           "pattern": "trait-impl",
           "note": "InterfoldRead is implemented once for every InterfoldContract, whatever its provider type",
-          "ref": "crates/evm-helpers/src/contracts.rs@361@impl<T: Send + Sync> InterfoldRead for InterfoldContract<T>"
+          "ref": "crates/evm-helpers/src/contracts.rs@403@impl<T: Send + Sync> InterfoldRead for InterfoldContract<T>"
         },
         {
           "pattern": "tokio-spawn",
@@ -584,7 +584,7 @@
         {
           "pattern": "option-combinators",
           "note": "a missing wallet becomes an error through ok_or_else, then ?",
-          "ref": "crates/evm-helpers/src/contracts.rs@540@.ok_or_else(|| eyre::eyre!("
+          "ref": "crates/evm-helpers/src/contracts.rs@552@.ok_or_else(|| eyre::eyre!("
         }
       ],
       "depends_on": ["e3-utils"],
@@ -711,17 +711,17 @@
         {
           "name": "Fhe",
           "what": "BFV parameters, common random polynomial and shared RNG, with key-share, decryption and aggregation methods",
-          "ref": "crates/fhe/src/runtime.rs@39@pub struct Fhe {"
+          "ref": "crates/fhe/src/runtime.rs@38@pub struct Fhe {"
         },
         {
           "name": "FheSnapshot",
           "what": "serializable params and CRP bytes that rebuild a Fhe in hydrate",
-          "ref": "crates/fhe/src/runtime.rs@149@pub struct FheSnapshot {"
+          "ref": "crates/fhe/src/runtime.rs@148@pub struct FheSnapshot {"
         },
         {
           "name": "DecryptCiphertext",
           "what": "input to decrypt_ciphertext: the secret-key bytes and one ciphertext",
-          "ref": "crates/fhe/src/runtime.rs@32@pub struct DecryptCiphertext {"
+          "ref": "crates/fhe/src/runtime.rs@31@pub struct DecryptCiphertext {"
         }
       ],
       "read_first": [
@@ -739,7 +739,7 @@
         },
         {
           "why": "the fhe.rs adaptor and its key-share step",
-          "ref": "crates/fhe/src/runtime.rs@73@pub fn generate_keyshare(&self) -> Result<(Vec<u8>, ArcBytes)> {"
+          "ref": "crates/fhe/src/runtime.rs@72@pub fn generate_keyshare(&self) -> Result<(Vec<u8>, ArcBytes)> {"
         }
       ],
       "rust_patterns": [
@@ -756,12 +756,12 @@
         {
           "pattern": "anyhow-context",
           "note": "a ciphertext that fails to deserialize gets a context message",
-          "ref": "crates/fhe/src/runtime.rs@93@.context(\"Error deserializing ciphertext\")?,"
+          "ref": "crates/fhe/src/runtime.rs@92@.context(\"Error deserializing ciphertext\")?,"
         },
         {
           "pattern": "iterator-chain",
           "note": "public-key shares are deserialized and aggregated in one chain",
-          "ref": "crates/fhe/src/runtime.rs@104@.map(|k| PublicKeyShare::deserialize(k, &self.params, self.crp.clone()))"
+          "ref": "crates/fhe/src/runtime.rs@103@.map(|k| PublicKeyShare::deserialize(k, &self.params, self.crp.clone()))"
         }
       ],
       "depends_on": ["e3-data", "e3-events", "e3-utils", "e3-request", "e3-bfv-client", "e3-fhe-params"],
@@ -1036,7 +1036,7 @@
         {
           "pattern": "async-test",
           "note": "the integration test runs under tokio",
-          "ref": "crates/trbfv/tests/integration.rs@27@#[tokio::test]"
+          "ref": "crates/trbfv/tests/integration.rs@30@#[tokio::test]"
         }
       ],
       "depends_on": ["e3-bfv-client", "e3-fhe-params", "e3-crypto", "e3-utils"],

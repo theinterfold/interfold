@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
+use crate::test_support::get_common_setup;
 use alloy::primitives::Address;
 use e3_data::{AutoPersist, DataStore, InMemStore, PersistableData, Repository};
 use e3_events::EventConstructorWithTimestamp;
@@ -12,7 +13,6 @@ use e3_events::{
     CircuitName, ComputeRequestErrorKind, EffectsEnabled, GetEvents, HistoryCollector,
     ProofPayload, ProofType, Seed, TakeEvents, Unsequenced, ZkError,
 };
-use e3_test_helpers::get_common_setup;
 use std::collections::{BTreeSet, HashMap};
 
 fn test_ctx(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {

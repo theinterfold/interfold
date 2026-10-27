@@ -10,7 +10,7 @@ VERSIONS_JSON="${ROOT_DIR}/crates/zk/prover/versions.json"
 echo ""
 echo "PREBUILDING BINARIES..."
 echo ""
-(cd "$ROOT_DIR/crates" && E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 cargo build --bin fake_encrypt --bin pack_e3_params)
+(cd "$ROOT_DIR" && cargo build --locked -p e3-tests --bin fake_encrypt --bin pack_e3_params)
 echo ""
 echo "FINISHED PREBUILDING BINARIES"
 echo ""
@@ -32,6 +32,7 @@ if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
     --committee minimum \
     --hydrate-bin-only \
     --no-clean-targets)
+  (cd "$ROOT_DIR" && pnpm build:circuits prepare-vk-commitments)
   for preset in insecure-64 secure-8192; do
     mkdir -p "${INTEGRATION_NOIR}/circuits/${preset}"
     cp -R "${ROOT_DIR}/dist/circuits/${preset}/minimum" \
