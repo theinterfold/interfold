@@ -11,7 +11,7 @@
 use bb_proof_verification::{UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof};
 use lib::configs::default::T;
 use lib::math::c6_fold::{assert_c6_domain, C6_PUBLIC_LEN, place_c6_leaves};
-use lib::math::chonk::{C6_CHONK_DATA_LEN, C6_CHONK_LEAVES};
+use lib::math::chonk::{C3_CHONK_LEAVES, C6_CHONK_DATA_LEN, C6_CHONK_LEAVES};
 
 fn main(
     leaf_vk: UltraHonkVerificationKey,
@@ -20,6 +20,12 @@ fn main(
     c6_public_inputs: [[Field; C6_PUBLIC_LEN]; C6_CHONK_LEAVES],
     slot_indices: [u32; C6_CHONK_LEAVES],
 ) -> return_data [Field; C6_CHONK_DATA_LEN + 1] {
+    // One stack holds the whole column; bb's ECCVM bound was measured at 24 UltraHonk proofs per
+    // stack (`C3_CHONK_LEAVES`), and a larger committee needs a second stack.
+    std::static_assert(
+        C6_CHONK_LEAVES <= C3_CHONK_LEAVES,
+        "T + 1 C6 proofs must fit one Chonk stack",
+    );
     for k in 0..C6_CHONK_LEAVES {
         assert(slot_indices[k] < T + 1, "slot index out of range");
         verify_honk_proof(leaf_vk, proofs[k], c6_public_inputs[k], leaf_key_hash);

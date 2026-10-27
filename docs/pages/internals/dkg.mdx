@@ -260,9 +260,10 @@ the secret coefficient. Each circuit checks four properties:
 1. The secret hashes to `expected_secret_commitment` from C1.
 2. The first entry of each share vector equals the secret coefficient.
 3. Every share is in $[0, q_j)$.
-4. The shares lie on a polynomial of degree at most T. The Reed-Solomon parity check is
-   $H_j \cdot y_{i,j}^{\top} \equiv 0 \pmod{q_j}$, with a parity matrix of size
-   $(N - T) \times (N + 1)$.
+4. The shares lie on a polynomial of degree at most T. The evaluation points are consecutive, so
+   each of the $N - T$ windows of $T + 2$ consecutive values must have a $(T + 1)$-th finite
+   difference $\equiv 0 \pmod{q_j}$. These windows span the same space as the Reed-Solomon parity
+   rows.
 
 C2 outputs one commitment for each (party, modulus) pair, an $N \times L$ grid. C3 and C4 consume
 this grid.

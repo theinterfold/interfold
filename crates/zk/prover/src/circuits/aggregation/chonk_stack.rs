@@ -123,6 +123,15 @@ impl ChonkStack {
             })
     }
 
+    /// Hands the kernel after `stage` the key of stage `from` in place of `stage`'s own, as a
+    /// prover passing off one circuit's proof as another's would. Negative tests only.
+    pub(crate) fn substitute_key(&mut self, stage: usize, from: usize) {
+        self.stages[stage].vk = VkArtifacts {
+            verification_key: self.stages[from].vk.verification_key.clone(),
+            key_hash: self.stages[from].vk.key_hash.clone(),
+        };
+    }
+
     /// The hiding kernel's Chonk key, which a tube verifies the stack's proof against.
     pub(crate) fn chonk_key(&self) -> &VkArtifacts {
         &self.stages[3].vk

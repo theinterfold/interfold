@@ -225,3 +225,27 @@ pub fn generate_c6_chonk_root(
         artifacts_dir,
     )
 }
+
+/// [`generate_c6_chonk_root`] with stack stage `stage` (0 app, 1 init kernel, 2 tail kernel)
+/// claimed under stage `from`'s key. Negative tests only: the root must fail to prove or verify.
+pub fn generate_c6_chonk_root_with_substituted_key(
+    prover: &ZkProver,
+    inner_proofs: &[Proof],
+    slot_indices: &[u32],
+    total_slots: usize,
+    (stage, from): (usize, usize),
+    job_id: &str,
+    artifacts_dir: &str,
+) -> Result<Proof, ZkError> {
+    let mut circuits = C6ChonkCircuits::load(prover, artifacts_dir)?;
+    circuits.stack.substitute_key(stage, from);
+    generate_c6_chonk(
+        prover,
+        &circuits,
+        inner_proofs,
+        slot_indices,
+        total_slots,
+        job_id,
+        artifacts_dir,
+    )
+}

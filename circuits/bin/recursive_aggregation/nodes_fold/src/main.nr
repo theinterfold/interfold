@@ -15,13 +15,17 @@ use lib::configs::default::{H, N_PARTIES};
 use lib::math::nodes_fold::{NODES_FOLD_LEAVES, place_nodes};
 use lib::math::recursive_vk::predecessor_key_hash;
 
-pub global C2_PUBLIC_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
-pub global C2AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C2_PUBLIC_LEN);
+/// C2's public inputs as `c2ab_fold` passes them on: without the key tree, which it hashes into
+/// its key hash. The C2 proof itself has one field more (`c2ab_fold::C2_PUBLIC_LEN`).
+pub global C2_FOLDED_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
+pub global C2AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C2_FOLDED_LEN);
 /// Must match `c3ab_fold::C3AB_FOLD_PUBLIC_LEN` (one C3 slot per party and CRT limb).
 pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;
 pub global C3AB_FOLD_PUBLIC_LEN: u32 = 2 + 1 + (6 * C3_SLOTS);
-pub global C4_PUBLIC_LEN: u32 = (H * L_THRESHOLD) + 1;
-pub global C4AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C4_PUBLIC_LEN);
+/// C4's public inputs as `c4ab_fold` passes them on, likewise without the key tree
+/// (`c4ab_fold::C4_PUBLIC_LEN` is one field more).
+pub global C4_FOLDED_LEN: u32 = (H * L_THRESHOLD) + 1;
+pub global C4AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C4_FOLDED_LEN);
 
 /// Must match `node_fold::NODE_FOLD_PUBLIC_LEN`.
 pub global NODE_FOLD_PUBLIC_LEN: u32 = 11 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);

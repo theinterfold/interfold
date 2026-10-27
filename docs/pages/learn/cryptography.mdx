@@ -175,19 +175,19 @@ to a slash. See [Commitment consistency](/internals/commitment-consistency) and
 The circuit IDs match the `CircuitName` enum in `crates/events/src/interfold_event/proof.rs`. The
 directories are under `circuits/bin/`.
 
-| ID       | Directory                                | `CircuitName`                | What the proof shows                                                                   |
-| -------- | ---------------------------------------- | ---------------------------- | -------------------------------------------------------------------------------------- |
-| C0       | `dkg/pk`                                 | `PkBfv`                      | The member's individual BFV public key is valid, with a commitment to it               |
-| C1       | `threshold/pk_generation`                | `PkGeneration`               | The public key share follows BFV key generation from the committed secret contribution |
-| C2a      | `dkg/sk_share_computation`               | `SkShareComputation`         | The Shamir shares of the secret contribution are valid (a Reed–Solomon parity check)   |
-| C2b      | `dkg/e_sm_share_computation`             | `ESmShareComputation`        | The Shamir shares of the smudging noise are valid                                      |
-| C3a, C3b | `dkg/share_encryption`                   | `ShareEncryption`            | Each share is encrypted under the recipient's committed C0 key                         |
-| C4a, C4b | `dkg/share_decryption`                   | `DkgShareDecryption`         | The shares from the roster match the C2 commitments, with a commitment to their sum    |
-| C5       | `threshold/pk_aggregation`               | `PkAggregation`              | The threshold public key is the sum of the H roster contributions                      |
-| P3       | `threshold/user_data_encryption*`        | None                         | A user ciphertext is a valid BFV encryption under the threshold key                    |
-| C6       | `threshold/share_decryption`             | `ThresholdShareDecryption`   | The decryption share uses the member's committed key share and smudging noise          |
-| C7       | `threshold/decrypted_shares_aggregation` | `DecryptedSharesAggregation` | T + 1 shares combine and decode to the claimed plaintext                               |
-| Config   | `config`                                 | None                         | The preset constants (CRT moduli, bounds, parity matrices) are consistent              |
+| ID       | Directory                                | `CircuitName`                | What the proof shows                                                                        |
+| -------- | ---------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------- |
+| C0       | `dkg/pk`                                 | `PkBfv`                      | The member's individual BFV public key is valid, with a commitment to it                    |
+| C1       | `threshold/pk_generation`                | `PkGeneration`               | The public key share follows BFV key generation from the committed secret contribution      |
+| C2a      | `dkg/sk_share_computation`               | `SkShareComputation`         | The Shamir shares of the secret contribution are valid (a degree-T finite-difference check) |
+| C2b      | `dkg/e_sm_share_computation`             | `ESmShareComputation`        | The Shamir shares of the smudging noise are valid                                           |
+| C3a, C3b | `dkg/share_encryption`                   | `ShareEncryption`            | Each share is encrypted under the recipient's committed C0 key                              |
+| C4a, C4b | `dkg/share_decryption`                   | `DkgShareDecryption`         | The shares from the roster match the C2 commitments, with a commitment to their sum         |
+| C5       | `threshold/pk_aggregation`               | `PkAggregation`              | The threshold public key is the sum of the H roster contributions                           |
+| P3       | `threshold/user_data_encryption*`        | None                         | A user ciphertext is a valid BFV encryption under the threshold key                         |
+| C6       | `threshold/share_decryption`             | `ThresholdShareDecryption`   | The decryption share uses the member's committed key share and smudging noise               |
+| C7       | `threshold/decrypted_shares_aggregation` | `DecryptedSharesAggregation` | T + 1 shares combine and decode to the claimed plaintext                                    |
+| Config   | `config`                                 | None                         | The preset constants (CRT moduli, bounds, parity matrices) are consistent                   |
 
 The "a" and "b" suffixes are the secret-key track and the smudging-noise track. C3 and C4 use one
 circuit for both tracks.

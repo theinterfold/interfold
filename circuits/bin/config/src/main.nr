@@ -49,7 +49,8 @@ use lib::configs::secure::threshold::{
     USER_DATA_ENCRYPTION_K0IS, USER_DATA_ENCRYPTION_PK_BOUNDS, USER_DATA_ENCRYPTION_E0_BOUND,
     USER_DATA_ENCRYPTION_E1_BOUND, USER_DATA_ENCRYPTION_U_BOUND, USER_DATA_ENCRYPTION_K1_LOW_BOUND,
     USER_DATA_ENCRYPTION_K1_UP_BOUND, USER_DATA_ENCRYPTION_CT0_R_BOUNDS,
-    USER_DATA_ENCRYPTION_CT1_R_BOUNDS,
+    USER_DATA_ENCRYPTION_CT1_R_BOUNDS, USER_DATA_ENCRYPTION_CT0_BIT_R,
+    USER_DATA_ENCRYPTION_CT1_BIT_R,
 };
 
 use lib::math::modulo::U128::ModU128;
@@ -602,6 +603,11 @@ fn verify_user_data_encryption_bounds() {
             USER_DATA_ENCRYPTION_CT0_R_BOUNDS[i] as u128 == expected_ct0_r,
             "USER_DATA_ENCRYPTION_CT0_R_BOUNDS mismatch",
         );
+
+        // Both legs check `r` in the window `[-2^BIT_R, 2^BIT_R)`, not against these bounds, so
+        // the widths are what must cover them.
+        USER_DATA_ENCRYPTION_CT0_R_BOUNDS[i].assert_max_bit_size::<USER_DATA_ENCRYPTION_CT0_BIT_R>();
+        USER_DATA_ENCRYPTION_CT1_R_BOUNDS[i].assert_max_bit_size::<USER_DATA_ENCRYPTION_CT1_BIT_R>();
     }
 }
 

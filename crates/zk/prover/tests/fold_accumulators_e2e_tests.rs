@@ -25,9 +25,11 @@ use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{CircuitName, Proof};
 use e3_fhe_params::BfvPreset;
 use e3_zk_config::MAX_MSG_NON_ZERO_COEFFS;
-use e3_zk_prover::test_utils::{fold_witness_field_strings, load_vk_artifacts};
+use e3_zk_prover::test_utils::{
+    fold_witness_field_strings, generate_c6_chonk_root_with_substituted_key, load_vk_artifacts,
+};
 use e3_zk_prover::ThresholdShareDecryptionCircuit as ShareDecryptionCircuit;
-use e3_zk_prover::{generate_c6_chonk_root, CircuitVariant, Provable, ZkProver};
+use e3_zk_prover::{generate_c6_chonk_root, CircuitVariant, Provable, ZkError, ZkProver};
 use recursive_vk_substitution::{fields, substitute_proof, vk_hash, witness};
 use serde_json::json;
 
@@ -171,15 +173,22 @@ fn assert_c6_chonk_tree_binding(
     );
 }
 
-#[tokio::test]
-#[ignore = "requires prepared integration artifacts; run pnpm rust:test:proofs"]
-async fn c6_chonk_root_proves_and_binds_the_decryption_aggregator() {
+/// A decryption's prover with the C6 Chonk circuits set up, and one inner C6 proof.
+struct C6Fixture {
+    prover: ZkProver,
+    inner: Proof,
+    total_slots: usize,
+    artifacts_dir: String,
+    _temp: tempfile::TempDir,
+}
+
+async fn c6_fixture() -> C6Fixture {
     let committee = CiphernodesCommitteeSize::Minimum.values();
     let preset = BfvPreset::InsecureThreshold64;
     let bb = find_bb()
         .await
         .expect("missing required test prerequisite: bb not found");
-    let (backend, _temp) = setup_test_prover(&bb).await;
+    let (backend, temp) = setup_test_prover(&bb).await;
     setup_compiled_circuit(&backend, "threshold", "share_decryption").await;
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::DecryptionAggregator).await;
     setup_c6_chonk_circuits(&backend).await;
@@ -206,7 +215,84 @@ async fn c6_chonk_root_proves_and_binds_the_decryption_aggregator() {
         )
         .expect("inner ThresholdShareDecryption proof");
     assert_eq!(inner.circuit, CircuitName::ThresholdShareDecryption);
+    C6Fixture {
+        prover,
+        inner,
+        total_slots,
+        artifacts_dir,
+        _temp: temp,
+    }
+}
 
-    assert_c6_chonk_tree_binding(&prover, &inner, total_slots, &artifacts_dir);
-    prover.cleanup("e3-c6-inner").unwrap();
+#[tokio::test]
+#[ignore = "requires prepared integration artifacts; run pnpm rust:test:proofs"]
+async fn c6_chonk_root_proves_and_binds_the_decryption_aggregator() {
+    let f = c6_fixture().await;
+    assert_c6_chonk_tree_binding(&f.prover, &f.inner, f.total_slots, &f.artifacts_dir);
+    f.prover.cleanup("e3-c6-inner").unwrap();
+}
+
+/// A stack cannot carry a leaf whose claimed outputs differ from what it proved, nor a stage
+/// passed off under another stage's key: each root either fails to prove or does not verify.
+#[tokio::test]
+#[ignore = "requires prepared integration artifacts; run pnpm rust:test:proofs"]
+async fn c6_chonk_rejects_a_corrupted_leaf_or_a_substituted_key() {
+    let f = c6_fixture().await;
+    let slots: Vec<u32> = (0..f.total_slots as u32).collect();
+    let rejected = |root: Result<Proof, ZkError>, job: &str| match root {
+        Err(e) => {
+            eprintln!("{job} rejected: {e}");
+            true
+        }
+        Ok(root) => !f
+            .prover
+            .verify_fold_proof(&root, job, 0, &f.artifacts_dir)
+            .unwrap_or(false),
+    };
+
+    // The leaf's last public signal is its `d` commitment, the row the stack writes for it.
+    let mut signals = f.inner.public_signals.extract_bytes();
+    *signals.last_mut().unwrap() ^= 1;
+    let corrupted = Proof::new(
+        f.inner.circuit,
+        f.inner.data.clone(),
+        e3_utils::ArcBytes::from_bytes(&signals),
+    );
+    let mut inners = vec![f.inner.clone(); f.total_slots];
+    inners[f.total_slots - 1] = corrupted;
+    assert!(
+        rejected(
+            generate_c6_chonk_root(
+                &f.prover,
+                &inners,
+                &slots,
+                f.total_slots,
+                "c6-corrupted-leaf",
+                &f.artifacts_dir,
+            ),
+            "c6-corrupted-leaf",
+        ),
+        "a leaf whose claimed row differs from its proof must not reach a verifying root"
+    );
+
+    let inners = vec![f.inner.clone(); f.total_slots];
+    for (stage, from) in [(0, 1), (1, 2), (2, 1)] {
+        let job = format!("c6-key-{stage}-as-{from}");
+        assert!(
+            rejected(
+                generate_c6_chonk_root_with_substituted_key(
+                    &f.prover,
+                    &inners,
+                    &slots,
+                    f.total_slots,
+                    (stage, from),
+                    &job,
+                    &f.artifacts_dir,
+                ),
+                &job,
+            ),
+            "stack stage {stage} claimed under stage {from}'s key must not reach a verifying root"
+        );
+    }
+    f.prover.cleanup("e3-c6-inner").unwrap();
 }

@@ -306,8 +306,10 @@ pub fn check_range_bounds<let N: u32, let L: u32, let N_PARTIES: u32, let BIT_SH
 /// per row instead of `N_PARTIES + 1`, and the weights are small integers, so each divisibility
 /// quotient is `T + 3` bits instead of a full `u64`.
 ///
-/// Bounds: the caller range-checks the shares to `[0, q_j)` and pins the secret column below `2 q_j`
-/// in magnitude (each C2 circuit opens it through a checked commitment). The weights sum to
+/// Bounds: the caller range-checks the shares to `[0, q_j)`. The secret column is below `2 q_j` in
+/// magnitude because the final C2 circuit opens C1's secret through a checked commitment and checks
+/// the chunks absorbed that same secret into their chain digest
+/// (`lib::core::dkg::share_computation_chain`). The weights sum to
 /// `2^(T + 1)` in absolute value, so a window's integer sum lies in `(-2^(T + 2) q_j, 2^(T + 2) q_j)`;
 /// the offset `2^(T + 2) q_j` makes it non-negative and its quotient below `2^(T + 3)`. Every term stays
 /// far below the field prime, so the field equation `sum + offset == quotient * q_j` is the integer
