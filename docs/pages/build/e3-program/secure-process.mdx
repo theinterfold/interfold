@@ -240,7 +240,7 @@ components. The Interfold does not publish a relinearization key, so the run the
 Other limits:
 
 - BFV arithmetic is modulo the plaintext modulus: 100 for insecure, 17,000,000 for secure-8192, and
-  1,000 for secure-16384 (65,537 for secure-16384-simd), so 10,000,000 + 8,000,000 decrypts to 1,000,000.
+  1,000 for secure-16384 (65,537 for secure-16384-simd and secure-16384-simd-d6), so 10,000,000 + 8,000,000 decrypts to 1,000,000.
 - Each preset has an addition budget, `z` (`SEARCH_Z` in `crates/fhe-params/src/constants.rs`). The
   ciphernodes make the smudging noise of their decryption shares large enough for an output of at
   most `z` fresh ciphertexts added together. `z` is 100,000 for parameter set `2` and for parameter

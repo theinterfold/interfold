@@ -254,9 +254,9 @@ cannot substitute another circuit within the proof tree.
 
 ## BFV presets
 
-Six BFV presets exist. Each preset has a threshold parameter set for user data and a DKG parameter
+Seven BFV presets exist. Each preset has a threshold parameter set for user data and a DKG parameter
 set for the individual keys. The values come from `crates/fhe-params/src/constants.rs`. `insecure-64`
-and `secure-8192` use the trBFV protocol path. `insecure`, `insecure-simd`, `secure-16384`, and `secure-16384-simd` use
+and `secure-8192` use the trBFV protocol path. `insecure`, `insecure-simd`, `secure-16384`, `secure-16384-simd`, and `secure-16384-simd-d6` use
 the l-BFV protocol path.
 
 | Preset          | `paramSet` | Threshold degree | Threshold CRT moduli | Plaintext modulus $t$ | DKG degree | DKG CRT moduli |
@@ -267,13 +267,18 @@ the l-BFV protocol path.
 | `secure-8192`   |          2 |             8192 |                    3 |            17,000,000 |       8192 |              2 |
 | `secure-16384`  |          3 |            16384 |                    5 |                 1,000 |      16384 |              2 |
 | `secure-16384-simd` |      6 |            16384 |                    5 |                65,537 |      16384 |              2 |
+| `secure-16384-simd-d6` |   7 |            16384 |                    8 |                65,537 |      16384 |              2 |
+
+`secure-16384-simd-d6` has the same degree and plaintext modulus as `secure-16384-simd`. It supports
+multiplicative depth 6. It uses eight 54-bit threshold moduli, so the modulus Q is about 424 bits.
+The l-BFV key envelope of this preset has 21,234,096 bytes (20.25 MiB).
 
 The l-BFV presets cannot run on the trBFV path, and the trBFV presets cannot run on the l-BFV path.
 Their proof shapes are not interchangeable.
 
 `insecure-64`, `insecure`, and `insecure-simd` are for development and tests only. The code marks
 them as not for production. The deployment script refuses to deploy them on a chain that is not a
-known test or local chain. `insecure-simd` supports only the `Minimum` and `Micro` committees. `secure-16384-simd` supports all three committees.
+known test or local chain. `insecure-simd` supports only the `Minimum` and `Micro` committees. `secure-16384-simd` and `secure-16384-simd-d6` support all three committees.
 
 ### Presets by chain
 
@@ -282,8 +287,8 @@ known test or local chain. `insecure-simd` supports only the `Minimum` and `Micr
 | Chain            | Chain ID    | Presets                                   | Committee sizes in the circuit build |
 | ---------------- | ----------- | ----------------------------------------- | ------------------------------------ |
 | Ethereum mainnet | 1           | `secure-8192`                             | `Minimum`, `Micro`, `Small`          |
-| Sepolia          | 11155111    | All five presets                          | Registered routes only               |
-| Local            | 31337, 1337 | All five presets                          | Registered routes only               |
+| Sepolia          | 11155111    | All seven presets                         | Registered routes only               |
+| Local            | 31337, 1337 | All seven presets                         | Registered routes only               |
 
 Any chain that is not Sepolia or local gets the mainnet rules. The mainnet launch pricing
 configuration sets `minCommitteeSize` to 19. With that value, `getE3Quote` rejects `Minimum` and

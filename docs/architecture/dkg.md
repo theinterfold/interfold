@@ -14,8 +14,8 @@ Owners: [keyshare](../../crates/keyshare/src/threshold_keyshare/),
 ## Identities and dimensions
 
 There are two proof paths. `insecure-64` (parameter set 0) and `secure-8192` use trBFV; `secure-16384`,
-`secure-16384-simd` (parameter set 6), `insecure-simd` (parameter set 5), and the insecure l-BFV
-parameter set 4 (`insecure`) use l-BFV.
+`secure-16384-simd` (parameter set 6), `secure-16384-simd-d6` (parameter set 7), `insecure-simd`
+(parameter set 5), and the insecure l-BFV parameter set 4 (`insecure`) use l-BFV.
 `insecure-64` and `insecure` have different degrees, and their protocol paths are not
 interchangeable. The C1/C5 and singleton C2 descriptions below describe trBFV unless stated otherwise.
 
@@ -42,12 +42,13 @@ sizes. [Shape tests](../../crates/zk/prover/src/share_verification/workflow_test
 distinction for both presets.
 
 The trBFV presets `insecure-64` and `secure-8192` use three threshold Shamir rows. The l-BFV path
-uses chunked C2/C3 proofs; `secure-16384` and `secure-16384-simd` have five threshold rows. Do not infer one path's proof
+uses chunked C2/C3 proofs; `secure-16384` and `secure-16384-simd` have five threshold rows.
+`secure-16384-simd-d6` has eight threshold rows. Do not infer one path's proof
 shape from the other.
 
 The l-BFV C2 chunk size is `c2_chunk_size(degree, n_parties)` in `e3-zk-config`. At degree 16384 it is
 8192 coefficients for up to 4 parties and 2048 above. Other degrees use the smaller of 512 and the
-degree. A batch holds up to four chunks. The generated `dkg.nr` of `secure-16384` and `secure-16384-simd` writes the chunk
+degree. A batch holds up to four chunks. The generated `dkg.nr` of `secure-16384`, `secure-16384-simd` and `secure-16384-simd-d6` writes the chunk
 size as an expression over the active committee's `N_PARTIES`, so the compiled circuits follow the
 same rule. The other presets write fixed values. A non-default `--chunk-size` gives artifacts that
 are valid only after the C2/C3/C4 circuits are recompiled against the generated configuration.
@@ -170,7 +171,7 @@ agree. The wrapper checks its 128-bit limbs; other contextual PK-verifier argume
 additional circuit bindings merely because the interface accepts them.
 
 The proven commitment is authority; serialized bytes are transport. Request-time members, including
-retained expelled members, can publish canonical 90 KiB chunks of a candidate up to 16 MiB while
+retained expelled members, can publish canonical 90 KiB chunks of a candidate up to 24 MiB while
 `KeyPublished`. Each consumer admits at most the first candidate per publisher and groups chunks by
 E3, publisher, and candidate hash. Require a complete sequence, Keccak candidate hash, valid BFV
 decode with request-time parameters, and recomputed C5 commitment equality before producing runtime
@@ -179,7 +180,7 @@ candidate. Terminal stages reject chunks and cannot recreate cleaned-up assembli
 alone does not mean clients have usable key bytes.
 
 **Accepted processing cost (ZEN2-17):** publication accepts dynamic proof/data without wrapper-level
-caps. Canonical chunk shape/16 MiB candidate limits bound retained assembly, not total emitted logs:
+caps. Canonical chunk shape/24 MiB candidate limits bound retained assembly, not total emitted logs:
 members may repeat valid chunks while KeyPublished because contracts do not track emitted indices.
 Senders pay gas; observers pay processing. Verification failure still reverts atomically. The
 transport caps do not establish a bound on every publication's observer cost.
@@ -196,8 +197,9 @@ intents.
 ### l-BFV generation, collection, and publication
 
 The l-BFV path has **no C1 and no C5**. PK and RLK generation row proofs bind the same secret as the
-C2a secret root; C2b chunk leaves enforce the lifted smudging bound themselves. For secure-16384,
-generation supplies five ordered PK rows and five ordered RLK rows. Aggregation uses the same exact
+C2a secret root; C2b chunk leaves enforce the lifted smudging bound themselves. For secure-16384 and
+secure-16384-simd, generation supplies five ordered PK rows and five ordered RLK rows. For
+secure-16384-simd-d6, it supplies eight of each. Aggregation uses the same exact
 H ascending parties for PK, RLK D0, and RLK D2, with expected commitments equal to their verified
 generation records. Row identity includes family and row; RLK aggregation uses
 `component * rows + row`, not only `ProofType`.
@@ -215,7 +217,8 @@ arrival-order quorum.
 generation secret to the chunked node's C2a root; `nodes_fold_v2` contains exactly H parties.
 `dkg_aggregator_v2` binds independent legacy and V2 VK manifests, the session, accepted set,
 committee, and operational key-envelope commitment. The final public-input length is
-`39 + 3*H + 3*rows` (60 for secure-16384/minimum and secure-16384-simd/minimum), not the trBFV C5 layout. Aggregator ID is
+`39 + 3*H + 3*rows` (60 for secure-16384/minimum and secure-16384-simd/minimum, 69 for
+secure-16384-simd-d6/minimum), not the trBFV C5 layout. Aggregator ID is
 statement metadata; publication remains permissionless.
 
 Persist both operational keys reconstructed from accepted contribution documents before final V2
@@ -226,6 +229,13 @@ reconstruct the level-zero `LBFVPublicKey`, validate fixed CRS/URS material, con
 reversed, centered circuit CRT form, and recompute the combined PK/D0/D2 commitment. Only equality
 with the on-chain `pkCommitment` authorizes encryption or exposing the RLK. A decoded public-key
 prefix alone is insufficient.
+
+`secure-16384-simd-d6` (parameter set 7) has the degree, the committees, and the V2 layout of
+`secure-16384-simd`. It supports multiplicative depth 6, so it has eight threshold CRT moduli and
+eight l-BFV rows. Its version-3 `IFLBFVKE` envelope has 21,234,096 bytes (20.25 MiB). The envelope
+is an 18-byte header and the aggregate relinearization key of 21,234,078 bytes. This size is above
+the former 16 MiB limit. A separate protocol change raises the cap to 24 MiB for this reason. The
+committee public key cap is 24 MiB.
 
 Owners include
 [l-BFV collection](../../crates/aggregator/src/public_key_aggregation/lbfv_contribution_collection.rs),

@@ -102,7 +102,7 @@ proof. Its numeric value is the `proofType` that slashing evidence uses. The `Ci
 
 P3 uses the user-data encryption packages. For a trBFV key (`insecure-64`, `secure-8192`), one package,
 `threshold/user_data_encryption`, proves both ciphertext legs. For an l-BFV key (`insecure`,
-`insecure-simd`, `secure-16384`, `secure-16384-simd`), the chunked packages prove each leg, and the wrapper
+`insecure-simd`, `secure-16384`, `secure-16384-simd`, `secure-16384-simd-d6`), the chunked packages prove each leg, and the wrapper
 `threshold/user_data_encryption_chunked` verifies both legs. These packages have no `ProofType`
 because data providers, not ciphernodes, make these proofs.
 
@@ -125,8 +125,8 @@ proofs.
 
 ### Proof count per E3
 
-L is the number of threshold CRT moduli: 3 for `insecure-64`, `insecure`, `insecure-simd`, and `secure-8192`, and 5 for
-`secure-16384` and `secure-16384-simd`. The current TrBFV code makes one smudging noise share set, so the smudging
+L is the number of threshold CRT moduli: 3 for `insecure-64`, `insecure`, `insecure-simd`, and `secure-8192`, 5 for
+`secure-16384` and `secure-16384-simd`, and 8 for `secure-16384-simd-d6`. The current TrBFV code makes one smudging noise share set, so the smudging
 multiplicity Z is 1.
 
 | Circuit | Count for one node                               | Count for the committee               |
@@ -665,8 +665,8 @@ anchors let later steps map each DKG output to `topNodes[partyId]`.
 ### Public key transport
 
 `publishCommittee` stores only the commitment. Committee members then send the serialized key with
-`publishCommitteePublicKey` in 90 KiB chunks, with a maximum of 16 MiB, while the E3 is at
-`KeyPublished`. The registry emits `CommitteePublicKeyChunkPublished`. A consumer assembles a
+`publishCommitteePublicKey` in 90 KiB chunks while the E3 is at `KeyPublished`. The committee public
+key cap is 24 MiB. The registry emits `CommitteePublicKeyChunkPublished`. A consumer assembles a
 complete chunk set, checks `keccak256(publicKey) == candidateHash`, and recomputes the commitment
 before it uses the key.
 
@@ -730,7 +730,7 @@ The Honk verifiers `DkgAggregatorVerifier.sol` and `DecryptionAggregatorVerifier
 from the recursive VKs of `dkg_aggregator` and `decryption_aggregator` with
 `bb write_solidity_verifier`. The files in
 `packages/interfold-contracts/contracts/verifiers/bfv/honk/` are the `insecure-64` and `minimum` pair.
-The other pairs are in `honk/<preset>/<committee>/`. `secure-16384` and `secure-16384-simd` support the `minimum`, `micro`,
+The other pairs are in `honk/<preset>/<committee>/`. `secure-16384`, `secure-16384-simd` and `secure-16384-simd-d6` support the `minimum`, `micro`,
 and `small` committees. A deployment must use the pair that matches its preset and committee. A
 production deployment on a non-canonical preset must regenerate the verifiers locally for that
 deployment.
@@ -872,20 +872,27 @@ the party at fault.
 
 `crates/fhe-params/src/constants.rs` defines the presets. E3 requests use `paramSet` 0 for
 `insecure-64`, 2 for `secure-8192`, 3 for `secure-16384`, 4 for `insecure`, 5 for
-`insecure-simd`, and 6 for `secure-16384-simd`. Index 1 is retired. It remains in the registry for older E3s.
+`insecure-simd`, 6 for `secure-16384-simd`, and 7 for `secure-16384-simd-d6`. Index 1 is retired. It remains in the registry for older E3s.
 
-| Parameter                                | `insecure-64`                    | `insecure`                       | `insecure-simd`                  | `secure-8192` | `secure-16384` | `secure-16384-simd` |
-| ---------------------------------------- | -------------------------------- | -------------------------------- | -------------------------------- | ------------- | -------------- | ------------------- |
-| Protocol path                            | trBFV                            | l-BFV                            | l-BFV                            | trBFV         | l-BFV          | l-BFV               |
-| Ring degree $d$                          | 64                               | 128                              | 128                              | 8192          | 16384          | 16384               |
-| Threshold CRT moduli L                   | 3                                | 3                                | 3                                | 3             | 5              | 5                   |
-| DKG CRT moduli                           | 2                                | 2                                | 2                                | 2             | 2              | 2                   |
-| Threshold plaintext modulus $t$          | 17000000                         | 100                              | 257                              | 17000000      | 1000           | 65537               |
-| Statistical security parameter $\lambda$ | 2                                | 2                                | 2                                | 45            | 31             | 31                  |
-| Use                                      | Local development and tests only | Local development and tests only | Local development and tests only | Production    | l-BFV, not on mainnet | l-BFV with 16384 SIMD slots, not on mainnet |
+| Parameter                                | `insecure-64`                    | `insecure`                       | `insecure-simd`                  | `secure-8192` | `secure-16384` | `secure-16384-simd` | `secure-16384-simd-d6` |
+| ---------------------------------------- | -------------------------------- | -------------------------------- | -------------------------------- | ------------- | -------------- | ------------------- | ---------------------- |
+| Protocol path                            | trBFV                            | l-BFV                            | l-BFV                            | trBFV         | l-BFV          | l-BFV               | l-BFV                  |
+| Ring degree $d$                          | 64                               | 128                              | 128                              | 8192          | 16384          | 16384               | 16384                  |
+| Threshold CRT moduli L                   | 3                                | 3                                | 3                                | 3             | 5              | 5                   | 8                      |
+| DKG CRT moduli                           | 2                                | 2                                | 2                                | 2             | 2              | 2                   | 2                      |
+| Threshold plaintext modulus $t$          | 17000000                         | 100                              | 257                              | 17000000      | 1000           | 65537               | 65537                  |
+| Statistical security parameter $\lambda$ | 2                                | 2                                | 2                                | 45            | 31             | 31                  | 31                     |
+| Use                                      | Local development and tests only | Local development and tests only | Local development and tests only | Production    | l-BFV, not on mainnet | l-BFV with 16384 SIMD slots, not on mainnet | l-BFV with 16384 SIMD slots and multiplicative depth 6, not on mainnet |
 
 Circuit artifacts are compiled separately for each preset and committee. The prover and the verifier
 must use the same pair.
+
+`secure-16384-simd-d6` has the same degree, plaintext modulus, committees, and V2 layout as
+`secure-16384-simd`. It supports multiplicative depth 6 and uses eight 54-bit threshold moduli, so
+the modulus Q is about 424 bits. Its l-BFV key envelope has 21,234,096 bytes (20.25 MiB). This size
+is above the former 16 MiB limit. A separate protocol change raises the cap to 24 MiB for this
+reason. The committee public key cap is 24 MiB. The C7 circuit of this preset is
+`decrypted_shares_aggregation_wide`, which holds Q and u as `U512` values because Q is above 352 bits.
 
 ## Next steps
 

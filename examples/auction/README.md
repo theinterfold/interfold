@@ -262,8 +262,10 @@ on random bids for each bidder count and prints one table:
 cargo run --release -- --params demo --levels 16 --sweep 2,4,8,16,32,64
 ```
 
-The sweep does not apply the 16 MiB cap on the relinearization key. A design with depth 6 or more
-needs 8 or more moduli, and its key is larger than the cap.
+The committee public key cap is 24 MiB. The sweep does not apply this cap to the relinearization
+key. A design with depth 6 needs 8 moduli. The `secure-16384-simd-d6` preset has these 8 moduli, and
+its l-BFV key envelope has 21,234,096 bytes (20.25 MiB), which is below the cap. A design with
+depth 7 or more needs 9 or more moduli, and its key can be larger than the cap [estimate].
 
 The output shows these items for each design:
 

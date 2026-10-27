@@ -44,6 +44,7 @@ All binary packages depend on one shared library. The Nargo package name of the 
           <FileTree.Folder name='secure_8192' />
           <FileTree.Folder name='secure_16384' />
           <FileTree.Folder name='secure_16384_simd' />
+          <FileTree.Folder name='secure_16384_simd_d6' />
           <FileTree.Folder name='committee' />
         </FileTree.Folder>
       </FileTree.Folder>
@@ -92,7 +93,7 @@ All binary packages depend on one shared library. The Nargo package name of the 
 | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `lib/src/math`              | Polynomials, the SAFE sponge (Poseidon2 and Keccak256), modular arithmetic, and the commitment functions with their domain separators.                                                                                                                                                                                                                                                  |
 | `lib/src/core`              | The circuit logic that the binary packages call. `core/dkg` holds C0 and C2 to C4. `core/threshold` holds C1, C5, the two user-encryption legs and the circuit that proves them together, C6, and C7.                                                                                                                                                                                   |
-| `lib/src/configs`           | The BFV presets (`insecure_64`, `insecure`, `insecure_simd`, `secure_8192`, `secure_16384`, `secure_16384_simd`) and the committee sizes. `default/mod.nr` and `committee/active.nr` select the active pair. The build script writes both files.                                                                                                                                                                                             |
+| `lib/src/configs`           | The BFV presets (`insecure_64`, `insecure`, `insecure_simd`, `secure_8192`, `secure_16384`, `secure_16384_simd`, `secure_16384_simd_d6`) and the committee sizes. `default/mod.nr` and `committee/active.nr` select the active pair. The build script writes both files.                                                                                                                                                                                             |
 | `bin/dkg`                   | Nargo workspace: `pk` (C0), `sk_share_computation` (C2a), `e_sm_share_computation` (C2b), `share_encryption` (C3), `share_decryption` (C4).                                                                                                                                                                                                                                             |
 | `bin/threshold`             | Nargo workspace: `pk_generation` (C1), `pk_aggregation` (C5), `user_data_encryption` (P3 for trBFV keys: one circuit for both legs), the chunked P3 family for l-BFV keys (`user_data_encryption_ct0_chunked`, `user_data_encryption_ct1_chunked`, their child circuits, and the wrapper `user_data_encryption_chunked`), `share_decryption` (C6), `decrypted_shares_aggregation` (C7). |
 | `bin/recursive_aggregation` | Twelve packages that fold proofs together. The two final circuits are `dkg_aggregator` and `decryption_aggregator`.                                                                                                                                                                                                                                                                     |
@@ -230,7 +231,7 @@ A build selects one BFV preset and one committee size:
 
 | Option        | Values                                                                              | Default       |
 | ------------- | ----------------------------------------------------------------------------------- | ------------- |
-| `--preset`    | `insecure-64`, `insecure`, `insecure-simd`, `secure-8192`, `secure-16384`, `secure-16384-simd`, `all`    | `insecure-64` |
+| `--preset`    | `insecure-64`, `insecure`, `insecure-simd`, `secure-8192`, `secure-16384`, `secure-16384-simd`, `secure-16384-simd-d6`, `all`    | `insecure-64` |
 | `--committee` | `minimum`, `micro`, `small`, `all`                                                  | `minimum`     |
 
 | Committee | N   | T   | H   |
@@ -242,8 +243,14 @@ A build selects one BFV preset and one committee size:
 N is the committee size, T is the threshold, and H is the number of honest parties that the DKG
 expects. Decryption needs T + 1 shares. The mainnet contracts accept only the secure-8192 parameter
 set. Sepolia and local chains accept all three sets with every canonical committee, including
-`secure-16384/micro` and the three `secure-16384-simd` committees (`ActiveCryptoConfig.sol`). Deployment still requires matching artifacts and
+`secure-16384/micro`, the three `secure-16384-simd` committees, and the three
+`secure-16384-simd-d6` committees (`ActiveCryptoConfig.sol`). Deployment still requires matching artifacts and
 verifier routes; source-level admission does not install them.
+
+`secure-16384-simd-d6` has the same degree, committees, and V2 layout as `secure-16384-simd`. It
+supports multiplicative depth 6 and uses eight 54-bit moduli, so Q is about 424 bits. Its C7
+circuit is `decrypted_shares_aggregation_wide`. That circuit holds Q and u as `U512` values,
+because Q is above 352 bits.
 
 For each pair, the Rust build owner does these steps (`crates/zk/build`):
 
@@ -253,7 +260,7 @@ For each pair, the Rust build owner does these steps (`crates/zk/build`):
    `packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol`.
 4. It compiles the packages in `bin/dkg`, `bin/threshold`, and `bin/recursive_aggregation` with
    `nargo compile`. `insecure-64` and `secure-8192` serve only the trBFV path and skip the l-BFV
-   circuits. `insecure`, `insecure-simd`, `secure-16384`, and `secure-16384-simd` serve only the l-BFV path and skip the
+   circuits. `insecure`, `insecure-simd`, `secure-16384`, `secure-16384-simd`, and `secure-16384-simd-d6` serve only the l-BFV path and skip the
    trBFV-only circuits.
 5. It writes verification keys with `bb write_vk`. Each base circuit gets `evm`,
    `noir-recursive-no-zk`, and `noir-recursive` keys. Each fold circuit gets a
@@ -280,7 +287,7 @@ Each required or included pair must contain every artifact in
 `crates/zk/prover/required-artifacts.json`, which both protocol paths use. A pair that serves the
 trBFV path (`insecure-64`, `secure-8192`) must also contain every artifact in
 `crates/zk/prover/required-artifacts-trbfv.json`. A pair that serves the l-BFV path (`insecure`,
-`insecure-simd`, `secure-16384`, `secure-16384-simd`) must also contain every artifact in `crates/zk/prover/required-artifacts-lbfv.json`.
+`insecure-simd`, `secure-16384`, `secure-16384-simd`, `secure-16384-simd-d6`) must also contain every artifact in `crates/zk/prover/required-artifacts-lbfv.json`.
 The release validator and installer share these inventories. The manifest must cover each artifact.
 
 If circuit replacement or the version update fails, the installer attempts rollback and returns the
@@ -379,7 +386,7 @@ circuit.
 
 The SDK function `generateProof()` proves only the user-data-encryption circuits. For a trBFV preset
 (`INSECURE_THRESHOLD_64`, `SECURE_THRESHOLD_8192`), it proves the one `user_data_encryption` circuit. For an l-BFV preset
-(`INSECURE_THRESHOLD_LBFV`, `INSECURE_THRESHOLD_SIMD`, `SECURE_THRESHOLD_16384`, `SECURE_THRESHOLD_16384_SIMD`), it proves the chunked tree and its wrapper.
+(`INSECURE_THRESHOLD_LBFV`, `INSECURE_THRESHOLD_SIMD`, `SECURE_THRESHOLD_16384`, `SECURE_THRESHOLD_16384_SIMD`, `SECURE_THRESHOLD_16384_SIMD_D6`), it proves the chunked tree and its wrapper.
 It embeds artifacts built for `insecure-64` with `minimum`. See the [SDK](/build/sdk) page.
 
 ## Use circuits/lib in another Noir project

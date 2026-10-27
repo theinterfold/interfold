@@ -29,7 +29,7 @@ Before accepting a paid request it requires:
 - expected token/configuration equality and `totalFee <= maxFee`, before exact escrow transfer.
 
 Mainnet supports secure-8192 at minimum/micro/small; configured launch `minCommitteeSize = 19`
-admits Small only. Sepolia/local also support `insecure-64`, the insecure l-BFV presets, and registered secure-16384 and secure-16384-simd l-BFV routes. A
+admits Small only. Sepolia/local also support `insecure-64`, the insecure l-BFV presets, and registered secure-16384, secure-16384-simd, and secure-16384-simd-d6 l-BFV routes. A
 route being configured does not itself authorize its price-policy committee size. Different tuples,
 H/N, or verifier thresholds require matching artifacts and contracts. Runtime rejects a request or
 saved E3 whose crypto ID differs from its build's expected ID. [Upgrades](upgrades.md) preserves

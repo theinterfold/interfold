@@ -79,8 +79,8 @@ tree** under the old hash scheme. Another tree needs a rebuild, not a new label.
 `required_circuits_version` equals Interfold release version without v; binary resolves GitHub tag
 `v{version}` / `circuits-{version}.tar.gz`. Release workflow rejects mismatch. All pairs in
 [supported-configurations](../../crates/zk/prover/supported-configurations.json) must ship: insecure-64,
-insecure, and secure-8192 × minimum/micro/small, the supported secure-16384 and secure-16384-simd
-pairs, and insecure-simd × minimum/micro. That matrix is
+insecure, and secure-8192 × minimum/micro/small, the supported secure-16384, secure-16384-simd and
+secure-16384-simd-d6 pairs, and insecure-simd × minimum/micro. That matrix is
 canonical for release/installation and must be a subset of `scripts/circuits/build-pairs.json`
 (tooling test). Both Rust and TypeScript read that build policy. Wildcards preserve its order, not a
 Cartesian product; an unsupported explicit pair fails before tools or writes.
@@ -89,9 +89,14 @@ The build policy also generates deployment configuration declarations/testnet ro
 pair admission. Network admission is separate and remains secure-8192-only on mainnet.
 Secure-16384/micro uses the existing `(N,T,H) = (9,4,5)` committee and five l-BFV rows; its V2 PK
 layout has 69 public fields; small has 96. The required release matrix includes all three
-secure-16384 and secure-16384-simd committees. Secure-16384-simd (parameter set 6) shares the
-degree, the committees and the V2 layout of secure-16384 and differs in the plaintext modulus
-(65537) and the 56-bit CRT moduli. Enabling a new pair requires a complete matching artifact build, real-proof
+secure-16384, secure-16384-simd and secure-16384-simd-d6 committees. Secure-16384-simd (parameter
+set 6) shares the degree, the committees and the V2 layout of secure-16384 and differs in the
+plaintext modulus (65537) and the 56-bit CRT moduli. Secure-16384-simd-d6 (parameter set 7) has the
+same degree, committees and V2 layout as secure-16384-simd. It supports multiplicative depth 6 and
+uses eight 54-bit CRT moduli. Its C7 circuit is `decrypted_shares_aggregation_wide`, because Q is
+about 424 bits. Its l-BFV key envelope is 21,234,096 bytes (20.25 MiB), which is above the former
+16 MiB committee public key limit. A separate protocol change raises the cap to 24 MiB for this
+reason. Enabling a new pair requires a complete matching artifact build, real-proof
 acceptance, and replacement/installation of the matching PK/decryption router routes before requests
 are admitted. Wrapper generation alone does not qualify the full proof chain or an existing
 deployment.
@@ -116,8 +121,8 @@ Both download and local install require nonempty SHA-256 checksums.json, verify 
 uncovered artifacts, and require every path in
 [required-artifacts](../../crates/zk/prover/required-artifacts.json) for required/included pairs.
 Also require `required-artifacts-trbfv.json` for trBFV pairs and `required-artifacts-lbfv.json` for
-l-BFV pairs. Insecure serves both paths; secure-8192 serves trBFV; secure-16384 and
-secure-16384-simd serve l-BFV.
+l-BFV pairs. Insecure serves both paths; secure-8192 serves trBFV; secure-16384,
+secure-16384-simd and secure-16384-simd-d6 serve l-BFV.
 SOURCE_HASH/root manifests/stamps are metadata, not prover artifacts. Required pairs cannot be
 chosen by archive contents. Explicit nonempty subsets are available through installer APIs and
 repeated `--circuits-configuration` only with `--circuits-archive`. Local archives need the same
@@ -160,7 +165,7 @@ an automatic fix. Tracked contract artifacts feed CLI `sol!`; after `pnpm evm:bu
 functions/events/errors. Size CI reserves >=128 bytes below EIP-170 for Interfold, BondingRegistry,
 CiphernodeRegistryOwnable, canonical insecure-64 minimum aggregator verifiers, the secure-16384 minimum
 V2 verifier, all secure-16384 micro/small aggregator verifiers, and the same set for
-secure-16384-simd. **Limit:** every variant must
+secure-16384-simd and secure-16384-simd-d6. **Limit:** every variant must
 fit, but the remaining verifier variants are not measured by that gate. See
 [registration](registration-and-bonding.md) for library links.
 
