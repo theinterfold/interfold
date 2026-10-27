@@ -79,9 +79,9 @@ const PRICE_EXPLANATION: Record<AuctionType, string> = {
   [AuctionType.SecondPrice]:
     'Second-price auction: the winner pays the second-highest bid. The committee decrypted only the winner and that price; the winning bid itself stays secret.',
   [AuctionType.RatioFirstPrice]:
-    'First-price auction with ratio lanes: the winner pays their own bid, which is the highest bid. The committee decrypted the highest bid and the set of bidders that tied for it. If one bidder tied, that bidder won. If more tied, a public random value picked the winner among them. No other bid was revealed.',
+    'First-price auction with ratio lanes: the winner pays their own bid, which is the highest bid. The committee decrypted the highest bid and the set of bidders that tied for it. If one bidder tied, that bidder won. If more tied, the tied bidder who bid first won. No other bid was revealed.',
   [AuctionType.RatioSecondPrice]:
-    'Second-price auction with ratio lanes: the winner pays the second-highest bid. The committee decrypted that price and the set of winning bidders. If the top bids tied, that set holds every tied bidder, their bids equal the price, and a public random value picked the winner among them. Without a tie the winner’s bid stays secret.',
+    'Second-price auction with ratio lanes: the winner pays the second-highest bid. The committee decrypted that price and the set of winning bidders. If the top bids tied, that set holds every tied bidder, their bids equal the price, and the tied bidder who bid first won. Without a tie the winner’s bid stays secret.',
 }
 
 const PRICE_CAPTION: Record<AuctionType, string> = {
@@ -115,11 +115,7 @@ const ResultPanel: React.FC<ResultPanelProps> = ({ auction, account, myVersions 
             `Only ${bidders.length} ${bidders.length === 1 ? 'bid' : 'bids'} opened their commitments, and the auction needs ${MIN_BIDDERS}. The program had nothing to compute over.`,
           )
         }
-        const result = await decodeAuction(
-          auction.auctionType,
-          plaintextOutput,
-          bidders.map((bid) => bid.ciphertexts[0]),
-        )
+        const result = await decodeAuction(auction.auctionType, plaintextOutput, bidders.length)
         if (!cancelled) setDecoded({ bidders, outcomes, result })
       })
       .catch((err) => {
@@ -202,12 +198,12 @@ export const ResultView: React.FC<ResultViewProps> = ({ auction, account, myVers
         <div className={`note ${youWon ? 'ok' : ''}`}>
           {youWon ? (
             <>
-              <strong>You won.</strong> You pay {priceLabel}.{inTieSet && ' You tied for the top bid and the random draw picked you.'}
+              <strong>You won.</strong> You pay {priceLabel}.{inTieSet && ' You tied for the top bid and you bid first.'}
             </>
           ) : youBid ? (
             <>
               <strong>You did not win.</strong>
-              {inTieSet && ' You tied for the top bid and the random draw picked another bidder.'}
+              {inTieSet && ' You tied for the top bid and another tied bidder bid first.'}
               {myBid !== null && ` Your bid was ${formatPrice(myBid, auction.prices)}.`}
             </>
           ) : mine ? (
@@ -310,11 +306,6 @@ const LaneProblems: React.FC<{ auction: AuctionState; result: LaneResult }> = ({
         winner.
       </div>
     )}
-    {result.tieSet.length > 1 && result.random === null && (
-      <div role='alert' className='note bad'>
-        More than one bidder tied for the top bid, but the random lane is unreadable, so the draw cannot be checked.
-      </div>
-    )}
   </>
 )
 
@@ -324,10 +315,9 @@ const LaneView: React.FC<{
   bidders: SelectedBid[]
   result: LaneResult
 }> = ({ auction, account, bidders, result }) => {
-  const { price, winner, tieSet, random, lanes, copies } = result
+  const { price, winner, tieSet, lanes, copies } = result
   const levels = auction.prices.length
   const columns = { gridTemplateColumns: `max-content repeat(${levels}, minmax(0, 1fr))` }
-  const drawn = random !== null && tieSet.length > 1 ? random % tieSet.length : null
 
   return (
     <div className='space-y-6'>
@@ -379,20 +369,14 @@ const LaneView: React.FC<{
           <h3 className='h3'>{tieSet.length > 1 ? `${tieSet.length} bidders tied for the top bid` : 'No tie'}</h3>
           <p className='text-sm text-muted'>
             The tie set is the group of bidders that bid the top step. The result publishes it, so everyone sees who tied, but not any other
-            bid. If the set holds one bidder, that bidder wins. If it holds more, the winner is picked at random from the set.
+            bid. If the set holds one bidder, that bidder wins. If it holds more, the tied bidder who bid first wins.
           </p>
           {tieSet.length > 1 ? (
             <>
               <p className='text-sm text-muted'>
-                The random pick uses a number the committee publishes in one extra slot. It is the sum of the random masks of all bidders,
-                so nobody can choose it or try again. The winner is the tied bidder at the place (number mod {tieSet.length}) in the list
-                below. The list is in the order the bidders bid.
+                The list below is in the order the bidders bid, and the winner is the first bidder in it. A bidder that updated its bid has
+                the place of its update, so an update loses the place of the earlier bid.
               </p>
-              {random !== null && drawn !== null && (
-                <p className='font-mono text-sm'>
-                  random value {random} mod {tieSet.length} = {drawn}, so the winner is tied bidder {drawn}
-                </p>
-              )}
               <ol className='space-y-2'>
                 {tieSet.map((position, place) => {
                   const address = bidders[position].bidder
@@ -409,7 +393,7 @@ const LaneView: React.FC<{
             </>
           ) : (
             <p className='text-sm text-muted'>
-              Here one bidder holds the top bid, so that bidder won and no random pick was needed.{' '}
+              Here one bidder holds the top bid, so that bidder won.{' '}
               {auction.auctionType === AuctionType.RatioSecondPrice
                 ? 'The winning bid stays secret: only the second-highest bid, the price, is public.'
                 : 'The winning bid is the price.'}
@@ -493,8 +477,8 @@ const SlotGrid: React.FC<{
         </span>
       </div>
       <p className='muted text-xs'>
-        The tie priority of each bidder comes from the published ciphertexts. It matters only when the top bids tie. The last bidder can see
-        the earlier ciphertexts and could re-encrypt to improve its priority, so a tie is not a fair draw.
+        If the top bids tie, the tied bidder who bid first wins. The result does not show that a tie happened. A bidder that updated its bid
+        has the place of its update, so an update loses the place of the earlier bid.
       </p>
       {!result.unusedGroupsZero && (
         <p role='alert' className='note bad'>

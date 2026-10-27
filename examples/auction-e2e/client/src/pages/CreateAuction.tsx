@@ -168,8 +168,8 @@ const CreateAuction: React.FC = () => {
             ))}
             <p className='text-sm text-muted' aria-live='polite'>
               {isRatioType(auctionType)
-                ? `If the top bids tie, a public random draw picks the winner among the tied bidders. The tie becomes public: the result names every bidder that tied. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders, more than the ${MAX_BIDDERS_BY_TYPE[AuctionType.FirstPrice]} of the other types.`
-                : `If the top bids tie, a priority taken from a hash of the published ciphertexts picks the winner. Nothing about the tie is revealed. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders.`}
+                ? `If the top bids tie, the tied bidder who bid first wins. The tie becomes public: the result names every bidder that tied. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders, more than the ${MAX_BIDDERS_BY_TYPE[AuctionType.FirstPrice]} of the other types.`
+                : `If the top bids tie, the tied bidder who bid first wins. Nothing about the tie is revealed. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders.`}
             </p>
           </fieldset>
 

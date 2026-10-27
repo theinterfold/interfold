@@ -6,17 +6,18 @@ decrypts one result.
 
 The creator selects the auction type:
 
-| Type                      | Bidders | Winner                                                                   | Price                                                 | The result shows                          |
-| ------------------------- | ------- | ------------------------------------------------------------------------ | ----------------------------------------------------- | ----------------------------------------- |
-| First-price               | 2 to 4  | the highest bid                                                          | the highest bid                                       | the winner, the price                     |
-| Second-price (Vickrey)    | 2 to 4  | the highest bid                                                          | the second-highest bid                                | the winner, the price                     |
-| First-price, ratio lanes  | 2 to 8  | the highest bid; on a tie, one of the tied bidders by a random value     | the highest bid                                       | the price, the tie set, a random value    |
-| Second-price, ratio lanes | 2 to 8  | the highest bid; on a top tie, one of the tied bidders by a random value | the second-highest bid (the highest bid on a top tie) | the price, the winner set, a random value |
+| Type                      | Bidders | Winner                                                       | Price                                                 | The result shows          |
+| ------------------------- | ------- | ------------------------------------------------------------ | ----------------------------------------------------- | ------------------------- |
+| First-price               | 2 to 4  | the highest bid; on a tie, the tied bidder who bid first     | the highest bid                                       | the winner, the price     |
+| Second-price (Vickrey)    | 2 to 4  | the highest bid; on a tie, the tied bidder who bid first     | the second-highest bid                                | the winner, the price     |
+| First-price, ratio lanes  | 2 to 8  | the highest bid; on a tie, the tied bidder who bid first     | the highest bid                                       | the price, the tie set    |
+| Second-price, ratio lanes | 2 to 8  | the highest bid; on a top tie, the tied bidder who bid first | the second-highest bid (the highest bid on a top tie) | the price, the winner set |
 
 For a second-price auction, the winning bid stays secret, except when the top bids tie: then the
-price is the tied bid. The two region types (first-price and Vickrey) resolve a tie inside the
-computation and do not show it. The two ratio-lane types show the tie set: the bidders whose bid
-equals the price. They pick the winner from it with the random value of the result.
+price is the tied bid. A tie at the top always goes to the tied bidder whose counted bid was
+submitted first (see "Bid updates"). The two region types (first-price and Vickrey) resolve a tie
+inside the computation and do not show it. The two ratio-lane types show the tie set: the bidders
+whose bid equals the price. The winner is the first bidder of the tie set.
 
 | Step           | What happens                                                                                                                                                             |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -25,7 +26,7 @@ equals the price. They pick the winner from it with the random value of the resu
 | Bid            | Each bidder encrypts a bid in the browser, proves with one proof that the bid is valid, and sends it. A bidder can update a bid, and a relayer can send it.              |
 | Computation    | The FHE program multiplies ciphertexts. It uses the threshold relinearization key.                                                                                       |
 | Decryption     | The committee decrypts one ciphertext. It holds the winner and the price only.                                                                                           |
-| Result         | The web app decodes the result and shows the winner and the price. Region types also show the tie priority. Ratio-lane types also show the tie set and the random value. |
+| Result         | The web app decodes the result and shows the winner and the price. Ratio-lane types also show the tie set.                                                               |
 
 This example runs on the **insecure SIMD parameters (parameter set 5: N = 128, t = 257)**. They are
 for development and give no security.
@@ -114,6 +115,14 @@ The program counts one bid for each bidder: the latest bid whose ciphertexts all
 commitments. If the latest bid does not open, an earlier version counts. If no bid of a bidder
 opens, the program drops the bidder whole. The program never counts part of a bid.
 
+The place of a bid in the queue is the leaf index of its first ciphertext. The bidder position in the
+computation is the order of the counted bids by that index. A bidder that updates gets the place of
+its update, so an update loses the place of the earlier bid: a bidder that bids first and updates
+last counts after every bidder that bid in between. If the update does not open its commitments, the
+earlier bid counts and keeps its own place. On a tie at the top, the tied bidder with the lowest
+position wins, which is the tied bidder whose counted bid was published first. The order of the
+bids is the order of the transactions on chain, so no bidder can change it by encrypting again.
+
 ### Relayed bids
 
 A bidder can sign a bid, and any account can send it. The relayer pays the gas. The bidder address
@@ -192,11 +201,9 @@ With `n` bidders, the program makes `floor(8 / n)` copies of `n` regions. A regi
 program zeroes the unused groups. It multiplies a test vector by the sum of the bidder masks. A slot
 is uniform where the test is non-zero, so the result shows only the zero slots.
 
-The tie priority comes from the published ciphertexts. The seed is `keccak256` of the `ge`
-ciphertexts of the selected bids, in bidder-position order. The program ranks the bidder positions
-by `keccak256(seed || u32_be(position))`. The highest hash gets priority `n - 1`. The priority is
-fixed only when the input window closes, because a bidder can update a bid until then. A tie at the
-top goes to the bidder with the higher priority.
+On a tie at the top, the region of the lowest bidder position wins: region `k` belongs to the bidder
+position `k`, and a region sees a tie only with the bidders of lower positions. The ciphertext bytes
+play no part in the tie, so a bidder cannot change it by encrypting again.
 
 **First-price.** One ciphertext product, depth 1. The result has one zero slot in each copy: the
 region of the winner, at the highest bid `h`.
@@ -214,7 +221,7 @@ A set slot reads as zero by error with probability `1 / 257` for each copy.
 
 ### The ratio-lane types
 
-The ratio-lane types have no regions and no tie priority. Bidder position `k` (leaf order) has the
+The ratio-lane types have no regions. Bidder position `k` (leaf order) has the
 weight `w_k = 2^k`. The weights of 8 bidders add up to `255`, which is below `t = 257`. A sum of
 weights thus shows which bidders it contains. A bit of the sum is a bidder. The tie set is the set
 of bidders whose bid equals the price.
@@ -252,14 +259,10 @@ The decoder takes `s` as the highest level with `y != 0`, and the highest `s` of
 `1 / 257^3` for the three copies. The decoder reads the ratio `z / y` from a copy that shows
 `y != 0`. All copies must show the same ratio.
 
-**The random lane.** Both ratio-lane types have one more slot: slot 16 (first-price) or slot 96
-(second-price). It holds the sum of the masks at that slot, and no result lane uses it. It is
-uniform if one bidder is honest. The encrypted masks fix it, so no bidder can know it before the
-window closes, and no bidder can grind it alone. The result shows it. The winner is
-`tieSet[random mod |tieSet|]`, with the tie set sorted by bidder position. A bidder without a tie
-wins with certainty. Every slot that is not a result lane or the random lane is 0.
+The winner is the first member of the tie set: the tied bidder with the lowest bidder position. A
+bidder without a tie wins with certainty. Every slot that is not a result lane is 0.
 
-The result is a function of the price, the tie set and the random value only. It does not show the
+The result is a function of the price and the tie set only. It does not show the
 other bids, or any count. Compared with the region types, a ratio-lane type shows the tie set. It
 does not need regions, so it supports 8 bidders. The lane count does not depend on the number of
 bidders. The fourth ciphertext of the second-price type adds one encryption, one encryption proof
@@ -415,8 +418,8 @@ it works**.
    bidding duration. The page offers four types: first-price, second-price (Vickrey), first-price
    with ratio lanes and second-price with ratio lanes. It shows the bidder limit of the chosen type
    (2 to 4 bidders for the first two types, 2 to 8 for the ratio-lane types) and the number of
-   ciphertexts of each bid. A ratio-lane auction resolves a top tie with a public random draw among
-   the tied bidders. The tie set becomes public: the result names every bidder that tied. For the
+   ciphertexts of each bid. A top tie always goes to the tied bidder who bid first. A ratio-lane
+   auction also publishes the tie set: the result names every bidder that tied. For the
    price steps, first set **Number of steps** (2 to 16, 8 by default). Then select **Even steps** (a
    start price and a step) or **Custom list** (one price for each step, increasing, for example a
    1-2-5 scale). Under **Who can bid**, select **Anyone** or **Allowlist**. For an allowlist, enter
@@ -434,7 +437,8 @@ it works**.
    and the server sends the transaction. The bid counts when the transaction is mined. On an
    allowlist auction, the page shows if the account is on the list. After a bid, the page shows the
    version of the bid and **Update bid (n left)**: an address can send 3 bids. An update has a new
-   proof. The latest bid whose bytes open counts. The auction is full when `bidderCount` reaches the
+   proof. The latest bid whose bytes open counts, and it counts from the time of the update: an
+   update loses the place of the earlier bid in a tie. The auction is full when `bidderCount` reaches the
    limit of its type. The page keeps the level and the transaction hash of each version in the
    browser storage.
 5. **Result.** When the window closes, the server computes the result, and the committee decrypts
@@ -445,9 +449,9 @@ it works**.
    that the region of the winner is the only zero region at the price level. Ratio-lane types show
    the winner, the price and one lane of 16 slots: zero above the price, the set of tied bidders at
    the price, and random values below. If more than one bidder tied, the page also shows the tie
-   set, the random value `r` and the draw `r mod |tie set|`. The page shows an error when a lane
-   does not decode to a price and a tie set, when the copies of ratio-lane second-price disagree, or
-   when the random lane is unreadable during a tie.
+   set in the order the bidders bid. The first bidder of the set wins. The page shows an error when
+   a lane does not decode to a price and a tie set, or when the copies of ratio-lane second-price
+   disagree.
 
 An auction needs 2 bidders at least, and 4 (region types) or 8 (ratio-lane types) at most. A bidder
 counts only if one of its bids opens its commitments. With fewer than 2 such bidders, the server
@@ -473,7 +477,7 @@ proofs.
 | Second-price (Vickrey)    | `0: 14`, `1: 12`, `2: 9`, `0: 5` | The update counts: bidder 0 bids the highest step and then updates. The test sends the update again as version 3, and a fourth bid is rejected. | bidder 1 wins at price 9                                 |
 | First-price               | `0: 6`, `1: 9`, `2: 11`          | An allowlist of bidders 0 to 2, and the creator account is rejected. The bytes of bidder 2 do not open, so the program drops bidder 2.          | bidder 1 wins at price 9                                 |
 | First-price, ratio lanes  | `0: 2`, `1: 7`                   | Bidder 1 signs, and the relayer of the server sends the bid.                                                                                    | price 7, tie set `[1]`, bidder 1 wins                    |
-| Second-price, ratio lanes | `0: 5`, `1: 5`                   | A top tie on step 5 of a 6-step auction.                                                                                                        | price 5, tie set `[0, 1]`, winner `tieSet[random mod 2]` |
+| Second-price, ratio lanes | `0: 5`, `1: 5`                   | A top tie on step 5 of a 6-step auction.                                                                                                        | price 5, tie set `[0, 1]`, bidder 0 wins (bid first)     |
 
 The test also checks that the contract rejects these bids:
 
@@ -488,7 +492,7 @@ The test also checks that the contract rejects these bids:
 
 It checks `bidCount`, `bidderCount`, the `firstIndex` and the `version` of each `BidSubmitted` event
 and the number of leaves. It then selects the bids with `selectBids` and compares them with the
-expected bids. `cargo test` covers more ties, 8 bidders, the zero slots of the output, the plaintext
+expected bids. `cargo test` covers a tie at the top for each type (the earliest position wins), 8 bidders, the zero slots of the output, the plaintext
 formulas of the ratio-lane types, and the leaf and the selection of the input policy. The latest
 valid version wins. An earlier version counts if the latest does not open. A bidder with no bid that
 opens is dropped whole. A leaf vector is shared with the Solidity `inputLeaf`. `hardhat test` covers
@@ -781,7 +785,7 @@ older figures were for a proof of each ciphertext, and they do not apply.
 | Path                            | What                                                                                                                               |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `sdk/`                          | `@interfold/auction` (private): the four files below. `pnpm build:sdk` builds `sdk/dist` and `sdk/circuits`                        |
-| `sdk/src/layout.ts`             | the slot encoding, the roles and limits of each type, the tie priority and the result decoders                                     |
+| `sdk/src/layout.ts`             | the slot encoding, the roles and limits of each type and the result decoders                                                      |
 | `sdk/src/prover.ts`             | `BidProver`: encrypt, the encryption proofs, the pair, masks and bid proofs                                                        |
 | `sdk/src/selection.ts`          | `selectBids`: the TypeScript form of the input policy (which bids count)                                                           |
 | `sdk/src/allowlist.ts`          | `allowlistRoot` and `allowlistProof`: the allowlist tree of `MerkleAllowlistGate`                                                  |
@@ -834,20 +838,15 @@ older figures were for a proof of each ciphertext, and they do not apply.
 - The server stores the picture of an auction without a rate limit. A creator can upload 1 MiB for
   each auction that the creator owns, and the file stays on the disk of the server. The picture is
   public. An EOA wallet must sign the upload: the server does not check ERC-1271 signatures.
-- A region type resolves a tie at the top with the tie priority: the tied bidder with the higher
-  priority wins. The result does not show that a tie happened. The priority comes from the `ge`
-  ciphertexts of the selected bids. A bidder can encrypt again with new randomness until the
-  priority is good for the bidder. This can change the winner only when the bids tie. Updates make
-  this cheaper: a bidder does not need to bid last. It can update after it has seen the ciphertexts
-  of the other bidders, until the window closes. Randomness that is set after the window closes
-  would fix this.
-- A ratio-lane type resolves a tie with the random lane. The result shows the tie set (every bidder
-  whose bid equals the price) and the random value. This is the one thing the result shows beyond
-  the winner and the price. The random lane is the sum of all masks at one slot. It is uniform if at
-  least one mask is chosen at random by a bidder who does not collude with the others. The encrypted
-  masks fix the value, and a bidder cannot read the masks of other bidders, so one bidder alone
-  cannot grind it. Bidders that all collude can choose it. A fair draw against such a group needs
-  randomness that is set after the input window closes. The platform does not supply it.
+- A tie at the top goes to the tied bidder whose counted bid was published first. This favours early
+  bidders: a bidder that bids late cannot win a tie, and an update gives up the place of the earlier
+  bid. The order is the order of the transactions on chain, so whoever orders them (the block
+  builder, or a relayer for relayed bids) chooses the winner of a tie between bids that arrive
+  at the same time. A bidder cannot change the tie by encrypting again, and the ciphertext bytes
+  play no part in it. A bidder can still use more than one address to hold more than one place.
+- The result of a region type does not show that a tie happened. A ratio-lane type shows the tie set
+  (every bidder whose bid equals the price). This is the one thing the result shows beyond the
+  winner and the price.
 - A ratio-lane second-price bid has a fourth ciphertext. It needs one more encryption and one more
   encryption proof, and it has one more proof in the tree: `auction_bid_masks`, so a bid makes three
   proofs after the encryptions, against two for the other types.

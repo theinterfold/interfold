@@ -33,7 +33,7 @@ const AuctionCard: React.FC<{ auction: AuctionState; now: bigint }> = ({ auction
           <div className='flex min-w-0 flex-wrap items-center gap-3'>
             <StatusBadge phase={phase} />
             <span className='id muted min-w-0 truncate' title={auction.e3Id.toString()}>
-              Nº {shortId(auction.e3Id)}
+              {shortId(auction.e3Id)}
             </span>
           </div>
           <h3 className='h3'>{auction.title}</h3>

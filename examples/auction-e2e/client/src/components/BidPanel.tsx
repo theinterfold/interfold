@@ -179,7 +179,8 @@ const BidPanel: React.FC<BidPanelProps> = ({ auction, phase, wallet, committeeKe
           <p className='muted text-xs'>
             The creator set {levels} steps and the price of each. Your bid never leaves this browser unencrypted: only ciphertexts and a
             proof are published. Nobody, the creator included, can read it.
-            {count > 0 && ' An update replaces your bid: the latest version that is valid counts, and earlier versions are ignored.'}
+            {count > 0 &&
+              ' An update replaces your bid: the latest version that is valid counts, and earlier versions are ignored. An update also loses your place in the queue: if the top bids tie, the tied bidder who bid first wins, and your bid counts from the time of the update.'}
           </p>
           {gateNote}
           {limitNote}
