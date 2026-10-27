@@ -23,4 +23,3 @@ tempfile.workspace = true
 [dev-dependencies]
 e3-events = { workspace = true, features = ["test-helpers"] }
 e3-event-system.workspace = true
-e3-test-helpers.workspace = true

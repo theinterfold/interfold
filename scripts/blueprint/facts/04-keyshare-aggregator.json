@@ -388,7 +388,7 @@
         },
         {
           "why": "crate surface: CommitteeFinalizer, recovery/state types and repositories are public; key/plaintext actors stay crate-private",
-          "ref": "crates/aggregator/src/lib.rs@21@pub use actors::{"
+          "ref": "crates/aggregator/src/lib.rs@23@pub use actors::{"
         },
         {
           "why": "committee hashing is owned by e3-committee-hash, not a local aggregator wrapper",

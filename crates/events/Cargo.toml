@@ -32,9 +32,9 @@ e3-fhe-params = { workspace = true }
 e3-zk-config = { workspace = true }
 
 [features]
-test-helpers = [] # ensure test-helpers is available for integration tests
+test-helpers = [] # opt-in event constructors for consumer tests
 
 [dev-dependencies]
 proptest = { workspace = true }
 e3-events = { workspace = true, features = ["test-helpers"] }
-e3-test-helpers = { workspace = true }
+e3-test-support = { workspace = true }

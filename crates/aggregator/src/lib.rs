@@ -15,6 +15,8 @@ mod actors;
 mod domain;
 pub mod ext;
 mod repo;
+#[cfg(test)]
+mod test_support;
 mod workflow;
 
 pub(crate) use actors::*;

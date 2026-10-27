@@ -50,11 +50,15 @@ exports typed recovery states and repository factory traits for persistence inte
 ## Tests
 
 Run `cargo test --locked -p e3-aggregator` from the repository root. Prepare the
-[test-helper prerequisites](../test-helpers/README.md) first; the test graph includes chain fixtures
-and the prover. Actor tests with mock proofs do not validate recursive proofs.
+[system prerequisites](../tests/README.md#prerequisites-and-assurance) first; the test graph
+includes chain fixtures and the prover. Actor tests with mock proofs do not validate recursive
+proofs.
 
 Public-key [tests](src/public_key_aggregation/tests) cover attestations and failures; plaintext
 [tests](src/plaintext_aggregation/tests) cover share admission, thresholds, publication, completion,
 and recovery. Neighboring `workflow_tests.rs` files exercise pure phase decisions separately from
 actor delivery. Multi-node flows are in [e3-tests](../tests/README.md). See [AGENTS.md](AGENTS.md)
 for change-specific rules.
+
+The BFV/event setup tuple is private to these aggregation tests. Event-only consumers use
+event-system's opt-in fixture rather than constructing unrelated BFV material.

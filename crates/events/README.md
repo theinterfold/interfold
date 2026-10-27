@@ -62,9 +62,9 @@ without the signal does not obtain process-level monitoring.
 
 ## Tests
 
-Run `cargo test --locked -p e3-events` with the
-[test-helper prerequisites](../test-helpers/README.md). Serialization compatibility spans saved
-events and network envelopes; see [upgrades](../../docs/architecture/upgrades.md).
+Run `cargo test --locked -p e3-events`; no EVM/prover fixture setup is required. Serialization
+compatibility spans saved events and network envelopes; see
+[upgrades](../../docs/architecture/upgrades.md).
 
 Tests are colocated with pipeline modules: stores cover append/query/failure behavior; bus tests
 cover delivery/barriers; snapshot-buffer tests cover batching/timing; HLC tests cover

@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
+use crate::test_support::get_common_setup;
 use alloy::signers::local::PrivateKeySigner;
 use e3_data::{AutoPersist, DataStore, InMemStore, PersistableData, Repository};
 use e3_events::{
@@ -16,7 +17,6 @@ use e3_sortition::{
     AggregatorFailoverState, CiphernodeSelector, CiphernodeSelectorState, NodeStateStore,
     SortitionBackend, SortitionParams,
 };
-use e3_test_helpers::get_common_setup;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 fn test_ctx(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {

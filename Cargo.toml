@@ -2,6 +2,7 @@
 members = [
   "crates/aggregator",
   "crates/bfv-client",
+  "crates/bfv-test-support",
   "crates/ciphernode-builder",
   "crates/cli",
   "crates/committee",
@@ -44,7 +45,7 @@ members = [
   "crates/sortition",
   "crates/sync",
   "crates/task-pool",
-  "crates/test-helpers",
+  "crates/test-support",
   "crates/tests",
   "crates/trbfv",
   "crates/utils",
@@ -86,6 +87,7 @@ repository = "https://github.com/theinterfold/interfold"
 [workspace.dependencies]
 e3-aggregator = { version = "0.20.0-dev.2", path = "./crates/aggregator" }
 e3-bfv-client = { version = "0.20.0-dev.2", path = "./crates/bfv-client" }
+e3-bfv-test-support = { path = "./crates/bfv-test-support" }
 e3-committee = { version = "0.20.0-dev.2", path = "./crates/committee" }
 e3-config = { version = "0.20.0-dev.2", path = "./crates/config" }
 e3-console = { version = "0.20.0-dev.2", path = "./crates/console" }
@@ -125,7 +127,7 @@ e3-polynomial-fhe = { version = "0.20.0-dev.2", path = "./crates/polynomial/fhe-
 e3-sync = { version = "0.20.0-dev.2", path = "./crates/sync" }
 e3-layout-lock = { version = "0.20.0-dev.2", path = "./crates/layout-lock" }
 e3-task-pool = { version = "0.20.0-dev.2", path = "./crates/task-pool" }
-e3-test-helpers = { version = "0.20.0-dev.2", path = "./crates/test-helpers" }
+e3-test-support = { path = "./crates/test-support" }
 e3-tests = { version = "0.20.0-dev.2", path = "./crates/tests" }
 e3-trbfv = { version = "0.20.0-dev.2", path = "./crates/trbfv" }
 e3-utils = { version = "0.20.0-dev.2", path = "./crates/utils" }

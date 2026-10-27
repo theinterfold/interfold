@@ -1036,7 +1036,7 @@
         {
           "pattern": "async-test",
           "note": "the integration test runs under tokio",
-          "ref": "crates/trbfv/tests/integration.rs@27@#[tokio::test]"
+          "ref": "crates/trbfv/tests/integration.rs@30@#[tokio::test]"
         }
       ],
       "depends_on": ["e3-bfv-client", "e3-fhe-params", "e3-crypto", "e3-utils"],

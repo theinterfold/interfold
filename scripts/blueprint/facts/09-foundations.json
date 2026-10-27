@@ -708,92 +708,55 @@
       "unverified": ["Whether any test in e3-utils or e3-events checks the derived hex and raw-byte forms was not checked."]
     },
     {
-      "id": "e3-test-helpers",
+      "id": "e3-test-support",
       "documentation": [{ "title": "Test harness boundaries", "path": "docs/architecture/repository-testing.md" }],
       "kind": "crate",
-      "path": "crates/test-helpers",
-      "one_line": "Shared test scaffolding: deterministic setup, application helpers, history collectors and a libp2p network mock.",
+      "path": "crates/test-support",
+      "one_line": "Unpublished mechanical test support: seeded RNGs, scoped tracing and bb discovery, with no internal dependencies.",
       "actors": [],
       "consumes": [],
       "emits": [],
-      "state": [
-        {
-          "name": "the mock's record store, held in memory",
-          "where": "memory",
-          "ref": "crates/test-helpers/src/libp2p_mock.rs@26@store: Arc<RwLock<HashMap<ContentHash, ArcBytes>>>,"
-        }
-      ],
-      "key_types": [
-        {
-          "name": "AddToCommittee",
-          "what": "test helper that publishes CiphernodeAdded with incrementing indices",
-          "ref": "crates/test-helpers/src/lib.rs@160@pub struct AddToCommittee {"
-        },
-        {
-          "name": "Libp2pMock",
-          "what": "in-process stand-in for gossip and DHT between node network bridges",
-          "ref": "crates/test-helpers/src/libp2p_mock.rs@25@pub struct Libp2pMock {"
-        }
-      ],
+      "state": [],
+      "key_types": [],
       "read_first": [
         {
-          "why": "module list and shared deterministic setup helpers",
-          "ref": "crates/test-helpers/src/lib.rs@7@pub mod application;"
+          "why": "per-node RNGs preserve distinct mutexes",
+          "ref": "crates/test-support/src/lib.rs@22@pub fn derive_shared_rng("
         },
         {
-          "why": "per-node RNGs avoid serializing parallel test work on one shared mutex",
-          "ref": "crates/test-helpers/src/lib.rs@98@pub fn derive_shared_rng(base_seed: u64, salt: u64) -> SharedRng {"
-        },
-        {
-          "why": "multi-node assembly now belongs to the integration harness, not this shared crate",
-          "ref": "crates/tests/tests/ciphernode_system/mod.rs@36@pub struct CiphernodeSystemBuilder<'a> {"
-        },
-        {
-          "why": "the in-process gossip and DHT mock",
-          "ref": "crates/test-helpers/src/libp2p_mock.rs@25@pub struct Libp2pMock {"
+          "why": "read-only discovery of an existing proof backend",
+          "ref": "crates/test-support/src/lib.rs@31@pub async fn find_bb()"
         }
       ],
-      "rust_patterns": [
+      "rust_patterns": [],
+      "depends_on": [],
+      "tests": "cargo test --locked -p e3-test-support checks repeatable RNGs and independent per-node mutexes.",
+      "unverified": []
+    },
+    {
+      "id": "e3-bfv-test-support",
+      "documentation": [{ "title": "Test harness boundaries", "path": "docs/architecture/repository-testing.md" }],
+      "kind": "crate",
+      "path": "crates/bfv-test-support",
+      "one_line": "Unpublished random encrypted-ballot and tally fixtures shared by TrBFV and system tests.",
+      "actors": [],
+      "consumes": [],
+      "emits": [],
+      "state": [],
+      "key_types": [],
+      "read_first": [
         {
-          "pattern": "ownership-clone",
-          "note": "committee helper publishes its test event and also returns its payload",
-          "ref": "crates/test-helpers/src/lib.rs@184@self.bus.publish_without_context(evt.clone())?;"
+          "why": "random ballots encrypted with the supplied public key",
+          "ref": "crates/bfv-test-support/src/lib.rs@18@pub fn generate_ciphertexts("
         },
         {
-          "pattern": "arc-shared",
-          "note": "the deterministic RNG is shared behind a mutex",
-          "ref": "crates/test-helpers/src/lib.rs@90@Arc::new(std::sync::Mutex::new(ChaCha20Rng::seed_from_u64(value)))"
-        },
-        {
-          "pattern": "async-await",
-          "note": "mock node registration is asynchronous",
-          "ref": "crates/test-helpers/src/libp2p_mock.rs@60@pub async fn add_node(&self, peer_id: PeerId, handle: NetChannelBridge) {"
-        },
-        {
-          "pattern": "async-test",
-          "note": "network mock tests run under tokio",
-          "ref": "crates/test-helpers/src/libp2p_mock.rs@297@#[tokio::test]"
+          "why": "column-wise encrypted tally",
+          "ref": "crates/bfv-test-support/src/lib.rs@56@pub fn run_application("
         }
       ],
-      "depends_on": [
-        "e3-aggregator",
-        "e3-crypto",
-        "e3-event-system",
-        "e3-data",
-        "e3-bfv-client",
-        "e3-fhe-params",
-        "e3-events",
-        "e3-fhe",
-        "e3-keyshare",
-        "e3-multithread",
-        "e3-request",
-        "e3-sdk",
-        "e3-net",
-        "e3-trbfv",
-        "e3-utils",
-        "e3-sortition"
-      ],
-      "tests": "Five #[tokio::test] tests in src/libp2p_mock.rs. Multi-node harness tests live in e3-tests. Run: cargo test -p e3-test-helpers.",
+      "rust_patterns": [],
+      "depends_on": [],
+      "tests": "cargo test --locked -p e3-trbfv --test integration exercises ballots through threshold decryption.",
       "unverified": []
     },
     {
@@ -801,27 +764,43 @@
       "documentation": [{ "title": "Integration evidence", "path": "docs/architecture/repository-testing.md" }],
       "kind": "crate",
       "path": "crates/tests",
-      "one_line": "Integration test binaries for the workspace, which run several in-process ciphernodes over a simulated network.",
+      "one_line": "System-test scenarios, local mock transport and registration, plus the external integration fixture bins. Node assembly dependencies are dev-only.",
       "actors": [
         {
           "name": "StoredEvents",
           "role": "test-only actor that answers one event-store query by sending the events back on a oneshot channel",
-          "ref": "crates/tests/tests/integration.rs@3064@struct StoredEvents("
+          "ref": "crates/tests/tests/integration.rs@3060@struct StoredEvents("
         }
       ],
       "consumes": [],
       "emits": [],
-      "state": [],
+      "state": [
+        {
+          "name": "the mock transport's record store",
+          "where": "memory",
+          "ref": "crates/tests/tests/ciphernode_system/libp2p_mock.rs@26@store: Arc<RwLock<HashMap<ContentHash, ArcBytes>>>,"
+        }
+      ],
       "key_types": [
         {
           "name": "CiphernodeSystemBuilder",
           "what": "integration-local builder for groups of nodes and their optional network mock",
-          "ref": "crates/tests/tests/ciphernode_system/mod.rs@36@pub struct CiphernodeSystemBuilder<'a> {"
+          "ref": "crates/tests/tests/ciphernode_system/mod.rs@37@pub struct CiphernodeSystemBuilder<'a> {"
         },
         {
           "name": "CiphernodeSystem",
           "what": "built nodes and network mock, with restart support",
-          "ref": "crates/tests/tests/ciphernode_system/mod.rs@113@pub struct CiphernodeSystem {"
+          "ref": "crates/tests/tests/ciphernode_system/mod.rs@114@pub struct CiphernodeSystem {"
+        },
+        {
+          "name": "Libp2pMock",
+          "what": "local gossip/DHT and restart transport, not peer authorization",
+          "ref": "crates/tests/tests/ciphernode_system/libp2p_mock.rs@25@pub struct Libp2pMock {"
+        },
+        {
+          "name": "AddToCommittee",
+          "what": "synthetic registration events for the integration suite",
+          "ref": "crates/tests/tests/common/committee.rs@12@pub struct AddToCommittee {"
         }
       ],
       "read_first": [
@@ -856,7 +835,7 @@
         {
           "pattern": "actix-actor",
           "note": "StoredEvents is a small actor that answers one query",
-          "ref": "crates/tests/tests/integration.rs@3066@impl actix::Actor for StoredEvents {"
+          "ref": "crates/tests/tests/integration.rs@3062@impl actix::Actor for StoredEvents {"
         },
         {
           "pattern": "unit-test",
@@ -864,34 +843,8 @@
           "ref": "crates/tests/tests/layout_lock.rs@250@#[test]"
         }
       ],
-      "depends_on": [
-        "e3-committee",
-        "e3-aggregator",
-        "e3-config",
-        "e3-crypto",
-        "e3-ciphernode-builder",
-        "e3-event-system",
-        "e3-data",
-        "e3-events",
-        "e3-evm",
-        "e3-fhe",
-        "e3-keyshare",
-        "e3-logger",
-        "e3-multithread",
-        "e3-net",
-        "e3-request",
-        "e3-sdk",
-        "e3-sortition",
-        "e3-test-helpers",
-        "e3-trbfv",
-        "e3-bfv-client",
-        "e3-fhe-params",
-        "e3-utils",
-        "e3-zk-prover",
-        "e3-zk-config",
-        "e3-polynomial"
-      ],
-      "tests": "cargo test -p e3-tests --test integration (5 tests), --test large_work_plan_recovery (1) and --test layout_lock (1). Regenerate the layout fixture locally with LAYOUT_LOCK_UPDATE=1 cargo test -p e3-tests --test layout_lock. tests/docker holds a shell test of the ciphernode entrypoint's state paths.",
+      "depends_on": ["e3-bfv-client", "e3-fhe-params"],
+      "tests": "cargo test -p e3-tests --test integration includes the system scenarios and five local mock-network regressions; --test large_work_plan_recovery and --test layout_lock select persistence boundaries. Fixture bins build separately without the dev-only node graph. tests/docker covers the ciphernode entrypoint's state paths.",
       "unverified": []
     },
     {

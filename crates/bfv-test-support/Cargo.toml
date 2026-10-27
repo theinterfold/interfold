@@ -1,0 +1,13 @@
+[package]
+name = "e3-bfv-test-support"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "BFV encryption and homomorphic summation fixtures for tests"
+repository.workspace = true
+publish = false
+
+[dependencies]
+fhe.workspace = true
+fhe-traits.workspace = true
+rand.workspace = true

@@ -385,13 +385,13 @@ mod tests {
         network::EthereumWallet, primitives::Address, providers::ProviderBuilder,
         signers::local::PrivateKeySigner, transports::mock::Asserter,
     };
+    use e3_event_system::test_support::EventFixture;
     use e3_events::prelude::*;
     use e3_events::{
         DkgFoldAttestationContext, DkgFoldAttestationContextEstablished, E3id, EffectsEnabled,
         EventSource, InterfoldEvent, PublicKeyAggregated, TakeEvents, Unsequenced,
         DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
     };
-    use e3_test_helpers::get_common_setup;
     use e3_utils::{ArcBytes, OrderedSet};
     use std::collections::HashMap;
 
@@ -542,7 +542,7 @@ mod tests {
 
     #[actix::test]
     async fn a_key_result_after_its_request_completed_is_not_kept() -> anyhow::Result<()> {
-        let (bus, _rng, _seed, _params, _crp, _errors, _history) = get_common_setup(None)?;
+        let EventFixture { bus, .. } = EventFixture::new()?;
         let e3_id = E3id::new("13", 1);
         let writer = mocked_writer(&bus, &e3_id).await?;
         writer.send(local_event(EffectsEnabled::new(), 1)).await?;
@@ -569,7 +569,7 @@ mod tests {
     /// aggregator sends its saved publication again once effects run.
     #[actix::test]
     async fn a_key_on_chain_ends_the_publication() -> anyhow::Result<()> {
-        let (bus, _rng, _seed, _params, _crp, _errors, _history) = get_common_setup(None)?;
+        let EventFixture { bus, .. } = EventFixture::new()?;
         let e3_id = E3id::new("14", 1);
         let writer = mocked_writer(&bus, &e3_id).await?;
 
@@ -600,7 +600,7 @@ mod tests {
 
     #[actix::test]
     async fn submits_its_own_key_without_being_the_active_aggregator() -> anyhow::Result<()> {
-        let (bus, _rng, _seed, _params, _crp, errors, _history) = get_common_setup(None)?;
+        let EventFixture { bus, errors, .. } = EventFixture::new()?;
         let asserter = Asserter::new();
         asserter.push_success(&"0x1");
         let provider = EthProvider::new(

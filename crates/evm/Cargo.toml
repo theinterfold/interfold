@@ -45,11 +45,11 @@ zeroize = { workspace = true }
 alloy = { workspace = true, features = ["json-rpc"] }
 alloy-dyn-abi = { workspace = true }
 bincode = { workspace = true }
-e3-event-system = { workspace = true }
+e3-event-system = { workspace = true, features = ["test-support"] }
 e3-events = { workspace = true, features = ["test-helpers"] }
 e3-evm = { workspace = true }
 e3-sync.workspace = true
-e3-test-helpers = { workspace = true }
+e3-test-support = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }

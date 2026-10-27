@@ -28,7 +28,8 @@ zeroize.workspace = true
 rand.workspace = true
 
 [dev-dependencies]
-e3-test-helpers.workspace = true
+e3-test-support.workspace = true
+e3-bfv-test-support.workspace = true
 e3-fhe.workspace = true
 e3-events.workspace = true
 tracing-subscriber.workspace = true
