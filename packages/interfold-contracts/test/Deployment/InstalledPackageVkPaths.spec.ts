@@ -11,6 +11,9 @@ import path from "path";
 import {
   SECURE_16384_MICRO_BFV_CONFIG,
   SECURE_16384_MINIMUM_BFV_CONFIG,
+  SECURE_16384_SIMD_D6_MICRO_BFV_CONFIG,
+  SECURE_16384_SIMD_D6_MINIMUM_BFV_CONFIG,
+  SECURE_16384_SIMD_D6_SMALL_BFV_CONFIG,
   SECURE_16384_SMALL_BFV_CONFIG,
   bfvConfigsForChain,
   bfvHonkSource,
@@ -102,6 +105,39 @@ describe("installed-package BFV VK paths", function () {
         );
       }
       expect(bfvPkV2PublicInputLayout(config.h, 5).length).to.equal(length);
+      expect(bfvConfigsForChain(31337)).to.include(config);
+      expect(bfvConfigsForChain(11155111)).to.include(config);
+      expect(
+        bfvConfigsForChain(1).every((route) => route.paramSet === 2),
+      ).to.equal(true);
+    });
+  }
+
+  for (const [config, committee, committeeSize, n, t, h, length] of [
+    [SECURE_16384_SIMD_D6_MINIMUM_BFV_CONFIG, "minimum", 0, 3, 1, 2, 69],
+    [SECURE_16384_SIMD_D6_MICRO_BFV_CONFIG, "micro", 1, 9, 4, 5, 78],
+    [SECURE_16384_SIMD_D6_SMALL_BFV_CONFIG, "small", 2, 19, 9, 14, 105],
+  ] as const) {
+    it(`resolves secure-16384-simd-d6 ${committee} with an eight-row ${length}-field V2 layout`, function () {
+      expect(bfvHonkSource(config, "DkgAggregatorV2Verifier")).to.equal(
+        `contracts/verifiers/bfv/honk/secure-16384-simd-d6/${committee}/DkgAggregatorV2Verifier.sol`,
+      );
+      expect(config).to.include({
+        paramSet: 7,
+        committeeSize,
+        n,
+        t,
+        h,
+      });
+      const prefix =
+        path.join(release, `secure-16384-simd-d6/${committee}`) + path.sep;
+      for (const file of [
+        ...getBfvPkVkBindingHashPaths(config),
+        ...getBfvV2VkBindingHashPaths(config),
+      ]) {
+        expect(file.startsWith(prefix)).to.equal(true);
+      }
+      expect(bfvPkV2PublicInputLayout(config.h, 8).length).to.equal(length);
       expect(bfvConfigsForChain(31337)).to.include(config);
       expect(bfvConfigsForChain(11155111)).to.include(config);
       expect(

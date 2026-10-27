@@ -819,7 +819,8 @@ library InterfoldLifecycle {
             revert IInterfold.InvalidInputDeadlineEnd(inputWindow[1]);
         if (
             (paramSet == ActiveCryptoConfig.SECURE_16384_PARAM_SET ||
-                paramSet == ActiveCryptoConfig.SECURE_16384_SIMD_PARAM_SET) &&
+                paramSet == ActiveCryptoConfig.SECURE_16384_SIMD_PARAM_SET ||
+                paramSet == ActiveCryptoConfig.SECURE_16384_SIMD_D6_PARAM_SET) &&
             timeoutConfig.dkgWindow < SECURE_16384_MIN_DKG_WINDOW
         ) revert IInterfold.InvalidTimeoutWindow();
         uint256 totalDuration = requestLifecycleDuration(

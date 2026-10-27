@@ -212,9 +212,17 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         view
         returns (uint256 h, uint256 partyIdOffset, uint256 commitmentOffset)
     {
-        (uint256 v2H, ) = _v2CommitteeParams(publicInputs.length);
-        if (v2H > 0 && _isV2Statement(registry, e3Id, publicInputs, v2H)) {
-            return (v2H, 1, 21);
+        // Two committee shapes can share a public-input length (2 of 3 with 8 rows and 5 of 9
+        // with 5 rows both give 69), so each candidate must also match the registry's committee
+        // hash.
+        for (uint256 shape = 0; shape < 3; ++shape) {
+            (uint256 v2H, uint256 v2N) = _v2CommitteeShape(shape);
+            if (
+                _hasV2Length(publicInputs.length, v2H) &&
+                _isV2Statement(registry, e3Id, publicInputs, v2H, v2N)
+            ) {
+                return (v2H, 1, 21);
+            }
         }
         // trBFV `dkg_aggregator`: 3*h + 6 public inputs.
         require(
@@ -234,9 +242,9 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         address registry,
         uint256 e3Id,
         bytes32[] memory publicInputs,
-        uint256 v2H
+        uint256 v2H,
+        uint256 v2N
     ) private view returns (bool) {
-        (, uint256 v2N) = _v2CommitteeParams(publicInputs.length);
         uint256 previous;
         for (uint256 i = 0; i < v2H; ++i) {
             uint256 partyId = uint256(publicInputs[1 + i]);
@@ -276,21 +284,26 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
             CommitteeHashLib.lo(acceptedSetHash);
     }
 
-    function _v2CommitteeParams(
-        uint256 publicInputLength
+    /// @dev The (honest count, committee size) pairs compiled into `dkg_aggregator_v2`.
+    function _v2CommitteeShape(
+        uint256 shape
     ) private pure returns (uint256 v2H, uint256 v2N) {
-        // `dkg_aggregator_v2`: 39 + 3h + 3 * rows, with 3 rows (insecure l-BFV) or 5 rows
-        // (secure-16384 and secure-16384-simd).
-        if (publicInputLength == 54 || publicInputLength == 60) {
-            return (2, 3);
-        }
-        if (publicInputLength == 63 || publicInputLength == 69) {
-            return (5, 9);
-        }
-        if (publicInputLength == 90 || publicInputLength == 96) {
-            return (14, 19);
-        }
-        return (0, 0);
+        if (shape == 0) return (2, 3);
+        if (shape == 1) return (5, 9);
+        return (14, 19);
+    }
+
+    function _hasV2Length(
+        uint256 publicInputLength,
+        uint256 v2H
+    ) private pure returns (bool) {
+        // `dkg_aggregator_v2`: 39 + 3h + 3 * rows, with 3 rows (insecure l-BFV), 5 rows
+        // (secure-16384 and secure-16384-simd) or 8 rows (secure-16384-simd-d6).
+        uint256 fixedLength = 39 + (3 * v2H);
+        return
+            publicInputLength == fixedLength + 9 ||
+            publicInputLength == fixedLength + 15 ||
+            publicInputLength == fixedLength + 24;
     }
 
     function _verifyBinding(

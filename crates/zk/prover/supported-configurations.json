@@ -15,5 +15,8 @@
   ["insecure-simd", "micro"],
   ["secure-16384-simd", "minimum"],
   ["secure-16384-simd", "micro"],
-  ["secure-16384-simd", "small"]
+  ["secure-16384-simd", "small"],
+  ["secure-16384-simd-d6", "minimum"],
+  ["secure-16384-simd-d6", "micro"],
+  ["secure-16384-simd-d6", "small"]
 ]

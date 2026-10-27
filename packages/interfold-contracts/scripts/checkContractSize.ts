@@ -29,6 +29,13 @@ const RELEASE_CONTRACTS = [
   "contracts/verifiers/bfv/honk/secure-16384-simd/small/DkgAggregatorVerifier.sol:DkgAggregatorVerifier",
   "contracts/verifiers/bfv/honk/secure-16384-simd/small/DecryptionAggregatorVerifier.sol:DecryptionAggregatorVerifier",
   "contracts/verifiers/bfv/honk/secure-16384-simd/small/DkgAggregatorV2Verifier.sol:DkgAggregatorV2Verifier",
+  "contracts/verifiers/bfv/honk/secure-16384-simd-d6/minimum/DkgAggregatorV2Verifier.sol:DkgAggregatorV2Verifier",
+  "contracts/verifiers/bfv/honk/secure-16384-simd-d6/micro/DkgAggregatorVerifier.sol:DkgAggregatorVerifier",
+  "contracts/verifiers/bfv/honk/secure-16384-simd-d6/micro/DecryptionAggregatorVerifier.sol:DecryptionAggregatorVerifier",
+  "contracts/verifiers/bfv/honk/secure-16384-simd-d6/micro/DkgAggregatorV2Verifier.sol:DkgAggregatorV2Verifier",
+  "contracts/verifiers/bfv/honk/secure-16384-simd-d6/small/DkgAggregatorVerifier.sol:DkgAggregatorVerifier",
+  "contracts/verifiers/bfv/honk/secure-16384-simd-d6/small/DecryptionAggregatorVerifier.sol:DecryptionAggregatorVerifier",
+  "contracts/verifiers/bfv/honk/secure-16384-simd-d6/small/DkgAggregatorV2Verifier.sol:DkgAggregatorV2Verifier",
 ] as const;
 
 let failed = false;

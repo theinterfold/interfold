@@ -38,7 +38,7 @@ fn is_lbfv_preset_dir(preset_dir: &str) -> bool {
         .any(|preset| e3_fhe_params::supports_lbfv(*preset) && preset.artifacts_dir() == preset_dir)
 }
 
-/// Whether the preset artifact directory `preset_dir` serves only l-BFV presets (secure-16384, secure-16384-simd).
+/// Whether the preset artifact directory `preset_dir` serves only l-BFV presets (secure-16384, secure-16384-simd, secure-16384-simd-d6).
 fn is_lbfv_only_preset_dir(preset_dir: &str) -> bool {
     is_lbfv_preset_dir(preset_dir)
         && e3_fhe_params::BfvPreset::PAIR_PRESETS
@@ -910,6 +910,9 @@ mod tests {
             "secure-16384-simd/minimum/",
             "secure-16384-simd/micro/",
             "secure-16384-simd/small/",
+            "secure-16384-simd-d6/minimum/",
+            "secure-16384-simd-d6/micro/",
+            "secure-16384-simd-d6/small/",
         ] {
             let temp = TempDir::new().unwrap();
             let mut backend = test_backend(&temp);
@@ -1165,6 +1168,7 @@ mod tests {
             "insecure-simd",
             "secure-16384",
             "secure-16384-simd",
+            "secure-16384-simd-d6",
         ] {
             assert_eq!(required_artifacts(preset_dir), lbfv_only, "{preset_dir}");
         }
@@ -1174,6 +1178,7 @@ mod tests {
         assert!(!required_artifacts("insecure").contains(&c5));
         assert!(!required_artifacts("secure-16384").contains(&c5));
         assert!(!required_artifacts("secure-16384-simd").contains(&c5));
+        assert!(!required_artifacts("secure-16384-simd-d6").contains(&c5));
         // The l-BFV path proves C7 with the wide circuit only; the bounded C7 does not hold there.
         let narrow_c7 =
             "default/threshold/decrypted_shares_aggregation/decrypted_shares_aggregation.json";
@@ -1184,6 +1189,7 @@ mod tests {
             "insecure-simd",
             "secure-16384",
             "secure-16384-simd",
+            "secure-16384-simd-d6",
         ] {
             assert!(!required_artifacts(preset_dir).contains(&narrow_c7));
             assert!(required_artifacts(preset_dir).contains(&wide_c7));

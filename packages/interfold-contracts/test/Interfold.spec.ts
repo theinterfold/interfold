@@ -5,12 +5,14 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { expect } from "chai";
 
+import { SECURE_16384_SIMD_D6_MINIMUM_BFV_CONFIG } from "../scripts/utils";
 import {
   ACTIVE_CRYPTO_CONFIG_ID,
   ADDRESS_TWO as AddressTwo,
   BFV_PARAMS_DEFAULT,
   BFV_PARAMS_SECURE,
   BFV_PARAMS_SECURE_16384,
+  BFV_PARAMS_SECURE_16384_SIMD_D6,
   PRODUCTION_CRYPTO_CONFIG_ID,
   SECURE_16384_CRYPTO_CONFIG_ID,
   buildMockAggregationPublishArgs,
@@ -628,6 +630,51 @@ describe("Interfold", function () {
       ).to.equal(secure16384MinDkgWindow);
       expect(await interfold.e3CryptoConfigIds(firstE3Id)).to.equal(
         SECURE_16384_CRYPTO_CONFIG_ID,
+      );
+    });
+
+    it("rejects secure-16384-simd-d6 with a DKG window below 21,600 seconds", async function () {
+      const { interfold, request } = await loadFixture(setup);
+      await interfold.setParamSet(7, BFV_PARAMS_SECURE_16384_SIMD_D6);
+      await interfold.setTimeoutConfig({
+        ...timeoutConfig,
+        dkgWindow: secure16384MinDkgWindow - 1,
+      });
+      const now = await time.latest();
+
+      await expect(
+        interfold.request({
+          ...request,
+          paramSet: 7,
+          inputWindow: [now + 10, now + inputWindowDuration],
+          expectedCryptoConfigId:
+            SECURE_16384_SIMD_D6_MINIMUM_BFV_CONFIG.configId,
+        }),
+      ).to.be.revertedWithCustomError(interfold, "InvalidTimeoutWindow");
+    });
+
+    it("accepts and snapshots a 21,600-second secure-16384-simd-d6 DKG window", async function () {
+      const { interfold, request, usdcToken } = await loadFixture(setup);
+      await interfold.setParamSet(7, BFV_PARAMS_SECURE_16384_SIMD_D6);
+      await interfold.setTimeoutConfig({
+        ...timeoutConfig,
+        dkgWindow: secure16384MinDkgWindow,
+      });
+      const now = await time.latest();
+
+      await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
+      await interfold.request({
+        ...request,
+        paramSet: 7,
+        inputWindow: [now + 10, now + inputWindowDuration],
+        expectedCryptoConfigId: SECURE_16384_SIMD_D6_MINIMUM_BFV_CONFIG.configId,
+      });
+
+      expect(
+        (await interfold.getE3TimeoutConfig(firstE3Id)).dkgWindow,
+      ).to.equal(secure16384MinDkgWindow);
+      expect(await interfold.e3CryptoConfigIds(firstE3Id)).to.equal(
+        SECURE_16384_SIMD_D6_MINIMUM_BFV_CONFIG.configId,
       );
     });
 

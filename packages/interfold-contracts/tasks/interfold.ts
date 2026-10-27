@@ -43,6 +43,9 @@ function cryptoConfigIdForParamSet(paramSet: number): string {
   if (paramSet === 6) {
     return "0xd053da3859a277a18b1d0bce3f59f7afb5dda18833e3e0fc32c204d066d4e65e";
   }
+  if (paramSet === 7) {
+    return "0xd2338ceef6b88f3e9f31843168abda095ec15bb8bc74060a4fc36d980403de0d";
+  }
   throw new Error(`Unsupported BFV parameter set: ${paramSet}`);
 }
 
@@ -221,7 +224,7 @@ export const requestCommittee = task(
   .addOption({
     name: "paramSet",
     description:
-      "BFV parameter set (0=insecure-64, 2=secure-8192, 3=secure-16384, 4=insecure l-BFV, 5=insecure-simd, 6=secure-16384-simd; default: the set of the active circuit build)",
+      "BFV parameter set (0=insecure-64, 2=secure-8192, 3=secure-16384, 4=insecure l-BFV, 5=insecure-simd, 6=secure-16384-simd, 7=secure-16384-simd-d6; default: the set of the active circuit build)",
     defaultValue: ACTIVE_BFV_PARAM_SET,
     type: ArgumentType.INT,
   })

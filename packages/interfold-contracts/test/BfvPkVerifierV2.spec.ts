@@ -11,6 +11,8 @@ import {
   INSECURE_LBFV_MINIMUM_BFV_CONFIG,
   INSECURE_LBFV_PARAM_SET,
   SECURE_16384_MINIMUM_BFV_CONFIG,
+  SECURE_16384_SIMD_D6_MINIMUM_BFV_CONFIG,
+  SECURE_16384_SIMD_D6_PARAM_SET,
 } from "../scripts/utils";
 import { ethers, ignition } from "./fixtures/connection";
 
@@ -26,6 +28,8 @@ const V2_VK_BINDING = Array.from({ length: 11 }, (_, index) =>
 );
 const SECURE_16384_CONFIG_ID = SECURE_16384_MINIMUM_BFV_CONFIG.configId;
 const INSECURE_CONFIG_ID = INSECURE_LBFV_MINIMUM_BFV_CONFIG.configId;
+const SECURE_16384_SIMD_D6_CONFIG_ID =
+  SECURE_16384_SIMD_D6_MINIMUM_BFV_CONFIG.configId;
 const LBFV_PROTOCOL_VERSION = currentNodeRelease().protocolVersion;
 
 function limbs(hash: string): [string, string] {
@@ -218,6 +222,40 @@ describe("BfvPkVerifierV2", function () {
     );
 
     expect(await verifier.expectedPublicInputsLen()).to.equal(54n);
+    expect(
+      await verifier.verify.staticCall(
+        e3Id,
+        0,
+        nodes,
+        pkCommitment,
+        committeeHash(nodes),
+        proof,
+      ),
+    ).to.equal(true);
+  });
+
+  it("accepts the secure-16384-simd-d6 eight-row V2 layout and context", async function () {
+    const { interfold, verifier } = await deployFixture(
+      SECURE_16384_SIMD_D6_PARAM_SET,
+    );
+    const [signer, second, third] = await ethers.getSigners();
+    const nodes = [signer.address, second.address, third.address];
+    const e3Id = 7n;
+    const pkCommitment = ethers.id("d6-v2-pk");
+    const proof = encodeProof(
+      publicInputs(
+        nodes,
+        await interfold.getAddress(),
+        e3Id,
+        pkCommitment,
+        LBFV_PROTOCOL_VERSION,
+        SECURE_16384_SIMD_D6_CONFIG_ID,
+        8,
+      ),
+    );
+
+    expect(await verifier.lbfvRows()).to.equal(8n);
+    expect(await verifier.expectedPublicInputsLen()).to.equal(69n);
     expect(
       await verifier.verify.staticCall(
         e3Id,

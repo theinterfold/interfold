@@ -638,12 +638,13 @@ function validateActiveBfvCommitteeConfig(config: ProtocolConfigFile): void {
     activeConfigs.some(
       (active) =>
         active.preset === "secure-16384" ||
-        active.preset === "secure-16384-simd",
+        active.preset === "secure-16384-simd" ||
+        active.preset === "secure-16384-simd-d6",
     ) &&
     BigInt(config.interfold.timeoutConfig.dkgWindow) < 21_600n
   ) {
     throw new Error(
-      "interfold.timeoutConfig.dkgWindow must be at least 21600 seconds when the chain supports secure-16384 or secure-16384-simd",
+      "interfold.timeoutConfig.dkgWindow must be at least 21600 seconds when the chain supports secure-16384, secure-16384-simd, or secure-16384-simd-d6",
     );
   }
 

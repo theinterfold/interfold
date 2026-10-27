@@ -99,6 +99,81 @@ describe("DkgFoldAttestationVerifier", function () {
     expect(esmAggCommits).to.deep.equal(fixture.esmCommits);
   });
 
+  // 39 + 3 * 2 + 3 * 8 = 69 public inputs, the same length as a five-row V2 statement with h = 5.
+  it("verifies a secure-16384-simd-d6 eight-row V2 bundle with h = 2", async function () {
+    const { owner, mockRegistry, verifier, operators } =
+      await loadFixture(setup);
+    const fixture = await buildMockDkgAttestationFixtureData(
+      operators.slice(0, 2),
+      e3Id,
+      ethers.id(`pk-v2-d6-${e3Id}`),
+      await verifier.getAddress(),
+      await mockRegistry.getAddress(),
+    );
+    await mockRegistry.connect(owner).setCommitteeNodes(
+      e3Id,
+      fixture.ordered.map((o) => o.addr),
+    );
+    const proof = encodeMockDkgV2ProofForAttestation(
+      ethers.id(`pk-v2-d6-${e3Id}`),
+      await mockRegistry.getCommitteeHash(e3Id),
+      fixture.partyIds,
+      fixture.skCommits,
+      fixture.esmCommits,
+      8,
+    );
+
+    const [partyIds, skAggCommits, esmAggCommits] = await verifier.verify(
+      await mockRegistry.getAddress(),
+      31337,
+      e3Id,
+      proof,
+      fixture.bundle,
+    );
+
+    expect(partyIds.map((v: bigint) => Number(v))).to.deep.equal([0, 1]);
+    expect(skAggCommits).to.deep.equal(fixture.skCommits);
+    expect(esmAggCommits).to.deep.equal(fixture.esmCommits);
+  });
+
+  it("verifies a five-row V2 bundle with h = 5 that shares its length with the eight-row h = 2 shape", async function () {
+    const { owner, mockRegistry, verifier } = await loadFixture(setup);
+    const signers = await ethers.getSigners();
+    const fixture = await buildMockDkgAttestationFixtureData(
+      signers.slice(2, 7),
+      e3Id,
+      ethers.id(`pk-v2-h5-${e3Id}`),
+      await verifier.getAddress(),
+      await mockRegistry.getAddress(),
+    );
+    await mockRegistry.connect(owner).setCommitteeNodes(
+      e3Id,
+      fixture.ordered.map((o) => o.addr),
+    );
+    const proof = encodeMockDkgV2ProofForAttestation(
+      ethers.id(`pk-v2-h5-${e3Id}`),
+      await mockRegistry.getCommitteeHash(e3Id),
+      fixture.partyIds,
+      fixture.skCommits,
+      fixture.esmCommits,
+      5,
+    );
+
+    const [partyIds, skAggCommits, esmAggCommits] = await verifier.verify(
+      await mockRegistry.getAddress(),
+      31337,
+      e3Id,
+      proof,
+      fixture.bundle,
+    );
+
+    expect(partyIds.map((v: bigint) => Number(v))).to.deep.equal([
+      0, 1, 2, 3, 4,
+    ]);
+    expect(skAggCommits).to.deep.equal(fixture.skCommits);
+    expect(esmAggCommits).to.deep.equal(fixture.esmCommits);
+  });
+
   // 3 * 16 + 6 = 54 public inputs, the same length as an insecure l-BFV V2 statement with h = 2.
   it("does not classify a sixteen-party trBFV statement as V2", async function () {
     const { owner, mockRegistry, verifier } = await loadFixture(setup);

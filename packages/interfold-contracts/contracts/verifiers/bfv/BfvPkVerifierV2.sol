@@ -84,7 +84,8 @@ contract BfvPkVerifierV2 is IPkVerifier {
             _paramSet != ActiveCryptoConfig.SECURE_16384_PARAM_SET &&
             _paramSet != ActiveCryptoConfig.INSECURE_LBFV_PARAM_SET &&
             _paramSet != ActiveCryptoConfig.INSECURE_SIMD_PARAM_SET &&
-            _paramSet != ActiveCryptoConfig.SECURE_16384_SIMD_PARAM_SET
+            _paramSet != ActiveCryptoConfig.SECURE_16384_SIMD_PARAM_SET &&
+            _paramSet != ActiveCryptoConfig.SECURE_16384_SIMD_D6_PARAM_SET
         ) {
             revert InvalidParamSet(_paramSet);
         }
@@ -113,10 +114,14 @@ contract BfvPkVerifierV2 is IPkVerifier {
         h = _committeeH;
         committeeN = _committeeN;
         expectedParamSet = _paramSet;
-        lbfvRows = (_paramSet == ActiveCryptoConfig.SECURE_16384_PARAM_SET ||
-            _paramSet == ActiveCryptoConfig.SECURE_16384_SIMD_PARAM_SET)
-            ? 5
-            : 3;
+        // secure-16384-simd-d6 compiles eight l-BFV rows, secure-16384 and secure-16384-simd
+        // compile five, and the insecure presets compile three.
+        lbfvRows = _paramSet == ActiveCryptoConfig.SECURE_16384_SIMD_D6_PARAM_SET
+            ? 8
+            : (_paramSet == ActiveCryptoConfig.SECURE_16384_PARAM_SET ||
+                _paramSet == ActiveCryptoConfig.SECURE_16384_SIMD_PARAM_SET)
+                ? 5
+                : 3;
         expectedPublicInputsLen =
             V2_PUBLIC_INPUTS_FIXED_LEN +
             (3 * h) +

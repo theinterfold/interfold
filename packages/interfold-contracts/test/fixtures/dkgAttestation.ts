@@ -52,15 +52,12 @@ export function encodeMockDkgV2ProofForAttestation(
   esmCommits: string[],
   lbfvRows = 5,
 ): string {
-  if (
-    partyIds.length !== 2 ||
-    skCommits.length !== 2 ||
-    esmCommits.length !== 2
-  ) {
-    throw new Error("V2 attestation fixtures require two honest parties");
+  const h = partyIds.length;
+  if (h === 0 || skCommits.length !== h || esmCommits.length !== h) {
+    throw new Error("V2 attestation fixtures require matching commit lists");
   }
   const publicInputs: string[] = Array.from(
-    { length: 39 + 3 * partyIds.length + 3 * lbfvRows },
+    { length: 39 + 3 * h + 3 * lbfvRows },
     () => ethers.ZeroHash,
   );
   const toLimbs = (hash: string): [string, string] => {
@@ -72,26 +69,21 @@ export function encodeMockDkgV2ProofForAttestation(
   };
   const acceptedSetHash = ethers.keccak256(
     ethers.solidityPacked(
-      ["bytes32", "uint32", "uint32", "uint32"],
-      [
-        ethers.id("interfold.lbfv.accepted-party-set:v1"),
-        2,
-        partyIds[0],
-        partyIds[1],
-      ],
+      ["bytes32", "uint32", ...partyIds.map(() => "uint32")],
+      [ethers.id("interfold.lbfv.accepted-party-set:v1"), h, ...partyIds],
     ),
   );
   const [committeeHi, committeeLo] = toLimbs(committeeHash);
   const [acceptedSetHi, acceptedSetLo] = toLimbs(acceptedSetHash);
-  publicInputs[27] = pkCommitment;
-  publicInputs[3] = committeeHi;
-  publicInputs[4] = committeeLo;
-  publicInputs[32] = acceptedSetHi;
-  publicInputs[33] = acceptedSetLo;
-  for (let i = 0; i < partyIds.length; i++) {
+  publicInputs[21 + 3 * h] = pkCommitment;
+  publicInputs[1 + h] = committeeHi;
+  publicInputs[2 + h] = committeeLo;
+  publicInputs[26 + 3 * h] = acceptedSetHi;
+  publicInputs[27 + 3 * h] = acceptedSetLo;
+  for (let i = 0; i < h; i++) {
     publicInputs[1 + i] = ethers.zeroPadValue(ethers.toBeHex(partyIds[i]), 32);
-    publicInputs[23 + i] = skCommits[i];
-    publicInputs[25 + i] = esmCommits[i];
+    publicInputs[21 + h + i] = skCommits[i];
+    publicInputs[21 + 2 * h + i] = esmCommits[i];
   }
   return ethers.AbiCoder.defaultAbiCoder().encode(
     ["bytes", "bytes32[]"],

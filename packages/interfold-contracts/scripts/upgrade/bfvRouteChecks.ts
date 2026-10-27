@@ -115,8 +115,8 @@ export async function validateBfvRoutes(
 
     const pkRoute = await pkRouter.routeAt(index);
     const decryptionRoute = await decryptionRouter.routeAt(index);
-    // The secure-16384, secure-16384-simd, insecure and insecure-simd presets run only the l-BFV path, which the V2
-    // PK verifier and aggregator serve.
+    // The secure-16384, secure-16384-simd, secure-16384-simd-d6, insecure and insecure-simd
+    // presets run only the l-BFV path, which the V2 PK verifier and aggregator serve.
     const isV2 = isLbfvParamSet(expected.paramSet);
     const expectedPkVerifier = isV2
       ? recorded.pkVerifierV2
@@ -132,15 +132,17 @@ export async function validateBfvRoutes(
     );
     equalValue(
       pkRoute[1],
-      // secure-16384 and secure-16384-simd compile five l-BFV rows; insecure and insecure-simd
-      // compile three.
+      // secure-16384-simd-d6 compiles eight l-BFV rows; secure-16384 and secure-16384-simd
+      // compile five; insecure and insecure-simd compile three.
       isV2
         ? bfvPkV2PublicInputLayout(
             expected.h,
-            expected.preset === "secure-16384" ||
-              expected.preset === "secure-16384-simd"
-              ? 5
-              : 3,
+            expected.preset === "secure-16384-simd-d6"
+              ? 8
+              : expected.preset === "secure-16384" ||
+                  expected.preset === "secure-16384-simd"
+                ? 5
+                : 3,
           ).length
         : bfvPkExpectedPublicInputsLen(expected.h),
       `PK route ${index} public input count`,
