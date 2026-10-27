@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 e3-committee = { workspace = true }
+e3-evm-contracts.workspace = true
 actix = { workspace = true }
 alloy = { workspace = true }
 alloy-primitives = { workspace = true }

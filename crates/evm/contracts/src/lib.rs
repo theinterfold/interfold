@@ -17,6 +17,16 @@ use alloy_sol_types::sol;
 
 pub mod enums;
 pub use enums::{CommitteeSize, E3Stage, FailureReason};
+pub mod token;
+pub use token::{IERC20Metadata, IInterfoldTicketToken};
+
+/// ABI views used to decode already-stored raw observations. If a live admission layout changes,
+/// retain its old definition here rather than changing the decoder for existing journals.
+pub mod legacy {
+    pub use crate::IBondingRegistry::{
+        AdmissionPolicy as StoredAdmissionPolicy, AdmissionPolicyUpdated, AdmissionStarted,
+    };
+}
 
 #[cfg(test)]
 mod abi_consistency;
@@ -503,6 +513,26 @@ sol! {
     #[sol(rpc, abi)]
     #[derive(Debug)]
     interface IBondingRegistry {
+        function setBondOwner(address bondOwner) external;
+        function proposeBondOwner(address operator, address newOwner) external;
+        function acceptBondOwner(address operator) external;
+        function registerOperatorFor(address operator) external;
+        function deregisterOperatorFor(address operator) external;
+        function refreshOperatorStatus(address operator) external;
+        function claimExitsFor(address operator, uint256 maxTicketAmount, uint256 maxCiphernodeBondAmount) external;
+        function bondCiphernodeFor(address operator, uint256 amount) external;
+        function unbondCiphernodeFor(address operator, uint256 amount) external;
+        function addTicketBalanceFor(address operator, uint256 amount) external;
+        function removeTicketBalanceFor(address operator, uint256 amount) external;
+
+        function getCiphernodeBondToken() external view returns (address);
+        function getTicketToken() external view returns (address);
+        function pendingBondOwnerOf(address operator) external view returns (address);
+        function pendingExits(address operator) external view returns (uint256 ticket, uint256 ciphernodeBond);
+        function ticketPrice() external view returns (uint256);
+        function minTicketBalance() external view returns (uint256);
+        function requiredCiphernodeBond() external view returns (uint256);
+
         function getTicketBalance(address operator) external view returns (uint256);
         function getCiphernodeBond(address operator) external view returns (uint256);
         function bondOwnerOf(address operator) external view returns (address);
