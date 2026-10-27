@@ -24,7 +24,7 @@ use e3_logger::LogCollector;
 use e3_net::NetworkStatus;
 use e3_task_pool::TaskPool;
 use e3_utils::actix::channel as actix_toolbox;
-pub use metrics::start_metrics;
+pub use metrics::metrics_server;
 use projection::TelemetryProjection;
 use serde::{Deserialize, Serialize};
 use std::{

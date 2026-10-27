@@ -32,10 +32,11 @@ and exposes detailed operational/protocol data.
 
 ## Serve metrics
 
-Await `start_metrics(address, state)` with the same `DashboardState`, after `with_ingestion_status`
-and `with_task_pool`, to serve `GET /metrics` in the OpenMetrics text format. It is a separate
-listener so that it can bind a non-loopback address: it renders aggregate numbers only. Each scrape
-builds a fresh registry, so series of a removed chain or status disappear.
+Call `metrics_server(address, state)` with the same `DashboardState`, after `with_ingestion_status`
+and `with_task_pool`, to bind `GET /metrics` (OpenMetrics text), then await the returned server. It
+binds before it returns, so an address in use is an error at startup. It is a separate listener so
+that it can bind a non-loopback address: it renders aggregate numbers only. Each scrape builds a
+fresh registry, so series of a removed chain or status disappear.
 
 ## HTTP API
 

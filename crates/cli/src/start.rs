@@ -103,12 +103,20 @@ pub async fn execute(mut config: NodeConfig, peers: Vec<String>, bootstrap: bool
             info!("Dashboard available at http://127.0.0.1:{dashboard_port}");
         }
         if let Some(metrics_addr) = metrics_addr {
-            tokio::task::spawn_local(async move {
-                if let Err(error) = e3_dashboard::start_metrics(metrics_addr, state).await {
-                    error!(%error, "node metrics endpoint stopped");
+            // Bind before announcing, so an address in use is reported instead of a dead endpoint.
+            match e3_dashboard::metrics_server(metrics_addr, state) {
+                Ok((server, bound)) => {
+                    tokio::task::spawn_local(async move {
+                        if let Err(error) = server.await {
+                            error!(%error, "node metrics endpoint stopped");
+                        }
+                    });
+                    info!("Metrics available at http://{bound}/metrics");
                 }
-            });
-            info!("Metrics available at http://{metrics_addr}/metrics");
+                Err(error) => {
+                    error!(%error, %metrics_addr, "node metrics endpoint could not bind its address")
+                }
+            }
         }
     }
 

@@ -16,7 +16,7 @@ use crate::{
     projection::{E3Phase, E3Summary, ProtocolOverview},
     DashboardRuntime, DashboardState, OperatorStatusSnapshot,
 };
-use actix_web::{get, http::header, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{dev::Server, get, http::header, web, App, HttpResponse, HttpServer, Responder};
 use e3_evm::ChainIngestion;
 use e3_net::NetworkSnapshot;
 use e3_task_pool::TaskPoolLoad;
@@ -386,27 +386,85 @@ async fn metrics(state: web::Data<DashboardState>) -> impl Responder {
         .body(render(&input))
 }
 
-/// Serve `GET /metrics` on `address`. Unlike the dashboard it may bind any interface, because it
-/// serves aggregate numbers only. It is unauthenticated, so bind it to a private interface.
-pub async fn start_metrics(address: SocketAddr, state: DashboardState) -> std::io::Result<()> {
-    info!(%address, "node metrics listening on http://{address}/metrics");
-    HttpServer::new(move || {
+/// Bind `GET /metrics` to `address` and return the server to await, with the bound address. The
+/// bind happens here, not when the server runs, so that a caller can report an address in use
+/// instead of announcing an endpoint that does not exist. Unlike the dashboard it may bind any
+/// interface, because it serves aggregate numbers only. It is unauthenticated, so bind it to a
+/// private interface.
+pub fn metrics_server(
+    address: SocketAddr,
+    state: DashboardState,
+) -> std::io::Result<(Server, SocketAddr)> {
+    let server = HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(state.clone()))
             .service(metrics)
     })
     // One worker: a scrape is short, and the node needs its threads for protocol work.
     .workers(1)
-    .bind(address)?
-    .run()
-    .await
+    .bind(address)?;
+    let bound = server.addrs().first().copied().unwrap_or(address);
+    info!(address = %bound, "node metrics listening on http://{bound}/metrics");
+    Ok((server.run(), bound))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::DashboardChain;
+    use e3_config::chain_config::ChainConfig;
+    use e3_event_system::EventSystem;
     use e3_evm::OperatorChainStatus;
+    use e3_net::NetworkStatus;
+
+    /// A state that reads an empty in-memory EventStore.
+    fn state(chains: Vec<ChainConfig>) -> DashboardState {
+        let eventstore = EventSystem::in_mem()
+            .eventstore_reader()
+            .expect("in-memory EventStore");
+        DashboardState::new(
+            runtime(),
+            eventstore,
+            vec![0],
+            NetworkStatus::default(),
+            chains,
+        )
+    }
+
+    /// Bind a listener on a free loopback port and run it.
+    fn serve(state: DashboardState) -> (actix_web::dev::ServerHandle, SocketAddr) {
+        let (server, address) =
+            metrics_server("127.0.0.1:0".parse().unwrap(), state).expect("bind");
+        let handle = server.handle();
+        actix_web::rt::spawn(server);
+        (handle, address)
+    }
+
+    async fn scrape(address: SocketAddr, path: &str) -> reqwest::Response {
+        reqwest::get(format!("http://{address}{path}"))
+            .await
+            .expect("request")
+    }
+
+    /// The listener serves only `/metrics`, as OpenMetrics, and a second listener on the same
+    /// address fails when it binds, so the caller does not announce an endpoint that is not there.
+    #[actix_web::test]
+    async fn an_address_in_use_fails_when_it_binds() {
+        let state = state(Vec::new());
+        let (handle, address) = serve(state.clone());
+
+        let response = scrape(address, "/metrics").await;
+        assert_eq!(response.status(), 200);
+        assert_eq!(
+            response.headers()[reqwest::header::CONTENT_TYPE],
+            CONTENT_TYPE
+        );
+        assert!(response.text().await.unwrap().ends_with("# EOF\n"));
+        assert_eq!(scrape(address, "/api/snapshot").await.status(), 404);
+
+        assert!(metrics_server(address, state).is_err());
+        handle.stop(true).await;
+    }
 
     fn runtime() -> DashboardRuntime {
         DashboardRuntime {
