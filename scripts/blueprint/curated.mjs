@@ -187,7 +187,7 @@ function system({ units, tag }) {
         fa: 0.3,
         label: 'witness in-process · bb proves',
         tip: 'Noir is linked as a library to compute the witness; the bb binary runs as a child process to make the proof.',
-        refs: ['crates/zk/prover/src/witness.rs@59@execute_program(', 'crates/zk/prover/src/prover.rs@104@StdCommand::new(bb)'],
+        refs: ['crates/zk/prover/src/witness.rs@59@execute_program(', 'crates/zk/prover/src/prover.rs@111@StdCommand::new(bb)'],
       },
       { from: 'circuits', to: 'contracts', fs: 'l', ts: 'r', label: 'Honk verifiers', refs: [...ev('A20'), ...ev('D9', 'D10')] },
       {
@@ -585,7 +585,7 @@ function circuits() {
         title: 'c2ab_fold',
         lines: ['C2a + C2b'],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/c2ab_fold/src/main.nr@30@verify_honk_proof(c2a_vk, c2a_proof`,
+        ref: `${CIR}/recursive_aggregation/c2ab_fold/src/main.nr@33@verify_honk_proof(c2a_vk, c2a_proof`,
       },
       {
         id: 'c3f',
@@ -593,10 +593,10 @@ function circuits() {
         y: 480,
         w: 320,
         h: 80,
-        title: 'c3_fold → c3ab_fold',
-        lines: ['every C3, then sk and e_sm'],
+        title: 'C3 Chonk → c3ab_fold',
+        lines: ['stacks of 24 C3, then sk and e_sm'],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/c3_fold/src/main.nr@42@verify_honk_proof(inner_vk, inner_proof, c3_public_inputs`,
+        ref: `${CIR}/chonk/c3_chonk_app/src/main.nr@27@verify_honk_proof(leaf_vk, proofs[k], c3_public_inputs[k]`,
       },
       {
         id: 'c4ab',
@@ -607,7 +607,7 @@ function circuits() {
         title: 'c4ab_fold',
         lines: ['C4a + C4b'],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/c4ab_fold/src/main.nr@30@verify_honk_proof(c4a_vk, c4a_proof`,
+        ref: `${CIR}/recursive_aggregation/c4ab_fold/src/main.nr@32@verify_honk_proof(c4a_vk, c4a_proof`,
       },
       {
         id: 'node',
@@ -640,7 +640,7 @@ function circuits() {
         title: 'nodes_fold',
         lines: ["all H members' node proofs"],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/nodes_fold/src/main.nr@61@verify_honk_proof_non_zk(acc_vk, acc_proof`,
+        ref: `${CIR}/recursive_aggregation/nodes_fold/src/main.nr@64@verify_honk_proof_non_zk(acc_vk, acc_proof`,
       },
       {
         id: 'dkgagg',
@@ -651,7 +651,7 @@ function circuits() {
         title: 'dkg_aggregator',
         lines: ['nodes_fold + C5', 'one DKG proof'],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/dkg_aggregator/src/main.nr@78@verify_honk_proof_non_zk(c5_vk, c5_proof`,
+        ref: `${CIR}/recursive_aggregation/dkg_aggregator/src/main.nr@79@verify_honk_proof_non_zk(c5_vk, c5_proof`,
       },
       {
         id: 'dkgver',
@@ -672,10 +672,10 @@ function circuits() {
         y: 820,
         w: 320,
         h: 80,
-        title: 'c6_fold',
+        title: 'C6 Chonk → c6_chonk_root',
         lines: ['C6 of the T + 1 selected members'],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/c6_fold/src/main.nr@43@verify_honk_proof(inner_vk, inner_proof, c6_public_inputs`,
+        ref: `${CIR}/chonk/c6_chonk_app/src/main.nr@25@verify_honk_proof(leaf_vk, proofs[k], c6_public_inputs[k]`,
       },
       {
         id: 'c7',
@@ -695,9 +695,9 @@ function circuits() {
         w: 280,
         h: 220,
         title: 'decryption_aggregator',
-        lines: ['c6_fold + C7', 'one decryption proof'],
+        lines: ['C6 root + C7', 'one decryption proof'],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/decryption_aggregator/src/main.nr@89@verify_honk_proof_non_zk(c6_fold_vk, c6_fold_proof`,
+        ref: `${CIR}/recursive_aggregation/decryption_aggregator/src/main.nr@85@verify_honk_proof_non_zk(c6_root_vk, c6_root_proof`,
       },
       {
         id: 'decver',
@@ -750,7 +750,7 @@ function circuits() {
       { from: 'c5', to: 'dkgagg', fs: 'r', ts: 'l', ta: 0.25, refs: ev('D7', 'D14') },
       { from: 'dkgagg', to: 'dkgver', fs: 'r', ts: 'l', tip: 'Checked in publishCommittee, through BfvPkVerifier', refs: ev('D9') },
       { from: 'c6', to: 'c6f', fs: 'r', ts: 'l', refs: ev('D4', 'D16') },
-      { from: 'c6f', to: 'decagg', fs: 'r', ts: 'l', ta: (860 - 780) / 220, label: 'folded C6', refs: ev('D8') },
+      { from: 'c6f', to: 'decagg', fs: 'r', ts: 'l', ta: (860 - 780) / 220, label: 'C6 root', refs: ev('D8') },
       { from: 'c7', to: 'decagg', fs: 'r', ts: 'l', ta: (955 - 780) / 220, refs: ev('D8', 'D15') },
       {
         from: 'decagg',
@@ -1070,7 +1070,7 @@ function ciphernode({ units }) {
         ta: 0.3,
         label: 'spawn bb',
         lt: 0.3,
-        refs: ['crates/zk/prover/src/prover.rs@104@StdCommand::new(bb)', 'crates/zk/prover/src/witness.rs@59@execute_program('],
+        refs: ['crates/zk/prover/src/prover.rs@111@StdCommand::new(bb)', 'crates/zk/prover/src/witness.rs@59@execute_program('],
       },
     ],
   }

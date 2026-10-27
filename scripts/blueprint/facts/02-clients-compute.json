@@ -814,12 +814,12 @@
         {
           "name": "ComputeResponse",
           "by": "Multithread",
-          "ref": "crates/multithread/src/multithread.rs@666@bus.publish(value, ctx)?;"
+          "ref": "crates/multithread/src/multithread.rs@713@bus.publish(value, ctx)?;"
         },
         {
           "name": "ComputeRequestError, for failures that are not retried",
           "by": "Multithread",
-          "ref": "crates/multithread/src/multithread.rs@646@bus.publish(ComputeRequestError::new(error_kind, request_snapshot), ctx)?;"
+          "ref": "crates/multithread/src/multithread.rs@693@bus.publish(ComputeRequestError::new(error_kind, request_snapshot), ctx)?;"
         },
         {
           "name": "stored outcomes sent to the other request IDs waiting on the same work",
@@ -831,7 +831,7 @@
         {
           "name": "task pool: Tokio semaphore, Rayon pool, and a cancellation sender per task group",
           "where": "memory",
-          "ref": "crates/task-pool/src/lib.rs@29@task_groups: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,"
+          "ref": "crates/task-pool/src/lib.rs@35@task_groups: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,"
         },
         {
           "name": "requests the worker is running, counted per correlation ID",
@@ -848,12 +848,12 @@
         {
           "name": "TaskPool",
           "what": "bounded executor: spawn() takes a Tokio permit, runs the closure on Rayon, and returns its result or a TaskPoolError",
-          "ref": "crates/task-pool/src/lib.rs@26@pub struct TaskPool {"
+          "ref": "crates/task-pool/src/lib.rs@30@pub struct TaskPool {"
         },
         {
           "name": "TaskPoolError",
           "what": "pool failures: semaphore, receive, a panic in the closure, or a cancelled group",
-          "ref": "crates/task-pool/src/lib.rs@33@pub enum TaskPoolError {"
+          "ref": "crates/task-pool/src/lib.rs@39@pub enum TaskPoolError {"
         },
         {
           "name": "ComputeCapacity",
@@ -877,27 +877,27 @@
         },
         {
           "why": "the actor's request handler and its retry loop",
-          "ref": "crates/multithread/src/multithread.rs@550@async fn handle_compute_request_event("
+          "ref": "crates/multithread/src/multithread.rs@589@async fn handle_compute_request_event("
         },
         {
           "why": "the pool: semaphore wait, Rayon spawn, and the oneshot result",
-          "ref": "crates/task-pool/src/lib.rs@128@async fn spawn_inner<OP, T: Debug + Send + 'static>("
+          "ref": "crates/task-pool/src/lib.rs@169@async fn spawn_inner<OP, T: Debug + Send + 'static>("
         },
         {
           "why": "the worker function that dispatches TrBFV and ZK requests",
-          "ref": "crates/multithread/src/multithread.rs@856@fn handle_compute_request("
+          "ref": "crates/multithread/src/multithread.rs@903@fn handle_compute_request("
         }
       ],
       "rust_patterns": [
         {
           "pattern": "actix-actor",
           "note": "Multithread implements Actor and sets its mailbox capacity from MAILBOX_LIMIT on start",
-          "ref": "crates/multithread/src/multithread.rs@505@impl Actor for Multithread {"
+          "ref": "crates/multithread/src/multithread.rs@544@impl Actor for Multithread {"
         },
         {
           "pattern": "actix-handler",
           "note": "the actor handles bus events by queuing compute requests to itself as typed messages",
-          "ref": "crates/multithread/src/multithread.rs@512@impl Handler<InterfoldEvent> for Multithread {"
+          "ref": "crates/multithread/src/multithread.rs@551@impl Handler<InterfoldEvent> for Multithread {"
         },
         {
           "pattern": "actix-recipient",
@@ -907,17 +907,17 @@
         {
           "pattern": "channel",
           "note": "a oneshot channel carries each Rayon result back to the async caller",
-          "ref": "crates/task-pool/src/lib.rs@213@let (tx, rx) = tokio::sync::oneshot::channel();"
+          "ref": "crates/task-pool/src/lib.rs@256@let (tx, rx) = tokio::sync::oneshot::channel();"
         },
         {
           "pattern": "tokio-select",
           "note": "the pool waits for either a group cancellation or a free semaphore permit",
-          "ref": "crates/task-pool/src/lib.rs@150@tokio::select! {"
+          "ref": "crates/task-pool/src/lib.rs@152@tokio::select! {"
         },
         {
           "pattern": "tokio-spawn",
           "note": "a warning task logs long jobs and is aborted when the result arrives",
-          "ref": "crates/task-pool/src/lib.rs@178@let warning_handle = tokio::spawn(async move {"
+          "ref": "crates/task-pool/src/lib.rs@221@let warning_handle = tokio::spawn(async move {"
         }
       ],
       "depends_on": ["e3-request", "e3-trbfv", "e3-crypto", "e3-events", "e3-task-pool", "e3-utils", "e3-zk-prover"],
@@ -1057,7 +1057,7 @@
         {
           "name": "VerifiableEncryptionResult",
           "what": "ciphertext bytes plus the circuit inputs as a JSON string",
-          "ref": "crates/bfv-client/src/client.rs@72@pub struct VerifiableEncryptionResult {"
+          "ref": "crates/bfv-client/src/client.rs@73@pub struct VerifiableEncryptionResult {"
         },
         {
           "name": "Error",
@@ -1072,19 +1072,19 @@
         },
         {
           "why": "encryption under a public key",
-          "ref": "crates/bfv-client/src/client.rs@45@pub fn bfv_encrypt<T>("
+          "ref": "crates/bfv-client/src/client.rs@46@pub fn bfv_encrypt<T>("
         },
         {
           "why": "verifiable encryption, with the circuit inputs",
-          "ref": "crates/bfv-client/src/client.rs@96@pub fn bfv_verifiable_encrypt<T>("
+          "ref": "crates/bfv-client/src/client.rs@97@pub fn bfv_verifiable_encrypt<T>("
         },
         {
           "why": "the public-key commitment check used before a key is trusted",
-          "ref": "crates/bfv-client/src/client.rs@197@pub fn validate_pk_commitment("
+          "ref": "crates/bfv-client/src/client.rs@200@pub fn validate_pk_commitment("
         },
         {
           "why": "the ciphertext commitment, with a variant that reuses built parameters",
-          "ref": "crates/bfv-client/src/client.rs@221@pub fn compute_ct_commitment("
+          "ref": "crates/bfv-client/src/client.rs@224@pub fn compute_ct_commitment("
         }
       ],
       "rust_patterns": [
@@ -1096,22 +1096,22 @@
         {
           "pattern": "generic-where",
           "note": "the encrypt functions take any value T that fhe.rs can encode, through a where bound",
-          "ref": "crates/bfv-client/src/client.rs@53@Plaintext: for<'a> FheEncoder<&'a T, Error = FheError>,"
+          "ref": "crates/bfv-client/src/client.rs@54@Plaintext: for<'a> FheEncoder<&'a T, Error = FheError>,"
         },
         {
           "pattern": "result-question-mark",
           "note": "building the parameters returns early on error",
-          "ref": "crates/bfv-client/src/client.rs@55@build_client_params(degree, plaintext_modulus, moduli, None)?;"
+          "ref": "crates/bfv-client/src/client.rs@56@build_client_params(degree, plaintext_modulus, moduli, None)?;"
         },
         {
           "pattern": "option-combinators",
           "note": "an unsupported parameter tuple becomes an anyhow error through ok_or_else",
-          "ref": "crates/bfv-client/src/client.rs@107@.ok_or_else(|| {"
+          "ref": "crates/bfv-client/src/client.rs@108@.ok_or_else(|| {"
         },
         {
           "pattern": "unit-test",
           "note": "the encryption round trips are plain #[test] functions",
-          "ref": "crates/bfv-client/src/client.rs@382@fn test_bfv_encrypt_a64() {"
+          "ref": "crates/bfv-client/src/client.rs@385@fn test_bfv_encrypt_a64() {"
         }
       ],
       "depends_on": ["e3-fhe-params", "e3-zk-config", "e3-zk-witness", "e3-polynomial"],

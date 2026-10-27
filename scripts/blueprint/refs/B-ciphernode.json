@@ -160,9 +160,9 @@
     "id": "B14",
     "supported": true,
     "refs": [
-      "crates/multithread/src/multithread.rs@526@impl Handler<TypedEvent<ComputeRequest>> for Multithread {",
-      "crates/multithread/src/multithread.rs@856@fn handle_compute_request(",
-      "crates/multithread/src/multithread.rs@666@bus.publish(value, ctx)?;"
+      "crates/multithread/src/multithread.rs@565@impl Handler<TypedEvent<ComputeRequest>> for Multithread {",
+      "crates/multithread/src/multithread.rs@903@fn handle_compute_request(",
+      "crates/multithread/src/multithread.rs@713@bus.publish(value, ctx)?;"
     ],
     "line_text": [
       "impl Handler<TypedEvent<ComputeRequest>> for Multithread {",

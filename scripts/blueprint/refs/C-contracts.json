@@ -99,9 +99,9 @@
     "id": "C11",
     "supported": true,
     "refs": [
-      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@678@ticketToken.depositFrom(",
+      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@693@ticketToken.depositFrom(",
       "packages/interfold-contracts/contracts/token/InterfoldTicketToken.sol@306@_mint(to, amount)",
-      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@711@ticketToken.burnTickets("
+      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@726@ticketToken.burnTickets("
     ],
     "line_text": [
       "ticketToken.depositFrom(msg.sender, operator, amount);",
@@ -114,8 +114,8 @@
     "id": "C12",
     "supported": true,
     "refs": [
-      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1374@require(msg.sender == bondOwner",
-      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1379@BondingAssetLib.transferFromExact(",
+      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1389@require(msg.sender == bondOwner",
+      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1394@BondingAssetLib.transferFromExact(",
       "packages/interfold-contracts/contracts/lib/BondingAssetLib.sol@426@token.safeTransferFrom(sender",
       "packages/interfold-contracts/contracts/lib/BondingAssetLib.sol@380@ILockAwareCiphernodeBondToken.lockedBalanceOf"
     ],
@@ -166,7 +166,7 @@
     "supported": true,
     "refs": [
       "packages/interfold-contracts/contracts/lib/BondingEligibilityLib.sol@97@isNodeReleaseReady(",
-      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1428@updateOperator("
+      "packages/interfold-contracts/contracts/registry/BondingRegistry.sol@1443@updateOperator("
     ],
     "line_text": ["INodeReleaseRegistry(releaseRegistry).isNodeReleaseReady(", ".updateOperator("],
     "note": "BondingRegistry._updateOperatorStatus calls BondingEligibilityLib.updateOperator, which reads isNodeReleaseReady."

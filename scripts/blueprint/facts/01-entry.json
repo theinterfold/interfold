@@ -102,7 +102,7 @@
         {
           "pattern": "trait-impl",
           "note": "TryFrom maps a Commands value to the remote allow-list or returns an error",
-          "ref": "crates/cli/src/cli.rs@472@impl TryFrom<Commands> for RemoteCommand {"
+          "ref": "crates/cli/src/cli.rs@478@impl TryFrom<Commands> for RemoteCommand {"
         },
         {
           "pattern": "closure",
@@ -596,7 +596,7 @@
         },
         {
           "why": "the server side: one task per connection, one command per request",
-          "ref": "crates/daemon-server/src/lib.rs@59@pub async fn start_daemon_server<F, Fut>(tcp_port: u16, handler: F)"
+          "ref": "crates/daemon-server/src/lib.rs@58@pub async fn start_daemon_server<F, Fut>(tcp_port: u16, handler: F)"
         },
         {
           "why": "the client side: post the command, print the reply lines",
@@ -611,17 +611,17 @@
         {
           "pattern": "generic-where",
           "note": "the handler is a generic Fn(String) returning a future, bounded to 'static",
-          "ref": "crates/daemon-server/src/lib.rs@61@F: Fn(String) -> Fut + 'static,"
+          "ref": "crates/daemon-server/src/lib.rs@60@F: Fn(String) -> Fut + 'static,"
         },
         {
           "pattern": "result-question-mark",
           "note": "request parsing propagates read errors with ?",
-          "ref": "crates/daemon-server/src/lib.rs@104@buf_reader.read_line(&mut line).await?;"
+          "ref": "crates/daemon-server/src/lib.rs@103@buf_reader.read_line(&mut line).await?;"
         },
         {
           "pattern": "arc-shared",
           "note": "the handler is wrapped in an Arc so every connection task can use it",
-          "ref": "crates/daemon-server/src/lib.rs@72@let handler = Arc::new(handler);"
+          "ref": "crates/daemon-server/src/lib.rs@71@let handler = Arc::new(handler);"
         },
         {
           "pattern": "async-await",

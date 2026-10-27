@@ -14,38 +14,38 @@
         {
           "name": "Shared semaphore, Rayon pool and cancellation groups",
           "where": "memory",
-          "ref": "crates/task-pool/src/lib.rs@26@pub struct TaskPool {"
+          "ref": "crates/task-pool/src/lib.rs@30@pub struct TaskPool {"
         }
       ],
       "key_types": [
         {
           "name": "TaskPool",
           "what": "Cloneable shared CPU admission budget",
-          "ref": "crates/task-pool/src/lib.rs@26@pub struct TaskPool {"
+          "ref": "crates/task-pool/src/lib.rs@30@pub struct TaskPool {"
         },
         {
           "name": "TaskPoolError",
           "what": "Admission, channel, cancellation and panic outcomes",
-          "ref": "crates/task-pool/src/lib.rs@33@pub enum TaskPoolError {"
+          "ref": "crates/task-pool/src/lib.rs@39@pub enum TaskPoolError {"
         }
       ],
       "read_first": [
-        { "why": "Pool state shared by its clones", "ref": "crates/task-pool/src/lib.rs@26@pub struct TaskPool {" },
+        { "why": "Pool state shared by its clones", "ref": "crates/task-pool/src/lib.rs@30@pub struct TaskPool {" },
         {
           "why": "Admission, queued cancellation and worker execution",
-          "ref": "crates/task-pool/src/lib.rs@128@async fn spawn_inner<OP, T: Debug + Send + 'static>("
+          "ref": "crates/task-pool/src/lib.rs@169@async fn spawn_inner<OP, T: Debug + Send + 'static>("
         }
       ],
       "rust_patterns": [
         {
           "pattern": "arc-shared",
           "note": "Clones retain the same cancellation map",
-          "ref": "crates/task-pool/src/lib.rs@29@task_groups: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,"
+          "ref": "crates/task-pool/src/lib.rs@35@task_groups: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,"
         },
         {
           "pattern": "tokio-select",
           "note": "Admission waits for a permit or cancellation",
-          "ref": "crates/task-pool/src/lib.rs@150@tokio::select! {"
+          "ref": "crates/task-pool/src/lib.rs@152@tokio::select! {"
         }
       ],
       "depends_on": [],
@@ -467,7 +467,7 @@
         },
         {
           "why": "compute_tag: the IO pattern and domain separator folded into one field element",
-          "ref": "crates/safe/src/lib.rs@266@pub fn compute_tag<const L: usize>"
+          "ref": "crates/safe/src/lib.rs@349@pub fn compute_tag<const L: usize>"
         }
       ],
       "rust_patterns": [
@@ -479,12 +479,12 @@
         {
           "pattern": "iterator-chain",
           "note": "compute_tag walks the IO pattern with iter().take(L)",
-          "ref": "crates/safe/src/lib.rs@274@for item in io_pattern.iter().take(L) {"
+          "ref": "crates/safe/src/lib.rs@357@for item in io_pattern.iter().take(L) {"
         },
         {
           "pattern": "unit-test",
           "note": "tests sit in a cfg(test) module in the same file",
-          "ref": "crates/safe/src/lib.rs@388@#[test]"
+          "ref": "crates/safe/src/lib.rs@456@#[test]"
         }
       ],
       "depends_on": [],
@@ -806,7 +806,7 @@
         {
           "name": "StoredEvents",
           "role": "test-only actor that answers one event-store query by sending the events back on a oneshot channel",
-          "ref": "crates/tests/tests/integration.rs@3064@struct StoredEvents("
+          "ref": "crates/tests/tests/integration.rs@3257@struct StoredEvents("
         }
       ],
       "consumes": [],
@@ -827,11 +827,11 @@
       "read_first": [
         {
           "why": "a full multi-node test: test_trbfv_actor",
-          "ref": "crates/tests/tests/integration.rs@1329@async fn test_trbfv_actor()"
+          "ref": "crates/tests/tests/integration.rs@1421@async fn test_trbfv_actor()"
         },
         {
           "why": "the simulated network is switched on for the node group",
-          "ref": "crates/tests/tests/integration.rs@1615@.simulate_libp2p()"
+          "ref": "crates/tests/tests/integration.rs@1707@.simulate_libp2p()"
         },
         {
           "why": "how the zk backend is chosen: a local bb binary or the CI install",
@@ -846,17 +846,17 @@
         {
           "pattern": "async-test",
           "note": "integration tests run under actix::test and are serialized with serial_test",
-          "ref": "crates/tests/tests/integration.rs@1327@#[actix::test]"
+          "ref": "crates/tests/tests/integration.rs@1419@#[actix::test]"
         },
         {
           "pattern": "builder-pattern",
           "note": "the node groups are assembled with CiphernodeSystemBuilder",
-          "ref": "crates/tests/tests/integration.rs@1507@let mut nodes = CiphernodeSystemBuilder::new()"
+          "ref": "crates/tests/tests/integration.rs@1599@let mut nodes = CiphernodeSystemBuilder::new()"
         },
         {
           "pattern": "actix-actor",
           "note": "StoredEvents is a small actor that answers one query",
-          "ref": "crates/tests/tests/integration.rs@3066@impl actix::Actor for StoredEvents {"
+          "ref": "crates/tests/tests/integration.rs@3259@impl actix::Actor for StoredEvents {"
         },
         {
           "pattern": "unit-test",

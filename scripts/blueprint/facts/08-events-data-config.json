@@ -223,7 +223,7 @@
         {
           "pattern": "enum-match",
           "note": "CircuitName::as_str maps each circuit to its name string",
-          "ref": "crates/events/src/interfold_event/proof.rs@157@CircuitName::PkBfv => \"pk\","
+          "ref": "crates/events/src/interfold_event/proof.rs@196@CircuitName::PkBfv => \"pk\","
         },
         {
           "pattern": "newtype",
@@ -414,7 +414,7 @@
         {
           "name": "SCHEMA_VERSION",
           "what": "u32 = 8, defined in e3-sync: the on-disk format guard that the node checks before the EventStores open",
-          "ref": "crates/sync/src/sync/schema_version.rs@20@pub const SCHEMA_VERSION: u32 = 8;"
+          "ref": "crates/sync/src/sync/schema_version.rs@22@pub const SCHEMA_VERSION: u32 = 9;"
         }
       ],
       "read_first": [

@@ -377,7 +377,7 @@
         {
           "name": "SCHEMA_VERSION",
           "what": "The on-disk schema version this binary accepts (8); an older or newer marker halts startup.",
-          "ref": "crates/sync/src/sync/schema_version.rs@20@pub const SCHEMA_VERSION: u32 = 8;"
+          "ref": "crates/sync/src/sync/schema_version.rs@22@pub const SCHEMA_VERSION: u32 = 9;"
         },
         {
           "name": "HistoricalEvmCollector",
@@ -396,7 +396,7 @@
         },
         {
           "why": "The schema check that runs before any state is written.",
-          "ref": "crates/sync/src/sync/preflight.rs@45@pub async fn preflight_schema_version("
+          "ref": "crates/sync/src/sync/preflight.rs@54@pub async fn preflight_schema_version("
         },
         {
           "why": "The replay loop: fan-out of each merged event, then a barrier.",
@@ -426,7 +426,7 @@
         {
           "pattern": "enum-match",
           "note": "The schema decision is matched on the persisted version and the existing-state flag.",
-          "ref": "crates/sync/src/sync/schema_version.rs@61@match persisted {"
+          "ref": "crates/sync/src/sync/schema_version.rs@63@match persisted {"
         },
         {
           "pattern": "iterator-chain",
