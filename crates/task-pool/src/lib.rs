@@ -8,6 +8,7 @@ use rayon::ThreadPool;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::Deref;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::{sync::Arc, time::Duration};
 use thiserror::Error;
@@ -25,8 +26,38 @@ pub fn scoped_task_group(scope: &str, key: impl std::fmt::Display) -> String {
 #[derive(Debug, Clone)]
 pub struct TaskPool {
     semaphore: Arc<Semaphore>,
+    max_tasks: usize,
+    /// Tasks that wait for a semaphore permit.
+    waiting: Arc<AtomicUsize>,
     thread_pool: Arc<ThreadPool>,
     task_groups: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,
+}
+
+/// The admission state of a pool at one moment, for monitoring.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TaskPoolLoad {
+    /// Tasks that the pool admits at once.
+    pub capacity: usize,
+    /// Admitted tasks: queued inside Rayon or running.
+    pub admitted: usize,
+    /// Tasks that wait for admission. Retry delays do not count.
+    pub waiting: usize,
+}
+
+/// Counts a task as waiting for admission until it is dropped, also when its future is.
+struct Waiting<'a>(&'a AtomicUsize);
+
+impl<'a> Waiting<'a> {
+    fn start(count: &'a AtomicUsize) -> Self {
+        count.fetch_add(1, Ordering::Relaxed);
+        Self(count)
+    }
+}
+
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 #[derive(Debug, Error)]
@@ -55,7 +86,20 @@ impl TaskPool {
         Self {
             thread_pool: Arc::new(thread_pool),
             semaphore: Arc::new(Semaphore::new(max_tasks)),
+            max_tasks,
+            waiting: Arc::new(AtomicUsize::new(0)),
             task_groups: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// The admission state of this pool, shared by every clone.
+    pub fn load(&self) -> TaskPoolLoad {
+        TaskPoolLoad {
+            capacity: self.max_tasks,
+            admitted: self
+                .max_tasks
+                .saturating_sub(self.semaphore.available_permits()),
+            waiting: self.waiting.load(Ordering::Relaxed),
         }
     }
 
@@ -146,6 +190,7 @@ impl TaskPool {
             ));
         }
 
+        let waiting = Waiting::start(&self.waiting);
         let _permit = if let Some(receiver) = cancellation.as_mut() {
             tokio::select! {
                 biased;
@@ -164,6 +209,7 @@ impl TaskPool {
                 .await
                 .map_err(|_| TaskPoolError::SemaphoreError(task_name.to_owned()))?
         };
+        drop(waiting);
 
         if cancellation
             .as_ref()
@@ -407,6 +453,78 @@ mod tests {
             .await
             .expect("fresh task failed");
         assert_eq!(fresh, 3);
+    }
+
+    /// The load counts an admitted task and a task that waits behind it, and returns to idle when
+    /// both finish.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn load_reports_admitted_and_waiting_tasks() {
+        let pool = TaskPool::new(1, 1);
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        assert_eq!(
+            pool.load(),
+            TaskPoolLoad {
+                capacity: 1,
+                admitted: 0,
+                waiting: 0,
+            }
+        );
+
+        let running = {
+            let pool = pool.clone();
+            let release = release.clone();
+            tokio::spawn(async move {
+                pool.spawn(
+                    "running".to_owned(),
+                    TaskTimeouts::new(Vec::new()),
+                    move || {
+                        let _ = started_tx.send(());
+                        let (lock, wake) = &*release;
+                        let mut released = lock.lock().expect("release lock poisoned");
+                        while !*released {
+                            released = wake.wait(released).expect("release lock poisoned");
+                        }
+                    },
+                )
+                .await
+            })
+        };
+        timeout(Duration::from_secs(2), started_rx)
+            .await
+            .expect("running task did not start")
+            .expect("running task dropped its start signal");
+        let waiting = {
+            let pool = pool.clone();
+            tokio::spawn(async move {
+                pool.spawn("waiting".to_owned(), TaskTimeouts::new(Vec::new()), || ())
+                    .await
+            })
+        };
+        timeout(Duration::from_secs(2), async {
+            while pool.load().waiting != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("second task did not wait for admission");
+        assert_eq!(pool.load().admitted, 1);
+
+        {
+            let (lock, wake) = &*release;
+            *lock.lock().expect("release lock poisoned") = true;
+            wake.notify_all();
+        }
+        running.await.expect("join").expect("running task failed");
+        waiting.await.expect("join").expect("waiting task failed");
+        assert_eq!(
+            pool.load(),
+            TaskPoolLoad {
+                capacity: 1,
+                admitted: 0,
+                waiting: 0,
+            }
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
