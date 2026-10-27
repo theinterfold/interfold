@@ -5,18 +5,14 @@ Owners: [Rust SDK](../../crates/sdk/), [BFV client](../../crates/bfv-client/),
 [TypeScript SDK](../pages/build/sdk.mdx) is a separate client. Neither client replaces the
 application contract's input checks or the protocol's output verification.
 
-Shared Rust contract facts live in [e3-evm-contracts](../../crates/evm/contracts/README.md), not in
-a client or node delivery policy. Its wire tuples are distinct from persisted application and node
-models; [client migration notes](../../crates/evm/client/README.md#contract-clients) describe the
-raw enum fields and explicit typed views.
+Shared [wire bindings](../../crates/evm/contracts/README.md) are separate from persisted application
+and node models. The [EVM client](../../crates/evm/client/README.md#contract-clients) exposes raw
+enum fields and explicit typed views.
 
 ## Client boundaries
 
-`e3-sdk` re-exports `bfv_client` and `bfv_params` through feature `bfv`, `evm` through `evm`, and
-`indexer` through `indexer`. The default `full` feature enables all three. These are re-exports, not
-a second implementation of encryption or chain tracking. The deprecated `evm_helpers` alias has a
-bounded [dev-release migration](../../crates/sdk/README.md#evm-dev-release-migration); direct
-consumers must rename the former helper dependency to `e3-evm-client` as well.
+The [SDK feature selection](../../crates/sdk/README.md#select-capabilities) controls which client
+capabilities are exposed; the facade adds no encryption or chain-tracking policy.
 
 `bfv_encrypt` returns ciphertext bytes. `bfv_verifiable_encrypt` also returns witness JSON; it does
 not itself produce or verify a proof. Verifiable encryption accepts supported threshold parameter
