@@ -28,8 +28,8 @@
     "id": "B3",
     "supported": true,
     "refs": [
-      "crates/evm/runtime/src/ciphernode_registry/effects.rs@55@.submitTicket(e3_id_u256, ticket_number_u256)",
-      "crates/evm/runtime/src/ciphernode_registry/effects.rs@320@.publishCommittee(e3_id_u256, pk_commitment_b256, proof, attestation_bundle)"
+      "crates/evm/runtime/src/ciphernode_registry/effects.rs@54@.submitTicket(e3_id_u256, ticket_number_u256)",
+      "crates/evm/runtime/src/ciphernode_registry/effects.rs@319@.publishCommittee(e3_id_u256, pk_commitment_b256, proof, attestation_bundle)"
     ],
     "line_text": [
       ".submitTicket(e3_id_u256, ticket_number_u256)",

@@ -5,10 +5,9 @@
 use super::*;
 use crate::adapters::log_fetcher::fetch_logs_adapting;
 use crate::contracts::IInterfold;
+use e3_data_availability::public_key::ChunkLayout;
 
 const TICKET_GAS_SAFETY_MULTIPLIER: u64 = 2;
-const MAX_PUBLIC_KEY_BYTES: usize = 512 * 1024;
-const PUBLIC_KEY_CHUNK_BYTES: usize = 90 * 1024;
 
 fn ticket_gas_limit(estimate: u64) -> u64 {
     estimate.saturating_mul(TICKET_GAS_SAFETY_MULTIPLIER)
@@ -320,33 +319,17 @@ pub async fn publish_committee_public_key_to_registry<
 ) -> Result<TransactionReceipt> {
     let e3_id_u256: U256 = e3_id.try_into()?;
     let public_key_bytes = Bytes::from(public_key.extract_bytes());
-    anyhow::ensure!(
-        !public_key_bytes.is_empty(),
-        "committee public key is empty"
-    );
-    anyhow::ensure!(
-        public_key_bytes.len() <= MAX_PUBLIC_KEY_BYTES,
-        "committee public key is {} bytes; maximum is {MAX_PUBLIC_KEY_BYTES}",
-        public_key_bytes.len()
-    );
-
-    let total_length: u32 = public_key_bytes
-        .len()
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("committee public key exceeds uint32 length"))?;
-    let chunk_count: u16 = public_key_bytes
-        .len()
-        .div_ceil(PUBLIC_KEY_CHUNK_BYTES)
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("committee public key has too many chunks"))?;
+    let layout = ChunkLayout::new(public_key_bytes.len())?;
+    let total_length = layout.total_length();
+    let chunk_count = layout.chunk_count();
     let candidate_hash = alloy::primitives::keccak256(&public_key_bytes);
     let mut last_receipt = None;
 
-    for (chunk_index, chunk) in public_key_bytes.chunks(PUBLIC_KEY_CHUNK_BYTES).enumerate() {
-        let chunk_index: u16 = chunk_index
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("public-key chunk index exceeds uint16"))?;
-        let chunk = Bytes::copy_from_slice(chunk);
+    for chunk_index in 0..chunk_count {
+        let range = layout
+            .range(chunk_index)
+            .context("public-key chunk index outside layout")?;
+        let chunk = Bytes::copy_from_slice(&public_key_bytes[range]);
         let receipt = send_tx_with_retry(
             "publishCommitteePublicKey chunk",
             &["CommitteeNotPublished"],
@@ -571,5 +554,112 @@ mod tests {
         assert!(committee_publication_error_is_terminal(&selector_error(
             ICiphernodeRegistry::PublicKeyPublisherNotCommitteeMember::SELECTOR
         )));
+    }
+
+    #[tokio::test]
+    async fn public_key_publication_preserves_bytes_metadata_and_repeated_sends(
+    ) -> anyhow::Result<()> {
+        use super::publish_committee_public_key_to_registry;
+        use crate::helpers::EthProvider;
+        use alloy::{
+            node_bindings::Anvil,
+            primitives::{keccak256, U256},
+            providers::{Provider, ProviderBuilder},
+            rpc::types::Filter,
+            signers::local::PrivateKeySigner,
+            sol,
+            sol_types::SolEvent,
+        };
+        use e3_events::E3id;
+        use e3_utils::ArcBytes;
+
+        sol!(
+            #[sol(rpc)]
+            EmitLogs,
+            "tests/fixtures/emit_logs.json"
+        );
+
+        let anvil = Anvil::new().try_spawn()?;
+        let signer = PrivateKeySigner::from_slice(&anvil.keys()[0].to_bytes())?;
+        let sender = signer.address();
+        let provider = EthProvider::new(
+            ProviderBuilder::new()
+                .wallet(signer)
+                .connect(&anvil.endpoint())
+                .await?,
+        )
+        .await?;
+        let registry = EmitLogs::deploy(provider.provider()).await?;
+        let address = *registry.address();
+        let e3_id = E3id::new("7", provider.chain_id());
+        let bytes = (0..184_337)
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+
+        // A restart may resend unfinished chunks. The transport bytes and identity must not change.
+        for _ in 0..2 {
+            let receipt = publish_committee_public_key_to_registry(
+                provider.clone(),
+                address,
+                e3_id.clone(),
+                ArcBytes::from_bytes(&bytes),
+            )
+            .await?;
+            assert!(receipt.status());
+            let last = receipt.logs()[0]
+                .log_decode::<ICiphernodeRegistry::CommitteePublicKeyChunkPublished>()?
+                .inner
+                .data;
+            assert_eq!(last.chunkIndex, 2);
+        }
+
+        let nonce = provider.provider().get_transaction_count(sender).await?;
+        for invalid in [Vec::new(), vec![0; 524_289]] {
+            assert!(publish_committee_public_key_to_registry(
+                provider.clone(),
+                address,
+                e3_id.clone(),
+                ArcBytes::from_bytes(&invalid),
+            )
+            .await
+            .is_err());
+        }
+        assert_eq!(
+            provider.provider().get_transaction_count(sender).await?,
+            nonce
+        );
+
+        let logs = provider
+            .provider()
+            .get_logs(
+                &Filter::new()
+                    .address(address)
+                    .from_block(0)
+                    .event_signature(
+                        ICiphernodeRegistry::CommitteePublicKeyChunkPublished::SIGNATURE_HASH,
+                    ),
+            )
+            .await?;
+        assert_eq!(logs.len(), 6);
+        for (log, (index, range)) in logs.iter().zip(
+            [(0, 0..92_160), (1, 92_160..184_320), (2, 184_320..184_337)]
+                .into_iter()
+                .cycle(),
+        ) {
+            let event = log
+                .log_decode::<ICiphernodeRegistry::CommitteePublicKeyChunkPublished>()?
+                .inner
+                .data;
+            assert_eq!(event.e3Id, U256::from(7));
+            assert_eq!(event.publisher, sender);
+            assert_eq!(event.candidateHash, keccak256(&bytes));
+            assert_eq!(event.nodes, vec![sender]);
+            assert_eq!(event.pkCommitment.0, U256::from(9).to_be_bytes::<32>());
+            assert_eq!(event.chunkIndex, index);
+            assert_eq!(event.chunkCount, 3);
+            assert_eq!(event.totalLength, 184_337);
+            assert_eq!(event.chunk.as_ref(), &bytes[range]);
+        }
+        Ok(())
     }
 }

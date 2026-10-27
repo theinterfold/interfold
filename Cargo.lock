@@ -4125,6 +4125,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "e3-bfv-client",
+ "e3-data-availability",
  "e3-evm-client",
  "e3-evm-contracts",
  "e3-fhe-params",

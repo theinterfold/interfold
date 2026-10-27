@@ -9,6 +9,7 @@ use alloy::{
 };
 use anyhow::{ensure, Context as _, Result};
 use e3_committee::CiphernodesCommitteeSize;
+use e3_data_availability::public_key::MAX_PUBLIC_KEY_BYTES;
 use e3_events::{
     prelude::*, AggregateId, BusHandle, CommitteePublished, CorrelationId, E3Requested, E3id,
     EventSource, EventStoreQueryBy, EventStoreQueryResponse, InterfoldEvent, InterfoldEventData,
@@ -18,10 +19,7 @@ use e3_request::canonical_key::{CanonicalPublicKey, CanonicalPublicKeys};
 use e3_utils::{actix::channel, ArcBytes};
 use std::collections::{HashMap, HashSet};
 
-use crate::{
-    actors::data_availability::{KeyAssembly, MAX_PUBLIC_KEY_BYTES},
-    ICiphernodeRegistry,
-};
+use crate::{actors::data_availability::KeyAssembly, ICiphernodeRegistry};
 
 type Candidate = (E3id, String, [u8; 32]);
 

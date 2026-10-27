@@ -336,27 +336,27 @@
         {
           "name": "CommitteePublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/evm/indexer/src/indexer.rs@683@move |e: CommitteePublished, ctx| async move {"
+          "ref": "crates/evm/indexer/src/indexer.rs@657@move |e: CommitteePublished, ctx| async move {"
         },
         {
           "name": "CommitteePublicKeyChunkPublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/evm/indexer/src/indexer.rs@695@move |event: CommitteePublicKeyChunkPublished, ctx| async move {"
+          "ref": "crates/evm/indexer/src/indexer.rs@669@move |event: CommitteePublicKeyChunkPublished, ctx| async move {"
         },
         {
           "name": "CiphertextOutputPublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/evm/indexer/src/indexer.rs@771@self.add_event_handler(move |e: CiphertextOutputPublished, ctx| async move {"
+          "ref": "crates/evm/indexer/src/indexer.rs@745@self.add_event_handler(move |e: CiphertextOutputPublished, ctx| async move {"
         },
         {
           "name": "CiphertextOutputReferencePublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/evm/indexer/src/indexer.rs@794@move |event: CiphertextOutputReferencePublished, ctx| async move {"
+          "ref": "crates/evm/indexer/src/indexer.rs@768@move |event: CiphertextOutputReferencePublished, ctx| async move {"
         },
         {
           "name": "PlaintextOutputPublished log",
           "by": "InterfoldIndexer",
-          "ref": "crates/evm/indexer/src/indexer.rs@816@self.add_event_handler(move |e: PlaintextOutputPublished, ctx| async move {"
+          "ref": "crates/evm/indexer/src/indexer.rs@790@self.add_event_handler(move |e: PlaintextOutputPublished, ctx| async move {"
         }
       ],
       "emits": [],
@@ -364,24 +364,24 @@
         {
           "name": "E3 record under the key _e3:<id> in the crate's InMemoryStore",
           "where": "memory",
-          "ref": "crates/evm/indexer/src/indexer.rs@148@pub struct InMemoryStore {"
+          "ref": "crates/evm/indexer/src/indexer.rs@122@pub struct InMemoryStore {"
         },
         {
           "name": "callback queue and cursor flags (backfill_enabled, cursor_high, caught_up)",
           "where": "memory",
-          "ref": "crates/evm/indexer/src/indexer.rs@292@callbacks: CallbackQueue,"
+          "ref": "crates/evm/indexer/src/indexer.rs@266@callbacks: CallbackQueue,"
         }
       ],
       "key_types": [
         {
           "name": "InterfoldIndexer",
           "what": "owns the IndexerContext and the listen loop, which restarts the listeners after an error",
-          "ref": "crates/evm/indexer/src/indexer.rs@261@pub struct InterfoldIndexer<S: DataStore, R: ProviderType> {"
+          "ref": "crates/evm/indexer/src/indexer.rs@235@pub struct InterfoldIndexer<S: DataStore, R: ProviderType> {"
         },
         {
           "name": "IndexerContext",
           "what": "shared by every handler: store, listeners, contract handle, callback queue and cursor flags",
-          "ref": "crates/evm/indexer/src/indexer.rs@285@pub struct IndexerContext<S: DataStore, R: ProviderType> {"
+          "ref": "crates/evm/indexer/src/indexer.rs@259@pub struct IndexerContext<S: DataStore, R: ProviderType> {"
         },
         {
           "name": "DataStore",
@@ -411,19 +411,19 @@
         },
         {
           "why": "construction: reads the chain id, wires the listeners and registers the handlers",
-          "ref": "crates/evm/indexer/src/indexer.rs@581@pub async fn new("
+          "ref": "crates/evm/indexer/src/indexer.rs@555@pub async fn new("
         },
         {
           "why": "opt-in catch-up and cursor, with the reason for the opt-in in the doc",
-          "ref": "crates/evm/indexer/src/indexer.rs@936@pub fn configure_backfill(&self, start_block: Option<u64>, chunk: Option<u64>) {"
+          "ref": "crates/evm/indexer/src/indexer.rs@910@pub fn configure_backfill(&self, start_block: Option<u64>, chunk: Option<u64>) {"
         },
         {
           "why": "committee key handling: the on-chain commitment check before storage",
-          "ref": "crates/evm/indexer/src/indexer.rs@503@if let Err(error) = validate_pk_commitment("
+          "ref": "crates/evm/indexer/src/indexer.rs@477@if let Err(error) = validate_pk_commitment("
         },
         {
           "why": "the live loop: backfill, subscribe, overlap replay, restart on error",
-          "ref": "crates/evm/indexer/src/indexer.rs@1033@pub async fn listen(&self) -> Result<()> {"
+          "ref": "crates/evm/indexer/src/indexer.rs@1007@pub async fn listen(&self) -> Result<()> {"
         }
       ],
       "rust_patterns": [
@@ -435,22 +435,22 @@
         {
           "pattern": "trait-impl",
           "note": "InMemoryStore implements DataStore, storing values as bincode bytes",
-          "ref": "crates/evm/indexer/src/indexer.rs@167@impl DataStore for InMemoryStore {"
+          "ref": "crates/evm/indexer/src/indexer.rs@141@impl DataStore for InMemoryStore {"
         },
         {
           "pattern": "tokio-select",
           "note": "listen() races the event listener, the block listener and the overlap replay, and restarts when one ends",
-          "ref": "crates/evm/indexer/src/indexer.rs@1134@let res = tokio::select! {"
+          "ref": "crates/evm/indexer/src/indexer.rs@1108@let res = tokio::select! {"
         },
         {
           "pattern": "arc-shared",
           "note": "handlers hold a Weak reference to the context, so the context and its listeners can be dropped",
-          "ref": "crates/evm/indexer/src/indexer.rs@629@let ctx_weak = Arc::downgrade(&ctx);"
+          "ref": "crates/evm/indexer/src/indexer.rs@603@let ctx_weak = Arc::downgrade(&ctx);"
         }
       ],
-      "depends_on": ["e3-bfv-client", "e3-evm-client", "e3-evm-contracts", "e3-fhe-params"],
-      "tests": "cargo test -p e3-indexer. Unit tests: indexer.rs (cfg(test) at line 1202), repo.rs (line 132) and callback_queue.rs. Integration tests in tests/integration.rs start Anvil (tests/helpers.rs:11), and build.rs runs scripts/build_fixtures.sh, which needs solc and jq on PATH.",
-      "unverified": ["The integration tests were not run in this pass; only their setup was read."]
+      "depends_on": ["e3-bfv-client", "e3-data-availability", "e3-evm-client", "e3-evm-contracts", "e3-fhe-params"],
+      "tests": "cargo test -p e3-indexer. Inline and Anvil-backed tests cover projections, chunk replay and candidate admission. Fixture builds need solc and jq on PATH.",
+      "unverified": ["Local-chain replay does not establish reorg rollback or all-handler crash consistency."]
     },
     {
       "id": "e3-evm-client",

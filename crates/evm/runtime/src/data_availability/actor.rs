@@ -9,7 +9,10 @@ use alloy::primitives::keccak256;
 use e3_bfv_client::validate_pk_commitment;
 use e3_config::chain_config::{DataAvailabilityConfig, DataAvailabilityMode};
 use e3_data::Repository;
-use e3_data_availability::{AvailReader, DataAvailabilityReader, DataReference, HttpObjectReader};
+use e3_data_availability::{
+    public_key::{self, ChunkLayout},
+    AvailReader, DataAvailabilityReader, DataReference, HttpObjectReader,
+};
 use e3_events::{
     prelude::*, BusHandle, CiphertextOutputPublished, CiphertextOutputReferencePublished,
     CommitteePublicKeyChunkPublished, CommitteePublished, E3id, EType, EventContext,
@@ -26,8 +29,6 @@ use std::{
 use tracing::{info, warn};
 
 const OUTPUT_RETRY_DELAY: Duration = Duration::from_secs(30);
-pub(crate) const MAX_PUBLIC_KEY_BYTES: usize = 512 * 1024;
-const PUBLIC_KEY_CHUNK_BYTES: usize = 90 * 1024;
 pub const DATA_AVAILABILITY_RECOVERY_SCHEMA_VERSION: u32 = 2;
 
 type CandidateKey = (E3id, String, [u8; 32]);
@@ -105,19 +106,9 @@ impl Default for DataAvailabilityRecoveryState {
 
 impl KeyAssembly {
     pub(crate) fn event_shape_is_valid(event: &CommitteePublicKeyChunkPublished) -> bool {
-        let total_length = event.total_length as usize;
-        if total_length == 0 || total_length > MAX_PUBLIC_KEY_BYTES {
-            return false;
-        }
-        let expected_count = total_length.div_ceil(PUBLIC_KEY_CHUNK_BYTES);
-        if expected_count != usize::from(event.chunk_count)
-            || usize::from(event.chunk_index) >= expected_count
-        {
-            return false;
-        }
-        let offset = usize::from(event.chunk_index) * PUBLIC_KEY_CHUNK_BYTES;
-        let expected_length = (total_length - offset).min(PUBLIC_KEY_CHUNK_BYTES);
-        event.chunk.len() == expected_length
+        ChunkLayout::new(event.total_length as usize).is_ok_and(|layout| {
+            layout.accepts(event.chunk_index, event.chunk_count, event.chunk.len())
+        })
     }
 
     pub(crate) fn new(event: &CommitteePublicKeyChunkPublished) -> Self {
@@ -140,14 +131,9 @@ impl KeyAssembly {
         if !self.metadata_matches(event) {
             return false;
         }
-        let Some(slot) = self.chunks.get_mut(usize::from(event.chunk_index)) else {
-            return false;
-        };
-        if let Some(existing) = slot {
-            return existing[..] == event.chunk[..];
-        }
-        *slot = Some(event.chunk.clone());
-        true
+        public_key::insert_chunk(&mut self.chunks, event.chunk_index, &event.chunk, || {
+            event.chunk.clone()
+        })
     }
 
     pub(crate) fn validated_bytes(
@@ -180,11 +166,7 @@ impl KeyAssembly {
     }
 
     fn bytes(&self) -> Option<Vec<u8>> {
-        let mut bytes = Vec::with_capacity(self.total_length as usize);
-        for chunk in &self.chunks {
-            bytes.extend_from_slice(chunk.as_ref()?.as_ref());
-        }
-        (bytes.len() == self.total_length as usize).then_some(bytes)
+        public_key::assemble_chunks(self.total_length, &self.chunks)
     }
 }
 
@@ -555,11 +537,10 @@ impl Handler<RetrieveOutput> for DataAvailabilityCoordinator {
 mod tests {
     use super::*;
     use e3_bfv_client::{client::generate_public_key, compute_pk_commitment};
+    use e3_data_availability::public_key::PUBLIC_KEY_CHUNK_BYTES;
 
     fn chunk_event(bytes: &[u8], chunk_index: u16) -> CommitteePublicKeyChunkPublished {
-        let chunk_count = bytes.len().div_ceil(PUBLIC_KEY_CHUNK_BYTES) as u16;
-        let offset = usize::from(chunk_index) * PUBLIC_KEY_CHUNK_BYTES;
-        let end = (offset + PUBLIC_KEY_CHUNK_BYTES).min(bytes.len());
+        let layout = ChunkLayout::new(bytes.len()).unwrap();
         CommitteePublicKeyChunkPublished {
             e3_id: E3id::new("7", 1),
             publisher: "0x0000000000000000000000000000000000000001".to_owned(),
@@ -567,9 +548,9 @@ mod tests {
             nodes: vec!["0x0000000000000000000000000000000000000001".to_owned()],
             pk_commitment: [9; 32],
             chunk_index,
-            chunk_count,
-            total_length: bytes.len() as u32,
-            chunk: ArcBytes::from_bytes(&bytes[offset..end]),
+            chunk_count: layout.chunk_count(),
+            total_length: layout.total_length(),
+            chunk: ArcBytes::from_bytes(&bytes[layout.range(chunk_index).unwrap()]),
         }
     }
 
@@ -578,7 +559,7 @@ mod tests {
         let bytes = (0..(3 * PUBLIC_KEY_CHUNK_BYTES + 17))
             .map(|index| (index % 251) as u8)
             .collect::<Vec<_>>();
-        let mut events = (0..bytes.len().div_ceil(PUBLIC_KEY_CHUNK_BYTES) as u16)
+        let mut events = (0..ChunkLayout::new(bytes.len()).unwrap().chunk_count())
             .map(|index| chunk_event(&bytes, index))
             .collect::<Vec<_>>();
         let mut assembly = KeyAssembly::new(&events[0]);
@@ -646,6 +627,21 @@ mod tests {
         assert!(recovered.terminal_e3s.contains(&E3id::new("8", 1)));
     }
 
+    #[test]
+    fn legacy_key_assembly_encoding_stays_readable() {
+        let bytes = vec![3; 92_161];
+        let last = chunk_event(&bytes, 1);
+        let mut assembly = KeyAssembly::new(&last);
+        assert!(assembly.insert(&last));
+        // Captured before extracting transport mechanics; never regenerate from the new helper.
+        let frozen = hex::decode("01000000000000002a0000000000000030783030303030303030303030303030303030303030303030303030303030303030303030303030303109090909090909090909090909090909090909090909090909090909090909090168010002000000000000000001010000000000000003").unwrap();
+        assert_eq!(bincode::serialize(&assembly).unwrap(), frozen);
+        let mut recovered: KeyAssembly = bincode::deserialize(&frozen).unwrap();
+        assert!(recovered.bytes().is_none());
+        assert!(recovered.insert(&chunk_event(&bytes, 0)));
+        assert_eq!(recovered.bytes().unwrap(), bytes);
+    }
+
     fn test_bus() -> BusHandle {
         use e3_data::{InMemEventLog, InMemSequenceIndex};
         use e3_events::{hlc_factory::HlcFactory, EventBus, EventStore, Sequencer};
@@ -661,8 +657,7 @@ mod tests {
     }
 
     /// Store a complete, valid committee key assembly for each E3.
-    fn complete_assemblies(e3_ids: &[&E3id]) -> DataAvailabilityRecoveryState {
-        let preset = BfvPreset::InsecureThreshold64;
+    fn complete_assemblies(e3_ids: &[&E3id], preset: BfvPreset) -> DataAvailabilityRecoveryState {
         let params = BfvParamSet::from(preset);
         let public_key = generate_public_key(
             params.degree,
@@ -679,7 +674,7 @@ mod tests {
         .expect("compute C5 commitment");
         let mut state = DataAvailabilityRecoveryState::default();
         for e3_id in e3_ids {
-            let chunk_count = public_key.len().div_ceil(PUBLIC_KEY_CHUNK_BYTES) as u16;
+            let chunk_count = ChunkLayout::new(public_key.len()).unwrap().chunk_count();
             let mut assembly = None;
             for chunk_index in 0..chunk_count {
                 let event = CommitteePublicKeyChunkPublished {
@@ -718,7 +713,10 @@ mod tests {
             .repositories()
             .data_availability_recovery(1);
         recovery
-            .write_sync(&complete_assemblies(&[&active, &finished]))
+            .write_sync(&complete_assemblies(
+                &[&active, &finished],
+                BfvPreset::InsecureThreshold64,
+            ))
             .await?;
         let bus = test_bus();
         let history = bus.history();
@@ -760,6 +758,143 @@ mod tests {
         assert!(state.assemblies.keys().all(|key| key.0 == active));
         assert!(!state.presets.contains_key(&finished));
         assert!(state.pending_outputs.is_empty());
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn restart_keeps_selected_and_invalid_candidates_separate() -> anyhow::Result<()> {
+        use crate::DataAvailabilityRepositoryFactory;
+        use e3_data::{DataStore, InMemStore, RepositoriesFactory};
+        use e3_events::GetEvents;
+
+        async fn recovered_when(
+            recovery: &Repository<DataAvailabilityRecoveryState>,
+            ready: impl Fn(&DataAvailabilityRecoveryState) -> bool,
+        ) -> anyhow::Result<DataAvailabilityRecoveryState> {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    if let Some(state) = recovery.read().await? {
+                        if ready(&state) {
+                            return Ok(state);
+                        }
+                    }
+                    actix::clock::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await?
+        }
+
+        let e3_id = E3id::new("7", 1);
+        let mut seed = complete_assemblies(&[&e3_id], BfvPreset::SecureThreshold8192);
+        let (key, assembly) = seed.assemblies.iter().next().unwrap();
+        let key = key.clone();
+        let bytes = assembly.bytes().unwrap();
+        let commitment = assembly.pk_commitment;
+        let layout = ChunkLayout::new(bytes.len())?;
+        assert!(layout.chunk_count() > 1);
+        let event = |index| CommitteePublicKeyChunkPublished {
+            pk_commitment: commitment,
+            ..chunk_event(&bytes, index)
+        };
+        seed.assemblies.clear();
+        seed.selected_candidates.clear();
+        let recovery = DataStore::from_in_mem(&InMemStore::new(false).start())
+            .repositories()
+            .data_availability_recovery(1);
+        recovery.write_sync(&seed).await?;
+        let bus = test_bus();
+        DataAvailabilityCoordinator::attach(&bus, 1, None, recovery.clone(), &HashSet::new())
+            .await?;
+        let last = layout.chunk_count() - 1;
+        let mut malformed = event(last);
+        malformed.candidate_hash = [0; 32];
+        malformed.chunk = ArcBytes::from_bytes(&[]);
+        bus.publish_without_context(malformed)?;
+        bus.publish_without_context(event(last))?;
+        bus.publish_without_context(event(last))?;
+        bus.flush_event_pipeline().await?;
+        let partial =
+            recovered_when(&recovery, |state| state.assemblies.contains_key(&key)).await?;
+        assert_eq!(
+            partial.selected_candidates[&(key.0.clone(), key.1.clone())],
+            key.2
+        );
+        assert!(partial.assemblies[&key].bytes().is_none());
+        bus.publish_shutdown_and_wait().await?;
+        bus.flush_event_pipeline().await?;
+
+        let bus = test_bus();
+        DataAvailabilityCoordinator::attach(&bus, 1, None, recovery.clone(), &HashSet::new())
+            .await?;
+        let mut second_candidate = event(0);
+        second_candidate.candidate_hash = [0x55; 32];
+        bus.publish_without_context(second_candidate)?;
+        let mut changed_metadata = event(last);
+        changed_metadata.pk_commitment = [0; 32];
+        bus.publish_without_context(changed_metadata)?;
+        // Neither the original bytes nor another hash from that publisher revives the candidate.
+        for index in 0..layout.chunk_count() {
+            bus.publish_without_context(event(index))?;
+        }
+        bus.flush_event_pipeline().await?;
+        let invalid =
+            recovered_when(&recovery, |state| state.invalid_candidates.contains(&key)).await?;
+        assert_eq!(invalid.assemblies.len(), 1);
+        bus.publish_shutdown_and_wait().await?;
+        bus.flush_event_pipeline().await?;
+
+        let bus = test_bus();
+        let history = bus.history();
+        DataAvailabilityCoordinator::attach(&bus, 1, None, recovery.clone(), &HashSet::new())
+            .await?;
+        bus.publish_without_context(event(last))?;
+        let good_publisher = "0x0000000000000000000000000000000000000002".to_owned();
+        let good_key = (key.0.clone(), good_publisher.clone(), key.2);
+        for index in (0..layout.chunk_count()).rev() {
+            bus.publish_without_context(CommitteePublicKeyChunkPublished {
+                publisher: good_publisher.clone(),
+                ..event(index)
+            })?;
+        }
+        bus.flush_event_pipeline().await?;
+        let restored = recovered_when(&recovery, |state| {
+            state
+                .assemblies
+                .get(&good_key)
+                .is_some_and(|assembly| assembly.bytes().is_some())
+        })
+        .await?;
+        assert!(restored.invalid_candidates.contains(&key));
+        assert!(!restored.invalid_candidates.contains(&good_key));
+        assert_eq!(restored.assemblies.len(), 2);
+        assert_eq!(restored.selected_candidates.len(), 2);
+        assert_eq!(restored.assemblies[&good_key].bytes(), Some(bytes.clone()));
+        assert!(history
+            .send(GetEvents::<InterfoldEvent>::new())
+            .await?
+            .iter()
+            .all(|event| !matches!(event.get_data(), InterfoldEventData::CommitteePublished(_))));
+
+        bus.publish_without_context(e3_events::EffectsEnabled::new())?;
+        bus.flush_event_pipeline().await?;
+        let published = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                // A derived event is appended after the input handler has run.
+                bus.flush_event_pipeline().await?;
+                let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+                if let Some(publication) = events.iter().find_map(|event| match event.get_data() {
+                    InterfoldEventData::CommitteePublished(event) => Some(event.clone()),
+                    _ => None,
+                }) {
+                    return Ok::<_, anyhow::Error>(publication);
+                }
+                actix::clock::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await??;
+        assert_eq!(&published.public_key[..], bytes.as_slice());
+        assert_eq!(published.e3_id, e3_id);
+        bus.publish_shutdown_and_wait().await?;
         Ok(())
     }
 

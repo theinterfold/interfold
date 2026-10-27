@@ -2,21 +2,24 @@
 
 ## Purpose
 
-Content-addressed data transport for Interfold applications: publication coordinates, retrieval, and
-Avail/VectorX bridge-proof encoding. Application job scheduling and Ethereum acceptance remain with
-their respective owners.
+Content-addressed data transport and committee-public-key chunk mechanics. Application scheduling,
+candidate selection, persistence, and Ethereum acceptance remain with their respective owners.
 
 ## Map
 
-| Location                   | Responsibility                                                                    |
-| -------------------------- | --------------------------------------------------------------------------------- |
-| [`lib.rs`](src/lib.rs)     | Content references, transport traits, bounds, HTTP reader, and VectorX proof ABI. |
-| [`avail.rs`](src/avail.rs) | Feature-gated Avail retrieval and signed submission/finalization.                 |
+| Location                             | Responsibility                                                                    |
+| ------------------------------------ | --------------------------------------------------------------------------------- |
+| [`lib.rs`](src/lib.rs)               | Content references, transport traits, bounds, HTTP reader, and VectorX proof ABI. |
+| [`avail.rs`](src/avail.rs)           | Feature-gated Avail retrieval and signed submission/finalization.                 |
+| [`public_key.rs`](src/public_key.rs) | Pure chunk layout, duplicate/conflict handling, and byte assembly.                |
 
 Publication produces pending coordinates; a later bridge query supplies the Ethereum proof and final
 reference. Retrieval checks bytes against that reference independently of bridge acceptance. The
 adapters share the content-hash/bounds boundary, so changing transport does not make RPC bytes
 authoritative.
+
+Public-key chunk helpers operate on consumer-owned slots without changing their stored types.
+Complete, shape-valid bytes still require candidate-hash and request-time key-commitment checks.
 
 ## Publication and retrieval
 
@@ -51,5 +54,7 @@ Run `cargo test --locked -p e3-data-availability`; check optional adapters with
 `cargo check --locked -p e3-data-availability --features avail-read,avail-submit`.
 
 Inline tests cover substituted bytes, bridge response/URL shape, Solidity proof encoding, and
-optional endpoint validation. They do not publish to Avail or wait for bridge finality; those
-require configured live services. See [AGENTS.md](AGENTS.md) for adapter-change guidance.
+optional endpoint validation. Chunk boundary vectors are also exercised against the Solidity
+registry in `test/Registry/CiphernodeRegistryOwnable.spec.ts`. Tests do not publish to Avail or wait
+for bridge finality; those require configured live services. See [AGENTS.md](AGENTS.md) for
+adapter-change guidance.

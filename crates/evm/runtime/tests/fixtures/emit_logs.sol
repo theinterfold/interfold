@@ -22,6 +22,17 @@ contract EmitLogs {
   event AdmissionStarted(address indexed operator, uint48 timepoint);
   event AdmissionPolicyUpdated(uint48 timepoint, AdmissionPolicy policy);
   event BondOwnerSet(address indexed operator, address indexed bondOwner);
+  event CommitteePublicKeyChunkPublished(
+    uint256 indexed e3Id,
+    address indexed publisher,
+    bytes32 indexed candidateHash,
+    address[] nodes,
+    bytes32 pkCommitment,
+    uint16 chunkIndex,
+    uint16 chunkCount,
+    uint32 totalLength,
+    bytes chunk
+  );
 
   string _value;
 
@@ -53,5 +64,28 @@ contract EmitLogs {
     for (uint256 i = 0; i < operators.length; i++) {
       emit BondOwnerSet(operators[i], owners[i]);
     }
+  }
+
+  function publishCommitteePublicKey(
+    uint256 e3Id,
+    bytes32 candidateHash,
+    uint16 chunkIndex,
+    uint16 chunkCount,
+    uint32 totalLength,
+    bytes calldata chunk
+  ) external {
+    address[] memory nodes = new address[](1);
+    nodes[0] = msg.sender;
+    emit CommitteePublicKeyChunkPublished(
+      e3Id,
+      msg.sender,
+      candidateHash,
+      nodes,
+      bytes32(uint256(9)),
+      chunkIndex,
+      chunkCount,
+      totalLength,
+      chunk
+    );
   }
 }

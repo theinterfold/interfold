@@ -174,7 +174,7 @@ function system({ units, tag }) {
         label: 'events in · transactions out',
         refs: [
           'crates/evm/runtime/src/event_decoding/catalog.rs@144@"E3Requested"',
-          'crates/evm/runtime/src/ciphernode_registry/effects.rs@42@send_tx_idempotent("submitTicket"',
+          'crates/evm/runtime/src/ciphernode_registry/effects.rs@41@send_tx_idempotent("submitTicket"',
           'crates/evm/runtime/src/interfold_writing/effects.rs@272@.publishPlaintextOutput(e3_id, decrypted_output, proof)',
         ],
       },
