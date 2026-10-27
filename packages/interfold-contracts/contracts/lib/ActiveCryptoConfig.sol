@@ -11,7 +11,8 @@ import { IInterfold } from "../interfaces/IInterfold.sol";
 // Mainnet supports secure-8192 with all committees. Sepolia and local chains additionally
 // support insecure-64 (trBFV), insecure (l-BFV, degree 128), and secure-16384 (l-BFV) with all
 // committees. They also
-// support secure-16384-simd (l-BFV, plaintext modulus 65537) with all committees, and insecure SIMD
+// support secure-16384-simd and secure-16384-simd-d6 (l-BFV, plaintext modulus 65537) with all
+// committees, and insecure SIMD
 // (l-BFV, plaintext modulus 257) with the minimum and micro committees.
 library ActiveCryptoConfig {
     bytes32 internal constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
@@ -52,6 +53,12 @@ library ActiveCryptoConfig {
     uint8 internal constant SECURE_16384_SIMD_PARAM_SET = 6;
     bytes32 internal constant SECURE_16384_SIMD_PARAM_SET_HASH =
         0x7bb0115496a871fa95c282abe46f910d53ff22270e7c225e2468f9420570fe53;
+
+    bytes32 internal constant SECURE_16384_SIMD_D6_CONFIG_ID =
+        0xd2338ceef6b88f3e9f31843168abda095ec15bb8bc74060a4fc36d980403de0d;
+    uint8 internal constant SECURE_16384_SIMD_D6_PARAM_SET = 7;
+    bytes32 internal constant SECURE_16384_SIMD_D6_PARAM_SET_HASH =
+        0xdd27d8ab4febb75c65a5bf4b1730077ec6ef1cc3df0536ca6ae246b47ed583e9;
 
     uint8 internal constant MINIMUM_COMMITTEE_SIZE = 0;
     uint32 internal constant MINIMUM_T = 1;
@@ -101,6 +108,8 @@ library ActiveCryptoConfig {
         if (paramSet == INSECURE_SIMD_PARAM_SET) return INSECURE_SIMD_CONFIG_ID;
         if (paramSet == SECURE_16384_SIMD_PARAM_SET)
             return SECURE_16384_SIMD_CONFIG_ID;
+        if (paramSet == SECURE_16384_SIMD_D6_PARAM_SET)
+            return SECURE_16384_SIMD_D6_CONFIG_ID;
         revert IInterfold.UnsupportedCryptoConfig();
     }
 
@@ -120,7 +129,8 @@ library ActiveCryptoConfig {
                 paramSet == SECURE_16384_PARAM_SET ||
                 paramSet == INSECURE_LBFV_PARAM_SET ||
                 paramSet == INSECURE_SIMD_PARAM_SET ||
-                paramSet == SECURE_16384_SIMD_PARAM_SET;
+                paramSet == SECURE_16384_SIMD_PARAM_SET ||
+                paramSet == SECURE_16384_SIMD_D6_PARAM_SET;
         }
         return paramSet == SECURE_PARAM_SET;
     }
@@ -144,7 +154,8 @@ library ActiveCryptoConfig {
             paramSet == INSECURE_LBFV_PARAM_SET ||
             paramSet == SECURE_PARAM_SET ||
             paramSet == SECURE_16384_PARAM_SET ||
-            paramSet == SECURE_16384_SIMD_PARAM_SET
+            paramSet == SECURE_16384_SIMD_PARAM_SET ||
+            paramSet == SECURE_16384_SIMD_D6_PARAM_SET
         ) {
             if (
                 committeeSize == MINIMUM_COMMITTEE_SIZE ||
@@ -207,6 +218,8 @@ library ActiveCryptoConfig {
             expectedHash = INSECURE_SIMD_PARAM_SET_HASH;
         else if (paramSet == SECURE_16384_SIMD_PARAM_SET)
             expectedHash = SECURE_16384_SIMD_PARAM_SET_HASH;
+        else if (paramSet == SECURE_16384_SIMD_D6_PARAM_SET)
+            expectedHash = SECURE_16384_SIMD_D6_PARAM_SET_HASH;
         else if (paramSet == SECURE_PARAM_SET)
             expectedHash = SECURE_PARAM_SET_HASH;
         else expectedHash = SECURE_16384_PARAM_SET_HASH;
