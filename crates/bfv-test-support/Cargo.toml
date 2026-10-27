@@ -3,7 +3,7 @@ name = "e3-bfv-test-support"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Artificial encrypted ballots and tally fixtures"
+description = "BFV encryption and homomorphic summation fixtures for tests"
 repository.workspace = true
 publish = false
 
