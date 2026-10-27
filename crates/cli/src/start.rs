@@ -54,7 +54,9 @@ pub async fn execute(mut config: NodeConfig, peers: Vec<String>, bootstrap: bool
         }
     }?;
 
-    if let Some(dashboard_port) = config.dashboard_port() {
+    let dashboard_port = config.dashboard_port();
+    let metrics_addr = config.metrics_addr();
+    if dashboard_port.is_some() || metrics_addr.is_some() {
         let chains = node
             .aggregate_ids()
             .iter()
@@ -76,7 +78,8 @@ pub async fn execute(mut config: NodeConfig, peers: Vec<String>, bootstrap: bool
             address: node.address.clone(),
             peer_id: node.peer_id.to_string(),
             quic_port: config.quic_port(),
-            dashboard_port,
+            // Only the dashboard reads its port.
+            dashboard_port: dashboard_port.unwrap_or_default(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
             chains,
         };
@@ -86,13 +89,27 @@ pub async fn execute(mut config: NodeConfig, peers: Vec<String>, bootstrap: bool
             node.aggregate_ids().to_vec(),
             node.network_status(),
             config.chains().clone(),
-        );
-        tokio::task::spawn_local(async move {
-            if let Err(error) = e3_dashboard::start_dashboard(dashboard_port, state).await {
-                error!(%error, "node dashboard stopped");
-            }
-        });
-        info!("Dashboard available at http://127.0.0.1:{dashboard_port}");
+        )
+        .with_ingestion_status(node.ingestion_status())
+        .with_task_pool(node.task_pool());
+        // The dashboard and the metrics share one state, so they share its projection and caches.
+        if let Some(dashboard_port) = dashboard_port {
+            let state = state.clone();
+            tokio::task::spawn_local(async move {
+                if let Err(error) = e3_dashboard::start_dashboard(dashboard_port, state).await {
+                    error!(%error, "node dashboard stopped");
+                }
+            });
+            info!("Dashboard available at http://127.0.0.1:{dashboard_port}");
+        }
+        if let Some(metrics_addr) = metrics_addr {
+            tokio::task::spawn_local(async move {
+                if let Err(error) = e3_dashboard::start_metrics(metrics_addr, state).await {
+                    error!(%error, "node metrics endpoint stopped");
+                }
+            });
+            info!("Metrics available at http://{metrics_addr}/metrics");
+        }
     }
 
     info!(
