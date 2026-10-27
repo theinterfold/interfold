@@ -36,6 +36,7 @@ import { PictureField } from '@/components/PictureField'
 const MAX_TITLE_BYTES = 80
 
 const DURATIONS = [
+  { label: '10 minutes', seconds: 10 * 60 },
   { label: '15 minutes', seconds: 15 * 60 },
   { label: '30 minutes', seconds: 30 * 60 },
   { label: '1 hour', seconds: 60 * 60 },
@@ -62,7 +63,7 @@ const CreateAuction: React.FC = () => {
   const [title, setTitle] = useState('')
   const [auctionType, setAuctionType] = useState<AuctionType>(AuctionType.SecondPrice)
   const [priceForm, setPriceForm] = useState(INITIAL_PRICE_FORM)
-  const [durationSeconds, setDurationSeconds] = useState<number>(DURATIONS[2].seconds)
+  const [durationSeconds, setDurationSeconds] = useState<number>(DURATIONS[3].seconds)
   const [who, setWho] = useState<'anyone' | 'allowlist'>('anyone')
   const [allowlistText, setAllowlistText] = useState('')
   const [picture, setPicture] = useState<Blob | null>(null)

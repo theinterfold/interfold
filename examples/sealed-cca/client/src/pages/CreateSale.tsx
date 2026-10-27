@@ -21,6 +21,7 @@ import Spinner from '@/components/Spinner'
 const MAX_TITLE_BYTES = 80
 
 const DURATIONS = [
+  { label: '10 minutes', seconds: 10 * 60 },
   { label: '15 minutes', seconds: 15 * 60 },
   { label: '30 minutes', seconds: 30 * 60 },
   { label: '1 hour', seconds: 60 * 60 },
@@ -48,7 +49,7 @@ const CreateSale: React.FC = () => {
   const [paymentTokenText, setPaymentTokenText] = useState<string>(PAYMENT_TOKEN_ADDRESS ?? '')
   const [escrowText, setEscrowText] = useState('100')
   const [priceForm, setPriceForm] = useState(INITIAL_PRICE_FORM)
-  const [durationSeconds, setDurationSeconds] = useState<number>(DURATIONS[2].seconds)
+  const [durationSeconds, setDurationSeconds] = useState<number>(DURATIONS[3].seconds)
 
   const saleToken = useTokenInfo(saleTokenText)
   const paymentToken = useTokenInfo(paymentTokenText)
