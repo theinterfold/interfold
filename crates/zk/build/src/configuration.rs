@@ -47,6 +47,7 @@ pub struct OperationParams {
     secure: PresetMaterial,
     secure16384: PresetMaterial,
     secure16384_simd: PresetMaterial,
+    secure16384_simd_d6: PresetMaterial,
 }
 
 impl OperationParams {
@@ -58,6 +59,7 @@ impl OperationParams {
             secure: PresetMaterial::new(BfvPreset::SecureThreshold8192)?,
             secure16384: PresetMaterial::new(BfvPreset::SecureThreshold16384)?,
             secure16384_simd: PresetMaterial::new(BfvPreset::SecureThreshold16384Simd)?,
+            secure16384_simd_d6: PresetMaterial::new(BfvPreset::SecureThreshold16384SimdD6)?,
         })
     }
     pub fn get(&self, preset: BfvPreset) -> &PresetMaterial {
@@ -68,6 +70,7 @@ impl OperationParams {
             BfvPreset::SecureThreshold8192 => &self.secure,
             BfvPreset::SecureThreshold16384 => &self.secure16384,
             BfvPreset::SecureThreshold16384Simd => &self.secure16384_simd,
+            BfvPreset::SecureThreshold16384SimdD6 => &self.secure16384_simd_d6,
             _ => unreachable!("build selects threshold presets"),
         }
     }
@@ -443,6 +446,10 @@ pub fn parity_files(
         ("SECURE_8192", BfvPreset::SecureThreshold8192),
         ("SECURE_16384", BfvPreset::SecureThreshold16384),
         ("SECURE_16384_SIMD", BfvPreset::SecureThreshold16384Simd),
+        (
+            "SECURE_16384_SIMD_D6",
+            BfvPreset::SecureThreshold16384SimdD6,
+        ),
     ] {
         // The smudging bound is only defined for the committees the preset supports.
         if !preset_supports_committee(preset, committee) {
@@ -585,6 +592,11 @@ pub fn protocol_contract(
         ("SECURE", BfvPreset::SecureThreshold8192, 2),
         ("SECURE_16384", BfvPreset::SecureThreshold16384, 3),
         ("SECURE_16384_SIMD", BfvPreset::SecureThreshold16384Simd, 6),
+        (
+            "SECURE_16384_SIMD_D6",
+            BfvPreset::SecureThreshold16384SimdD6,
+            7,
+        ),
     ] {
         let material = params.get(preset);
         text = text
@@ -620,6 +632,10 @@ pub fn protocol_contract(
         ("secure-8192", &["SECURE_PARAM_SET"][..]),
         ("secure-16384", &["SECURE_16384_PARAM_SET"][..]),
         ("secure-16384-simd", &["SECURE_16384_SIMD_PARAM_SET"][..]),
+        (
+            "secure-16384-simd-d6",
+            &["SECURE_16384_SIMD_D6_PARAM_SET"][..],
+        ),
     ] {
         let committees = pairs
             .iter()
@@ -690,6 +706,7 @@ pub fn protocol_utils(
         BfvPreset::SecureThreshold8192 => 2,
         BfvPreset::SecureThreshold16384 => 3,
         BfvPreset::SecureThreshold16384Simd => 6,
+        BfvPreset::SecureThreshold16384SimdD6 => 7,
         _ => unreachable!("build selects threshold presets"),
     };
     let mut after = before.to_string();
@@ -729,6 +746,11 @@ pub fn protocol_utils(
             "SECURE_16384_SIMD",
             BfvPreset::SecureThreshold16384Simd,
         ),
+        (
+            "SECURE_16384_SIMD_D6",
+            "SECURE_16384_SIMD_D6",
+            BfvPreset::SecureThreshold16384SimdD6,
+        ),
     ] {
         let material = params.get(preset);
         for (suffix, value) in [
@@ -764,6 +786,7 @@ pub fn protocol_utils(
             "secure-8192" => "SECURE",
             "secure-16384" => "SECURE_16384",
             "secure-16384-simd" => "SECURE_16384_SIMD",
+            "secure-16384-simd-d6" => "SECURE_16384_SIMD_D6",
             _ => bail!("Unsupported deployment preset: {}", pair[0]),
         };
         let name = format!("{prefix}_{}_BFV_CONFIG", pair[1].to_uppercase());

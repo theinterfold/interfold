@@ -24,15 +24,16 @@ use std::{
 
 const COMMITTEES: &[&str] = &["minimum", "micro", "small"];
 // Every preset with its own artifact directory and Noir module. `insecure-64` and `secure-8192`
-// serve the trBFV path; `insecure`, `insecure-simd`, `secure-16384` and `secure-16384-simd` serve the
-// l-BFV path.
-const ARTIFACT_PRESETS: [BfvPreset; 6] = [
+// serve the trBFV path; `insecure`, `insecure-simd`, `secure-16384`, `secure-16384-simd` and
+// `secure-16384-simd-d6` serve the l-BFV path.
+const ARTIFACT_PRESETS: [BfvPreset; 7] = [
     BfvPreset::InsecureThreshold64,
     BfvPreset::InsecureThresholdLbfv,
     BfvPreset::InsecureThresholdSimd,
     BfvPreset::SecureThreshold8192,
     BfvPreset::SecureThreshold16384,
     BfvPreset::SecureThreshold16384Simd,
+    BfvPreset::SecureThreshold16384SimdD6,
 ];
 
 pub fn build_pairs(root: &Path) -> Result<Vec<[String; 2]>> {
@@ -351,6 +352,7 @@ fn preset(value: &str) -> Result<BfvPreset> {
         "secure-8192" => Ok(BfvPreset::SecureThreshold8192),
         "secure-16384" => Ok(BfvPreset::SecureThreshold16384),
         "secure-16384-simd" => Ok(BfvPreset::SecureThreshold16384Simd),
+        "secure-16384-simd-d6" => Ok(BfvPreset::SecureThreshold16384SimdD6),
         _ => bail!("Select one supported preset, not {value}"),
     }
 }
@@ -362,6 +364,7 @@ fn tier(preset: BfvPreset) -> &'static str {
         BfvPreset::SecureThreshold8192 => "secure_8192",
         BfvPreset::SecureThreshold16384 => "secure_16384",
         BfvPreset::SecureThreshold16384Simd => "secure_16384_simd",
+        BfvPreset::SecureThreshold16384SimdD6 => "secure_16384_simd_d6",
         _ => unreachable!("build selects threshold presets"),
     }
 }
@@ -373,6 +376,7 @@ fn preset_name(preset: BfvPreset) -> &'static str {
         BfvPreset::SecureThreshold8192 => "secure-8192",
         BfvPreset::SecureThreshold16384 => "secure-16384",
         BfvPreset::SecureThreshold16384Simd => "secure-16384-simd",
+        BfvPreset::SecureThreshold16384SimdD6 => "secure-16384-simd-d6",
         _ => unreachable!("build selects threshold presets"),
     }
 }

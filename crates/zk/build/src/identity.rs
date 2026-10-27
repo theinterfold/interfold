@@ -373,12 +373,12 @@ pub fn source_hash_with_updates(
         };
         if path == "circuits/lib/src/configs/default/mod.nr" {
             source = Regex::new(
-                r"preset: (insecure[-_]64|insecure[-_]simd|insecure|secure[-_]8192|secure[-_]16384[-_]simd|secure[-_]16384)\b",
+                r"preset: (insecure[-_]64|insecure[-_]simd|insecure|secure[-_]8192|secure[-_]16384[-_]simd[-_]d6|secure[-_]16384[-_]simd|secure[-_]16384)\b",
             )?
             .replace_all(&source, "preset: <selected>")
             .into_owned();
             source = Regex::new(
-                r"super::(insecure_64|insecure_simd|insecure|secure_8192|secure_16384_simd|secure_16384)::",
+                r"super::(insecure_64|insecure_simd|insecure|secure_8192|secure_16384_simd_d6|secure_16384_simd|secure_16384)::",
             )?
             .replace_all(&source, "super::<selected>::")
             .into_owned();

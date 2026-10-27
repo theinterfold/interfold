@@ -61,6 +61,7 @@ pub fn enabled(circuit: &Circuit, preset: BfvPreset) -> bool {
         BfvPreset::InsecureThresholdLbfv
         | BfvPreset::SecureThreshold16384
         | BfvPreset::SecureThreshold16384Simd
+        | BfvPreset::SecureThreshold16384SimdD6
         | BfvPreset::InsecureThresholdSimd => {
             LBFV.contains(&circuit.name.as_str())
                 || SHARED.contains(&format!("{}/{}", circuit.group, circuit.name).as_str())
@@ -72,7 +73,11 @@ pub fn enabled(circuit: &Circuit, preset: BfvPreset) -> bool {
 pub fn has_lbfv(preset: &str) -> bool {
     matches!(
         preset,
-        "insecure" | "insecure-simd" | "secure-16384" | "secure-16384-simd"
+        "insecure"
+            | "insecure-simd"
+            | "secure-16384"
+            | "secure-16384-simd"
+            | "secure-16384-simd-d6"
     )
 }
 

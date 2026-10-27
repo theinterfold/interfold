@@ -156,8 +156,8 @@ fn build_policy_rejects_disabled_pairs_before_tools_and_filters_all_selectors() 
             },
             2,
         ),
-        // The micro committee builds insecure-64, insecure, secure-16384, insecure-simd and
-        // secure-16384-simd; secure-8192 is disabled in this policy.
+        // The micro committee builds insecure-64, insecure, secure-16384, insecure-simd,
+        // secure-16384-simd and secure-16384-simd-d6; secure-8192 is disabled in this policy.
         (
             {
                 let mut r = request();
@@ -165,7 +165,7 @@ fn build_policy_rejects_disabled_pairs_before_tools_and_filters_all_selectors() 
                 r.committee = CommitteeSelection::Single(CiphernodesCommitteeSize::Micro);
                 r
             },
-            5,
+            6,
         ),
     ] {
         let selected = options.selected_pairs(temp.path()).unwrap();
@@ -387,6 +387,8 @@ fn source_identity_tracks_inputs_not_generated_selections_or_tests() {
     write(root, selector, "// preset: secure-16384\npub use super::secure_16384::threshold;\npub global MAX_MSG_NON_ZERO_COEFFS: u32 = 51;\n");
     assert_eq!(hash(), before);
     write(root, selector, "// preset: secure-16384-simd\npub use super::secure_16384_simd::threshold;\npub global MAX_MSG_NON_ZERO_COEFFS: u32 = 50;\n");
+    assert_eq!(hash(), before);
+    write(root, selector, "// preset: secure-16384-simd-d6\npub use super::secure_16384_simd_d6::threshold;\npub global MAX_MSG_NON_ZERO_COEFFS: u32 = 50;\n");
     assert_eq!(hash(), before);
     write(
         root,
@@ -830,7 +832,7 @@ fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
     ] {
         let parity = configuration::parity_files(committee, &params).unwrap();
         // One parity matrix per artifact preset, and the smudging file.
-        assert_eq!(parity.len(), 7);
+        assert_eq!(parity.len(), 8);
     }
     let material = params.get(BfvPreset::InsecureThreshold64);
     let bounds = configuration::bound_updates(
@@ -947,6 +949,10 @@ fn protocol_utils_rewrites_drifted_message_widths() {
         ("SECURE", BfvPreset::SecureThreshold8192),
         ("SECURE_16384", BfvPreset::SecureThreshold16384),
         ("SECURE_16384_SIMD", BfvPreset::SecureThreshold16384Simd),
+        (
+            "SECURE_16384_SIMD_D6",
+            BfvPreset::SecureThreshold16384SimdD6,
+        ),
     ] {
         assert!(
             rendered.contains(&format!(
@@ -1247,6 +1253,10 @@ fn simd_committee_support_follows_smudging_feasibility_and_build_policy() {
     for (preset, dir) in [
         (BfvPreset::InsecureThresholdSimd, "insecure-simd"),
         (BfvPreset::SecureThreshold16384Simd, "secure-16384-simd"),
+        (
+            BfvPreset::SecureThreshold16384SimdD6,
+            "secure-16384-simd-d6",
+        ),
     ] {
         for name in COMMITTEES {
             let committee: CiphernodesCommitteeSize = name.parse().unwrap();
