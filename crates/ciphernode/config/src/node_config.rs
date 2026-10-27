@@ -12,7 +12,7 @@ use anyhow::Result;
 use e3_evm_config::ChainConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::{collections::HashMap, env, path::PathBuf};
+use std::{collections::HashMap, env, net::SocketAddr, path::PathBuf};
 
 /// The structure within the app configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -49,6 +49,11 @@ pub struct NodeDefinition {
     pub autowallet: bool,
     /// Optional dashboard port. When set, serves a monitoring web UI on this port.
     pub dashboard_port: Option<u16>,
+    /// Optional listen address of the Prometheus metrics endpoint, for example `127.0.0.1:9095`.
+    /// When set, serves `GET /metrics` there. Unlike the dashboard it may bind a non-loopback
+    /// interface, because it serves aggregate numbers only, so a scraper outside a container can
+    /// reach it.
+    pub metrics_addr: Option<SocketAddr>,
     /// Run this profile as a bootstrap peer: networking and chain reads only, as
     /// `interfold start --bootstrap`. `interfold nodes up` reads it for each profile it starts.
     #[serde(default)]
@@ -134,6 +139,7 @@ impl Default for NodeDefinition {
             autopassword: false,
             autowallet: false,
             dashboard_port: None,
+            metrics_addr: None,
             bootstrap: false,
             multithread_reserve_threads: default_multithread_reserve_threads(),
             multithread_concurrent_jobs: default_multithread_concurrent_jobs(),
@@ -402,6 +408,11 @@ impl NodeConfig {
     /// Get the optional dashboard port
     pub fn dashboard_port(&self) -> Option<u16> {
         self.node_def().dashboard_port
+    }
+
+    /// Get the optional listen address of the Prometheus metrics endpoint
+    pub fn metrics_addr(&self) -> Option<SocketAddr> {
+        self.node_def().metrics_addr
     }
 
     /// CPUs reserved for non-compute work (Actix, networking, RPC).

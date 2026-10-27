@@ -482,6 +482,37 @@ chains:
         });
     }
 
+    /// The metrics endpoint is off unless a profile sets its address, in the file or with
+    /// `E3_NODE__METRICS_ADDR`, and an address without a port is rejected.
+    #[test]
+    fn metrics_addr_is_opt_in_and_needs_a_port() {
+        Jail::expect_with(|jail| {
+            jail.clear_env();
+            jail.set_env("HOME", jail.directory().display().to_string());
+            jail.create_file("interfold.config.yaml", "{}")?;
+            let metrics_addr = || {
+                load_config("_default", None, None)
+                    .map(|config| config.node.metrics_addr())
+                    .map_err(|error| error.to_string())
+            };
+
+            assert_eq!(metrics_addr()?, None);
+
+            jail.create_file(
+                "interfold.config.yaml",
+                "node:\n  metrics_addr: \"127.0.0.1:9095\"\n",
+            )?;
+            assert_eq!(metrics_addr()?, Some("127.0.0.1:9095".parse().unwrap()));
+
+            jail.set_env("E3_NODE__METRICS_ADDR", "0.0.0.0:9095");
+            assert_eq!(metrics_addr()?, Some("0.0.0.0:9095".parse().unwrap()));
+
+            jail.set_env("E3_NODE__METRICS_ADDR", "0.0.0.0");
+            assert!(metrics_addr().is_err());
+            Ok(())
+        });
+    }
+
     #[test]
     fn program_and_node_settings_use_the_same_file_and_environment() {
         Jail::expect_with(|jail| {
