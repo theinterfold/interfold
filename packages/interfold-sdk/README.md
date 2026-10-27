@@ -498,6 +498,7 @@ on-chain `paramSet` index registered in the Interfold contract:
 | `'INSECURE_THRESHOLD_LBFV'` | `4`                       | l-BFV | Fast local or testnet l-BFV work (degree 128). Not cryptographically secure. |
 | `'INSECURE_THRESHOLD_SIMD'` | `5`                       | l-BFV | Local or testnet l-BFV work with SIMD slots (degree 128, plaintext modulus 257). Not cryptographically secure. |
 | `'SECURE_THRESHOLD_16384_SIMD'` | `6`                   | l-BFV | l-BFV work with 16384 SIMD slots (degree 16384, plaintext modulus 65537, five ciphertext moduli). |
+| `'SECURE_THRESHOLD_16384_SIMD_D6'` | `7`                | l-BFV | l-BFV work with 16384 SIMD slots (degree 16384, plaintext modulus 65537, eight ciphertext moduli for multiplicative depth 6). |
 
 | Network           | Supported presets                                                                                                                  |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |

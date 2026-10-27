@@ -66,6 +66,7 @@ const LBFV_PRESETS: ReadonlySet<ThresholdBfvParamsPresetName> = new Set([
   'INSECURE_THRESHOLD_SIMD',
   'SECURE_THRESHOLD_16384',
   'SECURE_THRESHOLD_16384_SIMD',
+  'SECURE_THRESHOLD_16384_SIMD_D6',
 ])
 
 /** Chunked proof bundles by polynomial degree. */
@@ -75,20 +76,23 @@ const CHUNKED_BUNDLE_DEGREES = {
   'secure-8192': 8192,
   'secure-16384': 16384,
   'secure-16384-simd': 16384,
+  'secure-16384-simd-d6': 16384,
 } as const
 
 type ChunkedBundleName = keyof typeof CHUNKED_BUNDLE_DEGREES
 
 /**
  * The bundle of each l-BFV preset. `insecure` and `insecure-simd` share degree 128, and
- * `secure-16384` and `secure-16384-simd` share degree 16384, but each pair differs in the plaintext
- * modulus, so a preset must pick its bundle by name, not by degree.
+ * `secure-16384`, `secure-16384-simd` and `secure-16384-simd-d6` share degree 16384, but each
+ * differs in the plaintext modulus or the ciphertext moduli, so a preset must pick its bundle by name,
+ * not by degree.
  */
 const CHUNKED_BUNDLE_BY_PRESET: Partial<Record<ThresholdBfvParamsPresetName, ChunkedBundleName>> = {
   INSECURE_THRESHOLD_LBFV: 'insecure',
   INSECURE_THRESHOLD_SIMD: 'insecure-simd',
   SECURE_THRESHOLD_16384: 'secure-16384',
   SECURE_THRESHOLD_16384_SIMD: 'secure-16384-simd',
+  SECURE_THRESHOLD_16384_SIMD_D6: 'secure-16384-simd-d6',
 }
 
 const loadProofBundle = async (bundle: ChunkedBundleName): Promise<UserDataEncryptionProofBundle> => {
@@ -103,6 +107,8 @@ const loadProofBundle = async (bundle: ChunkedBundleName): Promise<UserDataEncry
       return (await import('@interfold/sdk/internal/presets/secure-16384')).secure16384ProofBundle
     case 'secure-16384-simd':
       return (await import('@interfold/sdk/internal/presets/secure-16384-simd')).secure16384SimdProofBundle
+    case 'secure-16384-simd-d6':
+      return (await import('@interfold/sdk/internal/presets/secure-16384-simd-d6')).secure16384SimdD6ProofBundle
   }
 }
 

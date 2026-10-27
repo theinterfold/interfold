@@ -40,6 +40,10 @@ export enum ParamSet {
   InsecureLbfv = 4,
   /** Insecure SIMD l-BFV preset (N=128, plaintext modulus 257). Test-only; not cryptographically secure. */
   InsecureSimd = 5,
+  /** Secure SIMD l-BFV preset (N=16384, plaintext modulus 65537, five 56-bit moduli, multiplicative depth 3). */
+  Secure16384Simd = 6,
+  /** Secure SIMD l-BFV preset (N=16384, plaintext modulus 65537, eight 54-bit moduli, multiplicative depth 6). */
+  Secure16384SimdD6 = 7,
 }
 
 export interface E3 {

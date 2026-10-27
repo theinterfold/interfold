@@ -105,6 +105,9 @@ export function cryptoConfigIdForParamSet(paramSet: number): Hash {
   if (paramSet === 6) {
     return '0xd053da3859a277a18b1d0bce3f59f7afb5dda18833e3e0fc32c204d066d4e65e'
   }
+  if (paramSet === 7) {
+    return '0xd2338ceef6b88f3e9f31843168abda095ec15bb8bc74060a4fc36d980403de0d'
+  }
   throw new SDKError(`Unsupported BFV parameter set: ${paramSet}`, 'UNSUPPORTED_CRYPTO_CONFIG')
 }
 

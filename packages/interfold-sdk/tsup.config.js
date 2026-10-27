@@ -15,6 +15,7 @@ const entry = [
   'src/crypto/presets/secure-8192.ts',
   'src/crypto/presets/secure-16384.ts',
   'src/crypto/presets/secure-16384-simd.ts',
+  'src/crypto/presets/secure-16384-simd-d6.ts',
   'src/contracts/index.ts',
   'src/events/index.ts',
 ]
@@ -24,6 +25,7 @@ const presetEntries = [
   '@interfold/sdk/internal/presets/secure-8192',
   '@interfold/sdk/internal/presets/secure-16384',
   '@interfold/sdk/internal/presets/secure-16384-simd',
+  '@interfold/sdk/internal/presets/secure-16384-simd-d6',
 ]
 
 export default defineConfig([

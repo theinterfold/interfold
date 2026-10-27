@@ -16,9 +16,10 @@ export interface BfvParams {
 
 /**
  * `INSECURE_THRESHOLD_64` and `SECURE_THRESHOLD_8192` run the trBFV path. The other presets run the
- * l-BFV path: `INSECURE_THRESHOLD_LBFV` (N=128, on-chain parameter set 4), `INSECURE_THRESHOLD_SIMD`
- * `SECURE_THRESHOLD_16384` and `SECURE_THRESHOLD_16384_SIMD` (N=16384, plaintext modulus 65537,
- * on-chain parameter set 6).
+ * l-BFV path: `INSECURE_THRESHOLD_LBFV` (N=128, on-chain parameter set 4), `INSECURE_THRESHOLD_SIMD`,
+ * `SECURE_THRESHOLD_16384`, `SECURE_THRESHOLD_16384_SIMD` (N=16384, plaintext modulus 65537,
+ * on-chain parameter set 6) and `SECURE_THRESHOLD_16384_SIMD_D6` (the same degree and plaintext
+ * modulus with eight ciphertext moduli for multiplicative depth 6, on-chain parameter set 7).
  */
 export type ThresholdBfvParamsPresetName =
   | 'INSECURE_THRESHOLD_64'
@@ -27,6 +28,7 @@ export type ThresholdBfvParamsPresetName =
   | 'SECURE_THRESHOLD_8192'
   | 'SECURE_THRESHOLD_16384'
   | 'SECURE_THRESHOLD_16384_SIMD'
+  | 'SECURE_THRESHOLD_16384_SIMD_D6'
 
 export const ThresholdBfvParamsPresetNames = [
   'INSECURE_THRESHOLD_64',
@@ -35,6 +37,7 @@ export const ThresholdBfvParamsPresetNames = [
   'SECURE_THRESHOLD_8192',
   'SECURE_THRESHOLD_16384',
   'SECURE_THRESHOLD_16384_SIMD',
+  'SECURE_THRESHOLD_16384_SIMD_D6',
 ] as const satisfies ReadonlyArray<ThresholdBfvParamsPresetName>
 
 export interface VerifiableEncryptionResult {
