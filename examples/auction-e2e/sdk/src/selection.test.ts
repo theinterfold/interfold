@@ -65,6 +65,15 @@ describe('selectBids', () => {
     expect(picked([...bids].reverse())).toEqual(picked(bids))
   })
 
+  it('keeps the place of an earlier bid when the update does not open', () => {
+    const tree = new Tree()
+    // Alice's update is skipped, so her first bid counts at its own place, before Bob.
+    expect(picked([tree.bid(alice, 1), tree.bid(bob, 1), tree.bid(alice, 2, [true, false, true])])).toEqual([
+      [alice, 1, 0],
+      [bob, 1, 1],
+    ])
+  })
+
   it('treats addresses that differ only in case as one bidder', () => {
     const tree = new Tree()
     const checksummed = '0xAbCdEf0000000000000000000000000000000001'

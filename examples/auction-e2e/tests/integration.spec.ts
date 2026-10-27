@@ -85,7 +85,7 @@ interface AuctionCase {
   /** The bidders, as indices into `BIDDER_KEYS`, that the allowlist gate lets in. No gate if absent. */
   allowlist?: readonly number[]
   price: number
-  /** The bidder, as an index into `BIDDER_KEYS`, that wins a region auction, or a ratio auction without a tie. */
+  /** The bidder, as an index into `BIDDER_KEYS`, that wins: on a tie, the tied bidder whose counted bid was published first. */
   winner?: number
   /** The bidders of a ratio auction whose counted bid equals the price. */
   tieSet?: readonly number[]
@@ -95,9 +95,9 @@ interface AuctionCase {
  * One auction of each type, run at the same time, each with its own number of price steps. Every
  * bid is below the `levels` of its auction, and the top step of the shorter auctions is bid, so
  * the bid circuit's `b < levels` check is met at its edge. The counted bids of the region auctions
- * are distinct, so their winner does not depend on the tie priority. The ratio first-price bids are
+ * are distinct, so their winner does not depend on the tie rule. The ratio first-price bids are
  * distinct too. The ratio second-price bids tie, on the top step of a 6-step auction, so the winner
- * is the member of the tie set that the random lane picks.
+ * is the first member of the tie set, which is the tied bidder whose counted bid was published first.
  *
  * The auctions also cover:
  * - an update: in the second-price auction bidder 0 bids step 14, which would win, then updates to
@@ -163,6 +163,7 @@ const AUCTIONS: readonly AuctionCase[] = [
       { bidder: 0, level: 5 },
       { bidder: 1, level: 5 },
     ],
+    winner: 0,
     price: 5,
     tieSet: [0, 1],
   },
@@ -555,35 +556,30 @@ describe('Sealed-bid auction', () => {
         const levels = counted.map(({ plan }) => plan.level)
 
         const plaintextOutput = await waitFor(`the plaintext output of E3 ${e3Ids[a]}`, () => plaintexts.get(e3Ids[a]), 25 * 60_000)
-        // The role-0 ciphertexts of the counted bids in bidder-position order fix the tie priority.
-        const result = await decodeAuction(
-          auction.type,
-          plaintextOutput,
-          selected.map((bid) => bid.ciphertexts[0] as `0x${string}`),
-        )
+        // Bidder position `j` is the place of the `j`-th counted bid in leaf order.
+        const result = await decodeAuction(auction.type, plaintextOutput, selected.length)
         const bidderAt = (position: number) => bidderIndex(selected[position].bidder)
         if (result.kind === 'lane') {
           console.log(
-            `${auction.title}: price ${result.price}, tie set ${result.tieSet.join(',')}, random ${result.random}, winner bidder ${result.winner === null ? 'none' : bidderAt(result.winner)}`,
+            `${auction.title}: price ${result.price}, tie set ${result.tieSet.join(',')}, winner bidder ${result.winner === null ? 'none' : bidderAt(result.winner)}`,
           )
           expect(isRatioType(auction.type)).toBe(true)
           const { price, tieSet } = expectedTieSet(auction.type, levels)
           expect(price).toBe(auction.price)
           expect(tieSet.map(bidderAt)).toEqual(auction.tieSet)
           expect(result).toMatchObject({ price, tieSet, copiesAgree: true })
-          expect(result.random).not.toBeNull()
-          // The winner is the member of the sorted tie set that the random lane picks.
-          expect(result.winner).toBe(tieSet[result.random! % tieSet.length])
+          // The winner is the first member of the sorted tie set: the tied bidder whose counted bid was published first.
+          expect(result.winner).toBe(tieSet[0])
           if (auction.winner !== undefined) expect(bidderAt(result.winner!)).toBe(auction.winner)
           expect(result.lanes.filter((lane) => lane === 'result')).toHaveLength(1)
         } else {
           console.log(
-            `${auction.title}: winner bidder ${result.winner === null ? 'none' : bidderAt(result.winner)}, price ${result.price}, priority ${result.priority.join(',')}`,
+            `${auction.title}: winner bidder ${result.winner === null ? 'none' : bidderAt(result.winner)}, price ${result.price}`,
           )
           expect(result.unusedGroupsZero).toBe(true)
           const winnerPosition = selected.findIndex((bid) => bidderIndex(bid.bidder) === auction.winner)
           expect(result).toMatchObject({ winner: winnerPosition, price: auction.price })
-          expect(expectedAuction(auction.type, levels, result.priority)).toEqual({ winner: winnerPosition, price: auction.price })
+          expect(expectedAuction(auction.type, levels)).toEqual({ winner: winnerPosition, price: auction.price })
         }
       }
     },

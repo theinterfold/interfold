@@ -33,14 +33,14 @@ const HIDDEN_REVEALED: Record<AuctionType, { hidden: string[]; revealed: string[
     hidden: ['Every bid below the top bid', 'Who came second, and by how much'],
     revealed: [
       'The winner and the top bid, which is the price',
-      'If the top bids tie: every bidder that tied, and the random value that picked the winner',
+      'If the top bids tie: every bidder that tied. The tied bidder who bid first wins',
     ],
   },
   [AuctionType.RatioSecondPrice]: {
     hidden: ['The winning bid, unless the top bids tie', 'The ranking of the losing bids'],
     revealed: [
       'The winner and the second-highest bid, which is the price',
-      'If the top bids tie: every bidder that tied (their bid is the price), and the random value that picked the winner',
+      'If the top bids tie: every bidder that tied (their bid is the price). The tied bidder who bid first wins',
     ],
   },
 }
@@ -80,10 +80,9 @@ const PROOFS = [
   ],
 ] as const
 
-const Block: React.FC<{ eyebrow: string; title: string; children: React.ReactNode }> = ({ eyebrow, title, children }) => (
+const Block: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
   <section className='space-y-5'>
     <div className='space-y-2'>
-      <p className='mono muted'>{eyebrow}</p>
       <h2 className='h2'>{title}</h2>
       <div className='hr' />
     </div>
@@ -101,7 +100,7 @@ const About: React.FC = () => (
       </p>
     </header>
 
-    <Block eyebrow='Nº 01' title='Hidden and revealed'>
+    <Block title='Hidden and revealed'>
       <div className='grid gap-5 md:grid-cols-2'>
         {AUCTION_TYPES.map((type) => (
           <div key={type} className='card space-y-4'>
@@ -139,7 +138,7 @@ const About: React.FC = () => (
       </p>
     </Block>
 
-    <Block eyebrow='Nº 02' title='Life of an auction'>
+    <Block title='Life of an auction'>
       <ol className='steps'>
         {LIFECYCLE.map(([title, body], index) => (
           <li key={title} className='step done'>
@@ -153,7 +152,7 @@ const About: React.FC = () => (
       </ol>
     </Block>
 
-    <Block eyebrow='Nº 03' title='The proofs of a bid'>
+    <Block title='The proofs of a bid'>
       <p className='prose-ed max-w-3xl'>
         A bid is three ciphertexts: two thermometers of the bid step and a random mask. Ratio-lane second price adds a fourth, the paired
         mask. The browser proves the following, which takes several minutes, and sends everything in one transaction. The contract checks
@@ -170,12 +169,13 @@ const About: React.FC = () => (
       </div>
     </Block>
 
-    <Block eyebrow='Nº 04' title='Updates, relayers and who can bid'>
+    <Block title='Updates, relayers and who can bid'>
       <p className='prose-ed max-w-3xl'>
         <strong>Updates.</strong> A bidder can bid again, up to {MAX_BIDS_PER_BIDDER} times in all: the first bid and two updates. Each is a
         new version with new ciphertexts. The contract keeps them all and the program computes over the latest version that is valid, so an
         update replaces the earlier bid without anyone seeing either. Which addresses bid and how many versions each sent is public; the
-        steps stay hidden. An update does not take another place in the auction: a place belongs to an address.
+        steps stay hidden. An update does not add a bidder, because a bidder is an address. It does lose the place in the queue: the bid
+        that counts is the latest valid version, and its place is where that version was published.
       </p>
       <p className='prose-ed max-w-3xl'>
         <strong>Relayed bids.</strong> A bidder can sign the bid in the wallet and let a relayer send the transaction, so the bidder needs
@@ -191,26 +191,28 @@ const About: React.FC = () => (
       </p>
     </Block>
 
-    <Block eyebrow='Nº 05' title='Ties'>
+    <Block title='Ties'>
       <p className='prose-ed max-w-3xl'>
-        <strong>First-price and second-price (Vickrey).</strong> If two bidders reach the highest bid, the tie goes to the bidder with the
-        higher priority. The priority comes from a hash of the published ciphertexts of all bidders. The last bidder sees the other
-        ciphertexts first, and can encrypt again until the priority favours it; with updates it can try more than once. This changes the
-        winner only when the top bids tie; a fair draw needs randomness that is fixed after the window closes, which these two types do not
-        have.
+        <strong>The first bid wins a tie.</strong> If two or more bidders reach the highest bid, the tied bidder whose counted bid was
+        published first wins. The order of the bids is the order of the transactions on chain, so nobody can change it after the fact. A
+        bidder that updates its bid goes to the back of the queue: the bid that counts is the latest valid version, and its place is where
+        that version was published. The earlier version loses its place. If the latest version does not open its commitments, the program
+        falls back to the earlier version, and that version keeps its own place.
       </p>
       <p className='prose-ed max-w-3xl'>
-        <strong>Ratio-lane types.</strong> The result shows which bidders tie for the top bid, not only one winner. If more than one bidder
-        tied, a random value picks the winner among them: take the value, divide it by the number of tied bidders, and the remainder is the
-        place of the winner in the list of tied bidders, sorted by the order in which they bid. The value is the sum of the random masks of
-        all bidders, in one extra slot. It is uniform as long as one bidder is honest, and it is fixed by the encrypted masks, so no bidder
-        can predict it or try again for a better draw. The price of this rule: the tie becomes public. Everyone sees which bidders tied and
-        that their bids are equal to the price. Ratio-lane types also allow {MAX_BIDDERS_BY_TYPE[AuctionType.RatioFirstPrice]} bidders, not{' '}
-        {MAX_BIDDERS_BY_TYPE[AuctionType.FirstPrice]}.
+        <strong>First-price and second-price (Vickrey).</strong> The result does not show that a tie happened. It shows the winner and the
+        price, and the winner is the tied bidder who bid first. No bidder can change the outcome of a tie by encrypting again, because
+        the ciphertext bytes play no part in it.
+      </p>
+      <p className='prose-ed max-w-3xl'>
+        <strong>Ratio-lane types.</strong> The result shows which bidders tie for the top bid, not only one winner. The winner is the first
+        bidder in the list of tied bidders, sorted by the order in which they bid. The price of this rule: the tie becomes public. Everyone
+        sees which bidders tied and that their bids are equal to the price. Ratio-lane types also allow{' '}
+        {MAX_BIDDERS_BY_TYPE[AuctionType.RatioFirstPrice]} bidders, not {MAX_BIDDERS_BY_TYPE[AuctionType.FirstPrice]}.
       </p>
     </Block>
 
-    <Block eyebrow='Nº 06' title='Read the result'>
+    <Block title='Read the result'>
       <p className='prose-ed max-w-3xl'>
         The committee publishes a vector of slots. For first-price and second-price (Vickrey) there are {LEVELS} slots per bidder, one per
         price step; an auction with fewer steps uses only the first ones. The program arranges them so that a zero slot marks the outcome:
@@ -222,7 +224,7 @@ const About: React.FC = () => (
         every slot is zero. At the price step the slot holds the set of bidders that tied. It writes the set as a sum with a weight of 1, 2,
         4, 8 and so on for each bidder, so one number names the whole set. Ratio-lane second price reads the set from the ratio of two
         slots. Below the price every slot is random. Ratio-lane second price repeats the lanes in three copies, and the page checks that the
-        copies agree. One more slot holds the random value for the tie draw. The result page draws the lane and decodes the winner for you.
+        copies agree. The result page draws the lane and decodes the winner for you.
       </p>
     </Block>
 

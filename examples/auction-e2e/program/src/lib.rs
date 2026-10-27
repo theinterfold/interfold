@@ -18,7 +18,11 @@
 //! bid again (an update), so the tree can hold several bids of one bidder. The policy picks, for
 //! each bidder, its latest bid whose bytes open their commitments (see [`select_bids`]). After the
 //! configuration the processor then receives one group of ciphertexts per chosen bid, in leaf
-//! order. All are SIMD-encoded; a bid is a level `b` in `0..LEVELS`:
+//! order. The bidder position is the place of the chosen bid in that order. The position does not
+//! depend on the ciphertext bytes. A bidder that updates is placed where its update is published, so
+//! an update loses the place of the earlier bid. If the top bids tie, the tied bidder with the
+//! lowest position (the one whose chosen bid was published first) wins. All ciphertexts are
+//! SIMD-encoded; a bid is a level `b` in `0..LEVELS`:
 //!
 //! ```text
 //! ge         slot i  [b >= i % LEVELS]
@@ -37,23 +41,23 @@
 //! bidders there are `copies = GROUPS / n` copies of `n` regions (region `r` of copy `c` is group
 //! `c * n + r`). The last `GROUPS - copies * n` groups are not used and the program zeroes them.
 //!
-//! Region `k` belongs to the bidder with tie priority `k` (see [`tie_priority`]). The output is a
-//! test vector times `r`, the sum of the bidder masks. Where the test is non-zero the slot is
-//! uniform, so the output shows only where the test is zero.
+//! Region `k` belongs to the bidder at position `k`. The output is a test vector times `r`, the sum
+//! of the bidder masks. Where the test is non-zero the slot is uniform, so the output shows only
+//! where the test is zero.
 //!
 //! Second-price. Slot `p` of region `k` tests whether that bidder beats every other bidder at
 //! level `p`:
 //!
 //! ```text
-//! g_k[p] = #{j != k : b_j > p} + [b_k < p] + [b_k = p] * #{j > k : b_j = p}
+//! g_k[p] = #{j != k : b_j > p} + [b_k < p] + [b_k = p] * #{j < k : b_j = p}
 //! ```
 //!
-//! `g_k[p]` is zero exactly when no other bid is above `p`, `b_k >= p`, and no bidder of higher
-//! priority ties `k` at `p`. The program outputs `g * c'(c' - 1) * r`, where `c'[p] = #{j : b_j >= p}`.
+//! `g_k[p]` is zero exactly when no other bid is above `p`, `b_k >= p`, and no earlier bidder
+//! ties `k` at `p`. The program outputs `g * c'(c' - 1) * r`, where `c'[p] = #{j : b_j >= p}`.
 //! With `s` the second-highest bid:
 //!
 //! - `p < s`: two or more bids are above `p`, the slot is uniform;
-//! - `p = s`: the slot is zero in the region of the winner (ties go to the higher priority) and
+//! - `p = s`: the slot is zero in the region of the winner (a tie goes to the lowest position) and
 //!   uniform in every other region;
 //! - `p > s`: at most one bid is at or above `p`, the slot is zero.
 //!
@@ -64,7 +68,7 @@
 //! First-price. Slot `p` of region `k` tests whether that bidder bids exactly `p` and wins:
 //!
 //! ```text
-//! f_k[p] = (1 - [b_k = p]) + #{j != k : b_j > p} + #{j > k : b_j = p}
+//! f_k[p] = (1 - [b_k = p]) + #{j != k : b_j > p} + #{j < k : b_j = p}
 //! ```
 //!
 //! Each term is non-negative and `f_k[p] <= 2n - 1 < t`, so `f_k[p]` is zero exactly at the highest
@@ -73,10 +77,11 @@
 //!
 //! # Ratio-lane types
 //!
-//! A ratio-lane type has no regions and no tie priority, and at most 8 bidders. Bidder position `k`
+//! A ratio-lane type has no regions, and at most 8 bidders. Bidder position `k`
 //! (in leaf order) has the weight `w_k = 2^k`. For `n <= 8` bidders the weights add up to
 //! `2^n - 1 < t`, so a sum of weights shows exactly which bidders it contains. The top set `T` is
-//! the set of bidders whose bid equals the highest bid. The program shows `T`, not one winner.
+//! the set of bidders whose bid equals the highest bid. The program shows `T`. The winner is the
+//! member of `T` with the lowest position.
 //!
 //! With `C[p] = #{j : b_j >= p}`, `A[p] = #{j : b_j > p}`, `m` the sum of the masks, `R` the sum of
 //! the pair masks, `Z = sum_k w_k ge_k`, `G = sum_k w_k gt_k` and `E = Z - G`, the lane of level `p`
@@ -113,16 +118,11 @@
 //! The decoder takes `s` as the highest level with `y != 0`. `y[s]` is 0 only if `R[s] = 0`, which
 //! has the probability `1 / t` for each copy. The decoder takes the highest `s` of the copies.
 //!
-//! Random lane. Both types add one slot that holds `m` and is in no result lane: slot `LEVELS`
-//! (group 1) for first-price and slot `2 * RATIO_COPIES * LEVELS` (group 6) for second-price. The
-//! encrypted masks fix its value, and it is uniform if one bidder is honest. The winner is the
-//! member of the sorted winner set at the index `random mod |set|`. Every slot that is not a result
-//! lane or the random lane is zero. The output is a function of the price, the winner set and the
-//! random lane only.
+//! Every slot that is not a result lane is zero. The output is a function of the price and the
+//! winner set only.
 //!
-//! See `shared/layout.ts` for the client decoder.
+//! See `sdk/src/layout.ts` for the client decoder.
 
-use e3_compute_provider::hashing::keccak256;
 use e3_compute_provider::policy::{InputRecord, leaf_from_digest};
 use e3_compute_provider::{ComputeError, FHEProcessorInput, InputPolicy, PublishedInput};
 use fhe::bfv::{Ciphertext, Encoding, Plaintext};
@@ -144,12 +144,6 @@ pub const LEVELS: usize = 16;
 /// The number of copies of the `y` and `z` lanes of the second-price ratio-lane auction.
 pub const RATIO_COPIES: usize = 3;
 
-/// The slot of the random lane of the first-price ratio-lane auction: level 0 of group 1.
-const RATIO_FIRST_RANDOM_SLOT: usize = LEVELS;
-
-/// The slot of the random lane of the second-price ratio-lane auction: level 0 of group 6.
-const RATIO_SECOND_RANDOM_SLOT: usize = 2 * RATIO_COPIES * LEVELS;
-
 /// The prefix of the configuration input. `AuctionProgram.CONFIG_DOMAIN` is the same bytes.
 pub const CONFIG_DOMAIN: &[u8] = b"interfold-auction-config-v1";
 
@@ -161,10 +155,11 @@ pub enum AuctionType {
     FirstPrice = 0,
     /// The winner and the second-highest bid.
     SecondPrice = 1,
-    /// The highest bid and the set of bidders that bid it, with a random value that picks the winner.
+    /// The highest bid and the set of bidders that bid it. The tied bidder with the lowest position
+    /// wins.
     RatioFirstPrice = 2,
-    /// The second-highest bid (the highest if the top bids tie) and the winner set, with a random
-    /// value that picks the winner.
+    /// The second-highest bid (the highest if the top bids tie) and the winner set. The tied bidder
+    /// with the lowest position wins.
     RatioSecondPrice = 3,
 }
 
@@ -317,34 +312,6 @@ pub fn select_bids(inputs: &[InputRecord]) -> Vec<usize> {
     selected
 }
 
-/// The tie priority of each bidder position: `priority[j]` is the region of bidder position `j`.
-/// Only the region types use it.
-///
-/// `seed = keccak256(ge_0 || ge_1 || ...)`, the concatenation of the ge-ciphertext bytes of all
-/// bidders in iteration order. The priority of position `j` is its rank when the positions are
-/// sorted ascending by `keccak256(seed || u32_be(j))`, so the position with the highest hash has
-/// priority `n - 1`. The client recomputes this from the published ciphertexts. It is fixed only
-/// once every ge ciphertext is in, so the last bidder can re-encrypt to grind it; that only matters
-/// when the top bids tie.
-pub fn tie_priority(ge_ciphertexts: &[&[u8]]) -> Vec<usize> {
-    let seed = keccak256(&ge_ciphertexts.concat());
-    let hashes: Vec<[u8; 32]> = (0..ge_ciphertexts.len() as u32)
-        .map(|j| {
-            let mut preimage = [0u8; 36];
-            preimage[..32].copy_from_slice(&seed);
-            preimage[32..].copy_from_slice(&j.to_be_bytes());
-            keccak256(&preimage)
-        })
-        .collect();
-    let mut order: Vec<usize> = (0..hashes.len()).collect();
-    order.sort_by(|&a, &b| hashes[a].cmp(&hashes[b]).then(a.cmp(&b)));
-    let mut priority = vec![0; order.len()];
-    for (rank, &position) in order.iter().enumerate() {
-        priority[position] = rank;
-    }
-    priority
-}
-
 /// The number of copies of the `n` regions that fit the ring.
 pub fn copies(degree: usize, bidders: usize) -> usize {
     degree / LEVELS / bidders
@@ -405,21 +372,20 @@ fn multiply(
 
 /// Computes the test vector of a region type under the masks. See the module documentation.
 ///
-/// `bids[j]` is `([b_j >= p], [b_j > p])`, `masks` is the sum of the bidder masks and `priority[j]`
-/// is the region of bidder position `j`. Every ct*ct product is relinearized.
+/// `bids[j]` is `([b_j >= p], [b_j > p])` of bidder position `j`, and region `j` is its region.
+/// `masks` is the sum of the bidder masks. Every ct*ct product is relinearized.
 fn tests_under_mask(
     auction_type: AuctionType,
     params: &Arc<fhe::bfv::BfvParameters>,
     relinearization_key: &LBFVRelinearizationKey,
     bids: &[(Ciphertext, Ciphertext)],
     masks: &Ciphertext,
-    priority: &[usize],
 ) -> Ciphertext {
     let n = bids.len();
     let copies = 0..copies(params.degree(), n);
     let mul = |a: &Ciphertext, b: &Ciphertext| multiply(relinearization_key, a, b);
 
-    // Region r: its own slots, and the slots of the regions below it (r wins a tie there).
+    // Region r: its own slots, and the slots of the regions after it (r wins a tie there).
     let own = |r: usize| {
         ones_in(
             params,
@@ -428,12 +394,12 @@ fn tests_under_mask(
                 .map(|c| slot(n, c, r)..slot(n, c, r + 1)),
         )
     };
-    let lower = |r: usize| {
+    let later = |r: usize| {
         ones_in(
             params,
             copies
                 .clone()
-                .map(|c| slot(n, c, 0)..slot(n, c, r)),
+                .map(|c| slot(n, c, r + 1)..slot(n, c + 1, 0)),
         )
     };
     // The slots of the regions that exist. The groups beyond the last copy hold the thermometers
@@ -445,35 +411,34 @@ fn tests_under_mask(
     );
 
     let second_price = auction_type == AuctionType::SecondPrice;
-    let (mut own_at_least, mut own_above, mut ties_above) = (vec![], vec![], vec![]);
+    let (mut own_at_least, mut own_above, mut ties_before) = (vec![], vec![], vec![]);
     for (j, (at_least, above)) in bids.iter().enumerate() {
-        let region = priority[j];
-        let selector = own(region);
+        let selector = own(j);
         own_at_least.push(at_least * &selector);
         if second_price {
             own_above.push(above * &selector);
         }
-        ties_above.push(&(at_least - above) * &lower(region));
+        ties_before.push(&(at_least - above) * &later(j));
     }
     let own_at_least = sum(own_at_least);
-    // #{j > k : b_j = p} in region k.
-    let ties_above = sum(ties_above);
+    // #{j < k : b_j = p} in region k.
+    let ties_before = sum(ties_before);
     let above = sum(bids.iter().map(|b| b.1.clone()));
     let one = constant_slots(params, 1);
     let masks = masks * &used;
 
     match auction_type {
         AuctionType::FirstPrice => {
-            // (1 - [b_k = p]) + #{j != k : b_j > p} + #{j > k : b_j = p}. The own `[b_k > p]` in
+            // (1 - [b_k = p]) + #{j != k : b_j > p} + #{j < k : b_j = p}. The own `[b_k > p]` in
             // `above` and in `1 - [b_k >= p]` cancel to `1 - [b_k = p]`.
-            let wins = &(&(&above + &one) - &own_at_least) + &ties_above;
+            let wins = &(&(&above + &one) - &own_at_least) + &ties_before;
             mul(&wins, &masks)
         }
         AuctionType::SecondPrice => {
             let own_above = sum(own_above);
             let at_least = sum(bids.iter().map(|b| b.0.clone()));
-            // [b_k = p] * #{j > k : b_j = p} in region k.
-            let ties = mul(&(&own_at_least - &own_above), &ties_above);
+            // [b_k = p] * #{j < k : b_j = p} in region k.
+            let ties = mul(&(&own_at_least - &own_above), &ties_before);
             // #{j != k : b_j > p} + [b_k < p] + ties.
             let others_above = &above - &own_above;
             let beaten = &(&(&others_above + &one) - &own_at_least) + &ties;
@@ -487,9 +452,8 @@ fn tests_under_mask(
     }
 }
 
-/// Computes the lanes of the first-price ratio-lane type: `out = S0 * Z + (S0 * m) * A + S_random * m`
-/// with `S0` the slots of group 0 and `S_random` the random slot. One ct*ct product, at depth 1.
-/// See the module documentation.
+/// Computes the lanes of the first-price ratio-lane type: `out = S0 * Z + (S0 * m) * A` with `S0`
+/// the slots of group 0. One ct*ct product, at depth 1. See the module documentation.
 fn ratio_first_price(
     params: &Arc<fhe::bfv::BfvParameters>,
     relinearization_key: &LBFVRelinearizationKey,
@@ -497,16 +461,15 @@ fn ratio_first_price(
     masks: &Ciphertext,
 ) -> Ciphertext {
     let lanes = ones_in(params, [0..LEVELS]);
-    let random = ones_in(params, [RATIO_FIRST_RANDOM_SLOT..RATIO_FIRST_RANDOM_SLOT + 1]);
     let weights_at_least = weighted_sum(params, bids.iter().map(|b| &b.0));
     let above = sum(bids.iter().map(|b| b.1.clone()));
     let hidden = multiply(relinearization_key, &(masks * &lanes), &above);
-    &(&(&weights_at_least * &lanes) + &hidden) + &(masks * &random)
+    &(&weights_at_least * &lanes) + &hidden
 }
 
 /// Computes the lanes of the second-price ratio-lane type. `L' = S_y + S_z * (G + (1 - A) * E)`
 /// selects the `y` or the `z` weight of each lane, and
-/// `out = (R * c) * L' + (S_lanes * m) * u + S_random * m`. 6 ct*ct products, at depth 3. See the
+/// `out = (R * c) * L' + (S_lanes * m) * u`. 6 ct*ct products, at depth 3. See the
 /// module documentation.
 fn ratio_second_price(
     params: &Arc<fhe::bfv::BfvParameters>,
@@ -520,7 +483,6 @@ fn ratio_second_price(
     let y_lanes = ones_in(params, (0..RATIO_COPIES).map(|c| group(2 * c)));
     let z_lanes = ones_in(params, (0..RATIO_COPIES).map(|c| group(2 * c + 1)));
     let lanes = ones_in(params, [0..2 * RATIO_COPIES * LEVELS]);
-    let random = ones_in(params, [RATIO_SECOND_RANDOM_SLOT..RATIO_SECOND_RANDOM_SLOT + 1]);
 
     let at_least = sum(bids.iter().map(|b| b.0.clone()));
     let above = sum(bids.iter().map(|b| b.1.clone()));
@@ -544,7 +506,7 @@ fn ratio_second_price(
         &winners,
     );
     let hidden = multiply(relinearization_key, &(masks * &lanes), &two_above);
-    &(&shown + &hidden) + &(masks * &random)
+    &shown + &hidden
 }
 
 /// Runs the auction over the inputs of the round.
@@ -601,19 +563,7 @@ pub fn fhe_processor(inputs: FHEProcessorInput<'_>) -> Vec<u8> {
 
     let result = match auction_type {
         AuctionType::FirstPrice | AuctionType::SecondPrice => {
-            let priority = tie_priority(
-                &raw.chunks(roles)
-                    .map(|bidder| bidder[0].as_slice())
-                    .collect::<Vec<_>>(),
-            );
-            tests_under_mask(
-                auction_type,
-                params,
-                relinearization_key,
-                &bids,
-                &masks,
-                &priority,
-            )
+            tests_under_mask(auction_type, params, relinearization_key, &bids, &masks)
         }
         AuctionType::RatioFirstPrice => {
             ratio_first_price(params, relinearization_key, &bids, &masks)
@@ -629,6 +579,7 @@ pub fn fhe_processor(inputs: FHEProcessorInput<'_>) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use e3_compute_provider::hashing::keccak256;
     use anyhow::Result;
     use e3_fhe_params::{BfvPreset, build_pair_for_preset, lbfv_crs_seed, lbfv_urs_seed};
     use fhe::aggregate::AggregateIter;
@@ -755,11 +706,9 @@ mod tests {
         auction_type: AuctionType,
         bids: &[usize],
         seed: u64,
-    ) -> Result<(Vec<u64>, Vec<usize>)> {
+    ) -> Result<Vec<u64>> {
         let ciphertexts = encrypt_bids(fixture, auction_type, bids, seed)?;
-        let priority = priority_of(&ciphertexts);
-        let slots = decrypt_slots(fixture, &run(fixture, auction_type, ciphertexts))?;
-        Ok((slots, priority))
+        decrypt_slots(fixture, &run(fixture, auction_type, ciphertexts))
     }
 
     /// Encrypts the bids, runs a ratio-lane type over them, and decrypts the result.
@@ -785,14 +734,10 @@ mod tests {
         (0..copies(slots.len(), n)).any(|copy| slots[slot(n, copy, region) + level] != 0)
     }
 
-    /// `(winner position, price)` as the client reads them off the slots.
-    fn decode(
-        auction_type: AuctionType,
-        slots: &[u64],
-        n: usize,
-        priority: &[usize],
-    ) -> Option<(usize, usize)> {
-        let (region, price) = match auction_type {
+    /// `(winner position, price)` as the client reads them off the slots. Region `k` is the
+    /// region of bidder position `k`.
+    fn decode(auction_type: AuctionType, slots: &[u64], n: usize) -> Option<(usize, usize)> {
+        Some(match auction_type {
             AuctionType::FirstPrice => {
                 let clear: Vec<(usize, usize)> = (0..n)
                     .flat_map(|region| (0..LEVELS).map(move |level| (region, level)))
@@ -811,25 +756,16 @@ mod tests {
                 (region, price)
             }
             _ => unreachable!("a region type"),
-        };
-        Some((priority.iter().position(|&r| r == region)?, price))
+        })
     }
 
-    /// The priority the program derives, from the ge ciphertexts of the round.
-    fn priority_of(ciphertexts: &[(Vec<u8>, u64)]) -> Vec<usize> {
-        tie_priority(
-            &ciphertexts
-                .chunks(3)
-                .map(|t| t[0].0.as_slice())
-                .collect::<Vec<_>>(),
-        )
-    }
-
-    /// The winner and the price on the plaintext bids: the highest bid wins (ties go to the higher
-    /// priority) and pays the highest (first-price) or the second-highest bid (second-price).
-    fn expected(auction_type: AuctionType, bids: &[usize], priority: &[usize]) -> (usize, usize) {
+    /// The winner and the price on the plaintext bids: the highest bid wins (a tie goes to the
+    /// lowest position) and pays the highest (first-price) or the second-highest bid
+    /// (second-price).
+    fn expected(auction_type: AuctionType, bids: &[usize]) -> (usize, usize) {
         let mut order: Vec<usize> = (0..bids.len()).collect();
-        order.sort_by(|&a, &b| (bids[b], priority[b]).cmp(&(bids[a], priority[a])));
+        // The sort is stable, so the lowest position of equal bids comes first.
+        order.sort_by_key(|&j| std::cmp::Reverse(bids[j]));
         let paid = match auction_type {
             AuctionType::FirstPrice => order[0],
             AuctionType::SecondPrice => order[1],
@@ -838,43 +774,34 @@ mod tests {
         (order[0], bids[paid])
     }
 
-    #[test]
-    fn the_priority_is_a_permutation_of_the_positions() {
-        for n in 2..=max_bidders(AuctionType::FirstPrice) {
-            let ciphertexts: Vec<Vec<u8>> = (0..n).map(|j| vec![j as u8; 7]).collect();
-            let refs: Vec<&[u8]> = ciphertexts.iter().map(Vec::as_slice).collect();
-            let mut priority = tie_priority(&refs);
-            priority.sort_unstable();
-            assert_eq!(priority, (0..n).collect::<Vec<_>>());
-        }
-    }
+    /// Bid sets of 2 to 4 bidders with the winner position: unique tops at every position, and
+    /// tops that tie (some of them with a bidder between or before the tied bidders).
+    const TIE_ROUNDS: [(&[usize], usize); 8] = [
+        (&[12, 5, 9], 0),
+        (&[5, 12, 9], 1),
+        (&[5, 9, 12], 2),
+        (&[7, 3, 7], 0),
+        (&[3, 7, 7], 1),
+        (&[7, 7, 7], 0),
+        (&[5, 9, 2, 9], 1),
+        (&[4, 4], 0),
+    ];
 
-    #[test]
-    fn the_priority_ranks_positions_by_the_hash_of_the_seed_and_position() {
-        let ciphertexts = [vec![1u8, 2, 3], vec![4, 5], vec![6]];
-        let refs: Vec<&[u8]> = ciphertexts.iter().map(Vec::as_slice).collect();
-        let seed = keccak256(&ciphertexts.concat());
-        let hash = |j: u32| keccak256(&[seed.as_slice(), &j.to_be_bytes()].concat());
-        let priority = tie_priority(&refs);
-        for a in 0..3 {
-            for b in 0..3 {
-                assert_eq!(
-                    priority[a] < priority[b],
-                    hash(a as u32) < hash(b as u32),
-                    "positions {a} and {b}"
-                );
-            }
-        }
-    }
+    /// Bid sets of the ratio-lane types with more than 4 bidders, with the winner position.
+    const RATIO_TIE_ROUNDS: [(&[usize], usize); 3] = [
+        (&[2, 3, 9, 1, 9, 9, 0, 9], 2),
+        (&[15, 15, 15, 15, 15, 15, 15, 15], 0),
+        (&[0, 0, 0, 0, 0, 0, 15, 15], 6),
+    ];
 
     #[test]
     fn finds_the_winner_and_the_price() -> Result<()> {
         let fixture = fixture()?;
         let bids = [5, 12, 9];
         for (auction_type, price) in [(AuctionType::FirstPrice, 12), (AuctionType::SecondPrice, 9)] {
-            let (slots, priority) = auction(&fixture, auction_type, &bids, 1)?;
+            let slots = auction(&fixture, auction_type, &bids, 1)?;
             assert_eq!(
-                decode(auction_type, &slots, bids.len(), &priority),
+                decode(auction_type, &slots, bids.len()),
                 Some((1, price)),
                 "{auction_type:?}"
             );
@@ -883,19 +810,19 @@ mod tests {
     }
 
     #[test]
-    fn a_tie_at_the_top_goes_to_the_higher_priority() -> Result<()> {
+    fn a_tie_at_the_top_goes_to_the_earliest_position() -> Result<()> {
         let fixture = fixture()?;
-        let bids = [7, 3, 7];
         for auction_type in REGION_TYPES {
-            let (slots, priority) = auction(&fixture, auction_type, &bids, 2)?;
-            let (winner, price) = expected(auction_type, &bids, &priority);
-            assert_eq!(price, 7);
-            assert_eq!(winner, if priority[0] > priority[2] { 0 } else { 2 });
-            assert_eq!(
-                decode(auction_type, &slots, bids.len(), &priority),
-                Some((winner, 7)),
-                "{auction_type:?}"
-            );
+            for (seed, (bids, winner)) in TIE_ROUNDS.into_iter().enumerate() {
+                let slots = auction(&fixture, auction_type, bids, 2 + seed as u64)?;
+                let (expected_winner, price) = expected(auction_type, bids);
+                assert_eq!(expected_winner, winner, "{auction_type:?}, bids {bids:?}");
+                assert_eq!(
+                    decode(auction_type, &slots, bids.len()),
+                    Some((winner, price)),
+                    "{auction_type:?}, bids {bids:?}"
+                );
+            }
         }
         Ok(())
     }
@@ -908,10 +835,10 @@ mod tests {
                 .into_iter()
                 .enumerate()
             {
-                let (slots, priority) = auction(&fixture, auction_type, &bids, 10 + seed as u64)?;
+                let slots = auction(&fixture, auction_type, &bids, 10 + seed as u64)?;
                 assert_eq!(
-                    decode(auction_type, &slots, bids.len(), &priority),
-                    Some(expected(auction_type, &bids, &priority)),
+                    decode(auction_type, &slots, bids.len()),
+                    Some(expected(auction_type, &bids)),
                     "{auction_type:?}, bids {bids:?}"
                 );
             }
@@ -925,10 +852,10 @@ mod tests {
         let rounds: [&[usize]; 3] = [&[3, 8], &[1, 14, 6, 14], &[0, 2, 15, 15]];
         for auction_type in REGION_TYPES {
             for (seed, bids) in rounds.into_iter().enumerate() {
-                let (slots, priority) = auction(&fixture, auction_type, bids, 20 + seed as u64)?;
+                let slots = auction(&fixture, auction_type, bids, 20 + seed as u64)?;
                 assert_eq!(
-                    decode(auction_type, &slots, bids.len(), &priority),
-                    Some(expected(auction_type, bids, &priority)),
+                    decode(auction_type, &slots, bids.len()),
+                    Some(expected(auction_type, bids)),
                     "{auction_type:?}, bids {bids:?}"
                 );
             }
@@ -954,18 +881,16 @@ mod tests {
         for auction_type in REGION_TYPES {
             for n in 2..=max_bidders(auction_type) {
                 // Every set below is compared with the pattern the winner and the price predict,
-                // and with every other set that has the same price and the same winner region.
+                // and with every other set that has the same price and the same winner position.
+                // Sets with a tie at the top and sets with a unique top share a result, so the
+                // output does not show a tie.
                 let mut by_result = std::collections::HashMap::new();
                 for (seed, bids) in sets(auction_type, n).into_iter().enumerate() {
-                    let (slots, priority) =
-                        auction(&fixture, auction_type, &bids, 100 + seed as u64)?;
+                    let slots = auction(&fixture, auction_type, &bids, 100 + seed as u64)?;
                     let (regions, unused_zero) = pattern(&slots, n);
                     assert!(unused_zero, "unused groups must be zero, bids {bids:?}");
-                    // Re-key the pattern by position so that sets with different priorities compare.
-                    let by_position: Vec<Vec<bool>> =
-                        (0..n).map(|j| regions[priority[j]].clone()).collect();
-                    let (winner, price) = expected(auction_type, &bids, &priority);
-                    for (j, row) in by_position.iter().enumerate() {
+                    let (winner, price) = expected(auction_type, &bids);
+                    for (j, row) in regions.iter().enumerate() {
                         for (level, &set) in row.iter().enumerate() {
                             let expected_set = match auction_type {
                                 // Every slot is non-zero but the winner's at the price.
@@ -981,11 +906,10 @@ mod tests {
                             );
                         }
                     }
-                    let key = (priority[winner], price);
-                    match by_result.get(&key) {
+                    match by_result.get(&(winner, price)) {
                         Some(previous) => assert_eq!(previous, &regions, "bids {bids:?}"),
                         None => {
-                            by_result.insert(key, regions);
+                            by_result.insert((winner, price), regions);
                         }
                     }
                 }
@@ -995,11 +919,28 @@ mod tests {
     }
 
     /// Bid sets for `n` bidders: several share the price (the highest bid for first-price, the
-    /// second-highest for second-price) and the winner's region, with other bids that differ.
+    /// second-highest for second-price) and the winner's position, with other bids that differ.
+    /// Some tie at the top.
     fn sets(auction_type: AuctionType, n: usize) -> Vec<Vec<usize>> {
         let shapes = match auction_type {
-            AuctionType::FirstPrice => [(9, 4, 0), (9, 8, 3), (9, 1, 1), (15, 4, 3)],
-            _ => [(9, 4, 0), (15, 4, 3), (9, 4, 4), (12, 4, 1)],
+            AuctionType::FirstPrice => [
+                (9, 4, 0),
+                (9, 8, 3),
+                (9, 1, 1),
+                (15, 4, 3),
+                (9, 9, 0),
+                (9, 9, 4),
+                (9, 9, 9),
+            ],
+            _ => [
+                (9, 4, 0),
+                (15, 4, 3),
+                (9, 4, 4),
+                (12, 4, 1),
+                (9, 9, 0),
+                (15, 9, 3),
+                (9, 9, 4),
+            ],
         };
         let mut sets = Vec::new();
         for (top, second, rest) in shapes {
@@ -1018,7 +959,13 @@ mod tests {
     struct Lanes {
         price: usize,
         tie_set: Vec<usize>,
-        random: u64,
+    }
+
+    impl Lanes {
+        /// The winner: the first member of the tie set by position.
+        fn winner(&self) -> Option<usize> {
+            self.tie_set.first().copied()
+        }
     }
 
     /// The value of a lane: the `y` lane of `copy` at `level`, or its `z` lane.
@@ -1034,7 +981,7 @@ mod tests {
         (0..t - 2).fold(1, |acc, _| acc * value % t)
     }
 
-    /// Reads the price, the tie set and the random value off the slots, as `shared/layout.ts` does.
+    /// Reads the price and the tie set off the slots, as `sdk/src/layout.ts` does.
     /// `None` if the slots show no price, if the copies disagree or if a value is no set of bidders.
     fn decode_ratio(
         auction_type: AuctionType,
@@ -1064,14 +1011,9 @@ mod tests {
         if weights.iter().any(|&w| w != weight) || weight >> n != 0 {
             return None;
         }
-        let random_slot = match auction_type {
-            AuctionType::RatioFirstPrice => RATIO_FIRST_RANDOM_SLOT,
-            _ => RATIO_SECOND_RANDOM_SLOT,
-        };
         Some(Lanes {
             price,
             tie_set: (0..n).filter(|k| weight >> k & 1 == 1).collect(),
-            random: slots[random_slot],
         })
     }
 
@@ -1122,23 +1064,19 @@ mod tests {
     }
 
     #[test]
-    fn the_random_lane_is_the_sum_of_the_masks_and_picks_the_winner_from_the_tie_set() -> Result<()> {
+    fn a_tie_at_the_top_goes_to_the_earliest_position_of_the_tie_set() -> Result<()> {
         let fixture = fixture()?;
         let t = fixture.params.plaintext();
-        let bids = [7, 7, 3, 7];
         for auction_type in RATIO_TYPES {
-            let masks = plaintexts(&fixture, auction_type, &bids, 300);
-            let slots = ratio_auction(&fixture, auction_type, &bids, 300)?;
-            let lanes = decode_ratio(auction_type, &slots, bids.len(), t).unwrap();
-            let random_slot = match auction_type {
-                AuctionType::RatioFirstPrice => RATIO_FIRST_RANDOM_SLOT,
-                _ => RATIO_SECOND_RANDOM_SLOT,
-            };
-            let expected_random = masks.iter().map(|bidder| bidder[2][random_slot]).sum::<u64>() % t;
-            assert_eq!(lanes.random, expected_random, "{auction_type:?}");
-            assert_eq!((lanes.price, &lanes.tie_set[..]), (7, &[0, 1, 3][..]), "{auction_type:?}");
-            let winner = lanes.tie_set[(lanes.random % lanes.tie_set.len() as u64) as usize];
-            assert_eq!(winner, [0, 1, 3][(expected_random % 3) as usize], "{auction_type:?}");
+            for (seed, (bids, winner)) in TIE_ROUNDS.into_iter().chain(RATIO_TIE_ROUNDS).enumerate() {
+                let slots = ratio_auction(&fixture, auction_type, bids, 300 + seed as u64)?;
+                let lanes = decode_ratio(auction_type, &slots, bids.len(), t)
+                    .unwrap_or_else(|| panic!("{auction_type:?}, bids {bids:?}: no readable result"));
+                let (price, tie_set) = expected_lanes(auction_type, bids);
+                assert_eq!((lanes.price, &lanes.tie_set), (price, &tie_set), "{auction_type:?}, bids {bids:?}");
+                assert_eq!(tie_set.first(), Some(&winner), "{auction_type:?}, bids {bids:?}");
+                assert_eq!(lanes.winner(), Some(winner), "{auction_type:?}, bids {bids:?}");
+            }
         }
         Ok(())
     }
@@ -1168,10 +1106,8 @@ mod tests {
                 match auction_type {
                     AuctionType::RatioFirstPrice => match s {
                         0..LEVELS => (weights_at_least + masks * above) % t,
-                        RATIO_FIRST_RANDOM_SLOT => masks,
                         _ => 0,
                     },
-                    _ if s == RATIO_SECOND_RANDOM_SLOT => masks,
                     _ if group < 2 * RATIO_COPIES => {
                         let c = at_least * (at_least + t - 1) % t;
                         let u = above * (above + t - 1) % t;
@@ -1213,20 +1149,12 @@ mod tests {
     fn the_ratio_output_is_zero_above_the_price_and_outside_the_lanes() -> Result<()> {
         let fixture = fixture()?;
         for auction_type in RATIO_TYPES {
-            let random_slot = match auction_type {
-                AuctionType::RatioFirstPrice => RATIO_FIRST_RANDOM_SLOT,
-                _ => RATIO_SECOND_RANDOM_SLOT,
-            };
             for (seed, bids) in ratio_rounds().into_iter().enumerate() {
                 let slots = ratio_auction(&fixture, auction_type, &bids, 500 + seed as u64)?;
                 let (price, _) = expected_lanes(auction_type, &bids);
                 for (slot, &value) in slots.iter().enumerate() {
                     let in_lanes = slot / LEVELS < lane_groups(auction_type);
-                    let must_be_zero = if in_lanes {
-                        slot % LEVELS > price
-                    } else {
-                        slot != random_slot
-                    };
+                    let must_be_zero = !in_lanes || slot % LEVELS > price;
                     assert!(
                         !must_be_zero || value == 0,
                         "{auction_type:?}, bids {bids:?}, slot {slot} (price {price})"
@@ -1238,13 +1166,12 @@ mod tests {
     }
 
     #[test]
-    fn the_ratio_output_depends_only_on_the_price_the_tie_set_and_the_random_lane() -> Result<()> {
+    fn the_ratio_output_depends_only_on_the_price_and_the_tie_set() -> Result<()> {
         let fixture = fixture()?;
         let t = fixture.params.plaintext();
         // Bid sets of 4 bidders with the same price and the same tie set in each group, and
-        // different other bids. The same masks give the same random lane. `[9, 4, 4, 4]` has the
-        // most bids at the second-highest level, and `[3, 9, 9, 1]` and `[0, 9, 9, 8]` tie at
-        // the top.
+        // different other bids. `[9, 4, 4, 4]` has the most bids at the second-highest level,
+        // and `[3, 9, 9, 1]` and `[0, 9, 9, 8]` tie at the top.
         let groups: [(AuctionType, &[&[usize]]); 4] = [
             (AuctionType::RatioFirstPrice, &[&[9, 4, 0, 2], &[9, 8, 3, 1], &[9, 1, 1, 0]]),
             (AuctionType::RatioFirstPrice, &[&[3, 9, 9, 1], &[0, 9, 9, 8]]),
@@ -1260,7 +1187,7 @@ mod tests {
                 let lanes = decode_ratio(auction_type, &slots, bids.len(), t)
                     .unwrap_or_else(|| panic!("{auction_type:?}, bids {bids:?}: no readable result"));
                 assert_eq!(
-                    first.get_or_insert_with(|| Lanes { price: lanes.price, tie_set: lanes.tie_set.clone(), random: lanes.random }),
+                    first.get_or_insert_with(|| Lanes { price: lanes.price, tie_set: lanes.tie_set.clone() }),
                     &lanes,
                     "{auction_type:?}, bids {bids:?}"
                 );

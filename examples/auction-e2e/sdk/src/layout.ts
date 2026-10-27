@@ -22,7 +22,7 @@
  *
  * Region auctions (`FirstPrice`, `SecondPrice`). With `n` bidders the program uses
  * `copies = floor(GROUPS / n)` copies of `n` regions: region `r` of copy `c` is group `c * n + r`.
- * The groups beyond `copies * n` are zeroed. Region `k` belongs to the bidder with tie priority `k`.
+ * The groups beyond `copies * n` are zeroed. Region `k` belongs to the bidder at position `k`.
  * With `h` the highest bid and `s` the second-highest bid:
  *
  *   first-price   the region of the winner is ZERO at `h`, every other slot is non-zero
@@ -47,16 +47,18 @@
  *                       `weights` the winner set (the unique top bidder, or the tie set when the top
  *                       bids tie and `s = h`). Level p < s: uniform pair.
  *
- * Both ratio types put the sum of the masks into one random slot (slot 16 and slot 96): its value
- * is fixed by the encrypted masks and is uniform if one bidder is honest. The winner is the member
- * of the sorted tie set at the index `random % tieSet.length`. Every other slot is zero.
+ * A tie at the top goes to the lowest position among the tied bidders, so the winner is the first
+ * member of the sorted tie set. Every other slot is zero.
  *
  * Leaf 0 of every auction is a configuration input, not a ciphertext: `auctionConfigInput(type)`.
  * `AuctionProgram.validate` inserts its leaf, and the program reads the type from it. Every bid,
  * and every update of it, adds one run of `rolesFor(type).length` consecutive leaves in role order.
  * A leaf binds the ciphertext bytes, the commitment the bid proof checked, the bidder and the bid
  * version. The program picks the latest version of each bidder whose bytes open their commitments
- * (`selection.ts`); the bidder position in this file is the order of the picked runs.
+ * (`selection.ts`); the bidder position in this file is the order of the picked runs. A bidder that
+ * updates gets the position of its update, so an update loses the place of the earlier bid. A tie
+ * at the top goes to the tied bidder with the lowest position: the one whose counted bid was
+ * published first.
  */
 import {
   type AbiParameter,
@@ -65,7 +67,6 @@ import {
   concatBytes,
   encodeAbiParameters,
   type Hex,
-  hexToBytes,
   keccak256,
   maxUint256,
   parseAbiParameters,
@@ -97,9 +98,9 @@ export enum AuctionType {
   FirstPrice = 0,
   /** The highest bid wins and pays the second-highest bid. The result shows the winner and that price. */
   SecondPrice = 1,
-  /** As `FirstPrice`, with ratio lanes. The result shows the price, the tie set and a random value. */
+  /** As `FirstPrice`, with ratio lanes. The result shows the price and the tie set. The first tied bidder wins. */
   RatioFirstPrice = 2,
-  /** As `SecondPrice`, with ratio lanes. The result shows the price, the tie set and a random value. */
+  /** As `SecondPrice`, with ratio lanes. The result shows the price and the winner set. The first tied bidder wins. */
   RatioSecondPrice = 3,
 }
 
@@ -118,13 +119,14 @@ export const AUCTION_TYPE_LABELS: Record<AuctionType, string> = {
 }
 
 export const AUCTION_TYPE_DESCRIPTIONS: Record<AuctionType, string> = {
-  [AuctionType.FirstPrice]: 'The highest bid wins and pays its own bid. Only the winner and the winning bid are revealed.',
+  [AuctionType.FirstPrice]:
+    'The highest bid wins and pays its own bid. Only the winner and the winning bid are revealed. If the top bids tie, the tied bidder who bid first wins; the tie is not revealed.',
   [AuctionType.SecondPrice]:
-    'The highest bid wins and pays the second-highest bid. Only the winner and that price are revealed; the winning bid stays secret.',
+    'The highest bid wins and pays the second-highest bid. Only the winner and that price are revealed; the winning bid stays secret. If the top bids tie, the tied bidder who bid first wins; the tie is not revealed.',
   [AuctionType.RatioFirstPrice]:
-    'The highest bid wins and pays its own bid. The price and the set of bidders that tied at the top are revealed; a random value in the result picks the winner from that set.',
+    'The highest bid wins and pays its own bid. The price and the set of bidders that tied at the top are revealed. If bidders tie, the tied bidder who bid first wins.',
   [AuctionType.RatioSecondPrice]:
-    'The highest bid wins and pays the second-highest bid. The price and the winner set are revealed (more than one bidder only if the top bids tie); a random value in the result picks the winner from that set.',
+    'The highest bid wins and pays the second-highest bid. The price and the winner set are revealed (more than one bidder only if the top bids tie). If bidders tie, the tied bidder who bid first wins.',
 }
 
 /** The most bidders of one auction, by type. The ratio types are limited by the weights `2^k` that must stay below the plaintext modulus. */
@@ -138,17 +140,11 @@ export const MAX_BIDDERS_BY_TYPE: Record<AuctionType, number> = {
 /** The copies of the `y` and `z` lanes of the ratio second-price auction. */
 export const RATIO_COPIES = 3
 
-/** The slot of the random lane: group 1 for ratio first-price, group `2 * RATIO_COPIES` for ratio second-price. */
-const RANDOM_SLOT: Record<RatioType, number> = {
-  [AuctionType.RatioFirstPrice]: LEVELS,
-  [AuctionType.RatioSecondPrice]: 2 * RATIO_COPIES * LEVELS,
-}
-
 export function isAuctionType(value: number): value is AuctionType {
   return (AUCTION_TYPES as readonly number[]).includes(value)
 }
 
-/** The ratio-lane types: their result is a price, a tie set and a random value. */
+/** The ratio-lane types: their result is a price and a tie set. */
 export type RatioType = AuctionType.RatioFirstPrice | AuctionType.RatioSecondPrice
 
 export function isRatioType(type: AuctionType): type is RatioType {
@@ -356,30 +352,6 @@ export function copiesFor(n: number): number {
   return Math.floor(GROUPS / n)
 }
 
-/**
- * The tie priority of each bidder position, as the program derives it: `priority[j]` is the region
- * of bidder position `j`.
- *
- * `seed = keccak256(ge_0 || ge_1 || ...)` over the published ge ciphertexts in leaf order. The
- * priority of position `j` is its rank when the positions are sorted ascending by
- * `keccak256(seed || u32_be(j))`, so the position with the highest hash has priority `n - 1`. All
- * ciphertexts are fixed when the window closes, so no bidder knows the priority beforehand.
- */
-export function tiePriority(geCiphertexts: readonly `0x${string}`[]): number[] {
-  const seed = hexToBytes(keccak256(concatBytes(geCiphertexts.map((ciphertext) => hexToBytes(ciphertext)))))
-  const hashes = geCiphertexts.map((_, position) => {
-    const index = new Uint8Array(4)
-    new DataView(index.buffer).setUint32(0, position, false)
-    return BigInt(keccak256(concatBytes([seed, index])))
-  })
-  const order = hashes.map((_, position) => position).sort((a, b) => (hashes[a] < hashes[b] ? -1 : hashes[a] > hashes[b] ? 1 : a - b))
-  const priority = new Array<number>(order.length).fill(0)
-  order.forEach((position, rank) => {
-    priority[position] = rank
-  })
-  return priority
-}
-
 function assertBidderCount(type: AuctionType, bidders: number): void {
   const max = MAX_BIDDERS_BY_TYPE[type]
   if (bidders < MIN_BIDDERS || bidders > max) {
@@ -388,24 +360,17 @@ function assertBidderCount(type: AuctionType, bidders: number): void {
 }
 
 /**
- * The winner and the price on the plaintext bids. The highest bid wins, and a tie goes to the higher
- * priority. The price is the highest bid (first-price) or the second-highest bid (second-price).
- *
- * A ratio type has no tie priority: its winner is a random member of the tie set. Here the winner is
- * the lowest position of the tie set, which is the winner only if the top bid is unique. Use
- * `expectedTieSet` for a round with a tie.
+ * The winner and the price on the plaintext bids. The highest bid wins, and a tie goes to the
+ * lowest position. The price is the highest bid (first-price) or the second-highest bid
+ * (second-price).
  */
-export function expectedAuction(
-  type: AuctionType,
-  bids: readonly number[],
-  priority: readonly number[],
-): { winner: number; price: number } {
+export function expectedAuction(type: AuctionType, bids: readonly number[]): { winner: number; price: number } {
   assertBidderCount(type, bids.length)
   if (isRatioType(type)) {
     const { price, tieSet } = expectedTieSet(type, bids)
     return { winner: tieSet[0], price }
   }
-  const order = bids.map((_, position) => position).sort((a, b) => bids[b] - bids[a] || priority[b] - priority[a])
+  const order = bids.map((_, position) => position).sort((a, b) => bids[b] - bids[a] || a - b)
   return { winner: order[0], price: bids[order[type === AuctionType.FirstPrice ? 0 : 1]] }
 }
 
@@ -432,8 +397,6 @@ export interface RegionResult {
   bidders: number
   /** Copies of the regions in the ring. */
   copies: number
-  /** `priority[j]` is the region of bidder position `j`. */
-  priority: number[]
   /** The price the winner pays (see `expectedAuction`), or `null` if the result is unreadable. */
   price: number | null
   /** The winning bidder position, or `null` if the result does not show one winner. */
@@ -456,15 +419,13 @@ export interface LaneResult {
   copies: number
   /** The price level, or `null` if every lane is zero. */
   price: number | null
-  /** The winning bidder position: `tieSet[random % tieSet.length]`, or `null` if there is no readable tie set. */
+  /** The winning bidder position: the first member of `tieSet`, or `null` if there is no readable tie set. */
   winner: number | null
   /**
    * The winner set at the price level, ascending: the bidders with the top bid. Without a tie it has
    * one member (for `RatioSecondPrice` that bidder bid above the price). Empty if the lane value is no valid set.
    */
   tieSet: number[]
-  /** The value of the random lane, or `null` if the price is unreadable. */
-  random: number | null
   /** Per level: `'result'` at the price level, `'zero'` above it and `'random'` below it. */
   lanes: Array<'zero' | 'random' | 'result'>
   /** Whether every copy shows the same winner set at the price level, and no copy is non-zero there without its `y` lane. */
@@ -478,28 +439,23 @@ export type AuctionResult = RegionResult | LaneResult
  *
  * @param type The auction type, as `AuctionProgram.auctions` stores it.
  * @param plaintextHex The plaintext output: `OUTPUT_COEFFS` little-endian u64 coefficients.
- * @param geCiphertexts The role-0 ciphertext of each bidder in leaf order, as published. They fix
- * the tie priority of a region auction. A ratio auction only uses their count.
+ * @param bidders The number of counted bids. Bidder position `j` is the place of the `j`-th counted
+ * bid in leaf order.
  */
-export async function decodeAuction(
-  type: AuctionType,
-  plaintextHex: string,
-  geCiphertexts: readonly `0x${string}`[],
-): Promise<AuctionResult> {
-  assertBidderCount(type, geCiphertexts.length)
+export async function decodeAuction(type: AuctionType, plaintextHex: string, bidders: number): Promise<AuctionResult> {
+  assertBidderCount(type, bidders)
   const hex = plaintextHex.startsWith('0x') ? plaintextHex.slice(2) : plaintextHex
   if (hex.length < OUTPUT_COEFFS * 16) {
     throw new Error(`Plaintext output has ${hex.length / 2} bytes, expected ${OUTPUT_COEFFS * 8}`)
   }
   const slots = await decodePlaintextSlots(`0x${hex}`, PRESET)
   if (slots.length < DEGREE) throw new Error(`Decoded ${slots.length} slots, expected ${DEGREE}`)
-  return isRatioType(type) ? decodeLanes(type, slots, geCiphertexts.length) : decodeRegions(type, slots, geCiphertexts)
+  return isRatioType(type) ? decodeLanes(type, slots, bidders) : decodeRegions(type, slots, bidders)
 }
 
-function decodeRegions(type: AuctionType, slots: readonly bigint[], geCiphertexts: readonly `0x${string}`[]): RegionResult {
-  const n = geCiphertexts.length
+/** Read a region auction. Region `k` is the region of bidder position `k`. */
+function decodeRegions(type: AuctionType, slots: readonly bigint[], n: number): RegionResult {
   const copies = copiesFor(n)
-  const priority = tiePriority(geCiphertexts)
   const isSet = (region: number, level: number) => {
     for (let copy = 0; copy < copies; copy++) if (slots[slotIndex(n, copy, region, level)] !== 0n) return true
     return false
@@ -513,7 +469,7 @@ function decodeRegions(type: AuctionType, slots: readonly bigint[], geCiphertext
     const clear = regionSet.flatMap((row, region) => row.flatMap((set, level) => (set ? [] : [{ region, level }])))
     if (clear.length === 1) {
       price = clear[0].level
-      winner = priority.indexOf(clear[0].region)
+      winner = clear[0].region
     }
   } else {
     // `last(region)` is the highest level at which the region is non-zero. The price is the highest
@@ -523,7 +479,7 @@ function decodeRegions(type: AuctionType, slots: readonly bigint[], geCiphertext
       const level = Math.max(...lasts)
       price = level
       const winners = regionSet.map((row, region) => (row[level] ? -1 : region)).filter((region) => region >= 0)
-      if (winners.length === 1) winner = priority.indexOf(winners[0])
+      if (winners.length === 1) winner = winners[0]
     }
   }
 
@@ -534,10 +490,9 @@ function decodeRegions(type: AuctionType, slots: readonly bigint[], geCiphertext
     kind: 'region',
     bidders: n,
     copies,
-    priority,
     price,
     winner,
-    set: priority.map((region) => regionSet[region]),
+    set: regionSet,
     unusedGroupsZero,
   }
 }
@@ -585,7 +540,6 @@ function decodeLanes(type: RatioType, slots: readonly bigint[], bidders: number)
       price: null,
       winner: null,
       tieSet: [],
-      random: null,
       lanes: Array(LEVELS).fill('zero'),
       copiesAgree: true,
     }
@@ -602,16 +556,14 @@ function decodeLanes(type: RatioType, slots: readonly bigint[], bidders: number)
   copiesAgree &&= weights.every((weight) => weight === weights[0])
 
   const tieSet = positionsOf(weights[0], bidders)
-  const random = Number(slots[RANDOM_SLOT[type]])
   return {
     kind: 'lane',
     bidders,
     copies,
     price,
     // Copies that disagree show no single winner set; `decode_ratio` in the program returns none too.
-    winner: copiesAgree && tieSet.length > 0 ? tieSet[random % tieSet.length] : null,
+    winner: copiesAgree && tieSet.length > 0 ? tieSet[0] : null,
     tieSet,
-    random,
     lanes: Array.from({ length: LEVELS }, (_, level) => (level > price ? 'zero' : level === price ? 'result' : 'random')),
     copiesAgree,
   }

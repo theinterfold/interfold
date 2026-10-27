@@ -78,7 +78,7 @@ const AuctionPage: React.FC = () => {
       </div>
     )
   }
-  if (auction === null) return <NotFound text={`There is no auction Nº ${shortId(e3Id)} on this deployment.`} />
+  if (auction === null) return <NotFound text={`There is no auction ${shortId(e3Id)} on this deployment.`} />
   if (phase === null) return null
 
   const { e3Program } = getContractAddresses()
@@ -152,7 +152,9 @@ const AuctionPage: React.FC = () => {
           )}
         </Fact>
         <Fact label='Top tie'>
-          {isRatioType(auction.auctionType) ? 'Random draw among the tied bidders' : 'Priority from a hash of the ciphertexts'}
+          {isRatioType(auction.auctionType)
+            ? 'The tied bidder who bid first wins. The tie is public'
+            : 'The tied bidder who bid first wins. The tie stays hidden'}
         </Fact>
         <Fact label='Time'>{timeLeftLabel(auction, phase, now)}</Fact>
         <Fact label='Bidding ends'>{formatDateTime(auction.inputWindow[1])}</Fact>
@@ -172,10 +174,10 @@ const AuctionPage: React.FC = () => {
       {error && <div className='note bad'>Could not refresh the auction: {error}</div>}
 
       <div className='grid items-start gap-8 lg:grid-cols-[1fr_1.25fr]'>
-        <Section eyebrow='Nº 01' title='Progress'>
+        <Section title='Progress'>
           <PhaseTimeline phase={phase} auction={auction} />
         </Section>
-        <Section eyebrow='Nº 02' title='Your bid'>
+        <Section title='Your bid'>
           <BidPanel
             auction={auction}
             phase={phase}
@@ -188,7 +190,7 @@ const AuctionPage: React.FC = () => {
         </Section>
       </div>
 
-      <Section eyebrow='Nº 03' title='Result'>
+      <Section title='Result'>
         {phase === 'complete' ? (
           <ResultPanel auction={auction} account={wallet.address} myVersions={myVersions} />
         ) : phase === 'failed' ? (

@@ -27,8 +27,8 @@ import { IBidderGate } from "./interfaces/IBidderGate.sol";
 /// random). The second-price ratio type needs a fourth role, role 3 `pairMask` (uniform random,
 /// equal in the two slots of each lane pair). The FHE program reads the ciphertexts of a bidder in
 /// role order. The region types (0, 1) reveal only the winner and the price, as a pattern of zero
-/// slots. The ratio types (2, 3) reveal the price, the set of bidders whose bid equals it, and one
-/// random value that picks the winner from that set. See `program/src/lib.rs`.
+/// slots. The ratio types (2, 3) reveal the price and the set of bidders whose bid equals it. On a
+/// top tie the bidder whose counted bid came first (lowest leaf) wins. See `program/src/lib.rs`.
 ///
 /// Leaf 0 of every auction is its configuration leaf: `keccak256(CONFIG_DOMAIN || auctionType)`
 /// reduced into the BN254 scalar field. The program reads the type from the configuration input at
