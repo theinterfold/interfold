@@ -412,10 +412,11 @@ pub fn metrics_server(
 mod tests {
     use super::*;
     use crate::DashboardChain;
-    use e3_config::chain_config::ChainConfig;
     use e3_event_system::EventSystem;
-    use e3_evm::OperatorChainStatus;
+    use e3_evm::{IngestionProgress, IngestionStatus, OperatorChainStatus};
+    use e3_evm_config::ChainConfig;
     use e3_net::NetworkStatus;
+    use e3_task_pool::TaskPool;
 
     /// A state that reads an empty in-memory EventStore.
     fn state(chains: Vec<ChainConfig>) -> DashboardState {
@@ -463,6 +464,53 @@ mod tests {
         assert_eq!(scrape(address, "/api/snapshot").await.status(), 404);
 
         assert!(metrics_server(address, state).is_err());
+        handle.stop(true).await;
+    }
+
+    fn chain_config(name: &str, enabled: bool) -> ChainConfig {
+        serde_json::from_value(serde_json::json!({
+            "name": name,
+            "enabled": enabled,
+            // Nothing listens on port 1, so the operator read fails at once.
+            "rpc_url": "http://127.0.0.1:1",
+            "contracts": {
+                "interfold": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
+                "ciphernode_registry": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
+                "bonding_registry": "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9",
+            },
+        }))
+        .expect("chain config")
+    }
+
+    /// A scrape reports the state that the CLI wires in: the chain readers' progress, the compute
+    /// pool, and the enabled chains only.
+    #[actix_web::test]
+    async fn a_scrape_reports_the_state_that_the_cli_wires_in() {
+        let ingestion = IngestionStatus::default();
+        ingestion.record(
+            IngestionProgress {
+                chain_id: 1,
+                head: 120,
+                cursor: 110,
+            },
+            1_700_000_000,
+        );
+        let state = state(vec![chain_config("one", true), chain_config("two", false)])
+            .with_ingestion_status(ingestion)
+            .with_task_pool(Some(TaskPool::new(1, 3)));
+        let (handle, address) = serve(state);
+
+        let body = scrape(address, "/metrics").await.text().await.unwrap();
+
+        assert_eq!(value(&body, "interfold_chain_readers_expected"), "1");
+        assert_eq!(
+            value(&body, "interfold_chain_head_block{chain_id=\"1\"}"),
+            "120.0"
+        );
+        assert_eq!(value(&body, "interfold_compute_jobs_capacity"), "3");
+        assert_eq!(value(&body, "interfold_eventstore_read_up"), "1");
+        // The enabled chain's RPC refuses the connection.
+        assert_eq!(value(&body, "interfold_operator_status_up"), "0");
         handle.stop(true).await;
     }
 
