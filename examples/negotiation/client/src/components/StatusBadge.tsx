@@ -14,6 +14,7 @@ const TONES: Record<NegotiationPhase, string> = {
   decrypting: 'muted',
   settling: 'wait',
   settled: 'done',
+  incomplete: 'bad',
   failed: 'bad',
 }
 

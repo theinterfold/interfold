@@ -45,6 +45,7 @@ const ResultPanel: React.FC<ResultPanelProps> = ({ negotiation, phase, account, 
   const { settle, busy, error } = useSettle(negotiation.e3Id, account, onSettled)
 
   if (phase === 'failed') return <div className='note'>There is no result: the negotiation failed.</div>
+  if (phase === 'incomplete') return <div className='note'>There is no result: the offer window closed without both offers.</div>
 
   if (phase === 'settling') {
     return (

@@ -265,12 +265,28 @@ const scheduler = new ComputeScheduler({
   submit: runProgram,
 })
 
+// Whether an E3 belongs to this program. The key-chunk listener sees the E3s of every program on the Interfold, and only the
+// negotiations have offers to compute. The program of an E3 never changes, so one read per E3 is enough.
+const ownE3s = new Map<string, boolean>()
+
+async function isOwnE3(e3Id: bigint): Promise<boolean> {
+  const key = e3Id.toString()
+  const cached = ownE3s.get(key)
+  if (cached !== undefined) return cached
+  const { e3Program } = await sdk.getE3(e3Id)
+  const own = e3Program.toLowerCase() === config.program.toLowerCase()
+  ownE3s.set(key, own)
+  if (!own) console.log(`⏭️  Ignoring E3 ${e3Id}: it belongs to program ${e3Program}`)
+  return own
+}
+
 /**
  * Schedule the compute once the transported key matches the commitment accepted with the DKG
  * proof. Both the live listener and the recovery scan feed chunks here.
  */
 async function handleKeyChunk(chunk: CommitteePublicKeyChunkPublishedData): Promise<void> {
   try {
+    if (!(await isOwnE3(chunk.e3Id))) return
     const assembled = committeeKeyAssembler.add(chunk)
     if (!assembled) return
     const isBoundKey = await sdk.validatePublicKeyCommitment(assembled.publicKey, hexToBytes(assembled.pkCommitment))

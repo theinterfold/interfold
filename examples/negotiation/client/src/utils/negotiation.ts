@@ -62,8 +62,11 @@ export function roleOf(negotiation: Pick<NegotiationState, 'seller' | 'buyer'>, 
 
 export const ROLE_NAMES: Record<Role, 'seller' | 'buyer'> = { [Role.Seller]: 'seller', [Role.Buyer]: 'buyer' }
 
-/** Where a negotiation is, in the order it passes through. `failed` can happen at any point. */
-export type NegotiationPhase = 'awaiting-key' | 'offers' | 'computing' | 'decrypting' | 'settling' | 'settled' | 'failed'
+/**
+ * Where a negotiation is, in the order it passes through. `failed` can happen at any point. `incomplete`: the offer window
+ * closed without an offer of each party, so the program has nothing to compare and the negotiation stops there.
+ */
+export type NegotiationPhase = 'awaiting-key' | 'offers' | 'computing' | 'decrypting' | 'settling' | 'settled' | 'incomplete' | 'failed'
 
 /** The steps of the timeline. `settling` (decrypted, not yet settled) is the active `settled` step. */
 export const PHASE_ORDER = ['awaiting-key', 'offers', 'computing', 'decrypting', 'settled'] as const satisfies readonly NegotiationPhase[]
@@ -75,6 +78,7 @@ export const PHASE_LABELS: Record<NegotiationPhase, string> = {
   decrypting: 'Decrypting',
   settling: 'Ready to settle',
   settled: 'Settled',
+  incomplete: 'Offer missing',
   failed: 'Failed',
 }
 
@@ -89,8 +93,17 @@ export function phaseOf(negotiation: NegotiationState, now: bigint): Negotiation
   if (negotiation.outcome.settled) return 'settled'
   if (negotiation.stage === E3Stage.Complete || isPublished(negotiation.plaintextOutput)) return 'settling'
   if (negotiation.stage === E3Stage.CiphertextReady) return 'decrypting'
-  if (negotiation.stage === E3Stage.KeyPublished) return now <= negotiation.inputWindow[1] ? 'offers' : 'computing'
+  if (negotiation.stage === E3Stage.KeyPublished) {
+    if (now <= negotiation.inputWindow[1]) return 'offers'
+    return negotiation.offered.seller && negotiation.offered.buyer ? 'computing' : 'incomplete'
+  }
   return 'awaiting-key'
+}
+
+/** The parties that sent no offer, as a sentence. */
+export function missingOffersText(offered: NegotiationState['offered']): string {
+  if (!offered.seller && !offered.buyer) return 'Neither the seller nor the buyer sent an offer.'
+  return offered.seller ? 'The buyer sent no offer.' : 'The seller sent no offer.'
 }
 
 /** "1h 05m", "4m 10s" or "0s" for a span in seconds. */
