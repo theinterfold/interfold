@@ -22,6 +22,17 @@ pub mod c6_to_c7;
 pub use e3_events::{CommitmentLink, FieldValue, LinkScope};
 use e3_fhe_params::BfvPreset;
 
+/// The share-commitment section of a final C2 proof's public signals: everything between the
+/// leading `expected_secret_commitment` and the trailing chunk key-tree hash the final C2 circuit
+/// exposes. Empty when the signals cannot hold a share.
+pub(crate) fn c2_share_commitments(public_signals: &[u8]) -> &[u8] {
+    let field = e3_zk_config::FIELD_BYTE_LEN;
+    if public_signals.len() < 3 * field || !public_signals.len().is_multiple_of(field) {
+        return &[];
+    }
+    &public_signals[field..public_signals.len() - field]
+}
+
 /// Returns the default set of commitment links to register.
 ///
 /// C4→C6 links verify that C4's aggregated share commitment matches C6's
