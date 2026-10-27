@@ -15,12 +15,10 @@ use alloy::{
     providers::{Identity, Provider, ProviderBuilder, RootProvider},
     rpc::types::TransactionReceipt,
     signers::local::PrivateKeySigner,
-    sol,
 };
 use async_trait::async_trait;
 use e3_fhe_params::{current_bfv_crypto_config_id, encode_bfv_params, BfvParamSet, BfvPreset};
 use eyre::Result;
-use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 use std::sync::{Arc, OnceLock};
 
@@ -76,121 +74,10 @@ mod crypto_config_tests {
     }
 }
 
-sol! {
-    #[derive(Debug, Serialize, Deserialize)]
-    enum CommitteeSize {
-        Minimum,
-        Micro,
-        Small,
-    }
-
-    #[derive(Debug)]
-    struct E3 {
-        uint256 seed;
-        CommitteeSize committeeSize;
-        uint256 requestBlock;
-        uint256[2] inputWindow;
-        bytes32 encryptionSchemeId;
-        address e3Program;
-        uint8 paramSet;
-        bytes customParams;
-        address decryptionVerifier;
-        address pkVerifier;
-        bytes32 committeePublicKey;
-        bytes32 ciphertextOutput;
-        bytes plaintextOutput;
-        address requester;
-        bytes32 ciphertextCommitment;
-    }
-
-    #[derive(Debug)]
-    struct E3RequestParams {
-        CommitteeSize committeeSize;
-        uint256[2] inputWindow;
-        address e3Program;
-        uint8 paramSet;
-        bytes computeProviderParams;
-        bytes customParams;
-        address expectedFeeToken;
-        bytes32 expectedCryptoConfigId;
-        uint256 maxFee;
-    }
-
-    #[derive(Debug, PartialEq)]
-    enum E3Stage {
-        None,
-        Requested,
-        CommitteeFinalized,
-        KeyPublished,
-        CiphertextReady,
-        Complete,
-        Failed
-    }
-
-    #[derive(Debug, PartialEq)]
-    enum FailureReason {
-        None,
-        CommitteeFormationTimeout,
-        InsufficientCommitteeMembers,
-        DKGTimeout,
-        DKGInvalidShares,
-        NoInputsReceived,
-        ComputeTimeout,
-        ComputeProviderExpired,
-        ComputeProviderFailed,
-        RequesterCancelled,
-        DecryptionTimeout,
-        DecryptionInvalidShares,
-        VerificationFailed
-    }
-
-    #[derive(Debug)]
-    struct E3TimeoutConfig {
-        uint256 dkgWindow;
-        uint256 computeWindow;
-        uint256 decryptionWindow;
-    }
-
-    #[derive(Debug)]
-    struct E3Deadlines {
-        uint256 dkgDeadline;
-        uint256 computeDeadline;
-        uint256 decryptionDeadline;
-    }
-
-    struct CiphertextOutputReference {
-        bytes32 contentHash;
-        bytes32 ciphertextCommitment;
-        bytes computeProof;
-        bytes availabilityProof;
-    }
-
-
-    #[derive(Debug)]
-    #[sol(rpc)]
-    contract Interfold {
-        uint256 public nexte3Id = 0;
-        mapping(address e3Program => bool allowed) public e3Programs;
-        function request(E3RequestParams calldata requestParams) external returns (uint256 e3Id, E3 memory e3);
-        function registerE3Program(address e3Program) public;
-        function publishCiphertextOutput(
-            uint256 e3Id,
-            bytes calldata encodedOutputReference
-        ) external;
-        function publishPlaintextOutput(uint256 e3Id, bytes calldata data, bytes calldata proof) external returns (bool success);
-        function getE3(uint256 e3Id) external view returns (E3 memory e3);
-        function paramSetRegistry(uint8 paramSet) external view returns (bytes memory encodedParams);
-        function getE3Quote(E3RequestParams memory request) external view returns (uint256 fee);
-        function getE3Stage(uint256 e3Id) external view returns (E3Stage stage);
-        function getFailureReason(uint256 e3Id) external view returns (FailureReason reason);
-        function getRequester(uint256 e3Id) external view returns (address requester);
-        function getDeadlines(uint256 e3Id) external view returns (E3Deadlines memory deadlines);
-        function getTimeoutConfig() external view returns (E3TimeoutConfig memory config);
-        function feeToken() external view returns (address token);
-        function activeCryptoConfigId() external pure returns (bytes32 configId);
-        function e3CryptoConfigIds(uint256 e3Id) external view returns (bytes32 configId);
-    }
-}
+pub use e3_evm_contracts::IInterfold::{
+    CiphertextOutputReference, E3Deadlines, E3RequestParams, E3TimeoutConfig, E3,
+};
+pub use e3_evm_contracts::{CommitteeSize, E3Stage, FailureReason, IInterfold as Interfold};
 
 /// Trait for read-only operations on the Interfold contract
 #[async_trait]
@@ -436,7 +323,7 @@ where
         compute_provider_params: Bytes,
     ) -> Result<U256> {
         let e3_request = E3RequestParams {
-            committeeSize: committee_size,
+            committeeSize: committee_size.into(),
             inputWindow: input_window,
             e3Program: e3_program,
             paramSet: param_set,
@@ -455,13 +342,13 @@ where
     async fn get_e3_stage(&self, e3_id: U256) -> Result<E3Stage> {
         let contract = Interfold::new(self.contract_address, &self.provider);
         let stage = contract.getE3Stage(e3_id).call().await?;
-        Ok(stage)
+        Ok(E3Stage::try_from(stage).unwrap_or(E3Stage::__Invalid))
     }
 
     async fn get_failure_reason(&self, e3_id: U256) -> Result<FailureReason> {
         let contract = Interfold::new(self.contract_address, &self.provider);
         let reason = contract.getFailureReason(e3_id).call().await?;
-        Ok(reason)
+        Ok(FailureReason::try_from(reason).unwrap_or(FailureReason::__Invalid))
     }
 
     async fn get_requester(&self, e3_id: U256) -> Result<Address> {
@@ -515,7 +402,7 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
         let crypto_config_id = crypto_config_id_for_param_set(param_set)?;
 
         let quote_request = E3RequestParams {
-            committeeSize: committee_size,
+            committeeSize: committee_size.into(),
             inputWindow: input_window,
             e3Program: e3_program,
             paramSet: param_set,
@@ -527,7 +414,7 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
         };
         let max_fee = contract.getE3Quote(quote_request).call().await?;
         let e3_request = E3RequestParams {
-            committeeSize: committee_size,
+            committeeSize: committee_size.into(),
             inputWindow: input_window,
             e3Program: e3_program,
             paramSet: param_set,

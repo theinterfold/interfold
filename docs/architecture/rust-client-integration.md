@@ -5,6 +5,11 @@ Owners: [Rust SDK](../../crates/sdk/), [BFV client](../../crates/bfv-client/),
 [TypeScript SDK](../pages/build/sdk.mdx) is a separate client. Neither client replaces the
 application contract's input checks or the protocol's output verification.
 
+Shared Rust contract facts live in [e3-evm-contracts](../../crates/evm/contracts/README.md), not in
+a client or node delivery policy. Its wire tuples are distinct from persisted application and node
+models; [client migration notes](../../crates/evm-helpers/README.md#contract-clients) describe the
+raw enum fields and explicit typed views.
+
 ## Client boundaries
 
 `e3-sdk` re-exports `bfv_client` and `bfv_params` through feature `bfv`, `evm_helpers` through

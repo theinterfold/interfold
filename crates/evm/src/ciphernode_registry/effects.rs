@@ -6,20 +6,6 @@ use super::*;
 use crate::adapters::log_fetcher::fetch_logs_adapting;
 use crate::contracts::IInterfold;
 
-alloy::sol! {
-    #[sol(rpc)]
-    interface IChunkedPublicKeyPublisher {
-        function publishCommitteePublicKey(
-            uint256 e3Id,
-            bytes32 candidateHash,
-            uint16 chunkIndex,
-            uint16 chunkCount,
-            uint32 totalLength,
-            bytes calldata chunk
-        ) external;
-    }
-}
-
 const TICKET_GAS_SAFETY_MULTIPLIER: u64 = 2;
 const MAX_PUBLIC_KEY_BYTES: usize = 512 * 1024;
 const PUBLIC_KEY_CHUNK_BYTES: usize = 90 * 1024;
@@ -373,8 +359,7 @@ pub async fn publish_committee_public_key_to_registry<
                         total = chunk_count,
                         "Calling: contract.publishCommitteePublicKey(chunk)"
                     );
-                    let contract =
-                        IChunkedPublicKeyPublisher::new(contract_address, provider.provider());
+                    let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
                     let pending = send_with_next_nonce(
                         &provider,
                         contract.publishCommitteePublicKey(

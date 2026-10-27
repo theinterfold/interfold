@@ -8,16 +8,108 @@ use alloy_json_abi::JsonAbi;
 use serde_json::{json, Value};
 use std::{fs, path::PathBuf};
 
+fn artifacts_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../packages/interfold-contracts/artifacts")
+}
+
 fn artifact(contract: &str) -> Vec<Value> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../packages/interfold-contracts/artifacts/contracts")
-        .join(contract);
+    let path = artifacts_dir().join("contracts").join(contract);
     let contents = fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("{}: {error}; run pnpm evm:build", path.display()));
     serde_json::from_str::<Value>(&contents).unwrap()["abi"]
         .as_array()
         .expect("contract ABI")
         .clone()
+}
+
+#[test]
+fn typed_views_and_embedded_tuple_match_compiled_solidity() {
+    use crate::{CommitteeSize, E3Stage, FailureReason};
+    use alloy_sol_types::{SolEnum, SolStruct};
+
+    // ABI JSON erases enum members. Read the compiler AST, not a second numeric Rust table.
+    let implementation: Value = serde_json::from_str(
+        &fs::read_to_string(artifacts_dir().join("contracts/Interfold.sol/Interfold.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    let id = implementation["buildInfoId"].as_str().unwrap();
+    let output: Value = serde_json::from_str(
+        &fs::read_to_string(artifacts_dir().join(format!("build-info/{id}.output.json")))
+            .expect("Solidity build info; run pnpm evm:build"),
+    )
+    .unwrap();
+    let ast = &output["output"]["sources"]["project/contracts/interfaces/IInterfold.sol"]["ast"];
+    let contract = ast["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["nodeType"] == "ContractDefinition" && node["name"] == "IInterfold")
+        .unwrap();
+    let members = |name: &str| {
+        contract["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| node["nodeType"] == "EnumDefinition" && node["name"] == name)
+            .unwrap()["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|member| member["name"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        (0..CommitteeSize::COUNT as u8)
+            .map(|value| format!("{:?}", CommitteeSize::try_from(value).unwrap()))
+            .collect::<Vec<_>>(),
+        members("CommitteeSize")
+    );
+    assert_eq!(
+        (0..E3Stage::COUNT as u8)
+            .map(|value| format!("{:?}", E3Stage::try_from(value).unwrap()))
+            .collect::<Vec<_>>(),
+        members("E3Stage")
+    );
+    let mut reasons = members("FailureReason");
+    assert_eq!(reasons.pop().as_deref(), Some("_MAX_FAILURE_REASON"));
+    assert_eq!(
+        (0..FailureReason::COUNT as u8)
+            .map(|value| format!("{:?}", FailureReason::try_from(value).unwrap()))
+            .collect::<Vec<_>>(),
+        reasons
+    );
+    assert!(FailureReason::try_from(FailureReason::COUNT as u8).is_err());
+    assert!(E3Stage::try_from(255).is_err());
+    assert!(CommitteeSize::try_from(255).is_err());
+
+    // This tuple is ABI-encoded inside a bytes argument, so it is absent from the public JSON ABI.
+    let reference = contract["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| {
+            node["nodeType"] == "StructDefinition" && node["name"] == "CiphertextOutputReference"
+        })
+        .unwrap();
+    let fields = reference["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|member| {
+            format!(
+                "{} {}",
+                member["typeDescriptions"]["typeString"].as_str().unwrap(),
+                member["name"].as_str().unwrap()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    assert_eq!(
+        IInterfold::CiphertextOutputReference::eip712_encode_type(),
+        format!("CiphertextOutputReference({fields})")
+    );
 }
 
 // Names and Solidity internal types do not affect the ABI. Preserve order, widths, array suffixes,
@@ -83,7 +175,7 @@ fn assert_subset(bindings: JsonAbi, contract: &str, forwarded: &[(&str, &str)]) 
 }
 
 #[test]
-fn runtime_interfaces_conform_to_solidity() {
+fn declared_bindings_match_solidity() {
     assert_subset(
         IInterfold::abi::contract(),
         "Interfold.sol/Interfold.json",

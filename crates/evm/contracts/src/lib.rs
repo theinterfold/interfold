@@ -15,8 +15,11 @@
 
 use alloy_sol_types::sol;
 
+pub mod enums;
+pub use enums::{CommitteeSize, E3Stage, FailureReason};
+
 #[cfg(test)]
-mod conformance;
+mod abi_consistency;
 
 // ── IInterfold ───────────────────────────────────────────────────────────────
 
@@ -54,7 +57,29 @@ sol! {
             uint256 decryptionWindow;
         }
 
+        struct E3RequestParams {
+            uint8 committeeSize;
+            uint256[2] inputWindow;
+            address e3Program;
+            uint8 paramSet;
+            bytes computeProviderParams;
+            bytes customParams;
+            address expectedFeeToken;
+            bytes32 expectedCryptoConfigId;
+            uint256 maxFee;
+        }
+
+        struct CiphertextOutputReference {
+            bytes32 contentHash;
+            bytes32 ciphertextCommitment;
+            bytes computeProof;
+            bytes availabilityProof;
+        }
+
         // ── Write functions ─────────────────────────────────────────────────
+        function request(E3RequestParams calldata requestParams) external returns (uint256 e3Id, E3 memory e3);
+        function registerE3Program(address e3Program) external;
+        function publishCiphertextOutput(uint256 e3Id, bytes calldata encodedOutputReference) external;
         function publishPlaintextOutput(
             uint256 e3Id,
             bytes calldata plaintextOutput,
@@ -66,6 +91,16 @@ sol! {
         function markE3Failed(uint256 e3Id) external returns (uint8 reason);
 
         // ── View functions ──────────────────────────────────────────────────
+        function nexte3Id() external view returns (uint256);
+        function e3Programs(address e3Program) external view returns (bool);
+        function paramSetRegistry(uint8 paramSet) external view returns (bytes memory);
+        function getE3Quote(E3RequestParams calldata requestParams) external view returns (uint256);
+        function getRequester(uint256 e3Id) external view returns (address);
+        function getTimeoutConfig() external view returns (E3TimeoutConfig memory);
+        function feeToken() external view returns (address);
+        function activeCryptoConfigId() external pure returns (bytes32);
+        function e3CryptoConfigIds(uint256 e3Id) external view returns (bytes32);
+
         function getE3(uint256 e3Id) external view returns (E3 memory e3);
 
         function getE3Stage(uint256 e3Id) external view returns (uint8 stage);
@@ -106,6 +141,7 @@ sol! {
         event RewardClaimed(uint256 indexed e3Id, address indexed account, address indexed token, uint256 amount);
         event E3Failed(uint256 indexed e3Id, uint8 failedAtStage, uint8 reason);
         event E3StageChanged(uint256 indexed e3Id, uint8 previousStage, uint8 newStage);
+        event CommitteeFinalized(uint256 indexed e3Id);
 
         // ── Errors (only those our called functions can revert with) ────────
         error CiphertextOutputNotPublished(uint256 e3Id);
@@ -233,6 +269,15 @@ sol! {
             bytes32 pkCommitment,
             bytes calldata proof,
             bytes calldata dkgAttestationBundle
+        ) external;
+
+        function publishCommitteePublicKey(
+            uint256 e3Id,
+            bytes32 candidateHash,
+            uint16 chunkIndex,
+            uint16 chunkCount,
+            uint32 totalLength,
+            bytes calldata chunk
         ) external;
 
         // ── View functions ──────────────────────────────────────────────────
