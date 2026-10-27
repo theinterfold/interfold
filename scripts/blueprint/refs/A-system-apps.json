@@ -58,7 +58,7 @@
     "supported": true,
     "refs": [
       "templates/default/server/index.ts@245@sdk.publishCiphertextOutput(",
-      "crates/evm-helpers/src/contracts.rs@550@contract.publishCiphertextOutput("
+      "crates/evm/client/src/contracts.rs@550@contract.publishCiphertextOutput("
     ],
     "line_text": [
       "await sdk.publishCiphertextOutput(BigInt(e3_id), {",
@@ -108,7 +108,7 @@
     "supported": true,
     "refs": [
       "packages/interfold-sdk/src/contracts/contract-client.ts@137@public async requestE3(",
-      "crates/evm-helpers/src/contracts.rs@499@contract.request(e3_request)"
+      "crates/evm/client/src/contracts.rs@499@contract.request(e3_request)"
     ],
     "line_text": [
       "public async requestE3(params: E3RequestParams): Promise<Hash> {",
@@ -130,8 +130,8 @@
     "id": "A14",
     "supported": true,
     "refs": [
-      "crates/indexer/src/indexer.rs@415@create_contract_listener(rpc_url, addresses)",
-      "crates/indexer/src/indexer.rs@1138@event_listener.listen()"
+      "crates/evm/indexer/src/indexer.rs@415@create_contract_listener(rpc_url, addresses)",
+      "crates/evm/indexer/src/indexer.rs@1138@event_listener.listen()"
     ],
     "line_text": [
       "let event_listener = EventListener::create_contract_listener(rpc_url, addresses).await?;",

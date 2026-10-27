@@ -19,12 +19,12 @@ members = [
   "crates/events",
   "crates/evm",
   "crates/evm/contracts",
-  "crates/evm-helpers",
+  "crates/evm/client",
   "crates/fhe",
   "crates/fhe-params",
   "crates/fs",
   "crates/hamt",
-  "crates/indexer",
+  "crates/evm/indexer",
   "crates/init",
   "crates/keyshare",
   "crates/layout-lock",
@@ -108,11 +108,11 @@ e3-event-system = { version = "0.20.0-dev.2", path = "./crates/event-system" }
 e3-events = { version = "0.20.0-dev.2", path = "./crates/events" }
 e3-evm = { version = "0.20.0-dev.2", path = "./crates/evm" }
 e3-evm-contracts = { version = "0.20.0-dev.2", path = "./crates/evm/contracts" }
-e3-evm-helpers = { version = "0.20.0-dev.2", path = "./crates/evm-helpers" }
+e3-evm-helpers = { version = "0.20.0-dev.2", path = "./crates/evm/client" }
 e3-fhe = { version = "0.20.0-dev.2", path = "./crates/fhe" }
 e3-fhe-params = { version = "0.20.0-dev.2", path = "./crates/fhe-params" }
 e3-fs = { version = "0.20.0-dev.2", path = "./crates/fs" }
-e3-indexer = { version = "0.20.0-dev.2", path = "./crates/indexer" }
+e3-indexer = { version = "0.20.0-dev.2", path = "./crates/evm/indexer" }
 e3-multithread = { version = "0.20.0-dev.2", path = "./crates/multithread" }
 e3-keyshare = { version = "0.20.0-dev.2", path = "./crates/keyshare" }
 e3-logger = { version = "0.20.0-dev.2", path = "./crates/logger" }

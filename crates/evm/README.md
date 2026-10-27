@@ -4,7 +4,7 @@
 
 Ciphernode EVM adapters: canonical log ingestion, contract readers/writers, chain/provider
 resolution, and confirmed-key/lifecycle projections. Application-side listeners and contract clients
-live separately in [e3-evm-helpers](../evm-helpers/README.md).
+live separately in [e3-evm-helpers](client/README.md).
 
 Shared contract signatures, tuple layouts, events and errors belong to
 [e3-evm-contracts](contracts/README.md), without ingestion or transaction policy.

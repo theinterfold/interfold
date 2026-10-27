@@ -1,13 +1,13 @@
 # Rust client integration
 
 Owners: [Rust SDK](../../crates/sdk/), [BFV client](../../crates/bfv-client/),
-[indexer](../../crates/indexer/), and [EVM helpers](../../crates/evm-helpers/). The
+[indexer](../../crates/evm/indexer/), and [EVM helpers](../../crates/evm/client/). The
 [TypeScript SDK](../pages/build/sdk.mdx) is a separate client. Neither client replaces the
 application contract's input checks or the protocol's output verification.
 
 Shared Rust contract facts live in [e3-evm-contracts](../../crates/evm/contracts/README.md), not in
 a client or node delivery policy. Its wire tuples are distinct from persisted application and node
-models; [client migration notes](../../crates/evm-helpers/README.md#contract-clients) describe the
+models; [client migration notes](../../crates/evm/client/README.md#contract-clients) describe the
 raw enum fields and explicit typed views.
 
 ## Client boundaries
@@ -35,10 +35,10 @@ replay side effects. Opted-in raw handlers must tolerate duplicates and return f
 errors. The cursor is a best-effort raw-handler watermark, not an atomic completion ledger for typed
 projections, Ethereum finality, or reorg rollback.
 
-The [indexer contract](../../crates/indexer/README.md) owns the two catch-up passes, live-progress
-qualification, cursor-write limits, and callback ownership. Application recovery must check its own
-projection, not infer it from block height. CRISP's request/key convergence and input selection
-belong to [encrypted computation](encrypted-computation.md).
+The [indexer contract](../../crates/evm/indexer/README.md) owns the two catch-up passes,
+live-progress qualification, cursor-write limits, and callback ownership. Application recovery must
+check its own projection, not infer it from block height. CRISP's request/key convergence and input
+selection belong to [encrypted computation](encrypted-computation.md).
 
 EVM helpers provide bindings, log/block listeners, and transaction submission. Their
 `send_with_next_nonce` serializes nonce selection and broadcast for a chain/account within one

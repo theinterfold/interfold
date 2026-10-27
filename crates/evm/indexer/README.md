@@ -3,7 +3,7 @@
 ## Purpose
 
 `e3-indexer` maintains application-side E3/committee/output projections from Interfold logs and lets
-consumers attach raw/typed callbacks. It combines [EVM listeners](../evm-helpers/README.md) with a
+consumers attach raw/typed callbacks. It combines [EVM listeners](../client/README.md) with a
 consumer-provided store; it is not the ciphernode's protocol event journal.
 
 ## Map
@@ -59,17 +59,17 @@ Coverage records in stores without delete can outlive the deployment/configurati
 them; consumers need their live bindings, not only the stored record.
 
 Committee-key bytes are untrusted until assembled and checked against the proven request-time
-commitment. [DKG transport](../../docs/architecture/dkg.md) owns that boundary. CRISP's request/key
-convergence, deferred census discovery, and selection cache have separate application state; see
-[encrypted computation](../../docs/architecture/encrypted-computation.md). The watermark cannot
-stand in for those state checks.
+commitment. [DKG transport](../../../docs/architecture/dkg.md) owns that boundary. CRISP's
+request/key convergence, deferred census discovery, and selection cache have separate application
+state; see [encrypted computation](../../../docs/architecture/encrypted-computation.md). The
+watermark cannot stand in for those state checks.
 
 ## Tests
 
 Prepare root `pnpm fixtures:build` with bash, solc, and jq: the build script invokes Solidity
 fixture compilation even for checks. `cargo test --locked -p e3-indexer` exercises inline
 callback/repository/key-assembly tests and the Anvil-backed integration target. Listener
-subscription/progress tests are in [event_listener.rs](../evm-helpers/src/event_listener.rs),
-runnable with `cargo test -p e3-evm-helpers`. They do not establish all-handler crash consistency or
+subscription/progress tests are in [event_listener.rs](../client/src/event_listener.rs), runnable
+with `cargo test -p e3-evm-helpers`. They do not establish all-handler crash consistency or
 atomicity of concurrent cursor writes. See [AGENTS.md](AGENTS.md) for handler/cursor changes and
 ownership hazards.
