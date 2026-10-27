@@ -265,6 +265,13 @@ line:
 Metrics available at http://127.0.0.1:9095/metrics
 ```
 
+When the address is in use, the log shows `node metrics endpoint could not bind its address`
+instead, and the node runs without metrics.
+
+The endpoint starts after the node finishes its startup, which includes the initial chain sync. The
+startup can take up to `startup_timeout_secs` (30 minutes by default). Until then, every scrape
+fails. Give an alert on the scrape `up` metric a `for` duration longer than your usual startup.
+
 ### Read the metrics
 
 On the host of the node, run:
@@ -309,12 +316,21 @@ the host address in the port mapping. A Prometheus server in the same Docker net
 scrape_configs:
   - job_name: interfold
     scrape_interval: 30s
+    scrape_timeout: 15s
     static_configs:
       - targets: ['127.0.0.1:9095']
 ```
 
-Scrape at an interval of 30 s or more. Each scrape reads the new EventStore events. The operator
-state comes from chain RPC reads that the node makes at most once every 15 s.
+Scrape at an interval of 30 s or more. A scrape has these costs:
+
+- **Chain RPC.** The operator state comes from chain RPC reads: about a dozen requests for each
+  enabled chain, over a new connection, at most once every 15 s. With the metrics enabled, the node
+  makes these reads all the time, not only while the dashboard is open. Count them in the request
+  budget of your RPC provider. One read can take up to 8 s, so set `scrape_timeout` to 15 s or more.
+- **Event history.** Each scrape reads the new EventStore events into the same in-memory projection
+  that the dashboard uses. The first scrape after a start reads the whole history of the node. The
+  projection keeps every event, so its memory grows with the history of the node, also when the
+  dashboard is off.
 
 ### Metrics
 
