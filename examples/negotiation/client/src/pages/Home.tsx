@@ -10,7 +10,7 @@ import { HandshakeIcon, LockKeyIcon, SealCheckIcon } from '@phosphor-icons/react
 import { useNegotiations } from '@/hooks/useNegotiations'
 import { useChainTime } from '@/hooks/useChainTime'
 import { useWallet } from '@/hooks/useWallet'
-import { type NegotiationState, roleOf } from '@/utils/negotiation'
+import { type NegotiationState, partyRoleOf } from '@/utils/negotiation'
 import NegotiationCard, { NegotiationCardSkeleton } from '@/components/NegotiationCard'
 import Cipher from '@/components/Cipher'
 
@@ -62,8 +62,8 @@ const Home: React.FC = () => {
   const now = useChainTime()
   const { address } = useWallet()
 
-  const mine = negotiations.filter((item) => roleOf(item, address) !== null)
-  const others = negotiations.filter((item) => roleOf(item, address) === null).slice(0, RECENT_LIMIT)
+  const mine = negotiations.filter((item) => partyRoleOf(item, address) !== null)
+  const others = negotiations.filter((item) => partyRoleOf(item, address) === null).slice(0, RECENT_LIMIT)
 
   return (
     <div className='page !pt-0'>

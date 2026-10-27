@@ -72,6 +72,12 @@ describe('completeRoles', () => {
     expect([...completeRoles(offers, (ciphertext) => ciphertext !== '0xbb2')]).toEqual([0])
   })
 
+  it('takes the role of an offer from its event, so an open-seat buyer needs no stored buyer', () => {
+    // The `OfferSubmitted` event carries the role that the program chose for the party. The server reads nothing else.
+    const newcomer = '0x3333333333333333333333333333333333333333'
+    expect([...completeRoles([offer(seller, 0, 'ss'), offer(newcomer, 1, 'nn')], () => true)].sort()).toEqual([0, 1])
+  })
+
   it('is empty when no offer exists or none opens', () => {
     expect(completeRoles([], () => true).size).toBe(0)
     expect(completeRoles(offers, () => false).size).toBe(0)

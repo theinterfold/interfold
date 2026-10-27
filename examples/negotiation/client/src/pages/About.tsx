@@ -29,7 +29,11 @@ const REVEALED = [
 const LIFECYCLE = [
   [
     'Create',
-    `The creator picks the seller, the buyer and a grid of 2 to ${LEVELS} prices. The creator pays the Interfold fee. The price unit is only a label.`,
+    `The creator picks the seller, a grid of 2 to ${LEVELS} prices and, optionally, the buyer. The creator pays the Interfold fee. The price unit is only a label.`,
+  ],
+  [
+    'Open buyer seat',
+    'If the creator leaves the buyer empty, the buyer seat is open. The first wallet other than the seller that sends a valid buyer offer takes the seat. From then on that wallet is the buyer, and no other wallet can send a buyer offer. Any wallet that finds the negotiation can take an open seat first, for example from the public list. Name the buyer when you need a known counterparty. The seat is taken when the offer is accepted, even if the program later drops the offer: then the negotiation ends with an offer missing.',
   ],
   [
     'Committee key',

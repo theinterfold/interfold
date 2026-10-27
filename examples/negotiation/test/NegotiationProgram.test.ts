@@ -84,12 +84,12 @@ describe('NegotiationProgram', () => {
       expect((await fixture.program.negotiation(2n)).levels).to.equal(16n)
     })
 
-    it('rejects parties that are zero or equal', async () => {
+    it('rejects a zero seller, and a buyer that is the seller', async () => {
       const fixture = await deployFixture()
       const { program, seller, buyer } = fixture
       for (const options of [
         { seller: zeroAddress },
-        { buyer: zeroAddress },
+        { seller: zeroAddress, buyer: zeroAddress },
         { seller: seller.address, buyer: seller.address },
         { seller: buyer.address, buyer: buyer.address },
       ]) {
@@ -474,6 +474,124 @@ describe('NegotiationProgram', () => {
       const receipt = await submit(fixture, fixture.seller, makeOffer(fixture.seller.address, 1), e3Id)
       console.log(`      gas publishInput (mock verifier): ${receipt!.gasUsed}`)
       expect(receipt!.gasUsed).to.be.lessThan(1_000_000n)
+    })
+  })
+
+  describe('an open buyer seat', () => {
+    it('is created with the zero address as the buyer', async () => {
+      const fixture = await deployFixture()
+      const { program, creator, seller } = fixture
+      const { e3Id, tx } = await requestNegotiation(fixture, { buyer: zeroAddress })
+      await expect(tx())
+        .to.emit(program, 'NegotiationCreated')
+        .withArgs(e3Id, creator.address, seller.address, zeroAddress, LEVELS, MIN_PRICE, STEP_PRICE, TITLE)
+      expect((await program.negotiation(e3Id)).buyer).to.equal(zeroAddress)
+    })
+
+    it('goes to the first buyer offer of a wallet that is not the seller, and the buyer is fixed from then on', async () => {
+      const fixture = await deployFixture()
+      const { program, seller, buyer, stranger } = fixture
+      const e3Id = await createNegotiation(fixture, { buyer: zeroAddress })
+      // The seller sends its offer first: this does not take the seat.
+      await submit(fixture, seller, makeOffer(seller.address, 1), e3Id)
+      expect((await program.negotiation(e3Id)).buyer).to.equal(zeroAddress)
+      const offer = makeOffer(buyer.address, 2)
+      await expect(program.connect(buyer).publishInput(e3Id, offerData(offer)))
+        .to.emit(program, 'BuyerJoined')
+        .withArgs(e3Id, buyer.address)
+        .and.to.emit(program, 'OfferSubmitted')
+        .withArgs(e3Id, buyer.address, BUYER_ROLE, 4n, offer.ciphertexts, offer.commitments)
+      expect((await program.negotiation(e3Id)).buyer).to.equal(buyer.address)
+      expect(await program.offerSubmitted(e3Id, BUYER_ROLE)).to.equal(true)
+      // A second wallet cannot take the seat, and the buyer cannot send twice.
+      await expect(program.connect(stranger).publishInput(e3Id, offerData(makeOffer(stranger.address, 3))))
+        .to.be.revertedWithCustomError(program, 'NotAParty')
+        .withArgs(stranger.address)
+      await expect(program.connect(buyer).publishInput(e3Id, offerData(makeOffer(buyer.address, 4))))
+        .to.be.revertedWithCustomError(program, 'AlreadySubmitted')
+        .withArgs(buyer.address, BUYER_ROLE)
+      expect((await program.negotiation(e3Id)).buyer).to.equal(buyer.address)
+    })
+
+    it('does not go to the seller, and the seller offer keeps the seller role', async () => {
+      const fixture = await deployFixture()
+      const { program, seller, buyer } = fixture
+      const e3Id = await createNegotiation(fixture, { buyer: zeroAddress })
+      const offer = makeOffer(seller.address, 1)
+      await expect(program.connect(seller).publishInput(e3Id, offerData(offer)))
+        .to.emit(program, 'OfferSubmitted')
+        .withArgs(e3Id, seller.address, SELLER_ROLE, 1n, offer.ciphertexts, offer.commitments)
+      await expect(program.connect(seller).publishInput(e3Id, offerData(makeOffer(seller.address, 2))))
+        .to.be.revertedWithCustomError(program, 'AlreadySubmitted')
+        .withArgs(seller.address, SELLER_ROLE)
+      const events = await program.queryFilter(program.filters.BuyerJoined(e3Id))
+      expect(events).to.have.length(0)
+      expect((await program.negotiation(e3Id)).buyer).to.equal(zeroAddress)
+      // A buyer can still take the seat.
+      await submit(fixture, buyer, makeOffer(buyer.address, 3), e3Id)
+      expect((await program.negotiation(e3Id)).buyer).to.equal(buyer.address)
+    })
+
+    it('does not go to the zero address', async () => {
+      const fixture = await deployFixture()
+      const { program, stranger } = fixture
+      const e3Id = await createNegotiation(fixture, { buyer: zeroAddress })
+      await expect(program.connect(stranger).publishInput(e3Id, offerData(makeOffer(zeroAddress, 1))))
+        .to.be.revertedWithCustomError(program, 'NotAParty')
+        .withArgs(zeroAddress)
+      expect((await program.negotiation(e3Id)).buyer).to.equal(zeroAddress)
+    })
+
+    it('goes to the signer of a relayed offer, not to the relayer', async () => {
+      const fixture = await deployFixture()
+      const { program, buyer, relayer } = fixture
+      const e3Id = await createNegotiation(fixture, { buyer: zeroAddress })
+      const offer = makeOffer(buyer.address, 2)
+      await expect(program.connect(relayer).publishInput(e3Id, offerData(offer, await signOffer(fixture, buyer, e3Id, offer))))
+        .to.emit(program, 'BuyerJoined')
+        .withArgs(e3Id, buyer.address)
+      expect((await program.negotiation(e3Id)).buyer).to.equal(buyer.address)
+      // The relayer did not become the buyer.
+      await expect(program.connect(relayer).publishInput(e3Id, offerData(makeOffer(relayer.address, 3))))
+        .to.be.revertedWithCustomError(program, 'NotAParty')
+        .withArgs(relayer.address)
+    })
+
+    it('stays open after an offer that fails a check', async () => {
+      const fixture = await deployFixture()
+      const { program, offerVerifier, buyer, stranger } = fixture
+      const e3Id = await createNegotiation(fixture, { buyer: zeroAddress })
+      // A direct offer of another sender, a bad proof and a wrong shape do not take the seat.
+      await expect(program.connect(stranger).publishInput(e3Id, offerData(makeOffer(buyer.address, 2)))).to.be.revertedWithCustomError(
+        program,
+        'SenderNotParty',
+      )
+      await expect(
+        program.connect(buyer).publishInput(e3Id, offerData({ ...makeOffer(buyer.address, 2), proof: '0x02' })),
+      ).to.be.revertedWithCustomError(offerVerifier, 'ProofRejected')
+      await (await offerVerifier.setAccepting(false)).wait()
+      await expect(program.connect(buyer).publishInput(e3Id, offerData(makeOffer(buyer.address, 2)))).to.be.revertedWithCustomError(
+        program,
+        'InvalidOfferProof',
+      )
+      expect((await program.negotiation(e3Id)).buyer).to.equal(zeroAddress)
+      expect(await program.offerSubmitted(e3Id, BUYER_ROLE)).to.equal(false)
+      await (await offerVerifier.setAccepting(true)).wait()
+      // Another wallet takes the seat.
+      await submit(fixture, stranger, makeOffer(stranger.address, 5), e3Id)
+      expect((await program.negotiation(e3Id)).buyer).to.equal(stranger.address)
+    })
+
+    it('does not change a negotiation with a fixed buyer', async () => {
+      const fixture = await deployFixture()
+      const { program, buyer, stranger } = fixture
+      const e3Id = await createNegotiation(fixture)
+      await expect(program.connect(stranger).publishInput(e3Id, offerData(makeOffer(stranger.address, 5))))
+        .to.be.revertedWithCustomError(program, 'NotAParty')
+        .withArgs(stranger.address)
+      const offer = makeOffer(buyer.address, 2)
+      await expect(program.connect(buyer).publishInput(e3Id, offerData(offer))).to.not.emit(program, 'BuyerJoined')
+      expect((await program.negotiation(e3Id)).buyer).to.equal(buyer.address)
     })
   })
 

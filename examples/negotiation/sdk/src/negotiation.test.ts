@@ -170,6 +170,7 @@ describe('negotiationProgramAbi', () => {
     for (const expected of [
       'event:NegotiationCreated',
       'event:OfferSubmitted',
+      'event:BuyerJoined',
       'event:Settled',
       'function:negotiation',
       'function:offerSubmitted',

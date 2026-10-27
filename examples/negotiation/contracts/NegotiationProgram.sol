@@ -27,8 +27,11 @@ import { NegotiationOutput } from "./libraries/NegotiationOutput.sol";
 /// committee decrypts one output. If `b >= s`, the output names one level `p` that is almost uniform
 /// in `[s, b]`. Otherwise it shows only that there is no match. Nobody learns `s` or `b`.
 ///
-/// Flow: anyone requests the E3 and names the two parties (`validate`). Each party sends its offer with
-/// `publishInput`, directly or through a relayer with its EIP-712 signature. After the input window,
+/// Flow: anyone requests the E3 and names the seller and, optionally, the buyer (`validate`). Each party
+/// sends its offer with `publishInput`, directly or through a relayer with its EIP-712 signature. If the
+/// buyer is the zero address, the buyer seat is open: the first wallet that is not the seller and that
+/// sends a valid buyer offer becomes the buyer, for good. Any wallet that finds the negotiation can take
+/// an open seat first, so use it only when that is acceptable. After the input window,
 /// the program computes and Interfold publishes the plaintext. Anyone then calls `settle`, which reads
 /// the level from the plaintext and stores the price. There is no deposit: a negotiation that one
 /// party does not complete stops without a loss. `DESIGN.md` explains the encoding of the output.
@@ -57,6 +60,7 @@ contract NegotiationProgram is IE3Program, IE3ProgramDataAvailability, IERC165, 
   struct Terms {
     address creator;
     address seller;
+    /// @dev The zero address while the buyer seat is open. `publishInput` sets it once.
     address buyer;
     uint8 levels;
     uint256 minPrice;
@@ -143,6 +147,9 @@ contract NegotiationProgram is IE3Program, IE3ProgramDataAvailability, IERC165, 
     bytes[] ciphertexts,
     bytes32[] commitments
   );
+  /// @notice The open buyer seat of a negotiation was taken by the first valid buyer offer. The buyer
+  /// is fixed from then on. It is emitted with the `OfferSubmitted` event of the same offer.
+  event BuyerJoined(uint256 indexed e3Id, address indexed buyer);
   /// @notice The outcome was read from the published plaintext. `step` and `price` are 0 for no match.
   event Settled(uint256 indexed e3Id, bool matched, uint8 step, uint256 price);
 
@@ -186,8 +193,10 @@ contract NegotiationProgram is IE3Program, IE3ProgramDataAvailability, IERC165, 
 
   /// @inheritdoc IE3Program
   /// @dev `customParams` is `abi.encode(address seller, address buyer, uint8 levels, uint256 minPrice,
-  /// uint256 stepPrice, string title)`. Level `i` has the price `minPrice + i * stepPrice`. Interfold
-  /// calls this inside `request`, and the requester is already set.
+  /// uint256 stepPrice, string title)`. The buyer may be the zero address: the seat is then open and
+  /// the first valid buyer offer of a party other than the seller takes it (`publishInput`). Level `i`
+  /// has the price `minPrice + i * stepPrice`. Interfold calls this inside `request`, and the requester
+  /// is already set.
   function validate(
     uint256 e3Id,
     uint256,
@@ -203,7 +212,8 @@ contract NegotiationProgram is IE3Program, IE3ProgramDataAvailability, IERC165, 
       customParams,
       (address, address, uint8, uint256, uint256, string)
     );
-    if (terms.seller == address(0) || terms.buyer == address(0) || terms.seller == terms.buyer) revert InvalidParties();
+    // The buyer may be the zero address: the seat is open until a buyer offer takes it.
+    if (terms.seller == address(0) || terms.seller == terms.buyer) revert InvalidParties();
     if (terms.levels < MIN_LEVELS || terms.levels > MAX_LEVELS) revert InvalidLevels(terms.levels);
     // Each term is below 2^128, so the highest price is below 2^128 * 16 and cannot overflow here.
     if (
@@ -262,7 +272,8 @@ contract NegotiationProgram is IE3Program, IE3ProgramDataAvailability, IERC165, 
     return _hashTypedDataV4(keccak256(abi.encode(OFFER_TYPEHASH, e3Id, party, inputsHash)));
   }
 
-  /// @notice Send the offer of the seller or of the buyer. Each party sends one offer.
+  /// @notice Send the offer of the seller or of the buyer. Each party sends one offer. If the buyer seat
+  /// is open, the first valid offer of a party that is not the seller takes the seat and fixes the buyer.
   /// @param data `abi.encode(address party, bytes[] ciphertexts, bytes32[] commitments, bytes proof,
   /// bytes signature)`. With an empty `signature` the sender must be `party`. Otherwise `signature` is
   /// the EIP-712 signature of `party` (`offerDigest`), and anyone may send.
@@ -276,8 +287,11 @@ contract NegotiationProgram is IE3Program, IE3ProgramDataAvailability, IERC165, 
       (address, bytes[], bytes32[], bytes, bytes)
     );
     uint8 role;
+    // An open seat (the buyer is the zero address) goes to the first sender that is not the seller.
+    // The zero address is never a party, so it cannot match the zero buyer of an open seat.
+    if (offer.party == address(0)) revert NotAParty(offer.party);
     if (offer.party == terms.seller) role = SELLER;
-    else if (offer.party == terms.buyer) role = BUYER;
+    else if (offer.party == terms.buyer || terms.buyer == address(0)) role = BUYER;
     else revert NotAParty(offer.party);
     if (offer.ciphertexts.length != OFFER_CIPHERTEXTS || offer.commitments.length != OFFER_CIPHERTEXTS) revert InvalidOfferShape();
     if (offerSubmitted[e3Id][role]) revert AlreadySubmitted(offer.party, role);
@@ -290,6 +304,12 @@ contract NegotiationProgram is IE3Program, IE3ProgramDataAvailability, IERC165, 
     _checkSender(e3Id, offer, hashes);
     _verifyOfferProof(offer, role, terms.levels, e3.committeePublicKey);
 
+    // An open seat is taken here, after every check passed: only a valid buyer offer takes it. The
+    // program drops an offer whose ciphertexts do not open their commitments, but the seat stays taken.
+    if (role == BUYER && terms.buyer == address(0)) {
+      terms.buyer = offer.party;
+      emit BuyerJoined(e3Id, offer.party);
+    }
     offerSubmitted[e3Id][role] = true;
     uint256 firstLeaf = inputs[e3Id].numberOfLeaves;
     for (uint256 r = 0; r < OFFER_CIPHERTEXTS; r++) {

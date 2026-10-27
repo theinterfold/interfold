@@ -16,6 +16,7 @@ export interface NegotiationState {
   e3Id: bigint
   creator: `0x${string}`
   seller: `0x${string}`
+  /** The zero address while the buyer seat is open: the first buyer offer takes the seat, and the buyer is fixed from then on. */
   buyer: `0x${string}`
   /** The levels of the price grid (2 to 16). A price step is below it. */
   levels: number
@@ -51,13 +52,28 @@ export function splitTitle(stored: string): { title: string; unit: string } {
   return match ? { title: match[1], unit: match[2] } : { title: stored, unit: '' }
 }
 
-/** The role of `account` in the negotiation, or `null` if it is neither the seller nor the buyer. */
-export function roleOf(negotiation: Pick<NegotiationState, 'seller' | 'buyer'>, account: string | undefined): Role | null {
+/** Whether the buyer seat is open: the creator left the buyer empty and no buyer offer has taken the seat yet. */
+export function isOpenSeat(negotiation: Pick<NegotiationState, 'buyer'>): boolean {
+  return negotiation.buyer === zeroAddress
+}
+
+/** The role of `account` as a named party: the seller, or the buyer that is fixed. An open seat names nobody. */
+export function partyRoleOf(negotiation: Pick<NegotiationState, 'seller' | 'buyer'>, account: string | undefined): Role | null {
   if (account === undefined) return null
   const lower = account.toLowerCase()
   if (lower === negotiation.seller.toLowerCase()) return Role.Seller
-  if (lower === negotiation.buyer.toLowerCase()) return Role.Buyer
+  if (!isOpenSeat(negotiation) && lower === negotiation.buyer.toLowerCase()) return Role.Buyer
   return null
+}
+
+/**
+ * The role that `account` can act as, or `null` if it is neither the seller nor the buyer. While the seat is open,
+ * every connected account other than the seller can act as the buyer: its first offer takes the seat.
+ */
+export function roleOf(negotiation: Pick<NegotiationState, 'seller' | 'buyer'>, account: string | undefined): Role | null {
+  const party = partyRoleOf(negotiation, account)
+  if (party !== null) return party
+  return account !== undefined && isOpenSeat(negotiation) ? Role.Buyer : null
 }
 
 export const ROLE_NAMES: Record<Role, 'seller' | 'buyer'> = { [Role.Seller]: 'seller', [Role.Buyer]: 'buyer' }

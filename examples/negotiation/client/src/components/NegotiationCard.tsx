@@ -6,7 +6,7 @@
 
 import React from 'react'
 import { Link } from 'react-router-dom'
-import { type NegotiationState, ROLE_NAMES, formatLevel, phaseOf, roleOf, timeLeftLabel } from '@/utils/negotiation'
+import { type NegotiationState, ROLE_NAMES, formatLevel, isOpenSeat, partyRoleOf, phaseOf, timeLeftLabel } from '@/utils/negotiation'
 import { shorten } from '@/utils/error-formatting'
 import { shortId } from '@/utils/format'
 import StatusBadge from './StatusBadge'
@@ -22,7 +22,7 @@ interface NegotiationCardProps {
 /** A negotiation as a row of the list: status and id, title, price range and parties, then role and time. */
 const NegotiationCard: React.FC<NegotiationCardProps> = ({ negotiation, now, account }) => {
   const phase = phaseOf(negotiation, now)
-  const role = roleOf(negotiation, account)
+  const role = partyRoleOf(negotiation, account)
   return (
     <Link to={`/n/${negotiation.e3Id}`} className='list-row'>
       <div className='row-main flex items-start gap-4'>
@@ -40,7 +40,11 @@ const NegotiationCard: React.FC<NegotiationCardProps> = ({ negotiation, now, acc
           </p>
           <p className='muted text-sm'>
             Seller <span className='addr'>{shorten(negotiation.seller, 6, 4)}</span> · Buyer{' '}
-            <span className='addr'>{shorten(negotiation.buyer, 6, 4)}</span>
+            {isOpenSeat(negotiation) ? (
+              <span className='muted'>Open seat</span>
+            ) : (
+              <span className='addr'>{shorten(negotiation.buyer, 6, 4)}</span>
+            )}
           </p>
         </div>
       </div>

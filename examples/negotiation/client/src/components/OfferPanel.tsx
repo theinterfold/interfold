@@ -9,7 +9,7 @@ import { CheckCircleIcon, CircleIcon, LockKeyIcon, WarningCircleIcon } from '@ph
 import { Role, priceAt, stepFor } from '@interfold/negotiation'
 import { type StepRow, useOffer } from '@/hooks/useOffer'
 import type { Wallet } from '@/hooks/useWallet'
-import { type NegotiationPhase, type NegotiationState, ROLE_NAMES, formatLevel, formatPrice } from '@/utils/negotiation'
+import { type NegotiationPhase, type NegotiationState, ROLE_NAMES, formatLevel, formatPrice, isOpenSeat } from '@/utils/negotiation'
 import { ConnectPrompt } from './ConnectPrompt'
 import { TxLink } from './Explorer'
 import Spinner from './Spinner'
@@ -76,12 +76,21 @@ const OfferPanel: React.FC<OfferPanelProps> = ({ negotiation, phase, wallet, com
   const [relayed, setRelayed] = useState(false)
   const [revealed, setRevealed] = useState(false)
   const elapsed = useElapsed(offer.run?.startedAt, offer.submitting)
+  const openSeat = isOpenSeat(negotiation)
 
   if (!wallet.isConnected) {
     return (
       <div className='space-y-4'>
-        <ConnectPrompt>Connect the wallet of the seller or the buyer to send an offer.</ConnectPrompt>
-        <p className='muted text-sm'>Only the seller and the buyer of this negotiation can send an offer. Everyone else can follow it.</p>
+        <ConnectPrompt>
+          {openSeat
+            ? 'Connect a wallet to send an offer as the seller or to take the open buyer seat.'
+            : 'Connect the wallet of the seller or the buyer to send an offer.'}
+        </ConnectPrompt>
+        <p className='muted text-sm'>
+          {openSeat
+            ? 'The buyer seat is open: the first wallet other than the seller that sends an offer becomes the buyer. Everyone else can follow the negotiation.'
+            : 'Only the seller and the buyer of this negotiation can send an offer. Everyone else can follow it.'}
+        </p>
       </div>
     )
   }
@@ -112,7 +121,15 @@ const OfferPanel: React.FC<OfferPanelProps> = ({ negotiation, phase, wallet, com
       {wallet.wrongChain && <div className='note bad'>Your wallet is on another network. Switch networks to send an offer.</div>}
 
       <p className='muted text-sm'>
-        You are the <strong>{roleName}</strong>.
+        {role === Role.Buyer && openSeat ? (
+          <>
+            The buyer seat is open. If you send an offer, you become the <strong>buyer</strong> and nobody else can take the seat.
+          </>
+        ) : (
+          <>
+            You are the <strong>{roleName}</strong>.
+          </>
+        )}
       </p>
 
       {sealed ? (

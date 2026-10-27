@@ -7,7 +7,7 @@
 import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useWalletClient } from 'wagmi'
-import { isAddress } from 'viem'
+import { isAddress, zeroAddress } from 'viem'
 import { LEVELS, MIN_LEVELS, gridFor, priceAt } from '@interfold/negotiation'
 import { STEP_LABELS, useCreateNegotiation } from '@/hooks/useCreateNegotiation'
 import { useWallet } from '@/hooks/useWallet'
@@ -32,7 +32,7 @@ const MAX_MINUTES = 24 * 60
 const NEXT_STEPS = [
   'You approve the fee token, then send the request. The wallet asks you to sign each.',
   'The committee of ciphernodes generates the key. This takes several minutes.',
-  'You send the link to the seller and the buyer. Each connects its own wallet and seals one price in its browser.',
+  'You send the link to the seller and the buyer. Each connects its own wallet and seals one price in its browser. With no buyer named, the first wallet other than the seller that sends an offer becomes the buyer.',
   'After the window closes the program combines the two sealed prices. The committee decrypts only the result.',
   'Anyone settles the result on chain. Both parties learn the agreed price, or that there is no match.',
 ]
@@ -79,8 +79,9 @@ const CreateNegotiation: React.FC = () => {
   const seller = sellerText.trim()
   const buyer = buyerText.trim()
   const sellerValid = isAddress(seller)
-  const buyerValid = isAddress(buyer)
-  const sameParty = sellerValid && buyerValid && seller.toLowerCase() === buyer.toLowerCase()
+  // The buyer is optional: an empty field leaves the seat open.
+  const buyerValid = buyer === '' || isAddress(buyer)
+  const sameParty = sellerValid && buyer !== '' && buyerValid && seller.toLowerCase() === buyer.toLowerCase()
 
   const min = parsePrice(minText)
   const max = parsePrice(maxText)
@@ -115,7 +116,7 @@ const CreateNegotiation: React.FC = () => {
       const e3Id = await create.create({
         title: stored,
         seller: seller as `0x${string}`,
-        buyer: buyer as `0x${string}`,
+        buyer: buyer === '' ? zeroAddress : (buyer as `0x${string}`),
         levels,
         minPrice: min,
         stepPrice: stepSize,
@@ -150,6 +151,7 @@ const CreateNegotiation: React.FC = () => {
           <p className='lede'>
             Send this link to the seller and to the buyer. Each connects its own wallet and seals one price. The offers open once the
             committee has generated its key, which takes several minutes.
+            {buyer === '' && ' The buyer seat is open: the first wallet other than the seller that sends an offer becomes the buyer.'}
           </p>
           <div className='note space-y-3'>
             <p className='meta muted'>Link to share</p>
@@ -267,7 +269,7 @@ const CreateNegotiation: React.FC = () => {
             </div>
             <div>
               <label htmlFor='buyer' className='label'>
-                Buyer address
+                Buyer address <span className='muted'>(optional)</span>
               </label>
               <div className='flex gap-2'>
                 <input
@@ -285,9 +287,9 @@ const CreateNegotiation: React.FC = () => {
                 )}
               </div>
               {fieldNote(
-                (buyerText !== '' && !buyerValid) || sameParty,
+                !buyerValid || sameParty,
                 sameParty ? 'The seller and the buyer are two different addresses.' : 'This is not an address.',
-                'The buyer sends a maximum price.',
+                'Leave empty to let the first person who opens the link and sends an offer become the buyer. Then any wallet that finds the negotiation can take the seat first.',
               )}
             </div>
           </fieldset>

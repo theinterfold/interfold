@@ -37,6 +37,7 @@ export const OFFER_TYPES = {
 export const negotiationProgramAbi = parseAbi([
   'event NegotiationCreated(uint256 indexed e3Id, address indexed creator, address indexed seller, address buyer, uint8 levels, uint256 minPrice, uint256 stepPrice, string title)',
   'event OfferSubmitted(uint256 indexed e3Id, address indexed party, uint8 role, uint256 firstLeaf, bytes[] ciphertexts, bytes32[] commitments)',
+  'event BuyerJoined(uint256 indexed e3Id, address indexed buyer)',
   'event Settled(uint256 indexed e3Id, bool matched, uint8 step, uint256 price)',
   'function negotiation(uint256 e3Id) view returns (address creator, address seller, address buyer, uint8 levels, uint256 minPrice, uint256 stepPrice, string title)',
   'function offerSubmitted(uint256 e3Id, uint8 role) view returns (bool)',
@@ -68,6 +69,7 @@ export const negotiationProgramAbi = parseAbi([
 /** The public terms of a negotiation: the `customParams` of the E3 request. */
 export interface NegotiationParams {
   seller: Address
+  /** The zero address leaves the buyer seat open: the first valid buyer offer of a wallet other than the seller takes it. */
   buyer: Address
   /** The price levels, 2 to 16. */
   levels: number

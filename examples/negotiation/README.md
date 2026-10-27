@@ -17,9 +17,10 @@ client and proof pipeline. It has no tokens and no deposits.
 
 ## How a negotiation works
 
-1. **Create.** Anyone (the creator) names the seller and the buyer (two different addresses), a
-   price grid `[min, max, step]` of 2 to 16 levels, a title and an input window. The creator pays
-   the E3 fee. The creator shares the link `/n/<e3Id>`.
+1. **Create.** Anyone (the creator) names the seller and, optionally, the buyer (two different
+   addresses), a price grid `[min, max, step]` of 2 to 16 levels, a title and an input window. The
+   creator pays the E3 fee. The creator shares the link `/n/<e3Id>`. With no buyer named, the buyer
+   seat is open (see **The open buyer seat** under "Contracts").
 2. **Offers.** The seller seals its minimum, and the buyer seals its maximum. Each party picks a
    level of the grid and a random 4-bit share. The browser encrypts three ciphertexts under the
    committee key, proves in zero knowledge that they are well formed, and sends them with
@@ -107,19 +108,31 @@ The interface that the client, the server, the circuit and the program share:
 
 **Create** (`customParams` of the E3 request):
 `abi.encode(address seller, address buyer, uint8 levels, uint256 minPrice, uint256 stepPrice, string title)`.
-The seller and the buyer are non-zero and different, `levels` is 2 to 16 and `stepPrice > 0`.
-`validate` stores them and emits
+The seller is non-zero and is not the buyer, the buyer may be the zero address (an open seat),
+`levels` is 2 to 16 and `stepPrice > 0`. `validate` stores them and emits
 `NegotiationCreated(e3Id, creator, seller, buyer, levels, minPrice, stepPrice, title)`.
 
 **Offer** (`publishInput`):
 `data = abi.encode(address party, bytes[] ciphertexts, bytes32[] commitments, bytes proof, bytes signature)`
-with 3 ciphertexts and 3 commitments. `party` is the seller or the buyer. The sender is `party`, or
-`signature` is the EIP-712 signature of `party` over
-`Offer(uint256 e3Id, address party, bytes32 inputsHash)` (the relayed path). One offer for each
-role. The contract verifies one Honk proof. Its 8 public inputs are
+with 3 ciphertexts and 3 commitments. `party` is the seller or the buyer (or, on an open seat, a
+wallet that takes the seat). The sender is `party`, or `signature` is the EIP-712 signature of
+`party` over `Offer(uint256 e3Id, address party, bytes32 inputsHash)` (the relayed path). One offer
+for each role. The contract verifies one Honk proof. Its 8 public inputs are
 `ct_commitments[3], party, role, levels, pk_commitment, vk_anchor`. It adds three leaves to the
 input tree, with the metadata `party (20 bytes) || uint40(role * 256 + index)` and emits
 `OfferSubmitted`.
+
+**The open buyer seat.** If the buyer in `customParams` is the zero address, the seat is open.
+`negotiation(e3Id).buyer` stays the zero address until a buyer offer is accepted. The first valid
+`publishInput` of a `party` that is not the seller and not the zero address becomes the buyer. The
+contract stores it and emits `BuyerJoined(e3Id, buyer)` with `OfferSubmitted`. The buyer is fixed
+from then on: another wallet gets `NotAParty`, and the buyer gets `AlreadySubmitted` for a second
+offer. The checks of the signature (a relayed offer takes the seat for its signer, not for the
+relayer) and of the proof run first, so an offer that fails a check leaves the seat open. The seat
+is taken when the contract accepts the offer. If the committee then cannot use the offer, because
+its ciphertexts do not open their commitments, the program drops it and the seat stays taken: the
+negotiation ends with "Offer missing". The seller keeps the seller role, and the seller cannot take
+the seat. A negotiation with a named buyer works as before.
 
 **Settle** (`settle(e3Id)`, anyone): decodes the plaintext, sums the 8 groups of each level,
 requires a valid outcome (all zero, or one level with 1) and emits
@@ -278,11 +291,11 @@ Run these commands in this order, in this directory unless stated otherwise.
    1 to 5 (ciphernodes) or 9 (the relayer of the server). Use the well-known keys on a local chain
    only.
 2. **Get test tokens** (fee token for the E3 request).
-3. **Create** a negotiation: title, seller address, buyer address, range `[min, max, step]` of 2 to
-   16 levels (for example 48 to 63 with step 1), window in minutes. Optionally choose a picture
-   (PNG, JPEG or WebP): the page shrinks it, and the wallet signs the upload after the request is
-   mined. Copy the link `/n/<e3Id>`. Key generation takes about 11 minutes with full proof
-   aggregation and less with the skipped one (see Prerequisites).
+3. **Create** a negotiation: title, seller address, buyer address (optional: leave it empty for an
+   open seat), range `[min, max, step]` of 2 to 16 levels (for example 48 to 63 with step 1), window
+   in minutes. Optionally choose a picture (PNG, JPEG or WebP): the page shrinks it, and the wallet
+   signs the upload after the request is mined. Copy the link `/n/<e3Id>`. Key generation takes
+   about 11 minutes with full proof aggregation and less with the skipped one (see Prerequisites).
 4. Open the link as the seller and as the buyer. Enter a price on the grid (the seller 50, the
    buyer 60) and select **Seal my price**. The page shows the 3 encryptions, the 3 encryption
    proofs, the lanes proof and the offer proof. Each proof takes about 1 to 2 minutes in Node. Then
@@ -353,6 +366,9 @@ linear in the coefficients. The program contract is 20.6 KB.
   and a mean of 0.087.
 - The grid has at most 16 levels (the 16 slots of a group). A finer grid needs more coefficients in
   the output; this is not built.
+- An open buyer seat goes to the first wallet other than the seller that sends a valid buyer offer.
+  Any wallet that finds the negotiation, for example on the public list, can take the seat first and
+  the creator cannot take it back. Name the buyer when the counterparty must be known.
 - There is one offer for each party and no update. A party that does not send an offer stops the
   negotiation, with no leak and no refund (there is no deposit).
 - The match bit and the price are public, as is who sent an offer and when. Privacy of the two

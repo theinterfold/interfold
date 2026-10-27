@@ -10,7 +10,18 @@ import { useNegotiation } from '@/hooks/useNegotiations'
 import { useChainTime } from '@/hooks/useChainTime'
 import { useCommitteeKey } from '@/hooks/useCommitteeKey'
 import { useWallet } from '@/hooks/useWallet'
-import { ROLE_NAMES, formatDateTime, formatLevel, formatPrice, phaseOf, roleOf, timeLeftLabel } from '@/utils/negotiation'
+import { Role } from '@interfold/negotiation'
+import {
+  ROLE_NAMES,
+  formatDateTime,
+  formatLevel,
+  formatPrice,
+  isOpenSeat,
+  partyRoleOf,
+  phaseOf,
+  roleOf,
+  timeLeftLabel,
+} from '@/utils/negotiation'
 import { shortId } from '@/utils/format'
 import { getContractAddresses } from '@/utils/env-config'
 import CopyId from '@/components/CopyId'
@@ -36,6 +47,7 @@ const NegotiationPage: React.FC = () => {
 
   const phase = negotiation ? phaseOf(negotiation, now) : null
   const role = negotiation ? roleOf(negotiation, wallet.address) : null
+  const partyRole = negotiation ? partyRoleOf(negotiation, wallet.address) : null
   // The key is only needed to send an offer, and an offer needs it until the window closes.
   const needsKey =
     negotiation !== undefined &&
@@ -97,10 +109,13 @@ const NegotiationPage: React.FC = () => {
           A seller and a buyer each send one sealed price. If the buyer&rsquo;s maximum is at least the seller&rsquo;s minimum, both learn
           one agreed price. Otherwise both learn only that there is no match.
         </p>
-        {role !== null && (
+        {partyRole !== null && (
           <p className='note ok'>
-            You are the <strong>{ROLE_NAMES[role]}</strong> of this negotiation.
+            You are the <strong>{ROLE_NAMES[partyRole]}</strong> of this negotiation.
           </p>
+        )}
+        {role === Role.Buyer && partyRole === null && (
+          <p className='note'>The buyer seat is open. If you send an offer, you become the buyer and nobody else can take the seat.</p>
         )}
       </header>
 
@@ -125,7 +140,11 @@ const NegotiationPage: React.FC = () => {
           <OfferMark sealed={negotiation.offered.seller} />
         </Fact>
         <Fact label='Buyer'>
-          <AddressLink address={negotiation.buyer} />
+          {isOpenSeat(negotiation) ? (
+            <span className='muted'>Open: the first offer takes this seat</span>
+          ) : (
+            <AddressLink address={negotiation.buyer} />
+          )}
           <OfferMark sealed={negotiation.offered.buyer} />
         </Fact>
         <Fact label='Time'>{timeLeftLabel(negotiation, phase, now)}</Fact>
