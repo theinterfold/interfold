@@ -372,7 +372,7 @@
         {
           "name": "ProviderCache (e3-evm)",
           "what": "cached read and write RPC providers and the signer, per chain",
-          "ref": "crates/evm/src/provider_cache.rs@30@pub struct ProviderCache<State = ReadOnly> {"
+          "ref": "crates/evm/runtime/src/provider_cache.rs@30@pub struct ProviderCache<State = ReadOnly> {"
         },
         {
           "name": "Storage / Restart / Live / Protocol",
@@ -382,7 +382,7 @@
         {
           "name": "EvmSystemChainBuilder (e3-evm)",
           "what": "wires one chain's contract listeners onto the bus",
-          "ref": "crates/evm/src/chain_system.rs@22@pub struct EvmSystemChainBuilder<P> {"
+          "ref": "crates/evm/runtime/src/chain_system.rs@22@pub struct EvmSystemChainBuilder<P> {"
         }
       ],
       "read_first": [

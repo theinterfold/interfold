@@ -61,7 +61,7 @@ COPY crates/data-availability/Cargo.toml ./data-availability/Cargo.toml
 COPY crates/entrypoint/Cargo.toml ./entrypoint/Cargo.toml
 COPY crates/event-system/Cargo.toml ./event-system/Cargo.toml
 COPY crates/events/Cargo.toml ./events/Cargo.toml
-COPY crates/evm/Cargo.toml ./evm/Cargo.toml
+COPY crates/evm/runtime/Cargo.toml ./evm/runtime/Cargo.toml
 COPY crates/evm/contracts/Cargo.toml ./evm/contracts/Cargo.toml
 COPY crates/evm/client/Cargo.toml ./evm/client/Cargo.toml
 COPY crates/fhe/Cargo.toml ./fhe/Cargo.toml

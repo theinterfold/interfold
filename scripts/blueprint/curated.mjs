@@ -173,9 +173,9 @@ function system({ units, tag }) {
         both: true,
         label: 'events in · transactions out',
         refs: [
-          'crates/evm/src/event_decoding/catalog.rs@142@"E3Requested"',
-          'crates/evm/src/ciphernode_registry/effects.rs@56@send_tx_idempotent("submitTicket"',
-          'crates/evm/src/interfold_writing/effects.rs@272@.publishPlaintextOutput(e3_id, decrypted_output, proof)',
+          'crates/evm/runtime/src/event_decoding/catalog.rs@142@"E3Requested"',
+          'crates/evm/runtime/src/ciphernode_registry/effects.rs@56@send_tx_idempotent("submitTicket"',
+          'crates/evm/runtime/src/interfold_writing/effects.rs@272@.publishPlaintextOutput(e3_id, decrypted_output, proof)',
         ],
       },
       { from: 'node', to: 'peers', fs: 'b', ts: 't', both: true, label: 'libp2p: gossipsub + Kademlia DHT', refs: ev('A23') },
@@ -503,7 +503,7 @@ function contracts() {
         lt: 0.78,
         refs: [
           'packages/interfold-contracts/contracts/Interfold.sol@441@function publishPlaintextOutput(',
-          'crates/evm/src/interfold_writing/effects.rs@272@.publishPlaintextOutput(e3_id, decrypted_output, proof)',
+          'crates/evm/runtime/src/interfold_writing/effects.rs@272@.publishPlaintextOutput(e3_id, decrypted_output, proof)',
         ],
       },
       {

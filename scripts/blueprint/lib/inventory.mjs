@@ -57,7 +57,7 @@ export const LAYERS = {
     'openvm-prover',
   ],
   workflows: ['request', 'sortition', 'keyshare', 'aggregator', 'slashing', 'zk/prover', 'fhe', 'multithread', 'trbfv', 'bfv-client'],
-  adapters: ['evm', 'net', 'sync', 'event-system', 'data', 'data-availability', 'logger'],
+  adapters: ['evm/runtime', 'net', 'sync', 'event-system', 'data', 'data-availability', 'logger'],
   vocabulary: ['events', 'config', 'fhe-params', 'zk/config', 'zk/witness', 'committee', 'committee-hash', 'evm/contracts'],
   foundations: ['crypto', 'polynomial', 'polynomial/fhe-adapter', 'parity-matrix', 'safe', 'hamt', 'utils', 'utils-derive', 'task-pool'],
   validation: ['test-support', 'bfv-test-support', 'tests', 'layout-lock', 'zk/samples'],
