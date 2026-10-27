@@ -39,6 +39,7 @@ use crate::node_fold_witness;
 use e3_committee::{CiphernodesCommittee, CiphernodesCommitteeSize};
 use e3_events::{CircuitName, Proof};
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
+use e3_task_pool::{TaskPool, TaskTimeouts};
 use e3_zk_config::DkgInputType;
 use e3_zk_prover::{
     generate_c6_chonk_root, prove_node_dkg_fold, DecryptedSharesAggregationCircuit,
@@ -366,6 +367,12 @@ impl Phases {
         value
     }
 
+    /// Records a phase timed by the caller, for async work `run` cannot wrap.
+    pub fn record(&mut self, name: &str, seconds: f64) {
+        println!("PHASE {name} {seconds:.1}s");
+        self.rows.push((name.to_owned(), seconds));
+    }
+
     pub fn finish(&self) {
         let total: f64 = self.rows.iter().map(|(_, s)| s).sum();
         println!("TOTAL {} {total:.1}s", self.who);
@@ -502,6 +509,86 @@ pub fn prove_c3_set(
         slots.push(slot as u32);
     }
     (proofs, slots)
+}
+
+/// Both secrets' C3 proofs submitted at once to a [`TaskPool`] sized like a node's
+/// (`pool_threads` workers, `jobs` full slots), each C3 a light job with a quarter of the units and
+/// threads, as `e3-multithread` admits it. Returns each set's proofs and slots in slot order.
+#[allow(clippy::too_many_arguments)]
+pub async fn prove_c3_sets_pooled(
+    prover: &ZkProver,
+    preset: BfvPreset,
+    committee: &CiphernodesCommittee,
+    sets: [(&ShareComputationInputs, DkgInputType, &str); 2],
+    dkg_pk: &PublicKey,
+    artifacts_dir: &str,
+    pool_threads: usize,
+    jobs: usize,
+) -> Vec<(Vec<Proof>, Vec<u32>)> {
+    let pool = TaskPool::new(pool_threads, jobs);
+    let units = (pool.capacity_units() / 4).max(1);
+    let light = prover.with_bb_threads((pool_threads / 4).max(1));
+    note(&format!(
+        "C3 through a TaskPool of {pool_threads} threads and {jobs} slots: {units} of {} units and {} bb threads per proof",
+        pool.capacity_units(),
+        (pool_threads / 4).max(1)
+    ));
+    let config =
+        e3_zk_config::dkg::share_encryption::Configs::for_preset(preset).expect("C3 configuration");
+    let slots_per_party = preset.metadata().num_moduli;
+    let total_slots = committee.n * slots_per_party;
+    let mut batches = Vec::new();
+    for (share_inputs, input_type, tag) in sets {
+        let mut proofs = Vec::new();
+        let mut slots = Vec::new();
+        for slot in 0..total_slots {
+            if slot / slots_per_party == PARTY_ID {
+                continue;
+            }
+            let data = node_fold_witness::share_encryption_for_slot(
+                preset,
+                dkg_pk,
+                share_inputs,
+                slot,
+                input_type,
+            )
+            .expect("C3 witness data");
+            let (pool, light, config, dir) = (
+                pool.clone(),
+                light.clone(),
+                config.clone(),
+                artifacts_dir.to_owned(),
+            );
+            let job = format!("measure-{tag}-{slot}");
+            proofs.push(async move {
+                pool.spawn_in_group_weighted(
+                    "measure-c3".to_owned(),
+                    job.clone(),
+                    TaskTimeouts::new(Vec::new()),
+                    units,
+                    move || ShareEncryptionCircuit.prove(&light, &config, &data, &job, &dir),
+                )
+                .await
+            });
+            slots.push(slot as u32);
+        }
+        batches.push((proofs, slots));
+    }
+    let mut out = Vec::new();
+    let (first, second) = (batches.remove(0), batches.remove(0));
+    let (a, b) = futures_util::future::join(
+        futures_util::future::join_all(first.0),
+        futures_util::future::join_all(second.0),
+    )
+    .await;
+    for (results, slots) in [(a, first.1), (b, second.1)] {
+        let proofs = results
+            .into_iter()
+            .map(|r| r.expect("task pool").expect("C3 proof"))
+            .collect();
+        out.push((proofs, slots));
+    }
+    out
 }
 
 /// C4 input rows in honest-party order; `None` marks the recipient's own slot.

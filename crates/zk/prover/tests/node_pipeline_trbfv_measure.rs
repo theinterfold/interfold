@@ -179,31 +179,61 @@ async fn trbfv_node_dkg_pipeline_measure() {
     });
     drop((share_sk, share_esm));
 
-    let (c3a_proofs, c3b_proofs, c3_slots) = phases.run("c3", || {
-        let (c3a, slots_a) = pipeline::prove_c3_set(
+    // `MEASURE_C3_POOL=1` proves C3 as a node's scheduler does: every C3 proof at once through a
+    // TaskPool of `MEASURE_POOL_THREADS` (14: 16 minus the default reserve) and `MEASURE_POOL_JOBS`
+    // (2, a 32 GB node) slots, four light proofs at a time.
+    let (c3a_proofs, c3b_proofs, c3_slots) = if pipeline::env_flag("MEASURE_C3_POOL") {
+        let env_usize = |name: &str, default: usize| {
+            std::env::var(name).map_or(default, |v| v.parse().expect(name))
+        };
+        let started = std::time::Instant::now();
+        let mut sets = pipeline::prove_c3_sets_pooled(
             &prover,
             PRESET,
             &committee,
-            &sk_inputs,
+            [
+                (&sk_inputs, DkgInputType::SecretKey, "c3a"),
+                (&esm_inputs, DkgInputType::SmudgingNoise, "c3b"),
+            ],
             &dkg_pk,
-            DkgInputType::SecretKey,
-            "c3a",
             &artifacts_dir,
-        );
-        let (c3b, slots_b) = pipeline::prove_c3_set(
-            &prover,
-            PRESET,
-            &committee,
-            &esm_inputs,
-            &dkg_pk,
-            DkgInputType::SmudgingNoise,
-            "c3b",
-            &artifacts_dir,
-        );
+            env_usize("MEASURE_POOL_THREADS", 14),
+            env_usize("MEASURE_POOL_JOBS", 2),
+        )
+        .await;
+        phases.record("c3", started.elapsed().as_secs_f64());
+        let (c3b, slots_b) = sets.pop().expect("C3b");
+        let (c3a, slots_a) = sets.pop().expect("C3a");
         assert_eq!(slots_a, slots_b);
         println!("STEP c3 proofs={}", c3a.len() + c3b.len());
         (c3a, c3b, slots_a)
-    });
+    } else {
+        phases.run("c3", || {
+            let (c3a, slots_a) = pipeline::prove_c3_set(
+                &prover,
+                PRESET,
+                &committee,
+                &sk_inputs,
+                &dkg_pk,
+                DkgInputType::SecretKey,
+                "c3a",
+                &artifacts_dir,
+            );
+            let (c3b, slots_b) = pipeline::prove_c3_set(
+                &prover,
+                PRESET,
+                &committee,
+                &esm_inputs,
+                &dkg_pk,
+                DkgInputType::SmudgingNoise,
+                "c3b",
+                &artifacts_dir,
+            );
+            assert_eq!(slots_a, slots_b);
+            println!("STEP c3 proofs={}", c3a.len() + c3b.len());
+            (c3a, c3b, slots_a)
+        })
+    };
 
     let (c4a_proof, c4b_proof) = phases.run("c4", || {
         let c4a = measure("c4a", || {
