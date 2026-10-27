@@ -56,12 +56,13 @@ impl CiphernodeBuilder {
             provider_cache,
             ..
         } = live;
-        let progress = self
-            .ingestion_heartbeat_dir
-            .clone()
-            .map(ingestion_heartbeat_files)
-            .transpose()
-            .context("ingestion heartbeat directory")?;
+        let status = self.ingestion_status.clone();
+        let progress = match self.ingestion_heartbeat_dir.clone() {
+            Some(dir) => {
+                ingestion_heartbeat_files(dir, status).context("ingestion heartbeat directory")?
+            }
+            None => status.sink(),
+        };
         let mut evm_config = EvmEventConfig::new();
         let mut gateways = Vec::new();
         let finished = work_ended_on_restart(&restart.lifecycle_stages, &restart.kept_failures);
@@ -105,7 +106,7 @@ impl CiphernodeBuilder {
         bus: &'a BusHandle,
         storage: &Storage,
         finished: &HashSet<E3id>,
-        progress: &Option<IngestionProgressSink>,
+        progress: &IngestionProgressSink,
         evm_config: &mut EvmEventConfig,
     ) -> Result<ChainReaders<'a>> {
         let EnabledChain {
@@ -149,10 +150,8 @@ impl CiphernodeBuilder {
         system
             .with_provider_factory(provider_factory.clone())
             .with_buffer_limit(self.max_buffered_evm_events)
-            .with_max_log_window(max_log_window);
-        if let Some(progress) = progress {
-            system.with_progress_sink(progress.clone());
-        }
+            .with_max_log_window(max_log_window)
+            .with_progress_sink(progress.clone());
         Ok(ChainReaders {
             bus,
             chain,

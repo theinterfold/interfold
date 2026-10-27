@@ -191,6 +191,7 @@ impl CiphernodeBuilder {
             peer_id: network.peer_id,
             net_interface: network.kind,
             network_status: network.status,
+            ingestion_status: self.ingestion_status.clone(),
             eventstore: storage.eventstore,
             aggregate_ids: storage.eventstore_aggregate_config.indexed_ids(),
             persistence_health: storage.event_system.failure_receiver(),

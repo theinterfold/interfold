@@ -11,9 +11,10 @@
 //! of the chain head, with its cursor, to a sink. The file sink below writes one small file per
 //! chain, which `dappnode/healthcheck.sh` reads: a file that stops changing means a stalled reader,
 //! and a head and cursor that both stop moving mean a provider that stopped following the chain,
-//! or a sync that stopped advancing.
+//! or a sync that stopped advancing. [`IngestionStatus`] keeps the same values in memory for the
+//! node's metrics endpoint.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -39,32 +40,88 @@ pub fn heartbeat_file_name(chain_id: u64) -> String {
     format!("chain-{chain_id}.heartbeat")
 }
 
-struct ChainHeartbeat {
-    head: u64,
-    cursor: u64,
-    progressed_at: u64,
-    last_error: Option<String>,
+/// The latest successful read of one chain reader.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChainIngestion {
+    pub chain_id: u64,
+    pub head: u64,
+    pub cursor: u64,
+    /// Unix seconds of the latest read.
+    pub polled_at: u64,
+    /// Unix seconds of the latest read at which `head` or `cursor` changed.
+    pub progressed_at: u64,
 }
 
-/// A sink that writes one heartbeat file per chain under `dir`.
+/// The latest [`ChainIngestion`] of each chain reader. Clones share the same state.
+#[derive(Clone, Debug, Default)]
+pub struct IngestionStatus(Arc<Mutex<BTreeMap<u64, ChainIngestion>>>);
+
+impl IngestionStatus {
+    /// Record a read at `now` and return the chain's updated state. The cursor counts as progress
+    /// because a long historical sync reads toward one head for minutes while its cursor advances.
+    pub fn record(&self, progress: IngestionProgress, now: u64) -> ChainIngestion {
+        let mut chains = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let entry = chains
+            .entry(progress.chain_id)
+            .or_insert_with(|| ChainIngestion {
+                chain_id: progress.chain_id,
+                head: progress.head,
+                cursor: progress.cursor,
+                polled_at: now,
+                progressed_at: now,
+            });
+        if entry.head != progress.head || entry.cursor != progress.cursor {
+            entry.head = progress.head;
+            entry.cursor = progress.cursor;
+            entry.progressed_at = now;
+        }
+        entry.polled_at = now;
+        *entry
+    }
+
+    /// The latest state of each chain that has had a successful read, ordered by chain ID.
+    pub fn snapshot(&self) -> Vec<ChainIngestion> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .values()
+            .copied()
+            .collect()
+    }
+
+    /// A sink that only records into this status, for a node without heartbeat files.
+    pub fn sink(&self) -> IngestionProgressSink {
+        let status = self.clone();
+        Arc::new(move |progress| {
+            status.record(progress, unix_now());
+        })
+    }
+}
+
+/// A sink that records into `status` and writes one heartbeat file per chain under `dir`.
 ///
-/// Each file holds `key=value` lines: `chain_id`, `head`, `cursor`, `polled_at` (Unix seconds of
-/// the read) and `progressed_at` (Unix seconds of the last read at which `head` or `cursor`
-/// changed). The cursor counts as progress because a long historical sync reads toward one head
-/// for minutes while its cursor advances. The format is for a shell health check, which needs no
-/// JSON parser. Each write replaces the file atomically, so a reader never sees a partial file.
+/// Each file holds the [`ChainIngestion`] fields as `key=value` lines: `chain_id`, `head`,
+/// `cursor`, `polled_at` and `progressed_at`. The format is for a shell health check, which needs
+/// no JSON parser. Each write replaces the file atomically, so a reader never sees a partial file.
 ///
 /// The directory is created and probed for writes first, so a node whose heartbeat can never be
 /// written fails at startup instead of passing a health check that finds no heartbeat. Files of an
 /// earlier run are removed, so a health check that runs during a long startup finds no heartbeat
 /// instead of a stale one.
-pub fn ingestion_heartbeat_files(dir: PathBuf) -> io::Result<IngestionProgressSink> {
-    ingestion_heartbeat_files_with_clock(dir, Arc::new(unix_now))
+pub fn ingestion_heartbeat_files(
+    dir: PathBuf,
+    status: IngestionStatus,
+) -> io::Result<IngestionProgressSink> {
+    ingestion_heartbeat_files_with_clock(dir, status, Arc::new(unix_now))
 }
 
 /// [`ingestion_heartbeat_files`] with the clock as a parameter, for tests.
 pub fn ingestion_heartbeat_files_with_clock(
     dir: PathBuf,
+    status: IngestionStatus,
     clock: Arc<dyn Fn() -> u64 + Send + Sync>,
 ) -> io::Result<IngestionProgressSink> {
     fs::create_dir_all(&dir)?;
@@ -73,30 +130,18 @@ pub fn ingestion_heartbeat_files_with_clock(
     fs::write(&probe, b"")?;
     fs::remove_file(&probe)?;
 
-    let chains: Mutex<HashMap<u64, ChainHeartbeat>> = Mutex::new(HashMap::new());
+    // The last write error of each chain.
+    let errors: Mutex<HashMap<u64, String>> = Mutex::new(HashMap::new());
     Ok(Arc::new(move |progress: IngestionProgress| {
-        let mut chains = chains
+        let mut errors = errors
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let now = clock();
-        let entry = chains
-            .entry(progress.chain_id)
-            .or_insert_with(|| ChainHeartbeat {
-                head: progress.head,
-                cursor: progress.cursor,
-                progressed_at: now,
-                last_error: None,
-            });
-        if entry.head != progress.head || entry.cursor != progress.cursor {
-            entry.head = progress.head;
-            entry.cursor = progress.cursor;
-            entry.progressed_at = now;
-        }
-        let result = write_heartbeat(&dir, progress, now, entry.progressed_at);
+        let chain = status.record(progress, clock());
+        let result = write_heartbeat(&dir, &chain);
         // Log a write failure once, and the recovery once, not on every poll.
         match result {
             Ok(()) => {
-                if entry.last_error.take().is_some() {
+                if errors.remove(&progress.chain_id).is_some() {
                     info!(
                         chain_id = progress.chain_id,
                         "Ingestion heartbeat writes recovered"
@@ -105,14 +150,14 @@ pub fn ingestion_heartbeat_files_with_clock(
             }
             Err(error) => {
                 let message = error.to_string();
-                if entry.last_error.as_deref() != Some(message.as_str()) {
+                if errors.get(&progress.chain_id) != Some(&message) {
                     warn!(
                         chain_id = progress.chain_id,
                         dir = %dir.display(),
                         error = %message,
                         "Could not write the ingestion heartbeat"
                     );
-                    entry.last_error = Some(message);
+                    errors.insert(progress.chain_id, message);
                 }
             }
         }
@@ -177,18 +222,13 @@ fn clear_heartbeats(dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn write_heartbeat(
-    dir: &Path,
-    progress: IngestionProgress,
-    polled_at: u64,
-    progressed_at: u64,
-) -> io::Result<()> {
+fn write_heartbeat(dir: &Path, chain: &ChainIngestion) -> io::Result<()> {
     let content = format!(
         "chain_id={}\nhead={}\ncursor={}\npolled_at={}\nprogressed_at={}\n",
-        progress.chain_id, progress.head, progress.cursor, polled_at, progressed_at
+        chain.chain_id, chain.head, chain.cursor, chain.polled_at, chain.progressed_at
     );
-    let path = dir.join(heartbeat_file_name(progress.chain_id));
-    let tmp = dir.join(format!("{}.tmp", heartbeat_file_name(progress.chain_id)));
+    let path = dir.join(heartbeat_file_name(chain.chain_id));
+    let tmp = dir.join(format!("{}.tmp", heartbeat_file_name(chain.chain_id)));
     fs::write(&tmp, content)?;
     fs::rename(&tmp, &path)
 }
@@ -204,7 +244,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join(heartbeat_file_name(1)), b"chain_id=1\n").unwrap();
         write_ingestion_expectation_at(dir.path(), 2, 1_000).unwrap();
-        let _sink = ingestion_heartbeat_files(dir.path().to_path_buf()).unwrap();
+        let _sink = ingestion_heartbeat_files(dir.path().to_path_buf(), IngestionStatus::default())
+            .unwrap();
 
         assert_eq!(
             fs::read_to_string(dir.path().join(INGESTION_EXPECTATION_FILE)).unwrap(),
@@ -222,23 +263,31 @@ mod tests {
             .collect()
     }
 
-    /// A sink whose clock the test moves.
-    fn sink_with_clock(dir: &Path) -> (IngestionProgressSink, Arc<std::sync::atomic::AtomicU64>) {
+    /// A sink whose clock the test moves, and the status that it records into.
+    fn sink_with_clock(
+        dir: &Path,
+    ) -> (
+        IngestionProgressSink,
+        IngestionStatus,
+        Arc<std::sync::atomic::AtomicU64>,
+    ) {
         let now = Arc::new(std::sync::atomic::AtomicU64::new(1_000));
         let clock = now.clone();
+        let status = IngestionStatus::default();
         let sink = ingestion_heartbeat_files_with_clock(
             dir.to_path_buf(),
+            status.clone(),
             Arc::new(move || clock.load(std::sync::atomic::Ordering::SeqCst)),
         )
         .unwrap();
-        (sink, now)
+        (sink, status, now)
     }
 
     #[test]
     fn a_heartbeat_file_records_the_read_and_when_the_reader_last_progressed() {
         use std::sync::atomic::Ordering;
         let dir = tempfile::tempdir().unwrap();
-        let (sink, now) = sink_with_clock(dir.path());
+        let (sink, status, now) = sink_with_clock(dir.path());
 
         sink(IngestionProgress {
             chain_id: 1,
@@ -285,6 +334,18 @@ mod tests {
         let fourth = read_fields(dir.path(), 1);
         assert_eq!(fourth["head"], "101");
         assert_eq!(fourth["progressed_at"], "1030");
+
+        // The status that the metrics endpoint reads holds the same values as the file.
+        assert_eq!(
+            status.snapshot(),
+            vec![ChainIngestion {
+                chain_id: 1,
+                head: 101,
+                cursor: 100,
+                polled_at: 1_030,
+                progressed_at: 1_030,
+            }]
+        );
     }
 
     #[test]
@@ -295,7 +356,7 @@ mod tests {
         let file_in_the_way = dir.path().join("ingestion");
         fs::write(&file_in_the_way, b"not a directory").unwrap();
 
-        assert!(ingestion_heartbeat_files(file_in_the_way).is_err());
+        assert!(ingestion_heartbeat_files(file_in_the_way, IngestionStatus::default()).is_err());
     }
 
     #[cfg(unix)]
@@ -311,7 +372,7 @@ mod tests {
         fs::set_permissions(&read_only, fs::Permissions::from_mode(0o555)).unwrap();
         let can_write = fs::write(read_only.join("check"), b"").is_ok();
 
-        let result = ingestion_heartbeat_files(read_only.clone());
+        let result = ingestion_heartbeat_files(read_only.clone(), IngestionStatus::default());
 
         fs::set_permissions(&read_only, fs::Permissions::from_mode(0o755)).unwrap();
         if can_write {
@@ -324,7 +385,8 @@ mod tests {
     #[test]
     fn each_chain_has_its_own_file() {
         let dir = tempfile::tempdir().unwrap();
-        let sink = ingestion_heartbeat_files(dir.path().to_path_buf()).unwrap();
+        let sink = ingestion_heartbeat_files(dir.path().to_path_buf(), IngestionStatus::default())
+            .unwrap();
         sink(IngestionProgress {
             chain_id: 1,
             head: 10,
@@ -347,7 +409,8 @@ mod tests {
 
         // A health check between process start and the first read must find no heartbeat, not
         // the stale one of the previous run.
-        let _sink = ingestion_heartbeat_files(dir.path().to_path_buf()).unwrap();
+        let _sink = ingestion_heartbeat_files(dir.path().to_path_buf(), IngestionStatus::default())
+            .unwrap();
 
         assert!(!dir.path().join("chain-1.heartbeat").exists());
         assert!(dir.path().join("notes.txt").exists());

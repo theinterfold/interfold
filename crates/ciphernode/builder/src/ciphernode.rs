@@ -8,7 +8,7 @@ use actix::Addr;
 use anyhow::{Context, Result};
 use e3_data::DataStore;
 use e3_events::{BusHandle, HistoryCollector, InterfoldEvent};
-use e3_evm::GatewayFailureReceiver;
+use e3_evm::{GatewayFailureReceiver, IngestionStatus};
 use e3_net::{NetChannelBridge, NetworkStatus};
 use libp2p::PeerId;
 use std::{future::Future, time::Duration};
@@ -52,6 +52,8 @@ pub struct CiphernodeHandle {
     pub peer_id: PeerId,
     pub net_interface: NetInterfaceKind,
     pub network_status: NetworkStatus,
+    /// The latest ingestion progress of each chain reader.
+    pub ingestion_status: IngestionStatus,
     pub eventstore: EventStoreReader,
     pub aggregate_ids: Vec<usize>,
     pub persistence_health: tokio::sync::watch::Receiver<Option<String>>,
@@ -81,6 +83,10 @@ impl CiphernodeHandle {
 
     pub fn network_status(&self) -> NetworkStatus {
         self.network_status.clone()
+    }
+
+    pub fn ingestion_status(&self) -> IngestionStatus {
+        self.ingestion_status.clone()
     }
 
     pub fn eventstore(&self) -> EventStoreReader {
