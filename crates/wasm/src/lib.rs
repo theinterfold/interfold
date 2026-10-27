@@ -313,7 +313,8 @@ pub fn simd_decode(coefficients: Vec<u64>, preset_name: &str) -> Result<Vec<u64>
 /// Recovers the SIMD slot values at known positions from the published window of coefficients.
 ///
 /// A SIMD plaintext with few non-zero slots is dense in the poly basis, so a preset that publishes
-/// a prefix of the polynomial (the secure-16384-simd preset publishes 50 coefficients of 16384)
+/// a prefix of the polynomial (the secure-16384-simd and secure-16384-simd-d6 presets publish 50
+/// coefficients of 16384)
 /// gives a window, not the whole plaintext. The window fixes the slots when every non-zero slot is
 /// in `support` and `support` is no longer than the window.
 ///

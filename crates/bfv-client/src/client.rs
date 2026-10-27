@@ -954,9 +954,17 @@ mod tests {
 
     #[test]
     fn simd_recover_sparse_reads_the_published_window_at_degree_16384() {
+        simd_recover_sparse_reads_the_published_window(BfvPreset::SecureThreshold16384Simd);
+    }
+
+    #[test]
+    fn simd_recover_sparse_reads_the_published_window_at_degree_16384_d6() {
+        simd_recover_sparse_reads_the_published_window(BfvPreset::SecureThreshold16384SimdD6);
+    }
+
+    fn simd_recover_sparse_reads_the_published_window(preset: BfvPreset) {
         use fhe_traits::FheDecrypter;
 
-        let preset = BfvPreset::SecureThreshold16384Simd;
         let parameters: BfvParamSet = preset.into();
         let window = preset.max_msg_non_zero_coeffs();
         assert_eq!(window, 50);
@@ -1008,19 +1016,23 @@ mod tests {
 
     #[test]
     fn simd_recover_sparse_rejects_bad_input() {
-        let preset = BfvPreset::SecureThreshold16384Simd;
-        let window = vec![0u64; 50];
-        assert!(simd_recover_sparse(&window, preset, &[0, 1]).is_ok());
-        // More unknowns than coefficients.
-        let support: Vec<usize> = (0..51).collect();
-        assert!(simd_recover_sparse(&window, preset, &support).is_err());
-        // A repeated or out-of-range position.
-        assert!(simd_recover_sparse(&window, preset, &[3, 3]).is_err());
-        assert!(simd_recover_sparse(&window, preset, &[16384]).is_err());
-        // An entry at or above t.
-        let mut bad = window.clone();
-        bad[0] = 65537;
-        assert!(simd_recover_sparse(&bad, preset, &[0]).is_err());
+        for preset in [
+            BfvPreset::SecureThreshold16384Simd,
+            BfvPreset::SecureThreshold16384SimdD6,
+        ] {
+            let window = vec![0u64; 50];
+            assert!(simd_recover_sparse(&window, preset, &[0, 1]).is_ok());
+            // More unknowns than coefficients.
+            let support: Vec<usize> = (0..51).collect();
+            assert!(simd_recover_sparse(&window, preset, &support).is_err());
+            // A repeated or out-of-range position.
+            assert!(simd_recover_sparse(&window, preset, &[3, 3]).is_err());
+            assert!(simd_recover_sparse(&window, preset, &[16384]).is_err());
+            // An entry at or above t.
+            let mut bad = window.clone();
+            bad[0] = 65537;
+            assert!(simd_recover_sparse(&bad, preset, &[0]).is_err());
+        }
     }
 
     #[test]

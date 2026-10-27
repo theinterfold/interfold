@@ -39,6 +39,7 @@ fn validate_share_bytes(bytes: &[u8], public_key: bool) -> Result<()> {
         BfvPreset::InsecureThresholdSimd,
         BfvPreset::SecureThreshold16384,
         BfvPreset::SecureThreshold16384Simd,
+        BfvPreset::SecureThreshold16384SimdD6,
     ] {
         let (params, _) = build_pair_for_preset(preset)?;
         let result = if public_key {
