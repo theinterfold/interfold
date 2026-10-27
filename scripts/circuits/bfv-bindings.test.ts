@@ -62,9 +62,11 @@ test('deployment routes retain chain policy and order while projecting owner met
       ['insecure-64', 'minimum'],
       ['insecure-64', 'micro'],
       ['insecure-64', 'small'],
+      ['insecure-64', 'large'],
       ['secure-8192', 'minimum'],
       ['secure-8192', 'micro'],
       ['secure-8192', 'small'],
+      ['secure-8192', 'large'],
     ],
   )
   assert.deepEqual(
@@ -307,7 +309,7 @@ test('the dependency-free committee gate compares binding values, not consumer i
       'crates/committee/src/lib.rs',
       'crates/evm-helpers/src/contracts.rs',
       'circuits/lib/src/configs/committee/active.nr',
-      ...['minimum', 'micro', 'small'].map((committee) => `circuits/lib/src/configs/committee/${committee}/mod.nr`),
+      ...['minimum', 'micro', 'small', 'large'].map((committee) => `circuits/lib/src/configs/committee/${committee}/mod.nr`),
       ...['insecure', 'secure'].map((preset) => `circuits/lib/src/configs/${preset}/threshold.nr`),
     ]
     for (const file of files) {
@@ -340,7 +342,7 @@ test('the dependency-free committee gate compares binding values, not consumer i
     writeFileSync(binding, JSON.stringify(stale))
     assert.throws(check)
     writeFileSync(binding, source)
-    for (const committee of ['minimum', 'micro', 'small']) {
+    for (const committee of ['minimum', 'micro', 'small', 'large']) {
       const changed = JSON.parse(source)
       changed.committees.find((record) => record.name === committee).h += 1
       writeFileSync(binding, JSON.stringify(changed))

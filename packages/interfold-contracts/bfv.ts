@@ -89,6 +89,7 @@ export const COMMITTEES = {
   minimum: committee("minimum"),
   micro: committee("micro"),
   small: committee("small"),
+  large: committee("large"),
 };
 export const SUPPORTED_BFV_BUILD_PAIRS = config.buildPairs;
 
