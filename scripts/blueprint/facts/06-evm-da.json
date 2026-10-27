@@ -161,22 +161,22 @@
         {
           "name": "tx submitTicket(e3Id, ticketNumber)",
           "by": "CiphernodeRegistrySolWriter",
-          "ref": "crates/evm/runtime/src/ciphernode_registry/effects.rs@69@.submitTicket(e3_id_u256, ticket_number_u256)"
+          "ref": "crates/evm/runtime/src/ciphernode_registry/effects.rs@55@.submitTicket(e3_id_u256, ticket_number_u256)"
         },
         {
           "name": "tx finalizeCommittee(e3Id)",
           "by": "CiphernodeRegistrySolWriter",
-          "ref": "crates/evm/runtime/src/ciphernode_registry/effects.rs@234@finalizeCommittee(e3_id_u256)"
+          "ref": "crates/evm/runtime/src/ciphernode_registry/effects.rs@220@finalizeCommittee(e3_id_u256)"
         },
         {
           "name": "tx publishCommittee(e3Id, pkCommitment, proof, attestation)",
           "by": "CiphernodeRegistrySolWriter",
-          "ref": "crates/evm/runtime/src/ciphernode_registry/effects.rs@334@publishCommittee(e3_id_u256"
+          "ref": "crates/evm/runtime/src/ciphernode_registry/effects.rs@320@publishCommittee(e3_id_u256"
         },
         {
           "name": "tx publishCommitteePublicKey(chunk), one call per chunk",
           "by": "CiphernodeRegistrySolWriter",
-          "ref": "crates/evm/runtime/src/ciphernode_registry/effects.rs@406@.publishCommitteePublicKey("
+          "ref": "crates/evm/runtime/src/ciphernode_registry/effects.rs@391@.publishCommitteePublicKey("
         },
         {
           "name": "tx publishPlaintextOutput(e3Id, plaintext, proof)",

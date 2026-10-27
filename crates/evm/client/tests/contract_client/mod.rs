@@ -8,7 +8,7 @@ use alloy::{
     sol,
     sol_types::SolValue,
 };
-use e3_evm_helpers::{
+use e3_evm_client::{
     contracts::{
         CommitteeSize, E3Stage, FailureReason, InterfoldContract, InterfoldRead, InterfoldWrite,
     },
@@ -53,7 +53,7 @@ async fn request_uses_the_canonical_event_and_failed_receipts_remain_errors() ->
     assert_eq!(event.e3.committeeSize, u8::from(CommitteeSize::Micro));
     assert_eq!(event.e3.customParams.as_ref(), b"custom");
     assert_eq!(event.e3.requester, account);
-    let read: e3_evm_helpers::events::E3 = client.get_e3(id).await?;
+    let read: e3_evm_client::events::E3 = client.get_e3(id).await?;
     assert_eq!(read.abi_encode(), event.e3.abi_encode());
     assert_eq!(client.get_e3_stage(id).await?, E3Stage::__Invalid);
     assert_eq!(

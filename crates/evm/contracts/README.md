@@ -10,8 +10,8 @@ not a valid outcome. Keep persisted application/domain representations separate.
 
 This package owns signatures, tuple layouts, events and errors. It creates no provider, actor,
 transaction policy or recovery state, and normal builds need no Solidity compiler. Node ingestion
-belongs in [e3-evm](../README.md); application delivery belongs in
-[e3-evm-helpers](../client/README.md).
+belongs in [e3-evm](../runtime/README.md); application delivery belongs in
+[e3-evm-client](../client/README.md).
 
 ## Verification
 

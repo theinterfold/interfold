@@ -15,8 +15,8 @@ use alloy::{
     providers::{Provider, ProviderBuilder},
     sol,
 };
-use e3_evm_helpers::nonce::send_with_next_nonce;
-use e3_evm_helpers::{block_listener::BlockListener, event_listener::EventListener};
+use e3_evm_client::nonce::send_with_next_nonce;
+use e3_evm_client::{block_listener::BlockListener, event_listener::EventListener};
 use eyre::Result;
 use helpers::setup_logs_contract;
 use std::{

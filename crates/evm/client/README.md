@@ -1,10 +1,10 @@
-# e3-evm-helpers
+# e3-evm-client
 
 ## Purpose
 
 Application-facing Ethereum listeners, Interfold contract clients, retry helpers, and local nonce
-coordination. The [Rust SDK](../../sdk/README.md) re-exports this crate as `evm_helpers`.
-Ciphernode-specific ingestion and transaction policy belong in [e3-evm](../README.md).
+coordination. The [Rust SDK](../../sdk/README.md) re-exports this crate as `evm`.
+Ciphernode-specific ingestion and transaction policy belong in [e3-evm](../runtime/README.md).
 
 ## Map
 
@@ -55,7 +55,7 @@ successful transaction receipt.
 
 Provide bash, solc, jq, and workspace JS dependencies; run root `pnpm fixtures:build`. `build.rs`
 runs the fixture script even for a Cargo check and may rewrite JSON artifacts. Run
-`cargo test --locked -p e3-evm-helpers` with Anvil available for chain tests.
+`cargo test --locked -p e3-evm-client` with Anvil available for chain tests.
 
 Inline tests pin subscription readiness/applied ceilings, nonce reservations/expiry, and threshold
 ordering. Integration tests exercise local subscriptions and refused sends. See

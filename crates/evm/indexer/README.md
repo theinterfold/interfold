@@ -70,6 +70,6 @@ Prepare root `pnpm fixtures:build` with bash, solc, and jq: the build script inv
 fixture compilation even for checks. `cargo test --locked -p e3-indexer` exercises inline
 callback/repository/key-assembly tests and the Anvil-backed integration target. Listener
 subscription/progress tests are in [event_listener.rs](../client/src/event_listener.rs), runnable
-with `cargo test -p e3-evm-helpers`. They do not establish all-handler crash consistency or
-atomicity of concurrent cursor writes. See [AGENTS.md](AGENTS.md) for handler/cursor changes and
-ownership hazards.
+with `cargo test -p e3-evm-client`. They do not establish all-handler crash consistency or atomicity
+of concurrent cursor writes. See [AGENTS.md](AGENTS.md) for handler/cursor changes and ownership
+hazards.

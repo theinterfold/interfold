@@ -7,7 +7,7 @@ description = "E3 - Interfold SDK"
 repository.workspace = true
 
 [dependencies]
-e3-evm-helpers = { workspace = true, optional = true }
+e3-evm-client = { workspace = true, optional = true }
 e3-bfv-client = { workspace = true, optional = true }
 e3-fhe-params = { workspace = true, optional = true }
 e3-indexer = { workspace = true, optional = true }
@@ -16,5 +16,5 @@ e3-indexer = { workspace = true, optional = true }
 default = ["full"]
 full = ["evm", "bfv", "indexer"]
 indexer = ["dep:e3-indexer"]
-evm = ["dep:e3-evm-helpers"]
+evm = ["dep:e3-evm-client"]
 bfv = ["dep:e3-bfv-client", "dep:e3-fhe-params"]

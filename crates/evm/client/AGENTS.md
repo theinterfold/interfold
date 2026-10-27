@@ -1,4 +1,4 @@
-# e3-evm-helpers
+# e3-evm-client
 
 This crate supplies application-side listeners, contract helpers, retries, and nonce handling;
 ciphernode ingestion policy belongs in `e3-evm`.
