@@ -4,21 +4,24 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Minimal stable Solidity ABI definitions for on-chain contracts.
+//! Shared, minimal Solidity ABI definitions for Interfold contracts.
 //!
 //! Instead of bundling full contract ABIs from JSON artifacts, this module
-//! defines only the functions, events, errors, and structs that the ciphernode
-//! actually uses.  Contract upgrades must keep these exact signatures stable.
+//! defines the functions, events, errors, and structs used by Rust consumers.
+//! Confirmation, retry, provider configuration, and recovery belong to callers.
 //!
 //! All contract types (interfaces, enums) are replaced with their ABI-level
 //! counterparts: `address` for contract types, `uint8` for enums.
 
-use alloy::sol;
+use alloy_sol_types::sol;
+
+#[cfg(test)]
+mod conformance;
 
 // ── IInterfold ───────────────────────────────────────────────────────────────
 
 sol! {
-    #[sol(rpc)]
+    #[sol(rpc, abi)]
     #[derive(Debug)]
     interface IInterfold {
         struct E3 {
@@ -126,7 +129,7 @@ sol! {
 // ── INodeReleaseRegistry ───────────────────────────────────────────────────
 
 sol! {
-    #[sol(rpc)]
+    #[sol(rpc, abi)]
     #[derive(Debug)]
     interface INodeReleaseRegistry {
         struct OperatorNodeRelease {
@@ -147,7 +150,7 @@ sol! {
 // ── ISlashingManager ────────────────────────────────────────────────────────
 
 sol! {
-    #[sol(rpc)]
+    #[sol(rpc, abi)]
     #[derive(Debug)]
     interface ISlashingManager {
         struct SlashPolicy {
@@ -217,7 +220,7 @@ sol! {
 // ── ICiphernodeRegistry ────────────────────────────────────────────────────
 
 sol! {
-    #[sol(rpc)]
+    #[sol(rpc, abi)]
     #[derive(Debug)]
     interface ICiphernodeRegistry {
         // ── Write functions ─────────────────────────────────────────────────
@@ -437,7 +440,7 @@ sol! {
 // ── IRandomnessProvider ────────────────────────────────────────────────────
 
 sol! {
-    #[sol(rpc)]
+    #[sol(rpc, abi)]
     #[derive(Debug)]
     interface IRandomnessProvider {
         event RandomnessFulfilled(
@@ -452,7 +455,7 @@ sol! {
 // ── IBondingRegistry ────────────────────────────────────────────────────────
 
 sol! {
-    #[sol(rpc)]
+    #[sol(rpc, abi)]
     #[derive(Debug)]
     interface IBondingRegistry {
         function getTicketBalance(address operator) external view returns (uint256);

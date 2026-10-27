@@ -4001,6 +4001,7 @@ dependencies = [
  "e3-event-system",
  "e3-events",
  "e3-evm",
+ "e3-evm-contracts",
  "e3-fhe-params",
  "e3-request",
  "e3-sortition",
@@ -4020,6 +4021,16 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "zeroize",
+]
+
+[[package]]
+name = "e3-evm-contracts"
+version = "0.20.0-dev.2"
+dependencies = [
+ "alloy-contract",
+ "alloy-json-abi",
+ "alloy-sol-types",
+ "serde_json",
 ]
 
 [[package]]
