@@ -18,6 +18,7 @@ fn configured_leaf_selection_rejects_unknown_or_restricted_cases() {
         ("insecure", "insecure-simd", 8),
         ("secure", "secure-16384", 10),
         ("secure", "secure-16384-simd", 10),
+        ("secure", "secure-16384-simd-d6", 10),
     ] {
         assert_eq!(
             config.select_for_preset(mode, preset, &[]).unwrap().len(),

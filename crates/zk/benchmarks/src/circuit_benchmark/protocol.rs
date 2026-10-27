@@ -138,7 +138,9 @@ pub(crate) fn configuration(
         .as_str()
         .or_else(|| match cfg["bfv_preset_subdir"].as_str() {
             Some("insecure-64" | "insecure" | "insecure-simd") => Some("insecure"),
-            Some("secure-8192" | "secure-16384" | "secure-16384-simd") => Some("secure"),
+            Some("secure-8192" | "secure-16384" | "secure-16384-simd" | "secure-16384-simd-d6") => {
+                Some("secure")
+            }
             _ => None,
         });
     if let (Some(requested), Some(stored)) = (mode, stored_mode) {
@@ -159,7 +161,10 @@ pub(crate) fn configuration(
         ("insecure", "insecure-64" | "insecure" | "insecure-simd")
             | (
                 "secure",
-                "secure-8192" | "secure-16384" | "secure-16384-simd"
+                "secure-8192"
+                    | "secure-16384"
+                    | "secure-16384-simd"
+                    | "secure-16384-simd-d6"
             )
     ) {
         bail!("Exported preset disagrees with its benchmark mode");

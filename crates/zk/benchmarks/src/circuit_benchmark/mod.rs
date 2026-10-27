@@ -44,7 +44,8 @@ pub(crate) struct Options {
     #[arg(long)]
     pub mode: Option<String>,
     /// Protocol preset and artifact directory: insecure-64, insecure, insecure-simd, secure-8192,
-    /// secure-16384 or secure-16384-simd. Defaults to insecure-64 or secure-8192 by mode.
+    /// secure-16384, secure-16384-simd or secure-16384-simd-d6. Defaults to insecure-64 or
+    /// secure-8192 by mode.
     #[arg(long)]
     pub preset: Option<String>,
     #[arg(long)]
@@ -230,8 +231,12 @@ pub(crate) fn execute(root: &Path, options: &Options) -> Result<()> {
         "secure-8192" => ("secure-8192", BfvPreset::SecureThreshold8192),
         "secure-16384" => ("secure-16384", BfvPreset::SecureThreshold16384),
         "secure-16384-simd" => ("secure-16384-simd", BfvPreset::SecureThreshold16384Simd),
+        "secure-16384-simd-d6" => (
+            "secure-16384-simd-d6",
+            BfvPreset::SecureThreshold16384SimdD6,
+        ),
         _ => bail!(
-            "Preset must be insecure-64, insecure, insecure-simd, secure-8192, secure-16384, or secure-16384-simd"
+            "Preset must be insecure-64, insecure, insecure-simd, secure-8192, secure-16384, secure-16384-simd, or secure-16384-simd-d6"
         ),
     };
     if requested.starts_with("secure-") != (mode == "secure") {

@@ -159,7 +159,11 @@ impl Config {
             // The l-BFV-only artifact directories build no trBFV circuits.
             if matches!(
                 preset,
-                "insecure" | "insecure-simd" | "secure-16384" | "secure-16384-simd"
+                "insecure"
+                    | "insecure-simd"
+                    | "secure-16384"
+                    | "secure-16384-simd"
+                    | "secure-16384-simd-d6"
             ) && matches!(
                 path.as_str(),
                 "dkg/share_encryption"
