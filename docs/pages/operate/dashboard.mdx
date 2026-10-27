@@ -318,40 +318,45 @@ state comes from chain RPC reads that the node makes at most once every 15 s.
 
 ### Metrics
 
-Each metric name starts with `interfold_`. A metric with the `chain_id` label has one series for
-each enabled chain.
+Each metric name starts with `interfold_`. A metric with the `chain_id` label has at most one series
+for each enabled chain, and only while the node has a value for that chain:
 
-| Metric                                                | Labels                                  | Meaning                                                                                                                         |
-| ----------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `interfold_node_info`                                 | `version`, `name`, `address`, `peer_id` | Always 1. The version and the identity of the node.                                                                             |
-| `interfold_peers_connected`                           |                                         | Connected libp2p peers.                                                                                                         |
-| `interfold_peers_configured`                          |                                         | Configured libp2p peers.                                                                                                        |
-| `interfold_peers_gossip_subscribed`                   |                                         | Peers on the protocol gossip topic.                                                                                             |
-| `interfold_network_error`                             |                                         | 1 when the transport reports an error.                                                                                          |
-| `interfold_operator_status_up`                        |                                         | 1 when the last read of the operator state succeeded on every enabled chain.                                                    |
-| `interfold_operator_status_updated_timestamp_seconds` |                                         | Unix time of the last read of the operator state.                                                                               |
-| `interfold_operator_registered`                       | `chain_id`                              | 1 when the operator is registered.                                                                                              |
-| `interfold_operator_active`                           | `chain_id`                              | 1 when the `BondingRegistry` marks the operator active.                                                                         |
-| `interfold_operator_eligible`                         | `chain_id`                              | 1 when sortition can select the operator for a new committee. This includes the admission cooldown. Absent when the read fails. |
-| `interfold_operator_exit_pending`                     | `chain_id`                              | 1 when the operator has an exit in the queue.                                                                                   |
-| `interfold_operator_tickets_available`                | `chain_id`                              | Available sortition tickets.                                                                                                    |
-| `interfold_operator_ticket_balance`                   | `chain_id`                              | Ticket balance, in token base units.                                                                                            |
-| `interfold_operator_bond`                             | `chain_id`                              | Ciphernode bond, in token base units.                                                                                           |
-| `interfold_operator_rewards_credited`                 | `chain_id`                              | E3 rewards that the operator earned as a committee member. The count is the **Rewards** count of the dashboard.                 |
-| `interfold_registry_registered_nodes`                 | `chain_id`                              | Registered operators on the chain.                                                                                              |
-| `interfold_registry_active_nodes`                     | `chain_id`                              | Active operators on the chain.                                                                                                  |
-| `interfold_chain_readers_expected`                    |                                         | Chain readers that the node started.                                                                                            |
-| `interfold_chain_head_block`                          | `chain_id`                              | Chain head at the last successful read of the chain reader. Absent until the first successful read.                             |
-| `interfold_chain_cursor_block`                        | `chain_id`                              | Last block whose logs the chain reader delivered.                                                                               |
-| `interfold_chain_polled_timestamp_seconds`            | `chain_id`                              | Unix time of the last successful read of the chain head.                                                                        |
-| `interfold_chain_progressed_timestamp_seconds`        | `chain_id`                              | Unix time of the last read at which the head or the cursor moved.                                                               |
-| `interfold_eventstore_read_up`                        |                                         | 1 when the scrape read the EventStore. When it is 0, the `interfold_e3*` metrics are absent.                                    |
-| `interfold_e3_active`                                 |                                         | E3s that still need this node. This is the active E3 count of the **Updates** view.                                             |
-| `interfold_e3s`                                       | `status`                                | E3s that the node saw, by status: `active`, `degraded`, `failed`, or `complete`.                                                |
-| `interfold_e3_in_progress`                            | `phase`                                 | Active and degraded E3s by current phase, for example `dkg_shares`. The phases are the phases of the **E3 traces** view.        |
-| `interfold_compute_jobs_capacity`                     |                                         | ZK and TrBFV jobs that the compute pool runs at once. Absent on a bootstrap node.                                               |
-| `interfold_compute_jobs_admitted`                     |                                         | Jobs that the compute pool admitted, queued in it or running.                                                                   |
-| `interfold_compute_jobs_waiting`                      |                                         | Jobs that wait for admission to the compute pool.                                                                               |
+- The `interfold_operator_*` and `interfold_registry_*` series of a chain are absent when the last
+  operator read of that chain failed. `interfold_operator_status_up` is then 0.
+- The `interfold_chain_*` series of a chain are absent until its chain reader makes its first
+  successful read. Compare their count with `interfold_chain_readers_expected`.
+
+| Metric                                                | Labels                                  | Meaning                                                                                                                                |
+| ----------------------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `interfold_node_info`                                 | `version`, `name`, `address`, `peer_id` | Always 1. The version and the identity of the node.                                                                                    |
+| `interfold_peers_connected`                           |                                         | Connected libp2p peers.                                                                                                                |
+| `interfold_peers_configured`                          |                                         | Configured libp2p peers.                                                                                                               |
+| `interfold_peers_gossip_subscribed`                   |                                         | Peers on the protocol gossip topic.                                                                                                    |
+| `interfold_network_error`                             |                                         | 1 when the transport reports an error.                                                                                                 |
+| `interfold_operator_status_up`                        |                                         | 1 when the last read of the operator state succeeded on every enabled chain.                                                           |
+| `interfold_operator_status_updated_timestamp_seconds` |                                         | Unix time of the last read of the operator state.                                                                                      |
+| `interfold_operator_registered`                       | `chain_id`                              | 1 when the operator is registered.                                                                                                     |
+| `interfold_operator_active`                           | `chain_id`                              | 1 when the `BondingRegistry` marks the operator active.                                                                                |
+| `interfold_operator_eligible`                         | `chain_id`                              | 1 when sortition can select the operator for a new committee. This includes the admission cooldown. Absent when the read fails.        |
+| `interfold_operator_exit_pending`                     | `chain_id`                              | 1 when the operator has an exit in the queue.                                                                                          |
+| `interfold_operator_tickets_available`                | `chain_id`                              | Available sortition tickets.                                                                                                           |
+| `interfold_operator_ticket_balance`                   | `chain_id`                              | Ticket balance, in token base units.                                                                                                   |
+| `interfold_operator_bond`                             | `chain_id`                              | Ciphernode bond, in token base units.                                                                                                  |
+| `interfold_operator_rewards_credited`                 | `chain_id`                              | E3 rewards that the operator earned as a committee member. The count is the **Rewards** count of the dashboard.                        |
+| `interfold_registry_registered_nodes`                 | `chain_id`                              | Registered operators on the chain.                                                                                                     |
+| `interfold_registry_active_nodes`                     | `chain_id`                              | Active operators on the chain.                                                                                                         |
+| `interfold_chain_readers_expected`                    |                                         | Chain readers that the node started.                                                                                                   |
+| `interfold_chain_head_block`                          | `chain_id`                              | Chain head at the last successful read of the chain reader. Absent until the first successful read.                                    |
+| `interfold_chain_cursor_block`                        | `chain_id`                              | Last block whose logs the chain reader delivered.                                                                                      |
+| `interfold_chain_polled_timestamp_seconds`            | `chain_id`                              | Unix time of the last successful read of the chain head.                                                                               |
+| `interfold_chain_progressed_timestamp_seconds`        | `chain_id`                              | Unix time of the last read at which the head or the cursor moved.                                                                      |
+| `interfold_eventstore_read_up`                        |                                         | 1 when the scrape read the EventStore. When it is 0, the `interfold_e3*` metrics and `interfold_operator_rewards_credited` are absent. |
+| `interfold_e3_active`                                 |                                         | E3s that still need this node. This is the active E3 count of the **Updates** view.                                                    |
+| `interfold_e3s`                                       | `status`                                | E3s that the node saw, by status: `active`, `degraded`, `failed`, or `complete`.                                                       |
+| `interfold_e3_in_progress`                            | `phase`                                 | Active and degraded E3s by current phase, for example `dkg_shares`. The phases are the phases of the **E3 traces** view.               |
+| `interfold_compute_jobs_capacity`                     |                                         | ZK and TrBFV jobs that the compute pool runs at once. Absent on a bootstrap node.                                                      |
+| `interfold_compute_jobs_admitted`                     |                                         | Jobs that the compute pool admitted, queued in it or running.                                                                          |
+| `interfold_compute_jobs_waiting`                      |                                         | Jobs that wait for admission to the compute pool.                                                                                      |
 
 The ticket balance and the bond are large integers. The metrics give them as floating-point numbers,
 so the last digits can differ from the exact on-chain value.
@@ -385,8 +390,10 @@ groups:
         for: 30m
 ```
 
-An absent series does not fire an alert. Add an `absent(interfold_node_info)` rule, or alert on the
-`up` metric of the scrape job, to find a node that stopped.
+An absent series does not fire an alert. While the operator read of a chain fails,
+`InterfoldOperatorNotActive` and `InterfoldOperatorNotEligible` stay silent for that chain, and
+`InterfoldOperatorStatusReadFailing` fires instead. Add an `absent(interfold_node_info)` rule, or
+alert on the `up` metric of the scrape job, to find a node that stopped.
 
 ## Hosted dashboard
 

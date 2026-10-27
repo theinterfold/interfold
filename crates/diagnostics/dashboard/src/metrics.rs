@@ -509,8 +509,9 @@ mod tests {
         );
         assert_eq!(value(&body, "interfold_compute_jobs_capacity"), "3");
         assert_eq!(value(&body, "interfold_eventstore_read_up"), "1");
-        // The enabled chain's RPC refuses the connection.
+        // The enabled chain's RPC refuses the connection, so that chain has no operator series.
         assert_eq!(value(&body, "interfold_operator_status_up"), "0");
+        assert!(!body.contains("interfold_operator_active{"), "{body}");
         handle.stop(true).await;
     }
 
@@ -655,6 +656,25 @@ mod tests {
         for phase in E3Phase::ALL {
             assert_eq!(serde_json::to_value(phase).unwrap(), phase.id());
         }
+    }
+
+    /// With two enabled chains and a failed read on one, only the chain that was read has
+    /// `operator_*` series: the failed chain has none, so a value alert on it stays silent during
+    /// the outage, and `operator_status_up` reports the failure instead.
+    #[test]
+    fn a_chain_whose_operator_read_fails_has_no_operator_series() {
+        let runtime = runtime();
+        let mut input = input(&runtime);
+        input.operator.error = Some("sepolia: RPC query timed out".to_owned());
+
+        let body = render(&input);
+
+        assert_eq!(value(&body, "interfold_operator_status_up"), "0");
+        assert_eq!(
+            value(&body, "interfold_operator_active{chain_id=\"1\"}"),
+            "1"
+        );
+        assert!(!body.contains("chain_id=\"11155111\""), "{body}");
     }
 
     #[test]
