@@ -44,7 +44,7 @@ pub enum ZkRequest {
     NodesFoldStep(NodesFoldStepRequest),
     /// Cross-node DKG aggregator (NodesFold + C5 + DkgAggregator).
     DkgAggregation(DkgAggregationRequest),
-    /// Phase-7 decryption aggregator (C6Fold + C7 + DecryptionAggregator).
+    /// Phase-7 decryption aggregator (C6 Chonk root + C7 + DecryptionAggregator).
     DecryptionAggregation(DecryptionAggregationRequest),
     /// Re-verify a C3a/C3b proof that an accusation forwards. It is accusation work, so it still
     /// runs after the E3 fails, until the request completes. Its response is

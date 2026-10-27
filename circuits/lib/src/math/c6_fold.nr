@@ -4,15 +4,8 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Multi-leaf placement shared by `c6_fold_kernel` and `c6_fold`.
-//!
-//! A step verifies [`C6_FOLD_LEAVES`] C6 proofs, which fills a 2^22 proof and costs about half as
-//! much per leaf as one leaf per 2^21 step. A step with fewer leaves repeats one of them under the
-//! sentinel slot `SLOTS`, which writes nothing. The decryption aggregator requires every slot to
-//! hold the ciphertext commitment, so a chain cannot end with a slot left empty.
-
-/// C6 proofs one kernel or fold step verifies.
-pub global C6_FOLD_LEAVES: u32 = 4;
+//! Placement for the C6 Chonk app (`c6_chonk_app`). Its leaves fill every slot; the decryption
+//! aggregator requires the ciphertext commitment in each.
 
 /// Fields of a C6 public transcript: sk, esm and ct commitments, the domain limbs, then d.
 pub global C6_PUBLIC_LEN: u32 = 6;

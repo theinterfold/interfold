@@ -162,15 +162,14 @@ root rollup closes exactly two claims, so the root takes the tube twice under th
 states only the first; its final IPA check fails unless both claims are valid. The root ends by
 exposing the hash of the tube's seven key hashes before the data. The decryption aggregator verifies
 the root and requires `hash(root key, key-list hash)` to equal the anchored C6 tree, and the
-ciphertext commitment in every slot, so no slot stays empty. The C6 tree anchor keeps its `c6_fold`
-artifact path. The four-leaf `c6_fold` circuits remain but no longer feed the aggregator.
-`nodes_fold_kernel` and `nodes_fold` verify three `node_fold` proofs per step
-(`lib::math::nodes_fold`); a row must be all zero before it is written. Each node statement carries
-every party's rows, so a fourth node takes a step just past 2^22 at n = 39 (4.28M gates). The
-aggregator streams the steps: each `NodesFoldStepRequest` takes the next slots in canonical order
-once all their proofs are buffered, and `nodes_fold_step_len` fixes that count so the dispatcher and
-its response handler agree without extra state. A chain of at most three nodes splits one and the
-rest, so it never ends on the kernel.
+ciphertext commitment in every slot, so no slot stays empty. The C6 tree anchor keeps the retired
+`c6_fold` artifact path, which `BfvDecryptionVerifier` deployments read. `nodes_fold_kernel` and
+`nodes_fold` verify three `node_fold` proofs per step (`lib::math::nodes_fold`); a row must be all
+zero before it is written. Each node statement carries every party's rows, so a fourth node takes a
+step just past 2^22 at n = 39 (4.28M gates). The aggregator streams the steps: each
+`NodesFoldStepRequest` takes the next slots in canonical order once all their proofs are buffered,
+and `nodes_fold_step_len` fixes that count so the dispatcher and its response handler agree without
+extra state. A chain of at most three nodes splits one and the rest, so it never ends on the kernel.
 
 C3 chains run over Chonk (`lib::math::chonk`). A stack is `c3_chonk_app`, which verifies
 `C3_CHONK_LEAVES` (24) C3 proofs, then the init, tail and hiding kernels; `c3_chonk_tube` verifies

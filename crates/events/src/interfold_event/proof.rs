@@ -125,17 +125,18 @@ pub enum CircuitName {
     ThresholdShareDecryption,
     /// Decrypted shares aggregation proof (C7).
     DecryptedSharesAggregation,
-    /// Sequential C3 fold: inner ZK + optional prior `c3_fold` non-ZK proof.
+    /// Retired sequential C3 fold; C3 runs over Chonk. Kept so stored encodings keep their indices.
     C3Fold,
-    /// Bootstrap circuit for [`CircuitName::C3Fold`] genesis accumulator proof (same ABI, no acc verify).
+    /// Retired `c3_fold` kernel. Kept so stored encodings keep their indices.
     C3FoldKernel,
-    /// Sequential C6 fold: inner ZK + prior `c6_fold` non-ZK proof (phase-7 aggregator).
+    /// Retired sequential C6 fold; C6 runs over Chonk, and the C6 tree anchor keeps this name's
+    /// artifact path. Kept so stored encodings keep their indices.
     C6Fold,
-    /// Bootstrap circuit for [`CircuitName::C6Fold`] genesis accumulator proof (same ABI, no acc verify).
+    /// Retired `c6_fold` kernel. Kept so stored encodings keep their indices.
     C6FoldKernel,
     /// Ad-hoc recursive aggregation: C2a + C2b.
     C2abFold,
-    /// Ad-hoc: final sk `c3_fold` + final e_sm `c3_fold`.
+    /// Ad-hoc: final sk C3 Chonk accumulator + final e_sm C3 Chonk accumulator.
     C3abFold,
     /// Ad-hoc: C4a + C4b.
     C4abFold,

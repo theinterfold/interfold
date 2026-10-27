@@ -81,39 +81,10 @@ pub fn extract_single_field(
     Ok(fields.into_iter().next().expect("len == 1 verified above"))
 }
 
-/// Parse and validate fold-accumulator public-signal field strings against
-/// `(prefix_len, slot_width)`. Returns the flattened field-string vector.
-///
-/// Use this when the accumulator has a per-slot tail of fixed `slot_width` (e.g. `c3_fold`,
-/// `c6_fold`). For accumulators whose tail layout is determined at runtime by the inner proof
-/// shape (e.g. `nodes_fold`, where each slot stores a whole `node_fold` statement), use
-/// [`parse_acc_public_field_strings_flat`] and perform the per-slot length check at the call site.
-pub fn parse_acc_public_field_strings(
-    proof: &Proof,
-    expected_circuit: CircuitName,
-    prefix_len: usize,
-    slot_width: usize,
-) -> Result<Vec<String>, ZkError> {
-    if proof.circuit != expected_circuit {
-        return Err(ZkError::InvalidInput(format!(
-            "expected {expected_circuit} proof, got {}",
-            proof.circuit
-        )));
-    }
-    let v = bytes_to_field_strings(proof.public_signals.as_ref())?;
-    if v.len() < prefix_len || !(v.len() - prefix_len).is_multiple_of(slot_width) {
-        return Err(ZkError::InvalidInput(format!(
-            "unexpected {expected_circuit} public signal field count: {} (prefix={prefix_len}, slot_width={slot_width})",
-            v.len()
-        )));
-    }
-    Ok(v)
-}
-
-/// Same as [`parse_acc_public_field_strings`] but only validates the prefix length
-/// (no slot-width modulo check). Intended for accumulators whose per-slot width is determined
-/// at runtime from the inner proof shape; the caller is responsible for verifying the total
-/// length against the expected `prefix_len + slots * <runtime_slot_width>`.
+/// Parses an accumulator proof's public signals as field strings, checking its circuit and that
+/// they hold at least the prefix. The per-slot width (`nodes_fold` stores a whole `node_fold`
+/// statement per slot) is known only at runtime, so the caller checks the total length against
+/// `prefix_len + slots * <runtime_slot_width>`.
 pub fn parse_acc_public_field_strings_flat(
     proof: &Proof,
     expected_circuit: CircuitName,

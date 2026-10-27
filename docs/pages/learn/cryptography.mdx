@@ -197,17 +197,17 @@ circuit for both tracks.
 Members exchange their proofs over libp2p gossip and verify each other's proofs. Recursive circuits
 in `circuits/bin/recursive_aggregation/` then fold the proofs:
 
-| Circuit                           | `CircuitName`                  | What it folds                                    |
-| --------------------------------- | ------------------------------ | ------------------------------------------------ |
-| `c2ab_fold`                       | `C2abFold`                     | C2a and C2b                                      |
-| `c3_fold`, `c3_fold_kernel`       | `C3Fold`, `C3FoldKernel`       | The C3 proofs, in sequence                       |
-| `c3ab_fold`                       | `C3abFold`                     | The final secret-key and smudging-noise C3 folds |
-| `c4ab_fold`                       | `C4abFold`                     | C4a and C4b                                      |
-| `node_fold`                       | `NodeFold`                     | One member's chain from C0 to C4                 |
-| `nodes_fold`, `nodes_fold_kernel` | `NodesFold`, `NodesFoldKernel` | The H `node_fold` proofs, in sequence            |
-| `dkg_aggregator`                  | `DkgAggregator`                | `nodes_fold` and C5                              |
-| `c6_fold`, `c6_fold_kernel`       | `C6Fold`, `C6FoldKernel`       | The T + 1 C6 proofs, in sequence                 |
-| `decryption_aggregator`           | `DecryptionAggregator`         | `c6_fold` and C7                                 |
+| Circuit                           | `CircuitName`                  | What it folds                               |
+| --------------------------------- | ------------------------------ | ------------------------------------------- |
+| `c2ab_fold`                       | `C2abFold`                     | C2a and C2b                                 |
+| `c3_chonk_*`                      | `C3Chonk*`                     | The C3 proofs, in Chonk stacks of 24        |
+| `c3ab_fold`                       | `C3abFold`                     | The secret-key and smudging-noise C3 chains |
+| `c4ab_fold`                       | `C4abFold`                     | C4a and C4b                                 |
+| `node_fold`                       | `NodeFold`                     | One member's chain from C0 to C4            |
+| `nodes_fold`, `nodes_fold_kernel` | `NodesFold`, `NodesFoldKernel` | The H `node_fold` proofs, three per step    |
+| `dkg_aggregator`                  | `DkgAggregator`                | `nodes_fold` and C5                         |
+| `c6_chonk_*`                      | `C6Chonk*`                     | The T + 1 C6 proofs, in one Chonk stack     |
+| `decryption_aggregator`           | `DecryptionAggregator`         | `c6_chonk_root` and C7                      |
 
 Only two proofs go on-chain for each E3:
 

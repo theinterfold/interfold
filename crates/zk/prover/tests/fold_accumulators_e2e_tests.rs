@@ -4,22 +4,18 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Fold **accumulators** integration tests: sequential [`generate_sequential_c3_fold`] /
-//! [`generate_sequential_c6_fold`] (prove + [`ZkProver::verify_fold_proof`]) with the slot count read
-//! from the compiled `c3_fold` / `c6_fold` ABI and artifacts staged under [`CircuitVariant::Default`]
-//! (`noir-recursive-no-zk` VKs — see `crates/zk/build`).
+//! C6 accumulation integration test: a decryption's `T + 1` C6 proofs through the C6 Chonk stack,
+//! tube and root ([`generate_c6_chonk_root`]), verified under [`CircuitVariant::Default`]
+//! (`noir-recursive-no-zk` VKs — see `crates/zk/build`), and the decryption aggregator's binding
+//! of that root to the anchored C6 tree.
 //!
-//! The node-fold pipeline ([`CircuitName::C2abFold`] … [`CircuitName::NodeFold`]) is proven in
+//! The node-fold pipeline, including the C3 Chonk chains, is proven in
 //! `node_fold_correlated_e2e_tests.rs`.
-//!
-//! - [`c3_fold_sequential_proves_and_verifies`]: two inner `ShareEncryption` proofs → [`generate_sequential_c3_fold`].
-//! - [`c6_fold_sequential_proves_and_verifies`]: two inner `ThresholdShareDecryption` proofs → [`generate_sequential_c6_fold`].
 
 mod common;
+#[allow(dead_code)]
 #[path = "common/recursive_vk_substitution.rs"]
 mod recursive_vk_substitution;
-
-use std::path::PathBuf;
 
 use common::{
     find_bb, setup_c6_chonk_circuits, setup_compiled_circuit,
@@ -28,321 +24,28 @@ use common::{
 use e3_committee::CiphernodesCommitteeSize;
 use e3_events::{CircuitName, Proof};
 use e3_fhe_params::BfvPreset;
-use e3_zk_config::DkgInputType;
 use e3_zk_config::MAX_MSG_NON_ZERO_COEFFS;
 use e3_zk_prover::test_utils::{fold_witness_field_strings, load_vk_artifacts};
-use e3_zk_prover::{
-    generate_c6_chonk_root, generate_sequential_c3_fold, generate_sequential_c6_fold,
-    CircuitVariant, Provable, ZkBackend, ZkProver,
-};
-use e3_zk_prover::{
-    ShareEncryptionCircuit, ThresholdShareDecryptionCircuit as ShareDecryptionCircuit,
-};
-use e3_zk_witness::dkg::share_encryption::ShareEncryptionCircuitData;
-use e3_zk_witness::threshold::share_decryption::ShareDecryptionCircuitData;
-use recursive_vk_substitution::{assert_fold_rejected, fields, substitute_proof, vk_hash, witness};
+use e3_zk_prover::ThresholdShareDecryptionCircuit as ShareDecryptionCircuit;
+use e3_zk_prover::{generate_c6_chonk_root, CircuitVariant, Provable, ZkProver};
+use recursive_vk_substitution::{fields, substitute_proof, vk_hash, witness};
 use serde_json::json;
 
-fn c3_fold_json_path() -> PathBuf {
-    e3_zk_prover::test_utils::workspace_root()
-        .join("circuits/bin/recursive_aggregation/c3_fold/target/c3_fold.json")
-}
-
-fn c6_fold_json_path() -> PathBuf {
-    e3_zk_prover::test_utils::workspace_root()
-        .join("circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.json")
-}
-
-/// Reads `C3_SLOTS` from the compiled `c3_fold` ABI (`acc_public_inputs` length is `4 + C3_FOLD_LEAVES + 3 * C3_SLOTS`).
-fn c3_fold_total_slots_from_compiled_json() -> usize {
-    let path = c3_fold_json_path();
-    let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        panic!(
-            "read {}: {} (run `pnpm build:circuits --group recursive_aggregation`)",
-            path.display(),
-            e
-        )
-    });
-    let v: serde_json::Value =
-        serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {}: {}", path.display(), e));
-    let len = v["abi"]["parameters"]
+/// Slots of a C6 column (`T + 1`): the compiled `c6_chonk_app`'s `slot_indices` length.
+fn c6_total_slots_from_compiled_json() -> usize {
+    let path = e3_zk_prover::test_utils::workspace_root()
+        .join("circuits/bin/chonk/target/c6_chonk_app.json");
+    let raw =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    v["abi"]["parameters"]
         .as_array()
         .and_then(|ps| {
             ps.iter()
-                .find(|p| {
-                    p.get("name") == Some(&serde_json::Value::String("acc_public_inputs".into()))
-                })
+                .find(|p| p.get("name") == Some(&serde_json::Value::String("slot_indices".into())))
                 .and_then(|p| p.get("type")?.get("length")?.as_u64())
         })
-        .expect("c3_fold.json: abi.parameters.acc_public_inputs.length") as usize;
-    assert!(
-        len >= 4 + e3_zk_prover::C3_FOLD_LEAVES
-            && (len - (4 + e3_zk_prover::C3_FOLD_LEAVES)).is_multiple_of(3),
-        "unexpected acc_public_inputs length {} (expected 4 + C3_FOLD_LEAVES + 3 * slots)",
-        len
-    );
-    (len - (4 + e3_zk_prover::C3_FOLD_LEAVES)) / 3
-}
-
-/// Reads slot count from the compiled `c6_fold` ABI
-/// (`acc_public_inputs` length is `7 + 4 * slots`: five fold parameters and two domain limbs).
-fn c6_fold_total_slots_from_compiled_json() -> usize {
-    let path = c6_fold_json_path();
-    let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        panic!(
-            "read {}: {} (run `pnpm build:circuits --group recursive_aggregation`)",
-            path.display(),
-            e
-        )
-    });
-    let v: serde_json::Value =
-        serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {}: {}", path.display(), e));
-    let len = v["abi"]["parameters"]
-        .as_array()
-        .and_then(|ps| {
-            ps.iter()
-                .find(|p| {
-                    p.get("name") == Some(&serde_json::Value::String("acc_public_inputs".into()))
-                })
-                .and_then(|p| p.get("type")?.get("length")?.as_u64())
-        })
-        .expect("c6_fold.json: abi.parameters.acc_public_inputs.length") as usize;
-    let prefix = 6 + e3_zk_prover::C6_FOLD_LEAVES;
-    assert!(
-        len >= prefix && (len - prefix).is_multiple_of(4),
-        "unexpected acc_public_inputs length {len} (expected 6 + C6_FOLD_LEAVES + 4 * slots)"
-    );
-    (len - prefix) / 4
-}
-
-async fn setup_c3_fold_with_inner_share_encryption() -> Option<(
-    ZkBackend,
-    tempfile::TempDir,
-    ZkProver,
-    ShareEncryptionCircuit,
-    ShareEncryptionCircuitData,
-    ShareEncryptionCircuitData,
-    BfvPreset,
-)> {
-    let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold64;
-    let bb = find_bb().await?;
-    let (backend, temp) = setup_test_prover(&bb).await;
-
-    let sd = BfvPreset::InsecureThreshold64.search_defaults()?;
-
-    setup_compiled_circuit(&backend, "dkg", "share_encryption").await;
-    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C3Fold).await;
-    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C3FoldKernel).await;
-
-    let (threshold_params, dkg_params) = preset.build_pair().ok()?;
-    let sample_a = e3_zk_samples::dkg::share_encryption::generate(
-        &threshold_params,
-        &dkg_params,
-        preset,
-        committee.clone(),
-        DkgInputType::SecretKey,
-        sd.z,
-    )
-    .ok()?;
-    let sample_b = e3_zk_samples::dkg::share_encryption::generate(
-        &threshold_params,
-        &dkg_params,
-        preset,
-        committee,
-        DkgInputType::SecretKey,
-        sd.z,
-    )
-    .ok()?;
-    let prover = ZkProver::new(&backend);
-
-    Some((
-        backend,
-        temp,
-        prover,
-        ShareEncryptionCircuit,
-        sample_a,
-        sample_b,
-        preset,
-    ))
-}
-
-/// Expected C3 fold slot count when circuits are compiled for the minimum committee (N=3, T=1):
-/// one slot per party and insecure-64 threshold modulus (3 × 3).
-const MINIMUM_C3_FOLD_SLOTS: usize = 9;
-/// Expected C6 fold slot count when circuits are compiled for the minimum committee (N=3, T=1).
-const MINIMUM_C6_FOLD_SLOTS: usize = 2;
-
-fn assert_recursive_vk_binding(
-    prover: &ZkProver,
-    fold: CircuitName,
-    kernel: CircuitName,
-    inners: &[Proof],
-    folded: &Proof,
-    total_slots: usize,
-    artifacts_dir: &str,
-) {
-    let default_dir = prover.circuits_dir(CircuitVariant::Default, artifacts_dir);
-    let recursive_dir = prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir);
-    let leaf_vk = load_vk_artifacts(&recursive_dir, inners[0].circuit).unwrap();
-    let fold_vk = load_vk_artifacts(&default_dir, fold).unwrap();
-    let kernel_vk = load_vk_artifacts(&default_dir, kernel).unwrap();
-    let fold_path = default_dir
-        .join(fold.dir_path())
-        .join(format!("{}.json", fold.as_str()));
-    let kernel_path = default_dir
-        .join(kernel.dir_path())
-        .join(format!("{}.json", kernel.as_str()));
-    // Steps verify several leaves; this check places one real leaf and fills the other places with
-    // it under the sentinel slot.
-    let set_leaf = |input: &mut serde_json::Value, proof_data: &[u8], public: Vec<String>, slot| {
-        set_leaves(input, fold, total_slots, proof_data, public, slot);
-    };
-    // The kernel proves the chain's first leaf at slot 0.
-    let mut input = json!({
-        "inner_vk": leaf_vk.verification_key,
-        "acc_vk": kernel_vk.verification_key,
-        "acc_proof": vec!["0"; folded.data.len() / 32],
-        "acc_public_inputs": vec!["0"; fields(folded).len()],
-        "inner_key_hash": leaf_vk.key_hash,
-        "fold_key_hash": fold_vk.key_hash,
-        "kernel_key_hash": kernel_vk.key_hash,
-        "is_first_step": true,
-    });
-    set_leaf(&mut input, &inners[0].data, fields(&inners[0]), 0);
-    let kernel_witness = witness(&kernel_path, &input).expect("honest genesis witness");
-    let genesis = prover
-        .generate_recursive_aggregation_bin_proof(
-            kernel,
-            &kernel_witness,
-            "vk-binding-genesis",
-            artifacts_dir,
-        )
-        .expect("honest genesis proof");
-
-    // The first fold step adds the second leaf at slot 1 on top of the kernel proof.
-    input["acc_proof"] = json!(fold_witness_field_strings(&genesis.data).unwrap());
-    input["acc_public_inputs"] = json!(fields(&genesis));
-    set_leaf(&mut input, &inners[1].data, fields(&inners[1]), 1);
-    let first_witness = witness(&fold_path, &input).expect("honest first-step witness");
-    let first = prover
-        .generate_recursive_aggregation_bin_proof(
-            fold,
-            &first_witness,
-            "vk-binding-first",
-            artifacts_dir,
-        )
-        .expect("honest first-step proof");
-
-    let mut reused_slot = input.clone();
-    set_leaf(&mut reused_slot, &inners[1].data, fields(&inners[1]), 0);
-    assert!(
-        witness(&fold_path, &reused_slot).is_err(),
-        "the first fold step must not refill the kernel's slot"
-    );
-
-    let fake_acc = substitute_proof(
-        prover,
-        fold,
-        CircuitVariant::Default,
-        &fields(&first),
-        None,
-        "predecessor",
-    );
-    let mut fake_genesis = input.clone();
-    fake_genesis["acc_vk"] = json!(fake_acc.vk);
-    fake_genesis["acc_proof"] = json!(fold_witness_field_strings(&fake_acc.proof.data).unwrap());
-    fake_genesis["acc_public_inputs"] = json!(fields(&fake_acc.proof));
-    assert_fold_rejected(
-        prover,
-        fold,
-        &fold_path,
-        &fake_genesis,
-        artifacts_dir,
-        "substituted-genesis",
-    );
-
-    // With a third slot, a continuation verifies a fold predecessor under the fold key.
-    let mut steps = vec![(input.clone(), 1)];
-    if total_slots >= 3 {
-        let mut continuation = input.clone();
-        continuation["acc_vk"] = json!(fold_vk.verification_key);
-        continuation["acc_proof"] = json!(fold_witness_field_strings(&first.data).unwrap());
-        continuation["acc_public_inputs"] = json!(fields(&first));
-        set_leaf(&mut continuation, &inners[0].data, fields(&inners[0]), 2);
-        continuation["is_first_step"] = json!(false);
-        witness(&fold_path, &continuation).expect("honest continuation witness");
-
-        let mut fake_prior = continuation.clone();
-        fake_prior["acc_vk"] = json!(fake_acc.vk);
-        fake_prior["acc_proof"] = json!(fold_witness_field_strings(&fake_acc.proof.data).unwrap());
-        fake_prior["acc_public_inputs"] = json!(fields(&fake_acc.proof));
-        assert_fold_rejected(
-            prover,
-            fold,
-            &fold_path,
-            &fake_prior,
-            artifacts_dir,
-            "substituted-predecessor",
-        );
-        steps.push((continuation, 0));
-    }
-
-    for (step, leaf) in steps {
-        let fake_leaf = substitute_proof(
-            prover,
-            inners[leaf].circuit,
-            CircuitVariant::Recursive,
-            &fields(&inners[leaf]),
-            None,
-            "leaf",
-        );
-        let mut changed_leaf = step.clone();
-        let slot = changed_leaf["slot_indices"][0].as_u64().unwrap() as u32;
-        set_leaf(
-            &mut changed_leaf,
-            &fake_leaf.proof.data,
-            fields(&inners[leaf]),
-            slot,
-        );
-        changed_leaf["inner_vk"] = json!(fake_leaf.vk);
-        changed_leaf["inner_key_hash"] = json!(fake_leaf.key_hash);
-        assert!(
-            witness(&fold_path, &changed_leaf).is_err(),
-            "a fold step must retain its predecessor's leaf VK hash"
-        );
-        for key in ["fold_key_hash", "kernel_key_hash"] {
-            let mut changed_key = step.clone();
-            changed_key[key] = json!(fake_acc.key_hash);
-            assert!(
-                witness(&fold_path, &changed_key).is_err(),
-                "a fold step must retain its predecessor's {key}"
-            );
-        }
-    }
-}
-
-/// Puts one real leaf in the first place of a multi-leaf fold step's witness and repeats it under
-/// the sentinel slot `total_slots` in the others.
-fn set_leaves(
-    input: &mut serde_json::Value,
-    fold: CircuitName,
-    total_slots: usize,
-    proof_data: &[u8],
-    public: Vec<String>,
-    slot: u32,
-) {
-    let (leaves, public_name) = if fold == CircuitName::C3Fold {
-        (e3_zk_prover::C3_FOLD_LEAVES, "c3_public_inputs")
-    } else {
-        (e3_zk_prover::C6_FOLD_LEAVES, "c6_public_inputs")
-    };
-    let proof = fold_witness_field_strings(proof_data).unwrap();
-    let mut slots = vec![total_slots as u32; leaves];
-    slots[0] = slot;
-    input["inner_proofs"] = json!(vec![proof; leaves]);
-    input[public_name] = json!(vec![public; leaves]);
-    input["slot_indices"] = json!(slots);
+        .expect("c6_chonk_app slot_indices length") as usize
 }
 
 /// Proves a C6 Chonk root over `T + 1` copies of `inner` (one per slot, so every slot commits to
@@ -470,213 +173,40 @@ fn assert_c6_chonk_tree_binding(
 
 #[tokio::test]
 #[ignore = "requires prepared integration artifacts; run pnpm rust:test:proofs"]
-async fn c3_fold_sequential_proves_and_verifies() {
-    let Some((_backend, _temp, prover, circuit, sample_a, sample_b, preset)) =
-        setup_c3_fold_with_inner_share_encryption().await
-    else {
-        panic!("missing required test prerequisite: bb not found or prerequisites missing");
-    };
-
-    let total_slots = c3_fold_total_slots_from_compiled_json();
-    if total_slots != MINIMUM_C3_FOLD_SLOTS {
-        panic!(
-            "c3_fold_sequential_proves_and_verifies: circuits compiled for \
-             non-minimum committee (total_slots={total_slots}, expected {MINIMUM_C3_FOLD_SLOTS}). \
-             Rebuild with `pnpm build:circuits --committee minimum` to run this test."
-        );
-    }
-
-    let artifacts_dir = preset.artifacts_dir_for_committee("minimum");
-    let inner_e3_a = "e3-c3fold-inner-0";
-    let inner_e3_b = "e3-c3fold-inner-1";
-    let fold_e3 = "e3-c3fold-step";
-
-    let inner_a = circuit
-        .prove_with_variant(
-            &prover,
-            &e3_zk_config::dkg::share_encryption::Configs::for_preset(preset).unwrap(),
-            &sample_a,
-            inner_e3_a,
-            CircuitVariant::Recursive,
-            &artifacts_dir,
-        )
-        .expect("inner ShareEncryption proof 0");
-    assert_eq!(inner_a.circuit, CircuitName::ShareEncryption);
-
-    let inner_b = circuit
-        .prove_with_variant(
-            &prover,
-            &e3_zk_config::dkg::share_encryption::Configs::for_preset(preset).unwrap(),
-            &sample_b,
-            inner_e3_b,
-            CircuitVariant::Recursive,
-            &artifacts_dir,
-        )
-        .expect("inner ShareEncryption proof 1");
-    assert_eq!(inner_b.circuit, CircuitName::ShareEncryption);
-
-    let inners = [inner_a, inner_b];
-    let folded = generate_sequential_c3_fold(
-        &prover,
-        &inners,
-        &[0u32, 1u32],
-        total_slots,
-        fold_e3,
-        &artifacts_dir,
-    )
-    .expect("c3_fold sequential fold");
-    assert_eq!(folded.circuit, CircuitName::C3Fold);
-    assert!(
-        !folded.data.is_empty(),
-        "fold proof data should not be empty"
-    );
-    assert!(
-        !folded.public_signals.is_empty(),
-        "fold public signals should not be empty"
-    );
-
-    let party_id = 1u64;
-    let ok = prover
-        .verify_fold_proof(&folded, fold_e3, party_id, &artifacts_dir)
-        .expect("verify_fold_proof invocation");
-    assert!(ok, "c3_fold proof should verify under Default VK layout");
-    assert_recursive_vk_binding(
-        &prover,
-        CircuitName::C3Fold,
-        CircuitName::C3FoldKernel,
-        &inners,
-        &folded,
-        total_slots,
-        &artifacts_dir,
-    );
-
-    prover.cleanup(inner_e3_a).unwrap();
-    prover.cleanup(inner_e3_b).unwrap();
-    prover.cleanup(fold_e3).unwrap();
-}
-
-async fn setup_c6_fold_with_inner_threshold_share_decryption() -> Option<(
-    ZkBackend,
-    tempfile::TempDir,
-    ZkProver,
-    ShareDecryptionCircuit,
-    ShareDecryptionCircuitData,
-    ShareDecryptionCircuitData,
-    BfvPreset,
-)> {
+async fn c6_chonk_root_proves_and_binds_the_decryption_aggregator() {
     let committee = CiphernodesCommitteeSize::Minimum.values();
     let preset = BfvPreset::InsecureThreshold64;
-    let bb = find_bb().await?;
-    let (backend, temp) = setup_test_prover(&bb).await;
-
+    let bb = find_bb()
+        .await
+        .expect("missing required test prerequisite: bb not found");
+    let (backend, _temp) = setup_test_prover(&bb).await;
     setup_compiled_circuit(&backend, "threshold", "share_decryption").await;
-    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C6Fold).await;
-    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C6FoldKernel).await;
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::DecryptionAggregator).await;
     setup_c6_chonk_circuits(&backend).await;
-
-    let (params, _) = preset.build_pair().ok()?;
-    let sample_a =
-        e3_zk_samples::threshold::share_decryption::generate(&params, preset, committee.clone())
-            .ok()?;
-    let sample_b =
-        e3_zk_samples::threshold::share_decryption::generate(&params, preset, committee).ok()?;
     let prover = ZkProver::new(&backend);
 
-    Some((
-        backend,
-        temp,
-        prover,
-        ShareDecryptionCircuit,
-        sample_a,
-        sample_b,
-        preset,
-    ))
-}
-
-#[tokio::test]
-#[ignore = "requires prepared integration artifacts; run pnpm rust:test:proofs"]
-async fn c6_fold_sequential_proves_and_verifies() {
-    let Some((_backend, _temp, prover, circuit, sample_a, sample_b, preset)) =
-        setup_c6_fold_with_inner_threshold_share_decryption().await
-    else {
-        panic!("missing required test prerequisite: bb not found or prerequisites missing");
-    };
-
-    let total_slots = c6_fold_total_slots_from_compiled_json();
-    if total_slots != MINIMUM_C6_FOLD_SLOTS {
-        panic!(
-            "c6_fold_sequential_proves_and_verifies: circuits compiled for \
-             non-minimum committee (total_slots={total_slots}, expected {MINIMUM_C6_FOLD_SLOTS}). \
-             Rebuild with `pnpm build:circuits --committee minimum` to run this test."
-        );
-    }
+    let total_slots = c6_total_slots_from_compiled_json();
+    assert_eq!(
+        total_slots,
+        committee.threshold + 1,
+        "circuits compiled for a non-minimum committee; rebuild with `pnpm build:circuits --committee minimum`"
+    );
     let artifacts_dir = preset.artifacts_dir_for_committee("minimum");
-    let inner_e3_a = "e3-c6fold-inner-0";
-    let inner_e3_b = "e3-c6fold-inner-1";
-    let fold_e3 = "e3-c6fold-step";
-
-    let inner_a = circuit
+    let (params, _) = preset.build_pair().unwrap();
+    let sample =
+        e3_zk_samples::threshold::share_decryption::generate(&params, preset, committee).unwrap();
+    let inner = ShareDecryptionCircuit
         .prove_with_variant(
             &prover,
             &e3_zk_config::threshold::share_decryption::Configs::for_preset(preset).unwrap(),
-            &sample_a,
-            inner_e3_a,
+            &sample,
+            "e3-c6-inner",
             CircuitVariant::Recursive,
             &artifacts_dir,
         )
-        .expect("inner ThresholdShareDecryption proof 0");
-    assert_eq!(inner_a.circuit, CircuitName::ThresholdShareDecryption);
+        .expect("inner ThresholdShareDecryption proof");
+    assert_eq!(inner.circuit, CircuitName::ThresholdShareDecryption);
 
-    let inner_b = circuit
-        .prove_with_variant(
-            &prover,
-            &e3_zk_config::threshold::share_decryption::Configs::for_preset(preset).unwrap(),
-            &sample_b,
-            inner_e3_b,
-            CircuitVariant::Recursive,
-            &artifacts_dir,
-        )
-        .expect("inner ThresholdShareDecryption proof 1");
-    assert_eq!(inner_b.circuit, CircuitName::ThresholdShareDecryption);
-
-    let inners = [inner_a, inner_b];
-    let folded = generate_sequential_c6_fold(
-        &prover,
-        &inners,
-        &[0u32, 1u32],
-        total_slots,
-        fold_e3,
-        &artifacts_dir,
-    )
-    .expect("c6_fold sequential fold");
-    assert_eq!(folded.circuit, CircuitName::C6Fold);
-    assert!(
-        !folded.data.is_empty(),
-        "fold proof data should not be empty"
-    );
-    assert!(
-        !folded.public_signals.is_empty(),
-        "fold public signals should not be empty"
-    );
-
-    let party_id = 1u64;
-    let ok = prover
-        .verify_fold_proof(&folded, fold_e3, party_id, &artifacts_dir)
-        .expect("verify_fold_proof invocation");
-    assert!(ok, "c6_fold proof should verify under Default VK layout");
-    assert_recursive_vk_binding(
-        &prover,
-        CircuitName::C6Fold,
-        CircuitName::C6FoldKernel,
-        &inners,
-        &folded,
-        total_slots,
-        &artifacts_dir,
-    );
-    assert_c6_chonk_tree_binding(&prover, &inners[0], total_slots, &artifacts_dir);
-
-    prover.cleanup(inner_e3_a).unwrap();
-    prover.cleanup(inner_e3_b).unwrap();
-    prover.cleanup(fold_e3).unwrap();
+    assert_c6_chonk_tree_binding(&prover, &inner, total_slots, &artifacts_dir);
+    prover.cleanup("e3-c6-inner").unwrap();
 }

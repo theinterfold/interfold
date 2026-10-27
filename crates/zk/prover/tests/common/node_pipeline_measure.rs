@@ -258,7 +258,7 @@ async fn stage_leaf(preset_dir: &Path, circuit: CircuitName) {
 }
 
 /// A `recursive_aggregation` or `chonk` circuit: `default` gets the noir-recursive-no-zk VK (and the
-/// VK-tree anchor for `nodes_fold` / `c6_fold`), `evm` the EVM VK when the build emits one (as
+/// VK-tree anchor for `nodes_fold`), `evm` the EVM VK when the build emits one (as
 /// `setup_recursive_aggregation_fold_circuit` does).
 async fn stage_fold(preset_dir: &Path, circuit: CircuitName) {
     let name = circuit.as_str();
@@ -289,7 +289,7 @@ async fn stage_fold(preset_dir: &Path, circuit: CircuitName) {
         &file("vk_recursive_hash"),
     )
     .await;
-    if matches!(circuit, CircuitName::NodesFold | CircuitName::C6Fold) {
+    if circuit == CircuitName::NodesFold {
         copy(
             &file("vk_tree_hash"),
             &default_dir.join(format!("{name}.vk_tree_hash")),

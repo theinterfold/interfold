@@ -50,7 +50,8 @@ fn main(
         );
     }
 
-    // Signature parity with `nodes_fold`: see `c3_fold_kernel`.
+    // Signature parity with `nodes_fold`: the kernel takes the same inputs and ignores the
+    // accumulator, so both share one witness layout.
     let _ = (acc_vk, acc_proof, fold_key_hash, kernel_key_hash, acc_public_inputs);
 
     assert(is_first_step);

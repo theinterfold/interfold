@@ -4,15 +4,9 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Row placement shared by `c3_fold_kernel` and `c3_fold`.
-//!
-//! Each kernel or fold step verifies `C3_FOLD_LEAVES` C3 proofs. Four leaves plus the accumulator
-//! fill 2^22 (about 87%), which costs half as much per leaf as one leaf per 2^21 step. A chain may
-//! be shorter than a whole number of steps, so a place can be empty: its slot index is the
-//! sentinel `SLOTS` and it writes nothing (its proof position repeats a real leaf of the step).
-
-/// Leaves each `c3_fold_kernel` or `c3_fold` step verifies.
-pub global C3_FOLD_LEAVES: u32 = 4;
+//! Row placement for the C3 Chonk app (`c3_chonk_app`). A stack can hold fewer leaves than its
+//! size, so a place can be empty: its slot index is the sentinel `SLOTS` and it writes nothing (its
+//! proof position repeats a real leaf of the stack).
 
 /// Writes each leaf's `(pk, msg, ct)` row into its slot, which must be empty. A slot index of
 /// `SLOTS` marks an empty place and writes nothing; any other index must be in range.

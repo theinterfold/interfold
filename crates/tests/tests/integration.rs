@@ -424,22 +424,7 @@ async fn setup_test_zk_backend(
             let circuits_build_root = repo_root.join("circuits").join("bin");
             let dkg_target = circuits_build_root.join("dkg").join("target");
             let threshold_target = circuits_build_root.join("threshold").join("target");
-            let c3_fold_target = circuits_build_root
-                .join("recursive_aggregation")
-                .join("c3_fold")
-                .join("target");
-            let c3_fold_kernel_target = circuits_build_root
-                .join("recursive_aggregation")
-                .join("c3_fold_kernel")
-                .join("target");
-            let c6_fold_target = circuits_build_root
-                .join("recursive_aggregation")
-                .join("c6_fold")
-                .join("target");
-            let c6_fold_kernel_target = circuits_build_root
-                .join("recursive_aggregation")
-                .join("c6_fold_kernel")
-                .join("target");
+            let chonk_target = circuits_build_root.join("chonk").join("target");
             let c2ab_fold_target = circuits_build_root
                 .join("recursive_aggregation")
                 .join("c2ab_fold")
@@ -513,7 +498,7 @@ async fn setup_test_zk_backend(
                     src_dir.join("vk_hash")
                 };
                 copy_file(vk_hash_src, dst_dir.join(format!("{name}.vk_hash"))).await?;
-                if matches!(name, "nodes_fold" | "c6_fold") {
+                if name == "nodes_fold" {
                     copy_file(
                         src_dir.join(format!("{name}.vk_tree_hash")),
                         dst_dir.join(format!("{name}.vk_tree_hash")),
@@ -625,38 +610,73 @@ async fn setup_test_zk_backend(
             )
             .await?;
 
-            copy_circuit(
-                &c3_fold_target,
-                &dv.join("recursive_aggregation/c3_fold"),
-                "c3_fold",
-                ".vk_recursive",
-                ".vk_recursive_hash",
+            // The chunked C2 and C4 circuits are proven under the default variant.
+            for name in [
+                "sk_share_computation_chain",
+                "sk_share_computation_chain_last",
+                "e_sm_share_computation_chain",
+                "e_sm_share_computation_chain_last",
+                "share_decryption_limb_0",
+                "share_decryption_limb_1",
+                "share_decryption_limb_2",
+            ] {
+                copy_circuit(
+                    &dkg_target,
+                    &dv.join("dkg").join(name),
+                    name,
+                    ".vk_recursive",
+                    ".vk_recursive_hash",
+                )
+                .await?;
+            }
+            // The C3 and C6 Chonk stacks share the `chonk` workspace target.
+            for name in [
+                "c3_chonk_app",
+                "c3_chonk_init_kernel",
+                "c3_chonk_tail_kernel",
+                "c3_chonk_hiding_kernel",
+                "c6_chonk_app",
+                "c6_chonk_init_kernel",
+                "c6_chonk_tail_kernel",
+                "c6_chonk_hiding_kernel",
+            ] {
+                copy_circuit(
+                    &chonk_target,
+                    &dv.join("chonk").join(name),
+                    name,
+                    ".vk_recursive",
+                    ".vk_recursive_hash",
+                )
+                .await?;
+            }
+            for name in [
+                "c3_chonk_tube",
+                "c3_chonk_accumulate",
+                "c6_chonk_tube",
+                "c6_chonk_root",
+            ] {
+                copy_circuit(
+                    &circuits_build_root
+                        .join("recursive_aggregation")
+                        .join(name)
+                        .join("target"),
+                    &dv.join("recursive_aggregation").join(name),
+                    name,
+                    ".vk_recursive",
+                    ".vk_recursive_hash",
+                )
+                .await?;
+            }
+            // The C6 tree anchor keeps its `c6_fold` path after the fold circuit's removal.
+            let c6_anchor = dv.join("recursive_aggregation/c6_fold");
+            tokio::fs::create_dir_all(&c6_anchor).await?;
+            tokio::fs::copy(
+                circuits_build_root
+                    .join("recursive_aggregation/c6_fold/target/c6_fold.vk_tree_hash"),
+                c6_anchor.join("c6_fold.vk_tree_hash"),
             )
-            .await?;
-            copy_circuit(
-                &c3_fold_kernel_target,
-                &dv.join("recursive_aggregation/c3_fold_kernel"),
-                "c3_fold_kernel",
-                ".vk_recursive",
-                ".vk_recursive_hash",
-            )
-            .await?;
-            copy_circuit(
-                &c6_fold_target,
-                &dv.join("recursive_aggregation/c6_fold"),
-                "c6_fold",
-                ".vk_recursive",
-                ".vk_recursive_hash",
-            )
-            .await?;
-            copy_circuit(
-                &c6_fold_kernel_target,
-                &dv.join("recursive_aggregation/c6_fold_kernel"),
-                "c6_fold_kernel",
-                ".vk_recursive",
-                ".vk_recursive_hash",
-            )
-            .await?;
+            .await
+            .context("copy the C6 VK-tree anchor")?;
             copy_circuit(
                 &c2ab_fold_target,
                 &dv.join("recursive_aggregation/c2ab_fold"),

@@ -9,7 +9,7 @@
 //! **C3 over Chonk.** A Chonk stack is an app and three kernels. The app (`c3_chonk_app`) verifies
 //! a batch of C3 proofs and writes their rows; each kernel verifies the circuit before it and
 //! passes the rows on. Inside a Mega app an UltraHonk verification costs about 12K gates against
-//! about 700K in an UltraHonk circuit, which is what makes the stack cheaper than `c3_fold`.
+//! about 700K in an UltraHonk circuit, which is what makes a stack cheaper than folding the proofs one UltraHonk step at a time.
 //!
 //! **Keys.** Every key a stage verifies against is a witness, so each stage appends its key's hash
 //! to the data it passes on: the app the C3 leaf key, the init kernel the app key, the tail kernel
