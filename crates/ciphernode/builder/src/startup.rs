@@ -101,6 +101,11 @@ impl CiphernodeBuilder {
 
     async fn build_inner(mut self) -> anyhow::Result<CiphernodeHandle> {
         self.ensure_startup_options()?;
+        // Create the compute pool of a full node up front, so that the handle reports the load of
+        // the pool that the protocol actors use.
+        if self.role() == NodeRole::Full && self.task_pool.is_none() {
+            self.task_pool = Some(self.default_task_pool());
+        }
         let local_bus =
             EventBus::<InterfoldEvent>::new(EventBusConfig { deduplicate: true }).start();
 
@@ -192,6 +197,7 @@ impl CiphernodeBuilder {
             net_interface: network.kind,
             network_status: network.status,
             ingestion_status: self.ingestion_status.clone(),
+            task_pool: self.task_pool.clone(),
             eventstore: storage.eventstore,
             aggregate_ids: storage.eventstore_aggregate_config.indexed_ids(),
             persistence_health: storage.event_system.failure_receiver(),

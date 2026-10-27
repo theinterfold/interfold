@@ -10,6 +10,7 @@ use e3_data::DataStore;
 use e3_events::{BusHandle, HistoryCollector, InterfoldEvent};
 use e3_evm::{GatewayFailureReceiver, IngestionStatus};
 use e3_net::{NetChannelBridge, NetworkStatus};
+use e3_task_pool::TaskPool;
 use libp2p::PeerId;
 use std::{future::Future, time::Duration};
 use tracing::info;
@@ -54,6 +55,8 @@ pub struct CiphernodeHandle {
     pub network_status: NetworkStatus,
     /// The latest ingestion progress of each chain reader.
     pub ingestion_status: IngestionStatus,
+    /// The compute pool of the ZK and TrBFV jobs. A bootstrap node has none.
+    pub task_pool: Option<TaskPool>,
     pub eventstore: EventStoreReader,
     pub aggregate_ids: Vec<usize>,
     pub persistence_health: tokio::sync::watch::Receiver<Option<String>>,
@@ -87,6 +90,10 @@ impl CiphernodeHandle {
 
     pub fn ingestion_status(&self) -> IngestionStatus {
         self.ingestion_status.clone()
+    }
+
+    pub fn task_pool(&self) -> Option<TaskPool> {
+        self.task_pool.clone()
     }
 
     pub fn eventstore(&self) -> EventStoreReader {
