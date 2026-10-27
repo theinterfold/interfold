@@ -38,7 +38,9 @@ pub struct TaskPool {
 pub struct TaskPoolLoad {
     /// Tasks that the pool admits at once.
     pub capacity: usize,
-    /// Admitted tasks: queued inside Rayon or running.
+    /// Tasks that hold an admission permit: queued inside Rayon or running. The permit belongs to
+    /// the caller's future, so a closure whose caller dropped that future can still run on Rayon
+    /// without being counted.
     pub admitted: usize,
     /// Tasks that wait for admission. Retry delays do not count.
     pub waiting: usize,
