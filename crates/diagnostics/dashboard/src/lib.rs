@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+mod metrics;
 mod projection;
 mod updates;
 
@@ -17,10 +18,13 @@ use e3_event_system::global_eventstore_cache::EventStoreReader;
 use e3_events::{
     AggregateId, CorrelationId, EventContextSeq, EventStoreQueryBy, EventStoreQueryResponse, SeqAgg,
 };
+use e3_evm::IngestionStatus;
 use e3_evm_config::ChainConfig;
 use e3_logger::LogCollector;
 use e3_net::NetworkStatus;
+use e3_task_pool::TaskPool;
 use e3_utils::actix::channel as actix_toolbox;
+pub use metrics::start_metrics;
 use projection::TelemetryProjection;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -65,6 +69,8 @@ pub struct DashboardState {
     chain_configs: Arc<Vec<ChainConfig>>,
     operator_status: Arc<Mutex<OperatorStatusCache>>,
     updates: updates::UpdateService,
+    ingestion: IngestionStatus,
+    task_pool: Option<TaskPool>,
 }
 
 struct ProjectionState {
@@ -111,7 +117,21 @@ impl DashboardState {
             chain_configs: Arc::new(chain_configs),
             operator_status: Arc::new(Mutex::new(OperatorStatusCache::default())),
             updates: update_service,
+            ingestion: IngestionStatus::default(),
+            task_pool: None,
         }
+    }
+
+    /// Report the chain readers' progress in the metrics.
+    pub fn with_ingestion_status(mut self, ingestion: IngestionStatus) -> Self {
+        self.ingestion = ingestion;
+        self
+    }
+
+    /// Report the load of the node's compute pool in the metrics.
+    pub fn with_task_pool(mut self, task_pool: Option<TaskPool>) -> Self {
+        self.task_pool = task_pool;
+        self
     }
 
     async fn refresh(&self) -> Result<()> {
