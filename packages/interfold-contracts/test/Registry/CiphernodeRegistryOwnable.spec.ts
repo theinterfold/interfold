@@ -29,8 +29,9 @@ const data = "0xda7a";
 const dataHash = ethers.id(data);
 const SORTITION_SUBMISSION_WINDOW = 60;
 const PUBLIC_KEY_CHUNK_BYTES = 90 * 1024;
-const MAX_PUBLIC_KEY_BYTES = 16 * 1024 * 1024;
+const MAX_PUBLIC_KEY_BYTES = 24 * 1024 * 1024;
 const SECURE_16384_KEY_ENVELOPE_BYTES = 7_833_906;
+const SECURE_16384_SIMD_D6_KEY_ENVELOPE_BYTES = 21_234_096;
 
 describe("CiphernodeRegistryOwnable", function () {
   let firstE3Id: bigint;
@@ -985,6 +986,32 @@ describe("CiphernodeRegistryOwnable", function () {
           secureChunkCount,
           SECURE_16384_KEY_ENVELOPE_BYTES,
           secureLastChunk,
+        ),
+      ).to.emit(registry, "CommitteePublicKeyChunkPublished");
+
+      const d6ChunkCount = Math.ceil(
+        SECURE_16384_SIMD_D6_KEY_ENVELOPE_BYTES / PUBLIC_KEY_CHUNK_BYTES,
+      );
+      expect(d6ChunkCount).to.equal(231);
+      expect(SECURE_16384_SIMD_D6_KEY_ENVELOPE_BYTES).to.be.lessThan(
+        MAX_PUBLIC_KEY_BYTES,
+      );
+      const d6LastChunk = new Uint8Array(
+        SECURE_16384_SIMD_D6_KEY_ENVELOPE_BYTES -
+          (d6ChunkCount - 1) * PUBLIC_KEY_CHUNK_BYTES,
+      );
+      await expect(
+        registry
+          .connect(operator3)
+          .getFunction(
+            "publishCommitteePublicKey(uint256,bytes32,uint16,uint16,uint32,bytes)",
+          )(
+          firstE3Id,
+          ethers.keccak256("0xd6d6"),
+          d6ChunkCount - 1,
+          d6ChunkCount,
+          SECURE_16384_SIMD_D6_KEY_ENVELOPE_BYTES,
+          d6LastChunk,
         ),
       ).to.emit(registry, "CommitteePublicKeyChunkPublished");
 

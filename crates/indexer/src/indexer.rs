@@ -43,7 +43,7 @@ use tracing::{error, info, warn};
 type E3Id = String;
 
 const PUBLIC_KEY_CHUNK_BYTES: usize = 90 * 1024;
-const MAX_PUBLIC_KEY_BYTES: usize = 16 * 1024 * 1024;
+const MAX_PUBLIC_KEY_BYTES: usize = 24 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize, serde::Deserialize)]
 struct PublicKeyChunkAssembly {

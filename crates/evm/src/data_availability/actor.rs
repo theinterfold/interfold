@@ -26,7 +26,7 @@ use std::{
 use tracing::{info, warn};
 
 const OUTPUT_RETRY_DELAY: Duration = Duration::from_secs(30);
-pub(crate) const MAX_PUBLIC_KEY_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_PUBLIC_KEY_BYTES: usize = 24 * 1024 * 1024;
 const PUBLIC_KEY_CHUNK_BYTES: usize = 90 * 1024;
 pub const DATA_AVAILABILITY_RECOVERY_SCHEMA_VERSION: u32 = 2;
 

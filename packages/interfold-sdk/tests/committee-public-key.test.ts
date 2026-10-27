@@ -113,12 +113,28 @@ describe('CommitteePublicKeyAssembler', () => {
     expect(result?.lbfvKeyEnvelope?.relinearizationKey[0]).toBe(9)
   })
 
-  it('accepts 16 MiB and rejects one additional byte', () => {
+  it('assembles the secure-16384-simd-d6 key envelope in 231 chunks', () => {
+    const relinearizationKey = new Uint8Array(21_234_078).fill(10)
+    const bytes = lbfvEnvelope(relinearizationKey)
+    const events = eventsFor(bytes).reverse()
+    const assembler = new CommitteePublicKeyAssembler()
+
+    expect(bytes.length).toBe(21_234_096)
+    expect(events).toHaveLength(231)
+    let result
+    for (const event of events) result = assembler.add(event) ?? result
+
+    expect(result?.publicKey.length).toBe(bytes.length)
+    expect(result?.lbfvKeyEnvelope?.relinearizationKey.length).toBe(relinearizationKey.length)
+    expect(result?.lbfvKeyEnvelope?.relinearizationKey[0]).toBe(10)
+  })
+
+  it('accepts 24 MiB and rejects one additional byte', () => {
     const bytes = new Uint8Array(MAX_COMMITTEE_PUBLIC_KEY_BYTES).fill(3)
     const events = eventsFor(bytes)
     const assembler = new CommitteePublicKeyAssembler()
 
-    expect(events).toHaveLength(183)
+    expect(events).toHaveLength(274)
     let result
     for (const event of events) result = assembler.add(event) ?? result
     expect(result?.publicKey.length).toBe(bytes.length)

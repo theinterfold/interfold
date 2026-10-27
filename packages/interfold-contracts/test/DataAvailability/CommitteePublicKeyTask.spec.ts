@@ -14,8 +14,9 @@ const commitment = `0x${"11".repeat(32)}`;
 const publisherA = `0x${"aa".repeat(20)}`;
 const publisherB = `0x${"bb".repeat(20)}`;
 const publicKeyChunkBytes = 90 * 1024;
-const maxPublicKeyBytes = 16 * 1024 * 1024;
+const maxPublicKeyBytes = 24 * 1024 * 1024;
 const secure16384KeyEnvelopeBytes = 7_833_906;
+const secure16384SimdD6KeyEnvelopeBytes = 21_234_096;
 
 function allChunksFor(
   publicKey: Uint8Array,
@@ -90,11 +91,24 @@ describe("committee public-key task assembly", function () {
     expect(result.at(-1)).to.equal(0x44);
   });
 
-  it("accepts 16 MiB and rejects one additional byte", function () {
+  it("reassembles the secure-16384-simd-d6 key envelope in 231 chunks", function () {
+    const keyEnvelope = new Uint8Array(secure16384SimdD6KeyEnvelopeBytes).fill(
+      0x55,
+    );
+    const chunks = allChunksFor(keyEnvelope).reverse();
+
+    expect(chunks).to.have.length(231);
+    const result = assembleUniqueCommitteePublicKey(chunks, commitment);
+    expect(result).to.have.length(secure16384SimdD6KeyEnvelopeBytes);
+    expect(result[0]).to.equal(0x55);
+    expect(result.at(-1)).to.equal(0x55);
+  });
+
+  it("accepts 24 MiB and rejects one additional byte", function () {
     const publicKey = new Uint8Array(maxPublicKeyBytes).fill(0x33);
     const chunks = allChunksFor(publicKey);
 
-    expect(chunks).to.have.length(183);
+    expect(chunks).to.have.length(274);
     const result = assembleUniqueCommitteePublicKey(chunks, commitment);
     expect(result).to.have.length(maxPublicKeyBytes);
     expect(result[0]).to.equal(0x33);
