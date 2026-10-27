@@ -63,7 +63,7 @@ const NegotiationPage: React.FC = () => {
       </div>
     )
   }
-  if (negotiation === null) return <NotFound text={`There is no negotiation Nº ${shortId(e3Id)} on this deployment.`} />
+  if (negotiation === null) return <NotFound text={`There is no negotiation ${shortId(e3Id)} on this deployment.`} />
   if (phase === null) return null
 
   const { e3Program } = getContractAddresses()
@@ -152,10 +152,10 @@ const NegotiationPage: React.FC = () => {
       {error && <div className='note bad'>Could not refresh the negotiation: {error}</div>}
 
       <div className='grid items-start gap-8 lg:grid-cols-[1fr_1.25fr]'>
-        <Section eyebrow='Nº 01' title='Progress'>
+        <Section title='Progress'>
           <PhaseTimeline phase={phase} negotiation={negotiation} />
         </Section>
-        <Section eyebrow='Nº 02' title='Your offer'>
+        <Section title='Your offer'>
           <OfferPanel
             negotiation={negotiation}
             phase={phase}
@@ -167,7 +167,7 @@ const NegotiationPage: React.FC = () => {
         </Section>
       </div>
 
-      <Section eyebrow='Nº 03' title='Result'>
+      <Section title='Result'>
         <ResultPanel negotiation={negotiation} phase={phase} account={wallet.address} role={role} onSettled={onChanged} />
       </Section>
     </div>

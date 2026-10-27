@@ -31,7 +31,7 @@ const NegotiationCard: React.FC<NegotiationCardProps> = ({ negotiation, now, acc
           <div className='flex min-w-0 flex-wrap items-center gap-3'>
             <StatusBadge phase={phase} />
             <span className='id muted min-w-0 truncate' title={negotiation.e3Id.toString()}>
-              Nº {shortId(negotiation.e3Id)}
+              {shortId(negotiation.e3Id)}
             </span>
           </div>
           <h3 className='h3'>{negotiation.title}</h3>
