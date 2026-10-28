@@ -172,13 +172,20 @@ nested keys. DKG aggregation requires one node-tree hash across every selected r
 
 C6's PRF expands exactly `T` peer pairs, selected from the ordered designated set with the owner
 removed. A witness-dependent branch inside a full-N loop does not skip circuit constraints and must
-not be mistaken for runtime work avoidance. This optimization does not truncate the PRF: each key
-still squeezes all `L*N` coefficients with the released SAFE domain, IO pattern and coefficient
-order. The ciphertext-context digest is computed once and shared by those evaluations. The
-fixed-array squeeze path requires the sponge to be at a permutation boundary and validates the
-declared output count against the IO pattern. It performs the same full-rate blocks and final
-partial block as streaming SAFE; a zero-length squeeze performs no permutation. It must not reset
-the domain/tag, truncate the stream, or silently accept a partially consumed rate window.
+not be mistaken for runtime work avoidance. Each key absorbs its key and the two-element context
+digest, then squeezes `L * ceil(N/3)` field elements under
+`fhe.rs/trbfv/prf/poseidon2/eval-x3`. Successive integer division by that limb's modulus splits
+each element into three residues in `[0, q)`. The last element of a limb contributes only
+`N mod 3` coefficients when `N` is not a multiple of 3. The third residue is statistically short
+of 128 bits for a modulus near 60 bits; the first two are not. A raw 64-bit window is not a
+substitute. The context digest, under `fhe.rs/trbfv/prf/poseidon2/ctx-cmt`, absorbs the designated
+set, level 0, the two components, `L`, `N`, and the checked ciphertext commitment already verified
+against the opened ciphertext. It does not absorb the raw coefficients again. These domains do
+not verify masks produced by the previous `ctx` and `eval` labels. The fixed-array squeeze path
+requires the sponge to be at a permutation boundary and validates the declared output count
+against the IO pattern. It performs the same full-rate blocks and final partial block as
+streaming SAFE; a zero-length squeeze performs no permutation. It must not reset the domain/tag,
+truncate the stream, or silently accept a partially consumed rate window.
 
 The trust tree uses ordered SAFE `DS_VK_HASH` hashing:
 

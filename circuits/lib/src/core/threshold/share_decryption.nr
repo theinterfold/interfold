@@ -226,6 +226,7 @@ impl<let N: u32, let K: u32, let L: u32, let BIT_CT: u32, let BIT_SK: u32, let B
             );
         }
         self.verify_d_native_trunc_binding();
+        // `verify_ct_commitment` has already bound this value to the opened ciphertext.
         let mask = prf_decryption_mask(
             self.party_idx,
             self.decryptors,
@@ -233,8 +234,7 @@ impl<let N: u32, let K: u32, let L: u32, let BIT_CT: u32, let BIT_SK: u32, let B
             self.incoming_keys,
             self.outgoing_key_commitments,
             self.incoming_key_commitments,
-            self.ct0,
-            self.ct1,
+            self.ct_commitment,
             self.configs.qis,
         );
         let gamma = self.generate_challenge();

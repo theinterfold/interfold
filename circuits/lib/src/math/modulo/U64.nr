@@ -50,6 +50,19 @@ impl ModU64 {
         self.reduce_fields([n])[0]
     }
 
+    /// Integer quotient and remainder of one canonical field element.
+    ///
+    /// `reduce_field` fixes the remainder in `[0, m)`. Field division then
+    /// returns `(n - remainder) / m`. Both pieces sit below the scalar prime,
+    /// so the closing equality is the integer identity
+    /// `quotient * m + remainder = n`, with no scalar wrap.
+    pub fn quot_rem(self, n: Field) -> (Field, Field) {
+        let remainder = self.reduce_field(n);
+        let quotient = (n - remainder) / self.get_mod_field();
+        assert(quotient * self.get_mod_field() + remainder == n);
+        (quotient, remainder)
+    }
+
     /// Reuse modulus-only bounds across a row instead of rebuilding their SSA for every output.
     pub fn reduce_fields<let N: u32>(self, values: [Field; N]) -> [Field; N] {
         assert(self.m > 0);
