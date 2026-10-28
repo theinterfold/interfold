@@ -18,8 +18,11 @@ use std::fmt::{self, Display};
 /// Durable intent to publish the aggregated public key on-chain and distribute it to the committee.
 ///
 /// This event is not a canonical key-publication fact. Committee members need its key and honest
-/// subset to produce decryption shares, so it is forwarded to peers. Only the originating node can
-/// submit it on-chain. The confirmed `CommitteePublished` chain event advances the request to the
+/// subset to produce decryption shares, so it is forwarded to peers when its key fits one gossip
+/// message or sync reply (`e3_net` limits the key to 9 MiB). A larger key, such as the set-7 l-BFV
+/// envelope, is not forwarded: members take it from the confirmed on-chain key chunks, which they
+/// must check against the chain commitment in any case. Only the originating node can submit it
+/// on-chain. The confirmed `CommitteePublished` chain event advances the request to the
 /// published-key stage.
 pub struct PublicKeyAggregated {
     #[derivative(Debug(format_with = "e3_utils::formatters::hexf"))]

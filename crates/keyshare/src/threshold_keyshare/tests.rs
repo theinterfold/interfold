@@ -7388,3 +7388,107 @@ async fn a_replayed_key_is_recorded_without_a_collector() -> Result<()> {
         .contains_key(&1));
     Ok(())
 }
+
+/// One real l-BFV key envelope of the preset, from a single contributing party.
+fn lbfv_key_envelope(preset: BfvPreset) -> Result<Vec<u8>> {
+    use fhe::aggregate::AggregateIter;
+    use fhe::bfv::{CommonRandomPolyVec, SecretKey};
+    use fhe::trlbfv::{
+        aggregate_relinearization_key, LBFVPublicKey, PublicKeyShare, RelinKeyShare,
+    };
+    use fhe_traits::Serialize as _;
+    use rand::SeedableRng;
+
+    let (params, _) = e3_fhe_params::build_pair_for_preset(preset)?;
+    let crs = CommonRandomPolyVec::from_seed(
+        &params,
+        e3_fhe_params::lbfv_crs_seed(preset).expect("the preset has an l-BFV CRS"),
+    )?;
+    let urs = CommonRandomPolyVec::from_seed(
+        &params,
+        e3_fhe_params::lbfv_urs_seed(preset).expect("the preset has an l-BFV URS"),
+    )?;
+    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(7);
+    let secret_key = SecretKey::random(&params, &mut rng);
+    let public_key_share = PublicKeyShare::contribute_with_crp(&secret_key, &crs, &mut rng)?;
+    let public_key: LBFVPublicKey = [public_key_share].into_iter().aggregate()?;
+    let rlk_share = RelinKeyShare::contribution_with_crp(&secret_key, &urs, &crs, 0, 0, &mut rng)?;
+    let rlk = aggregate_relinearization_key(&[rlk_share], &public_key)?;
+    e3_bfv_client::encode_lbfv_key_envelope(&public_key.to_bytes(), &rlk.to_bytes(), preset)
+}
+
+/// The set-7 aggregated key is too large to gossip, so a committee member takes it from the
+/// confirmed chain publication. The member admits the real envelope, bound to the chain
+/// commitment. Generating and validating a real set-7 key takes about 13 minutes in a debug build,
+/// so this test runs on request: `cargo test --release -p e3-keyshare -- --ignored set_7_key`.
+#[actix::test]
+#[ignore = "builds and validates a real set-7 key envelope; slow in a debug build"]
+async fn set_7_key_envelope_reaches_a_member_through_the_chain_publication() -> Result<()> {
+    let threshold = BfvPreset::SecureThreshold16384SimdD6;
+    let envelope = lbfv_key_envelope(threshold)?;
+    let (commitments, _) = e3_bfv_client::inspect_lbfv_key_envelope(&envelope, threshold)?;
+
+    let id = E3id::new("77", 1);
+    let committee = vec![
+        Address::repeat_byte(1),
+        Address::repeat_byte(2),
+        Address::repeat_byte(3),
+    ];
+    let keys = crate::canonical_key::CanonicalPublicKeys::default();
+    keys.insert(
+        id.clone(),
+        crate::canonical_key::CanonicalPublicKey {
+            pk_commitment: commitments.envelope,
+            committee: committee.clone(),
+            honest_committee: committee.clone(),
+            params_preset: threshold,
+            committee_size: e3_committee::CiphernodesCommitteeSize::Minimum,
+            interfold_address: Address::repeat_byte(9),
+            sk_agg_commits: vec![],
+            esm_agg_commits: vec![],
+        },
+    )?;
+
+    let (bus, _history) = test_bus();
+    let (state, repo) = test_state(&id, KeyshareState::ReadyForDecryption(ready_for_c4_test()));
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: BfvPreset::SecureDkg16384SimdD6,
+        interfold_address: Address::repeat_byte(9),
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: true,
+        recovery: test_recovery(),
+        lbfv_generation: test_lbfv_generation(),
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    })
+    .with_canonical_keys(keys.clone())
+    .start();
+
+    actor
+        .send(keyshare_event(
+            CommitteePublished {
+                e3_id: id.clone(),
+                nodes: committee.iter().map(ToString::to_string).collect(),
+                public_key: ArcBytes::from_bytes(&envelope),
+                proof: ArcBytes::from_bytes(&[]),
+            },
+            1,
+            EventSource::Evm,
+        ))
+        .await?;
+    let admitted = repo.read().await?.expect("keyshare state");
+    assert_eq!(
+        admitted.aggregated_pk.map(|pk| pk.to_vec()),
+        Some(envelope.clone()),
+        "the member holds the envelope that matches the chain commitment"
+    );
+    assert_eq!(
+        admitted.decryption_domain,
+        Some(keys.get(&id).unwrap().domain(Address::repeat_byte(9)))
+    );
+    Ok(())
+}

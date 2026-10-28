@@ -335,3 +335,55 @@ async fn an_event_as_large_as_a_reply_allows_is_served_through_the_transport_fra
         SyncBatchOutcome::Failed(_)
     ));
 }
+
+/// A stored set-7 key publication is never served, and it does not stall the history behind it.
+#[test]
+fn build_sync_batch_skips_a_key_publication_above_the_forwarding_budget() {
+    use crate::domain::event_translation::key_publication_fixtures::*;
+    let fetch = FetchEventsSince::new(AggregateId::new(1), 0, 10);
+    for oversized in [
+        lbfv_key_publication(LARGEST_COMMITTEE_KEY_BYTES, EventSource::Net),
+        public_key_aggregated(LARGEST_COMMITTEE_KEY_BYTES, EventSource::Net),
+    ] {
+        let SyncBatchOutcome::Batch(batch) = build_sync_batch(
+            vec![oversized, net_event(5)],
+            exhausted(Some(5)),
+            None,
+            &fetch,
+        ) else {
+            panic!("a key publication that is not forwarded must not fail the sync reply");
+        };
+        assert_eq!(batch.events.len(), 1);
+        assert!(matches!(batch.next, BatchCursor::Done));
+    }
+}
+
+/// The largest key publication that the forwarding rule admits fits a sync reply and its frame.
+#[tokio::test]
+async fn a_forwarded_key_publication_fits_a_sync_reply() {
+    use crate::domain::event_translation::key_publication_fixtures::*;
+    let fetch = FetchEventsSince::new(AggregateId::new(1), 0, 10);
+    let progress = exhausted(Some(1));
+    for event in [
+        lbfv_key_publication(FORWARDED_KEY_BYTES, EventSource::Net),
+        lbfv_key_publication(
+            crate::domain::wire::MAX_FORWARDED_KEY_BYTES,
+            EventSource::Net,
+        ),
+        public_key_aggregated(
+            crate::domain::wire::MAX_FORWARDED_KEY_BYTES,
+            EventSource::Net,
+        ),
+    ] {
+        let SyncBatchOutcome::Batch(batch) = build_sync_batch(vec![event], progress, None, &fetch)
+        else {
+            panic!("a forwarded key publication fits one sync reply");
+        };
+        assert_eq!(batch.events.len(), 1);
+        let bytes: Vec<u8> = batch.try_into().unwrap();
+        assert!(bytes.len() <= crate::domain::wire::MAX_SYNC_ENVELOPE_BYTES);
+        crate::events::through_reply_frame(bytes)
+            .await
+            .expect("the reply fits one transport frame");
+    }
+}

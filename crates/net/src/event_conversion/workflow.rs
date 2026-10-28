@@ -332,11 +332,12 @@ mod tests {
         }
     }
 
-    fn signed_proof(
+    fn signed_proof_with_data(
         context: &LbfvKeyShareDocumentContextV1,
         proof_type: ProofType,
         row: u32,
         signer: &PrivateKeySigner,
+        proof_bytes: usize,
     ) -> SignedProofPayload {
         let circuit = proof_type.circuit_names()[0];
         let public_signals = if proof_type.is_multirow() {
@@ -366,7 +367,7 @@ mod tests {
                 proof_type,
                 proof: Proof::new(
                     circuit,
-                    ArcBytes::from_bytes(&[1]),
+                    ArcBytes::from_bytes(&vec![1; proof_bytes]),
                     ArcBytes::from_bytes(&public_signals),
                 ),
             },
@@ -376,6 +377,14 @@ mod tests {
     }
 
     fn lbfv_public_key_document(preset: BfvPreset) -> LbfvKeyShareDocument {
+        lbfv_public_key_document_with_proofs(preset, ProofType::LBFV_ROW_INSTANCES, 1)
+    }
+
+    fn lbfv_public_key_document_with_proofs(
+        preset: BfvPreset,
+        rows: u32,
+        proof_bytes: usize,
+    ) -> LbfvKeyShareDocument {
         let signer: PrivateKeySigner =
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
                 .parse()
@@ -384,13 +393,29 @@ mod tests {
         LbfvKeyShareDocument::PublicKeyV3(LbfvPublicKeyShareDocumentV3 {
             context: context.clone(),
             share: ArcBytes::from_bytes(&lbfv_share_bytes(true, preset)),
-            signed_row_proofs: (0..ProofType::LBFV_ROW_INSTANCES)
-                .map(|row| signed_proof(&context, ProofType::LbfvPkGeneration, row, &signer))
+            signed_row_proofs: (0..rows)
+                .map(|row| {
+                    signed_proof_with_data(
+                        &context,
+                        ProofType::LbfvPkGeneration,
+                        row,
+                        &signer,
+                        proof_bytes,
+                    )
+                })
                 .collect(),
         })
     }
 
     fn lbfv_relinearization_key_document(preset: BfvPreset) -> LbfvKeyShareDocument {
+        lbfv_relinearization_key_document_with_proofs(preset, ProofType::LBFV_ROW_INSTANCES, 1)
+    }
+
+    fn lbfv_relinearization_key_document_with_proofs(
+        preset: BfvPreset,
+        rows: u32,
+        proof_bytes: usize,
+    ) -> LbfvKeyShareDocument {
         let signer: PrivateKeySigner =
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
                 .parse()
@@ -399,8 +424,16 @@ mod tests {
         LbfvKeyShareDocument::RelinearizationKeyV2(LbfvRelinearizationKeyShareDocumentV2 {
             context: context.clone(),
             share: ArcBytes::from_bytes(&lbfv_share_bytes(false, preset)),
-            signed_row_proofs: (0..ProofType::LBFV_ROW_INSTANCES)
-                .map(|row| signed_proof(&context, ProofType::RlkGeneration, row, &signer))
+            signed_row_proofs: (0..rows)
+                .map(|row| {
+                    signed_proof_with_data(
+                        &context,
+                        ProofType::RlkGeneration,
+                        row,
+                        &signer,
+                        proof_bytes,
+                    )
+                })
                 .collect(),
         })
     }
@@ -622,6 +655,37 @@ mod tests {
                     document,
                 })
                 .unwrap();
+            assert!(request.value.len() <= MAX_DHT_DOCUMENT_BYTES);
+        }
+    }
+
+    /// A set-7 share document carries one row proof per CRT row. Every proof is an UltraHonk proof
+    /// of 14,656 bytes (`circuits/benchmarks/results_secure-16384-simd-d6_minimum/report.md`), and
+    /// the share is a real one for the preset, so the size follows the preset parameters.
+    #[test]
+    fn secure_16384_simd_d6_share_documents_fit_one_dht_document() {
+        const PROOF_BYTES: usize = 14_656;
+        let preset = BfvPreset::SecureThreshold16384SimdD6;
+        let rows = e3_fhe_params::lbfv_row_count(preset).unwrap() as u32;
+
+        for document in [
+            lbfv_public_key_document_with_proofs(preset, rows, PROOF_BYTES),
+            lbfv_relinearization_key_document_with_proofs(preset, rows, PROOF_BYTES),
+        ] {
+            let share_bytes = document.share().len();
+            let request =
+                EventConversionService::lbfv_key_share_to_request(LbfvKeyShareDocumentCreated {
+                    document,
+                })
+                .expect("a set-7 share document fits the DHT document limit");
+            // The context, the signed row proofs and the framing stay under 200 KiB.
+            let overhead = request.value.len() - share_bytes;
+            eprintln!(
+                "set-7 {:?} document: share {share_bytes} B, document {} B, limit {MAX_DHT_DOCUMENT_BYTES} B",
+                request.meta.kind,
+                request.value.len()
+            );
+            assert!(overhead < 200 * 1024, "overhead {overhead}");
             assert!(request.value.len() <= MAX_DHT_DOCUMENT_BYTES);
         }
     }

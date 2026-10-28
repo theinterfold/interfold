@@ -24,6 +24,15 @@ pub(crate) const MAX_DIRECT_MESSAGE_BYTES: usize = 10 * 1024 * 1024;
 /// and byte-string headers to the envelope, and must stay within the 10 MiB response limit.
 pub(crate) const MAX_SYNC_ENVELOPE_BYTES: usize = MAX_DIRECT_MESSAGE_BYTES - 64;
 pub(crate) const MAX_DHT_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
+/// Bytes that a forwarded key publication keeps for everything except its key: the committee and
+/// honest-set addresses (at most 19 each), node names, the recursive DKG proof, the attestation
+/// bundle, and the gossip or sync framing.
+pub(crate) const KEY_PUBLICATION_RESERVE_BYTES: usize = 1024 * 1024;
+/// The largest key that a key-publication event carries on the gossip topic and in sync replies.
+/// The set-7 l-BFV key envelope (about 20 MiB) is above it, and the canonical on-chain chunks
+/// deliver that key. The envelopes of sets 1..6 (at most 7.8 MB) stay under it and are forwarded
+/// as before.
+pub(crate) const MAX_FORWARDED_KEY_BYTES: usize = MAX_GOSSIP_BYTES - KEY_PUBLICATION_RESERVE_BYTES;
 
 const GOSSIP_MAGIC: [u8; 4] = *b"IFG3";
 const SYNC_MAGIC: [u8; 4] = *b"IFS3";

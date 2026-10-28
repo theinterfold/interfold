@@ -15,9 +15,10 @@ use e3_events::{
     Unsequenced,
 };
 use libp2p::PeerId;
-use tracing::{debug, trace};
+use tracing::{debug, info, trace};
 
 use crate::{
+    domain::wire::MAX_FORWARDED_KEY_BYTES,
     events::GossipData,
     seen_messages::{Admission, SeenIds},
     NetworkPolicy,
@@ -62,6 +63,11 @@ impl EventTranslationService {
 
     /// Function to determine which events are allowed to be automatically broadcast to the
     /// network. Static so the same rule can be reused elsewhere (e.g. sync responses).
+    ///
+    /// A key publication whose key exceeds `MAX_FORWARDED_KEY_BYTES` is not forwardable: it cannot
+    /// fit one gossip message or sync reply, and a historical-sync reply that cannot carry one
+    /// stored event stalls behind it. Its recipients take the key from the confirmed on-chain
+    /// chunks, which are the authority for it.
     pub fn is_forwardable_event<S: SeqState>(event: &InterfoldEvent<S>) -> bool {
         matches!(
             event.get_data(),
@@ -74,7 +80,16 @@ impl EventTranslationService {
                 | InterfoldEventData::ProofFailureAccusation(_)
                 | InterfoldEventData::AccusationVote(_)
                 | InterfoldEventData::LbfvKeyShareManifestPublished(_)
-        )
+        ) && Self::forwarded_key_len(event).is_none_or(|len| len <= MAX_FORWARDED_KEY_BYTES)
+    }
+
+    /// The key length of a key-publication event, and `None` for any other event.
+    fn forwarded_key_len<S: SeqState>(event: &InterfoldEvent<S>) -> Option<usize> {
+        match event.get_data() {
+            InterfoldEventData::PublicKeyAggregated(data) => Some(data.pubkey.len()),
+            InterfoldEventData::LbfvPublicKeyAggregated(data) => Some(data.pubkey.len()),
+            _ => None,
+        }
     }
 
     /// Decide whether a local event should be gossiped.
@@ -87,7 +102,14 @@ impl EventTranslationService {
     ) -> Result<Option<(EventId, GossipData)>> {
         if !Self::is_forwardable_event(&event) {
             let id = event.event_id();
-            trace!(evt_id=%id, "Local events should not be rebroadcast so ignoring");
+            match Self::forwarded_key_len(&event) {
+                Some(len) => info!(
+                    evt_id=%id,
+                    key_bytes = len,
+                    "Public key exceeds the gossip budget, so peers take it from the on-chain chunks"
+                ),
+                None => trace!(evt_id=%id, "Local events should not be rebroadcast so ignoring"),
+            }
             return Ok(None);
         }
 
@@ -168,6 +190,81 @@ impl EventTranslationService {
             published.manifest.recover_address()?;
         }
         Ok(())
+    }
+}
+
+/// Key-publication events whose key has a chosen size, with the other fields of the largest
+/// committee (`N = 19`, `H = 14`) and a proof and attestation bundle well above real sizes.
+#[cfg(test)]
+pub(crate) mod key_publication_fixtures {
+    use alloy::primitives::Address;
+    use e3_events::{
+        CircuitName, E3id, EventConstructorWithTimestamp, EventSource, InterfoldEvent,
+        LbfvPublicKeyAggregated, OrderedSet, Proof, PublicKeyAggregated, Unsequenced,
+    };
+    use e3_utils::ArcBytes;
+
+    /// The committee public key cap of the registry (24 MiB): the largest key that any preset
+    /// publishes, and above the gossip budget. The set-7 l-BFV key envelope lies between them.
+    pub(crate) const LARGEST_COMMITTEE_KEY_BYTES: usize = 24 * 1024 * 1024;
+    /// A key of 8 MiB, near the largest envelope of sets 1..6, which the gossip topic forwards.
+    pub(crate) const FORWARDED_KEY_BYTES: usize = 8 * 1024 * 1024;
+
+    fn committee() -> (Vec<Address>, Vec<Address>, OrderedSet<String>) {
+        let committee: Vec<Address> = (1..=19).map(Address::repeat_byte).collect();
+        let honest = committee[..14].to_vec();
+        let nodes = OrderedSet::from_iter(committee.iter().map(ToString::to_string));
+        (committee, honest, nodes)
+    }
+
+    fn event(
+        data: impl Into<e3_events::InterfoldEventData>,
+        source: EventSource,
+    ) -> InterfoldEvent {
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(data.into(), None, 42, None, source)
+            .into_sequenced(1)
+    }
+
+    pub(crate) fn lbfv_key_publication(key_bytes: usize, source: EventSource) -> InterfoldEvent {
+        let (committee_addresses, honest_committee_addresses, nodes) = committee();
+        event(
+            LbfvPublicKeyAggregated {
+                pubkey: ArcBytes::from_bytes(&vec![0x44; key_bytes]),
+                e3_id: E3id::new("1", 1),
+                nodes,
+                committee_addresses,
+                honest_committee_addresses,
+                pk_commitment: [9; 32],
+                dkg_aggregator_v2_proof: Proof::new(
+                    CircuitName::DkgAggregatorV2,
+                    ArcBytes::from_bytes(&vec![1; 64 * 1024]),
+                    ArcBytes::from_bytes(&vec![2; 105 * 32]),
+                ),
+                dkg_attestation_bundle: Some(ArcBytes::from_bytes(&vec![3; 64 * 1024])),
+            },
+            source,
+        )
+    }
+
+    pub(crate) fn public_key_aggregated(key_bytes: usize, source: EventSource) -> InterfoldEvent {
+        let (committee_addresses, honest_committee_addresses, nodes) = committee();
+        event(
+            PublicKeyAggregated {
+                pubkey: ArcBytes::from_bytes(&vec![0x44; key_bytes]),
+                e3_id: E3id::new("1", 1),
+                nodes,
+                committee_addresses,
+                honest_committee_addresses,
+                pk_commitment: [9; 32],
+                dkg_aggregator_proof: Some(Proof::new(
+                    CircuitName::DkgAggregatorV2,
+                    ArcBytes::from_bytes(&vec![1; 64 * 1024]),
+                    ArcBytes::from_bytes(&vec![2; 105 * 32]),
+                )),
+                dkg_attestation_bundle: Some(ArcBytes::from_bytes(&vec![3; 64 * 1024])),
+            },
+            source,
+        )
     }
 }
 
@@ -458,5 +555,57 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("signature"));
+    }
+
+    #[test]
+    fn a_key_publication_above_the_gossip_budget_is_not_forwarded() {
+        use super::key_publication_fixtures::*;
+        let oversized = [
+            lbfv_key_publication(LARGEST_COMMITTEE_KEY_BYTES, EventSource::Local),
+            lbfv_key_publication(MAX_FORWARDED_KEY_BYTES + 1, EventSource::Local),
+            public_key_aggregated(LARGEST_COMMITTEE_KEY_BYTES, EventSource::Local),
+            public_key_aggregated(MAX_FORWARDED_KEY_BYTES + 1, EventSource::Local),
+        ];
+        for event in oversized {
+            assert!(!EventTranslationService::is_forwardable_event(&event));
+            let mut service = EventTranslationService::new("topic");
+            assert!(service.prepare_outbound(event.clone()).unwrap().is_none());
+
+            // A peer copy is refused for the same reason, so it never reaches the event store.
+            let data: GossipData = event.try_into().unwrap();
+            assert!(service.prepare_inbound(data.clone()).is_err());
+            assert!(crate::domain::wire::encode_gossip(
+                &data,
+                &NetworkPolicy::local_unrestricted(),
+                None
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn every_key_publication_that_fits_the_gossip_budget_is_forwarded() {
+        use super::key_publication_fixtures::*;
+        for key_bytes in [FORWARDED_KEY_BYTES, MAX_FORWARDED_KEY_BYTES] {
+            for event in [
+                lbfv_key_publication(key_bytes, EventSource::Local),
+                public_key_aggregated(key_bytes, EventSource::Local),
+            ] {
+                assert!(EventTranslationService::is_forwardable_event(&event));
+                let mut outbound = EventTranslationService::new("topic");
+                let (_, gossip) = outbound.prepare_outbound(event.clone()).unwrap().unwrap();
+                // The wire envelope, with its hash and metadata, stays within the gossip limit.
+                let encoded = crate::domain::wire::encode_gossip(
+                    &gossip,
+                    &NetworkPolicy::local_unrestricted(),
+                    None,
+                )
+                .expect("a forwardable key publication fits one gossip message");
+                assert!(encoded.len() <= crate::domain::wire::MAX_GOSSIP_BYTES);
+                let mut inbound = EventTranslationService::new("topic");
+                let decoded = inbound.prepare_inbound(gossip).unwrap();
+                assert_eq!(decoded.get_data(), event.get_data());
+            }
+        }
     }
 }

@@ -12,6 +12,10 @@ use e3_utils::ArcBytes;
 use serde::{Deserialize, Serialize};
 
 /// Secure-16384 public-key publication intent.
+///
+/// Like [`crate::PublicKeyAggregated`], it is forwarded to peers only when its key envelope fits
+/// one gossip message or sync reply (9 MiB). The set-7 envelope does not, so its members take the
+/// key from the confirmed on-chain key chunks, which are checked against the chain commitment.
 #[derive(Derivative, Message, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[derivative(Debug)]
 #[rtype(result = "()")]
