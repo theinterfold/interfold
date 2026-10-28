@@ -1,10 +1,10 @@
 # Identity gate: audit pack
 
-The identity gate is phase 2 of Interfold's Sybil resistance. Governance can
-require that the bond owner of each selected operator holds a verified identity
-credential at the request boundary (T−1). The first verifier accepts ZKPassport
-proofs of chip documents. One verified owner can fund many operators, but
-sortition still gives each snapshot owner one seat.
+With the identity gate, governance can require that the bond owner of each
+selected operator holds a verified identity credential at the request boundary
+(T−1). The first verifier accepts ZKPassport proofs of chip documents. One
+verified owner can fund many operators, but sortition still gives each snapshot
+owner one seat.
 
 Status: a stack of draft PRs, not deployed. Design and rules:
 [Owner identity](../../../docs/architecture/registration-and-bonding.md#owner-identity)

@@ -6,8 +6,8 @@
 | 2026-08-17 | Zenith  | Protocol contracts (6 files) | [20260714-Interfold - Zenith Audit Report.pdf](<./20260714-Interfold - Zenith Audit Report.pdf>) |
 | 2026-09-08 | Zenith  | Protocol update (14 files)   | [20260908_audit_protocol_zenith.pdf](./20260908_audit_protocol_zenith.pdf)                       |
 
-Prepared for a planned audit: the [identity gate audit pack](./identity-gate.md)
-(scope, threat model, invariants, known limits, and test evidence).
+The [identity gate audit pack](./identity-gate.md) gives the scope, threat
+model, invariants, known limits, and test evidence of the identity gate.
 
 ## What the 2026-08-17 protocol audit covered
 
