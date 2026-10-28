@@ -15,8 +15,8 @@ import { BfvDecryptionLayout } from "../../lib/BfvDecryptionLayout.sol";
 /**
  * @title BfvDecryptionVerifier
  * @notice Verifies the DecryptionAggregator (EVM) proof produced by the
- *         recursive aggregation pipeline (C6 folds + C7/decrypted_shares
- *         verified internally) and binds it to the full on-chain call context.
+ *         recursive aggregation pipeline (C6 proofs aggregated over Chonk +
+ *         C7/decrypted_shares verified internally) and binds it to the full on-chain call context.
  * @dev Used when the Interfold is configured with encryptionSchemeId
  *      keccak256("fhe.rs:BFV"). Constructor `threshold` must match the
  *      compiled DecryptionAggregator circuit `T` (`lib::configs::default::T`).
@@ -44,9 +44,10 @@ import { BfvDecryptionLayout } from "../../lib/BfvDecryptionLayout.sol";
  *      with some self-declared commitment, so this binds that commitment to
  *      the address-signed DKG output actually recorded for this E3.
  *
- *      Each secret-bearing C6 proof commits to the same domain limbs. C6Fold
- *      preserves them, and DecryptionAggregator exposes them here, so an
- *      aggregator cannot re-label an existing proof for another E3.
+ *      Each secret-bearing C6 proof commits to the same domain limbs. The C6
+ *      Chonk stack and root preserve them, and DecryptionAggregator exposes
+ *      them here, so an aggregator cannot re-label an existing proof for
+ *      another E3.
  *
  *      The domain prevents cross-context replay, the SAFE ciphertext commitment
  *      binds the final proof to the stored circuit-compatible commitment, and
@@ -108,9 +109,11 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
     ///         `party_ids`/`expected_sk`/`expected_esm` outputs must match.
     ICiphernodeRegistry public immutable ciphernodeRegistry;
 
-    /// @notice SAFE commitment to the C6 fold, genesis, and leaf VKs.
-    ///         Expected at `publicInputs[0]`. The builder writes
-    ///         `c6_fold.vk_tree_hash` from the complete artifact pair.
+    /// @notice SAFE commitment to the C6 Chonk root key and the keys of the
+    ///         stack below it (tube, hiding kernel, C6 leaf, app, init and
+    ///         tail kernels). Expected at `publicInputs[0]`. The builder still
+    ///         writes it as `c6_fold.vk_tree_hash` from the complete artifact
+    ///         pair; the name is kept for deployment tooling.
     bytes32 public immutable expectedC6FoldKeyHash;
 
     /// @notice Barretenberg hash of the C7 non-ZK recursive VK.
