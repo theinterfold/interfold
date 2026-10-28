@@ -66,12 +66,15 @@ Pre-configured BFV parameter sets for PVSS (Public Verifiable Secret Sharing) pr
   non-zero slots (`e3_bfv_client::simd_recover_sparse`)
 - **`BfvPreset::SecureThreshold16384SimdD6`** / **`BfvPreset::SecureDkg16384SimdD6`**: Secure l-BFV
   parameters with SIMD slots for multiplicative depth 6 (degree 16384, plaintext modulus 65537,
-  eight 54-bit threshold moduli, two 56-bit DKG moduli, on-chain parameter set 7). The plaintext has
-  16384 slots, and the decryption circuits publish 50 coefficients, as for set 6. The search needed
-  8 primes: 7 primes cover committees of at most 17 nodes only. The repo estimator limit at
-  d = 16384 is 430.6 bits of q, and the 424-bit q is 6.6 bits below it. The correctness margin
-  `log2(Δ) - log2(LHS)` at a committee of 20 nodes is 3.64 bits. The l-BFV key envelope has
-  21,234,096 bytes (20.25 MiB), so the committee public key cap is 24 MiB.
+  eight threshold moduli (five of 54 bits and three of 55 bits), two 57-bit DKG moduli, on-chain
+  parameter set 7). The plaintext has 16384 slots, and the decryption circuits publish 50
+  coefficients, as for set 6. The search needed 8 primes: 7 primes cover committees of at most 17
+  nodes only. It covers a sum of 126 fresh ciphertexts (`z = 126`) for every committee up to 20
+  nodes. No set of 8 equal-size primes fits, so the search mixes 54-bit and 55-bit primes. The
+  repo estimator limit at d = 16384 is 430.6 bits of q, and the 427-bit q is 3.6 bits below it. The
+  correctness margin `log2(Δ) - log2(LHS)` at a committee of 20 nodes is 2.07 bits. The l-BFV key
+  envelope has
+  21,381,552 bytes (20.39 MiB), so the committee public key cap is 24 MiB.
 
 The trBFV presets are `InsecureThreshold64` and `SecureThreshold8192`; the l-BFV presets are the
 other threshold presets. `supports_lbfv` and `is_lbfv_path` name the protocol path of a preset, and
@@ -188,9 +191,9 @@ cargo run --bin search_params --package e3-fhe-params -- \
 ```
 
 ```bash
-# 3 additions, then depth 6: 8 × 54-bit primes at d = 16384 (preset secure-16384-simd-d6)
+# 126 additions, then depth 6: 5 × 54-bit + 3 × 55-bit primes at d = 16384 (preset secure-16384-simd-d6)
 cargo run --bin search_params --package e3-fhe-params -- \
-    --d 16384 --n 20 --k 65537 --z 3 --lambda 31 --b 20 --b-chi 1 --mult-depth 6
+    --d 16384 --n 20 --k 65537 --z 126 --lambda 31 --b 20 --b-chi 1 --mult-depth 6
 ```
 
 #### Search Algorithm
@@ -201,6 +204,9 @@ The `bfv_search()` function implements a search algorithm that:
 2. Tries 3 to 8 primes, and for each count the prime bit-lengths from `min_prime_bits` up to 60
 3. In each bit-length, takes the largest primes whose product q is under the Eq4 limit
 4. Validates that q against Eq1 (noise bound). If it fails, moves to the next bit-length
+5. If no set of equal-size primes with that count fits, tries sets that mix two neighbouring
+   bit-lengths (for example 5 × 54-bit and 3 × 55-bit primes), by growing q one bit per prime,
+   before it adds a prime
 
 Returns the first feasible parameter set found, or an error if none exist.
 

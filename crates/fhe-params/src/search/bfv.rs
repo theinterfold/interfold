@@ -322,6 +322,56 @@ pub fn bfv_search(bfv_search_config: &BfvSearchConfig) -> BfvParamsResult<BfvSea
                         }
                     }
                 }
+
+            // No equal-size set of this prime count fits. Try sets that mix two neighbouring
+            // bit-lengths (`n_hi` primes of `bb + 1` bits, the rest of `bb` bits): q then moves in
+            // steps of one bit per prime instead of `num_primes` bits. This runs only after every
+            // equal-size set of the same prime count failed, so a result that an equal-size set gave
+            // before is unchanged. Order: smaller `bb`, then fewer `bb + 1`-bit primes (smaller q).
+            if num_primes >= 2 {
+                for bb in min_prime_bits..FIRST_MAX_PRIME_BITS {
+                    let (Some(lo), Some(hi)) = (by_bits_d.get(&bb), by_bits_d.get(&(bb + 1)))
+                    else {
+                        continue;
+                    };
+                    for n_hi in 1..num_primes {
+                        let n_lo = num_primes - n_hi;
+                        if lo.len() < n_lo || hi.len() < n_hi {
+                            continue;
+                        }
+                        // Both windows slide together; they descend, so later ones are smaller.
+                        for start in 0..=(lo.len() - n_lo).min(hi.len() - n_hi) {
+                            let mut sel: Vec<PrimeItem> = lo[start..start + n_lo].to_vec();
+                            sel.extend_from_slice(&hi[start..start + n_hi]);
+                            sel.sort_by(|a, b| b.value.cmp(&a.value));
+                            let q = sel.iter().map(|pi| &pi.value).product::<BigUint>();
+                            let q_bits = log2_big(&q);
+                            if q_bits < min_log2_q {
+                                break;
+                            }
+                            if q_bits > log2_q_limit && !bfv_search_config.insecure {
+                                continue;
+                            }
+                            if let Some(res) = finalize_bfv_candidate(bfv_search_config, d, sel) {
+                                if verbose {
+                                    println!(
+                                        "\n✓ Found first set: {n_lo} × {bb}-bit + {n_hi} × {}-bit primes, d={d}, log2(q)={q_bits:.2}",
+                                        bb + 1
+                                    );
+                                }
+                                return Ok(res);
+                            }
+                            if verbose {
+                                println!(
+                                    "  {n_lo} × {bb}-bit + {n_hi} × {}-bit: log2(q)={q_bits:.2} ❌ fails correctness or margin < {:.1} bits",
+                                    bb + 1,
+                                    bfv_search_config.min_margin
+                                );
+                            }
+                        }
+                    }
+                }
+            }
             }
         }
 

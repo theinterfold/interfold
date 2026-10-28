@@ -173,15 +173,17 @@ pub mod secure_16384_simd {
 /// Secure SIMD preset constants (degree 16384, plaintext modulus 65537) for multiplicative depth 6.
 ///
 /// `PLAINTEXT_MODULUS` is prime and 1 mod 2N, so the plaintext ring splits into N SIMD slots. The
-/// parameters come from `search_params --d 16384 --n 20 --k 65537 --z 3 --lambda 31 --b 20
+/// parameters come from `search_params --d 16384 --n 20 --k 65537 --z 126 --lambda 31 --b 20
 /// --b-chi 1 --mult-depth 6`, the inputs in `secure_16384_simd_d6_search_defaults`. The set has 8
-/// primes of 54 bits, log2(q) = 424, below the RLWE limit of 430.6 bits that the search takes from
-/// the lattice estimator for this degree. The relinearization noise grows with the largest modulus
-/// and with the square of the modulus count, so 7 moduli cannot reach n = 20: the largest 7-prime
-/// set (61-bit moduli, q = 427) covers n = 17 only. One 8-prime set covers every committee up to
-/// n = 20, with a margin of 3.6 bits over the bound. The DKG set follows the search: its
-/// plaintext modulus is the largest prime of the threshold set and its two 56-bit moduli hold the
-/// shares.
+/// primes: three of 55 bits and five of 54 bits, log2(q) = 427, below the RLWE limit of 430.6 bits
+/// that the search takes from the lattice estimator for this degree. The relinearization noise
+/// grows with the largest modulus and with the square of the modulus count, so 7 moduli cannot
+/// reach n = 20: the largest 7-prime set (61-bit moduli, q = 427) covers n = 17 only. One 8-prime
+/// set covers every committee up to n = 20 with a sum of up to 126 fresh ciphertexts, with a margin
+/// of 2.07 bits over the bound. No set of 8 equal-size primes fits at z = 126: 8 primes of 54 bits
+/// (q = 2^424) fall short, and 8 primes of 55 bits (q = 2^432) are above the estimator limit, so
+/// the search mixes the two sizes. The DKG set follows the search: its plaintext modulus is the
+/// largest prime of the threshold set and its two 57-bit moduli hold the shares.
 pub mod secure_16384_simd_d6 {
     pub const DEGREE: usize = 16384;
     pub const NUM_PARTIES: u128 = 20; // real - used in the search default
@@ -190,22 +192,22 @@ pub mod secure_16384_simd_d6 {
     pub mod threshold {
         pub const PLAINTEXT_MODULUS: u64 = 65537;
         pub const MODULI: &[u64] = &[
+            0x0040000000f60001,
+            0x0040000000e40001,
+            0x0040000000b00001,
             0x0020000000c70001,
             0x0020000000c10001,
             0x0020000000bf0001,
             0x0020000000b30001,
             0x0020000000970001,
-            0x0020000000820001,
-            0x00200000007c0001,
-            0x0020000000640001,
         ];
         pub const ERROR1_VARIANCE: &str = "264093875047547801360979058141866";
     }
 
     /// DKG parameters
     pub mod dkg {
-        pub const PLAINTEXT_MODULUS: u64 = 9007199267782657;
-        pub const MODULI: &[u64] = &[0x0080000000080001, 0x0080000000130001];
+        pub const PLAINTEXT_MODULUS: u64 = 18014398525603841;
+        pub const MODULI: &[u64] = &[0x0100000000060001, 0x01000000002a0001];
         pub const ERROR1_VARIANCE: &str = "10";
     }
 }
@@ -285,7 +287,7 @@ pub mod secure_16384_simd_d6_search_defaults {
     pub const B_CHI: u128 = 1;
     pub const SEARCH_N: u128 = 20;
     pub const SEARCH_K: u128 = 65537;
-    pub const SEARCH_Z: u128 = 3;
+    pub const SEARCH_Z: u128 = 126;
 }
 
 /// Default values for BFV parameters
