@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{EvmEvent, EvmLogRejected};
+use crate::{EvmEvent, EvmLogRejected, EvmReaderStopped};
 
 use super::*;
 use e3_event_system::EventSystem;
@@ -286,6 +286,25 @@ async fn rejected_log_fails_gateway_readiness() -> Result<()> {
 
     let error = gateway.wait_until_live().await.unwrap_err();
     assert!(error.to_string().contains("malformed historical log"));
+    Ok(())
+}
+
+#[actix::test]
+async fn stopped_reader_fails_gateway_readiness() -> Result<()> {
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle()?.enable("test-stopped-reader");
+    let gateway = EvmChainGateway::setup_with_readiness(&bus);
+
+    gateway
+        .addr()
+        .send(InterfoldEvmEvent::ReaderStopped(EvmReaderStopped::new(
+            1,
+            "the recreated provider is on chain 5",
+        )))
+        .await?;
+
+    let error = gateway.wait_until_live().await.unwrap_err();
+    assert!(error.to_string().contains("on chain 5"), "{error:#}");
     Ok(())
 }
 
