@@ -25,4 +25,5 @@ commitlog = { workspace = true }
 sha2 = { workspace = true }
 
 [dev-dependencies]
+e3-zk-config.workspace = true
 alloy-primitives = { workspace = true }

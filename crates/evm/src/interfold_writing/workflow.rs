@@ -11,9 +11,10 @@
 //! on-chain write.
 
 use alloy::primitives::{Address, U256};
-use e3_events::{CircuitName, E3Stage, E3id, PlaintextAggregated, Proof};
+use e3_events::{E3Stage, E3id, PlaintextAggregated, Proof};
 use e3_request::canonical_key::CanonicalPublicKeys;
 use e3_utils::{backoff_delay, utility_types::ArcBytes};
+use e3_zk_config::CircuitName;
 use std::collections::HashMap;
 use std::time::Duration;
 

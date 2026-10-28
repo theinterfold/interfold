@@ -144,8 +144,9 @@ pub(crate) fn validate_external_key_commitment(
 mod tests {
     use super::*;
     use alloy::signers::local::PrivateKeySigner;
-    use e3_events::{CircuitName, E3id, ProofPayload, ProofType};
+    use e3_events::{E3id, ProofPayload, ProofType};
     use e3_utils::utility_types::ArcBytes;
+    use e3_zk_config::CircuitName;
 
     const KEY_COMMITMENT: [u8; 32] = [0x42; 32];
 

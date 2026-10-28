@@ -893,14 +893,14 @@ mod tests {
         use e3_events::{
             AccusationOutcome, AccusationQuorumReached, AccusationVote, AggregatorChanged,
             CiphernodeAdded, CiphernodeRemoved, CiphernodeSelected, CiphertextOutputPublished,
-            CircuitName, CommitteeFinalizeRequested, CommitteeFinalized, CommitteePublished,
-            CommitteeRequested, DecryptionKeyShared, DecryptionshareCreated, E3Failed,
-            E3RequestComplete, E3Requested, E3Stage, E3id, FailureReason, KeyshareCreated,
-            PlaintextAggregated, PlaintextOutputPublished, Proof, ProofPayload, ProofType,
-            PublicKeyAggregated, Seed, SignedProofPayload, TicketGenerated, TicketId,
-            TicketSubmitted,
+            CommitteeFinalizeRequested, CommitteeFinalized, CommitteePublished, CommitteeRequested,
+            DecryptionKeyShared, DecryptionshareCreated, E3Failed, E3RequestComplete, E3Requested,
+            E3Stage, E3id, FailureReason, KeyshareCreated, PlaintextAggregated,
+            PlaintextOutputPublished, Proof, ProofPayload, ProofType, PublicKeyAggregated, Seed,
+            SignedProofPayload, TicketGenerated, TicketId, TicketSubmitted,
         };
         use e3_utils::ArcBytes;
+        use e3_zk_config::CircuitName;
 
         let e3_id = E3id::new("1", 1);
         let empty = ArcBytes::from_bytes(&[]);

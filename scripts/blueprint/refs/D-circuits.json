@@ -21,7 +21,7 @@
       "circuits/bin/recursive_aggregation/c3_fold_kernel/src/main.nr@36@verify_honk_proof(inner_vk, inner_proof, c3_public_inputs",
       "circuits/bin/recursive_aggregation/c3ab_fold/src/main.nr@36@verify_honk_proof_non_zk(c3a_vk, c3a_proof",
       "circuits/bin/recursive_aggregation/c3ab_fold/src/main.nr@37@verify_honk_proof_non_zk(c3b_vk, c3b_proof",
-      "crates/zk/prover/src/circuits/aggregation/c3_accumulator.rs@125@if proof.circuit != CircuitName::ShareEncryption {"
+      "crates/zk/prover/src/circuits/aggregation/c3_accumulator.rs@126@if proof.circuit != CircuitName::ShareEncryption {"
     ],
     "line_text": [
       "verify_honk_proof(inner_vk, inner_proof, c3_public_inputs, inner_key_hash);",
@@ -53,7 +53,7 @@
       "circuits/bin/recursive_aggregation/c6_fold/src/main.nr@43@verify_honk_proof(inner_vk, inner_proof, c6_public_inputs",
       "circuits/bin/recursive_aggregation/c6_fold/src/main.nr@52@verify_honk_proof_non_zk(acc_vk, acc_proof",
       "circuits/bin/recursive_aggregation/c6_fold_kernel/src/main.nr@40@verify_honk_proof(inner_vk, inner_proof, c6_public_inputs",
-      "crates/zk/prover/src/circuits/aggregation/c6_accumulator.rs@120@if proof.circuit != CircuitName::ThresholdShareDecryption {"
+      "crates/zk/prover/src/circuits/aggregation/c6_accumulator.rs@121@if proof.circuit != CircuitName::ThresholdShareDecryption {"
     ],
     "line_text": [
       "verify_honk_proof(inner_vk, inner_proof, c6_public_inputs, inner_key_hash);",

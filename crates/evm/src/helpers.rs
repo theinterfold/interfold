@@ -483,8 +483,9 @@ mod tests {
     use super::*;
     use alloy_dyn_abi::DynSolType;
     use e3_config::{chain_config::ChainConfig, Contract, ContractAddresses};
-    use e3_events::{CircuitName, Proof};
+    use e3_events::Proof;
     use e3_utils::ArcBytes;
+    use e3_zk_config::CircuitName;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn loopback_chain(rpc_poll_interval_ms: Option<u64>) -> ChainConfig {

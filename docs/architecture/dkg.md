@@ -224,7 +224,8 @@ are logged and retried on the next mutation while processing and publication con
 [persistence](persistence-and-replay.md) for the wider snapshot limit.
 
 The checker owns the `CommitmentLink` interface in `e3-slashing`; `e3-zk-prover` supplies concrete
-public-signal extraction/comparison. `ProofType` and signed proof payloads stay in events.
+public-signal extraction/comparison. `ProofType` and signed proof payloads stay in events. Static
+circuit identity and layout selection belong to `e3-zk-config`, not to the transport pipeline.
 
 Representative guards (not a complete protocol proof):
 

@@ -142,9 +142,10 @@ mod tests {
     use e3_committee::CiphernodesCommitteeSize;
     use e3_event_system::test_support::EventFixture;
     use e3_events::{
-        CircuitName, ComputeRequestErrorKind, ComputeRequestKind, Event, GetEvents,
-        HistoryCollector, NodeDkgFoldRequest, TakeEvents, Unsequenced, ZkError,
+        ComputeRequestErrorKind, ComputeRequestKind, Event, GetEvents, HistoryCollector,
+        NodeDkgFoldRequest, TakeEvents, Unsequenced, ZkError,
     };
+    use e3_zk_config::CircuitName;
     use std::collections::HashSet;
 
     fn test_ctx(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {

@@ -35,6 +35,7 @@ e3-zk-config = { workspace = true }
 test-helpers = [] # opt-in event constructors for consumer tests
 
 [dev-dependencies]
+serde_json.workspace = true
 proptest = { workspace = true }
 e3-events = { workspace = true, features = ["test-helpers"] }
 e3-test-support = { workspace = true }
