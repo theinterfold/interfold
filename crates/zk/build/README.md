@@ -24,7 +24,7 @@ Secure-16384-simd has the degree, committees and V2 layout of secure-16384, plai
 and 56-bit moduli. Its C7 is `decrypted_shares_aggregation_wide`, which holds `Q` and `u` as U384
 values because `Q` (276 bits) is above the field.
 Secure-16384-simd-d6 has the same degree, committees and V2 layout as secure-16384-simd. It has
-multiplicative depth 6 and eight 54-bit moduli, so `Q` is about 424 bits. Its C7 is
+multiplicative depth 6 and eight moduli (five of 54 bits and three of 55 bits), so `Q` is about 427 bits. Its C7 is
 `decrypted_shares_aggregation_wide`, which holds `Q` and `u` as U512 values because `Q` is above 352 bits.
 Insecure-simd has plaintext modulus 257 and builds the l-BFV path for minimum and micro committees.
 The small committee exceeds its smudging-noise budget. Its legacy tree anchor is also C6.

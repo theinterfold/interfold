@@ -93,8 +93,8 @@ secure-16384, secure-16384-simd and secure-16384-simd-d6 committees. Secure-1638
 set 6) shares the degree, the committees and the V2 layout of secure-16384 and differs in the
 plaintext modulus (65537) and the 56-bit CRT moduli. Secure-16384-simd-d6 (parameter set 7) has the
 same degree, committees and V2 layout as secure-16384-simd. It supports multiplicative depth 6 and
-uses eight 54-bit CRT moduli. Its C7 circuit is `decrypted_shares_aggregation_wide`, because Q is
-about 424 bits. Its l-BFV key envelope is 21,234,096 bytes (20.25 MiB), which is above the former
+uses eight CRT moduli (five of 54 bits and three of 55 bits). Its C7 circuit is `decrypted_shares_aggregation_wide`, because Q is
+about 427 bits. Its l-BFV key envelope is 21,381,552 bytes (20.39 MiB), which is above the former
 16 MiB committee public key limit. A separate protocol change raises the cap to 24 MiB for this
 reason. Enabling a new pair requires a complete matching artifact build, real-proof
 acceptance, and replacement/installation of the matching PK/decryption router routes before requests

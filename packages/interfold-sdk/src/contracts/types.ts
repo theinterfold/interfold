@@ -42,7 +42,7 @@ export enum ParamSet {
   InsecureSimd = 5,
   /** Secure SIMD l-BFV preset (N=16384, plaintext modulus 65537, five 56-bit moduli, multiplicative depth 3). */
   Secure16384Simd = 6,
-  /** Secure SIMD l-BFV preset (N=16384, plaintext modulus 65537, eight 54-bit moduli, multiplicative depth 6). */
+  /** Secure SIMD l-BFV preset (N=16384, plaintext modulus 65537, eight moduli (five of 54 bits and three of 55 bits), multiplicative depth 6). */
   Secure16384SimdD6 = 7,
 }
 

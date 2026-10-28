@@ -248,7 +248,7 @@ set. Sepolia and local chains accept all three sets with every canonical committ
 verifier routes; source-level admission does not install them.
 
 `secure-16384-simd-d6` has the same degree, committees, and V2 layout as `secure-16384-simd`. It
-supports multiplicative depth 6 and uses eight 54-bit moduli, so Q is about 424 bits. Its C7
+supports multiplicative depth 6 and uses eight moduli (five of 54 bits and three of 55 bits), so Q is about 427 bits. Its C7
 circuit is `decrypted_shares_aggregation_wide`. That circuit holds Q and u as `U512` values,
 because Q is above 352 bits.
 

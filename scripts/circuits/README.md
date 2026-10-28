@@ -110,7 +110,7 @@ the generator would produce.
   `insecure`, `insecure-simd`, `secure-16384`, `secure-16384-simd` and `secure-16384-simd-d6`
   build the l-BFV circuits only. Secure-16384, secure-16384-simd, secure-16384-simd-d6 (degree
   16384, plaintext modulus 65537) and `insecure` support minimum, micro, and small.
-  `secure-16384-simd-d6` has multiplicative depth 6 and uses eight 54-bit moduli. Insecure-simd
+  `secure-16384-simd-d6` has multiplicative depth 6 and uses eight moduli (five of 54 bits and three of 55 bits). Insecure-simd
   (degree 128, plaintext modulus 257) supports minimum and micro only.
 - `--committee <name>` - Committee size: `minimum` (default), `micro`, `small`
 - `--skip-utils-patch` - Skip rewriting committee values and BFV configuration hashes in

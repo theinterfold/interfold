@@ -179,8 +179,8 @@ of the E3.
 | `SECURE_THRESHOLD_16384_SIMD_D6` | 7    | 16384       | 8              | l-BFV with 16384 SIMD slots (plaintext modulus 65537), multiplicative depth 6, and a `minimum`, `micro` or `small` committee; not on mainnet |
 
 `SECURE_THRESHOLD_16384_SIMD_D6` has the same degree and plaintext modulus as
-`SECURE_THRESHOLD_16384_SIMD`. It uses eight 54-bit moduli, so an E3 program can multiply
-ciphertexts to multiplicative depth 6. Its l-BFV key envelope has 21,234,096 bytes (20.25 MiB). The committee public key
+`SECURE_THRESHOLD_16384_SIMD`. It uses eight moduli (five of 54 bits and three of 55 bits), so an E3 program can multiply
+ciphertexts to multiplicative depth 6. Its l-BFV key envelope has 21,381,552 bytes (20.39 MiB). The committee public key
 cap is 24 MiB.
 
 The insecure presets have no production security. Use them only for tests.
