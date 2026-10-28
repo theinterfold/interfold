@@ -10,7 +10,7 @@ use crate::messages::{EvmEventProcessor, EvmLog, InterfoldEvmEvent};
 use alloy::primitives::B256;
 use alloy::providers::Provider;
 use alloy::rpc::types::{Filter, Log};
-use anyhow::{anyhow, Context as _};
+use anyhow::{anyhow, ensure, Context as _};
 use async_trait::async_trait;
 use e3_events::CorrelationId;
 use futures_util::stream::{Stream, StreamExt};
@@ -386,7 +386,9 @@ pub(crate) async fn fetch_logs_adapting<L: LogProvider>(
 /// A failed attempt keeps the chunks whose logs it dispatched, so the next attempt resumes after
 /// them instead of reading the history again. The first attempt that reads the chain head fixes the
 /// sync's end: a provider recreated after a failure can lag, and a lower end would make the live
-/// loop read again blocks that the sync already dispatched.
+/// loop read again blocks that the sync already dispatched. A later attempt fails while its
+/// provider is behind that end, because a provider can answer an empty log range for blocks that it
+/// does not have, and the cursor would then move past their logs.
 pub(crate) struct HistoricalSync {
     /// The first block that the sync has not fetched.
     cursor: u64,
@@ -431,19 +433,16 @@ impl HistoricalSync {
         window: &mut LogWindow,
         progress: Option<&IngestionProgressSink>,
     ) -> Result<u64, anyhow::Error> {
-        let to_block = match self.head {
-            Some(head) => head,
-            None => {
-                let raw_head = provider
-                    .fetch_block_number()
-                    .await
-                    .map_err(|e| anyhow!("Failed to get the latest block number: {}", e))?;
-                *self.head.insert(crate::domain::reorg::confirmed_head(
-                    raw_head,
-                    confirmations,
-                ))
-            }
-        };
+        let raw_head = provider
+            .fetch_block_number()
+            .await
+            .map_err(|e| anyhow!("Failed to get the latest block number: {}", e))?;
+        let confirmed = crate::domain::reorg::confirmed_head(raw_head, confirmations);
+        let to_block = *self.head.get_or_insert(confirmed);
+        ensure!(
+            confirmed >= to_block,
+            "the provider's confirmed head {confirmed} is behind the historical sync end {to_block}"
+        );
         self.fetch_to(
             provider,
             filter,

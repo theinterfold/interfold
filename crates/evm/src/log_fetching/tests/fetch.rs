@@ -264,8 +264,24 @@ async fn a_failed_sync_resumes_after_the_chunks_it_dispatched() {
     .await
     .expect_err("the second chunk fails");
 
-    // A recreated provider that lags must not move the end of the sync.
+    // A recreated provider that lags behind the end of the sync is refused before it fetches: it
+    // could answer an empty range for the blocks that it does not have yet.
     mock.set_block_number(15);
+    sync.run(
+        &mock,
+        &Filter::new(),
+        0,
+        1,
+        &next,
+        &mut ts,
+        &mut window,
+        None,
+    )
+    .await
+    .expect_err("a provider behind the end of the sync is refused");
+
+    // Once the provider has caught up, the retry resumes at the failed chunk.
+    mock.set_block_number(19);
     mock.push_logs(vec![make_timestamped_log(12, 1_012)]);
     let head = sync
         .run(
