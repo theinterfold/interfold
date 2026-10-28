@@ -203,6 +203,42 @@ describe("DkgFoldAttestationVerifier", function () {
     expect(esmAggCommits).to.deep.equal(fixture.esmCommits);
   });
 
+  // 39 + 3 * 2 + 3 * 4 = 57 public inputs: no supported parameter set compiles four rows, so the
+  // statement is not V2 and is read as a 17-party trBFV statement, which the two-party bundle cannot satisfy.
+  it("does not classify a V2 statement with an unsupported row count", async function () {
+    const { owner, mockRegistry, verifier, operators } =
+      await loadFixture(setup);
+    const fixture = await buildMockDkgAttestationFixtureData(
+      operators.slice(0, 2),
+      e3Id,
+      ethers.id(`pk-v2-rows4-${e3Id}`),
+      await verifier.getAddress(),
+      await mockRegistry.getAddress(),
+    );
+    await mockRegistry.connect(owner).setCommitteeNodes(
+      e3Id,
+      fixture.ordered.map((o) => o.addr),
+    );
+    const proof = encodeMockDkgV2ProofForAttestation(
+      ethers.id(`pk-v2-rows4-${e3Id}`),
+      await mockRegistry.getCommitteeHash(e3Id),
+      fixture.partyIds,
+      fixture.skCommits,
+      fixture.esmCommits,
+      4,
+    );
+
+    await expect(
+      verifier.verify(
+        await mockRegistry.getAddress(),
+        31337,
+        e3Id,
+        proof,
+        fixture.bundle,
+      ),
+    ).to.be.revertedWithCustomError(mockRegistry, "InvalidFoldAttestation");
+  });
+
   it("rejects a bundle signed for another registry", async function () {
     const { mockRegistry, verifier, operators } = await loadFixture(setup);
     const secondRegistry = await ethers.deployContract(

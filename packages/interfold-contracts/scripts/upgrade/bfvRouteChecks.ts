@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { ethers as ethersLib } from "ethers";
 
+import { lbfvRowCount } from "../lbfvRowCount";
 import type { BfvVerifierRouteDeployment } from "../protocol/types";
 import {
   activeBfvConfigForChain,
@@ -132,18 +133,9 @@ export async function validateBfvRoutes(
     );
     equalValue(
       pkRoute[1],
-      // secure-16384-simd-d6 compiles eight l-BFV rows; secure-16384 and secure-16384-simd
-      // compile five; insecure and insecure-simd compile three.
       isV2
-        ? bfvPkV2PublicInputLayout(
-            expected.h,
-            expected.preset === "secure-16384-simd-d6"
-              ? 8
-              : expected.preset === "secure-16384" ||
-                  expected.preset === "secure-16384-simd"
-                ? 5
-                : 3,
-          ).length
+        ? bfvPkV2PublicInputLayout(expected.h, lbfvRowCount(expected.paramSet))
+            .length
         : bfvPkExpectedPublicInputsLen(expected.h),
       `PK route ${index} public input count`,
     );

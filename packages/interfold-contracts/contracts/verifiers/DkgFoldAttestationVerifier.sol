@@ -12,6 +12,7 @@ import {
 } from "../interfaces/IDkgFoldAttestationVerifier.sol";
 import { DkgFoldAttestationLib } from "../lib/DkgFoldAttestationLib.sol";
 import { CommitteeHashLib } from "../lib/CommitteeHashLib.sol";
+import { LbfvRowCount } from "../lib/LbfvRowCount.sol";
 
 /**
  * @title DkgFoldAttestationVerifier
@@ -297,13 +298,14 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         uint256 publicInputLength,
         uint256 v2H
     ) private pure returns (bool) {
-        // `dkg_aggregator_v2`: 39 + 3h + 3 * rows, with 3 rows (insecure l-BFV), 5 rows
-        // (secure-16384 and secure-16384-simd) or 8 rows (secure-16384-simd-d6).
+        // `dkg_aggregator_v2`: 39 + 3h + 3 * rows, where `rows` is the l-BFV row count of one
+        // supported parameter set (`LbfvRowCount`).
         uint256 fixedLength = 39 + (3 * v2H);
+        if (publicInputLength < fixedLength) return false;
+        uint256 variableLength = publicInputLength - fixedLength;
         return
-            publicInputLength == fixedLength + 9 ||
-            publicInputLength == fixedLength + 15 ||
-            publicInputLength == fixedLength + 24;
+            variableLength % 3 == 0 &&
+            LbfvRowCount.isSupportedRowCount(variableLength / 3);
     }
 
     function _verifyBinding(

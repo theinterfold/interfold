@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import MockCiphernodeRegistryModule from "../ignition/modules/mockCiphernodeRegistry";
+import { SUPPORTED_LBFV_ROW_COUNTS } from "../scripts/lbfvRowCount";
 import {
   ACTIVE_BFV_PARAM_SET,
   BFV_DKG_H,
@@ -113,8 +114,8 @@ const readFoldedArtifactsFromFile = (
   return isValidFoldedArtifacts(parsed) ? parsed : null;
 };
 
-const v2DkgLbfvRows = (publicInputs: string[]): 3 | 5 | 8 | null => {
-  for (const rows of [3, 5, 8] as const) {
+const v2DkgLbfvRows = (publicInputs: string[]): number | null => {
+  for (const rows of SUPPORTED_LBFV_ROW_COUNTS) {
     if (
       publicInputs.length === bfvPkV2PublicInputLayout(BFV_DKG_H, rows).length
     ) {

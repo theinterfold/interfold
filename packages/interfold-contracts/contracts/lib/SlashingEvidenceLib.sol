@@ -8,7 +8,9 @@ pragma solidity 0.8.28;
 
 import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
+import { IInterfold } from "../interfaces/IInterfold.sol";
 import { ISlashingManager } from "../interfaces/ISlashingManager.sol";
+import { LbfvRowCount } from "./LbfvRowCount.sol";
 
 /// @notice Verifies signed committee accusations outside the size-constrained manager.
 library SlashingEvidenceLib {
@@ -20,7 +22,6 @@ library SlashingEvidenceLib {
     uint256 internal constant CLOCK_SKEW = 30 seconds;
     uint256 internal constant FIRST_MULTIROW_PROOF_TYPE = 11;
     uint256 internal constant RLK_AGGREGATION_PROOF_TYPE = 14;
-    uint256 internal constant LBFV_ROW_INSTANCES = 5;
 
     struct AttestationEvidence {
         uint256 proofType;
@@ -49,26 +50,17 @@ library SlashingEvidenceLib {
         uint256 e3Id,
         address operator,
         address registryAddress,
+        address interfoldAddress,
         uint64 voteValidity,
         uint64 slashSubmissionDeadline,
         bytes32 domainSeparator
     ) external view {
         ICiphernodeRegistry registry = ICiphernodeRegistry(registryAddress);
         AttestationEvidence memory attestation = _decodeEvidence(proof);
-        {
-            bool isMultirow = attestation.proofType >=
-                FIRST_MULTIROW_PROOF_TYPE &&
-                attestation.proofType <= RLK_AGGREGATION_PROOF_TYPE;
-            // RLK aggregation identifies both d0 and d2 as component * rowCount + row.
-            uint256 instanceLimit = attestation.proofType ==
-                RLK_AGGREGATION_PROOF_TYPE
-                ? 2 * LBFV_ROW_INSTANCES
-                : LBFV_ROW_INSTANCES;
-            if (
-                (isMultirow && attestation.proofInstance >= instanceLimit) ||
-                (!isMultirow && attestation.proofInstance != 0)
-            ) revert ISlashingManager.InvalidProof();
-        }
+        if (
+            attestation.proofInstance >=
+            _proofInstanceLimit(attestation.proofType, interfoldAddress, e3Id)
+        ) revert ISlashingManager.InvalidProof();
         uint256 numVotes = attestation.voters.length;
         if (
             numVotes != attestation.dataHashes.length ||
@@ -109,6 +101,29 @@ library SlashingEvidenceLib {
             registry: registry
         });
         _verifyVotes(attestation, context);
+    }
+
+    /// @dev Exclusive upper bound on `proofInstance`, mirroring
+    ///      `ProofType::instance_from_public_signals` in
+    ///      `crates/events/src/interfold_event/signed_proof.rs`. Singleton proof types have
+    ///      instance 0 only (limit 1). Row-indexed types (11..14) use `row < rowCount`, and RLK
+    ///      aggregation identifies both d0 and d2 as `component * rowCount + row`
+    ///      (limit `2 * rowCount`). `rowCount` comes from the E3's own parameter set, read from
+    ///      the Interfold contract frozen for this E3, never from caller input. A parameter set
+    ///      without l-BFV rows (rowCount 0) admits no row-indexed proof.
+    function _proofInstanceLimit(
+        uint256 proofType,
+        address interfoldAddress,
+        uint256 e3Id
+    ) private view returns (uint256) {
+        if (
+            proofType < FIRST_MULTIROW_PROOF_TYPE ||
+            proofType > RLK_AGGREGATION_PROOF_TYPE
+        ) return 1;
+        uint256 rows = LbfvRowCount.rowCount(
+            IInterfold(interfoldAddress).getE3(e3Id).paramSet
+        );
+        return proofType == RLK_AGGREGATION_PROOF_TYPE ? 2 * rows : rows;
     }
 
     function _decodeEvidence(

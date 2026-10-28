@@ -8,6 +8,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import { lbfvRowCount } from "./lbfvRowCount";
 import {
   type ActiveBfvConfig,
   type BfvCommittee,
@@ -426,13 +427,7 @@ async function main() {
   );
 
   const benchmarkConfig = resolveBenchmarkConfig(foldedDoc);
-  const lbfvRows =
-    benchmarkConfig.preset === "secure-16384-simd-d6"
-      ? 8
-      : benchmarkConfig.preset === "secure-16384" ||
-          benchmarkConfig.preset === "secure-16384-simd"
-        ? 5
-        : 3;
+  const lbfvRows = lbfvRowCount(benchmarkConfig.paramSet);
   const v2Layout = bfvPkV2PublicInputLayout(benchmarkConfig.h, lbfvRows);
   const useV2Dkg = dkgPublicInputs.length === v2Layout.length;
   const expectedNodesFoldKeyHash = readVkRecursiveHash(

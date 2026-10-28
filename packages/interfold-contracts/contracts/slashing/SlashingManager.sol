@@ -854,6 +854,7 @@ contract SlashingManager is
             e3Id,
             operator,
             address(dependencies.registry),
+            address(dependencies.interfoldContract),
             dependencies.accusationVoteValidity,
             dependencies.slashSubmissionDeadline,
             _domainSeparatorV4()

@@ -6,13 +6,16 @@
 import { expect } from "chai";
 
 import dkgAggregatorV2VerifierModule from "../ignition/modules/dkgAggregatorV2Verifier";
+import { lbfvRowCount } from "../scripts/lbfvRowCount";
 import { currentNodeRelease } from "../scripts/protocol/nodeRelease";
 import {
   INSECURE_LBFV_MINIMUM_BFV_CONFIG,
   INSECURE_LBFV_PARAM_SET,
+  INSECURE_SIMD_PARAM_SET,
   SECURE_16384_MINIMUM_BFV_CONFIG,
   SECURE_16384_SIMD_D6_MINIMUM_BFV_CONFIG,
   SECURE_16384_SIMD_D6_PARAM_SET,
+  SECURE_16384_SIMD_PARAM_SET,
 } from "../scripts/utils";
 import { ethers, ignition } from "./fixtures/connection";
 
@@ -267,6 +270,49 @@ describe("BfvPkVerifierV2", function () {
       ),
     ).to.equal(true);
   });
+
+  for (const [paramSet, rows] of [
+    [3, 5],
+    [INSECURE_LBFV_PARAM_SET, 3],
+    [INSECURE_SIMD_PARAM_SET, 3],
+    [SECURE_16384_SIMD_PARAM_SET, 5],
+    [SECURE_16384_SIMD_D6_PARAM_SET, 8],
+  ] as const) {
+    it(`takes the row count of parameter set ${paramSet} from the single owner`, async function () {
+      const { verifier } = await deployFixture(paramSet);
+
+      expect(await verifier.lbfvRows()).to.equal(BigInt(rows));
+      expect(lbfvRowCount(paramSet)).to.equal(rows);
+      expect(await verifier.expectedPublicInputsLen()).to.equal(
+        BigInt(39 + 3 * 2 + 3 * rows),
+      );
+    });
+  }
+
+  for (const paramSet of [0, 2]) {
+    it(`rejects trBFV parameter set ${paramSet}, which has no l-BFV rows`, async function () {
+      const circuit = await ethers.deployContract("MockCircuitVerifier");
+      const registry = await ethers.deployContract("MockCiphernodeRegistry");
+
+      await expect(
+        ethers.deployContract("BfvPkVerifierV2", [
+          await circuit.getAddress(),
+          await registry.getAddress(),
+          paramSet,
+          2,
+          3,
+          NODES_FOLD_KEY_HASH,
+          SK_C2_CHUNK_KEY_HASH,
+          ESM_C2_CHUNK_KEY_HASH,
+          LEGACY_VK_BINDING,
+          V2_VK_BINDING,
+        ]),
+      ).to.be.revertedWithCustomError(
+        await ethers.getContractFactory("BfvPkVerifierV2"),
+        "InvalidParamSet",
+      );
+    });
+  }
 
   it("rejects a proof from another protocol version", async function () {
     const { interfold, verifier } = await deployFixture();

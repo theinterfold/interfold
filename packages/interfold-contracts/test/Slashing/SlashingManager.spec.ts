@@ -491,19 +491,49 @@ describe("SlashingManager", function () {
       expect(proposal.proposer).to.equal(await proposer.getAddress());
     });
 
-    for (const [proofType, proofInstance, accepted] of [
-      [11, 4, true],
-      [12, 4, true],
-      [13, 4, true],
-      [14, 4, true],
-      [14, 5, true],
-      [14, 9, true],
-      [11, 5, false],
-      [12, 5, false],
-      [13, 5, false],
-      [14, 10, false],
+    // The instance bound is `rowCount(paramSet)` for proof types 11..13 and `2 * rowCount` for
+    // RLK aggregation (14), with the row count read from the E3's own parameter set:
+    // sets 4 and 5 have 3 rows, sets 3 and 6 have 5, set 7 has 8, and the trBFV sets have none.
+    for (const [paramSet, proofType, proofInstance, accepted] of [
+      [6, 11, 4, true],
+      [6, 12, 4, true],
+      [6, 13, 4, true],
+      [6, 14, 4, true],
+      [6, 14, 5, true],
+      [6, 14, 9, true],
+      [6, 11, 5, false],
+      [6, 12, 5, false],
+      [6, 13, 5, false],
+      [6, 14, 10, false],
+      [3, 11, 4, true],
+      [3, 11, 5, false],
+      [3, 14, 9, true],
+      [3, 14, 10, false],
+      [4, 11, 2, true],
+      [4, 12, 2, true],
+      [4, 13, 2, true],
+      [4, 11, 3, false],
+      [4, 12, 3, false],
+      [4, 13, 3, false],
+      [4, 14, 5, true],
+      [4, 14, 6, false],
+      [5, 11, 2, true],
+      [5, 11, 3, false],
+      [5, 14, 5, true],
+      [5, 14, 6, false],
+      [7, 11, 7, true],
+      [7, 12, 7, true],
+      [7, 13, 7, true],
+      [7, 11, 8, false],
+      [7, 12, 8, false],
+      [7, 13, 8, false],
+      [7, 14, 8, true],
+      [7, 14, 15, true],
+      [7, 14, 16, false],
+      [0, 11, 0, false],
+      [2, 14, 0, false],
     ] as const) {
-      it(`${accepted ? "accepts" : "rejects"} proof family ${proofType} instance ${proofInstance}`, async function () {
+      it(`${accepted ? "accepts" : "rejects"} proof family ${proofType} instance ${proofInstance} on parameter set ${paramSet}`, async function () {
         const {
           slashingManager,
           proposer,
@@ -511,12 +541,14 @@ describe("SlashingManager", function () {
           voter1,
           voter2,
           mockCiphernodeRegistry,
+          mockInterfold,
         } = await loadFixture(setup);
+        await mockInterfold.setParamSet(0, paramSet);
         const reason = ethers.keccak256(
           ethers.solidityPacked(["uint256"], [proofType]),
         );
         await slashingManager.setSlashPolicy(reason, buildProofPolicy());
-        const smallD2 = proofType === 14 && proofInstance === 9;
+        const smallD2 = accepted && proofType === 14 && proofInstance >= 9;
         const candidates = smallD2
           ? (await ethers.getSigners()).filter(
               (signer) => signer.address !== operatorAddress,
@@ -558,7 +590,7 @@ describe("SlashingManager", function () {
             "InvalidProof",
           );
         }
-        if (proofType === 14 && proofInstance === 9) {
+        if (smallD2) {
           const anotherRow = await signAndEncodeAttestation(
             voters,
             0,

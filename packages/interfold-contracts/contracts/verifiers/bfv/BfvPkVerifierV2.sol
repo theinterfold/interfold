@@ -12,6 +12,7 @@ import { IInterfold } from "../../interfaces/IInterfold.sol";
 import { IPkVerifier } from "../../interfaces/IPkVerifier.sol";
 import { ActiveCryptoConfig } from "../../lib/ActiveCryptoConfig.sol";
 import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
+import { LbfvRowCount } from "../../lib/LbfvRowCount.sol";
 
 /// @notice Verifies a V2 l-BFV DKG aggregator proof.
 contract BfvPkVerifierV2 is IPkVerifier {
@@ -79,14 +80,8 @@ contract BfvPkVerifierV2 is IPkVerifier {
         if (_ciphernodeRegistry.code.length == 0) {
             revert InvalidRegistry(_ciphernodeRegistry);
         }
-        // The V2 statement exists only on the l-BFV path.
-        if (
-            _paramSet != ActiveCryptoConfig.SECURE_16384_PARAM_SET &&
-            _paramSet != ActiveCryptoConfig.INSECURE_LBFV_PARAM_SET &&
-            _paramSet != ActiveCryptoConfig.INSECURE_SIMD_PARAM_SET &&
-            _paramSet != ActiveCryptoConfig.SECURE_16384_SIMD_PARAM_SET &&
-            _paramSet != ActiveCryptoConfig.SECURE_16384_SIMD_D6_PARAM_SET
-        ) {
+        // The V2 statement exists only on the l-BFV path; trBFV sets have no l-BFV rows.
+        if (LbfvRowCount.rowCount(_paramSet) == 0) {
             revert InvalidParamSet(_paramSet);
         }
         if (_committeeH == 0 || _committeeN == 0 || _committeeH > _committeeN) {
@@ -114,14 +109,7 @@ contract BfvPkVerifierV2 is IPkVerifier {
         h = _committeeH;
         committeeN = _committeeN;
         expectedParamSet = _paramSet;
-        // secure-16384-simd-d6 compiles eight l-BFV rows, secure-16384 and secure-16384-simd
-        // compile five, and the insecure presets compile three.
-        lbfvRows = _paramSet == ActiveCryptoConfig.SECURE_16384_SIMD_D6_PARAM_SET
-            ? 8
-            : (_paramSet == ActiveCryptoConfig.SECURE_16384_PARAM_SET ||
-                _paramSet == ActiveCryptoConfig.SECURE_16384_SIMD_PARAM_SET)
-                ? 5
-                : 3;
+        lbfvRows = LbfvRowCount.rowCount(_paramSet);
         expectedPublicInputsLen =
             V2_PUBLIC_INPUTS_FIXED_LEN +
             (3 * h) +

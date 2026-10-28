@@ -6,11 +6,23 @@
 
 pragma solidity 0.8.28;
 
+import { E3 } from "../interfaces/IE3.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { ISlashingManager } from "../interfaces/ISlashingManager.sol";
 
 contract MockSlashingInterfold {
     mapping(uint256 e3Id => uint256 deadline) private _lifecycleDeadlines;
+    mapping(uint256 e3Id => uint8 paramSet) private _paramSets;
+
+    function setParamSet(uint256 e3Id, uint8 paramSet) external {
+        _paramSets[e3Id] = paramSet;
+    }
+
+    /// @dev Only `paramSet` is meaningful: it is the sole E3 field the slashing evidence
+    ///      library reads.
+    function getE3(uint256 e3Id) external view returns (E3 memory e3) {
+        e3.paramSet = _paramSets[e3Id];
+    }
 
     function snapshotDependencies(
         ISlashingManager manager,
