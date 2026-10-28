@@ -105,6 +105,20 @@ fork. It overwrites the `mainnet` entry of the checkout's
 `packages/crisp-contracts/deployed_contracts.json` with the fork's addresses, passes that file as
 `--crisp-deployments`, and restores the file when it ends.
 
+`upgrade:identity` (`scripts/upgrade/identityGate.ts prepare`) rolls out the
+[owner identity](registration-and-bonding.md#owner-identity) gate. It reads the `identity` section
+of the protocol config (ZKPassport root verifier, version, domain, scope, identifier type, OPRF key
+hash, FaceMatch, proof validity, maximum validity) and stops on an incomplete value. It deploys
+`ZKPassportIdentityVerifier`, `OwnerIdentityRegistry` owned by the protocol owner, and a linked
+BondingRegistry implementation. Its governance batch upgrades BondingRegistry, sets the identity
+policy to the new registry with `required = false`, which publishes the registry to the verification
+page, and refreshes every registered operator in batches of 20, because every policy change resets
+counted owner capacity. `upgrade:identity:validate` reads back the implementation, the registry
+owner and verifier, every verifier setting, the latest `IdentityPolicyUpdated`, and the owner
+capacity for the largest committee. `upgrade:identity:enforce` writes the batch that sets
+`required = true` and refreshes every operator; `upgrade:identity:relax` is its rollback. The
+batches and the plan (`deploy/protocol/<name>.identity-*`) stay local and are not committed.
+
 During an ordered legacy CRISP server cutover, missing `earliestVotingStart()` can temporarily fall
 back to live protocol windows. Install/register new program and update server/DAO addresses before
 resume; old servers do not schedule the required separate voting start and cannot make valid new
