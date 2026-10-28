@@ -7,6 +7,17 @@
   "bondedVotesExcludedAccounts": [],
   "bondingRegistryProxy": "0x0000000000000000000000000000000000000000",
   "bondingRegistryProxyAdmin": "0x0000000000000000000000000000000000000000",
+  "identity": {
+    "zkPassportRootVerifier": "0x1D000001000EFD9a6371f4d90bB8920D5431c0D8",
+    "zkPassportVersion": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "domain": "dashboard.theinterfold.com",
+    "scope": "interfold-bond-owner",
+    "nullifierType": 0,
+    "oprfKeyHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "faceMatchRequired": true,
+    "proofValidity": "604800",
+    "maxValidity": "31536000"
+  },
   "feeToken": "0x0000000000000000000000000000000000000000",
   "feeTokenDecimals": 18,
   "ticketUnderlyingToken": "0x0000000000000000000000000000000000000000",

@@ -42,6 +42,26 @@ export interface RandomnessConfig {
   requestTimeout: string;
 }
 
+/** The ZKPassport verifier of the bond-owner identity gate (`scripts/upgrade/identityGate.ts`). */
+export interface IdentityGateConfig {
+  /** ZKPassport's root verifier, the same address on every network that ZKPassport supports. */
+  zkPassportRootVerifier: string;
+  /** The one ZKPassport version (bytes32) that the verifier accepts. */
+  zkPassportVersion: string;
+  /** The domain and scope are part of every identifier; a change needs a new registry. */
+  domain: string;
+  scope: string;
+  /** 0 non-salted, 1 salted (OPRF). */
+  nullifierType: number;
+  /** ZKPassport's OPRF key hash for salted identifiers; zero for non-salted ones. */
+  oprfKeyHash: string;
+  faceMatchRequired: boolean;
+  /** Maximum proof age, in seconds, when the registration is mined. */
+  proofValidity: string;
+  /** Longest credential, in seconds after the proof date. */
+  maxValidity: string;
+}
+
 export interface ProtocolConfigFile {
   name: string;
   chainId: number;
@@ -74,6 +94,8 @@ export interface ProtocolConfigFile {
   bondedVotesExcludedAccounts?: string[];
   bondingRegistryProxy: string;
   bondingRegistryProxyAdmin: string;
+  /** Bond-owner identity gate settings; only `identityGate.ts` reads them. */
+  identity?: IdentityGateConfig;
   feeToken: string;
   feeTokenDecimals: number;
   ticketUnderlyingToken: string;
