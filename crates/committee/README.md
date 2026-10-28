@@ -2,15 +2,15 @@
 
 ## Purpose
 
-Canonical names and numeric parameters for supported ciphernode committee sizes. This small crate
-supplies configuration to runtime, parameter, and circuit tooling; it does not select committee
-members or determine their party IDs.
+Canonical committee parameters and ordered membership data shared by runtime and circuit tooling.
+This crate preserves supplied membership order; it does not form committees, normalize chain
+addresses, or choose active aggregators.
 
 ## Map
 
-[`src/lib.rs`](src/lib.rs) contains the whole crate: `CiphernodesCommitteeSize` parses canonical
-names and looks up `CiphernodesCommittee { n, h, threshold }`; inline tests pin numeric lookups and
-serialized variants. There is no actor, runtime selector, or generated table here.
+[`src/lib.rs`](src/lib.rs) owns supported parameter lookup. [`membership.rs`](src/membership.rs)
+owns `Committee`: ordered members, zero-based party lookup, and the derived address index. There is
+no actor, runtime selector, or generated table here.
 
 ## Look up a committee
 
@@ -33,10 +33,19 @@ For a dependency inside this workspace, use `e3-committee = { workspace = true }
 `e3_committee`. The [FHE parameter API](../fhe-params/README.md) combines committee dimensions with
 cryptographic presets; supported dimensions alone do not imply installed circuit artifacts.
 
+## Ordered membership
+
+`Committee::new(members)` keeps the supplied strings and order exactly: index is party ID. Lookup
+lowercases addresses; duplicate lowercase keys resolve to the last position. Deserialization
+rebuilds that index, while serialization and equality use only the member list. Construction does
+not validate or deduplicate addresses. Sortition owns canonical formation/normalization and the
+[active/standby failover policy](../sortition/src/failover.rs).
+
 ## Tests
 
 Run `cargo test --locked -p e3-committee` from the root; no chain/proof tools are needed. Tests
-cover names/serialization, all supported dimensions, and rejected parameter pairs. See
+cover names/serialization, all supported dimensions, rejected parameter pairs, and frozen membership
+bytes/cache reconstruction. See
 [committee selection](../../docs/architecture/committee-selection.md) for runtime membership and
 [circuit artifacts](../../docs/architecture/circuit-artifacts.md) for matching generated outputs.
 Compatibility rules for table changes are in [AGENTS.md](AGENTS.md).

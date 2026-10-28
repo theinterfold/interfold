@@ -252,7 +252,7 @@
         {
           "name": "CiphernodeSelector (e3-sortition, outside this crate)",
           "role": "decides is_aggregator for each E3 and publishes AggregatorChanged",
-          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@112@pub struct CiphernodeSelector {"
+          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@113@pub struct CiphernodeSelector {"
         },
         {
           "name": "CiphernodeRegistrySolWriter (e3-evm, outside this crate)",

@@ -29,7 +29,7 @@
         {
           "name": "ShareVerificationActor",
           "role": "Verifies peers' C1-C4 and C6 share proofs: ECDSA check, commitment consistency check, then ZK verification through ComputeRequest",
-          "ref": "crates/zk/prover/src/share_verification/actor.rs@56@pub struct ShareVerificationActor"
+          "ref": "crates/zk/prover/src/share_verification/actor.rs@57@pub struct ShareVerificationActor"
         },
         {
           "name": "NodeProofAggregator",
@@ -86,12 +86,12 @@
         {
           "name": "ShareVerificationDispatched",
           "by": "ShareVerificationActor",
-          "ref": "crates/zk/prover/src/share_verification/actor.rs@84@EventType::ShareVerificationDispatched"
+          "ref": "crates/zk/prover/src/share_verification/actor.rs@85@EventType::ShareVerificationDispatched"
         },
         {
           "name": "CommitmentConsistencyCheckComplete",
           "by": "ShareVerificationActor",
-          "ref": "crates/zk/prover/src/share_verification/actor.rs@88@EventType::CommitmentConsistencyCheckComplete"
+          "ref": "crates/zk/prover/src/share_verification/actor.rs@89@EventType::CommitmentConsistencyCheckComplete"
         },
         {
           "name": "DKGInnerProofReady",
@@ -225,7 +225,7 @@
         {
           "name": "finalized committee addresses per E3",
           "where": "memory",
-          "ref": "crates/zk/prover/src/share_verification/actor.rs@60@committees: HashMap<E3id, Vec<Address>>"
+          "ref": "crates/zk/prover/src/share_verification/actor.rs@61@committees: HashMap<E3id, Vec<Address>>"
         }
       ],
       "key_types": [
@@ -278,7 +278,7 @@
       "read_first": [
         {
           "why": "wiring: the five ZK actors are created here and connected to the bus",
-          "ref": "crates/zk/prover/src/actor_system.rs@128@pub fn setup_zk_actors("
+          "ref": "crates/zk/prover/src/actor_system.rs@129@pub fn setup_zk_actors("
         },
         {
           "why": "the trigger events that start a proof request",

@@ -7,9 +7,9 @@
 //! Cross-circuit commitment consistency types.
 //!
 //! Defines the [`CommitmentLink`] trait and supporting types used by the
-//! [`CommitmentConsistencyChecker`] in `e3-slashing`.
+//! [`crate::CommitmentConsistencyChecker`].
 
-use crate::ProofType;
+use e3_events::ProofType;
 
 /// A 32-byte field element extracted from proof public signals.
 pub type FieldValue = [u8; 32];

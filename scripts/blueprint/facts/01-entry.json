@@ -310,17 +310,17 @@
         {
           "name": "E3Router",
           "role": "request router: extensions register on it, and it is attached after networking starts",
-          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@239@Ok(E3Router::builder(bus, storage.store.clone())"
+          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@240@Ok(E3Router::builder(bus, storage.store.clone())"
         },
         {
           "name": "ThresholdKeyshareExtension",
           "role": "registered with ZK actors only for the full-node profile",
-          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@78@ThresholdKeyshareExtension::create("
+          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@79@ThresholdKeyshareExtension::create("
         },
         {
           "name": "Multithread",
           "role": "full-node compute worker, started with the configured pool and ZK backend",
-          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@204@Multithread::attach_with_zk("
+          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@205@Multithread::attach_with_zk("
         }
       ],
       "consumes": [
@@ -396,7 +396,7 @@
         },
         {
           "why": "where protocol extensions are registered, and under which roles",
-          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@41@pub(super) async fn setup_extensions("
+          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@42@pub(super) async fn setup_extensions("
         },
         {
           "why": "the production caller, with the settings for a full node",
@@ -412,7 +412,7 @@
         {
           "pattern": "let-else",
           "note": "bootstrap returns the router without installing full-node protocol extensions",
-          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@64@let NodeProfile::Full { zk_backend } = &self.profile else {"
+          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@65@let NodeProfile::Full { zk_backend } = &self.profile else {"
         },
         {
           "pattern": "arc-shared",

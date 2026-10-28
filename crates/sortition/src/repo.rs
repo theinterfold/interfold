@@ -8,8 +8,9 @@ use crate::domain::backends::SortitionBackend;
 use crate::domain::failover::AggregatorFailoverState;
 use crate::domain::node_registry::NodeStateStore;
 use crate::{BondOwnerState, CiphernodeSelectorState, SortitionRecoveryState};
+use e3_committee::Committee;
 use e3_data::{Repositories, Repository};
-use e3_events::{Committee, E3id, StoreKeys};
+use e3_events::{E3id, StoreKeys};
 use std::collections::HashMap;
 
 pub trait SortitionRepositoryFactory {

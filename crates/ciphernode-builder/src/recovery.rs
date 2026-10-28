@@ -12,7 +12,8 @@ use e3_aggregator::{
     RecoveredCommitteeRequest as FinalizerRecoveredCommitteeRequest,
     COMMITTEE_FINALIZER_RECOVERY_SCHEMA_VERSION,
 };
-use e3_events::{AggregateId, CiphernodeSelected, Committee, E3Stage, E3id};
+use e3_committee::Committee;
+use e3_events::{AggregateId, CiphernodeSelected, E3Stage, E3id};
 use e3_evm::{SlashingWriterRepositoryFactory, SLASHING_WRITER_RECOVERY_SCHEMA_VERSION};
 use e3_request::E3LifecycleRepositoryFactory;
 use e3_sortition::{

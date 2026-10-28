@@ -7,9 +7,10 @@
 use super::*;
 use crate::test_support::get_common_setup;
 use alloy::signers::local::PrivateKeySigner;
+use e3_committee::Committee;
 use e3_data::{AutoPersist, DataStore, InMemStore, PersistableData, Repository};
 use e3_events::{
-    CircuitName, Committee, ComputeRequestErrorKind, ComputeRequestKind, EffectsEnabled, GetEvents,
+    CircuitName, ComputeRequestErrorKind, ComputeRequestKind, EffectsEnabled, GetEvents,
     HistoryCollector, ProofPayload, ProofType, Seed, TakeEvents, Unsequenced, ZkError,
 };
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, DEFAULT_BFV_PRESET};

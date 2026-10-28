@@ -223,6 +223,9 @@ do not make snapshot enqueue a durable-flush acknowledgment. **Gap:** failed che
 are logged and retried on the next mutation while processing and publication continue. See
 [persistence](persistence-and-replay.md) for the wider snapshot limit.
 
+The checker owns the `CommitmentLink` interface in `e3-slashing`; `e3-zk-prover` supplies concrete
+public-signal extraction/comparison. `ProofType` and signed proof payloads stay in events.
+
 Representative guards (not a complete protocol proof):
 
 - [Keyshare tests](../../crates/keyshare/src/threshold_keyshare/tests.rs):

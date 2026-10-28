@@ -8,6 +8,10 @@ DKG and aggregation are downstream consumers. The walkthrough below places selec
 E3 lifecycle; the [selection domain](../../docs/architecture/committee-selection.md) owns the
 cross-component rules and limits.
 
+Ordered membership/lookup belongs to `e3-committee`. The free functions in
+[`failover.rs`](src/failover.rs) choose active/standby aggregators from that supplied order; they do
+not reorder members or renumber finalized slots.
+
 ## Map
 
 | Location                                                                                                                                                                                       | Responsibility                                                        |
