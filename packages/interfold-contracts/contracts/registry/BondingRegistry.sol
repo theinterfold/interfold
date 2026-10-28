@@ -404,13 +404,6 @@ contract BondingRegistry is
         BondingEligibilityLib.setIdentityPolicy(identityRegistry, required);
     }
 
-    /// @inheritdoc IBondingIdentity
-    function identityPolicyAt(
-        uint256 timepoint
-    ) external view returns (IdentityPolicy memory) {
-        return BondingEligibilityLib.identityPolicyAt(timepoint);
-    }
-
     /// @inheritdoc IBondingRegistry
     function pendingBondOwnerOf(
         address operator
@@ -1504,8 +1497,7 @@ contract BondingRegistry is
     ////////////////////////////////////////////////////////////
 
     /// @notice ERC-165 interface detection. Advertises
-    ///         {IBondingRegistry}, {IBondOwnerHistory}, {IBondingAdmission},
-    ///         {IBondingIdentity}, and {IERC165}.
+    ///         {IBondingRegistry}, {IBondOwnerHistory}, {IBondingAdmission}, and {IERC165}.
     function supportsInterface(
         bytes4 interfaceId
     ) external pure virtual returns (bool) {
@@ -1513,7 +1505,6 @@ contract BondingRegistry is
             interfaceId == type(IBondingRegistry).interfaceId ||
             interfaceId == type(IBondOwnerHistory).interfaceId ||
             interfaceId == type(IBondingAdmission).interfaceId ||
-            interfaceId == type(IBondingIdentity).interfaceId ||
             interfaceId == type(IERC165).interfaceId;
     }
 

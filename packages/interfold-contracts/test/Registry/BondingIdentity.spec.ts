@@ -62,8 +62,6 @@ describe("Bond-owner identity admission", function () {
   it("defaults to off and leaves unverified operators eligible when disabled", async function () {
     const ctx = await loadFixture(setup);
     const b = ctx.bondingRegistry;
-    const before = await time.latest();
-    expect((await b.identityPolicyAt(before)).required).to.equal(false);
     expect(await eligible(ctx, ctx.operators[0])).to.equal(true);
     await expect(
       b
@@ -76,12 +74,6 @@ describe("Bond-owner identity admission", function () {
     await expect(b.setIdentityPolicy(registry, false))
       .to.emit(b, "IdentityPolicyUpdated")
       .withArgs(updatedAt, registry, false);
-    expect((await b.identityPolicyAt(await time.latest())).registry).to.equal(
-      registry,
-    );
-    expect((await b.identityPolicyAt(before)).registry).to.equal(
-      ethers.ZeroAddress,
-    );
     expect(await eligible(ctx, ctx.operators[0])).to.equal(true);
   });
 
@@ -262,9 +254,8 @@ describe("Bond-owner identity admission", function () {
     await expect(
       b.setIdentityPolicy(await ctx.verifier.getAddress(), true),
     ).to.be.revert(ethers);
-    expect((await b.identityPolicyAt(await time.latest())).required).to.equal(
-      false,
-    );
+    // No rejected call set a policy, so an unverified operator stays eligible.
+    expect(await eligible(ctx, ctx.operators[0])).to.equal(true);
     await b.setIdentityPolicy(ethers.ZeroAddress, false);
   });
 

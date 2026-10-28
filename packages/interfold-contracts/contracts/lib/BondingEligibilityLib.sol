@@ -203,12 +203,6 @@ library BondingEligibilityLib {
         BondingIdentityLib.setPolicy(registry, required);
     }
 
-    function identityPolicyAt(
-        uint256 timepoint
-    ) external view returns (IBondingIdentity.IdentityPolicy memory) {
-        return BondingIdentityLib.policyAt(timepoint);
-    }
-
     /// @dev Call before registration. A new operator cannot settle an existing operator's check.
     function excludeNewRegistration(address operator) internal {
         BondingEligibilityStorage.EligibilityLayout

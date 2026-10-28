@@ -24,9 +24,4 @@ interface IBondingIdentity {
 
     /// @notice Sets the identity policy for future snapshots and clears counted owner capacity.
     function setIdentityPolicy(address registry, bool required) external;
-
-    /// @notice Returns the policy at a timestamp. An unset policy does not require identity.
-    function identityPolicyAt(
-        uint256 timepoint
-    ) external view returns (IdentityPolicy memory);
 }
