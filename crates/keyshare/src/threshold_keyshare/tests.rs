@@ -7390,7 +7390,7 @@ async fn a_replayed_key_is_recorded_without_a_collector() -> Result<()> {
 }
 
 /// One real l-BFV key envelope of the preset, from a single contributing party.
-fn lbfv_key_envelope(preset: BfvPreset) -> Result<Vec<u8>> {
+fn lbfv_key_envelope(preset: BfvPreset, seed: u64) -> Result<Vec<u8>> {
     use fhe::aggregate::AggregateIter;
     use fhe::bfv::{CommonRandomPolyVec, SecretKey};
     use fhe::trlbfv::{
@@ -7408,7 +7408,7 @@ fn lbfv_key_envelope(preset: BfvPreset) -> Result<Vec<u8>> {
         &params,
         e3_fhe_params::lbfv_urs_seed(preset).expect("the preset has an l-BFV URS"),
     )?;
-    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(7);
+    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(seed);
     let secret_key = SecretKey::random(&params, &mut rng);
     let public_key_share = PublicKeyShare::contribute_with_crp(&secret_key, &crs, &mut rng)?;
     let public_key: LBFVPublicKey = [public_key_share].into_iter().aggregate()?;
@@ -7425,7 +7425,7 @@ fn lbfv_key_envelope(preset: BfvPreset) -> Result<Vec<u8>> {
 #[ignore = "builds and validates a real set-7 key envelope; slow in a debug build"]
 async fn set_7_key_envelope_reaches_a_member_through_the_chain_publication() -> Result<()> {
     let threshold = BfvPreset::SecureThreshold16384SimdD6;
-    let envelope = lbfv_key_envelope(threshold)?;
+    let envelope = lbfv_key_envelope(threshold, 7)?;
     let (commitments, _) = e3_bfv_client::inspect_lbfv_key_envelope(&envelope, threshold)?;
 
     let id = E3id::new("77", 1);
@@ -7490,5 +7490,131 @@ async fn set_7_key_envelope_reaches_a_member_through_the_chain_publication() -> 
         admitted.decryption_domain,
         Some(keys.get(&id).unwrap().domain(Address::repeat_byte(9)))
     );
+    Ok(())
+}
+
+fn lbfv_publication(
+    id: &E3id,
+    envelope: &[u8],
+    preset: BfvPreset,
+    committee: &[Address],
+) -> Result<e3_events::LbfvPublicKeyAggregated> {
+    let (commitments, _) = e3_bfv_client::inspect_lbfv_key_envelope(envelope, preset)?;
+    Ok(e3_events::LbfvPublicKeyAggregated {
+        pubkey: ArcBytes::from_bytes(envelope),
+        e3_id: id.clone(),
+        nodes: OrderedSet::new(),
+        committee_addresses: committee.to_vec(),
+        honest_committee_addresses: committee.to_vec(),
+        pk_commitment: commitments.envelope,
+        dkg_aggregator_v2_proof: Proof::new(
+            CircuitName::DkgAggregatorV2,
+            ArcBytes::from_bytes(&[]),
+            ArcBytes::from_bytes(&[]),
+        ),
+        dkg_attestation_bundle: None,
+    })
+}
+
+/// A peer `LbfvPublicKeyAggregated` is admitted only when it matches the chain projection. A
+/// forged envelope that is consistent with its own commitment and the canonical rosters changes
+/// nothing, the canonical key is admitted, and an admitted context is never replaced.
+#[actix::test]
+async fn peer_lbfv_key_publication_must_match_the_chain_key() -> Result<()> {
+    let threshold = BfvPreset::InsecureThresholdLbfv;
+    let canonical = lbfv_key_envelope(threshold, 1)?;
+    let forged = lbfv_key_envelope(threshold, 2)?;
+    assert_ne!(canonical, forged);
+    let (commitments, _) = e3_bfv_client::inspect_lbfv_key_envelope(&canonical, threshold)?;
+
+    let id = E3id::new("78", 1);
+    let committee = vec![
+        Address::repeat_byte(1),
+        Address::repeat_byte(2),
+        Address::repeat_byte(3),
+    ];
+    let keys = crate::canonical_key::CanonicalPublicKeys::default();
+    keys.insert(
+        id.clone(),
+        crate::canonical_key::CanonicalPublicKey {
+            pk_commitment: commitments.envelope,
+            committee: committee.clone(),
+            honest_committee: committee.clone(),
+            params_preset: threshold,
+            committee_size: e3_committee::CiphernodesCommitteeSize::Minimum,
+            interfold_address: Address::repeat_byte(9),
+            sk_agg_commits: vec![],
+            esm_agg_commits: vec![],
+        },
+    )?;
+    let (bus, _history) = test_bus();
+    let (state, repo) = test_state(&id, KeyshareState::ReadyForDecryption(ready_for_c4_test()));
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: BfvPreset::InsecureDkgLbfv,
+        interfold_address: Address::repeat_byte(9),
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: true,
+        recovery: test_recovery(),
+        lbfv_generation: test_lbfv_generation(),
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    })
+    .with_canonical_keys(keys.clone())
+    .start();
+
+    // Forged but self-consistent: its envelope matches its own commitment and the rosters.
+    actor
+        .send(keyshare_event(
+            lbfv_publication(&id, &forged, threshold, &committee)?,
+            1,
+            EventSource::Net,
+        ))
+        .await?;
+    let state = repo.read().await?.expect("keyshare state");
+    assert!(state.aggregated_pk.is_none() && state.decryption_domain.is_none());
+
+    // The canonical commitment with other rosters, and with forged bytes, are rejected too.
+    let mut wrong_roster = lbfv_publication(&id, &canonical, threshold, &committee)?;
+    wrong_roster.honest_committee_addresses.pop();
+    let mut forged_bytes = lbfv_publication(&id, &canonical, threshold, &committee)?;
+    forged_bytes.pubkey = ArcBytes::from_bytes(&forged);
+    for (seq, event) in [(2, wrong_roster), (3, forged_bytes)] {
+        actor
+            .send(keyshare_event(event, seq, EventSource::Net))
+            .await?;
+        let state = repo.read().await?.expect("keyshare state");
+        assert!(state.aggregated_pk.is_none() && state.decryption_domain.is_none());
+    }
+
+    actor
+        .send(keyshare_event(
+            lbfv_publication(&id, &canonical, threshold, &committee)?,
+            4,
+            EventSource::Net,
+        ))
+        .await?;
+    let admitted = repo.read().await?.expect("keyshare state");
+    assert_eq!(
+        admitted.aggregated_pk.as_ref().map(|pk| pk.to_vec()),
+        Some(canonical.clone())
+    );
+    let domain = keys.get(&id).unwrap().domain(Address::repeat_byte(9));
+    assert_eq!(admitted.decryption_domain, Some(domain));
+
+    // An admitted context is kept against every later copy.
+    actor
+        .send(keyshare_event(
+            lbfv_publication(&id, &forged, threshold, &committee)?,
+            5,
+            EventSource::Net,
+        ))
+        .await?;
+    let after = repo.read().await?.expect("keyshare state");
+    assert_eq!(after.aggregated_pk, admitted.aggregated_pk);
+    assert_eq!(after.decryption_domain, admitted.decryption_domain);
     Ok(())
 }

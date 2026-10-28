@@ -40,36 +40,8 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 });
             }
             InterfoldEventData::LbfvPublicKeyAggregated(data) => {
-                if data.dkg_aggregator_v2_proof.circuit != e3_events::CircuitName::DkgAggregatorV2 {
-                    warn!(
-                        e3_id = %data.e3_id,
-                        "Ignoring secure-16384 public-key intent with the wrong proof circuit"
-                    );
-                    return;
-                }
-                let Some(preset) = self.share_enc_preset.threshold_counterpart() else {
-                    warn!(e3_id = %data.e3_id, "Ignoring l-BFV key envelope for a non-threshold preset");
-                    return;
-                };
-                let Ok((_, encryption_key)) = e3_bfv_client::validate_lbfv_key_envelope(
-                    &data.pubkey,
-                    data.pk_commitment,
-                    preset,
-                ) else {
-                    warn!(e3_id = %data.e3_id, "Ignoring an invalid l-BFV key envelope");
-                    return;
-                };
-                let committee_hash =
-                    e3_committee_hash::hash_committee_addresses(&data.committee_addresses);
-                let pk = ArcBytes::from_bytes(&encryption_key);
-                let _ = self.state.try_mutate(&ec, |mut s| {
-                    s.aggregated_pk = Some(pk);
-                    s.decryption_domain = Some(e3_committee_hash::DecryptionDomainContext {
-                        interfold_address: self.interfold_address,
-                        committee_hash,
-                        committee_public_key: data.pk_commitment.into(),
-                    });
-                    Ok(s)
+                trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                    self.handle_lbfv_public_key_aggregated(data, &ec)
                 });
             }
             InterfoldEventData::ThresholdShareCreated(data) => {

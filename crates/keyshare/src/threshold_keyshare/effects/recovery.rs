@@ -79,6 +79,47 @@ impl ThresholdKeyshare {
         self.admit_public_key(data.pubkey, ec)
     }
 
+    /// Admit the key of an `LbfvPublicKeyAggregated` that matches the canonical key authority.
+    ///
+    /// A peer copy is checked against the chain projection, exactly as a `PublicKeyAggregated`
+    /// is: its commitment and both rosters must match, and its envelope must hash to the chain
+    /// commitment. An event that is consistent only with its own commitment establishes nothing,
+    /// and an already admitted context is never replaced.
+    pub(in crate::actors::threshold_keyshare) fn handle_lbfv_public_key_aggregated(
+        &mut self,
+        data: e3_events::LbfvPublicKeyAggregated,
+        ec: &EventContext<Sequenced>,
+    ) -> Result<()> {
+        if data.dkg_aggregator_v2_proof.circuit != e3_events::CircuitName::DkgAggregatorV2 {
+            warn!(
+                e3_id = %data.e3_id,
+                "Ignoring secure-16384 public-key intent with the wrong proof circuit"
+            );
+            return Ok(());
+        }
+        let Some(key) = self.canonical_keys.get(&data.e3_id) else {
+            return Ok(());
+        };
+        let publication = e3_events::PublicKeyAggregated {
+            pubkey: data.pubkey,
+            e3_id: data.e3_id,
+            nodes: data.nodes,
+            committee_addresses: data.committee_addresses,
+            honest_committee_addresses: data.honest_committee_addresses,
+            pk_commitment: data.pk_commitment,
+            dkg_aggregator_proof: Some(data.dkg_aggregator_v2_proof),
+            dkg_attestation_bundle: data.dkg_attestation_bundle,
+        };
+        if !key.accepts(&publication) {
+            warn!(
+                e3_id = %publication.e3_id,
+                "Ignoring an l-BFV public-key publication that does not match the chain key"
+            );
+            return Ok(());
+        }
+        self.admit_public_key(publication.pubkey, ec)
+    }
+
     /// Record the key publication stage of a chain `CommitteePublished`, and admit its key when it
     /// matches the canonical key authority. A peer copy establishes nothing.
     pub(in crate::actors::threshold_keyshare) fn handle_committee_published(
