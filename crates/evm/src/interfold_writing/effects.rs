@@ -208,17 +208,7 @@ pub(in crate::actors::interfold_sol_writer) async fn mark_e3_failed_if_due<
     }
 
     info!(e3_id = %e3_id, stage = ?expected_stage, "markE3Failed() after canonical deadline");
-    let _nonce_guard = transaction_nonce_guard(&provider).await;
-    let from_address = provider.provider().default_signer_address();
-    let current_nonce = provider
-        .provider()
-        .get_transaction_count(from_address)
-        .pending()
-        .await?;
-    let contract = IInterfold::new(contract_address, provider.provider());
-    let builder = contract.markE3Failed(raw_e3_id).nonce(current_nonce);
-    let pending = builder.send().await?;
-    drop(_nonce_guard);
+    let pending = send_with_next_nonce(&provider, contract.markE3Failed(raw_e3_id)).await?;
     let receipt = pending.get_receipt().await?;
     require_successful_receipt("mark E3 failed", &receipt)?;
     Ok(MarkFailureOutcome::Marked)
@@ -260,19 +250,12 @@ pub(in crate::actors::interfold_sol_writer) async fn publish_plaintext_output<
             let provider = provider.clone();
 
             async move {
-                let _nonce_guard = transaction_nonce_guard(&provider).await;
-                let from_address = provider.provider().default_signer_address();
-                let current_nonce = provider
-                    .provider()
-                    .get_transaction_count(from_address)
-                    .pending()
-                    .await?;
                 let contract = IInterfold::new(contract_address, provider.provider());
-                let builder = contract
-                    .publishPlaintextOutput(e3_id, decrypted_output, proof)
-                    .nonce(current_nonce);
-                let pending = builder.send().await?;
-                drop(_nonce_guard);
+                let pending = send_with_next_nonce(
+                    &provider,
+                    contract.publishPlaintextOutput(e3_id, decrypted_output, proof),
+                )
+                .await?;
                 let receipt = pending.get_receipt().await?;
                 require_successful_receipt("publish plaintext output", &receipt)?;
                 Ok(receipt)
@@ -412,16 +395,7 @@ pub(in crate::actors::interfold_sol_writer) async fn process_e3_failure<
         return Err(error.into());
     }
 
-    let _nonce_guard = transaction_nonce_guard(&provider).await;
-    let from_address = provider.provider().default_signer_address();
-    let current_nonce = provider
-        .provider()
-        .get_transaction_count(from_address)
-        .pending()
-        .await?;
-    let builder = contract.processE3Failure(e3_id).nonce(current_nonce);
-    let pending = builder.send().await?;
-    drop(_nonce_guard);
+    let pending = send_with_next_nonce(&provider, contract.processE3Failure(e3_id)).await?;
     let receipt = pending.get_receipt().await?;
     require_successful_receipt("process E3 failure", &receipt)?;
     Ok(FailureSettlementOutcome::Submitted(Box::new(receipt)))
