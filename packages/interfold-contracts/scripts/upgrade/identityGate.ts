@@ -45,7 +45,12 @@ import type {
   ProtocolDeployment,
   SafeTransaction,
 } from "../protocol/types";
-import { address, deployedAddress, loadConfig } from "../protocol/values";
+import {
+  address,
+  deployedAddress,
+  loadConfig,
+  requireContract,
+} from "../protocol/values";
 import { verifyRecordedDeployments } from "../sourceVerification";
 import {
   deployUpgradeImplementation,
@@ -61,6 +66,29 @@ const bondingInterface = BondingRegistryFactory.createInterface();
 const ZERO_HASH = ethersLib.ZeroHash;
 /** Operators per `refreshOperatorStatuses` call, as in the v0.19 refresh. */
 export const REFRESH_BATCH = 20;
+/**
+ * The batch refreshes every operator in one governance transaction, so its gas grows with the
+ * operator count. Above this count, pause requests and refresh in stages instead.
+ */
+export const MAX_BATCH_OPERATORS = 200;
+/** `BondOwnerCapacityLib.IDENTITY_CAPACITY_WINDOW`. Windows start at multiples of it. */
+export const CAPACITY_WINDOW = 30n * 86_400n;
+const IDENTITY_TAG = "interfold.identity.zkpassport.v1";
+
+/** The last second of the capacity window that contains `timestamp` (`_windowEnd`). */
+export function capacityWindowEnd(timestamp: bigint): bigint {
+  return (timestamp / CAPACITY_WINDOW + 1n) * CAPACITY_WINDOW - 1n;
+}
+
+/** The identifier namespace of a verifier with this domain and scope. */
+export function identityNamespace(domain: string, scope: string): string {
+  return ethersLib.keccak256(
+    ethersLib.AbiCoder.defaultAbiCoder().encode(
+      ["string", "string", "string"],
+      [IDENTITY_TAG, domain, scope],
+    ),
+  );
+}
 
 export interface IdentityGateDecisions {
   bondingRegistry: string;
@@ -76,6 +104,11 @@ export interface IdentityGateDecisions {
 export function buildIdentityGateTransactions(
   decisions: IdentityGateDecisions,
 ): SafeTransaction[] {
+  if (decisions.operators.length > MAX_BATCH_OPERATORS) {
+    throw new Error(
+      `${decisions.operators.length} operators exceed the ${MAX_BATCH_OPERATORS} that one governance transaction refreshes; pause requests and refresh in stages`,
+    );
+  }
   const txs: SafeTransaction[] = [];
   if (decisions.upgrade) {
     txs.push(
@@ -139,8 +172,16 @@ export function identityGateSettings(
       "identity.zkPassportVersion is unset; use the version that the current ZKPassport app proves",
     );
   }
-  if (identity.domain === "" || identity.scope === "") {
+  if (
+    typeof identity.domain !== "string" ||
+    typeof identity.scope !== "string" ||
+    identity.domain === "" ||
+    identity.scope === ""
+  ) {
     throw new Error("identity.domain and identity.scope must be set");
+  }
+  if (typeof identity.faceMatchRequired !== "boolean") {
+    throw new Error("identity.faceMatchRequired must be true or false");
   }
   if (identity.nullifierType !== 0 && identity.nullifierType !== 1) {
     throw new Error(
@@ -156,9 +197,12 @@ export function identityGateSettings(
     ["identity.proofValidity", identity.proofValidity],
     ["identity.maxValidity", identity.maxValidity],
   ] as const) {
-    if (!/^[1-9]\d*$/.test(value)) {
+    if (typeof value !== "string" || !/^[1-9]\d*$/.test(value)) {
       throw new Error(`${key} must be a positive number of seconds`);
     }
+  }
+  if (BigInt(identity.maxValidity) >= 2n ** 48n) {
+    throw new Error("identity.maxValidity must fit in uint48");
   }
   return identity;
 }
@@ -189,6 +233,31 @@ function loadContext() {
   const config = loadConfig();
   const deployment = readJson<ProtocolDeployment>(deploymentPath(config));
   return { config, deployment };
+}
+
+const sameAddress = (a: string, b: string) =>
+  a.toLowerCase() === b.toLowerCase();
+
+/** The saved plan, refused when it belongs to another deployment. */
+function loadPlan(
+  config: ProtocolConfigFile,
+  deployment: ProtocolDeployment,
+): IdentityGatePlan {
+  const plan = readJson<IdentityGatePlan>(planPath(config));
+  if (
+    plan.name !== config.name ||
+    plan.chainId !== config.chainId ||
+    !sameAddress(plan.bondingRegistry, deployment.bondingRegistryProxy) ||
+    !sameAddress(
+      plan.bondingRegistryProxyAdmin,
+      config.bondingRegistryProxyAdmin,
+    )
+  ) {
+    throw new Error(
+      `${repoRelativePath(planPath(config))} belongs to another deployment than ${config.name}`,
+    );
+  }
+  return plan;
 }
 
 async function requireChain(
@@ -240,6 +309,37 @@ async function registeredOperators(
   return registered;
 }
 
+/**
+ * The distinct owners that a refresh under a required policy would count now: owners of active
+ * operators whose credential lasts to the end of the current capacity window. The admission
+ * cooldown can still exclude some, so `validate` checks the executed result.
+ */
+async function countableOwners(
+  ethers: any,
+  deployment: ProtocolDeployment,
+  plan: IdentityGatePlan,
+  operators: string[],
+): Promise<number> {
+  const bonding = await ethers.getContractAt(
+    "BondingRegistry",
+    deployment.bondingRegistryProxy,
+  );
+  const registry = await ethers.getContractAt(
+    "OwnerIdentityRegistry",
+    plan.identityRegistry,
+  );
+  const block = await ethers.provider.getBlock("latest");
+  const windowEnd = capacityWindowEnd(BigInt(block.timestamp));
+  const owners = new Set<string>();
+  for (const operator of operators) {
+    if (!(await bonding.isActive(operator))) continue;
+    const owner: string = await bonding.bondOwnerOf(operator);
+    const [, expiresAt] = await registry.identityOf(owner);
+    if (BigInt(expiresAt) >= windowEnd) owners.add(owner.toLowerCase());
+  }
+  return owners.size;
+}
+
 /** Write the raw batch, and the Aragon Safe batch when governance is a DAO. */
 async function writeBatch(
   config: ProtocolConfigFile,
@@ -280,6 +380,28 @@ export async function prepareIdentityGate(): Promise<void> {
   await requireChain(ethers, config, deployment);
   const settings = identityGateSettings(config);
   const [operator] = await ethers.getSigners();
+  if (
+    !sameAddress(config.bondingRegistryProxy, deployment.bondingRegistryProxy)
+  ) {
+    throw new Error(
+      "The config and the deployment name different BondingRegistry proxies",
+    );
+  }
+  await requireContract(
+    ethers.provider,
+    settings.zkPassportRootVerifier,
+    "ZKPassport root verifier",
+  );
+  const admin = await ethers.getContractAt(
+    "ProxyAdmin",
+    config.bondingRegistryProxyAdmin,
+  );
+  const adminOwner = await admin.owner();
+  if (!sameAddress(adminOwner, config.protocolOwner)) {
+    throw new Error(
+      `BondingRegistry ProxyAdmin owner mismatch: expected ${config.protocolOwner}, got ${adminOwner}`,
+    );
+  }
 
   const verifierFactory = await ethers.getContractFactory(
     "ZKPassportIdentityVerifier",
@@ -360,8 +482,29 @@ export async function setIdentityRequirement(required: boolean): Promise<void> {
   const { ethers } = await connect();
   const { config, deployment } = loadContext();
   await requireChain(ethers, config, deployment);
-  const plan = readJson<IdentityGatePlan>(planPath(config));
+  const plan = loadPlan(config, deployment);
   const operators = await registeredOperators(ethers, deployment);
+  if (required) {
+    // A required policy counts only owners whose credential lasts to the window end. Enforcing it
+    // with too few would leave requests with zero capacity.
+    const countable = await countableOwners(
+      ethers,
+      deployment,
+      plan,
+      operators,
+    );
+    const needed = requiredActiveOperators(
+      config.interfold.committeeThresholds,
+      config.chainId,
+      arg("sepolia-committee-size"),
+    );
+    if (BigInt(countable) < needed && !hasFlag("force")) {
+      throw new Error(
+        `Only ${countable} owners have a credential that lasts to the end of this window; the largest committee needs ${needed}. Wait for more registrations, or pass --force`,
+      );
+    }
+    console.log(`  countable owners: ${countable} (needed ${needed})`);
+  }
   const txs = buildIdentityGateTransactions({
     bondingRegistry: deployment.bondingRegistryProxy,
     identityRegistry: plan.identityRegistry,
@@ -391,11 +534,23 @@ export async function validateIdentityGate(): Promise<void> {
   const { ethers } = await connect();
   const { config, deployment } = loadContext();
   await requireChain(ethers, config, deployment);
-  const plan = readJson<IdentityGatePlan>(planPath(config));
+  const plan = loadPlan(config, deployment);
   const settings = identityGateSettings(config);
+  const expectedRequired = arg("required");
+  if (expectedRequired !== "true" && expectedRequired !== "false") {
+    throw new Error(
+      "Pass --required true|false: the policy that the executed batch set",
+    );
+  }
   const failures: string[] = [];
+  // Addresses and hex values compare in any case; strings compare exactly, because the domain and
+  // scope are part of every identifier.
   const expect = (label: string, actual: unknown, expected: unknown) => {
-    if (String(actual).toLowerCase() !== String(expected).toLowerCase()) {
+    const hex = (value: unknown) =>
+      typeof value === "string" && value.startsWith("0x")
+        ? value.toLowerCase()
+        : String(value);
+    if (hex(actual) !== hex(expected)) {
       failures.push(`${label}: expected ${expected}, read ${actual}`);
     }
   };
@@ -440,6 +595,11 @@ export async function validateIdentityGate(): Promise<void> {
     settings.proofValidity,
   );
   expect("max validity", await verifier.MAX_VALIDITY(), settings.maxValidity);
+  expect(
+    "identifier namespace",
+    await verifier.IDENTITY_NAMESPACE(),
+    identityNamespace(settings.domain, settings.scope),
+  );
 
   const bonding = await ethers.getContractAt(
     "BondingRegistry",
@@ -454,6 +614,11 @@ export async function validateIdentityGate(): Promise<void> {
     failures.push("BondingRegistry has emitted no IdentityPolicyUpdated");
   } else {
     expect("policy registry", latest.args.registry, plan.identityRegistry);
+    expect(
+      "policy required",
+      latest.args.required,
+      expectedRequired === "true",
+    );
   }
   if (failures.length > 0) {
     throw new Error(

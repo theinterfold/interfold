@@ -12,9 +12,13 @@ import path from "node:path";
 import { proxyAdminInterface } from "../../scripts/protocol/constants";
 import type { ProtocolConfigFile } from "../../scripts/protocol/types";
 import {
+  CAPACITY_WINDOW,
+  MAX_BATCH_OPERATORS,
   REFRESH_BATCH,
   buildIdentityGateTransactions,
+  capacityWindowEnd,
   identityGateSettings,
+  identityNamespace,
 } from "../../scripts/upgrade/identityGate";
 import {
   type ProofBundle,
@@ -132,6 +136,19 @@ describe("identity gate rollout", function () {
     expect(() =>
       identityGateSettings(config({ zkPassportRootVerifier: "0x1234" })),
     ).to.throw();
+    // ethers would encode a missing or string flag silently.
+    expect(() =>
+      identityGateSettings(config({ faceMatchRequired: undefined })),
+    ).to.throw(/faceMatchRequired/);
+    expect(() =>
+      identityGateSettings(config({ faceMatchRequired: "false" })),
+    ).to.throw(/faceMatchRequired/);
+    expect(() => identityGateSettings(config({ domain: 7 }))).to.throw(
+      /domain and identity.scope/,
+    );
+    expect(() =>
+      identityGateSettings(config({ maxValidity: (2n ** 48n).toString() })),
+    ).to.throw(/uint48/);
   });
 
   it("derives the identifier of a downloaded proof as the verifier does", function () {
@@ -174,5 +191,41 @@ describe("identity gate rollout", function () {
     fs.writeFileSync(bad, JSON.stringify({ kind: "other" }));
     expect(readProofBundle(good).scope).to.equal(scope);
     expect(() => readProofBundle(bad)).to.throw(/not a proof download/);
+  });
+
+  it("refuses a batch that one transaction cannot refresh", function () {
+    const many = Array.from({ length: MAX_BATCH_OPERATORS + 1 }, (_, i) =>
+      addr(5_000 + i),
+    );
+    expect(() =>
+      buildIdentityGateTransactions({
+        bondingRegistry: addr(1),
+        identityRegistry: addr(4),
+        required: true,
+        operators: many,
+      }),
+    ).to.throw(/refresh in stages/);
+  });
+
+  it("matches the contract's capacity window and identifier namespace", function () {
+    const start = CAPACITY_WINDOW * 680n;
+    expect(capacityWindowEnd(start)).to.equal(start + CAPACITY_WINDOW - 1n);
+    expect(capacityWindowEnd(start + CAPACITY_WINDOW)).to.equal(
+      start + 2n * CAPACITY_WINDOW - 1n,
+    );
+    const coder = ethersLib.AbiCoder.defaultAbiCoder();
+    const domain = "dashboard.theinterfold.com";
+    expect(identityNamespace(domain, "interfold-bond-owner")).to.equal(
+      ethersLib.keccak256(
+        coder.encode(
+          ["string", "string", "string"],
+          ["interfold.identity.zkpassport.v1", domain, "interfold-bond-owner"],
+        ),
+      ),
+    );
+    // A scope that differs only in case is another namespace.
+    expect(identityNamespace(domain, "Interfold-bond-owner")).to.not.equal(
+      identityNamespace(domain, "interfold-bond-owner"),
+    );
   });
 });
