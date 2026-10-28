@@ -106,8 +106,12 @@ operator-count cutoff must not discard necessary owners. If any eligible operato
 history, turn the owner shortlist off and rank every eligible operator; Solidity still rejects zero
 snapshot owners. A required identity policy at T−1 also turns the shortlist off, because the node
 does not know which owners hold a credential: every eligible operator submits, and the ticket gas
-estimate fails for an operator whose owner has no credential, so it sends nothing. Committee
-formation requires N distinct snapshot owners, not N submissions.
+estimate fails for an operator whose owner has no credential, so it sends nothing. During an
+admission pause, a policy that was required at the pause cutoff also turns the shortlist off, as the
+contract still checks identity at the cutoff. The node reads the policy history from its own log; a
+node that ran an older release while the policy changed, and then upgrades again, keeps the old
+history until its data is reset. Committee formation requires N distinct snapshot owners, not N
+submissions.
 
 `BondOwnerCapacityLib` maintains epoch-scoped activity/owner counts. Configuration resets it; legacy
 unrefreshed operators contribute zero, and duplicate refresh cannot double count. Return zero for an
@@ -138,11 +142,12 @@ polling/skipping.
 ## Finalization and lifecycle clocks
 
 Ticket submissions include `committeeDeadline`; `finalizeCommittee` requires strictly later time.
-Members schedule staggered calls, but the first successful transaction locks canonical on-chain
-order. It must finalize by `committeeDeadline + dkgWindow`, inclusive: delaying finalization cannot
-buy more paid lifetime. Fewer than N submissions fails with supplier-paid
-`InsufficientCommitteeMembers`. Finalization snapshots every operator's reward recipient and retains
-its collateral obligation.
+Members schedule calls staggered by submission rank, 30 seconds apart and at most 20 steps (about 10
+minutes) after the deadline: without the shortlist, the rank also counts operators that never
+submit. The first successful transaction locks canonical on-chain order. It must finalize by
+`committeeDeadline + dkgWindow`, inclusive: delaying finalization cannot buy more paid lifetime.
+Fewer than N submissions fails with supplier-paid `InsufficientCommitteeMembers`. Finalization
+snapshots every operator's reward recipient and retains its collateral obligation.
 
 The Rust finalizer retains request/context/ticket before effects, re-arms its absolute deadline
 after EffectsEnabled, retries temporary timestamp errors, and opens a fresh read provider for each
