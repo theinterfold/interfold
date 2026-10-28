@@ -17,8 +17,10 @@ import {
   credentialEnd,
   encodeEvidence,
   expiryLowerBound,
+  isContractCode,
   outerEvmProof,
   proofFacts,
+  registrationDeadline,
   safeRegistrationBatch,
   type ProofResult,
 } from './identity'
@@ -132,4 +134,18 @@ test('the downloaded bundle describes the proof that it carries', () => {
       }),
     /no expiry-date check/,
   )
+})
+
+test('an EIP-7702 account registers itself; a contract wallet goes through its own transaction', () => {
+  assert.equal(isContractCode(undefined), false)
+  assert.equal(isContractCode('0x'), false)
+  assert.equal(isContractCode(`0xef0100${'ab'.repeat(20)}`), false)
+  assert.equal(isContractCode(`0xEF0100${'AB'.repeat(20)}`), false)
+  assert.equal(isContractCode('0x6080604052'), true)
+  assert.equal(isContractCode(`0xef0100${'ab'.repeat(21)}`), true)
+})
+
+test('a proof registers until it is too old or its credential ends', () => {
+  assert.equal(registrationDeadline(1_000n, 600n, 5_000n), 1_600n)
+  assert.equal(registrationDeadline(1_000n, 600n, 1_200n), 1_200n)
 })
