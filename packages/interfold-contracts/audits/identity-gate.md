@@ -88,15 +88,17 @@ Attacker goals to rule out:
   or revocation.
 - A frozen (paused) pool widened by a later credential or policy change.
 - Capacity that reads higher than the true number of counted owners.
-- Requests blocked for longer than one refresh after a window end or a
-  governance change.
+- Capacity that reads zero while enough owners hold credentials that cover the
+  window, after the refreshes that the rollout and the nodes perform.
 
 ## Invariants
 
 1. An identifier belongs to its first owner forever, through replacement,
    expiry, and revocation.
-2. A registration cannot shorten the owner's current expiry, and an expired or
-   revoked identifier cannot register.
+2. A registration cannot shorten the owner's current expiry. A credential that
+   the verifier returns already expired is rejected, and a revoked identifier
+   cannot register again. The reserved owner can renew an unrevoked identifier,
+   also after it expired.
 3. `isVerifiedAt(owner, t)` and the policy at `t` never change once `t` is in
    the past.
 4. Under a required policy at T−1, every eligible operator's snapshot owner was
@@ -126,8 +128,16 @@ These are accepted, and the docs state them:
   registry.
 - `setVerifier` accepts any verifier; one that derives other identifiers lets
   every credential claim a second owner, so it needs a new registry.
+- Changing or clearing the verifier affects future registrations only. Issued
+  credentials stay valid. After a verifier compromise, governance revokes the
+  affected identifiers and refreshes capacity, or moves to a new registry.
 - Capacity fails closed for a few minutes after each window starts, until the
-  nodes refresh. A governance change needs its refresh batch.
+  nodes refresh. A governance change or a revocation needs a refresh of every
+  operator. A refresh counts only owners whose credential lasts to the window
+  end; with too few of them, capacity stays below the committee size until
+  owners renew. The self-refresh depends on running, funded nodes.
+- During an admission pause, turning the requirement off keeps the identity rule
+  at the pause cutoff until the admission policy changes too.
 - The node does not know which owners hold a credential, so under a required
   policy it turns the owner shortlist off; every eligible node submits, and the
   contract rejects unverified owners.
