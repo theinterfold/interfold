@@ -21,8 +21,17 @@ import { ComputeScheduler } from './scheduler'
 import { closedReason, computeWindowOpen, type E3Window } from './window'
 import { getLogsChunked } from './logs'
 import { AuctionProgram__factory } from '../types/factories/contracts'
-import { AUCTION_TYPE_LABELS, isAuctionType, MIN_BIDDERS, selectBids, type SubmittedBid } from '@interfold/auction'
-import { auctionInputs, opensCommitment, type ProgramInputs } from './inputs'
+import {
+  AUCTION_TYPE_LABELS,
+  encodeMaskInput,
+  isAuctionType,
+  isProviderType,
+  type SubmittedBid,
+  type SubmittedMask,
+} from '@interfold/auction'
+import { BidProver } from '@interfold/auction/prover'
+import { opensCommitment, planRun, type RunPlan } from './inputs'
+import { MaskProvider, MaskRejectedError, type ProviderAuction } from './provider'
 import { parseRelayRequest, relayBid, RelayRequestError, RelayRevertError } from './relay'
 import { imageRouter } from './image'
 
@@ -175,11 +184,12 @@ async function runProgram(e3Id: bigint, committeeKey: Uint8Array, callbackToken:
   })) as string
 
   // Gather the inputs with one-shot log queries — no long-lived listeners, no in-memory input
-  // buffer. `BidSubmitted` holds the bytes of every bid and the leaf of its first ciphertext. Every
-  // bid is a published input, counted or not, because the input root covers all leaves. Leaf 0 is
-  // the auction's configuration, which the contract inserted at request time. Every input comes
-  // after the auction's creation, so the scans start at its `AuctionCreated` block, in chunks that
-  // a public RPC accepts.
+  // buffer. `BidSubmitted` holds the bytes of every bid and the leaf of its first ciphertext.
+  // `MaskSubmitted` holds the bytes and the leaf of each mask of a type-4 auction. Every bid and mask
+  // is a published input, counted or not, because the input root covers all leaves. Leaf 0 is
+  // the auction's configuration, which the contract inserted at request time: for a type-4 auction
+  // it names the mask providers. Every input comes after the auction's creation, so the scans start
+  // at its `AuctionCreated` block, in chunks that a public RPC accepts.
   const fromBlock = await auctionCreatedBlock(e3Id)
   const toBlock = await publicClient.getBlockNumber()
   const [submitted, auction] = await Promise.all([
@@ -214,28 +224,59 @@ async function runProgram(e3Id: bigint, committeeKey: Uint8Array, callbackToken:
     ciphertexts: [...args.ciphertexts],
     commitments: [...args.commitments],
   }))
-  let inputs: ProgramInputs
-  try {
-    inputs = auctionInputs(auctionType, bids)
-  } catch (error) {
-    throw new Error(`E3 ${e3Id}: ${error instanceof Error ? error.message : error}`)
+
+  let providers: readonly Address[] = []
+  let masks: SubmittedMask[] = []
+  if (isProviderType(auctionType)) {
+    const [named, maskLogs] = await Promise.all([
+      publicClient.readContract({
+        address: config.program,
+        abi: AuctionProgram__factory.abi,
+        functionName: 'auctionProviders',
+        args: [e3Id],
+      }),
+      getLogsChunked(
+        (range) =>
+          publicClient.getContractEvents({
+            address: config.program,
+            abi: AuctionProgram__factory.abi,
+            args: { e3Id },
+            strict: true,
+            eventName: 'MaskSubmitted',
+            ...range,
+          }),
+        fromBlock,
+        toBlock,
+        config.logChunkSize,
+      ),
+    ])
+    providers = named
+    masks = maskLogs.map(({ args }) => ({
+      provider: args.provider,
+      index: Number(args.index),
+      ciphertext: args.ciphertext,
+      commitment: args.commitment,
+    }))
   }
 
   // The contract cannot check that published bytes open their commitments; the program does, and
   // leaves a bid that does not open out of the computation. Apply the same rule here, to know
-  // whether there is an auction to run.
-  const counted = selectBids(bids, await opensCommitment(bids))
+  // whether there is an auction to run. The program needs every mask of a type-4 auction.
+  const opens = await opensCommitment([...bids.flatMap((bid) => bid.ciphertexts), ...masks.map((mask) => mask.ciphertext)])
+  let plan: RunPlan
+  try {
+    plan = planRun(auctionType, bids, { providers, masks }, opens)
+  } catch (error) {
+    throw new Error(`E3 ${e3Id}: ${error instanceof Error ? error.message : error}`)
+  }
   console.log(
-    `📊 Processing E3 ${e3Id} (${AUCTION_TYPE_LABELS[auctionType]}): ${bids.length} bid(s), ${counted.length} counted, ${inputs.ciphertexts.length} input(s)`,
+    `📊 Processing E3 ${e3Id} (${AUCTION_TYPE_LABELS[auctionType]}): ${bids.length} bid(s), ${plan.counted} counted, ${masks.length}/${providers.length} mask(s)`,
   )
-
-  // The program needs 2 bidders at least (the most is set by the contract); with fewer there is no auction to run.
-  if (counted.length < MIN_BIDDERS) {
-    console.log(
-      `⏭️  Skipping E3 ${e3Id}: ${counted.length} bidder(s) with a bid that opens its commitments, an auction needs ${MIN_BIDDERS}`,
-    )
+  if (plan.kind === 'skip') {
+    console.log(`⏭️  Skipping E3 ${e3Id}: ${plan.reason}`)
     return 'skipped'
   }
+  const { inputs } = plan
 
   console.log(`🔄 Calling FHE runner for E3 ${e3Id}...`)
   await callFheRunner(
@@ -264,8 +305,65 @@ const scheduler = new ComputeScheduler({
 })
 
 /**
- * Schedule the compute once the transported key matches the commitment accepted with the DKG
- * proof. Both the live listener and the recovery scan feed chunks here.
+ * The mask provider of this server, if `MASK_PROVIDER_PRIVATE_KEY` is set. It sends the mask of its
+ * key to each type-4 auction that names it. The key is not the operator key or the relayer key, so
+ * the creator of an auction can name it without trusting the operator with the mask.
+ */
+const maskAccount = config.maskProviderPrivateKey ? privateKeyToAccount(config.maskProviderPrivateKey) : undefined
+const maskWallet = maskAccount
+  ? createWalletClient({ account: maskAccount, chain: config.chain, transport: http(config.rpcUrl) })
+  : undefined
+
+/** The state of a type-4 auction as the mask provider needs it, or `null` for any other E3. */
+async function readProviderAuction(e3Id: bigint, provider: Address): Promise<ProviderAuction | null> {
+  const publicClient = sdk.getPublicClient()
+  const read = { address: config.program, abi: AuctionProgram__factory.abi } as const
+  const [[auctionType, , creator], e3, stage, block] = await Promise.all([
+    publicClient.readContract({ ...read, functionName: 'auctions', args: [e3Id] }),
+    sdk.getE3(e3Id),
+    sdk.getE3Stage(e3Id),
+    publicClient.getBlock(),
+  ])
+  if (creator === zeroAddress || !isAuctionType(auctionType) || !isProviderType(auctionType)) return null
+  const [providers, submitted] = await Promise.all([
+    publicClient.readContract({ ...read, functionName: 'auctionProviders', args: [e3Id] }),
+    publicClient.readContract({ ...read, functionName: 'maskSubmitted', args: [e3Id, provider] }),
+  ])
+  return { type: auctionType, providers, submitted, stage, inputWindow: e3.inputWindow, now: block.timestamp }
+}
+
+const maskProvider =
+  maskAccount && maskWallet
+    ? new MaskProvider({
+        address: maskAccount.address,
+        readAuction: (e3Id) => readProviderAuction(e3Id, maskAccount.address),
+        prove: async (committeeKey) => {
+          const prover = await BidProver.create()
+          try {
+            const { ciphertext, commitment, proof } = await prover.proveMask(committeeKey, maskAccount.address)
+            return { ciphertext, commitment, proof }
+          } finally {
+            await prover.destroy()
+          }
+        },
+        send: async (e3Id, { ciphertext, commitment, proof }) => {
+          const data = encodeMaskInput({ provider: maskAccount.address, ciphertext, commitment, proof })
+          try {
+            return await relayBid(sdk.getPublicClient(), maskWallet, config.program, e3Id, data)
+          } catch (error) {
+            // A custom error of the contract ("InvalidMaskProof()"): the same proof would fail again. Anything else may pass.
+            if (error instanceof RelayRevertError && /^\w+\(.*\)$/.test(error.message)) throw new MaskRejectedError(error.message)
+            throw error
+          }
+        },
+        waitForChainTime: waitForChainTimestamp,
+      })
+    : undefined
+
+/**
+ * Schedule the compute, and start the mask of this server's provider key, once the transported key
+ * matches the commitment accepted with the DKG proof. Both the live listener and the recovery scan
+ * feed chunks here.
  */
 async function handleKeyChunk(chunk: CommitteePublicKeyChunkPublishedData): Promise<void> {
   try {
@@ -279,6 +377,7 @@ async function handleKeyChunk(chunk: CommitteePublicKeyChunkPublishedData): Prom
     committeeKeyAssembler.clear(assembled.e3Id)
     if (!scheduler.isScheduled(assembled.e3Id)) console.log(`🎯 Committee published for E3 ${assembled.e3Id}`)
     scheduler.schedule(assembled.e3Id, assembled.publicKey)
+    maskProvider?.start(assembled.e3Id, assembled.publicKey)
   } catch (error) {
     console.error('Failed to process a committee public-key chunk:', error)
   }
@@ -536,6 +635,15 @@ const app = express()
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' })
 })
+// The create page asks which address this server sends masks from, to offer it as a provider. A browser at another origin calls it.
+app.get('/provider', (_req, res) => {
+  res.set('Access-Control-Allow-Origin', '*')
+  if (!maskAccount) {
+    res.status(404).json({ error: 'This server is no mask provider: set MASK_PROVIDER_PRIVATE_KEY' })
+    return
+  }
+  res.json({ address: maskAccount.address })
+})
 // The authentication runs before the body parser, so an unauthorized caller makes the server read nothing.
 app.post('/callback/:e3Id/:token', authenticateCallback, express.json({ limit: CALLBACK_BODY_LIMIT }), handleCallback)
 // The relayer sends a signed bid for a bidder who has no gas. A browser at another origin calls it.
@@ -564,6 +672,7 @@ async function startServer() {
       console.log(
         `🚀 Interfold coordination server listening on port ${config.port} (chain ${config.chain.id}, ${config.dataAvailability.mode})`,
       )
+      if (maskAccount) console.log(`🎭 Mask provider: ${maskAccount.address}`)
     })
     // Listen before the scan, so no event slips between the two.
     await setupEventListeners()

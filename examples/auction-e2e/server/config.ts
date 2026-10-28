@@ -40,6 +40,11 @@ export interface ServerConfig {
    * defaults to Anvil account 9, which no bidder and no ciphernode uses.
    */
   relayerPrivateKey?: Hex
+  /**
+   * The key of the mask provider of type-4 auctions. Never log it. `undefined` turns the provider off.
+   * The address needs gas, and the creator of an auction must name it as a provider.
+   */
+  maskProviderPrivateKey?: Hex
   chain: Chain
   interfold: Address
   registry: Address
@@ -113,6 +118,10 @@ export function loadConfig(env: Env = process.env): ServerConfig {
   if (relayerKey && !/^0x[0-9a-fA-F]{64}$/.test(relayerKey))
     throw new Error('RELAYER_PRIVATE_KEY must be a 32-byte hex value with a 0x prefix')
 
+  const maskProviderKey = env.MASK_PROVIDER_PRIVATE_KEY?.trim()
+  if (maskProviderKey && !/^0x[0-9a-fA-F]{64}$/.test(maskProviderKey))
+    throw new Error('MASK_PROVIDER_PRIVATE_KEY must be a 32-byte hex value with a 0x prefix')
+
   const wsRpcUrl = env.WS_RPC_URL?.trim()
   const deployBlockText = env.DEPLOY_BLOCK?.trim()
   if (!deployBlockText && chainId !== hardhat.id) {
@@ -142,6 +151,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     wsRpcUrl: wsRpcUrl ? url('WS_RPC_URL', wsRpcUrl, ['ws:', 'wss:']) : undefined,
     privateKey: privateKey as Hex,
     relayerPrivateKey: relayerKey as Hex | undefined,
+    maskProviderPrivateKey: (maskProviderKey || undefined) as Hex | undefined,
     chain,
     interfold: address(env, 'INTERFOLD_ADDRESS'),
     registry: address(env, 'REGISTRY_ADDRESS'),

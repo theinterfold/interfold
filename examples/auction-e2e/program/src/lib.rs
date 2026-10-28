@@ -4,13 +4,15 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! The FHE program of the auction example: sealed-bid auctions of four types. The region types
+//! The FHE program of the auction example: sealed-bid auctions of five types. The region types
 //! are first-price and second-price (Vickrey). The ratio-lane types are first-price and
-//! second-price with ratio lanes.
+//! second-price with ratio lanes. The mask-provider type is second-price with masks that
+//! independent providers send, which never fails to show the result.
 //!
-//! Input 0 of a round is its configuration, [`config_input`]: the domain bytes and the auction type.
-//! It is not a ciphertext. `AuctionProgram.validate` inserts its leaf, so the compute proof binds
-//! the type through the input root (see [`policy`]).
+//! Input 0 of a round is its configuration, [`config_input`]: the domain bytes, the auction type
+//! and, for the mask-provider type, the 20-byte addresses of the mask providers. It is not a
+//! ciphertext. `AuctionProgram.validate` inserts its leaf, so the compute proof binds the type and
+//! the providers through the input root (see [`policy`]).
 //!
 //! Each bidder sends [`role_count`] ciphertexts that do not depend on the bidder's index, on the
 //! number of bidders or on the other bids. `AuctionProgram.publishInput` verifies one proof for the
@@ -121,6 +123,33 @@
 //! Every slot that is not a result lane is zero. The output is a function of the price and the
 //! winner set only.
 //!
+//! # Mask-provider type
+//!
+//! The mask-provider type ([`AuctionType::ProviderSecondPrice`]) has the result of the region
+//! second-price type, with one copy of the regions and no bidder masks. A bidder sends only
+//! `[ge, gt]`. The configuration names `k` mask providers (1 to [`MAX_PROVIDERS`]). Each provider
+//! sends one mask ciphertext `M_i` whose 128 slots are all non-zero (`AuctionProgram` checks a proof
+//! of that). The masks come right after the configuration, one per provider in submission order,
+//! with the bid version [`MASK_VERSION`]. The bids follow, and so with `n` bidders (2 to 8) the
+//! processor receives `1 + k + 2n` inputs.
+//!
+//! Region `j` is the slots `16 j .. 16 j + 15`, the same for every bidder count. `tests` is the
+//! second-price test vector of the region types, `beaten * c'(c' - 1)`, and
+//! `used` is 1 on the slots `0 .. 16 n` and 0 elsewhere. The output is
+//!
+//! ```text
+//! out = tests * r        r = (M_1 * used) * M_2 * ... * M_k   (a product tree, depth 2)
+//! ```
+//!
+//! Every non-zero `g` is a whole number in `1 ..= n`, and every non-zero `c'(c' - 1)` is one in
+//! `2 ..= n (n - 1)`. Both are below `t`, and `t` is prime, so `tests` is non-zero mod `t` exactly
+//! where it is non-zero as a whole number. Every mask slot is non-zero, so a non-zero test never
+//! becomes zero: the result is read with no failure. If one provider is honest, `r` is uniform in
+//! `1 .. t` in every slot, so each non-zero output slot is uniform and the output shows only where
+//! it is zero: a function of the winner and the price. `tests` is at depth 2 and `r` is at depth 2,
+//! so the output is at depth 3. There are `k + 3` ct*ct products: 3 for `tests`, `k - 1` for `r`
+//! and the last one.
+//!
 //! See `sdk/src/layout.ts` for the client decoder.
 
 use e3_compute_provider::policy::{InputRecord, leaf_from_digest};
@@ -144,6 +173,14 @@ pub const LEVELS: usize = 16;
 /// The number of copies of the `y` and `z` lanes of the second-price ratio-lane auction.
 pub const RATIO_COPIES: usize = 3;
 
+/// The most mask providers of a mask-provider auction.
+pub const MAX_PROVIDERS: usize = 4;
+
+/// The bid version of a mask. It is `uint32` max, so the metadata of a mask is
+/// `provider || 00 FF FF FF FF`. `AuctionProgram.MASK_VERSION` is the same number. A bid never has
+/// this version.
+pub const MASK_VERSION: u32 = u32::MAX;
+
 /// The prefix of the configuration input. `AuctionProgram.CONFIG_DOMAIN` is the same bytes.
 pub const CONFIG_DOMAIN: &[u8] = b"interfold-auction-config-v1";
 
@@ -161,20 +198,51 @@ pub enum AuctionType {
     /// The second-highest bid (the highest if the top bids tie) and the winner set. The tied bidder
     /// with the lowest position wins.
     RatioSecondPrice = 3,
+    /// The winner and the second-highest bid, with masks from 1 to [`MAX_PROVIDERS`] providers.
+    /// The tied bidder with the lowest position wins.
+    ProviderSecondPrice = 4,
+}
+
+/// The address of a mask provider.
+pub type Provider = [u8; 20];
+
+/// What input 0 holds: the type and, for the mask-provider type, the providers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuctionConfig {
+    pub auction_type: AuctionType,
+    /// Empty for every type but [`AuctionType::ProviderSecondPrice`], which has 1 to
+    /// [`MAX_PROVIDERS`].
+    pub providers: Vec<Provider>,
+}
+
+impl AuctionConfig {
+    /// The configuration of an input, or `None` if `input` is not one: the domain bytes, the type
+    /// byte and then the providers (20 raw bytes each). The mask-provider type needs 1 to
+    /// [`MAX_PROVIDERS`] of them, and every other type has none.
+    pub fn from_input(input: &[u8]) -> Option<Self> {
+        let (&type_byte, providers) = input.strip_prefix(CONFIG_DOMAIN)?.split_first()?;
+        let auction_type = match type_byte {
+            0 => AuctionType::FirstPrice,
+            1 => AuctionType::SecondPrice,
+            2 => AuctionType::RatioFirstPrice,
+            3 => AuctionType::RatioSecondPrice,
+            4 => AuctionType::ProviderSecondPrice,
+            _ => return None,
+        };
+        let (providers, rest) = providers.as_chunks::<20>();
+        let count_fits = if auction_type == AuctionType::ProviderSecondPrice {
+            (1..=MAX_PROVIDERS).contains(&providers.len())
+        } else {
+            providers.is_empty()
+        };
+        (rest.is_empty() && count_fits).then(|| Self {
+            auction_type,
+            providers: providers.to_vec(),
+        })
+    }
 }
 
 impl AuctionType {
-    /// The type of a configuration input, or `None` if `input` is not one.
-    pub fn from_config(input: &[u8]) -> Option<Self> {
-        match input.strip_prefix(CONFIG_DOMAIN)? {
-            [0] => Some(Self::FirstPrice),
-            [1] => Some(Self::SecondPrice),
-            [2] => Some(Self::RatioFirstPrice),
-            [3] => Some(Self::RatioSecondPrice),
-            _ => None,
-        }
-    }
-
     /// Whether the type is a ratio-lane type.
     pub fn is_ratio(self) -> bool {
         matches!(self, Self::RatioFirstPrice | Self::RatioSecondPrice)
@@ -182,23 +250,28 @@ impl AuctionType {
 }
 
 /// The number of ciphertexts one bidder sends: `[ge, gt, mask]`, and for the second-price
-/// ratio-lane type also the pair mask.
+/// ratio-lane type also the pair mask. A bidder of the mask-provider type sends `[ge, gt]`.
 pub fn role_count(auction_type: AuctionType) -> usize {
     match auction_type {
         AuctionType::RatioSecondPrice => 4,
+        AuctionType::ProviderSecondPrice => 2,
         _ => 3,
     }
 }
 
 /// The most bidders of a type. The smallest number is two. The region types are limited by the
-/// regions that fit the ring, the ratio-lane types by the weights `2^k` that must stay below `t`.
+/// regions that fit the ring, the ratio-lane types by the weights `2^k` that must stay below `t`,
+/// the mask-provider type by its one copy of the regions.
 pub fn max_bidders(auction_type: AuctionType) -> usize {
-    if auction_type.is_ratio() { 8 } else { 4 }
+    match auction_type {
+        AuctionType::FirstPrice | AuctionType::SecondPrice => 4,
+        _ => 8,
+    }
 }
 
-/// Input 0 of a round: the domain bytes followed by the type byte.
-pub fn config_input(auction_type: AuctionType) -> Vec<u8> {
-    [CONFIG_DOMAIN, &[auction_type as u8]].concat()
+/// Input 0 of a round: the domain bytes, the type byte and the 20-byte `providers`.
+pub fn config_input(auction_type: AuctionType, providers: &[Provider]) -> Vec<u8> {
+    [CONFIG_DOMAIN, &[auction_type as u8], providers.as_flattened()].concat()
 }
 
 /// The metadata `AuctionProgram` publishes with each bid ciphertext: the 20-byte bidder, then the
@@ -258,8 +331,26 @@ pub fn auction_leaf(input: &PublishedInput) -> Result<String, ComputeError> {
     Ok(leaf_from_digest(&outer.finalize()))
 }
 
-/// Which inputs the computation runs over: the configuration, and for each bidder its latest bid
-/// whose bytes all open their commitments.
+/// Whether the metadata of `record` is that of a mask: [`METADATA_LEN`] bytes with the version
+/// [`MASK_VERSION`].
+fn is_mask(record: &InputRecord) -> bool {
+    match record.metadata {
+        [.., 0, a, b, c, d] if record.metadata.len() == METADATA_LEN => {
+            u32::from_be_bytes([*a, *b, *c, *d]) == MASK_VERSION
+        }
+        _ => false,
+    }
+}
+
+/// Which inputs the computation runs over: the configuration, the masks of a mask-provider
+/// auction, and for each bidder its latest bid whose bytes all open their commitments.
+///
+/// The masks are the maximal run of records right after the configuration whose version is
+/// [`MASK_VERSION`] (`AuctionProgram` inserts them first and gives no bid that version). A mask
+/// that has no commitment or does not open it cannot be replaced, and the auction cannot run
+/// without every mask: then only the configuration is selected, and the processor panics. If
+/// every mask opens, all of them are selected. A record with the mask version anywhere else is
+/// never a bid.
 ///
 /// `AuctionProgram.publishInput` inserts one bid as a run of consecutive leaves with the same
 /// metadata, so a run of records with identical metadata is one bid. A bidder may bid up to a few
@@ -275,15 +366,23 @@ pub fn auction_leaf(input: &PublishedInput) -> Result<String, ComputeError> {
 /// A run whose metadata is not [`METADATA_LEN`] bytes is never taken. The result is ascending
 /// by index, so the order of the chosen runs is the bidder position in the computation.
 pub fn select_bids(inputs: &[InputRecord]) -> Vec<usize> {
-    let Some((_, bids)) = inputs.split_first() else {
+    let Some((_, records)) = inputs.split_first() else {
         return Vec::new();
     };
+    let mask_count = records.iter().take_while(|record| is_mask(record)).count();
+    let (masks, bids) = records.split_at(mask_count);
+    if !masks
+        .iter()
+        .all(|record| record.commitment.is_some() && record.matches_commitment())
+    {
+        return vec![0];
+    }
 
     // The best run so far of each bidder: its version bytes and its records.
     let mut latest: BTreeMap<&[u8], (&[u8], &[InputRecord])> = BTreeMap::new();
     for run in bids.chunk_by(|a, b| a.metadata == b.metadata) {
         let metadata = run[0].metadata;
-        if metadata.len() != METADATA_LEN {
+        if metadata.len() != METADATA_LEN || is_mask(&run[0]) {
             continue;
         }
         if !run
@@ -303,6 +402,7 @@ pub fn select_bids(inputs: &[InputRecord]) -> Vec<usize> {
     }
 
     let mut selected = vec![0];
+    selected.extend(masks.iter().map(|record| record.index));
     selected.extend(
         latest
             .into_values()
@@ -370,19 +470,41 @@ fn multiply(
     product
 }
 
+/// The product of `factors`, as a balanced tree of ct*ct products: the depth is `ceil(log2(len))`.
+fn product_tree(
+    relinearization_key: &LBFVRelinearizationKey,
+    mut factors: Vec<Ciphertext>,
+) -> Ciphertext {
+    assert!(!factors.is_empty(), "a product needs a factor");
+    while factors.len() > 1 {
+        factors = factors
+            .chunks(2)
+            .map(|pair| match pair {
+                [a, b] => multiply(relinearization_key, a, b),
+                [a] => a.clone(),
+                _ => unreachable!("chunks of 2"),
+            })
+            .collect();
+    }
+    factors.swap_remove(0)
+}
+
 /// Computes the test vector of a region type under the masks. See the module documentation.
 ///
 /// `bids[j]` is `([b_j >= p], [b_j > p])` of bidder position `j`, and region `j` is its region.
-/// `masks` is the sum of the bidder masks. Every ct*ct product is relinearized.
+/// There are `copies` copies of the regions. `mask` is the factor the tests are multiplied by: it
+/// gets `used`, the slots of the regions that exist, and applies it to the masks. Every ct*ct
+/// product is relinearized.
 fn tests_under_mask(
     auction_type: AuctionType,
     params: &Arc<fhe::bfv::BfvParameters>,
     relinearization_key: &LBFVRelinearizationKey,
     bids: &[(Ciphertext, Ciphertext)],
-    masks: &Ciphertext,
+    copies: usize,
+    mask: impl FnOnce(&Plaintext) -> Ciphertext,
 ) -> Ciphertext {
     let n = bids.len();
-    let copies = 0..copies(params.degree(), n);
+    let copies = 0..copies;
     let mul = |a: &Ciphertext, b: &Ciphertext| multiply(relinearization_key, a, b);
 
     // Region r: its own slots, and the slots of the regions after it (r wins a tie there).
@@ -410,7 +532,7 @@ fn tests_under_mask(
         copies.clone().map(|c| slot(n, c, 0)..slot(n, c + 1, 0)),
     );
 
-    let second_price = auction_type == AuctionType::SecondPrice;
+    let second_price = auction_type != AuctionType::FirstPrice;
     let (mut own_at_least, mut own_above, mut ties_before) = (vec![], vec![], vec![]);
     for (j, (at_least, above)) in bids.iter().enumerate() {
         let selector = own(j);
@@ -425,7 +547,7 @@ fn tests_under_mask(
     let ties_before = sum(ties_before);
     let above = sum(bids.iter().map(|b| b.1.clone()));
     let one = constant_slots(params, 1);
-    let masks = masks * &used;
+    let masks = mask(&used);
 
     match auction_type {
         AuctionType::FirstPrice => {
@@ -434,7 +556,7 @@ fn tests_under_mask(
             let wins = &(&(&above + &one) - &own_at_least) + &ties_before;
             mul(&wins, &masks)
         }
-        AuctionType::SecondPrice => {
+        AuctionType::SecondPrice | AuctionType::ProviderSecondPrice => {
             let own_above = sum(own_above);
             let at_least = sum(bids.iter().map(|b| b.0.clone()));
             // [b_k = p] * #{j < k : b_j = p} in region k.
@@ -511,16 +633,17 @@ fn ratio_second_price(
 
 /// Runs the auction over the inputs of the round.
 ///
-/// The selected inputs arrive one at a time, in leaf order: the configuration, then the
-/// [`role_count`] ciphertexts of each chosen bid in role order (see [`select_bids`]). The on-chain
-/// index is not used, only the position.
+/// The selected inputs arrive one at a time, in leaf order: the configuration, for the
+/// mask-provider type one mask per provider of the configuration, then the [`role_count`]
+/// ciphertexts of each chosen bid in role order (see [`select_bids`]). The on-chain index is not
+/// used, only the position.
 ///
 /// # Panics
 ///
-/// If input 0 is not a configuration, if the number of ciphertexts is not a multiple of the role
-/// count, if there are fewer than two or more than [`max_bidders`] bidders, or if the l-BFV
-/// relinearization key is missing. A malformed round has no meaningful result, so there is nothing
-/// to recover to.
+/// If input 0 is not a configuration, if a mask-provider round lacks a mask, if the number of bid
+/// ciphertexts is not a multiple of the role count, if there are fewer than two or more than
+/// [`max_bidders`] bidders, or if the l-BFV relinearization key is missing. A malformed round has
+/// no meaningful result, so there is nothing to recover to.
 pub fn fhe_processor(inputs: FHEProcessorInput<'_>) -> Vec<u8> {
     let relinearization_key = inputs
         .relinearization_key
@@ -531,13 +654,22 @@ pub fn fhe_processor(inputs: FHEProcessorInput<'_>) -> Vec<u8> {
         .ciphertexts
         .next()
         .expect("input 0 must be the auction configuration");
-    let auction_type =
-        AuctionType::from_config(&config).expect("input 0 must be the auction configuration");
+    let AuctionConfig {
+        auction_type,
+        providers,
+    } = AuctionConfig::from_input(&config).expect("input 0 must be the auction configuration");
 
     let mut raw = Vec::new();
     while let Some((bytes, _)) = inputs.ciphertexts.next() {
         raw.push(bytes);
     }
+    assert!(
+        raw.len() >= providers.len(),
+        "the auction needs the {} masks of its providers, got {} inputs",
+        providers.len(),
+        raw.len()
+    );
+    let (mask_bytes, raw) = raw.split_at(providers.len());
     let roles = role_count(auction_type);
     assert!(
         raw.len() % roles == 0,
@@ -559,18 +691,50 @@ pub fn fhe_processor(inputs: FHEProcessorInput<'_>) -> Vec<u8> {
         .chunks(roles)
         .map(|bidder| (ciphertext(&bidder[0]), ciphertext(&bidder[1])))
         .collect();
-    let masks = sum(raw.chunks(roles).map(|bidder| ciphertext(&bidder[2])));
+    // The sum of the bidder masks. The mask-provider type has none.
+    let bidder_masks = || sum(raw.chunks(roles).map(|bidder| ciphertext(&bidder[2])));
 
     let result = match auction_type {
         AuctionType::FirstPrice | AuctionType::SecondPrice => {
-            tests_under_mask(auction_type, params, relinearization_key, &bids, &masks)
+            let masks = bidder_masks();
+            tests_under_mask(
+                auction_type,
+                params,
+                relinearization_key,
+                &bids,
+                copies(params.degree(), n),
+                |used| &masks * used,
+            )
+        }
+        AuctionType::ProviderSecondPrice => {
+            // r = (M_1 * used) * M_2 * ... * M_k. `used` goes on the fresh M_1, which costs the
+            // least noise, and the product tree has the depth `ceil(log2 k)`.
+            let mut masks = mask_bytes.iter().map(ciphertext);
+            let first = masks.next().expect("a mask-provider round has a provider");
+            tests_under_mask(
+                auction_type,
+                params,
+                relinearization_key,
+                &bids,
+                1,
+                |used| {
+                    let factors = std::iter::once(&first * used).chain(masks).collect();
+                    product_tree(relinearization_key, factors)
+                },
+            )
         }
         AuctionType::RatioFirstPrice => {
-            ratio_first_price(params, relinearization_key, &bids, &masks)
+            ratio_first_price(params, relinearization_key, &bids, &bidder_masks())
         }
         AuctionType::RatioSecondPrice => {
             let pair_masks = sum(raw.chunks(roles).map(|bidder| ciphertext(&bidder[3])));
-            ratio_second_price(params, relinearization_key, &bids, &masks, &pair_masks)
+            ratio_second_price(
+                params,
+                relinearization_key,
+                &bids,
+                &bidder_masks(),
+                &pair_masks,
+            )
         }
     };
     result.to_bytes()
@@ -645,11 +809,11 @@ mod tests {
                         })
                         .collect()
                 };
-                let mut roles = vec![
-                    thermometer(true),
-                    thermometer(false),
-                    (0..degree).map(|_| rng.random_range(0..t)).collect(),
-                ];
+                let mut roles = vec![thermometer(true), thermometer(false)];
+                // The mask-provider type has no bidder masks.
+                if role_count(auction_type) >= 3 {
+                    roles.push((0..degree).map(|_| rng.random_range(0..t)).collect());
+                }
                 if role_count(auction_type) == 4 {
                     // One free value for the slot `l` of the groups `2c` and `2c + 1`.
                     let mut pair_mask = vec![0; degree];
@@ -667,6 +831,15 @@ mod tests {
             .collect()
     }
 
+    /// The bytes of the encryption of `slots` under the committee key.
+    fn encrypt_slots(fixture: &Fixture, slots: &[u64]) -> Result<Vec<u8>> {
+        let plaintext = Plaintext::try_encode(slots, Encoding::simd(), &fixture.params)?;
+        let ciphertext: Ciphertext = fixture
+            .public_key
+            .try_encrypt(&plaintext, &mut rand::rng())?;
+        Ok(ciphertext.to_bytes())
+    }
+
     /// Encrypts the bids with the masks of `plaintexts(.., seed)`.
     fn encrypt_bids(
         fixture: &Fixture,
@@ -676,14 +849,27 @@ mod tests {
     ) -> Result<Vec<(Vec<u8>, u64)>> {
         let mut ciphertexts = Vec::new();
         for slots in plaintexts(fixture, auction_type, bids, seed).iter().flatten() {
-            let plaintext = Plaintext::try_encode(slots, Encoding::simd(), &fixture.params)?;
-            let ciphertext: Ciphertext = fixture
-                .public_key
-                .try_encrypt(&plaintext, &mut rand::rng())?;
             let index = ciphertexts.len() as u64;
-            ciphertexts.push((ciphertext.to_bytes(), index));
+            ciphertexts.push((encrypt_slots(fixture, slots)?, index));
         }
         Ok(ciphertexts)
+    }
+
+    /// Runs the program over the configuration of `auction_type` with `providers`, and then
+    /// `ciphertexts`.
+    fn run_with_providers(
+        fixture: &Fixture,
+        auction_type: AuctionType,
+        providers: &[Provider],
+        ciphertexts: Vec<(Vec<u8>, u64)>,
+    ) -> Vec<u8> {
+        let inputs =
+            std::iter::once((config_input(auction_type, providers), 0)).chain(ciphertexts);
+        fhe_processor(FHEProcessorInput {
+            ciphertexts: &mut inputs.into_iter(),
+            params: &fixture.params,
+            relinearization_key: Some(&fixture.rlk),
+        })
     }
 
     /// Runs the program over the configuration of `auction_type` and then `ciphertexts`.
@@ -692,12 +878,7 @@ mod tests {
         auction_type: AuctionType,
         ciphertexts: Vec<(Vec<u8>, u64)>,
     ) -> Vec<u8> {
-        let inputs = std::iter::once((config_input(auction_type), 0)).chain(ciphertexts);
-        fhe_processor(FHEProcessorInput {
-            ciphertexts: &mut inputs.into_iter(),
-            params: &fixture.params,
-            relinearization_key: Some(&fixture.rlk),
-        })
+        run_with_providers(fixture, auction_type, &[], ciphertexts)
     }
 
     /// Encrypts the bids, runs a region type over them, and decrypts the result.
@@ -768,7 +949,7 @@ mod tests {
         order.sort_by_key(|&j| std::cmp::Reverse(bids[j]));
         let paid = match auction_type {
             AuctionType::FirstPrice => order[0],
-            AuctionType::SecondPrice => order[1],
+            AuctionType::SecondPrice | AuctionType::ProviderSecondPrice => order[1],
             _ => unreachable!("a region type"),
         };
         (order[0], bids[paid])
@@ -1261,33 +1442,91 @@ mod tests {
     #[test]
     fn the_configuration_type_byte_names_the_type() {
         // `AuctionProgram.AUCTION_*` stores the same numbers.
-        let from_byte = |byte: u8| AuctionType::from_config(&[CONFIG_DOMAIN, &[byte]].concat());
+        let from_byte = |byte: u8| {
+            AuctionConfig::from_input(&[CONFIG_DOMAIN, &[byte]].concat())
+                .map(|config| config.auction_type)
+        };
         assert_eq!(from_byte(0), Some(AuctionType::FirstPrice));
         assert_eq!(from_byte(1), Some(AuctionType::SecondPrice));
         assert_eq!(from_byte(2), Some(AuctionType::RatioFirstPrice));
         assert_eq!(from_byte(3), Some(AuctionType::RatioSecondPrice));
-        assert_eq!(from_byte(4), None);
-        assert_eq!(AuctionType::from_config(&CONFIG_DOMAIN[1..]), None);
+        assert_eq!(from_byte(5), None);
+        assert_eq!(AuctionConfig::from_input(&CONFIG_DOMAIN[1..]), None);
+        assert_eq!(AuctionConfig::from_input(CONFIG_DOMAIN), None);
+    }
+
+    #[test]
+    fn the_configuration_of_the_provider_type_lists_one_to_four_providers() {
+        let providers = [[0x11; 20], [0x22; 20], [0x33; 20], [0x44; 20], [0x55; 20]];
+        let parse = |auction_type, count: usize| {
+            AuctionConfig::from_input(&config_input(auction_type, &providers[..count]))
+        };
+        for count in 1..=MAX_PROVIDERS {
+            assert_eq!(
+                parse(AuctionType::ProviderSecondPrice, count),
+                Some(AuctionConfig {
+                    auction_type: AuctionType::ProviderSecondPrice,
+                    providers: providers[..count].to_vec(),
+                })
+            );
+        }
+        assert_eq!(parse(AuctionType::ProviderSecondPrice, 0), None);
+        assert_eq!(parse(AuctionType::ProviderSecondPrice, MAX_PROVIDERS + 1), None);
+        // The other types have no providers.
+        for auction_type in [
+            AuctionType::FirstPrice,
+            AuctionType::SecondPrice,
+            AuctionType::RatioFirstPrice,
+            AuctionType::RatioSecondPrice,
+        ] {
+            assert_eq!(parse(auction_type, 0).map(|c| c.providers.len()), Some(0));
+            assert_eq!(parse(auction_type, 1), None);
+        }
+        // A provider is 20 raw bytes, not a padded word and not a part of one.
+        let config = config_input(AuctionType::ProviderSecondPrice, &providers[..2]);
+        assert_eq!(config.len(), CONFIG_DOMAIN.len() + 1 + 40);
+        assert_eq!(AuctionConfig::from_input(&config[..config.len() - 1]), None);
+        assert_eq!(AuctionConfig::from_input(&[config, vec![0]].concat()), None);
     }
 
     #[test]
     fn the_configuration_leaf_is_the_reduced_hash_of_the_configuration() {
-        // `AuctionProgram.configLeaf` computes `keccak256(CONFIG_DOMAIN || type) mod BN254`. Input 0
-        // must get that leaf, whatever commitment and metadata come with it.
-        let config = config_input(AuctionType::SecondPrice);
+        // `AuctionProgram.configLeaf` computes `keccak256(CONFIG_DOMAIN || type || providers) mod
+        // BN254`. Input 0 must get that leaf, whatever commitment and metadata come with it.
         let zero = [0u8; 32];
-        let leaf = (policy().leaf)(&PublishedInput {
-            index: 0,
-            ciphertext: &config,
-            ciphertext_hash: keccak256(&config),
-            commitment: Some(&zero),
-            metadata: &[0; METADATA_LEN],
-            recomputed: None,
-        })
-        .unwrap();
+        let leaf_of = |config: &[u8]| {
+            (policy().leaf)(&PublishedInput {
+                index: 0,
+                ciphertext: config,
+                ciphertext_hash: keccak256(config),
+                commitment: Some(&zero),
+                metadata: &[0; METADATA_LEN],
+                recomputed: None,
+            })
+            .unwrap()
+        };
         assert_eq!(
-            leaf,
+            leaf_of(&config_input(AuctionType::SecondPrice, &[])),
             leaf_from_digest(&keccak256(b"interfold-auction-config-v1\x01"))
+        );
+        let providers = [[0x11; 20], [0x22; 20]];
+        let config = config_input(AuctionType::ProviderSecondPrice, &providers);
+        assert_eq!(
+            config,
+            [
+                &b"interfold-auction-config-v1\x04"[..],
+                &[0x11; 20][..],
+                &[0x22; 20][..]
+            ]
+            .concat()
+        );
+        assert_eq!(leaf_of(&config), leaf_from_digest(&keccak256(&config)));
+        // The values `AuctionProgram.configInput` and `configLeaf` give for these providers.
+        let digest: String = keccak256(&config).iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(digest, "c6399fdb7f3b0e098dc01996306af62f928ed18203a1920ba1a7c96379d6460c");
+        assert_eq!(
+            format!("{:0>64}", leaf_of(&config)),
+            "04a8660ffa748d62ac7f02bc2a6594baf1bf30601cbbcfc6921ff313b9d64608"
         );
     }
 
@@ -1355,8 +1594,9 @@ mod tests {
         recomputed: Option<[u8; 32]>,
     }
 
-    /// The 3 records of a bid; `opens[r]` says whether role `r` opens its commitment.
-    fn bid(bidder: u8, version: u64, opens: [bool; 3]) -> Vec<Row> {
+    /// The records of one run with the same metadata; `opens[r]` says whether record `r` opens its
+    /// commitment.
+    fn run_of(bidder: u8, version: u64, opens: &[bool]) -> Vec<Row> {
         opens
             .iter()
             .enumerate()
@@ -1366,6 +1606,11 @@ mod tests {
                 recomputed: Some([if *opens { role as u8 + 1 } else { 0xff }; 32]),
             })
             .collect()
+    }
+
+    /// The 3 records of a bid; `opens[r]` says whether role `r` opens its commitment.
+    fn bid(bidder: u8, version: u64, opens: [bool; 3]) -> Vec<Row> {
+        run_of(bidder, version, &opens)
     }
 
     /// The indices `select_bids` picks from the configuration followed by `rows`.
@@ -1460,5 +1705,333 @@ mod tests {
         let mut no_commitment = bid(1, 1, OPENS);
         no_commitment[1].commitment = None;
         assert_eq!(selected(&[no_commitment, bid(2, 1, OPENS)]), [0, 4, 5, 6]);
+    }
+
+    /// The 2 records of a mask-provider bid.
+    fn bid2(bidder: u8, version: u64) -> Vec<Row> {
+        run_of(bidder, version, &[true, true])
+    }
+
+    /// The record of the mask of provider `provider`.
+    fn mask(provider: u8, opens: bool) -> Vec<Row> {
+        run_of(provider, MASK_VERSION.into(), &[opens])
+    }
+
+    #[test]
+    fn the_masks_lead_and_the_bids_follow_by_the_usual_rule() {
+        // Leaves 1 and 2 are the masks, 3-4 the bid of bidder 1, 5-6 its update, 7-8 bidder 2.
+        assert_eq!(
+            selected(&[
+                mask(0xa0, true),
+                mask(0xa1, true),
+                bid2(1, 1),
+                bid2(1, 2),
+                bid2(2, 1)
+            ]),
+            [0, 1, 2, 5, 6, 7, 8]
+        );
+        // An update that does not open falls back to the first bid, which keeps its place.
+        let mut bad_update = bid2(1, 2);
+        bad_update[1].recomputed = Some([0xff; 32]);
+        assert_eq!(
+            selected(&[mask(0xa0, true), bid2(1, 1), bad_update, bid2(2, 1)]),
+            [0, 1, 2, 3, 6, 7]
+        );
+        // A bidder whose only bid does not open is dropped, and the masks stay.
+        let mut bad = bid2(1, 1);
+        bad[0].recomputed = Some([0xff; 32]);
+        assert_eq!(selected(&[mask(0xa0, true), bad, bid2(2, 1)]), [0, 1, 4, 5]);
+    }
+
+    #[test]
+    fn a_mask_that_does_not_open_leaves_only_the_configuration() {
+        for bad in 0..3 {
+            let masks: Vec<Vec<Row>> = (0..3).map(|i| mask(0xa0 + i, i as usize != bad)).collect();
+            let mut rows = masks;
+            rows.push(bid2(1, 1));
+            rows.push(bid2(2, 1));
+            assert_eq!(selected(&rows), [0], "mask {bad} does not open");
+        }
+        // A mask with no commitment does not open either.
+        let mut no_commitment = mask(0xa1, true);
+        no_commitment[0].commitment = None;
+        assert_eq!(
+            selected(&[mask(0xa0, true), no_commitment, bid2(1, 1), bid2(2, 1)]),
+            [0]
+        );
+    }
+
+    #[test]
+    fn a_record_with_the_mask_version_after_a_bid_is_ignored() {
+        // The leading run ends at the first bid. A later mask record is no mask and no bid, and it
+        // does not matter whether it opens.
+        for opens in [true, false] {
+            assert_eq!(
+                selected(&[mask(0xa0, true), bid2(1, 1), mask(0xa1, opens), bid2(2, 1)]),
+                [0, 1, 2, 3, 5, 6]
+            );
+        }
+        // Without a mask at the front, a mask-version record is never a bid either.
+        assert_eq!(selected(&[bid2(1, 1), mask(0xa1, true)]), [0, 1, 2]);
+    }
+
+    #[test]
+    fn the_mask_version_is_the_last_uint32_in_the_metadata() {
+        // `provider || 00 FF FF FF FF`; a bid of version 1 to 3 is no mask, and a version one
+        // below the mask version is a bid.
+        let almost = u64::from(MASK_VERSION) - 1;
+        assert_eq!(selected(&[bid2(1, almost), bid2(2, 1)]), [0, 1, 2, 3, 4]);
+        assert_eq!(metadata_of(7, MASK_VERSION.into())[20..], [0, 0xff, 0xff, 0xff, 0xff]);
+    }
+
+    /// Slots of a mask-provider round: `t - 1` values `1..t`.
+    fn mask_slots(rng: &mut StdRng, degree: usize, t: u64) -> Vec<u64> {
+        (0..degree).map(|_| rng.random_range(1..t)).collect()
+    }
+
+    /// The masks of `k` providers that the adversarial tests use. Every slot is non-zero.
+    fn mask_sets(k: usize, degree: usize, t: u64, rng: &mut StdRng) -> Vec<(&'static str, Vec<Vec<u64>>)> {
+        let constant = |values: &[u64]| -> Vec<Vec<u64>> {
+            values[..k].iter().map(|&v| vec![v; degree]).collect()
+        };
+        // A slot-dependent ramp that covers `1..t` with a different offset for each provider.
+        let ramp: Vec<Vec<u64>> = (0..k)
+            .map(|p| (0..degree).map(|s| (s as u64 * (p as u64 + 1)) % (t - 1) + 1).collect())
+            .collect();
+        vec![
+            ("random", (0..k).map(|_| mask_slots(rng, degree, t)).collect()),
+            ("every slot 1", constant(&[1; 4])),
+            ("every slot t - 1", constant(&[t - 1; 4])),
+            // 2 * 129 = 1 mod 257: the product of the pair is 1 in every slot.
+            ("a different constant per provider", constant(&[1, t - 1, 2, 129])),
+            ("a ramp per provider", ramp),
+        ]
+    }
+
+    /// The output of the mask-provider type: the `masks` (slots of each provider), then the bids.
+    fn provider_output(
+        fixture: &Fixture,
+        bids: &[usize],
+        masks: &[Vec<u64>],
+        seed: u64,
+    ) -> Result<Vec<u8>> {
+        let mut ciphertexts = Vec::new();
+        for slots in masks {
+            let index = ciphertexts.len() as u64 + 1;
+            ciphertexts.push((encrypt_slots(fixture, slots)?, index));
+        }
+        ciphertexts.extend(encrypt_bids(fixture, AuctionType::ProviderSecondPrice, bids, seed)?);
+        let providers: Vec<Provider> = (0..masks.len()).map(|i| [0xa0 + i as u8; 20]).collect();
+        Ok(run_with_providers(
+            fixture,
+            AuctionType::ProviderSecondPrice,
+            &providers,
+            ciphertexts,
+        ))
+    }
+
+    /// `(winner position, price)` as the client reads the slots of the mask-provider type, with
+    /// the strict pattern: the unused slots are zero, no slot above the price is non-zero, exactly
+    /// one region is zero at the price, and every slot below the price is non-zero.
+    fn decode_provider(slots: &[u64], n: usize) -> Option<(usize, usize)> {
+        let at = |region: usize, level: usize| slots[region * LEVELS + level];
+        if slots[n * LEVELS..].iter().any(|&s| s != 0) {
+            return None;
+        }
+        let price = (0..LEVELS)
+            .rev()
+            .find(|&level| (0..n).any(|region| at(region, level) != 0))?;
+        let winners: Vec<usize> = (0..n).filter(|&region| at(region, price) == 0).collect();
+        let below_set = (0..n).all(|region| (0..price).all(|level| at(region, level) != 0));
+        match (&winners[..], below_set) {
+            ([winner], true) => Some((*winner, price)),
+            _ => None,
+        }
+    }
+
+    /// Whether each slot of the output is non-zero, on the plaintext bids.
+    fn provider_pattern(bids: &[usize], degree: usize) -> Vec<bool> {
+        let (winner, price) = expected(AuctionType::SecondPrice, bids);
+        (0..degree)
+            .map(|slot| {
+                let (region, level) = (slot / LEVELS, slot % LEVELS);
+                region < bids.len() && (level < price || (level == price && region != winner))
+            })
+            .collect()
+    }
+
+    /// Checks the output against the expected winner and price and against the exact pattern.
+    fn check_provider(slots: &[u64], bids: &[usize], context: &str) {
+        let pattern: Vec<bool> = slots.iter().map(|&s| s != 0).collect();
+        assert_eq!(
+            pattern,
+            provider_pattern(bids, slots.len()),
+            "{context}, bids {bids:?}: the zero pattern is not the one of the winner and the price"
+        );
+        assert_eq!(
+            decode_provider(slots, bids.len()),
+            Some(expected(AuctionType::SecondPrice, bids)),
+            "{context}, bids {bids:?}"
+        );
+    }
+
+    /// Bid sets of `n` bidders: random bids, equal bids, ties at the top, only zero bids, and one
+    /// bid above zero bids.
+    fn provider_bid_sets(n: usize, rng: &mut StdRng) -> Vec<Vec<usize>> {
+        let random = |rng: &mut StdRng| -> Vec<usize> {
+            (0..n).map(|_| rng.random_range(0..LEVELS)).collect()
+        };
+        let (mut top_tie, mut late_tie, mut one_above) = (random(rng), random(rng), vec![0; n]);
+        top_tie[0] = LEVELS - 1;
+        top_tie[n - 1] = LEVELS - 1;
+        late_tie.iter_mut().for_each(|bid| *bid = (*bid).min(LEVELS - 2));
+        late_tie[n - 1] = LEVELS - 1;
+        late_tie[n - 2] = LEVELS - 1;
+        one_above[n - 1] = 5;
+        vec![
+            random(rng),
+            random(rng),
+            vec![9; n],
+            top_tie,
+            late_tie,
+            vec![0; n],
+            vec![LEVELS - 1; n],
+            one_above,
+        ]
+    }
+
+    #[test]
+    fn the_provider_type_decodes_exactly_for_every_bidder_and_provider_count() -> Result<()> {
+        let fixture = fixture()?;
+        let (degree, t) = (fixture.params.degree(), fixture.params.plaintext());
+        let mut rng = StdRng::seed_from_u64(40);
+        for n in 2..=8 {
+            for k in 1..=4 {
+                for (seed, bids) in provider_bid_sets(n, &mut rng).into_iter().enumerate() {
+                    let masks: Vec<Vec<u64>> =
+                        (0..k).map(|_| mask_slots(&mut rng, degree, t)).collect();
+                    let output = provider_output(&fixture, &bids, &masks, 700 + seed as u64)?;
+                    let slots = decrypt_slots(&fixture, &output)?;
+                    check_provider(&slots, &bids, &format!("n = {n}, k = {k}"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_provider_type_decodes_exactly_under_adversarial_masks() -> Result<()> {
+        let fixture = fixture()?;
+        let (degree, t) = (fixture.params.degree(), fixture.params.plaintext());
+        let mut rng = StdRng::seed_from_u64(41);
+        for n in [2, 3, 5, 8] {
+            let sets = provider_bid_sets(n, &mut rng);
+            for k in 1..=4 {
+                for (name, masks) in mask_sets(k, degree, t, &mut rng) {
+                    // A top tie, the zero bids and a random set.
+                    for bids in [&sets[0], &sets[3], &sets[5]] {
+                        let output = provider_output(&fixture, bids, &masks, 800)?;
+                        let slots = decrypt_slots(&fixture, &output)?;
+                        check_provider(&slots, bids, &format!("n = {n}, k = {k}, masks: {name}"));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_provider_type_has_the_result_of_the_second_price_type() -> Result<()> {
+        let fixture = fixture()?;
+        let (degree, t) = (fixture.params.degree(), fixture.params.plaintext());
+        let mut rng = StdRng::seed_from_u64(42);
+        for (seed, (bids, winner)) in TIE_ROUNDS.into_iter().enumerate() {
+            let masks = vec![mask_slots(&mut rng, degree, t), mask_slots(&mut rng, degree, t)];
+            let slots = decrypt_slots(
+                &fixture,
+                &provider_output(&fixture, bids, &masks, 900 + seed as u64)?,
+            )?;
+            let (expected_winner, price) = expected(AuctionType::SecondPrice, bids);
+            assert_eq!(expected_winner, winner, "bids {bids:?}");
+            assert_eq!(decode_provider(&slots, bids.len()), Some((winner, price)), "bids {bids:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_provider_output_keeps_a_noise_budget_at_eight_bidders_and_four_providers() -> Result<()> {
+        let fixture = fixture()?;
+        let (degree, t) = (fixture.params.degree(), fixture.params.plaintext());
+        let mut rng = StdRng::seed_from_u64(43);
+        let bids = [3, 9, 9, 15, 0, 15, 7, 2];
+        let masks: Vec<Vec<u64>> = (0..4).map(|_| mask_slots(&mut rng, degree, t)).collect();
+        let output = Ciphertext::from_bytes(
+            &provider_output(&fixture, &bids, &masks, 1000)?,
+            &fixture.params,
+        )?;
+        // SAFETY: `measure_noise` has a variable-time path that depends on the noise. The test
+        // holds the secret key and only reads the budget.
+        let noise = unsafe { fixture.secret_key.measure_noise(&output) }?;
+        let log2_q: f64 = fixture.params.moduli().iter().map(|&q| (q as f64).log2()).sum();
+        let budget = log2_q - (t as f64).log2() - 1.0 - noise as f64;
+        eprintln!("type 4, n = 8, k = 4: noise {noise} bits, log2 q = {log2_q:.1}, budget {budget:.1} bits");
+        // About 66 bits when measured; the output stops decrypting exactly at 0.
+        assert!(budget > 30.0, "the budget is {budget} bits");
+        check_provider(&decrypt_slots(&fixture, &output.to_bytes())?, &bids, "n = 8, k = 4");
+        Ok(())
+    }
+
+    #[test]
+    #[should_panic(expected = "masks of its providers")]
+    fn rejects_a_provider_round_without_its_masks() {
+        // The policy selects only the configuration when a mask does not open.
+        let fixture = fixture().unwrap();
+        run_with_providers(
+            &fixture,
+            AuctionType::ProviderSecondPrice,
+            &[[0xa0; 20], [0xa1; 20]],
+            vec![],
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "2 to 8 bidders")]
+    fn rejects_a_provider_round_with_one_bidder() {
+        let fixture = fixture().unwrap();
+        let mut rng = StdRng::seed_from_u64(44);
+        let mask = mask_slots(&mut rng, fixture.params.degree(), fixture.params.plaintext());
+        provider_output(&fixture, &[4], &[mask], 1).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "2 to 8 bidders")]
+    fn rejects_a_ninth_bidder_of_the_provider_type() {
+        let fixture = fixture().unwrap();
+        let mut rng = StdRng::seed_from_u64(45);
+        let mask = mask_slots(&mut rng, fixture.params.degree(), fixture.params.plaintext());
+        provider_output(&fixture, &[1, 2, 3, 4, 5, 6, 7, 8, 9], &[mask], 1).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "multiple of 2")]
+    fn rejects_a_provider_bid_with_a_missing_ciphertext() {
+        let fixture = fixture().unwrap();
+        let mut rng = StdRng::seed_from_u64(46);
+        let mask = encrypt_slots(
+            &fixture,
+            &mask_slots(&mut rng, fixture.params.degree(), fixture.params.plaintext()),
+        )
+        .unwrap();
+        let mut ciphertexts = vec![(mask, 1)];
+        ciphertexts.extend(
+            encrypt_bids(&fixture, AuctionType::ProviderSecondPrice, &[1, 2], 2).unwrap(),
+        );
+        ciphertexts.pop();
+        run_with_providers(
+            &fixture,
+            AuctionType::ProviderSecondPrice,
+            &[[0xa0; 20]],
+            ciphertexts,
+        );
     }
 }

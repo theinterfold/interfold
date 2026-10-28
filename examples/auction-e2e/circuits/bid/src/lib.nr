@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! The validity rules of an auction bid, shared by the four bid circuits.
+//! The validity rules of an auction bid and of a provider mask, shared by the bid circuits.
 //!
 //! A bid is `K` ciphertexts, one for each role: 3 for the auction types 0 to 2 (`ge`, `gt`, `mask`)
 //! and 4 for type 3 (`ge`, `gt`, `mask`, `pair_mask`). All of them are SIMD-encoded. Slot `i` has
@@ -29,6 +29,8 @@
 //!   auction_bid_masks   roles 2 and 3: both wrapper proofs, the pair-mask check   (K = 4 only)
 //!   auction_bid3        the pair proof and the wrapper proof of role 2             (EVM verifier)
 //!   auction_bid4        the pair proof and the masks proof                         (EVM verifier)
+//!   auction_bid2        the pair proof only, for the auction type 4                (EVM verifier)
+//!   auction_mask        one wrapper proof and the nonzero slots of a provider mask (EVM verifier)
 //! ```
 //!
 //! Roles 0 and 1 use the same `b` inside `auction_bid_pair`, which is why a bid needs no commitment
@@ -63,6 +65,14 @@
 //! multiplies one value of the sum of the pair masks into two lanes (the `y` lane and the `z` lane
 //! of one copy), so the two slots of a pair must hold the same value at every level.
 //!
+//! A provider mask (auction type 4) is the same kind of sum over `TABLE_SLOT_UNIT`: `k1` is the sum
+//! of the `N` unit rows, each times its slot value `m_s`, mod `t`. The circuit checks the integer
+//! equation `sum_s m_s * unit_s[i] = k1[i] + t * q[i]` as for the pair mask. Every `m_s` is in
+//! `1..=t - 1` (`m_s - 1` fits in 8 bits, and `t - 1` is `2^8`), so both sides are below `2^24`.
+//! The SIMD map is a bijection between slot vectors and plaintexts, so the plaintext has the slot
+//! values `m_s`, all of them nonzero mod `t`. The program multiplies the output by this mask, so a
+//! nonzero test never becomes 0, and no provider can zero a slot to damage the result.
+//!
 //! The commitment of `k1` is the one with the digit asserts, so that the packing is injective and a
 //! commitment has one opening. The encryption circuit range-checks `k1` to `[0, t - 1]`, and equal
 //! commitments transfer that bound to this `k1`.
@@ -72,6 +82,7 @@ use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_hon
 pub use constants::PAIR_UNITS;
 use constants::{
     LEVELS, TABLE_GE, TABLE_GT, TABLE_N, TABLE_PAIR_UNIT, TABLE_PLAINTEXT_MODULUS, TABLE_Q_MOD_T,
+    TABLE_SLOT_UNIT,
 };
 // The insecure SIMD preset, like the user-data encryption circuits `compile_circuits.sh` bundles.
 use interfold_lib::configs::insecure_simd::threshold::{
@@ -91,6 +102,11 @@ pub global LEVELS_BITS: u32 = 8;
 pub global PAIR_VALUE_BITS: u32 = 9;
 /// The quotient of the pair equation is below `PAIR_UNITS * 2^PAIR_VALUE_BITS`, so below `2^15`.
 pub global PAIR_QUOTIENT_BITS: u32 = 15;
+
+/// A slot value of a provider mask is in `1..=2^MASK_VALUE_BITS`: `m - 1` has that many bits.
+pub global MASK_VALUE_BITS: u32 = 8;
+/// The quotient of the mask equation is below `N * 2^(2 * MASK_VALUE_BITS) / t`, so below `2^15`.
+pub global MASK_QUOTIENT_BITS: u32 = 15;
 
 /// Length of the public inputs of a `user_data_encryption_chunked` wrapper proof: `ct0_vk_chain`,
 /// `ct1_vk_chain`, `pk_commitment`, `ct_commitment`, `k1_commitment`.
@@ -185,6 +201,61 @@ pub fn k1_is_pair_mask(k1: Polynomial<N>, values: [Field; PAIR_UNITS]) {
         assert(
             sums[i] == k1.coefficients[i] + PLAINTEXT_MODULUS * quotients[i],
             "k1 is not a pair-equal mask",
+        );
+    }
+}
+
+/// The integer `sum_s values[s] * TABLE_SLOT_UNIT[s][i]` of every coefficient `i`.
+fn slot_sums(values: [Field; N]) -> [Field; N] {
+    let mut sums = [0; N];
+    for i in 0..N {
+        for s in 0..N {
+            sums[i] += values[s] * TABLE_SLOT_UNIT[s][i];
+        }
+    }
+    sums
+}
+
+/// The floor of every slot sum over `t`, the quotient of the mask equation for an honest `k1`.
+unconstrained fn slot_quotients(values: [Field; N]) -> [Field; N] {
+    let sums = slot_sums(values);
+    let mut quotients = [0; N];
+    for i in 0..N {
+        quotients[i] = ((sums[i] as u64) / (PLAINTEXT_MODULUS as u64)) as Field;
+    }
+    quotients
+}
+
+/// `k1` is the plaintext of the SIMD slots `values`, and every value is nonzero mod `t`.
+pub fn k1_is_nonzero_slots(k1: Polynomial<N>, values: [Field; N]) {
+    // The ranges hold for a plaintext modulus of `2^MASK_VALUE_BITS + 1`, so that `1..=t - 1` is
+    // exactly the values with `m - 1` below `2^MASK_VALUE_BITS`.
+    std::static_assert(TABLE_N == N, "the table is for another degree");
+    std::static_assert(
+        (PLAINTEXT_MODULUS as u64) == ((1 as u64) << (MASK_VALUE_BITS as u64)) + 1,
+        "the mask ranges are for another plaintext modulus",
+    );
+    // The largest sum, `N * (t - 1)^2`, divided by `t` fits in `MASK_QUOTIENT_BITS`.
+    std::static_assert(
+        (N as u64) * ((1 as u64) << ((2 * MASK_VALUE_BITS) as u64))
+            < (PLAINTEXT_MODULUS as u64) * ((1 as u64) << (MASK_QUOTIENT_BITS as u64)),
+        "the mask quotient ranges are for a smaller degree",
+    );
+    // Safety: the equation below constrains each quotient, and the range checks keep it exact.
+    let quotients = unsafe { slot_quotients(values) };
+    for s in 0..N {
+        // A zero value, or a value above `t - 1`, makes `values[s] - 1` a 9-bit number or a field
+        // element near the modulus.
+        (values[s] - 1).assert_max_bit_size::<MASK_VALUE_BITS>();
+    }
+    for i in 0..N {
+        quotients[i].assert_max_bit_size::<MASK_QUOTIENT_BITS>();
+    }
+    let sums = slot_sums(values);
+    for i in 0..N {
+        assert(
+            sums[i] == k1.coefficients[i] + PLAINTEXT_MODULUS * quotients[i],
+            "k1 is not a mask of nonzero slots",
         );
     }
 }
@@ -436,4 +507,99 @@ fn rejects_more_levels_than_slots() {
 fn rejects_a_levels_value_beyond_the_range_check() {
     // `2^32 + 2` would be 2 after a truncation to `u32`.
     check_thermometers(honest(TABLE_GE, 0), honest(TABLE_GT, 0), 0, 0x100000002);
+}
+
+/// `k1` of the plaintext with the slots `values`: the combination mod `t` of the slot units.
+fn honest_slot_mask(values: [Field; N]) -> Polynomial<N> {
+    let t = PLAINTEXT_MODULUS as u64;
+    let mut k1 = Polynomial { coefficients: [0; N] };
+    for i in 0..N {
+        let mut sum: u64 = 0;
+        for s in 0..N {
+            sum += (values[s] as u64) * (TABLE_SLOT_UNIT[s][i] as u64);
+        }
+        k1.coefficients[i] = (sum % t) as Field;
+    }
+    k1
+}
+
+/// Every slot is nonzero, and the values are not all alike.
+fn slot_values() -> [Field; N] {
+    let mut values = [0; N];
+    for s in 0..N {
+        values[s] = ((s * 53 + 7) % 256 + 1) as Field;
+    }
+    values
+}
+
+#[test]
+fn accepts_an_honest_provider_mask() {
+    let values = slot_values();
+    k1_is_nonzero_slots(honest_slot_mask(values), values);
+}
+
+#[test]
+fn accepts_the_extreme_provider_masks() {
+    // The smallest and the largest slot values: the largest sums and quotients.
+    let mut ones = [1; N];
+    k1_is_nonzero_slots(honest_slot_mask(ones), ones);
+    let mut largest = [(PLAINTEXT_MODULUS - 1); N];
+    k1_is_nonzero_slots(honest_slot_mask(largest), largest);
+    // One slot at each end of the range.
+    ones[0] = PLAINTEXT_MODULUS - 1;
+    largest[N - 1] = 1;
+    k1_is_nonzero_slots(honest_slot_mask(ones), ones);
+    k1_is_nonzero_slots(honest_slot_mask(largest), largest);
+}
+
+#[test(should_fail_with = "k1 is not a mask of nonzero slots")]
+fn rejects_the_plaintext_of_a_zero_slot_under_a_nonzero_claim() {
+    // `k1` encodes a plaintext with a zero in slot 5, but the witness claims 1 there.
+    let mut zeroed = slot_values();
+    zeroed[5] = 0;
+    let k1 = honest_slot_mask(zeroed);
+    let mut claimed = zeroed;
+    claimed[5] = 1;
+    k1_is_nonzero_slots(k1, claimed);
+}
+
+#[test(should_fail)]
+fn rejects_a_zero_slot_value() {
+    // The witness is the honest one for the plaintext with a zero slot: the equation holds, the
+    // range check does not.
+    let mut values = slot_values();
+    values[5] = 0;
+    k1_is_nonzero_slots(honest_slot_mask(values), values);
+}
+
+#[test(should_fail)]
+fn rejects_a_zero_slot_written_as_t() {
+    // `t` and 0 are the same slot mod `t`, so the equation holds for `t`; the range check does not.
+    let mut values = slot_values();
+    values[77] = PLAINTEXT_MODULUS;
+    k1_is_nonzero_slots(honest_slot_mask(values), values);
+}
+
+#[test(should_fail)]
+fn rejects_a_zero_in_the_last_slot() {
+    // `0 - 1` is `p - 1`, which is not 8 bits.
+    let mut values = slot_values();
+    values[127] = 0;
+    k1_is_nonzero_slots(honest_slot_mask(values), values);
+}
+
+#[test(should_fail_with = "k1 is not a mask of nonzero slots")]
+fn rejects_a_k1_that_differs_in_one_coefficient() {
+    let values = slot_values();
+    let mut k1 = honest_slot_mask(values);
+    k1.coefficients[40] = (((k1.coefficients[40] as u64) + 1) % (PLAINTEXT_MODULUS as u64)) as Field;
+    k1_is_nonzero_slots(k1, values);
+}
+
+#[test(should_fail_with = "k1 is not a mask of nonzero slots")]
+fn rejects_the_mask_of_other_slot_values() {
+    let mut values = slot_values();
+    let k1 = honest_slot_mask(values);
+    values[100] = (((values[100] as u64) % 256) + 1) as Field;
+    k1_is_nonzero_slots(k1, values);
 }

@@ -5,12 +5,13 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 /**
- * The encoding the bidders, the bid circuits (`auction_bid3`, `auction_bid4`), the FHE program
- * (`program/src/lib.rs`) and the result decoder share.
+ * The encoding the bidders, the bid circuits (`auction_bid2`, `auction_bid3`, `auction_bid4`), the mask
+ * circuit (`auction_mask`), the FHE program (`program/src/lib.rs`) and the result decoder share.
  *
  * All ciphertexts are SIMD-encoded over the 128 slots of the ring. Slot `i` has level `i % LEVELS`,
  * and a bid `b` is in `[0, LEVELS)`. Each bidder sends 3 ciphertexts (4 for the second-price ratio
- * auction) that depend on neither the bidder's position nor the number of bidders:
+ * auction, 2 for the provider-mask auction) that depend on neither the bidder's position nor the
+ * number of bidders:
  *
  *   role 0 (ge)        slot i  [b >= i % LEVELS]
  *   role 1 (gt)        slot i  [b >  i % LEVELS]
@@ -50,9 +51,25 @@
  * A tie at the top goes to the lowest position among the tied bidders, so the winner is the first
  * member of the sorted tie set. Every other slot is zero.
  *
- * Leaf 0 of every auction is a configuration input, not a ciphertext: `auctionConfigInput(type)`.
- * `AuctionProgram.validate` inserts its leaf, and the program reads the type from it. Every bid,
- * and every update of it, adds one run of `rolesFor(type).length` consecutive leaves in role order.
+ * Provider-mask auction (`ProviderSecondPrice`). A bid is 2 ciphertexts `[ge, gt]`, with no mask.
+ * The creator names 1 to `MAX_PROVIDERS` mask providers; each sends one mask ciphertext whose 128
+ * slots are all non-zero. There is ONE copy of the regions, for 2 to 8 bidders: region `k` is the
+ * slots `16 k .. 16 k + 15` and the slots from `16 n` on are ZERO. The result has the second-price
+ * pattern (`s` the second-highest bid):
+ *
+ *   level p < s   every region is non-zero
+ *   level p = s   the region of the winner is ZERO, every other region is non-zero
+ *   level p > s   every region is zero
+ *
+ * The output is `tests * r`, with `r` the product of the masks: every test is below the plaintext
+ * modulus, so a non-zero slot is NEVER read as zero. If one provider is honest, each non-zero slot is
+ * uniform. The decoder is strict and reads no result from any other pattern.
+ *
+ * Leaf 0 of every auction is a configuration input, not a ciphertext: `auctionConfigInput(type,
+ * providers)`. `AuctionProgram.validate` inserts its leaf, and the program reads the type and the
+ * providers from it. In a provider auction the leaves 1 to k are the masks, one per provider in the order
+ * of submission, with the version `MASK_VERSION`; the bids follow. Every bid, and every update of it,
+ * adds one run of `rolesFor(type).length` consecutive leaves in role order.
  * A leaf binds the ciphertext bytes, the commitment the bid proof checked, the bidder and the bid
  * version. The program picks the latest version of each bidder whose bytes open their commitments
  * (`selection.ts`); the bidder position in this file is the order of the picked runs. A bidder that
@@ -67,6 +84,8 @@ import {
   concatBytes,
   encodeAbiParameters,
   type Hex,
+  hexToBytes,
+  isAddress,
   keccak256,
   maxUint256,
   parseAbiParameters,
@@ -102,6 +121,8 @@ export enum AuctionType {
   RatioFirstPrice = 2,
   /** As `SecondPrice`, with ratio lanes. The result shows the price and the winner set. The first tied bidder wins. */
   RatioSecondPrice = 3,
+  /** As `SecondPrice`, with masks from 1 to `MAX_PROVIDERS` mask providers and up to 8 bidders. The result always decodes. */
+  ProviderSecondPrice = 4,
 }
 
 export const AUCTION_TYPES = [
@@ -109,6 +130,7 @@ export const AUCTION_TYPES = [
   AuctionType.SecondPrice,
   AuctionType.RatioFirstPrice,
   AuctionType.RatioSecondPrice,
+  AuctionType.ProviderSecondPrice,
 ] as const
 
 export const AUCTION_TYPE_LABELS: Record<AuctionType, string> = {
@@ -116,6 +138,7 @@ export const AUCTION_TYPE_LABELS: Record<AuctionType, string> = {
   [AuctionType.SecondPrice]: 'Second-price (Vickrey)',
   [AuctionType.RatioFirstPrice]: 'Ratio first-price',
   [AuctionType.RatioSecondPrice]: 'Ratio second-price',
+  [AuctionType.ProviderSecondPrice]: 'Second-price, zero failure',
 }
 
 export const AUCTION_TYPE_DESCRIPTIONS: Record<AuctionType, string> = {
@@ -127,14 +150,17 @@ export const AUCTION_TYPE_DESCRIPTIONS: Record<AuctionType, string> = {
     'The highest bid wins and pays its own bid. The price and the set of bidders that tied at the top are revealed. If bidders tie, the tied bidder who bid first wins.',
   [AuctionType.RatioSecondPrice]:
     'The highest bid wins and pays the second-highest bid. The price and the winner set are revealed (more than one bidder only if the top bids tie). If bidders tie, the tied bidder who bid first wins.',
+  [AuctionType.ProviderSecondPrice]:
+    'The highest bid wins and pays the second-highest bid, as in the second-price auction, for up to 8 bidders. Only the winner and that price are revealed. The auction names 1 to 4 mask providers. Each one sends a random mask before bidding opens. If one provider is honest, the result shows nothing else, and it can never fail to show the winner. If the top bids tie, the tied bidder who bid first wins; the tie is not revealed.',
 }
 
-/** The most bidders of one auction, by type. The ratio types are limited by the weights `2^k` that must stay below the plaintext modulus. */
+/** The most bidders of one auction, by type. The ratio types are limited by the weights `2^k` that must stay below the plaintext modulus. The provider type has one copy of the regions. */
 export const MAX_BIDDERS_BY_TYPE: Record<AuctionType, number> = {
   [AuctionType.FirstPrice]: 4,
   [AuctionType.SecondPrice]: 4,
   [AuctionType.RatioFirstPrice]: 8,
   [AuctionType.RatioSecondPrice]: 8,
+  [AuctionType.ProviderSecondPrice]: 8,
 }
 
 /** The copies of the `y` and `z` lanes of the ratio second-price auction. */
@@ -151,15 +177,40 @@ export function isRatioType(type: AuctionType): type is RatioType {
   return type === AuctionType.RatioFirstPrice || type === AuctionType.RatioSecondPrice
 }
 
+/** The most mask providers of an auction. `AuctionProgram.MAX_PROVIDERS`. */
+export const MAX_PROVIDERS = 4
+
+/**
+ * The bid version of a mask in the 25-byte metadata of its leaf (`provider || uint40(version)`):
+ * `uint32` max. A bid has the versions 1 to `MAX_BIDS_PER_BIDDER`. `AuctionProgram.MASK_VERSION`.
+ */
+export const MASK_VERSION = 0xffffffff
+
+/** The type that has mask providers: one mask ciphertext each and bidders that send `[ge, gt]` only. */
+export function isProviderType(type: AuctionType): type is AuctionType.ProviderSecondPrice {
+  return type === AuctionType.ProviderSecondPrice
+}
+
 /** The domain prefix of the configuration input. `AuctionProgram.CONFIG_DOMAIN` and the program use the same bytes. */
 export const AUCTION_CONFIG_DOMAIN = 'interfold-auction-config-v1'
 
 /**
- * The configuration input of an auction, leaf 0 of its tree: the domain bytes followed by the type
- * byte. The leaf is `keccak256(input) mod BN254`, which `AuctionProgram.validate` inserts.
+ * The configuration input of an auction, leaf 0 of its tree: the domain bytes, the type byte and the
+ * mask providers as 20 raw bytes each (`AuctionProgram.configInput`: not the 32-byte words of
+ * `abi.encodePacked(address[])`). The leaf is `keccak256(input) mod BN254`, which
+ * `AuctionProgram.validate` inserts. Types other than `ProviderSecondPrice` have no providers, so their
+ * input is the domain and the type byte only.
  */
-export function auctionConfigInput(type: AuctionType): `0x${string}` {
-  return bytesToHex(concatBytes([new TextEncoder().encode(AUCTION_CONFIG_DOMAIN), new Uint8Array([type])]))
+export function auctionConfigInput(type: AuctionType, providers: readonly Address[] = []): `0x${string}` {
+  const error = providersError(type, providers)
+  if (error) throw new Error(error)
+  return bytesToHex(
+    concatBytes([
+      new TextEncoder().encode(AUCTION_CONFIG_DOMAIN),
+      new Uint8Array([type]),
+      ...providers.map((provider) => hexToBytes(provider)),
+    ]),
+  )
 }
 
 /**
@@ -185,10 +236,33 @@ export function evenPrices(start: bigint, step: bigint, count: number): bigint[]
 }
 
 /**
+ * Why `providers` is not a valid list of mask providers for an auction of `type`, or `null` when it
+ * is one. `AuctionProgram` applies the same rules: a `ProviderSecondPrice` auction has 1 to
+ * `MAX_PROVIDERS` providers, each a non-zero address, with no address twice (case does not matter).
+ * Every other type has none.
+ */
+export function providersError(type: AuctionType, providers: readonly Address[]): string | null {
+  if (!isProviderType(type)) return providers.length === 0 ? null : 'Only an auction with mask providers has providers'
+  if (providers.length < 1 || providers.length > MAX_PROVIDERS) {
+    return `An auction has 1 to ${MAX_PROVIDERS} mask providers, got ${providers.length}`
+  }
+  const seen = new Set<string>()
+  for (const provider of providers) {
+    if (!isAddress(provider, { strict: false })) return `${provider} is not an address`
+    const key = provider.toLowerCase()
+    if (key === zeroAddress) return 'A mask provider cannot be the zero address'
+    if (seen.has(key)) return `${provider} is listed twice`
+    seen.add(key)
+  }
+  return null
+}
+
+/**
  * The request's `customParams`: `abi.encode(uint8 auctionType, uint8 levels, uint256[16] prices,
- * string title, address gate, bytes gateConfig)`. `levels` is `prices.length`; the contract wants the
- * unused prices to be zero, so they are padded. With the zero `gate` anyone may bid, and `gateConfig`
- * must be empty. Otherwise the contract calls `gate.configure(e3Id, gateConfig)`.
+ * string title, address gate, bytes gateConfig, address[] providers)`. `levels` is `prices.length`;
+ * the contract wants the unused prices to be zero, so they are padded. With the zero `gate` anyone
+ * may bid, and `gateConfig` must be empty. Otherwise the contract calls
+ * `gate.configure(e3Id, gateConfig)`. `providers` are the mask providers (see `providersError`).
  */
 export function encodeAuctionParams(
   type: AuctionType,
@@ -196,12 +270,13 @@ export function encodeAuctionParams(
   title: string,
   gate: Address = zeroAddress,
   gateConfig: Hex = '0x',
+  providers: readonly Address[] = [],
 ): Hex {
-  const error = priceListError(prices)
+  const error = priceListError(prices) ?? providersError(type, providers)
   if (error) throw new Error(error)
   const padded = [...prices, ...Array.from({ length: LEVELS - prices.length }, () => 0n)]
-  const abi: readonly AbiParameter[] = parseAbiParameters('uint8, uint8, uint256[16], string, address, bytes')
-  return encodeAbiParameters(abi, [type, prices.length, padded, title, gate, gateConfig])
+  const abi: readonly AbiParameter[] = parseAbiParameters('uint8, uint8, uint256[16], string, address, bytes, address[]')
+  return encodeAbiParameters(abi, [type, prices.length, padded, title, gate, gateConfig, providers])
 }
 
 /**
@@ -238,6 +313,22 @@ export interface BidInput {
 export function encodeBidInput(input: BidInput): Hex {
   const abi: readonly AbiParameter[] = parseAbiParameters('address, bytes[], bytes32[], bytes, bytes, bytes')
   return encodeAbiParameters(abi, [input.bidder, input.ciphertexts, input.commitments, input.proof, input.gateProof, input.signature])
+}
+
+/**
+ * The `data` of `AuctionProgram.publishInput` for the mask of a provider of a `ProviderSecondPrice`
+ * auction: the encoding of `encodeBidInput` with the provider as `bidder`, one ciphertext and one
+ * commitment, and an empty `gateProof` and `signature`.
+ */
+export function encodeMaskInput(input: { provider: Address; ciphertext: Hex; commitment: Hex; proof: Hex }): Hex {
+  return encodeBidInput({
+    bidder: input.provider,
+    ciphertexts: [input.ciphertext],
+    commitments: [input.commitment],
+    proof: input.proof,
+    gateProof: '0x',
+    signature: '0x',
+  })
 }
 
 /**
@@ -282,6 +373,7 @@ const ROLES_BY_TYPE: Record<AuctionType, readonly Role[]> = {
   [AuctionType.SecondPrice]: [Role.Ge, Role.Gt, Role.Mask],
   [AuctionType.RatioFirstPrice]: [Role.Ge, Role.Gt, Role.Mask],
   [AuctionType.RatioSecondPrice]: [Role.Ge, Role.Gt, Role.Mask, Role.PairMask],
+  [AuctionType.ProviderSecondPrice]: [Role.Ge, Role.Gt],
 }
 
 /** The roles, in leaf order, of the ciphertexts one bidder submits to an auction of `type`. */
@@ -362,7 +454,7 @@ function assertBidderCount(type: AuctionType, bidders: number): void {
 /**
  * The winner and the price on the plaintext bids. The highest bid wins, and a tie goes to the
  * lowest position. The price is the highest bid (first-price) or the second-highest bid
- * (second-price).
+ * (second-price, also `ProviderSecondPrice`).
  */
 export function expectedAuction(type: AuctionType, bids: readonly number[]): { winner: number; price: number } {
   assertBidderCount(type, bids.length)
@@ -450,7 +542,40 @@ export async function decodeAuction(type: AuctionType, plaintextHex: string, bid
   }
   const slots = await decodePlaintextSlots(`0x${hex}`, PRESET)
   if (slots.length < DEGREE) throw new Error(`Decoded ${slots.length} slots, expected ${DEGREE}`)
+  if (type === AuctionType.ProviderSecondPrice) return decodeProviderRegions(slots, bidders)
   return isRatioType(type) ? decodeLanes(type, slots, bidders) : decodeRegions(type, slots, bidders)
+}
+
+/**
+ * Read a provider-mask auction: one copy of the regions, region `k` at slots `16 k .. 16 k + 15`.
+ * The pattern is strict. The result is read only if the slots beyond the `n` regions are zero, no
+ * slot above the price is non-zero, exactly one region is zero at the price, and every slot below
+ * the price is non-zero. Any other pattern gives no price and no winner.
+ *
+ * The masks are proven non-zero and every test is below the plaintext modulus, so no non-zero slot is
+ * ever read as zero: a valid output always matches the pattern.
+ */
+function decodeProviderRegions(slots: readonly bigint[], n: number): RegionResult {
+  const regionSet = Array.from({ length: n }, (_, region) =>
+    Array.from({ length: LEVELS }, (_, level) => slots[slotIndex(n, 0, region, level)] !== 0n),
+  )
+  let unusedGroupsZero = true
+  for (let slot = n * LEVELS; slot < DEGREE; slot++) if (slots[slot] !== 0n) unusedGroupsZero = false
+
+  let price: number | null = null
+  let winner: number | null = null
+  // The price is the highest level at which some region is non-zero.
+  const lasts = regionSet.map((row) => row.lastIndexOf(true)).filter((level) => level >= 0)
+  if (unusedGroupsZero && lasts.length > 0) {
+    const level = Math.max(...lasts)
+    const winners = regionSet.flatMap((row, region) => (row[level] ? [] : [region]))
+    const belowSet = regionSet.every((row) => row.slice(0, level).every(Boolean))
+    if (winners.length === 1 && belowSet) {
+      price = level
+      winner = winners[0]
+    }
+  }
+  return { kind: 'region', bidders: n, copies: 1, price, winner, set: regionSet, unusedGroupsZero }
 }
 
 /** Read a region auction. Region `k` is the region of bidder position `k`. */

@@ -2,16 +2,21 @@
 # Compile the bid circuits, write their Solidity verifiers, and compute the VK anchors the program
 # contract pins.
 #
-# A bid is a tree of four circuits, each below 2^21 gates so that a browser can prove it (the WASM
-# heap is 4 GiB):
+# A bid is a tree of circuits, each below 2^21 gates so that a browser can prove it (the WASM heap
+# is 4 GiB):
 #   auction_bid_pair    the proofs of the roles 0 and 1, and the bid itself  (recursive proof)
 #   auction_bid_masks   the proofs of the roles 2 and 3, the pair mask        (recursive proof, type 3)
+#   auction_bid2        the pair proof only, type 4         (EVM verifier AuctionVerifier2)
 #   auction_bid3        the pair proof and the proof of role 2  (EVM verifier AuctionVerifier3)
 #   auction_bid4        the pair proof and the masks proof      (EVM verifier AuctionVerifier4)
+#   auction_mask        the proof of a provider mask, type 4    (EVM verifier AuctionMaskVerifier)
 #
 # Each anchor covers the Interfold user-data encryption tree as the SDK bundles it for the insecure
 # SIMD preset (the key hash of the wrapper and the two per-leg chains) and the inner circuits of its
-# bid tree. `auction_bid3` returns `vkAnchor3` and `auction_bid4` returns `vkAnchor4` as `vk_anchor`.
+# tree. `auction_bid2` returns `vkAnchor2`, `auction_bid3` returns `vkAnchor3`, `auction_bid4`
+# returns `vkAnchor4` and `auction_mask` returns `vkAnchorMask` as `vk_anchor`. `vkAnchor2` equals
+# `vkAnchor3`: both cover the wrapper and the pair circuit. Each verifier contract is its own
+# circuit, so the contracts keep the anchors apart.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -48,7 +53,7 @@ to_file() {
 }
 
 echo "Compiling the bid circuits..."
-for dir in pair masks bid3 bid4; do
+for dir in pair masks bid2 bid3 bid4 mask; do
   (cd "$CIRCUITS/$dir" && nargo compile)
 done
 
@@ -84,31 +89,34 @@ leg_chain() {
 to_file "$(leg_chain ct0)" "$TMP/ct0_chain"
 to_file "$(leg_chain ct1)" "$TMP/ct1_chain"
 ude="$VK/user_data_encryption_chunked/vk_hash"
+anchor2="$(vk_hash "$ude" "$TMP/ct0_chain" "$TMP/ct1_chain" "$VK/auction_bid_pair/vk_hash")"
 anchor3="$(vk_hash "$ude" "$TMP/ct0_chain" "$TMP/ct1_chain" "$VK/auction_bid_pair/vk_hash")"
 anchor4="$(vk_hash "$ude" "$TMP/ct0_chain" "$TMP/ct1_chain" "$VK/auction_bid_pair/vk_hash" "$VK/auction_bid_masks/vk_hash")"
-printf '{\n  "vkAnchor3": "%s",\n  "vkAnchor4": "%s"\n}\n' "$anchor3" "$anchor4" >"$ANCHOR"
-echo "VK anchors: $anchor3 (3 roles), $anchor4 (4 roles)"
+anchor_mask="$(vk_hash "$ude" "$TMP/ct0_chain" "$TMP/ct1_chain")"
+printf '{\n  "vkAnchor2": "%s",\n  "vkAnchor3": "%s",\n  "vkAnchor4": "%s",\n  "vkAnchorMask": "%s"\n}\n' \
+  "$anchor2" "$anchor3" "$anchor4" "$anchor_mask" >"$ANCHOR"
+echo "VK anchors: $anchor2 (2 roles), $anchor3 (3 roles), $anchor4 (4 roles), $anchor_mask (mask)"
 
 # `bb` writes every verifier with the same top-level names (`Fr`, `Honk`, `HonkVerifier`, ...), which
 # collide when two are in one project. Suffix each top-level identifier with `$2`, and name the
-# verifier contract `AuctionVerifier$2`. The libraries (`ZKTranscriptLib$2`, `RelationsLib$2`) are
-# linked on deployment. In an `assembly` block `add`, `sub` and `mul` are the EVM opcodes, so they
+# verifier contract `$3`. The libraries (`ZKTranscriptLib$2`, `RelationsLib$2`) are linked on
+# deployment. In an `assembly` block `add`, `sub` and `mul` are the EVM opcodes, so they
 # keep their names there.
 suffix_verifier() {
-  local source="$1" suffix="$2" names
+  local source="$1" suffix="$2" contract="$3" names
   names="$(perl -ne '
     print "$1\n" if /^(?:abstract\s+)?(?:contract|library|interface|struct|enum)\s+(\w+)/
       || /^type\s+(\w+)\s+is/ || /^function\s+(\w+)/ || /^error\s+(\w+)/
       || /^[\w.\[\]]+\s+constant\s+(\w+)/;
   ' "$source" | sort -u | grep -vx HonkVerifier | paste -sd'|' -)"
-  NAMES="$names" SUFFIX="$suffix" perl -e '
-    my ($names, $suffix, $depth) = ($ENV{NAMES}, $ENV{SUFFIX}, 0);
+  NAMES="$names" SUFFIX="$suffix" CONTRACT="$contract" perl -e '
+    my ($names, $suffix, $contract, $depth) = ($ENV{NAMES}, $ENV{SUFFIX}, $ENV{CONTRACT}, 0);
     (my $yul = $names) =~ s/\b(?:add|sub|mul)\b\|?//g;
     $yul =~ s/\|$//;
     while (<>) {
       my $in_asm = $depth > 0 || /\bassembly\b/;
       my $re = $in_asm ? $yul : $names;
-      s/(?<![\w\$])(?:($re)|HonkVerifier)(?!\w)/defined($1) ? "$1$suffix" : "AuctionVerifier$suffix"/ge;
+      s/(?<![\w\$])(?:($re)|HonkVerifier)(?!\w)/defined($1) ? "$1$suffix" : $contract/ge;
       if ($in_asm) {
         my $tail = /\bassembly\b/ ? substr($_, index($_, "assembly")) : $_;
         $depth += () = $tail =~ /\{/g;
@@ -119,11 +127,14 @@ suffix_verifier() {
   ' "$source"
 }
 
-for n in 3 4; do
-  echo "Writing the Solidity verifier of auction_bid$n..."
-  mkdir -p "$VK/auction_bid$n"
-  bb write_vk -b "$CIRCUITS/bid$n/target/auction_bid$n.json" -o "$VK/auction_bid$n" -t evm >/dev/null
-  bb write_solidity_verifier -k "$VK/auction_bid$n/vk" -o "$TMP/verifier$n.sol" -t evm >/dev/null
+# `write_verifier CIRCUIT_DIR NAME SUFFIX CONTRACT`: the Solidity verifier of `circuits/CIRCUIT_DIR`
+# (the package `NAME`) in `contracts/verifiers/CONTRACT.sol`.
+write_verifier() {
+  local dir="$1" name="$2" suffix="$3" contract="$4"
+  echo "Writing the Solidity verifier of $name..."
+  mkdir -p "$VK/$name"
+  bb write_vk -b "$CIRCUITS/$dir/target/$name.json" -o "$VK/$name" -t evm >/dev/null
+  bb write_solidity_verifier -k "$VK/$name/vk" -o "$TMP/verifier_$suffix.sol" -t evm >/dev/null
   {
     printf '%s\n' \
       '// SPDX-License-Identifier: LGPL-3.0-only' \
@@ -132,9 +143,14 @@ for n in 3 4; do
       '// without even the implied warranty of MERCHANTABILITY' \
       '// or FITNESS FOR A PARTICULAR PURPOSE.' \
       '//' \
-      "// Generated by scripts/compile_circuits.sh from circuits/bid$n. Do not edit."
-    tail -n +3 "$TMP/verifier$n.sol" >"$TMP/body$n.sol"
-    suffix_verifier "$TMP/body$n.sol" "$n"
-  } >"$VERIFIERS/AuctionVerifier$n.sol"
-  echo "Wrote $VERIFIERS/AuctionVerifier$n.sol"
-done
+      "// Generated by scripts/compile_circuits.sh from circuits/$dir. Do not edit."
+    tail -n +3 "$TMP/verifier_$suffix.sol" >"$TMP/body_$suffix.sol"
+    suffix_verifier "$TMP/body_$suffix.sol" "$suffix" "$contract"
+  } >"$VERIFIERS/$contract.sol"
+  echo "Wrote $VERIFIERS/$contract.sol"
+}
+
+write_verifier bid2 auction_bid2 2 AuctionVerifier2
+write_verifier bid3 auction_bid3 3 AuctionVerifier3
+write_verifier bid4 auction_bid4 4 AuctionVerifier4
+write_verifier mask auction_mask Mask AuctionMaskVerifier

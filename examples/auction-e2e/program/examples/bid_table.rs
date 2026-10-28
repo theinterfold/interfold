@@ -17,6 +17,9 @@
 //! the slots `2c * LEVELS + l` and `(2c + 1) * LEVELS + l` hold the same value. Its unit
 //! `c * LEVELS + l` has 1 in those two slots and 0 elsewhere.
 //!
+//! A provider mask (the auction type 4) has 128 free slot values, each in `1..t`. Its unit `s` has
+//! 1 in the slot `s` and 0 elsewhere.
+//!
 //! Run it from `examples/auction-e2e`:
 //!
 //! ```text
@@ -122,6 +125,28 @@ fn main() -> Result<()> {
         "the pair units do not combine to a direct encoding"
     );
 
+    // The slot units: `slot_unit[s]` is the k1 of the plaintext with 1 in slot `s` and 0 elsewhere.
+    // A provider mask is a combination of them, with one nonzero value for each slot.
+    let slot_unit: Vec<Vec<u64>> = (0..degree)
+        .map(|slot| {
+            let slots: Vec<u64> = (0..degree).map(|i| u64::from(i == slot)).collect();
+            Ok(to_k1(&polynomial(&slots)?))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mask_values: Vec<u64> = (0..degree).map(|s| (s as u64 * 53 + 7) % (t - 1) + 1).collect();
+    let mask_combined: Vec<u64> = (0..degree)
+        .map(|i| {
+            mask_values
+                .iter()
+                .zip(&slot_unit)
+                .fold(0u64, |acc, (&v, row)| (acc + v * row[i]) % t)
+        })
+        .collect();
+    ensure!(
+        to_k1(&polynomial(&mask_values)?) == mask_combined,
+        "the slot units do not combine to a direct encoding"
+    );
+
     println!("// SPDX-License-Identifier: LGPL-3.0-only");
     println!("//");
     println!("// This file is provided WITHOUT ANY WARRANTY;");
@@ -156,6 +181,13 @@ fn main() -> Result<()> {
     println!("/// the groups `2c` and `2c + 1`, and 0 elsewhere.");
     println!("pub global TABLE_PAIR_UNIT: [[Field; TABLE_N]; PAIR_UNITS] = [");
     for row in &pair_unit {
+        let cells: Vec<String> = row.iter().map(u64::to_string).collect();
+        println!("    [{}],", cells.join(", "));
+    }
+    println!("];");
+    println!("/// `TABLE_SLOT_UNIT[s]` is `k1` of the SIMD plaintext that is 1 in slot `s`, and 0 elsewhere.");
+    println!("pub global TABLE_SLOT_UNIT: [[Field; TABLE_N]; TABLE_N] = [");
+    for row in &slot_unit {
         let cells: Vec<String> = row.iter().map(u64::to_string).collect();
         println!("    [{}],", cells.join(", "));
     }

@@ -5,14 +5,12 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import React, { useEffect, useState } from 'react'
-import { bytesToHex, hexToBytes, type Address, type Hex } from 'viem'
-import { computeCiphertextCommitment } from '@interfold/sdk'
+import type { Address } from 'viem'
 import {
   type AuctionResult,
   AuctionType,
   type LaneResult,
   MIN_BIDDERS,
-  PRESET,
   type RegionResult,
   type SelectedBid,
   type SubmittedBid,
@@ -20,6 +18,7 @@ import {
   selectBids,
 } from '@interfold/auction'
 import { type AuctionState, formatPrice } from '@/utils/auction'
+import { opensCommitment } from '@/utils/commitments'
 import { readSubmittedBids } from '@/utils/auction-events'
 import type { StoredVersion } from '@/utils/bid-storage'
 import { formatError } from '@/utils/error-formatting'
@@ -47,17 +46,7 @@ interface Decoded {
  * must open the commitment the bidder published. The same rule as `select` in the program.
  */
 async function selectCountedBids(bids: SubmittedBid[]): Promise<{ bidders: SelectedBid[]; outcomes: BidderOutcome[] }> {
-  const recomputed = new Map<Hex, string>()
-  await Promise.all(
-    [...new Set(bids.flatMap((bid) => bid.ciphertexts))].map(async (ciphertext) => {
-      try {
-        recomputed.set(ciphertext, bytesToHex(await computeCiphertextCommitment(hexToBytes(ciphertext), PRESET)))
-      } catch {
-        // Bytes that are no ciphertext open no commitment: the ciphertext is left out of the map.
-      }
-    }),
-  )
-  const bidders = selectBids(bids, (ciphertext, commitment) => recomputed.get(ciphertext) === commitment.toLowerCase())
+  const bidders = selectBids(bids, await opensCommitment(bids.flatMap((bid) => bid.ciphertexts)))
   const outcomes = new Map<string, BidderOutcome>()
   for (const { bidder, version } of bids) {
     const key = bidder.toLowerCase()
@@ -82,6 +71,8 @@ const PRICE_EXPLANATION: Record<AuctionType, string> = {
     'First-price auction with ratio lanes: the winner pays their own bid, which is the highest bid. The committee decrypted the highest bid and the set of bidders that tied for it. If one bidder tied, that bidder won. If more tied, the tied bidder who bid first won. No other bid was revealed.',
   [AuctionType.RatioSecondPrice]:
     'Second-price auction with ratio lanes: the winner pays the second-highest bid. The committee decrypted that price and the set of winning bidders. If the top bids tied, that set holds every tied bidder, their bids equal the price, and the tied bidder who bid first won. Without a tie the winner’s bid stays secret.',
+  [AuctionType.ProviderSecondPrice]:
+    'Second-price auction with mask providers: the winner pays the second-highest bid. The committee decrypted a pattern of zeros and random numbers, and the pattern shows only the winner and that price; the winning bid itself stays secret. The mask providers made the random numbers, and none of them is zero, so the pattern always reads.',
 }
 
 const PRICE_CAPTION: Record<AuctionType, string> = {
@@ -89,6 +80,7 @@ const PRICE_CAPTION: Record<AuctionType, string> = {
   [AuctionType.SecondPrice]: 'The second-highest bid',
   [AuctionType.RatioFirstPrice]: 'The winning bid',
   [AuctionType.RatioSecondPrice]: 'The second-highest bid (the top bid, if the top bids tied)',
+  [AuctionType.ProviderSecondPrice]: 'The second-highest bid',
 }
 
 interface ResultPanelProps {
@@ -186,8 +178,9 @@ export const ResultView: React.FC<ResultViewProps> = ({ auction, account, myVers
       {result.kind === 'region' ? (
         (winner === null || price === null) && (
           <div role='alert' className='note bad'>
-            The result does not show a single winner. A slot that should hold a random value read as zero by mistake (about 1 in 257 per
-            slot and copy on these demo parameters). Run the auction again.
+            {auction.auctionType === AuctionType.ProviderSecondPrice
+              ? 'The result does not show a single winner. With mask providers this cannot happen by chance, so the output is not from the auction program.'
+              : 'The result does not show a single winner. A slot that should hold a random value read as zero by mistake (about 1 in 257 per slot and copy on these demo parameters). Run the auction again.'}
           </div>
         )
       ) : (

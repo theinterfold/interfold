@@ -6,24 +6,26 @@
 
 import React, { useMemo, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import { AUCTION_TYPE_DESCRIPTIONS, AUCTION_TYPE_LABELS, MAX_BIDDERS_BY_TYPE, isRatioType } from '@interfold/auction'
+import { AUCTION_TYPE_DESCRIPTIONS, AUCTION_TYPE_LABELS, MAX_BIDDERS_BY_TYPE, isProviderType, isRatioType } from '@interfold/auction'
 import { useAuction } from '@/hooks/useAuctions'
 import { useChainTime } from '@/hooks/useChainTime'
 import { useCommitteeKey } from '@/hooks/useCommitteeKey'
 import { useAllowlist, gateKind as gateKindOf } from '@/hooks/useAllowlist'
 import { useBidCount } from '@/hooks/useBidCount'
 import { useWallet } from '@/hooks/useWallet'
-import { formatDateTime, phaseOf, timeLeftLabel } from '@/utils/auction'
+import { formatDateTime, maskCount, phaseOf, timeLeftLabel } from '@/utils/auction'
 import { shortId } from '@/utils/format'
 import { loadVersions } from '@/utils/bid-storage'
 import { chain } from '@/utils/chain'
 import { getContractAddresses } from '@/utils/env-config'
 import { Pips } from '@/components/AuctionCard'
 import BidPanel from '@/components/BidPanel'
+import MaskPanel from '@/components/MaskPanel'
 import CopyId from '@/components/CopyId'
 import { AddressLink } from '@/components/Explorer'
 import { PictureControl, PictureHero, usePicture } from '@/components/AuctionPicture'
 import PhaseTimeline from '@/components/PhaseTimeline'
+import ProviderAuctionExplainer from '@/components/ProviderAuctionExplainer'
 import ResultPanel from '@/components/ResultPanel'
 import Section from '@/components/Section'
 import Spinner from '@/components/Spinner'
@@ -151,6 +153,13 @@ const AuctionPage: React.FC = () => {
             </span>
           )}
         </Fact>
+        {isProviderType(auction.auctionType) && (
+          <Fact label='Mask providers'>
+            <span className='font-mono text-xs'>
+              {maskCount(auction)}/{auction.providers.length} masks sent
+            </span>
+          </Fact>
+        )}
         <Fact label='Top tie'>
           {isRatioType(auction.auctionType)
             ? 'The tied bidder who bid first wins. The tie is public'
@@ -172,6 +181,12 @@ const AuctionPage: React.FC = () => {
       </dl>
 
       {error && <div className='note bad'>Could not refresh the auction: {error}</div>}
+
+      {isProviderType(auction.auctionType) && (
+        <Section title='Mask providers'>
+          <MaskPanel auction={auction} phase={phase} wallet={wallet} committeeKey={committeeKey} onSubmitted={onSubmitted} />
+        </Section>
+      )}
 
       <div className='grid items-start gap-8 lg:grid-cols-[1fr_1.25fr]'>
         <Section title='Progress'>
@@ -205,6 +220,12 @@ const AuctionPage: React.FC = () => {
           </div>
         )}
       </Section>
+
+      {isProviderType(auction.auctionType) && (
+        <Section title='How this auction works'>
+          <ProviderAuctionExplainer />
+        </Section>
+      )}
     </div>
   )
 }
