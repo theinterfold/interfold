@@ -15,6 +15,12 @@ chain-independent aggregate zero cannot arrive through peer history. Validate be
 admission. Most protocol payloads still lack explicit per-type schema versions; later domain
 admission checks signatures/committee statements.
 
+Bound inbound connections before admission. One IPv4 address or IPv6 /56 holds at most **8**
+pending or established inbound connections; loopback is exempt. At most **16** inbound connections
+wait for Identify; a new one over that closes the oldest waiting connection of the address group
+with the most waiting connections. A peer that completes Identify still holds its slots, and no
+slots are reserved for registered operators: a peer ID is not bound to an operator address.
+
 Never offer the old unscoped protocol as fallback. Mainnet/Sepolia DNS bootstrap aliases are
 distinct; retired bootstrap addresses are not compiled defaults. Legacy records in the wrong
 aggregate can be quarantined without deleting operator data. Permanent compatibility failures differ

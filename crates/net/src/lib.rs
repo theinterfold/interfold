@@ -16,6 +16,7 @@ mod event_subscription;
 pub mod events;
 mod gossip_ingress;
 mod gossip_subscription_health;
+mod inbound_ip_limits;
 mod ingress_limits;
 mod keypair;
 mod live_history;
