@@ -7,10 +7,23 @@
 use crate::domain::backends::SortitionBackend;
 use crate::domain::failover::AggregatorFailoverState;
 use crate::domain::node_registry::NodeStateStore;
-use crate::{BondOwnerState, CiphernodeSelectorState, SortitionRecoveryState};
+use crate::{
+    BondOwnerState, CiphernodeSelectorState, CommitteeFinalizerRecoveryState,
+    SortitionRecoveryState,
+};
 use e3_data::{Repositories, Repository};
 use e3_events::{Committee, E3id, StoreKeys};
 use std::collections::HashMap;
+
+pub trait CommitteeFinalizerRepositoryFactory {
+    fn committee_finalizer_recovery(&self) -> Repository<CommitteeFinalizerRecoveryState>;
+}
+
+impl CommitteeFinalizerRepositoryFactory for Repositories {
+    fn committee_finalizer_recovery(&self) -> Repository<CommitteeFinalizerRecoveryState> {
+        Repository::new(self.store.scope(StoreKeys::committee_finalizer_recovery()))
+    }
+}
 
 pub trait SortitionRepositoryFactory {
     fn sortition(&self) -> Repository<HashMap<u64, SortitionBackend>>;

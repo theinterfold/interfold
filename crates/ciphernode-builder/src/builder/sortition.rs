@@ -10,9 +10,9 @@ use super::restart::terminal_e3s;
 use crate::recovery::reconcile_committee_snapshots;
 use actix::Addr;
 use anyhow::Result;
-use e3_aggregator::CommitteeFinalizerRepositoryFactory;
 use e3_events::BusHandle;
 use e3_request::E3LifecycleRepositoryFactory;
+use e3_sortition::CommitteeFinalizerRepositoryFactory;
 use e3_sortition::{
     AggregatorFailoverRepositoryFactory, CiphernodeSelector, CiphernodeSelectorFactory,
     CiphernodeSelectorState, FinalizedCommitteesRepositoryFactory, GetCiphernodeSelectorState,
@@ -92,11 +92,11 @@ mod tests {
 
     #[actix::test]
     async fn startup_keeps_existing_ticket_intents_without_reranking() -> anyhow::Result<()> {
-        use e3_aggregator::{CommitteeFinalizerRecoveryState, CommitteeFinalizerRepositoryFactory};
         use e3_events::{
             E3Requested, EffectsEnabled, EventConstructorWithTimestamp, EventSource, GetEvents,
             InterfoldEvent, TicketGenerated, TicketId, TypedEvent, Unsequenced,
         };
+        use e3_sortition::{CommitteeFinalizerRecoveryState, CommitteeFinalizerRepositoryFactory};
         use e3_sortition::{SortitionRecoveryRepositoryFactory, SortitionRecoveryState};
 
         let system = e3_event_system::EventSystem::new().with_fresh_bus();
@@ -160,13 +160,13 @@ mod tests {
 
     #[actix::test]
     async fn non_aggregator_restart_keeps_ticket_before_or_after_snapshot() -> anyhow::Result<()> {
-        use e3_aggregator::{CommitteeFinalizerRecoveryState, CommitteeFinalizerRepositoryFactory};
         use e3_events::{
             AggregateConfig, AggregateId, E3Requested, EffectsEnabled,
             EventConstructorWithTimestamp, EventPublisher, EventSource, GetEvents, InterfoldEvent,
             TicketGenerated, TicketId, TypedEvent, Unsequenced,
         };
         use e3_request::E3LifecycleRepositoryFactory;
+        use e3_sortition::{CommitteeFinalizerRecoveryState, CommitteeFinalizerRepositoryFactory};
         use e3_sortition::{SortitionRecoveryRepositoryFactory, SortitionRecoveryState};
         use e3_sync::SyncRepositoryFactory;
 

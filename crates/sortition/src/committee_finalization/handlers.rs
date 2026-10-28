@@ -35,7 +35,6 @@ impl Handler<InterfoldEvent> for CommitteeFinalizer {
 impl Handler<TypedEvent<CommitteeRequested>> for CommitteeFinalizer {
     type Result = ();
 
-    // TODO: Remove all async from this function. Remove reliance on e3_evm package. Add unit test.
     fn handle(
         &mut self,
         msg: TypedEvent<CommitteeRequested>,

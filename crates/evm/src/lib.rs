@@ -16,6 +16,7 @@ mod actors;
 mod adapters;
 pub mod canonical_key;
 mod chain_system;
+mod chain_time;
 mod chains;
 mod contracts;
 mod dkg_timing;
@@ -40,6 +41,7 @@ pub use adapters::ingestion_progress::{
     INGESTION_EXPECTATION_FILE,
 };
 pub use chain_system::*;
+pub use chain_time::committee_chain_time_reader;
 pub use chains::{validate_chain_id, Chain, Chains, EnabledChain};
 pub use contracts::ICiphernodeRegistry;
 pub use dkg_timing::{read_canonical_dkg_timing, CanonicalDkgTiming};
