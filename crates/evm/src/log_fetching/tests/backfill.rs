@@ -453,7 +453,7 @@ async fn the_historical_sync_reports_each_chunk() {
     let mut window = LogWindow::new();
     let filter = Filter::new();
 
-    fetch_logs_chunked(
+    sync_range(
         &mock,
         &filter,
         0,

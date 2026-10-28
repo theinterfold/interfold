@@ -14,7 +14,7 @@ async fn test_fetch_logs_empty_range() {
     let mut window = LogWindow::new();
     let filter = Filter::new();
 
-    let result = fetch_logs_chunked(
+    let result = sync_range(
         &mock,
         &filter,
         200,
@@ -81,7 +81,7 @@ async fn timestamp_rpc_failure_prevents_log_dispatch() {
     let mut tracker = TimestampTracker::new();
     let mut window = LogWindow::new();
 
-    let error = fetch_logs_chunked(
+    let error = sync_range(
         &mock,
         &Filter::new(),
         100,
@@ -114,7 +114,7 @@ async fn test_fetch_logs_single_chunk() {
     let mut window = LogWindow::new();
     let filter = Filter::new();
 
-    let result = fetch_logs_chunked(
+    let result = sync_range(
         &mock,
         &filter,
         0,
@@ -152,7 +152,7 @@ async fn test_fetch_logs_multiple_chunks() {
     let mut window = LogWindow::new();
     let filter = Filter::new();
 
-    let result = fetch_logs_chunked(
+    let result = sync_range(
         &mock,
         &filter,
         0,
@@ -182,7 +182,7 @@ async fn test_fetch_logs_retry_then_success() {
     let mut window = LogWindow::new();
     let filter = Filter::new();
 
-    let result = fetch_logs_chunked(
+    let result = sync_range(
         &mock,
         &filter,
         0,
@@ -213,7 +213,7 @@ async fn test_fetch_logs_all_retries_exhausted() {
     let mut window = LogWindow::new();
     let filter = Filter::new();
 
-    let result = fetch_logs_chunked(
+    let result = sync_range(
         &mock,
         &filter,
         0,
@@ -234,6 +234,146 @@ async fn test_fetch_logs_all_retries_exhausted() {
     assert_eq!(mock.get_logs_call_count(), GET_LOGS_MAX_RETRIES);
 }
 
+/// A failed attempt keeps the chunks that it dispatched: the retry reads on from the failed chunk,
+/// to the head that the first attempt read, and sends no log twice.
+#[actix::test]
+async fn a_failed_sync_resumes_after_the_chunks_it_dispatched() {
+    tokio::time::pause(); // Skip retry delays
+
+    let mock = MockLogProvider::new(19);
+    let (next, mut rx) = setup_collector();
+    let mut ts = TimestampTracker::new();
+    let mut window = LogWindow::with_max(10);
+    let mut sync = HistoricalSync::new(0);
+
+    // Blocks 0..=9 are served, and every try at blocks 10..=19 fails.
+    mock.push_logs(vec![make_timestamped_log(5, 1_005)]);
+    for _ in 0..GET_LOGS_MAX_RETRIES {
+        mock.push_error("connection reset");
+    }
+    sync.run(
+        &mock,
+        &Filter::new(),
+        0,
+        1,
+        &next,
+        &mut ts,
+        &mut window,
+        None,
+    )
+    .await
+    .expect_err("the second chunk fails");
+
+    // A recreated provider that lags behind the end of the sync is refused before it fetches: it
+    // could answer an empty range for the blocks that it does not have yet.
+    mock.set_block_number(15);
+    sync.run(
+        &mock,
+        &Filter::new(),
+        0,
+        1,
+        &next,
+        &mut ts,
+        &mut window,
+        None,
+    )
+    .await
+    .expect_err("a provider behind the end of the sync is refused");
+
+    // Once the provider has caught up, the retry resumes at the failed chunk.
+    mock.set_block_number(19);
+    mock.push_logs(vec![make_timestamped_log(12, 1_012)]);
+    let head = sync
+        .run(
+            &mock,
+            &Filter::new(),
+            0,
+            1,
+            &next,
+            &mut ts,
+            &mut window,
+            None,
+        )
+        .await
+        .expect("the retry completes the sync");
+
+    assert_eq!(head, 19);
+    // One request for the first chunk; the failed and the served requests for the second.
+    assert_eq!(mock.get_logs_call_count(), GET_LOGS_MAX_RETRIES + 2);
+    let mut dispatched = Vec::new();
+    for _ in 0..2 {
+        let Some(InterfoldEvmEvent::Log(log)) = rx.recv().await else {
+            panic!("the sync dispatches only logs");
+        };
+        dispatched.push(log);
+    }
+    let blocks: Vec<_> = dispatched.iter().map(|log| log.log.block_number).collect();
+    assert_eq!(blocks, vec![Some(5), Some(12)]);
+    assert_eq!(sync.last_id(), Some(dispatched[1].id));
+    tokio::task::yield_now().await;
+    assert!(rx.try_recv().is_err(), "a log was dispatched twice");
+}
+
+/// A timestamp that cannot be resolved in the middle of a chunk sends nothing from that chunk, so
+/// the retry sends each of its logs once.
+#[actix::test]
+async fn a_failed_timestamp_sends_nothing_from_its_chunk() {
+    tokio::time::pause(); // Skip retry delays
+
+    let mock = MockLogProvider::new(10);
+    let (next, mut rx) = setup_collector();
+    let mut ts = TimestampTracker::new();
+    let mut window = LogWindow::new();
+    let mut sync = HistoricalSync::new(0);
+
+    // One chunk with two logs whose blocks need a timestamp lookup. The second lookup fails.
+    mock.push_logs(vec![make_test_log(3), make_test_log(7)]);
+    mock.push_timestamp(1_003);
+    for _ in 0..BLOCK_TIMESTAMP_MAX_ATTEMPTS {
+        mock.push_timestamp_error("block not found");
+    }
+    sync.run(
+        &mock,
+        &Filter::new(),
+        0,
+        1,
+        &next,
+        &mut ts,
+        &mut window,
+        None,
+    )
+    .await
+    .expect_err("the second timestamp fails");
+    tokio::task::yield_now().await;
+    assert!(rx.try_recv().is_err(), "the failed chunk sent a log");
+
+    mock.push_logs(vec![make_test_log(3), make_test_log(7)]);
+    mock.push_timestamp(1_007);
+    sync.run(
+        &mock,
+        &Filter::new(),
+        0,
+        1,
+        &next,
+        &mut ts,
+        &mut window,
+        None,
+    )
+    .await
+    .expect("the retry completes the sync");
+
+    let mut blocks = Vec::new();
+    for _ in 0..2 {
+        let Some(InterfoldEvmEvent::Log(log)) = rx.recv().await else {
+            panic!("the sync dispatches only logs");
+        };
+        blocks.push(log.log.block_number);
+    }
+    assert_eq!(blocks, vec![Some(3), Some(7)]);
+    tokio::task::yield_now().await;
+    assert!(rx.try_recv().is_err(), "a log was dispatched twice");
+}
+
 #[actix::test]
 async fn a_rejected_range_is_retried_narrower_and_covers_every_block() {
     // The provider refuses anything wider than 2,500 blocks. The first two attempts are rejected,
@@ -250,7 +390,7 @@ async fn a_rejected_range_is_retried_narrower_and_covers_every_block() {
     let mut window = LogWindow::new();
     let filter = Filter::new();
 
-    let result = fetch_logs_chunked(
+    let result = sync_range(
         &mock,
         &filter,
         0,
@@ -290,7 +430,7 @@ async fn a_narrowed_window_is_kept_for_later_chunks() {
     let mut ts = TimestampTracker::new();
     let mut window = LogWindow::new();
 
-    fetch_logs_chunked(
+    sync_range(
         &mock,
         &Filter::new(),
         0,
@@ -324,7 +464,7 @@ async fn a_range_error_does_not_consume_the_retry_budget() {
     let mut ts = TimestampTracker::new();
     let mut window = LogWindow::new();
 
-    let result = fetch_logs_chunked(
+    let result = sync_range(
         &mock,
         &Filter::new(),
         0,
@@ -358,7 +498,7 @@ async fn a_provider_that_rejects_every_range_fails_with_an_actionable_error() {
     let mut ts = TimestampTracker::new();
     let mut window = LogWindow::new();
 
-    let error = fetch_logs_chunked(
+    let error = sync_range(
         &mock,
         &Filter::new(),
         0,
@@ -393,7 +533,7 @@ async fn a_rate_limit_error_is_retried_without_narrowing_the_window() {
     let mut ts = TimestampTracker::new();
     let mut window = LogWindow::new();
 
-    let result = fetch_logs_chunked(
+    let result = sync_range(
         &mock,
         &Filter::new(),
         0,
@@ -429,7 +569,7 @@ async fn a_whole_chunk_of_timestamped_logs_sends_no_timestamp_requests() {
     let mut ts = TimestampTracker::new();
     let mut window = LogWindow::new();
 
-    fetch_logs_chunked(
+    sync_range(
         &mock,
         &Filter::new(),
         0,
