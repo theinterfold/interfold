@@ -16,7 +16,7 @@ use crate::domain::slash_submission::{
     classify_slash_policy, is_slashable_outcome, slash_reason, SlashIntentKey, SlashSubmission,
     SlashSubmissionDecision, SlashSubmissionGate, SubmissionReport, SubmissionStep,
 };
-use crate::helpers::{transaction_nonce_guard, EthProvider};
+use crate::helpers::{send_with_next_nonce, EthProvider};
 use crate::send_tx_with_retry;
 use actix::prelude::*;
 use actix::Addr;
