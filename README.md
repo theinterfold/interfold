@@ -190,17 +190,17 @@ pnpm test:integration --no-prebuild
 				</a>
 			</td>
 			<td align="center">
-				<a href="https://github.com/nginnever">
-					<img src="https://avatars.githubusercontent.com/u/7103153?v=4" width="100;" alt="nginnever"/>
-					<br />
-					<sub><b>Nathan Ginnever</b></sub>
-				</a>
-			</td>
-			<td align="center">
 				<a href="https://github.com/neogiacomo">
 					<img src="https://avatars.githubusercontent.com/u/20580910?v=4" width="100;" alt="neogiacomo"/>
 					<br />
 					<sub><b>Giacomo Corrias</b></sub>
+				</a>
+			</td>
+			<td align="center">
+				<a href="https://github.com/nginnever">
+					<img src="https://avatars.githubusercontent.com/u/7103153?v=4" width="100;" alt="nginnever"/>
+					<br />
+					<sub><b>Nathan Ginnever</b></sub>
 				</a>
 			</td>
 			<td align="center">
