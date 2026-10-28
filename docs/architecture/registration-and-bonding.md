@@ -140,6 +140,31 @@ preserves other pooled liabilities. Decimal checks establish scale, not market v
 Fee-token/raw-price configuration is separate and atomic; `setRandomnessFlatFee` changes only its
 nonzero raw-unit charge.
 
+## Owner identity
+
+`setIdentityPolicy(registry,required)` (owner only) checkpoints an identity policy in its own
+namespace and emits `IdentityPolicyUpdated`; those events are the policy history, and no view
+returns it. An unset or disabled policy requires no identity. A required policy needs a deployed
+`OwnerIdentityRegistry`: `eligibilityAt(operator,T−1)` then also requires
+`isVerifiedAt(bondOwnerAt(operator,T−1),T−1)`, and owner transfers check identity before they move
+counted capacity. One verified owner may fund many operators; the selection cap still gives each
+owner one seat.
+
+`OwnerIdentityRegistry.register(evidence)` passes the caller as the owner to the governance-set
+`IIdentityVerifier`, which must bind the credential to that owner, and checkpoints the result. Each
+identifier stays reserved to its first owner through replacement, expiry, and revocation.
+Registration cannot shorten an existing expiry, so governance revokes first. Expiry and revocation
+keep earlier snapshot answers. `setVerifier` accepts any verifier: a replacement that derives other
+identifiers lets every registered credential claim a second owner, so it needs a new registry.
+
+Every policy change resets counted owner capacity. Requests fail capacity closed until
+`refreshOperatorStatuses` counts the operators again, so refresh after each change. Under a required
+policy, capacity also reads zero past the earliest counted credential expiry or after any revocation
+until a refresh rebuilds it, even when that owner renewed. Rust does not apply the identity policy
+to its owner shortlist yet, so enabling `required` before a node release that does would make
+verified nodes misjudge selection. An identifier proves what its verifier proves (for a document
+verifier, one document rather than one person); it does not stop identity rental.
+
 ## Deactivation and exit
 
 Removing tickets or unbonding can make an operator inactive without removing its IMT leaf.
@@ -188,9 +213,12 @@ routes drain. Default-admin handover uses the two-day `AccessControlDefaultAdmin
   [admission tests](../../packages/interfold-contracts/test/Registry/BondingAdmission.spec.ts),
   [ticket tests](../../packages/interfold-contracts/test/Token/InterfoldTicketToken.spec.ts), and
   [exit queue tests](../../packages/interfold-contracts/test/Registry/ExitQueueLib.spec.ts) own
-  financial and authorization behavior. [CLI secret tests](../../crates/cli/tests/cli_secrets.rs)
-  own process argument exposure. Run `pnpm evm:test` and `cargo test -p e3-cli --test cli_secrets`
-  as relevant.
+  financial and authorization behavior.
+  [Identity tests](../../packages/interfold-contracts/test/Registry/BondingIdentity.spec.ts) and
+  [registry tests](../../packages/interfold-contracts/test/Registry/OwnerIdentityRegistry.spec.ts)
+  own the identity gate and credential history.
+  [CLI secret tests](../../crates/cli/tests/cli_secrets.rs) own process argument exposure. Run
+  `pnpm evm:test` and `cargo test -p e3-cli --test cli_secrets` as relevant.
 - [EVM event decoding](../../crates/evm/src/bonding_registry/events.rs) tests typed owner, policy,
   and activity projection inputs. Those tests do not establish complete restart or migration
   behavior.
