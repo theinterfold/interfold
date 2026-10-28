@@ -8,11 +8,16 @@ use lib::configs::default::dkg::{
     L_THRESHOLD, N, SHARE_COMPUTATION_BIT_SHARE, SHARE_COMPUTATION_CHUNK_SIZE,
     SHARE_COMPUTATION_E_SM_BIT_SECRET, SHARE_COMPUTATION_E_SM_CONFIGS, SHARE_COMPUTATION_N_CHUNKS,
 };
-use lib::configs::default::{N_PARTIES, T};
+use lib::configs::default::{
+    E_SM_WIDE, E_SM_WIDE_BIT_HI, E_SM_WIDE_BIT_QUOTIENT, E_SM_WIDE_BOUND_HI, E_SM_WIDE_BOUND_LO,
+    E_SM_WIDE_QUOTIENT_BOUNDS, E_SM_WIDE_RADIX, E_SM_WIDE_SHIFT, E_SM_WIDE_SPAN_HI,
+    E_SM_WIDE_SPAN_LO, N_PARTIES, T,
+};
 use lib::configs::default::threshold::{
     PK_GENERATION_BIT_E_SM_LIFTED, PK_GENERATION_BIT_E_SM_QUOTIENT, PK_GENERATION_E_SM_BOUND,
     PK_GENERATION_E_SM_QUOTIENT_BOUNDS,
 };
+use lib::core::dkg::esm_wide_lift::check_wide_lift;
 use lib::core::dkg::share_computation::{
     centered_residue, check_range_bounds, verify_shamir_finite_differences,
 };
@@ -22,6 +27,16 @@ use lib::math::commitments::{
 use lib::math::polynomial::Polynomial;
 
 pub global CHUNK_PUBLIC_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
+
+/// Number of polynomials in `e_sm_quotients_chunk`: one CRT quotient per modulus, and when the
+/// preset's smudging bound exceeds the field (the two-limb check) the high limb of the lifted noise
+/// as the last entry. The extra entry rides in the quotient array so that a narrow preset keeps the
+/// exact inputs, and the exact circuit, it had before the two-limb check existed.
+global E_SM_QUOTIENT_LIMBS: u32 = L_THRESHOLD + if E_SM_WIDE {
+    1
+} else {
+    0
+};
 
 /// Proves the chunk's residues are those of one integer smudging noise bounded by `e_sm_bound`.
 /// On the l-BFV path no C1 proof carries this bound, so every C2b leaf checks it for its own
@@ -36,21 +51,19 @@ pub global CHUNK_PUBLIC_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
 /// `2^(BIT_E_SM_QUOTIENT + 65)`. With the lifted bound, every term of the relation stays far
 /// below the field prime, so the relation holds over the integers and each residue is the lifted
 /// value modulo `q_l`. A one-sided quotient check is enough for that; it is not a secret bound.
-fn check_e_sm_lift<let CHUNK: u32>(
+fn check_narrow_lift<let CHUNK: u32, let BIT_LIFTED: u32, let BIT_QUOTIENT: u32>(
+    bound: Field,
+    quotient_bounds: [Field; L_THRESHOLD],
     centered: [[Field; CHUNK]; L_THRESHOLD],
     e_sm_lifted_chunk: Polynomial<CHUNK>,
     e_sm_quotients_chunk: [Polynomial<CHUNK>; L_THRESHOLD],
 ) {
-    e_sm_lifted_chunk.range_check_2bounds::<PK_GENERATION_BIT_E_SM_LIFTED>(
-        PK_GENERATION_E_SM_BOUND,
-        PK_GENERATION_E_SM_BOUND,
-    );
+    e_sm_lifted_chunk.range_check_2bounds::<BIT_LIFTED>(bound, bound);
     for mod_idx in 0..L_THRESHOLD {
         let q = SHARE_COMPUTATION_E_SM_CONFIGS.qis[mod_idx];
         for i in 0..CHUNK {
             let quotient = e_sm_quotients_chunk[mod_idx].coefficients[i];
-            (quotient + PK_GENERATION_E_SM_QUOTIENT_BOUNDS[mod_idx])
-                .assert_max_bit_size::<PK_GENERATION_BIT_E_SM_QUOTIENT + 1>();
+            (quotient + quotient_bounds[mod_idx]).assert_max_bit_size::<BIT_QUOTIENT + 1>();
             assert(
                 e_sm_lifted_chunk.coefficients[i] == centered[mod_idx][i] + quotient * q,
                 "Smudging noise CRT consistency failed",
@@ -59,12 +72,56 @@ fn check_e_sm_lift<let CHUNK: u32>(
     }
 }
 
+/// Picks the check by the preset's smudging bound. A bound that fits one field element uses the
+/// one-element lift above. A wider bound uses the two-limb check of `core::dkg::esm_wide_lift`,
+/// with `e_sm_lifted_chunk` as its low limb and the last entry of `e_sm_quotients_chunk` as its
+/// high limb. The unused branch compiles away, so a narrow preset keeps its circuit.
+fn check_e_sm_lift<let CHUNK: u32>(
+    centered: [[Field; CHUNK]; L_THRESHOLD],
+    e_sm_lifted_chunk: Polynomial<CHUNK>,
+    e_sm_quotients_chunk: [Polynomial<CHUNK>; E_SM_QUOTIENT_LIMBS],
+) {
+    let mut quotients: [Polynomial<CHUNK>; L_THRESHOLD] = [Polynomial::new([0; CHUNK]); L_THRESHOLD];
+    for l in 0..L_THRESHOLD {
+        quotients[l] = e_sm_quotients_chunk[l];
+    }
+    if E_SM_WIDE {
+        // `E_SM_QUOTIENT_LIMBS` is `L_THRESHOLD + 1` in this branch.
+        let hi_index = if E_SM_WIDE {
+            L_THRESHOLD
+        } else {
+            0
+        };
+        check_wide_lift::<CHUNK, L_THRESHOLD, E_SM_WIDE_SHIFT, E_SM_WIDE_BIT_HI, E_SM_WIDE_BIT_QUOTIENT>(
+            SHARE_COMPUTATION_E_SM_CONFIGS.qis,
+            E_SM_WIDE_RADIX,
+            E_SM_WIDE_QUOTIENT_BOUNDS,
+            E_SM_WIDE_BOUND_HI,
+            E_SM_WIDE_BOUND_LO,
+            E_SM_WIDE_SPAN_HI,
+            E_SM_WIDE_SPAN_LO,
+            centered,
+            e_sm_lifted_chunk,
+            e_sm_quotients_chunk[hi_index].coefficients,
+            quotients,
+        );
+    } else {
+        check_narrow_lift::<CHUNK, PK_GENERATION_BIT_E_SM_LIFTED, PK_GENERATION_BIT_E_SM_QUOTIENT>(
+            PK_GENERATION_E_SM_BOUND,
+            PK_GENERATION_E_SM_QUOTIENT_BOUNDS,
+            centered,
+            e_sm_lifted_chunk,
+            quotients,
+        );
+    }
+}
+
 fn main(
     chunk_idx: pub u32,
     secret_chunk: [Polynomial<SHARE_COMPUTATION_CHUNK_SIZE>; L_THRESHOLD],
     y_chunk: [[[Field; N_PARTIES + 1]; L_THRESHOLD]; SHARE_COMPUTATION_CHUNK_SIZE],
     e_sm_lifted_chunk: Polynomial<SHARE_COMPUTATION_CHUNK_SIZE>,
-    e_sm_quotients_chunk: [Polynomial<SHARE_COMPUTATION_CHUNK_SIZE>; L_THRESHOLD],
+    e_sm_quotients_chunk: [Polynomial<SHARE_COMPUTATION_CHUNK_SIZE>; E_SM_QUOTIENT_LIMBS],
 ) -> pub [Field; CHUNK_PUBLIC_LEN] {
     assert(chunk_idx < SHARE_COMPUTATION_N_CHUNKS);
 
@@ -128,10 +185,21 @@ fn main(
     out
 }
 
+// The narrow check takes its bounds as arguments, so these tests hold for every preset.
+global TEST_BIT_LIFTED: u32 = 100;
+global TEST_BIT_QUOTIENT: u32 = 3;
+global TEST_BOUND: Field = 0x10000000000000000000000000;
+
+fn test_quotient_bounds() -> [Field; L_THRESHOLD] {
+    [4; L_THRESHOLD]
+}
+
 #[test]
 fn test_e_sm_lift_accepts_small_noise() {
     let lifted = Polynomial::new([7, -5]);
-    check_e_sm_lift(
+    check_narrow_lift::<2, TEST_BIT_LIFTED, TEST_BIT_QUOTIENT>(
+        TEST_BOUND,
+        test_quotient_bounds(),
         [[7, -5]; L_THRESHOLD],
         lifted,
         [Polynomial::new([0, 0]); L_THRESHOLD],
@@ -146,7 +214,9 @@ fn test_e_sm_lift_accepts_noise_above_a_modulus() {
     for l in 0..L_THRESHOLD {
         centered[l] = [q0 + 3 - SHARE_COMPUTATION_E_SM_CONFIGS.qis[l]];
     }
-    check_e_sm_lift(
+    check_narrow_lift::<1, TEST_BIT_LIFTED, TEST_BIT_QUOTIENT>(
+        TEST_BOUND,
+        test_quotient_bounds(),
         centered,
         Polynomial::new([q0 + 3]),
         [Polynomial::new([1]); L_THRESHOLD],
@@ -155,8 +225,10 @@ fn test_e_sm_lift_accepts_noise_above_a_modulus() {
 
 #[test(should_fail)]
 fn test_e_sm_lift_rejects_noise_above_the_bound() {
-    let too_large = PK_GENERATION_E_SM_BOUND + 1;
-    check_e_sm_lift(
+    let too_large = TEST_BOUND + 1;
+    check_narrow_lift::<1, TEST_BIT_LIFTED, TEST_BIT_QUOTIENT>(
+        TEST_BOUND,
+        test_quotient_bounds(),
         [[too_large]; L_THRESHOLD],
         Polynomial::new([too_large]),
         [Polynomial::new([0]); L_THRESHOLD],
@@ -168,7 +240,13 @@ fn test_e_sm_lift_rejects_a_wrong_quotient() {
     let lifted = Polynomial::new([7, -5]);
     let mut quotients = [Polynomial::new([0, 0]); L_THRESHOLD];
     quotients[0] = Polynomial::new([1, 0]);
-    check_e_sm_lift([[7, -5]; L_THRESHOLD], lifted, quotients);
+    check_narrow_lift::<2, TEST_BIT_LIFTED, TEST_BIT_QUOTIENT>(
+        TEST_BOUND,
+        test_quotient_bounds(),
+        [[7, -5]; L_THRESHOLD],
+        lifted,
+        quotients,
+    );
 }
 
 #[test(should_fail)]
@@ -180,7 +258,9 @@ fn test_e_sm_lift_rejects_a_field_only_quotient() {
     for l in 0..L_THRESHOLD {
         centered[l] = [7 - quotient * SHARE_COMPUTATION_E_SM_CONFIGS.qis[l]];
     }
-    check_e_sm_lift(
+    check_narrow_lift::<1, TEST_BIT_LIFTED, TEST_BIT_QUOTIENT>(
+        TEST_BOUND,
+        test_quotient_bounds(),
         centered,
         Polynomial::new([7]),
         [Polynomial::new([quotient]); L_THRESHOLD],

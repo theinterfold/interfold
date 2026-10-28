@@ -387,6 +387,16 @@ pub fn source_hash_with_updates(
             source = Regex::new(r"(pub global MAX_MSG_NON_ZERO_COEFFS: u32 = )\d+;")?
                 .replace_all(&source, "${1}<selected>;")
                 .into_owned();
+            // The wide smudging-lift constants derive from the selected preset and committee, and
+            // from the hashed `crates/fhe-params/src` and `crates/zk/config/src`; the selector copy
+            // must not vary the hash.
+            source = Regex::new(&format!(
+                r"(?s){}.*?{}",
+                regex::escape(configuration::E_SM_WIDE_BEGIN),
+                regex::escape(configuration::E_SM_WIDE_END)
+            ))?
+            .replace_all(&source, "<selected e_sm wide>")
+            .into_owned();
         }
         if path == "Cargo.lock" {
             source = external_pins(&source)?;

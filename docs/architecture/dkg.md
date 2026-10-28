@@ -232,10 +232,18 @@ prefix alone is insufficient.
 
 `secure-16384-simd-d6` (parameter set 7) has the degree, the committees, and the V2 layout of
 `secure-16384-simd`. It supports multiplicative depth 6, so it has eight threshold CRT moduli and
-eight l-BFV rows. Its version-3 `IFLBFVKE` envelope has 21,234,096 bytes (20.25 MiB). The envelope
-is an 18-byte header and the aggregate relinearization key of 21,234,078 bytes. This size is above
+eight l-BFV rows. Its version-3 `IFLBFVKE` envelope has 21,381,552 bytes (20.39 MiB). The envelope
+is an 18-byte header and the aggregate relinearization key of 21,381,534 bytes. This size is above
 the former 16 MiB limit. A separate protocol change raises the cap to 24 MiB for this reason. The
 committee public key cap is 24 MiB.
+
+The smudging noise bound of `secure-16384-simd-d6` is 2^382 or more. This value is above the BN254
+field. The C2b leaf `esm_share_computation_chunk` therefore proves the bound in two limbs for this
+preset. The generated `default/mod.nr` sets `E_SM_WIDE` and the constants `E_SM_WIDE_*`. The witness
+gives the low limb, a high limb, and one quotient for each CRT modulus. The high limb is the last
+entry of `e_sm_quotients_chunk`, so the circuit input layout does not change. Each term of the
+relation stays below 2^251. The narrow presets keep the single-limb check, and their compiled
+circuits are byte-identical to the circuits before this change.
 
 Owners include
 [l-BFV collection](../../crates/aggregator/src/public_key_aggregation/lbfv_contribution_collection.rs),

@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+pub mod esm_wide_lift;
 pub mod pk;
 pub mod share_computation;
 pub mod share_encryption;

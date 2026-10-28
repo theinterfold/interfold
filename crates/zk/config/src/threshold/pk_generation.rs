@@ -31,6 +31,94 @@ pub struct Configs {
     pub committee: CiphernodesCommitteeSize,
     pub bits: Bits,
     pub bounds: Bounds,
+    /// Two-limb description of the smudging bound, present when the bound is too wide for one
+    /// field element. The C2b leaf then checks the lift with it, and the C1 constants below are
+    /// placeholders: no C1 proof exists for such a preset.
+    pub wide_lift: Option<WideLift>,
+}
+
+/// Widest smudging bound, in bits, that the single-element lift handles. The bound's bit width
+/// plus the width of a modulus must stay under the field width, with room for the one-sided
+/// quotient window; a larger bound uses [`WideLift`].
+pub const NARROW_LIFT_MAX_BITS: u64 = 252;
+
+/// Largest magnitude, in bits, that a term of the wide lift relation may reach. The relation is
+/// an integer equation only if both sides stay below half of the 254-bit field prime.
+const WIDE_LIFT_MAX_TERM_BITS: u64 = 251;
+
+/// The smudging bound `B` split at `2^shift`: `u = x + B` lies in `[0, 2B]`, and the leaf takes
+/// `u = lo + 2^shift * hi`. All fields are circuit constants.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WideLift {
+    pub shift: u32,
+    pub bit_hi: u32,
+    pub bit_quotient: u32,
+    pub bound_hi: BigUint,
+    pub bound_lo: BigUint,
+    pub span_hi: BigUint,
+    pub span_lo: BigUint,
+    /// `2^shift mod q_l` for each limb.
+    pub radix: Vec<BigUint>,
+    /// Bound on `|quotient|` of `centered + quotient * q_l == (lo - B_lo) + radix_l * (hi - B_hi)`.
+    pub quotient_bounds: Vec<BigUint>,
+}
+
+impl WideLift {
+    /// `None` when the narrow single-element lift is sound for `e_sm_bound`.
+    pub fn new(e_sm_bound: &BigUint, qis: &[BigUint]) -> Result<Option<Self>, ConfigError> {
+        if e_sm_bound.bits() <= NARROW_LIFT_MAX_BITS {
+            return Ok(None);
+        }
+        let span: BigUint = e_sm_bound << 1u32;
+        let q_bits = qis.iter().map(BigUint::bits).max().unwrap_or(0);
+        // Both the low limb (`shift` bits) and the high limb times a radix (`span - shift +
+        // q_bits` bits) must fit well under the field, and the range checks cost `2 * span` bits
+        // in total whatever the split, so balance the two terms.
+        let shift = (span.bits() + q_bits + 3).div_ceil(2);
+        let mask = (BigUint::from(1u32) << shift) - 1u32;
+        let (span_hi, span_lo) = (&span >> shift, &span & &mask);
+        let (bound_hi, bound_lo) = (e_sm_bound >> shift, e_sm_bound & &mask);
+        let bit_hi = span_hi.bits();
+        let radix: Vec<BigUint> = qis
+            .iter()
+            .map(|q| (BigUint::from(1u32) << shift) % q)
+            .collect();
+        // |lo - B_lo| < 2^shift and |hi - B_hi| <= span_hi, so |rhs| < 2^shift + radix * span_hi.
+        let quotient_bounds: Vec<BigUint> = qis
+            .iter()
+            .zip(&radix)
+            .map(|(q, r)| ((BigUint::from(1u32) << shift) + r * &span_hi + q) / q + 1u32)
+            .collect();
+        let bit_quotient = quotient_bounds.iter().map(BigUint::bits).max().unwrap_or(0);
+        let widest_term = [
+            shift,
+            bit_hi + q_bits,
+            // The one-sided window admits |quotient| < 2^(bit_quotient + 1).
+            bit_quotient + 1 + q_bits,
+        ]
+        .into_iter()
+        .max()
+        .unwrap_or(0)
+            + 1;
+        if widest_term > WIDE_LIFT_MAX_TERM_BITS {
+            return Err(ConfigError::Other(format!(
+                "Smudging bound of {} bits exceeds the wide lift: a relation term needs {widest_term} bits",
+                e_sm_bound.bits()
+            )));
+        }
+        Ok(Some(WideLift {
+            shift: u32::try_from(shift).map_err(|e| ConfigError::Other(e.to_string()))?,
+            bit_hi: u32::try_from(bit_hi).map_err(|e| ConfigError::Other(e.to_string()))?,
+            bit_quotient: u32::try_from(bit_quotient)
+                .map_err(|e| ConfigError::Other(e.to_string()))?,
+            bound_hi,
+            bound_lo,
+            span_hi,
+            span_lo,
+            radix,
+            quotient_bounds,
+        }))
+    }
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Bits {
@@ -61,7 +149,18 @@ impl Configs {
         crate::parameters::require_threshold_preset(preset, threshold_params)?;
 
         let bounds = Bounds::new(preset, threshold_params, committee)?;
-        let bits = Bits::new(threshold_params, &bounds);
+        let mut bits = Bits::new(threshold_params, &bounds);
+        let qis: Vec<BigUint> = threshold_params
+            .moduli()
+            .iter()
+            .map(|q| BigUint::from(*q))
+            .collect();
+        let wide_lift = WideLift::new(&bounds.e_sm_bound, &qis)?;
+        if wide_lift.is_some() {
+            // The C1 widths describe a one-element lift that does not exist for this preset.
+            bits.e_sm_lifted_bit = 1;
+            bits.e_sm_quotient_bit = 1;
+        }
 
         Ok(Configs {
             params: threshold_params.clone(),
@@ -70,6 +169,7 @@ impl Configs {
 
             bits,
             bounds,
+            wide_lift,
         })
     }
 }
@@ -206,7 +306,19 @@ impl Configs {
         let qis_str = join_display(&configs.params.moduli(), ", ");
 
         let e_sm_limb_bounds_str = join_display(&configs.bounds.e_sm_limb_bounds, ", ");
-        let e_sm_quotient_bounds_str = join_display(&configs.bounds.e_sm_quotient_bounds, ", ");
+        // A wide preset has no C1 proof, so its C1 bounds are zero placeholders; the C2b leaf
+        // takes its bound from the wide lift constants.
+        let (e_sm_bound, e_sm_quotient_bounds_str) = if configs.wide_lift.is_some() {
+            (
+                BigUint::from(0u32),
+                join_display(&vec![0u32; configs.bounds.e_sm_quotient_bounds.len()], ", "),
+            )
+        } else {
+            (
+                configs.bounds.e_sm_bound.clone(),
+                join_display(&configs.bounds.e_sm_quotient_bounds, ", "),
+            )
+        };
         let r_bounds_str = join_display(&configs.bounds.r_bounds, ", ");
 
         let crp_matrix_str = crp_matrix_constant_string(threshold_params)?;
@@ -280,7 +392,7 @@ pub global {}_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfigs::new(
             prefix,
             configs.bounds.sk_bound,
             prefix,
-            configs.bounds.e_sm_bound,
+            e_sm_bound,
             prefix,
             e_sm_limb_bounds_str,
             prefix,

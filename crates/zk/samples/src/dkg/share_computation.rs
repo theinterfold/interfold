@@ -239,4 +239,58 @@ mod chunk_tests {
             assert!(prepare_chunk(&config, &data, 2).is_err());
         }
     }
+
+    /// The D6 smudging bound is wider than the field, so the leaf gets a two-limb lift. This
+    /// checks, in integers, the relation and the ranges the circuit proves for every coefficient.
+    #[test]
+    fn wide_lift_satisfies_the_leaf_relation() {
+        use num_bigint::{BigInt, BigUint};
+        let preset = BfvPreset::SecureThreshold16384SimdD6;
+        let committee = CiphernodesCommitteeSize::Minimum;
+        let config = Configs::for_preset(preset, committee).unwrap();
+        let wide = e3_zk_config::threshold::pk_generation::Configs::new(
+            preset,
+            &config.params,
+            committee,
+        )
+        .unwrap()
+        .wide_lift
+        .expect("the D6 smudging bound is wider than the field");
+        let data = generate(&config, preset, DkgInputType::SmudgingNoise).unwrap();
+        let inputs = Inputs::compute(&config, &data).unwrap();
+        let lift = inputs.e_sm_lift.as_ref().unwrap();
+        let moduli = config.params.moduli();
+        let shift = wide.shift as usize;
+        let bound_hi = BigInt::from(wide.bound_hi.clone());
+        let bound_lo = BigInt::from(wide.bound_lo.clone());
+        let span_hi = BigInt::from(wide.span_hi.clone());
+        let span_lo = BigInt::from(wide.span_lo.clone());
+        assert_eq!(lift.lifted.len(), config.params.degree());
+        assert_eq!(lift.hi.len(), config.params.degree());
+        let mut widest = BigUint::from(0u32);
+        for i in 0..lift.lifted.len() {
+            let (lo, hi) = (&lift.lifted[i], &lift.hi[i]);
+            assert!(lo >= &BigInt::from(0) && lo < &(BigInt::from(1) << shift));
+            assert!(hi >= &BigInt::from(0) && hi <= &span_hi);
+            if hi == &span_hi {
+                assert!(lo <= &span_lo);
+            }
+            let rhs_base = (lo - &bound_lo, hi - &bound_hi);
+            for (l, &q) in moduli.iter().enumerate() {
+                let q = BigInt::from(q);
+                let residue = &inputs.secret_crt.limb(l).coefficients()[i];
+                let rhs = &rhs_base.0 + BigInt::from(wide.radix[l].clone()) * &rhs_base.1;
+                let quotient = &lift.quotients[l][i];
+                // `secret_crt` holds the residue in [0, q); the circuit centers it by one of two
+                // choices, so the relation is checked modulo q and for the exact quotient.
+                assert_eq!((&rhs - residue) % &q, BigInt::from(0));
+                assert!(quotient.magnitude() <= &wide.quotient_bounds[l]);
+                let centered = &rhs - quotient * &q;
+                assert!(centered.magnitude() <= &(q.magnitude() * 2u32));
+                widest = widest.max(rhs.magnitude().clone());
+            }
+        }
+        // Both sides of the relation stay below half of the field prime.
+        assert!(widest.bits() < 252);
+    }
 }

@@ -17,6 +17,7 @@ use crate::encoding::poly_coefficients_to_toml_json;
 use crate::WitnessError;
 use e3_polynomial::CrtPolynomial;
 use e3_zk_config::dkg::share_computation::Configs;
+use e3_zk_config::threshold::pk_generation::WideLift;
 use e3_zk_config::DkgInputType;
 use ndarray::Array2;
 use num_bigint::{BigInt, BigUint};
@@ -54,7 +55,20 @@ pub struct Inputs {
     /// which the C2b chunk leaves range-check. `None` for the secret key and on the trBFV path,
     /// whose single C2 proof takes no such inputs.
     #[serde(default)]
-    pub e_sm_lift: Option<(Vec<BigInt>, Vec<Vec<BigInt>>)>,
+    pub e_sm_lift: Option<EsmLift>,
+}
+
+/// The lifted smudging noise of an l-BFV C2b witness, in the form the leaf circuit checks.
+///
+/// Narrow presets: `lifted[i]` is the signed integer noise and `hi` is empty. Wide presets (a
+/// smudging bound beyond the field, see [`WideLift`]): `lifted[i]` is `lo` and `hi[i]` is `hi` of
+/// `u = noise + B = lo + 2^shift * hi`, and the quotients tie `lo`/`hi` to each residue.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EsmLift {
+    pub lifted: Vec<BigInt>,
+    #[serde(default)]
+    pub hi: Vec<BigInt>,
+    pub quotients: Vec<Vec<BigInt>>,
 }
 
 /// Center a residue already in `[0, modulus)` around zero.
@@ -75,7 +89,8 @@ fn center(residue: &BigInt, modulus: &BigInt) -> BigInt {
 pub fn e_sm_crt_lift(
     secret_crt: &CrtPolynomial,
     moduli: &[u64],
-) -> Result<(Vec<BigInt>, Vec<Vec<BigInt>>), WitnessError> {
+    wide: Option<&WideLift>,
+) -> Result<EsmLift, WitnessError> {
     if secret_crt.limbs.len() != moduli.len() {
         return Err(WitnessError::Sample(format!(
             "e_sm has {} CRT limbs; expected {}",
@@ -97,6 +112,7 @@ pub fn e_sm_crt_lift(
 
     let degree = secret_crt.limb(0).coefficients().len();
     let mut lifted = Vec::with_capacity(degree);
+    let mut his = Vec::new();
     let mut quotients = vec![Vec::with_capacity(degree); moduli.len()];
     for coeff_idx in 0..degree {
         let mut residues = Vec::with_capacity(moduli.len());
@@ -108,19 +124,64 @@ pub fn e_sm_crt_lift(
             residues.push(center(&residue, &q));
         }
         let value = center(&sum.mod_floor(&q_product), &q_product);
+        let (lo_hi, targets) = match wide {
+            None => (None, vec![value.clone(); moduli.len()]),
+            Some(wide) => {
+                let shift = wide.shift as usize;
+                let bound = BigInt::from((&wide.bound_hi << shift) + &wide.bound_lo);
+                let u = &value + &bound;
+                if u.sign() == num_bigint::Sign::Minus
+                    || u > BigInt::from((&wide.span_hi << shift) + &wide.span_lo)
+                {
+                    return Err(WitnessError::Sample(format!(
+                        "e_sm exceeds its smudging bound at coefficient {coeff_idx}"
+                    )));
+                }
+                let lo = &u & ((BigInt::from(1) << shift) - 1);
+                let hi = &u >> shift;
+                let (bound_hi, bound_lo) = (
+                    BigInt::from(wide.bound_hi.clone()),
+                    BigInt::from(wide.bound_lo.clone()),
+                );
+                let targets = wide
+                    .radix
+                    .iter()
+                    .map(|radix| (&lo - &bound_lo) + BigInt::from(radix.clone()) * (&hi - &bound_hi))
+                    .collect();
+                (Some((lo, hi)), targets)
+            }
+        };
         for (mod_idx, &q) in moduli.iter().enumerate() {
             let q = BigInt::from(q);
-            let difference = &value - &residues[mod_idx];
+            let difference = &targets[mod_idx] - &residues[mod_idx];
             if (&difference % &q) != BigInt::from(0) {
                 return Err(WitnessError::Sample(format!(
                     "e_sm CRT lift is inconsistent at coefficient {coeff_idx}, limb {mod_idx}"
                 )));
             }
-            quotients[mod_idx].push(difference / q);
+            let quotient = difference / &q;
+            if let Some(wide) = wide {
+                if quotient.magnitude() > &wide.quotient_bounds[mod_idx] {
+                    return Err(WitnessError::Sample(format!(
+                        "e_sm CRT quotient is outside its bound at coefficient {coeff_idx}, limb {mod_idx}"
+                    )));
+                }
+            }
+            quotients[mod_idx].push(quotient);
         }
-        lifted.push(value);
+        match lo_hi {
+            None => lifted.push(value),
+            Some((lo, hi)) => {
+                lifted.push(lo);
+                his.push(hi);
+            }
+        }
     }
-    Ok((lifted, quotients))
+    Ok(EsmLift {
+        lifted,
+        hi: his,
+        quotients,
+    })
 }
 
 impl Inputs {
@@ -171,13 +232,16 @@ impl Inputs {
             "y_chunk": bigint_3d_to_json_values(y),
         });
         if self.dkg_input_type == DkgInputType::SmudgingNoise {
-            let (lifted, quotients) = self.e_sm_lift.as_ref().ok_or_else(|| {
+            let lift = self.e_sm_lift.as_ref().ok_or_else(|| {
                 WitnessError::Other("C2b input is missing the lifted e_sm".into())
             })?;
-            json["e_sm_lifted_chunk"] = poly_coefficients_to_toml_json(&slice(lifted)?);
+            json["e_sm_lifted_chunk"] = poly_coefficients_to_toml_json(&slice(&lift.lifted)?);
+            // With a wide smudging bound the leaf reads the high limb of the lifted noise as the
+            // last entry of `e_sm_quotients_chunk`; a narrow preset has no such entry.
             json["e_sm_quotients_chunk"] = serde_json::Value::Array(
-                quotients
+                lift.quotients
                     .iter()
+                    .chain((!lift.hi.is_empty()).then_some(&lift.hi))
                     .map(|limb| slice(limb).map(|values| poly_coefficients_to_toml_json(&values)))
                     .collect::<Result<Vec<_>, _>>()?,
             );
@@ -307,7 +371,13 @@ impl Inputs {
         };
 
         let e_sm_lift = if lbfv && data.dkg_input_type == DkgInputType::SmudgingNoise {
-            Some(e_sm_crt_lift(&data.secret, moduli)?)
+            let wide = e3_zk_config::threshold::pk_generation::Configs::new(
+                config.preset,
+                &config.params,
+                config.committee,
+            )?
+            .wide_lift;
+            Some(e_sm_crt_lift(&data.secret, moduli, wide.as_ref())?)
         } else {
             None
         };
@@ -340,10 +410,13 @@ impl Inputs {
         });
 
         json.as_object_mut().unwrap().insert(key.to_string(), value);
-        if let Some((lifted, quotients)) = &self.e_sm_lift {
-            json["e_sm_lifted"] = poly_coefficients_to_toml_json(lifted);
+        if let Some(lift) = &self.e_sm_lift {
+            json["e_sm_lifted"] = poly_coefficients_to_toml_json(&lift.lifted);
+            if !lift.hi.is_empty() {
+                json["e_sm_hi"] = poly_coefficients_to_toml_json(&lift.hi);
+            }
             json["e_sm_quotients"] = serde_json::Value::Array(
-                quotients
+                lift.quotients
                     .iter()
                     .map(|limb| poly_coefficients_to_toml_json(limb))
                     .collect(),
