@@ -34,10 +34,10 @@ pub global Q_MOD_T: Field = 10522;
 pub global Q_MOD_T_CENTERED: Field = 10522;
 pub global Q_INVERSE_MOD_T: Field = 218;
 pub global PARAMS_SEARCH_N: Field = 20;
-pub global PARAMS_SEARCH_Z: Field = 3;
+pub global PARAMS_SEARCH_Z: Field = 126;
 pub global PARAMS_LAMBDA: u32 = 31;
 pub global PARAMS_TWO_POW_LAMBDA_PLUS_ONE: Field = 4294967296;
-pub global PARAMS_MULT_DEPTH: u32 = 3;
+pub global PARAMS_MULT_DEPTH: u32 = 6;
 pub global PARAMS_SMUDGING_B_ENC: Field = 28147497671065600;
 
 pub global CRP: [Polynomial<N>; L] = [
