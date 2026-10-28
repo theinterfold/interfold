@@ -124,6 +124,10 @@ describe("OwnerIdentityRegistry", function () {
     const revokedAt = await time.latest();
     expect(await registry.revocationCountAt(revokedAt)).to.equal(1);
     expect(await registry.revocationCountAt(snapshot)).to.equal(0);
+    await expect(registry.revoke(ID))
+      .to.be.revertedWithCustomError(registry, "IdentityIsRevoked")
+      .withArgs(ID);
+    expect(await registry.revocationCountAt(await time.latest())).to.equal(1);
     expect(await registry.identityOf(alice.address)).to.deep.equal([
       ethers.ZeroHash,
       0n,
