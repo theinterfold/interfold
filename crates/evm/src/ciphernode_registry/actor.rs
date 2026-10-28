@@ -21,7 +21,7 @@ use crate::domain::error_decoder::{
 use crate::domain::log_timestamp::from_log_chain_id_to_ts;
 use crate::domain::publication_replay::ReplaySubmissionGate;
 use crate::helpers::{
-    encode_zk_proof, send_tx_idempotent, send_tx_with_retry, transaction_nonce_guard, EthProvider,
+    encode_zk_proof, send_tx_idempotent, send_tx_with_retry, send_with_next_nonce, EthProvider,
     ProviderFactory, TxOutcome,
 };
 use crate::messages::{EvmEvent, EvmEventProcessor, EvmLog, EvmLogRejected, InterfoldEvmEvent};

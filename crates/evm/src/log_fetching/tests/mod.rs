@@ -251,6 +251,35 @@ fn setup_collector() -> (
     (addr.recipient(), rx)
 }
 
+/// One historical-sync attempt over `from_block..=to_block`. Returns the last log that it
+/// dispatched.
+#[allow(clippy::too_many_arguments)]
+async fn sync_range<L: LogProvider>(
+    provider: &L,
+    filter: &Filter,
+    from_block: u64,
+    to_block: u64,
+    chain_id: u64,
+    next: &EvmEventProcessor,
+    timestamp_tracker: &mut TimestampTracker,
+    window: &mut LogWindow,
+    progress: Option<&IngestionProgressSink>,
+) -> Result<Option<CorrelationId>, anyhow::Error> {
+    let mut sync = HistoricalSync::new(from_block);
+    sync.fetch_to(
+        provider,
+        filter,
+        to_block,
+        chain_id,
+        next,
+        timestamp_tracker,
+        window,
+        progress,
+    )
+    .await?;
+    Ok(sync.last_id())
+}
+
 mod backfill;
 mod fetch;
 mod live;

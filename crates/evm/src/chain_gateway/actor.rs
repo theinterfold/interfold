@@ -220,6 +220,11 @@ impl EvmChainGateway {
             InterfoldEvmEvent::Processed(_) => {
                 bail!("EvmChainGateway received an internal ordering marker")
             }
+            InterfoldEvmEvent::ReaderStopped(stopped) => bail!(
+                "the reader of chain {} stopped: {}",
+                stopped.chain_id,
+                stopped.reason
+            ),
         }
     }
 
