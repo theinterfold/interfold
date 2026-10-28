@@ -6,13 +6,13 @@
 
 use crate::adapters::ingestion_progress::IngestionProgressSink;
 use crate::adapters::log_fetcher::{
-    backfill_to_head, consume_live_logs, fetch_logs_chunked, LiveStop, TimestampTracker,
+    backfill_to_head, consume_live_logs, HistoricalSync, LiveStop, TimestampTracker,
 };
 use crate::domain::backoff::Backoff;
 use crate::domain::log_window::{LogWindow, MAX_LOG_WINDOW};
 use crate::helpers::{EthProvider, ProviderFactory};
-use crate::messages::HistoricalSyncComplete;
 use crate::messages::{EvmEventProcessor, InterfoldEvmEvent};
+use crate::messages::{EvmReaderStopped, HistoricalSyncComplete};
 use actix::prelude::*;
 use alloy::eips::BlockNumberOrTag;
 use alloy::primitives::B256;
@@ -44,6 +44,8 @@ const PROVIDER_RECREATE_MAX_ATTEMPTS: u32 = 3;
 const PROVIDER_RECREATE_INITIAL_DELAY_MS: u64 = 2000;
 /// Consecutive failures before we assume the provider is dead and recreate it.
 const MAX_RETRIES_BEFORE_RECREATE: u32 = 3;
+/// How long a stopped reader waits for the next actor to accept its stop report.
+const STOP_REPORT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Polling is required even while the subscription is quiet: a log becomes confirmed because later
 /// blocks arrive, and those blocks need not contain any matching contract event. At zero
 /// confirmations the poll delivers the logs that the subscription did not announce.
@@ -169,6 +171,69 @@ impl<P: Provider + Clone + 'static> EvmReadInterface<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy::providers::ProviderBuilder;
+    use alloy::rpc::types::Log;
+    use alloy::transports::mock::Asserter;
+    use e3_event_system::test_support::EventFixture;
+    use tokio::sync::mpsc;
+
+    struct Collector(mpsc::UnboundedSender<InterfoldEvmEvent>);
+
+    impl Actor for Collector {
+        type Context = actix::Context<Self>;
+    }
+
+    impl Handler<InterfoldEvmEvent> for Collector {
+        type Result = ();
+
+        fn handle(&mut self, msg: InterfoldEvmEvent, _: &mut Self::Context) {
+            let _ = self.0.send(msg);
+        }
+    }
+
+    /// A failed read retries the historical sync instead of ending the reader, and a reader that
+    /// cannot recover reports that it stopped.
+    #[actix::test]
+    async fn the_history_is_retried_and_a_reader_that_cannot_recover_reports_it(
+    ) -> anyhow::Result<()> {
+        tokio::time::pause(); // Skip backoff delays
+        let EventFixture { bus, .. } = EventFixture::new()?;
+        let asserter = Asserter::new();
+        asserter.push_success(&"0x1"); // eth_chainId
+        asserter.push_failure_msg("connection reset"); // eth_blockNumber
+        asserter.push_success(&"0x14"); // eth_blockNumber
+        asserter.push_success(&Vec::<Log>::new()); // eth_getLogs
+
+        // The live loop then gets no answer, and without a provider factory it cannot recover.
+        let provider =
+            EthProvider::new(ProviderBuilder::new().connect_mocked_client(asserter)).await?;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let _reader = EvmReadInterface::setup(
+            &provider,
+            Collector(tx).start().recipient(),
+            &bus,
+            Filters::new(vec![Address::ZERO], 1),
+        );
+
+        let deadline = Duration::from_secs(600);
+        let Some(InterfoldEvmEvent::HistoricalSyncComplete(sync)) =
+            tokio::time::timeout(deadline, rx.recv()).await?
+        else {
+            panic!("the historical sync must complete after the retry");
+        };
+        assert_eq!(sync.chain_id, 1);
+        let Some(InterfoldEvmEvent::ReaderStopped(stopped)) =
+            tokio::time::timeout(deadline, rx.recv()).await?
+        else {
+            panic!("a reader that cannot recover must report it");
+        };
+        assert_eq!(stopped.chain_id, 1);
+        assert!(
+            stopped.reason.contains("no provider factory"),
+            "{stopped:?}"
+        );
+        Ok(())
+    }
 
     #[test]
     fn the_reader_window_starts_at_the_configured_range() {

@@ -10,7 +10,7 @@ use crate::messages::{EvmEventProcessor, EvmLog, InterfoldEvmEvent};
 use alloy::primitives::B256;
 use alloy::providers::Provider;
 use alloy::rpc::types::{Filter, Log};
-use anyhow::{anyhow, Context as _};
+use anyhow::{anyhow, ensure, Context as _};
 use async_trait::async_trait;
 use e3_events::CorrelationId;
 use futures_util::stream::{Stream, StreamExt};
@@ -58,21 +58,35 @@ impl<P: Provider + Send + Sync> LogProvider for P {
     }
 }
 
-pub(crate) async fn process_log<L: LogProvider>(
+/// Send the logs of one chunk in order, and return the id of the last one.
+///
+/// Every timestamp is resolved before the first log is sent. A failed lookup sends nothing, so the
+/// caller, which reads the chunk again, sends each log once.
+pub(crate) async fn dispatch_chunk<L: LogProvider>(
     provider: &L,
-    log: Log,
+    logs: Vec<Log>,
     chain_id: u64,
     next: &EvmEventProcessor,
     timestamp_tracker: &mut TimestampTracker,
-) -> Result<CorrelationId, anyhow::Error> {
-    let timestamp = timestamp_tracker
-        .get(provider, log.block_number, log.block_timestamp)
-        .await?;
-    let evt = InterfoldEvmEvent::Log(EvmLog::new(log, chain_id, timestamp));
-    let id = evt.get_id();
-    debug!("Sending event({})", id);
-    next.do_send(evt);
-    Ok(id)
+) -> Result<Option<CorrelationId>, anyhow::Error> {
+    let mut events = Vec::with_capacity(logs.len());
+    for log in logs {
+        let timestamp = timestamp_tracker
+            .get(provider, log.block_number, log.block_timestamp)
+            .await?;
+        events.push(InterfoldEvmEvent::Log(EvmLog::new(
+            log, chain_id, timestamp,
+        )));
+    }
+
+    let mut last_id = None;
+    for evt in events {
+        let id = evt.get_id();
+        debug!("Sending event({})", id);
+        next.do_send(evt);
+        last_id = Some(id);
+    }
+    Ok(last_id)
 }
 
 /// Handle a log that the subscription stream announced.
@@ -367,78 +381,149 @@ pub(crate) async fn fetch_logs_adapting<L: LogProvider>(
     Ok(logs)
 }
 
-/// Fetch logs in chunks from `from_block` to `to_block` with retry logic per chunk.
-/// Returns the CorrelationId of the last processed event, if any.
+/// Progress of the historical sync, kept across attempts.
 ///
-/// `window` carries the block range across chunks and across calls. Hosted providers cap the
-/// `eth_getLogs` range and do not publish that cap over the wire, so the range is narrowed when a
-/// provider rejects it and the narrowed range is then kept. A caller that made a fresh window for
-/// every call would rediscover the same cap and pay one failed request for each chunk.
-///
-/// `progress` learns the cursor after each chunk, so a health check sees a long first sync move.
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn fetch_logs_chunked<L: LogProvider>(
-    provider: &L,
-    filter: &Filter,
-    from_block: u64,
-    to_block: u64,
-    chain_id: u64,
-    next: &EvmEventProcessor,
-    timestamp_tracker: &mut TimestampTracker,
-    window: &mut LogWindow,
-    progress: Option<&IngestionProgressSink>,
-) -> Result<Option<CorrelationId>, anyhow::Error> {
-    if to_block < from_block {
-        return Ok(None);
+/// A failed attempt keeps the chunks whose logs it dispatched, so the next attempt resumes after
+/// them instead of reading the history again. The first attempt that reads the chain head fixes the
+/// sync's end: a provider recreated after a failure can lag, and a lower end would make the live
+/// loop read again blocks that the sync already dispatched. A later attempt fails while its
+/// provider is behind that end, because a provider can answer an empty log range for blocks that it
+/// does not have, and the cursor would then move past their logs.
+pub(crate) struct HistoricalSync {
+    /// The first block that the sync has not fetched.
+    cursor: u64,
+    /// The confirmed head that the sync reads to.
+    head: Option<u64>,
+    /// The last log that the sync dispatched.
+    last_id: Option<CorrelationId>,
+}
+
+impl HistoricalSync {
+    pub(crate) fn new(start_block: u64) -> Self {
+        Self {
+            cursor: start_block,
+            head: None,
+            last_id: None,
+        }
     }
 
-    // An estimate, not a count: a later narrowing increases the real number of chunks.
-    let total_chunks = window.estimated_chunks(from_block, to_block);
+    /// The last log that the sync dispatched, which `HistoricalSyncComplete` must follow.
+    pub(crate) fn last_id(&self) -> Option<CorrelationId> {
+        self.last_id
+    }
 
-    info!(
-        chain_id,
-        from_block,
-        to_block,
-        total_chunks,
-        window = window.width(),
-        "Fetching logs in chunks"
-    );
+    /// Run one attempt, and return the confirmed head once every block up to it is dispatched.
+    ///
+    /// `window` carries the block range across chunks and across calls. Hosted providers cap the
+    /// `eth_getLogs` range and do not publish that cap over the wire, so the range is narrowed when
+    /// a provider rejects it and the narrowed range is then kept. A caller that made a fresh window
+    /// for every call would rediscover the same cap and pay one failed request for each chunk.
+    ///
+    /// `progress` learns the cursor after each chunk, so a health check sees a long first sync
+    /// move.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn run<L: LogProvider>(
+        &mut self,
+        provider: &L,
+        filter: &Filter,
+        confirmations: u64,
+        chain_id: u64,
+        next: &EvmEventProcessor,
+        timestamp_tracker: &mut TimestampTracker,
+        window: &mut LogWindow,
+        progress: Option<&IngestionProgressSink>,
+    ) -> Result<u64, anyhow::Error> {
+        let raw_head = provider
+            .fetch_block_number()
+            .await
+            .map_err(|e| anyhow!("Failed to get the latest block number: {}", e))?;
+        let confirmed = crate::domain::reorg::confirmed_head(raw_head, confirmations);
+        let to_block = *self.head.get_or_insert(confirmed);
+        ensure!(
+            confirmed >= to_block,
+            "the provider's confirmed head {confirmed} is behind the historical sync end {to_block}"
+        );
+        self.fetch_to(
+            provider,
+            filter,
+            to_block,
+            chain_id,
+            next,
+            timestamp_tracker,
+            window,
+            progress,
+        )
+        .await?;
+        Ok(to_block)
+    }
 
-    let mut cursor = from_block;
-    let mut last_id: Option<CorrelationId> = None;
-    let mut chunk_idx = 0u64;
+    /// Fetch the logs from the cursor to `to_block` in chunks, and move the cursor past each chunk
+    /// whose logs were dispatched.
+    #[allow(clippy::too_many_arguments)]
+    async fn fetch_to<L: LogProvider>(
+        &mut self,
+        provider: &L,
+        filter: &Filter,
+        to_block: u64,
+        chain_id: u64,
+        next: &EvmEventProcessor,
+        timestamp_tracker: &mut TimestampTracker,
+        window: &mut LogWindow,
+        progress: Option<&IngestionProgressSink>,
+    ) -> Result<(), anyhow::Error> {
+        if to_block < self.cursor {
+            return Ok(());
+        }
 
-    while cursor <= to_block {
-        chunk_idx += 1;
-
-        let (logs, chunk_end) =
-            fetch_chunk_adapting(provider, filter, cursor, to_block, chain_id, window).await?;
+        // An estimate, not a count: a later narrowing increases the real number of chunks.
+        let total_chunks = window.estimated_chunks(self.cursor, to_block);
 
         info!(
             chain_id,
-            chunk = chunk_idx,
+            from_block = self.cursor,
+            to_block,
             total_chunks,
-            from = cursor,
-            to = chunk_end,
-            events = logs.len(),
-            "Fetched log chunk"
+            window = window.width(),
+            "Fetching logs in chunks"
         );
 
-        for log in logs {
-            last_id = Some(process_log(provider, log, chain_id, next, timestamp_tracker).await?);
+        let mut chunk_idx = 0u64;
+
+        while self.cursor <= to_block {
+            chunk_idx += 1;
+
+            let (logs, chunk_end) =
+                fetch_chunk_adapting(provider, filter, self.cursor, to_block, chain_id, window)
+                    .await?;
+
+            info!(
+                chain_id,
+                chunk = chunk_idx,
+                total_chunks,
+                from = self.cursor,
+                to = chunk_end,
+                events = logs.len(),
+                "Fetched log chunk"
+            );
+
+            if let Some(id) =
+                dispatch_chunk(provider, logs, chain_id, next, timestamp_tracker).await?
+            {
+                self.last_id = Some(id);
+            }
+
+            report_progress(progress, chain_id, to_block, chunk_end);
+            self.cursor = chunk_end + 1;
         }
 
-        report_progress(progress, chain_id, to_block, chunk_end);
-        cursor = chunk_end + 1;
+        info!(
+            chain_id,
+            chunks_fetched = chunk_idx,
+            window = window.width(),
+            "Log fetch complete"
+        );
+        Ok(())
     }
-
-    info!(
-        chain_id,
-        chunks_fetched = chunk_idx,
-        window = window.width(),
-        "Log fetch complete"
-    );
-    Ok(last_id)
 }
 
 /// Fetch any blocks between `last_block` and the chain head to fill gaps.
@@ -500,9 +585,7 @@ pub(crate) async fn backfill_to_head<L: LogProvider>(
             "Backfilled log chunk"
         );
 
-        for log in logs {
-            process_log(provider, log, chain_id, next, timestamp_tracker).await?;
-        }
+        dispatch_chunk(provider, logs, chain_id, next, timestamp_tracker).await?;
 
         *last_block = chunk_end;
         cursor = chunk_end + 1;
