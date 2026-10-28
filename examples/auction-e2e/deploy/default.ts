@@ -37,6 +37,20 @@ const contractMapping: Record<string, string> = {
   Faucet: 'faucet',
 }
 
+/** The anchors `circuits/target/vk_anchor.json` holds, one per generated verifier. */
+const ANCHOR_KEYS = ['vkAnchor2', 'vkAnchor3', 'vkAnchor4', 'vkAnchorMask'] as const
+
+/**
+ * The generated verifiers `scripts/compile_circuits.sh` writes: the contract of each (also its file
+ * name) and the suffix of its libraries, `ZKTranscriptLib<suffix>` and `RelationsLib<suffix>`.
+ */
+const VERIFIERS = [
+  { key: 'bidVerifier2', contract: 'AuctionVerifier2', suffix: '2' },
+  { key: 'bidVerifier3', contract: 'AuctionVerifier3', suffix: '3' },
+  { key: 'bidVerifier4', contract: 'AuctionVerifier4', suffix: '4' },
+  { key: 'maskVerifier', contract: 'AuctionMaskVerifier', suffix: 'Mask' },
+] as const
+
 /** Read an env flag that is `true`, `false` or unset; reject any other text. */
 function envFlag(name: string): boolean | undefined {
   const raw = process.env[name]?.trim().toLowerCase()
@@ -162,39 +176,38 @@ export const deployTemplate = async () => {
     chain,
   )
 
-  // `scripts/compile_circuits.sh` writes the bid verifiers and the anchor of the circuits they were
+  // `scripts/compile_circuits.sh` writes the verifiers and the anchors of the circuits they were
   // generated from; they must come from the same run.
   const anchorFile: unknown = JSON.parse(readFileSync(path.join(TEMPLATE_ROOT, 'circuits/target/vk_anchor.json'), 'utf8'))
-  if (
-    !anchorFile ||
-    typeof anchorFile !== 'object' ||
-    !('vkAnchor3' in anchorFile) ||
-    typeof anchorFile.vkAnchor3 !== 'string' ||
-    !('vkAnchor4' in anchorFile) ||
-    typeof anchorFile.vkAnchor4 !== 'string'
-  ) {
-    throw new Error('circuits/target/vk_anchor.json has no vkAnchor3 and vkAnchor4; run scripts/compile_circuits.sh')
+  const anchorEntries = ANCHOR_KEYS.map((key) => {
+    const value = anchorFile && typeof anchorFile === 'object' ? (anchorFile as Record<string, unknown>)[key] : undefined
+    if (typeof value !== 'string') {
+      throw new Error(`circuits/target/vk_anchor.json has no ${key}; run scripts/compile_circuits.sh`)
+    }
+    return [key, value] as const
+  })
+  const anchors = Object.fromEntries(anchorEntries) as Record<(typeof ANCHOR_KEYS)[number], string>
+  // One verifier per bid role count (2, 3, 4) and one for the mask. bb's ZK verifier is too large for
+  // one contract; each ships two external libraries to link, and the generated files suffix every
+  // name with the verifier's suffix.
+  const verifierAddresses: Record<(typeof VERIFIERS)[number]['key'], string> = {
+    bidVerifier2: '',
+    bidVerifier3: '',
+    bidVerifier4: '',
+    maskVerifier: '',
   }
-  const { vkAnchor3, vkAnchor4 } = anchorFile
-  // One verifier per role count. bb's ZK verifier is too large for one contract; each ships two
-  // external libraries to link, and the generated files suffix every name with the role count.
-  const bidVerifierAddresses: Record<3 | 4, string> = { 3: '', 4: '' }
-  for (const roles of [3, 4] as const) {
-    const verifierSource = `contracts/verifiers/AuctionVerifier${roles}.sol`
+  for (const { key, contract, suffix } of VERIFIERS) {
+    const verifierSource = `contracts/verifiers/${contract}.sol`
     const libraries: Record<string, string> = {}
     for (const library of ['ZKTranscriptLib', 'RelationsLib']) {
-      const deployed = await ethers.deployContract(`${verifierSource}:${library}${roles}`)
+      const deployed = await ethers.deployContract(`${verifierSource}:${library}${suffix}`)
       await deployed.waitForDeployment()
-      libraries[`project/${verifierSource}:${library}${roles}`] = await deployed.getAddress()
+      libraries[`project/${verifierSource}:${library}${suffix}`] = await deployed.getAddress()
     }
-    const bidVerifier = await ethers.deployContract(`${verifierSource}:AuctionVerifier${roles}`, { libraries })
-    await bidVerifier.waitForDeployment()
-    bidVerifierAddresses[roles] = await bidVerifier.getAddress()
-    storeDeploymentArgs(
-      { address: bidVerifierAddresses[roles], blockNumber: await ethers.provider.getBlockNumber() },
-      `AuctionVerifier${roles}`,
-      chain,
-    )
+    const deployedVerifier = await ethers.deployContract(`${verifierSource}:${contract}`, { libraries })
+    await deployedVerifier.waitForDeployment()
+    verifierAddresses[key] = await deployedVerifier.getAddress()
+    storeDeploymentArgs({ address: verifierAddresses[key], blockNumber: await ethers.provider.getBlockNumber() }, contract, chain)
   }
 
   // The allowlist gate is an example `IBidderGate`; an auction names it in its `customParams`.
@@ -214,10 +227,14 @@ export const deployTemplate = async () => {
     await interfold.getAddress(),
     await verifier.getAddress(),
     programId,
-    bidVerifierAddresses[3],
-    bidVerifierAddresses[4],
-    vkAnchor3,
-    vkAnchor4,
+    verifierAddresses.bidVerifier2,
+    verifierAddresses.bidVerifier3,
+    verifierAddresses.bidVerifier4,
+    verifierAddresses.maskVerifier,
+    anchors.vkAnchor2,
+    anchors.vkAnchor3,
+    anchors.vkAnchor4,
+    anchors.vkAnchorMask,
     dataAvailabilityVerifierAddress,
   )
   await e3Program.waitForDeployment()
@@ -231,10 +248,14 @@ export const deployTemplate = async () => {
         interfold: await interfold.getAddress(),
         verifier: await verifier.getAddress(),
         imageId: programId,
-        bidVerifier3: bidVerifierAddresses[3],
-        bidVerifier4: bidVerifierAddresses[4],
-        vkAnchor3,
-        vkAnchor4,
+        bidVerifier2: verifierAddresses.bidVerifier2,
+        bidVerifier3: verifierAddresses.bidVerifier3,
+        bidVerifier4: verifierAddresses.bidVerifier4,
+        maskVerifier: verifierAddresses.maskVerifier,
+        vkAnchor2: anchors.vkAnchor2,
+        vkAnchor3: anchors.vkAnchor3,
+        vkAnchor4: anchors.vkAnchor4,
+        vkAnchorMask: anchors.vkAnchorMask,
         dataAvailabilityVerifier: dataAvailabilityVerifierAddress,
       },
     },
@@ -293,7 +314,8 @@ export const deployTemplate = async () => {
   console.log(
     `
       Deployed AuctionProgram at address: ${programAddress}
-      Deployed the bid verifiers at addresses: ${bidVerifierAddresses[3]} (3 roles), ${bidVerifierAddresses[4]} (4 roles); VK anchors ${vkAnchor3}, ${vkAnchor4}
+      Deployed the bid verifiers at addresses: ${verifierAddresses.bidVerifier2} (2 roles), ${verifierAddresses.bidVerifier3} (3 roles), ${verifierAddresses.bidVerifier4} (4 roles); the mask verifier at ${verifierAddresses.maskVerifier}
+      VK anchors: ${anchors.vkAnchor2} (2 roles), ${anchors.vkAnchor3} (3 roles), ${anchors.vkAnchor4} (4 roles), ${anchors.vkAnchorMask} (mask)
       Deployed MerkleAllowlistGate at address: ${allowlistGateAddress}
       Deployed ${unprovedTest ? 'local unproved test verifier' : 'OpenVmReceiptVerifier'} at address: ${await verifier.getAddress()}
       Deployed OpenVmBfvCiphertextVerifier at address: ${ciphertextVerifierAddress}

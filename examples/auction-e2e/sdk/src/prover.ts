@@ -10,21 +10,38 @@ import { computeCiphertextCommitment, computePublicKeyCommitment, encryptVectorA
 import { insecureSimdProofBundle } from '@interfold/sdk/internal/presets/insecure-simd'
 import { proveUserDataEncryptionTree } from '@interfold/user-data-encryption-prover'
 import type { Address, Hex } from 'viem'
+import bid2CircuitJson from '../circuits/auction_bid2.json'
 import bid3CircuitJson from '../circuits/auction_bid3.json'
 import bid4CircuitJson from '../circuits/auction_bid4.json'
+import maskCircuitJson from '../circuits/auction_mask.json'
 import masksCircuitJson from '../circuits/auction_bid_masks.json'
 import pairCircuitJson from '../circuits/auction_bid_pair.json'
-import { assertBid, bidSlots, type AuctionType, GROUPS, LEVELS, MIN_LEVELS, PRESET, Role, rolesFor } from './layout'
+import {
+  assertBid,
+  bidSlots,
+  type AuctionType,
+  DEGREE,
+  GROUPS,
+  LEVELS,
+  MIN_LEVELS,
+  PLAINTEXT_MODULUS,
+  PRESET,
+  Role,
+  rolesFor,
+} from './layout'
 
 /** The insecure SIMD parameters on the l-BFV path: param set 5. */
 export { PRESET }
 export const PARAM_SET = 5
 
-/** The circuit that proves a whole bid, for each number of roles: `auction_bid3` or `auction_bid4`. */
+/** The circuit that proves a whole bid, for each number of roles: `auction_bid2`, `auction_bid3` or `auction_bid4`. */
 const BID_CIRCUITS: Record<number, CompiledCircuit> = {
+  2: bid2CircuitJson as CompiledCircuit,
   3: bid3CircuitJson as CompiledCircuit,
   4: bid4CircuitJson as CompiledCircuit,
 }
+/** The circuit that proves the mask of a provider (type 4). */
+const maskCircuit = maskCircuitJson as CompiledCircuit
 /** The inner proofs of the bid: the roles 0 and 1 with the bid itself, and the roles 2 and 3 (type 3). */
 const pairCircuit = pairCircuitJson as CompiledCircuit
 const masksCircuit = masksCircuitJson as CompiledCircuit
@@ -66,6 +83,21 @@ export type BidStep =
   | { kind: 'masks-proof' }
   | { kind: 'bid-proof' }
 
+/** One mask of a provider (type 4), encrypted and proven, ready for `AuctionProgram.publishInput`. */
+export interface PreparedMask {
+  /** The one ciphertext: 128 SIMD slots, all nonzero mod 257. */
+  ciphertext: Hex
+  /** Its ciphertext commitment (bytes32). */
+  commitment: Hex
+  /** The mask proof, the only proof that goes on chain. */
+  proof: Hex
+  /** The proof's public outputs, for display: committee key commitment and VK anchor. */
+  pkCommitment: Hex
+  vkAnchor: Hex
+}
+
+export type MaskStep = { kind: 'encrypt' } | { kind: 'encryption-proof' } | { kind: 'mask-proof' }
+
 export function toHex(bytes: Uint8Array): Hex {
   let hex = '0x'
   for (const byte of bytes) hex += byte.toString(16).padStart(2, '0')
@@ -96,15 +128,29 @@ interface InnerKey {
   vkHash: string
 }
 
+/** The witness of one user-data encryption proof. */
+type EncryptionInputs = Parameters<typeof proveUserDataEncryptionTree>[2]
+
 /** One ciphertext of the bid with the proof of its encryption. */
 interface Encrypted {
-  role: Role
   slots: BigUint64Array
   ciphertext: Hex
   commitment: Hex
   /** The plaintext `k1` as the circuits take it. */
   k1: { coefficients: unknown }
   wrapper: InnerProof
+}
+
+/**
+ * The slots of a provider mask: uniform in `1..=t - 1`. The mask circuit proves that no slot is 0,
+ * and an honest provider has no reason to leave a slot guessable. With `t = 257` one random byte
+ * plus 1 is uniform in `1..=256`, so no sample is rejected.
+ */
+function maskSlots(): BigUint64Array {
+  if (PLAINTEXT_MODULUS !== 257) throw new Error('The mask slots are sampled for the plaintext modulus 257')
+  const bytes = new Uint8Array(DEGREE)
+  globalThis.crypto.getRandomValues(bytes)
+  return BigUint64Array.from(bytes, (byte) => BigInt(byte) + 1n)
 }
 
 /**
@@ -133,11 +179,12 @@ export class BidProver {
   /**
    * Encrypt a bid to the committee key and prove it valid, with one proof for the whole bid.
    *
-   * The bid is 3 or 4 ciphertexts, one for each role of `type`. The plaintext of each is
+   * The bid is 2 to 4 ciphertexts, one for each role of `type`. The plaintext of each is
    * SIMD-encoded: the thermometer slots of the bid for the roles 0 and 1, uniform random slots for
    * the mask (role 2), and uniform random slots that repeat in each pair of groups for the pair
-   * mask (role 3). All proofs run on this machine, so the bid never leaves it. The proofs form a
-   * tree, and no circuit has more than 2^21 gates, so a browser can prove each one:
+   * mask (role 3). The type 4 (mask providers) has the roles 0 and 1 only. All proofs run on this
+   * machine, so the bid never leaves it. The proofs form a tree, and no circuit has more than 2^21
+   * gates, so a browser can prove each one:
    *
    * - for every role, Interfold's user-data encryption proof (the ciphertext encrypts `k1` under
    *   the committee key);
@@ -145,8 +192,8 @@ export class BidProver {
    *   the one bid, which is below `levels`;
    * - `auction_bid_masks` (type 3 only): the proofs of the roles 2 and 3, and the pair mask is
    *   pair-equal;
-   * - `auction_bid3` or `auction_bid4`: verifies the proofs above. This is the only proof
-   *   published. It binds `bidder`, the address that will be the bidder of `publishInput` (the
+   * - `auction_bid2`, `auction_bid3` or `auction_bid4`: verifies the proofs above. This is the only
+   *   proof published. It binds `bidder`, the address that will be the bidder of `publishInput` (the
    *   sender or the signer of a relayed bid), and `levels`, the number of price steps of the auction.
    */
   async prove(
@@ -169,24 +216,9 @@ export class BidProver {
     const encryptions: Encrypted[] = []
     for (const role of roles) {
       onStep?.({ kind: 'encrypt', role })
-      const slots = bidSlots(role, bid)
-      const { encryptedData, circuitInputs } = await encryptVectorAndGenInputs(slots, committeeKey, PRESET, {
-        encoding: 'simd',
-      })
-      // An l-BFV committee key yields the chunked witness; a trBFV key would mean the wrong preset.
-      if (!('r1is' in circuitInputs)) {
-        throw new Error(`The committee key is not an l-BFV key; this program needs param set ${PARAM_SET}`)
-      }
-      const commitment = toHex(await computeCiphertextCommitment(encryptedData, PRESET))
-
+      const encrypted = await this.encrypt(bidSlots(role, bid), committeeKey)
       onStep?.({ kind: 'encryption-proof', role })
-      const wrapper = await this.proveEncryption(circuitInputs)
-      // Fail here rather than on chain: the leaf the contract inserts must be the commitment the
-      // FHE program recomputes from the published bytes.
-      if (word(wrapper.publicInputs[3]) !== commitment) {
-        throw new Error('The encryption proof commits to a different ciphertext than the one being published')
-      }
-      encryptions.push({ role, slots, ciphertext: toHex(encryptedData), commitment, k1: circuitInputs.k1, wrapper })
+      encryptions.push(await this.proveEncrypted(encrypted))
     }
 
     // Every wrapper proof has the same circuit, so one key serves all of them. All of them also
@@ -248,7 +280,7 @@ export class BidProver {
         masks_proof: proofToFields(masks.proof),
         masks_key_hash: masksKey.vkHash,
       } as InputMap
-    } else {
+    } else if (roles.length === 3) {
       onStep?.({ kind: 'bid-proof' })
       const mask = encryptions[2]
       finalInputs = {
@@ -257,21 +289,110 @@ export class BidProver {
         mask_proof: proofToFields(mask.wrapper.proof),
         mask_public_inputs: mask.wrapper.publicInputs,
       } as InputMap
+    } else {
+      onStep?.({ kind: 'bid-proof' })
+      finalInputs = { ...commonInputs, ct0_chain: shared.ct0_chain, ct1_chain: shared.ct1_chain } as InputMap
     }
-    const { witness, returnValue } = await new Noir(bidCircuit).execute(finalInputs)
-    // The contract checks this output against the E3's committee key commitment.
-    const committeeCommitment = toHex(await computePublicKeyCommitment(committeeKey, PRESET))
-    if (!Array.isArray(returnValue) || typeof returnValue[0] !== 'string' || word(returnValue[0]) !== committeeCommitment) {
-      throw new Error('The bid circuit does not reproduce the committee key commitment')
-    }
-    const backend = new UltraHonkBackend(bidCircuit.bytecode, this.api)
-    const proof = await backend.generateProof(witness, { verifierTarget: 'evm' })
-
     // The public inputs: the ciphertext commitments, bidder, levels, pk_commitment, vk_anchor.
-    const outputs = proof.publicInputs.length - 2
+    const { proof, pkCommitment, vkAnchor } = await this.proveFinal(bidCircuit, finalInputs, committeeKey)
     return {
       ciphertexts: encryptions.map(({ ciphertext }) => ciphertext),
       commitments: encryptions.map(({ commitment }) => commitment),
+      proof,
+      pkCommitment,
+      vkAnchor,
+    }
+  }
+
+  /**
+   * Encrypt the mask of a provider (type 4) to the committee key and prove it valid, with one proof.
+   *
+   * The plaintext has 128 SIMD slots, each drawn uniform in 1 to 256 with `crypto.getRandomValues`.
+   * The program multiplies the output of the auction by the masks of all providers, so a zero slot
+   * would erase a result. The proofs are:
+   *
+   * - Interfold's user-data encryption proof (the ciphertext encrypts `k1` under the committee key);
+   * - `auction_mask`: verifies it, and `k1` is the plaintext of 128 slots that are all nonzero mod
+   *   257. This is the only proof published. It binds `provider`, the address that sends
+   *   `publishInput`.
+   *
+   * The public inputs are the ciphertext commitment, `provider`, the committee key commitment and the
+   * VK anchor.
+   */
+  async proveMask(committeeKey: Uint8Array, provider: Address, onStep?: (step: MaskStep) => void): Promise<PreparedMask> {
+    onStep?.({ kind: 'encrypt' })
+    const slots = maskSlots()
+    const encrypted = await this.encrypt(slots, committeeKey)
+    onStep?.({ kind: 'encryption-proof' })
+    const { ciphertext, commitment, k1, wrapper } = await this.proveEncrypted(encrypted)
+    const udeKey = await keyOf(wrapper)
+
+    onStep?.({ kind: 'mask-proof' })
+    const opening = await openLbfvKeyEnvelope(committeeKey, PRESET)
+    const { proof, pkCommitment, vkAnchor } = await this.proveFinal(
+      maskCircuit,
+      {
+        user_data_encryption_verification_key: udeKey.vkAsFields,
+        user_data_encryption_proof: proofToFields(wrapper.proof),
+        user_data_encryption_public_inputs: wrapper.publicInputs,
+        user_data_encryption_key_hash: udeKey.vkHash,
+        ct_commitment: commitment,
+        provider: BigInt(provider).toString(),
+        public_key_row_commitments: opening.publicKeyRows.map(toHex),
+        relinearization_key_commitment: toHex(opening.relinearizationKey),
+        k1: { coefficients: k1.coefficients },
+        slot_values: Array.from(slots, (slot) => slot.toString()),
+      } as InputMap,
+      committeeKey,
+    )
+    return { ciphertext, commitment, proof, pkCommitment, vkAnchor }
+  }
+
+  /** Encrypt `slots` to the committee key, and keep the commitment and the witness of the encryption. */
+  private async encrypt(
+    slots: BigUint64Array,
+    committeeKey: Uint8Array,
+  ): Promise<Omit<Encrypted, 'wrapper'> & { circuitInputs: EncryptionInputs }> {
+    const { encryptedData, circuitInputs } = await encryptVectorAndGenInputs(slots, committeeKey, PRESET, {
+      encoding: 'simd',
+    })
+    // An l-BFV committee key yields the chunked witness; a trBFV key would mean the wrong preset.
+    if (!('r1is' in circuitInputs)) {
+      throw new Error(`The committee key is not an l-BFV key; this program needs param set ${PARAM_SET}`)
+    }
+    const commitment = toHex(await computeCiphertextCommitment(encryptedData, PRESET))
+    return { slots, ciphertext: toHex(encryptedData), commitment, k1: circuitInputs.k1, circuitInputs }
+  }
+
+  /** The user-data encryption proof of an encrypted ciphertext, checked against its commitment. */
+  private async proveEncrypted({
+    circuitInputs,
+    ...encrypted
+  }: Omit<Encrypted, 'wrapper'> & { circuitInputs: EncryptionInputs }): Promise<Encrypted> {
+    const wrapper = await this.proveEncryption(circuitInputs)
+    // Fail here rather than on chain: the leaf the contract inserts must be the commitment the
+    // FHE program recomputes from the published bytes.
+    if (word(wrapper.publicInputs[3]) !== encrypted.commitment) {
+      throw new Error('The encryption proof commits to a different ciphertext than the one being published')
+    }
+    return { ...encrypted, wrapper }
+  }
+
+  /**
+   * The proof that goes on chain: execute the outer circuit, check that it reproduces the committee
+   * key commitment, and prove it for the EVM verifier. The outputs are the last two public inputs.
+   */
+  private async proveFinal(circuit: CompiledCircuit, inputs: InputMap, committeeKey: Uint8Array) {
+    const { witness, returnValue } = await new Noir(circuit).execute(inputs)
+    // The contract checks this output against the E3's committee key commitment.
+    const committeeCommitment = toHex(await computePublicKeyCommitment(committeeKey, PRESET))
+    if (!Array.isArray(returnValue) || typeof returnValue[0] !== 'string' || word(returnValue[0]) !== committeeCommitment) {
+      throw new Error('The circuit does not reproduce the committee key commitment')
+    }
+    const backend = new UltraHonkBackend(circuit.bytecode, this.api)
+    const proof = await backend.generateProof(witness, { verifierTarget: 'evm' })
+    const outputs = proof.publicInputs.length - 2
+    return {
       proof: toHex(proof.proof),
       pkCommitment: word(proof.publicInputs[outputs]),
       vkAnchor: word(proof.publicInputs[outputs + 1]),
@@ -290,7 +411,7 @@ export class BidProver {
    * The user-data encryption proof of one ciphertext: the proof tree, then the wrapper proof that
    * the bid circuits verify.
    */
-  private async proveEncryption(circuitInputs: Parameters<typeof proveUserDataEncryptionTree>[2]): Promise<InnerProof> {
+  private async proveEncryption(circuitInputs: EncryptionInputs): Promise<InnerProof> {
     const { userDataEncryption, ...proofTree } = insecureSimdProofBundle
     const { ct0, ct1 } = await proveUserDataEncryptionTree(this.api, proofTree, circuitInputs)
     return this.proveInner(userDataEncryption, {

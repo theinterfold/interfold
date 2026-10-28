@@ -19,6 +19,7 @@ import {
   PLAINTEXT_MODULUS,
 } from '@interfold/auction'
 import { GITHUB_URL } from '@/components/Footer'
+import ProviderAuctionExplainer from '@/components/ProviderAuctionExplainer'
 
 const HIDDEN_REVEALED: Record<AuctionType, { hidden: string[]; revealed: string[] }> = {
   [AuctionType.FirstPrice]: {
@@ -43,6 +44,10 @@ const HIDDEN_REVEALED: Record<AuctionType, { hidden: string[]; revealed: string[
       'If the top bids tie: every bidder that tied (their bid is the price). The tied bidder who bid first wins',
     ],
   },
+  [AuctionType.ProviderSecondPrice]: {
+    hidden: ['Every bid, including the winning one', 'The ranking of the losing bids', 'How close the losing bids were'],
+    revealed: ['The winner', 'The second-highest bid, which is the price'],
+  },
 }
 
 const LIFECYCLE = [
@@ -55,8 +60,12 @@ const LIFECYCLE = [
     'A committee of ciphernodes generates a public key together. No node holds the whole secret key. This takes several minutes; bids open once the key is published.',
   ],
   [
+    'Mask providers (zero-failure type only)',
+    'The creator names 1 to 4 mask providers. Each one sends one random mask, encrypted to the committee key, with a proof that no value in it is zero. Bidding opens when every provider has sent its mask.',
+  ],
+  [
     'Bid',
-    'A bidder picks one of the price steps the creator set. The browser encrypts it to the committee key, as 3 ciphertexts (4 for ratio-lane second price), proves the bid is well formed and the bidder publishes it on chain in one transaction. A bidder can update the bid twice.',
+    'A bidder picks one of the price steps the creator set. The browser encrypts it to the committee key, as 3 ciphertexts (4 for ratio-lane second price, 2 for the zero-failure type), proves the bid is well formed and the bidder publishes it on chain in one transaction. A bidder can update the bid twice.',
   ],
   [
     'Compute',
@@ -77,6 +86,10 @@ const PROOFS = [
   [
     'Check by the program',
     'The contract cannot read the ciphertext bytes against their commitments, but it stores both in the input tree. After the window closes, the program hashes each published ciphertext again and keeps only the bids whose bytes open their commitments. A bid that does not open is ignored whole, and the bidder falls back to its earlier valid version, if it has one.',
+  ],
+  [
+    'Mask proof',
+    'Only for the zero-failure type. One proof for each mask. It checks the encryption proof and that every one of the 128 values in the mask is not zero. The proof is bound to the provider address and to the committee key, and the contract verifies it before it accepts the mask. A zero in the mask could hide a number that is not zero, so this proof is what makes the result always readable.',
   ],
 ] as const
 
@@ -133,8 +146,9 @@ const About: React.FC = () => (
       <p className='prose-ed muted text-sm'>
         Always public, because it happens on chain: which address submitted a bid, when, how many versions it sent, and how many bidders
         took part. An auction has {MIN_BIDDERS} to {MAX_BIDDERS_BY_TYPE[AuctionType.FirstPrice]} bidders (
-        {MAX_BIDDERS_BY_TYPE[AuctionType.RatioFirstPrice]} for the ratio-lane types), and a bid is one of the price steps the creator chose,
-        from 2 to {LEVELS} steps. The creator sets the price of each step; the gaps between steps can be uneven.
+        {MAX_BIDDERS_BY_TYPE[AuctionType.RatioFirstPrice]} for the ratio-lane types and the zero-failure type), and a bid is one of the
+        price steps the creator chose, from 2 to {LEVELS} steps. The creator sets the price of each step; the gaps between steps can be
+        uneven.
       </p>
     </Block>
 
@@ -155,10 +169,11 @@ const About: React.FC = () => (
     <Block title='The proofs of a bid'>
       <p className='prose-ed max-w-3xl'>
         A bid is three ciphertexts: two thermometers of the bid step and a random mask. Ratio-lane second price adds a fourth, the paired
-        mask. The browser proves the following, which takes several minutes, and sends everything in one transaction. The contract checks
-        the bid proof before it accepts the bid, and you are a bidder once the transaction is mined.
+        mask. In the zero-failure type a bid is two ciphertexts, the two thermometers, because the mask providers send the masks. The
+        browser proves the following, which takes several minutes, and sends everything in one transaction. The contract checks the bid
+        proof before it accepts the bid, and you are a bidder once the transaction is mined.
       </p>
-      <div className='grid gap-5 md:grid-cols-3'>
+      <div className='grid gap-5 md:grid-cols-2'>
         {PROOFS.map(([title, body], index) => (
           <div key={title} className='card flat space-y-2'>
             <p className='mono muted'>Proof {index + 1}</p>
@@ -201,8 +216,8 @@ const About: React.FC = () => (
       </p>
       <p className='prose-ed max-w-3xl'>
         <strong>First-price and second-price (Vickrey).</strong> The result does not show that a tie happened. It shows the winner and the
-        price, and the winner is the tied bidder who bid first. No bidder can change the outcome of a tie by encrypting again, because
-        the ciphertext bytes play no part in it.
+        price, and the winner is the tied bidder who bid first. No bidder can change the outcome of a tie by encrypting again, because the
+        ciphertext bytes play no part in it.
       </p>
       <p className='prose-ed max-w-3xl'>
         <strong>Ratio-lane types.</strong> The result shows which bidders tie for the top bid, not only one winner. The winner is the first
@@ -210,6 +225,14 @@ const About: React.FC = () => (
         sees which bidders tied and that their bids are equal to the price. Ratio-lane types also allow{' '}
         {MAX_BIDDERS_BY_TYPE[AuctionType.RatioFirstPrice]} bidders, not {MAX_BIDDERS_BY_TYPE[AuctionType.FirstPrice]}.
       </p>
+      <p className='prose-ed max-w-3xl'>
+        <strong>Zero-failure second price.</strong> This type works like second price: the result does not show a tie, and the tied bidder
+        who bid first wins. It allows {MAX_BIDDERS_BY_TYPE[AuctionType.ProviderSecondPrice]} bidders.
+      </p>
+    </Block>
+
+    <Block title='How the zero-failure type works'>
+      <ProviderAuctionExplainer />
     </Block>
 
     <Block title='Read the result'>
@@ -226,6 +249,11 @@ const About: React.FC = () => (
         slots. Below the price every slot is random. Ratio-lane second price repeats the lanes in three copies, and the page checks that the
         copies agree. The result page draws the lane and decodes the winner for you.
       </p>
+      <p className='prose-ed max-w-3xl'>
+        For the zero-failure type the result has {LEVELS} slots per bidder, like second price, but every slot that is not zero is a random
+        number between 1 and {PLAINTEXT_MODULUS - 1} that the mask providers made. It never reads as zero by mistake. The result page draws
+        the grid and decodes it for you.
+      </p>
     </Block>
 
     <div role='note' className='note warn flex gap-3'>
@@ -236,7 +264,8 @@ const About: React.FC = () => (
           This app runs the development preset of the encryption scheme: a tiny ring (N = 128) and a plaintext modulus of{' '}
           {PLAINTEXT_MODULUS}. It is fast enough to prove in a browser and is not cryptographically secure. Use it to see how a sealed-bid
           auction works, never for bids that matter. Because of the small modulus, a slot that should hold a random value reads as zero by
-          mistake with a probability of 1 in {PLAINTEXT_MODULUS}, which can make a result unreadable; the page says so when it happens.
+          mistake with a probability of 1 in {PLAINTEXT_MODULUS}, which can make a result unreadable; the page says so when it happens. The
+          zero-failure type does not have this problem.
         </p>
       </div>
     </div>

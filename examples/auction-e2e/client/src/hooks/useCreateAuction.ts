@@ -30,6 +30,8 @@ export interface CreateInput {
   gate: Address
   /** What `gate.configure` takes; `0x` without a gate. */
   gateConfig: Hex
+  /** The mask providers of a type-4 auction, 1 to `MAX_PROVIDERS`; empty for the other types. */
+  providers: readonly Address[]
   /** Seconds the input window stays open, counted from its start. */
   durationSeconds: number
 }
@@ -133,7 +135,7 @@ export function useCreateAuction(account: `0x${string}` | undefined): UseCreateA
           paramSet: PARAM_SET,
           // The mock flag makes the compute provider return 32 zero bytes; the program server computes the real result.
           computeProviderParams: encodeComputeProviderParams(DEFAULT_COMPUTE_PROVIDER_PARAMS, true),
-          customParams: encodeAuctionParams(input.auctionType, input.prices, input.title, input.gate, input.gateConfig),
+          customParams: encodeAuctionParams(input.auctionType, input.prices, input.title, input.gate, input.gateConfig, input.providers),
         }
 
         setStep('quoting')

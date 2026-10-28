@@ -7,7 +7,7 @@
 import React from 'react'
 import { CheckCircleIcon, XCircleIcon } from '@phosphor-icons/react'
 import { FailureReason } from '@interfold/sdk'
-import { type AuctionPhase, type AuctionState, PHASE_ORDER, formatDateTime } from '@/utils/auction'
+import { type AuctionPhase, type AuctionState, PHASE_ORDER, formatDateTime, maskCount, masksComplete } from '@/utils/auction'
 import Spinner from './Spinner'
 
 const FAILURE_TEXT: Partial<Record<FailureReason, string>> = {
@@ -32,7 +32,10 @@ const STEP_COPY: Record<(typeof PHASE_ORDER)[number], { title: string; body: (au
   },
   bidding: {
     title: 'Bidding open',
-    body: (auction) => `Bids are accepted until ${formatDateTime(auction.inputWindow[1])}.`,
+    body: (auction) =>
+      masksComplete(auction)
+        ? `Bids are accepted until ${formatDateTime(auction.inputWindow[1])}.`
+        : `Bids open when every mask provider has sent its mask (${maskCount(auction)}/${auction.providers.length} so far) and close at ${formatDateTime(auction.inputWindow[1])}.`,
   },
   computing: {
     title: 'Computing',

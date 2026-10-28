@@ -17,11 +17,13 @@ import {
   MAX_BIDDERS_BY_TYPE,
   MIN_BIDDERS,
   encodeAllowlistConfig,
+  isProviderType,
   isRatioType,
   rolesFor,
 } from '@interfold/auction'
 import { STEP_LABELS, useCreateAuction } from '@/hooks/useCreateAuction'
 import { useWallet } from '@/hooks/useWallet'
+import { useServerProvider } from '@/hooks/useServerProvider'
 import { parseAllowlist } from '@/utils/allowlist-input'
 import { chain } from '@/utils/chain'
 import { ALLOWLIST_GATE_ADDRESS } from '@/utils/env-config'
@@ -31,6 +33,7 @@ import { ConnectPrompt } from '@/components/ConnectPrompt'
 import { INITIAL_PRICE_FORM, PriceLevelsField, pricesOf } from '@/components/PriceLevelsField'
 import Spinner from '@/components/Spinner'
 import { PictureField } from '@/components/PictureField'
+import { ProvidersField, checkProviders } from '@/components/ProvidersField'
 
 /** The contract rejects titles outside 1..80 bytes of UTF-8. */
 const MAX_TITLE_BYTES = 80
@@ -50,6 +53,17 @@ const NEXT_STEPS = [
   'After the window closes the result is computed and decrypted. Share the auction link with the bidders.',
 ]
 
+/** The next steps of an auction type: a type with mask providers needs their masks before bidding opens. */
+function nextSteps(type: AuctionType): string[] {
+  if (!isProviderType(type)) return NEXT_STEPS
+  return [
+    ...NEXT_STEPS.slice(0, 2),
+    'Each mask provider sends its mask. A provider can do it from the auction page, and the server sends the mask of its own provider address.',
+    'Bidding opens once the key is published and every mask is on chain, and stays open until the duration ends.',
+    NEXT_STEPS[3],
+  ]
+}
+
 const UPLOAD_LABELS = { signing: 'Sign the picture in your wallet…', uploading: 'Uploading the picture…' } as const
 
 const titleBytes = (title: string) => new TextEncoder().encode(title).length
@@ -68,6 +82,9 @@ const CreateAuction: React.FC = () => {
   const [allowlistText, setAllowlistText] = useState('')
   const [picture, setPicture] = useState<Blob | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  // `null` until the creator edits the list: then the default list follows the wallet and the server provider.
+  const [editedProviders, setEditedProviders] = useState<string[] | null>(null)
+  const serverProvider = useServerProvider()
   const [upload, setUpload] = useState<'signing' | 'uploading' | null>(null)
 
   const trimmed = title.trim()
@@ -86,7 +103,13 @@ const CreateAuction: React.FC = () => {
           : listed.count > MAX_ALLOWLIST_MEMBERS
             ? `An allowlist has at most ${MAX_ALLOWLIST_MEMBERS} addresses, got ${listed.count}.`
             : null
-  const canSubmit = ready && titleValid && 'prices' in priced && listError === null && !busy && create.shortfall === null
+  const defaultProviders = [address, serverProvider].filter((provider, index, all): provider is NonNullable<typeof provider> => {
+    return !!provider && all.findIndex((other) => other?.toLowerCase() === provider.toLowerCase()) === index
+  })
+  const providerRows = editedProviders ?? defaultProviders
+  const { providers, error: providersFault } = checkProviders(auctionType, providerRows)
+  const canSubmit =
+    ready && titleValid && 'prices' in priced && listError === null && providersFault === null && !busy && create.shortfall === null
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -100,6 +123,7 @@ const CreateAuction: React.FC = () => {
         prices: priced.prices,
         gate: gate ?? zeroAddress,
         gateConfig: gate ? encodeAllowlistConfig(listed.members) : '0x',
+        providers,
         durationSeconds,
       })
       if (e3Id === null) return
@@ -128,7 +152,7 @@ const CreateAuction: React.FC = () => {
         <h1 className='display'>Create an auction</h1>
         <p className='lede'>
           Choose what the auction reveals, how many price steps a bid can pick from, and the price of each step. Each type has its own limit
-          on the number of bidders; the ratio types take the most.
+          on the number of bidders; the ratio types and the zero-failure type take the most.
         </p>
       </header>
 
@@ -168,11 +192,24 @@ const CreateAuction: React.FC = () => {
               </label>
             ))}
             <p className='text-sm text-muted' aria-live='polite'>
-              {isRatioType(auctionType)
-                ? `If the top bids tie, the tied bidder who bid first wins. The tie becomes public: the result names every bidder that tied. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders, more than the ${MAX_BIDDERS_BY_TYPE[AuctionType.FirstPrice]} of the other types.`
-                : `If the top bids tie, the tied bidder who bid first wins. Nothing about the tie is revealed. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders.`}
+              {isProviderType(auctionType)
+                ? `If the top bids tie, the tied bidder who bid first wins. Nothing about the tie is revealed. Every bid has 2 ciphertexts, and the mask providers you name send the masks before bidding opens. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders.`
+                : isRatioType(auctionType)
+                  ? `If the top bids tie, the tied bidder who bid first wins. The tie becomes public: the result names every bidder that tied. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders, more than the ${MAX_BIDDERS_BY_TYPE[AuctionType.FirstPrice]} of the first-price and second-price types.`
+                  : `If the top bids tie, the tied bidder who bid first wins. Nothing about the tie is revealed. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders.`}
             </p>
           </fieldset>
+
+          {isProviderType(auctionType) && (
+            <ProvidersField
+              rows={providerRows}
+              onChange={setEditedProviders}
+              disabled={busy}
+              error={providersFault}
+              account={address}
+              serverProvider={serverProvider}
+            />
+          )}
 
           <PriceLevelsField form={priceForm} onChange={setPriceForm} disabled={busy} />
 
@@ -293,7 +330,7 @@ const CreateAuction: React.FC = () => {
         <aside className='card flat space-y-5 lg:sticky lg:top-24'>
           <p className='mono muted'>What happens next</p>
           <ol className='steps'>
-            {NEXT_STEPS.map((text, index) => (
+            {nextSteps(auctionType).map((text, index) => (
               <li key={text} className='step'>
                 <span className='pin'>{index + 1}</span>
                 <p className='text-sm text-ink'>{text}</p>

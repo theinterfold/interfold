@@ -4,14 +4,20 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { zeroAddress } from 'viem'
+import { type Address, zeroAddress } from 'viem'
 import { E3Stage, FailureReason } from '@interfold/sdk'
-import { type AuctionType, isAuctionType, type PriceList, readPriceList } from '@interfold/auction'
 import { AuctionProgram__factory } from '@contract-types/factories/contracts/AuctionProgram__factory'
+import { type AuctionType, isAuctionType, isProviderType, type PriceList, readPriceList } from '@interfold/auction'
 import { getContractAddresses } from './env-config'
 import { scanLogs } from './logs'
 import { getReadSdk, publicClient } from './chain'
 import { shortId } from './format'
+
+/** A mask provider of a type-4 auction and whether its mask is on chain. */
+export interface MaskProviderState {
+  address: Address
+  submitted: boolean
+}
 
 /** Everything the UI shows about one auction, read from the chain. */
 export interface AuctionState {
@@ -31,6 +37,8 @@ export interface AuctionState {
   gate: `0x${string}`
   /** Addresses that have bid at least once. They take a place of `MAX_BIDDERS_BY_TYPE[auctionType]`. */
   bidderCount: number
+  /** The mask providers the creator named, in that order. Empty for the types that have none. */
+  providers: readonly MaskProviderState[]
 }
 
 /** Where an auction is, in the order it passes through. `failed` can happen at any point. */
@@ -59,6 +67,28 @@ export function phaseOf(auction: AuctionState, now: bigint): AuctionPhase {
   if (auction.stage === E3Stage.CiphertextReady) return 'decrypting'
   if (auction.stage === E3Stage.KeyPublished) return now <= auction.inputWindow[1] ? 'bidding' : 'computing'
   return 'awaiting-key'
+}
+
+/** How many of the mask providers of the auction have sent their mask. */
+export function maskCount(auction: AuctionState): number {
+  return auction.providers.filter((provider) => provider.submitted).length
+}
+
+/** Whether every mask is on chain. An auction without providers needs none. */
+export function masksComplete(auction: AuctionState): boolean {
+  return auction.providers.every((provider) => provider.submitted)
+}
+
+async function loadProviders(e3Id: bigint): Promise<MaskProviderState[]> {
+  const { e3Program } = getContractAddresses()
+  const read = { address: e3Program, abi: AuctionProgram__factory.abi } as const
+  const addresses = await publicClient.readContract({ ...read, functionName: 'auctionProviders', args: [e3Id] })
+  return Promise.all(
+    addresses.map(async (address) => ({
+      address,
+      submitted: await publicClient.readContract({ ...read, functionName: 'maskSubmitted', args: [e3Id, address] }),
+    })),
+  )
 }
 
 /** Whole numbers with digit grouping: a price is a `uint256` that can exceed 2^53. */
@@ -114,7 +144,11 @@ export async function loadAuction(e3Id: bigint): Promise<AuctionState | null> {
   if (creator === zeroAddress) return null
   if (!isAuctionType(auctionType)) throw new Error(`Auction ${shortId(e3Id)} has the unknown type ${auctionType}`)
 
-  const [e3, stage] = await Promise.all([sdk.getE3(e3Id), sdk.getE3Stage(e3Id)])
+  const [e3, stage, providers] = await Promise.all([
+    sdk.getE3(e3Id),
+    sdk.getE3Stage(e3Id),
+    isProviderType(auctionType) ? loadProviders(e3Id) : Promise.resolve([]),
+  ])
   const failureReason = stage === E3Stage.Failed ? await sdk.getFailureReason(e3Id) : null
   return {
     e3Id,
@@ -128,6 +162,7 @@ export async function loadAuction(e3Id: bigint): Promise<AuctionState | null> {
     plaintextOutput: isPublished(e3.plaintextOutput) ? e3.plaintextOutput : null,
     gate,
     bidderCount: Number(bidders),
+    providers,
   }
 }
 

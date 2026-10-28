@@ -50,6 +50,13 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...local, RELAYER_PRIVATE_KEY: '0x12' })).toThrow('RELAYER_PRIVATE_KEY')
   })
 
+  it('turns the mask provider on only when MASK_PROVIDER_PRIVATE_KEY is set, and checks the key', () => {
+    expect(loadConfig(local).maskProviderPrivateKey).toBeUndefined()
+    expect(loadConfig({ ...local, MASK_PROVIDER_PRIVATE_KEY: '' }).maskProviderPrivateKey).toBeUndefined()
+    expect(loadConfig({ ...local, MASK_PROVIDER_PRIVATE_KEY: `0x${'ef'.repeat(32)}` }).maskProviderPrivateKey).toBe(`0x${'ef'.repeat(32)}`)
+    expect(() => loadConfig({ ...local, MASK_PROVIDER_PRIVATE_KEY: '0x12' })).toThrow('MASK_PROVIDER_PRIVATE_KEY')
+  })
+
   it('requires the deployment block on a public chain', () => {
     const sepolia = { ...local, CHAIN_ID: '11155111' }
     expect(() => loadConfig(sepolia)).toThrow('DEPLOY_BLOCK is required')

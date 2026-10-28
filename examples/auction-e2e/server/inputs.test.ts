@@ -6,8 +6,8 @@
 
 import { describe, expect, it } from 'vitest'
 import { zeroAddress, type Hex } from 'viem'
-import { AuctionType, auctionConfigInput, type SubmittedBid } from '@interfold/auction'
-import { auctionInputs } from './inputs'
+import { AuctionType, MASK_VERSION, auctionConfigInput, type SubmittedBid, type SubmittedMask } from '@interfold/auction'
+import { auctionInputs, planRun } from './inputs'
 
 const alice = '0x1111111111111111111111111111111111111111'
 const bob = '0x2222222222222222222222222222222222222222'
@@ -82,5 +82,90 @@ describe('auctionInputs', () => {
   it('rejects a bid whose lists differ in length', () => {
     const broken = { ...bid(alice, 'aa', 1, 1), commitments: [] as Hex[] }
     expect(() => auctionInputs(AuctionType.FirstPrice, [broken])).toThrow(/3 ciphertexts and 0 commitments/)
+  })
+})
+
+const carol = '0x3333333333333333333333333333333333333333'
+const providers = [alice, bob] as const
+
+/** A mask of `provider` at leaf `index`. */
+const mask = (provider: `0x${string}`, name: string, index: number): SubmittedMask => ({
+  provider,
+  index,
+  ciphertext: `0x${name}` as Hex,
+  commitment: `0x${name}c` as Hex,
+})
+
+describe('auctionInputs of a type-4 auction', () => {
+  const type = AuctionType.ProviderSecondPrice
+
+  it('puts the providers in the configuration, then the masks, then the bids, in leaf order', () => {
+    // Neither the masks nor the bids arrive in leaf order.
+    const inputs = auctionInputs(type, [bid(carol, 'cc', 1, 3, 2)], { providers, masks: [mask(bob, 'mb', 2), mask(alice, 'ma', 1)] })
+    expect(inputs.ciphertexts).toEqual([
+      [auctionConfigInput(type, providers), 0],
+      ['0xma', 1],
+      ['0xmb', 2],
+      ['0xcc0', 3],
+      ['0xcc1', 4],
+    ])
+    expect(inputs.commitments).toEqual([`0x${'00'.repeat(32)}`, '0xmac', '0xmbc', '0xccc0', '0xccc1'])
+  })
+
+  it('sends the provider as the sender of a mask and MASK_VERSION as its version', () => {
+    const inputs = auctionInputs(type, [bid(carol, 'cc', 1, 3, 2)], { providers, masks: [mask(alice, 'ma', 1), mask(bob, 'mb', 2)] })
+    expect(inputs.slots).toEqual([zeroAddress, alice, bob, carol, carol])
+    expect(inputs.parents).toEqual([0, MASK_VERSION, MASK_VERSION, 1, 1])
+  })
+
+  it('names the providers in leaf 0, so a different list gives a different configuration', () => {
+    const first = auctionInputs(type, [], { providers: [alice, bob], masks: [] }).ciphertexts[0][0]
+    expect(first).not.toBe(auctionInputs(type, [], { providers: [bob, alice], masks: [] }).ciphertexts[0][0])
+    expect(first).not.toBe(auctionInputs(type, [], { providers: [alice], masks: [] }).ciphertexts[0][0])
+  })
+
+  it('rejects a gap before a mask or between the masks and the bids', () => {
+    expect(() => auctionInputs(type, [], { providers, masks: [mask(alice, 'ma', 2)] })).toThrow(/Leaf 1 has no mask event/)
+    expect(() =>
+      auctionInputs(type, [bid(carol, 'cc', 1, 4, 2)], { providers, masks: [mask(alice, 'ma', 1), mask(bob, 'mb', 2)] }),
+    ).toThrow(/Leaf 3 has no bid event/)
+  })
+})
+
+describe('planRun', () => {
+  const type = AuctionType.ProviderSecondPrice
+  const masks = [mask(alice, 'ma', 1), mask(bob, 'mb', 2)]
+  const bids = [bid(carol, 'cc', 1, 3, 2), bid('0x4444444444444444444444444444444444444444', 'dd', 1, 5, 2)]
+  const opensAll = () => true
+
+  it('runs a type-4 auction when every mask is in and 2 bidders count', () => {
+    const plan = planRun(type, bids, { providers, masks }, opensAll)
+    expect(plan.kind).toBe('run')
+    expect(plan.counted).toBe(2)
+    if (plan.kind === 'run') expect(plan.inputs.ciphertexts.map(([, leaf]) => leaf)).toEqual([0, 1, 2, 3, 4, 5, 6])
+  })
+
+  it('does not run a type-4 auction with a missing mask, and names the provider', () => {
+    const plan = planRun(type, [], { providers, masks: [masks[0]] }, opensAll)
+    expect(plan).toMatchObject({ kind: 'skip', counted: 0 })
+    expect(plan.kind === 'skip' && plan.reason).toContain(bob)
+  })
+
+  it('does not run a type-4 auction with a mask that does not open its commitment', () => {
+    const plan = planRun(type, bids, { providers, masks }, (ciphertext) => ciphertext !== '0xmb')
+    expect(plan.kind).toBe('skip')
+    expect(plan.kind === 'skip' && plan.reason).toContain(bob)
+  })
+
+  it('does not run with fewer than 2 bidders whose bids open their commitments', () => {
+    expect(planRun(type, [bids[0]], { providers, masks }, opensAll)).toMatchObject({ kind: 'skip', counted: 1 })
+    const plan = planRun(type, bids, { providers, masks }, (ciphertext) => !ciphertext.startsWith('0xdd'))
+    expect(plan).toMatchObject({ kind: 'skip', counted: 1 })
+  })
+
+  it('runs the other types without masks and still needs 2 bidders', () => {
+    const first = [bid(alice, 'a1', 1, 1, 3), bid(bob, 'bb', 1, 4, 3)]
+    expect(planRun(AuctionType.FirstPrice, first, { providers: [], masks: [] }, opensAll)).toMatchObject({ kind: 'run', counted: 2 })
+    expect(planRun(AuctionType.FirstPrice, [first[0]], { providers: [], masks: [] }, opensAll)).toMatchObject({ kind: 'skip', counted: 1 })
   })
 })
