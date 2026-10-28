@@ -107,6 +107,12 @@ impl AdmissionState {
         });
         Cow::Owned(filtered)
     }
+
+    /// The admission pause cutoff at `timepoint`, when admissions are paused then.
+    pub fn pause_cutoff(&self, chain_id: u64, timepoint: u64) -> Option<u64> {
+        let policy = at(&self.chains.get(&chain_id)?.policies, timepoint);
+        policy.admissions_paused.then_some(policy.pause_timepoint)
+    }
 }
 
 /// The bond-owner identity policy of each chain: whether a request at a timestamp requires a
@@ -153,6 +159,19 @@ impl IdentityPolicyState {
         self.chains
             .get(&chain_id)
             .is_some_and(|history| at(history, timepoint))
+    }
+
+    /// Whether selection at `timepoint` needs a verified bond owner. During an admission pause, the
+    /// contract also applies the policy at the pause cutoff, so a policy that was required then
+    /// still applies after governance turns it off.
+    pub fn required_for_selection(
+        &self,
+        chain_id: u64,
+        timepoint: u64,
+        pause_cutoff: Option<u64>,
+    ) -> bool {
+        self.required_at(chain_id, timepoint)
+            || pause_cutoff.is_some_and(|cutoff| self.required_at(chain_id, cutoff))
     }
 }
 
@@ -247,6 +266,40 @@ mod tests {
                 restored.required_at(1, timepoint)
             );
         }
+    }
+
+    #[test]
+    fn a_pause_keeps_the_identity_policy_of_its_cutoff() {
+        let mut identity = IdentityPolicyState::default();
+        for (timepoint, required) in [(10, true), (50, false)] {
+            identity
+                .record(&IdentityPolicyChange {
+                    chain_id: 1,
+                    timepoint,
+                    required,
+                })
+                .unwrap();
+        }
+        let mut admission = AdmissionState::default();
+        admission
+            .record(&AdmissionUpdated {
+                chain_id: 1,
+                timepoint: 40,
+                change: AdmissionChange::Policy(AdmissionPolicy {
+                    admissions_paused: true,
+                    pause_timepoint: 30,
+                    ..Default::default()
+                }),
+            })
+            .unwrap();
+
+        assert_eq!(admission.pause_cutoff(1, 39), None);
+        assert_eq!(admission.pause_cutoff(1, 60), Some(30));
+        // Not required at T-1, but required at the cutoff of a pause that still applies.
+        assert!(!identity.required_at(1, 60));
+        assert!(identity.required_for_selection(1, 60, admission.pause_cutoff(1, 60)));
+        assert!(!identity.required_for_selection(1, 60, None));
+        assert!(!identity.required_for_selection(1, 5, Some(5)));
     }
 
     #[test]

@@ -169,9 +169,11 @@ at the pause cutoff, so a later credential or policy change cannot widen the fro
 renew before the window that their credential ends in, or they stop counting toward capacity; an
 owner who renews during a window counts after `interfold ciphernode activate` or at the next window.
 A required policy turns the Rust owner shortlist off, because the node does not know which owners
-hold a credential. Turn `required` on only after most nodes run a release that has the shortlist
-change and the self-refresh. An identifier proves what its verifier proves (for a document verifier,
-one document rather than one person); it does not stop identity rental.
+hold a credential. Turn `required` on only when, for the largest committee size, enough distinct
+verified owners run a release that has the shortlist change and the self-refresh, are online, and
+are eligible; nodes on an older release keep the shortlist on and can skip seats. An identifier
+proves what its verifier proves (for a document verifier, one document rather than one person); it
+does not stop identity rental.
 
 `ZKPassportIdentityVerifier` checks ZKPassport proofs of chip documents (passports, national ID
 cards, residence permits) through ZKPassport's root verifier. ZKPassport checks the domain, scope,

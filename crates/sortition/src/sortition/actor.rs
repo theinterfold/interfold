@@ -386,7 +386,11 @@ impl Sortition {
         let state = admission.filter(chain_id, timepoint, state);
         // The node does not know which owners hold a credential, so a required identity policy
         // turns the owner shortlist off and every eligible node submits.
-        let owner_shortlist = !self.identity_policy.get()?.required_at(chain_id, timepoint);
+        let owner_shortlist = !self.identity_policy.get()?.required_for_selection(
+            chain_id,
+            timepoint,
+            admission.pause_cutoff(chain_id, timepoint),
+        );
 
         backend
             .get_submission_index(

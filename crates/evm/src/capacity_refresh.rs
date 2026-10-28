@@ -10,7 +10,9 @@
 //! fixed windows. When a window ends, the count reads zero until operator refreshes rebuild it, and
 //! no view shows which owners the new count holds. So each full node refreshes its own operator
 //! once in each window. The node keeps the window in memory, so it refreshes once more after a
-//! restart.
+//! restart. A sent refresh settles before the node sends another: a check waits while it is pending,
+//! takes its window from its block once mined, and sends again only if it reverted or left the
+//! mempool.
 
 use crate::{
     contracts::IBondingRegistry,
@@ -18,15 +20,16 @@ use crate::{
 };
 use actix::prelude::*;
 use alloy::{
-    primitives::Address,
+    eips::BlockNumberOrTag,
+    primitives::{Address, TxHash},
     providers::{Provider, WalletProvider},
 };
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use e3_events::{
     prelude::*, BusHandle, EffectsEnabled, EventType, InterfoldEvent, InterfoldEventData, Shutdown,
 };
 use e3_sortition::IdentityPolicyRequiredAt;
-use e3_utils::{require_successful_receipt, NotifySync};
+use e3_utils::NotifySync;
 use std::time::Duration;
 use tracing::{info, warn};
 
@@ -47,13 +50,46 @@ fn refresh_due(required: bool, timestamp: u64, refreshed_window: Option<u64>) ->
     required && refreshed_window != Some(timestamp / CAPACITY_WINDOW_SECS)
 }
 
+/// The refresh state of one chain between checks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Progress {
+    /// The window of the last refresh that this process saw mined.
+    refreshed_window: Option<u64>,
+    /// A refresh that this process sent and has not seen settle.
+    pending: Option<TxHash>,
+}
+
+/// Where a sent refresh stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Sent {
+    Pending,
+    /// Mined successfully, in a block with this timestamp.
+    Mined(u64),
+    /// Reverted, or no longer known to the node's RPC.
+    Lost,
+}
+
+impl Progress {
+    /// Apply the state of the pending refresh. Returns whether the node may send another.
+    fn settle(&mut self, sent: Sent) -> bool {
+        match sent {
+            Sent::Pending => return false,
+            Sent::Mined(timestamp) => {
+                self.refreshed_window = Some(timestamp / CAPACITY_WINDOW_SECS);
+            }
+            Sent::Lost => {}
+        }
+        self.pending = None;
+        true
+    }
+}
+
 /// Refreshes the operator of this node in each owner capacity window of one chain.
 pub struct CapacityRefresher<P> {
     provider: EthProvider<P>,
     bonding_registry: Address,
     identity_policy: Recipient<IdentityPolicyRequiredAt>,
-    /// The window of the last refresh in this process.
-    refreshed_window: Option<u64>,
+    progress: Progress,
     checking: bool,
 }
 
@@ -68,7 +104,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> CapacityRefresher<P> {
             provider,
             bonding_registry,
             identity_policy,
-            refreshed_window: None,
+            progress: Progress::default(),
             checking: false,
         }
         .start();
@@ -129,26 +165,22 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<Check> for Capacity
         let provider = self.provider.clone();
         let bonding_registry = self.bonding_registry;
         let identity_policy = self.identity_policy.clone();
-        let refreshed_window = self.refreshed_window;
+        let mut progress = self.progress;
         Box::pin(
             async move {
-                check(
-                    provider,
-                    bonding_registry,
-                    identity_policy,
-                    refreshed_window,
-                )
-                .await
+                let result =
+                    check(&provider, bonding_registry, identity_policy, &mut progress).await;
+                (progress, result)
             }
             .into_actor(self)
-            .map(|result, actor, ctx| {
-                match result {
-                    Ok(Some(window)) => actor.refreshed_window = Some(window),
-                    Ok(None) => {}
-                    Err(error) => warn!(
+            .map(|(progress, result), actor, ctx| {
+                // Keep what the check learned even when a later step failed.
+                actor.progress = progress;
+                if let Err(error) = result {
+                    warn!(
                         chain_id = actor.provider.chain_id(),
                         "Could not refresh the operator for the owner capacity window: {error:#}"
-                    ),
+                    );
                 }
                 ctx.notify_later(Check, CHECK_INTERVAL);
             }),
@@ -156,16 +188,21 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<Check> for Capacity
     }
 }
 
-/// Refresh the operator when its window is due. Returns the window that needs no other refresh.
+/// Settle a sent refresh, then refresh the operator when its window is due.
 async fn check<P>(
-    provider: EthProvider<P>,
+    provider: &EthProvider<P>,
     bonding_registry: Address,
     identity_policy: Recipient<IdentityPolicyRequiredAt>,
-    refreshed_window: Option<u64>,
-) -> Result<Option<u64>>
+    progress: &mut Progress,
+) -> Result<()>
 where
     P: Provider + WalletProvider + Clone + 'static,
 {
+    if let Some(hash) = progress.pending {
+        if !progress.settle(sent_state(provider, hash).await?) {
+            return Ok(());
+        }
+    }
     let timestamp = get_current_timestamp_from_provider(provider.clone()).await?;
     let required = identity_policy
         .send(IdentityPolicyRequiredAt {
@@ -173,22 +210,60 @@ where
             timepoint: timestamp,
         })
         .await??;
-    if !refresh_due(required, timestamp, refreshed_window) {
-        return Ok(None);
+    if !refresh_due(required, timestamp, progress.refreshed_window) {
+        return Ok(());
     }
-    refresh_operator(&provider, bonding_registry).await?;
-    Ok(Some(timestamp / CAPACITY_WINDOW_SECS))
+    match send_refresh(provider, bonding_registry).await? {
+        Some(hash) => progress.pending = Some(hash),
+        // The registry has nothing to count for an unregistered operator.
+        None => progress.refreshed_window = Some(timestamp / CAPACITY_WINDOW_SECS),
+    }
+    Ok(())
 }
 
-async fn refresh_operator<P>(provider: &EthProvider<P>, bonding_registry: Address) -> Result<()>
+/// Read where a sent refresh stands.
+async fn sent_state<P>(provider: &EthProvider<P>, hash: TxHash) -> Result<Sent>
+where
+    P: Provider + WalletProvider + Clone + 'static,
+{
+    let client = provider.provider();
+    if let Some(receipt) = client.get_transaction_receipt(hash).await? {
+        if !receipt.status() {
+            warn!(tx = %hash, "The operator refresh reverted; the next check sends it again");
+            return Ok(Sent::Lost);
+        }
+        let block = receipt
+            .block_number
+            .context("mined refresh receipt has no block number")?;
+        let timestamp = client
+            .get_block_by_number(BlockNumberOrTag::Number(block))
+            .await?
+            .context("block of the mined refresh not found")?
+            .header
+            .timestamp;
+        info!(tx = %hash, "Refreshed the operator for the owner capacity window");
+        return Ok(Sent::Mined(timestamp));
+    }
+    if client.get_transaction_by_hash(hash).await?.is_some() {
+        return Ok(Sent::Pending);
+    }
+    warn!(tx = %hash, "The operator refresh left the mempool; the next check sends it again");
+    Ok(Sent::Lost)
+}
+
+/// Send `refreshOperatorStatus` for this node's operator. Returns `None` for an unregistered
+/// operator, whose call would revert.
+async fn send_refresh<P>(
+    provider: &EthProvider<P>,
+    bonding_registry: Address,
+) -> Result<Option<TxHash>>
 where
     P: Provider + WalletProvider + Clone + 'static,
 {
     let operator = provider.provider().default_signer_address();
     let bonding = IBondingRegistry::new(bonding_registry, provider.provider());
-    // The registry has nothing to count for an unregistered operator, and the call would revert.
     if !bonding.isRegistered(operator).call().await? {
-        return Ok(());
+        return Ok(None);
     }
     let _nonce_guard = transaction_nonce_guard(provider).await;
     let nonce = provider
@@ -202,14 +277,9 @@ where
         .gas(gas.saturating_mul(REFRESH_GAS_MULTIPLIER))
         .send()
         .await?;
-    drop(_nonce_guard);
-    let receipt = pending.get_receipt().await?;
-    require_successful_receipt("refresh operator status", &receipt)?;
-    info!(
-        tx = %receipt.transaction_hash,
-        "Refreshed the operator for the owner capacity window"
-    );
-    Ok(())
+    let hash = *pending.tx_hash();
+    info!(tx = %hash, "Sent the operator refresh for the owner capacity window");
+    Ok(Some(hash))
 }
 
 #[cfg(test)]
@@ -226,5 +296,43 @@ mod tests {
         assert!(!refresh_due(true, last_of_four, Some(4)));
         assert!(refresh_due(true, first_of_five, Some(4)));
         assert!(!refresh_due(true, first_of_five, Some(5)));
+    }
+
+    #[test]
+    fn a_sent_refresh_settles_before_another_is_sent() {
+        let hash = TxHash::repeat_byte(1);
+        let sent = Progress {
+            refreshed_window: Some(3),
+            pending: Some(hash),
+        };
+
+        let mut waiting = sent;
+        assert!(!waiting.settle(Sent::Pending));
+        assert_eq!(waiting, sent);
+
+        // The window comes from the block that mined the refresh, not from the check that sent it.
+        let mut mined = sent;
+        assert!(mined.settle(Sent::Mined(CAPACITY_WINDOW_SECS * 5)));
+        assert_eq!(
+            mined,
+            Progress {
+                refreshed_window: Some(5),
+                pending: None,
+            }
+        );
+        assert!(!refresh_due(
+            true,
+            CAPACITY_WINDOW_SECS * 5 + 1,
+            mined.refreshed_window
+        ));
+
+        let mut lost = sent;
+        assert!(lost.settle(Sent::Lost));
+        assert_eq!(lost.pending, None);
+        assert!(refresh_due(
+            true,
+            CAPACITY_WINDOW_SECS * 5,
+            lost.refreshed_window
+        ));
     }
 }
