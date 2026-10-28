@@ -113,9 +113,9 @@ before its first mutation/check. Underestimation during migration is safe; overe
 Capacity proves neither online availability nor independent people. Insufficient capacity reverts
 fees and treasury credit before a VRF draw. A required
 [owner identity](registration-and-bonding.md#owner-identity) policy also gates each snapshot owner
-at T−1, and capacity then fails closed past the earliest counted credential expiry or after a
-revocation until refreshes rebuild it. Gap: the Rust owner shortlist does not apply the identity
-policy.
+at T−1. Capacity then counts only owners whose credential lasts through the current 30-day window
+and fails closed at the window end or after a revocation until refreshes rebuild it. Gap: the Rust
+owner shortlist does not apply the identity policy.
 
 Before dispatching its canonical ticket, a selected node persists one provisional `active_jobs`
 reservation. Replay reuses it. Canonical committee finalization retains selected reservations and
