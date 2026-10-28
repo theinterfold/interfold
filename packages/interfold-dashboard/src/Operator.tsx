@@ -13,10 +13,11 @@
 // that funds and controls the collateral. They may be the same wallet, and the
 // guide supports either arrangement.
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { erc20Abi, formatUnits, isAddress, parseUnits, type Address, type Hash } from 'viem'
 import Loader from './Loader'
 import {
+  CHAIN,
   CONTRACTS,
   FEE_TOKEN,
   IS_TESTNET,
@@ -25,7 +26,28 @@ import {
   e3RefundManagerAbi,
   faucetAbi,
   interfoldAbi,
+  ownerIdentityRegistryAbi,
 } from './lib/chain'
+import {
+  PREVIEW_SERVICE,
+  boundChainName,
+  buildProofBundle,
+  capacityWindowEnd,
+  credentialEnd,
+  dateInput,
+  fetchIdentityPolicy,
+  fetchOwnerAccount,
+  fetchVerifierConfig,
+  fmtDay,
+  identityStatusText,
+  outerEvmProof,
+  parseDateInput,
+  safeRegistrationBatch,
+  type IdentityPolicy,
+  type OwnerAccount,
+  type ProofBundle,
+  type VerifierConfig,
+} from './lib/identity'
 import { LINKS, explorerAddress, explorerTx } from './lib/links'
 import { compactE3Id } from './lib/pollMeta'
 import {
@@ -680,6 +702,16 @@ export default function Operator() {
             </StepCard>
           </div>
 
+          {status?.bondOwner && (
+            <IdentityPanel
+              owner={status.bondOwner}
+              wallet={connected ? wallet.address : null}
+              busy={busy}
+              send={(key, call) => void run(key, () => write(call))}
+              errFor={errFor}
+            />
+          )}
+
           {operator && status && (
             <ManagePosition
               config={config}
@@ -1316,6 +1348,551 @@ function RewardsSummary({
       )}
     </>
   )
+}
+
+// ─── Bond-owner identity ──────────────────────────────────────────────────
+
+/** The ZKPassport request of the identity panel. */
+export type IdentityRequest =
+  | { phase: 'idle' }
+  | { phase: 'creating' }
+  | { phase: 'waiting'; url: string; qr: string; received: boolean }
+  | { phase: 'proving' }
+  | { phase: 'ready'; bundle: ProofBundle }
+  | { phase: 'failed'; message: string }
+
+/** The proof settings: the deployed verifier's, or the planned ones before a deployment. */
+export type IdentityService = {
+  domain: string
+  scope: string
+  faceMatch: boolean
+  /** 0 non-salted, 1 salted; null keeps the ZKPassport default. */
+  nullifierType: number | null
+  proofValidity: bigint
+  maxValidity: bigint
+}
+
+const REGISTER_IDENTITY_KEY = 'registerIdentity'
+
+function identityService(verifier: VerifierConfig | null, previewFaceMatch: boolean): IdentityService {
+  return verifier
+    ? {
+        domain: verifier.domain,
+        scope: verifier.scope,
+        faceMatch: verifier.faceMatchRequired,
+        nullifierType: verifier.nullifierType,
+        proofValidity: verifier.proofValidity,
+        maxValidity: verifier.maxValidity,
+      }
+    : {
+        domain: PREVIEW_SERVICE.domain,
+        scope: PREVIEW_SERVICE.scope,
+        faceMatch: previewFaceMatch,
+        nullifierType: null,
+        proofValidity: PREVIEW_SERVICE.proofValidity,
+        maxValidity: PREVIEW_SERVICE.maxValidity,
+      }
+}
+
+function IdentityPanel({
+  owner,
+  wallet,
+  busy,
+  send,
+  errFor,
+}: {
+  owner: Address
+  wallet: Address | null
+  busy: string | null
+  send: (key: string, call: ContractCall) => void
+  errFor: (key: string) => ReactNode
+}) {
+  const [reload, setReload] = useState(0)
+  // undefined while loading; null when the network has no identity policy.
+  const [policy, setPolicy] = useState<IdentityPolicy | null | undefined>(undefined)
+  const [verifier, setVerifier] = useState<VerifierConfig | null>(null)
+  // Kept with the owner that it was read for, so another owner never shows these values.
+  const [account, setAccount] = useState<{ owner: Address; value: OwnerAccount } | null>(null)
+  const [loadFailed, setLoadFailed] = useState(false)
+  const [request, setRequest] = useState<IdentityRequest>({ phase: 'idle' })
+  // null until the owner types a date.
+  const [validUntilInput, setValidUntilInput] = useState<string | null>(null)
+  const [previewFaceMatch, setPreviewFaceMatch] = useState(true)
+  const cancelRequest = useRef<(() => void) | null>(null)
+  // Each request gets a token. A callback of an older request changes nothing.
+  const requestToken = useRef(0)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      const nextPolicy = await fetchIdentityPolicy()
+      const nextVerifier = nextPolicy ? await fetchVerifierConfig(nextPolicy.registry) : null
+      if (cancelled) return
+      setPolicy(nextPolicy)
+      setVerifier(nextVerifier)
+    }
+    load().catch(() => {
+      if (!cancelled) setLoadFailed(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [reload])
+
+  // `busy` changes when a transaction settles, so a registration shows its new expiry.
+  useEffect(() => {
+    if (policy === undefined) return
+    let cancelled = false
+    fetchOwnerAccount(owner, policy?.registry ?? null).then(
+      (value) => {
+        if (!cancelled) setAccount({ owner, value })
+      },
+      () => {
+        if (!cancelled) setLoadFailed(true)
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [owner, policy, busy, reload])
+
+  // A request binds one owner, so a new owner starts over. Clearing during render (not in an effect)
+  // drops the old owner's request before the browser paints it.
+  const [requestOwner, setRequestOwner] = useState(owner)
+  if (owner !== requestOwner) {
+    setRequestOwner(owner)
+    setRequest({ phase: 'idle' })
+    setValidUntilInput(null)
+  }
+  useEffect(
+    () => () => {
+      requestToken.current += 1
+      cancelRequest.current?.()
+      cancelRequest.current = null
+    },
+    [owner],
+  )
+
+  const service = identityService(verifier, previewFaceMatch)
+  const current = account?.owner === owner ? account.value : null
+  // Until the owner types a date, the field offers the longest credential that the verifier allows.
+  const validUntilValue = validUntilInput ?? (current ? dateInput(current.now + service.maxValidity) : '')
+
+  const create = async () => {
+    const chain = boundChainName(CHAIN.id)
+    const validUntil = parseDateInput(validUntilValue)
+    if (!chain || validUntil === null) return
+    cancelRequest.current?.()
+    const token = ++requestToken.current
+    const update = (next: IdentityRequest) => {
+      if (requestToken.current === token) setRequest(next)
+    }
+    update({ phase: 'creating' })
+    try {
+      // The SDK is large, so it loads only when an owner asks for a proof.
+      const [sdk, qrcode] = await Promise.all([import('@zkpassport/sdk'), import('qrcode')])
+      const zkPassport = new sdk.ZKPassport(service.domain)
+      const builder = await zkPassport.request({
+        name: 'Interfold',
+        purpose: 'Verify the bond owner of an Interfold ciphernode.',
+        scope: service.scope,
+        mode: 'compressed-evm',
+        devMode: false,
+        ...(service.nullifierType === null
+          ? {}
+          : { uniqueIdentifierType: service.nullifierType === 1 ? sdk.NullifierType.SALTED : sdk.NullifierType.NON_SALTED }),
+      })
+      let query = builder
+        .gte('expiry_date', new Date(Number(validUntil) * 1000))
+        .bind('user_address', owner)
+        .bind('chain', chain)
+      if (service.faceMatch) query = query.facematch('strict')
+      const result = query.done()
+      if (requestToken.current !== token) return zkPassport.cancelRequest(result.requestId)
+      cancelRequest.current = () => zkPassport.cancelRequest(result.requestId)
+      const qr = await qrcode.toDataURL(result.url, { margin: 1, width: 240 })
+      update({ phase: 'waiting', url: result.url, qr, received: false })
+      result.onRequestReceived(() => update({ phase: 'waiting', url: result.url, qr, received: true }))
+      result.onGeneratingProof(() => update({ phase: 'proving' }))
+      result.onSuccess((success) => {
+        try {
+          const outer = outerEvmProof(success.proofs)
+          if (!outer) throw new Error('The app sent no EVM proof.')
+          const params = zkPassport.getSolidityVerifierParameters({ proof: outer, scope: service.scope, devMode: false })
+          update({
+            phase: 'ready',
+            bundle: buildProofBundle({ success, params, owner, chainId: CHAIN.id, faceMatch: service.faceMatch }),
+          })
+        } catch (e) {
+          update({ phase: 'failed', message: walletErrorMessage(e) })
+        }
+      })
+      result.onReject(() => update({ phase: 'failed', message: 'The request was rejected in the ZKPassport app.' }))
+      result.onError((message) => update({ phase: 'failed', message }))
+    } catch (e) {
+      update({ phase: 'failed', message: walletErrorMessage(e) })
+    }
+  }
+
+  return (
+    <IdentityView
+      owner={owner}
+      policy={policy}
+      verifier={verifier}
+      account={current}
+      loadFailed={loadFailed}
+      service={service}
+      validUntilInput={validUntilValue}
+      onValidUntil={setValidUntilInput}
+      previewFaceMatch={previewFaceMatch}
+      onPreviewFaceMatch={setPreviewFaceMatch}
+      request={request}
+      canRegister={sameAddress(wallet, owner)}
+      busy={busy}
+      errFor={errFor}
+      onReload={() => {
+        setLoadFailed(false)
+        setReload((n) => n + 1)
+      }}
+      onCreate={() => void create()}
+      onCancel={() => {
+        requestToken.current += 1
+        cancelRequest.current?.()
+        cancelRequest.current = null
+        setRequest({ phase: 'idle' })
+      }}
+      onRegister={(bundle) =>
+        send(REGISTER_IDENTITY_KEY, {
+          address: policy!.registry,
+          abi: ownerIdentityRegistryAbi,
+          functionName: 'register',
+          args: [bundle.evidence],
+        })
+      }
+      onDownloadProof={(bundle) => downloadJson(`interfold-identity-proof-${owner}.json`, bundle)}
+      onDownloadSafe={(bundle) =>
+        downloadJson(
+          `interfold-identity-safe-${owner}.json`,
+          safeRegistrationBatch(policy!.registry, owner, CHAIN.id, bundle.evidence, Date.now()),
+        )
+      }
+    />
+  )
+}
+
+/**
+ * The bond owner's credential, the ZKPassport request, and the registration. `policy` is undefined
+ * while it loads and null when the network has no identity registry; `account` is null while it loads.
+ */
+export function IdentityView({
+  owner,
+  policy,
+  verifier,
+  account,
+  loadFailed,
+  service,
+  validUntilInput,
+  onValidUntil,
+  previewFaceMatch,
+  onPreviewFaceMatch,
+  request,
+  canRegister,
+  busy,
+  errFor,
+  onReload,
+  onCreate,
+  onCancel,
+  onRegister,
+  onDownloadProof,
+  onDownloadSafe,
+}: {
+  owner: Address
+  policy: IdentityPolicy | null | undefined
+  verifier: VerifierConfig | null
+  account: OwnerAccount | null
+  loadFailed: boolean
+  service: IdentityService
+  validUntilInput: string
+  onValidUntil: (value: string) => void
+  previewFaceMatch: boolean
+  onPreviewFaceMatch: (value: boolean) => void
+  request: IdentityRequest
+  canRegister: boolean
+  busy: string | null
+  errFor: (key: string) => ReactNode
+  onReload: () => void
+  onCreate: () => void
+  onCancel: () => void
+  onRegister: (bundle: ProofBundle) => void
+  onDownloadProof: (bundle: ProofBundle) => void
+  onDownloadSafe: (bundle: ProofBundle) => void
+}) {
+  const preview = policy === null
+  const chain = boundChainName(CHAIN.id)
+  const validUntil = parseDateInput(validUntilInput)
+  const windowEnd = account ? capacityWindowEnd(account.now) : null
+  const currentExpiry = account?.identity?.expiresAt ?? 0n
+  const requesting = request.phase === 'creating' || request.phase === 'waiting' || request.phase === 'proving'
+
+  return (
+    <section className='opposition opidentity'>
+      <div className='section__eyebrow'>Bond owner / Identity</div>
+      <h3 className='oprewards__title'>Bond-owner identity</h3>
+      <p className='opnext__body'>
+        Governance can require each bond owner to prove one identity document with the ZKPassport app. The proof shows that the document is
+        valid. It puts no personal data on chain. One owner may fund many operators.
+      </p>
+
+      {loadFailed ? (
+        <>
+          <Note kind='warn'>Could not read the identity registry.</Note>
+          <button className='btn btn--ghost' onClick={onReload}>
+            Try again
+          </button>
+        </>
+      ) : policy === undefined || !account ? (
+        <p className='opmanage__text'>Loading the identity status…</p>
+      ) : (
+        <>
+          <dl className='dl'>
+            <dt>Bond owner</dt>
+            <dd>
+              <AddrLink address={owner} />
+              {account.isContract && <span className='dl__muted'> · contract wallet (Safe)</span>}
+            </dd>
+            <dt>Identity required</dt>
+            <dd>
+              {preview ? (
+                <span className='dl__muted'>No identity registry on {NETWORK_NAME} yet</span>
+              ) : policy.required ? (
+                `Yes, since ${fmtDay(policy.timepoint)}`
+              ) : (
+                'Not yet'
+              )}
+            </dd>
+            {!preview && (
+              <>
+                <dt>Credential</dt>
+                <dd>{identityStatusText(account)}</dd>
+              </>
+            )}
+          </dl>
+          {!preview && account.identity && account.identity.verifiedNow && windowEnd !== null && currentExpiry < windowEnd && (
+            <Note kind='warn'>
+              The credential ends before this 30-day window ends ({fmtDay(windowEnd)}), so this owner does not count toward request capacity
+              in this window. Renew it.
+            </Note>
+          )}
+          {preview && (
+            <Note>
+              You can still make a proof and download it. It uses the planned settings: domain{' '}
+              <code className='mono'>{service.domain}</code>, scope <code className='mono'>{service.scope}</code>.
+            </Note>
+          )}
+
+          {!chain ? (
+            <Note kind='warn'>ZKPassport does not verify proofs on {NETWORK_NAME}.</Note>
+          ) : request.phase === 'ready' ? (
+            <IdentityProof
+              bundle={request.bundle}
+              owner={owner}
+              preview={preview}
+              verifier={verifier}
+              account={account}
+              service={service}
+              canRegister={canRegister}
+              busy={busy}
+              errFor={errFor}
+              onRegister={onRegister}
+              onDownloadProof={onDownloadProof}
+              onDownloadSafe={onDownloadSafe}
+              onRestart={onCancel}
+            />
+          ) : (
+            <div className='opmanage__group'>
+              <h4 className='opmanage__title'>{account.identity?.expiresAt ? 'Renew the credential' : 'Verify the owner'}</h4>
+              <p className='opmanage__text'>
+                Use a passport, ID card or residence permit with a chip, and a phone with NFC and the ZKPassport app. The proof is bound to
+                this owner and to {NETWORK_NAME}.
+              </p>
+              <Field
+                label='Document valid until (UTC date)'
+                value={validUntilInput}
+                onChange={onValidUntil}
+                placeholder='YYYY-MM-DD'
+                invalid={validUntilInput.trim() !== '' && validUntil === null}
+                hint={`The document must be valid at least until this date. The credential ends on this date, or ${formatDuration(
+                  service.maxValidity,
+                )} after the proof, if that is earlier.`}
+              />
+              {validUntil !== null && windowEnd !== null && validUntil < windowEnd && (
+                <Note kind='warn'>
+                  This date is before the end of the current 30-day window ({fmtDay(windowEnd)}). The owner would not count toward request
+                  capacity in this window.
+                </Note>
+              )}
+              {validUntil !== null && account.identity && validUntil <= currentExpiry && (
+                <Note kind='warn'>
+                  Pick a date after the current expiry ({fmtDay(currentExpiry)}). A renewal cannot shorten the credential.
+                </Note>
+              )}
+              {preview ? (
+                <label className='opcheck'>
+                  <input type='checkbox' checked={previewFaceMatch} onChange={(e) => onPreviewFaceMatch(e.target.checked)} />
+                  <span>Require FaceMatch (a live face scan against the chip photo)</span>
+                </label>
+              ) : (
+                service.faceMatch && <Note>The app also asks for a face scan (FaceMatch).</Note>
+              )}
+
+              {request.phase === 'waiting' ? (
+                <div className='opidentity__request'>
+                  <img className='opidentity__qr' src={request.qr} alt='ZKPassport request QR code' width={240} height={240} />
+                  <div>
+                    <p className='opmanage__text'>
+                      {request.received
+                        ? 'The request is open in the app. Check the site and the bound address, then approve it.'
+                        : 'Scan this code with the ZKPassport app.'}
+                    </p>
+                    <a className='link-inline' href={request.url} target='_blank' rel='noreferrer'>
+                      Open the request on this phone
+                    </a>
+                  </div>
+                </div>
+              ) : request.phase === 'proving' ? (
+                <p className='opmanage__text'>The app is making the proof. This takes up to a minute.</p>
+              ) : request.phase === 'failed' ? (
+                <Note kind='warn'>{request.message}</Note>
+              ) : null}
+
+              <div className='opactions'>
+                {requesting ? (
+                  <button className='btn btn--ghost' onClick={onCancel}>
+                    Cancel
+                  </button>
+                ) : (
+                  <button className='btn btn--primary' disabled={validUntil === null} onClick={onCreate}>
+                    {request.phase === 'failed' ? 'Try again' : 'Create ZKPassport request'}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
+/** A proof from the app: what the verifier will read from it, and the ways to register it. */
+function IdentityProof({
+  bundle,
+  owner,
+  preview,
+  verifier,
+  account,
+  service,
+  canRegister,
+  busy,
+  errFor,
+  onRegister,
+  onDownloadProof,
+  onDownloadSafe,
+  onRestart,
+}: {
+  bundle: ProofBundle
+  owner: Address
+  preview: boolean
+  verifier: VerifierConfig | null
+  account: OwnerAccount
+  service: IdentityService
+  canRegister: boolean
+  busy: string | null
+  errFor: (key: string) => ReactNode
+  onRegister: (bundle: ProofBundle) => void
+  onDownloadProof: (bundle: ProofBundle) => void
+  onDownloadSafe: (bundle: ProofBundle) => void
+  onRestart: () => void
+}) {
+  const validUntil = BigInt(bundle.validUntil)
+  const proofDate = BigInt(bundle.proofDate)
+  const ends = credentialEnd(validUntil, proofDate, service.maxValidity)
+  const deadline = proofDate + service.proofValidity
+  const versionMatches = !verifier || bundle.version.toLowerCase() === verifier.version.toLowerCase()
+  const expired = account.now > deadline
+  const shortens = account.identity !== null && ends <= account.identity.expiresAt
+  const blocked = !versionMatches || expired || shortens
+
+  return (
+    <div className='opmanage__group'>
+      <h4 className='opmanage__title'>Proof ready</h4>
+      <dl className='dl'>
+        <dt>Bound to</dt>
+        <dd>
+          <AddrLink address={bundle.owner} /> on {NETWORK_NAME}
+        </dd>
+        <dt>Document valid until</dt>
+        <dd>{fmtDay(validUntil)}</dd>
+        <dt>Credential ends</dt>
+        <dd>{fmtDay(ends)}</dd>
+        <dt>Register before</dt>
+        <dd>{fmtDay(deadline)}</dd>
+        <dt>Identifier type</dt>
+        <dd>{bundle.nullifierType === 1 ? 'Salted' : 'Not salted'}</dd>
+      </dl>
+      {!versionMatches && (
+        <Note kind='warn'>
+          The app made the proof with another ZKPassport version than the verifier accepts. Governance must deploy a verifier for the new
+          version first.
+        </Note>
+      )}
+      {expired && <Note kind='warn'>The proof is too old to register. Create a new request.</Note>}
+      {shortens && <Note kind='warn'>This proof ends before the current credential. A renewal cannot shorten it.</Note>}
+
+      <div className='opactions'>
+        {!preview && !account.isContract && (
+          <button className='btn btn--primary' disabled={busy !== null || !canRegister || blocked} onClick={() => onRegister(bundle)}>
+            {busy === REGISTER_IDENTITY_KEY ? 'Confirming…' : 'Register the identity'}
+          </button>
+        )}
+        {!preview && account.isContract && (
+          <button className='btn btn--primary' disabled={blocked} onClick={() => onDownloadSafe(bundle)}>
+            Download the Safe transaction
+          </button>
+        )}
+        <button className='btn btn--ghost' onClick={() => onDownloadProof(bundle)}>
+          Download the proof (JSON)
+        </button>
+        <button className='btn btn--ghost' onClick={onRestart}>
+          New request
+        </button>
+      </div>
+      {errFor(REGISTER_IDENTITY_KEY)}
+      {!preview && !account.isContract && !canRegister && <Note>Connect the bond-owner wallet {shortAddr(owner)} to register.</Note>}
+      {!preview && account.isContract && (
+        <Note>
+          Load the file in the Safe Transaction Builder and execute it before {fmtDay(deadline)}. The registration costs about 1.3 million
+          gas.
+        </Note>
+      )}
+      {!preview && (
+        <Note>
+          The owner's operators count toward this window's request capacity after their next status refresh. Each node refreshes itself when
+          a window starts; to count now, use <strong>Refresh the status</strong> in Manage the position.
+        </Note>
+      )}
+    </div>
+  )
+}
+
+function downloadJson(name: string, value: unknown) {
+  const text = JSON.stringify(value, (_, v) => (typeof v === 'bigint' ? v.toString() : v), 2)
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = name
+  link.click()
+  URL.revokeObjectURL(url)
 }
 
 const bigMax = (a: bigint, b: bigint): bigint => (a > b ? a : b)

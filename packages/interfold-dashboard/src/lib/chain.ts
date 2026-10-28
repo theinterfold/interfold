@@ -15,9 +15,12 @@ import {
   CiphernodeRegistryOwnable__factory,
   E3RefundManager__factory,
   Faucet__factory,
+  IOwnerIdentityRegistry__factory,
+  IZKPassportVerifier__factory,
   Interfold__factory,
   InterfoldTicketToken__factory,
   InterfoldToken__factory,
+  ZKPassportIdentityVerifier__factory,
 } from '@interfold/contracts/types'
 import { NETWORKS, overrideKey, selectNetwork, type Env, type Setting } from './networks'
 
@@ -123,6 +126,10 @@ export const FEE_TOKEN = {
 // emitted before Interfold was deployed.
 export const DEPLOY_BLOCK = BigInt(envStr('DEPLOY_BLOCK', NET.deployBlock))
 
+// First block of the bond-owner identity policy scan. The policy is the latest
+// IdentityPolicyUpdated log of the bonding registry.
+export const IDENTITY_DEPLOY_BLOCK = BigInt(envStr('IDENTITY_DEPLOY_BLOCK', NET.identityDeployBlock || String(DEPLOY_BLOCK)))
+
 // E3 timeout windows (seconds), matching the deployment's timeoutConfig. Used to
 // decide whether an E3 is still genuinely active vs. expired without completing.
 export const TIMEOUTS = {
@@ -137,3 +144,6 @@ export const bondingRegistryAbi = BondingRegistry__factory.abi
 export const ticketTokenAbi = InterfoldTicketToken__factory.abi
 export const ciphernodeBondTokenAbi = InterfoldToken__factory.abi
 export const faucetAbi = Faucet__factory.abi
+export const ownerIdentityRegistryAbi = IOwnerIdentityRegistry__factory.abi
+export const zkPassportIdentityVerifierAbi = ZKPassportIdentityVerifier__factory.abi
+export const zkPassportRootVerifierAbi = IZKPassportVerifier__factory.abi
