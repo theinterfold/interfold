@@ -69,7 +69,7 @@ fn main(
     c7_vk: UltraHonkVerificationKey,
     c7_proof: UltraHonkProof,
     c7_public: [Field; C7_PUBLIC_LEN],
-    c6_key_hash: pub Field,
+    c6_fold_key_hash: pub Field,
     c7_key_hash: pub Field,
     committee_members: [Field; N_PARTIES],
     committee_hash_hi: pub Field,
@@ -86,7 +86,7 @@ fn main(
     verify_honk_proof_non_zk(c7_vk, c7_proof, c7_public, c7_key_hash);
 
     // The C6 tree is the root key and the hash of the stack's key list.
-    assert(c6_key_hash == compute_vk_hash([c6_root_vk_hash, c6_root_public[0]].as_vector()));
+    assert(c6_fold_key_hash == compute_vk_hash([c6_root_vk_hash, c6_root_public[0]].as_vector()));
 
     // The C6 stack only accepts secret-bearing leaf proofs carrying one common
     // domain. Expose that domain in the final EVM proof for on-chain checking.
@@ -105,7 +105,7 @@ fn main(
         assert(c6_root_public[C6_ROOT_D_OFFSET + i] == c7_public[C7_D_COMMITMENT_OFFSET + i]);
     }
 
-    let vk_hashes = [c6_key_hash, c7_key_hash].as_vector();
+    let vk_hashes = [c6_fold_key_hash, c7_key_hash].as_vector();
     let key_hash = compute_vk_hash(vk_hashes);
 
     let mut party_ids: [Field; T + 1] = [0; T + 1];

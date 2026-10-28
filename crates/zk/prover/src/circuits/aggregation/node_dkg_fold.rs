@@ -556,7 +556,7 @@ struct DecryptionAggregatorWitness {
     c7_vk: Vec<String>,
     c7_proof: Vec<String>,
     c7_public: Vec<String>,
-    c6_key_hash: String,
+    c6_fold_key_hash: String,
     c7_key_hash: String,
     committee_members: Vec<String>,
     committee_hash_hi: String,
@@ -644,7 +644,7 @@ pub fn prove_decryption_aggregation_jobs(
             c7_proof: proof_field_strings(job.c7_proof)?,
             c7_public: proof_public_field_strings(job.c7_proof)?,
             // The C6 tree anchor keeps its `c6_fold` artifact path.
-            c6_key_hash: vk::load_vk_tree_hash(
+            c6_fold_key_hash: vk::load_vk_tree_hash(
                 &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
                 CircuitName::C6Fold,
             )?,

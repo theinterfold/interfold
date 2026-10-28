@@ -118,7 +118,7 @@ fn assert_c6_chonk_tree_binding(
             "c7_vk": c7.vk,
             "c7_proof": fold_witness_field_strings(&c7.proof.data).unwrap(),
             "c7_public": fields(&c7.proof),
-            "c6_key_hash": tree,
+            "c6_fold_key_hash": tree,
             "c7_key_hash": c7.key_hash,
             "committee_members": ["1", "2", "3"],
             "committee_hash_hi": committee_hi,
