@@ -266,7 +266,10 @@ library BondingEligibilityLib {
                 state.operatorActiveVersions[operator].upperLookupRecent(
                     policy.pauseTimepoint
                 ) !=
-                version
+                version ||
+                // The frozen pool also needs identity at the cutoff, so a credential or a policy
+                // change after the pause cannot add an operator.
+                !BondingIdentityLib.allows(operator, policy.pauseTimepoint)
             ) return false;
         }
         return BondingIdentityLib.allows(operator, timepoint);
