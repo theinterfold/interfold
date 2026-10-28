@@ -91,6 +91,28 @@ rewards** sends `claimRewards(e3Ids)` for the completed E3s of the connected rec
 `claimHonestNodeReward` for each failed E3. Each transaction waits for the previous one. E3s that an
 earlier refund manager recorded are not listed. The amounts use the `FEE_TOKEN_*` display settings.
 
+**Bond-owner identity** (`src/lib/identity.ts`) shows when the operator has a bond owner. Governance
+can require each bond owner to prove one identity document with ZKPassport (`OwnerIdentityRegistry`
+and `ZKPassportIdentityVerifier`). The page:
+
+1. Reads the policy from the latest `IdentityPolicyUpdated` log of the bonding registry (it has no
+   view). Then it reads the verifier's fixed settings (domain, scope, ZKPassport version, identifier
+   type, FaceMatch, proof validity, maximum validity) and the owner's credential (`identityOf`,
+   `isVerifiedAt`).
+2. Creates a ZKPassport request with `@zkpassport/sdk` in `compressed-evm` mode. The document must
+   be valid until a chosen date, and the proof binds the bond owner and the chain. The SDK and the
+   QR code load only when the owner asks for a proof.
+3. Builds the evidence, `abi.encode(ProofVerificationParams, validUntil)`. `validUntil` is the
+   expiry bound that the proof committed to, not the typed date.
+4. Registers it. An owner wallet sends `register(evidence)`. A Safe downloads a Safe Transaction
+   Builder batch and executes it before the proof's validity ends.
+
+The page warns when the proof's ZKPassport version differs from the verifier's, when the proof is
+too old, when a renewal would shorten the credential, and when the credential ends inside the
+current 30-day capacity window. Before a deployment (no policy log), it makes a proof with the
+planned settings (`PREVIEW_SERVICE`) and offers only the download. The download holds the proofs,
+the verifier parameters, and the evidence, so a fork test can replay it.
+
 Only `VITE_BONDING_REGISTRY_ADDRESS` is configured. The ciphernode bond token, ticket wrapper,
 ticket underlying, bond size, ticket price, minimum tickets, and exit delay are all read back from
 the registry, so the guide follows the deployment instead of a hardcoded token list.
@@ -122,6 +144,7 @@ default:
   the "Get test tokens" action on a testnet too.
 - `FEE_TOKEN_SYMBOL`, `FEE_TOKEN_DECIMALS` — fee token display.
 - `DEPLOY_BLOCK` — first block to scan from (the Interfold deploy block).
+- `IDENTITY_DEPLOY_BLOCK` — first block of the identity policy scan (defaults to `DEPLOY_BLOCK`).
 - `COMPUTE_WINDOW`, `DECRYPTION_WINDOW` — E3 timeout windows in seconds.
 
 `vite.config.ts` stops the build when an override has no network scope (for example `VITE_RPC_URL`),

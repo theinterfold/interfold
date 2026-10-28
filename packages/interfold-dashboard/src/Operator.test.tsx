@@ -8,10 +8,12 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { Address } from 'viem'
-import { CommitteeRewardsView, ManagePosition, positionActions, ticketBurnAmount } from './Operator'
+import { CommitteeRewardsView, IdentityView, ManagePosition, positionActions, ticketBurnAmount, type IdentityService } from './Operator'
 import { CONTRACTS, E3Stage, FEE_TOKEN } from './lib/chain'
 import type { BondingConfig, OperatorStatus } from './lib/bonding'
 import { claimPlan, summarizeRewards, type CommitteeSeat, type SeatStatus } from './lib/rewards'
+import { buildProofBundle, dateInput, identityStatusText, parseDateInput, type OwnerAccount, type VerifierConfig } from './lib/identity'
+import { pad, toHex, type Hex } from 'viem'
 
 const OPERATOR = '0x1111111111111111111111111111111111111111' as Address
 const OWNER = '0x2222222222222222222222222222222222222222' as Address
@@ -167,4 +169,170 @@ test('the claim covers the claimable seats of the connected recipient, and the s
   assert.doesNotMatch(disconnected, />Process</)
   assert.match(renderToStaticMarkup(<CommitteeRewardsView {...props} statuses={null} wallet={OWNER} />), /Reading rewards/)
   assert.match(renderToStaticMarkup(<CommitteeRewardsView {...props} seats={[]} wallet={OWNER} />), /No committee has selected/)
+})
+
+// ─── Bond-owner identity ───────────────────────────────────────────────────
+
+const DAY = 86_400n
+const NOW = 1_790_000_000n
+const word = (value: bigint): Hex => pad(toHex(value), { size: 32 })
+const VERSION = word(0x14n << 232n)
+
+const service: IdentityService = {
+  domain: 'dashboard.theinterfold.com',
+  scope: 'interfold-bond-owner',
+  faceMatch: true,
+  nullifierType: 0,
+  proofValidity: 7n * DAY,
+  maxValidity: 365n * DAY,
+}
+
+const verifier: VerifierConfig = {
+  address: OTHER,
+  domain: service.domain,
+  scope: service.scope,
+  version: VERSION,
+  nullifierType: 0,
+  oprfKeyHash: word(0n),
+  faceMatchRequired: true,
+  proofValidity: service.proofValidity,
+  maxValidity: service.maxValidity,
+}
+
+const policy = { registry: PROPOSED, required: true, timepoint: NOW - 10n * DAY }
+
+function account(overrides: Partial<OwnerAccount> = {}): OwnerAccount {
+  return { now: NOW, isContract: false, identity: { identityId: word(0n), expiresAt: 0n, verifiedNow: false }, ...overrides }
+}
+
+function bundle(version: Hex = VERSION) {
+  return buildProofBundle({
+    success: {
+      proofs: [
+        {
+          name: 'compare_expiry_evm',
+          committedInputs: { compare_expiry_evm: { minDateTimestamp: Number(NOW + 400n * DAY), maxDateTimestamp: 0 } },
+        },
+        { name: 'outer_evm_count_5', proof: '0x02' },
+      ],
+      result: {},
+    },
+    params: {
+      version,
+      proofVerificationData: {
+        vkeyHash: word(7n),
+        proof: '0x1234',
+        publicInputs: [word(1n), word(2n), word(NOW), word(0n), word(9n), word(0n)],
+      },
+      committedInputs: '0xbeef',
+      serviceConfig: { validityPeriodInSeconds: 604_800, domain: service.domain, scope: service.scope, devMode: false },
+    },
+    owner: OWNER,
+    chainId: 11_155_111,
+    faceMatch: true,
+  })
+}
+
+const identityProps = {
+  owner: OWNER,
+  policy,
+  verifier,
+  account: account(),
+  loadFailed: false,
+  service,
+  validUntilInput: '2027-12-01',
+  onValidUntil: () => {},
+  previewFaceMatch: true,
+  onPreviewFaceMatch: () => {},
+  request: { phase: 'idle' } as const,
+  canRegister: true,
+  busy: null,
+  errFor: () => null,
+  onReload: () => {},
+  onCreate: () => {},
+  onCancel: () => {},
+  onRegister: () => {},
+  onDownloadProof: () => {},
+  onDownloadSafe: () => {},
+}
+
+test('date fields round-trip in UTC and reject impossible dates', () => {
+  assert.equal(parseDateInput('2027-12-01'), BigInt(Date.UTC(2027, 11, 1) / 1000))
+  assert.equal(dateInput(parseDateInput('2027-12-01')!), '2027-12-01')
+  assert.equal(parseDateInput('2026-02-31'), null)
+  assert.equal(parseDateInput('01/12/2027'), null)
+})
+
+test('the identity panel shows the credential and offers a request', () => {
+  const unverified = renderToStaticMarkup(<IdentityView {...identityProps} />)
+  assert.match(unverified, /Yes, since/)
+  assert.match(unverified, /Not verified/)
+  assert.match(unverified, /Verify the owner/)
+  assert.match(unverified, />Create ZKPassport request</)
+  assert.match(unverified, /face scan/)
+
+  const verified = account({ identity: { identityId: word(1n), expiresAt: NOW + 200n * DAY, verifiedNow: true } })
+  assert.equal(
+    identityStatusText(verified),
+    `Verified until ${new Date(Number(NOW + 200n * DAY) * 1000).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })}`,
+  )
+  const renew = renderToStaticMarkup(<IdentityView {...identityProps} account={verified} validUntilInput={dateInput(NOW + 100n * DAY)} />)
+  assert.match(renew, /Renew the credential/)
+  assert.match(renew, /A renewal cannot shorten the credential/)
+
+  // A credential that ends inside the current window does not count toward request capacity.
+  const short = account({ identity: { identityId: word(1n), expiresAt: NOW + 1n, verifiedNow: true } })
+  assert.match(renderToStaticMarkup(<IdentityView {...identityProps} account={short} />), /does not count toward request capacity/)
+  assert.match(
+    renderToStaticMarkup(<IdentityView {...identityProps} validUntilInput={dateInput(NOW + 1n)} />),
+    /would not count toward request/,
+  )
+})
+
+test('before a deployment the panel makes a proof to download', () => {
+  const preview = renderToStaticMarkup(
+    <IdentityView {...identityProps} policy={null} verifier={null} account={account({ identity: null })} />,
+  )
+  assert.match(preview, /No identity registry on/)
+  assert.match(preview, /planned settings/)
+  assert.match(preview, /Require FaceMatch/)
+
+  const ready = renderToStaticMarkup(
+    <IdentityView
+      {...identityProps}
+      policy={null}
+      verifier={null}
+      account={account({ identity: null })}
+      request={{ phase: 'ready', bundle: bundle() }}
+    />,
+  )
+  assert.match(ready, /Proof ready/)
+  assert.match(ready, />Download the proof \(JSON\)</)
+  assert.doesNotMatch(ready, /Register the identity/)
+})
+
+test('a proof registers from the owner, or as a Safe transaction', () => {
+  const ready = { phase: 'ready', bundle: bundle() } as const
+  const eoa = renderToStaticMarkup(<IdentityView {...identityProps} request={ready} />)
+  assert.match(eoa, /<button class="btn btn--primary">Register the identity/)
+  assert.match(eoa, /Refresh the status/)
+
+  const otherWallet = renderToStaticMarkup(<IdentityView {...identityProps} request={ready} canRegister={false} />)
+  assert.match(otherWallet, /<button class="btn btn--primary" disabled="">Register the identity/)
+  assert.match(otherWallet, /Connect the bond-owner wallet/)
+
+  const safe = renderToStaticMarkup(<IdentityView {...identityProps} account={account({ isContract: true })} request={ready} />)
+  assert.match(safe, />Download the Safe transaction</)
+  assert.doesNotMatch(safe, /Register the identity/)
+  assert.match(safe, /Safe Transaction Builder/)
+
+  // The verifier accepts one ZKPassport version.
+  const otherVersion = { phase: 'ready', bundle: bundle(word(0x15n << 232n)) } as const
+  const mismatch = renderToStaticMarkup(<IdentityView {...identityProps} request={otherVersion} />)
+  assert.match(mismatch, /another ZKPassport version/)
+  assert.match(mismatch, /<button class="btn btn--primary" disabled="">Register the identity/)
+
+  // A proof older than the verifier's validity window cannot register.
+  const late = renderToStaticMarkup(<IdentityView {...identityProps} account={account({ now: NOW + 8n * DAY })} request={ready} />)
+  assert.match(late, /too old to register/)
 })
