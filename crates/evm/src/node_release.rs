@@ -9,7 +9,7 @@
 
 use crate::{
     contracts::{IBondingRegistry, IInterfold, INodeReleaseRegistry},
-    helpers::{transaction_nonce_guard, EthProvider},
+    helpers::{send_with_next_nonce, EthProvider},
 };
 use alloy::{
     primitives::Address,
@@ -195,22 +195,13 @@ where
         node_generation = release.node_generation,
         "Acknowledging ciphernode release"
     );
-    let _nonce_guard = transaction_nonce_guard(provider).await;
-    let current_nonce = provider
-        .provider()
-        .get_transaction_count(operator)
-        .pending()
-        .await?;
-    let call = controller
-        .acknowledgeNodeRelease(
-            release_id,
-            release.protocol_version,
-            release.node_generation,
-        )
-        .nonce(current_nonce);
+    let call = controller.acknowledgeNodeRelease(
+        release_id,
+        release.protocol_version,
+        release.node_generation,
+    );
     let gas = call.estimate_gas().await?;
-    let pending = call.gas(acknowledgment_gas_limit(gas)).send().await?;
-    drop(_nonce_guard);
+    let pending = send_with_next_nonce(provider, call.gas(acknowledgment_gas_limit(gas))).await?;
     let receipt = pending.get_receipt().await?;
     require_successful_receipt("acknowledge ciphernode release", &receipt)?;
     // Operators check for this line after an upgrade, so log it on the first start too.

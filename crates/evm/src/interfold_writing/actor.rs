@@ -15,7 +15,7 @@ use crate::domain::plaintext_publication::{
     plaintext_has_canonical_domain, validate_plaintext_output,
 };
 use crate::domain::publication_replay::ReplaySubmissionGate;
-use crate::helpers::{encode_zk_proof, transaction_nonce_guard, EthProvider};
+use crate::helpers::{encode_zk_proof, send_with_next_nonce, EthProvider};
 use crate::send_tx_with_retry;
 use actix::prelude::*;
 use alloy::{
