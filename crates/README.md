@@ -38,6 +38,10 @@ than making those policies part of the executor.
 
 ## Find a component
 
+The map below describes the current checkout. The
+[capability-family proposal](../docs/proposals/rust-crate-families.md) records candidate grouping,
+intentionally unchanged paths, and bounded migration steps; it is not an implemented directory tree.
+
 | Capability                      | Entry points                                                                                                                                                                                                                                                                                                                                               |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Operator commands and assembly  | [CLI](cli/README.md), [entrypoint](entrypoint/README.md), [ciphernode builder](ciphernode-builder/README.md), [configuration](config/README.md)                                                                                                                                                                                                            |
