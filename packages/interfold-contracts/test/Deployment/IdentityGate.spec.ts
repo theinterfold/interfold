@@ -5,6 +5,9 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { expect } from "chai";
 import { ethers as ethersLib } from "ethers";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { proxyAdminInterface } from "../../scripts/protocol/constants";
 import type { ProtocolConfigFile } from "../../scripts/protocol/types";
@@ -13,6 +16,11 @@ import {
   buildIdentityGateTransactions,
   identityGateSettings,
 } from "../../scripts/upgrade/identityGate";
+import {
+  type ProofBundle,
+  expectedIdentityId,
+  readProofBundle,
+} from "../../scripts/upgrade/identityProofFork";
 import { BondingRegistry__factory as BondingRegistryFactory } from "../../types";
 
 const bondingInterface = BondingRegistryFactory.createInterface();
@@ -124,5 +132,47 @@ describe("identity gate rollout", function () {
     expect(() =>
       identityGateSettings(config({ zkPassportRootVerifier: "0x1234" })),
     ).to.throw();
+  });
+
+  it("derives the identifier of a downloaded proof as the verifier does", function () {
+    const domain = "dashboard.theinterfold.com";
+    const scope = "interfold-bond-owner";
+    const nullifier = ethersLib.id("document scoped nullifier");
+    const coder = ethersLib.AbiCoder.defaultAbiCoder();
+    const namespace = ethersLib.keccak256(
+      coder.encode(
+        ["string", "string", "string"],
+        ["interfold.identity.zkpassport.v1", domain, scope],
+      ),
+    );
+    const bundle = {
+      kind: "interfold.identity.zkpassport-proof",
+      domain,
+      scope,
+      params: {
+        proofVerificationData: {
+          // The pinned version ends with [nullifier type, scoped nullifier, OPRF key hash].
+          publicInputs: [
+            ethersLib.ZeroHash,
+            ethersLib.ZeroHash,
+            nullifier,
+            ethersLib.ZeroHash,
+          ],
+        },
+      },
+    } as unknown as ProofBundle;
+    expect(expectedIdentityId(bundle)).to.equal(
+      ethersLib.keccak256(
+        coder.encode(["bytes32", "bytes32"], [namespace, nullifier]),
+      ),
+    );
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "identity-proof-"));
+    const good = path.join(dir, "proof.json");
+    const bad = path.join(dir, "other.json");
+    fs.writeFileSync(good, JSON.stringify(bundle));
+    fs.writeFileSync(bad, JSON.stringify({ kind: "other" }));
+    expect(readProofBundle(good).scope).to.equal(scope);
+    expect(() => readProofBundle(bad)).to.throw(/not a proof download/);
   });
 });
