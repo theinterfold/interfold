@@ -9,7 +9,7 @@
 use crate::domain::node_registry::{NodeState, NodeStateStore, StateCheckpoint};
 use alloy::primitives::Address;
 use anyhow::{ensure, Result};
-use e3_events::{AdmissionChange, AdmissionPolicy, AdmissionUpdated};
+use e3_events::{AdmissionChange, AdmissionPolicy, AdmissionUpdated, IdentityPolicyChange};
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashMap};
 
@@ -109,6 +109,53 @@ impl AdmissionState {
     }
 }
 
+/// The bond-owner identity policy of each chain: whether a request at a timestamp requires a
+/// verified bond owner.
+///
+/// The node does not track owner credentials. When the policy at T-1 is required, selection turns
+/// the owner shortlist off, so that every eligible node submits and the contract rejects the tickets
+/// of unverified owners.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct IdentityPolicyState {
+    pub schema_version: u32,
+    pub chains: HashMap<u64, Vec<StateCheckpoint<bool>>>,
+}
+
+impl Default for IdentityPolicyState {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            chains: HashMap::new(),
+        }
+    }
+}
+
+impl IdentityPolicyState {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.schema_version == 1,
+            "unsupported identity policy snapshot schema {}",
+            self.schema_version
+        );
+        Ok(())
+    }
+
+    pub fn record(&mut self, change: &IdentityPolicyChange) -> Result<()> {
+        record(
+            self.chains.entry(change.chain_id).or_default(),
+            change.timepoint,
+            change.required,
+        )
+    }
+
+    /// Whether the policy at `timepoint` requires a verified bond owner.
+    pub fn required_at(&self, chain_id: u64, timepoint: u64) -> bool {
+        self.chains
+            .get(&chain_id)
+            .is_some_and(|history| at(history, timepoint))
+    }
+}
+
 fn allowed(since: u64, timepoint: u64, policy: &AdmissionPolicy, node: &NodeState) -> bool {
     let (boundary, enabled, duration) = if policy.admissions_paused {
         if !node.active_at(policy.pause_timepoint) {
@@ -171,6 +218,34 @@ mod tests {
                 value: U256::from(1),
             }],
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn identity_policy_follows_the_request_timestamp_and_survives_restart() {
+        let mut state = IdentityPolicyState::default();
+        let change = |timepoint, required| IdentityPolicyChange {
+            chain_id: 1,
+            timepoint,
+            required,
+        };
+        assert!(!state.required_at(1, 100));
+        state.record(&change(10, true)).unwrap();
+        state.record(&change(20, false)).unwrap();
+        state.record(&change(20, true)).unwrap();
+        assert!(!state.required_at(1, 9));
+        assert!(state.required_at(1, 10));
+        assert!(state.required_at(1, 20));
+        assert!(!state.required_at(2, 20));
+        assert!(state.record(&change(15, false)).is_err());
+        let restored: IdentityPolicyState =
+            bincode::deserialize(&bincode::serialize(&state).unwrap()).unwrap();
+        restored.validate().unwrap();
+        for timepoint in 0..30 {
+            assert_eq!(
+                state.required_at(1, timepoint),
+                restored.required_at(1, timepoint)
+            );
         }
     }
 
@@ -359,6 +434,7 @@ mod tests {
                     snapshot,
                     19,
                     &owners,
+                    true,
                 )
                 .unwrap();
             if i <= 28 {

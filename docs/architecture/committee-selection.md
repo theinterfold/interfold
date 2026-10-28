@@ -1,9 +1,9 @@
 # Requests and committee selection
 
 Owners: [Interfold contracts](../../packages/interfold-contracts/contracts/),
-[sortition](../../crates/sortition/src/), and [EVM ingestion](../../crates/evm/runtime/src/).
-Collateral and eligibility belong to [registration](registration-and-bonding.md), proof-backed key
-publication to [DKG](dkg.md), and actor delivery to [persistence](persistence-and-replay.md).
+[sortition](../../crates/sortition/src/), and [EVM ingestion](../../crates/evm/src/). Collateral and
+eligibility belong to [registration](registration-and-bonding.md), proof-backed key publication to
+[DKG](dkg.md), and actor delivery to [persistence](persistence-and-replay.md).
 
 ## Request-time contract
 
@@ -104,7 +104,10 @@ establish human uniqueness or prevent pre-request wallet splitting/collusion.
 Rust shortlists N-plus-buffer distinct owners with their eligible operator backups. An
 operator-count cutoff must not discard necessary owners. If any eligible operator lacks owner
 history, turn the owner shortlist off and rank every eligible operator; Solidity still rejects zero
-snapshot owners. Committee formation requires N distinct snapshot owners, not N submissions.
+snapshot owners. A required identity policy at T−1 also turns the shortlist off, because the node
+does not know which owners hold a credential: every eligible operator submits, and the ticket gas
+estimate fails for an operator whose owner has no credential, so it sends nothing. Committee
+formation requires N distinct snapshot owners, not N submissions.
 
 `BondOwnerCapacityLib` maintains epoch-scoped activity/owner counts. Configuration resets it; legacy
 unrefreshed operators contribute zero, and duplicate refresh cannot double count. Return zero for an
@@ -114,9 +117,8 @@ Capacity proves neither online availability nor independent people. Insufficient
 fees and treasury credit before a VRF draw. A required
 [owner identity](registration-and-bonding.md#owner-identity) policy also gates each snapshot owner
 at T−1. Capacity then counts only owners whose credential lasts through the current 30-day window
-and fails closed at the window end or after a revocation of a current credential: it reads zero
-until the next refresh, then counts only refreshed owners until every operator is refreshed. Gap:
-the Rust owner shortlist does not apply the identity policy.
+and fails closed at the window end or after a revocation until refreshes rebuild it. Each full node
+refreshes its own operator once in each window.
 
 Before dispatching its canonical ticket, a selected node persists one provisional `active_jobs`
 reservation. Replay reuses it. Canonical committee finalization retains selected reservations and
@@ -135,11 +137,6 @@ polling/skipping.
 
 ## Finalization and lifecycle clocks
 
-`e3-committee::Committee` owns the supplied ordered member list and address lookup, not formation or
-failover. Sortition normalizes finalized EVM addresses into runtime party order and owns the
-active/standby policy. Moving the representation must not change either ordering or lookup case
-behavior; [DKG identities](dkg.md#identities-and-dimensions) constrain downstream slots.
-
 Ticket submissions include `committeeDeadline`; `finalizeCommittee` requires strictly later time.
 Members schedule staggered calls, but the first successful transaction locks canonical on-chain
 order. It must finalize by `committeeDeadline + dkgWindow`, inclusive: delaying finalization cannot
@@ -147,13 +144,9 @@ buy more paid lifetime. Fewer than N submissions fails with supplier-paid
 `InsufficientCommitteeMembers`. Finalization snapshots every operator's reward recipient and retains
 its collateral obligation.
 
-The [sortition finalizer](../../crates/sortition/src/committee_finalization/actor.rs) retains
-request/context/ticket before effects and re-arms from its saved absolute committee deadline after
-EffectsEnabled. Its [EVM time reader](../../crates/evm/runtime/src/chain_time.rs) opens a fresh read
-provider for each attempt so a dead WebSocket cannot permanently stop it. Timestamp errors retry
-without substituting host time. The saved rank's full stagger is reapplied after each successful
-read, including restart; there is no persisted rank-specific not-before instant. Formation remains a
-separate actor from ticket selection and downstream aggregation. `E3Requested` is
+The Rust finalizer retains request/context/ticket before effects, re-arms its absolute deadline
+after EffectsEnabled, retries temporary timestamp errors, and opens a fresh read provider for each
+attempt so a dead WebSocket cannot permanently stop it. `E3Requested` is
 `(uint256 e3Id, E3 e3, bytes32 indexed cryptoConfigId)`; preserve the indexed configuration
 boundary.
 
@@ -190,7 +183,7 @@ reachable cap is `2**TREE_DEPTH - 1` (1,048,575 at depth 20), matching LazyIMT's
 own request/selection boundaries. Run `pnpm evm:test` and `cargo test -p e3-sortition` for affected
 behavior; cross-layer changes also need `pnpm test:integration` with the relevant scenario.
 
-Chain readers default to three confirmations even through a loopback proxy; only explicit
+Chain readers default to one confirmation even through a loopback proxy; only explicit
 single-process development uses zero and a 250 ms rather than 7 s RPC poll interval. Live
 subscriptions are wake-ups: canonical `eth_getLogs` backfill delivers from watermark to confirmed
 head, including a five-second periodic backfill at every depth. Retry/reconnect rather than silently

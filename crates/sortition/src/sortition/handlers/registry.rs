@@ -19,8 +19,25 @@ impl Handler<TypedEvent<e3_events::EvmLogObserved>> for Sortition {
                     Ok(admission)
                 })?;
             }
+            if let Some(change) = e3_events::IdentityPolicyChange::from_observed_log(&log)? {
+                self.identity_policy.try_mutate(&ec, |mut policy| {
+                    policy.record(&change)?;
+                    Ok(policy)
+                })?;
+            }
             Ok(())
         })
+    }
+}
+
+impl Handler<IdentityPolicyRequiredAt> for Sortition {
+    type Result = Result<bool>;
+
+    fn handle(&mut self, msg: IdentityPolicyRequiredAt, _: &mut Self::Context) -> Self::Result {
+        Ok(self
+            .identity_policy
+            .try_get()?
+            .required_at(msg.chain_id, msg.timepoint))
     }
 }
 

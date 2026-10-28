@@ -114,6 +114,14 @@ impl<T: Send + Sync> Deref for E3CommitteeContainsResponse<T> {
     }
 }
 
+/// Ask whether the bond-owner identity policy of a chain is required at a timestamp.
+#[derive(Message, Clone, Debug, PartialEq, Eq)]
+#[rtype(result = "anyhow::Result<bool>")]
+pub struct IdentityPolicyRequiredAt {
+    pub chain_id: u64,
+    pub timepoint: u64,
+}
+
 /// Request the ordered finalized committee member list for an E3.
 #[derive(Message, Clone, Debug)]
 #[rtype(result = "()")]
