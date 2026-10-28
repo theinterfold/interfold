@@ -76,6 +76,9 @@ contract OwnerIdentityRegistry is IOwnerIdentityRegistry, Ownable2Step {
     function revoke(bytes32 identityId) external onlyOwner {
         address identityOwner = ownerOfIdentity[identityId];
         if (identityOwner == address(0)) revert UnknownIdentity(identityId);
+        // A repeat would add a revocation checkpoint, so owner capacity would read stale again
+        // with nothing new revoked.
+        if (_revoked[identityId]) revert IdentityIsRevoked(identityId);
         _revoked[identityId] = true;
         _revocationCounts.push(
             SafeCast.toUint48(block.timestamp),
