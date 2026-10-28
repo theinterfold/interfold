@@ -22,7 +22,6 @@ import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
 import { BondOwnerCapacityLib } from "./BondOwnerCapacityLib.sol";
 import { BondingAdmissionLib } from "./BondingAdmissionLib.sol";
 import { IBondingAdmission } from "../interfaces/IBondingAdmission.sol";
-import { IBondingIdentity } from "../interfaces/IBondingIdentity.sol";
 import { BondingIdentityLib } from "./BondingIdentityLib.sol";
 
 /// @notice Stores the request-boundary eligibility history for BondingRegistry.
