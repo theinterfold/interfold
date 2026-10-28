@@ -170,6 +170,20 @@ release that does would make verified nodes misjudge selection. An identifier pr
 verifier proves (for a document verifier, one document rather than one person); it does not stop
 identity rental.
 
+`ZKPassportIdentityVerifier` checks ZKPassport proofs of chip documents (passports, national ID
+cards, residence permits) through ZKPassport's root verifier. ZKPassport checks the domain, scope,
+proof-age window, and dev mode that its caller passes, so the verifier replaces them with fixed
+values. It accepts one ZKPassport version (the public-input layout belongs to the version), one
+identifier type, and one OPRF key hash (ZKPassport's key for salted proofs, zero otherwise), because
+salted and non-salted identifiers of one document differ and a salted identifier depends on the key.
+The proof must be bound to the registering owner and `block.chainid`, show an expiry date at or
+after the evidence's `validUntil`, and include strict FaceMatch when configured. The credential ends
+at `validUntil`, or `MAX_VALIDITY` after the proof date if that is earlier. The identifier hashes
+the scoped nullifier with the domain and scope, so it belongs to one document; a second document or
+a renewed one gives a new identifier. ZKPassport's admin keys control its verifier, helper,
+certificate registry, and OPRF key without delay. When ZKPassport retires the pinned version,
+registration and renewal revert until governance sets a verifier for the new version.
+
 ## Deactivation and exit
 
 Removing tickets or unbonding can make an operator inactive without removing its IMT leaf.
@@ -221,9 +235,12 @@ routes drain. Default-admin handover uses the two-day `AccessControlDefaultAdmin
   financial and authorization behavior.
   [Identity tests](../../packages/interfold-contracts/test/Registry/BondingIdentity.spec.ts) and
   [registry tests](../../packages/interfold-contracts/test/Registry/OwnerIdentityRegistry.spec.ts)
-  own the identity gate and credential history.
-  [CLI secret tests](../../crates/cli/tests/cli_secrets.rs) own process argument exposure. Run
-  `pnpm evm:test` and `cargo test -p e3-cli --test cli_secrets` as relevant.
+  own the identity gate and credential history;
+  [ZKPassport verifier tests](../../packages/interfold-contracts/test/Verifiers/ZKPassportIdentityVerifier.spec.ts)
+  own its binding, version, identifier-type, and OPRF-key rules against mocks of ZKPassport's
+  contracts, not against real proofs. [CLI secret tests](../../crates/cli/tests/cli_secrets.rs) own
+  process argument exposure. Run `pnpm evm:test` and `cargo test -p e3-cli --test cli_secrets` as
+  relevant.
 - [EVM event decoding](../../crates/evm/src/bonding_registry/events.rs) tests typed owner, policy,
   and activity projection inputs. Those tests do not establish complete restart or migration
   behavior.
