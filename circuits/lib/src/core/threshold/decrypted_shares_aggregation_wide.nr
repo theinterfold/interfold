@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! C7 for ciphertext moduli wider than [`decrypted_shares_aggregation`] supports (secure-16384,
-//! Q of about 2^250; secure-16384-simd, Q of about 2^276; secure-16384-simd-d6, Q of about 2^424).
+//! Q of about 2^250; secure-16384-simd, Q of about 2^276; secure-16384-simd-d6, Q of about 2^427).
 //!
 //! Same construction as the bounded C7: the shares are range-checked residues, `u` is derived from
 //! them by Garner reconstruction, and the decode `round(t * u / Q)` is pinned by a unique quotient
@@ -564,16 +564,16 @@ fn rounded_decode_beyond_field_handles_the_simd_modulus() {
     assert(rounded_decode_beyond_field(encoded, t, half, q_bn) == 7);
 }
 
-/// The secure-16384-simd-d6 CRT moduli: eight 54-bit primes, `Q` of about `2^424`.
+/// The secure-16384-simd-d6 CRT moduli: three 55-bit and five 54-bit primes, `Q` of about `2^427`.
 global SECURE_16384_SIMD_D6_QIS: [Field; 8] = [
+    18014398525603841,
+    18014398524424193,
+    18014398521016321,
     9007199267782657,
     9007199267389441,
     9007199267258369,
     9007199266471937,
     9007199264636929,
-    9007199263260673,
-    9007199262867457,
-    9007199261294593,
 ];
 
 /// Garner in U512 agrees with the residues it was built from (`500` at `q = [7, 11, 13]`).
@@ -584,15 +584,15 @@ fn garner_bn_512_reconstructs_the_unique_representative() {
     assert(garner_mixed_radix_bn_512::<3, 8, 9>(residues, qis) == U512::from(500));
 }
 
-/// At secure-16384-simd-d6 `Q` is about `2^424`. Garner returns `Q - 1` from the residues `q_l - 1`.
+/// At secure-16384-simd-d6 `Q` is about `2^427`. Garner returns `Q - 1` from the residues `q_l - 1`.
 #[test]
 fn garner_bn_512_reconstructs_the_top_of_the_d6_modulus() {
-    let q_bn = exact_q_total_bn_512::<8, 54>(SECURE_16384_SIMD_D6_QIS);
+    let q_bn = exact_q_total_bn_512::<8, 55>(SECURE_16384_SIMD_D6_QIS);
     let mut residues = [0 as Field; 8];
     for l in 0..8 {
         residues[l] = SECURE_16384_SIMD_D6_QIS[l] - 1;
     }
-    let u = garner_mixed_radix_bn_512::<8, 54, 60>(residues, SECURE_16384_SIMD_D6_QIS);
+    let u = garner_mixed_radix_bn_512::<8, 55, 60>(residues, SECURE_16384_SIMD_D6_QIS);
     assert(u + U512::from(1) == q_bn);
 }
 
@@ -613,10 +613,10 @@ fn rounded_decode_beyond_field_512_covers_its_boundaries() {
 }
 
 /// At secure-16384-simd-d6 `u = Q - 1` decodes to zero and the exact encoding of `m = 7` decodes to
-/// 7, with `t = 65537` and a numerator of about 441 bits.
+/// 7, with `t = 65537` and a numerator of about 444 bits.
 #[test]
 fn rounded_decode_beyond_field_512_handles_the_d6_modulus() {
-    let q_bn = exact_q_total_bn_512::<8, 54>(SECURE_16384_SIMD_D6_QIS);
+    let q_bn = exact_q_total_bn_512::<8, 55>(SECURE_16384_SIMD_D6_QIS);
     let half = (q_bn - U512::from(1)).udiv(&U512::from(2));
     let t: Field = 65537;
     assert(rounded_decode_beyond_field_512(q_bn - U512::from(1), t, half, q_bn) == 0);
