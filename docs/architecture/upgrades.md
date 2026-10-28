@@ -127,12 +127,14 @@ after the batch was written makes `refreshOperatorStatuses` revert, and the whol
 it, so write it again. One batch refreshes at most 200 operators; a larger pool needs a paused,
 staged refresh.
 
-Before `prepare`, `upgrade:identity:proof-fork -- --network localhost --proof <file>` replays a
-proof that the verification page downloaded against ZKPassport's verifier on an Anvil mainnet fork
-(`CONFIRM_MAINNET_FORK=1`). It deploys the verifier with the proof's settings, checks that another
-owner is rejected, registers the bound owner, and checks the identifier and the expiry. The proof's
-version is the value for `identity.zkPassportVersion`. The batches and the plan
-(`deploy/protocol/<name>.identity-*`) stay local and are not committed.
+Before `prepare`, `upgrade:identity:proof-fork -- --network mainnet --proof <file>` replays a proof
+that the verification page downloaded against ZKPassport's verifier on an Anvil mainnet fork. Set
+`CONFIRM_MAINNET_FORK=1`, and point the `mainnet` network at the fork with `RPC_URL` and a test
+`PRIVATE_KEY`; the script refuses any chain that is not an Anvil mainnet fork. It deploys the
+verifier with the proof's settings, checks that another owner is rejected, registers the bound
+owner, and checks the identifier and the expiry. The proof's version is the value for
+`identity.zkPassportVersion`; ZKPassport rejects a retired version ("Verifier not found"). The
+batches and the plan (`deploy/protocol/<name>.identity-*`) stay local and are not committed.
 
 During an ordered legacy CRISP server cutover, missing `earliestVotingStart()` can temporarily fall
 back to live protocol windows. Install/register new program and update server/DAO addresses before

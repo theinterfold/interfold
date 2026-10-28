@@ -10,7 +10,11 @@
 // proof as its bound owner, and checks the identifier, the expiry, and the owner binding.
 //
 //   anvil --fork-url <mainnet RPC>
-//   CONFIRM_MAINNET_FORK=1 pnpm upgrade:identity:proof-fork -- --network localhost --proof <file>
+//   CONFIRM_MAINNET_FORK=1 RPC_URL=http://127.0.0.1:8545 PRIVATE_KEY=<Anvil's first test key> \
+//     pnpm upgrade:identity:proof-fork -- --network mainnet --proof <file>
+//
+// The `mainnet` network reads RPC_URL and PRIVATE_KEY, so it reaches the fork; the script refuses
+// any chain that is not an Anvil mainnet fork.
 //
 // Options: --proof-validity <seconds> (default 7 days), --max-validity <seconds> (default 365 days).
 import { ethers as ethersLib } from "ethers";
@@ -89,15 +93,46 @@ export async function replayProof(): Promise<void> {
   const file = arg("proof");
   if (!file) throw new Error("Pass --proof <the identity panel's download>");
   const bundle = readProofBundle(resolvePath(file));
-  const { ethers } = await connect();
+  const connection = await connect();
+  const { ethers } = connection;
   await requireAnvilMainnetFork(ethers);
+  if (connection.networkConfig.type !== "http") {
+    throw new Error("This replay requires an HTTP network");
+  }
   if (bundle.chainId !== 1) {
     throw new Error(`The proof binds chain ${bundle.chainId}, not mainnet`);
   }
   const proofValidity = BigInt(arg("proof-validity") ?? 7 * 86_400);
   const maxValidity = BigInt(arg("max-validity") ?? 365 * 86_400);
   const [deployer] = await ethers.getSigners();
+  // Impersonated accounts sign through a plain provider, as in the service-migration simulation.
+  const forkProvider = new ethersLib.JsonRpcProvider(
+    await connection.networkConfig.url.get(),
+  );
+  try {
+    // A fresh fork's first local account may hold no ether.
+    await fund(forkProvider, await deployer.getAddress());
+    await register(
+      ethers,
+      forkProvider,
+      deployer,
+      bundle,
+      proofValidity,
+      maxValidity,
+    );
+  } finally {
+    forkProvider.destroy();
+  }
+}
 
+async function register(
+  ethers: any,
+  forkProvider: ethersLib.JsonRpcProvider,
+  deployer: any,
+  bundle: ProofBundle,
+  proofValidity: bigint,
+  maxValidity: bigint,
+): Promise<void> {
   const verifier = await (
     await ethers.getContractFactory("ZKPassportIdentityVerifier")
   ).deploy(
@@ -122,10 +157,9 @@ export async function replayProof(): Promise<void> {
 
   // A proof for one owner must not register another.
   const stranger = ethersLib.Wallet.createRandom().address;
-  await impersonate(ethers, stranger);
   const strangerError = await revertName(
     registry
-      .connect(await ethers.getSigner(stranger))
+      .connect(await impersonate(forkProvider, stranger))
       .register.staticCall(bundle.evidence),
     verifier.interface,
   );
@@ -135,8 +169,7 @@ export async function replayProof(): Promise<void> {
     );
   }
 
-  await impersonate(ethers, bundle.owner);
-  const owner = await ethers.getSigner(bundle.owner);
+  const owner = await impersonate(forkProvider, bundle.owner);
   const tx = await registry.connect(owner).register(bundle.evidence);
   const receipt = await tx.wait();
   if (receipt?.status !== 1) throw new Error("Registration reverted");
@@ -171,7 +204,10 @@ Real ZKPassport proof registered on the mainnet fork
 `);
 }
 
-/** The custom error of a reverted call, decoded with `iface`, or "success". */
+/**
+ * The custom error of a reverted call, decoded with `iface`; otherwise the revert reason or data
+ * that the node returned. "success" when the call did not revert.
+ */
 async function revertName(
   call: Promise<unknown>,
   iface: ethersLib.Interface,
@@ -180,17 +216,45 @@ async function revertName(
     await call;
     return "success";
   } catch (error) {
-    const data = (error as { data?: string }).data;
-    return (data && iface.parseError(data)?.name) || String(error);
+    const failure = error as {
+      data?: string;
+      reason?: string;
+      shortMessage?: string;
+    };
+    // ethers decodes Error(string) and Panic(uint256) too; keep their reason.
+    const parsed = failure.data ? iface.parseError(failure.data) : null;
+    const decoded =
+      parsed && (parsed.name === "Error" || parsed.name === "Panic")
+        ? `${parsed.name}(${parsed.args[0]})`
+        : parsed?.name;
+    return (
+      decoded ??
+      failure.reason ??
+      (failure.data ? `revert data ${failure.data.slice(0, 74)}` : undefined) ??
+      failure.shortMessage ??
+      String(error)
+    );
   }
 }
 
-async function impersonate(ethers: any, account: string): Promise<void> {
-  await ethers.provider.send("anvil_impersonateAccount", [account]);
-  await ethers.provider.send("anvil_setBalance", [
+async function fund(
+  forkProvider: ethersLib.JsonRpcProvider,
+  account: string,
+): Promise<void> {
+  await forkProvider.send("anvil_setBalance", [
     account,
     ethersLib.toBeHex(ethersLib.parseEther("10")),
   ]);
+}
+
+/** A funded signer for `account` on the fork. */
+async function impersonate(
+  forkProvider: ethersLib.JsonRpcProvider,
+  account: string,
+): Promise<ethersLib.JsonRpcSigner> {
+  await forkProvider.send("anvil_impersonateAccount", [account]);
+  await fund(forkProvider, account);
+  return forkProvider.getSigner(account);
 }
 
 if (
