@@ -48,9 +48,8 @@ impl Configs {
         crate::parameters::require_threshold_preset(preset, threshold_params)?;
         let bits = Bits::new(threshold_params);
         let degree = threshold_params.degree();
-        let sk_chunks = ChunkLayout::new(degree, bits.bit_share, ChunkLayout::SK_TARGET_CHUNKS)?;
-        let e_sm_chunks =
-            ChunkLayout::new(degree, bits.bit_share, ChunkLayout::E_SM_TARGET_CHUNKS)?;
+        let sk_chunks = ChunkLayout::new(degree, bits.bit_share, ChunkLayout::TARGET_CHUNKS)?;
+        let e_sm_chunks = ChunkLayout::new(degree, bits.bit_share, ChunkLayout::TARGET_CHUNKS)?;
 
         Ok(Configs {
             params: threshold_params.clone(),
@@ -70,10 +69,10 @@ impl Configs {
 /// `chunk_size` is a multiple of three packing groups and every chunk starts each sponge on a block
 /// boundary.
 ///
-/// The targets keep every chunk inside 2^22 at 39 parties with as few chunks as possible, which
-/// costs less proving than more, smaller chunks. At degree 8192, C2a takes five chunks of 1647
-/// (4.14M gates). C2b also hashes every secret limb, so five chunks would cross 2^22; it takes six
-/// of 1368 (about 3.5M). Eleven chunks for C2a and C2b fit within one Chonk stack.
+/// The target keeps every chunk inside 2^22 at 45 parties with as few chunks as possible, which
+/// costs less proving than more, smaller chunks. At degree 8192 both C2a and C2b take six chunks
+/// of 1368: C2a's largest is 3.97M gates and C2b's, which also hashes every secret limb, 4.05M.
+/// Five C2a chunks would be 4.78M.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChunkLayout {
     pub chunk_size: usize,
@@ -82,8 +81,7 @@ pub struct ChunkLayout {
 }
 
 impl ChunkLayout {
-    pub const SK_TARGET_CHUNKS: usize = 5;
-    pub const E_SM_TARGET_CHUNKS: usize = 6;
+    pub const TARGET_CHUNKS: usize = 6;
     const MIN_CHUNKS: usize = 2;
 
     pub fn new(degree: usize, bit_share: u32, target_chunks: usize) -> Result<Self, ConfigError> {
@@ -229,9 +227,8 @@ mod tests {
     fn chunk_layouts_cover_the_degree_with_whole_carriers() {
         // 60-bit shares pack three per carrier.
         for (degree, target, chunk_size, last_chunk_size, n_chunks) in [
-            (8192, ChunkLayout::SK_TARGET_CHUNKS, 1647, 1604, 5),
-            (8192, ChunkLayout::E_SM_TARGET_CHUNKS, 1368, 1352, 6),
-            (64, ChunkLayout::E_SM_TARGET_CHUNKS, 18, 10, 4),
+            (8192, ChunkLayout::TARGET_CHUNKS, 1368, 1352, 6),
+            (64, ChunkLayout::TARGET_CHUNKS, 18, 10, 4),
         ] {
             let layout = ChunkLayout::new(degree, 60, target).unwrap();
             assert_eq!(

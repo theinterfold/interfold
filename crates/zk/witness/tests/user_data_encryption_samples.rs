@@ -50,7 +50,7 @@ fn insecure_e0_bound_matches_error1_sampler() {
         .map(|config| config.bits)
         .unwrap();
     // B_Enc of the insecure-64 search: ⌊B_Enc(B_Enc+1)/3⌋ is its error1 variance.
-    assert_eq!(bounds.e0_bound, BigUint::from(399360u32));
+    assert_eq!(bounds.e0_bound, BigUint::from(460800u32));
     assert_eq!(bounds.e1_bound, BigUint::from(20u32));
     assert_eq!(bits.e0_bit, 19);
 }

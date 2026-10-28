@@ -11,16 +11,16 @@ library BfvProtocol {
     bytes32 internal constant CIRCUIT_VERSION = keccak256("interfold-bfv-v5");
 
     bytes32 internal constant INSECURE_CONFIG_ID =
-        0xa3bd5ecc8eede945ef4c08d5454022649137c7696ef8ad2f984f2b9ece35dd32;
+        0x5d12098e317ec9918b099e134da06000a91d7c2bff731cc37c630b8b671a724b;
     uint8 internal constant INSECURE_PARAM_SET = 0;
     bytes32 internal constant INSECURE_PARAM_SET_HASH =
-        0x0c989bf49a85bd9e3bee06d72073c5e060e0f3260cbfc583407519959e74cbe4;
+        0x2898f8a9fbc317e2812695161febb2c738bf0548327f4805d0329c6f6bb3a844;
 
     bytes32 internal constant SECURE_CONFIG_ID =
-        0xfb73fe2faf11760fd19a2374e7077fdf5e7f7d8324a36b3acb0c05d56ca6307a;
+        0xceded5557de51373b24a54e2cc2ea5b08818f0f5abdc3f87851136941d33260b;
     uint8 internal constant SECURE_PARAM_SET = 2;
     bytes32 internal constant SECURE_PARAM_SET_HASH =
-        0x79f1d3a1594ca78e3232c804c49c2a404303ae1c539fb25c57971d7a582de2e2;
+        0x4f4025982214c2149028270dccc0ad45c24c2441a3496cdf1a29f5d1e1b908c3;
 
     uint8 internal constant MINIMUM_COMMITTEE_SIZE = 0;
     uint32 internal constant MINIMUM_T = 1;
@@ -38,9 +38,9 @@ library BfvProtocol {
     uint32 internal constant SMALL_N = 19;
 
     uint8 internal constant LARGE_COMMITTEE_SIZE = 3;
-    uint32 internal constant LARGE_T = 19;
-    uint32 internal constant LARGE_H = 28;
-    uint32 internal constant LARGE_N = 39;
+    uint32 internal constant LARGE_T = 22;
+    uint32 internal constant LARGE_H = 34;
+    uint32 internal constant LARGE_N = 45;
 
     uint256 internal constant MESSAGE_COEFFS_COUNT = 50;
     uint256 internal constant MESSAGE_COEFF_BYTE_LEN = 8;

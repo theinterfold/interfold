@@ -12,7 +12,7 @@
 //! so a chain cannot end with a row left empty.
 
 /// `node_fold` proofs one kernel or fold step verifies. Each statement carries every party's rows,
-/// so a fourth node would take a step just past 2^22 at n = 39; three keep it at 2^22.
+/// so a fourth node would take a step past 2^22 (4.28M gates at n = 39); three keep it within 2^22.
 pub global NODES_FOLD_LEAVES: u32 = 3;
 
 /// Writes each node's statement into its row. A row must be all zero before it is written; the

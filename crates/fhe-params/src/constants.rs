@@ -18,15 +18,15 @@ pub const INTERFOLD_BFV_VERSION: &str = "interfold-bfv-v5";
 /// Insecure preset constants (degree 64) - DO NOT USE IN PRODUCTION
 pub mod insecure_64 {
     pub const DEGREE: usize = 64;
-    pub const NUM_PARTIES: u128 = 39; // fake - not used in the search default
+    pub const NUM_PARTIES: u128 = 45; // fake - not used in the search default
 
     /// Threshold BFV parameters
     pub mod threshold {
         pub const PLAINTEXT_MODULUS: u64 = 17000000;
         pub const MODULI: &[u64] = &[0x0000000007fffd81, 0x0000000007fff801, 0x0000000007fff781];
-        /// ⌊B_Enc(B_Enc+1)/3⌋ for B_Enc = 399360 (uniform e_1).
-        pub const ERROR1_VARIANCE: &str = "53162936320";
-        pub const ERROR1_VARIANCE_BIGUINT: u64 = 53162936320;
+        /// ⌊B_Enc(B_Enc+1)/3⌋ for B_Enc = 460800 (uniform e_1).
+        pub const ERROR1_VARIANCE: &str = "70779033600";
+        pub const ERROR1_VARIANCE_BIGUINT: u64 = 70779033600;
     }
 
     /// DKG parameters
@@ -41,13 +41,13 @@ pub mod insecure_64 {
 /// Secure preset constants (degree 8192) - PRODUCTION READY
 pub mod secure_8192 {
     pub const DEGREE: usize = 8192;
-    pub const NUM_PARTIES: u128 = 39; // real - used in the search default
+    pub const NUM_PARTIES: u128 = 45; // real - used in the search default
 
     /// Threshold BFV parameters
     pub mod threshold {
         pub const PLAINTEXT_MODULUS: u64 = 17000000;
         pub const MODULI: &[u64] = &[0x0800000000db4001, 0x0800000000d54001, 0x0800000000cbc001];
-        pub const ERROR1_VARIANCE: &str = "67391859386295234756372897751812360110080";
+        pub const ERROR1_VARIANCE: &str = "89722889715481821421179914794614285926400";
     }
 
     /// DKG parameters
@@ -65,7 +65,7 @@ pub mod secure_8192 {
 pub mod search_defaults {
     pub const B: u128 = 20;
     pub const B_CHI: u128 = 1;
-    pub const SEARCH_N: u128 = 39;
+    pub const SEARCH_N: u128 = 45;
     pub const SEARCH_K: u128 = 17000000;
     pub const SEARCH_Z: u128 = 100000;
 }
@@ -77,7 +77,7 @@ pub mod insecure_search_defaults {
     pub const MIN_PRIME_BITS: u8 = 12;
     pub const B: u128 = 20;
     pub const B_CHI: u128 = 1;
-    pub const SEARCH_N: u128 = 39;
+    pub const SEARCH_N: u128 = 45;
     pub const SEARCH_K: u128 = 17000000;
     pub const SEARCH_Z: u128 = 100000;
 }

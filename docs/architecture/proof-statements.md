@@ -174,10 +174,11 @@ ciphertext commitment in every slot, so no slot stays empty. The C6 tree anchor 
 `c6_fold` artifact path, which `BfvDecryptionVerifier` deployments read. `nodes_fold_kernel` and
 `nodes_fold` verify three `node_fold` proofs per step (`lib::math::nodes_fold`); a row must be all
 zero before it is written. Each node statement carries every party's rows, so a fourth node takes a
-step just past 2^22 at n = 39 (4.28M gates). The aggregator streams the steps: each
-`NodesFoldStepRequest` takes the next slots in canonical order once all their proofs are buffered,
-and `nodes_fold_step_len` fixes that count so the dispatcher and its response handler agree without
-extra state. A chain of at most three nodes splits one and the rest, so it never ends on the kernel.
+step past 2^22 (4.28M gates at n = 39; three nodes are 3.71M at n = 45). The aggregator streams the
+steps: each `NodesFoldStepRequest` takes the next slots in canonical order once all their proofs are
+buffered, and `nodes_fold_step_len` fixes that count so the dispatcher and its response handler
+agree without extra state. A chain of at most three nodes splits one and the rest, so it never ends
+on the kernel.
 
 C3 chains run over Chonk (`lib::math::chonk`). A stack is `c3_chonk_app`, which verifies
 `C3_CHONK_LEAVES` (24) C3 proofs, then the init, tail and hiding kernels; `c3_chonk_tube` verifies
@@ -244,8 +245,8 @@ across limbs) and continues every party's sponge from a carried `(state, absorb_
 consecutive ABSORB words into one tag, so the chain computes exactly the unchunked commitment and
 C1, C3, C4 and the node fold are unchanged. A full chunk holds whole packing carriers and whole
 sponge blocks, so every chunk starts each sponge at a known position; only the last may end on a
-partial carrier. At degree 8192 C2a takes five chunks and C2b, which also hashes every secret limb,
-six; each fills at most 2^22 at 39 parties.
+partial carrier. At degree 8192 C2a and C2b each take six chunks, each within 2^22 at 45 parties;
+C2b's are the larger because it also hashes every secret limb.
 
 Each chunk proves `h_out` from `h_in`, hashes of every carried sponge
 (`DS_SHARE_COMPUTATION_CHAIN_STATE`). The final `sk_share_computation` or `e_sm_share_computation`

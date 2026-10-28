@@ -83,8 +83,8 @@
       },
       {
         "size": "3",
-        "quorum": "28",
-        "total": "39"
+        "quorum": "34",
+        "total": "45"
       }
     ],
     "registerActiveBfvParamSet": true,
