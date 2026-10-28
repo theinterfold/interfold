@@ -224,7 +224,7 @@ check_bfv_preset() {
 
   noir_degree=$(grep -E '^pub global N: u32 = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
   noir_plaintext=$(grep -E '^pub global PLAINTEXT_MODULUS: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
-  noir_moduli=$(awk '/^pub global QIS:/,/];/ { gsub(/[^0-9,]/, ""); if ($0 != "") { printf "%s%s", sep, $0; sep = "," } }' "$noir_file")
+  noir_moduli=$(awk '/^pub global QIS:/,/];/' "$noir_file" | grep -oE '[0-9]+' | paste -sd, -)
   noir_error_bound=$(grep -E '^pub global PK_GENERATION_B_ENC: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
   noir_q_mod_t=$(grep -E '^pub global Q_MOD_T: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
   noir_q_inverse_mod_t=$(grep -E '^pub global Q_INVERSE_MOD_T: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
