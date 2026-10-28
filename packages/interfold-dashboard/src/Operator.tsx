@@ -42,6 +42,7 @@ import {
   identityStatusText,
   outerEvmProof,
   parseDateInput,
+  registrationDeadline,
   safeRegistrationBatch,
   type IdentityPolicy,
   type OwnerAccount,
@@ -227,6 +228,14 @@ export default function Operator() {
   const bonded = Boolean(config && status && status.ciphernodeBond >= config.requiredCiphernodeBond)
   const registered = Boolean(status?.registered)
   const ticketed = Boolean(config && status && status.availableTickets >= config.minTicketBalance)
+
+  // The identity panel follows the bond owner, not the connected wallet: `useBonding` clears the
+  // status while a new wallet's reads load, and the panel must keep a finished proof meanwhile.
+  const [ownerOf, setOwnerOf] = useState<{ operator: Address; owner: Address } | null>(null)
+  if (operator && status?.bondOwner && (ownerOf?.operator !== operator || !sameAddress(ownerOf.owner, status.bondOwner))) {
+    setOwnerOf({ operator, owner: status.bondOwner })
+  }
+  const identityOwner = operator && ownerOf?.operator === operator ? ownerOf.owner : null
 
   const stepDone = [connected, bondOwnerSet, bonded, registered, ticketed]
   const activeStep = stepDone.findIndex((d) => !d)
@@ -702,9 +711,10 @@ export default function Operator() {
             </StepCard>
           </div>
 
-          {status?.bondOwner && (
+          {identityOwner && (
             <IdentityPanel
-              owner={status.bondOwner}
+              key={identityOwner}
+              owner={identityOwner}
               wallet={connected ? wallet.address : null}
               busy={busy}
               send={(key, call) => void run(key, () => write(call))}
@@ -1456,25 +1466,28 @@ function IdentityPanel({
     }
   }, [owner, policy, busy, reload])
 
-  // A request binds one owner, so a new owner starts over. Clearing during render (not in an effect)
-  // drops the old owner's request before the browser paints it.
-  const [requestOwner, setRequestOwner] = useState(owner)
-  if (owner !== requestOwner) {
-    setRequestOwner(owner)
-    setRequest({ phase: 'idle' })
-    setValidUntilInput(null)
-  }
+  // A request binds one owner, and each owner has its own panel instance (keyed by owner).
   useEffect(
     () => () => {
       requestToken.current += 1
       cancelRequest.current?.()
       cancelRequest.current = null
     },
-    [owner],
+    [],
   )
+  // A finished proof expires, so its view follows the clock while the page stays open.
+  const [clock, setClock] = useState(() => BigInt(Math.floor(Date.now() / 1000)))
+  useEffect(() => {
+    if (request.phase !== 'ready') return undefined
+    const id = setInterval(() => setClock(BigInt(Math.floor(Date.now() / 1000))), 30_000)
+    return () => clearInterval(id)
+  }, [request.phase])
 
   const service = identityService(verifier, previewFaceMatch)
-  const current = account?.owner === owner ? account.value : null
+  const loaded = account?.owner === owner ? account.value : null
+  const current = loaded && clock > loaded.now ? { ...loaded, now: clock } : loaded
+  // A published registry without a verifier keeps its credentials, but takes no registration.
+  const registrationClosed = Boolean(policy) && verifier === null
   // Until the owner types a date, the field offers the longest credential that the verifier allows.
   const validUntilValue = validUntilInput ?? (current ? dateInput(current.now + service.maxValidity) : '')
 
@@ -1506,7 +1519,8 @@ function IdentityPanel({
         .gte('expiry_date', new Date(Number(validUntil) * 1000))
         .bind('user_address', owner)
         .bind('chain', chain)
-      if (service.faceMatch) query = query.facematch('strict')
+      // The SDK requires strict FaceMatch for a salted identifier.
+      if (service.faceMatch || service.nullifierType === 1) query = query.facematch('strict')
       const result = query.done()
       if (requestToken.current !== token) return zkPassport.cancelRequest(result.requestId)
       cancelRequest.current = () => zkPassport.cancelRequest(result.requestId)
@@ -1547,6 +1561,7 @@ function IdentityPanel({
       previewFaceMatch={previewFaceMatch}
       onPreviewFaceMatch={setPreviewFaceMatch}
       request={request}
+      registrationClosed={registrationClosed}
       canRegister={sameAddress(wallet, owner)}
       busy={busy}
       errFor={errFor}
@@ -1570,12 +1585,16 @@ function IdentityPanel({
         })
       }
       onDownloadProof={(bundle) => downloadJson(`interfold-identity-proof-${owner}.json`, bundle)}
-      onDownloadSafe={(bundle) =>
+      onDownloadSafe={(bundle) => {
+        if (BigInt(Math.floor(Date.now() / 1000)) > proofDeadline(bundle, service)) {
+          setRequest({ phase: 'failed', message: 'The proof is too old to register. Create a new request.' })
+          return
+        }
         downloadJson(
           `interfold-identity-safe-${owner}.json`,
           safeRegistrationBatch(policy!.registry, owner, CHAIN.id, bundle.evidence, Date.now()),
         )
-      }
+      }}
     />
   )
 }
@@ -1596,6 +1615,7 @@ export function IdentityView({
   previewFaceMatch,
   onPreviewFaceMatch,
   request,
+  registrationClosed = false,
   canRegister,
   busy,
   errFor,
@@ -1617,6 +1637,8 @@ export function IdentityView({
   previewFaceMatch: boolean
   onPreviewFaceMatch: (value: boolean) => void
   request: IdentityRequest
+  /** The policy names a registry that has no verifier. */
+  registrationClosed?: boolean
   canRegister: boolean
   busy: string | null
   errFor: (key: string) => ReactNode
@@ -1632,6 +1654,10 @@ export function IdentityView({
   const validUntil = parseDateInput(validUntilInput)
   const windowEnd = account ? capacityWindowEnd(account.now) : null
   const currentExpiry = account?.identity?.expiresAt ?? 0n
+  // Capacity depends on credentials only while the policy requires them.
+  const capacityApplies = Boolean(policy?.required)
+  // The proof date is about now, so the credential would end on this date or at the verifier's cap.
+  const plannedEnd = validUntil !== null && account ? credentialEnd(validUntil, account.now, service.maxValidity) : null
   const requesting = request.phase === 'creating' || request.phase === 'waiting' || request.phase === 'proving'
 
   return (
@@ -1677,7 +1703,7 @@ export function IdentityView({
               </>
             )}
           </dl>
-          {!preview && account.identity && account.identity.verifiedNow && windowEnd !== null && currentExpiry < windowEnd && (
+          {capacityApplies && account.identity && account.identity.verifiedNow && windowEnd !== null && currentExpiry < windowEnd && (
             <Note kind='warn'>
               The credential ends before this 30-day window ends ({fmtDay(windowEnd)}), so this owner does not count toward request capacity
               in this window. Renew it.
@@ -1692,6 +1718,8 @@ export function IdentityView({
 
           {!chain ? (
             <Note kind='warn'>ZKPassport does not verify proofs on {NETWORK_NAME}.</Note>
+          ) : registrationClosed ? (
+            <Note>The identity registry has no verifier at the moment, so it takes no registration. Credentials it issued stay valid.</Note>
           ) : request.phase === 'ready' ? (
             <IdentityProof
               bundle={request.bundle}
@@ -1725,13 +1753,13 @@ export function IdentityView({
                   service.maxValidity,
                 )} after the proof, if that is earlier.`}
               />
-              {validUntil !== null && windowEnd !== null && validUntil < windowEnd && (
+              {capacityApplies && plannedEnd !== null && windowEnd !== null && plannedEnd < windowEnd && (
                 <Note kind='warn'>
                   This date is before the end of the current 30-day window ({fmtDay(windowEnd)}). The owner would not count toward request
                   capacity in this window.
                 </Note>
               )}
-              {validUntil !== null && account.identity && validUntil <= currentExpiry && (
+              {plannedEnd !== null && account.identity && plannedEnd < currentExpiry && (
                 <Note kind='warn'>
                   Pick a date after the current expiry ({fmtDay(currentExpiry)}). A renewal cannot shorten the credential.
                 </Note>
@@ -1817,11 +1845,16 @@ function IdentityProof({
   const validUntil = BigInt(bundle.validUntil)
   const proofDate = BigInt(bundle.proofDate)
   const ends = credentialEnd(validUntil, proofDate, service.maxValidity)
-  const deadline = proofDate + service.proofValidity
+  const deadline = proofDeadline(bundle, service)
+  // The panel requested this binding; a proof for another owner or chain would only revert.
+  const bound = sameAddress(bundle.owner, owner) && bundle.chainId === CHAIN.id
   const versionMatches = !verifier || bundle.version.toLowerCase() === verifier.version.toLowerCase()
+  const keyMatches =
+    !verifier ||
+    (bundle.nullifierType === verifier.nullifierType && bundle.oprfKeyHash.toLowerCase() === verifier.oprfKeyHash.toLowerCase())
   const expired = account.now > deadline
-  const shortens = account.identity !== null && ends <= account.identity.expiresAt
-  const blocked = !versionMatches || expired || shortens
+  const shortens = account.identity !== null && ends < account.identity.expiresAt
+  const blocked = !bound || !versionMatches || !keyMatches || expired || shortens
 
   return (
     <div className='opmanage__group'>
@@ -1836,10 +1869,14 @@ function IdentityProof({
         <dt>Credential ends</dt>
         <dd>{fmtDay(ends)}</dd>
         <dt>Register before</dt>
-        <dd>{fmtDay(deadline)}</dd>
+        <dd>{fmtMoment(deadline)}</dd>
         <dt>Identifier type</dt>
         <dd>{bundle.nullifierType === 1 ? 'Salted' : 'Not salted'}</dd>
       </dl>
+      {!bound && <Note kind='warn'>This proof is bound to another owner or network. Create a new request.</Note>}
+      {!keyMatches && (
+        <Note kind='warn'>The proof's identifier type or OPRF key differs from the verifier's. The verifier would reject it.</Note>
+      )}
       {!versionMatches && (
         <Note kind='warn'>
           The app made the proof with another ZKPassport version than the verifier accepts. Governance must deploy a verifier for the new
@@ -1871,8 +1908,8 @@ function IdentityProof({
       {!preview && !account.isContract && !canRegister && <Note>Connect the bond-owner wallet {shortAddr(owner)} to register.</Note>}
       {!preview && account.isContract && (
         <Note>
-          Load the file in the Safe Transaction Builder and execute it before {fmtDay(deadline)}. The registration costs about 1.3 million
-          gas.
+          Load the file in the Safe Transaction Builder and execute it before {fmtMoment(deadline)}. The registration costs about 1.3
+          million gas.
         </Note>
       )}
       {!preview && (
@@ -1883,6 +1920,17 @@ function IdentityProof({
       )}
     </div>
   )
+}
+
+/** The last moment that this proof can register under `service`. */
+function proofDeadline(bundle: ProofBundle, service: IdentityService): bigint {
+  const proofDate = BigInt(bundle.proofDate)
+  return registrationDeadline(proofDate, service.proofValidity, credentialEnd(BigInt(bundle.validUntil), proofDate, service.maxValidity))
+}
+
+/** A Unix timestamp as a UTC date and time, to the minute. */
+function fmtMoment(ts: bigint): string {
+  return `${new Date(Number(ts) * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC`
 }
 
 function downloadJson(name: string, value: unknown) {

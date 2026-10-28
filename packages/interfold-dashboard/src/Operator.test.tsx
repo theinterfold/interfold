@@ -336,3 +336,48 @@ test('a proof registers from the owner, or as a Safe transaction', () => {
   const late = renderToStaticMarkup(<IdentityView {...identityProps} account={account({ now: NOW + 8n * DAY })} request={ready} />)
   assert.match(late, /too old to register/)
 })
+
+test('a registry without a verifier shows the credential but takes no registration', () => {
+  const closed = renderToStaticMarkup(<IdentityView {...identityProps} verifier={null} registrationClosed />)
+  assert.match(closed, /takes no registration/)
+  assert.match(closed, /Not verified/)
+  assert.doesNotMatch(closed, /Create ZKPassport request/)
+})
+
+test('capacity warnings apply only while the policy requires identity', () => {
+  const optional = { ...policy, required: false }
+  const short = account({ identity: { identityId: word(1n), expiresAt: NOW + 1n, verifiedNow: true } })
+  assert.doesNotMatch(renderToStaticMarkup(<IdentityView {...identityProps} policy={optional} account={short} />), /does not count/)
+  assert.doesNotMatch(
+    renderToStaticMarkup(<IdentityView {...identityProps} policy={optional} validUntilInput={dateInput(NOW + 1n)} />),
+    /would not count/,
+  )
+  // The verifier's cap counts too: a far date still ends at the maximum validity.
+  const capped = renderToStaticMarkup(
+    <IdentityView {...identityProps} service={{ ...service, maxValidity: 1n }} validUntilInput={dateInput(NOW + 900n * DAY)} />,
+  )
+  assert.match(capped, /would not count toward request/)
+})
+
+test('a proof that the verifier would reject cannot register, and an equal expiry can', () => {
+  const ready = (b: ReturnType<typeof bundle>) => ({ phase: 'ready', bundle: b }) as const
+  const register = /<button class="btn btn--primary">Register the identity/
+  const disabled = /<button class="btn btn--primary" disabled="">Register the identity/
+
+  // A replacement that ends exactly at the current expiry is allowed by the registry.
+  const proof = bundle()
+  const ends = BigInt(proof.proofDate) + service.maxValidity
+  const same = account({ identity: { identityId: word(1n), expiresAt: ends, verifiedNow: true } })
+  assert.match(renderToStaticMarkup(<IdentityView {...identityProps} account={same} request={ready(proof)} />), register)
+
+  const otherOwner = { ...bundle(), owner: PROPOSED }
+  const moved = renderToStaticMarkup(<IdentityView {...identityProps} request={ready(otherOwner)} />)
+  assert.match(moved, /bound to another owner or network/)
+  assert.match(moved, disabled)
+
+  const salted = renderToStaticMarkup(
+    <IdentityView {...identityProps} verifier={{ ...verifier, nullifierType: 1 }} request={ready(bundle())} />,
+  )
+  assert.match(salted, /identifier type or OPRF key differs/)
+  assert.match(salted, disabled)
+})

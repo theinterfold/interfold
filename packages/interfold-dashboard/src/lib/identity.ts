@@ -79,7 +79,10 @@ export type OwnerAccount = {
   identity: { identityId: Hex; expiresAt: bigint; verifiedNow: boolean } | null
 }
 
-/** The current identity policy: the latest IdentityPolicyUpdated log, or null before the first. */
+/**
+ * The current identity policy: the latest IdentityPolicyUpdated log. Null before the first log, and
+ * when the latest log clears the registry.
+ */
 export async function fetchIdentityPolicy(): Promise<IdentityPolicy | null> {
   const head = await publicClient.getBlockNumber()
   const logs = await getLogsChunked<any>(
@@ -88,17 +91,18 @@ export async function fetchIdentityPolicy(): Promise<IdentityPolicy | null> {
     head,
   )
   const latest = logs[logs.length - 1]
-  if (!latest) return null
+  if (!latest || latest.args.registry === ZERO_ADDRESS) return null
   return { registry: latest.args.registry, required: latest.args.required, timepoint: BigInt(latest.args.timepoint) }
 }
 
-export async function fetchVerifierConfig(registry: Address): Promise<VerifierConfig> {
+/** The verifier settings, or null while the registry has no verifier (registration is closed). */
+export async function fetchVerifierConfig(registry: Address): Promise<VerifierConfig | null> {
   const address = (await (publicClient.readContract as any)({
     address: registry,
     abi: ownerIdentityRegistryAbi,
     functionName: 'verifier',
   })) as Address
-  if (address === ZERO_ADDRESS) throw new Error('The identity registry has no verifier yet.')
+  if (address === ZERO_ADDRESS) return null
   const read = (functionName: string) => (publicClient.readContract as any)({ address, abi: zkPassportIdentityVerifierAbi, functionName })
   const [domain, scope, version, nullifierType, oprfKeyHash, faceMatchRequired, proofValidity, maxValidity] = await Promise.all([
     read('domain'),
@@ -139,7 +143,26 @@ export async function fetchOwnerAccount(owner: Address, registry: Address | null
         )
       : Promise.resolve(null),
   ])
-  return { now: block.timestamp, isContract: Boolean(code && code !== '0x'), identity }
+  return { now: block.timestamp, isContract: isContractCode(code), identity }
+}
+
+/**
+ * Whether account code makes the owner a contract wallet, such as a Safe. An EIP-7702 account's
+ * code is a delegation designator (`0xef0100` and an address): it is still an EOA that sends its own
+ * transactions.
+ */
+export function isContractCode(code: Hex | undefined): boolean {
+  if (!code || code === '0x') return false
+  return !(code.toLowerCase().startsWith('0xef0100') && code.length === 2 + 2 * 23)
+}
+
+/**
+ * The last moment that a registration can be mined: ZKPassport rejects a proof older than the proof
+ * validity, and the registry rejects a credential that has already ended.
+ */
+export function registrationDeadline(proofDate: bigint, proofValidity: bigint, credentialEnds: bigint): bigint {
+  const proofExpires = proofDate + proofValidity
+  return proofExpires < credentialEnds ? proofExpires : credentialEnds
 }
 
 /** The last second of the capacity window that contains `timestamp` (`BondOwnerCapacityLib._windowEnd`). */
