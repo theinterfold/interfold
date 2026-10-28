@@ -108,17 +108,27 @@ fork. It overwrites the `mainnet` entry of the checkout's
 `upgrade:identity` (`scripts/upgrade/identityGate.ts prepare`) rolls out the
 [owner identity](registration-and-bonding.md#owner-identity) gate. It reads the `identity` section
 of the protocol config (ZKPassport root verifier, version, domain, scope, identifier type, OPRF key
-hash, FaceMatch, proof validity, maximum validity) and stops on an incomplete value. It deploys
-`ZKPassportIdentityVerifier`, `OwnerIdentityRegistry` owned by the protocol owner, and a linked
-BondingRegistry implementation. Its governance batch upgrades BondingRegistry, sets the identity
-policy to the new registry with `required = false`, which publishes the registry to the verification
-page, and refreshes every registered operator in batches of 20, because every policy change resets
-counted owner capacity. `upgrade:identity:validate` reads back the implementation, the registry
-owner and verifier, every verifier setting, the latest `IdentityPolicyUpdated`, and the owner
-capacity for the largest committee. `upgrade:identity:enforce` writes the batch that sets
-`required = true` and refreshes every operator; `upgrade:identity:relax` is its rollback. Before
-`prepare`, `upgrade:identity:proof-fork -- --network localhost --proof <file>` replays a proof that
-the verification page downloaded against ZKPassport's verifier on an Anvil mainnet fork
+hash, FaceMatch, proof validity, maximum validity) and stops on an incomplete value. It checks the
+ProxyAdmin owner and the root verifier's code, then deploys `ZKPassportIdentityVerifier`,
+`OwnerIdentityRegistry` owned by the protocol owner, and a linked BondingRegistry implementation.
+Its governance batch upgrades BondingRegistry, sets the identity policy to the new registry with
+`required = false`, which publishes the registry to the verification page, and refreshes every
+registered operator in batches of 20, because every policy change resets counted owner capacity.
+
+`upgrade:identity:enforce` writes the batch that sets `required = true` and refreshes every
+operator. It refuses while fewer owners than the largest committee needs have a credential that
+lasts to the end of the current window (`--force` overrides). `upgrade:identity:relax` is its
+rollback; during an admission pause, the identity rule at the pause cutoff stays until the admission
+policy changes too. `upgrade:identity:validate -- --required <true|false>` reads back the
+implementation, the registry owner and verifier, every verifier setting and the identifier
+namespace, the latest `IdentityPolicyUpdated` against the expected policy, and the owner capacity
+for the largest committee. Write each batch shortly before execution: an operator that deregisters
+after the batch was written makes `refreshOperatorStatuses` revert, and the whole batch reverts with
+it, so write it again. One batch refreshes at most 200 operators; a larger pool needs a paused,
+staged refresh.
+
+Before `prepare`, `upgrade:identity:proof-fork -- --network localhost --proof <file>` replays a
+proof that the verification page downloaded against ZKPassport's verifier on an Anvil mainnet fork
 (`CONFIRM_MAINNET_FORK=1`). It deploys the verifier with the proof's settings, checks that another
 owner is rejected, registers the bound owner, and checks the identifier and the expiry. The proof's
 version is the value for `identity.zkPassportVersion`. The batches and the plan
