@@ -194,6 +194,7 @@
     "upgrade:identity:enforce": "tsx scripts/upgrade/identityGate.ts enforce",
     "upgrade:identity:relax": "tsx scripts/upgrade/identityGate.ts relax",
     "upgrade:identity:validate": "tsx scripts/upgrade/identityGate.ts validate",
+    "upgrade:identity:proof-fork": "tsx scripts/upgrade/identityProofFork.ts",
     "upgrade:v19": "pnpm validate:upgrade && pnpm -w store:circuits verify-release && tsx scripts/upgrade/v19Cutover.ts prepare",
     "upgrade:v19:validate": "tsx scripts/upgrade/v19Cutover.ts validate",
     "upgrade:v19:refresh": "tsx scripts/upgrade/v19Cutover.ts refresh",

@@ -116,8 +116,13 @@ page, and refreshes every registered operator in batches of 20, because every po
 counted owner capacity. `upgrade:identity:validate` reads back the implementation, the registry
 owner and verifier, every verifier setting, the latest `IdentityPolicyUpdated`, and the owner
 capacity for the largest committee. `upgrade:identity:enforce` writes the batch that sets
-`required = true` and refreshes every operator; `upgrade:identity:relax` is its rollback. The
-batches and the plan (`deploy/protocol/<name>.identity-*`) stay local and are not committed.
+`required = true` and refreshes every operator; `upgrade:identity:relax` is its rollback. Before
+`prepare`, `upgrade:identity:proof-fork -- --network localhost --proof <file>` replays a proof that
+the verification page downloaded against ZKPassport's verifier on an Anvil mainnet fork
+(`CONFIRM_MAINNET_FORK=1`). It deploys the verifier with the proof's settings, checks that another
+owner is rejected, registers the bound owner, and checks the identifier and the expiry. The proof's
+version is the value for `identity.zkPassportVersion`. The batches and the plan
+(`deploy/protocol/<name>.identity-*`) stay local and are not committed.
 
 During an ordered legacy CRISP server cutover, missing `earliestVotingStart()` can temporarily fall
 back to live protocol windows. Install/register new program and update server/DAO addresses before
