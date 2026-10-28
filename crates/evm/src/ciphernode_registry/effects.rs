@@ -57,17 +57,8 @@ pub async fn submit_ticket_to_registry<P: Provider + WalletProvider + Clone + 's
         let provider = provider.clone();
         async move {
             info!("Calling: contract.submitTicket(..)");
-            let _nonce_guard = transaction_nonce_guard(&provider).await;
-            let from_address = provider.provider().default_signer_address();
-            let current_nonce = provider
-                .provider()
-                .get_transaction_count(from_address)
-                .pending()
-                .await?;
             let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
-            let builder = contract
-                .submitTicket(e3_id_u256, ticket_number_u256)
-                .nonce(current_nonce);
+            let builder = contract.submitTicket(e3_id_u256, ticket_number_u256);
             // Nodes estimate concurrently before any ticket is mined. Earlier
             // insertions can make a later top-N update more expensive than its
             // estimate, so leave room for the request state to change.
@@ -77,8 +68,7 @@ pub async fn submit_ticket_to_registry<P: Provider + WalletProvider + Clone + 's
                 estimated_gas,
                 gas_limit, "Applying submitTicket gas safety margin"
             );
-            let pending = builder.gas(gas_limit).send().await?;
-            drop(_nonce_guard);
+            let pending = send_with_next_nonce(&provider, builder.gas(gas_limit)).await?;
             let receipt = pending.get_receipt().await?;
             require_successful_receipt("submit ticket", &receipt)?;
             Ok(receipt)
@@ -223,17 +213,9 @@ pub async fn finalize_committee_on_registry<P: Provider + WalletProvider + Clone
             let provider = provider.clone();
             async move {
                 info!("Calling: contract.finalizeCommittee(..)");
-                let _nonce_guard = transaction_nonce_guard(&provider).await;
-                let from_address = provider.provider().default_signer_address();
-                let current_nonce = provider
-                    .provider()
-                    .get_transaction_count(from_address)
-                    .pending()
-                    .await?;
                 let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
-                let builder = contract.finalizeCommittee(e3_id_u256).nonce(current_nonce);
-                let pending = builder.send().await?;
-                drop(_nonce_guard);
+                let pending =
+                    send_with_next_nonce(&provider, contract.finalizeCommittee(e3_id_u256)).await?;
                 let receipt = pending.get_receipt().await?;
                 require_successful_receipt("finalize committee", &receipt)?;
                 Ok(receipt)
@@ -322,19 +304,17 @@ pub async fn publish_committee_to_registry<P: Provider + WalletProvider + Clone 
             let attestation_bundle = attestation_bundle.clone();
             async move {
                 info!("Calling: contract.publishCommittee(..)");
-                let _nonce_guard = transaction_nonce_guard(&provider).await;
-                let from_address = provider.provider().default_signer_address();
-                let current_nonce = provider
-                    .provider()
-                    .get_transaction_count(from_address)
-                    .pending()
-                    .await?;
                 let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
-                let builder = contract
-                    .publishCommittee(e3_id_u256, pk_commitment_b256, proof, attestation_bundle)
-                    .nonce(current_nonce);
-                let pending = builder.send().await?;
-                drop(_nonce_guard);
+                let pending = send_with_next_nonce(
+                    &provider,
+                    contract.publishCommittee(
+                        e3_id_u256,
+                        pk_commitment_b256,
+                        proof,
+                        attestation_bundle,
+                    ),
+                )
+                .await?;
                 let receipt = pending.get_receipt().await?;
                 require_successful_receipt("publish committee", &receipt)?;
                 Ok(receipt)
@@ -393,28 +373,20 @@ pub async fn publish_committee_public_key_to_registry<
                         total = chunk_count,
                         "Calling: contract.publishCommitteePublicKey(chunk)"
                     );
-                    let _nonce_guard = transaction_nonce_guard(&provider).await;
-                    let from_address = provider.provider().default_signer_address();
-                    let current_nonce = provider
-                        .provider()
-                        .get_transaction_count(from_address)
-                        .pending()
-                        .await?;
                     let contract =
                         IChunkedPublicKeyPublisher::new(contract_address, provider.provider());
-                    let pending = contract
-                        .publishCommitteePublicKey(
+                    let pending = send_with_next_nonce(
+                        &provider,
+                        contract.publishCommitteePublicKey(
                             e3_id_u256,
                             candidate_hash,
                             chunk_index,
                             chunk_count,
                             total_length,
                             chunk,
-                        )
-                        .nonce(current_nonce)
-                        .send()
-                        .await?;
-                    drop(_nonce_guard);
+                        ),
+                    )
+                    .await?;
                     let receipt = pending.get_receipt().await?;
                     require_successful_receipt("publish committee public-key chunk", &receipt)?;
                     Ok(receipt)
