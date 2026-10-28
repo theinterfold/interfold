@@ -897,6 +897,7 @@ mod tests {
         .start();
         let sortition = Sortition::new(SortitionParams {
             admission: persist(Default::default()),
+            identity_policy: persist(Default::default()),
             bus: bus.clone(),
             backends: persist(Default::default()),
             node_state: persist(Default::default()),

@@ -89,6 +89,7 @@ async fn eligibility_source_time_survives_delayed_ingestion_and_snapshot_replay(
                 backends: memory(Default::default()).0,
                 bond_owners: memory(Default::default()).0,
                 admission: memory(Default::default()).0,
+                identity_policy: memory(Default::default()).0,
                 finalized_committees: memory(Default::default()).0,
                 recovery: memory(Default::default()).0,
                 ciphernode_selector: selector,

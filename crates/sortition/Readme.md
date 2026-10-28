@@ -269,7 +269,8 @@ flowchart LR
   - Rank all eligible nodes by their best ticket score
   - Shortlist N-plus-buffer distinct snapshot owners and retain their operators as backups
   - Submit the local node's best ticket if its owner is shortlisted and it has capacity
-  - Permit all eligible submissions when chain-time owner history is incomplete
+  - Permit all eligible submissions when chain-time owner history is incomplete or the identity
+    policy is required at T−1
 - **On-Chain Integration**: Tickets submitted to contract for verification
 - **Committee Finalization**: After the window closes, the contract selects N distinct request-time
   bond owners. Each owner has at most one candidate. Existing requests from before the cap upgrade

@@ -170,6 +170,7 @@ fn start_sortition(bus: &BusHandle) -> Addr<Sortition> {
 
     Sortition::new(SortitionParams {
         admission: test_persistable(e3_sortition::AdmissionState::default()),
+        identity_policy: test_persistable(e3_sortition::IdentityPolicyState::default()),
         bus: bus.clone(),
         backends: test_persistable(HashMap::<u64, SortitionBackend>::new()),
         node_state: test_persistable(HashMap::<u64, NodeStateStore>::new()),

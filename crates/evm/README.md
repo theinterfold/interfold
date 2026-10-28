@@ -17,6 +17,7 @@ live separately in [e3-evm-helpers](../evm-helpers/README.md).
 | [`interfold_writing/`](src/interfold_writing), [`slashing_writing/`](src/slashing_writing)                                    | Publication preflights/retries and slash outbox.                                   |
 | [`canonical_key.rs`](src/canonical_key.rs), [`data_availability/`](src/data_availability)                                     | Confirmed key authority and referenced-output retrieval.                           |
 | [`node_release.rs`](src/node_release.rs), [`slashing_manager_address.rs`](src/slashing_manager_address.rs)                    | Startup release acknowledgment and authoritative manager resolution.               |
+| [`capacity_refresh.rs`](src/capacity_refresh.rs)                                                                              | Operator refresh in each owner capacity window under a required identity policy.   |
 
 The read path fetches confirmed logs, decodes observations, orders the startup handoff, and sends
 facts to the bus. The write path consumes local intents; confirmed results return through the read
@@ -48,6 +49,12 @@ Slash intents retain their first-recorded time, preserving the remaining fallbac
 restart. Decoded permanent contract errors end retries. Failure-path reads/transactions use capped
 per-E3 backoff; a successful call clears its count. Release acknowledgment rereads state on each of
 three attempts to avoid sending again after a mined success.
+
+`CapacityRefresher` starts 10 minutes after effects start and then checks every 10 minutes at the
+latest block's timestamp. When sortition reports a required identity policy and this process has not
+refreshed the operator in the current 30-day window, it sends `refreshOperatorStatus` for the
+operator. An unregistered operator sends nothing for that window. A failed read or transaction waits
+for the next check. The window lives only in memory, so a restart costs at most one more refresh.
 
 Public helpers also include `ProviderConfig`, canonical DKG timing/lifecycle reads,
 `fetch_operator_status`, and slashing-manager resolution. See

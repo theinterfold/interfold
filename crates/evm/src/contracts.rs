@@ -467,6 +467,7 @@ sol! {
         ) external view returns (bool active, uint256 activeOperatorCount);
         function numActiveOperators() external view returns (uint256);
         function hasExitInProgress(address operator) external view returns (bool);
+        function refreshOperatorStatus(address operator) external;
 
         function unresolvedCommitteesOf(address operator) external view returns (uint256);
         function committeeObligationAt(

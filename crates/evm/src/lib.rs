@@ -15,6 +15,7 @@
 mod actors;
 mod adapters;
 pub mod canonical_key;
+mod capacity_refresh;
 mod chain_system;
 mod chains;
 mod contracts;
@@ -39,6 +40,7 @@ pub use adapters::ingestion_progress::{
     write_ingestion_expectation_at, IngestionProgress, IngestionProgressSink,
     INGESTION_EXPECTATION_FILE,
 };
+pub use capacity_refresh::CapacityRefresher;
 pub use chain_system::*;
 pub use chains::{validate_chain_id, Chain, Chains, EnabledChain};
 pub use contracts::ICiphernodeRegistry;

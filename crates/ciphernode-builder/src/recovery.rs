@@ -67,6 +67,14 @@ pub(crate) async fn backfill_restart_state(
         .copied()
         .filter(|chain_id| !admission.chains.contains_key(chain_id))
         .collect::<HashSet<_>>();
+    let identity_store = repositories.sortition_identity_policy();
+    let mut identity = identity_store.read().await?.unwrap_or_default();
+    identity.validate()?;
+    let identity_target_chains = chain_ids
+        .iter()
+        .copied()
+        .filter(|chain_id| !identity.chains.contains_key(chain_id))
+        .collect::<HashSet<_>>();
     let mut owners = owners_store.read().await?.unwrap_or_default();
     owners.validate()?;
     let owner_target_chains = chain_ids
@@ -188,7 +196,9 @@ pub(crate) async fn backfill_restart_state(
         targets.extend(active_e3s);
     }
     let projection_target_chains = owner_target_chains
-        .union(&admission_target_chains)
+        .iter()
+        .chain(&admission_target_chains)
+        .chain(&identity_target_chains)
         .copied()
         .collect::<HashSet<_>>();
     let mut cursors = HashMap::new();
@@ -199,6 +209,7 @@ pub(crate) async fn backfill_restart_state(
             slash_target_chains
                 .iter()
                 .chain(&admission_target_chains)
+                .chain(&identity_target_chains)
                 .map(|chain_id| AggregateId::from_chain_id(Some(*chain_id))),
         )
         // Typed owner/admission events use aggregate zero. Legacy raw logs use their chain aggregate.
@@ -235,7 +246,11 @@ pub(crate) async fn backfill_restart_state(
         let aggregate = AggregateId::from_chain_id(Some(e3_id.chain_id()));
         checked.get(e3_id).copied().unwrap_or(0) < cursors.get(&aggregate).copied().unwrap_or(0)
     });
-    for chain_id in slash_target_chains.iter().chain(&admission_target_chains) {
+    for chain_id in slash_target_chains
+        .iter()
+        .chain(&admission_target_chains)
+        .chain(&identity_target_chains)
+    {
         start_cursors.insert(AggregateId::from_chain_id(Some(*chain_id)), 0);
     }
     if !projection_target_chains.is_empty() {
@@ -277,6 +292,17 @@ pub(crate) async fn backfill_restart_state(
     }
     if !admission_target_chains.is_empty() {
         admission_store.write_sync(&admission).await?;
+    }
+    for change in recovered.identity_policy_updates {
+        if identity_target_chains.contains(&change.chain_id) {
+            identity.record(&change)?;
+        }
+    }
+    for chain_id in &identity_target_chains {
+        identity.chains.entry(*chain_id).or_default();
+    }
+    if !identity_target_chains.is_empty() {
+        identity_store.write_sync(&identity).await?;
     }
     for chain_id in &owner_target_chains {
         owners.chains.entry(*chain_id).or_default();

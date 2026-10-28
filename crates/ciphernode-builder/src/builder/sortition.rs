@@ -62,6 +62,7 @@ pub(super) async fn setup_sortition(
         node_state_store: repositories.node_state(),
         bond_owners_store: repositories.sortition_bond_owners(),
         admission_store: repositories.sortition_admission(),
+        identity_policy_store: repositories.sortition_identity_policy(),
         recovery_store: repositories.sortition_recovery(),
         committees_store: committees_repo,
         default_backend: SortitionBackend::score(),
@@ -330,11 +331,19 @@ mod tests {
                 )
                     .abi_encode(),
             );
+            let identity = |timepoint: u64, required: bool| {
+                raw(
+                    vec![keccak256("IdentityPolicyUpdated(uint48,address,bool)")],
+                    (U256::from(timepoint), Address::repeat_byte(7), required).abi_encode(),
+                )
+            };
             let mut events = Vec::new();
             for (index, (log, source)) in [
                 (started(10u64), EventSource::Evm),
                 (policy, EventSource::Evm),
                 (started(200u64), EventSource::Local),
+                (identity(30, true), EventSource::Evm),
+                (identity(40, false), EventSource::Local),
             ]
             .into_iter()
             .enumerate()
@@ -354,7 +363,7 @@ mod tests {
             bus.flush_event_pipeline().await?;
             repos
                 .aggregate_seq(aggregate)
-                .write_sync(&if before_snapshot { 3 } else { 0 })
+                .write_sync(&if before_snapshot { 5 } else { 0 })
                 .await?;
 
             // The old decoder could persist an empty chain projection. Keep its bytes intact.
@@ -401,6 +410,14 @@ mod tests {
                 1,
                 "local raw log must be ignored"
             );
+            let identity = repos.sortition_identity_policy().read().await?.unwrap();
+            identity.validate()?;
+            assert!(!identity.required_at(1, 29));
+            assert!(identity.required_at(1, 30));
+            assert!(
+                identity.required_at(1, 45),
+                "local identity log must be ignored"
+            );
             assert!(errors.send(GetEvents::new()).await?.is_empty());
             crate::recovery::backfill_restart_state(
                 &repos,
@@ -416,6 +433,10 @@ mod tests {
             assert_eq!(
                 legacy_bytes,
                 bincode::serialize(&legacy_store.read().await?.unwrap())?
+            );
+            assert_eq!(
+                bincode::serialize(&identity)?,
+                bincode::serialize(&repos.sortition_identity_policy().read().await?.unwrap())?
             );
         }
         Ok(())
