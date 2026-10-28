@@ -55,10 +55,10 @@ library ActiveCryptoConfig {
         0x7bb0115496a871fa95c282abe46f910d53ff22270e7c225e2468f9420570fe53;
 
     bytes32 internal constant SECURE_16384_SIMD_D6_CONFIG_ID =
-        0xd2338ceef6b88f3e9f31843168abda095ec15bb8bc74060a4fc36d980403de0d;
+        0xcb99467971a96a9c89fa19ad44e7b9c58c3f7907e5bd46fd1a879a2b8b020bc8;
     uint8 internal constant SECURE_16384_SIMD_D6_PARAM_SET = 7;
     bytes32 internal constant SECURE_16384_SIMD_D6_PARAM_SET_HASH =
-        0xdd27d8ab4febb75c65a5bf4b1730077ec6ef1cc3df0536ca6ae246b47ed583e9;
+        0x6512744d8292a474c595c1ce61bb45e25db0218be32ea224aacd6f18674ebca7;
 
     uint8 internal constant MINIMUM_COMMITTEE_SIZE = 0;
     uint32 internal constant MINIMUM_T = 1;

@@ -31,7 +31,7 @@ const SORTITION_SUBMISSION_WINDOW = 60;
 const PUBLIC_KEY_CHUNK_BYTES = 90 * 1024;
 const MAX_PUBLIC_KEY_BYTES = 24 * 1024 * 1024;
 const SECURE_16384_KEY_ENVELOPE_BYTES = 7_833_906;
-const SECURE_16384_SIMD_D6_KEY_ENVELOPE_BYTES = 21_234_096;
+const SECURE_16384_SIMD_D6_KEY_ENVELOPE_BYTES = 21_381_552;
 
 describe("CiphernodeRegistryOwnable", function () {
   let firstE3Id: bigint;
@@ -992,7 +992,7 @@ describe("CiphernodeRegistryOwnable", function () {
       const d6ChunkCount = Math.ceil(
         SECURE_16384_SIMD_D6_KEY_ENVELOPE_BYTES / PUBLIC_KEY_CHUNK_BYTES,
       );
-      expect(d6ChunkCount).to.equal(231);
+      expect(d6ChunkCount).to.equal(233);
       expect(SECURE_16384_SIMD_D6_KEY_ENVELOPE_BYTES).to.be.lessThan(
         MAX_PUBLIC_KEY_BYTES,
       );

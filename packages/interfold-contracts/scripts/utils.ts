@@ -157,9 +157,9 @@ const SECURE_16384_SIMD_PARAM_SET_HASH =
 const SECURE_16384_SIMD_CONFIG_ID =
   "0xd053da3859a277a18b1d0bce3f59f7afb5dda18833e3e0fc32c204d066d4e65e";
 const SECURE_16384_SIMD_D6_PARAM_SET_HASH =
-  "0xdd27d8ab4febb75c65a5bf4b1730077ec6ef1cc3df0536ca6ae246b47ed583e9";
+  "0x6512744d8292a474c595c1ce61bb45e25db0218be32ea224aacd6f18674ebca7";
 const SECURE_16384_SIMD_D6_CONFIG_ID =
-  "0xd2338ceef6b88f3e9f31843168abda095ec15bb8bc74060a4fc36d980403de0d";
+  "0xcb99467971a96a9c89fa19ad44e7b9c58c3f7907e5bd46fd1a879a2b8b020bc8";
 
 // Generated from `BfvPreset::max_msg_non_zero_coeffs` by `pnpm build:circuits`.
 const INSECURE_64_MESSAGE_COEFFS_COUNT = 50;
@@ -187,7 +187,7 @@ export const SECURE_16384_SIMD_PARAM_SET = 6;
 
 /**
  * On-chain index of the secure SIMD parameters for multiplicative depth 6 (degree 16384, plaintext
- * modulus 65537, eight 54-bit moduli, l-BFV path).
+ * modulus 65537, eight moduli (five of 54 bits and three of 55 bits), l-BFV path).
  */
 export const SECURE_16384_SIMD_D6_PARAM_SET = 7;
 

@@ -30,7 +30,7 @@ describe('SDK circuit selection', () => {
     expect(ParamSet.Secure16384Simd).toBe(6)
     expect(cryptoConfigIdForParamSet(ParamSet.Secure16384Simd)).toBe('0xd053da3859a277a18b1d0bce3f59f7afb5dda18833e3e0fc32c204d066d4e65e')
     expect(ParamSet.Secure16384SimdD6).toBe(7)
-    expect(cryptoConfigIdForParamSet(ParamSet.Secure16384SimdD6)).toBe('0xd2338ceef6b88f3e9f31843168abda095ec15bb8bc74060a4fc36d980403de0d')
+    expect(cryptoConfigIdForParamSet(ParamSet.Secure16384SimdD6)).toBe('0xcb99467971a96a9c89fa19ad44e7b9c58c3f7907e5bd46fd1a879a2b8b020bc8')
     expect(() => cryptoConfigIdForParamSet(1)).toThrow('Unsupported BFV parameter set: 1')
   })
 
