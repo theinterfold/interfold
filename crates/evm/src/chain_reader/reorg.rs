@@ -8,9 +8,9 @@
 //!
 //! The local event log is append-only and has no truncation primitive, so once
 //! a chain log is promoted to an `InterfoldEvent` and folded into state it cannot
-//! be cleanly un-applied. The only sound defence against a chain reorg is
-//! therefore *prevention*: do not ingest a log until it is buried under enough
-//! confirmations that a reorg of that depth is infeasible.
+//! be cleanly un-applied. The only defence against a chain reorg is therefore
+//! *prevention*: do not ingest a log until the configured number of blocks is
+//! built on it. Nothing detects or undoes a reorg deeper than that depth.
 //!
 //! [`confirmed_head`] is that gate: it clamps how far the reader may advance. It
 //! is clock-free and provider-free so it is fully unit-tested; the actors own the

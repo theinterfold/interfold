@@ -106,7 +106,7 @@ checklist.
 - **Read history with a start block.** `getHistoricalEvents` reads in ranges of 10,000 blocks when
   you give `fromBlock`. Start at the contract deployment block, not at block 0.
 - **Wait for confirmations before an irreversible action.** A reorganization can remove a log.
-  Ciphernodes apply logs after `ingestion_confirmations` blocks (default 1). The CRISP availability
+  Ciphernodes apply logs after `ingestion_confirmations` blocks (default 3). The CRISP availability
   service reads finalized blocks before it retires a job.
 
 ## Failures and refunds
