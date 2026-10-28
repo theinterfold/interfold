@@ -112,13 +112,105 @@ rounds.
 
 ## Aztec v6 toolchain cutover
 
-The current source declares protocol **9**, generation **2**. `bb` 6.0.0 and Noir `v1.0.0-rc.3`
+The cutover declared protocol **9**, generation **2**; the l-BFV proof tree later raised protocol to **10**. `bb` 6.0.0 and Noir `v1.0.0-rc.3`
 change every verification key, VK tree anchor, and Honk verifier; proofs do not verify across
 toolchains, so a mixed fleet attests honest peers' proofs as invalid. Use the contract/protocol
 rollout: pause/drain, publish all six artifact pairs, replace PK/decryption wrappers and routers in
 the governance batch that raises the required protocol version, and upgrade every node before
 resume. Persisted peer proofs from in-flight E3s are not foldable under bb 6; drain them first.
 Storage schema and gossip/sync wire majors are unchanged.
+
+## Parameter set 7 rollout (`secure-16384-simd-d6`)
+
+**Upgrade class: governance for the contracts, compatible rolling for the nodes.** Set 7 adds two
+`BfvPreset` variants after set 6 (discriminants 0..11 are unchanged), a 24 MiB committee public key
+cap, a `DkgFoldAttestationVerifier` that tries every committee shape that fits a public-input
+length, and generated `ActiveCryptoConfig` constants. `SCHEMA_VERSION`, the gossip and sync wire
+majors, the storage layouts, the contract ABIs and the events do not change. This is not a
+drain-and-resync change. Every contract step is an owner or Safe transaction, and one of them has a
+two-day timelock.
+
+**Counters: `protocol_version` stays 10 and `node_generation` stays 2.** The rules ask for a bump
+when a release becomes incompatible. A release that adds set 7 is incompatible only for E3s that use
+set 7, and only governance can create those, through `setParamSet(7)`.
+
+- Sets 5 and 6 appended variants the same way and bumped nothing. A node on the previous release
+  cannot decode a record or message of the new preset, and it cannot roll back after it stored one.
+  The CHANGELOG states this for set 5 and for set 7.
+- A bump pauses and drains every deployment, splits the P2P overlay, and cannot be reversed, because
+  required counters never decrease. Off testnet, `ActiveCryptoConfig.isParamSetSupported` accepts
+  only set 2, so no mainnet E3 can use set 7. The cost lands on deployments that never use set 7.
+- Old nodes stay sortition-eligible, so the gate is the order below, not a counter. The `v10` test
+  release `v0.20.0-lbfv.gca9825b` predates sets 6 and 7: a committee that includes such a node
+  cannot take part in a set-7 DKG [INFERENCE: not run].
+- If chain-enforced exclusion of old nodes is wanted, the existing lever is a mandatory node-only
+  release (`node_generation` 3). It needs pause and drain, applies fleet-wide on every chain, and
+  cannot be lowered again. Decide that before step 6. The repository does not require it.
+
+Prerequisites outside this section: the `v10` cutover is complete, and the circuit archive and
+`supported-configurations.json` pins contain the three d6 pairs. Download and local installation
+fail closed for every node until those artifacts exist, so no node can install the release without
+them.
+
+### Order
+
+| #   | Action                                                                                                                                                                                                                                                                                                  | Tool                                                                                                   |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| 1   | Deploy a new `DkgFoldAttestationVerifier`. The registry owner calls `proposeDkgFoldAttestationVerifier`. The two-day timelock starts now, so do this first.                                                                                                                                             | Manual. `deployAndSaveDkgFoldAttestationVerifier` returns an existing deployment and cannot redeploy.  |
+| 2   | Upgrade `CiphernodeRegistryOwnable`. The batch redeploys `RegistrySortitionLib` (an external, linked library), relinks the implementation, and upgrades the proxy. This sets the 24 MiB cap.                                                                                                            | `pnpm --dir packages/interfold-contracts upgrade:ciphernodeRegistryOwnable`                            |
+| 3   | Upgrade `Interfold`. The batch redeploys `InterfoldLifecycle` and `InterfoldPricing` (both link `ActiveCryptoConfig`), the implementation, and the proxy.                                                                                                                                               | `upgrade:interfold`                                                                                    |
+| 4   | Deploy the d6 Honk wrappers, three `BfvPkVerifierV2` routes for set 7, and new `BfvPkVerifierRouter` and `BfvDecryptionVerifierRouter` contracts. Routes are immutable, so each router lists every enabled set. Install them with `setPkVerifier` and `setDecryptionVerifier`. Run `validateBfvRoutes`. | Manual. `scripts/upgrade/bfvRouteChecks.ts` validates; `v19Cutover.ts` installs routes for set 2 only. |
+| 5   | After the timelock, call `commitDkgFoldAttestationVerifier` with the same address.                                                                                                                                                                                                                      | Manual. The call reverts with `VerifierUpdateTimelockActive` before the timelock ends.                 |
+| 6   | Release the node, the indexer and the SDK with the 24 MiB cap and the set-7 preset. Operators install it one at a time. Confirm each operator through `operatorNodeRelease`.                                                                                                                            | `upgrade:node-release --action prepare` confirms that no governance transaction is needed.             |
+| 7   | Enable set 7: `setParamSet(7, encoded)`, then `setCommitteeThresholds` if a size is missing. Request the first E3 with the minimum committee, then micro, then small.                                                                                                                                   | Manual. `v19Cutover.ts` builds `setParamSet` for index 2 only.                                         |
+
+Steps 1 to 5 and step 6 can run in parallel. Step 7 needs all of them. Step 2 before step 3 keeps
+the cap ahead of any request. Step 6 is complete only when every operator that can enter a committee
+has acknowledged the new release. Compare `operatorNodeRelease(operator).releaseId` with
+`keccak256("interfold.node.release:v1:" + semver)`.
+
+The new SDK throws when a caller passes `maxBufferedBytes` between 16 and 24 MiB. The default is 64
+MiB.
+
+A request freezes its `DkgFoldAttestationVerifier` (`_committeeDependencies[e3Id]`). Committing the
+new verifier does not repair an earlier E3. E3s that exist before step 5 keep the verifier that they
+froze.
+
+### What fails out of order
+
+| Done early or skipped                   | Result                                                                                                                                                                                                                                                                                                         |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `setParamSet(7)` before step 3          | Reverts `UnsupportedCryptoConfig`: the old `ActiveCryptoConfig` does not know set 7.                                                                                                                                                                                                                           |
+| Set 7 enabled before step 4             | The request passes. `BfvPkVerifierRouter` has no route, so `publishCommittee` reverts with `InvalidPublicInputsLength`, `VkHashMismatch` or `ParamSetRouteMismatch`, and the E3 times out.                                                                                                                     |
+| Set 7 requested before step 5           | The E3 froze the old fold verifier. A 69-input statement maps to shape (5,9), `_isV2Statement` fails, and the trBFV branch reverts `AttestationBindingCountMismatch`. `publishCommittee` never succeeds, the DKG times out, and `markE3Failed` blames the ciphernodes. Committing later does not help that E3. |
+| Set 7 requested before step 2           | The key envelope is above 16 MiB. The old library rejects `totalLength` above 16 MiB with `InvalidPublicKeyChunk` for every chunk, so the key never publishes and the E3 fails in `KeyPublished`.                                                                                                                   |
+| Set 7 enabled before step 6             | Old nodes drop set-7 chunk events and cannot decode the preset. A committee with such a member loses that member. The old indexer rejects a key above its cap, so clients never see the key.                                                                                                                   |
+| Step 6 without the d6 circuit artifacts | Installation fails closed on the missing pairs, so the node stays on the old release.                                                                                                                                                                                                                          |
+
+### Rollback
+
+1. `setRequestsPaused(true)`. Wait until every set-7 E3 has completed or failed. `activeE3Count` and
+   `unreleasedCommitteeCount` count all sets, so check each set-7 E3 with `getE3Stage`.
+2. Do not undo steps 1, 2, 5 and 6. The cap only grows, so replay of older keys is unchanged. The
+   new fold verifier accepts the old shapes. Nodes cannot decode stored set-7 records on the
+   previous release, so they stay on the new release. No counter changes.
+3. `paramSetRegistry` entries cannot be removed, and there is no per-set switch. While requests stay
+   paused, no set-7 E3 starts. To end set 7 for good, ship contracts that no longer accept it. Under
+   [Rollback and evidence](#rollback-and-evidence) that is a new implementation under a higher
+   `protocol_version`, not a bytecode revert. Historical set-7 E3s may hit `UnsupportedCryptoConfig`
+   on any path that reads `ActiveCryptoConfig` after such a change [INFERENCE: not traced]. Settle
+   them first.
+4. To replace the fold verifier, propose the new address and wait two days again. A node-only fix
+   after this change raises `node_generation`. Neither counter goes down.
+
+### Tooling gaps
+
+`upgrade:ciphernodeRegistryOwnable` and `upgrade:interfold` already redeploy the libraries and link
+them (`safeProxyUpgrade.ts`). These parts have no script: the fold verifier redeploy, propose and
+commit; the in-place addition of a route to the PK and decryption routers; the standalone
+`setParamSet`; and a drain check per parameter set. `safeProxyUpgrade.ts` is the only Safe template,
+and it ties plan, proposal and deployment records together, so these steps stay manual. Use
+`validateBfvRoutes` after step 4 and the E3 smoke requests of step 7 as the acceptance check.
 
 ## Dependency replacement
 

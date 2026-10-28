@@ -54,6 +54,14 @@ The l-BFV proof tree uses protocol version 10. It changes proofs, verifiers, and
 does not work with protocol version 9 nodes or verifiers. Upgrade every node and verifier together
 after active E3 work completes.
 
+The `secure-16384-simd-d6` preset (parameter set 7) keeps protocol version 10 and node generation 2.
+It is a compatible release for nodes, with one condition: install it on every node before governance
+registers parameter set 7. The release raises the committee public key limit to 24 MiB. A node on an
+older release stays eligible, but it cannot decode a set-7 message, so a committee that includes it
+can fail. Use `upgrade:node-release --action prepare` to confirm that the release needs no
+governance transaction. The contract order is in
+[Parameter set 7 rollout](https://github.com/theinterfold/interfold/blob/main/docs/architecture/upgrades.md#parameter-set-7-rollout-secure-16384-simd-d6).
+
 ## The on-chain release gate
 
 The Interfold contract points to a node release registry (`INodeReleaseRegistry`). The registry
