@@ -2,7 +2,7 @@
 
 //! Historical catch-up and confirmed live-log ingestion loop.
 
-use super::provider_recovery::{get_new_provider_or_exit, sleep_or_shutdown};
+use super::provider_recovery::{get_new_provider_or_exit, sleep_or_shutdown, ReaderStop};
 use super::*;
 
 #[instrument(name = "evm_interface", skip_all)]
@@ -17,7 +17,49 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
     filters: Filters,
     progress: Option<IngestionProgressSink>,
 ) {
-    let progress = progress.as_ref();
+    let chain_id = provider.chain_id();
+    let stop = read_chain(
+        provider,
+        provider_factory,
+        &next,
+        &mut shutdown,
+        bus,
+        filters,
+        progress.as_ref(),
+    )
+    .await;
+    if let ReaderStop::Failed(reason) = stop {
+        // The gateway fails closed on this message: startup fails at once, and a running node
+        // exits so that its supervisor restarts it.
+        error!(chain_id, %reason, "Chain reader stopped");
+        let stopped = InterfoldEvmEvent::ReaderStopped(EvmReaderStopped::new(chain_id, &reason));
+        match tokio::time::timeout(STOP_REPORT_TIMEOUT, next.send(stopped)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => bus.err(
+                EType::Evm,
+                anyhow!(
+                    "could not report that the chain {chain_id} reader stopped ({reason}): {error}"
+                ),
+            ),
+            Err(_) => bus.err(
+                EType::Evm,
+                anyhow!(
+                    "timed out while reporting that the chain {chain_id} reader stopped: {reason}"
+                ),
+            ),
+        }
+    }
+}
+
+async fn read_chain<P: Provider + Clone + 'static>(
+    provider: EthProvider<P>,
+    provider_factory: Option<ProviderFactory<P>>,
+    next: &EvmEventProcessor,
+    shutdown: &mut oneshot::Receiver<()>,
+    bus: &BusHandle,
+    filters: Filters,
+    progress: Option<&IngestionProgressSink>,
+) -> ReaderStop {
     let chain_id = provider.chain_id();
     let mut timestamp_tracker = TimestampTracker::new();
     let mut backoff = Backoff::new(MAX_RECONNECT_DELAY_SECS);
@@ -25,44 +67,60 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
     // historical sync and then reused by every backfill, so a narrow provider is paid for once
     // rather than on every reconnect.
     let mut log_window = filters.log_window();
+    let mut current_provider = provider;
+    let mut consecutive_failures: u32 = 0;
 
-    // ── Phase 1: Historical sync (must succeed, fatal on failure) ──
+    // ── Phase 1: Historical sync ──
+    //
+    // The node needs the full history, so a failure is retried like a failed backfill below,
+    // including provider recreation. Startup has its own deadline for an RPC that never recovers.
 
-    let latest_block = match provider.provider().get_block_number().await {
-        Ok(bn) => crate::domain::reorg::confirmed_head(bn, filters.confirmations()),
-        Err(e) => {
-            error!(chain_id, error = %e, "Failed to get latest block number");
-            bus.err(EType::Evm, anyhow!(e));
-            return;
+    let mut sync = HistoricalSync::new(filters.start_block);
+    let latest_block = loop {
+        match sync
+            .run(
+                current_provider.provider(),
+                &filters.historical,
+                filters.confirmations(),
+                chain_id,
+                next,
+                &mut timestamp_tracker,
+                &mut log_window,
+                progress,
+            )
+            .await
+        {
+            Ok(head) => break head,
+            Err(e) => {
+                consecutive_failures += 1;
+                warn!(chain_id, error = %e, consecutive_failures, "Historical sync failed, retrying");
+                if consecutive_failures >= MAX_RETRIES_BEFORE_RECREATE {
+                    current_provider = match get_new_provider_or_exit(
+                        &provider_factory,
+                        shutdown,
+                        chain_id,
+                        &mut backoff,
+                    )
+                    .await
+                    {
+                        Ok(p) => p,
+                        Err(stop) => return stop,
+                    };
+                    consecutive_failures = 0;
+                    continue;
+                }
+                if sleep_or_shutdown(backoff.next_delay(), shutdown).await {
+                    return ReaderStop::Shutdown;
+                }
+            }
         }
     };
-
-    let last_id = match fetch_logs_chunked(
-        provider.provider(),
-        &filters.historical,
-        filters.start_block,
-        latest_block,
-        chain_id,
-        &next,
-        &mut timestamp_tracker,
-        &mut log_window,
-        progress,
-    )
-    .await
-    {
-        Ok(id) => {
-            info!(chain_id, "Historical sync succeeded");
-            id
-        }
-        Err(e) => {
-            error!(chain_id, error = %e, "Failed to fetch historical events — node cannot operate without full state, exiting");
-            bus.err(EType::Evm, anyhow!(e));
-            return;
-        }
-    };
+    info!(chain_id, "Historical sync succeeded");
+    backoff.reset();
+    consecutive_failures = 0;
 
     next.do_send(InterfoldEvmEvent::HistoricalSyncComplete(
-        HistoricalSyncComplete::new(chain_id, last_id),
+        HistoricalSyncComplete::new(chain_id, sync.last_id()),
     ));
 
     // ── Phase 2: Live event loop with provider lifecycle management ──
@@ -72,8 +130,6 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
     // On transient errors, retry with exponential backoff.
 
     let mut last_block = latest_block;
-    let mut current_provider = provider;
-    let mut consecutive_failures: u32 = 0;
 
     loop {
         // Step 1: Backfill any blocks missed since last_block
@@ -81,7 +137,7 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
             current_provider.provider(),
             &filters.current,
             chain_id,
-            &next,
+            next,
             &mut timestamp_tracker,
             &mut last_block,
             filters.confirmations(),
@@ -98,23 +154,22 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
                 consecutive_failures += 1;
                 warn!(chain_id, error = %e, consecutive_failures, "Backfill failed");
                 if consecutive_failures >= MAX_RETRIES_BEFORE_RECREATE {
-                    let Some(p) = get_new_provider_or_exit(
+                    current_provider = match get_new_provider_or_exit(
                         &provider_factory,
-                        &mut shutdown,
+                        shutdown,
                         chain_id,
                         &mut backoff,
-                        bus,
                     )
                     .await
-                    else {
-                        return;
+                    {
+                        Ok(p) => p,
+                        Err(stop) => return stop,
                     };
-                    current_provider = p;
                     consecutive_failures = 0;
                     continue;
                 }
-                if sleep_or_shutdown(backoff.next_delay(), &mut shutdown).await {
-                    return;
+                if sleep_or_shutdown(backoff.next_delay(), shutdown).await {
+                    return ReaderStop::Shutdown;
                 }
                 continue;
             }
@@ -140,13 +195,13 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
                     &mut stream,
                     &filters.current,
                     chain_id,
-                    &next,
+                    next,
                     &mut timestamp_tracker,
                     &mut last_block,
                     filters.confirmations(),
                     &mut log_window,
                     Duration::from_secs(CONFIRMED_BACKFILL_INTERVAL_SECS),
-                    &mut shutdown,
+                    shutdown,
                     progress,
                 )
                 .await;
@@ -154,7 +209,7 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
                     LiveStop::Shutdown => {
                         info!("Shutdown signal received, stopping EVM stream");
                         let _ = current_provider.provider().unsubscribe(sub_id).await;
-                        return;
+                        return ReaderStop::Shutdown;
                     }
                     LiveStop::StreamEnded => {
                         consecutive_failures += 1;
@@ -184,46 +239,44 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
                 }
 
                 if consecutive_failures >= MAX_RETRIES_BEFORE_RECREATE {
-                    let Some(p) = get_new_provider_or_exit(
+                    current_provider = match get_new_provider_or_exit(
                         &provider_factory,
-                        &mut shutdown,
+                        shutdown,
                         chain_id,
                         &mut backoff,
-                        bus,
                     )
                     .await
-                    else {
-                        return;
+                    {
+                        Ok(p) => p,
+                        Err(stop) => return stop,
                     };
-                    current_provider = p;
                     consecutive_failures = 0;
                 } else if consecutive_failures > 0
-                    && sleep_or_shutdown(backoff.next_delay(), &mut shutdown).await
+                    && sleep_or_shutdown(backoff.next_delay(), shutdown).await
                 {
-                    return;
+                    return ReaderStop::Shutdown;
                 }
             }
             Err(e) => {
                 consecutive_failures += 1;
                 error!(chain_id, error = %e, consecutive_failures, "Failed to subscribe to live events");
                 if consecutive_failures >= MAX_RETRIES_BEFORE_RECREATE {
-                    let Some(p) = get_new_provider_or_exit(
+                    current_provider = match get_new_provider_or_exit(
                         &provider_factory,
-                        &mut shutdown,
+                        shutdown,
                         chain_id,
                         &mut backoff,
-                        bus,
                     )
                     .await
-                    else {
-                        return;
+                    {
+                        Ok(p) => p,
+                        Err(stop) => return stop,
                     };
-                    current_provider = p;
                     consecutive_failures = 0;
                 } else {
                     bus.err(EType::Evm, anyhow!("{}", e));
-                    if sleep_or_shutdown(backoff.next_delay(), &mut shutdown).await {
-                        return;
+                    if sleep_or_shutdown(backoff.next_delay(), shutdown).await {
+                        return ReaderStop::Shutdown;
                     }
                 }
             }
