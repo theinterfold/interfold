@@ -66,6 +66,18 @@ describe('selectBids', () => {
     expect(picked([...bids].reverse())).toEqual(picked(bids))
   })
 
+  it('takes a bid of 4 ciphertexts (the no-provider type) whole or not at all', () => {
+    const tree = new Tree()
+    const all = [true, true, true, true]
+    // The second share of Alice's update does not open, so her first bid counts, before Bob.
+    expect(picked([tree.bid(alice, 1, all), tree.bid(bob, 1, all), tree.bid(alice, 2, [true, true, true, false])])).toEqual([
+      [alice, 1, 0],
+      [bob, 1, 1],
+    ])
+    // Alice's only bid has a bad share: she is dropped whole.
+    expect(picked([tree.bid(alice, 1, [true, true, false, true]), tree.bid(bob, 1, all)])).toEqual([[bob, 1, 0]])
+  })
+
   it('keeps the place of an earlier bid when the update does not open', () => {
     const tree = new Tree()
     // Alice's update is skipped, so her first bid counts at its own place, before Bob.

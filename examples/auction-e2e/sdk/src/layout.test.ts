@@ -16,6 +16,7 @@ import {
   AUCTION_TYPES,
   AUCTION_TYPE_LABELS,
   AuctionType,
+  bidSlots,
   DEGREE,
   LEVELS,
   MASK_VERSION,
@@ -462,5 +463,111 @@ describe('decodeAuction, provider-mask type', () => {
   it('refuses a bidder count outside 2 to 8', async () => {
     await expect(decode(providerSlots([1, 2]), 1)).rejects.toThrow()
     await expect(decode(providerSlots([1, 2]), 9)).rejects.toThrow()
+  })
+})
+
+describe('the no-provider type', () => {
+  const type = AuctionType.QnrSecondPrice
+  const decode = async (slots: bigint[], n: number) => {
+    outputSlots = slots
+    return decodeAuction(type, OUTPUT, n)
+  }
+  const invalid = { price: null, winner: null }
+  /** `r = (S1^2 - 3) * (S2^2 - 3) mod t` for the share sums `S1` and `S2`. */
+  const factor = (s1: bigint, s2: bigint) => (((((s1 * s1 - 3n) % T) + T) % T) * ((((s2 * s2 - 3n) % T) + T) % T)) % T
+
+  beforeEach(() => {
+    outputSlots = []
+  })
+
+  it('has 4 roles, up to 8 bidders, no providers and its own label', () => {
+    expect(type).toBe(5)
+    expect(Role.Share).toBe(4)
+    expect(AUCTION_TYPES).toContain(type)
+    expect(AUCTION_TYPE_LABELS[type]).toBe('Second-price, no providers')
+    expect(rolesFor(type)).toEqual([Role.Ge, Role.Gt, Role.Share, Role.Share])
+    expect(MAX_BIDDERS_BY_TYPE[type]).toBe(8)
+    expect(isProviderType(type)).toBe(false)
+  })
+
+  it('gives the result of the second-price type, with up to 8 bidders', () => {
+    for (const [bids] of [...ROUNDS, ...RATIO_ROUNDS]) {
+      expect(expectedAuction(type, bids)).toEqual(expectedAuction(AuctionType.ProviderSecondPrice, bids))
+    }
+    expect(expectedAuction(type, [2, 3, 9, 1, 9, 9, 0, 9])).toEqual({ winner: 2, price: 9 })
+    expect(() => expectedAuction(type, [1])).toThrow()
+    expect(() => expectedAuction(type, [1, 2, 3, 4, 5, 6, 7, 8, 9])).toThrow()
+  })
+
+  it('has shares that are uniform slots in [0, t) and ignore the bid', () => {
+    const first = bidSlots(Role.Share, 0)
+    const second = bidSlots(Role.Share, 15)
+    expect(first).toHaveLength(DEGREE)
+    for (const slot of [...first, ...second]) expect(slot < T).toBe(true)
+    // Two draws of 128 slots with 257 values are never equal in practice, and are not constant.
+    expect([...first]).not.toEqual([...second])
+    expect(new Set(first).size).toBeGreaterThan(1)
+  })
+
+  it('has a factor `(S1^2 - 3) * (S2^2 - 3)` that is never zero: 3 is not a square modulo t', () => {
+    for (let s = 0n; s < T; s++) expect((s * s) % T).not.toBe(3n)
+    for (let s1 = 0n; s1 < T; s1++) expect(factor(s1, (s1 * 5n + 1n) % T)).not.toBe(0n)
+  })
+
+  it.each([...ROUNDS, ...RATIO_ROUNDS])('reads the winner and the price of %j', async (bids, winner) => {
+    const result = await decode(providerSlots(bids), bids.length)
+    expect(result).toMatchObject({ kind: 'region', copies: 1, winner, price: expectedAuction(type, bids).price, unusedGroupsZero: true })
+  })
+
+  it('reads the same result under the factor of every pair of share sums', async () => {
+    for (let shift = 0n; shift < T; shift += 16n) {
+      // The sums of the slots go through every value of 0..t over the shifts.
+      const maskOf = (slot: number) => factor(BigInt(slot) + shift, 2n * BigInt(slot) + shift)
+      for (const [bids, winner] of [...ROUNDS, ...RATIO_ROUNDS]) {
+        expect(await decode(providerSlots(bids, maskOf), bids.length)).toMatchObject({ winner, price: expectedAuction(type, bids).price })
+      }
+    }
+  })
+
+  it('reads a tie at the top as a unique top: the pattern is the same', async () => {
+    const tied = await decode(providerSlots([9, 9, 0]), 3)
+    const unique = await decode(providerSlots([15, 9, 0]), 3)
+    expect(tied).toMatchObject({ winner: 0, price: 9 })
+    expect(tied).toEqual(unique)
+  })
+
+  it('rejects a pattern that is not the one of a winner and a price', async () => {
+    const base = () => providerSlots([5, 12, 9])
+    const at = (region: number, level: number) => slotIndex(3, 0, region, level)
+    const beyond = base()
+    beyond[3 * LEVELS] = 1n
+    expect(await decode(beyond, 3)).toMatchObject({ ...invalid, unusedGroupsZero: false })
+    const hole = base()
+    hole[at(2, 4)] = 0n
+    expect(await decode(hole, 3)).toMatchObject(invalid)
+    const noWinner = base()
+    noWinner[at(1, 9)] = 7n
+    expect(await decode(noWinner, 3)).toMatchObject(invalid)
+    const twoWinners = base()
+    twoWinners[at(0, 9)] = 0n
+    expect(await decode(twoWinners, 3)).toMatchObject(invalid)
+    expect(await decode(new Array<bigint>(DEGREE).fill(0n), 3)).toMatchObject(invalid)
+  })
+
+  it('refuses a bidder count outside 2 to 8', async () => {
+    await expect(decode(providerSlots([1, 2]), 1)).rejects.toThrow()
+    await expect(decode(providerSlots([1, 2]), 9)).rejects.toThrow()
+  })
+
+  it('has no providers: the configuration, the check and the request parameters', () => {
+    expect(auctionConfigInput(type)).toBe(`0x${Buffer.from('interfold-auction-config-v1').toString('hex')}05`)
+    expect(() => auctionConfigInput(type, [PROVIDER_A])).toThrow()
+    expect(providersError(type, [])).toBeNull()
+    expect(providersError(type, [PROVIDER_A])).not.toBeNull()
+    const abi = parseAbiParameters('uint8, uint8, uint256[16], string, address, bytes, address[]')
+    const [encodedType, , , , , , providers] = decodeAbiParameters(abi, encodeAuctionParams(type, [1n, 2n, 5n], 'Lot'))
+    expect(encodedType).toBe(5)
+    expect(providers).toEqual([])
+    expect(() => encodeAuctionParams(type, [1n, 2n, 5n], 'Lot', zeroAddress, '0x', [PROVIDER_A])).toThrow()
   })
 })

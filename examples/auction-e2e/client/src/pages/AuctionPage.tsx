@@ -6,7 +6,14 @@
 
 import React, { useMemo, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import { AUCTION_TYPE_DESCRIPTIONS, AUCTION_TYPE_LABELS, MAX_BIDDERS_BY_TYPE, isProviderType, isRatioType } from '@interfold/auction'
+import {
+  AUCTION_TYPE_DESCRIPTIONS,
+  AUCTION_TYPE_LABELS,
+  AuctionType,
+  MAX_BIDDERS_BY_TYPE,
+  isProviderType,
+  isRatioType,
+} from '@interfold/auction'
 import { useAuction } from '@/hooks/useAuctions'
 import { useChainTime } from '@/hooks/useChainTime'
 import { useCommitteeKey } from '@/hooks/useCommitteeKey'
@@ -26,6 +33,7 @@ import { AddressLink } from '@/components/Explorer'
 import { PictureControl, PictureHero, usePicture } from '@/components/AuctionPicture'
 import PhaseTimeline from '@/components/PhaseTimeline'
 import ProviderAuctionExplainer from '@/components/ProviderAuctionExplainer'
+import QnrAuctionExplainer from '@/components/QnrAuctionExplainer'
 import ResultPanel from '@/components/ResultPanel'
 import Section from '@/components/Section'
 import Spinner from '@/components/Spinner'
@@ -224,6 +232,12 @@ const AuctionPage: React.FC = () => {
       {isProviderType(auction.auctionType) && (
         <Section title='How this auction works'>
           <ProviderAuctionExplainer />
+        </Section>
+      )}
+
+      {auction.auctionType === AuctionType.QnrSecondPrice && (
+        <Section title='How this auction works'>
+          <QnrAuctionExplainer />
         </Section>
       )}
     </div>

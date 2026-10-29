@@ -73,6 +73,8 @@ const PRICE_EXPLANATION: Record<AuctionType, string> = {
     'Second-price auction with ratio lanes: the winner pays the second-highest bid. The committee decrypted that price and the set of winning bidders. If the top bids tied, that set holds every tied bidder, their bids equal the price, and the tied bidder who bid first won. Without a tie the winner’s bid stays secret.',
   [AuctionType.ProviderSecondPrice]:
     'Second-price auction with mask providers: the winner pays the second-highest bid. The committee decrypted a pattern of zeros and random numbers, and the pattern shows only the winner and that price; the winning bid itself stays secret. The mask providers made the random numbers, and none of them is zero, so the pattern always reads.',
+  [AuctionType.QnrSecondPrice]:
+    'Second-price auction without providers: the winner pays the second-highest bid. The committee decrypted a pattern of zeros and other numbers, and the pattern shows the winner and that price; the winning bid itself stays secret. The bidders made the random shares, and the number 3 is not a square modulo 257, so the pattern always reads. The numbers that are not zero carry a small statistical hint about the losing bids.',
 }
 
 const PRICE_CAPTION: Record<AuctionType, string> = {
@@ -81,6 +83,7 @@ const PRICE_CAPTION: Record<AuctionType, string> = {
   [AuctionType.RatioFirstPrice]: 'The winning bid',
   [AuctionType.RatioSecondPrice]: 'The second-highest bid (the top bid, if the top bids tied)',
   [AuctionType.ProviderSecondPrice]: 'The second-highest bid',
+  [AuctionType.QnrSecondPrice]: 'The second-highest bid',
 }
 
 interface ResultPanelProps {
@@ -180,7 +183,9 @@ export const ResultView: React.FC<ResultViewProps> = ({ auction, account, myVers
           <div role='alert' className='note bad'>
             {auction.auctionType === AuctionType.ProviderSecondPrice
               ? 'The result does not show a single winner. With mask providers this cannot happen by chance, so the output is not from the auction program.'
-              : 'The result does not show a single winner. A slot that should hold a random value read as zero by mistake (about 1 in 257 per slot and copy on these demo parameters). Run the auction again.'}
+              : auction.auctionType === AuctionType.QnrSecondPrice
+                ? 'The result does not show a single winner. This type cannot fail by chance, whatever the bidders send, so the output is not from the auction program.'
+                : 'The result does not show a single winner. A slot that should hold a random value read as zero by mistake (about 1 in 257 per slot and copy on these demo parameters). Run the auction again.'}
           </div>
         )
       ) : (

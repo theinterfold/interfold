@@ -6,17 +6,22 @@
 # is 4 GiB):
 #   auction_bid_pair    the proofs of the roles 0 and 1, and the bid itself  (recursive proof)
 #   auction_bid_masks   the proofs of the roles 2 and 3, the pair mask        (recursive proof, type 3)
+#   auction_bid_shares  the proofs of the roles 2 and 3, the shares           (recursive proof, type 5)
 #   auction_bid2        the pair proof only, type 4         (EVM verifier AuctionVerifier2)
 #   auction_bid3        the pair proof and the proof of role 2  (EVM verifier AuctionVerifier3)
-#   auction_bid4        the pair proof and the masks proof      (EVM verifier AuctionVerifier4)
+#   auction_bid4        the pair proof and the masks or shares proof, types 3 and 5
+#                                                               (EVM verifier AuctionVerifier4)
 #   auction_mask        the proof of a provider mask, type 4    (EVM verifier AuctionMaskVerifier)
 #
 # Each anchor covers the Interfold user-data encryption tree as the SDK bundles it for the insecure
 # SIMD preset (the key hash of the wrapper and the two per-leg chains) and the inner circuits of its
 # tree. `auction_bid2` returns `vkAnchor2`, `auction_bid3` returns `vkAnchor3`, `auction_bid4`
-# returns `vkAnchor4` and `auction_mask` returns `vkAnchorMask` as `vk_anchor`. `vkAnchor2` equals
-# `vkAnchor3`: both cover the wrapper and the pair circuit. Each verifier contract is its own
-# circuit, so the contracts keep the anchors apart.
+# returns `vkAnchor4` (type 3) or `vkAnchorQnr` (type 5), and `auction_mask` returns `vkAnchorMask`
+# as `vk_anchor`. `vkAnchor2` equals `vkAnchor3`: both cover the wrapper and the pair circuit.
+# `vkAnchor4` and `vkAnchorQnr` have the same formula: they differ in the key hash of the circuit
+# of the roles 2 and 3 (masks or shares). Each verifier contract is its own circuit, so the
+# contracts keep the anchors apart; `auction_bid4` serves both types, and the program contract
+# tells them apart by the anchor.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -53,7 +58,7 @@ to_file() {
 }
 
 echo "Compiling the bid circuits..."
-for dir in pair masks bid2 bid3 bid4 mask; do
+for dir in pair masks shares bid2 bid3 bid4 mask; do
   (cd "$CIRCUITS/$dir" && nargo compile)
 done
 
@@ -71,6 +76,7 @@ done
 # The bid tree's inner circuits only fold proofs.
 write_vk "$CIRCUITS/pair/target/auction_bid_pair.json" noir-recursive-no-zk
 write_vk "$CIRCUITS/masks/target/auction_bid_masks.json" noir-recursive-no-zk
+write_vk "$CIRCUITS/shares/target/auction_bid_shares.json" noir-recursive-no-zk
 
 echo "Computing the VK anchor..."
 TMP="$(mktemp -d)"
@@ -92,10 +98,11 @@ ude="$VK/user_data_encryption_chunked/vk_hash"
 anchor2="$(vk_hash "$ude" "$TMP/ct0_chain" "$TMP/ct1_chain" "$VK/auction_bid_pair/vk_hash")"
 anchor3="$(vk_hash "$ude" "$TMP/ct0_chain" "$TMP/ct1_chain" "$VK/auction_bid_pair/vk_hash")"
 anchor4="$(vk_hash "$ude" "$TMP/ct0_chain" "$TMP/ct1_chain" "$VK/auction_bid_pair/vk_hash" "$VK/auction_bid_masks/vk_hash")"
+anchor_qnr="$(vk_hash "$ude" "$TMP/ct0_chain" "$TMP/ct1_chain" "$VK/auction_bid_pair/vk_hash" "$VK/auction_bid_shares/vk_hash")"
 anchor_mask="$(vk_hash "$ude" "$TMP/ct0_chain" "$TMP/ct1_chain")"
-printf '{\n  "vkAnchor2": "%s",\n  "vkAnchor3": "%s",\n  "vkAnchor4": "%s",\n  "vkAnchorMask": "%s"\n}\n' \
-  "$anchor2" "$anchor3" "$anchor4" "$anchor_mask" >"$ANCHOR"
-echo "VK anchors: $anchor2 (2 roles), $anchor3 (3 roles), $anchor4 (4 roles), $anchor_mask (mask)"
+printf '{\n  "vkAnchor2": "%s",\n  "vkAnchor3": "%s",\n  "vkAnchor4": "%s",\n  "vkAnchorMask": "%s",\n  "vkAnchorQnr": "%s"\n}\n' \
+  "$anchor2" "$anchor3" "$anchor4" "$anchor_mask" "$anchor_qnr" >"$ANCHOR"
+echo "VK anchors: $anchor2 (2 roles), $anchor3 (3 roles), $anchor4 (4 roles), $anchor_mask (mask), $anchor_qnr (type 5)"
 
 # `bb` writes every verifier with the same top-level names (`Fr`, `Honk`, `HonkVerifier`, ...), which
 # collide when two are in one project. Suffix each top-level identifier with `$2`, and name the

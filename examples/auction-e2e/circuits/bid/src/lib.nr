@@ -26,9 +26,10 @@
 //!
 //! ```text
 //!   auction_bid_pair    roles 0 and 1: both wrapper proofs, the one private `b`, levels
-//!   auction_bid_masks   roles 2 and 3: both wrapper proofs, the pair-mask check   (K = 4 only)
+//!   auction_bid_masks   roles 2 and 3: both wrapper proofs, the pair-mask check   (type 3)
+//!   auction_bid_shares  roles 2 and 3: both wrapper proofs only                    (type 5)
 //!   auction_bid3        the pair proof and the wrapper proof of role 2             (EVM verifier)
-//!   auction_bid4        the pair proof and the masks proof                         (EVM verifier)
+//!   auction_bid4        the pair proof and the masks or the shares proof           (EVM verifier)
 //!   auction_bid2        the pair proof only, for the auction type 4                (EVM verifier)
 //!   auction_mask        one wrapper proof and the nonzero slots of a provider mask (EVM verifier)
 //! ```

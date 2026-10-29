@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useWalletClient } from 'wagmi'
 import { type Address } from 'viem'
 import {
-  type AuctionType,
+  AuctionType,
   MAX_BIDS_PER_BIDDER,
   ROLE_LABELS,
   allowlistProof,
@@ -34,18 +34,40 @@ export interface StepRow {
   status: StepStatus
 }
 
-const stepId = (step: BidStep): string => ('role' in step ? `${step.kind}:${step.role}` : step.kind)
+const baseStepId = (step: BidStep): string => ('role' in step ? `${step.kind}:${step.role}` : step.kind)
+
+/**
+ * Turns the steps the prover reports into step ids. A bid can have two ciphertexts of one role (the
+ * two shares of a type-5 bid), so the second report of an id gets the suffix `#2`, in the same order
+ * as {@link planSteps} lists them.
+ */
+function stepIds(): (step: BidStep) => string {
+  const seen = new Map<string, number>()
+  return (step) => {
+    const base = baseStepId(step)
+    const count = (seen.get(base) ?? 0) + 1
+    seen.set(base, count)
+    return count === 1 ? base : `${base}#${count}`
+  }
+}
 
 /** The steps of one submission, in the order they run. A relayed bid is signed and posted, a direct one is sent by the wallet. */
 function planSteps(type: AuctionType, relayed: boolean): { id: string; label: string }[] {
   const roles = rolesFor(type)
+  const idOf = stepIds()
+  const proofLabels =
+    type === AuctionType.QnrSecondPrice
+      ? [{ id: 'shares-proof', label: 'Prove the shares in the last two ciphertexts' }]
+      : roles.length === 4
+        ? [{ id: 'masks-proof', label: 'Prove the masks in the last two ciphertexts' }]
+        : []
   return [
     ...roles.flatMap((role, index) => [
-      { id: stepId({ kind: 'encrypt', role }), label: `Encrypt ciphertext ${index + 1} of ${roles.length}: ${ROLE_LABELS[role]}` },
-      { id: stepId({ kind: 'encryption-proof', role }), label: `Prove the encryption of ciphertext ${index + 1}` },
+      { id: idOf({ kind: 'encrypt', role }), label: `Encrypt ciphertext ${index + 1} of ${roles.length}: ${ROLE_LABELS[role]}` },
+      { id: idOf({ kind: 'encryption-proof', role }), label: `Prove the encryption of ciphertext ${index + 1}` },
     ]),
     { id: 'pair-proof', label: 'Prove the bid in the first two ciphertexts' },
-    ...(roles.length === 4 ? [{ id: 'masks-proof', label: 'Prove the masks in the last two ciphertexts' }] : []),
+    ...proofLabels,
     { id: 'bid-proof', label: 'Combine the proofs into the bid proof' },
     ...(relayed
       ? [
@@ -151,7 +173,8 @@ export function useBid({ e3Id, auctionType, levels, gateKind, members, account, 
         }
 
         prover = await BidProver.create()
-        const prepared = await prover.prove(auctionType, level, levels, committeeKey, account, (step) => advance(stepId(step)))
+        const idOf = stepIds()
+        const prepared = await prover.prove(auctionType, level, levels, committeeKey, account, (step) => advance(idOf(step)))
         if (abandoned.current) return
         if (accountRef.current?.toLowerCase() !== account.toLowerCase()) {
           throw new Error('The connected account changed while the proof was running. Reconnect the account that bids and submit again.')

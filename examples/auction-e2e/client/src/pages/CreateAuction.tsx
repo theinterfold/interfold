@@ -152,7 +152,7 @@ const CreateAuction: React.FC = () => {
         <h1 className='display'>Create an auction</h1>
         <p className='lede'>
           Choose what the auction reveals, how many price steps a bid can pick from, and the price of each step. Each type has its own limit
-          on the number of bidders; the ratio types and the zero-failure type take the most.
+          on the number of bidders; the ratio types and the two zero-failure types take the most.
         </p>
       </header>
 
@@ -194,9 +194,11 @@ const CreateAuction: React.FC = () => {
             <p className='text-sm text-muted' aria-live='polite'>
               {isProviderType(auctionType)
                 ? `If the top bids tie, the tied bidder who bid first wins. Nothing about the tie is revealed. Every bid has 2 ciphertexts, and the mask providers you name send the masks before bidding opens. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders.`
-                : isRatioType(auctionType)
-                  ? `If the top bids tie, the tied bidder who bid first wins. The tie becomes public: the result names every bidder that tied. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders, more than the ${MAX_BIDDERS_BY_TYPE[AuctionType.FirstPrice]} of the first-price and second-price types.`
-                  : `If the top bids tie, the tied bidder who bid first wins. Nothing about the tie is revealed. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders.`}
+                : auctionType === AuctionType.QnrSecondPrice
+                  ? `If the top bids tie, the tied bidder who bid first wins. The auction never fails and needs no trusted party and no mask providers: the bidders themselves send the random shares. The price of this is a small statistical hint about the losing bids, which is larger on the small demo parameters than on secure ones. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders.`
+                  : isRatioType(auctionType)
+                    ? `If the top bids tie, the tied bidder who bid first wins. The tie becomes public: the result names every bidder that tied. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders, more than the ${MAX_BIDDERS_BY_TYPE[AuctionType.FirstPrice]} of the first-price and second-price types.`
+                    : `If the top bids tie, the tied bidder who bid first wins. Nothing about the tie is revealed. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders.`}
             </p>
           </fieldset>
 

@@ -4,15 +4,19 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! The bid proof for the auction type 3: 4 roles (`ge`, `gt`, `mask`, `pair_mask`). It verifies
-//! the `auction_bid_pair` proof (roles 0 and 1) and the `auction_bid_masks` proof (roles 2 and 3).
+//! The bid proof for the auction types 3 and 5: 4 roles. Type 3 has the roles `ge`, `gt`, `mask`
+//! and `pair_mask`; type 5 has `ge`, `gt`, `share` and `share`. It verifies the `auction_bid_pair`
+//! proof (roles 0 and 1) and the proof of the roles 2 and 3: `auction_bid_masks` for type 3,
+//! `auction_bid_shares` for type 5. Both have the same public inputs, so one circuit serves both.
 //!
 //! Public inputs, in order: `ct_commitments` (4), `bidder`, `levels`, then the returned
 //! `pk_commitment` and `vk_anchor`. See `auction_bid3` for what they bind.
 //!
 //! `vk_anchor` is the hash of the wrapper key hash, the two VK chains, and the key hashes of the
-//! pair and the masks circuits. The two VK chains are witnesses here: both inner proofs commit to
-//! them, so they cannot differ from the chains the anchor pins.
+//! pair circuit and of the circuit of the roles 2 and 3 (`masks_key_hash`: the masks circuit for
+//! type 3, the shares circuit for type 5, so the two types have two anchors). The two VK chains
+//! are witnesses here: both inner proofs commit to them, so they cannot differ from the chains
+//! the anchor pins.
 use auction_bid::committee_key_commitment;
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use interfold_lib::configs::insecure_simd::threshold::GADGET_DIM;
