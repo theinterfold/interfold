@@ -875,9 +875,9 @@
           "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@71@c7_public: [Field; C7_PUBLIC_LEN]"
         },
         {
-          "name": "public: c6_key_hash",
+          "name": "public: c6_fold_key_hash",
           "by": "decryption_aggregator",
-          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@72@c6_key_hash: pub Field"
+          "ref": "circuits/bin/recursive_aggregation/decryption_aggregator/src/main.nr@72@c6_fold_key_hash: pub Field"
         },
         {
           "name": "public: c7_key_hash",
