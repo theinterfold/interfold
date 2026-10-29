@@ -20,6 +20,7 @@ Shared contract signatures, tuple layouts, events and errors belong to
 | [`interfold_writing/`](src/interfold_writing), [`slashing_writing/`](src/slashing_writing)                                    | Publication preflights/retries and slash outbox.                                   |
 | [`canonical_key.rs`](src/canonical_key.rs), [`data_availability/`](src/data_availability)                                     | Confirmed key authority and referenced-output retrieval.                           |
 | [`node_release.rs`](src/node_release.rs), [`slashing_manager_address.rs`](src/slashing_manager_address.rs)                    | Startup release acknowledgment and authoritative manager resolution.               |
+| [`chain_time.rs`](src/chain_time.rs)                                                                                          | Fresh-provider latest-block time adapter for sortition's committee finalizer.      |
 
 The read path fetches confirmed logs, decodes observations, orders the startup handoff, and sends
 facts to the bus. The write path consumes local intents; confirmed results return through the read

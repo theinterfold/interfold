@@ -267,9 +267,9 @@
     "id": "B21",
     "supported": true,
     "refs": [
-      "crates/ciphernode-builder/src/builder/startup.rs@96@pub async fn build(self) -> anyhow::Result<CiphernodeHandle> {",
-      "crates/ciphernode-builder/src/builder/startup.rs@101@async fn build_inner(mut self) -> anyhow::Result<CiphernodeHandle> {",
-      "crates/ciphernode-builder/src/builder/startup.rs@418@E3LifecycleCoordinator::attach(bus, storage.store.clone()).await?;",
+      "crates/ciphernode-builder/src/builder/startup.rs@97@pub async fn build(self) -> anyhow::Result<CiphernodeHandle> {",
+      "crates/ciphernode-builder/src/builder/startup.rs@102@async fn build_inner(mut self) -> anyhow::Result<CiphernodeHandle> {",
+      "crates/ciphernode-builder/src/builder/startup.rs@419@E3LifecycleCoordinator::attach(bus, storage.store.clone()).await?;",
       "crates/ciphernode-builder/src/builder/sortition.rs@48@let ciphernode_selector = CiphernodeSelector::attach("
     ],
     "line_text": [

@@ -13,15 +13,18 @@ use e3_events::{
     InterfoldEvent, InterfoldEventData, Shutdown, TicketGenerated, TypedEvent,
 };
 use e3_events::{E3id, EventContext, Sequenced};
-use e3_evm::helpers::{ConcreteReadProvider, ProviderFactory};
 use e3_utils::{NotifySync, MAILBOX_LIMIT};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{error, info};
 
+#[path = "chain_time.rs"]
+mod chain_time;
 #[path = "handlers.rs"]
 mod handlers;
+
+pub use chain_time::{CommitteeChainTimeFuture, CommitteeChainTimeReader};
 
 const FINALIZATION_BUFFER_SECONDS: u64 = 1;
 /// Delay between one committee member's finalization attempt and the next.
@@ -85,7 +88,7 @@ pub struct CommitteeFinalizer {
     bus: BusHandle,
     pending_committees: HashMap<E3id, SpawnHandle>,
     recovery: Persistable<CommitteeFinalizerRecoveryState>,
-    chain_providers: HashMap<u64, ProviderFactory<ConcreteReadProvider>>,
+    chain_time_reader: CommitteeChainTimeReader,
     effects_enabled: bool,
 }
 
@@ -93,13 +96,13 @@ impl CommitteeFinalizer {
     fn from_recovery(
         bus: &BusHandle,
         recovery: Persistable<CommitteeFinalizerRecoveryState>,
-        chain_providers: HashMap<u64, ProviderFactory<ConcreteReadProvider>>,
+        chain_time_reader: CommitteeChainTimeReader,
     ) -> Self {
         Self {
             bus: bus.clone(),
             pending_committees: HashMap::new(),
             recovery,
-            chain_providers,
+            chain_time_reader,
             effects_enabled: false,
         }
     }
@@ -107,7 +110,7 @@ impl CommitteeFinalizer {
     pub async fn attach_with_recovery(
         bus: &BusHandle,
         repository: Repository<CommitteeFinalizerRecoveryState>,
-        chain_providers: HashMap<u64, ProviderFactory<ConcreteReadProvider>>,
+        chain_time_reader: CommitteeChainTimeReader,
     ) -> Result<Addr<Self>> {
         let recovery = repository
             .load_or_default(CommitteeFinalizerRecoveryState::default())
@@ -116,7 +119,7 @@ impl CommitteeFinalizer {
             recovery.try_get()?.schema_version == COMMITTEE_FINALIZER_RECOVERY_SCHEMA_VERSION,
             "unsupported committee-finalizer recovery schema"
         );
-        let addr = CommitteeFinalizer::from_recovery(bus, recovery, chain_providers).start();
+        let addr = CommitteeFinalizer::from_recovery(bus, recovery, chain_time_reader).start();
 
         // Subscribe to state-building / cleanup events immediately
         bus.subscribe_all(
@@ -152,23 +155,10 @@ impl CommitteeFinalizer {
         let ec = request.context.clone();
         let pending_key = e3_id.clone();
         let e3_id_for_async = e3_id.clone();
-        let provider_factory = self.chain_providers.get(&e3_id.chain_id()).cloned();
+        let chain_time_reader = self.chain_time_reader.clone();
 
         let fut = async move {
-            let timestamp = match provider_factory {
-                // Connect per attempt: a WebSocket past its reconnect budget stays dead.
-                Some(factory) => match factory().await {
-                    Ok(provider) => {
-                        e3_evm::helpers::get_current_timestamp_from_provider(provider).await
-                    }
-                    Err(e) => Err(e),
-                },
-                None => Err(anyhow::anyhow!(
-                    "No RPC provider configured for chain {}",
-                    e3_id_for_async.chain_id()
-                )),
-            };
-            match timestamp {
+            match chain_time_reader(e3_id_for_async.chain_id()).await {
                 Ok(timestamp) => Some(timestamp),
                 Err(e) => {
                     error!(
@@ -265,6 +255,10 @@ impl CommitteeFinalizer {
         self.schedule_committee(request.clone(), party_index, ctx);
     }
 }
+
+#[cfg(test)]
+#[path = "tests.rs"]
+mod runtime_tests;
 
 impl Actor for CommitteeFinalizer {
     type Context = Context<Self>;

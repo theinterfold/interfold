@@ -137,9 +137,13 @@ buy more paid lifetime. Fewer than N submissions fails with supplier-paid
 `InsufficientCommitteeMembers`. Finalization snapshots every operator's reward recipient and retains
 its collateral obligation.
 
-The Rust finalizer retains request/context/ticket before effects, re-arms its absolute deadline
-after EffectsEnabled, retries temporary timestamp errors, and opens a fresh read provider for each
-attempt so a dead WebSocket cannot permanently stop it. `E3Requested` is
+The [sortition finalizer](../../crates/sortition/src/committee_finalization/actor.rs) retains
+request/context/ticket before effects and re-arms from its saved absolute committee deadline after
+EffectsEnabled. Its [EVM time reader](../../crates/evm/runtime/src/chain_time.rs) opens a fresh read
+provider for each attempt so a dead WebSocket cannot permanently stop it. Timestamp errors retry
+without substituting host time. The saved rank's full stagger is reapplied after each successful
+read, including restart; there is no persisted rank-specific not-before instant. Formation remains a
+separate actor from ticket selection and downstream aggregation. `E3Requested` is
 `(uint256 e3Id, E3 e3, bytes32 indexed cryptoConfigId)`; preserve the indexed configuration
 boundary.
 
