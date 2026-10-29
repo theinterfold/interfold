@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 use crate::{
-    IBondingRegistry, ICiphernodeRegistry, IInterfold, INodeReleaseRegistry, IRandomnessProvider,
-    ISlashingManager,
+    IBondingRegistry, ICiphernodeRegistry, IERC20Metadata, IInterfold, IInterfoldTicketToken,
+    INodeReleaseRegistry, IRandomnessProvider, ISlashingManager,
 };
 use alloy_json_abi::JsonAbi;
 use serde_json::{json, Value};
@@ -223,6 +223,15 @@ fn declared_bindings_match_solidity() {
         (
             IRandomnessProvider::abi::contract(),
             "interfaces/IRandomnessProvider.sol/IRandomnessProvider.json",
+        ),
+        (
+            IERC20Metadata::abi::contract(),
+            // TicketToken deliberately makes approve pure/reverting; this is the standard token API.
+            "token/InterfoldToken.sol/InterfoldToken.json",
+        ),
+        (
+            IInterfoldTicketToken::abi::contract(),
+            "token/InterfoldTicketToken.sol/InterfoldTicketToken.json",
         ),
     ] {
         assert_subset(bindings, contract, &[]);

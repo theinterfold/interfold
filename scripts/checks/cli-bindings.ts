@@ -7,10 +7,9 @@
 /**
  * Checks that the committed contract artifacts match a fresh contract build.
  *
- * `crates/cli/src/ciphernode/context.rs` generates its contract bindings with `sol!` from the
- * artifact JSONs that git tracks under `packages/interfold-contracts/artifacts/`. A contract change
- * that does not regenerate them leaves the CLI calling an ABI the contract no longer has, and
- * nothing else compares the two.
+ * `e3-evm-contracts` checks the shared Rust binding surface against freshly compiled Solidity.
+ * The tracked artifacts under `packages/interfold-contracts/artifacts/` must also stay current;
+ * comparing Rust bindings against stale reference artifacts would hide a contract change.
  *
  * `pnpm evm:build` writes the fresh artifacts over the tracked files. This check compares the `abi`
  * of each tracked artifact at `HEAD` with the file in the working tree, entry by entry. Formatting
