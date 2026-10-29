@@ -18,7 +18,8 @@ use crate::circuits::vk;
 use crate::error::ZkError;
 use crate::prover::ZkProver;
 use crate::witness::{CompiledCircuit, WitnessGenerator};
-use e3_events::{CircuitName, CircuitVariant, Proof};
+use e3_events::Proof;
+use e3_zk_config::{CircuitName, CircuitVariant};
 use serde::Serialize;
 
 /// Public-signal layout of `nodes_fold`: five prefix fields, then complete node statements.

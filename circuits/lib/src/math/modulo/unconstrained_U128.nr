@@ -37,6 +37,13 @@ pub unconstrained fn __compute_mod_reduction(value: Field, q: Field) -> (Field, 
     (quotient_u128 as Field, remainder_u128 as Field)
 }
 
+/// Return only the quotient when constrained code derives the remainder itself. An unused hinted
+/// remainder triggers beta.26's manual-constraint diagnostic despite the bounded division check.
+pub unconstrained fn __compute_mod_quotient(value: Field, q: Field) -> Field {
+    let (quotient, _) = __compute_mod_reduction(value, q);
+    quotient
+}
+
 /// Computes the negation of a value modulo m (unconstrained).
 ///
 /// Returns `(m - val) mod m`, with special handling for zero (returns 0).

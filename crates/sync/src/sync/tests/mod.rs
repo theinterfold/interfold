@@ -20,10 +20,10 @@ use e3_events::{
     EventContextAccessors, EventPublisher, EventSubscriber, EventType, EvmEventConfig,
     EvmEventConfigChain, GetEvents, HistoricalEvmEventsReceived, HistoricalEvmSyncStart,
     HistoricalNetSyncEventsReceived, HistoricalNetSyncFailed, HistoricalNetSyncStart,
-    InterfoldEvent, InterfoldEventData, NetReady, ProofType, RequestRouterCheckpoint, Seed,
-    SlashExecuted, StoreKeys, SyncEffect, SyncEnded, TakeEvents, TicketGenerated, TicketId,
-    Unsequenced,
+    InterfoldEvent, InterfoldEventData, NetReady, ProofType, Seed, SlashExecuted, StoreKeys,
+    SyncEffect, SyncEnded, TakeEvents, TicketGenerated, TicketId, Unsequenced,
 };
+use e3_request::RequestRouterCheckpoint;
 use e3_utils::MAILBOX_LIMIT_LARGE;
 use std::collections::BTreeMap;
 

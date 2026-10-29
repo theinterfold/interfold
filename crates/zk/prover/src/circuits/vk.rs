@@ -9,7 +9,7 @@
 
 use super::utils::bytes_to_field_strings;
 use crate::error::ZkError;
-use e3_events::CircuitName;
+use e3_zk_config::CircuitName;
 use std::fs;
 use std::path::Path;
 

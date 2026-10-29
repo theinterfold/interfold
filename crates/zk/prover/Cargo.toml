@@ -8,15 +8,15 @@ repository.workspace = true
 
 [dependencies]
 e3-committee.workspace = true
-acir = { git = "https://github.com/noir-lang/noir", tag = "v1.0.0-beta.26" }
+acir = { git = "https://github.com/noir-lang/noir", tag = "v1.0.0-rc.3" }
 actix.workspace = true
-acvm = { git = "https://github.com/noir-lang/noir", tag = "v1.0.0-beta.26" }
+acvm = { git = "https://github.com/noir-lang/noir", tag = "v1.0.0-rc.3" }
 alloy = { workspace = true }
 anyhow.workspace = true
 async-trait.workspace = true
 base64 = "0.22"
 bincode = "1.3.3"
-bn254_blackbox_solver = { git = "https://github.com/noir-lang/noir", tag = "v1.0.0-beta.26" }
+bn254_blackbox_solver = { git = "https://github.com/noir-lang/noir", tag = "v1.0.0-rc.3" }
 chrono = { workspace = true }
 directories = "5"
 e3-committee-hash.workspace = true
@@ -43,8 +43,8 @@ flate2 = "1"
 futures-util.workspace = true
 hex.workspace = true
 indicatif = "0.17"
-nargo = { git = "https://github.com/noir-lang/noir", tag = "v1.0.0-beta.26" }
-noirc_abi = { git = "https://github.com/noir-lang/noir", tag = "v1.0.0-beta.26" }
+nargo = { git = "https://github.com/noir-lang/noir", tag = "v1.0.0-rc.3" }
+noirc_abi = { git = "https://github.com/noir-lang/noir", tag = "v1.0.0-rc.3" }
 num-bigint.workspace = true
 rayon.workspace = true
 reqwest = { workspace = true, features = ["json", "stream"] }
@@ -62,11 +62,11 @@ walkdir = "2.5"
 [dev-dependencies]
 e3-zk-samples.workspace = true
 num-integer.workspace = true
-e3-event-system = { workspace = true }
+e3-event-system = { workspace = true, features = ["test-support"] }
 e3-net = { workspace = true }
 e3-sync = { workspace = true }
 e3-sortition = { workspace = true }
-e3-test-helpers = { workspace = true }
+e3-test-support = { workspace = true }
 e3-layout-lock = { workspace = true }
 e3-evm = { workspace = true }
 ark-bn254 = { workspace = true }

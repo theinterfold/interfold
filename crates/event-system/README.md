@@ -69,9 +69,19 @@ For production lifecycle/replay use [CiphernodeBuilder](../ciphernode-builder/RE
 
 ## Tests
 
-`cargo test --locked -p e3-event-system`, with [helper prerequisites](../test-helpers/README.md).
+`cargo test --locked -p e3-event-system`. No EVM or prover fixture preparation is required.
 
 Inline `event_system.rs` scenarios cover both backends, multiple aggregates, pre-fanout admission,
-durable-clock seeding, and shutdown final-state writes using temporary storage. They exercise
-assembly, not a complete ciphernode restart. [AGENTS.md](AGENTS.md) owns ordering/cache change
-rules.
+durable-clock seeding, and shutdown final-state writes using temporary storage.
+[`tests/sequencer.rs`](tests/sequencer.rs) covers sequence numbering, event bursts, and equal EVM
+facts on the domain and snapshot paths; [`tests/bus_handle.rs`](tests/bus_handle.rs) covers HLC
+restart seeding and causal order across buses. They exercise assembly, not a complete ciphernode
+restart. [AGENTS.md](AGENTS.md) owns ordering/cache change rules.
+
+### Test fixtures
+
+Capability tests can enable `e3-event-system`'s `test-support` feature in a dev-dependency and call
+`test_support::EventFixture::new()` inside an Actix runtime. Each fixture has its own deduplicating
+bus, in-memory stores, and all-event/error collectors, with zero-duration routes for aggregates 1
+and 2. It does not create BFV parameters, RNGs, or a node. The feature is off by default; production
+composition uses the ordinary `EventSystem` API.

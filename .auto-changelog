@@ -1,5 +1,6 @@
 {
   "commitLimit": false,
   "ignoreCommitPattern": "^chore\\(release\\): bump version to(?:\\s|$)",
-  "tagPrefix": "v"
+  "tagPrefix": "v",
+  "tagPattern": "^v\\d+\\.\\d+\\.\\d+(?:-(?![a-z]+\\.g[0-9a-f]{7}$)[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
 }

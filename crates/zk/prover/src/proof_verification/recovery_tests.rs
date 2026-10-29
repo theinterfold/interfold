@@ -177,7 +177,7 @@ fn assert_no_blame(events: &[InterfoldEventData]) {
 #[actix::test]
 async fn c0_local_verifier_failures_retry_without_peer_blame() {
     let artifacts = crate::test_utils::workspace_root().join("circuits/bin/dkg/target");
-    let Some(bb) = e3_test_helpers::find_bb().await else {
+    let Some(bb) = e3_test_support::find_bb().await else {
         eprintln!("skipping C0 recovery test: bb is not installed");
         return;
     };

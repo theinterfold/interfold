@@ -270,7 +270,6 @@
         "e3-sortition",
         "e3-sync",
         "e3-utils",
-        "e3-test-helpers",
         "e3-zk-prover"
       ],
       "tests": "Unit tests in src/ (fence.rs, store_record.rs, validate.rs, nodes/, start/start.rs, wallet/set.rs) and integration tests in tests/ (purge_guard.rs, reset_data_guard.rs, validate_older_schema.rs, validate_snapshot_errors.rs); run: cargo test -p e3-entrypoint",
@@ -286,12 +285,12 @@
         {
           "name": "EventBus<InterfoldEvent>",
           "role": "fresh node-local bus, passed to the event system before storage opens",
-          "ref": "crates/ciphernode-builder/src/builder/startup.rs@104@EventBus::<InterfoldEvent>::new(EventBusConfig { deduplicate: true }).start();"
+          "ref": "crates/ciphernode-builder/src/builder/startup.rs@105@EventBus::<InterfoldEvent>::new(EventBusConfig { deduplicate: true }).start();"
         },
         {
           "name": "E3LifecycleCoordinator",
           "role": "additive observer that tracks each E3's stage for restart and shutdown",
-          "ref": "crates/ciphernode-builder/src/builder/startup.rs@418@E3LifecycleCoordinator::attach(bus, storage.store.clone()).await?;"
+          "ref": "crates/ciphernode-builder/src/builder/startup.rs@419@E3LifecycleCoordinator::attach(bus, storage.store.clone()).await?;"
         },
         {
           "name": "CiphernodeSelector",
@@ -311,24 +310,24 @@
         {
           "name": "E3Router",
           "role": "request router: extensions register on it, and it is attached after networking starts",
-          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@239@Ok(E3Router::builder(bus, storage.store.clone())"
+          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@240@Ok(E3Router::builder(bus, storage.store.clone())"
         },
         {
           "name": "ThresholdKeyshareExtension",
           "role": "registered with ZK actors only for the full-node profile",
-          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@78@ThresholdKeyshareExtension::create("
+          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@79@ThresholdKeyshareExtension::create("
         },
         {
           "name": "Multithread",
           "role": "full-node compute worker, started with the configured pool and ZK backend",
-          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@204@Multithread::attach_with_zk("
+          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@205@Multithread::attach_with_zk("
         }
       ],
       "consumes": [
         {
           "name": "NetReady",
           "by": "CiphernodeBuilder",
-          "ref": "crates/ciphernode-builder/src/builder/startup.rs@139@let net_ready = live.bus.wait_for(EventType::NetReady);"
+          "ref": "crates/ciphernode-builder/src/builder/startup.rs@140@let net_ready = live.bus.wait_for(EventType::NetReady);"
         }
       ],
       "emits": [],
@@ -341,7 +340,7 @@
         {
           "name": "correlation-ids file next to the event log",
           "where": "disk",
-          "ref": "crates/ciphernode-builder/src/builder/startup.rs@245@e3_events::reserve_correlation_ids(&log_path.with_file_name(\"correlation-ids\"))?;"
+          "ref": "crates/ciphernode-builder/src/builder/startup.rs@246@e3_events::reserve_correlation_ids(&log_path.with_file_name(\"correlation-ids\"))?;"
         },
         {
           "name": "ingestion heartbeat files, one per chain",
@@ -351,7 +350,7 @@
         {
           "name": "in-memory event system (tests and benchmarks)",
           "where": "memory",
-          "ref": "crates/ciphernode-builder/src/builder/startup.rs@461@EventSystemType::InMem => EventSystem::in_mem(),"
+          "ref": "crates/ciphernode-builder/src/builder/startup.rs@462@EventSystemType::InMem => EventSystem::in_mem(),"
         }
       ],
       "key_types": [
@@ -373,31 +372,31 @@
         {
           "name": "ProviderCache (e3-evm)",
           "what": "cached read and write RPC providers and the signer, per chain",
-          "ref": "crates/evm/src/provider_cache.rs@30@pub struct ProviderCache<State = ReadOnly> {"
+          "ref": "crates/evm/runtime/src/provider_cache.rs@30@pub struct ProviderCache<State = ReadOnly> {"
         },
         {
           "name": "Storage / Restart / Live / Protocol",
           "what": "private phase outputs passed between the ordered startup steps",
-          "ref": "crates/ciphernode-builder/src/builder/startup.rs@51@pub(super) struct Storage {"
+          "ref": "crates/ciphernode-builder/src/builder/startup.rs@52@pub(super) struct Storage {"
         },
         {
           "name": "EvmSystemChainBuilder (e3-evm)",
           "what": "wires one chain's contract listeners onto the bus",
-          "ref": "crates/evm/src/chain_system.rs@22@pub struct EvmSystemChainBuilder<P> {"
+          "ref": "crates/evm/runtime/src/chain_system.rs@22@pub struct EvmSystemChainBuilder<P> {"
         }
       ],
       "read_first": [
         {
           "why": "the function that builds the node; it hands off to build_inner",
-          "ref": "crates/ciphernode-builder/src/builder/startup.rs@96@pub async fn build(self) -> anyhow::Result<CiphernodeHandle> {"
+          "ref": "crates/ciphernode-builder/src/builder/startup.rs@97@pub async fn build(self) -> anyhow::Result<CiphernodeHandle> {"
         },
         {
           "why": "the ordered startup steps, from storage checks to the sync wait",
-          "ref": "crates/ciphernode-builder/src/builder/startup.rs@101@async fn build_inner(mut self)"
+          "ref": "crates/ciphernode-builder/src/builder/startup.rs@102@async fn build_inner(mut self)"
         },
         {
           "why": "where protocol extensions are registered, and under which roles",
-          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@41@pub(super) async fn setup_extensions("
+          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@42@pub(super) async fn setup_extensions("
         },
         {
           "why": "the production caller, with the settings for a full node",
@@ -413,7 +412,7 @@
         {
           "pattern": "let-else",
           "note": "bootstrap returns the router without installing full-node protocol extensions",
-          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@64@let NodeProfile::Full { zk_backend } = &self.profile else {"
+          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@65@let NodeProfile::Full { zk_backend } = &self.profile else {"
         },
         {
           "pattern": "arc-shared",
@@ -428,7 +427,7 @@
         {
           "pattern": "tokio-select",
           "note": "startup waits for sync, EVM gateways and networking, or fails on a fatal storage error",
-          "ref": "crates/ciphernode-builder/src/builder/startup.rs@158@tokio::select! {"
+          "ref": "crates/ciphernode-builder/src/builder/startup.rs@159@tokio::select! {"
         },
         {
           "pattern": "lifetime",

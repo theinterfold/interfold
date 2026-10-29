@@ -46,6 +46,10 @@ The v0.19 DKG message format requires storage schema 8 and gossip/sync wire vers
 uses protocol version 8 and node generation 2. Complete active E3 work before the
 [storage reset](#reset-node-state). The signed DKG messages cannot reuse schema 7 state.
 
+The `bb` 6.0.0 toolchain uses protocol version 9. Its proofs and verification keys do not verify
+against `bb` 5.2.0 nodes or verifiers, so upgrade every node together during the paused cutover,
+after active E3 work completes. No storage reset is needed.
+
 ## The on-chain release gate
 
 The Interfold contract points to a node release registry (`INodeReleaseRegistry`). The registry

@@ -55,16 +55,16 @@ Some tools are necessary only for specific tasks.
 | [`cargo-openvm`](https://docs.openvm.dev) v2.0.2     | Real proofs (`program.dev: false`). `interfold program compile` builds the guest with it. See [Compute provider](/build/e3-program/compute-provider#run-a-compute-provider). |
 | The CUDA toolkit and an NVIDIA GPU                   | Optional. The CUDA build of the OpenVM worker proves on the GPU; without it, the CPU worker proves.                                                                          |
 | [tmux](https://github.com/tmux/tmux/wiki/Installing) | `pnpm dev:all --tmux`, which opens each process in its own tmux pane.                                                                                                        |
-| [Noir](https://noir-lang.org/docs) (`nargo`)         | Only to write your own circuits. The repository CI uses `v1.0.0-beta.26`. See [Noir circuits](/build/noir-circuits).                                                         |
+| [Noir](https://noir-lang.org/docs) (`nargo`)         | Only to write your own circuits. The repository CI uses `v1.0.0-rc.3`. See [Noir circuits](/build/noir-circuits).                                                            |
 
 For a released node, the setup commands install these components:
 
 - **Barretenberg (`bb`) and the protocol circuits.** `interfold noir setup` downloads the versions
-  pinned in the CLI. Source builds pin `bb` 5.2.0. The template scripts run this command for you.
+  pinned in the CLI. Source builds pin `bb` 6.0.0. The template scripts run this command for you.
 - **The OpenVM guest toolchain.** `cargo-openvm` installs the toolchain it needs. The local scripts
   run in dev mode by default, so they do not use OpenVM.
 
-Source builds need circuit artifacts that match the checkout and its `bb` 5.2.0 pin. Pull matching
+Source builds need circuit artifacts that match the checkout and its `bb` 6.0.0 pin. Pull matching
 artifacts with `pnpm store:circuits pull`, or rebuild them. Do not reuse an archive from an older
 toolchain. See [the source toolchain instructions](/build/noir-circuits#toolchain).
 

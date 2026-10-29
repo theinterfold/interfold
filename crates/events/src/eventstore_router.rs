@@ -71,11 +71,6 @@ impl QueryAggregator {
         self.pending.insert(sub_query_id, aggregate_id);
         self.query_count += 1;
     }
-
-    #[allow(dead_code)]
-    fn pending_aggregates(&self) -> Vec<&AggregateId> {
-        self.pending.values().collect()
-    }
 }
 
 impl Actor for QueryAggregator {

@@ -8,6 +8,10 @@ ciphernode protocol proofs. This is separate from the
 [e3-zk-config](../config/README.md), and production input preparation/encoding belongs in
 [e3-zk-witness](../witness/README.md).
 
+Import circuit identities/variants from `e3-zk-config` and commitment-link interfaces from
+`e3-slashing`. This crate implements the ZK-specific links; its compatibility re-exports do not
+define a second owner.
+
 ## Map
 
 | Location                                                                                                 | Responsibility                                                                                            |
@@ -75,7 +79,8 @@ E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 cargo check --locked -p e3-zk-prover --tests
 ```
 
 This skips fixture preparation only. It neither skips proof tests nor supplies valid artifacts. The
-dependency graph can also need [Solidity fixtures](../../test-helpers/README.md).
+dependency graph can also need
+[Solidity fixtures](../../tests/README.md#prerequisites-and-assurance).
 
 ## Tests
 

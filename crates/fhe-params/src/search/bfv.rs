@@ -1072,23 +1072,9 @@ mod tests {
 
     /// Search inputs of a preset, with the margin the presets were searched with.
     fn preset_config(preset: crate::presets::BfvPreset) -> BfvSearchConfig {
-        let sd = preset
-            .search_defaults()
-            .expect("threshold preset has search inputs");
-        BfvSearchConfig {
-            n: sd.n,
-            z: sd.z,
-            k: sd.k,
-            lambda: sd.lambda,
-            b: sd.b,
-            b_chi: sd.b_chi,
-            min_margin: crate::search::constants::MIN_MARGIN_BITS,
-            d: None,
-            insecure: false,
-            mult_depth: 0,
-            min_prime_bits: crate::search::constants::DEFAULT_MIN_PRIME_BITS,
-            verbose: false,
-        }
+        preset
+            .search_config()
+            .expect("threshold preset has search inputs")
     }
 
     #[test]
@@ -1097,9 +1083,6 @@ mod tests {
         use crate::search::utils::{variance_cbd_str, variance_uniform_sym};
 
         let mut config = preset_config(crate::presets::BfvPreset::InsecureThreshold64);
-        config.d = Some(insecure_64::DEGREE as u64);
-        config.insecure = true;
-        config.min_prime_bits = 12;
 
         let first = bfv_search(&config).expect("insecure threshold set must be feasible");
         assert_eq!(first.d, insecure_64::DEGREE as u64);
@@ -1229,8 +1212,6 @@ mod tests {
         // d = 128, n = 19, k = 100, z = 3 additions, then depth 3, λ = 2.
         let mut config = preset_config(crate::presets::BfvPreset::InsecureThreshold64);
         config.d = Some(128);
-        config.insecure = true;
-        config.min_prime_bits = 12;
         config.k = 100;
         config.z = 3;
         config.mult_depth = 3;
@@ -1267,8 +1248,6 @@ mod tests {
     #[test]
     fn search_rejects_ring_dimensions_fhe_rs_cannot_build() {
         let mut config = preset_config(crate::presets::BfvPreset::InsecureThreshold64);
-        config.insecure = true;
-        config.min_prime_bits = 12;
         config.d = Some(4);
         assert!(bfv_search(&config).is_err());
         config.d = Some(8);

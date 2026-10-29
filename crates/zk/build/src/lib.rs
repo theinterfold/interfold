@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 mod artifacts;
+mod bindings;
 mod configuration;
 mod identity;
+mod layouts;
+pub mod metadata;
 mod toolchain;
+mod vk_commitments;
 mod vk_tree;
 
 pub use identity::checksum;
@@ -56,6 +60,15 @@ pub enum Operation {
     SyncConfig,
     SyncPreset,
     Check,
+    ExportConfig,
+    SyncBindings,
+    CheckBindings,
+    CheckLayouts,
+    SyncVkCommitments,
+    PrepareVkCommitments,
+    CheckVkCommitments,
+    QualifyVkCommitments,
+    SyncSources,
 }
 
 impl FromStr for Operation {
@@ -67,8 +80,17 @@ impl FromStr for Operation {
             "sync-config" => Ok(Self::SyncConfig),
             "sync-preset" => Ok(Self::SyncPreset),
             "check" => Ok(Self::Check),
+            "export-config" => Ok(Self::ExportConfig),
+            "sync-bindings" => Ok(Self::SyncBindings),
+            "check-bindings" => Ok(Self::CheckBindings),
+            "check-layouts" => Ok(Self::CheckLayouts),
+            "sync-vk-commitments" => Ok(Self::SyncVkCommitments),
+            "prepare-vk-commitments" => Ok(Self::PrepareVkCommitments),
+            "check-vk-commitments" => Ok(Self::CheckVkCommitments),
+            "qualify-vk-commitments" => Ok(Self::QualifyVkCommitments),
+            "sync-sources" => Ok(Self::SyncSources),
             other => Err(format!(
-                "unknown build operation {other}; expected build, hash, sync-config, sync-preset, or check"
+                "unknown build operation {other}; expected build, hash, sync-config, sync-preset, check, export-config, sync-bindings, check-bindings, check-layouts, sync-vk-commitments, prepare-vk-commitments, check-vk-commitments, qualify-vk-commitments, or sync-sources"
             )),
         }
     }
@@ -82,6 +104,15 @@ impl fmt::Display for Operation {
             Self::SyncConfig => "sync-config",
             Self::SyncPreset => "sync-preset",
             Self::Check => "check",
+            Self::ExportConfig => "export-config",
+            Self::SyncBindings => "sync-bindings",
+            Self::CheckBindings => "check-bindings",
+            Self::CheckLayouts => "check-layouts",
+            Self::SyncVkCommitments => "sync-vk-commitments",
+            Self::PrepareVkCommitments => "prepare-vk-commitments",
+            Self::CheckVkCommitments => "check-vk-commitments",
+            Self::QualifyVkCommitments => "qualify-vk-commitments",
+            Self::SyncSources => "sync-sources",
         })
     }
 }
@@ -356,6 +387,22 @@ fn run(command: &mut Command) -> Result<String> {
     let output = command
         .output()
         .with_context(|| format!("Start {command:?}"))?;
+    let diagnostic = Path::new(command.get_program())
+        .file_name()
+        .is_some_and(|name| name == "nargo")
+        && [&output.stdout, &output.stderr].into_iter().any(|stream| {
+            String::from_utf8_lossy(stream)
+                .lines()
+                .any(|line| line.trim_start().starts_with("bug:"))
+        });
+    if diagnostic {
+        bail!(
+            "{command:?}: compiler emitted a bug diagnostic despite process exit {}:\n{}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
     if !output.status.success() {
         bail!(
             "{command:?} failed ({}):\n{}\n{}",
@@ -417,6 +464,22 @@ pub fn execute(root: &Path, request: &Request) -> Result<()> {
             configuration::sync_preset(root, request.single_preset()?, request.single_committee()?)?
         }
         Operation::Check => configuration::check(root, request)?,
+        Operation::SyncBindings => bindings::sync(root, false)?,
+        Operation::CheckBindings => bindings::sync(root, true)?,
+        Operation::CheckLayouts => layouts::check(root, request)?,
+        Operation::SyncVkCommitments => vk_commitments::generate(root, &request.output_dir(root))?,
+        Operation::PrepareVkCommitments => {
+            vk_commitments::prepare(root, &request.output_dir(root))?
+        }
+        Operation::CheckVkCommitments => vk_commitments::check(root, request)?,
+        Operation::QualifyVkCommitments => vk_commitments::qualify(root, request)?,
+        Operation::SyncSources => configuration::sync_sources(root)?,
+        Operation::ExportConfig => {
+            let metadata = metadata::collect(root)?;
+            let mut stdout = std::io::stdout().lock();
+            serde_json::to_writer_pretty(&mut stdout, &metadata)?;
+            writeln!(stdout)?;
+        }
         Operation::Build => artifacts::build(root, request)?,
     }
     Ok(())

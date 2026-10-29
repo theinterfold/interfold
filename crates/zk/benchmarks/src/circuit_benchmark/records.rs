@@ -3,7 +3,7 @@
 use super::{selection::Case, Options};
 use anyhow::Result;
 use e3_committee::CiphernodesCommitteeSize;
-use e3_zk_prover::CircuitVariant;
+use e3_zk_config::CircuitVariant;
 use serde::{Deserialize, Serialize};
 use std::{path::Path, time::Duration};
 

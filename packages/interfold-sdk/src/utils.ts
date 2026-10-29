@@ -4,7 +4,9 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+import { COMMITTEES, bfvPresetForParamSet } from '@interfold/contracts/bfv'
 import { type Address, type Hash, type Log, PublicClient, encodeAbiParameters } from 'viem'
+import type { CommitteeSize } from './contracts/types'
 import type { BfvParams } from './types'
 
 export class SDKError extends Error {
@@ -78,18 +80,14 @@ export const DEFAULT_COMPUTE_PROVIDER_PARAMS: ComputeProviderParams = {
 
 // Default E3 configuration (`committeeSize` is `IInterfold.CommitteeSize`, not circuit N_PARTIES).
 export const DEFAULT_E3_CONFIG = {
-  committeeSize: 0, // CommitteeSize.Minimum
+  committeeSize: COMMITTEES.minimum.committeeSize as CommitteeSize.Minimum,
   duration: 1800, // 30 minutes in seconds
   payment_amount: '0', // 0 ETH in wei
 } as const
 
 export function cryptoConfigIdForParamSet(paramSet: number): Hash {
-  if (paramSet === 0) {
-    return '0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9'
-  }
-  if (paramSet === 2) {
-    return '0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa'
-  }
+  const preset = bfvPresetForParamSet(paramSet)
+  if (preset) return preset.configId
   throw new SDKError(`Unsupported BFV parameter set: ${paramSet}`, 'UNSUPPORTED_CRYPTO_CONFIG')
 }
 

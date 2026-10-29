@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::traits::{ErrorEvent, Event};
+use crate::traits::Event;
 use crate::{EventBusBarrier, EventType};
 use actix::prelude::*;
 use e3_utils::{colorize, Color, MAILBOX_LIMIT, MAILBOX_LIMIT_LARGE};
@@ -40,7 +40,7 @@ const DEFAULT_DEDUP_CAPACITY: usize = 250_000;
 /// Actor handlers are expected to hand long-running work to child futures. A
 /// full mailbox that cannot accept one event within this window is unhealthy;
 /// replay fails closed instead of hanging startup forever.
-pub const FANOUT_ACCEPT_TIMEOUT: Duration = Duration::from_secs(30);
+const FANOUT_ACCEPT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Maximum time for actor shutdown, event flushing, and store flushing.
 ///
@@ -143,10 +143,6 @@ impl<E: Event> EventBus<E> {
             listeners: HashMap::new(),
             ids: ExactDedup::new(dedup_capacity),
         }
-    }
-
-    pub fn set_config(&mut self, config: EventBusConfig) {
-        self.config = config;
     }
 
     pub fn history(source: &Addr<EventBus<E>>) -> Addr<HistoryCollector<E>> {
@@ -515,22 +511,6 @@ impl<E: Event> TakeEvents<E> {
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct ResetHistory;
-
-#[derive(Message)]
-#[rtype(result = "Vec<E::Data>")]
-pub struct GetErrors<E: ErrorEvent>(PhantomData<E>);
-
-impl<E: ErrorEvent> Default for GetErrors<E> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<E: ErrorEvent> GetErrors<E> {
-    pub fn new() -> Self {
-        Self(PhantomData)
-    }
-}
 
 //////////////////////////////////////////////////////////////////////////////
 // History Collector

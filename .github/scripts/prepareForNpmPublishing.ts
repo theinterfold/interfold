@@ -8,6 +8,8 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
+import { internalDependencyRange } from '../../scripts/release/version.mjs'
+
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
@@ -62,8 +64,9 @@ PACKAGES.forEach(({ name, path: pkgPath }) => {
       if (version.startsWith('workspace:')) {
         const actualVersion = packageVersions.get(depName)
         if (actualVersion) {
-          deps[depName] = `^${actualVersion}`
-          console.log(`  ✓ ${name} ${depType}: ${depName}: ${version} → ^${actualVersion}`)
+          const range = internalDependencyRange(actualVersion)
+          deps[depName] = range
+          console.log(`  ✓ ${name} ${depType}: ${depName}: ${version} → ${range}`)
           hasChanges = true
         } else {
           console.warn(`  ⚠️  Warning: Could not find version for ${depName}`)

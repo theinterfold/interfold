@@ -83,20 +83,6 @@ impl Actor for BatchRouter {
 }
 
 impl BatchRouter {
-    #[allow(dead_code)]
-    pub fn new(
-        config: &AggregateConfig,
-        timelock_queue: impl Into<Recipient<StartTimelock>>,
-        db: impl Into<Recipient<InsertBatch>>,
-    ) -> Self {
-        Self::with_clock(
-            config,
-            timelock_queue,
-            db,
-            Arc::new(super::timelock_queue::SystemClock),
-        )
-    }
-
     pub fn with_clock(
         config: &AggregateConfig,
         timelock_queue: impl Into<Recipient<StartTimelock>>,

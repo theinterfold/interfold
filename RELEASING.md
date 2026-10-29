@@ -115,6 +115,67 @@ the [compute-provider manifest](docs/pages/build/e3-program/verify-compute-provi
 release CI cannot attach a complete one; `complete: false` is not accepted evidence of identity or
 reproducibility. No guide command substitutes for an independent rebuild where required.
 
+## Test releases from a branch
+
+Use a test release to give the team released binaries, npm packages, and containers from a branch
+that is not in main, for example the `lbfv` work branch. A test release is not a stable release and
+not a dev release. It uses the same workflow as a tag release.
+
+Before you start:
+
+1. Merge or rebase main into the branch. The workflow file and the release scripts come from the
+   branch that you dispatch, so the branch must contain the test release mode. GitHub runs a manual
+   workflow only if the workflow file with the `workflow_dispatch` trigger is also on main.
+2. Build the circuits of the branch tree and run `pnpm store:circuits push`. The workflow pulls only
+   circuit artifacts that have the `SOURCE_HASH` of the dispatched commit. It fails when none exist.
+3. Make sure the branch has `deployments/manifest.json`, and that its version files agree. Do not
+   bump the version. The workflow does not commit anything.
+
+Run the workflow for the branch. A maintainer with write access must do this. A tag push cannot
+start a test release:
+
+```sh
+gh workflow run releases.yml --ref <branch> -f label=<label>
+```
+
+The label has 2 to 16 lowercase letters. `latest`, `dev`, `stable`, `main`, `next`, `alpha`, `beta`,
+`rc`, and `canary` are not allowed. The workflow refuses a tag ref and `main`.
+
+The workflow builds the commit at the tip of the branch. It changes the version in the checkout of
+each build job to `<X.Y.Z>-<label>.g<short SHA>`, for example `0.20.0-lbfv.g1a2b3c4`. `X.Y.Z` is the
+core of the version in the branch. The `g` is part of the version. Then the workflow:
+
+| Publication       | Test release                                                                    |
+| ----------------- | ------------------------------------------------------------------------------- |
+| npm dist-tag      | The label only. `latest` and `dev` do not change.                               |
+| Container tags    | The full version and the label. `latest` and `dev` do not change.               |
+| GitHub release    | Prerelease with tag `v<version>` on the commit. Not latest. Stable tag is kept. |
+| Circuit artifacts | The revision that was built from the same source tree as the commit.            |
+| DAppNode packages | Not built.                                                                      |
+
+To install a test release, use the exact version, the label, or the container tag:
+
+```sh
+npm install @interfold/sdk@lbfv
+interfold update --version v0.20.0-lbfv.g1a2b3c4
+docker pull ghcr.io/theinterfold/ciphernode:lbfv
+```
+
+A test release package depends on the exact version of the other test release packages, not on a
+range. `interfold update --version dev` and the install script do not select a test release. They
+select a test release only when you give its exact version. The changelog and the notes of the next
+stable release do not list test releases. A dispatch has its own concurrency group for each label,
+so it cannot cancel a pending tag release.
+
+The label tags move to the newest test release that has that label. The full version never moves.
+The release notes and `release-provenance.json` name the branch. Do not use a test release in
+production. Do not use a test release to decide a protocol rollout.
+
+A test release is permanent after it is published. To remove it, delete the GitHub release and its
+tag by hand, and deprecate the npm versions. Never reuse a version for different bytes. A rerun on
+the same commit and label has the same version, and the npm step skips packages that have the same
+bytes.
+
 ## Channels and recovery
 
 | Publication       | Stable `X.Y.Z`           | Prerelease, conventionally `X.Y.Z-dev.N` |
@@ -145,7 +206,7 @@ npm deprecate @interfold/sdk@1.0.0 "Critical bug, use 1.0.1"
 Deprecation changes npm metadata, not deployed contracts or node state. Qualify and release the
 replacement through the same procedure above.
 
-`pnpm test:release` tests release tooling (tag ancestry, version checks, publication
-retries/assets/gates). It neither publishes nor replaces candidate protocol/integration
+`pnpm test:release` tests release tooling (tag ancestry, version checks, test release versions,
+publication retries/assets/gates). It neither publishes nor replaces candidate protocol/integration
 qualification. Release implementation commands such as `prepare-assets`, `publish-npm`, and
 `promote-stable` write state or publish; they are workflow internals, not operator dry runs.

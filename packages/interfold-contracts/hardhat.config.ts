@@ -159,9 +159,14 @@ const config: HardhatUserConfig = {
     sepolia: getChainConfig("sepolia", process.env.ETHERSCAN_API_KEY || ""),
     goerli: getChainConfig("goerli", process.env.ETHERSCAN_API_KEY || ""),
   },
+  // Deploy runs publish sources (scripts/sourceVerification.ts). Sourcify needs no key; Etherscan
+  // runs only when a key is set.
   verify: {
-    etherscan: {
-      apiKey: process.env.ETHERSCAN_API_KEY || "",
+    etherscan: process.env.ETHERSCAN_API_KEY
+      ? { apiKey: process.env.ETHERSCAN_API_KEY }
+      : { enabled: false },
+    sourcify: {
+      enabled: true,
     },
     blockscout: {
       enabled: false,

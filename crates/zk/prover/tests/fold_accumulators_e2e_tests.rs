@@ -25,14 +25,14 @@ use common::{
     find_bb, setup_compiled_circuit, setup_recursive_aggregation_fold_circuit, setup_test_prover,
 };
 use e3_committee::CiphernodesCommitteeSize;
-use e3_events::{CircuitName, Proof};
+use e3_events::Proof;
 use e3_fhe_params::BfvPreset;
 use e3_zk_config::DkgInputType;
 use e3_zk_config::MAX_MSG_NON_ZERO_COEFFS;
+use e3_zk_config::{CircuitName, CircuitVariant};
 use e3_zk_prover::test_utils::{fold_witness_field_strings, load_vk_artifacts};
 use e3_zk_prover::{
-    generate_sequential_c3_fold, generate_sequential_c6_fold, CircuitVariant, Provable, ZkBackend,
-    ZkProver,
+    generate_sequential_c3_fold, generate_sequential_c6_fold, Provable, ZkBackend, ZkProver,
 };
 use e3_zk_prover::{
     ShareEncryptionCircuit, ThresholdShareDecryptionCircuit as ShareDecryptionCircuit,

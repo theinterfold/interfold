@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-import { Barretenberg, UltraHonkBackend, UltraHonkVerifierBackend, type ProofData } from '@aztec/bb.js'
+import { Barretenberg, UltraHonkBackend, UltraHonkVerifierBackend, type ProofData } from '@aztec-foundation/bb.js'
 import { CompiledCircuit, Noir } from '@noir-lang/noir_js'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { bytesToBigInt, createPublicClient, http, toHex, zeroAddress } from 'viem'

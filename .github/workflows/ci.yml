@@ -13,17 +13,15 @@ on:
         type: boolean
         default: false
   workflow_dispatch:
+  # Dependent PRs target the preceding stack branch, not necessarily main/dev.
   pull_request:
-    branches:
-      - main
-      - dev
 env:
   CIPHERNODE_DOCKERFILE_PATH: crates/Dockerfile
   CIPHERNODE_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ciphernode
   NODE_VERSION: 22
   RUST_TOOLCHAIN: 1.91.1
-  NOIR_TOOLCHAIN: v1.0.0-beta.26
-  BB_VERSION: 5.2.0
+  NOIR_TOOLCHAIN: v1.0.0-rc.3
+  BB_VERSION: 6.0.0
   HARDHAT_VAR_MNEMONIC: 'test test test test test test test test test test test junk'
   HARDHAT_VAR_INFURA_API_KEY: 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'
   PRIVATE_KEY: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
@@ -69,6 +67,7 @@ jobs:
       openvm_worker: ${{ steps.jobs.outputs.openvm_worker }}
       openvm_guest: ${{ steps.jobs.outputs.openvm_guest }}
       build_circuits: ${{ steps.jobs.outputs.build_circuits }}
+      crypto_sources: ${{ steps.jobs.outputs.crypto_sources }}
       noir_checks: ${{ steps.jobs.outputs.noir_checks }}
       integration_prebuild: ${{ steps.jobs.outputs.integration_prebuild }}
       zk_prover_integration: ${{ steps.jobs.outputs.zk_prover_integration }}
@@ -197,16 +196,6 @@ jobs:
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
-            # Inputs of build_circuits that the `circuits` and `verifiers` filters do not list: the
-            # circuit artifact store and its test (`store:circuits`, `test:circuit-tooling`), and
-            # the BFV parameters. The Rust circuit builder derives the generated constants in
-            # ActiveCryptoConfig.sol and utils.ts from them, and hashes their file into SOURCE_HASH.
-            # check:verifiers reads none of these files, so they stay out of
-            # .github/filters/circuits.yml, which also starts check:verifiers in pre-push.
-            circuit_build:
-              - 'scripts/circuits/artifacts.ts'
-              - 'scripts/circuits/artifacts.test.ts'
-              - 'packages/interfold-contracts/scripts/protocol/constants.ts'
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         if: ${{ !inputs.release_candidate }}
         id: circuit_filter
@@ -221,7 +210,7 @@ jobs:
           BINDINGS="${{ steps.filter.outputs.bindings }}"
           CIRCUITS="${{ steps.circuit_filter.outputs.circuits }}"
           VERIFIERS="${{ steps.circuit_filter.outputs.verifiers }}"
-          CIRCUIT_BUILD="${{ steps.filter.outputs.circuit_build }}"
+          CRYPTO_CONFIG="${{ steps.circuit_filter.outputs.crypto_config }}"
           TEMPLATES="${{ steps.filter.outputs.templates }}"
           SDK="${{ steps.filter.outputs.sdk }}"
           REACT="${{ steps.filter.outputs.react }}"
@@ -262,9 +251,9 @@ jobs:
           echo "build_e3_support_dev=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CIRCUITS $SDK $CI $TOOLING)" >> $GITHUB_OUTPUT
           echo "openvm_worker=$(any $FORCE $OPENVM_WORKER $CI)" >> $GITHUB_OUTPUT
           echo "openvm_guest=$(any $FORCE $OPENVM_GUEST $CI)" >> $GITHUB_OUTPUT
-          # build_circuits runs check:verifiers, so every input of the generated verifiers runs it.
-          # CIRCUIT_BUILD adds the other files that the job runs or hashes.
-          echo "build_circuits=$(any $FORCE $RUST $CIRCUITS $VERIFIERS $CIRCUIT_BUILD $CI $TOOLING)" >> $GITHUB_OUTPUT
+          # Source checks run separately; only compiler/verifier inputs need a circuit rebuild.
+          echo "build_circuits=$(any $FORCE $CIRCUITS $VERIFIERS)" >> $GITHUB_OUTPUT
+          echo "crypto_sources=$(any $FORCE $CIRCUITS $VERIFIERS $CRYPTO_CONFIG)" >> $GITHUB_OUTPUT
           # nargo reads only the circuit paths, so Rust and tooling changes skip the Noir checks.
           echo "noir_checks=$(any $FORCE $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           echo "integration_prebuild=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI $TOOLING)" >> $GITHUB_OUTPUT
@@ -420,6 +409,13 @@ jobs:
       - name: Compile contracts for ABI catalog tests
         run: pnpm evm:build
 
+      # The source-identity regression compares against Noir's actual formatted selector.
+      - name: Install Nargo for formatted source identity tests
+        if: matrix.suite == 'lib'
+        uses: noir-lang/noirup@bedac8fbe6a059177c35e565f9f76db54a795976 # v0.1.5
+        with:
+          toolchain: ${{ env.NOIR_TOOLCHAIN }}
+
       - name: Check the committed contract artifacts against the build
         if: matrix.suite == 'lib' && matrix.partition == 1
         run: pnpm check:bindings
@@ -438,6 +434,15 @@ jobs:
       - name: Run doc-tests
         if: matrix.suite == 'doc'
         run: cargo test --doc
+
+      - name: Check SDK capability exports
+        if: matrix.suite == 'lib' && matrix.partition == 1
+        run: |
+          cargo test --locked -p e3-sdk --no-default-features --test exports
+          cargo test --locked -p e3-sdk --no-default-features --features bfv --test exports
+          cargo test --locked -p e3-sdk --no-default-features --features evm --test exports
+          cargo test --locked -p e3-sdk --no-default-features --features indexer --test exports
+          cargo test --locked -p e3-sdk --test exports
 
       # The library run skips the entrypoint integration tests, the CLI binary tests, and the CLI
       # secret-input integration tests.
@@ -764,6 +769,9 @@ jobs:
       # Without coverage instrumentation. No step reads the coverage report, instrumentation makes
       # the suite several times slower, and under `--coverage` BfvVkBindingIntegration skips the
       # on-chain Honk verification because instrumented verifiers run out of gas.
+      - name: Build deployment utilities for installed-package tests
+        run: pnpm -C packages/interfold-contracts compile:ts
+
       - name: 'Test the contracts'
         run: 'pnpm evm:test'
 
@@ -827,7 +835,7 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install Nargo
-        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
+        uses: noir-lang/noirup@bedac8fbe6a059177c35e565f9f76db54a795976 # v0.1.5
         with:
           toolchain: ${{ env.NOIR_TOOLCHAIN }}
 
@@ -1023,7 +1031,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Nargo
-        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
+        uses: noir-lang/noirup@bedac8fbe6a059177c35e565f9f76db54a795976 # v0.1.5
         with:
           toolchain: ${{ env.NOIR_TOOLCHAIN }}
 
@@ -1039,6 +1047,29 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+  crypto_sources:
+    needs: [detect_changes]
+    if: needs.detect_changes.outputs.crypto_sources == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: ./.github/actions/cache-dependencies
+      - uses: noir-lang/noirup@bedac8fbe6a059177c35e565f9f76db54a795976 # v0.1.5
+        with:
+          toolchain: ${{ env.NOIR_TOOLCHAIN }}
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check:crypto-config
+      - run: pnpm test:circuit-tooling
+
   build_circuits:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.build_circuits == 'true'
@@ -1053,13 +1084,18 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
-          # Keeps the token out of .git/config, where install and build scripts could read it and use
-          # this job's actions: write. The cancel step gets the token on its own.
+          # Keep the cancellation token out of install/build script credentials.
           persist-credentials: false
           submodules: recursive
 
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - uses: ./.github/actions/cache-dependencies
+
       - name: Install Nargo
-        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
+        uses: noir-lang/noirup@bedac8fbe6a059177c35e565f9f76db54a795976 # v0.1.5
         with:
           toolchain: ${{ env.NOIR_TOOLCHAIN }}
 
@@ -1102,22 +1138,22 @@ jobs:
       - name: Build circuits
         run: pnpm build:circuits
 
+      - name: Check compiled decryption layout
+        run: pnpm check:decryption-layout
+
       - name: Check generated circuit sources are committed
         run: |
           git diff --exit-code -- \
             circuits/lib/src/configs \
-            packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol \
+            packages/interfold-contracts/contracts/lib/BfvProtocol.sol \
             packages/interfold-contracts/scripts/utils.ts
 
       - name: Test circuit artifact validation and verifier selection
-        run: pnpm test:circuit-build -- --include-ignored && pnpm test:circuit-tooling
+        run: pnpm test:circuit-build -- --include-ignored
 
-      # The generated verifier contracts must match the freshly built verification keys. A drift
-      # means the deployed verifier accepts a different circuit from the one in this tree.
-      #
-      # `--no-compile`: without it the checker deletes every nargo target directory first, its guard
-      # against comparing stale artifacts, and recompiles them. The step above has just built these
-      # circuits, so there is nothing stale to guard against.
+      - name: Check named VK commitments
+        run: pnpm build:circuits check-vk-commitments
+
       - name: Check generated verifiers are in sync
         run: pnpm check:verifiers --no-compile
 
@@ -1153,7 +1189,7 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install Nargo
-        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
+        uses: noir-lang/noirup@bedac8fbe6a059177c35e565f9f76db54a795976 # v0.1.5
         with:
           toolchain: ${{ env.NOIR_TOOLCHAIN }}
 
@@ -1389,7 +1425,7 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install Nargo
-        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
+        uses: noir-lang/noirup@bedac8fbe6a059177c35e565f9f76db54a795976 # v0.1.5
         with:
           toolchain: ${{ env.NOIR_TOOLCHAIN }}
 
@@ -1538,7 +1574,7 @@ jobs:
           chmod +x templates/default/target/debug/program-runner
 
       - name: Install Nargo
-        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
+        uses: noir-lang/noirup@bedac8fbe6a059177c35e565f9f76db54a795976 # v0.1.5
         with:
           toolchain: ${{ env.NOIR_TOOLCHAIN }}
 

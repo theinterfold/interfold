@@ -3,6 +3,9 @@
 // This file is provided WITHOUT ANY WARRANTY;
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
+mod common;
+
+use common::shares;
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{bail, Result};
@@ -11,7 +14,7 @@ use e3_crypto::Cipher;
 use e3_fhe_params::create_deterministic_crp_from_default_seed;
 use e3_fhe_params::DEFAULT_BFV_PRESET;
 use e3_fhe_params::{encode_bfv_params, BfvParamSet};
-use e3_test_helpers::{create_shared_rng_from_u64, usecase_helpers};
+use e3_test_support::create_shared_rng_from_u64;
 use e3_trbfv::{
     calculate_decryption_share::{
         CalculateDecryptionShareRequest, CalculateDecryptionShareResponse,
@@ -49,13 +52,11 @@ async fn test_trbfv_isolation() -> Result<()> {
     let crp_raw = create_deterministic_crp_from_default_seed(&trbfv_config.params());
 
     // let crp = ArcBytes::from_bytes(crp_raw.to_bytes());
-    let generated =
-        usecase_helpers::generate_shares_hash_map(&trbfv_config, &crp_raw, &rng, &cipher)?;
+    let generated = shares::generate_shares_hash_map(&trbfv_config, &crp_raw, &rng, &cipher)?;
 
-    let pubkey =
-        usecase_helpers::get_public_key(&generated.shares, trbfv_config.params(), &crp_raw)?;
+    let pubkey = shares::get_public_key(&generated.shares, trbfv_config.params(), &crp_raw)?;
     let shares = to_ordered_vec(generated.shares);
-    let decryption_keys = usecase_helpers::get_decryption_keys(
+    let decryption_keys = shares::get_decryption_keys(
         shares,
         &generated.bfv_secret_keys,
         &cipher,
@@ -65,14 +66,10 @@ async fn test_trbfv_isolation() -> Result<()> {
     // Create the inputs
     let num_votes_per_voter = 3;
     let num_voters = 30;
-    let (inputs, numbers) = e3_test_helpers::application::generate_ciphertexts(
-        &pubkey,
-        num_voters,
-        num_votes_per_voter,
-    );
+    let (inputs, numbers) =
+        e3_bfv_test_support::generate_ciphertexts(&pubkey, num_voters, num_votes_per_voter);
 
-    let outputs =
-        e3_test_helpers::application::run_application(&inputs, &pubkey, num_votes_per_voter);
+    let outputs = e3_bfv_test_support::run_application(&inputs, &pubkey, num_votes_per_voter);
 
     // Encrypt the plaintext
     let ciphertexts = outputs

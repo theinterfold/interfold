@@ -269,17 +269,46 @@ fn tags_match(a: &str, b: &str) -> bool {
     a.trim().trim_start_matches('v') == b.trim().trim_start_matches('v')
 }
 
-/// Select the most recently published release, stable or pre-release. GitHub writes
+/// A branch test release tag has the form `v<core>-<label>.g<sha7>`, for example `v0.20.0-lbfv.g1a2b3c4`.
+/// It is not a channel release, so `dev` never selects it. The shape matches
+/// `TEST_RELEASE_VERSION` in `scripts/release/version.mjs`.
+fn is_test_release_tag(tag: &str) -> bool {
+    let Some((core, suffix)) = tag.trim().trim_start_matches('v').split_once('-') else {
+        return false;
+    };
+    let is_core = {
+        let parts: Vec<&str> = core.split('.').collect();
+        parts.len() == 3
+            && parts
+                .iter()
+                .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+    };
+    let Some((label, sha)) = suffix.split_once(".g") else {
+        return false;
+    };
+    is_core
+        && !label.is_empty()
+        && label.bytes().all(|b| b.is_ascii_lowercase())
+        && sha.len() == 7
+        && sha.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Select the most recently published release, stable or pre-release, but not a branch test
+/// release. GitHub writes
 /// `published_at` as an RFC 3339 UTC time, so the text order is the time order.
 fn newest_release(releases: Vec<GitHubRelease>) -> Option<GitHubRelease> {
     releases
         .into_iter()
+        .filter(|release| !is_test_release_tag(&release.tag_name))
         .max_by(|a, b| a.published_at.cmp(&b.published_at))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{newest_release, replace_binary, tag_candidates, tags_match, GitHubRelease};
+    use super::{
+        is_test_release_tag, newest_release, replace_binary, tag_candidates, tags_match,
+        GitHubRelease,
+    };
     use flate2::{write::GzEncoder, Compression};
     use std::fs;
 
@@ -351,6 +380,44 @@ mod tests {
         assert_eq!(newest(after_next_dev).as_deref(), Some("v0.20.0-dev.1"));
 
         assert!(newest(Vec::new()).is_none());
+    }
+
+    #[test]
+    fn dev_never_selects_a_branch_test_release() {
+        let release = |tag: &str, published_at: &str| GitHubRelease {
+            tag_name: tag.to_string(),
+            published_at: Some(published_at.to_string()),
+            assets: Vec::new(),
+        };
+        let releases = vec![
+            release("v0.20.0-dev.1", "2026-10-01T00:00:00Z"),
+            release("v0.20.0-lbfv.g1a2b3c4", "2026-10-05T00:00:00Z"),
+        ];
+        assert_eq!(
+            newest_release(releases).map(|r| r.tag_name).as_deref(),
+            Some("v0.20.0-dev.1")
+        );
+        assert!(newest_release(vec![release(
+            "v0.20.0-lbfv.g1a2b3c4",
+            "2026-10-05T00:00:00Z"
+        )])
+        .is_none());
+
+        for tag in ["v0.20.0-lbfv.g1a2b3c4", "0.20.0-lbfv.g0123456"] {
+            assert!(is_test_release_tag(tag), "{tag}");
+        }
+        for tag in [
+            "v0.20.0",
+            "v0.20.0-dev.2",
+            "v0.19.0-test.2",
+            "v0.20.0-beta.1",
+            "v0.20.0-lbfv.g1a2b3c",
+            "v0.20.0-lbfv.g1a2b3c4d",
+            "v0.20.0-lbfv.gABCDEFG",
+            "v0.20-lbfv.g1a2b3c4",
+        ] {
+            assert!(!is_test_release_tag(tag), "{tag}");
+        }
     }
 
     #[test]

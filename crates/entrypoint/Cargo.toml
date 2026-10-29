@@ -45,7 +45,6 @@ e3-sortition = { workspace = true }
 e3-sync = { workspace = true }
 e3-utils = { workspace = true }
 serde_yaml = { workspace = true }
-e3-test-helpers = { workspace = true }
 e3-zk-prover = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
@@ -57,6 +56,7 @@ reqwest = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+e3-test-support = { workspace = true }
 commitlog = { workspace = true }
 sled = { workspace = true }
 tempfile = { workspace = true }

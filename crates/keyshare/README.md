@@ -56,8 +56,8 @@ dimensions, roster transitions, proof batches, and recovery limits are in
 ## Tests
 
 Run `cargo test --locked -p e3-keyshare` after the
-[test-helper prerequisites](../test-helpers/README.md). Its test graph includes EVM/prover build
-steps. Actor/mock coverage is separate from matching real-proof acceptance.
+[system prerequisites](../tests/README.md#prerequisites-and-assurance). Its test graph includes
+EVM/prover build steps. Actor/mock coverage is separate from matching real-proof acceptance.
 
 [`threshold_keyshare/tests.rs`](src/threshold_keyshare/tests.rs) exercises actor histories and
 restart/cutoff behavior; [`tests/admission.rs`](src/threshold_keyshare/tests/admission.rs) covers

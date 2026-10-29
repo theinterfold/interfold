@@ -178,15 +178,21 @@ The keys below matter most on an operator node. The
 | `rpc_url`                        | Required | WebSocket URL (`ws://` or `wss://`). The node needs it for log subscriptions.                             |
 | `rpc_auth`                       | No auth  | `Basic` or `Bearer` credentials. See [RPC authentication](/reference/configuration#rpc-authentication).   |
 | `data_availability`              | Required | `mode: avail` and an HTTP `rpc_url`. See [Data availability](/reference/configuration#data-availability). |
-| `ingestion_confirmations`        | `1`      | Confirmations before the node applies a log.                                                              |
+| `ingestion_confirmations`        | `3`      | Confirmations before the node applies a log.                                                              |
 | `rpc_poll_interval_ms`           | `7000`   | Milliseconds between the polls of an HTTP provider for a receipt or a new block.                          |
 | `rpc_log_range_blocks`           | `10000`  | Widest block range of one `eth_getLogs` request. See [RPC endpoints](/operate/rpc-endpoints).             |
 | `enabled`                        | `true`   | `false` makes the node ignore the entry.                                                                  |
 
-The defaults of one confirmation and a 7-second poll interval also apply when `rpc_url` uses
+The defaults of three confirmations and a 7-second poll interval also apply when `rpc_url` uses
 `localhost` or `127.0.0.1`, because that URL can be a proxy to a live chain. Set
 `ingestion_confirmations: 0` and `rpc_poll_interval_ms: 250` only on a single-process development
 chain such as Anvil. Do not set them on mainnet or Sepolia.
+
+The node cannot undo a log that it applied, so a chain reorganization deeper than
+`ingestion_confirmations` can leave the node out of step with the chain. Each confirmation also
+delays every duty by about 12 seconds. The default leaves room for a sortition ticket in the
+10-minute mainnet window and the 3-minute Sepolia window. The node logs the value that it uses for
+each chain at startup.
 
 The `autonetkey` key has no effect in this release. The node derives its libp2p key from the wallet
 key.

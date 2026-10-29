@@ -8,8 +8,9 @@
 # Usage: pushed-paths-match.sh <filter-file> < <pre-push refs>
 #
 # Tells the pre-push hook whether a pushed branch changes a path that <filter-file> matches.
-# <filter-file> uses the dorny/paths-filter format that CI reads: each `- '<glob>'` line adds a
-# pattern, and a `!<glob>` pattern excludes paths. The script compares each pushed branch with its
+# <filter-file> uses the dorny/paths-filter format that CI reads. Only the `circuits` and `verifiers`
+# groups select compilation; `- '<glob>'` adds a pattern and `!<glob>` excludes paths.
+# The script compares each pushed branch with its
 # merge base with origin/main. Without refs on stdin (a manual run), it compares HEAD.
 #
 # check:verifiers reads only the checked-out tree, so it covers a pushed branch only when that branch
@@ -24,7 +25,8 @@ set -uo pipefail
 
 filter_file="$1"
 
-patterns="$(sed -n "s/^[[:space:]]*- '\([^']*\)'.*/\1/p" "$filter_file")" || exit 0
+patterns="$(awk '/^[a-z_]+:/ { selected = ($0 ~ /^(circuits|verifiers):/) } selected' "$filter_file" \
+  | sed -n "s/^[[:space:]]*- '\([^']*\)'.*/\1/p")" || exit 0
 [[ -n "$patterns" ]] || exit 0
 
 pathspecs=()

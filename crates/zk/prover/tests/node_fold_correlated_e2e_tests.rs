@@ -23,13 +23,14 @@ use common::{
     setup_recursive_aggregation_fold_circuit, setup_test_prover,
 };
 use e3_committee::CiphernodesCommitteeSize;
-use e3_events::{CircuitName, Proof};
+use e3_events::Proof;
 use e3_fhe_params::BfvPreset;
 use e3_zk_config::DkgInputType;
+use e3_zk_config::{CircuitName, CircuitVariant};
 use e3_zk_prover::test_utils::{
     fold_witness_field_strings, fold_witness_input_map, load_vk_artifacts,
 };
-use e3_zk_prover::{generate_sequential_c3_fold, CircuitVariant, Provable, ZkProver};
+use e3_zk_prover::{generate_sequential_c3_fold, Provable, ZkProver};
 use e3_zk_prover::{CompiledCircuit, WitnessGenerator};
 use e3_zk_prover::{
     DkgShareDecryptionCircuit as ShareDecryptionCircuit, PkCircuit, PkGenerationCircuit,

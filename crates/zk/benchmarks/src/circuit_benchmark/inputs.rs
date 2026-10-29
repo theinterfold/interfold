@@ -6,8 +6,8 @@ use super::{
 };
 use anyhow::{bail, Result};
 use e3_committee::CiphernodesCommitteeSize;
-use e3_events::CircuitName;
 use e3_fhe_params::BfvPreset;
+use e3_zk_config::CircuitName;
 use e3_zk_config::{dkg, threshold, DkgInputType};
 use e3_zk_prover::{CompiledCircuit, Provable};
 use fhe::bfv::BfvParameters;

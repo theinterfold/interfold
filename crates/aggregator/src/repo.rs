@@ -8,19 +8,9 @@ use e3_data::{Repositories, Repository};
 use e3_events::{E3id, StoreKeys};
 
 use crate::{
-    CommitteeFinalizerRecoveryState, PublicKeyAggregatorRecoveryState, PublicKeyAggregatorState,
+    PublicKeyAggregatorRecoveryState, PublicKeyAggregatorState,
     ThresholdPlaintextAggregatorRecoveryState, ThresholdPlaintextAggregatorState,
 };
-
-pub trait CommitteeFinalizerRepositoryFactory {
-    fn committee_finalizer_recovery(&self) -> Repository<CommitteeFinalizerRecoveryState>;
-}
-
-impl CommitteeFinalizerRepositoryFactory for Repositories {
-    fn committee_finalizer_recovery(&self) -> Repository<CommitteeFinalizerRecoveryState> {
-        Repository::new(self.store.scope(StoreKeys::committee_finalizer_recovery()))
-    }
-}
 
 pub trait TrBfvPlaintextRepositoryFactory {
     fn trbfv_plaintext(&self, e3_id: &E3id) -> Repository<ThresholdPlaintextAggregatorState>;

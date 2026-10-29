@@ -16,7 +16,7 @@ It does not own the cryptographic statements implemented by those recipients.
 | [`routing/effects/`](src/routing/effects)                                                                  | Context construction, hydration, checkpoints, and snapshots.   |
 | [`context.rs`](src/context.rs), [`meta.rs`](src/meta.rs), [`hetrogenous_map.rs`](src/hetrogenous_map.rs)   | Per-E3 recipients, metadata, and typed dependencies.           |
 | [`lifecycle/`](src/lifecycle), [`canonical_key.rs`](src/canonical_key.rs)                                  | Node-wide stage projection and shared confirmed-key authority. |
-| [`repo.rs`](src/repo.rs)                                                                                   | Router/context/lifecycle persistence accessors.                |
+| [`repo.rs`](src/repo.rs), [`request_router_checkpoint.rs`](src/request_router_checkpoint.rs)               | Router checkpoint and router/context/lifecycle repositories.   |
 
 Chain admission creates a context; extensions add dependencies and recipients as prerequisites
 arrive. Deferred history reaches a new recipient before the creating event. Hydration restores
@@ -52,10 +52,11 @@ Peer events arriving before chain admission wait in a bounded memory-only queue.
 admitting chain event in arrival order; a restart before admission loses that held history. This
 queue is separate from deferred delivery to missing recipients.
 
-`canonical_key::CanonicalPublicKeys` is the shared cache for confirmed key identity and
-decryption-domain repair. Its EVM projection establishes authority; a local `PublicKeyAggregated`
-intent cannot. Repository factory traits expose typed context, metadata, lifecycle, and
-router-checkpoint storage to startup/recovery consumers.
+`canonical_key::CanonicalPublicKeys` stays here as the shared runtime authority for confirmed key
+identity and decryption-domain repair, not a transport type or a second service in events. Its EVM
+projection establishes authority; a local `PublicKeyAggregated` intent cannot. Repository factory
+traits expose typed context, metadata, lifecycle, and router-checkpoint storage to startup/recovery
+consumers.
 
 See [persistence and replay](../../docs/architecture/persistence-and-replay.md) for checkpoint,
 deferred-queue, overflow, and teardown limits.

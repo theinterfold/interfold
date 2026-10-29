@@ -37,6 +37,9 @@ behavior; record unmet requirements as gaps rather than weakening them to match 
   Existing code has exceptions; see [design principles](docs/architecture/design-principles.md).
 - Follow nearby code and repository formatter/linter configuration. Format changed files only. Write
   concise comments that explain why; match documentation style and preserve exact interface text.
+- Keep READMEs, `AGENTS.md`, and domain docs focused on non-obvious usage, rationale, constraints,
+  and operational hazards. Do not duplicate APIs, constants, file inventories, or behavior that is
+  clear from code. Correct stale text instead of adding implementation summaries.
 
 ## Protocol and artifact changes
 

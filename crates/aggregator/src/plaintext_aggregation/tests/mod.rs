@@ -5,18 +5,20 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
+use crate::test_support::get_common_setup;
 use alloy::signers::local::PrivateKeySigner;
+use e3_committee::Committee;
 use e3_data::{AutoPersist, DataStore, InMemStore, PersistableData, Repository};
 use e3_events::{
-    CircuitName, Committee, ComputeRequestErrorKind, ComputeRequestKind, EffectsEnabled, GetEvents,
-    HistoryCollector, ProofPayload, ProofType, Seed, TakeEvents, Unsequenced, ZkError,
+    ComputeRequestErrorKind, ComputeRequestKind, EffectsEnabled, GetEvents, HistoryCollector,
+    ProofPayload, ProofType, Seed, TakeEvents, Unsequenced, ZkError,
 };
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, DEFAULT_BFV_PRESET};
 use e3_sortition::{
     AggregatorFailoverState, CiphernodeSelector, CiphernodeSelectorState, NodeStateStore,
     SortitionBackend, SortitionParams,
 };
-use e3_test_helpers::get_common_setup;
+use e3_zk_config::CircuitName;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 fn test_ctx(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {

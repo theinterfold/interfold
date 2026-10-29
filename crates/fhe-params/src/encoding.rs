@@ -17,7 +17,9 @@ use thiserror::Error as ThisError;
 #[cfg(feature = "abi-encoding")]
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 #[cfg(feature = "abi-encoding")]
-use alloy_primitives::U256;
+use alloy_primitives::{keccak256, B256, U256};
+
+use crate::constants::{BFV_ENCRYPTION_SCHEME, INTERFOLD_BFV_VERSION};
 
 #[derive(ThisError, Debug)]
 pub enum EncodingError {
@@ -58,6 +60,34 @@ pub fn encode_bfv_params(params: &BfvParameters) -> Vec<u8> {
         DynSolValue::String(params.get_error1_variance().to_string()),
     ]);
     value.abi_encode()
+}
+
+/// Hash the exact ABI parameter bytes, including their tuple framing.
+pub fn bfv_parameter_hash(encoded_params: &[u8]) -> B256 {
+    keccak256(encoded_params)
+}
+
+/// Return the on-chain BFV encryption scheme identifier.
+pub fn bfv_encryption_scheme_id() -> B256 {
+    keccak256(BFV_ENCRYPTION_SCHEME.as_bytes())
+}
+
+/// Derive a configuration identity without decoding or normalizing registry bytes.
+///
+/// The version is explicit so historical indexers can verify their frozen domain.
+/// This function does not decide whether a configuration is supported.
+pub fn bfv_crypto_config_id(encoded_params: &[u8], circuit_version: &str) -> B256 {
+    let value = DynSolValue::Tuple(vec![
+        DynSolValue::FixedBytes(bfv_encryption_scheme_id(), 32),
+        DynSolValue::FixedBytes(bfv_parameter_hash(encoded_params), 32),
+        DynSolValue::FixedBytes(keccak256(circuit_version.as_bytes()), 32),
+    ]);
+    keccak256(value.abi_encode())
+}
+
+/// Derive a configuration identity using the current circuit statement domain.
+pub fn current_bfv_crypto_config_id(encoded_params: &[u8]) -> B256 {
+    bfv_crypto_config_id(encoded_params, INTERFOLD_BFV_VERSION)
 }
 
 /// Decodes BFV parameters from ABI-encoded bytes.

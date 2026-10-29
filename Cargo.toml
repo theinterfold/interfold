@@ -2,6 +2,7 @@
 members = [
   "crates/aggregator",
   "crates/bfv-client",
+  "crates/bfv-test-support",
   "crates/ciphernode-builder",
   "crates/cli",
   "crates/committee",
@@ -16,13 +17,14 @@ members = [
   "crates/entrypoint",
   "crates/event-system",
   "crates/events",
-  "crates/evm",
-  "crates/evm-helpers",
+  "crates/evm/runtime",
+  "crates/evm/contracts",
+  "crates/evm/client",
   "crates/fhe",
   "crates/fhe-params",
   "crates/fs",
   "crates/hamt",
-  "crates/indexer",
+  "crates/evm/indexer",
   "crates/init",
   "crates/keyshare",
   "crates/layout-lock",
@@ -44,7 +46,7 @@ members = [
   "crates/sortition",
   "crates/sync",
   "crates/task-pool",
-  "crates/test-helpers",
+  "crates/test-support",
   "crates/tests",
   "crates/trbfv",
   "crates/utils",
@@ -86,6 +88,7 @@ repository = "https://github.com/theinterfold/interfold"
 [workspace.dependencies]
 e3-aggregator = { version = "0.20.0-dev.2", path = "./crates/aggregator" }
 e3-bfv-client = { version = "0.20.0-dev.2", path = "./crates/bfv-client" }
+e3-bfv-test-support = { path = "./crates/bfv-test-support" }
 e3-committee = { version = "0.20.0-dev.2", path = "./crates/committee" }
 e3-config = { version = "0.20.0-dev.2", path = "./crates/config" }
 e3-console = { version = "0.20.0-dev.2", path = "./crates/console" }
@@ -103,12 +106,13 @@ e3-entrypoint = { version = "0.20.0-dev.2", path = "./crates/entrypoint" }
 e3-init = { version = "0.20.0-dev.2", path = "./crates/init" }
 e3-event-system = { version = "0.20.0-dev.2", path = "./crates/event-system" }
 e3-events = { version = "0.20.0-dev.2", path = "./crates/events" }
-e3-evm = { version = "0.20.0-dev.2", path = "./crates/evm" }
-e3-evm-helpers = { version = "0.20.0-dev.2", path = "./crates/evm-helpers" }
+e3-evm = { version = "0.20.0-dev.2", path = "./crates/evm/runtime" }
+e3-evm-contracts = { version = "0.20.0-dev.2", path = "./crates/evm/contracts" }
+e3-evm-client = { version = "0.20.0-dev.2", path = "./crates/evm/client" }
 e3-fhe = { version = "0.20.0-dev.2", path = "./crates/fhe" }
 e3-fhe-params = { version = "0.20.0-dev.2", path = "./crates/fhe-params" }
 e3-fs = { version = "0.20.0-dev.2", path = "./crates/fs" }
-e3-indexer = { version = "0.20.0-dev.2", path = "./crates/indexer" }
+e3-indexer = { version = "0.20.0-dev.2", path = "./crates/evm/indexer" }
 e3-multithread = { version = "0.20.0-dev.2", path = "./crates/multithread" }
 e3-keyshare = { version = "0.20.0-dev.2", path = "./crates/keyshare" }
 e3-logger = { version = "0.20.0-dev.2", path = "./crates/logger" }
@@ -125,7 +129,7 @@ e3-polynomial-fhe = { version = "0.20.0-dev.2", path = "./crates/polynomial/fhe-
 e3-sync = { version = "0.20.0-dev.2", path = "./crates/sync" }
 e3-layout-lock = { version = "0.20.0-dev.2", path = "./crates/layout-lock" }
 e3-task-pool = { version = "0.20.0-dev.2", path = "./crates/task-pool" }
-e3-test-helpers = { version = "0.20.0-dev.2", path = "./crates/test-helpers" }
+e3-test-support = { path = "./crates/test-support" }
 e3-tests = { version = "0.20.0-dev.2", path = "./crates/tests" }
 e3-trbfv = { version = "0.20.0-dev.2", path = "./crates/trbfv" }
 e3-utils = { version = "0.20.0-dev.2", path = "./crates/utils" }
@@ -143,6 +147,8 @@ actix = "=0.13.5"
 actix-web = "=4.11.0"
 aes-gcm = "=0.10.3"
 alloy = { version = "=1.0.41", features = ["node-bindings", "full"] }
+alloy-contract = { version = "=1.0.41", default-features = false }
+alloy-json-abi = "=1.4.1"
 alloy-primitives = { version = "=1.4.1", default-features = false, features = [
   "rlp",
   "serde",
