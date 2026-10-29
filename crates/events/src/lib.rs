@@ -6,8 +6,6 @@
 
 mod bus_handle;
 mod chain_position;
-mod commitment_link;
-mod committee;
 mod correlation_id;
 mod data_events;
 mod e3id;
@@ -32,8 +30,6 @@ mod traits;
 
 pub use bus_handle::*;
 pub use chain_position::*;
-pub use commitment_link::*;
-pub use committee::*;
 pub use correlation_id::*;
 pub use data_events::*;
 pub use e3id::*;

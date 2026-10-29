@@ -9,7 +9,7 @@ use e3_data::{InMemEventLog, InMemSequenceIndex, RepositoriesFactory, Snapshot};
 use e3_events::{
     CiphertextOutputPublished, EventSource, EventStore, EventStoreQueryBy, EventStoreRouter, SeqAgg,
 };
-use e3_keyshare::canonical_key::{CanonicalPublicKey, CanonicalPublicKeys};
+use e3_request::canonical_key::{CanonicalPublicKey, CanonicalPublicKeys};
 use e3_request::{
     ContextRepositoryFactory, E3Context, E3ContextParams, E3Extension, E3Meta, META_KEY,
 };

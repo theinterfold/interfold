@@ -131,8 +131,8 @@ mod tests {
     use crate::utils::total_expected_for;
 
     use super::*;
-    use e3_events::CircuitName;
     use e3_utils::ArcBytes;
+    use e3_zk_config::CircuitName;
 
     fn meta(sk: usize, esm: usize) -> NodeDkgFoldMeta {
         NodeDkgFoldMeta {

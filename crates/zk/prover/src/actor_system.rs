@@ -9,10 +9,11 @@
 use actix::{Actor, Addr, Recipient};
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::Result;
+use e3_committee::Committee;
 use e3_data::Repositories;
 use e3_events::{
-    AggregateId, BusHandle, Committee, DkgFoldAttestationContext, E3Stage, E3id,
-    EncryptionKeyReceived, EventStoreQueryBy, SeqAgg, TypedEvent,
+    AggregateId, BusHandle, DkgFoldAttestationContext, E3Stage, E3id, EncryptionKeyReceived,
+    EventStoreQueryBy, SeqAgg, TypedEvent,
 };
 use e3_request::E3Meta;
 use e3_task_pool::TaskPool;

@@ -8,8 +8,11 @@
 
 #[path = "ciphernode_selection/actor.rs"]
 mod ciphernode_selector;
+#[path = "committee_finalization/actor.rs"]
+mod committee_finalizer;
 #[path = "sortition/actor.rs"]
 mod sortition;
 
 pub use ciphernode_selector::*;
+pub use committee_finalizer::*;
 pub use sortition::*;

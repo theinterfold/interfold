@@ -139,7 +139,7 @@
       "read_first": [
         {
           "why": "Wiring: the node builds E3Router and installs the router extensions",
-          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@239@Ok(E3Router::builder(bus, storage.store.clone())"
+          "ref": "crates/ciphernode-builder/src/builder/extensions.rs@240@Ok(E3Router::builder(bus, storage.store.clone())"
         },
         { "why": "The router actor and what it holds per E3", "ref": "crates/request/src/routing/actor.rs@95@pub struct E3Router {" },
         {
@@ -207,6 +207,11 @@
       "one_line": "Chooses E3 committees by ranking operator tickets against the request seed, then tells each node whether it was finalized into one.",
       "actors": [
         {
+          "name": "CommitteeFinalizer",
+          "role": "Retains request/ticket context and schedules ranked finalization attempts through an injected chain-time reader after effects are enabled.",
+          "ref": "crates/sortition/src/committee_finalization/actor.rs@87@pub struct CommitteeFinalizer {"
+        },
+        {
           "name": "Sortition",
           "role": "Bus subscriber for registry and chain state; ranks tickets for each E3Requested once its seed arrives, and stores finalized committees.",
           "ref": "crates/sortition/src/sortition/handlers/envelope.rs@7@impl Actor for Sortition {"
@@ -214,7 +219,7 @@
         {
           "name": "CiphernodeSelector",
           "role": "Bus subscriber that turns a ranking result into TicketGenerated and a finalized roster into CiphernodeSelected; it also tracks aggregator failover.",
-          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@127@impl Actor for CiphernodeSelector {"
+          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@128@impl Actor for CiphernodeSelector {"
         }
       ],
       "consumes": [
@@ -276,6 +281,11 @@
       ],
       "emits": [
         {
+          "name": "CommitteeFinalizeRequested",
+          "by": "CommitteeFinalizer",
+          "ref": "crates/sortition/src/committee_finalization/actor.rs@202@CommitteeFinalizeRequested {"
+        },
+        {
           "name": "TicketGenerated",
           "by": "CiphernodeSelector",
           "ref": "crates/sortition/src/ciphernode_selection/handlers.rs@129@TicketGenerated {"
@@ -288,7 +298,7 @@
         {
           "name": "AggregatorChanged",
           "by": "CiphernodeSelector",
-          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@383@let event = AggregatorChanged {"
+          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@385@let event = AggregatorChanged {"
         },
         {
           "name": "CommitteeMemberExpelled (re-published with party id)",
@@ -360,9 +370,9 @@
           "ref": "crates/sortition/src/sortition/node_registry.rs@123@pub struct NodeStateStore {"
         },
         {
-          "name": "CommitteeFinalizer (e3-aggregator, outside this group)",
-          "what": "Collects TicketGenerated for an E3 and publishes CommitteeFinalizeRequested at the deadline.",
-          "ref": "crates/aggregator/src/committee_finalization/actor.rs@84@pub struct CommitteeFinalizer {"
+          "name": "CommitteeFinalizerRecoveryState",
+          "what": "Retains the original request/context and finalization ticket under the unchanged recovery key and schema.",
+          "ref": "crates/sortition/src/committee_finalization/actor.rs@49@pub struct CommitteeFinalizerRecoveryState {"
         }
       ],
       "read_first": [
@@ -406,7 +416,7 @@
         {
           "pattern": "actix-timer",
           "note": "The selector arms its aggregator failover timer with run_later.",
-          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@630@let handle = ctx.run_later(delay, move |actor, ctx| {"
+          "ref": "crates/sortition/src/ciphernode_selection/actor.rs@632@let handle = ctx.run_later(delay, move |actor, ctx| {"
         },
         {
           "pattern": "iterator-chain",
@@ -422,7 +432,7 @@
       "depends_on": ["e3-config", "e3-data", "e3-events", "e3-request", "e3-utils"],
       "tests": "unit tests in sortition/ticket_selection.rs, ticket.rs, selection_backend.rs, node_registry_tests.rs and ciphernode_selection/actor.rs under crates/sortition/src; fixtures in crates/sortition/tests/fixtures; cargo test -p e3-sortition",
       "unverified": [
-        "CommitteeRequested is built from randomness-provider chain logs (crates/evm/src/randomness_provider/events.rs), grepped only; the chain path that emits CommitteeFinalized was not read."
+        "CommitteeRequested is built from randomness-provider chain logs (crates/evm/runtime/src/randomness_provider/events.rs), grepped only; the chain path that emits CommitteeFinalized was not read."
       ]
     },
     {
@@ -440,7 +450,7 @@
         {
           "name": "CommitmentConsistencyChecker",
           "role": "Per-E3 actor that caches verified proof outputs, checks cross-circuit commitment links before and after ZK, and publishes violations.",
-          "ref": "crates/slashing/src/commitment_consistency/actor.rs@153@impl Actor for CommitmentConsistencyChecker {"
+          "ref": "crates/slashing/src/commitment_consistency/actor.rs@154@impl Actor for CommitmentConsistencyChecker {"
         }
       ],
       "consumes": [
@@ -482,17 +492,17 @@
         {
           "name": "CommitmentConsistencyCheckRequested (pre-ZK gate, returns inconsistent parties)",
           "by": "CommitmentConsistencyChecker",
-          "ref": "crates/slashing/src/commitment_consistency/actor.rs@241@impl Handler<TypedEvent<CommitmentConsistencyCheckRequested>> for CommitmentConsistencyChecker {"
+          "ref": "crates/slashing/src/commitment_consistency/actor.rs@242@impl Handler<TypedEvent<CommitmentConsistencyCheckRequested>> for CommitmentConsistencyChecker {"
         },
         {
           "name": "ProofVerificationPassed (cross-circuit check after ZK)",
           "by": "CommitmentConsistencyChecker",
-          "ref": "crates/slashing/src/commitment_consistency/actor.rs@222@impl Handler<TypedEvent<ProofVerificationPassed>> for CommitmentConsistencyChecker {"
+          "ref": "crates/slashing/src/commitment_consistency/actor.rs@223@impl Handler<TypedEvent<ProofVerificationPassed>> for CommitmentConsistencyChecker {"
         },
         {
           "name": "CommitmentRosterSelected (fixes the C4 roster used to map rows)",
           "by": "CommitmentConsistencyChecker",
-          "ref": "crates/slashing/src/commitment_consistency/actor.rs@203@impl Handler<TypedEvent<CommitmentRosterSelected>> for CommitmentConsistencyChecker {"
+          "ref": "crates/slashing/src/commitment_consistency/actor.rs@204@impl Handler<TypedEvent<CommitmentRosterSelected>> for CommitmentConsistencyChecker {"
         }
       ],
       "emits": [
@@ -519,12 +529,12 @@
         {
           "name": "CommitmentConsistencyViolation",
           "by": "CommitmentConsistencyChecker",
-          "ref": "crates/slashing/src/commitment_consistency/actor.rs@215@if let Err(err) = self.bus.publish(violation, ec.clone()) {"
+          "ref": "crates/slashing/src/commitment_consistency/actor.rs@216@if let Err(err) = self.bus.publish(violation, ec.clone()) {"
         },
         {
           "name": "CommitmentConsistencyCheckComplete (pre-ZK response)",
           "by": "CommitmentConsistencyChecker",
-          "ref": "crates/slashing/src/commitment_consistency/actor.rs@262@if let Err(err) = self.bus.publish(outcome.complete, ec) {"
+          "ref": "crates/slashing/src/commitment_consistency/actor.rs@263@if let Err(err) = self.bus.publish(outcome.complete, ec) {"
         }
       ],
       "state": [
@@ -546,12 +556,12 @@
         {
           "name": "verified proof cache keyed by (address, proof type)",
           "where": "memory",
-          "ref": "crates/slashing/src/commitment_consistency/workflow.rs@119@verified: HashMap<(Address, ProofType), Vec<VerifiedProofData>>,"
+          "ref": "crates/slashing/src/commitment_consistency/workflow.rs@120@verified: HashMap<(Address, ProofType), Vec<VerifiedProofData>>,"
         },
         {
           "name": "commitment checker snapshot repository (written after each change)",
           "where": "disk",
-          "ref": "crates/slashing/src/commitment_consistency/actor.rs@57@snapshot_repo: Option<Repository<CommitmentConsistencySnapshot>>,"
+          "ref": "crates/slashing/src/commitment_consistency/actor.rs@58@snapshot_repo: Option<Repository<CommitmentConsistencySnapshot>>,"
         }
       ],
       "key_types": [
@@ -582,13 +592,13 @@
         },
         {
           "name": "CommitmentLink",
-          "what": "Trait for one cross-circuit rule: source and target proof types, a scope, and a consistency check.",
-          "ref": "crates/events/src/commitment_link.rs@34@pub trait CommitmentLink: Send + Sync {"
+          "what": "Checker-owned interface for cross-circuit rules; ZK implementations depend on slashing, while ProofType stays in events.",
+          "ref": "crates/slashing/src/commitment_consistency/link.rs@34@pub trait CommitmentLink: Send + Sync {"
         },
         {
           "name": "CommitmentConsistency",
           "what": "Plain service that caches verified outputs, maps C2 rows through the C4 roster, and returns violations.",
-          "ref": "crates/slashing/src/commitment_consistency/workflow.rs@110@pub(crate) struct CommitmentConsistency {"
+          "ref": "crates/slashing/src/commitment_consistency/workflow.rs@111@pub(crate) struct CommitmentConsistency {"
         },
         {
           "name": "AccusationManagerExtension",
@@ -615,7 +625,7 @@
         },
         {
           "why": "On-chain side: the e3-evm writer consumes AccusationQuorumReached; the AccusedFaulted gate (is_slashable_outcome) is a few lines below",
-          "ref": "crates/evm/src/slashing_writing/handlers.rs@16@InterfoldEventData::AccusationQuorumReached(data) => {"
+          "ref": "crates/evm/runtime/src/slashing_writing/handlers.rs@16@InterfoldEventData::AccusationQuorumReached(data) => {"
         }
       ],
       "rust_patterns": [
@@ -637,7 +647,7 @@
         {
           "pattern": "trait-object-dyn",
           "note": "CommitmentConsistency holds its rules as boxed CommitmentLink trait objects.",
-          "ref": "crates/slashing/src/commitment_consistency/workflow.rs@112@links: Vec<Box<dyn CommitmentLink>>,"
+          "ref": "crates/slashing/src/commitment_consistency/workflow.rs@113@links: Vec<Box<dyn CommitmentLink>>,"
         },
         {
           "pattern": "enum-match",
