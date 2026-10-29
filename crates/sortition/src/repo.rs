@@ -11,8 +11,9 @@ use crate::{
     BondOwnerState, CiphernodeSelectorState, CommitteeFinalizerRecoveryState,
     SortitionRecoveryState,
 };
+use e3_committee::Committee;
 use e3_data::{Repositories, Repository};
-use e3_events::{Committee, E3id, StoreKeys};
+use e3_events::{E3id, StoreKeys};
 use std::collections::HashMap;
 
 pub trait CommitteeFinalizerRepositoryFactory {

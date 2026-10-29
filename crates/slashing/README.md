@@ -19,6 +19,11 @@ Local proof/commitment observations and received accusations pass authentication
 voting. The workflow tallies one signed preimage/window and emits outcomes for the EVM writer;
 consistency checks supply evidence but do not execute a slash.
 
+This checker owns `CommitmentLink`, `LinkScope`, and `FieldValue` in
+[`commitment_consistency/link.rs`](src/commitment_consistency/link.rs). The interface uses event
+`ProofType` and raw public-signal bytes; concrete ZK extraction stays in `e3-zk-prover`. Dependency
+direction is prover → slashing → events, so events cannot re-export the interface.
+
 ## Router extensions
 
 Register these per-E3 capabilities through `E3RouterBuilder::with_recipient`:

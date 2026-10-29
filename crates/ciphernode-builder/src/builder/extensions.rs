@@ -21,8 +21,9 @@ use anyhow::Result;
 use e3_aggregator::ext::{
     AggregatorRoleExtension, PublicKeyAggregatorExtension, ThresholdPlaintextAggregatorExtension,
 };
+use e3_committee::Committee;
 use e3_data::Repositories;
-use e3_events::{AggregateId, BusHandle, Committee, E3Stage, E3id};
+use e3_events::{AggregateId, BusHandle, E3Stage, E3id};
 use e3_evm::{read_canonical_dkg_timing, slashing_managers_by_chain, Chains};
 use e3_fhe::ext::FheExtension;
 use e3_keyshare::{ext::ThresholdKeyshareExtension, DkgTimingReader};

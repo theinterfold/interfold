@@ -5,9 +5,9 @@
 use super::{dkg_has_ended, validate_received_key};
 use actix::Recipient;
 use anyhow::{ensure, Context, Result};
-use e3_committee::CiphernodesCommitteeSize;
+use e3_committee::{CiphernodesCommitteeSize, Committee};
 use e3_events::{
-    AggregateId, Committee, CorrelationId, E3id, EncryptionKeyReceived, EventContextAccessors,
+    AggregateId, CorrelationId, E3id, EncryptionKeyReceived, EventContextAccessors,
     EventContextSeq, EventSource, EventStoreQueryBy, EventStoreQueryResponse, InterfoldEvent,
     InterfoldEventData, ProofType, SeqAgg, TypedEvent,
 };

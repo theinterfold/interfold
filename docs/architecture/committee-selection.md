@@ -130,6 +130,11 @@ polling/skipping.
 
 ## Finalization and lifecycle clocks
 
+`e3-committee::Committee` owns the supplied ordered member list and address lookup, not formation or
+failover. Sortition normalizes finalized EVM addresses into runtime party order and owns the
+active/standby policy. Moving the representation must not change either ordering or lookup case
+behavior; [DKG identities](dkg.md#identities-and-dimensions) constrain downstream slots.
+
 Ticket submissions include `committeeDeadline`; `finalizeCommittee` requires strictly later time.
 Members schedule staggered calls, but the first successful transaction locks canonical on-chain
 order. It must finalize by `committeeDeadline + dkgWindow`, inclusive: delaying finalization cannot
