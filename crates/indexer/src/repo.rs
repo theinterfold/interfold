@@ -133,7 +133,7 @@ impl<S: DataStore> E3Repository<S> {
 mod tests {
     use super::E3Repository;
     use crate::{models::E3, InMemoryStore, SharedStore};
-    use e3_evm_helpers::contracts::CommitteeSize;
+    use e3_evm_contracts::CommitteeSize;
     use std::sync::Arc;
     use tokio::sync::RwLock;
 

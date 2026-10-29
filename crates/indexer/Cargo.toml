@@ -12,6 +12,7 @@ async-trait.workspace = true
 bincode.workspace = true
 e3-bfv-client.workspace = true
 e3-evm-helpers.workspace = true
+e3-evm-contracts.workspace = true
 e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
 eyre.workspace = true
 serde.workspace = true

@@ -17,6 +17,13 @@ use alloy::providers::Provider;
 use alloy::sol_types::SolEvent;
 use async_trait::async_trait;
 use e3_bfv_client::validate_pk_commitment;
+use e3_evm_contracts::{
+    CommitteeSize,
+    ICiphernodeRegistry::{CommitteePublicKeyChunkPublished, CommitteePublished},
+    IInterfold::{
+        CiphertextOutputPublished, CiphertextOutputReferencePublished, PlaintextOutputPublished,
+    },
+};
 use e3_evm_helpers::{
     block_listener::BlockListener,
     contracts::{
@@ -24,10 +31,6 @@ use e3_evm_helpers::{
         ReadWrite,
     },
     event_listener::{EventListener, LiveProgress, NOT_PROCESSING},
-    events::{
-        CiphertextOutputPublished, CiphertextOutputReferencePublished,
-        CommitteePublicKeyChunkPublished, CommitteePublished, PlaintextOutputPublished,
-    },
 };
 use e3_fhe_params::{
     bfv_crypto_config_id, bfv_encryption_scheme_id, current_bfv_crypto_config_id,
@@ -538,7 +541,9 @@ async fn store_committee_public_key<S: DataStore, R: ProviderType>(
         request_block,
         seed,
         input_window,
-        committee_size: e3.committeeSize,
+        // Preserve the former Alloy enum view, including its unknown-value sentinel, in storage.
+        committee_size: CommitteeSize::try_from(e3.committeeSize)
+            .unwrap_or(CommitteeSize::__Invalid),
         requester: e3.requester.to_string(),
     };
 

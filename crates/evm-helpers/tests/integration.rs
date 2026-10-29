@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+mod contract_client;
 mod helpers;
 use alloy::consensus::BlockHeader;
 use alloy::primitives::{Address, U256};

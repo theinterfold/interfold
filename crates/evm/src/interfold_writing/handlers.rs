@@ -961,16 +961,32 @@ mod tests {
     /// another 30 s.
     #[actix::test]
     async fn failed_settlement_reads_back_off() -> Result<()> {
+        use alloy::{
+            rpc::{client::RpcClient, json_rpc::RequestPacket},
+            transports::mock::MockTransport,
+        };
+        use tower::Service;
+
         tokio::time::pause();
         let system = EventSystem::new().with_fresh_bus();
         let bus = system.handle()?.enable("failed-settlement-backoff");
 
         let asserter = Asserter::new();
         asserter.push_success(&"0x1");
+        let (attempts, mut attempt_times) = tokio::sync::mpsc::unbounded_channel();
+        let mut mock = MockTransport::new(asserter.clone());
+        let transport = tower::service_fn(move |packet: RequestPacket| {
+            if let RequestPacket::Single(request) = &packet {
+                if request.method() == "eth_call" {
+                    attempts.send(tokio::time::Instant::now()).unwrap();
+                }
+            }
+            mock.call(packet)
+        });
         let provider = EthProvider::new(
             ProviderBuilder::new()
                 .wallet(EthereumWallet::from(PrivateKeySigner::random()))
-                .connect_mocked_client(asserter.clone()),
+                .connect_client(RpcClient::new(transport, true)),
         )
         .await?;
         // Each attempt fails at its first read, `getE3Stage`.
@@ -993,15 +1009,16 @@ mod tests {
         .start();
         writer.send(EffectsEnabled::new()).await?;
 
-        // The (paused) time at which each of the three attempts read the chain.
-        let mut attempts = Vec::new();
-        while attempts.len() < 3 {
-            if asserter.read_q().len() < 3 - attempts.len() {
-                attempts.push(tokio::time::Instant::now());
-                continue;
+        // Timestamp the calls themselves: polling the response queue can observe one attempt
+        // later than another and make a correct 60-second delay appear shorter.
+        let attempts = tokio::time::timeout(Duration::from_secs(120), async {
+            let mut times = Vec::new();
+            for _ in 0..3 {
+                times.push(attempt_times.recv().await.expect("mock transport closed"));
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+            times
+        })
+        .await?;
         let first_wait = attempts[1] - attempts[0];
         let second_wait = attempts[2] - attempts[1];
         assert!(

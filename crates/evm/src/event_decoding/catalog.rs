@@ -10,7 +10,9 @@
 //! names every other event in the current implementation ABIs so raw audit
 //! records remain understandable without creating dozens of actor messages.
 
+use crate::contracts::{ICiphernodeRegistry, IInterfold};
 use alloy::primitives::{keccak256, B256};
+use alloy::sol_types::SolEvent;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EvmEventDefinition {
@@ -100,12 +102,12 @@ const INTERFOLD: &[EvmEventDefinition] = &[
     EvmEventDefinition::new("CiphernodeRegistrySet", "CiphernodeRegistrySet(address)", None),
     EvmEventDefinition::new(
         "CiphertextOutputPublished",
-        "CiphertextOutputPublished(uint256,bytes,bytes32)",
+        IInterfold::CiphertextOutputPublished::SIGNATURE,
         Some(1),
     ),
     EvmEventDefinition::new(
         "CiphertextOutputReferencePublished",
-        "CiphertextOutputReferencePublished(uint256,bytes32,bytes32,uint32,uint128)",
+        IInterfold::CiphertextOutputReferencePublished::SIGNATURE,
         Some(1),
     ),
     EvmEventDefinition::new(
@@ -113,14 +115,14 @@ const INTERFOLD: &[EvmEventDefinition] = &[
         "CiphertextVerifierSet(bytes32,address)",
         None,
     ),
-    EvmEventDefinition::new("CommitteeFinalized", "CommitteeFinalized(uint256)", Some(1)),
+    EvmEventDefinition::new("CommitteeFinalized", IInterfold::CommitteeFinalized::SIGNATURE, Some(1)),
     EvmEventDefinition::new("CommitteeFormed", "CommitteeFormed(uint256)", Some(1)),
     EvmEventDefinition::new(
         "CommitteeThresholdsUpdated",
         "CommitteeThresholdsUpdated(uint8,uint32[2])",
         None,
     ),
-    EvmEventDefinition::new("E3Failed", "E3Failed(uint256,uint8,uint8)", Some(1)),
+    EvmEventDefinition::new("E3Failed", IInterfold::E3Failed::SIGNATURE, Some(1)),
     EvmEventDefinition::new(
         "E3FailureProcessed",
         "E3FailureProcessed(uint256,uint256,uint256)",
@@ -140,10 +142,10 @@ const INTERFOLD: &[EvmEventDefinition] = &[
     EvmEventDefinition::new("E3RefundManagerSet", "E3RefundManagerSet(address)", None),
     EvmEventDefinition::new(
         "E3Requested",
-        "E3Requested(uint256,(uint256,uint8,uint256,uint256[2],bytes32,address,uint8,bytes,address,address,bytes32,bytes32,bytes,address,bytes32),bytes32)",
+        IInterfold::E3Requested::SIGNATURE,
         None,
     ),
-    EvmEventDefinition::new("E3StageChanged", "E3StageChanged(uint256,uint8,uint8)", Some(1)),
+    EvmEventDefinition::new("E3StageChanged", IInterfold::E3StageChanged::SIGNATURE, Some(1)),
     EvmEventDefinition::new(
         "EncryptionSchemeEnabled",
         "EncryptionSchemeEnabled(bytes32)",
@@ -186,7 +188,7 @@ const INTERFOLD: &[EvmEventDefinition] = &[
     EvmEventDefinition::new("PkVerifierSet", "PkVerifierSet(bytes32,address)", None),
     EvmEventDefinition::new(
         "PlaintextOutputPublished",
-        "PlaintextOutputPublished(uint256,bytes,bytes)",
+        IInterfold::PlaintextOutputPublished::SIGNATURE,
         Some(1),
     ),
     EvmEventDefinition::new(
@@ -444,12 +446,12 @@ const CIPHERNODE_REGISTRY: &[EvmEventDefinition] = &[
     ),
     EvmEventDefinition::new(
         "CommitteePublished",
-        "CommitteePublished(uint256,address[],bytes,bytes32,bytes)",
+        ICiphernodeRegistry::CommitteePublished::SIGNATURE,
         Some(1),
     ),
     EvmEventDefinition::new(
         "CommitteePublicKeyChunkPublished",
-        "CommitteePublicKeyChunkPublished(uint256,address,bytes32,address[],bytes32,uint16,uint16,uint32,bytes)",
+        ICiphernodeRegistry::CommitteePublicKeyChunkPublished::SIGNATURE,
         Some(1),
     ),
     EvmEventDefinition::new(

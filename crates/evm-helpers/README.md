@@ -22,6 +22,14 @@ transactions independently of listener delivery.
 
 ## Contract clients
 
+Bindings and wire events are re-exported from [e3-evm-contracts](../evm/contracts/README.md). The
+`E3` returned by contract reads is now the same type carried by `E3Requested`; its `committeeSize`,
+and stage/reason fields on wire events, are raw `uint8` values. Convert explicitly with
+`CommitteeSize::try_from`, `E3Stage::try_from` or `FailureReason::try_from` when a typed view is
+needed. Typed read helpers keep their existing unknown-value sentinel. This is a Rust source-API
+change for the next dev release, not a Solidity ABI change. Indexer projection encodings do not
+change.
+
 `contracts::InterfoldContract::read_only(http_rpc_url, contract_address).await` creates a read
 client. `InterfoldContract::new(http_rpc_url, private_key, contract_address).await` creates a
 signing client. Import `InterfoldRead` / `InterfoldWrite` for their operations; the factory also

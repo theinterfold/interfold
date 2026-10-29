@@ -10,6 +10,8 @@ repository.workspace = true
 alloy-contract.workspace = true
 alloy-json-abi.workspace = true
 alloy-sol-types = { workspace = true, features = ["json"] }
+serde.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+bincode.workspace = true
