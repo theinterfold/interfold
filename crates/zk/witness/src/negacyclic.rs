@@ -26,12 +26,18 @@ const AUX_PRIME_BITS: usize = 62;
 /// product of two NTT-friendly primes, then lifted to the centred window `(-P/2, P/2)`. That lift
 /// is the integer product because every result coefficient is a sum of `N` terms `a_i * b_j`, so
 /// `|c| <= N * max|a| * max|b|`, which is checked to be below `P/2` before the NTT path is taken.
-/// Inputs that do not fit `i64`, have another length, or could exceed the window use the quadratic
-/// product and fold instead, so the result is exact either way.
+/// Inputs that do not fit `i64`, have a degree the NTT context cannot take, or could exceed the
+/// window use the quadratic product and fold instead, so the result is exact either way.
+///
+/// # Panics
+///
+/// Panics when either input does not have exactly `N` coefficients.
 pub(crate) fn negacyclic_mul_exact(a: &Polynomial, b: &Polynomial, n: usize) -> Polynomial {
     match ntt_negacyclic_mul(a, b, n) {
         Some(product) => product,
-        None => fold_negacyclic(&a.mul(b), n),
+        // `product_for_fold` pads a short product, such as the single zero coefficient
+        // `Polynomial::mul` returns for a zero operand, to the `2N - 1` the fold expects.
+        None => fold_negacyclic(&product_for_fold(a, b, n), n),
     }
 }
 
@@ -95,18 +101,6 @@ fn aux_context(n: usize) -> Option<Arc<Context>> {
     contexts.insert(n, ctx.clone());
     Some(ctx)
 }
-
-/// Reduces a polynomial of degree `2N-2` modulo `x^N + 1`, in O(N).
-///
-/// `x^N = -1` in the ring, so a coefficient at degree `e + N` folds onto degree `e` with its sign
-/// flipped. Coefficients are stored **descending**, so the coefficient of `x^(N-1-j)` sits at index
-/// `j`: its low part is `poly[N-1+j]` and the high part that wraps onto it is `poly[j-1]`. Index
-/// `j = 0` is degree `N-1`, whose partner would be degree `2N-1` and so does not exist.
-///
-/// The tests compare this linear fold with independent polynomial long division.
-///
-/// # Panics
-///
 
 /// Keep the circuit's descending product shape when an operand is zero.
 /// Polynomial::mul retains its canonical single-coefficient zero result.
@@ -232,7 +226,7 @@ mod tests {
         assert_eq!(folded, reduce_reference(&poly, n));
     }
 
-    /// Independent long division by the monic polynomial X^N + 1.
+    /// The NTT product equals the quadratic product folded, at every size the circuits use.
     #[test]
     fn exact_product_matches_quadratic_fold() {
         use rand::Rng;
@@ -272,6 +266,17 @@ mod tests {
         let short = Polynomial::new(vec![BigInt::from(3); n - 1]);
         let full = Polynomial::new(vec![BigInt::from(5); n]);
         assert!(ntt_negacyclic_mul(&short, &full, n).is_none());
+    }
+
+    /// A zero operand on the fallback path folds to zero. `Polynomial::mul` returns a single zero
+    /// coefficient for it, which the fold alone would reject.
+    #[test]
+    fn exact_product_of_a_zero_operand_on_the_fallback_path_is_zero() {
+        let n = 4;
+        let zero = Polynomial::new(vec![BigInt::zero(); n]);
+        let key = Polynomial::new((1..=n as i64).map(BigInt::from).collect());
+        assert!(ntt_negacyclic_mul(&key, &zero, n).is_none());
+        assert_eq!(negacyclic_mul_exact(&key, &zero, n), zero);
     }
 
     /// Independent long division by the monic polynomial X^N + 1.
