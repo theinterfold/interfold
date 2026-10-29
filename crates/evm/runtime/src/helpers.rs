@@ -1,0 +1,823 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE.
+
+use crate::error_decoder::decode_error_from_str;
+use alloy::{
+    contract::{CallBuilder, CallDecoder},
+    network::{Ethereum, EthereumWallet},
+    providers::{
+        fillers::{
+            BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
+            SimpleNonceManager, WalletFiller,
+        },
+        Identity, PendingTransactionBuilder, Provider, ProviderBuilder, RootProvider,
+        WalletProvider,
+    },
+    rpc::{client::ClientBuilder, types::TransactionReceipt},
+    signers::local::PrivateKeySigner,
+    transports::{
+        http::{
+            reqwest::{
+                header::{HeaderMap, HeaderValue, AUTHORIZATION},
+                Client,
+            },
+            Http,
+        },
+        layers::RetryBackoffLayer,
+        ws::{WebSocketConfig, WsConnect},
+        Authorization,
+    },
+};
+use alloy::{
+    primitives::{Address, Bytes},
+    sol_types::SolValue,
+};
+use anyhow::{Context, Result};
+use base64::{engine::general_purpose::STANDARD, Engine};
+use e3_config::{chain_config::ChainConfig, RpcAuth, RPC};
+use e3_crypto::Cipher;
+use e3_data::Repository;
+use e3_events::Proof;
+use e3_utils::{
+    nonce::{broadcast_refused, next_free_nonce},
+    retry_with_backoff, should_retry_error, RetryError, RPC_RETRY_ATTEMPTS,
+    RPC_RETRY_FIRST_DELAY_MS,
+};
+use std::{
+    collections::{BTreeMap, HashMap},
+    env,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex as StdMutex, OnceLock},
+    time::{Duration, Instant},
+};
+use tokio::sync::Mutex as AsyncMutex;
+use tracing::{info, warn};
+use zeroize::{Zeroize, Zeroizing};
+
+/// ABI-encodes a ZK proof for EVM verifiers (C5 pk, C7 decryption, etc.).
+/// Format: abi.encode(rawProof, publicInputs). Public inputs as bytes32[].
+pub fn encode_zk_proof(proof: &Proof) -> Result<Bytes> {
+    let signals: &[u8] = &proof.public_signals;
+    if signals.is_empty() {
+        anyhow::bail!("public_signals must be non-empty");
+    }
+    if !signals.len().is_multiple_of(32) {
+        anyhow::bail!(
+            "public_signals length must be a multiple of 32, got {}",
+            signals.len()
+        );
+    }
+    let mut inputs = Vec::with_capacity(signals.len() / 32);
+    for chunk in signals.chunks_exact(32) {
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(chunk);
+        inputs.push(arr);
+    }
+
+    Ok(Bytes::from(
+        (&proof.data.to_vec(), inputs).abi_encode_params(),
+    ))
+}
+
+pub trait AuthConversions {
+    fn to_header_value(&self) -> Option<HeaderValue>;
+    fn to_ws_auth(&self) -> Option<Authorization>;
+}
+
+impl AuthConversions for RpcAuth {
+    fn to_header_value(&self) -> Option<HeaderValue> {
+        match self {
+            RpcAuth::None => None,
+            RpcAuth::Basic { username, password } => {
+                let credentials = STANDARD.encode(format!("{}:{}", username, password));
+                HeaderValue::from_str(&format!("Basic {}", credentials)).ok()
+            }
+            RpcAuth::Bearer(token) => HeaderValue::from_str(&format!("Bearer {}", token)).ok(),
+        }
+    }
+
+    fn to_ws_auth(&self) -> Option<Authorization> {
+        match self {
+            RpcAuth::None => None,
+            RpcAuth::Basic { username, password } => Some(Authorization::basic(username, password)),
+            RpcAuth::Bearer(token) => Some(Authorization::bearer(token)),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct EthProvider<P> {
+    provider: Arc<P>,
+    chain_id: u64,
+}
+
+impl<P: Provider + Clone> EthProvider<P> {
+    pub async fn new(provider: P) -> Result<Self> {
+        let chain_id = provider.get_chain_id().await?;
+        Ok(Self {
+            provider: Arc::new(provider),
+            chain_id,
+        })
+    }
+
+    pub fn provider(&self) -> &P {
+        &self.provider
+    }
+
+    pub fn chain_id(&self) -> u64 {
+        self.chain_id
+    }
+}
+
+type NonceLockKey = (u64, Address);
+
+/// The nonces that this process sent from one signer on one chain, with their send times.
+type SentNonces = BTreeMap<u64, Instant>;
+
+fn nonce_lock(chain_id: u64, signer: Address) -> Arc<AsyncMutex<SentNonces>> {
+    static LOCKS: OnceLock<StdMutex<HashMap<NonceLockKey, Arc<AsyncMutex<SentNonces>>>>> =
+        OnceLock::new();
+    let locks = LOCKS.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mut locks = locks
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    Arc::clone(locks.entry((chain_id, signer)).or_default())
+}
+
+/// Broadcast `call` from the provider's signer with the signer's next free nonce.
+///
+/// Independent writer actors share a provider signer, so the nonce choice and the broadcast are
+/// serialized for one signer on one chain. The pending count of the RPC can miss a transaction
+/// that it accepted a moment ago, for example on another node behind a load balancer, and a second
+/// transaction with that nonce is refused or replaces the first. So the choice also skips the
+/// nonces that this process sent and the chain does not count yet. The lock is released when the
+/// broadcast returns, before the receipt, so a slow confirmation does not block unrelated
+/// submissions.
+///
+/// The gas limit, the EIP-1559 fees and the chain ID are filled before the nonce is reserved, so
+/// that the send under the reservation only signs and broadcasts: a failed estimate reserves
+/// nothing. A gas limit that the caller set stays.
+pub(crate) async fn send_with_next_nonce<P, C, D>(
+    provider: &EthProvider<P>,
+    call: CallBuilder<C, D>,
+) -> Result<PendingTransactionBuilder<Ethereum>, alloy::contract::Error>
+where
+    P: Provider + WalletProvider + Clone,
+    C: Provider,
+    D: CallDecoder,
+{
+    let call = match call.as_ref().gas {
+        Some(_) => call,
+        None => {
+            let gas = call.estimate_gas().await?;
+            call.gas(gas)
+        }
+    };
+    let fees = provider.provider().estimate_eip1559_fees().await?;
+    let call = call
+        .max_fee_per_gas(fees.max_fee_per_gas)
+        .max_priority_fee_per_gas(fees.max_priority_fee_per_gas)
+        .chain_id(provider.chain_id());
+
+    let signer = provider.provider().default_signer_address();
+    let mut sent = nonce_lock(provider.chain_id(), signer).lock_owned().await;
+    let pending = provider
+        .provider()
+        .get_transaction_count(signer)
+        .pending()
+        .await?;
+    send_with_reservation(&mut sent, pending, |nonce| async move {
+        call.nonce(nonce).send().await
+    })
+    .await
+}
+
+/// Reserve the next free nonce at or above `pending`, and broadcast with it.
+///
+/// The reservation is made before the broadcast, because a send that stops during the broadcast
+/// can leave the transaction with the node. It is freed only when the send left no transaction
+/// with the node (`broadcast_refused`); otherwise it stays until the chain counts the nonce or the
+/// reservation expires.
+async fn send_with_reservation<T, F, Fut>(
+    sent: &mut SentNonces,
+    pending: u64,
+    broadcast: F,
+) -> Result<T, alloy::contract::Error>
+where
+    F: FnOnce(u64) -> Fut,
+    Fut: Future<Output = Result<T, alloy::contract::Error>>,
+{
+    let nonce = next_free_nonce(sent, pending, Instant::now());
+    sent.insert(nonce, Instant::now());
+    let result = broadcast(nonce).await;
+    if result.as_ref().is_err_and(broadcast_refused) {
+        sent.remove(&nonce);
+    }
+    result
+}
+
+pub type ProviderFactory<P> =
+    Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<EthProvider<P>>> + Send>> + Send + Sync>;
+
+/// Attempts for a request the provider refused with a rate limit.
+///
+/// A public endpoint refuses a burst but accepts the same request shortly after, so the node waits
+/// rather than fails. Before this retry existed, one HTTP 429 during the first sync ended the
+/// process: `eth_chainId` runs before the actor system starts, and its error reaches the top-level
+/// exit path.
+const RPC_RATE_LIMIT_MAX_RETRIES: u32 = 8;
+
+/// First wait after a refused request, in milliseconds.
+///
+/// A provider that sends a backoff hint in the JSON-RPC error body overrides this: the transport
+/// prefers the interval the provider asked for. It does not read an HTTP `Retry-After` header.
+/// Without a hint the wait is this constant on every attempt, so the value must be large enough
+/// for a refusal to clear on its own.
+const RPC_RATE_LIMIT_INITIAL_BACKOFF_MS: u64 = 500;
+
+/// Compute units per second the retry path assumes for pacing.
+///
+/// This value only spaces out requests that are already waiting after a refusal; it does not
+/// throttle requests that succeed. The value matches the free tier of common hosted providers, so
+/// the node recovers from a burst instead of repeating it.
+const RPC_COMPUTE_UNITS_PER_SECOND: u64 = 330;
+
+/// Retry transport layer for rate-limited providers.
+///
+/// The policy retries HTTP 429 and 503, and the JSON-RPC errors that report the same condition.
+/// Other errors stay unretried here, because the layers above own their own recovery: a rejected
+/// block range is answered by a narrower window, and a dead transport by provider recreation.
+fn rate_limit_retry_layer() -> RetryBackoffLayer {
+    RetryBackoffLayer::new(
+        RPC_RATE_LIMIT_MAX_RETRIES,
+        RPC_RATE_LIMIT_INITIAL_BACKOFF_MS,
+        RPC_COMPUTE_UNITS_PER_SECOND,
+    )
+}
+
+/// Poll interval of a provider built without a chain configuration. Alloy's default for a remote
+/// endpoint.
+const DEFAULT_RPC_POLL_INTERVAL: Duration = Duration::from_secs(7);
+
+#[derive(Clone)]
+pub struct ProviderConfig {
+    rpc: RPC,
+    auth: RpcAuth,
+    /// Interval between the polls of an HTTP provider for a receipt or a new block. Set
+    /// explicitly on every client: Alloy would otherwise poll a loopback URL every 250 ms, and a
+    /// loopback URL can be a proxy to a live chain.
+    poll_interval: Duration,
+}
+
+pub type ConcreteReadProvider = FillProvider<
+    JoinFill<
+        Identity,
+        JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
+    >,
+    RootProvider,
+>;
+
+pub type ConcreteWriteProvider = FillProvider<
+    JoinFill<
+        JoinFill<
+            JoinFill<
+                alloy::providers::Identity,
+                JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
+            >,
+            NonceFiller<SimpleNonceManager>,
+        >,
+        WalletFiller<EthereumWallet>,
+    >,
+    RootProvider,
+>;
+
+impl ProviderConfig {
+    pub fn new(rpc: RPC, auth: RpcAuth) -> Self {
+        Self {
+            rpc,
+            auth,
+            poll_interval: DEFAULT_RPC_POLL_INTERVAL,
+        }
+    }
+
+    /// The provider configuration of a configured chain: its URL, credentials and poll interval.
+    pub fn for_chain(chain: &ChainConfig) -> Result<Self> {
+        Ok(Self::new(chain.rpc_url()?, chain.rpc_auth.clone())
+            .with_poll_interval(chain.rpc_poll_interval()?))
+    }
+
+    pub fn with_poll_interval(mut self, poll_interval: Duration) -> Self {
+        self.poll_interval = poll_interval;
+        self
+    }
+
+    pub async fn create_readonly_provider(&self) -> Result<EthProvider<ConcreteReadProvider>> {
+        let client = if self.rpc.is_websocket() {
+            ClientBuilder::default()
+                .layer(rate_limit_retry_layer())
+                .ws(self.create_ws_connect()?)
+                .await
+                .context("Failed to connect to WebSocket RPC. Check if the node is running and URL is correct.")?
+                .with_poll_interval(self.poll_interval)
+        } else {
+            self.create_http_client()?
+        };
+
+        EthProvider::new(ProviderBuilder::new().connect_client(client)).await
+    }
+
+    pub async fn create_signer_provider(
+        &self,
+        signer: &PrivateKeySigner,
+    ) -> Result<EthProvider<ConcreteWriteProvider>> {
+        let wallet = EthereumWallet::from(signer.clone());
+
+        let provider = ProviderBuilder::new()
+            .with_simple_nonce_management()
+            .wallet(wallet)
+            .connect_client(self.create_http_client()?);
+
+        EthProvider::new(provider).await
+    }
+
+    fn create_ws_connect(&self) -> Result<WsConnect> {
+        let config = WebSocketConfig::default()
+            .max_frame_size(Some(32 * 1024 * 1024))
+            .max_message_size(Some(32 * 1024 * 1024));
+
+        let mut ws_connect = WsConnect::new(self.rpc.as_ws_url()?).with_config(config);
+
+        if let Some(auth) = self.auth.to_ws_auth() {
+            ws_connect = ws_connect.with_auth(auth);
+        }
+
+        Ok(ws_connect)
+    }
+
+    pub fn into_read_provider_factory(self) -> ProviderFactory<ConcreteReadProvider> {
+        Arc::new(move || {
+            let config = self.clone();
+            Box::pin(async move { config.create_readonly_provider().await })
+        })
+    }
+
+    fn create_http_client(&self) -> Result<alloy::rpc::client::RpcClient> {
+        let mut headers = HeaderMap::new();
+        if let Some(auth_header) = self.auth.to_header_value() {
+            headers.insert(AUTHORIZATION, auth_header);
+        }
+
+        let client = Client::builder()
+            .default_headers(headers)
+            .build()
+            .context("Failed to create HTTP client")?;
+
+        let url = self.rpc.as_http_url()?;
+        let http = Http::with_client(client, url.parse()?);
+        // The local flag only selects Alloy's default poll interval, and the explicit interval
+        // replaces that default.
+        Ok(ClientBuilder::default()
+            .layer(rate_limit_retry_layer())
+            .transport(http, self.rpc.is_local())
+            .with_poll_interval(self.poll_interval))
+    }
+}
+
+pub fn load_signer_from_env(var: &str) -> Result<PrivateKeySigner> {
+    let private_key = env::var(var)?;
+    env::remove_var(var);
+    private_key.parse().map_err(Into::into)
+}
+
+pub async fn load_signer_from_repository(
+    repository: Repository<Vec<u8>>,
+    cipher: &Cipher,
+) -> Result<PrivateKeySigner> {
+    let encrypted_key = repository
+        .read()
+        .await?
+        .context("No private key found in repository")?;
+
+    let mut decrypted = cipher.decrypt_data(&encrypted_key)?;
+    let private_key = Zeroizing::new(hex::encode(&decrypted));
+    decrypted.zeroize();
+    private_key.parse().map_err(Into::into)
+}
+
+/// Read the latest block timestamp from an already resolved chain provider.
+pub async fn get_current_timestamp_from_provider<P>(provider: EthProvider<P>) -> Result<u64>
+where
+    P: Provider + Clone,
+{
+    let block = provider
+        .provider()
+        .get_block_by_number(alloy::eips::BlockNumberOrTag::Latest)
+        .await
+        .context("Failed to get latest block")?
+        .ok_or_else(|| anyhow::anyhow!("Latest block not found"))?;
+
+    Ok(block.header.timestamp)
+}
+
+/// The wait before a writer tries a ticket, committee finalization, committee publication or
+/// plaintext publication again. Each try already retries its transaction with backoff
+/// (`send_tx_with_retry`) and reads the chain first, so a try after a mined transaction sends
+/// nothing. The wait between tries stays fixed because each of these transactions has an on-chain
+/// window, such as the 10-minute ticket submission window, and a growing wait could miss it.
+pub(crate) const PUBLICATION_RETRY_DELAY: Duration = Duration::from_secs(30);
+
+pub async fn send_tx_with_retry<F, Fut>(
+    operation_name: &str,
+    retry_on_errors: &[&str],
+    tx_fn: F,
+) -> Result<TransactionReceipt>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = Result<TransactionReceipt>>,
+{
+    let op_name = operation_name.to_string();
+    let retry_codes: Vec<String> = retry_on_errors.iter().map(|s| s.to_string()).collect();
+
+    retry_with_backoff(
+        || {
+            let op_name = op_name.clone();
+            let retry_codes = retry_codes.clone();
+            let fut = tx_fn();
+            async move {
+                match fut.await {
+                    Ok(receipt) => Ok(receipt),
+                    Err(e) => {
+                        let error_str = format!("{e:#}");
+                        let decoded = decode_error_from_str(&error_str);
+                        let display_error = decoded.as_deref().unwrap_or(&error_str);
+                        let retry_refs: Vec<&str> =
+                            retry_codes.iter().map(|s| s.as_str()).collect();
+                        if should_retry_error(&error_str, decoded.as_deref(), &retry_refs) {
+                            info!("{}: error, will retry: {}", op_name, display_error);
+                            Err(RetryError::Retry(e))
+                        } else {
+                            warn!(
+                                "{}: permanent error, not retrying: {}",
+                                op_name, display_error
+                            );
+                            Err(RetryError::Failure(e))
+                        }
+                    }
+                }
+            }
+        },
+        RPC_RETRY_ATTEMPTS,
+        RPC_RETRY_FIRST_DELAY_MS,
+    )
+    .await
+}
+
+/// Result of a transaction whose chain effect can become unnecessary.
+#[derive(Debug)]
+pub enum TxOutcome {
+    /// The transaction was mined and its receipt reports success.
+    Mined(Box<TransactionReceipt>),
+    /// The transaction failed, but the operation has no remaining chain work.
+    AlreadySettled,
+}
+
+impl TxOutcome {
+    /// The receipt of a mined transaction, or `None` when no chain work remains.
+    pub fn receipt(&self) -> Option<&TransactionReceipt> {
+        match self {
+            TxOutcome::Mined(receipt) => Some(receipt),
+            TxOutcome::AlreadySettled => None,
+        }
+    }
+}
+
+/// Send a transaction whose effect can become unnecessary before it is mined.
+///
+/// Preflights before the transaction cannot close the window between the
+/// preflight and the block that includes the transaction. A transaction that
+/// loses that race is mined with a failed receipt, and the receipt carries no
+/// revert reason, so [`send_tx_with_retry`] classifies it as a hard failure.
+///
+/// `settled` runs after such a failure. It must report whether the operation
+/// has any useful chain work left. If it does not, the failure is benign and the
+/// operation returns [`TxOutcome::AlreadySettled`]. In all other cases the
+/// original transaction error propagates.
+pub async fn send_tx_idempotent<F, Fut, S, SFut>(
+    operation_name: &str,
+    retry_on_errors: &[&str],
+    settled: S,
+    tx_fn: F,
+) -> Result<TxOutcome>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = Result<TransactionReceipt>>,
+    S: FnOnce() -> SFut,
+    SFut: Future<Output = Result<bool>>,
+{
+    let error = match send_tx_with_retry(operation_name, retry_on_errors, tx_fn).await {
+        Ok(receipt) => return Ok(TxOutcome::Mined(Box::new(receipt))),
+        Err(error) => error,
+    };
+
+    match settled().await {
+        Ok(true) => {
+            info!(
+                "{}: no chain work remains; treating the failure as benign: {}",
+                operation_name,
+                decode_error_from_str(&format!("{error:#}"))
+                    .unwrap_or_else(|| format!("{error:#}"))
+            );
+            Ok(TxOutcome::AlreadySettled)
+        }
+        Ok(false) => Err(error),
+        Err(check_error) => Err(error.context(format!(
+            "the on-chain state check after the failure also failed: {check_error:#}"
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::{primitives::U256, transports::mock::Asserter, transports::RpcError};
+    use alloy_dyn_abi::DynSolType;
+    use e3_config::{chain_config::ChainConfig, Contract, ContractAddresses};
+    use e3_events::{CircuitName, Proof};
+    use e3_utils::ArcBytes;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn loopback_chain(rpc_poll_interval_ms: Option<u64>) -> ChainConfig {
+        let contract = || Contract::Full {
+            address: "0x0000000000000000000000000000000000000000".to_string(),
+            deploy_block: Some(1),
+        };
+        ChainConfig {
+            enabled: Some(true),
+            name: "test".to_string(),
+            rpc_url: "http://127.0.0.1:8545".to_string(),
+            rpc_auth: RpcAuth::default(),
+            contracts: ContractAddresses {
+                interfold: contract(),
+                ciphernode_registry: contract(),
+                bonding_registry: contract(),
+                e3_program: None,
+                fee_token: None,
+                slashing_manager: None,
+                dkg_fold_attestation_verifier: None,
+                faucet: None,
+            },
+            finalization_ms: None,
+            chain_id: Some(31337),
+            ingestion_confirmations: None,
+            rpc_poll_interval_ms,
+            rpc_log_range_blocks: None,
+            data_availability: None,
+        }
+    }
+
+    #[test]
+    fn a_loopback_http_client_polls_at_the_public_interval_unless_configured() {
+        // Alloy would poll a loopback transport every 250 ms. A loopback URL can be a proxy to a
+        // live chain, so the interval comes from the chain configuration instead.
+        let client = ProviderConfig::for_chain(&loopback_chain(None))
+            .unwrap()
+            .create_http_client()
+            .unwrap();
+        assert_eq!(client.poll_interval(), Duration::from_secs(7));
+
+        let client = ProviderConfig::for_chain(&loopback_chain(Some(250)))
+            .unwrap()
+            .create_http_client()
+            .unwrap();
+        assert_eq!(client.poll_interval(), Duration::from_millis(250));
+    }
+
+    /// Verifies encode_zk_proof produces ABI: abi.decode(proof, (bytes, bytes32[]))
+    #[test]
+    fn test_encode_zk_proof_abi_format() {
+        let raw_proof = vec![1u8, 2, 3, 4, 5];
+        let public_signals: Vec<u8> = (0..64).map(|i| i as u8).collect(); // 2 × 32-byte fields
+        let proof = Proof::new(
+            CircuitName::PkAggregation,
+            ArcBytes::from_bytes(&raw_proof),
+            ArcBytes::from_bytes(&public_signals),
+        );
+
+        let encoded = encode_zk_proof(&proof).expect("encoding should succeed");
+
+        let tuple_type = DynSolType::Tuple(vec![
+            DynSolType::Bytes,
+            DynSolType::Array(Box::new(DynSolType::FixedBytes(32))),
+        ]);
+        // Pair encode_zk_proof's abi_encode_params with abi_decode_params (not abi_decode).
+        tuple_type.abi_decode_params(&encoded).expect(
+            "encoded proof should decode as (bytes, bytes32[]) - matches contract abi.decode",
+        );
+    }
+
+    #[test]
+    fn test_encode_zk_proof_rejects_invalid() {
+        let proof = Proof::new(
+            CircuitName::PkAggregation,
+            ArcBytes::from_bytes(&[1, 2, 3]),
+            ArcBytes::from_bytes(&[0u8; 31]), // not divisible by 32
+        );
+        assert!(encode_zk_proof(&proof).is_err());
+
+        let proof_empty = Proof::new(
+            CircuitName::PkAggregation,
+            ArcBytes::from_bytes(&[1, 2, 3]),
+            ArcBytes::from_bytes(&[]),
+        );
+        assert!(encode_zk_proof(&proof_empty).is_err());
+    }
+
+    #[test]
+    fn test_rpc_conversions() -> Result<()> {
+        // HTTP/HTTPS
+        let http = RPC::from_url("http://localhost:8545/")?;
+        assert_eq!(http.as_http_url()?, "http://localhost:8545/");
+        assert_eq!(http.as_ws_url()?, "ws://localhost:8545/");
+        assert!(!http.is_secure());
+        assert!(!http.is_websocket());
+
+        let https = RPC::from_url("https://example.com/")?;
+        assert_eq!(https.as_http_url()?, "https://example.com/");
+        assert_eq!(https.as_ws_url()?, "wss://example.com/");
+        assert!(https.is_secure());
+        assert!(!https.is_websocket());
+
+        // WS/WSS
+        let ws = RPC::from_url("ws://localhost:8545/")?;
+        assert_eq!(ws.as_http_url()?, "http://localhost:8545/");
+        assert_eq!(ws.as_ws_url()?, "ws://localhost:8545/");
+        assert!(!ws.is_secure());
+        assert!(ws.is_websocket());
+
+        let wss = RPC::from_url("wss://example.com/")?;
+        assert_eq!(wss.as_http_url()?, "https://example.com/");
+        assert_eq!(wss.as_ws_url()?, "wss://example.com/");
+        assert!(wss.is_secure());
+        assert!(wss.is_websocket());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn nonce_lock_serializes_one_signer_per_chain() {
+        let key = (9_876_543, Address::repeat_byte(0x42));
+        let active = Arc::new(AtomicUsize::new(0));
+        let maximum = Arc::new(AtomicUsize::new(0));
+        let mut tasks = Vec::new();
+
+        for _ in 0..32 {
+            let active = Arc::clone(&active);
+            let maximum = Arc::clone(&maximum);
+            tasks.push(tokio::spawn(async move {
+                let _guard = nonce_lock(key.0, key.1).lock_owned().await;
+                let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                maximum.fetch_max(now, Ordering::SeqCst);
+                tokio::task::yield_now().await;
+                active.fetch_sub(1, Ordering::SeqCst);
+            }));
+        }
+
+        for task in tasks {
+            task.await.expect("nonce-lock task must not panic");
+        }
+        assert_eq!(maximum.load(Ordering::SeqCst), 1);
+    }
+
+    /// A mined but reverted transaction. Its message carries no revert reason,
+    /// which is what makes the state check after the failure necessary.
+    fn reverted_transaction() -> anyhow::Error {
+        anyhow::anyhow!("finalize committee transaction 0xabcd reverted on chain")
+    }
+
+    #[tokio::test]
+    async fn idempotent_send_accepts_a_state_another_sender_produced() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&attempts);
+
+        let outcome = send_tx_idempotent(
+            "finalizeCommittee",
+            &["SubmissionWindowNotClosed"],
+            || async { Ok(true) },
+            || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                async { Err(reverted_transaction()) }
+            },
+        )
+        .await
+        .expect("a state that another sender produced is not a failure");
+
+        assert!(matches!(outcome, TxOutcome::AlreadySettled));
+        assert!(outcome.receipt().is_none());
+        // The reason is not retryable, so the transaction runs one time.
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn idempotent_send_reports_a_failure_that_left_work_to_do() {
+        let error = send_tx_idempotent(
+            "finalizeCommittee",
+            &["SubmissionWindowNotClosed"],
+            || async { Ok(false) },
+            || async { Err(reverted_transaction()) },
+        )
+        .await
+        .expect_err("an incomplete operation must stay an error");
+
+        assert!(format!("{error:#}").contains("reverted on chain"));
+    }
+
+    #[tokio::test]
+    async fn idempotent_send_keeps_the_transaction_error_when_the_check_fails() {
+        let error = send_tx_idempotent(
+            "finalizeCommittee",
+            &["SubmissionWindowNotClosed"],
+            || async { Err(anyhow::anyhow!("RPC unavailable")) },
+            || async { Err(reverted_transaction()) },
+        )
+        .await
+        .expect_err("an unreadable state must not hide the transaction failure");
+
+        let message = format!("{error:#}");
+        assert!(message.contains("reverted on chain"), "got: {message}");
+        assert!(message.contains("RPC unavailable"), "got: {message}");
+    }
+
+    /// The pending count can come from an RPC node that has not seen the last transaction yet. A
+    /// second send must not take the nonce of the first.
+    #[tokio::test]
+    async fn a_nonce_that_the_rpc_does_not_count_yet_is_not_used_again() {
+        let mut sent = SentNonces::new();
+        let first = send_with_reservation(&mut sent, 5, |nonce| async move { Ok(nonce) }).await;
+        // The RPC still reports a pending count of 5.
+        let second = send_with_reservation(&mut sent, 5, |nonce| async move { Ok(nonce) }).await;
+        assert_eq!((first.unwrap(), second.unwrap()), (5, 6));
+    }
+
+    /// A node that refused a transaction holds nothing at its nonce, so the next send takes it.
+    /// After a broadcast with an unknown result the node can hold the transaction, so its nonce
+    /// stays reserved.
+    #[tokio::test]
+    async fn only_a_refused_broadcast_frees_its_nonce() {
+        let mut sent = SentNonces::new();
+        let mut used = Vec::new();
+        let refused = alloy::contract::Error::TransportError(RpcError::ErrorResp(
+            alloy::rpc::json_rpc::ErrorPayload::internal_error_message("nonce too low".into()),
+        ));
+        let unknown = alloy::contract::Error::TransportError(
+            alloy::transports::TransportErrorKind::custom_str("connection reset"),
+        );
+
+        for error in [refused, unknown] {
+            let result = send_with_reservation(&mut sent, 5, |nonce| {
+                used.push(nonce);
+                async move { Err::<(), _>(error) }
+            })
+            .await;
+            assert!(result.is_err());
+        }
+        send_with_reservation(&mut sent, 5, |nonce| {
+            used.push(nonce);
+            async { Ok(()) }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(used, vec![5, 5, 6]);
+    }
+
+    /// A send that fails before the broadcast, here while it estimates the transaction, holds no
+    /// nonce. A held nonce would leave the next transaction of the signer waiting behind a gap.
+    #[tokio::test]
+    async fn a_send_that_fails_before_the_broadcast_holds_no_nonce() -> anyhow::Result<()> {
+        let asserter = Asserter::new();
+        asserter.push_success(&"0x1"); // eth_chainId
+        asserter.push_success(&"0x5"); // The next request; nothing answers after it.
+        let provider = EthProvider::new(
+            ProviderBuilder::new()
+                .wallet(EthereumWallet::from(PrivateKeySigner::random()))
+                .connect_mocked_client(asserter),
+        )
+        .await?;
+        let contract = crate::contracts::IInterfold::new(Address::ZERO, provider.provider());
+
+        send_with_next_nonce(&provider, contract.markE3Failed(U256::from(1)))
+            .await
+            .expect_err("the provider stops answering before the broadcast");
+
+        let signer = provider.provider().default_signer_address();
+        assert!(nonce_lock(provider.chain_id(), signer)
+            .lock()
+            .await
+            .is_empty());
+        Ok(())
+    }
+}

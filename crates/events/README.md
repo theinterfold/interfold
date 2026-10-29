@@ -36,10 +36,10 @@ publisher/subscriber/context traits used by capability crates.
 Logical identity is not delivery identity: repeated equal facts can be distinct chain log
 occurrences or verification batches.
 
-`E3id`, `ProofType`, proof payloads, and the transport pipeline remain owned here. `Committee` is a
-compatibility re-export from [committee](../committee/README.md); consumers should import that owner
-directly. The cross-proof `CommitmentLink` interface belongs to [slashing](../slashing/README.md),
-not transport. It is not re-exported here because slashing already depends on events.
+`E3id`, `ProofType`, proof payloads, and the transport pipeline remain owned here. Import
+`Committee` directly from [committee](../committee/README.md); events does not re-export membership.
+The cross-proof `CommitmentLink` interface belongs to [slashing](../slashing/README.md), not
+transport. It is not re-exported here because slashing already depends on events.
 
 ## Runtime use
 

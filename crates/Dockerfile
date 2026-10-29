@@ -61,13 +61,14 @@ COPY crates/data-availability/Cargo.toml ./data-availability/Cargo.toml
 COPY crates/entrypoint/Cargo.toml ./entrypoint/Cargo.toml
 COPY crates/event-system/Cargo.toml ./event-system/Cargo.toml
 COPY crates/events/Cargo.toml ./events/Cargo.toml
-COPY crates/evm/Cargo.toml ./evm/Cargo.toml
-COPY crates/evm-helpers/Cargo.toml ./evm-helpers/Cargo.toml
+COPY crates/evm/runtime/Cargo.toml ./evm/runtime/Cargo.toml
+COPY crates/evm/contracts/Cargo.toml ./evm/contracts/Cargo.toml
+COPY crates/evm/client/Cargo.toml ./evm/client/Cargo.toml
 COPY crates/fhe/Cargo.toml ./fhe/Cargo.toml
 COPY crates/fhe-params/Cargo.toml ./fhe-params/Cargo.toml
 COPY crates/fs/Cargo.toml ./fs/Cargo.toml
 COPY crates/hamt/Cargo.toml ./hamt/Cargo.toml
-COPY crates/indexer/Cargo.toml ./indexer/Cargo.toml
+COPY crates/evm/indexer/Cargo.toml ./evm/indexer/Cargo.toml
 COPY crates/init/Cargo.toml ./init/Cargo.toml
 COPY crates/keyshare/Cargo.toml ./keyshare/Cargo.toml
 COPY crates/layout-lock/Cargo.toml ./layout-lock/Cargo.toml

@@ -28,7 +28,7 @@ use e3_events::{
 };
 use e3_events::{BusHandle, EType, InterfoldEvent, InterfoldEventData};
 use e3_fhe::ext::FHE_KEY;
-use e3_keyshare::canonical_key::CanonicalPublicKeys;
+use e3_request::canonical_key::CanonicalPublicKeys;
 use e3_request::{
     E3Context, E3ContextSnapshot, E3Extension, E3LifecycleRepositoryFactory, TypedKey,
     DKG_FOLD_ATTESTATION_CONTEXT_KEY, META_KEY,
@@ -877,7 +877,7 @@ mod tests {
         use e3_data::{PersistableData, Repository};
         use e3_events::{EventSource, PublicKeyAggregated, Unsequenced};
         use e3_fhe_params::{BfvParamSet, BfvPreset};
-        use e3_keyshare::canonical_key::CanonicalPublicKey;
+        use e3_request::canonical_key::CanonicalPublicKey;
         use e3_request::{E3Meta, META_KEY};
         use e3_sortition::{CiphernodeSelector, SortitionParams};
         use e3_utils::{ArcBytes, OrderedSet};
