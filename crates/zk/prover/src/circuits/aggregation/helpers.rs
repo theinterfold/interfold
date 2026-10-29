@@ -32,7 +32,8 @@ pub mod field_keys {
     pub const D_COMMITMENT: &str = "d_commitment";
 }
 
-/// Vector of `field_count` zero-encoded 32-byte hex field strings for the genesis accumulator.
+/// Vector of `field_count` zero-encoded 32-byte hex field strings, for a kernel's accumulator inputs,
+/// which the kernel does not verify.
 pub fn zero_field_hex_strings(field_count: usize) -> Result<Vec<String>, ZkError> {
     let bytes = vec![0u8; field_count * 32];
     bytes_to_field_strings(&bytes)

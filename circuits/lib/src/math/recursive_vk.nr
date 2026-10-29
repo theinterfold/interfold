@@ -6,7 +6,7 @@
 
 use crate::math::commitments::compute_vk_hash;
 
-/// Keep the leaf, fold, and genesis VK hashes constant throughout a sequential fold.
+/// Keep the leaf, fold, and kernel VK hashes constant throughout a sequential fold.
 pub fn predecessor_key_hash(
     inner_key_hash: Field,
     fold_key_hash: Field,
@@ -22,7 +22,7 @@ pub fn predecessor_key_hash(
     }
 }
 
-/// Commit to the ordered fold, genesis, and leaf verification keys.
+/// Commit to the ordered fold, kernel, and leaf verification keys.
 pub fn sequential_fold_vk_hash(
     fold_key_hash: Field,
     kernel_key_hash: Field,
@@ -32,7 +32,7 @@ pub fn sequential_fold_vk_hash(
 }
 
 #[test]
-fn genesis_and_continuation_select_the_expected_key() {
+fn kernel_and_continuation_select_the_expected_key() {
     assert(predecessor_key_hash(11, 22, 33, true, [11, 22, 33]) == 33);
     assert(predecessor_key_hash(11, 22, 33, false, [11, 22, 33]) == 22);
 }
@@ -48,6 +48,6 @@ fn a_different_fold_key_is_rejected() {
 }
 
 #[test(should_fail)]
-fn a_different_genesis_key_is_rejected() {
+fn a_different_kernel_key_is_rejected() {
     let _ = predecessor_key_hash(11, 22, 44, false, [11, 22, 33]);
 }

@@ -87,7 +87,7 @@ impl NodesFoldVks {
 
 /// Proves [`CircuitName::NodesFoldKernel`] over the chain's first node proof, at its slot. The proof
 /// carries that row and is the accumulator the first fold step verifies.
-fn generate_nodes_fold_kernel_genesis_proof(
+fn generate_nodes_fold_kernel_proof(
     prover: &ZkProver,
     inner: &Proof,
     total_slots: usize,
@@ -186,7 +186,7 @@ fn generate_nodes_fold_step_with_vks(
             )));
         }
         let kernel_job_id = format!("{e3_id}-nodesfold-kernel");
-        return generate_nodes_fold_kernel_genesis_proof(
+        return generate_nodes_fold_kernel_proof(
             prover,
             inner,
             total_slots,

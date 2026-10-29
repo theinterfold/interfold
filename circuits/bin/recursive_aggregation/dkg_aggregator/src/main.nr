@@ -88,7 +88,7 @@ fn main(
                 == node_tree_hash,
         );
     }
-    // Public input zero anchors every fold, genesis, and nested leaf VK on-chain.
+    // Public input zero anchors every fold, kernel, and nested leaf VK on-chain.
     assert(
         nodes_fold_key_hash
             == compute_vk_hash([

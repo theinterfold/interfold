@@ -64,7 +64,7 @@ impl C3FoldVks {
 ///
 /// Uses work dir `job_id` (caller should use a suffix of the fold `e3_id` so jobs stay distinct).
 /// Removes that work dir after the proof is returned.
-fn generate_c3_fold_kernel_genesis_proof(
+fn generate_c3_fold_kernel_proof(
     prover: &ZkProver,
     inner: &Proof,
     slot_index: u32,
@@ -172,7 +172,7 @@ fn generate_c3_fold_step_with_vks(
     // it would only repeat that verification.
     let Some(prior) = prior_fold else {
         let kernel_job_id = format!("{e3_id}-c3fold-kernel");
-        return generate_c3_fold_kernel_genesis_proof(
+        return generate_c3_fold_kernel_proof(
             prover,
             inner,
             slot_index,
