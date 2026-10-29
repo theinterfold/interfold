@@ -2,6 +2,29 @@
   "group": "evm-da",
   "units": [
     {
+      "id": "e3-evm-contracts",
+      "kind": "crate",
+      "path": "crates/evm/contracts",
+      "one_line": "Shared checked Solidity ABI bindings, independent of node and application delivery policies.",
+      "documentation": [{ "title": "Rust contract boundaries", "path": "docs/architecture/rust-client-integration.md" }],
+      "actors": [],
+      "consumes": [],
+      "emits": [],
+      "state": [],
+      "key_types": [],
+      "read_first": [
+        { "why": "minimal shared Interfold wire surface", "ref": "crates/evm/contracts/src/lib.rs@39@interface IInterfold {" },
+        {
+          "why": "checks against compiled Solidity",
+          "ref": "crates/evm/contracts/src/abi_consistency.rs@178@fn declared_bindings_match_solidity() {"
+        }
+      ],
+      "rust_patterns": [],
+      "depends_on": [],
+      "tests": "Run pnpm evm:build and pnpm check:bindings, then cargo test --locked -p e3-evm-contracts.",
+      "unverified": ["Binding consistency does not establish transaction, ingestion or proof correctness."]
+    },
+    {
       "id": "e3-evm",
       "documentation": [
         { "title": "Chain ingestion", "path": "docs/architecture/committee-selection.md" },
@@ -217,7 +240,7 @@
         {
           "name": "IInterfold",
           "what": "alloy sol! binding for Interfold.sol; the other contracts have their own sol! blocks in contracts.rs",
-          "ref": "crates/evm/src/contracts.rs@23@interface IInterfold {"
+          "ref": "crates/evm/contracts/src/lib.rs@39@interface IInterfold {"
         },
         {
           "name": "ensure_node_release",

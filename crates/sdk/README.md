@@ -41,13 +41,13 @@ let bytes = encode_vec_u64_to_bytes(&[7_u64]);
 assert_eq!(decode_bytes_to_vec_u64(&bytes).unwrap(), vec![7]);
 ```
 
-See [BFV usage](../bfv-client/README.md), [contract/listener helpers](../evm-helpers/README.md), and
-[indexing](../indexer/README.md) for their API contracts and examples.
+See [BFV usage](../bfv-client/README.md), [contract/listener helpers](../evm/client/README.md), and
+[indexing](../evm/indexer/README.md) for their API contracts and examples.
 
 ## Tests and feature checks
 
 Minimal checks: `cargo check --locked -p e3-sdk --no-default-features`, or add `--features bfv`.
-Default/EVM/indexer builds require the [Solidity fixture prerequisites](../evm-helpers/README.md)
+Default/EVM/indexer builds require the [Solidity fixture prerequisites](../evm/client/README.md)
 even for Cargo checks; BFV-only builds avoid those optional adapters.
 
 The facade has no independent behavioral tests. `cargo check --locked -p e3-sdk` checks the default

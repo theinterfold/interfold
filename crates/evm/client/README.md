@@ -3,8 +3,8 @@
 ## Purpose
 
 Application-facing Ethereum listeners, Interfold contract clients, retry helpers, and local nonce
-coordination. The [Rust SDK](../sdk/README.md) re-exports this crate as `evm_helpers`.
-Ciphernode-specific ingestion and transaction policy belong in [e3-evm](../evm/README.md).
+coordination. The [Rust SDK](../../sdk/README.md) re-exports this crate as `evm_helpers`.
+Ciphernode-specific ingestion and transaction policy belong in [e3-evm](../README.md).
 
 ## Map
 
@@ -22,9 +22,9 @@ transactions independently of listener delivery.
 
 ## Contract clients
 
-Bindings and wire events are re-exported from [e3-evm-contracts](../evm/contracts/README.md). The
-`E3` returned by contract reads is now the same type carried by `E3Requested`; its `committeeSize`,
-and stage/reason fields on wire events, are raw `uint8` values. Convert explicitly with
+Bindings and wire events are re-exported from [e3-evm-contracts](../contracts/README.md). The `E3`
+returned by contract reads is now the same type carried by `E3Requested`; its `committeeSize`, and
+stage/reason fields on wire events, are raw `uint8` values. Convert explicitly with
 `CommitteeSize::try_from`, `E3Stage::try_from` or `FailureReason::try_from` when a typed view is
 needed. Typed read helpers keep their existing unknown-value sentinel. This is a Rust source-API
 change for the next dev release, not a Solidity ABI change. Indexer projection encodings do not
