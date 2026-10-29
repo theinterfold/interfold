@@ -34,7 +34,8 @@
 //! `public_signals` (false negatives/positives relative to the intended circuit).
 
 use super::{CommitmentLink, FieldValue, LinkScope};
-use e3_events::{CircuitName, ProofType};
+use e3_events::ProofType;
+use e3_zk_config::CircuitName;
 use e3_zk_config::FIELD_BYTE_LEN;
 use e3_zk_config::MAX_MSG_NON_ZERO_COEFFS;
 

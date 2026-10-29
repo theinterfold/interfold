@@ -23,7 +23,8 @@
 //! `expected_threshold_pk_commitments` array.
 
 use super::{CommitmentLink, FieldValue, LinkScope};
-use e3_events::{CircuitName, ProofType};
+use e3_events::ProofType;
+use e3_zk_config::CircuitName;
 use e3_zk_config::FIELD_BYTE_LEN;
 
 /// C1 → C5 pk_commitment consistency link.

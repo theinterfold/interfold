@@ -38,8 +38,10 @@ occurrences or verification batches.
 
 `E3id`, `ProofType`, proof payloads, and the transport pipeline remain owned here. Import
 `Committee` directly from [committee](../committee/README.md); events does not re-export membership.
-The cross-proof `CommitmentLink` interface belongs to [slashing](../slashing/README.md), not
-transport. It is not re-exported here because slashing already depends on events.
+`CircuitName`/`CircuitVariant` remain compatibility re-exports from
+[ZK config](../zk/config/README.md); consumers should import that owner directly. The cross-proof
+`CommitmentLink` interface belongs to [slashing](../slashing/README.md), not transport. It is not
+re-exported here because slashing already depends on events.
 
 ## Runtime use
 

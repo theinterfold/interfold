@@ -11,13 +11,13 @@ use e3_committee::CiphernodesCommitteeSize;
 use e3_data::{Repositories, RepositoriesFactory};
 use e3_event_system::EventSystem;
 use e3_events::{
-    AggregateConfig, AggregateId, CiphertextOutputPublished, CircuitName, EventSource,
-    EventStoreQueryBy, EvmEventConfig, EvmEventConfigChain, HistoricalEvmEventsReceived, SeqAgg,
-    Unsequenced,
+    AggregateConfig, AggregateId, CiphertextOutputPublished, EventSource, EventStoreQueryBy,
+    EvmEventConfig, EvmEventConfigChain, HistoricalEvmEventsReceived, SeqAgg, Unsequenced,
 };
 use e3_fhe_params::BfvPreset;
 use e3_request::canonical_key::CanonicalPublicKey;
 use e3_utils::ArcBytes;
+use e3_zk_config::CircuitName;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,

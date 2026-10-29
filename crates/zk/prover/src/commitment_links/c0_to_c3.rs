@@ -22,7 +22,8 @@
 //! appear among the set of C0 `pk_commitment` outputs from any party.
 
 use super::{CommitmentLink, FieldValue, LinkScope};
-use e3_events::{CircuitName, ProofType};
+use e3_events::ProofType;
+use e3_zk_config::CircuitName;
 use e3_zk_config::FIELD_BYTE_LEN;
 
 /// C3a → C0 pk_commitment consistency link.

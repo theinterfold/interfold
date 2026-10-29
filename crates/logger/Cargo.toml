@@ -16,5 +16,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+e3-zk-config.workspace = true
 alloy = { workspace = true }
 e3-utils = { workspace = true }
