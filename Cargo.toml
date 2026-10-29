@@ -17,7 +17,7 @@ members = [
   "crates/entrypoint",
   "crates/event-system",
   "crates/events",
-  "crates/evm",
+  "crates/evm/runtime",
   "crates/evm/contracts",
   "crates/evm/client",
   "crates/fhe",
@@ -106,7 +106,7 @@ e3-entrypoint = { version = "0.20.0-dev.2", path = "./crates/entrypoint" }
 e3-init = { version = "0.20.0-dev.2", path = "./crates/init" }
 e3-event-system = { version = "0.20.0-dev.2", path = "./crates/event-system" }
 e3-events = { version = "0.20.0-dev.2", path = "./crates/events" }
-e3-evm = { version = "0.20.0-dev.2", path = "./crates/evm" }
+e3-evm = { version = "0.20.0-dev.2", path = "./crates/evm/runtime" }
 e3-evm-contracts = { version = "0.20.0-dev.2", path = "./crates/evm/contracts" }
 e3-evm-helpers = { version = "0.20.0-dev.2", path = "./crates/evm/client" }
 e3-fhe = { version = "0.20.0-dev.2", path = "./crates/fhe" }

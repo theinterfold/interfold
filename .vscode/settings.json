@@ -5,7 +5,7 @@
   "solidity.formatter": "prettier",
   "typescript.tsdk": "node_modules/typescript/lib",
   "rust-analyzer.cargo.extraArgs": ["--locked"],
-  "rust-analyzer.linkedProjects": ["crates/evm/Cargo.toml", "crates/evm/client/Cargo.toml"],
+  "rust-analyzer.linkedProjects": ["crates/evm/runtime/Cargo.toml", "crates/evm/client/Cargo.toml"],
   "[solidity]": {
     "editor.defaultFormatter": "NomicFoundation.hardhat-solidity"
   },

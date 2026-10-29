@@ -675,7 +675,7 @@ mod tests {
 
     fn artifact_path(relative: &str) -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../packages/interfold-contracts")
+            .join("../../../packages/interfold-contracts")
             .join(relative)
     }
 

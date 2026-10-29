@@ -1,9 +1,9 @@
 # Requests and committee selection
 
 Owners: [Interfold contracts](../../packages/interfold-contracts/contracts/),
-[sortition](../../crates/sortition/src/), and [EVM ingestion](../../crates/evm/src/). Collateral and
-eligibility belong to [registration](registration-and-bonding.md), proof-backed key publication to
-[DKG](dkg.md), and actor delivery to [persistence](persistence-and-replay.md).
+[sortition](../../crates/sortition/src/), and [EVM ingestion](../../crates/evm/runtime/src/).
+Collateral and eligibility belong to [registration](registration-and-bonding.md), proof-backed key
+publication to [DKG](dkg.md), and actor delivery to [persistence](persistence-and-replay.md).
 
 ## Request-time contract
 

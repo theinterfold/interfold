@@ -198,8 +198,8 @@
     "id": "A22",
     "supported": true,
     "refs": [
-      "crates/evm/src/event_decoding/catalog.rs@33@pub(crate) fn find(",
-      "crates/evm/src/event_decoding/observation.rs@16@pub(crate) fn observe("
+      "crates/evm/runtime/src/event_decoding/catalog.rs@33@pub(crate) fn find(",
+      "crates/evm/runtime/src/event_decoding/observation.rs@16@pub(crate) fn observe("
     ],
     "line_text": ["pub(crate) fn find(contract: &str, topic0: B256) -> Option<&'static EvmEventDefinition> {", "pub(crate) fn observe("],
     "note": "catalog.rs names a log by its topic0, observation.rs turns it into an EvmLogObserved node event, and protocol events use typed decoders."

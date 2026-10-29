@@ -96,18 +96,18 @@ router sends each proof to the verifier for its parameter set and committee size
 A ciphernode is the `interfold` binary that runs with `interfold start`. It reads contract events,
 talks to other ciphernodes over libp2p, and sends transactions. Its main parts are actors:
 
-| Part                           | Crate               | Job                                                                  |
-| ------------------------------ | ------------------- | -------------------------------------------------------------------- |
-| EVM readers and writers        | `crates/evm`        | Read contract events and send transactions                           |
-| `Sortition`                    | `crates/sortition`  | Score tickets, submit tickets, and track committee membership        |
-| `CommitteeFinalizer`           | `crates/aggregator` | Call `finalizeCommittee` after the ticket window closes              |
-| `ThresholdKeyshare`            | `crates/keyshare`   | Run DKG and compute decryption shares for one E3                     |
-| `PublicKeyAggregator`          | `crates/aggregator` | Aggregate the public key and the DKG proofs                          |
-| `ThresholdPlaintextAggregator` | `crates/aggregator` | Combine decryption shares and fold the decryption proofs             |
-| Proof actors                   | `crates/zk/prover`  | Generate and verify ZK proofs with Barretenberg (`bb`)               |
-| `AccusationManager`            | `crates/slashing`   | Start an accusation after a failed proof and collect committee votes |
-| Network                        | `crates/net`        | libp2p gossip between ciphernodes                                    |
-| Storage                        | `crates/data`       | sled storage and event replay after a restart                        |
+| Part                           | Crate                | Job                                                                  |
+| ------------------------------ | -------------------- | -------------------------------------------------------------------- |
+| EVM readers and writers        | `crates/evm/runtime` | Read contract events and send transactions                           |
+| `Sortition`                    | `crates/sortition`   | Score tickets, submit tickets, and track committee membership        |
+| `CommitteeFinalizer`           | `crates/aggregator`  | Call `finalizeCommittee` after the ticket window closes              |
+| `ThresholdKeyshare`            | `crates/keyshare`    | Run DKG and compute decryption shares for one E3                     |
+| `PublicKeyAggregator`          | `crates/aggregator`  | Aggregate the public key and the DKG proofs                          |
+| `ThresholdPlaintextAggregator` | `crates/aggregator`  | Combine decryption shares and fold the decryption proofs             |
+| Proof actors                   | `crates/zk/prover`   | Generate and verify ZK proofs with Barretenberg (`bb`)               |
+| `AccusationManager`            | `crates/slashing`    | Start an accusation after a failed proof and collect committee votes |
+| Network                        | `crates/net`         | libp2p gossip between ciphernodes                                    |
+| Storage                        | `crates/data`        | sled storage and event replay after a restart                        |
 
 Ciphernodes exchange their proofs over gossip and verify each other's proofs. Individual proofs do
 not go on-chain. Only the aggregated proofs do.

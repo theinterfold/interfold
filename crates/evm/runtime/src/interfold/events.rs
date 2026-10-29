@@ -542,7 +542,7 @@ mod tests {
     #[test]
     fn preset_config_ids_are_accepted() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../fhe-params/tests/fixtures/bfv_protocol.json"
+            "../../../../fhe-params/tests/fixtures/bfv_protocol.json"
         ))
         .unwrap();
         for vector in fixture["vectors"]
