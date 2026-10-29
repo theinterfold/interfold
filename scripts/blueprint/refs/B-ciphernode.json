@@ -3,9 +3,9 @@
     "id": "B1",
     "supported": true,
     "refs": [
-      "crates/evm/src/event_decoding/actor.rs@95@InterfoldEvmEvent::Event(event)",
-      "crates/evm/src/chain_gateway/actor.rs@208@into_interfold_event(&self.bus)",
-      "crates/evm/src/chain_gateway/actor.rs@174@self.bus.naked_dispatch(msg);"
+      "crates/evm/runtime/src/event_decoding/actor.rs@95@InterfoldEvmEvent::Event(event)",
+      "crates/evm/runtime/src/chain_gateway/actor.rs@208@into_interfold_event(&self.bus)",
+      "crates/evm/runtime/src/chain_gateway/actor.rs@174@self.bus.naked_dispatch(msg);"
     ],
     "line_text": [
       "Ok(Some(event)) => self.next.do_send(InterfoldEvmEvent::Event(event)),",
@@ -18,8 +18,8 @@
     "id": "B2",
     "supported": true,
     "refs": [
-      "crates/evm/src/interfold_writing/effects.rs@272@.publishPlaintextOutput(e3_id, decrypted_output, proof)",
-      "crates/evm/src/interfold_writing/handlers.rs@411@let result = publish_plaintext_output("
+      "crates/evm/runtime/src/interfold_writing/effects.rs@272@.publishPlaintextOutput(e3_id, decrypted_output, proof)",
+      "crates/evm/runtime/src/interfold_writing/handlers.rs@411@let result = publish_plaintext_output("
     ],
     "line_text": [".publishPlaintextOutput(e3_id, decrypted_output, proof)", "let result = publish_plaintext_output("],
     "note": "publish_plaintext_output sends the publishPlaintextOutput transaction, and the InterfoldSolWriter handler calls it."
@@ -28,8 +28,8 @@
     "id": "B3",
     "supported": true,
     "refs": [
-      "crates/evm/src/ciphernode_registry/effects.rs@69@.submitTicket(e3_id_u256, ticket_number_u256)",
-      "crates/evm/src/ciphernode_registry/effects.rs@334@.publishCommittee(e3_id_u256, pk_commitment_b256, proof, attestation_bundle)"
+      "crates/evm/runtime/src/ciphernode_registry/effects.rs@54@.submitTicket(e3_id_u256, ticket_number_u256)",
+      "crates/evm/runtime/src/ciphernode_registry/effects.rs@319@.publishCommittee(e3_id_u256, pk_commitment_b256, proof, attestation_bundle)"
     ],
     "line_text": [
       ".submitTicket(e3_id_u256, ticket_number_u256)",
@@ -41,8 +41,8 @@
     "id": "B4",
     "supported": true,
     "refs": [
-      "crates/evm/src/slashing_writing/effects.rs@82@.proposeSlashByDkgParty(e3_id, pid, proof)",
-      "crates/evm/src/slashing_writing/effects.rs@88@.proposeSlash(e3_id, operator, proof)"
+      "crates/evm/runtime/src/slashing_writing/effects.rs@82@.proposeSlashByDkgParty(e3_id, pid, proof)",
+      "crates/evm/runtime/src/slashing_writing/effects.rs@88@.proposeSlash(e3_id, operator, proof)"
     ],
     "line_text": [".proposeSlashByDkgParty(e3_id, pid, proof)", ".proposeSlash(e3_id, operator, proof)"],
     "note": "submit_slash_proposal sends proposeSlashByDkgParty when the operator resolves to a DKG party, and proposeSlash otherwise."

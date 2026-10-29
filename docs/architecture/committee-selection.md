@@ -1,9 +1,9 @@
 # Requests and committee selection
 
 Owners: [Interfold contracts](../../packages/interfold-contracts/contracts/),
-[sortition](../../crates/sortition/src/), and [EVM ingestion](../../crates/evm/src/). Collateral and
-eligibility belong to [registration](registration-and-bonding.md), proof-backed key publication to
-[DKG](dkg.md), and actor delivery to [persistence](persistence-and-replay.md).
+[sortition](../../crates/sortition/src/), and [EVM ingestion](../../crates/evm/runtime/src/).
+Collateral and eligibility belong to [registration](registration-and-bonding.md), proof-backed key
+publication to [DKG](dkg.md), and actor delivery to [persistence](persistence-and-replay.md).
 
 ## Request-time contract
 
@@ -139,7 +139,7 @@ its collateral obligation.
 
 The [sortition finalizer](../../crates/sortition/src/committee_finalization/actor.rs) retains
 request/context/ticket before effects and re-arms from its saved absolute committee deadline after
-EffectsEnabled. Its [EVM time reader](../../crates/evm/src/chain_time.rs) opens a fresh read
+EffectsEnabled. Its [EVM time reader](../../crates/evm/runtime/src/chain_time.rs) opens a fresh read
 provider for each attempt so a dead WebSocket cannot permanently stop it. Timestamp errors retry
 without substituting host time. The saved rank's full stagger is reapplied after each successful
 read, including restart; there is no persisted rank-specific not-before instant. Formation remains a

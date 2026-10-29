@@ -252,12 +252,12 @@
         {
           "name": "CiphernodeRegistrySolWriter (e3-evm, outside this crate)",
           "role": "takes PublicKeyAggregated and submits publishCommittee on chain",
-          "ref": "crates/evm/src/ciphernode_registry/handlers.rs@638@Handler<PublicKeyAggregated>"
+          "ref": "crates/evm/runtime/src/ciphernode_registry/handlers.rs@638@Handler<PublicKeyAggregated>"
         },
         {
           "name": "InterfoldSolWriter (e3-evm, outside this crate)",
           "role": "takes a locally computed PlaintextAggregated and submits publishPlaintextOutput on chain",
-          "ref": "crates/evm/src/interfold_writing/handlers.rs@222@InterfoldEventData::PlaintextAggregated(data) => {"
+          "ref": "crates/evm/runtime/src/interfold_writing/handlers.rs@222@InterfoldEventData::PlaintextAggregated(data) => {"
         }
       ],
       "consumes": [

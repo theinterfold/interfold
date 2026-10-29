@@ -2,248 +2,271 @@
   "group": "evm-da",
   "units": [
     {
+      "id": "e3-evm-contracts",
+      "kind": "crate",
+      "path": "crates/evm/contracts",
+      "one_line": "Shared checked Solidity ABI bindings, independent of node and application delivery policies.",
+      "documentation": [{ "title": "Rust contract boundaries", "path": "docs/architecture/rust-client-integration.md" }],
+      "actors": [],
+      "consumes": [],
+      "emits": [],
+      "state": [],
+      "key_types": [],
+      "read_first": [
+        { "why": "minimal shared Interfold wire surface", "ref": "crates/evm/contracts/src/lib.rs@39@interface IInterfold {" },
+        {
+          "why": "checks against compiled Solidity",
+          "ref": "crates/evm/contracts/src/abi_consistency.rs@178@fn declared_bindings_match_solidity() {"
+        }
+      ],
+      "rust_patterns": [],
+      "depends_on": [],
+      "tests": "Run pnpm evm:build and pnpm check:bindings, then cargo test --locked -p e3-evm-contracts.",
+      "unverified": ["Binding consistency does not establish transaction, ingestion or proof correctness."]
+    },
+    {
       "id": "e3-evm",
       "documentation": [
         { "title": "Chain ingestion", "path": "docs/architecture/committee-selection.md" },
         { "title": "Writer recovery", "path": "docs/architecture/persistence-and-replay.md" }
       ],
       "kind": "crate",
-      "path": "crates/evm",
+      "path": "crates/evm/runtime",
       "one_line": "Connects the ciphernode to its EVM contracts: decodes chain logs into bus events and submits the node's transactions.",
       "actors": [
         {
           "name": "EvmReadInterface",
           "role": "Reads logs for every routed contract address: historical sync from the start block, then a live subscription with backfill and reconnect.",
-          "ref": "crates/evm/src/chain_reader/actor.rs@113@pub struct EvmReadInterface<P> {"
+          "ref": "crates/evm/runtime/src/chain_reader/actor.rs@113@pub struct EvmReadInterface<P> {"
         },
         {
           "name": "EvmRouter",
           "role": "Sends each log to the parser for its emitting address; a log with no route goes to the fallback as rejected.",
-          "ref": "crates/evm/src/event_router.rs@16@pub struct EvmRouter {"
+          "ref": "crates/evm/runtime/src/event_router.rs@16@pub struct EvmRouter {"
         },
         {
           "name": "InterfoldSolReader",
           "role": "Interfold.sol: decodes IInterfold events through a version-aware EvmParser.",
-          "ref": "crates/evm/src/interfold/reader.rs@13@pub struct InterfoldSolReader;"
+          "ref": "crates/evm/runtime/src/interfold/reader.rs@13@pub struct InterfoldSolReader;"
         },
         {
           "name": "CiphernodeRegistrySolReader",
           "role": "CiphernodeRegistry.sol: decodes committee, ticket, and public-key chunk events.",
-          "ref": "crates/evm/src/ciphernode_registry/actor.rs@63@pub struct CiphernodeRegistrySolReader<P> {"
+          "ref": "crates/evm/runtime/src/ciphernode_registry/actor.rs@63@pub struct CiphernodeRegistrySolReader<P> {"
         },
         {
           "name": "BondingRegistrySolReader",
           "role": "BondingRegistry.sol: decodes ticket and bond balance, operator activation, and admission events.",
-          "ref": "crates/evm/src/bonding_registry/actor.rs@13@pub struct BondingRegistrySolReader;"
+          "ref": "crates/evm/runtime/src/bonding_registry/actor.rs@13@pub struct BondingRegistrySolReader;"
         },
         {
           "name": "SlashingManagerSolReader",
           "role": "SlashingManager.sol: decodes slash execution events.",
-          "ref": "crates/evm/src/slashing/reader.rs@13@pub struct SlashingManagerSolReader;"
+          "ref": "crates/evm/runtime/src/slashing/reader.rs@13@pub struct SlashingManagerSolReader;"
         },
         {
           "name": "RandomnessProviderSolReader",
           "role": "RandomnessProvider: decodes RandomnessFulfilled, waits until the registry accepts the sortition seed (sortitionSeed), then emits a committee request.",
-          "ref": "crates/evm/src/randomness_provider/actor.rs@29@pub struct RandomnessProviderSolReader<P> {"
+          "ref": "crates/evm/runtime/src/randomness_provider/actor.rs@29@pub struct RandomnessProviderSolReader<P> {"
         },
         {
           "name": "EvmParser",
           "role": "Applies a per-contract extractor to each log; a strict extractor turns an undecodable log at a routed address into a rejection, which fails the gateway closed.",
-          "ref": "crates/evm/src/event_decoding/actor.rs@25@pub struct EvmParser {"
+          "ref": "crates/evm/runtime/src/event_decoding/actor.rs@25@pub struct EvmParser {"
         },
         {
           "name": "FixHistoricalOrder",
           "role": "Holds a HistoricalSyncComplete marker back until the event it refers to has been observed.",
-          "ref": "crates/evm/src/historical_order/actor.rs@13@pub struct FixHistoricalOrder {"
+          "ref": "crates/evm/runtime/src/historical_order/actor.rs@13@pub struct FixHistoricalOrder {"
         },
         {
           "name": "EvmChainGateway",
           "role": "Buffers events until the sync actor starts, hands the historical batch over, then forwards live events to the bus; fails closed on error.",
-          "ref": "crates/evm/src/chain_gateway/actor.rs@59@pub struct EvmChainGateway {"
+          "ref": "crates/evm/runtime/src/chain_gateway/actor.rs@59@pub struct EvmChainGateway {"
         },
         {
           "name": "DataAvailabilityCoordinator",
           "role": "Assembles committee-key chunks from chain events and retrieves ciphertext outputs through e3-data-availability.",
-          "ref": "crates/evm/src/data_availability/actor.rs@200@pub struct DataAvailabilityCoordinator {"
+          "ref": "crates/evm/runtime/src/data_availability/actor.rs@182@pub struct DataAvailabilityCoordinator {"
         },
         {
           "name": "CiphernodeRegistrySolWriter",
           "role": "Writes to CiphernodeRegistry.sol: submitTicket, finalizeCommittee, publishCommittee, and publishCommitteePublicKey chunks; acts only on a local PublicKeyAggregated.",
-          "ref": "crates/evm/src/ciphernode_registry/actor.rs@357@pub struct CiphernodeRegistrySolWriter<P> {"
+          "ref": "crates/evm/runtime/src/ciphernode_registry/actor.rs@357@pub struct CiphernodeRegistrySolWriter<P> {"
         },
         {
           "name": "InterfoldSolWriter",
           "role": "Writes to Interfold.sol: publishPlaintextOutput for a local PlaintextAggregated, plus markE3Failed and processE3Failure around failure deadlines.",
-          "ref": "crates/evm/src/interfold_writing/actor.rs@49@pub struct InterfoldSolWriter<P> {"
+          "ref": "crates/evm/runtime/src/interfold_writing/actor.rs@49@pub struct InterfoldSolWriter<P> {"
         },
         {
           "name": "SlashingManagerSolWriter",
           "role": "Writes to SlashingManager.sol: proposeSlash or proposeSlashByDkgParty after AccusationQuorumReached; with the policy disabled it publishes a local exclusion instead.",
-          "ref": "crates/evm/src/slashing_writing/actor.rs@48@pub struct SlashingManagerSolWriter<P> {"
+          "ref": "crates/evm/runtime/src/slashing_writing/actor.rs@48@pub struct SlashingManagerSolWriter<P> {"
         }
       ],
       "consumes": [
         {
           "name": "PlaintextAggregated",
           "by": "InterfoldSolWriter",
-          "ref": "crates/evm/src/interfold_writing/handlers.rs@222@InterfoldEventData::PlaintextAggregated(data) => {"
+          "ref": "crates/evm/runtime/src/interfold_writing/handlers.rs@222@InterfoldEventData::PlaintextAggregated(data) => {"
         },
         {
           "name": "PublicKeyAggregated",
           "by": "CiphernodeRegistrySolWriter",
-          "ref": "crates/evm/src/ciphernode_registry/handlers.rs@124@InterfoldEventData::PublicKeyAggregated(data) => {"
+          "ref": "crates/evm/runtime/src/ciphernode_registry/handlers.rs@124@InterfoldEventData::PublicKeyAggregated(data) => {"
         },
         {
           "name": "AccusationQuorumReached",
           "by": "SlashingManagerSolWriter",
-          "ref": "crates/evm/src/slashing_writing/handlers.rs@16@InterfoldEventData::AccusationQuorumReached(data) => {"
+          "ref": "crates/evm/runtime/src/slashing_writing/handlers.rs@16@InterfoldEventData::AccusationQuorumReached(data) => {"
         },
         {
           "name": "CommitteePublicKeyChunkPublished",
           "by": "DataAvailabilityCoordinator",
-          "ref": "crates/evm/src/data_availability/actor.rs@417@InterfoldEventData::CommitteePublicKeyChunkPublished(event) => {"
+          "ref": "crates/evm/runtime/src/data_availability/actor.rs@399@InterfoldEventData::CommitteePublicKeyChunkPublished(event) => {"
         },
         {
           "name": "CiphertextOutputReferencePublished",
           "by": "DataAvailabilityCoordinator",
-          "ref": "crates/evm/src/data_availability/actor.rs@459@InterfoldEventData::CiphertextOutputReferencePublished(event) => {"
+          "ref": "crates/evm/runtime/src/data_availability/actor.rs@441@InterfoldEventData::CiphertextOutputReferencePublished(event) => {"
         }
       ],
       "emits": [
         {
           "name": "InterfoldEvmEvent::Event (decoded protocol event)",
           "by": "EvmParser",
-          "ref": "crates/evm/src/event_decoding/actor.rs@95@InterfoldEvmEvent::Event(event)"
+          "ref": "crates/evm/runtime/src/event_decoding/actor.rs@95@InterfoldEvmEvent::Event(event)"
         },
         {
           "name": "HistoricalEvmEventsReceived (buffered history to the sync actor)",
           "by": "EvmChainGateway",
-          "ref": "crates/evm/src/chain_gateway/actor.rs@245@HistoricalEvmEventsReceived::new(state.buffer, event.chain_id)"
+          "ref": "crates/evm/runtime/src/chain_gateway/actor.rs@245@HistoricalEvmEventsReceived::new(state.buffer, event.chain_id)"
         },
         {
           "name": "CommitteePublished (key assembled from chunks)",
           "by": "DataAvailabilityCoordinator",
-          "ref": "crates/evm/src/data_availability/actor.rs@332@let event = CommitteePublished {"
+          "ref": "crates/evm/runtime/src/data_availability/actor.rs@314@let event = CommitteePublished {"
         },
         {
           "name": "CiphertextOutputPublished (bytes retrieved from DA)",
           "by": "DataAvailabilityCoordinator",
-          "ref": "crates/evm/src/data_availability/actor.rs@529@let event = CiphertextOutputPublished {"
+          "ref": "crates/evm/runtime/src/data_availability/actor.rs@511@let event = CiphertextOutputPublished {"
         },
         {
           "name": "committee request (after RandomnessFulfilled and registry acceptance)",
           "by": "RandomnessProviderSolReader",
-          "ref": "crates/evm/src/randomness_provider/actor.rs@161@let data = committee_requested(SortitionRequestContext {"
+          "ref": "crates/evm/runtime/src/randomness_provider/actor.rs@161@let data = committee_requested(SortitionRequestContext {"
         },
         {
           "name": "tx submitTicket(e3Id, ticketNumber)",
           "by": "CiphernodeRegistrySolWriter",
-          "ref": "crates/evm/src/ciphernode_registry/effects.rs@69@.submitTicket(e3_id_u256, ticket_number_u256)"
+          "ref": "crates/evm/runtime/src/ciphernode_registry/effects.rs@54@.submitTicket(e3_id_u256, ticket_number_u256)"
         },
         {
           "name": "tx finalizeCommittee(e3Id)",
           "by": "CiphernodeRegistrySolWriter",
-          "ref": "crates/evm/src/ciphernode_registry/effects.rs@234@finalizeCommittee(e3_id_u256)"
+          "ref": "crates/evm/runtime/src/ciphernode_registry/effects.rs@219@finalizeCommittee(e3_id_u256)"
         },
         {
           "name": "tx publishCommittee(e3Id, pkCommitment, proof, attestation)",
           "by": "CiphernodeRegistrySolWriter",
-          "ref": "crates/evm/src/ciphernode_registry/effects.rs@334@publishCommittee(e3_id_u256"
+          "ref": "crates/evm/runtime/src/ciphernode_registry/effects.rs@319@publishCommittee(e3_id_u256"
         },
         {
           "name": "tx publishCommitteePublicKey(chunk), one call per chunk",
           "by": "CiphernodeRegistrySolWriter",
-          "ref": "crates/evm/src/ciphernode_registry/effects.rs@406@.publishCommitteePublicKey("
+          "ref": "crates/evm/runtime/src/ciphernode_registry/effects.rs@374@.publishCommitteePublicKey("
         },
         {
           "name": "tx publishPlaintextOutput(e3Id, plaintext, proof)",
           "by": "InterfoldSolWriter",
-          "ref": "crates/evm/src/interfold_writing/effects.rs@272@.publishPlaintextOutput(e3_id, decrypted_output, proof)"
+          "ref": "crates/evm/runtime/src/interfold_writing/effects.rs@272@.publishPlaintextOutput(e3_id, decrypted_output, proof)"
         },
         {
           "name": "tx markE3Failed or processE3Failure (failure deadline and settlement)",
           "by": "InterfoldSolWriter",
-          "ref": "crates/evm/src/interfold_writing/effects.rs@219@contract.markE3Failed(raw_e3_id)"
+          "ref": "crates/evm/runtime/src/interfold_writing/effects.rs@219@contract.markE3Failed(raw_e3_id)"
         },
         {
           "name": "tx proposeSlash(e3Id, operator, proof) or proposeSlashByDkgParty",
           "by": "SlashingManagerSolWriter",
-          "ref": "crates/evm/src/slashing_writing/effects.rs@88@.proposeSlash(e3_id, operator, proof)"
+          "ref": "crates/evm/runtime/src/slashing_writing/effects.rs@88@.proposeSlash(e3_id, operator, proof)"
         }
       ],
       "state": [
         {
           "name": "Eth signing key repository",
           "where": "disk",
-          "ref": "crates/evm/src/repo.rs@18@Repository::new(self.store.scope(StoreKeys::eth_private_key()))"
+          "ref": "crates/evm/runtime/src/repo.rs@18@Repository::new(self.store.scope(StoreKeys::eth_private_key()))"
         },
         {
           "name": "Slashing writer recovery state, per chain",
           "where": "disk",
-          "ref": "crates/evm/src/slashing_writing/actor.rs@53@recovery: Option<Persistable<SlashingWriterRecoveryState>>,"
+          "ref": "crates/evm/runtime/src/slashing_writing/actor.rs@53@recovery: Option<Persistable<SlashingWriterRecoveryState>>,"
         },
         {
           "name": "Data-availability recovery state: key chunks, pending outputs, terminal E3s",
           "where": "disk",
-          "ref": "crates/evm/src/data_availability/actor.rs@215@recovery: Repository<DataAvailabilityRecoveryState>,"
+          "ref": "crates/evm/runtime/src/data_availability/actor.rs@197@recovery: Repository<DataAvailabilityRecoveryState>,"
         },
         {
           "name": "Ingestion heartbeat file per chain (health check only, not a resume cursor)",
           "where": "disk",
-          "ref": "crates/evm/src/chain_reader/progress.rs@61@pub fn ingestion_heartbeat_files(dir: PathBuf)"
+          "ref": "crates/evm/runtime/src/chain_reader/progress.rs@61@pub fn ingestion_heartbeat_files(dir: PathBuf)"
         },
         {
           "name": "Reader watermark last_block (memory only; a restart replays from the snapshot block cursor)",
           "where": "memory",
-          "ref": "crates/evm/src/chain_reader/effects/stream.rs@74@let mut last_block = latest_block;"
+          "ref": "crates/evm/runtime/src/chain_reader/effects/stream.rs@74@let mut last_block = latest_block;"
         }
       ],
       "key_types": [
         {
           "name": "InterfoldEvmEvent",
           "what": "the message between ingestion stages: Log, Event, Rejected, Processed, HistoricalSyncComplete",
-          "ref": "crates/evm/src/messages.rs@146@pub enum InterfoldEvmEvent {"
+          "ref": "crates/evm/runtime/src/messages.rs@146@pub enum InterfoldEvmEvent {"
         },
         {
           "name": "EvmLog",
           "what": "raw provider log tagged with its chain id and block timestamp",
-          "ref": "crates/evm/src/messages.rs@173@pub struct EvmLog {"
+          "ref": "crates/evm/runtime/src/messages.rs@173@pub struct EvmLog {"
         },
         {
           "name": "Filters",
           "what": "start block, confirmations, and the widest eth_getLogs window for one chain reader",
-          "ref": "crates/evm/src/chain_reader/actor.rs@53@pub struct Filters {"
+          "ref": "crates/evm/runtime/src/chain_reader/actor.rs@53@pub struct Filters {"
         },
         {
           "name": "IInterfold",
-          "what": "alloy sol! binding for Interfold.sol; the other contracts have their own sol! blocks in contracts.rs",
-          "ref": "crates/evm/src/contracts.rs@23@interface IInterfold {"
+          "what": "shared checked Interfold wire binding, re-exported by the runtime",
+          "ref": "crates/evm/contracts/src/lib.rs@39@interface IInterfold {"
         },
         {
           "name": "ensure_node_release",
           "what": "startup check: verifies this binary and acknowledges it on INodeReleaseRegistry before the readers start",
-          "ref": "crates/evm/src/node_release.rs@74@pub async fn ensure_node_release<P>("
+          "ref": "crates/evm/runtime/src/node_release.rs@74@pub async fn ensure_node_release<P>("
         },
         {
           "name": "ProviderCache",
           "what": "cached RPC providers and signer, with read-only and write-enabled startup states",
-          "ref": "crates/evm/src/provider_cache.rs@30@pub struct ProviderCache<State = ReadOnly> {"
+          "ref": "crates/evm/runtime/src/provider_cache.rs@30@pub struct ProviderCache<State = ReadOnly> {"
         },
         {
           "name": "EvmSystemChainBuilder",
           "what": "registers one chain's contract routes and starts its ingestion gateway",
-          "ref": "crates/evm/src/chain_system.rs@22@pub struct EvmSystemChainBuilder<P> {"
+          "ref": "crates/evm/runtime/src/chain_system.rs@22@pub struct EvmSystemChainBuilder<P> {"
         }
       ],
       "read_first": [
-        { "why": "crate purpose and the reader/writer split", "ref": "crates/evm/src/lib.rs@7@EVM integration for Interfold." },
+        { "why": "crate purpose and the reader/writer split", "ref": "crates/evm/runtime/src/lib.rs@7@EVM integration for Interfold." },
         {
           "why": "historical catch-up, then the live loop with reconnect",
-          "ref": "crates/evm/src/chain_reader/effects/stream.rs@9@async fn stream_from_evm<"
+          "ref": "crates/evm/runtime/src/chain_reader/effects/stream.rs@9@async fn stream_from_evm<"
         },
         {
           "why": "the reader's start block comes from the routing table and the chain's deploy block",
-          "ref": "crates/evm/src/chain_system.rs@136@Filters::from_routing_table(router.get_routing_table(), deploy_block)"
+          "ref": "crates/evm/runtime/src/chain_system.rs@136@Filters::from_routing_table(router.get_routing_table(), deploy_block)"
         },
         {
           "why": "restart: the block cursor saved with the snapshot replaces the deploy block",
@@ -254,22 +277,22 @@
         {
           "pattern": "actix-actor",
           "note": "EvmRouter is a plain actix actor that owns its routing table",
-          "ref": "crates/evm/src/event_router.rs@50@impl Actor for EvmRouter {"
+          "ref": "crates/evm/runtime/src/event_router.rs@50@impl Actor for EvmRouter {"
         },
         {
           "pattern": "actix-timer",
           "note": "a failed deferred-plaintext history read is retried after a fixed delay with run_later",
-          "ref": "crates/evm/src/interfold_writing/handlers.rs@109@ctx.run_later(PUBLICATION_RETRY_DELAY, move |actor, ctx| {"
+          "ref": "crates/evm/runtime/src/interfold_writing/handlers.rs@109@ctx.run_later(PUBLICATION_RETRY_DELAY, move |actor, ctx| {"
         },
         {
           "pattern": "let-else",
           "note": "the provider is taken once when the reader starts; a second start bails out",
-          "ref": "crates/evm/src/chain_reader/handlers.rs@19@let Some(provider) = self.provider.take() else {"
+          "ref": "crates/evm/runtime/src/chain_reader/handlers.rs@19@let Some(provider) = self.provider.take() else {"
         },
         {
           "pattern": "enum-match",
           "note": "the gateway matches each InterfoldEvmEvent variant and fails closed on the ones it must not receive",
-          "ref": "crates/evm/src/chain_gateway/actor.rs@214@InterfoldEvmEvent::Rejected(rejected) => bail!("
+          "ref": "crates/evm/runtime/src/chain_gateway/actor.rs@214@InterfoldEvmEvent::Rejected(rejected) => bail!("
         }
       ],
       "depends_on": [
@@ -281,12 +304,13 @@
         "e3-data",
         "e3-data-availability",
         "e3-events",
+        "e3-evm-contracts",
         "e3-fhe-params",
         "e3-sortition",
         "e3-trbfv",
         "e3-utils"
       ],
-      "tests": "cargo test -p e3-evm. Unit tests sit in src/ and in the *tests.rs modules. crates/evm/tests/live_sepolia_window.rs is #[ignore] and needs network access and the live Sepolia deployment.",
+      "tests": "cargo test -p e3-evm. Unit tests sit in src/ and in the *tests.rs modules. crates/evm/runtime/tests/live_sepolia_window.rs is #[ignore] and needs network access and the live Sepolia deployment.",
       "unverified": [
         "Whether events at the snapshot block are deduplicated on replay was not traced; collect_history.rs:47-58 dedups per chain, not per event.",
         "Whether the on-chain CommitteePublished event and the DA-assembled CommitteePublished can both reach the bus for one E3 was not traced."
@@ -294,10 +318,13 @@
     },
     {
       "id": "e3-data-availability",
-      "documentation": [{ "title": "Data availability", "path": "docs/architecture/data-availability.md" }],
+      "documentation": [
+        { "title": "Data availability", "path": "docs/architecture/data-availability.md" },
+        { "title": "Key transport and authority", "path": "docs/architecture/dkg.md" }
+      ],
       "kind": "crate",
       "path": "crates/data-availability",
-      "one_line": "Content-addressed object transport: publishes bytes to Avail and retrieves them by hash, re-hashing what it reads.",
+      "one_line": "Content-addressed object transport and pure committee-key chunk mechanics; admission and recovery stay with callers.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -312,22 +339,22 @@
         {
           "name": "DataReference",
           "what": "content hash, Avail block number, and leaf index that Ethereum records for one object",
-          "ref": "crates/data-availability/src/lib.rs@28@pub struct DataReference {"
+          "ref": "crates/data-availability/src/lib.rs@30@pub struct DataReference {"
         },
         {
           "name": "PendingPublication",
           "what": "Avail block hash, block number, and extrinsic index needed to request a bridge proof",
-          "ref": "crates/data-availability/src/lib.rs@36@pub struct PendingPublication {"
+          "ref": "crates/data-availability/src/lib.rs@38@pub struct PendingPublication {"
         },
         {
           "name": "ProofStatus",
           "what": "Pending, or Ready with the ABI-encoded Merkle proof and the reference",
-          "ref": "crates/data-availability/src/lib.rs@45@pub enum ProofStatus {"
+          "ref": "crates/data-availability/src/lib.rs@47@pub enum ProofStatus {"
         },
         {
           "name": "VectorXBridgeApi",
           "what": "HTTP client for the official Avail VectorX bridge proof route",
-          "ref": "crates/data-availability/src/lib.rs@164@pub struct VectorXBridgeApi {"
+          "ref": "crates/data-availability/src/lib.rs@166@pub struct VectorXBridgeApi {"
         },
         {
           "name": "AvailPublisher",
@@ -342,21 +369,26 @@
         {
           "name": "HttpObjectReader",
           "what": "mock reader: GET /objects/0x<hash> from a local HTTP server",
-          "ref": "crates/data-availability/src/lib.rs@239@pub struct HttpObjectReader {"
+          "ref": "crates/data-availability/src/lib.rs@241@pub struct HttpObjectReader {"
+        },
+        {
+          "name": "ChunkLayout",
+          "what": "ephemeral public-key chunk layout, independent of consumer persistence and key authority",
+          "ref": "crates/data-availability/src/public_key.rs@13@pub struct ChunkLayout {"
         }
       ],
       "read_first": [
         {
           "why": "crate purpose and the trust split: receipt on chain, re-hash on read",
-          "ref": "crates/data-availability/src/lib.rs@7@Content-addressed data-availability transport used by Interfold applications."
+          "ref": "crates/data-availability/src/lib.rs@7@Content-addressed transport and committee-public-key chunk mechanics."
         },
         {
           "why": "the retrieval boundary that the e3-evm coordinator calls",
-          "ref": "crates/data-availability/src/lib.rs@55@pub trait DataAvailabilityReader: Send + Sync {"
+          "ref": "crates/data-availability/src/lib.rs@57@pub trait DataAvailabilityReader: Send + Sync {"
         },
         {
           "why": "the hash check that every reader runs before it returns bytes",
-          "ref": "crates/data-availability/src/lib.rs@67@pub fn verify_retrieved_bytes("
+          "ref": "crates/data-availability/src/lib.rs@69@pub fn verify_retrieved_bytes("
         },
         {
           "why": "publish path: submit, wait for finality, return the coordinates",
@@ -367,32 +399,32 @@
         {
           "pattern": "trait-def",
           "note": "async trait with Send and Sync bounds; the Avail reader and the HTTP mock reader implement it",
-          "ref": "crates/data-availability/src/lib.rs@55@pub trait DataAvailabilityReader: Send + Sync {"
+          "ref": "crates/data-availability/src/lib.rs@57@pub trait DataAvailabilityReader: Send + Sync {"
         },
         {
           "pattern": "trait-impl",
           "note": "the HTTP reader's retrieve() re-hashes the bytes before it returns them",
-          "ref": "crates/data-availability/src/lib.rs@260@impl DataAvailabilityReader for HttpObjectReader {"
+          "ref": "crates/data-availability/src/lib.rs@262@impl DataAvailabilityReader for HttpObjectReader {"
         },
         {
           "pattern": "result-question-mark",
           "note": "size and emptiness are checked before the bytes are hashed",
-          "ref": "crates/data-availability/src/lib.rs@68@validate_object_bytes(&bytes)?;"
+          "ref": "crates/data-availability/src/lib.rs@70@validate_object_bytes(&bytes)?;"
         },
         {
           "pattern": "anyhow-context",
           "note": "a bad bridge URL reports a human-readable context",
-          "ref": "crates/data-availability/src/lib.rs@178@VectorX bridge API URL is invalid"
+          "ref": "crates/data-availability/src/lib.rs@180@VectorX bridge API URL is invalid"
         },
         {
           "pattern": "serde-derive",
           "note": "DataReference derives serde, so it can be serialized",
-          "ref": "crates/data-availability/src/lib.rs@27@#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]"
+          "ref": "crates/data-availability/src/lib.rs@29@#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]"
         },
         {
           "pattern": "unit-test",
           "note": "the re-hash rule is tested offline: matching bytes pass, substituted bytes fail",
-          "ref": "crates/data-availability/src/lib.rs@295@fn retrieved_bytes_must_match_the_reference() {"
+          "ref": "crates/data-availability/src/lib.rs@297@fn retrieved_bytes_must_match_the_reference() {"
         }
       ],
       "depends_on": [],

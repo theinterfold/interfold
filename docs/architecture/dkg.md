@@ -155,14 +155,15 @@ Committee hash is Keccak over ordered raw **20-byte** addresses, not padded
 agree. The wrapper checks its 128-bit limbs; other contextual PK-verifier arguments are not
 additional circuit bindings merely because the interface accepts them.
 
-The proven commitment is authority; serialized bytes are transport. Request-time members, including
-retained expelled members, can publish canonical 90 KiB chunks of a candidate up to 512 KiB while
-`KeyPublished`. Each consumer admits at most the first candidate per publisher and groups chunks by
-E3, publisher, and candidate hash. Require a complete sequence, Keccak candidate hash, valid BFV
-decode with request-time parameters, and recomputed C5 commitment equality before producing runtime
-`CommitteePublished` or storing a client key. An invalid candidate cannot consume another member's
-candidate. Terminal stages reject chunks and cannot recreate cleaned-up assemblies. `KeyPublished`
-alone does not mean clients have usable key bytes.
+The proven commitment is authority; shared
+[chunk mechanics](../../crates/data-availability/README.md) only validate transport. Request-time
+members, including retained expelled members, can publish canonical 90 KiB chunks of a candidate up
+to 512 KiB while `KeyPublished`. Each consumer admits at most the first candidate per publisher and
+groups chunks by E3, publisher, and candidate hash. Require a complete sequence, Keccak candidate
+hash, valid BFV decode with request-time parameters, and recomputed C5 commitment equality before
+producing runtime `CommitteePublished` or storing a client key. An invalid candidate cannot consume
+another member's candidate. Terminal stages reject chunks and cannot recreate cleaned-up assemblies.
+`KeyPublished` alone does not mean clients have usable key bytes.
 
 **Accepted processing cost (ZEN2-17):** publication accepts dynamic proof/data without wrapper-level
 caps. Canonical chunk shape/512 KiB candidate limits bound retained assembly, not total emitted

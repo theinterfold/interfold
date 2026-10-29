@@ -12,12 +12,12 @@ use actix::Addr;
 use anyhow::Result;
 use e3_events::BusHandle;
 use e3_request::E3LifecycleRepositoryFactory;
-use e3_sortition::CommitteeFinalizerRepositoryFactory;
 use e3_sortition::{
     AggregatorFailoverRepositoryFactory, CiphernodeSelector, CiphernodeSelectorFactory,
-    CiphernodeSelectorState, FinalizedCommitteesRepositoryFactory, GetCiphernodeSelectorState,
-    NodeStateRepositoryFactory, Sortition, SortitionAttachParams, SortitionBackend,
-    SortitionRecoveryRepositoryFactory, SortitionRepositoryFactory,
+    CiphernodeSelectorState, CommitteeFinalizerRepositoryFactory,
+    FinalizedCommitteesRepositoryFactory, GetCiphernodeSelectorState, NodeStateRepositoryFactory,
+    Sortition, SortitionAttachParams, SortitionBackend, SortitionRecoveryRepositoryFactory,
+    SortitionRepositoryFactory,
 };
 
 /// Reconcile the selector and finalized-committee snapshots, then attach the ciphernode selector
@@ -96,8 +96,10 @@ mod tests {
             E3Requested, EffectsEnabled, EventConstructorWithTimestamp, EventSource, GetEvents,
             InterfoldEvent, TicketGenerated, TicketId, TypedEvent, Unsequenced,
         };
-        use e3_sortition::{CommitteeFinalizerRecoveryState, CommitteeFinalizerRepositoryFactory};
-        use e3_sortition::{SortitionRecoveryRepositoryFactory, SortitionRecoveryState};
+        use e3_sortition::{
+            CommitteeFinalizerRecoveryState, CommitteeFinalizerRepositoryFactory,
+            SortitionRecoveryRepositoryFactory, SortitionRecoveryState,
+        };
 
         let system = e3_event_system::EventSystem::new().with_fresh_bus();
         let bus = system.handle()?.enable("sortition-upgrade");
@@ -166,8 +168,10 @@ mod tests {
             TicketGenerated, TicketId, TypedEvent, Unsequenced,
         };
         use e3_request::E3LifecycleRepositoryFactory;
-        use e3_sortition::{CommitteeFinalizerRecoveryState, CommitteeFinalizerRepositoryFactory};
-        use e3_sortition::{SortitionRecoveryRepositoryFactory, SortitionRecoveryState};
+        use e3_sortition::{
+            CommitteeFinalizerRecoveryState, CommitteeFinalizerRepositoryFactory,
+            SortitionRecoveryRepositoryFactory, SortitionRecoveryState,
+        };
         use e3_sync::SyncRepositoryFactory;
 
         for before_snapshot in [true, false] {

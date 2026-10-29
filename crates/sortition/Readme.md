@@ -31,10 +31,10 @@ messages such as `GetNodesForE3`; they do not rerun selection from current balan
 Full nodes also attach
 `CommitteeFinalizer::attach_with_recovery(bus, repository, chain_time_reader)` at the existing
 [startup boundary](../ciphernode-builder/src/builder/startup.rs). The `CommitteeChainTimeReader`
-reads latest block time for the request's chain; the [EVM adapter](../evm/src/chain_time.rs) creates
-a fresh provider per attempt. The actor retains deadline/rank, effects gating and cancellation. It
-remains separate from `Sortition`, and bootstrap does not attach it. Recovery keeps its original
-store key and schema despite the ownership move.
+reads latest block time for the request's chain; the [EVM adapter](../evm/runtime/src/chain_time.rs)
+creates a fresh provider per attempt. The actor retains deadline/rank, effects gating and
+cancellation. It remains separate from `Sortition`, and bootstrap does not attach it. Recovery keeps
+its original store key and schema despite the ownership move.
 
 The finalizer, recovery types, schema constant and repository factory are now exported by
 `e3_sortition`, not `e3_aggregator`; Rust callers must migrate those imports and pass a reader

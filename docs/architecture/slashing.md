@@ -2,7 +2,7 @@
 
 Owners: [accusation workflow](../../crates/slashing/src/accusation_voting/),
 [commitment consistency](../../crates/slashing/src/commitment_consistency/),
-[slash writer](../../crates/evm/src/slashing_writing/), and `SlashingManager` in
+[slash writer](../../crates/evm/runtime/src/slashing_writing/), and `SlashingManager` in
 [contracts](../../packages/interfold-contracts/contracts/). [Settlement](failure-settlement.md) owns
 payer, reward holds, and claim allocation; [registration](registration-and-bonding.md) owns
 collateral exit gates.
@@ -79,8 +79,8 @@ not override a live result. After two failed-read retries, or a zero result, an 
 manager and a full node fails startup. Configuration is a fallback only for a disabled chain without
 a provider. An E3 without its chain's manager cannot start accusation work; startup requires at
 least one resolved manager. Configured deploy blocks still control backfill.
-[Resolution tests](../../crates/evm/src/slashing_manager_address.rs) pin address precedence, not
-availability of every historical manager after arbitrary governance changes.
+[Resolution tests](../../crates/evm/runtime/src/slashing_manager_address.rs) pin address precedence,
+not availability of every historical manager after arbitrary governance changes.
 
 After startup sync, an Interfold `SlashingManagerSet` log naming a different address fails that
 chain's gateway closed. The node exits unsuccessfully; restart resolves the new manager. **Gap:** a
@@ -183,8 +183,8 @@ drain policy.
   [Expulsion tests](../../packages/interfold-contracts/test/Slashing/CommitteeExpulsion.spec.ts)
   cover atomic viability and callbacks. Run `pnpm evm:test`.
 - [Typed accusation admission](../../crates/slashing/src/accusation_voting/transitions/admission.rs)
-  and [writer workflow](../../crates/evm/src/slashing_writing/workflow.rs) contain owner-level
-  tests; use `cargo test -p e3-slashing` / `cargo test -p e3-evm` as relevant.
+  and [writer workflow](../../crates/evm/runtime/src/slashing_writing/workflow.rs) contain
+  owner-level tests; use `cargo test -p e3-slashing` / `cargo test -p e3-evm` as relevant.
 - [Accusation actor tests](../../crates/slashing/src/accusation_voting/actor_tests.rs) and
   [extension tests](../../crates/slashing/src/accusation_manager_ext.rs) cover saved votes/timeouts
   and accusation deferral during replay. These do not prove every snapshot crash window.

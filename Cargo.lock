@@ -3679,6 +3679,7 @@ dependencies = [
  "e3-event-system",
  "e3-events",
  "e3-evm",
+ "e3-evm-contracts",
  "e3-fhe-params",
  "e3-init",
  "e3-logger",
@@ -3962,6 +3963,7 @@ dependencies = [
  "e3-committee-hash",
  "e3-crypto",
  "e3-events",
+ "e3-evm-contracts",
  "e3-fhe-params",
  "e3-test-support",
  "e3-trbfv",
@@ -4000,6 +4002,7 @@ dependencies = [
  "e3-event-system",
  "e3-events",
  "e3-evm",
+ "e3-evm-contracts",
  "e3-fhe-params",
  "e3-request",
  "e3-sortition",
@@ -4022,22 +4025,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "e3-evm-helpers"
+name = "e3-evm-client"
 version = "0.20.0-dev.2"
 dependencies = [
  "alloy",
  "anyhow",
  "async-trait",
+ "e3-evm-contracts",
  "e3-fhe-params",
  "e3-utils",
  "eyre",
  "futures",
  "futures-util",
  "once_cell",
- "serde",
  "serde_json",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "e3-evm-contracts"
+version = "0.20.0-dev.2"
+dependencies = [
+ "alloy-contract",
+ "alloy-json-abi",
+ "alloy-sol-types",
+ "bincode",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4109,7 +4124,9 @@ dependencies = [
  "async-trait",
  "bincode",
  "e3-bfv-client",
- "e3-evm-helpers",
+ "e3-data-availability",
+ "e3-evm-client",
+ "e3-evm-contracts",
  "e3-fhe-params",
  "eyre",
  "fhe",
@@ -4388,7 +4405,7 @@ name = "e3-sdk"
 version = "0.20.0-dev.2"
 dependencies = [
  "e3-bfv-client",
- "e3-evm-helpers",
+ "e3-evm-client",
  "e3-fhe-params",
  "e3-indexer",
 ]

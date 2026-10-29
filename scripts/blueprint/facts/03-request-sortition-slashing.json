@@ -432,7 +432,7 @@
       "depends_on": ["e3-config", "e3-data", "e3-events", "e3-request", "e3-utils"],
       "tests": "unit tests in sortition/ticket_selection.rs, ticket.rs, selection_backend.rs, node_registry_tests.rs and ciphernode_selection/actor.rs under crates/sortition/src; fixtures in crates/sortition/tests/fixtures; cargo test -p e3-sortition",
       "unverified": [
-        "CommitteeRequested is built from randomness-provider chain logs (crates/evm/src/randomness_provider/events.rs), grepped only; the chain path that emits CommitteeFinalized was not read."
+        "CommitteeRequested is built from randomness-provider chain logs (crates/evm/runtime/src/randomness_provider/events.rs), grepped only; the chain path that emits CommitteeFinalized was not read."
       ]
     },
     {
@@ -625,7 +625,7 @@
         },
         {
           "why": "On-chain side: the e3-evm writer consumes AccusationQuorumReached; the AccusedFaulted gate (is_slashable_outcome) is a few lines below",
-          "ref": "crates/evm/src/slashing_writing/handlers.rs@16@InterfoldEventData::AccusationQuorumReached(data) => {"
+          "ref": "crates/evm/runtime/src/slashing_writing/handlers.rs@16@InterfoldEventData::AccusationQuorumReached(data) => {"
         }
       ],
       "rust_patterns": [
