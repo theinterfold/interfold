@@ -15,6 +15,6 @@ projections.
 
 `build.rs` invokes `scripts/build_fixtures.sh` even for a check and can rewrite fixture JSON; edit
 Solidity rather than generated ABI/bytecode. Use the [README tests/prerequisites](README.md#tests);
-listener progress checks live in e3-evm-helpers. Neither the atomic high-water claim nor typed
+listener progress checks live in e3-evm-client. Neither the atomic high-water claim nor typed
 callback success proves durable all-handler completion. Catch-up changes need an affected
 consumer/reconnect scenario, not only a higher stored block number.

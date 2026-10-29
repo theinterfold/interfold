@@ -10,7 +10,7 @@ use alloy::{
     sol,
 };
 use e3_bfv_client::compute_pk_commitment;
-use e3_evm_helpers::contracts::ReadOnly;
+use e3_evm_client::contracts::ReadOnly;
 use e3_fhe_params::build_bfv_params_from_set_arc;
 use e3_fhe_params::DEFAULT_BFV_PRESET;
 use e3_indexer::{DataStore, InMemoryStore, InterfoldIndexer};
@@ -276,7 +276,7 @@ async fn backfill_skips_legacy_keys_and_recovers_current_rounds() -> Result<()> 
 
 mod test_memory_leak {
 
-    use e3_evm_helpers::{contracts::InterfoldContractFactory, event_listener::EventListener};
+    use e3_evm_client::{contracts::InterfoldContractFactory, event_listener::EventListener};
 
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};

@@ -1,20 +1,18 @@
 # Rust client integration
 
 Owners: [Rust SDK](../../crates/sdk/), [BFV client](../../crates/bfv-client/),
-[indexer](../../crates/evm/indexer/), and [EVM helpers](../../crates/evm/client/). The
+[indexer](../../crates/evm/indexer/), and [EVM client](../../crates/evm/client/). The
 [TypeScript SDK](../pages/build/sdk.mdx) is a separate client. Neither client replaces the
 application contract's input checks or the protocol's output verification.
 
-Shared Rust contract facts live in [e3-evm-contracts](../../crates/evm/contracts/README.md), not in
-a client or node delivery policy. Its wire tuples are distinct from persisted application and node
-models; [client migration notes](../../crates/evm/client/README.md#contract-clients) describe the
-raw enum fields and explicit typed views.
+Shared [wire bindings](../../crates/evm/contracts/README.md) are separate from persisted application
+and node models. The [EVM client](../../crates/evm/client/README.md#contract-clients) exposes raw
+enum fields and explicit typed views.
 
 ## Client boundaries
 
-`e3-sdk` re-exports `bfv_client` and `bfv_params` through feature `bfv`, `evm_helpers` through
-`evm`, and `indexer` through `indexer`. The default `full` feature enables all three. These are
-re-exports, not a second implementation of encryption or chain tracking.
+The [SDK feature selection](../../crates/sdk/README.md#select-capabilities) controls which client
+capabilities are exposed; the facade adds no encryption or chain-tracking policy.
 
 `bfv_encrypt` returns ciphertext bytes. `bfv_verifiable_encrypt` also returns witness JSON; it does
 not itself produce or verify a proof. Verifiable encryption accepts supported threshold parameter
@@ -40,7 +38,7 @@ live-progress qualification, cursor-write limits, and callback ownership. Applic
 check its own projection, not infer it from block height. CRISP's request/key convergence and input
 selection belong to [encrypted computation](encrypted-computation.md).
 
-EVM helpers provide bindings, log/block listeners, and transaction submission. Their
+The EVM client provides bindings, log/block listeners, and transaction submission. Its
 `send_with_next_nonce` serializes nonce selection and broadcast for a chain/account within one
 process; receipt waiting happens after the lock is released. Another process sharing the key is
 visible only through the RPC pending count. This is not a distributed nonce coordinator or durable
@@ -48,7 +46,7 @@ transaction outbox. [Persistence](persistence-and-replay.md) describes node writ
 
 ## Evidence
 
-Use `cargo test -p e3-bfv-client`, `cargo test -p e3-indexer`, and `cargo test -p e3-evm-helpers`
-for changed owner boundaries. A reconnect change also needs an affected consumer scenario. Local
-helper tests do not establish all-handler crash consistency, browser/Node build parity, or
-acceptance by a deployed application verifier.
+Use `cargo test -p e3-bfv-client`, `cargo test -p e3-indexer`, and `cargo test -p e3-evm-client` for
+changed owner boundaries. A reconnect change also needs an affected consumer scenario. Local helper
+tests do not establish all-handler crash consistency, browser/Node build parity, or acceptance by a
+deployed application verifier.

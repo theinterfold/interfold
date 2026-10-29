@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use e3_evm_helpers::threshold_queue::{ThresholdItem, ThresholdQueue};
+use e3_evm_client::threshold_queue::{ThresholdItem, ThresholdQueue};
 use eyre::Result;
 use std::{future::Future, pin::Pin, sync::Arc};
 use tracing::info;

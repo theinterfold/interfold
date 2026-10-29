@@ -4026,19 +4026,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "e3-evm-contracts"
-version = "0.20.0-dev.2"
-dependencies = [
- "alloy-contract",
- "alloy-json-abi",
- "alloy-sol-types",
- "bincode",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "e3-evm-helpers"
+name = "e3-evm-client"
 version = "0.20.0-dev.2"
 dependencies = [
  "alloy",
@@ -4054,6 +4042,18 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "e3-evm-contracts"
+version = "0.20.0-dev.2"
+dependencies = [
+ "alloy-contract",
+ "alloy-json-abi",
+ "alloy-sol-types",
+ "bincode",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4125,8 +4125,8 @@ dependencies = [
  "async-trait",
  "bincode",
  "e3-bfv-client",
+ "e3-evm-client",
  "e3-evm-contracts",
- "e3-evm-helpers",
  "e3-fhe-params",
  "eyre",
  "fhe",
@@ -4405,7 +4405,7 @@ name = "e3-sdk"
 version = "0.20.0-dev.2"
 dependencies = [
  "e3-bfv-client",
- "e3-evm-helpers",
+ "e3-evm-client",
  "e3-fhe-params",
  "e3-indexer",
 ]

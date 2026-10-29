@@ -2,25 +2,19 @@
 
 ## Purpose
 
-Feature-gated Rust facade for application clients. It re-exports the existing capability crates
-rather than wrapping them with another implementation. The JavaScript SDK is a separate
+Feature-gated Rust facade for application clients. The JavaScript SDK is a separate
 [workspace package](../../packages/interfold-sdk/README.md).
-
-## Map
-
-[`src/lib.rs`](src/lib.rs) is intentionally only a feature-gated export surface.
-[`Cargo.toml`](Cargo.toml) maps features to optional owner crates. Calls through an alias go
-directly to that owner; there is no SDK actor, configuration loader, or second client
-implementation.
 
 ## Select capabilities
 
 | Feature          | Public module aliases                                          |
 | ---------------- | -------------------------------------------------------------- |
 | `bfv`            | `bfv_client` (`e3-bfv-client`), `bfv_params` (`e3-fhe-params`) |
-| `evm`            | `evm_helpers` (`e3-evm-helpers`)                               |
+| `evm`            | `evm` (`e3-evm-client`)                                        |
 | `indexer`        | `indexer` (`e3-indexer`)                                       |
 | `full` (default) | All of the above                                               |
+
+`evm_helpers` is a deprecated alias of `evm`, scheduled for removal in 0.21.
 
 For a BFV-only sibling crate in this checkout, select the local package explicitly:
 
@@ -41,15 +35,15 @@ let bytes = encode_vec_u64_to_bytes(&[7_u64]);
 assert_eq!(decode_bytes_to_vec_u64(&bytes).unwrap(), vec![7]);
 ```
 
-See [BFV usage](../bfv-client/README.md), [contract/listener helpers](../evm/client/README.md), and
+See [BFV usage](../bfv-client/README.md), [EVM clients](../evm/client/README.md), and
 [indexing](../evm/indexer/README.md) for their API contracts and examples.
 
 ## Tests and feature checks
 
-Minimal checks: `cargo check --locked -p e3-sdk --no-default-features`, or add `--features bfv`.
-Default/EVM/indexer builds require the [Solidity fixture prerequisites](../evm/client/README.md)
-even for Cargo checks; BFV-only builds avoid those optional adapters.
+Run `cargo test --locked -p e3-sdk --test exports` for default exports. Add `--no-default-features`
+to check the minimal facade, then `--features bfv`, `--features evm`, or `--features indexer` to
+check individual capabilities.
 
-The facade has no independent behavioral tests. `cargo check --locked -p e3-sdk` checks the default
-exports; BFV/listener/indexer behavior is tested in the linked owner crates above. See
-[AGENTS.md](AGENTS.md) for feature/default and re-export changes.
+EVM/indexer builds require the [Solidity fixture prerequisites](../evm/client/README.md), even for
+Cargo checks; minimal and BFV-only builds do not. Behavior is tested in the owner crates linked
+above. See [AGENTS.md](AGENTS.md) for feature and re-export changes.

@@ -1,10 +1,10 @@
-# e3-evm-helpers
+# e3-evm-client
 
 ## Purpose
 
 Application-facing Ethereum listeners, Interfold contract clients, retry helpers, and local nonce
-coordination. The [Rust SDK](../../sdk/README.md) re-exports this crate as `evm_helpers`.
-Ciphernode-specific ingestion and transaction policy belong in [e3-evm](../README.md).
+coordination. The [Rust SDK](../../sdk/README.md) re-exports this crate as `evm`.
+Ciphernode-specific ingestion and transaction policy belong in [e3-evm](../runtime/README.md).
 
 ## Map
 
@@ -22,13 +22,10 @@ transactions independently of listener delivery.
 
 ## Contract clients
 
-Bindings and wire events are re-exported from [e3-evm-contracts](../contracts/README.md). The `E3`
-returned by contract reads is now the same type carried by `E3Requested`; its `committeeSize`, and
-stage/reason fields on wire events, are raw `uint8` values. Convert explicitly with
-`CommitteeSize::try_from`, `E3Stage::try_from` or `FailureReason::try_from` when a typed view is
-needed. Typed read helpers keep their existing unknown-value sentinel. This is a Rust source-API
-change for the next dev release, not a Solidity ABI change. Indexer projection encodings do not
-change.
+Bindings and wire events come from [e3-evm-contracts](../contracts/README.md). `E3.committeeSize`
+and stage/reason fields on wire events are raw `uint8` values; convert with
+`CommitteeSize::try_from`, `E3Stage::try_from` or `FailureReason::try_from` for typed views. Typed
+read helpers return `__Invalid` for unknown values.
 
 `contracts::InterfoldContract::read_only(http_rpc_url, contract_address).await` creates a read
 client. `InterfoldContract::new(http_rpc_url, private_key, contract_address).await` creates a
@@ -55,7 +52,7 @@ successful transaction receipt.
 
 Provide bash, solc, jq, and workspace JS dependencies; run root `pnpm fixtures:build`. `build.rs`
 runs the fixture script even for a Cargo check and may rewrite JSON artifacts. Run
-`cargo test --locked -p e3-evm-helpers` with Anvil available for chain tests.
+`cargo test --locked -p e3-evm-client` with Anvil available for chain tests.
 
 Inline tests pin subscription readiness/applied ceilings, nonce reservations/expiry, and threshold
 ordering. Integration tests exercise local subscriptions and refused sends. See

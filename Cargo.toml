@@ -108,7 +108,7 @@ e3-event-system = { version = "0.20.0-dev.2", path = "./crates/event-system" }
 e3-events = { version = "0.20.0-dev.2", path = "./crates/events" }
 e3-evm = { version = "0.20.0-dev.2", path = "./crates/evm/runtime" }
 e3-evm-contracts = { version = "0.20.0-dev.2", path = "./crates/evm/contracts" }
-e3-evm-helpers = { version = "0.20.0-dev.2", path = "./crates/evm/client" }
+e3-evm-client = { version = "0.20.0-dev.2", path = "./crates/evm/client" }
 e3-fhe = { version = "0.20.0-dev.2", path = "./crates/fhe" }
 e3-fhe-params = { version = "0.20.0-dev.2", path = "./crates/fhe-params" }
 e3-fs = { version = "0.20.0-dev.2", path = "./crates/fs" }

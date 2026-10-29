@@ -67,7 +67,7 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
-      # The build scripts of e3-evm, e3-evm-helpers, e3-indexer and e3-zk-prover compile Solidity
+      # The build scripts of e3-evm, e3-evm-client, e3-indexer and e3-zk-prover compile Solidity
       # fixtures and need the same tools as the ci Rust jobs.
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1

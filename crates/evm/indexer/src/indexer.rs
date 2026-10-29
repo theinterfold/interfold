@@ -17,20 +17,20 @@ use alloy::providers::Provider;
 use alloy::sol_types::SolEvent;
 use async_trait::async_trait;
 use e3_bfv_client::validate_pk_commitment;
-use e3_evm_contracts::{
-    CommitteeSize,
-    ICiphernodeRegistry::{CommitteePublicKeyChunkPublished, CommitteePublished},
-    IInterfold::{
-        CiphertextOutputPublished, CiphertextOutputReferencePublished, PlaintextOutputPublished,
-    },
-};
-use e3_evm_helpers::{
+use e3_evm_client::{
     block_listener::BlockListener,
     contracts::{
         InterfoldContract, InterfoldContractFactory, InterfoldRead, ProviderType, ReadOnly,
         ReadWrite,
     },
     event_listener::{EventListener, LiveProgress, NOT_PROCESSING},
+};
+use e3_evm_contracts::{
+    CommitteeSize,
+    ICiphernodeRegistry::{CommitteePublicKeyChunkPublished, CommitteePublished},
+    IInterfold::{
+        CiphertextOutputPublished, CiphertextOutputReferencePublished, PlaintextOutputPublished,
+    },
 };
 use e3_fhe_params::{
     bfv_crypto_config_id, bfv_encryption_scheme_id, current_bfv_crypto_config_id,
