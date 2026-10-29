@@ -20,6 +20,11 @@ use crate::math::polynomial::{negacyclic_kernel, Polynomial};
 /// Parameters for user-data encryption ct1 (P3).
 pub struct Configs<let N: u32, let L: u32> {
     pub qis: [Field; L],
+    /// The circuit-constant CRS `CRP`, the second component of every committee key. C5 commits it as
+    /// `pk1_agg`. It is part of the configuration rather than a witness: its coefficients are centred
+    /// residues by construction, so this leg neither range-checks nor digit-checks it, and only a
+    /// constant keeps the key commitment bound to the committee-key anchor.
+    pub crp: [Polynomial<N>; L],
     pub e1_bound: Field,
     pub u_bound: Field,
     /// Bound on `r`, the quotient of the mod-`q` reduction, that honest witnesses meet. The circuit
@@ -27,8 +32,14 @@ pub struct Configs<let N: u32, let L: u32> {
     pub r_bounds: [Field; L],
 }
 impl<let N: u32, let L: u32> Configs<N, L> {
-    pub fn new(qis: [Field; L], e1_bound: Field, u_bound: Field, r_bounds: [Field; L]) -> Self {
-        Configs { qis, e1_bound, u_bound, r_bounds }
+    pub fn new(
+        qis: [Field; L],
+        crp: [Polynomial<N>; L],
+        e1_bound: Field,
+        u_bound: Field,
+        r_bounds: [Field; L],
+    ) -> Self {
+        Configs { qis, crp, e1_bound, u_bound, r_bounds }
     }
 }
 
@@ -40,10 +51,6 @@ impl<let N: u32, let L: u32> Configs<N, L> {
 /// **Produces:** `(pk1_commitment, ct1_commitment, u_commitment)` public outputs.
 pub struct UserDataEncryptionCt1<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E1: u32, let BIT_R: u32> {
     configs: Configs<N, L>,
-    /// The circuit-constant CRS `CRP`, the second component of every committee key. C5 commits it as
-    /// `pk1_agg`, so the binary passes the same constant and nothing here is witnessed: its
-    /// coefficients are centred residues by construction, so this leg does not range-check them.
-    pk1is: [Polynomial<N>; L],
     ct1is: [Polynomial<N>; L],
     /// The encryption randomness, the same `u` as ct0's.
     u: Polynomial<N>,
@@ -56,18 +63,15 @@ pub struct UserDataEncryptionCt1<let N: u32, let L: u32, let BIT_PK: u32, let BI
 
 impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E1: u32, let BIT_R: u32> UserDataEncryptionCt1<N, L, BIT_PK, BIT_CT, BIT_U, BIT_E1, BIT_R> {
 
-    /// `pk1is` must be the circuit-constant CRS that C5 commits as `pk1_agg` (the binary passes
-    /// `CRP`). This leg neither range-checks nor digit-checks it, so a witnessed `pk1is` would give
-    /// the key commitment a second opening and the committee-key anchor would no longer bind it.
+    /// The key's second component is `configs.crp`, never a witness.
     pub fn new(
         configs: Configs<N, L>,
-        pk1is: [Polynomial<N>; L],
         ct1is: [Polynomial<N>; L],
         u: Polynomial<N>,
         e1: Polynomial<N>,
         r: [Polynomial<N>; L],
     ) -> Self {
-        UserDataEncryptionCt1 { configs, pk1is, ct1is, u, e1, r }
+        UserDataEncryptionCt1 { configs, ct1is, u, e1, r }
     }
 
     /// Bounds every value the reduced identity is checked over.
@@ -76,7 +80,7 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     /// field equality to imply the integer one.
     /// - `ct1is` are exact centred residues mod `q_i`, `e1` exact to its bound, and `u` ternary
     ///   (`u_bound` is 1). Inside `user_data_encryption` ct0 bounds the shared `u` instead.
-    /// - `pk1is` is the constant CRS (see the field), so it needs no check.
+    /// - `configs.crp` is the constant CRS, so it needs no check.
     /// - `r` only needs to stay small. With every other term exactly bounded, the integer identity
     ///   fixes `r = (ct1 - pk1 * u - e1) / q_i`, so a window `[-2^BIT_R, 2^BIT_R)` that covers
     ///   `r_bounds` and keeps `q_i * r` far below the field modulus pins it as well as the exact
@@ -111,10 +115,12 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
 
     /// `(pk1_commitment, ct1_commitment)`.
     fn generate_commitments_except_u(self) -> (Field, Field) {
-        // `ct1is` is range-checked, so its plain packing is injective. `pk1is` is the constant CRS,
-        // so its commitment is a constant too, the one C5 computes.
-        let pk1_commitment =
-            compute_multiple_polynomial_commitment::<N, L, BIT_PK>(self.pk1is, DS_PK_AGGREGATION);
+        // `ct1is` is range-checked, so its plain packing is injective. `configs.crp` is the constant
+        // CRS, so its commitment is a constant too, the one C5 computes.
+        let pk1_commitment = compute_multiple_polynomial_commitment::<N, L, BIT_PK>(
+            self.configs.crp,
+            DS_PK_AGGREGATION,
+        );
         let ct1_commitment =
             compute_multiple_polynomial_commitment::<N, L, BIT_CT>(self.ct1is, DS_CIPHERTEXT);
 
@@ -147,9 +153,9 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         compute_user_data_encryption_ct1_challenge::<L>(payload)
     }
 
-    /// Checks `ct1is = pk1is * u + e1 + q_i * r` modulo `X^N + 1`, at one challenge point.
+    /// Checks `ct1is = crp * u + e1 + q_i * r` modulo `X^N + 1`, at one challenge point.
     ///
-    /// `negacyclic_kernel` supplies the reduced product `pk1is * u mod X^N + 1` evaluated at `x`, so
+    /// `negacyclic_kernel` supplies the reduced product `crp * u mod X^N + 1` evaluated at `x`, so
     /// the product never enters the witness and the cyclotomic quotient is gone with it.
     fn verify_evaluations(self, gammas: [Field]) -> bool {
         let x = gammas[0];
@@ -163,7 +169,7 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
                     - self.e1.coefficients[j]
                     - self.configs.qis[i] * self.r[i].coefficients[j];
             }
-            holds = holds & (Polynomial::new(residual).eval(x) == self.pk1is[i].dot(k));
+            holds = holds & (Polynomial::new(residual).eval(x) == self.configs.crp[i].dot(k));
         }
 
         holds
@@ -225,8 +231,7 @@ fn u_outside_its_bound_is_rejected() {
     let z = Polynomial::new([0; 8]);
     let one = Polynomial::new([0, 0, 0, 0, 0, 0, 0, 1]);
     let mut c: UserDataEncryptionCt1<8, 1, 35, 35, 1, 5, 9> = UserDataEncryptionCt1::new(
-        Configs::new([68719403009], 32, 1, [5]),
-        [one],
+        Configs::new([68719403009], [one], 32, 1, [5]),
         [one],
         z,
         z,
@@ -250,7 +255,7 @@ fn honest_reduced_identity_holds() {
     let r = Polynomial::new([1, 0, 0, 1]);
 
     let c: UserDataEncryptionCt1<4, 1, 6, 6, 1, 1, 3> =
-        UserDataEncryptionCt1::new(Configs::new([97], 1, 1, [3]), [pk1], [ct1], u, e1, [r]);
+        UserDataEncryptionCt1::new(Configs::new([97], [pk1], 1, 1, [3]), [ct1], u, e1, [r]);
     let _ = c.execute();
 }
 
@@ -260,8 +265,7 @@ fn honest_reduced_identity_holds() {
 fn shared_u_commitment_matches_standalone_execution() {
     let u = Polynomial::new([0, 1, 0, -1]);
     let c: UserDataEncryptionCt1<4, 1, 6, 6, 1, 1, 3> = UserDataEncryptionCt1::new(
-        Configs::new([97], 1, 1, [3]),
-        [Polynomial::new([30, 40, -20, 10])],
+        Configs::new([97], [Polynomial::new([30, 40, -20, 10])], 1, 1, [3]),
         [Polynomial::new([47, -30, -10, 48])],
         u,
         Polynomial::new([0, 0, 0, 1]),

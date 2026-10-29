@@ -65,8 +65,7 @@ fn legs(
         [Polynomial::new([1, 0, 0, 1])],
     );
     let leg1 = UserDataEncryptionCt1::new(
-        Ct1Configs::new([97], 1, 1, [3]),
-        [Polynomial::new([30, 40, -20, 10])],
+        Ct1Configs::new([97], [Polynomial::new([30, 40, -20, 10])], 1, 1, [3]),
         [Polynomial::new(ct1)],
         Polynomial::new(u1),
         Polynomial::new([0, 0, 0, 1]),
