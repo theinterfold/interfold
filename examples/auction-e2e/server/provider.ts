@@ -8,7 +8,7 @@ import type { Address, Hex } from 'viem'
 import { type AuctionType, isProviderType } from '@interfold/auction'
 import { E3Stage } from '@interfold/sdk/contracts'
 
-/** What a mask provider needs to know about a type-4 auction to decide what to do. */
+/** What a mask provider needs to know about a mask-provider auction to decide what to do. */
 export interface ProviderAuction {
   type: AuctionType
   /** The providers the creator named. */
@@ -62,7 +62,7 @@ export class MaskRejectedError extends Error {}
 export interface MaskProviderDeps {
   /** The address of the provider key. */
   address: Address
-  /** The state of the auction, or `null` when it is no type-4 auction of this program. */
+  /** The state of the auction, or `null` when it is no mask-provider auction of this program. */
   readAuction: (e3Id: bigint) => Promise<ProviderAuction | null>
   /** Encrypt a random mask to the committee key and prove it, in this process. */
   prove: (committeeKey: Uint8Array) => Promise<ProvedMask>

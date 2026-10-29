@@ -6,73 +6,75 @@ decrypts one result.
 
 The creator selects the auction type:
 
-| Type                       | Bidders | Winner                                                       | Price                                                 | The result shows          |
-| -------------------------- | ------- | ------------------------------------------------------------ | ----------------------------------------------------- | ------------------------- |
-| First-price                | 2 to 4  | the highest bid; on a tie, the tied bidder who bid first     | the highest bid                                       | the winner, the price     |
-| Second-price (Vickrey)     | 2 to 4  | the highest bid; on a tie, the tied bidder who bid first     | the second-highest bid                                | the winner, the price     |
-| First-price, ratio lanes   | 2 to 8  | the highest bid; on a tie, the tied bidder who bid first     | the highest bid                                       | the price, the tie set    |
-| Second-price, ratio lanes  | 2 to 8  | the highest bid; on a top tie, the tied bidder who bid first | the second-highest bid (the highest bid on a top tie) | the price, the winner set |
-| Second-price, zero failure | 2 to 8  | the highest bid; on a tie, the tied bidder who bid first     | the second-highest bid                                | the winner, the price     |
-| Second-price, no providers | 2 to 8  | the highest bid; on a tie, the tied bidder who bid first     | the second-highest bid                                | the winner, the price     |
+| Id  | Type                         | Bidders | Winner                                                   | Price                  | The result shows      |
+| --- | ---------------------------- | ------- | -------------------------------------------------------- | ---------------------- | --------------------- |
+| 0   | First-price                  | 2 to 8  | the highest bid; on a tie, the tied bidder who bid first | the highest bid        | the winner, the price |
+| 1   | Second-price, mask providers | 2 to 8  | the highest bid; on a tie, the tied bidder who bid first | the second-highest bid | the winner, the price |
+| 2   | Second-price, no providers   | 2 to 8  | the highest bid; on a tie, the tied bidder who bid first | the second-highest bid | the winner, the price |
 
-For a second-price auction, the winning bid stays secret, except when the top bids tie: then the
-price is the tied bid. A tie at the top always goes to the tied bidder whose counted bid was
-submitted first (see "Bid updates"). The four region types (first-price, Vickrey, zero failure and
-no providers) resolve a tie inside the computation and do not show it. The two ratio-lane types show
-the tie set: the bidders whose bid equals the price. The winner is the first bidder of the tie set.
+For a second-price auction, the winning bid stays secret. For a first-price auction, the price is
+the winning bid, so that bid is public. A tie at the top always goes to the tied bidder whose
+counted bid was submitted first (see "Bid updates"). All three types resolve a tie inside the
+computation and do not show it. The computation of all three types cannot fail by chance.
 
-The zero-failure type gives the same result as the Vickrey type, but its computation cannot fail by
-chance. The random mask does not come from the bidders. The creator names 1 to 4 mask providers, and
-each provider sends one random mask. A bid has two ciphertexts only. Privacy needs one honest
-provider. The auction needs every provider to send its mask (see "Send a mask").
+The first-price type is a priority-expanded first-price auction. The result has one lane of 16 slots
+for each bidder. Above the price, every slot is 0. At the price, the lane of the winner is exactly 1
+and every lane before it is exactly 0. The program multiplies a random mask only into the slots that
+the reader does not need, so the mask can never hide the result. Each bidder sends three ciphertexts
+(`ge`, `gt` and a random `mask` that the bidder draws). Privacy needs one bidder that draws its mask
+at random (see "The program: the first-price type").
 
-The no-providers type also gives the same result as the Vickrey type, and its computation also
-cannot fail by chance. It needs no mask provider and no trusted party. Each bidder sends two random
-shares with the bid, and the program makes the random factor from the sum of the shares of all
-bidders. A bid has four ciphertexts. Privacy needs one bidder that draws its shares at random. The
-price: the random factor is not exactly uniform, so the numbers that are not 0 in the result leak a
-small statistical hint about the losing bids. The hint is larger on the small parameters of this
-demo than on secure parameters (see "The program: the no-providers type").
+The mask-provider type gives the second-price result. The random mask does not come from the
+bidders. The creator names 1 to 4 mask providers, and each provider sends one random mask. A bid has
+two ciphertexts only. Privacy needs one honest provider. The auction needs every provider to send
+its mask (see "Send a mask").
 
-| Step           | What happens                                                                                                                                                             |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Create         | The creator pays the E3 fee and requests an E3. The request carries the type, the title, the price of each bid level and, for the zero-failure type, the mask providers. |
-| Key generation | The ciphernodes run a distributed key generation. It makes the l-BFV public key and the threshold relinearization key.                                                   |
-| Masks          | Zero-failure type only. Each mask provider proves and sends one mask. Bidding opens when all masks are in.                                                               |
-| Bid            | Each bidder encrypts a bid in the browser, proves with one proof that the bid is valid, and sends it. A bidder can update a bid, and a relayer can send it.              |
-| Computation    | The FHE program multiplies ciphertexts. It uses the threshold relinearization key.                                                                                       |
-| Decryption     | The committee decrypts one ciphertext. It holds the winner and the price only.                                                                                           |
-| Result         | The web app decodes the result and shows the winner and the price. Ratio-lane types also show the tie set.                                                               |
+The no-providers type also gives the second-price result. It needs no mask provider and no trusted
+party. Each bidder sends two random shares with the bid, and the program makes the random factor
+from the sum of the shares of all bidders. A bid has four ciphertexts. Privacy needs one bidder that
+draws its shares at random. The price: the random factor is not exactly uniform, so the numbers that
+are not 0 in the result leak a small statistical hint about the losing bids. The hint is larger on
+the small parameters of this demo than on secure parameters (see "The program: the no-providers
+type").
+
+| Step           | What happens                                                                                                                                                              |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Create         | The creator pays the E3 fee and requests an E3. The request carries the type, the title, the price of each bid level and, for the mask-provider type, the mask providers. |
+| Key generation | The ciphernodes run a distributed key generation. It makes the l-BFV public key and the threshold relinearization key.                                                    |
+| Masks          | Mask-provider type only. Each mask provider proves and sends one mask. Bidding opens when all masks are in.                                                               |
+| Bid            | Each bidder encrypts a bid in the browser, proves with one proof that the bid is valid, and sends it. A bidder can update a bid, and a relayer can send it.               |
+| Computation    | The FHE program multiplies ciphertexts. It uses the threshold relinearization key.                                                                                        |
+| Decryption     | The committee decrypts one ciphertext. It holds the winner and the price only.                                                                                            |
+| Result         | The web app decodes the result and shows the winner and the price.                                                                                                        |
 
 This example runs on the **insecure SIMD parameters (parameter set 5: N = 128, t = 257)**. They are
 for development and give no security.
 
-The first four types come from the design study in [`../auction`](../auction): the designs in Rust,
-a plaintext simulation, a design visualizer (`../auction/viz`) and the report for review
-(`../auction/REPORT.md`). The zero-failure type replaces the random mask of each bidder with masks
-from providers (see "The program: the zero-failure type"). The no-providers type replaces it with
-shares that the bidders send (see "The program: the no-providers type").
+The lane layout comes from the design study in [`../auction`](../auction): the designs in Rust, a
+plaintext simulation, a design visualizer (`../auction/viz`) and the report for review
+(`../auction/REPORT.md`). The first-price type uses one random mask from the bidders (see "The
+program: the first-price type"). The mask-provider type replaces it with masks from providers (see
+"The program: the mask-provider type"). The no-providers type replaces it with shares that the
+bidders send (see "The program: the no-providers type").
 
 ## How a bid works
 
 A bid is a whole number `b` from 0 to 15. The 128 slots of the SIMD plaintext hold 8 groups of 16
-slots. Slot `i` has level `i % 16`. Each bidder sends three ciphertexts. A bid of the second-price
-ratio-lane type has four ciphertexts, and so has a bid of the no-providers type. A bid of the
-zero-failure type has two:
+slots. Slot `i` has level `i % 16`. A first-price bid has three ciphertexts. A bid of the
+mask-provider type has two. A bid of the no-providers type has four:
 
-| Role | Name       | Slot `i` holds                                                                                                                      | Types                   |
-| ---- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
-| 0    | `ge`       | `1` if `b >= i % 16`, else `0`                                                                                                      | all                     |
-| 1    | `gt`       | `1` if `b > i % 16`, else `0`                                                                                                       | all                     |
-| 2    | `mask`     | a uniform random value in 0 to 256                                                                                                  | 0 to 3                  |
-| 3    | `pairMask` | a uniform random value. Slot `(2c) * 16 + l` and slot `(2c + 1) * 16 + l` hold the same value, for `c` in 0 to 3 and `l` in 0 to 15 | ratio-lane second-price |
-| 2, 3 | `share`    | a uniform random value in 0 to 256 (the `mask` distribution). A bid has two shares, `s1` and `s2`. Role number 4 in the SDK         | no providers            |
+| Role | Name    | Slot `i` holds                                                                                                              | Types            |
+| ---- | ------- | --------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| 0    | `ge`    | `1` if `b >= i % 16`, else `0`                                                                                              | all              |
+| 1    | `gt`    | `1` if `b > i % 16`, else `0`                                                                                               | all              |
+| 2    | `mask`  | a uniform random value in 0 to 256                                                                                          | 0 (first-price)  |
+| 2, 3 | `share` | a uniform random value in 0 to 256 (the `mask` distribution). A bid has two shares, `s1` and `s2`. Role number 3 in the SDK | 2 (no providers) |
 
 These ciphertexts do not depend on the number of bidders or on the position of the bidder.
 
-A mask provider of the zero-failure type sends one more kind of ciphertext: a provider mask. Its 128
-slots hold a uniform random value in 1 to 256. No slot is 0. It is not a role of a bid, and a bidder
-never sends it.
+A mask provider of the mask-provider type sends one more kind of ciphertext: a provider mask. Its
+128 slots hold a uniform random value in 1 to 256. No slot is 0. It is not a role of a bid, and a
+bidder never sends it.
 
 ### Create an auction
 
@@ -83,21 +85,20 @@ auction and emits `AuctionCreated`, which carries `gate` and `gateConfig`. It in
 configuration leaf, `keccak256(configInput(auctionType, providers))` in the BN254 field. The
 configuration input is
 `"interfold-auction-config-v1" || uint8 auctionType || provider_1 || ... || provider_k`. Each
-provider is 20 raw bytes. Types 0 to 3 and the no-providers type (5) have no provider, so their
-configuration input has no provider bytes. For the types 0 to 3 it is the same as before. If `gate`
-is not the zero address, it calls `IBidderGate(gate).configure(e3Id, gateConfig)` (see "The bidder
-gate"). `prices[b]` is the price of step `b`. The first `levels` prices must increase strictly, and
-the other prices must be zero (`InvalidPrices` otherwise); the steps can be uneven. Read them with
-`auctionPrices(e3Id)`, and the number of steps with `auctions(e3Id)`, which returns
-`(auctionType, levels, creator, title, gate)`. The program and the circuits see only steps, so the
-prices do not change the computation. The coordination server gives the program the configuration
-bytes as input 0. The program reads the type and the providers from them, so the compute proof binds
-both through the input root.
+provider is 20 raw bytes. The first-price type (0) and the no-providers type (2) have no provider,
+so their configuration input has no provider bytes. If `gate` is not the zero address, it calls
+`IBidderGate(gate).configure(e3Id, gateConfig)` (see "The bidder gate"). `prices[b]` is the price of
+step `b`. The first `levels` prices must increase strictly, and the other prices must be zero
+(`InvalidPrices` otherwise); the steps can be uneven. Read them with `auctionPrices(e3Id)`, and the
+number of steps with `auctions(e3Id)`, which returns `(auctionType, levels, creator, title, gate)`.
+The program and the circuits see only steps, so the prices do not change the computation. The
+coordination server gives the program the configuration bytes as input 0. The program reads the type
+and the providers from them, so the compute proof binds both through the input root.
 
-`providers` is the list of mask providers. The zero-failure type needs 1 to `MAX_PROVIDERS` = 4
-providers. No provider is the zero address, and no address is in the list twice. Every other type,
-the no-providers type included, needs an empty list. The contract reverts with `InvalidProviders`
-for any other list. For the zero-failure type, `validate` also emits
+`providers` is the list of mask providers. The mask-provider type (1) needs 1 to `MAX_PROVIDERS` = 4
+providers. No provider is the zero address, and no address is in the list twice. The first-price
+type and the no-providers type need an empty list. The contract reverts with `InvalidProviders` for
+any other list. For the mask-provider type, `validate` also emits
 `MaskProvidersSet(e3Id, providers)` after `AuctionCreated`. Read the list with
 `auctionProviders(e3Id)`, and test an address with `isProvider(e3Id, address)`.
 `configInput(auctionType, providers)` and `configLeaf(auctionType, providers)` give the bytes and
@@ -113,24 +114,23 @@ data = abi.encode(address bidder, bytes[] ciphertexts, bytes32[] commitments,
                   bytes proof, bytes gateProof, bytes signature)
 ```
 
-`ciphertexts` and `commitments` have `roleCount(type)` entries (2, 3 or 4), in role order.
-`commitments[r]` is the ciphertext commitment of `ciphertexts[r]`. The contract does these steps:
+`ciphertexts` and `commitments` have `roleCount(type)` entries (3 for type 0, 2 for type 1, 4 for
+type 2), in role order. `commitments[r]` is the ciphertext commitment of `ciphertexts[r]`. The
+contract does these steps:
 
 1. It rejects the call after the input window (`InputDeadlineReached`).
 2. It rejects a wrong number of ciphertexts or commitments, an empty ciphertext and a zero bidder
    (`InvalidBidShape`, `EmptyInputData`, `BidderIsZero`).
 3. It gives the bid the version `bidCount(e3Id, bidder) + 1`. A fourth bid of one address fails
-   (`TooManyBids`). The first bid of an address takes one of the places: `maxBidders(type)` is 4 for
-   the region types (first-price and Vickrey) and 8 for the other types (`TooManyBidders`).
+   (`TooManyBids`). The first bid of an address takes one of the places: `maxBidders(type)` is 8 for
+   every type (`TooManyBidders`).
 4. It checks the sender. A direct bid comes from `bidder` (`SenderNotBidder`). A relayed bid carries
    the signature of `bidder` (see "Relayed bids").
 5. If the auction has a gate, it asks the gate if `bidder` can bid (`BidderNotEligible`).
 6. It verifies the bid proof (`InvalidBidProof`) with `bidVerifier2` (2 roles), `bidVerifier3` (3
    roles) or `bidVerifier4` (4 roles). The public inputs are the commitments, the bidder, `levels`,
    the committee key commitment of the E3 and the VK anchor. The anchor must be the anchor of the
-   type: `vkAnchor2`, `vkAnchor3`, `vkAnchor4` (ratio-lane second price) or `vkAnchorQnr` (no
-   providers). The two 4-role types use the same verifier. Their anchors differ, so a bid proof of
-   one type fails for the other.
+   type: `vkAnchor3` (first-price), `vkAnchor2` (mask providers) or `vkAnchorQnr` (no providers).
 7. It inserts one leaf for each ciphertext as consecutive leaves, in role order, and emits
    `BidSubmitted(e3Id, bidder, version, firstIndex, ciphertexts, commitments)`. `firstIndex` is the
    leaf index of the first ciphertext.
@@ -147,7 +147,7 @@ The server and the web app read them from the event.
 
 ### Send a mask
 
-A zero-failure auction names its mask providers at creation. Each provider sends one mask with
+A mask-provider auction names its mask providers at creation. Each provider sends one mask with
 `publishInput(e3Id, data)`. `data` has the encoding of a bid, with these values:
 
 - `bidder` is the provider.
@@ -169,7 +169,7 @@ The contract treats the call as a mask when `isProvider(e3Id, bidder)` is true. 
 No gate applies to a provider. `MASK_VERSION` is `0xFFFFFFFF`. A bid has a version from 1 to 3, so a
 bid never has the version of a mask. The metadata of a mask leaf is `provider || MASK_VERSION`.
 
-The leaves of a zero-failure auction have this order, and the contract enforces it:
+The leaves of a mask-provider auction have this order, and the contract enforces it:
 
 1. Leaf 0: the configuration, with the providers.
 2. Leaves 1 to `k`: the `k` masks, in the order of submission.
@@ -278,7 +278,7 @@ the integration test use it. The server starts no computation with fewer than 2 
 
 ### The program: the masks
 
-The zero-failure type has `k` mask inputs after input 0, one for each provider. Each of them has
+The mask-provider type has `k` mask inputs after input 0, one for each provider. Each of them has
 `input_slots` = the provider and `input_parents` = `MASK_VERSION`. The policy reads the leading run
 of inputs with the version `MASK_VERSION` after input 0 as the masks. It does this:
 
@@ -293,57 +293,100 @@ them. It returns `complete` (every provider has a mask that opens), `missing` (t
 mask) and `invalid` (the providers whose mask does not open). The server and the web app use it. The
 server starts no computation until `complete` is true.
 
-### The program: region types
+### The program: lanes
 
-With `n` bidders, the program makes `floor(8 / n)` copies of `n` regions. A region has 16 slots. The
-program zeroes the unused groups. It multiplies a test vector by the sum of the bidder masks. A slot
-is uniform where the test is non-zero, so the result shows only the zero slots.
+With `n` bidders (2 to 8), the 128 slots hold `n` lanes of 16 slots. Lane `j` is the slots `16 j` to
+`16 j + 15`, and it belongs to the bidder at position `j`. Level `p` of lane `j` is the slot
+`16 j + p`. The program makes one copy of the lanes. It multiplies the result by `used`, which is 1
+in the slots `0` to `16 n - 1` and 0 in the other slots, so the slots of the lanes that do not exist
+are 0 in every output.
 
-On a tie at the top, the region of the lowest bidder position wins: region `k` belongs to the bidder
-position `k`, and a region sees a tie only with the bidders of lower positions. The ciphertext bytes
-play no part in the tie, so a bidder cannot change it by encrypting again.
+On a tie at the top, the lane of the lowest bidder position wins. The ciphertext bytes play no part
+in the tie, so a bidder cannot change it by encrypting again. `sdk/src/layout.ts` decodes the result
+of all three types, and the decoder returns the same shape for them.
 
-**First-price.** One ciphertext product, depth 1. The result has one zero slot in each copy: the
-region of the winner, at the highest bid `h`.
+### The program: the first-price type
 
-**Second-price.** Four ciphertext products, each relinearized with the threshold key, depth 3. With
-`s` the second-highest bid:
-
-- At a level below `s`, every region is non-zero.
-- At level `s`, only the region of the winner is zero.
-- At a level above `s`, every region is zero.
-
-All other slots hold uniform random values. The result does not show the other bids or a tie. For a
-second-price auction it also does not show the winning bid. `sdk/src/layout.ts` decodes the result.
-A set slot reads as zero by error with probability `1 / 257` for each copy.
-
-### The program: the zero-failure type
-
-The zero-failure type gives the result of the Vickrey type. It has no random mask from the bidders,
-and the computation does not fail by chance. The program makes one copy of `n` regions of 16 slots
-for the `n` bidders (2 to 8): region `j` is the slots `16 j` to `16 j + 15`. A bid has the roles 0
-and 1 only (`ge` and `gt`).
-
-The program has `k` masks `M_1` to `M_k`, one from each provider (1 to 4). It computes:
+The first-price type is priority-expanded first price (PE-FP). A bid has three ciphertexts: `ge`,
+`gt` and `mask`. Let `G[p]` be the sum of `gt_j[p]` over all bidders: the number of bids above `p`.
+It is the same in every lane. Let `E_j[p]` be the sum of `ge_k[p] - gt_k[p]` over the bidders `k`
+before `j`: the number of earlier bidders that bid exactly `p`. Let `m` be the sum of the masks,
+times `used`. Lane `j` holds:
 
 ```text
-tests = the test vector of the Vickrey type, for each region and level
-r     = (M_1 * used) * M_2 * ... * M_k
-out   = tests * r
+out_j[p] = ge_j[p] + m[p] * (G[p] + E_j[p])
 ```
 
-`used` is 1 in the slots `0` to `16 n - 1` and 0 in the other slots. It zeroes the unused regions.
-The product tree of `r` has depth 2 at most, and `tests` is the Vickrey tests of the second-price
-branch of the region types. The result has the same zero pattern as the Vickrey type: the region of
-the winner is the only zero region at the price level, every region is zero above it, and every used
-slot below it is not zero.
+This is one ciphertext product, at depth 1, and `3 n` products of a ciphertext and a plaintext. With
+`h` the highest bid and `w` the first bidder that bid `h`:
 
-**Why it cannot fail.** Every factor of `tests` is a whole number below 257 (a count of bids, or a
-product of two counts). Each factor is 0 only where the Vickrey test is 0. The proof `auction_mask`
-shows that every slot of every `M_i` is not 0 mod 257. The number 257 is prime, so a product of
-numbers that are not 0 is not 0. A slot of `out` thus is 0 only where `tests` is 0. The region types
-have a mask that can be 0 in a slot by chance (the probability is `1 / 257`), and they can read a
-slot as zero by error. This type has no such slot.
+- At a level above `h`, every lane is 0, because `ge`, `G` and `E` are 0.
+- At level `h`, a lane before `w` is 0, because `ge = 0` and `G + E = 0`. Lane `w` is exactly 1,
+  because `ge = 1` and `G + E = 0`. A lane after `w` is `1 + m * E` or `m * E`, and it means
+  nothing.
+- At a level below `h`, `G` is 1 or more, so the mask hides the slot.
+
+**Example.** The bids are 2, 3 and 3. At level 3, the lanes are `0`, `1` and a random value. Lane 0
+has `ge = 0`. Lane 1 has `ge = 1` and `G + E = 0`. Lane 2 has `ge = 1` and `E = 1`, because bidder 1
+bid 3 before it. Level 3 is the highest level with a non-zero slot, so the price is 3. The first
+non-zero lane is lane 1, so bidder 1 wins. The tie with bidder 2 does not show.
+
+The decoder reads the price as the highest level where some lane is not 0. It reads the winner as
+the first lane that is not 0 at that level. That lane must be exactly 1, and every lane before it
+must be exactly 0. Any other pattern is invalid, and the web app says so.
+
+**Why it cannot fail.** The mask touches only the slots where `G + E` is 1 or more. The decoder
+never needs these slots. So the result reads whatever the masks hold, also when the sum of the masks
+is 0 in a slot. A bidder that sends a bad mask on purpose cannot change the winner or the price.
+
+**What it leaks.** The output shows the winner and the highest bid, which is the price. If at least
+one bidder draws its mask at random and keeps it secret, `m` is uniform in every slot. `G + E` is a
+whole number from 1 to `2 n`, which is below 257, and 257 is prime. So each masked slot is uniform,
+and it shows nothing about the other bids or about a tie. If all bidders share their masks, they can
+read `G + E`, which shows more than the winner and the price.
+
+### The program: the second-price tests
+
+The two second-price types use the same test vector. Slot `p` of lane `k` tests whether bidder `k`
+beats every other bidder at level `p`:
+
+```text
+g_k[p]     = #{j != k : b_j > p} + [b_k < p] + [b_k = p] * #{j < k : b_j = p}
+c[p]       = #{j : b_j >= p}
+tests_k[p] = g_k[p] * c[p] * (c[p] - 1)
+```
+
+`g_k[p]` is 0 exactly when no other bid is above `p`, `b_k >= p` and no earlier bidder ties with `k`
+at `p`. With `s` the second-highest bid:
+
+- At a level below `s`, two or more bids are above the level, so the slot is not 0.
+- At level `s`, the slot is 0 in the lane of the winner (a tie goes to the lowest position) and not
+  0 in every other lane.
+- At a level above `s`, at most one bid is at or above the level, so the slot is 0.
+
+Every non-zero `g` is a whole number from 1 to `n`, and every non-zero `c (c - 1)` is a whole number
+from 2 to `n (n - 1)`. Both are below 257, and 257 is prime. So `tests` is not 0 mod 257 exactly
+where it is not 0 as a whole number. The program multiplies `tests` by a factor `r` that is 0 in no
+slot of a lane that exists. So the output is 0 exactly where `tests` is 0, and the result always
+reads. The result is a function of the winner and `s` only. It does not show the winning bid, the
+other bids, a count or a tie. The three ciphertext products of `tests` are at depth 2. The types
+differ in how they make `r`.
+
+### The program: the mask-provider type
+
+The mask-provider type has no mask from the bidders. A bid has the roles 0 and 1 only (`ge` and
+`gt`). The program has `k` masks `M_1` to `M_k`, one from each provider (1 to 4). It computes:
+
+```text
+out = tests * r        r = (M_1 * used) * M_2 * ... * M_k
+```
+
+The product tree of `r` has depth 2 at most, and the output has depth 3. There are `k + 3`
+ciphertext products.
+
+**Why it cannot fail.** The proof `auction_mask` shows that every slot of every `M_i` is not 0
+mod 257. The number 257 is prime, so a product of numbers that are not 0 is not 0. A slot of `out`
+thus is 0 only where `tests` is 0.
 
 **Why it stays private.** Each `M_i` is uniform in 1 to 256 when its provider is honest. A product
 of a uniform value that is not 0 and fixed values that are not 0 is uniform in 1 to 256. If one
@@ -354,33 +397,29 @@ winner and the price. A provider never sees a bid, and a provider cannot bid.
 
 ### The program: the no-providers type
 
-The no-providers type gives the result of the Vickrey type and does not fail by chance, like the
-zero-failure type. It needs no mask provider. The creation has no provider list (`providers` must be
-empty, and the configuration input is `"interfold-auction-config-v1" || uint8(5)`). The program
-selects bids with the rule of "The program: which bids count", and there are no mask inputs. A bid
-has four ciphertexts: `ge`, `gt` and the two shares `s1` and `s2`. The program makes one copy of `n`
-regions of 16 slots for the `n` bidders (2 to 8), as the zero-failure type does. It computes:
+The no-providers type gives the same result as the mask-provider type and does not fail by chance,
+like it. It needs no mask provider. The creation has no provider list (`providers` must be empty,
+and the configuration input is `"interfold-auction-config-v1" || uint8(2)`). The program selects
+bids with the rule of "The program: which bids count", and there are no mask inputs. A bid has four
+ciphertexts: `ge`, `gt` and the two shares `s1` and `s2`. The program computes:
 
 ```text
-tests = the test vector of the zero-failure type, for each region and level
-S1    = the sum of s1 over the selected bids
-S2    = the sum of s2 over the selected bids
-r     = ((S1 * S1 - 3) * used) * (S2 * S2 - 3)
-out   = tests * r
+S1  = the sum of s1 over the selected bids
+S2  = the sum of s2 over the selected bids
+r   = ((S1 * S1 - 3) * used) * (S2 * S2 - 3)
+out = tests * r
 ```
 
-`used` is as in the zero-failure type. The depth is 3: the squares have depth 1, `r` has depth 2,
-`tests` has depth 2 and `out` has depth 3. The constant 3 is the plaintext with the value 3 in every
-slot. The result has the same zero pattern as the Vickrey type, and `sdk/src/layout.ts` decodes it
-with the same decoder as the zero-failure type.
+The depth is 3: the squares have depth 1, `r` has depth 2, `tests` has depth 2 and `out` has
+depth 3. There are 7 ciphertext products. The constant 3 is the plaintext with the value 3 in every
+slot. `sdk/src/layout.ts` decodes the result with the same decoder as the other second-price type.
 
 **Why it cannot fail.** The number 3 is not a square modulo 257 (a check of all 257 values, also
 done for 65537). So `S^2 - 3` is not 0 for any `S`, and `r` is not 0 in any slot, whatever the
-bidders send. Every factor of `tests` is a whole number below 257 that is 0 only where the Vickrey
-test is 0. The number 257 is prime, so a product of numbers that are not 0 is not 0. A slot of `out`
-is thus 0 only where `tests` is 0, for any shares. A bidder that sends bad shares on purpose cannot
-change the winner or the price. It can only change the random numbers in the slots that are not 0.
-Because of this, a share needs no proof other than the normal encryption proof.
+bidders send. A slot of `out` is thus 0 only where `tests` is 0, for any shares. A bidder that sends
+bad shares on purpose cannot change the winner or the price. It can only change the random numbers
+in the slots that are not 0. Because of this, a share needs no proof other than the normal
+encryption proof.
 
 **What it leaks.** If at least one bidder draws its shares at random and keeps them secret, `S1` and
 `S2` are uniform and unknown to everyone else, even if all the other bidders agree on their shares.
@@ -388,83 +427,31 @@ No trusted party is needed. But `S^2 - 3` takes only 129 of the 257 values, so `
 uniform, and not uniform. A slot of `out` that is not 0 is `tests * r`, and its distribution depends
 a little on the number in `tests`. The numbers that are not 0 thus leak a small statistical hint
 about the counts in `tests`, which are a function of the losing bids. The zero pattern shows the
-winner and the price, as in the other types. The hint is larger on the small modulus of this demo
-than on a secure parameter set, which has a much larger modulus. The zero-failure type with
-providers has no such hint: its mask is exactly uniform and not 0.
-
-### The ratio-lane types
-
-The ratio-lane types have no regions. Bidder position `k` (leaf order) has the weight `w_k = 2^k`.
-The weights of 8 bidders add up to `255`, which is below `t = 257`. A sum of weights thus shows
-which bidders it contains. A bit of the sum is a bidder. The tie set is the set of bidders whose bid
-equals the price.
-
-In the formulas, `C` is the number of bids at least `p`, `A` is the number of bids above `p`, `m` is
-the sum of the masks and `R` is the sum of the pair masks. `Z` is the sum of `w_k * ge_k`, `G` is
-the sum of `w_k * gt_k` and `E = Z - G`.
-
-**First-price, ratio lanes.** One ciphertext product, depth 1. Level `p` is slot `p` of group 0:
-`out[p] = Z[p] + m[p] * A[p]`. With `h` the highest bid:
-
-- At a level above `h`, the lane is 0.
-- At level `h`, the lane is the sum of the weights of the tie set.
-- At a level below `h`, the lane is uniform.
-
-**Second-price, ratio lanes.** Six ciphertext products, depth 3. There are three copies. In copy
-`c`, group `2c` holds the `y` lanes and group `2c + 1` holds the `z` lanes:
-
-```text
-c = C (C - 1)      u = A (A - 1)      L = G + (1 - A) E
-y[p] = R[p] c[p]        + m[p] u[p]
-z[p] = R[p] c[p] L[p]   + m'[p] u[p]
-```
-
-The pair mask gives the same `R` to the `y` lane and the `z` lane of a level. With `s` the
-second-highest bid (the highest bid when the top bids tie):
-
-- At a level above `s`, both lanes are 0.
-- At level `s`, `u = 0`. Then `z / y = L`, which is the sum of the weights of the winner set: the
-  one top bidder, or the tie set when the top bids tie.
-- At a level below `s`, `(y, z)` is a uniform pair.
-
-The decoder takes `s` as the highest level with `y != 0`, and the highest `s` of the three copies.
-`y` at `s` is 0 only if `R` is 0 there. This has the probability `1 / 257` for one copy and
-`1 / 257^3` for the three copies. The decoder reads the ratio `z / y` from a copy that shows
-`y != 0`. All copies must show the same ratio.
-
-The winner is the first member of the tie set: the tied bidder with the lowest bidder position. A
-bidder without a tie wins with certainty. Every slot that is not a result lane is 0.
-
-The result is a function of the price and the tie set only. It does not show the other bids, or any
-count. Compared with the region types, a ratio-lane type shows the tie set. It does not need
-regions, so it supports 8 bidders. The lane count does not depend on the number of bidders. The
-fourth ciphertext of the second-price type adds one encryption, one encryption proof and a larger
-bid circuit to each bid.
+winner and the price, as in the mask-provider type. The hint is larger on the small modulus of this
+demo than on a secure parameter set, which has a much larger modulus. The mask-provider type has no
+such hint: its mask is exactly uniform and not 0.
 
 ## What is proven
 
-Each bidder publishes one bid proof. It is `auction_bid3` for the types with 3 roles, `auction_bid4`
-for the second-price ratio-lane type and the no-providers type, and `auction_bid2` for the
-zero-failure type. Each mask provider publishes one mask proof, `auction_mask`. A proof runs in a
-browser or in Node, and a browser can prove at most 2^21 gates (the WASM heap is 4 GiB; a 2^22
-circuit runs out of memory after it loads the SRS). One circuit that verifies all `K` encryption
-proofs has more gates than that, so the bid is a tree of circuits. Every one has fewer than 2^21
-gates and pads to 2^21, except the two smaller circuits of the zero-failure type, which pad to 2^20.
-The shared rules are in the Noir library `circuits/bid` (`auction_bid`). The seven circuits are thin
-packages around it:
+Each bidder publishes one bid proof. It is `auction_bid3` for the first-price type (3 roles),
+`auction_bid2` for the mask-provider type (2 roles) and `auction_bid4` for the no-providers type (4
+roles). Each mask provider publishes one mask proof, `auction_mask`. A proof runs in a browser or in
+Node, and a browser can prove at most 2^21 gates (the WASM heap is 4 GiB; a 2^22 circuit runs out of
+memory after it loads the SRS). One circuit that verifies all `K` encryption proofs has more gates
+than that, so the bid is a tree of circuits. Every one has fewer than 2^21 gates and pads to 2^21,
+except the two smaller circuits of the mask-provider type, which pad to 2^20. The shared rules are
+in the Noir library `circuits/bid` (`auction_bid`). The six circuits are thin packages around it:
 
 - `auction_bid_pair` (`circuits/pair`) verifies the encryption proofs of the roles 0 and 1. It holds
   the bid.
-- `auction_bid_masks` (`circuits/masks`, type 3 only) verifies the encryption proofs of the roles 2
-  and 3. It holds the pair-mask check.
 - `auction_bid_shares` (`circuits/shares`, no-providers type only) verifies the encryption proofs of
-  the roles 2 and 3. It is `auction_bid_masks` without the pair-mask check.
-- `auction_bid3` (`circuits/bid3`) verifies the pair proof and the encryption proof of role 2.
-- `auction_bid4` (`circuits/bid4`) verifies the pair proof and the masks proof (type 3) or the
-  shares proof (no-providers type).
-- `auction_bid2` (`circuits/bid2`, zero-failure type) verifies the pair proof only.
-- `auction_mask` (`circuits/mask`, zero-failure type) verifies one encryption proof, and proves that
-  every slot of the plaintext is not 0 mod 257. It is the proof of a provider mask.
+  the roles 2 and 3, which are the shares.
+- `auction_bid3` (`circuits/bid3`, first-price type) verifies the pair proof and the encryption
+  proof of role 2, which is the mask.
+- `auction_bid4` (`circuits/bid4`, no-providers type) verifies the pair proof and the shares proof.
+- `auction_bid2` (`circuits/bid2`, mask-provider type) verifies the pair proof only.
+- `auction_mask` (`circuits/mask`, mask-provider type) verifies one encryption proof, and proves
+  that every slot of the plaintext is not 0 mod 257. It is the proof of a provider mask.
 
 Only `auction_bid2`, `auction_bid3`, `auction_bid4` and `auction_mask` have an EVM verifier. The two
 inner circuits make recursive proofs. Together, the circuits check these facts:
@@ -480,11 +467,8 @@ inner circuits make recursive proofs. Together, the circuits check these facts:
   no valid proof exists for a bid at a step that the auction does not have.
 - **The plaintexts.** The `k1` of role 0 is the row `b` of the table for `ge`. The `k1` of role 1 is
   the row `b` of the table for `gt`. Both roles use the same `b` inside `auction_bid_pair`, so
-  nothing links them afterwards. A mask has a free `k1`, and so has a share. For the pair mask (role
-  3), `auction_bid_masks` checks that the plaintext is a mod-`t` combination of 64 unit rows, one
-  for each `(c, l)`. Thus the slots `(2c) * 16 + l` and `(2c + 1) * 16 + l` are equal. Without this
-  check, a bidder could give `R` two values (in the `y` lane and in the `z` lane) and change the
-  winner that the decoder reads. The tables come from `program/examples/bid_table.rs` and fhe.rs.
+  nothing links them afterwards. A mask has a free `k1`, and so has a share. The tables come from
+  `program/examples/bid_table.rs` and fhe.rs.
 - **The binding.** Each ciphertext commitment is the commitment of its encryption proof. The bidder
   is not zero.
 - **The mask.** `auction_mask` has a private list of 128 slot values. It proves that every value
@@ -494,6 +478,8 @@ inner circuits make recursive proofs. Together, the circuits check these facts:
 - **The shares.** `auction_bid_shares` checks the two encryption proofs of the roles 2 and 3 and
   their binding, and no other rule. A share is any plaintext, because the program does not need a
   property of it: no value of `S` makes `S^2 - 3` zero (see "The program: the no-providers type").
+  The mask of the first-price type has no rule either: the program reads the result whatever the
+  mask holds (see "The program: the first-price type").
 
 The public inputs of the bid proof, in order, are: the `K` ciphertext commitments, `bidder`,
 `levels`, the committee key commitment and the VK anchor. That is `K + 4` values. The contract
@@ -501,30 +487,26 @@ supplies `bidder`, `levels`, the committee key commitment of the E3 and the anch
 deployment. The public inputs of the mask proof, in order, are: the ciphertext commitment, the
 provider, the committee key commitment and the VK anchor. The contract supplies the provider (the
 sender), the committee key commitment and the anchor. The VK anchor covers the user-data encryption
-circuits and the inner circuits of the tree. It is `vkAnchor3` for `K = 3` (it contains
-`auction_bid_pair`) and `vkAnchor4` for `K = 4` with the masks proof (it contains `auction_bid_pair`
-and `auction_bid_masks`). `vkAnchorQnr` is the anchor of the no-providers type. It has the same
-formula as `vkAnchor4`, but it contains `auction_bid_shares` in place of `auction_bid_masks`. The
-two 4-role types use the same final circuit `auction_bid4` and the same verifier. The final circuit
-takes the inner key as a witness and binds it into the anchor, so each type has its own anchor, and
-a bid proof of one type fails the anchor check of the other type. `vkAnchor2` is the anchor of
-`auction_bid2`: it covers the same circuits as `vkAnchor3`. `vkAnchorMask` covers the encryption
-circuits only, because `auction_mask` has no inner circuit. The contract chooses the verifier and
-the anchor by the type and by the call (a bid or a mask).
+circuits and the inner circuits of the tree. It is `vkAnchor3` for the first-price type (it contains
+`auction_bid_pair`). `vkAnchorQnr` is the anchor of the no-providers type (it contains
+`auction_bid_pair` and `auction_bid_shares`). The final circuit takes the inner key as a witness and
+binds it into the anchor, so each type has its own anchor, and a bid proof of one type fails the
+anchor check of the other type. `vkAnchor2` is the anchor of `auction_bid2`: it covers the same
+circuits as `vkAnchor3`. `vkAnchorMask` covers the encryption circuits only, because `auction_mask`
+has no inner circuit. The contract chooses the verifier and the anchor by the type and by the call
+(a bid or a mask).
 
-| Circuit              | Proof                                       | Types  | Gates (`bb gates`) | Padded size |
-| -------------------- | ------------------------------------------- | ------ | ------------------ | ----------- |
-| `auction_bid_pair`   | recursive, roles 0 and 1                    | 0 to 5 | 1,427,574          | 2^21        |
-| `auction_bid_masks`  | recursive, roles 2 and 3                    | 3      | 1,429,486          | 2^21        |
-| `auction_bid_shares` | recursive, roles 2 and 3 (no pair check)    | 5      | 1,424,795          | 2^21        |
-| `auction_bid3`       | EVM, the pair proof and role 2              | 0 to 2 | 1,426,850          | 2^21        |
-| `auction_bid4`       | EVM, the pair proof and the masks or shares | 3, 5   | 1,426,857          | 2^21        |
-| `auction_bid2`       | EVM, the pair proof only                    | 4      | 681,650            | 2^20        |
-| `auction_mask`       | EVM, a provider mask                        | 4      | 688,062            | 2^20        |
+| Circuit              | Proof                                    | Types  | Gates (`bb gates`) | Padded size |
+| -------------------- | ---------------------------------------- | ------ | ------------------ | ----------- |
+| `auction_bid_pair`   | recursive, roles 0 and 1                 | 0 to 2 | 1,427,574          | 2^21        |
+| `auction_bid_shares` | recursive, roles 2 and 3 (no pair check) | 2      | 1,424,795          | 2^21        |
+| `auction_bid3`       | EVM, the pair proof and role 2           | 0      | 1,426,850          | 2^21        |
+| `auction_bid4`       | EVM, the pair proof and the shares       | 2      | 1,426,857          | 2^21        |
+| `auction_bid2`       | EVM, the pair proof only                 | 1      | 681,650            | 2^20        |
+| `auction_mask`       | EVM, a provider mask                     | 1      | 688,062            | 2^20        |
 
 The gate count of `auction_bid_shares` is from a later run of `bb` 6.0.0 than the other counts. In
-that run `auction_bid_masks` has 1,427,889 gates and `auction_bid4` has 1,425,260. Compare the
-counts of one run only.
+that run `auction_bid4` has 1,425,260 gates. Compare the counts of one run only.
 
 Only the bid proof (or the mask proof) leaves the machine of the bidder (or of the provider). The
 encryption proofs stay on that machine.
@@ -539,8 +521,8 @@ The mask proof has `provider` as a public input in the same way. The contract se
 another provider.
 
 The `ge` and `gt` ciphertexts of one bid come from one `b`, because the circuit has only one `b`.
-The limit of bidders is `maxBidders(type)`: 4 for the region types (first-price and Vickrey), and 8
-for the ratio-lane types, the zero-failure type and the no-providers type.
+The limit of bidders is `maxBidders(type)`: 8 for every type. One copy of the lanes has `16 n`
+slots, and they must fit in the 128 slots of the ring.
 
 ## Prerequisites
 
@@ -575,7 +557,7 @@ Run these commands in this order.
 3. Set up the example. This step runs `scripts/compile_circuits.sh`, which compiles the bid circuits
    and the mask circuit. It writes the verifiers of `auction_bid2`, `auction_bid3`, `auction_bid4`
    and `auction_mask` (`contracts/verifiers/AuctionVerifier2.sol`, `AuctionVerifier3.sol`,
-   `AuctionVerifier4.sol` and `AuctionMaskVerifier.sol`) and the five VK anchors. It builds
+   `AuctionVerifier4.sol` and `AuctionMaskVerifier.sol`) and the four VK anchors. It builds
    `program/examples/vk_hash.rs` to hash the verification keys:
 
    ```sh
@@ -626,132 +608,135 @@ it works**.
 2. **Get test tokens.** A request pays a fee in the fee token. On anvil, select **Get test tokens**
    to mint some.
 3. **Create an auction.** Enter a title (1 to 80 bytes), select the type, the price steps and the
-   bidding duration. The page offers six types: first-price, second-price (Vickrey), first-price
-   with ratio lanes, second-price with ratio lanes, second-price with zero failure and second-price
-   with no providers. It shows the bidder limit of the chosen type (2 to 4 bidders for the first two
-   types, 2 to 8 for the others) and the number of ciphertexts of each bid. A top tie always goes to
-   the tied bidder who bid first. A ratio-lane auction also publishes the tie set: the result names
-   every bidder that tied. The no-providers type has no providers field. The page explains that the
-   type needs no trusted party and never fails, and that the numbers in the result that are not 0
-   leak a small statistical hint about the losing bids, larger on the demo parameters than on secure
-   ones. For the zero-failure type, the page shows the list **Mask providers**. Name 1 to 4
-   addresses. The list starts with your wallet and the server provider, if the server has one (**Add
-   the server provider** adds it again). Each provider sends one mask before bidding opens. Privacy
-   needs one honest provider, and the auction needs every provider to send its mask. The page checks
-   the list with the rules of the contract. For the price steps, first set **Number of steps** (2 to
-   16, 8 by default). Then select **Even steps** (a start price and a step) or **Custom list** (one
-   price for each step, increasing, for example a 1-2-5 scale). Under **Who can bid**, select
-   **Anyone** or **Allowlist**. For an allowlist, enter the addresses. The page sorts them and
-   removes duplicates. The **Allowlist** choice needs `VITE_ALLOWLIST_GATE_ADDRESS`. Optionally,
-   select **Choose a picture** (PNG, JPEG or WebP). The page shrinks it, and the wallet signs the
-   upload after the request is mined. Key generation takes some minutes. Bidding opens when the
-   committee publishes the key (and, for the zero-failure type, when all masks are in), and it
-   closes at the end of the duration. The masks and the bids use the same window.
-4. **Send a mask** (zero-failure type). The auction page shows **Mask providers**: each provider,
+   bidding duration. The page offers three types: first-price (the default), second-price with mask
+   providers and second-price with no providers. Each card shows the bidder limit of the type (2 to
+   8 bidders) and the number of ciphertexts of each bid (3, 2 and 4). A top tie always goes to the
+   tied bidder who bid first, and the result never shows the tie. The first-price type has no
+   providers field. The page explains that it never fails, that it needs no trusted party and that
+   the winning bid is the price, so it is public. The no-providers type has no providers field
+   either. The page explains that this type needs no trusted party and never fails, and that the
+   numbers in the result that are not 0 leak a small statistical hint about the losing bids, larger
+   on the demo parameters than on secure ones. For the mask-provider type, the page shows the list
+   **Mask providers**. Name 1 to 4 addresses. The list starts with your wallet and the server
+   provider, if the server has one (**Add the server provider** adds it again). Each provider sends
+   one mask before bidding opens. Privacy needs one honest provider, and the auction needs every
+   provider to send its mask. The page checks the list with the rules of the contract. For the price
+   steps, first set **Number of steps** (2 to 16, 8 by default). Then select **Even steps** (a start
+   price and a step) or **Custom list** (one price for each step, increasing, for example a 1-2-5
+   scale). Under **Who can bid**, select **Anyone** or **Allowlist**. For an allowlist, enter the
+   addresses. The page sorts them and removes duplicates. The **Allowlist** choice needs
+   `VITE_ALLOWLIST_GATE_ADDRESS`. Optionally, select **Choose a picture** (PNG, JPEG or WebP). The
+   page shrinks it, and the wallet signs the upload after the request is mined. Key generation takes
+   some minutes. Bidding opens when the committee publishes the key (and, for the mask-provider
+   type, when all masks are in), and it closes at the end of the duration. The masks and the bids
+   use the same window.
+4. **Send a mask** (mask-provider type). The auction page shows **Mask providers**: each provider,
    and if its mask is in. A connected provider selects **Submit mask**. The browser draws 128 random
    values in 1 to 256, encrypts them and proves the encryption, then makes the mask proof. The page
    shows each step. The wallet sends one transaction. A provider that the server runs (see "Run the
    server") sends its mask by itself. The page shows an alert if a mask on chain does not open its
    commitment: the auction cannot run then.
 5. **Bid.** Open the auction page from another account. Select one of the prices that the creator
-   set (the steps 0 to `levels - 1`). Select **Submit bid**. A bid is 3 ciphertexts: the bid
-   thermometer "at least", the bid thermometer "above" and a random mask. A ratio-lane second-price
-   bid adds a fourth, the paired mask. A no-providers bid has 4 ciphertexts: the two thermometers
-   and two random shares (the browser draws 128 random values in 0 to 256 for each share). A
-   zero-failure bid has the two thermometers only. In a zero-failure auction the page shows
-   **Waiting for mask providers (x/k)** until all masks are in, and an account that is a provider
-   cannot bid. The browser encrypts each ciphertext and proves its encryption, then makes the bid
-   proof. The page shows each step. A no-providers bid has the step **Prove the shares in the last
-   two ciphertexts**. Each proof takes some minutes. The wallet then sends one transaction. With
-   **Send through relayer**, the wallet signs the bid and the server sends the transaction. The bid
-   counts when the transaction is mined. On an allowlist auction, the page shows if the account is
-   on the list. After a bid, the page shows the version of the bid and **Update bid (n left)**: an
-   address can send 3 bids. An update has a new proof. The latest bid whose bytes open counts, and
-   it counts from the time of the update: an update loses the place of the earlier bid in a tie. The
-   auction is full when `bidderCount` reaches the limit of its type. The page keeps the level and
-   the transaction hash of each version in the browser storage.
+   set (the steps 0 to `levels - 1`). Select **Submit bid**. A first-price bid is 3 ciphertexts: the
+   bid thermometer "at least", the bid thermometer "above" and a random mask (the browser draws 128
+   random values in 0 to 256). A no-providers bid has 4 ciphertexts: the two thermometers and two
+   random shares (the browser draws 128 random values in 0 to 256 for each share). A mask-provider
+   bid has the two thermometers only. In a mask-provider auction the page shows **Waiting for mask
+   providers (x/k)** until all masks are in, and an account that is a provider cannot bid. The
+   browser encrypts each ciphertext and proves its encryption, then makes the bid proof. The page
+   shows each step. A no-providers bid has the step **Prove the shares in the last two
+   ciphertexts**. Each proof takes some minutes. The wallet then sends one transaction. With **Send
+   through relayer**, the wallet signs the bid and the server sends the transaction. The bid counts
+   when the transaction is mined. On an allowlist auction, the page shows if the account is on the
+   list. After a bid, the page shows the version of the bid and **Update bid (n left)**: an address
+   can send 3 bids. An update has a new proof. The latest bid whose bytes open counts, and it counts
+   from the time of the update: an update loses the place of the earlier bid in a tie. The auction
+   is full when `bidderCount` reaches 8. The page keeps the level and the transaction hash of each
+   version in the browser storage.
 6. **Result.** When the window closes, the server computes the result, and the committee decrypts
    it. The page decodes the published plaintext in the browser. It uses `selectBids` to find the
    bids that counted. It shows the bidders that it dropped because their bytes did not open, and the
-   version of each bid that counted. First-price, Vickrey, zero failure and no providers show the
-   winner, the price, your outcome and the region grid (one row for each bidder, one column for each
-   level). The grid shows that the region of the winner is the only zero region at the price level.
-   Ratio-lane types show the winner, the price and one lane of 16 slots: zero above the price, the
-   set of tied bidders at the price, and random values below. If more than one bidder tied, the page
-   also shows the tie set in the order the bidders bid. The first bidder of the set wins. The page
-   shows an error when a lane does not decode to a price and a tie set, or when the copies of
-   ratio-lane second-price disagree. For the zero-failure type and the no-providers type, the page
-   shows an error when the output does not have the pattern of a result. This does not happen if
-   every mask is valid (zero-failure type), and it cannot happen for any shares (no-providers type).
+   version of each bid that counted. Every type shows the winner, the price, your outcome and a grid
+   with one lane for each bidder and one column for each level. For the mask-provider type and the
+   no-providers type, the grid shows that the lane of the winner is the only zero lane at the price
+   level. For the first-price type, the grid shows that the lane of the winner is exactly 1 at the
+   price level, every lane before it is 0 and every slot above the price is 0. The page shows an
+   error when the output does not have the pattern of a result. This does not happen for any bids
+   and any masks (first-price type), when every mask is valid (mask-provider type) and for any
+   shares (no-providers type).
 
-An auction needs 2 bidders at least, and 4 (first-price and Vickrey) or 8 (the other types) at most.
-A bidder counts only if one of its bids opens its commitments. With fewer than 2 such bidders, the
-server computes nothing, and the E3 fails at its compute deadline. A zero-failure auction also needs
-a mask from every provider that opens its commitment. If one provider does not send its mask,
-bidding stays closed, and the E3 fails at its compute deadline. A no-providers auction needs nothing
-more.
+An auction needs 2 bidders at least, and 8 at most. A bidder counts only if one of its bids opens
+its commitments. With fewer than 2 such bidders, the server computes nothing, and the E3 fails at
+its compute deadline. A mask-provider auction also needs a mask from every provider that opens its
+commitment. If one provider does not send its mask, bidding stays closed, and the E3 fails at its
+compute deadline. The other two types need nothing more.
 
 ## Test
 
 ```sh
-cargo test --release -p e3-user-program   # the FHE program and its input policy, all six types, against a local l-BFV key
+cargo test --release -p e3-user-program   # the FHE program and its input policy, all three types, against a local l-BFV key
 (cd circuits/bid && nargo test)           # the bid validity rules (the shared library)
 hardhat test                              # the contract and the allowlist gate (with a mock bid verifier)
 pnpm test:server                          # the server and the @interfold/auction package
-pnpm test:integration                     # DKG -> 11 bid proofs -> FHE -> threshold decryption, the types 0 to 3
+pnpm test:integration                     # DKG -> 9 bid proofs and 1 mask proof -> FHE -> threshold decryption, the types 0 to 2
 ```
 
 `pnpm test` runs `hardhat test`. `pnpm test:integration` runs `pnpm test:server` first.
 
-The integration test runs four auctions at the same time. They need 35 encryptions and 11 bid
-proofs.
+The integration test runs three auctions at the same time. They need 26 encryptions, 9 bid proofs
+and 1 mask proof.
 
-| Type                      | Bids (bidder: step)              | What else it covers                                                                                                                             | Result checked                                       |
-| ------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| Second-price (Vickrey)    | `0: 14`, `1: 12`, `2: 9`, `0: 5` | The update counts: bidder 0 bids the highest step and then updates. The test sends the update again as version 3, and a fourth bid is rejected. | bidder 1 wins at price 9                             |
-| First-price               | `0: 6`, `1: 9`, `2: 11`          | An allowlist of bidders 0 to 2, and the creator account is rejected. The bytes of bidder 2 do not open, so the program drops bidder 2.          | bidder 1 wins at price 9                             |
-| First-price, ratio lanes  | `0: 2`, `1: 7`                   | Bidder 1 signs, and the relayer of the server sends the bid.                                                                                    | price 7, tie set `[1]`, bidder 1 wins                |
-| Second-price, ratio lanes | `0: 5`, `1: 5`                   | A top tie on step 5 of a 6-step auction.                                                                                                        | price 5, tie set `[0, 1]`, bidder 0 wins (bid first) |
+| Type                         | Bids (bidder: step)              | What else it covers                                                                                                                                                                                                      | Result checked                       |
+| ---------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------ |
+| First-price                  | `0: 9`, `1: 9`, `2: 11`          | A top tie on step 9. An allowlist of bidders 0 to 2, and the creator account is rejected. Bidder 1 signs, and the relayer of the server sends the bid. The bytes of bidder 2 do not open, so the program drops bidder 2. | bidder 0 wins at price 9 (bid first) |
+| Second-price, mask providers | `0: 14`, `1: 12`, `2: 9`, `0: 5` | The creator is the only provider and sends its mask. The update counts: bidder 0 bids the highest step and then updates. The test sends the update again as version 3, and a fourth bid is rejected.                     | bidder 1 wins at price 9             |
+| Second-price, no providers   | `0: 5`, `1: 5`                   | A top tie on step 5 of a 6-step auction.                                                                                                                                                                                 | bidder 0 wins at price 5 (bid first) |
 
 The test also checks that the contract rejects these bids:
 
-- a 4-ciphertext bid for an auction with 3 roles (`InvalidBidShape`);
+- a 3-ciphertext bid for an auction with 4 roles (`InvalidBidShape`);
 - a proof whose commitments are swapped (the verifier fails);
 - a proof that another bidder copies with its own address (the verifier fails);
 - a direct bid from an account that is not the bidder (`SenderNotBidder`);
 - a bid from an account that is not on the allowlist (`BidderNotEligible`);
 - a signed bid with two ciphertexts swapped, a bid with the signature of another account, and the
   same signed bid after it was sent (`InvalidSignature`);
+- a bid for a mask-provider auction before its mask is in (`MasksPending`), and a second mask of the
+  same provider (`MaskAlreadySubmitted`);
 - a fourth bid of one address (`TooManyBids`).
 
 It checks `bidCount`, `bidderCount`, the `firstIndex` and the `version` of each `BidSubmitted` event
 and the number of leaves. It then selects the bids with `selectBids` and compares them with the
 expected bids. `cargo test` covers a tie at the top for each type (the earliest position wins), 8
-bidders, the zero slots of the output, the plaintext formulas of the ratio-lane types, and the leaf
-and the selection of the input policy. The latest valid version wins. An earlier version counts if
-the latest does not open. A bidder with no bid that opens is dropped whole. A leaf vector is shared
-with the Solidity `inputLeaf`. `hardhat test` covers the contract (bids, updates, relayed bids, the
-4-role verifier, the allowlist and the gate configuration) and the Merkle root of the allowlist gate
-on chain and in TypeScript. `pnpm test:server` runs the unit tests of the server and of `sdk/`,
-including the input assembly for 3 and 4 roles, the relay and the bid selection.
+bidders, the output of the first-price type under any mask, the zero slots of the output, and the
+leaf and the selection of the input policy. The latest valid version wins. An earlier version counts
+if the latest does not open. A bidder with no bid that opens is dropped whole. A leaf vector is
+shared with the Solidity `inputLeaf`. `hardhat test` covers the contract (bids, updates, relayed
+bids, the verifiers, the allowlist and the gate configuration) and the Merkle root of the allowlist
+gate on chain and in TypeScript. `pnpm test:server` runs the unit tests of the server and of `sdk/`,
+including the input assembly for 2, 3 and 4 roles, the relay and the bid selection.
 
-The tests of the zero-failure type are these. `hardhat test` covers the provider list, the order of
+The tests of the first-price type are these. `hardhat test` covers the creation (providers are
+rejected), the role count (3), the bidder limit (8) and the anchor rule: a bid of this type must
+carry `vkAnchor3`. `cargo test` covers the result for 2 to 8 bidders, all bid patterns with the top
+ties, and masks that are the worst case (a mask sum of 0 in every slot included): the result is
+always exact. `pnpm test:server` covers the layout and the decoder, which reads the lanes and
+rejects a pattern that no honest result has.
+
+The tests of the mask-provider type are these. `hardhat test` covers the provider list, the order of
 the leaves (the configuration, the masks, then the bids), the mask rules (shape, sender, a second
 mask, a bad proof) and `MasksPending`. `cargo test` covers the policy of the masks and the result of
 the type for 2 to 8 bidders and 1 to 4 providers, including masks that are the worst case for the
 noise. `pnpm test:server` covers the input assembly with masks, the rule that starts a computation
-(all masks and 2 bidders) and the mask provider of the server. The integration test does not run a
-zero-failure auction.
+(all masks and 2 bidders) and the mask provider of the server.
 
 The tests of the no-providers type are these. `hardhat test` covers the creation (providers are
 rejected), the role count (4) and the bidder limit (8), and the anchor rule: a bid of this type must
-carry `vkAnchorQnr`, and a bid of the ratio-lane second-price type must carry `vkAnchor4`.
-`cargo test` covers the result for 2 to 8 bidders, all bid patterns with the top ties, and shares
-that the bidders choose against the program (so that `S` takes every value from 0 to 256): the
-result is always exact. It runs the FHE computation for a set of bidder counts. `pnpm test:server`
-covers the layout, the decoder and the rule for providers, and the input assembly and the rule that
-starts a computation for 4 ciphertexts and no masks. The integration test does not run a
-no-providers auction.
+carry `vkAnchorQnr`. `cargo test` covers the result for 2 to 8 bidders, all bid patterns with the
+top ties, and shares that the bidders choose against the program (so that `S` takes every value from
+0 to 256): the result is always exact. It runs the FHE computation for a set of bidder counts.
+`pnpm test:server` covers the layout, the decoder and the rule for providers, and the input assembly
+and the rule that starts a computation for 4 ciphertexts and no masks.
 
 ## Deploy to Sepolia
 
@@ -786,8 +771,8 @@ Your protocol and the official one need these as well:
   bond them in the registry. The `minimum` committee has 3 nodes. Enable the `sepolia` chain in
   `interfold.config.yaml` (`enabled: true`) and start each node with `interfold start`.
 - The built circuits of this example: `pnpm dev:setup` writes `circuits/target/vk_anchor.json`
-  (`vkAnchor2`, `vkAnchor3`, `vkAnchor4`, `vkAnchorMask` and `vkAnchorQnr`) and the bid and mask
-  verifiers. The deploy reads them.
+  (`vkAnchor2`, `vkAnchor3`, `vkAnchorMask` and `vkAnchorQnr`) and the bid and mask verifiers. The
+  deploy reads them.
 - Sepolia ETH for the deploy account and for the server key. The auction creators need the fee token
   of the protocol.
 
@@ -856,11 +841,9 @@ with the Sepolia bridge and VectorX addresses of `@interfold/contracts`.
 
 The program constructor takes, in this order, the Interfold address, the compute verifier and the
 image ID, then the bid verifiers `bidVerifier2`, `bidVerifier3` and `bidVerifier4`, the mask
-verifier `maskVerifier`, the anchors `vkAnchor2`, `vkAnchor3`, `vkAnchor4`, `vkAnchorMask` and
-`vkAnchorQnr`, and the data-availability verifier. The ratio-lane second-price type and the
-no-providers type share `bidVerifier4` and differ in the anchor. The deploy script deploys the four
-verifiers, reads the five anchors from `circuits/target/vk_anchor.json` and records all of them in
-`deployed_contracts.json`.
+verifier `maskVerifier`, the anchors `vkAnchor2`, `vkAnchor3`, `vkAnchorMask` and `vkAnchorQnr`, and
+the data-availability verifier. The deploy script deploys the four verifiers, reads the four anchors
+from `circuits/target/vk_anchor.json` and records all of them in `deployed_contracts.json`.
 
 The script records every address in `deployed_contracts.json` and writes `e3_program` and its
 `deploy_block` to the `sepolia` entry of `interfold.config.yaml`. Write down the `deploy_block`. The
@@ -924,14 +907,14 @@ The server does this:
   program then counts, for each bidder, its latest bid whose ciphertexts open their commitments. The
   server applies the same rule (`sdk/src/selection.ts`) and does not start a run with fewer than two
   such bidders.
-- For a zero-failure auction it also reads the providers (the `auctionProviders` view) and every
+- For a mask-provider auction it also reads the providers (the `auctionProviders` view) and every
   `MaskSubmitted` event. It sends the runner the inputs in leaf order: the configuration with the
   providers, then the masks (`input_slots` is the provider and `input_parents` is `MASK_VERSION`),
   then the bids. It starts no run until every provider has a mask that opens its commitment
-  (`checkMasks`) and at least 2 bidders count. A no-providers auction (and every type but the
-  zero-failure one) has no mask input: the server sends the configuration and the bids, and the 4
-  ciphertexts of each bid are 4 consecutive leaves.
-- If `MASK_PROVIDER_PRIVATE_KEY` is set, the server is a mask provider. For each zero-failure
+  (`checkMasks`) and at least 2 bidders count. The other two types have no mask input: the server
+  sends the configuration and the bids, and the ciphertexts of each bid are 3 or 4 consecutive
+  leaves.
+- If `MASK_PROVIDER_PRIVATE_KEY` is set, the server is a mask provider. For each mask-provider
   auction that lists its address, it waits for the committee key and for the input window. It then
   draws a mask, proves it with `BidProver.proveMask` in Node and sends `publishInput` from that key.
   It proves one mask at a time. It reads `maskSubmitted` first, so a restart sends no second mask. A
@@ -1051,10 +1034,10 @@ isolation headers and the single-page rewrite. Prover threads need those headers
 These figures come from one run of `pnpm test:integration` (Node, 11 prover threads) on an Apple
 Silicon laptop. They are estimates.
 
-| Step                                                | Time                                                                                       |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Key generation (request to published key, real DKG) | 6 to 13 minutes for one auction; about 26 minutes when the test runs four at the same time |
-| Threshold decryption (ciphertext output to result)  | about 20 seconds                                                                           |
+| Step                                                | Time                                                                                              |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Key generation (request to published key, real DKG) | 6 to 13 minutes for one auction; about 26 minutes when four ran at the same time (an earlier run) |
+| Threshold decryption (ciphertext output to result)  | about 20 seconds                                                                                  |
 
 The time of a bidder (encryptions, encryption proofs and the bid proof, in Node and in the browser)
 and the time of the integration test have not been measured again for the flow of one bid proof. The
@@ -1062,50 +1045,46 @@ older figures were for a proof of each ciphertext, and they do not apply.
 
 ## Layout
 
-| Path                                  | What                                                                                                                                                                |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sdk/`                                | `@interfold/auction` (private): the four files below. `pnpm build:sdk` builds `sdk/dist` and `sdk/circuits`                                                         |
-| `sdk/src/layout.ts`                   | the slot encoding, the roles and limits of each type and the result decoders                                                                                        |
-| `sdk/src/prover.ts`                   | `BidProver`: encrypt, the encryption proofs, the pair, masks, shares and bid proofs, and `proveMask` (a provider mask)                                              |
-| `sdk/src/selection.ts`                | `selectBids` and `checkMasks`: the TypeScript form of the input policy (which bids and which masks count)                                                           |
-| `sdk/src/allowlist.ts`                | `allowlistRoot` and `allowlistProof`: the allowlist tree of `MerkleAllowlistGate`                                                                                   |
-| `circuits/bid/`                       | `auction_bid`: the library with the bid rules shared by the four circuits, and the tables of the honest bids                                                        |
-| `circuits/pair/`, `masks/`, `shares/` | `auction_bid_pair` (roles 0 and 1, the bid), `auction_bid_masks` (roles 2 and 3, the pair mask) and `auction_bid_shares` (roles 2 and 3, the shares): recursive     |
-| `circuits/bid3/`, `bid4/`             | `auction_bid3` and `auction_bid4`: the proofs the contract verifies; `scripts/compile_circuits.sh` builds all                                                       |
-| `circuits/bid2/`, `mask/`             | `auction_bid2` (the bid proof of type 4) and `auction_mask` (the mask proof of a provider): the proofs the contract verifies                                        |
-| `contracts/AuctionProgram.sol`        | auction config and providers, bids, masks and updates, relayed-bid signatures, gate check, proof checks, leaves, DA check                                           |
-| `contracts/interfaces/`               | `IBidderGate` and `IBidVerifier`                                                                                                                                    |
-| `contracts/gates/`                    | `MerkleAllowlistGate`: the example gate                                                                                                                             |
-| `contracts/verifiers/`                | `AuctionVerifier2.sol`, `AuctionVerifier3.sol`, `AuctionVerifier4.sol` and `AuctionMaskVerifier.sol`: generated by `scripts/compile_circuits.sh`. Do not edit them. |
-| `program/src/lib.rs`                  | the FHE processor and the input policy (the leaf and the selection; all six auction types)                                                                          |
-| `program/examples/bid_table.rs`       | the generator of `circuits/bid/src/constants.nr`                                                                                                                    |
-| `program/examples/vk_hash.rs`         | the hash of ordered VK hashes, for the VK anchor                                                                                                                    |
-| `runner/`                             | the program server (`program-runner`) that serves `program/`                                                                                                        |
-| `guest/`                              | the OpenVM guest that proves the program                                                                                                                            |
-| `server/`                             | the coordination server: events, compute, relay (`POST /relay`), mask provider (`GET /provider`), pictures (`/auctions/:e3Id/image`), output publication, `/health` |
-| `da/`                                 | `auction-da`: the Avail helper of the server (Rust)                                                                                                                 |
-| `deploy/default.ts`                   | the deployment of the program and of the allowlist gate, for the local chain and Sepolia                                                                            |
-| `client/`                             | the web app                                                                                                                                                         |
-| `test/`                               | the Hardhat tests of the contract and the gate                                                                                                                      |
-| `tests/`                              | the integration test and its input helper                                                                                                                           |
+| Path                            | What                                                                                                                                                                |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sdk/`                          | `@interfold/auction` (private): the four files below. `pnpm build:sdk` builds `sdk/dist` and `sdk/circuits`                                                         |
+| `sdk/src/layout.ts`             | the slot encoding, the roles and limits of each type and the result decoders                                                                                        |
+| `sdk/src/prover.ts`             | `BidProver`: encrypt, the encryption proofs, the pair, shares and bid proofs, and `proveMask` (a provider mask)                                                     |
+| `sdk/src/selection.ts`          | `selectBids` and `checkMasks`: the TypeScript form of the input policy (which bids and which masks count)                                                           |
+| `sdk/src/allowlist.ts`          | `allowlistRoot` and `allowlistProof`: the allowlist tree of `MerkleAllowlistGate`                                                                                   |
+| `circuits/bid/`                 | `auction_bid`: the library with the bid rules shared by the circuits, and the tables of the honest bids                                                             |
+| `circuits/pair/`, `shares/`     | `auction_bid_pair` (roles 0 and 1, the bid) and `auction_bid_shares` (roles 2 and 3, the shares): recursive                                                         |
+| `circuits/bid3/`, `bid4/`       | `auction_bid3` and `auction_bid4`: the proofs the contract verifies; `scripts/compile_circuits.sh` builds all                                                       |
+| `circuits/bid2/`, `mask/`       | `auction_bid2` (the bid proof of type 1) and `auction_mask` (the mask proof of a provider): the proofs the contract verifies                                        |
+| `contracts/AuctionProgram.sol`  | auction config and providers, bids, masks and updates, relayed-bid signatures, gate check, proof checks, leaves, DA check                                           |
+| `contracts/interfaces/`         | `IBidderGate` and `IBidVerifier`                                                                                                                                    |
+| `contracts/gates/`              | `MerkleAllowlistGate`: the example gate                                                                                                                             |
+| `contracts/verifiers/`          | `AuctionVerifier2.sol`, `AuctionVerifier3.sol`, `AuctionVerifier4.sol` and `AuctionMaskVerifier.sol`: generated by `scripts/compile_circuits.sh`. Do not edit them. |
+| `program/src/lib.rs`            | the FHE processor and the input policy (the leaf and the selection; all three auction types)                                                                        |
+| `program/examples/bid_table.rs` | the generator of `circuits/bid/src/constants.nr`                                                                                                                    |
+| `program/examples/vk_hash.rs`   | the hash of ordered VK hashes, for the VK anchor                                                                                                                    |
+| `runner/`                       | the program server (`program-runner`) that serves `program/`                                                                                                        |
+| `guest/`                        | the OpenVM guest that proves the program                                                                                                                            |
+| `server/`                       | the coordination server: events, compute, relay (`POST /relay`), mask provider (`GET /provider`), pictures (`/auctions/:e3Id/image`), output publication, `/health` |
+| `da/`                           | `auction-da`: the Avail helper of the server (Rust)                                                                                                                 |
+| `deploy/default.ts`             | the deployment of the program and of the allowlist gate, for the local chain and Sepolia                                                                            |
+| `client/`                       | the web app                                                                                                                                                         |
+| `test/`                         | the Hardhat tests of the contract and the gate                                                                                                                      |
+| `tests/`                        | the integration test and its input helper                                                                                                                           |
 
 ## Limits
 
 - The parameters are insecure. They give no security.
-- An auction has 2 to 4 bidders (first-price and Vickrey) or 2 to 8 bidders (the other types).
-  `maxBidders(type)` and `MAX_BIDDERS_BY_TYPE` in `sdk/src/layout.ts` set the limit. The first-price
-  and Vickrey types are limited by the slot layout: `floor(8 / n)` copies of `n` regions of 16
-  slots. The zero-failure type and the no-providers type have one copy, so `16 n` slots must fit
-  in 128. The ratio-lane types are limited by the weights `2^k`, which must add up to less than
-  `t = 257`, and by `n (n - 1) < t` (56 for 8 bidders).
+- An auction has 2 to 8 bidders, for every type. `maxBidders(type)` and `MAX_BIDDERS_BY_TYPE` in
+  `sdk/src/layout.ts` set the limit. The slot layout has one copy of the lanes, so `16 n` slots must
+  fit in 128.
 - An auction has 2 to 16 price steps, chosen by its creator. The slot layout always has 16 levels (0
   to 15). The steps `levels` to 15 stay empty, because every thermometer is 0 there. Thus the price
   never decodes to a step that the auction does not have.
 - Anyone can bid, unless the auction has a gate. The first bid of an address takes one of the places
-  (4 or 8), even if its bytes do not open. When the places are full, the contract rejects the first
-  bid of every new address. One party with that many addresses can fill all places. A gate limits
-  who can bid, but the example allowlist does not limit one party that holds several listed
-  addresses.
+  (8), even if its bytes do not open. When the places are full, the contract rejects the first bid
+  of every new address. One party with that many addresses can fill all places. A gate limits who
+  can bid, but the example allowlist does not limit one party that holds several listed addresses.
 - An address can send 3 bids at most: the first bid and 2 updates.
 - The proof binds the ciphertext commitment, not the published bytes. A bidder that publishes bytes
   that do not open the commitment does not count: the program uses an earlier version, or drops the
@@ -1126,34 +1105,33 @@ older figures were for a proof of each ciphertext, and they do not apply.
   builder, or a relayer for relayed bids) chooses the winner of a tie between bids that arrive at
   the same time. A bidder cannot change the tie by encrypting again, and the ciphertext bytes play
   no part in it. A bidder can still use more than one address to hold more than one place.
-- The result of a region type (including zero failure and no providers) does not show that a tie
-  happened. A ratio-lane type shows the tie set (every bidder whose bid equals the price). This is
-  the one thing the result shows beyond the winner and the price.
-- A ratio-lane second-price bid has a fourth ciphertext. It needs one more encryption and one more
-  encryption proof, and it has one more proof in the tree: `auction_bid_masks`, so a bid makes three
-  proofs after the encryptions, against two for the types 0 to 2 and 4. A no-providers bid also
-  makes three: `auction_bid_shares` takes the place of `auction_bid_masks`.
-- In the first-price and second-price region types (0 and 1), a slot reads as zero by error with
-  probability `1 / 257` for each copy. The decoder then cannot find a unique winner. Run the auction
-  again. The zero-failure and no-providers types cannot have this error.
-- Ratio-lane first-price has no such error: the lane at the price has no mask. In ratio-lane
-  second-price, the price reads too low if `R` is 0 at the price level in all three copies. This has
-  the probability `1 / 257^3`.
-- A zero-failure auction has `k` mask providers (1 to 4), and the creator names them. A provider is
+- The result of every type does not show that a tie happened. It shows the winner and the price
+  only. For the first-price type, the price is the winning bid, so that bid is public.
+- A first-price bid has a third ciphertext, the mask, so a bid makes two proofs after the
+  encryptions (the pair proof and the bid proof), as a mask-provider bid does. A no-providers bid
+  makes three: the pair proof, the shares proof and the bid proof.
+- The first-price type and the two second-price types cannot read a slot as zero by error. In the
+  first-price type, the mask touches only the slots that the reader does not need. In the
+  second-price types, the factor `r` is never zero in a slot that exists.
+- Privacy of the first-price type needs one bidder that draws its mask at random and keeps it
+  secret. If all the bidders share their masks, they can read the numbers `G + E`, which show more
+  than the winner and the price (for example, how many bidders bid above a level). The result alone
+  is never enough to read a bid.
+- A mask-provider auction has `k` mask providers (1 to 4), and the creator names them. A provider is
   not a bidder: the contract never counts its address as a bidder, and it rejects its bids.
-- Privacy of the zero-failure type needs one honest provider that keeps its mask secret and draws it
-  at random. If all providers share their masks, they can read the numbers in `tests`: for each
-  region and level, a product of counts. These numbers show more than the winner and the price. The
+- Privacy of the mask-provider type needs one honest provider that keeps its mask secret and draws
+  it at random. If all providers share their masks, they can read the numbers in `tests`: for each
+  lane and level, a product of counts. These numbers show more than the winner and the price. The
   result alone is never enough to read a bid.
-- The zero-failure auction needs every provider. If one provider does not send its mask, the
+- The mask-provider auction needs every provider. If one provider does not send its mask, the
   contract keeps bidding closed, and the E3 fails at its compute deadline. A provider cannot be
   replaced after the creation of the auction. The creator should name providers that are online, and
   should name the server provider, if there is one.
-- A mask that does not open its commitment stops the zero-failure auction too: the program needs
+- A mask that does not open its commitment stops the mask-provider auction too: the program needs
   every mask. The contract cannot see this, because it does not see the plaintext. Only the provider
   can send its mask, so only a provider can cause it. The web app shows an alert.
-- A zero-failure bid proves only `ge` and `gt`. The mask providers add 1 to 4 encryptions and proofs
-  to the whole auction, one for each provider, and the bidders do no mask work.
+- A mask-provider bid proves only `ge` and `gt`. The mask providers add 1 to 4 encryptions and
+  proofs to the whole auction, one for each provider, and the bidders do no mask work.
 - A no-providers bid has four ciphertexts: the two thermometers and two shares. The shares need no
   provider and no proof other than the encryption proof, and a bid makes three proofs after the
   encryptions (the pair proof, the shares proof and the bid proof).

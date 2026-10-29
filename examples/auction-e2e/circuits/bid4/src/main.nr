@@ -4,17 +4,14 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! The bid proof for the auction types 3 and 5: 4 roles. Type 3 has the roles `ge`, `gt`, `mask`
-//! and `pair_mask`; type 5 has `ge`, `gt`, `share` and `share`. It verifies the `auction_bid_pair`
-//! proof (roles 0 and 1) and the proof of the roles 2 and 3: `auction_bid_masks` for type 3,
-//! `auction_bid_shares` for type 5. Both have the same public inputs, so one circuit serves both.
+//! The bid proof for the auction type 2: 4 roles (`ge`, `gt`, `share`, `share`). It verifies the
+//! `auction_bid_pair` proof (roles 0 and 1) and the `auction_bid_shares` proof (roles 2 and 3).
 //!
 //! Public inputs, in order: `ct_commitments` (4), `bidder`, `levels`, then the returned
 //! `pk_commitment` and `vk_anchor`. See `auction_bid3` for what they bind.
 //!
 //! `vk_anchor` is the hash of the wrapper key hash, the two VK chains, and the key hashes of the
-//! pair circuit and of the circuit of the roles 2 and 3 (`masks_key_hash`: the masks circuit for
-//! type 3, the shares circuit for type 5, so the two types have two anchors). The two VK chains
+//! pair circuit and of the shares circuit (`shares_key_hash`). The two VK chains
 //! are witnesses here: both inner proofs commit to them, so they cannot differ from the chains
 //! the anchor pins.
 use auction_bid::committee_key_commitment;
@@ -29,9 +26,9 @@ fn main(
     pair_verification_key: UltraHonkVerificationKey,
     pair_proof: UltraHonkProof,
     pair_key_hash: Field,
-    masks_verification_key: UltraHonkVerificationKey,
-    masks_proof: UltraHonkProof,
-    masks_key_hash: Field,
+    shares_verification_key: UltraHonkVerificationKey,
+    shares_proof: UltraHonkProof,
+    shares_key_hash: Field,
     ct_commitments: pub [Field; 4],
     bidder: pub Field,
     levels: pub Field,
@@ -56,8 +53,8 @@ fn main(
         pair_key_hash,
     );
     verify_honk_proof_non_zk(
-        masks_verification_key,
-        masks_proof,
+        shares_verification_key,
+        shares_proof,
         [
             ct_commitments[2],
             ct_commitments[3],
@@ -66,13 +63,13 @@ fn main(
             ct0_chain,
             ct1_chain,
         ],
-        masks_key_hash,
+        shares_key_hash,
     );
 
     let pk_commitment =
         committee_key_commitment(public_key_row_commitments, relinearization_key_commitment);
     let vk_anchor = compute_vk_hash(
-        [user_data_encryption_key_hash, ct0_chain, ct1_chain, pair_key_hash, masks_key_hash]
+        [user_data_encryption_key_hash, ct0_chain, ct1_chain, pair_key_hash, shares_key_hash]
             .as_vector(),
     );
     (pk_commitment, vk_anchor)

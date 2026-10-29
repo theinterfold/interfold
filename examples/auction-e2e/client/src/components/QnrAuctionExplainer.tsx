@@ -128,9 +128,7 @@ const QnrAuctionExplainer: React.FC = () => {
           and {PLAINTEXT_MODULUS} is prime, so a product of numbers that are not zero is never a multiple of {PLAINTEXT_MODULUS}. A number
           of <Mono>tests</Mono> that is not zero can therefore never become a zero in the output, and the result always reads. A bidder who
           sends bad shares on purpose cannot break the auction: the bid proof checks the format of the shares only, and any shares give the
-          same winner and price. In the types without a zero-failure design (first-price, second-price and the ratio types), each bidder
-          draws a random mask, and the sum of the masks is zero in a slot with the probability 1 in {PLAINTEXT_MODULUS}, which can hide a
-          loser and make the result unreadable.
+          same winner and price.
         </p>
       </div>
 

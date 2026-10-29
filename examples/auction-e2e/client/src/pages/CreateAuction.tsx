@@ -18,7 +18,6 @@ import {
   MIN_BIDDERS,
   encodeAllowlistConfig,
   isProviderType,
-  isRatioType,
   rolesFor,
 } from '@interfold/auction'
 import { STEP_LABELS, useCreateAuction } from '@/hooks/useCreateAuction'
@@ -75,7 +74,7 @@ const CreateAuction: React.FC = () => {
   const { data: walletClient } = useWalletClient({ chainId: chain.id })
 
   const [title, setTitle] = useState('')
-  const [auctionType, setAuctionType] = useState<AuctionType>(AuctionType.SecondPrice)
+  const [auctionType, setAuctionType] = useState<AuctionType>(AuctionType.FirstPrice)
   const [priceForm, setPriceForm] = useState(INITIAL_PRICE_FORM)
   const [durationSeconds, setDurationSeconds] = useState<number>(DURATIONS[3].seconds)
   const [who, setWho] = useState<'anyone' | 'allowlist'>('anyone')
@@ -151,8 +150,8 @@ const CreateAuction: React.FC = () => {
       <header className='page-intro wide'>
         <h1 className='display'>Create an auction</h1>
         <p className='lede'>
-          Choose what the auction reveals, how many price steps a bid can pick from, and the price of each step. Each type has its own limit
-          on the number of bidders; the ratio types and the two zero-failure types take the most.
+          Choose what the auction reveals, how many price steps a bid can pick from, and the price of each step. Every type takes{' '}
+          {MIN_BIDDERS} to {MAX_BIDDERS_BY_TYPE[AuctionType.FirstPrice]} bidders.
         </p>
       </header>
 
@@ -196,9 +195,7 @@ const CreateAuction: React.FC = () => {
                 ? `If the top bids tie, the tied bidder who bid first wins. Nothing about the tie is revealed. Every bid has 2 ciphertexts, and the mask providers you name send the masks before bidding opens. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders.`
                 : auctionType === AuctionType.QnrSecondPrice
                   ? `If the top bids tie, the tied bidder who bid first wins. The auction never fails and needs no trusted party and no mask providers: the bidders themselves send the random shares. The price of this is a small statistical hint about the losing bids, which is larger on the small demo parameters than on secure ones. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders.`
-                  : isRatioType(auctionType)
-                    ? `If the top bids tie, the tied bidder who bid first wins. The tie becomes public: the result names every bidder that tied. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders, more than the ${MAX_BIDDERS_BY_TYPE[AuctionType.FirstPrice]} of the first-price and second-price types.`
-                    : `If the top bids tie, the tied bidder who bid first wins. Nothing about the tie is revealed. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders.`}
+                  : `If the top bids tie, the tied bidder who bid first wins. Nothing about the tie is revealed. The auction never fails and needs no trusted party and no mask providers: each bid carries a mask that the bidder draws, and the masks hide every slot that the result does not need. The winning bid is the price, so it is public. This type takes up to ${MAX_BIDDERS_BY_TYPE[auctionType]} bidders.`}
             </p>
           </fieldset>
 

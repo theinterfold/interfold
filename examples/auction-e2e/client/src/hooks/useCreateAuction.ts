@@ -30,7 +30,7 @@ export interface CreateInput {
   gate: Address
   /** What `gate.configure` takes; `0x` without a gate. */
   gateConfig: Hex
-  /** The mask providers of a type-4 auction, 1 to `MAX_PROVIDERS`; empty for the other types. */
+  /** The mask providers of a mask-provider auction, 1 to `MAX_PROVIDERS`; empty for the other types. */
   providers: readonly Address[]
   /** Seconds the input window stays open, counted from its start. */
   durationSeconds: number

@@ -38,7 +38,7 @@ const baseStepId = (step: BidStep): string => ('role' in step ? `${step.kind}:${
 
 /**
  * Turns the steps the prover reports into step ids. A bid can have two ciphertexts of one role (the
- * two shares of a type-5 bid), so the second report of an id gets the suffix `#2`, in the same order
+ * two shares of a no-provider second-price bid), so the second report of an id gets the suffix `#2`, in the same order
  * as {@link planSteps} lists them.
  */
 function stepIds(): (step: BidStep) => string {
@@ -56,11 +56,7 @@ function planSteps(type: AuctionType, relayed: boolean): { id: string; label: st
   const roles = rolesFor(type)
   const idOf = stepIds()
   const proofLabels =
-    type === AuctionType.QnrSecondPrice
-      ? [{ id: 'shares-proof', label: 'Prove the shares in the last two ciphertexts' }]
-      : roles.length === 4
-        ? [{ id: 'masks-proof', label: 'Prove the masks in the last two ciphertexts' }]
-        : []
+    type === AuctionType.QnrSecondPrice ? [{ id: 'shares-proof', label: 'Prove the shares in the last two ciphertexts' }] : []
   return [
     ...roles.flatMap((role, index) => [
       { id: idOf({ kind: 'encrypt', role }), label: `Encrypt ciphertext ${index + 1} of ${roles.length}: ${ROLE_LABELS[role]}` },

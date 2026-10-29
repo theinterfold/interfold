@@ -37,8 +37,8 @@ const contractMapping: Record<string, string> = {
   Faucet: 'faucet',
 }
 
-/** The anchors `circuits/target/vk_anchor.json` holds: one per generated verifier, and `vkAnchorQnr` (type 5, verified by `AuctionVerifier4`). */
-const ANCHOR_KEYS = ['vkAnchor2', 'vkAnchor3', 'vkAnchor4', 'vkAnchorMask', 'vkAnchorQnr'] as const
+/** The anchors `circuits/target/vk_anchor.json` holds: one per generated verifier, and `vkAnchorQnr` (type 2, verified by `AuctionVerifier4`). */
+const ANCHOR_KEYS = ['vkAnchor2', 'vkAnchor3', 'vkAnchorMask', 'vkAnchorQnr'] as const
 
 /**
  * The generated verifiers `scripts/compile_circuits.sh` writes: the contract of each (also its file
@@ -233,7 +233,6 @@ export const deployTemplate = async () => {
     verifierAddresses.maskVerifier,
     anchors.vkAnchor2,
     anchors.vkAnchor3,
-    anchors.vkAnchor4,
     anchors.vkAnchorMask,
     anchors.vkAnchorQnr,
     dataAvailabilityVerifierAddress,
@@ -255,7 +254,6 @@ export const deployTemplate = async () => {
         maskVerifier: verifierAddresses.maskVerifier,
         vkAnchor2: anchors.vkAnchor2,
         vkAnchor3: anchors.vkAnchor3,
-        vkAnchor4: anchors.vkAnchor4,
         vkAnchorMask: anchors.vkAnchorMask,
         vkAnchorQnr: anchors.vkAnchorQnr,
         dataAvailabilityVerifier: dataAvailabilityVerifierAddress,
@@ -317,7 +315,7 @@ export const deployTemplate = async () => {
     `
       Deployed AuctionProgram at address: ${programAddress}
       Deployed the bid verifiers at addresses: ${verifierAddresses.bidVerifier2} (2 roles), ${verifierAddresses.bidVerifier3} (3 roles), ${verifierAddresses.bidVerifier4} (4 roles); the mask verifier at ${verifierAddresses.maskVerifier}
-      VK anchors: ${anchors.vkAnchor2} (2 roles), ${anchors.vkAnchor3} (3 roles), ${anchors.vkAnchor4} (4 roles, type 3), ${anchors.vkAnchorMask} (mask), ${anchors.vkAnchorQnr} (4 roles, type 5)
+      VK anchors: ${anchors.vkAnchor2} (2 roles), ${anchors.vkAnchor3} (3 roles), ${anchors.vkAnchorMask} (mask), ${anchors.vkAnchorQnr} (4 roles)
       Deployed MerkleAllowlistGate at address: ${allowlistGateAddress}
       Deployed ${unprovedTest ? 'local unproved test verifier' : 'OpenVmReceiptVerifier'} at address: ${await verifier.getAddress()}
       Deployed OpenVmBfvCiphertextVerifier at address: ${ciphertextVerifierAddress}

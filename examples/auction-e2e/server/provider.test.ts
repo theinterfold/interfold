@@ -37,7 +37,7 @@ describe('decideMask', () => {
 
   it('skips an auction that does not name the provider, or has no providers at all', () => {
     expect(decideMask(me, auction({ providers: [other] }))).toEqual({ kind: 'skip', reason: NOT_LISTED })
-    expect(decideMask(me, auction({ type: AuctionType.SecondPrice, providers: [] })).kind).toBe('skip')
+    expect(decideMask(me, auction({ type: AuctionType.FirstPrice, providers: [] })).kind).toBe('skip')
   })
 
   it('skips once the mask is on chain, once the window is closed and when the auction left the key-published stage', () => {
@@ -78,7 +78,7 @@ describe('MaskProvider', () => {
     expect(send).toHaveBeenCalledWith(7n, proved)
   })
 
-  it('does nothing for an auction that is no type-4 auction of the program or that does not name it', async () => {
+  it('does nothing for an auction that is no mask-provider auction of the program or that does not name it', async () => {
     const prove = vi.fn(async () => proved)
     const provider = new MaskProvider({
       address: me,

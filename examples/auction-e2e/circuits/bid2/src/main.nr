@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! The bid proof for the auction type 4: 2 roles (`ge`, `gt`). It verifies the `auction_bid_pair`
+//! The bid proof for the auction type 1: 2 roles (`ge`, `gt`). It verifies the `auction_bid_pair`
 //! proof, and nothing else: a bidder of this type sends no mask. The mask providers send the masks.
 //!
 //! Public inputs, in order: `ct_commitments` (2), `bidder`, `levels`, then the returned

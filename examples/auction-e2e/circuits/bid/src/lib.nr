@@ -6,17 +6,18 @@
 
 //! The validity rules of an auction bid and of a provider mask, shared by the bid circuits.
 //!
-//! A bid is `K` ciphertexts, one for each role: 3 for the auction types 0 to 2 (`ge`, `gt`, `mask`)
-//! and 4 for type 3 (`ge`, `gt`, `mask`, `pair_mask`). All of them are SIMD-encoded. Slot `i` has
-//! level `i % LEVELS`, and a bid `b` is in `0..levels`, where the auction creator chose `levels` in
-//! `2..=LEVELS` (a public input, which the contract supplies from the auction). The steps
-//! `levels..LEVELS` stay empty: every thermometer is 0 there.
+//! A bid is `K` ciphertexts, one for each role: 3 for the auction type 0 (`ge`, `gt`, `mask`), 2
+//! for type 1 (`ge`, `gt`: its masks come from the providers) and 4 for type 2 (`ge`, `gt`,
+//! `share`, `share`). All of them are SIMD-encoded. Slot `i` has level `i % LEVELS`, and a bid `b`
+//! is in `0..levels`, where the auction creator chose `levels` in `2..=LEVELS` (a public input,
+//! which the contract supplies from the auction). The steps `levels..LEVELS` stay empty: every
+//! thermometer is 0 there.
 //!
 //! ```text
 //!   role 0 (ge)         slot i  [b >= i % LEVELS]
 //!   role 1 (gt)         slot i  [b >  i % LEVELS]
 //!   role 2 (mask)       slot i  uniform in 0..t         (no constraint)
-//!   role 3 (pair mask)  slot (2c) * LEVELS + l  ==  slot (2c + 1) * LEVELS + l
+//!   role 2, 3 (share)   slot i  uniform in 0..t         (no constraint)
 //! ```
 //!
 //! One proof must cover all `K` Interfold `user_data_encryption` proofs (each ciphertext is a
@@ -26,13 +27,14 @@
 //!
 //! ```text
 //!   auction_bid_pair    roles 0 and 1: both wrapper proofs, the one private `b`, levels
-//!   auction_bid_masks   roles 2 and 3: both wrapper proofs, the pair-mask check   (type 3)
-//!   auction_bid_shares  roles 2 and 3: both wrapper proofs only                    (type 5)
-//!   auction_bid3        the pair proof and the wrapper proof of role 2             (EVM verifier)
-//!   auction_bid4        the pair proof and the masks or the shares proof           (EVM verifier)
-//!   auction_bid2        the pair proof only, for the auction type 4                (EVM verifier)
-//!   auction_mask        one wrapper proof and the nonzero slots of a provider mask (EVM verifier)
+//!   auction_bid_shares  roles 2 and 3: both wrapper proofs only                    (type 2)
+//!   auction_bid3        the pair proof and the wrapper proof of role 2             (type 0)
+//!   auction_bid4        the pair proof and the shares proof                        (type 2)
+//!   auction_bid2        the pair proof only                                        (type 1)
+//!   auction_mask        one wrapper proof and the nonzero slots of a provider mask (type 1)
 //! ```
+//!
+//! `auction_bid2`, `auction_bid3`, `auction_bid4` and `auction_mask` have an EVM verifier.
 //!
 //! Roles 0 and 1 use the same `b` inside `auction_bid_pair`, which is why a bid needs no commitment
 //! to `b`. A mask has a free `k1`: the mask is uniform random, and it only hides the output of the
@@ -56,23 +58,17 @@
 //! constants times witnesses: no multiplication, and no reduction mod `t`, because every row is
 //! already in `[0, t - 1]`.
 //!
-//! The same map is linear for the pair mask: `k1` is the sum of the `PAIR_UNITS` rows of
-//! `TABLE_PAIR_UNIT`, each times its value `v_j`, mod `t`. A row is `k1` of the plaintext that has 1
-//! in the two slots of one pair at one level, and 0 elsewhere. The circuit checks the integer
-//! equation `sum_j v_j * row_j[i] = k1[i] + t * q[i]` for every coefficient `i`. Range checks keep
-//! it from wrapping around the field: `v_j < 2^PAIR_VALUE_BITS` and `q[i] < 2^PAIR_QUOTIENT_BITS`
-//! make both sides smaller than `2^24`. As `k1[i] < t`, the quotient `q[i]` is the floor of the sum
-//! over `t`, so only the plaintext `sum_j v_j * unit_j mod t` can satisfy the equation. The program
-//! multiplies one value of the sum of the pair masks into two lanes (the `y` lane and the `z` lane
-//! of one copy), so the two slots of a pair must hold the same value at every level.
-//!
-//! A provider mask (auction type 4) is the same kind of sum over `TABLE_SLOT_UNIT`: `k1` is the sum
-//! of the `N` unit rows, each times its slot value `m_s`, mod `t`. The circuit checks the integer
-//! equation `sum_s m_s * unit_s[i] = k1[i] + t * q[i]` as for the pair mask. Every `m_s` is in
-//! `1..=t - 1` (`m_s - 1` fits in 8 bits, and `t - 1` is `2^8`), so both sides are below `2^24`.
-//! The SIMD map is a bijection between slot vectors and plaintexts, so the plaintext has the slot
-//! values `m_s`, all of them nonzero mod `t`. The program multiplies the output by this mask, so a
-//! nonzero test never becomes 0, and no provider can zero a slot to damage the result.
+//! A provider mask (auction type 1) is a sum over `TABLE_SLOT_UNIT`: `k1` is the sum of the `N`
+//! unit rows, each times its slot value `m_s`, mod `t`. A row is `k1` of the plaintext that is 1 in
+//! one slot, and 0 elsewhere. The circuit checks the integer equation
+//! `sum_s m_s * unit_s[i] = k1[i] + t * q[i]` for every coefficient `i`. Range checks keep it from
+//! wrapping around the field: every `m_s` is in `1..=t - 1` (`m_s - 1` fits in 8 bits, and `t - 1`
+//! is `2^8`) and `q[i] < 2^MASK_QUOTIENT_BITS`, so both sides are below `2^24`. As `k1[i] < t`, the
+//! quotient `q[i]` is the floor of the sum over `t`, so only the plaintext `sum_s m_s * unit_s mod t`
+//! can satisfy the equation. The SIMD map is a bijection between slot vectors and plaintexts, so the
+//! plaintext has the slot values `m_s`, all of them nonzero mod `t`. The program multiplies the
+//! output by this mask, so a nonzero test never becomes 0, and no provider can zero a slot to damage
+//! the result.
 //!
 //! The commitment of `k1` is the one with the digit asserts, so that the packing is injective and a
 //! commitment has one opening. The encryption circuit range-checks `k1` to `[0, t - 1]`, and equal
@@ -80,10 +76,8 @@
 mod constants;
 
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
-pub use constants::PAIR_UNITS;
 use constants::{
-    LEVELS, TABLE_GE, TABLE_GT, TABLE_N, TABLE_PAIR_UNIT, TABLE_PLAINTEXT_MODULUS, TABLE_Q_MOD_T,
-    TABLE_SLOT_UNIT,
+    LEVELS, TABLE_GE, TABLE_GT, TABLE_N, TABLE_PLAINTEXT_MODULUS, TABLE_Q_MOD_T, TABLE_SLOT_UNIT,
 };
 // The insecure SIMD preset, like the user-data encryption circuits `compile_circuits.sh` bundles.
 use interfold_lib::configs::insecure_simd::threshold::{
@@ -98,12 +92,6 @@ use interfold_lib::math::polynomial::Polynomial;
 /// `levels` fits in `LEVELS_BITS` bits. `LEVELS` is 16, so 8 bits are enough.
 pub global LEVELS_BITS: u32 = 8;
 
-/// A pair value is below `2^PAIR_VALUE_BITS`. This is more than `t - 1` and it does not matter: a
-/// value `v` and `v - t` give the same plaintext mod `t`.
-pub global PAIR_VALUE_BITS: u32 = 9;
-/// The quotient of the pair equation is below `PAIR_UNITS * 2^PAIR_VALUE_BITS`, so below `2^15`.
-pub global PAIR_QUOTIENT_BITS: u32 = 15;
-
 /// A slot value of a provider mask is in `1..=2^MASK_VALUE_BITS`: `m - 1` has that many bits.
 pub global MASK_VALUE_BITS: u32 = 8;
 /// The quotient of the mask equation is below `N * 2^(2 * MASK_VALUE_BITS) / t`, so below `2^15`.
@@ -115,9 +103,6 @@ pub global UDE_PUBLIC_LEN: u32 = 5;
 /// `ct_commitment[0]`, `ct_commitment[1]`, `levels`, then `pk_row0`, `ude_key_hash`, `ct0_chain`
 /// and `ct1_chain`: the public inputs of `auction_bid_pair`.
 pub global PAIR_PUBLIC_LEN: u32 = 7;
-/// `ct_commitment[2]`, `ct_commitment[3]`, then the four shared values: the public inputs of
-/// `auction_bid_masks`.
-pub global MASKS_PUBLIC_LEN: u32 = 6;
 
 /// The bid `b` as a one-hot vector. `b` is in `0..LEVELS`, and no other `b` has a witness.
 fn one_hot(b: Field) -> [Field; LEVELS] {
@@ -153,56 +138,6 @@ fn k1_is_row(k1: Polynomial<N>, e: [Field; LEVELS], table: [[Field; TABLE_N]; LE
             row_i += e[l] * table[l][i];
         }
         assert(k1.coefficients[i] == row_i, "k1 is not the plaintext of the claimed bid");
-    }
-}
-
-/// The integer `sum_j values[j] * TABLE_PAIR_UNIT[j][i]` of every coefficient `i`.
-fn pair_sums(values: [Field; PAIR_UNITS]) -> [Field; N] {
-    let mut sums = [0; N];
-    for i in 0..N {
-        for j in 0..PAIR_UNITS {
-            sums[i] += values[j] * TABLE_PAIR_UNIT[j][i];
-        }
-    }
-    sums
-}
-
-/// The floor of every pair sum over `t`, the quotient of the pair equation for an honest `k1`.
-unconstrained fn pair_quotients(values: [Field; PAIR_UNITS]) -> [Field; N] {
-    let sums = pair_sums(values);
-    let mut quotients = [0; N];
-    for i in 0..N {
-        quotients[i] = ((sums[i] as u64) / (PLAINTEXT_MODULUS as u64)) as Field;
-    }
-    quotients
-}
-
-/// `k1` is the combination mod `t` of the units of `TABLE_PAIR_UNIT` with the weights `values`.
-pub fn k1_is_pair_mask(k1: Polynomial<N>, values: [Field; PAIR_UNITS]) {
-    // The ranges of the pair equation hold for a plaintext modulus up to `2^PAIR_VALUE_BITS`, and
-    // for the number of units.
-    std::static_assert(
-        (PLAINTEXT_MODULUS as u64) <= (1 as u64) << (PAIR_VALUE_BITS as u64),
-        "the pair-mask ranges are for a smaller plaintext modulus",
-    );
-    std::static_assert(
-        (PAIR_UNITS as u64) <= (1 as u64) << ((PAIR_QUOTIENT_BITS - PAIR_VALUE_BITS) as u64),
-        "the pair-mask ranges are for fewer units",
-    );
-    // Safety: the equation below constrains each quotient, and the range checks keep it exact.
-    let quotients = unsafe { pair_quotients(values) };
-    for j in 0..PAIR_UNITS {
-        values[j].assert_max_bit_size::<PAIR_VALUE_BITS>();
-    }
-    for i in 0..N {
-        quotients[i].assert_max_bit_size::<PAIR_QUOTIENT_BITS>();
-    }
-    let sums = pair_sums(values);
-    for i in 0..N {
-        assert(
-            sums[i] == k1.coefficients[i] + PLAINTEXT_MODULUS * quotients[i],
-            "k1 is not a pair-equal mask",
-        );
     }
 }
 
@@ -330,32 +265,8 @@ pub fn committee_key_commitment(
     )
 }
 
-global NO_PAIR_VALUES: [Field; PAIR_UNITS] = [0; PAIR_UNITS];
-
 fn honest(table: [[Field; TABLE_N]; LEVELS], b: u32) -> Polynomial<N> {
     Polynomial { coefficients: table[b] }
-}
-
-/// `k1` of the pair mask with the values `values`: the combination mod `t` of the units.
-fn honest_pair_mask(values: [Field; PAIR_UNITS]) -> Polynomial<N> {
-    let t = PLAINTEXT_MODULUS as u64;
-    let mut k1 = Polynomial { coefficients: [0; N] };
-    for i in 0..N {
-        let mut sum: u64 = 0;
-        for j in 0..PAIR_UNITS {
-            sum += (values[j] as u64) * (TABLE_PAIR_UNIT[j][i] as u64);
-        }
-        k1.coefficients[i] = (sum % t) as Field;
-    }
-    k1
-}
-
-fn pair_values() -> [Field; PAIR_UNITS] {
-    let mut values = [0; PAIR_UNITS];
-    for j in 0..PAIR_UNITS {
-        values[j] = ((j * 37 + 5) % 257) as Field;
-    }
-    values
 }
 
 /// All the slots are in use: the creator chose the full `LEVELS` steps.
@@ -382,57 +293,6 @@ fn accepts_the_top_step_of_a_shorter_auction() {
     check_thermometers(honest(TABLE_GE, 5), honest(TABLE_GT, 5), 5, 6);
     check_thermometers(honest(TABLE_GE, 0), honest(TABLE_GT, 0), 0, 2);
     check_thermometers(honest(TABLE_GE, 1), honest(TABLE_GT, 1), 1, 2);
-}
-
-#[test]
-fn accepts_an_honest_pair_mask() {
-    let values = pair_values();
-    k1_is_pair_mask(honest_pair_mask(values), values);
-}
-
-#[test]
-fn accepts_the_extreme_pair_masks() {
-    let zero = NO_PAIR_VALUES;
-    k1_is_pair_mask(honest_pair_mask(zero), zero);
-    // The largest sums and quotients: every value is `t - 1`.
-    let mut largest = zero;
-    for j in 0..PAIR_UNITS {
-        largest[j] = PLAINTEXT_MODULUS - 1;
-    }
-    k1_is_pair_mask(honest_pair_mask(largest), largest);
-}
-
-#[test(should_fail_with = "k1 is not a pair-equal mask")]
-fn rejects_a_pair_mask_that_breaks_one_pair_equality() {
-    let values = pair_values();
-    let mut k1 = honest_pair_mask(values);
-    k1.coefficients[3] = (((k1.coefficients[3] as u64) + 1) % (PLAINTEXT_MODULUS as u64)) as Field;
-    k1_is_pair_mask(k1, values);
-}
-
-#[test(should_fail_with = "k1 is not a pair-equal mask")]
-fn rejects_a_free_mask_for_the_pair_mask_role() {
-    let mut k1 = Polynomial { coefficients: [0; N] };
-    for i in 0..N {
-        k1.coefficients[i] = ((i * 37 + 11) % 257) as Field;
-    }
-    k1_is_pair_mask(k1, pair_values());
-}
-
-#[test(should_fail_with = "k1 is not a pair-equal mask")]
-fn rejects_a_pair_mask_with_other_values_than_its_own() {
-    let mut values = pair_values();
-    let k1 = honest_pair_mask(values);
-    values[10] += 1;
-    k1_is_pair_mask(k1, values);
-}
-
-#[test(should_fail)]
-fn rejects_a_pair_value_beyond_its_range() {
-    // A value of `2^PAIR_VALUE_BITS` or more is out of range, although its quotient is honest.
-    let mut values = pair_values();
-    values[0] += (1 as u64 << (PAIR_VALUE_BITS as u64)) as Field;
-    k1_is_pair_mask(honest_pair_mask(values), values);
 }
 
 #[test(should_fail_with = "k1 is not the plaintext of the claimed bid")]

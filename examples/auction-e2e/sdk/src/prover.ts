@@ -14,33 +14,27 @@ import bid2CircuitJson from '../circuits/auction_bid2.json'
 import bid3CircuitJson from '../circuits/auction_bid3.json'
 import bid4CircuitJson from '../circuits/auction_bid4.json'
 import maskCircuitJson from '../circuits/auction_mask.json'
-import masksCircuitJson from '../circuits/auction_bid_masks.json'
 import pairCircuitJson from '../circuits/auction_bid_pair.json'
 import sharesCircuitJson from '../circuits/auction_bid_shares.json'
-import { assertBid, bidSlots, AuctionType, DEGREE, GROUPS, LEVELS, MIN_LEVELS, PLAINTEXT_MODULUS, PRESET, Role, rolesFor } from './layout'
+import { assertBid, bidSlots, AuctionType, DEGREE, LEVELS, MIN_LEVELS, PLAINTEXT_MODULUS, PRESET, Role, rolesFor } from './layout'
 
 /** The insecure SIMD parameters on the l-BFV path: param set 5. */
 export { PRESET }
 export const PARAM_SET = 5
 
 /**
- * The circuit that proves a whole bid, for each number of roles: `auction_bid2`, `auction_bid3` or
- * `auction_bid4`. The types 3 and 5 both have 4 roles and share `auction_bid4`: they differ in the
- * inner circuit of the roles 2 and 3, which sets the VK anchor.
+ * The circuit that proves a whole bid, for each number of roles: `auction_bid2` (type 1),
+ * `auction_bid3` (type 0) or `auction_bid4` (type 2).
  */
 const BID_CIRCUITS: Record<number, CompiledCircuit> = {
   2: bid2CircuitJson as CompiledCircuit,
   3: bid3CircuitJson as CompiledCircuit,
   4: bid4CircuitJson as CompiledCircuit,
 }
-/** The circuit that proves the mask of a provider (type 4). */
+/** The circuit that proves the mask of a provider (type 1). */
 const maskCircuit = maskCircuitJson as CompiledCircuit
-/**
- * The inner proofs of the bid: the roles 0 and 1 with the bid itself, and the roles 2 and 3: the
- * masks (type 3) or the shares (type 5).
- */
+/** The inner proofs of the bid: the roles 0 and 1 with the bid itself, and the shares (type 2). */
 const pairCircuit = pairCircuitJson as CompiledCircuit
-const masksCircuit = masksCircuitJson as CompiledCircuit
 const sharesCircuit = sharesCircuitJson as CompiledCircuit
 
 /**
@@ -49,17 +43,6 @@ const sharesCircuit = sharesCircuitJson as CompiledCircuit
  * must be given at creation.
  */
 const SRS_POINTS = 2 ** 21
-
-/** The number of free values of a pair mask: one for each level of each pair of groups. */
-const PAIR_VALUES = (GROUPS / 2) * LEVELS
-
-/** The free values of a pair mask: `values[c * LEVELS + l]` is the slot `l` of the group `2c`. */
-function pairValues(slots: BigUint64Array): string[] {
-  return Array.from({ length: PAIR_VALUES }, (_, unit) => {
-    const [pair, level] = [Math.floor(unit / LEVELS), unit % LEVELS]
-    return slots[2 * pair * LEVELS + level].toString()
-  })
-}
 
 /** One bid, encrypted and proven, ready for `AuctionProgram.publishInput`. */
 export interface PreparedBid {
@@ -77,11 +60,10 @@ export interface PreparedBid {
 export type BidStep =
   | { kind: 'encrypt' | 'encryption-proof'; role: Role }
   | { kind: 'pair-proof' }
-  | { kind: 'masks-proof' }
   | { kind: 'shares-proof' }
   | { kind: 'bid-proof' }
 
-/** One mask of a provider (type 4), encrypted and proven, ready for `AuctionProgram.publishInput`. */
+/** One mask of a provider (type 1), encrypted and proven, ready for `AuctionProgram.publishInput`. */
 export interface PreparedMask {
   /** The one ciphertext: 128 SIMD slots, all nonzero mod 257. */
   ciphertext: Hex
@@ -131,7 +113,6 @@ type EncryptionInputs = Parameters<typeof proveUserDataEncryptionTree>[2]
 
 /** One ciphertext of the bid with the proof of its encryption. */
 interface Encrypted {
-  slots: BigUint64Array
   ciphertext: Hex
   commitment: Hex
   /** The plaintext `k1` as the circuits take it. */
@@ -178,10 +159,9 @@ export class BidProver {
    * Encrypt a bid to the committee key and prove it valid, with one proof for the whole bid.
    *
    * The bid is 2 to 4 ciphertexts, one for each role of `type`. The plaintext of each is
-   * SIMD-encoded: the thermometer slots of the bid for the roles 0 and 1, uniform random slots for
-   * the mask (role 2), and uniform random slots that repeat in each pair of groups for the pair
-   * mask (role 3). The type 5 has two shares (roles 2 and 3) instead: uniform random slots, with
-   * no other constraint. The type 4 (mask providers) has the roles 0 and 1 only. All proofs run on this
+   * SIMD-encoded: the thermometer slots of the bid for the roles 0 and 1, and uniform random slots
+   * for the mask (type 0, role 2) or the two shares (type 2, roles 2 and 3), with no other
+   * constraint. The type 1 (mask providers) has the roles 0 and 1 only. All proofs run on this
    * machine, so the bid never leaves it. The proofs form a tree, and no circuit has more than 2^21
    * gates, so a browser can prove each one:
    *
@@ -189,9 +169,7 @@ export class BidProver {
    *   the committee key);
    * - `auction_bid_pair`: the proofs of the roles 0 and 1, and `k1` of both is the thermometer of
    *   the one bid, which is below `levels`;
-   * - `auction_bid_masks` (type 3 only): the proofs of the roles 2 and 3, and the pair mask is
-   *   pair-equal;
-   * - `auction_bid_shares` (type 5 only): the proofs of the roles 2 and 3, nothing else;
+   * - `auction_bid_shares` (type 2 only): the proofs of the roles 2 and 3, nothing else;
    * - `auction_bid2`, `auction_bid3` or `auction_bid4`: verifies the proofs above. This is the only
    *   proof published. It binds `bidder`, the address that will be the bidder of `publishInput` (the
    *   sender or the signer of a relayed bid), and `levels`, the number of price steps of the auction.
@@ -260,38 +238,24 @@ export class BidProver {
     }
     let finalInputs: InputMap
     if (roles.length === 4) {
-      // The same final circuit takes either inner proof of the roles 2 and 3. Its key hash goes into
-      // the VK anchor, which is how the contract tells the type 3 from the type 5.
-      const [, , second, third] = encryptions
-      let masks: InnerProof
-      if (type === AuctionType.QnrSecondPrice) {
-        onStep?.({ kind: 'shares-proof' })
-        masks = await this.proveInner(sharesCircuit, {
-          ...wrapperInputs([second, third]),
-          ct_commitments: [second.commitment, third.commitment],
-          ...shared,
-          user_data_encryption_key_hash: udeKey.vkHash,
-        } as InputMap)
-      } else {
-        onStep?.({ kind: 'masks-proof' })
-        masks = await this.proveInner(masksCircuit, {
-          ...wrapperInputs([second, third]),
-          ct_commitments: [second.commitment, third.commitment],
-          ...shared,
-          user_data_encryption_key_hash: udeKey.vkHash,
-          pair_mask_k1: k1Of(third),
-          pair_values: pairValues(third.slots),
-        } as InputMap)
-      }
-      const masksKey = await keyOf(masks)
+      // The type 2 (QNR): the final circuit takes the shares proof of the roles 2 and 3.
+      const [, , first, second] = encryptions
+      onStep?.({ kind: 'shares-proof' })
+      const shares = await this.proveInner(sharesCircuit, {
+        ...wrapperInputs([first, second]),
+        ct_commitments: [first.commitment, second.commitment],
+        ...shared,
+        user_data_encryption_key_hash: udeKey.vkHash,
+      } as InputMap)
+      const sharesKey = await keyOf(shares)
       onStep?.({ kind: 'bid-proof' })
       finalInputs = {
         ...commonInputs,
         ct0_chain: shared.ct0_chain,
         ct1_chain: shared.ct1_chain,
-        masks_verification_key: masksKey.vkAsFields,
-        masks_proof: proofToFields(masks.proof),
-        masks_key_hash: masksKey.vkHash,
+        shares_verification_key: sharesKey.vkAsFields,
+        shares_proof: proofToFields(shares.proof),
+        shares_key_hash: sharesKey.vkHash,
       } as InputMap
     } else if (roles.length === 3) {
       onStep?.({ kind: 'bid-proof' })
@@ -318,7 +282,7 @@ export class BidProver {
   }
 
   /**
-   * Encrypt the mask of a provider (type 4) to the committee key and prove it valid, with one proof.
+   * Encrypt the mask of a provider (type 1) to the committee key and prove it valid, with one proof.
    *
    * The plaintext has 128 SIMD slots, each drawn uniform in 1 to 256 with `crypto.getRandomValues`.
    * The program multiplies the output of the auction by the masks of all providers, so a zero slot
@@ -374,7 +338,7 @@ export class BidProver {
       throw new Error(`The committee key is not an l-BFV key; this program needs param set ${PARAM_SET}`)
     }
     const commitment = toHex(await computeCiphertextCommitment(encryptedData, PRESET))
-    return { slots, ciphertext: toHex(encryptedData), commitment, k1: circuitInputs.k1, circuitInputs }
+    return { ciphertext: toHex(encryptedData), commitment, k1: circuitInputs.k1, circuitInputs }
   }
 
   /** The user-data encryption proof of an encrypted ciphertext, checked against its commitment. */

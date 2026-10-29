@@ -35,7 +35,7 @@ interface ProvidersFieldProps {
 
 const includes = (rows: readonly string[], address: string) => rows.some((row) => row.trim().toLowerCase() === address.toLowerCase())
 
-/** The editor of the mask providers of a type-4 auction: 1 to `MAX_PROVIDERS` addresses. */
+/** The editor of the mask providers of a mask-provider auction: 1 to `MAX_PROVIDERS` addresses. */
 export const ProvidersField: React.FC<ProvidersFieldProps> = ({ rows, onChange, disabled, error, account, serverProvider }) => {
   const full = rows.length >= MAX_PROVIDERS
   const add = (address: string) => onChange([...rows, address])

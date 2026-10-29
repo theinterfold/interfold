@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! The proof of a mask of the auction type 4, sent by a mask provider. It verifies one user-data
+//! The proof of a mask of the auction type 1, sent by a mask provider. It verifies one user-data
 //! encryption proof, and proves that the plaintext of that ciphertext has 128 SIMD slots that are
 //! all nonzero mod `t`.
 //!

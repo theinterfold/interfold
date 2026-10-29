@@ -10,54 +10,36 @@
  *
  * All ciphertexts are SIMD-encoded over the 128 slots of the ring. Slot `i` has level `i % LEVELS`,
  * and a bid `b` is in `[0, LEVELS)`.
- * Each bidder sends 3 ciphertexts (4 for the second-price ratio auction and for the no-provider
- * auction, 2 for the provider-mask auction) that depend on neither the bidder's position nor the
- * number of bidders:
+ * Each bidder sends 3 ciphertexts (4 for the no-provider auction, 2 for the provider-mask auction)
+ * that depend on neither the bidder's position nor the number of bidders:
  *
- *   role 0 (ge)        slot i  [b >= i % LEVELS]
- *   role 1 (gt)        slot i  [b >  i % LEVELS]
- *   role 2 (mask)      slot i  uniform in [0, PLAINTEXT_MODULUS)
- *   role 3 (pairMask)  slots (2c) * LEVELS + l and (2c + 1) * LEVELS + l hold one uniform value, for
- *                      c in 0..4 and l in 0..LEVELS (ratio second-price only)
- *   role 4 (share)     slot i  uniform in [0, PLAINTEXT_MODULUS), as a mask (`QnrSecondPrice` only)
+ *   role 0 (ge)     slot i  [b >= i % LEVELS]
+ *   role 1 (gt)     slot i  [b >  i % LEVELS]
+ *   role 2 (mask)   slot i  uniform in [0, PLAINTEXT_MODULUS) (`FirstPrice` only)
+ *   role 3 (share)  slot i  uniform in [0, PLAINTEXT_MODULUS), as a mask (`QnrSecondPrice` only)
  *
- * The slots form `GROUPS` groups of `LEVELS` slots. The auction type selects what the result shows.
+ * Every type has ONE copy of the regions, for 2 to 8 bidders: region `k` belongs to the bidder at
+ * position `k` and is the slots `16 k .. 16 k + 15`. The slots from `16 n` on are ZERO. `h` is the
+ * highest bid and `s` the second-highest bid.
  *
- * Region auctions (`FirstPrice`, `SecondPrice`). With `n` bidders the program uses
- * `copies = floor(GROUPS / n)` copies of `n` regions: region `r` of copy `c` is group `c * n + r`.
- * The groups beyond `copies * n` are zeroed. Region `k` belongs to the bidder at position `k`.
- * With `h` the highest bid and `s` the second-highest bid:
+ * First-price (`FirstPrice`, priority-expanded first price). The output is `ge + m * (G + E)` per
+ * region, with `m` the sum of the bidder masks, `G` the number of bids above the level and `E` the
+ * number of earlier bidders that bid exactly the level:
  *
- *   first-price   the region of the winner is ZERO at `h`, every other slot is non-zero
+ *   level p > h   every region is ZERO
+ *   level p = h   the region of the winner is exactly 1 and every region before it is exactly 0.
+ *                 The regions after the winner hold any value.
+ *   level p < h   masked: the slots hold any value
  *
- *   second-price  level p < s   every region is non-zero
- *                 level p = s   the region of the winner is ZERO, every other region is non-zero
- *                 level p > s   every region is zero
- *
- * A slot of a region holds a uniformly random value where it is non-zero, so a region reads as set
- * at a level if any copy is non-zero there. A set slot reads as zero by error with probability
- * `1 / PLAINTEXT_MODULUS` for each copy.
- *
- * Ratio-lane auctions (`RatioFirstPrice`, `RatioSecondPrice`). Bidder position `k` has the weight
- * `2^k`, so at most 8 bidders fit below the plaintext modulus. A lane holds the weights of the
- * bidders in the tie set, which is the set of bidders whose bid equals the published price:
- *
- *   ratio first-price   group 0, level p at slot p. Level p > h: ZERO. Level p = h: the sum of the
- *                       weights of the bidders with bid h. Level p < h: uniform.
- *
- *   ratio second-price  3 copies c in 0..3: the y lanes are group 2c and the z lanes are group 2c + 1.
- *                       Level p > s: both ZERO. Level p = s: `y = R * c`, `z = y * weights`, with
- *                       `weights` the winner set (the unique top bidder, or the tie set when the top
- *                       bids tie and `s = h`). Level p < s: uniform pair.
- *
- * A tie at the top goes to the lowest position among the tied bidders, so the winner is the first
- * member of the sorted tie set. Every other slot is zero.
+ * The decoder reads the price as the highest level where some region is non-zero, and the winner as
+ * the first region that is non-zero there. That region must hold exactly 1. The mask only touches
+ * the slots where `G + E >= 1`, which the decoder never needs, so the result is read whatever the
+ * masks hold. If one bidder is honest, the masked slots are uniform, so the output shows only the
+ * winner and the price.
  *
  * Provider-mask auction (`ProviderSecondPrice`). A bid is 2 ciphertexts `[ge, gt]`, with no mask.
  * The creator names 1 to `MAX_PROVIDERS` mask providers; each sends one mask ciphertext whose 128
- * slots are all non-zero. There is ONE copy of the regions, for 2 to 8 bidders: region `k` is the
- * slots `16 k .. 16 k + 15` and the slots from `16 n` on are ZERO. The result has the second-price
- * pattern (`s` the second-highest bid):
+ * slots are all non-zero. The result has the second-price pattern:
  *
  *   level p < s   every region is non-zero
  *   level p = s   the region of the winner is ZERO, every other region is non-zero
@@ -68,12 +50,12 @@
  * uniform. The decoder is strict and reads no result from any other pattern.
  *
  * No-provider auction (`QnrSecondPrice`). The result and the layout of the provider-mask auction
- * (one copy of the regions, 2 to 8 bidders, the same strict decoder), with no mask providers. A bid
- * is 4 ciphertexts `[ge, gt, share, share]`. The program adds the shares of the counted bids, `S1`
- * and `S2`, and multiplies the tests by `(S1^2 - 3) * (S2^2 - 3)`. 3 is not a square modulo the
- * plaintext modulus, so no factor is ever zero and a non-zero slot is NEVER read as zero, whatever
- * the bidders send. The factor is not exactly uniform, so the non-zero slots show a small
- * statistical hint about the counts of the tests.
+ * (the same strict decoder), with no mask providers. A bid is 4 ciphertexts
+ * `[ge, gt, share, share]`. The program adds the shares of the counted bids, `S1` and `S2`, and
+ * multiplies the tests by `(S1^2 - 3) * (S2^2 - 3)`. 3 is not a square modulo the plaintext modulus,
+ * so no factor is ever zero and a non-zero slot is NEVER read as zero, whatever the bidders send. The
+ * factor is not exactly uniform, so the non-zero slots show a small statistical hint about the counts
+ * of the tests.
  *
  * Leaf 0 of every auction is a configuration input, not a ciphertext: `auctionConfigInput(type,
  * providers)`. `AuctionProgram.validate` inserts its leaf, and the program reads the type and the
@@ -125,73 +107,38 @@ export const OUTPUT_COEFFS = 128
 export enum AuctionType {
   /** The highest bid wins and pays its own bid. The result shows the winner and the highest bid. */
   FirstPrice = 0,
-  /** The highest bid wins and pays the second-highest bid. The result shows the winner and that price. */
-  SecondPrice = 1,
-  /** As `FirstPrice`, with ratio lanes. The result shows the price and the tie set. The first tied bidder wins. */
-  RatioFirstPrice = 2,
-  /** As `SecondPrice`, with ratio lanes. The result shows the price and the winner set. The first tied bidder wins. */
-  RatioSecondPrice = 3,
-  /** As `SecondPrice`, with masks from 1 to `MAX_PROVIDERS` mask providers and up to 8 bidders. The result always decodes. */
-  ProviderSecondPrice = 4,
-  /** As `SecondPrice`, with up to 8 bidders and no mask providers: the bidders send random shares. The result always decodes. */
-  QnrSecondPrice = 5,
+  /** The highest bid wins and pays the second-highest bid, with masks from 1 to `MAX_PROVIDERS` mask providers and up to 8 bidders. The result always decodes. */
+  ProviderSecondPrice = 1,
+  /** The highest bid wins and pays the second-highest bid, with up to 8 bidders and no mask providers: the bidders send random shares. The result always decodes. */
+  QnrSecondPrice = 2,
 }
 
-export const AUCTION_TYPES = [
-  AuctionType.FirstPrice,
-  AuctionType.SecondPrice,
-  AuctionType.RatioFirstPrice,
-  AuctionType.RatioSecondPrice,
-  AuctionType.ProviderSecondPrice,
-  AuctionType.QnrSecondPrice,
-] as const
+export const AUCTION_TYPES = [AuctionType.FirstPrice, AuctionType.ProviderSecondPrice, AuctionType.QnrSecondPrice] as const
 
 export const AUCTION_TYPE_LABELS: Record<AuctionType, string> = {
   [AuctionType.FirstPrice]: 'First-price',
-  [AuctionType.SecondPrice]: 'Second-price (Vickrey)',
-  [AuctionType.RatioFirstPrice]: 'Ratio first-price',
-  [AuctionType.RatioSecondPrice]: 'Ratio second-price',
-  [AuctionType.ProviderSecondPrice]: 'Second-price, zero failure',
+  [AuctionType.ProviderSecondPrice]: 'Second-price, mask providers',
   [AuctionType.QnrSecondPrice]: 'Second-price, no providers',
 }
 
 export const AUCTION_TYPE_DESCRIPTIONS: Record<AuctionType, string> = {
   [AuctionType.FirstPrice]:
-    'The highest bid wins and pays its own bid. Only the winner and the winning bid are revealed. If the top bids tie, the tied bidder who bid first wins; the tie is not revealed.',
-  [AuctionType.SecondPrice]:
-    'The highest bid wins and pays the second-highest bid. Only the winner and that price are revealed; the winning bid stays secret. If the top bids tie, the tied bidder who bid first wins; the tie is not revealed.',
-  [AuctionType.RatioFirstPrice]:
-    'The highest bid wins and pays its own bid. The price and the set of bidders that tied at the top are revealed. If bidders tie, the tied bidder who bid first wins.',
-  [AuctionType.RatioSecondPrice]:
-    'The highest bid wins and pays the second-highest bid. The price and the winner set are revealed (more than one bidder only if the top bids tie). If bidders tie, the tied bidder who bid first wins.',
+    'The highest bid wins and pays its own bid, for up to 8 bidders. Only the winner and the winning bid are revealed. Each bidder has its own lane of the result, and the bidder masks hide every slot the result does not need, so the result can never fail to show the winner. If the top bids tie, the tied bidder who bid first wins; the tie is not revealed.',
   [AuctionType.ProviderSecondPrice]:
-    'The highest bid wins and pays the second-highest bid, as in the second-price auction, for up to 8 bidders. Only the winner and that price are revealed. The auction names 1 to 4 mask providers. Each one sends a random mask before bidding opens. If one provider is honest, the result shows nothing else, and it can never fail to show the winner. If the top bids tie, the tied bidder who bid first wins; the tie is not revealed.',
+    'The highest bid wins and pays the second-highest bid, for up to 8 bidders. Only the winner and that price are revealed. The auction names 1 to 4 mask providers. Each one sends a random mask before bidding opens. If one provider is honest, the result shows nothing else, and it can never fail to show the winner. If the top bids tie, the tied bidder who bid first wins; the tie is not revealed.',
   [AuctionType.QnrSecondPrice]:
     'The highest bid wins and pays the second-highest bid, for up to 8 bidders. Only the winner and that price are revealed. There are no mask providers and no trusted party: each bid carries two random shares, and the program mixes the shares of all bids into a random factor. The result can never fail to show the winner. The trade-off is a small statistical hint about the losing bids, larger on the demo parameters than on secure ones. If the top bids tie, the tied bidder who bid first wins; the tie is not revealed.',
 }
 
-/** The most bidders of one auction, by type. The ratio types are limited by the weights `2^k` that must stay below the plaintext modulus. The provider type has one copy of the regions. */
+/** The most bidders of one auction, by type. Every type has one copy of the regions, so the limit is the 8 groups of the ring. */
 export const MAX_BIDDERS_BY_TYPE: Record<AuctionType, number> = {
-  [AuctionType.FirstPrice]: 4,
-  [AuctionType.SecondPrice]: 4,
-  [AuctionType.RatioFirstPrice]: 8,
-  [AuctionType.RatioSecondPrice]: 8,
+  [AuctionType.FirstPrice]: 8,
   [AuctionType.ProviderSecondPrice]: 8,
   [AuctionType.QnrSecondPrice]: 8,
 }
 
-/** The copies of the `y` and `z` lanes of the ratio second-price auction. */
-export const RATIO_COPIES = 3
-
 export function isAuctionType(value: number): value is AuctionType {
   return (AUCTION_TYPES as readonly number[]).includes(value)
-}
-
-/** The ratio-lane types: their result is a price and a tie set. */
-export type RatioType = AuctionType.RatioFirstPrice | AuctionType.RatioSecondPrice
-
-export function isRatioType(type: AuctionType): type is RatioType {
-  return type === AuctionType.RatioFirstPrice || type === AuctionType.RatioSecondPrice
 }
 
 /** The most mask providers of an auction. `AuctionProgram.MAX_PROVIDERS`. */
@@ -381,17 +328,12 @@ export enum Role {
   Ge = 0,
   Gt = 1,
   Mask = 2,
-  /** The structured mask of the ratio second-price auction: one value in the `y` and the `z` slot of a lane pair. */
-  PairMask = 3,
   /** A share of the no-provider auction: uniform in every slot, as a mask. The program adds the shares of all bids. */
-  Share = 4,
+  Share = 3,
 }
 
 const ROLES_BY_TYPE: Record<AuctionType, readonly Role[]> = {
   [AuctionType.FirstPrice]: [Role.Ge, Role.Gt, Role.Mask],
-  [AuctionType.SecondPrice]: [Role.Ge, Role.Gt, Role.Mask],
-  [AuctionType.RatioFirstPrice]: [Role.Ge, Role.Gt, Role.Mask],
-  [AuctionType.RatioSecondPrice]: [Role.Ge, Role.Gt, Role.Mask, Role.PairMask],
   [AuctionType.ProviderSecondPrice]: [Role.Ge, Role.Gt],
   [AuctionType.QnrSecondPrice]: [Role.Ge, Role.Gt, Role.Share, Role.Share],
 }
@@ -405,7 +347,6 @@ export const ROLE_LABELS: Record<Role, string> = {
   [Role.Ge]: 'Bid thermometer (at least)',
   [Role.Gt]: 'Bid thermometer (above)',
   [Role.Mask]: 'Random mask',
-  [Role.PairMask]: 'Random mask (paired lanes)',
   [Role.Share]: 'Random share',
 }
 
@@ -426,25 +367,11 @@ function randomSlot(): bigint {
   }
 }
 
-/**
- * The SIMD slot values of one ciphertext of a bid. The masks and the shares ignore `bid`. The pair
- * mask repeats one uniform value in the slot `l` of group `2c` and of group `2c + 1`, for each copy
- * `c` of the ratio second-price lanes, so `R` is the same in the `y` and the `z` lane of a level.
- */
+/** The SIMD slot values of one ciphertext of a bid. The masks and the shares ignore `bid`. */
 export function bidSlots(role: Role, bid: number): BigUint64Array {
   const slots = new BigUint64Array(DEGREE)
   if (role === Role.Mask || role === Role.Share) {
     for (let i = 0; i < DEGREE; i++) slots[i] = randomSlot()
-    return slots
-  }
-  if (role === Role.PairMask) {
-    for (let pair = 0; pair < GROUPS; pair += 2) {
-      for (let level = 0; level < LEVELS; level++) {
-        const value = randomSlot()
-        slots[pair * LEVELS + level] = value
-        slots[(pair + 1) * LEVELS + level] = value
-      }
-    }
     return slots
   }
   assertBid(bid)
@@ -455,14 +382,9 @@ export function bidSlots(role: Role, bid: number): BigUint64Array {
   return slots
 }
 
-/** The slot of `level` in `region` of `copy`, for `n` bidders. */
-export function slotIndex(n: number, copy: number, region: number, level: number): number {
-  return (copy * n + region) * LEVELS + level
-}
-
-/** The copies of the `n` regions that fit the ring. */
-export function copiesFor(n: number): number {
-  return Math.floor(GROUPS / n)
+/** The slot of `level` in the region of bidder position `region`. */
+export function slotIndex(region: number, level: number): number {
+  return region * LEVELS + level
 }
 
 function assertBidderCount(type: AuctionType, bidders: number): void {
@@ -475,77 +397,27 @@ function assertBidderCount(type: AuctionType, bidders: number): void {
 /**
  * The winner and the price on the plaintext bids. The highest bid wins, and a tie goes to the
  * lowest position. The price is the highest bid (first-price) or the second-highest bid
- * (second-price, also `ProviderSecondPrice` and `QnrSecondPrice`).
+ * (`ProviderSecondPrice` and `QnrSecondPrice`).
  */
 export function expectedAuction(type: AuctionType, bids: readonly number[]): { winner: number; price: number } {
   assertBidderCount(type, bids.length)
-  if (isRatioType(type)) {
-    const { price, tieSet } = expectedTieSet(type, bids)
-    return { winner: tieSet[0], price }
-  }
   const order = bids.map((_, position) => position).sort((a, b) => bids[b] - bids[a] || a - b)
   return { winner: order[0], price: bids[order[type === AuctionType.FirstPrice ? 0 : 1]] }
 }
 
-/**
- * The price and the tie set of a ratio auction on the plaintext bids. The tie set is the bidder
- * positions, ascending, whose bid equals the price. With `RatioSecondPrice` and a unique top bid,
- * the tie set is that one bidder and the price is the second-highest bid.
- */
-export function expectedTieSet(type: AuctionType, bids: readonly number[]): { price: number; tieSet: number[] } {
-  if (!isRatioType(type)) throw new Error('Only the ratio types have a tie set')
-  assertBidderCount(type, bids.length)
-  const top = Math.max(...bids)
-  const tieSet = bids.flatMap((bid, position) => (bid === top ? [position] : []))
-  if (type === AuctionType.RatioSecondPrice && tieSet.length === 1) {
-    return { price: Math.max(...bids.filter((_, position) => position !== tieSet[0])), tieSet }
-  }
-  return { price: top, tieSet }
-}
-
-/** What the published result of a region auction shows. */
+/** What the published result of an auction shows. Region `k` is the region of bidder position `k`. */
 export interface RegionResult {
-  kind: 'region'
   /** Number of bidders in the round. */
   bidders: number
-  /** Copies of the regions in the ring. */
-  copies: number
   /** The price the winner pays (see `expectedAuction`), or `null` if the result is unreadable. */
   price: number | null
   /** The winning bidder position, or `null` if the result does not show one winner. */
   winner: number | null
-  /**
-   * `set[j][level]`: whether the region of bidder position `j` is non-zero at `level` in one or more
-   * copies. The winner's row is the only one that is clear at `price`.
-   */
+  /** `set[j][level]`: whether the region of bidder position `j` is non-zero at `level`. */
   set: boolean[][]
-  /** Whether the groups beyond the last copy are zero, as the program makes them. */
+  /** Whether the slots from `16 n` on are zero, as the program makes them. */
   unusedGroupsZero: boolean
 }
-
-/** What the published result of a ratio-lane auction shows. */
-export interface LaneResult {
-  kind: 'lane'
-  /** Number of bidders in the round. */
-  bidders: number
-  /** Copies of the lanes: 1 for `RatioFirstPrice`, `RATIO_COPIES` for `RatioSecondPrice`. */
-  copies: number
-  /** The price level, or `null` if every lane is zero. */
-  price: number | null
-  /** The winning bidder position: the first member of `tieSet`, or `null` if there is no readable tie set. */
-  winner: number | null
-  /**
-   * The winner set at the price level, ascending: the bidders with the top bid. Without a tie it has
-   * one member (for `RatioSecondPrice` that bidder bid above the price). Empty if the lane value is no valid set.
-   */
-  tieSet: number[]
-  /** Per level: `'result'` at the price level, `'zero'` above it and `'random'` below it. */
-  lanes: Array<'zero' | 'random' | 'result'>
-  /** Whether every copy shows the same winner set at the price level, and no copy is non-zero there without its `y` lane. */
-  copiesAgree: boolean
-}
-
-export type AuctionResult = RegionResult | LaneResult
 
 /**
  * Decode the published plaintext of an auction.
@@ -555,7 +427,7 @@ export type AuctionResult = RegionResult | LaneResult
  * @param bidders The number of counted bids. Bidder position `j` is the place of the `j`-th counted
  * bid in leaf order.
  */
-export async function decodeAuction(type: AuctionType, plaintextHex: string, bidders: number): Promise<AuctionResult> {
+export async function decodeAuction(type: AuctionType, plaintextHex: string, bidders: number): Promise<RegionResult> {
   assertBidderCount(type, bidders)
   const hex = plaintextHex.startsWith('0x') ? plaintextHex.slice(2) : plaintextHex
   if (hex.length < OUTPUT_COEFFS * 16) {
@@ -563,12 +435,45 @@ export async function decodeAuction(type: AuctionType, plaintextHex: string, bid
   }
   const slots = await decodePlaintextSlots(`0x${hex}`, PRESET)
   if (slots.length < DEGREE) throw new Error(`Decoded ${slots.length} slots, expected ${DEGREE}`)
-  if (type === AuctionType.ProviderSecondPrice || type === AuctionType.QnrSecondPrice) return decodeSingleCopyRegions(slots, bidders)
-  return isRatioType(type) ? decodeLanes(type, slots, bidders) : decodeRegions(type, slots, bidders)
+  return type === AuctionType.FirstPrice ? decodeFirstPrice(slots, bidders) : decodeSecondPrice(slots, bidders)
+}
+
+/** The non-zero pattern of the `n` regions (region `k` at slots `16 k .. 16 k + 15`), and whether the slots beyond them are zero. */
+function readRegions(slots: readonly bigint[], n: number): { set: boolean[][]; unusedGroupsZero: boolean } {
+  const set = Array.from({ length: n }, (_, region) => Array.from({ length: LEVELS }, (_, level) => slots[slotIndex(region, level)] !== 0n))
+  let unusedGroupsZero = true
+  for (let slot = n * LEVELS; slot < DEGREE; slot++) if (slots[slot] !== 0n) unusedGroupsZero = false
+  return { set, unusedGroupsZero }
 }
 
 /**
- * Read an auction with one copy of the regions (`ProviderSecondPrice`, `QnrSecondPrice`): region `k` at slots `16 k .. 16 k + 15`.
+ * Read a first-price auction. The price is the highest level where some region is non-zero, and the
+ * winner is the first region that is non-zero there. It must hold exactly 1, and the regions before it
+ * are zero by the choice of the winner. The result is read only if the slots beyond the `n` regions are
+ * zero. Any other pattern gives no price and no winner.
+ *
+ * The program makes every slot above the price zero, the regions before the winner zero at the
+ * price, and the winner's slot at the price exactly 1 (the mask only touches slots where `G + E >= 1`),
+ * so a valid output always matches this rule, whatever the masks hold.
+ */
+function decodeFirstPrice(slots: readonly bigint[], n: number): RegionResult {
+  const { set, unusedGroupsZero } = readRegions(slots, n)
+  let price: number | null = null
+  let winner: number | null = null
+  const lasts = set.map((row) => row.lastIndexOf(true)).filter((level) => level >= 0)
+  if (unusedGroupsZero && lasts.length > 0) {
+    const level = Math.max(...lasts)
+    const first = set.findIndex((row) => row[level])
+    if (slots[slotIndex(first, level)] === 1n) {
+      price = level
+      winner = first
+    }
+  }
+  return { bidders: n, price, winner, set, unusedGroupsZero }
+}
+
+/**
+ * Read a second-price auction (`ProviderSecondPrice`, `QnrSecondPrice`): region `k` at slots `16 k .. 16 k + 15`.
  * The pattern is strict. The result is read only if the slots beyond the `n` regions are zero, no
  * slot above the price is non-zero, exactly one region is zero at the price, and every slot below
  * the price is non-zero. Any other pattern gives no price and no winner.
@@ -577,143 +482,22 @@ export async function decodeAuction(type: AuctionType, plaintextHex: string, bid
  * the plaintext modulus, so no non-zero slot is ever read as zero: a valid output always matches the
  * pattern.
  */
-function decodeSingleCopyRegions(slots: readonly bigint[], n: number): RegionResult {
-  const regionSet = Array.from({ length: n }, (_, region) =>
-    Array.from({ length: LEVELS }, (_, level) => slots[slotIndex(n, 0, region, level)] !== 0n),
-  )
-  let unusedGroupsZero = true
-  for (let slot = n * LEVELS; slot < DEGREE; slot++) if (slots[slot] !== 0n) unusedGroupsZero = false
-
+function decodeSecondPrice(slots: readonly bigint[], n: number): RegionResult {
+  const { set, unusedGroupsZero } = readRegions(slots, n)
   let price: number | null = null
   let winner: number | null = null
   // The price is the highest level at which some region is non-zero.
-  const lasts = regionSet.map((row) => row.lastIndexOf(true)).filter((level) => level >= 0)
+  const lasts = set.map((row) => row.lastIndexOf(true)).filter((level) => level >= 0)
   if (unusedGroupsZero && lasts.length > 0) {
     const level = Math.max(...lasts)
-    const winners = regionSet.flatMap((row, region) => (row[level] ? [] : [region]))
-    const belowSet = regionSet.every((row) => row.slice(0, level).every(Boolean))
+    const winners = set.flatMap((row, region) => (row[level] ? [] : [region]))
+    const belowSet = set.every((row) => row.slice(0, level).every(Boolean))
     if (winners.length === 1 && belowSet) {
       price = level
       winner = winners[0]
     }
   }
-  return { kind: 'region', bidders: n, copies: 1, price, winner, set: regionSet, unusedGroupsZero }
-}
-
-/** Read a region auction. Region `k` is the region of bidder position `k`. */
-function decodeRegions(type: AuctionType, slots: readonly bigint[], n: number): RegionResult {
-  const copies = copiesFor(n)
-  const isSet = (region: number, level: number) => {
-    for (let copy = 0; copy < copies; copy++) if (slots[slotIndex(n, copy, region, level)] !== 0n) return true
-    return false
-  }
-  const regionSet = Array.from({ length: n }, (_, region) => Array.from({ length: LEVELS }, (_, level) => isSet(region, level)))
-
-  let price: number | null = null
-  let winner: number | null = null
-  if (type === AuctionType.FirstPrice) {
-    // Exactly one slot is clear: the winner's region at the highest bid.
-    const clear = regionSet.flatMap((row, region) => row.flatMap((set, level) => (set ? [] : [{ region, level }])))
-    if (clear.length === 1) {
-      price = clear[0].level
-      winner = clear[0].region
-    }
-  } else {
-    // `last(region)` is the highest level at which the region is non-zero. The price is the highest
-    // of them: every region is non-zero up to the price, except the winner's at the price itself.
-    const lasts = regionSet.map((row) => row.lastIndexOf(true)).filter((level) => level >= 0)
-    if (lasts.length > 0) {
-      const level = Math.max(...lasts)
-      price = level
-      const winners = regionSet.map((row, region) => (row[level] ? -1 : region)).filter((region) => region >= 0)
-      if (winners.length === 1) winner = winners[0]
-    }
-  }
-
-  let unusedGroupsZero = true
-  for (let slot = copies * n * LEVELS; slot < DEGREE; slot++) if (slots[slot] !== 0n) unusedGroupsZero = false
-
-  return {
-    kind: 'region',
-    bidders: n,
-    copies,
-    price,
-    winner,
-    set: regionSet,
-    unusedGroupsZero,
-  }
-}
-
-/** `value^-1 mod PLAINTEXT_MODULUS`, by Fermat: the modulus is prime. */
-function modInverse(value: bigint): bigint {
-  const modulus = BigInt(PLAINTEXT_MODULUS)
-  let result = 1n
-  let base = value % modulus
-  for (let exponent = modulus - 2n; exponent > 0n; exponent >>= 1n) {
-    if (exponent & 1n) result = (result * base) % modulus
-    base = (base * base) % modulus
-  }
-  return result
-}
-
-/** The bidder positions whose bit is set in `weights`, ascending. Empty if `weights` is 0 or has a bit at or above `bidders`. */
-function positionsOf(weights: bigint, bidders: number): number[] {
-  if (weights === 0n || weights >> BigInt(bidders) !== 0n) return []
-  return Array.from({ length: bidders }, (_, position) => position).filter((position) => (weights >> BigInt(position)) & 1n)
-}
-
-/**
- * Read a ratio auction. The price is the highest level with a non-zero `y` lane in any copy. The
- * weights of the winner set are the value of that lane (first-price) or the ratio `z / y` (second-price)
- * of every copy that shows it; a copy whose `y` lane is zero there lost it to `R = 0` and must show
- * `z = 0` too.
- */
-function decodeLanes(type: RatioType, slots: readonly bigint[], bidders: number): LaneResult {
-  const modulus = BigInt(PLAINTEXT_MODULUS)
-  const copies = type === AuctionType.RatioFirstPrice ? 1 : RATIO_COPIES
-  // First-price has the `y` lanes only, in group 0. Second-price has `y` in group `2c`, `z` in group `2c + 1`.
-  const lane = (copy: number, level: number, isZ: boolean) =>
-    slots[(type === AuctionType.RatioFirstPrice ? 0 : 2 * copy + Number(isZ)) * LEVELS + level]
-  const highest = Array.from({ length: copies }, (_, copy) => {
-    for (let level = LEVELS - 1; level >= 0; level--) if (lane(copy, level, false) !== 0n) return level
-    return -1
-  })
-  const price = Math.max(...highest)
-  if (price < 0) {
-    return {
-      kind: 'lane',
-      bidders,
-      copies,
-      price: null,
-      winner: null,
-      tieSet: [],
-      lanes: Array(LEVELS).fill('zero'),
-      copiesAgree: true,
-    }
-  }
-
-  const weights: bigint[] = []
-  let copiesAgree = true
-  for (let copy = 0; copy < copies; copy++) {
-    const y = lane(copy, price, false)
-    if (type === AuctionType.RatioFirstPrice) weights.push(y)
-    else if (y !== 0n) weights.push((lane(copy, price, true) * modInverse(y)) % modulus)
-    else if (lane(copy, price, true) !== 0n) copiesAgree = false
-  }
-  copiesAgree &&= weights.every((weight) => weight === weights[0])
-
-  const tieSet = positionsOf(weights[0], bidders)
-  return {
-    kind: 'lane',
-    bidders,
-    copies,
-    price,
-    // Copies that disagree show no single winner set; `decode_ratio` in the program returns none too.
-    winner: copiesAgree && tieSet.length > 0 ? tieSet[0] : null,
-    tieSet,
-    lanes: Array.from({ length: LEVELS }, (_, level) => (level > price ? 'zero' : level === price ? 'result' : 'random')),
-    copiesAgree,
-  }
+  return { bidders: n, price, winner, set, unusedGroupsZero }
 }
 
 export { bytesToHex }
