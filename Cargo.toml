@@ -18,6 +18,7 @@ members = [
   "crates/event-system",
   "crates/events",
   "crates/evm",
+  "crates/evm/contracts",
   "crates/evm-helpers",
   "crates/fhe",
   "crates/fhe-params",
@@ -106,6 +107,7 @@ e3-init = { version = "0.20.0-dev.2", path = "./crates/init" }
 e3-event-system = { version = "0.20.0-dev.2", path = "./crates/event-system" }
 e3-events = { version = "0.20.0-dev.2", path = "./crates/events" }
 e3-evm = { version = "0.20.0-dev.2", path = "./crates/evm" }
+e3-evm-contracts = { version = "0.20.0-dev.2", path = "./crates/evm/contracts" }
 e3-evm-helpers = { version = "0.20.0-dev.2", path = "./crates/evm-helpers" }
 e3-fhe = { version = "0.20.0-dev.2", path = "./crates/fhe" }
 e3-fhe-params = { version = "0.20.0-dev.2", path = "./crates/fhe-params" }
@@ -145,6 +147,8 @@ actix = "=0.13.5"
 actix-web = "=4.11.0"
 aes-gcm = "=0.10.3"
 alloy = { version = "=1.0.41", features = ["node-bindings", "full"] }
+alloy-contract = { version = "=1.0.41", default-features = false }
+alloy-json-abi = "=1.4.1"
 alloy-primitives = { version = "=1.4.1", default-features = false, features = [
   "rlp",
   "serde",

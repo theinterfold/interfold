@@ -17,7 +17,7 @@ mod adapters;
 pub mod canonical_key;
 mod chain_system;
 mod chains;
-mod contracts;
+use e3_evm_contracts as contracts;
 mod dkg_timing;
 mod domain;
 mod finalized_lifecycle;

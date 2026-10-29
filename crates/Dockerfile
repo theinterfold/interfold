@@ -62,6 +62,7 @@ COPY crates/entrypoint/Cargo.toml ./entrypoint/Cargo.toml
 COPY crates/event-system/Cargo.toml ./event-system/Cargo.toml
 COPY crates/events/Cargo.toml ./events/Cargo.toml
 COPY crates/evm/Cargo.toml ./evm/Cargo.toml
+COPY crates/evm/contracts/Cargo.toml ./evm/contracts/Cargo.toml
 COPY crates/evm-helpers/Cargo.toml ./evm-helpers/Cargo.toml
 COPY crates/fhe/Cargo.toml ./fhe/Cargo.toml
 COPY crates/fhe-params/Cargo.toml ./fhe-params/Cargo.toml
