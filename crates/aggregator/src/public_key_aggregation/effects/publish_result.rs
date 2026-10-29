@@ -106,7 +106,7 @@ impl PublicKeyAggregator {
                 inputs[4 + h] = hash.lo.0;
                 inputs[5 + 3 * h] = pk_commitment;
                 Proof::new(
-                    e3_events::CircuitName::DkgAggregator,
+                    e3_zk_config::CircuitName::DkgAggregator,
                     c5_proof.data.clone(),
                     ArcBytes::from_bytes(&inputs.concat()),
                 )

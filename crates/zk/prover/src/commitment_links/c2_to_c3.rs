@@ -24,7 +24,8 @@
 //! `ShareEncryption`) but different [`ProofType`] values, so we register two links.
 
 use super::{CommitmentLink, FieldValue, LinkScope};
-use e3_events::{CircuitName, ProofType};
+use e3_events::ProofType;
+use e3_zk_config::CircuitName;
 use e3_zk_config::FIELD_BYTE_LEN;
 
 /// C3a → C2a: SK share encryption `expected_message_commitment` vs SK share

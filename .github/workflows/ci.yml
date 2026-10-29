@@ -435,6 +435,15 @@ jobs:
         if: matrix.suite == 'doc'
         run: cargo test --doc
 
+      - name: Check SDK capability exports
+        if: matrix.suite == 'lib' && matrix.partition == 1
+        run: |
+          cargo test --locked -p e3-sdk --no-default-features --test exports
+          cargo test --locked -p e3-sdk --no-default-features --features bfv --test exports
+          cargo test --locked -p e3-sdk --no-default-features --features evm --test exports
+          cargo test --locked -p e3-sdk --no-default-features --features indexer --test exports
+          cargo test --locked -p e3-sdk --test exports
+
       # The library run skips the entrypoint integration tests, the CLI binary tests, and the CLI
       # secret-input integration tests.
       - name: Run the entrypoint guard and older-schema tests and the CLI tests

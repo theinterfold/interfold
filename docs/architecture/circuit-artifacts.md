@@ -59,6 +59,11 @@ roots changes its identity. Required files, directories, and tool pins must exis
 supplies that generated file's staged contents. A missing relocated owner fails instead of silently
 reducing provenance. Circuit-group order cannot change the same source set's hash.
 
+Committee and ZK-config sources are hashed inputs. Moving ordered membership or circuit identity
+into them changes pair provenance even when serialized bytes, paths, targets, and layouts stay
+identical. That is not a reason to restamp existing artifacts or regenerate deployed verifiers;
+retain published identity for development reuse and require source-bound release qualification.
+
 Normalize active-preset selection and generated bound values; exclude cfg(test) modules and the
 build crate's separate tests. Switching pair or editing a test must not stale another pair.
 Library-only changes invalidate affected pairs. Cache/release reuse rejects another hash scheme;

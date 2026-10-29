@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 use anyhow::{bail, Result};
-use e3_events::CircuitName;
-use e3_zk_prover::CircuitVariant;
+use e3_zk_config::{CircuitName, CircuitVariant};
 use serde::Deserialize;
 
 #[derive(Clone, Copy, Debug, PartialEq)]

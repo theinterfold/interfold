@@ -111,9 +111,9 @@ All binary packages depend on one shared library. The Nargo package name of the 
 | `bin/config`                | Package `validate_secure_configs`. It checks the secure preset constants (CRT moduli, bounds, and parity matrices).                                                                                 |
 | `benchmarks`                | Timing scripts and reports.                                                                                                                                                                         |
 
-The package directory names match the `CircuitName` enum in
-`crates/events/src/interfold_event/proof.rs`. For example, `CircuitName::PkBfv` is `pk`, and
-`CircuitName::DkgAggregator` is `dkg_aggregator`. The full package index is in
+The package directory names match the `CircuitName` enum in `crates/zk/config/src/circuit.rs`. For
+example, `CircuitName::PkBfv` is `pk`, and `CircuitName::DkgAggregator` is `dkg_aggregator`. The
+full package index is in
 [`circuits/README.md`](https://github.com/theinterfold/interfold/blob/main/circuits/README.md).
 
 ## How the proofs combine
@@ -434,11 +434,11 @@ The crate `e3-zk-prover` (`crates/zk/prover`) runs the circuits for the cipherno
 | `ZkBackend`                                                             | Finds `bb` and the circuit directory. `check_status`, `ensure_installed`, `download_bb`, and `download_circuits` implement `interfold noir`. |
 | `ZkProver`                                                              | Runs `bb prove` and `bb verify` as a subprocess. It reads artifacts from `<circuits>/<preset>/<committee>/<variant>/`.                       |
 | `Provable`                                                              | The trait for one circuit. It names the `CircuitName` and builds the witness inputs.                                                         |
-| `CircuitVariant` (`e3-events`)                                          | `Default` (`noir-recursive-no-zk`), `Recursive` (`noir-recursive`), and `Evm` (`evm`). These are the directory names in the archive.         |
+| `CircuitVariant` (`e3-zk-config`)                                       | `Default` (`noir-recursive-no-zk`), `Recursive` (`noir-recursive`), and `Evm` (`evm`). These are the directory names in the archive.         |
 | `ProofRequestActor`, `ProofVerificationActor`, `ShareVerificationActor` | The actors that request proofs and check the proofs of other ciphernodes.                                                                    |
 
-The event types (`CircuitName`, `ProofType`) are in `crates/events`. The protocol flow that uses
-them is in
+Circuit identity/variants belong to `crates/zk/config`; `ProofType` and proof payloads remain in
+`crates/events`. The protocol flow that uses them is in
 [proof statements](https://github.com/theinterfold/interfold/blob/main/docs/architecture/proof-statements.md)
 and [DKG](https://github.com/theinterfold/interfold/blob/main/docs/architecture/dkg.md).
 
@@ -449,7 +449,7 @@ and [DKG](https://github.com/theinterfold/interfold/blob/main/docs/architecture/
 2. Add the package to the `members` list of the group workspace, for `bin/dkg` and `bin/threshold`.
 3. Add the directory to `DIRS` in `scripts/circuits/lint.sh`, for a package in
    `bin/recursive_aggregation`.
-4. Add a `CircuitName` variant in `crates/events` if the Rust prover must run the circuit.
+4. Add a `CircuitName` variant in `crates/zk/config` if the Rust prover must run the circuit.
 5. Rebuild each pair that you ship, and regenerate the verifiers if the circuit goes on-chain.
 
 ## Next steps

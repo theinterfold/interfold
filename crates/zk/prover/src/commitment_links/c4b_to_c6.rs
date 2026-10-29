@@ -11,7 +11,8 @@
 //! C6 takes `expected_e_sm_commitment` as a public input.
 
 use super::{CommitmentLink, FieldValue, LinkScope};
-use e3_events::{CircuitName, ProofType};
+use e3_events::ProofType;
+use e3_zk_config::CircuitName;
 use e3_zk_config::FIELD_BYTE_LEN;
 
 pub struct C4bToC6ESmCommitmentLink;

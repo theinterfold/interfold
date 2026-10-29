@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE
 
 use crate::traits::Provable;
-use e3_events::CircuitName;
+use e3_zk_config::CircuitName;
 use e3_zk_witness::dkg::share_encryption::{Inputs, ShareEncryptionCircuitData};
 
 use crate::ZkError;

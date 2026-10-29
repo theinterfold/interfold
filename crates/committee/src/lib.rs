@@ -6,6 +6,9 @@
 
 //! Shared committee configurations and canonical parameter values.
 
+mod membership;
+pub use membership::Committee;
+
 use std::fmt;
 use std::str::FromStr;
 

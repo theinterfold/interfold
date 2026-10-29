@@ -10,7 +10,8 @@ use crate::error::ZkError;
 use crate::prover::ZkProver;
 use crate::witness::{CompiledCircuit, WitnessGenerator};
 use acir::FieldElement;
-use e3_events::{CircuitName, CircuitVariant, Proof};
+use e3_events::Proof;
+use e3_zk_config::{CircuitName, CircuitVariant};
 use noirc_abi::{input_parser::InputValue, InputMap};
 
 const FIELD_SIZE: usize = 32;

@@ -392,7 +392,7 @@
         },
         {
           "why": "The production caller: NetReady is armed before networking starts, then sync runs.",
-          "ref": "crates/ciphernode-builder/src/builder/startup.rs@160@sync_with_net_ready("
+          "ref": "crates/ciphernode-builder/src/builder/startup.rs@161@sync_with_net_ready("
         },
         {
           "why": "The schema check that runs before any state is written.",

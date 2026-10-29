@@ -22,8 +22,9 @@ use common::{
     setup_recursive_aggregation_fold_circuit, setup_test_prover,
 };
 use e3_committee::CiphernodesCommitteeSize;
-use e3_events::{CircuitName, Proof};
+use e3_events::Proof;
 use e3_fhe_params::BfvPreset;
+use e3_zk_config::CircuitName;
 use e3_zk_config::MAX_MSG_NON_ZERO_COEFFS;
 use e3_zk_prover::test_utils::{
     fold_witness_field_strings, generate_c6_chonk_root_with_substituted_key, load_vk_artifacts,

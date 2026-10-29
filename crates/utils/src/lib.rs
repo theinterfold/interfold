@@ -12,6 +12,7 @@ pub mod constants;
 pub mod error;
 pub mod formatters;
 pub mod helpers;
+pub mod nonce;
 pub mod ordered_set;
 pub mod path;
 pub mod retry;

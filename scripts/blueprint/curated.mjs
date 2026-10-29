@@ -173,9 +173,9 @@ function system({ units, tag }) {
         both: true,
         label: 'events in · transactions out',
         refs: [
-          'crates/evm/src/event_decoding/catalog.rs@142@"E3Requested"',
-          'crates/evm/src/ciphernode_registry/effects.rs@56@send_tx_idempotent("submitTicket"',
-          'crates/evm/src/interfold_writing/effects.rs@272@.publishPlaintextOutput(e3_id, decrypted_output, proof)',
+          'crates/evm/runtime/src/event_decoding/catalog.rs@144@"E3Requested"',
+          'crates/evm/runtime/src/ciphernode_registry/effects.rs@41@send_tx_idempotent("submitTicket"',
+          'crates/evm/runtime/src/interfold_writing/effects.rs@256@.publishPlaintextOutput(e3_id, decrypted_output, proof)',
         ],
       },
       { from: 'node', to: 'peers', fs: 'b', ts: 't', both: true, label: 'libp2p: gossipsub + Kademlia DHT', refs: ev('A23') },
@@ -187,7 +187,7 @@ function system({ units, tag }) {
         fa: 0.3,
         label: 'witness in-process · bb proves',
         tip: 'Noir is linked as a library to compute the witness; the bb binary runs as a child process to make the proof.',
-        refs: ['crates/zk/prover/src/witness.rs@59@execute_program(', 'crates/zk/prover/src/prover.rs@111@StdCommand::new(bb)'],
+        refs: ['crates/zk/prover/src/witness.rs@59@execute_program(', 'crates/zk/prover/src/prover.rs@112@StdCommand::new(bb)'],
       },
       { from: 'circuits', to: 'contracts', fs: 'l', ts: 'r', label: 'Honk verifiers', refs: [...ev('A20'), ...ev('D9', 'D10')] },
       {
@@ -503,7 +503,7 @@ function contracts() {
         lt: 0.78,
         refs: [
           'packages/interfold-contracts/contracts/Interfold.sol@441@function publishPlaintextOutput(',
-          'crates/evm/src/interfold_writing/effects.rs@272@.publishPlaintextOutput(e3_id, decrypted_output, proof)',
+          'crates/evm/runtime/src/interfold_writing/effects.rs@256@.publishPlaintextOutput(e3_id, decrypted_output, proof)',
         ],
       },
       {
@@ -618,7 +618,7 @@ function circuits() {
         title: 'node_fold',
         lines: ['one proof per member:', 'C0 · C1 · c2ab', 'c3ab · c4ab'],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/node_fold/src/main.nr@107@verify_honk_proof(c0_vk, c0_proof`,
+        ref: `${CIR}/recursive_aggregation/node_fold/src/main.nr@111@verify_honk_proof(c0_vk, c0_proof`,
       },
       {
         id: 'c5',
@@ -640,7 +640,7 @@ function circuits() {
         title: 'nodes_fold',
         lines: ["all H members' node proofs"],
         mono: true,
-        ref: `${CIR}/recursive_aggregation/nodes_fold/src/main.nr@64@verify_honk_proof_non_zk(acc_vk, acc_proof`,
+        ref: `${CIR}/recursive_aggregation/nodes_fold/src/main.nr@68@verify_honk_proof_non_zk(acc_vk, acc_proof`,
       },
       {
         id: 'dkgagg',
@@ -675,7 +675,7 @@ function circuits() {
         title: 'C6 Chonk → c6_chonk_root',
         lines: ['C6 of the T + 1 selected members'],
         mono: true,
-        ref: `${CIR}/chonk/c6_chonk_app/src/main.nr@25@verify_honk_proof(leaf_vk, proofs[k], c6_public_inputs[k]`,
+        ref: `${CIR}/chonk/c6_chonk_app/src/main.nr@31@verify_honk_proof(leaf_vk, proofs[k], c6_public_inputs[k]`,
       },
       {
         id: 'c7',
@@ -1070,7 +1070,7 @@ function ciphernode({ units }) {
         ta: 0.3,
         label: 'spawn bb',
         lt: 0.3,
-        refs: ['crates/zk/prover/src/prover.rs@111@StdCommand::new(bb)', 'crates/zk/prover/src/witness.rs@59@execute_program('],
+        refs: ['crates/zk/prover/src/prover.rs@112@StdCommand::new(bb)', 'crates/zk/prover/src/witness.rs@59@execute_program('],
       },
     ],
   }
@@ -1184,10 +1184,10 @@ function apps() {
         y: 620,
         w: 420,
         h: 100,
-        title: 'e3-evm-helpers',
+        title: 'e3-evm-client',
         lines: ['Interfold bindings · nonces'],
         mono: true,
-        drill: 'crate:e3-evm-helpers',
+        drill: 'crate:e3-evm-client',
       },
       {
         id: 'indexer',
@@ -1376,7 +1376,7 @@ function apps() {
         fs: 'b',
         ts: 't',
         label: 'uses',
-        refs: [H('crates/sdk/Cargo.toml', 19, 'evm = ["dep:e3-evm-helpers"]')],
+        refs: [H('crates/sdk/Cargo.toml', 19, 'evm = ["dep:e3-evm-client"]')],
       },
     ],
   }

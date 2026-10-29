@@ -48,7 +48,7 @@
     "id": "D4",
     "supported": true,
     "refs": [
-      "circuits/bin/chonk/c6_chonk_app/src/main.nr@25@verify_honk_proof(leaf_vk, proofs[k], c6_public_inputs[k]",
+      "circuits/bin/chonk/c6_chonk_app/src/main.nr@31@verify_honk_proof(leaf_vk, proofs[k], c6_public_inputs[k]",
       "circuits/bin/recursive_aggregation/c6_chonk_tube/src/main.nr@22@std::verify_proof_with_type(",
       "circuits/bin/recursive_aggregation/c6_chonk_root/src/main.nr@30@verify_root_rolluphonk_proof(tube_vk, tube_proofs[k]",
       "crates/zk/prover/src/circuits/aggregation/c6_chonk.rs@28@if proof.circuit != CircuitName::ThresholdShareDecryption {"
@@ -65,11 +65,11 @@
     "id": "D5",
     "supported": true,
     "refs": [
-      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@107@verify_honk_proof(c0_vk, c0_proof",
-      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@108@verify_honk_proof(c1_vk, c1_proof",
-      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@109@verify_honk_proof_non_zk(c2ab_vk, c2ab_proof",
-      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@110@verify_honk_proof_non_zk(c3ab_vk, c3ab_proof",
-      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@111@verify_honk_proof_non_zk(c4ab_vk, c4ab_proof"
+      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@111@verify_honk_proof(c0_vk, c0_proof",
+      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@112@verify_honk_proof(c1_vk, c1_proof",
+      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@113@verify_honk_proof_non_zk(c2ab_vk, c2ab_proof",
+      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@114@verify_honk_proof_non_zk(c3ab_vk, c3ab_proof",
+      "circuits/bin/recursive_aggregation/node_fold/src/main.nr@115@verify_honk_proof_non_zk(c4ab_vk, c4ab_proof"
     ],
     "line_text": [
       "verify_honk_proof(c0_vk, c0_proof, c0_public, c0_key_hash);",
@@ -84,9 +84,9 @@
     "id": "D6",
     "supported": true,
     "refs": [
-      "circuits/bin/recursive_aggregation/nodes_fold/src/main.nr@51@inner_proofs[k],",
-      "circuits/bin/recursive_aggregation/nodes_fold/src/main.nr@64@verify_honk_proof_non_zk(acc_vk, acc_proof",
-      "circuits/bin/recursive_aggregation/nodes_fold_kernel/src/main.nr@47@inner_proofs[k],"
+      "circuits/bin/recursive_aggregation/nodes_fold/src/main.nr@55@inner_proofs[k],",
+      "circuits/bin/recursive_aggregation/nodes_fold/src/main.nr@68@verify_honk_proof_non_zk(acc_vk, acc_proof",
+      "circuits/bin/recursive_aggregation/nodes_fold_kernel/src/main.nr@51@inner_proofs[k],"
     ],
     "line_text": ["inner_proofs[k],", "verify_honk_proof_non_zk(acc_vk, acc_proof, acc_public_inputs, acc_key_hash);", "inner_proofs[k],"],
     "note": "nodes_fold verifies three node_fold proofs per step plus the previous accumulator over the H rows, and nodes_fold_kernel verifies only its three node_fold proofs."
@@ -131,7 +131,7 @@
     "refs": [
       "packages/interfold-contracts/contracts/Interfold.sol@487@address(e3.decryptionVerifier),",
       "packages/interfold-contracts/contracts/lib/InterfoldLifecycle.sol@332@IDecryptionVerifier(verifierAddress).verify(",
-      "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@221@circuitVerifier.verify(rawProof, publicInputs)",
+      "packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol@224@circuitVerifier.verify(rawProof, publicInputs)",
       "packages/interfold-contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol@3285@contract DecryptionAggregatorVerifier is"
     ],
     "line_text": [
@@ -148,11 +148,11 @@
     "refs": [
       "circuits/bin/config/src/main.nr@22@use lib::configs::secure::dkg::{",
       "circuits/bin/config/src/main.nr@34@use lib::configs::secure::threshold::{",
-      "circuits/bin/config/src/main.nr@89@fn main() {",
-      "circuits/bin/config/src/main.nr@129@DKG Q_MOD_T verification failed",
-      "circuits/bin/config/src/main.nr@208@SHARE_ENCRYPTION_E0_BOUND == 20",
-      "circuits/bin/config/src/main.nr@613@assert(DKG_N == THRESHOLD_N",
-      "circuits/bin/config/src/main.nr@616@assert(L_THRESHOLD == THRESHOLD_L"
+      "circuits/bin/config/src/main.nr@90@fn main() {",
+      "circuits/bin/config/src/main.nr@130@DKG Q_MOD_T verification failed",
+      "circuits/bin/config/src/main.nr@209@SHARE_ENCRYPTION_E0_BOUND == 20",
+      "circuits/bin/config/src/main.nr@619@assert(DKG_N == THRESHOLD_N",
+      "circuits/bin/config/src/main.nr@622@assert(L_THRESHOLD == THRESHOLD_L"
     ],
     "line_text": [
       "use lib::configs::secure::dkg::{",

@@ -4,7 +4,8 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use e3_events::{Committee, E3Stage, E3id};
+use e3_committee::Committee;
+use e3_events::{E3Stage, E3id};
 use std::collections::HashMap;
 
 /// Pure lifecycle policy for restart-critical finalized committee state.

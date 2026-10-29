@@ -21,7 +21,8 @@ use crate::circuits::vk;
 use crate::error::ZkError;
 use crate::prover::ZkProver;
 use crate::witness::{CompiledCircuit, WitnessGenerator};
-use e3_events::{CircuitName, CircuitVariant, Proof};
+use e3_events::Proof;
+use e3_zk_config::{CircuitName, CircuitVariant};
 use serde::Serialize;
 
 /// Node proofs each kernel or fold step verifies (`lib::math::nodes_fold::NODES_FOLD_LEAVES`).

@@ -307,7 +307,7 @@ test('the dependency-free committee gate compares binding values, not consumer i
       'packages/interfold-sdk/src/utils.ts',
       'crates/fhe-params/src/constants.rs',
       'crates/committee/src/lib.rs',
-      'crates/evm-helpers/src/contracts.rs',
+      'crates/evm/client/src/contracts.rs',
       'circuits/lib/src/configs/committee/active.nr',
       ...['minimum', 'micro', 'small', 'large'].map((committee) => `circuits/lib/src/configs/committee/${committee}/mod.nr`),
       ...['insecure', 'secure'].map((preset) => `circuits/lib/src/configs/${preset}/threshold.nr`),

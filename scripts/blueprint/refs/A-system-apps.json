@@ -58,7 +58,7 @@
     "supported": true,
     "refs": [
       "templates/default/server/index.ts@245@sdk.publishCiphertextOutput(",
-      "crates/evm-helpers/src/contracts.rs@592@contract.publishCiphertextOutput("
+      "crates/evm/client/src/contracts.rs@479@contract.publishCiphertextOutput("
     ],
     "line_text": [
       "await sdk.publishCiphertextOutput(BigInt(e3_id), {",
@@ -108,7 +108,7 @@
     "supported": true,
     "refs": [
       "packages/interfold-sdk/src/contracts/contract-client.ts@137@public async requestE3(",
-      "crates/evm-helpers/src/contracts.rs@541@contract.request(e3_request)"
+      "crates/evm/client/src/contracts.rs@428@contract.request(e3_request)"
     ],
     "line_text": [
       "public async requestE3(params: E3RequestParams): Promise<Hash> {",
@@ -130,8 +130,8 @@
     "id": "A14",
     "supported": true,
     "refs": [
-      "crates/indexer/src/indexer.rs@418@create_contract_listener(rpc_url, addresses)",
-      "crates/indexer/src/indexer.rs@1130@event_listener.listen()"
+      "crates/evm/indexer/src/indexer.rs@395@create_contract_listener(rpc_url, addresses)",
+      "crates/evm/indexer/src/indexer.rs@1109@event_listener.listen()"
     ],
     "line_text": [
       "let event_listener = EventListener::create_contract_listener(rpc_url, addresses).await?;",
@@ -190,7 +190,7 @@
   {
     "id": "A21",
     "supported": false,
-    "refs": ["crates/zk/prover/src/prover.rs@111@StdCommand::new(bb)", "crates/zk/prover/src/witness.rs@59@execute_program("],
+    "refs": ["crates/zk/prover/src/prover.rs@112@StdCommand::new(bb)", "crates/zk/prover/src/witness.rs@59@execute_program("],
     "line_text": ["let mut child = StdCommand::new(bb)", "execute_program("],
     "note": "bb runs as a spawned child process, but nargo is a linked Rust library called in-process (witness.rs line 59), not a child process."
   },
@@ -198,8 +198,8 @@
     "id": "A22",
     "supported": true,
     "refs": [
-      "crates/evm/src/event_decoding/catalog.rs@33@pub(crate) fn find(",
-      "crates/evm/src/event_decoding/observation.rs@16@pub(crate) fn observe("
+      "crates/evm/runtime/src/event_decoding/catalog.rs@35@pub(crate) fn find(",
+      "crates/evm/runtime/src/event_decoding/observation.rs@16@pub(crate) fn observe("
     ],
     "line_text": ["pub(crate) fn find(contract: &str, topic0: B256) -> Option<&'static EvmEventDefinition> {", "pub(crate) fn observe("],
     "note": "catalog.rs names a log by its topic0, observation.rs turns it into an EvmLogObserved node event, and protocol events use typed decoders."

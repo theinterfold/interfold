@@ -42,10 +42,10 @@ mod tests {
     use actix::{Message, Recipient};
     use e3_config::BBPath;
     use e3_events::{
-        CircuitName, E3id, EncryptionKey, EventContext, InterfoldEventData, Proof, TestEvent,
-        Unsequenced,
+        E3id, EncryptionKey, EventContext, InterfoldEventData, Proof, TestEvent, Unsequenced,
     };
     use e3_utils::ArcBytes;
+    use e3_zk_config::CircuitName;
     #[cfg(unix)]
     use std::{
         fs,

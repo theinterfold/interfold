@@ -29,7 +29,7 @@
         {
           "name": "ShareVerificationActor",
           "role": "Verifies peers' C1-C4 and C6 share proofs: ECDSA check, commitment consistency check, then ZK verification through ComputeRequest",
-          "ref": "crates/zk/prover/src/share_verification/actor.rs@56@pub struct ShareVerificationActor"
+          "ref": "crates/zk/prover/src/share_verification/actor.rs@57@pub struct ShareVerificationActor"
         },
         {
           "name": "NodeProofAggregator",
@@ -86,12 +86,12 @@
         {
           "name": "ShareVerificationDispatched",
           "by": "ShareVerificationActor",
-          "ref": "crates/zk/prover/src/share_verification/actor.rs@84@EventType::ShareVerificationDispatched"
+          "ref": "crates/zk/prover/src/share_verification/actor.rs@85@EventType::ShareVerificationDispatched"
         },
         {
           "name": "CommitmentConsistencyCheckComplete",
           "by": "ShareVerificationActor",
-          "ref": "crates/zk/prover/src/share_verification/actor.rs@88@EventType::CommitmentConsistencyCheckComplete"
+          "ref": "crates/zk/prover/src/share_verification/actor.rs@89@EventType::CommitmentConsistencyCheckComplete"
         },
         {
           "name": "DKGInnerProofReady",
@@ -205,7 +205,7 @@
         {
           "name": "per-job witness and proof files in the bb work dir",
           "where": "disk",
-          "ref": "crates/zk/prover/src/prover.rs@335@let job_dir = self"
+          "ref": "crates/zk/prover/src/prover.rs@336@let job_dir = self"
         },
         {
           "name": "node-fold inner proofs and fold metadata in Repositories",
@@ -225,19 +225,19 @@
         {
           "name": "finalized committee addresses per E3",
           "where": "memory",
-          "ref": "crates/zk/prover/src/share_verification/actor.rs@60@committees: HashMap<E3id, Vec<Address>>"
+          "ref": "crates/zk/prover/src/share_verification/actor.rs@61@committees: HashMap<E3id, Vec<Address>>"
         }
       ],
       "key_types": [
         {
           "name": "ZkProver",
           "what": "runs bb prove and bb verify as subprocesses with a wall-clock cap",
-          "ref": "crates/zk/prover/src/prover.rs@153@pub struct ZkProver"
+          "ref": "crates/zk/prover/src/prover.rs@154@pub struct ZkProver"
         },
         {
           "name": "Provable",
           "what": "trait: build inputs, generate the witness, then prove one circuit",
-          "ref": "crates/zk/prover/src/traits.rs@18@pub trait Provable"
+          "ref": "crates/zk/prover/src/traits.rs@19@pub trait Provable"
         },
         {
           "name": "WitnessGenerator",
@@ -257,17 +257,17 @@
         {
           "name": "CircuitName",
           "what": "C0-C7 and fold circuit identifiers; dir_path gives the artifact folder",
-          "ref": "crates/events/src/interfold_event/proof.rs@109@pub enum CircuitName"
+          "ref": "crates/zk/config/src/circuit.rs@56@pub enum CircuitName"
         },
         {
           "name": "CircuitVariant",
           "what": "Default (noir-recursive-no-zk), Recursive (inner ZK proofs), Evm (on-chain)",
-          "ref": "crates/events/src/interfold_event/proof.rs@72@pub enum CircuitVariant"
+          "ref": "crates/zk/config/src/circuit.rs@19@pub enum CircuitVariant"
         },
         {
           "name": "Proof",
           "what": "proof bytes, public signals and the circuit name",
-          "ref": "crates/events/src/interfold_event/proof.rs@17@pub struct Proof"
+          "ref": "crates/events/src/interfold_event/proof.rs@12@pub struct Proof"
         },
         {
           "name": "ZkError",
@@ -278,7 +278,7 @@
       "read_first": [
         {
           "why": "wiring: the five ZK actors are created here and connected to the bus",
-          "ref": "crates/zk/prover/src/actor_system.rs@128@pub fn setup_zk_actors("
+          "ref": "crates/zk/prover/src/actor_system.rs@129@pub fn setup_zk_actors("
         },
         {
           "why": "the trigger events that start a proof request",
@@ -286,11 +286,11 @@
         },
         {
           "why": "inputs, then witness, then prove for one circuit",
-          "ref": "crates/zk/prover/src/traits.rs@55@fn prove_with_variant("
+          "ref": "crates/zk/prover/src/traits.rs@56@fn prove_with_variant("
         },
         {
           "why": "the exact bb prove arguments",
-          "ref": "crates/zk/prover/src/prover.rs@357@let mut args = vec!["
+          "ref": "crates/zk/prover/src/prover.rs@358@let mut args = vec!["
         },
         {
           "why": "protocol request adaptation, witness decryption and prover execution without actor scheduling",
@@ -301,7 +301,7 @@
         {
           "pattern": "trait-def",
           "note": "Provable: default methods build inputs, witness and proof for each circuit",
-          "ref": "crates/zk/prover/src/traits.rs@18@pub trait Provable: Send + Sync {"
+          "ref": "crates/zk/prover/src/traits.rs@19@pub trait Provable: Send + Sync {"
         },
         {
           "pattern": "actix-message",
@@ -362,17 +362,34 @@
       "id": "e3-zk-config",
       "kind": "crate",
       "path": "crates/zk/config",
-      "one_line": "Static BFV configuration, bounds, parity, Noir rendering, and public-input layouts, without witnesses or samples.",
+      "one_line": "Static circuit identity/variants, BFV configuration, bounds, parity, Noir rendering, and public-input layouts, without witnesses or samples.",
       "documentation": [{ "title": "Configuration and proof interfaces", "path": "docs/architecture/proof-statements.md" }],
       "actors": [],
       "consumes": [],
       "emits": [],
       "state": [],
-      "key_types": [],
-      "read_first": [
-        { "why": "Configuration metadata and layout exports", "ref": "crates/zk/config/src/lib.rs@18@pub use metadata::CircuitMetadata;" }
+      "key_types": [
+        {
+          "name": "CircuitName",
+          "what": "Serialized circuit identity with artifact paths and public-layout selection.",
+          "ref": "crates/zk/config/src/circuit.rs@56@pub enum CircuitName {"
+        },
+        {
+          "name": "CircuitVariant",
+          "what": "Serialized proof variant with its artifact directory and bb verifier target.",
+          "ref": "crates/zk/config/src/circuit.rs@19@pub enum CircuitVariant {"
+        }
       ],
-      "rust_patterns": [],
+      "read_first": [
+        { "why": "Configuration metadata and layout exports", "ref": "crates/zk/config/src/lib.rs@20@pub use metadata::CircuitMetadata;" }
+      ],
+      "rust_patterns": [
+        {
+          "pattern": "enum-match",
+          "note": "CircuitName maps static identities to artifact names without runtime dependencies.",
+          "ref": "crates/zk/config/src/circuit.rs@143@CircuitName::PkBfv => \"pk\","
+        }
+      ],
       "depends_on": ["e3-committee", "e3-fhe-params", "e3-polynomial", "e3-polynomial-fhe", "e3-parity-matrix"],
       "tests": "cargo test --locked -p e3-zk-config; pnpm test:circuit-build covers generated-source consumers.",
       "unverified": []

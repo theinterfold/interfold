@@ -6,8 +6,8 @@
 
 //! Cross-circuit commitment consistency links.
 //!
-//! Concrete implementations of [`CommitmentLink`](e3_events::CommitmentLink)
-//! for each ZK proof pair. The trait and supporting types live in `e3-events`.
+//! Concrete implementations of [`CommitmentLink`](e3_slashing::CommitmentLink)
+//! for each ZK proof pair. The checker owns the interface in `e3-slashing`.
 
 pub mod c0_to_c3;
 pub mod c1_to_c2;
@@ -18,9 +18,8 @@ pub mod c4a_to_c6;
 pub mod c4b_to_c6;
 pub mod c6_to_c7;
 
-// Re-export the canonical trait and types from e3-events.
-pub use e3_events::{CommitmentLink, FieldValue, LinkScope};
 use e3_fhe_params::BfvPreset;
+pub use e3_slashing::{CommitmentLink, FieldValue, LinkScope};
 
 /// The share-commitment section of a final C2 proof's public signals: everything between the
 /// leading `expected_secret_commitment` and the trailing chunk key-tree hash the final C2 circuit

@@ -16,7 +16,15 @@ use e3_events::EvmEventConfigChain;
 use serde::{Deserialize, Serialize};
 use tracing::error;
 
-const PUBLIC_RPC_CONFIRMATIONS: u64 = 1;
+/// Confirmations that a log needs when the chain does not set `ingestion_confirmations`.
+///
+/// The node cannot undo a log that it applied, so a reorganization deeper than this diverges the
+/// node from the chain. Post-merge Ethereum reorganizes one block in normal operation, when the
+/// next proposer orphans a late block; a deeper reorganization needs a rarer fork-choice failure.
+/// Three blocks take about 36 seconds at 12-second slots, which leaves room for a ticket in the
+/// 600-second mainnet window and the 180-second Sepolia window. Finality takes about 13 minutes,
+/// longer than either window.
+const PUBLIC_RPC_CONFIRMATIONS: u64 = 3;
 
 /// Interval between the polls of an HTTP provider, in milliseconds. Alloy's default for a remote
 /// endpoint.
@@ -187,13 +195,13 @@ mod tests {
     #[test]
     fn non_local_chain_uses_a_safe_default() {
         let config = EvmEventConfigChain::try_from(&chain("wss://example.com")).unwrap();
-        assert_eq!(config.confirmations(), PUBLIC_RPC_CONFIRMATIONS);
+        assert_eq!(config.confirmations(), 3);
     }
 
     #[test]
     fn local_proxy_does_not_disable_confirmations() {
         let config = EvmEventConfigChain::try_from(&chain("ws://127.0.0.1:8545")).unwrap();
-        assert_eq!(config.confirmations(), PUBLIC_RPC_CONFIRMATIONS);
+        assert_eq!(config.confirmations(), 3);
     }
 
     #[test]
