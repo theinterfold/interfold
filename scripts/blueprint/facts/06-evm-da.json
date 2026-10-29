@@ -87,7 +87,7 @@
         {
           "name": "DataAvailabilityCoordinator",
           "role": "Assembles committee-key chunks from chain events and retrieves ciphertext outputs through e3-data-availability.",
-          "ref": "crates/evm/runtime/src/data_availability/actor.rs@200@pub struct DataAvailabilityCoordinator {"
+          "ref": "crates/evm/runtime/src/data_availability/actor.rs@182@pub struct DataAvailabilityCoordinator {"
         },
         {
           "name": "CiphernodeRegistrySolWriter",
@@ -124,12 +124,12 @@
         {
           "name": "CommitteePublicKeyChunkPublished",
           "by": "DataAvailabilityCoordinator",
-          "ref": "crates/evm/runtime/src/data_availability/actor.rs@417@InterfoldEventData::CommitteePublicKeyChunkPublished(event) => {"
+          "ref": "crates/evm/runtime/src/data_availability/actor.rs@399@InterfoldEventData::CommitteePublicKeyChunkPublished(event) => {"
         },
         {
           "name": "CiphertextOutputReferencePublished",
           "by": "DataAvailabilityCoordinator",
-          "ref": "crates/evm/runtime/src/data_availability/actor.rs@459@InterfoldEventData::CiphertextOutputReferencePublished(event) => {"
+          "ref": "crates/evm/runtime/src/data_availability/actor.rs@441@InterfoldEventData::CiphertextOutputReferencePublished(event) => {"
         }
       ],
       "emits": [
@@ -146,12 +146,12 @@
         {
           "name": "CommitteePublished (key assembled from chunks)",
           "by": "DataAvailabilityCoordinator",
-          "ref": "crates/evm/runtime/src/data_availability/actor.rs@332@let event = CommitteePublished {"
+          "ref": "crates/evm/runtime/src/data_availability/actor.rs@314@let event = CommitteePublished {"
         },
         {
           "name": "CiphertextOutputPublished (bytes retrieved from DA)",
           "by": "DataAvailabilityCoordinator",
-          "ref": "crates/evm/runtime/src/data_availability/actor.rs@529@let event = CiphertextOutputPublished {"
+          "ref": "crates/evm/runtime/src/data_availability/actor.rs@511@let event = CiphertextOutputPublished {"
         },
         {
           "name": "committee request (after RandomnessFulfilled and registry acceptance)",
@@ -161,22 +161,22 @@
         {
           "name": "tx submitTicket(e3Id, ticketNumber)",
           "by": "CiphernodeRegistrySolWriter",
-          "ref": "crates/evm/runtime/src/ciphernode_registry/effects.rs@55@.submitTicket(e3_id_u256, ticket_number_u256)"
+          "ref": "crates/evm/runtime/src/ciphernode_registry/effects.rs@54@.submitTicket(e3_id_u256, ticket_number_u256)"
         },
         {
           "name": "tx finalizeCommittee(e3Id)",
           "by": "CiphernodeRegistrySolWriter",
-          "ref": "crates/evm/runtime/src/ciphernode_registry/effects.rs@220@finalizeCommittee(e3_id_u256)"
+          "ref": "crates/evm/runtime/src/ciphernode_registry/effects.rs@219@finalizeCommittee(e3_id_u256)"
         },
         {
           "name": "tx publishCommittee(e3Id, pkCommitment, proof, attestation)",
           "by": "CiphernodeRegistrySolWriter",
-          "ref": "crates/evm/runtime/src/ciphernode_registry/effects.rs@320@publishCommittee(e3_id_u256"
+          "ref": "crates/evm/runtime/src/ciphernode_registry/effects.rs@319@publishCommittee(e3_id_u256"
         },
         {
           "name": "tx publishCommitteePublicKey(chunk), one call per chunk",
           "by": "CiphernodeRegistrySolWriter",
-          "ref": "crates/evm/runtime/src/ciphernode_registry/effects.rs@391@.publishCommitteePublicKey("
+          "ref": "crates/evm/runtime/src/ciphernode_registry/effects.rs@374@.publishCommitteePublicKey("
         },
         {
           "name": "tx publishPlaintextOutput(e3Id, plaintext, proof)",
@@ -208,7 +208,7 @@
         {
           "name": "Data-availability recovery state: key chunks, pending outputs, terminal E3s",
           "where": "disk",
-          "ref": "crates/evm/runtime/src/data_availability/actor.rs@215@recovery: Repository<DataAvailabilityRecoveryState>,"
+          "ref": "crates/evm/runtime/src/data_availability/actor.rs@197@recovery: Repository<DataAvailabilityRecoveryState>,"
         },
         {
           "name": "Ingestion heartbeat file per chain (health check only, not a resume cursor)",
@@ -318,10 +318,13 @@
     },
     {
       "id": "e3-data-availability",
-      "documentation": [{ "title": "Data availability", "path": "docs/architecture/data-availability.md" }],
+      "documentation": [
+        { "title": "Data availability", "path": "docs/architecture/data-availability.md" },
+        { "title": "Key transport and authority", "path": "docs/architecture/dkg.md" }
+      ],
       "kind": "crate",
       "path": "crates/data-availability",
-      "one_line": "Content-addressed object transport: publishes bytes to Avail and retrieves them by hash, re-hashing what it reads.",
+      "one_line": "Content-addressed object transport and pure committee-key chunk mechanics; admission and recovery stay with callers.",
       "actors": [],
       "consumes": [],
       "emits": [],
@@ -336,22 +339,22 @@
         {
           "name": "DataReference",
           "what": "content hash, Avail block number, and leaf index that Ethereum records for one object",
-          "ref": "crates/data-availability/src/lib.rs@28@pub struct DataReference {"
+          "ref": "crates/data-availability/src/lib.rs@30@pub struct DataReference {"
         },
         {
           "name": "PendingPublication",
           "what": "Avail block hash, block number, and extrinsic index needed to request a bridge proof",
-          "ref": "crates/data-availability/src/lib.rs@36@pub struct PendingPublication {"
+          "ref": "crates/data-availability/src/lib.rs@38@pub struct PendingPublication {"
         },
         {
           "name": "ProofStatus",
           "what": "Pending, or Ready with the ABI-encoded Merkle proof and the reference",
-          "ref": "crates/data-availability/src/lib.rs@45@pub enum ProofStatus {"
+          "ref": "crates/data-availability/src/lib.rs@47@pub enum ProofStatus {"
         },
         {
           "name": "VectorXBridgeApi",
           "what": "HTTP client for the official Avail VectorX bridge proof route",
-          "ref": "crates/data-availability/src/lib.rs@164@pub struct VectorXBridgeApi {"
+          "ref": "crates/data-availability/src/lib.rs@166@pub struct VectorXBridgeApi {"
         },
         {
           "name": "AvailPublisher",
@@ -366,21 +369,26 @@
         {
           "name": "HttpObjectReader",
           "what": "mock reader: GET /objects/0x<hash> from a local HTTP server",
-          "ref": "crates/data-availability/src/lib.rs@239@pub struct HttpObjectReader {"
+          "ref": "crates/data-availability/src/lib.rs@241@pub struct HttpObjectReader {"
+        },
+        {
+          "name": "ChunkLayout",
+          "what": "ephemeral public-key chunk layout, independent of consumer persistence and key authority",
+          "ref": "crates/data-availability/src/public_key.rs@13@pub struct ChunkLayout {"
         }
       ],
       "read_first": [
         {
           "why": "crate purpose and the trust split: receipt on chain, re-hash on read",
-          "ref": "crates/data-availability/src/lib.rs@7@Content-addressed data-availability transport used by Interfold applications."
+          "ref": "crates/data-availability/src/lib.rs@7@Content-addressed transport and committee-public-key chunk mechanics."
         },
         {
           "why": "the retrieval boundary that the e3-evm coordinator calls",
-          "ref": "crates/data-availability/src/lib.rs@55@pub trait DataAvailabilityReader: Send + Sync {"
+          "ref": "crates/data-availability/src/lib.rs@57@pub trait DataAvailabilityReader: Send + Sync {"
         },
         {
           "why": "the hash check that every reader runs before it returns bytes",
-          "ref": "crates/data-availability/src/lib.rs@67@pub fn verify_retrieved_bytes("
+          "ref": "crates/data-availability/src/lib.rs@69@pub fn verify_retrieved_bytes("
         },
         {
           "why": "publish path: submit, wait for finality, return the coordinates",
@@ -391,32 +399,32 @@
         {
           "pattern": "trait-def",
           "note": "async trait with Send and Sync bounds; the Avail reader and the HTTP mock reader implement it",
-          "ref": "crates/data-availability/src/lib.rs@55@pub trait DataAvailabilityReader: Send + Sync {"
+          "ref": "crates/data-availability/src/lib.rs@57@pub trait DataAvailabilityReader: Send + Sync {"
         },
         {
           "pattern": "trait-impl",
           "note": "the HTTP reader's retrieve() re-hashes the bytes before it returns them",
-          "ref": "crates/data-availability/src/lib.rs@260@impl DataAvailabilityReader for HttpObjectReader {"
+          "ref": "crates/data-availability/src/lib.rs@262@impl DataAvailabilityReader for HttpObjectReader {"
         },
         {
           "pattern": "result-question-mark",
           "note": "size and emptiness are checked before the bytes are hashed",
-          "ref": "crates/data-availability/src/lib.rs@68@validate_object_bytes(&bytes)?;"
+          "ref": "crates/data-availability/src/lib.rs@70@validate_object_bytes(&bytes)?;"
         },
         {
           "pattern": "anyhow-context",
           "note": "a bad bridge URL reports a human-readable context",
-          "ref": "crates/data-availability/src/lib.rs@178@VectorX bridge API URL is invalid"
+          "ref": "crates/data-availability/src/lib.rs@180@VectorX bridge API URL is invalid"
         },
         {
           "pattern": "serde-derive",
           "note": "DataReference derives serde, so it can be serialized",
-          "ref": "crates/data-availability/src/lib.rs@27@#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]"
+          "ref": "crates/data-availability/src/lib.rs@29@#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]"
         },
         {
           "pattern": "unit-test",
           "note": "the re-hash rule is tested offline: matching bytes pass, substituted bytes fail",
-          "ref": "crates/data-availability/src/lib.rs@295@fn retrieved_bytes_must_match_the_reference() {"
+          "ref": "crates/data-availability/src/lib.rs@297@fn retrieved_bytes_must_match_the_reference() {"
         }
       ],
       "depends_on": [],

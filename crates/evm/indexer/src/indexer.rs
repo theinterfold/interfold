@@ -17,6 +17,7 @@ use alloy::providers::Provider;
 use alloy::sol_types::SolEvent;
 use async_trait::async_trait;
 use e3_bfv_client::validate_pk_commitment;
+use e3_data_availability::public_key::{self, ChunkLayout};
 use e3_evm_client::{
     block_listener::BlockListener,
     contracts::{
@@ -48,9 +49,6 @@ use tracing::{error, info, warn};
 
 type E3Id = String;
 
-const PUBLIC_KEY_CHUNK_BYTES: usize = 90 * 1024;
-const MAX_PUBLIC_KEY_BYTES: usize = 512 * 1024;
-
 #[derive(Clone, Debug, Serialize, serde::Deserialize)]
 struct PublicKeyChunkAssembly {
     nodes: Vec<Address>,
@@ -64,19 +62,9 @@ struct PublicKeyChunkAssembly {
 
 impl PublicKeyChunkAssembly {
     fn event_shape_is_valid(event: &CommitteePublicKeyChunkPublished) -> bool {
-        let total_length = event.totalLength as usize;
-        if total_length == 0 || total_length > MAX_PUBLIC_KEY_BYTES {
-            return false;
-        }
-        let expected_count = total_length.div_ceil(PUBLIC_KEY_CHUNK_BYTES);
-        if expected_count != usize::from(event.chunkCount)
-            || usize::from(event.chunkIndex) >= expected_count
-        {
-            return false;
-        }
-        let offset = usize::from(event.chunkIndex) * PUBLIC_KEY_CHUNK_BYTES;
-        let expected_length = (total_length - offset).min(PUBLIC_KEY_CHUNK_BYTES);
-        event.chunk.len() == expected_length
+        ChunkLayout::new(event.totalLength as usize).is_ok_and(|layout| {
+            layout.accepts(event.chunkIndex, event.chunkCount, event.chunk.len())
+        })
     }
 
     fn from_event(event: &CommitteePublicKeyChunkPublished) -> Self {
@@ -103,37 +91,23 @@ impl PublicKeyChunkAssembly {
             self.invalid |= !self.accepts(event);
             return;
         }
-        let expected_count = (self.total_length as usize).div_ceil(PUBLIC_KEY_CHUNK_BYTES);
-        let offset = usize::from(event.chunkIndex) * PUBLIC_KEY_CHUNK_BYTES;
-        let expected_length = (self.total_length as usize)
-            .saturating_sub(offset)
-            .min(PUBLIC_KEY_CHUNK_BYTES);
-        if expected_count != usize::from(self.chunk_count) || event.chunk.len() != expected_length {
+        if !ChunkLayout::new(self.total_length as usize).is_ok_and(|layout| {
+            layout.accepts(event.chunkIndex, self.chunk_count, event.chunk.len())
+        }) {
             self.invalid = true;
             return;
         }
-        let Some(slot) = self.chunks.get_mut(usize::from(event.chunkIndex)) else {
-            self.invalid = true;
-            return;
-        };
-        if let Some(existing) = slot {
-            if existing.as_slice() != event.chunk.as_ref() {
-                self.invalid = true;
-            }
-        } else {
-            *slot = Some(event.chunk.to_vec());
-        }
+        self.invalid =
+            !public_key::insert_chunk(&mut self.chunks, event.chunkIndex, &event.chunk, || {
+                event.chunk.to_vec()
+            });
     }
 
     fn bytes(&self) -> Option<Vec<u8>> {
         if self.invalid || self.stored {
             return None;
         }
-        let mut bytes = Vec::with_capacity(self.total_length as usize);
-        for chunk in &self.chunks {
-            bytes.extend_from_slice(chunk.as_ref()?);
-        }
-        (bytes.len() == self.total_length as usize).then_some(bytes)
+        public_key::assemble_chunks(self.total_length, &self.chunks)
     }
 }
 
@@ -1205,6 +1179,7 @@ mod public_key_chunk_tests {
     use alloy::primitives::{keccak256, Address, B256, U256};
     use alloy::sol_types::SolValue;
     use e3_bfv_client::{compute_pk_commitment, validate_pk_commitment};
+    use e3_evm_contracts::ICiphernodeRegistry::CommitteePublicKeyChunkPublished;
     use e3_fhe_params::{
         bfv_crypto_config_id, current_bfv_crypto_config_id, decode_bfv_params, encode_bfv_params,
         BfvParamSet, BfvPreset,
@@ -1338,5 +1313,259 @@ mod public_key_chunk_tests {
         assert!(completed.stored);
         assert!(!completed.invalid);
         assert!(completed.chunks.is_empty());
+    }
+
+    #[test]
+    fn legacy_key_assembly_encoding_stays_readable() {
+        let mut event = CommitteePublicKeyChunkPublished {
+            e3Id: U256::from(7),
+            publisher: Address::ZERO,
+            candidateHash: B256::repeat_byte(8),
+            nodes: vec![Address::ZERO],
+            pkCommitment: B256::repeat_byte(9),
+            chunkIndex: 1,
+            chunkCount: 2,
+            totalLength: 92_161,
+            chunk: vec![3].into(),
+        };
+        let mut assembly = PublicKeyChunkAssembly::from_event(&event);
+        assembly.insert(&event);
+        // Captured before extracting transport mechanics, including the invalid/stored flags.
+        let frozen = alloy::hex::decode("0100000000000000140000000000000000000000000000000000000000000000000000000909090909090909090909090909090909090909090909090909090909090909016801000200020000000000000000010100000000000000030000").unwrap();
+        assert_eq!(bincode::serialize(&assembly).unwrap(), frozen);
+        let mut recovered: PublicKeyChunkAssembly = bincode::deserialize(&frozen).unwrap();
+        assert!(!recovered.invalid && !recovered.stored);
+        assert!(recovered.bytes().is_none());
+        event.chunkIndex = 0;
+        event.chunk = vec![3; 92_160].into();
+        recovered.insert(&event);
+        assert_eq!(recovered.bytes().unwrap(), vec![3; 92_161]);
+    }
+
+    #[test]
+    fn metadata_conflicts_remain_invalid_after_restore() {
+        let event = CommitteePublicKeyChunkPublished {
+            e3Id: U256::from(7),
+            publisher: Address::ZERO,
+            candidateHash: B256::repeat_byte(8),
+            nodes: vec![Address::repeat_byte(1), Address::repeat_byte(2)],
+            pkCommitment: B256::repeat_byte(9),
+            chunkIndex: 0,
+            chunkCount: 2,
+            totalLength: 92_161,
+            chunk: vec![3; 92_160].into(),
+        };
+        for field in 0..4 {
+            let mut assembly = PublicKeyChunkAssembly::from_event(&event);
+            assembly.insert(&event);
+            let mut conflicting = event.clone();
+            match field {
+                0 => conflicting.nodes.reverse(),
+                1 => conflicting.pkCommitment = B256::ZERO,
+                2 => conflicting.chunkCount = 3,
+                _ => conflicting.totalLength += 1,
+            }
+            assembly.insert(&conflicting);
+            let mut restored: PublicKeyChunkAssembly =
+                bincode::deserialize(&bincode::serialize(&assembly).unwrap()).unwrap();
+            restored.insert(&event);
+            assert!(restored.invalid);
+            assert!(!restored.stored);
+            assert!(restored.bytes().is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn chunk_replay_restores_selection_and_keeps_candidate_policies() -> eyre::Result<()> {
+        use super::InterfoldIndexer;
+        use alloy::{
+            node_bindings::Anvil, providers::ProviderBuilder, signers::local::PrivateKeySigner, sol,
+        };
+        use e3_data_availability::public_key::ChunkLayout;
+        use e3_evm_client::{contracts::InterfoldContractFactory, event_listener::EventListener};
+        use e3_fhe_params::bfv_encryption_scheme_id;
+
+        sol!(
+            #[sol(rpc)]
+            FakeInterfold,
+            "tests/fixtures/fake_interfold.json"
+        );
+
+        let anvil = Anvil::new().try_spawn()?;
+        let signer = PrivateKeySigner::from_slice(&anvil.keys()[0].to_bytes())?;
+        let provider = ProviderBuilder::new()
+            .wallet(signer)
+            .connect(&anvil.endpoint())
+            .await?;
+        let fixture = FakeInterfold::deploy(provider).await?;
+        let address = fixture.address().to_string();
+        let endpoint = anvil.ws_endpoint();
+        let params = BfvParamSet::from(BfvPreset::SecureThreshold8192).build_arc();
+        let secret = SecretKey::random(&params, &mut rand::rng());
+        let bytes = PublicKey::new(&secret, &mut rand::rng()).to_bytes();
+        let commitment = compute_pk_commitment(
+            bytes.clone(),
+            params.degree(),
+            params.plaintext(),
+            params.moduli().to_vec(),
+        )
+        .unwrap();
+        fixture
+            .setRequestCrypto(
+                U256::from(7),
+                bfv_encryption_scheme_id(),
+                2,
+                current_bfv_crypto_config_id(&encode_bfv_params(&params)),
+            )
+            .send()
+            .await?
+            .watch()
+            .await?;
+        let layout = ChunkLayout::new(bytes.len()).unwrap();
+        assert!(layout.chunk_count() > 1);
+        let hash = keccak256(&bytes);
+        let event = |publisher, index| CommitteePublicKeyChunkPublished {
+            e3Id: U256::from(7),
+            publisher,
+            candidateHash: hash,
+            nodes: vec![Address::with_last_byte(1)],
+            pkCommitment: commitment.into(),
+            chunkIndex: index,
+            chunkCount: layout.chunk_count(),
+            totalLength: layout.total_length(),
+            chunk: bytes[layout.range(index).unwrap()].to_vec().into(),
+        };
+        let fixture = &fixture;
+        let emit = |event: CommitteePublicKeyChunkPublished| async move {
+            fixture
+                .emitPublicKeyChunk(
+                    event.e3Id,
+                    event.publisher,
+                    event.candidateHash,
+                    event.pkCommitment,
+                    event.chunkIndex,
+                    event.chunkCount,
+                    event.totalLength,
+                    event.chunk,
+                )
+                .send()
+                .await?
+                .watch()
+                .await?;
+            Ok::<_, eyre::Error>(())
+        };
+        let assembly_key =
+            |publisher: Address, hash: B256| format!("_pk_chunk:7:{publisher}:{hash:#x}");
+        let publisher = Address::repeat_byte(1);
+        let last = layout.chunk_count() - 1;
+        let listener = EventListener::create_contract_listener(&endpoint, &[&address]).await?;
+        let contract = InterfoldContractFactory::create_read(&endpoint, &address).await?;
+        let indexer =
+            InterfoldIndexer::new(listener.clone(), contract, InMemoryStore::new()).await?;
+
+        let mut malformed = event(publisher, last);
+        malformed.candidateHash = B256::ZERO;
+        malformed.chunk = Vec::new().into();
+        emit(malformed).await?;
+        emit(event(publisher, last)).await?;
+        emit(event(publisher, last)).await?;
+        listener
+            .catch_up(0, listener.head_block().await?, 2)
+            .await?;
+        let store = indexer.get_store();
+        let partial = store
+            .get::<PublicKeyChunkAssembly>(&assembly_key(publisher, hash))
+            .await?
+            .unwrap();
+        assert_eq!(
+            partial
+                .chunks
+                .iter()
+                .filter(|chunk| chunk.is_some())
+                .count(),
+            1
+        );
+        assert!(partial.bytes().is_none());
+        assert_eq!(
+            store
+                .get::<[u8; 32]>(&format!("_pk_candidate:7:{publisher}"))
+                .await?,
+            Some(hash.0)
+        );
+        assert!(indexer.get_e3("7").await.is_err());
+        drop(indexer);
+
+        // A fresh context and listener resume the same consumer-owned store, not a new assembly type.
+        let listener = EventListener::create_contract_listener(&endpoint, &[&address]).await?;
+        let contract = InterfoldContractFactory::create_read(&endpoint, &address).await?;
+        let indexer = InterfoldIndexer::new(listener.clone(), contract, store.clone()).await?;
+        let mut second_candidate = event(publisher, 0);
+        second_candidate.candidateHash = B256::repeat_byte(0x55);
+        emit(second_candidate).await?;
+        let mut conflicting = event(publisher, last);
+        let mut changed = conflicting.chunk.to_vec();
+        changed[0] ^= 1;
+        conflicting.chunk = changed.into();
+        emit(conflicting).await?;
+        for index in 0..layout.chunk_count() {
+            emit(event(publisher, index)).await?;
+        }
+        let unbound_publisher = Address::repeat_byte(2);
+        let wrong_hash_publisher = Address::repeat_byte(3);
+        for index in 0..layout.chunk_count() {
+            let mut unbound = event(unbound_publisher, index);
+            unbound.pkCommitment = B256::ZERO;
+            emit(unbound).await?;
+            let mut wrong_hash = event(wrong_hash_publisher, index);
+            wrong_hash.candidateHash = B256::repeat_byte(0x66);
+            emit(wrong_hash).await?;
+        }
+        listener
+            .catch_up(0, listener.head_block().await?, 2)
+            .await?;
+        assert!(indexer.get_e3("7").await.is_err());
+        assert!(store
+            .get::<PublicKeyChunkAssembly>(&assembly_key(publisher, B256::repeat_byte(0x55)))
+            .await?
+            .is_none());
+        for (publisher, candidate_hash) in [
+            (publisher, hash),
+            (unbound_publisher, hash),
+            (wrong_hash_publisher, B256::repeat_byte(0x66)),
+        ] {
+            let invalid = store
+                .get::<PublicKeyChunkAssembly>(&assembly_key(publisher, candidate_hash))
+                .await?
+                .unwrap();
+            assert!(invalid.invalid && !invalid.stored);
+            assert!(invalid.bytes().is_none());
+        }
+
+        // Another member's valid, reordered candidate remains admissible after those failures.
+        let good_publisher = Address::repeat_byte(4);
+        for index in (0..layout.chunk_count()).rev() {
+            emit(event(good_publisher, index)).await?;
+        }
+        let head = listener.head_block().await?;
+        listener.catch_up(0, head, 2).await?;
+        assert_eq!(indexer.get_e3("7").await?.committee_public_key, bytes);
+        let stored = store
+            .get::<PublicKeyChunkAssembly>(&assembly_key(good_publisher, hash))
+            .await?
+            .unwrap();
+        assert!(stored.stored && !stored.invalid);
+        assert!(stored.chunks.is_empty());
+        drop(indexer);
+        let listener = EventListener::create_contract_listener(&endpoint, &[&address]).await?;
+        let contract = InterfoldContractFactory::create_read(&endpoint, &address).await?;
+        let indexer = InterfoldIndexer::new(listener.clone(), contract, store.clone()).await?;
+        listener.catch_up(0, head, 2).await?;
+        let replayed = store
+            .get::<PublicKeyChunkAssembly>(&assembly_key(good_publisher, hash))
+            .await?
+            .unwrap();
+        assert!(replayed.stored && !replayed.invalid && replayed.chunks.is_empty());
+        assert_eq!(indexer.get_e3("7").await?.committee_public_key, bytes);
+        Ok(())
     }
 }

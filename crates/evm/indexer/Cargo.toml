@@ -11,6 +11,7 @@ alloy.workspace = true
 async-trait.workspace = true
 bincode.workspace = true
 e3-bfv-client.workspace = true
+e3-data-availability.workspace = true
 e3-evm-client.workspace = true
 e3-evm-contracts.workspace = true
 e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
