@@ -30,7 +30,10 @@ fn main(
     z: [Polynomial<N>; 1],
 ) -> pub Field {
     // The key is opened with checked digits at C0's width; C0 is what bounds it.
-    assert(SHARE_ENCRYPTION_BIT_PK == PK_BIT_PK);
+    std::static_assert(
+        SHARE_ENCRYPTION_BIT_PK == PK_BIT_PK,
+        "C3 must open the key at C0's width",
+    );
     let share_encryption: ShareEncryption<N, L, SHARE_ENCRYPTION_BIT_PK, SHARE_ENCRYPTION_BIT_CT, SHARE_ENCRYPTION_BIT_U, SHARE_ENCRYPTION_BIT_E0, SHARE_ENCRYPTION_BIT_E1, SHARE_ENCRYPTION_BIT_MSG, SHARE_ENCRYPTION_CT0_BIT_R, SHARE_ENCRYPTION_CT1_BIT_R, SHARE_ENCRYPTION_BIT_Z, SHARE_ENCRYPTION_BIT_Q0, SHARE_ENCRYPTION_BIT_Q0_DIFF, SHARE_ENCRYPTION_BIT_Q1> = ShareEncryption::new(
         SHARE_ENCRYPTION_CONFIGS,
         expected_pk_commitment,

@@ -253,6 +253,7 @@ user_data_encryption_ct1 (CIRCUIT B - CT1 ENCRYPTION)
 
 pub global {}_CT1_CONFIGS: UserDataEncryptionCt1Configs<N, L> = UserDataEncryptionCt1Configs::new(
     QIS,
+    CRP,
     {}_E1_BOUND,
     {}_U_BOUND,
     {}_CT1_R_BOUNDS,

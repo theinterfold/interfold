@@ -91,7 +91,8 @@ pub enum CircuitName {
     NodeFold,
     /// Sequential fold of `H` `node_fold` proofs (non-ZK) before `dkg_aggregator`.
     NodesFold,
-    /// Bootstrap circuit for [`CircuitName::NodesFold`] genesis accumulator proof (same ABI, no acc verify).
+    /// First step of a [`CircuitName::NodesFold`] chain: proves the first node proofs and starts the
+    /// accumulator (same ABI; it verifies no accumulator).
     NodesFoldKernel,
     /// DKG aggregator (folded `node_fold` via `nodes_fold` + C5).
     DkgAggregator,
