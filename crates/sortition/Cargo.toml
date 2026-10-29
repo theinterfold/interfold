@@ -28,4 +28,8 @@ num-bigint = { workspace = true }
 
 [dev-dependencies]
 bincode.workspace = true
+e3-event-system = { workspace = true, features = ["test-support"] }
+e3-sync.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber.workspace = true

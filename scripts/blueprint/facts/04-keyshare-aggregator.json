@@ -230,11 +230,6 @@
           "ref": "crates/aggregator/src/plaintext_aggregation/actor.rs@68@pub struct ThresholdPlaintextAggregator {"
         },
         {
-          "name": "CommitteeFinalizer",
-          "role": "after CommitteeRequested, dispatches CommitteeFinalizeRequested once the submission deadline has passed",
-          "ref": "crates/aggregator/src/committee_finalization/actor.rs@84@pub struct CommitteeFinalizer {"
-        },
-        {
           "name": "KeyshareCreatedFilterBuffer",
           "role": "holds KeyshareCreated until CommitteeFinalized arrives, then forwards only the finalized committee's keyshares",
           "ref": "crates/aggregator/src/public_key_aggregation/keyshare_buffer.rs@18@pub struct KeyshareCreatedFilterBuffer {"
@@ -257,12 +252,12 @@
         {
           "name": "CiphernodeRegistrySolWriter (e3-evm, outside this crate)",
           "role": "takes PublicKeyAggregated and submits publishCommittee on chain",
-          "ref": "crates/evm/src/ciphernode_registry/handlers.rs@638@Handler<PublicKeyAggregated>"
+          "ref": "crates/evm/runtime/src/ciphernode_registry/handlers.rs@638@Handler<PublicKeyAggregated>"
         },
         {
           "name": "InterfoldSolWriter (e3-evm, outside this crate)",
           "role": "takes a locally computed PlaintextAggregated and submits publishPlaintextOutput on chain",
-          "ref": "crates/evm/src/interfold_writing/handlers.rs@222@InterfoldEventData::PlaintextAggregated(data) => {"
+          "ref": "crates/evm/runtime/src/interfold_writing/handlers.rs@222@InterfoldEventData::PlaintextAggregated(data) => {"
         }
       ],
       "consumes": [
@@ -337,23 +332,18 @@
           "name": "PlaintextAggregated",
           "by": "ThresholdPlaintextAggregator",
           "ref": "crates/aggregator/src/plaintext_aggregation/effects/publish_result.rs@111@let event = PlaintextAggregated {"
-        },
-        {
-          "name": "CommitteeFinalizeRequested",
-          "by": "CommitteeFinalizer",
-          "ref": "crates/aggregator/src/committee_finalization/actor.rs@212@CommitteeFinalizeRequested {"
         }
       ],
       "state": [
         {
           "name": "PublicKeyAggregatorState and its recovery record",
           "where": "disk",
-          "ref": "crates/aggregator/src/repo.rs@52@fn publickey(&self, e3_id: &E3id) -> Repository<PublicKeyAggregatorState> {"
+          "ref": "crates/aggregator/src/repo.rs@42@fn publickey(&self, e3_id: &E3id) -> Repository<PublicKeyAggregatorState> {"
         },
         {
           "name": "ThresholdPlaintextAggregatorState and its recovery record",
           "where": "disk",
-          "ref": "crates/aggregator/src/repo.rs@34@fn trbfv_plaintext(&self, e3_id: &E3id) -> Repository<ThresholdPlaintextAggregatorState> {"
+          "ref": "crates/aggregator/src/repo.rs@24@fn trbfv_plaintext(&self, e3_id: &E3id) -> Repository<ThresholdPlaintextAggregatorState> {"
         },
         {
           "name": "registered committee (topNodes) for decryption, read from the chain",
@@ -387,7 +377,7 @@
           "ref": "crates/aggregator/src/plaintext_aggregation/actor.rs@68@pub struct ThresholdPlaintextAggregator {"
         },
         {
-          "why": "crate surface: CommitteeFinalizer, recovery/state types and repositories are public; key/plaintext actors stay crate-private",
+          "why": "crate surface: aggregation recovery/state types and repositories are public; key/plaintext actors stay crate-private",
           "ref": "crates/aggregator/src/lib.rs@23@pub use actors::{"
         },
         {
@@ -416,10 +406,8 @@
         "e3-committee",
         "e3-data",
         "e3-events",
-        "e3-evm",
         "e3-fhe",
         "e3-fhe-params",
-        "e3-keyshare",
         "e3-polynomial",
         "e3-polynomial-fhe",
         "e3-trbfv",
@@ -435,8 +423,7 @@
       "tests": "crates/aggregator/src/public_key_aggregation/tests/ (mod.rs, attestations.rs, failures.rs), crates/aggregator/src/plaintext_aggregation/tests/ (completion, failures, publication, recovery, share_admission, threshold) and the workflow_tests.rs files in both capability directories; run: cargo test -p e3-aggregator",
       "unverified": [
         "The TrBFV worker (CalculateThresholdDecryption) and the zk worker (ComputeRequest::zk) that answer these requests are outside this crate and were not read.",
-        "The sortition rule inside committee.effective_aggregator was not read; this unit only consumes its AggregatorChanged output.",
-        "The committee deadline arithmetic in committee_finalization/actor.rs was not traced."
+        "The sortition rule inside committee.effective_aggregator was not read; this unit only consumes its AggregatorChanged output."
       ]
     }
   ]

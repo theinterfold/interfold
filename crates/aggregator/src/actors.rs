@@ -8,8 +8,6 @@
 //!
 //! New implementation belongs in the referenced capability directory, not here.
 
-#[path = "committee_finalization/actor.rs"]
-mod committee_finalizer;
 #[path = "plaintext_aggregation/decryption_share_buffer.rs"]
 mod decryptionshare_created_buffer;
 #[path = "public_key_aggregation/keyshare_buffer.rs"]
@@ -19,7 +17,6 @@ mod publickey_aggregator;
 #[path = "plaintext_aggregation/actor.rs"]
 mod threshold_plaintext_aggregator;
 
-pub use committee_finalizer::*;
 pub use decryptionshare_created_buffer::*;
 pub use keyshare_created_filter_buffer::*;
 pub use publickey_aggregator::*;

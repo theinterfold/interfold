@@ -1,0 +1,27 @@
+[package]
+name = "e3-indexer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "E3 - A indexer for Interfold"
+repository.workspace = true
+
+[dependencies]
+alloy.workspace = true
+async-trait.workspace = true
+bincode.workspace = true
+e3-bfv-client.workspace = true
+e3-data-availability.workspace = true
+e3-evm-client.workspace = true
+e3-evm-contracts.workspace = true
+e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
+eyre.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+fhe.workspace = true
+fhe-traits.workspace = true
+rand.workspace = true

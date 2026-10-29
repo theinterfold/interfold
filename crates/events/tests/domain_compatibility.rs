@@ -46,7 +46,6 @@ fn baseline_signed_event_retains_encoding_signature_and_statement_identity() {
         serde_json::from_value::<SignedProofPayload>(json).unwrap(),
         *signed
     );
-    // These are aliases of the lower owner, not wrappers with a second encoding.
-    let _: e3_committee::Committee = e3_events::Committee::new(vec![]);
+    // The circuit variant alias does not add a wrapper or a second encoding.
     let _: e3_zk_config::CircuitVariant = e3_events::CircuitVariant::Evm;
 }
