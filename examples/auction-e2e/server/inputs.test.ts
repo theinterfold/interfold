@@ -23,7 +23,7 @@ const bid = (bidder: `0x${string}`, name: string, version: number, firstIndex: n
 
 describe('auctionInputs', () => {
   it('puts the configuration at leaf 0 and every ciphertext of every bid at its leaf, in leaf order', () => {
-    const type = AuctionType.RatioFirstPrice
+    const type = AuctionType.FirstPrice
     // Event order is not leaf order. Alice's update (version 2) is a published input too.
     const inputs = auctionInputs(type, [bid(bob, 'bb', 1, 4), bid(alice, 'aa', 2, 7), bid(alice, 'a1', 1, 1)])
     expect(inputs.ciphertexts).toEqual([
@@ -58,8 +58,8 @@ describe('auctionInputs', () => {
     for (const list of [inputs.commitments, inputs.slots, inputs.parents]) expect(list).toHaveLength(inputs.ciphertexts.length)
   })
 
-  it('takes 4 ciphertexts per bid for the second-price ratio type, the pair mask last', () => {
-    const type = AuctionType.RatioSecondPrice
+  it('takes 4 ciphertexts per bid for the no-provider type', () => {
+    const type = AuctionType.QnrSecondPrice
     const inputs = auctionInputs(type, [bid(bob, 'bb', 1, 5, 4), bid(alice, 'aa', 1, 1, 4)])
     expect(inputs.ciphertexts.map(([, leaf]) => leaf)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8])
     expect(inputs.ciphertexts.slice(1).map(([ciphertext]) => ciphertext)).toEqual([
@@ -96,7 +96,7 @@ const mask = (provider: `0x${string}`, name: string, index: number): SubmittedMa
   commitment: `0x${name}c` as Hex,
 })
 
-describe('auctionInputs of a type-4 auction', () => {
+describe('auctionInputs of a mask-provider auction', () => {
   const type = AuctionType.ProviderSecondPrice
 
   it('puts the providers in the configuration, then the masks, then the bids, in leaf order', () => {
@@ -138,20 +138,20 @@ describe('planRun', () => {
   const bids = [bid(carol, 'cc', 1, 3, 2), bid('0x4444444444444444444444444444444444444444', 'dd', 1, 5, 2)]
   const opensAll = () => true
 
-  it('runs a type-4 auction when every mask is in and 2 bidders count', () => {
+  it('runs a mask-provider auction when every mask is in and 2 bidders count', () => {
     const plan = planRun(type, bids, { providers, masks }, opensAll)
     expect(plan.kind).toBe('run')
     expect(plan.counted).toBe(2)
     if (plan.kind === 'run') expect(plan.inputs.ciphertexts.map(([, leaf]) => leaf)).toEqual([0, 1, 2, 3, 4, 5, 6])
   })
 
-  it('does not run a type-4 auction with a missing mask, and names the provider', () => {
+  it('does not run a mask-provider auction with a missing mask, and names the provider', () => {
     const plan = planRun(type, [], { providers, masks: [masks[0]] }, opensAll)
     expect(plan).toMatchObject({ kind: 'skip', counted: 0 })
     expect(plan.kind === 'skip' && plan.reason).toContain(bob)
   })
 
-  it('does not run a type-4 auction with a mask that does not open its commitment', () => {
+  it('does not run a mask-provider auction with a mask that does not open its commitment', () => {
     const plan = planRun(type, bids, { providers, masks }, (ciphertext) => ciphertext !== '0xmb')
     expect(plan.kind).toBe('skip')
     expect(plan.kind === 'skip' && plan.reason).toContain(bob)
@@ -163,13 +163,13 @@ describe('planRun', () => {
     expect(plan).toMatchObject({ kind: 'skip', counted: 1 })
   })
 
-  it('runs the other types without masks and still needs 2 bidders', () => {
+  it('runs the first-price type without masks and still needs 2 bidders', () => {
     const first = [bid(alice, 'a1', 1, 1, 3), bid(bob, 'bb', 1, 4, 3)]
     expect(planRun(AuctionType.FirstPrice, first, { providers: [], masks: [] }, opensAll)).toMatchObject({ kind: 'run', counted: 2 })
     expect(planRun(AuctionType.FirstPrice, [first[0]], { providers: [], masks: [] }, opensAll)).toMatchObject({ kind: 'skip', counted: 1 })
   })
 
-  it('runs a type-5 auction with 4 ciphertexts per bid and no masks, and still needs 2 bidders', () => {
+  it('runs the no-provider type with 4 ciphertexts per bid and no masks, and still needs 2 bidders', () => {
     const shares = [bid(alice, 'a1', 1, 1, 4), bid(bob, 'bb', 1, 5, 4)]
     const plan = planRun(AuctionType.QnrSecondPrice, shares, { providers: [], masks: [] }, opensAll)
     expect(plan).toMatchObject({ kind: 'run', counted: 2 })

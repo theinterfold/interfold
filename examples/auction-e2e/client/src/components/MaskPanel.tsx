@@ -24,7 +24,7 @@ interface MaskPanelProps {
 }
 
 /**
- * The mask providers of a type-4 auction and whether each has sent its mask. A connected provider
+ * The mask providers of a mask-provider auction and whether each has sent its mask. A connected provider
  * that has not sent its mask can prove and send it here. Bidding opens when every mask is in.
  */
 const MaskPanel: React.FC<MaskPanelProps> = ({ auction, phase, wallet, committeeKey, onSubmitted }) => {

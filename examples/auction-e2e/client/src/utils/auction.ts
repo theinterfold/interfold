@@ -13,7 +13,7 @@ import { scanLogs } from './logs'
 import { getReadSdk, publicClient } from './chain'
 import { shortId } from './format'
 
-/** A mask provider of a type-4 auction and whether its mask is on chain. */
+/** A mask provider of a mask-provider auction and whether its mask is on chain. */
 export interface MaskProviderState {
   address: Address
   submitted: boolean

@@ -5,15 +5,14 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! The bid proof for the roles 2 and 3 (`share1` and `share2`), the second leaf of the bid tree of
-//! the auction type 5.
+//! the auction type 2.
 //!
 //! It verifies the user-data encryption proofs of both roles and nothing else. A share is uniform
 //! random, and the encryption proof already range-checks its plaintext, so no other constraint
 //! applies. The proof is a recursive proof (`noir-recursive-no-zk`): `auction_bid4` verifies it.
 //!
 //! Public inputs, in order: the two ciphertext commitments, `pk_row0` (the commitment of the
-//! encryption key), the key hash of the wrapper circuit, and its two VK chains. They are the public
-//! inputs of `auction_bid_masks`.
+//! encryption key), the key hash of the wrapper circuit, and its two VK chains.
 use auction_bid::{UDE_PUBLIC_LEN, verify_wrapper};
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey};
 

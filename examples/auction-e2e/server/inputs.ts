@@ -38,7 +38,7 @@ export interface ProgramInputs {
   parents: number[]
 }
 
-/** The mask providers of a type-4 auction and the masks they sent. Both are empty for the other types. */
+/** The mask providers of a mask-provider auction and the masks they sent. Both are empty for the other types. */
 export interface MaskInputs {
   providers: readonly Address[]
   masks: readonly SubmittedMask[]
@@ -48,7 +48,7 @@ const NO_MASKS: MaskInputs = { providers: [], masks: [] }
 
 /**
  * Every published input of an auction in leaf order: the configuration at leaf 0 (it names the mask
- * providers of a type-4 auction), then the masks, then the ciphertexts of every bid, whether or not
+ * providers of a mask-provider auction), then the masks, then the ciphertexts of every bid, whether or not
  * the program will count it. The input root covers all leaves, so the program needs all of them.
  * Events do not arrive in leaf order, so this sorts them.
  *
@@ -113,7 +113,7 @@ export type RunPlan = { kind: 'run'; inputs: ProgramInputs; counted: number } | 
 
 /**
  * Decide whether an auction has a computation to run, and build its inputs if it has. The program
- * needs {@link MIN_BIDDERS} bidders whose bids open their commitments. A type-4 auction also needs
+ * needs {@link MIN_BIDDERS} bidders whose bids open their commitments. A mask-provider auction also needs
  * every mask, each one opening its commitment: the program stops without one, so the server does not
  * start it. `opens` is the function of {@link opensCommitment}.
  *

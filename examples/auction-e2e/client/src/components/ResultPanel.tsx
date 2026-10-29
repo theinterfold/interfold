@@ -7,9 +7,7 @@
 import React, { useEffect, useState } from 'react'
 import type { Address } from 'viem'
 import {
-  type AuctionResult,
   AuctionType,
-  type LaneResult,
   MIN_BIDDERS,
   type RegionResult,
   type SelectedBid,
@@ -38,7 +36,7 @@ interface Decoded {
   /** The bids the program computed over, in bidder position order. */
   bidders: SelectedBid[]
   outcomes: BidderOutcome[]
-  result: AuctionResult
+  result: RegionResult
 }
 
 /**
@@ -64,13 +62,7 @@ const sameAddress = (a: string, b: string | undefined) => b !== undefined && a.t
 
 const PRICE_EXPLANATION: Record<AuctionType, string> = {
   [AuctionType.FirstPrice]:
-    'First-price auction: the winner pays their own bid, which is the highest bid. The committee decrypted only the winner and that bid; no other bid was ever revealed.',
-  [AuctionType.SecondPrice]:
-    'Second-price auction: the winner pays the second-highest bid. The committee decrypted only the winner and that price; the winning bid itself stays secret.',
-  [AuctionType.RatioFirstPrice]:
-    'First-price auction with ratio lanes: the winner pays their own bid, which is the highest bid. The committee decrypted the highest bid and the set of bidders that tied for it. If one bidder tied, that bidder won. If more tied, the tied bidder who bid first won. No other bid was revealed.',
-  [AuctionType.RatioSecondPrice]:
-    'Second-price auction with ratio lanes: the winner pays the second-highest bid. The committee decrypted that price and the set of winning bidders. If the top bids tied, that set holds every tied bidder, their bids equal the price, and the tied bidder who bid first won. Without a tie the winner’s bid stays secret.',
+    'First-price auction: the winner pays their own bid, which is the highest bid. The committee decrypted one lane of numbers for each bidder. The lanes show only the winner and that bid. The masks of the bidders hide every other slot, and they never touch the slots that the reading needs, so the lanes always read.',
   [AuctionType.ProviderSecondPrice]:
     'Second-price auction with mask providers: the winner pays the second-highest bid. The committee decrypted a pattern of zeros and random numbers, and the pattern shows only the winner and that price; the winning bid itself stays secret. The mask providers made the random numbers, and none of them is zero, so the pattern always reads.',
   [AuctionType.QnrSecondPrice]:
@@ -79,9 +71,6 @@ const PRICE_EXPLANATION: Record<AuctionType, string> = {
 
 const PRICE_CAPTION: Record<AuctionType, string> = {
   [AuctionType.FirstPrice]: 'The winning bid',
-  [AuctionType.SecondPrice]: 'The second-highest bid',
-  [AuctionType.RatioFirstPrice]: 'The winning bid',
-  [AuctionType.RatioSecondPrice]: 'The second-highest bid (the top bid, if the top bids tied)',
   [AuctionType.ProviderSecondPrice]: 'The second-highest bid',
   [AuctionType.QnrSecondPrice]: 'The second-highest bid',
 }
@@ -145,7 +134,7 @@ const ResultPanel: React.FC<ResultPanelProps> = ({ auction, account, myVersions 
 interface ResultViewProps extends ResultPanelProps {
   bidders: SelectedBid[]
   outcomes: BidderOutcome[]
-  result: AuctionResult
+  result: RegionResult
 }
 
 /** Shows a decoded result: the winner, the price and the view that fits the result kind. */
@@ -158,8 +147,6 @@ export const ResultView: React.FC<ResultViewProps> = ({ auction, account, myVers
   // The level of the version that counted, if this browser made that bid.
   const myBid = myVersions.find(({ version }) => version === mine?.counted)?.level ?? null
   const priceLabel = price === null ? 'unreadable' : formatPrice(price, auction.prices)
-  const tieSet = result.kind === 'lane' ? result.tieSet : []
-  const inTieSet = tieSet.length > 1 && account !== undefined && tieSet.some((position) => sameAddress(bidders[position].bidder, account))
 
   return (
     <div className='space-y-7'>
@@ -178,30 +165,22 @@ export const ResultView: React.FC<ResultViewProps> = ({ auction, account, myVers
         </div>
       </div>
 
-      {result.kind === 'region' ? (
-        (winner === null || price === null) && (
-          <div role='alert' className='note bad'>
-            {auction.auctionType === AuctionType.ProviderSecondPrice
-              ? 'The result does not show a single winner. With mask providers this cannot happen by chance, so the output is not from the auction program.'
-              : auction.auctionType === AuctionType.QnrSecondPrice
-                ? 'The result does not show a single winner. This type cannot fail by chance, whatever the bidders send, so the output is not from the auction program.'
-                : 'The result does not show a single winner. A slot that should hold a random value read as zero by mistake (about 1 in 257 per slot and copy on these demo parameters). Run the auction again.'}
-          </div>
-        )
-      ) : (
-        <LaneProblems auction={auction} result={result} />
+      {(winner === null || price === null) && (
+        <div role='alert' className='note bad'>
+          The result does not show a single winner. This cannot happen by chance, whatever the bidders send, so the output is not from the
+          auction program.
+        </div>
       )}
 
       {account && (
         <div className={`note ${youWon ? 'ok' : ''}`}>
           {youWon ? (
             <>
-              <strong>You won.</strong> You pay {priceLabel}.{inTieSet && ' You tied for the top bid and you bid first.'}
+              <strong>You won.</strong> You pay {priceLabel}.
             </>
           ) : youBid ? (
             <>
               <strong>You did not win.</strong>
-              {inTieSet && ' You tied for the top bid and another tied bidder bid first.'}
               {myBid !== null && ` Your bid was ${formatPrice(myBid, auction.prices)}.`}
             </>
           ) : mine ? (
@@ -216,11 +195,7 @@ export const ResultView: React.FC<ResultViewProps> = ({ auction, account, myVers
       )}
 
       <p className='text-sm text-ink'>{PRICE_EXPLANATION[auction.auctionType]}</p>
-      {result.kind === 'lane' ? (
-        <LaneView auction={auction} account={account} bidders={bidders} result={result} />
-      ) : (
-        <SlotGrid auction={auction} account={account} bidders={bidders} result={result} />
-      )}
+      <SlotGrid auction={auction} account={account} bidders={bidders} result={result} />
       <CountedBids account={account} bidders={bidders} outcomes={outcomes} />
     </div>
   )
@@ -287,122 +262,6 @@ const CountedBids: React.FC<{ account: `0x${string}` | undefined; bidders: Selec
   )
 }
 
-/** The ways a ratio-lane result can fail to read: no price or tie set, or copies that disagree. */
-const LaneProblems: React.FC<{ auction: AuctionState; result: LaneResult }> = ({ auction, result }) => (
-  <>
-    {(result.winner === null || result.price === null || result.tieSet.length === 0) && (
-      <div role='alert' className='note bad'>
-        The result lanes do not show a price and a set of tied bidders.{' '}
-        {auction.auctionType === AuctionType.RatioSecondPrice
-          ? 'A random value in a lane read as zero by mistake (about 1 in 257 per copy on these demo parameters), or the output is not from the auction program. Run the auction again.'
-          : 'A lane holds a value that no set of bidders can make, so the output is not from the auction program.'}
-      </div>
-    )}
-    {!result.copiesAgree && (
-      <div role='alert' className='note bad'>
-        The copies of the result disagree about the set of tied bidders. The output is not from the auction program, so do not rely on this
-        winner.
-      </div>
-    )}
-  </>
-)
-
-const LaneView: React.FC<{
-  auction: AuctionState
-  account: `0x${string}` | undefined
-  bidders: SelectedBid[]
-  result: LaneResult
-}> = ({ auction, account, bidders, result }) => {
-  const { price, winner, tieSet, lanes, copies } = result
-  const levels = auction.prices.length
-  const columns = { gridTemplateColumns: `max-content repeat(${levels}, minmax(0, 1fr))` }
-
-  return (
-    <div className='space-y-6'>
-      <div className='space-y-1'>
-        <h3 className='h3'>How the result is read</h3>
-        <p className='text-sm text-muted'>
-          The committee published one lane of {levels} slots, one per price step, and not one row per bidder. Above the price every slot is
-          zero. At the price step the slot holds the set of bidders that tied for the top bid. Below it every slot is random.
-          {copies > 1 && ` The program repeats the lane in ${copies} copies. The page reads each copy and checks that they agree.`}
-        </p>
-      </div>
-
-      <div className='overflow-x-auto pb-2'>
-        <div className='slots' style={columns}>
-          <span />
-          {Array.from({ length: levels }, (_, level) => (
-            <span key={level} className='axis' title={`price ${formatPrice(level, auction.prices)}`}>
-              {level}
-            </span>
-          ))}
-          <span className='row-name'>Result lane</span>
-          {lanes.slice(0, levels).map((lane, level) => (
-            <span
-              key={level}
-              className={`cell ${lane === 'random' ? 'rand' : lane === 'result' ? 'read' : 'zero'} ${level === price ? 'col-price' : ''}`}
-              title={`step ${level}: ${lane === 'random' ? 'random value' : lane === 'result' ? 'the set of tied bidders' : 'zero'}`}
-            />
-          ))}
-        </div>
-      </div>
-
-      <div className='legend'>
-        <span>
-          <i className='slots-swatch rand' /> Random value
-        </span>
-        <span>
-          <i style={{ background: 'var(--paper)' }} /> Zero
-        </span>
-        <span>
-          <i style={{ background: 'var(--vote-action)', borderColor: 'var(--vote-action)' }} /> The set of tied bidders, at the price
-        </span>
-        <span>
-          <i style={{ boxShadow: '0 0 0 2px var(--ink)' }} /> Price step
-        </span>
-      </div>
-
-      {tieSet.length > 0 && (
-        <div className='space-y-3'>
-          <h3 className='h3'>{tieSet.length > 1 ? `${tieSet.length} bidders tied for the top bid` : 'No tie'}</h3>
-          <p className='text-sm text-muted'>
-            The tie set is the group of bidders that bid the top step. The result publishes it, so everyone sees who tied, but not any other
-            bid. If the set holds one bidder, that bidder wins. If it holds more, the tied bidder who bid first wins.
-          </p>
-          {tieSet.length > 1 ? (
-            <>
-              <p className='text-sm text-muted'>
-                The list below is in the order the bidders bid, and the winner is the first bidder in it. A bidder that updated its bid has
-                the place of its update, so an update loses the place of the earlier bid.
-              </p>
-              <ol className='space-y-2'>
-                {tieSet.map((position, place) => {
-                  const address = bidders[position].bidder
-                  return (
-                    <li key={address} className='flex flex-wrap items-center gap-2 text-sm'>
-                      <span className='mono muted'>{place}</span>
-                      <AddressLink address={address} />
-                      {sameAddress(address, account) && <span className='tag muted'>you</span>}
-                      {position === winner && <span className='tag live'>winner</span>}
-                    </li>
-                  )
-                })}
-              </ol>
-            </>
-          ) : (
-            <p className='text-sm text-muted'>
-              Here one bidder holds the top bid, so that bidder won.{' '}
-              {auction.auctionType === AuctionType.RatioSecondPrice
-                ? 'The winning bid stays secret: only the second-highest bid, the price, is public.'
-                : 'The winning bid is the price.'}
-            </p>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
 const SlotGrid: React.FC<{
   auction: AuctionState
   account: `0x${string}` | undefined
@@ -419,10 +278,9 @@ const SlotGrid: React.FC<{
       <div className='space-y-1'>
         <h3 className='h3'>How the result is read</h3>
         <p className='text-sm text-muted'>
-          The committee published {levels} slots per bidder, one per price step. Slots hold a random value unless the program zeroed them.{' '}
           {firstPrice
-            ? 'Exactly one slot is zero: the winner’s, at the winning bid.'
-            : 'Every bidder’s slots are random up to the price. At the price step exactly one is zero, the winner’s. Above it every slot is zero.'}
+            ? `The committee published one lane of ${levels} slots for each bidder, one slot per price step. Above the price every slot is zero. At the price step the winner’s lane is exactly 1, and every lane before it is exactly 0. The lanes after the winner, and every slot below the price, look random: the masks of the bidders hide them, and the reading does not need them.`
+            : `The committee published ${levels} slots per bidder, one per price step. Slots hold a random value unless the program zeroed them. Every bidder’s slots are random up to the price. At the price step exactly one is zero, the winner’s. Above it every slot is zero.`}
         </p>
       </div>
 
@@ -445,12 +303,12 @@ const SlotGrid: React.FC<{
                   {position === winner && <span className='tag live'>winner</span>}
                 </span>
                 {row.slice(0, levels).map((isSet, level) => {
-                  const reading = !isSet && position === winner && level === price
+                  const reading = position === winner && level === price
                   return (
                     <span
                       key={level}
-                      className={`cell ${isSet ? 'rand' : reading ? 'read' : 'zero'} ${level === price ? 'col-price' : ''}`}
-                      title={`step ${level}: ${isSet ? 'random value' : 'zero'}`}
+                      className={`cell ${reading ? 'read' : isSet ? 'rand' : 'zero'} ${level === price ? 'col-price' : ''}`}
+                      title={`step ${level}: ${reading ? (firstPrice ? 'exactly 1, the reading' : 'zero, the reading') : isSet ? 'random value' : 'zero'}`}
                     />
                   )
                 })}
@@ -468,7 +326,8 @@ const SlotGrid: React.FC<{
           <i style={{ background: 'var(--paper)' }} /> Zero
         </span>
         <span>
-          <i style={{ background: 'var(--vote-action)', borderColor: 'var(--vote-action)' }} /> The reading: the winner’s zero at the price
+          <i style={{ background: 'var(--vote-action)', borderColor: 'var(--vote-action)' }} /> The reading: the winner’s{' '}
+          {firstPrice ? '1' : 'zero'} at the price
         </span>
         <span>
           <i style={{ boxShadow: '0 0 0 2px var(--ink)' }} /> Price step

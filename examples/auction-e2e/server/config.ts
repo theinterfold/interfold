@@ -41,7 +41,7 @@ export interface ServerConfig {
    */
   relayerPrivateKey?: Hex
   /**
-   * The key of the mask provider of type-4 auctions. Never log it. `undefined` turns the provider off.
+   * The key of the mask provider of mask-provider auctions. Never log it. `undefined` turns the provider off.
    * The address needs gas, and the creator of an auction must name it as a provider.
    */
   maskProviderPrivateKey?: Hex

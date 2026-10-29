@@ -6,14 +6,7 @@
 
 import React, { useMemo, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import {
-  AUCTION_TYPE_DESCRIPTIONS,
-  AUCTION_TYPE_LABELS,
-  AuctionType,
-  MAX_BIDDERS_BY_TYPE,
-  isProviderType,
-  isRatioType,
-} from '@interfold/auction'
+import { AUCTION_TYPE_DESCRIPTIONS, AUCTION_TYPE_LABELS, AuctionType, MAX_BIDDERS_BY_TYPE, isProviderType } from '@interfold/auction'
 import { useAuction } from '@/hooks/useAuctions'
 import { useChainTime } from '@/hooks/useChainTime'
 import { useCommitteeKey } from '@/hooks/useCommitteeKey'
@@ -31,6 +24,7 @@ import MaskPanel from '@/components/MaskPanel'
 import CopyId from '@/components/CopyId'
 import { AddressLink } from '@/components/Explorer'
 import { PictureControl, PictureHero, usePicture } from '@/components/AuctionPicture'
+import FirstPriceAuctionExplainer from '@/components/FirstPriceAuctionExplainer'
 import PhaseTimeline from '@/components/PhaseTimeline'
 import ProviderAuctionExplainer from '@/components/ProviderAuctionExplainer'
 import QnrAuctionExplainer from '@/components/QnrAuctionExplainer'
@@ -168,11 +162,7 @@ const AuctionPage: React.FC = () => {
             </span>
           </Fact>
         )}
-        <Fact label='Top tie'>
-          {isRatioType(auction.auctionType)
-            ? 'The tied bidder who bid first wins. The tie is public'
-            : 'The tied bidder who bid first wins. The tie stays hidden'}
-        </Fact>
+        <Fact label='Top tie'>The tied bidder who bid first wins. The tie stays hidden</Fact>
         <Fact label='Time'>{timeLeftLabel(auction, phase, now)}</Fact>
         <Fact label='Bidding ends'>{formatDateTime(auction.inputWindow[1])}</Fact>
         <Fact label={`${auction.prices.length} price steps`}>
@@ -228,6 +218,12 @@ const AuctionPage: React.FC = () => {
           </div>
         )}
       </Section>
+
+      {auction.auctionType === AuctionType.FirstPrice && (
+        <Section title='How this auction works'>
+          <FirstPriceAuctionExplainer />
+        </Section>
+      )}
 
       {isProviderType(auction.auctionType) && (
         <Section title='How this auction works'>

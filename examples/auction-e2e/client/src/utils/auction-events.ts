@@ -12,7 +12,7 @@ import { getContractAddresses } from './env-config'
 import { scanLogs } from './logs'
 import { publicClient } from './chain'
 
-/** Every mask of a type-4 auction in leaf order, from the `MaskSubmitted` events. */
+/** Every mask of a mask-provider auction in leaf order, from the `MaskSubmitted` events. */
 export async function readSubmittedMasks(e3Id: bigint): Promise<SubmittedMask[]> {
   const { e3Program } = getContractAddresses()
   const { logs } = await scanLogs((range) =>

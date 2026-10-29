@@ -181,20 +181,6 @@ const config: HardhatUserConfig = {
         },
       },
     ],
-    overrides: {
-      // The constructor has 13 arguments: the legacy code generator runs out of stack slots when it
-      // decodes them. The Yul pipeline does not.
-      'contracts/AuctionProgram.sol': {
-        version: '0.8.28',
-        settings: {
-          viaIR: true,
-          optimizer: { enabled: true, runs: 1 },
-          evmVersion: 'paris',
-          debug: { revertStrings: 'strip' },
-          metadata: { bytecodeHash: 'none' },
-        },
-      },
-    },
   },
 }
 

@@ -10,7 +10,7 @@ import { exampleRows } from '@/utils/explainer-example'
 
 const Mono: React.FC<{ children: React.ReactNode }> = ({ children }) => <span className='font-mono'>{children}</span>
 
-/** How the "Second-price, zero failure" type works, in plain words, with a worked example of 3 bidders. */
+/** How the "Second-price, mask providers" type works, in plain words, with a worked example of 3 bidders. */
 const ProviderAuctionExplainer: React.FC = () => {
   const rows = exampleRows()
   const maxBidders = MAX_BIDDERS_BY_TYPE[AuctionType.ProviderSecondPrice]
@@ -123,9 +123,7 @@ const ProviderAuctionExplainer: React.FC = () => {
           The numbers are small: every factor of <Mono>tests</Mono> that is not zero is a whole number below {PLAINTEXT_MODULUS}. The number{' '}
           {PLAINTEXT_MODULUS} is prime, so the product of numbers that are not zero is never a multiple of {PLAINTEXT_MODULUS}. The proof of
           each mask shows that none of its numbers is zero. So a number of <Mono>tests</Mono> that is not zero can never become a zero in
-          the output, and the result always reads. In the types without a zero-failure design (first-price, second-price and the ratio
-          types), each bidder draws a random mask, and the sum of the masks is zero in a slot with the probability 1 in {PLAINTEXT_MODULUS},
-          which can hide a loser and make the result unreadable.
+          the output, and the result always reads.
         </p>
       </div>
 

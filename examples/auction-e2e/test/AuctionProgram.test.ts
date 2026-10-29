@@ -22,7 +22,6 @@ import {
 } from 'viem'
 import {
   type BidInput,
-  AuctionType,
   allowlistProof,
   bidInputsHash,
   bidTypedData,
@@ -37,10 +36,15 @@ const E3_ID = 5n
 const KEY = `0x${'ab'.repeat(32)}` as const
 const FIELD = 21888242871839275222246405745257275088548364400416034343698204186575808495617n
 const E3_PROGRAM_PARAMS = '0x1234'
-/** The type of the second-price auction with mask providers. */
-const PROVIDER_TYPE = 4
-/** The type of the second-price auction with no providers. */
-const QNR_TYPE = 5
+/** The first-price auction: a bidder sends `ge`, `gt` and a `mask`. */
+const FIRST_PRICE_TYPE = 0
+/** The second-price auction with mask providers: a bidder sends `ge` and `gt`. */
+const PROVIDER_TYPE = 1
+/** The second-price auction with no providers: a bidder sends `ge`, `gt` and two shares. */
+const QNR_TYPE = 2
+const TYPES = [FIRST_PRICE_TYPE, PROVIDER_TYPE, QNR_TYPE]
+/** The ciphertexts of one bid, by type. */
+const ROLES = [3, 2, 4]
 const MASK_VERSION = 0xffffffff
 
 /** `bytes32` filled with one byte. */
@@ -83,7 +87,7 @@ describe('AuctionProgram bids', () => {
     const { ethers } = await hre.network.connect()
     const [owner, alice, bob, carol, dave, relayer, outsider, p1, p2, p3, p4, ...rest] = await ethers.getSigners()
     const providerSigners = [p1, p2, p3, p4]
-    const type = options.type ?? AuctionType.FirstPrice
+    const type = options.type ?? FIRST_PRICE_TYPE
     const providers = (type === PROVIDER_TYPE ? providerSigners.slice(0, options.providers ?? 2) : []).map((signer) => signer.address)
     const interfold = await ethers.deployContract('MockInterfold', [options.deadline ?? 2n ** 40n, KEY, owner.address])
     const receiptVerifier = await ethers.deployContract('MockOpenVmReceiptVerifier')
@@ -95,7 +99,6 @@ describe('AuctionProgram bids', () => {
     const poseidon = await ethers.deployContract('PoseidonT3')
     const vkAnchor2 = filled(0xcc)
     const vkAnchor3 = filled(0xcd)
-    const vkAnchor4 = filled(0xce)
     const vkAnchorMask = filled(0xcf)
     const vkAnchorQnr = filled(0xd0)
     const factory = await ethers.getContractFactory(
@@ -115,7 +118,6 @@ describe('AuctionProgram bids', () => {
           await maskVerifier.getAddress(),
           vkAnchor2,
           vkAnchor3,
-          vkAnchor4,
           vkAnchorMask,
           vkAnchorQnr,
           await availability.getAddress(),
@@ -136,7 +138,7 @@ describe('AuctionProgram bids', () => {
     await created.wait()
     const chainId = Number((await ethers.provider.getNetwork()).chainId)
     const programAddress = (await program.getAddress()) as Hex
-    const roles = type === AuctionType.RatioSecondPrice || type === QNR_TYPE ? 4 : type === PROVIDER_TYPE ? 2 : 3
+    const roles = ROLES[type]
     const makeBid = (bidder: string, seed: number, extra: { gateProof?: Hex; signature?: Hex; proof?: Hex } = {}) => {
       const ciphertexts = Array.from({ length: roles }, (_, r) => `0x${(seed * 16 + r + 1).toString(16).padStart(2, '0').repeat(8)}` as Hex)
       const commitments = Array.from({ length: roles }, (_, r) => filled(seed * 16 + r + 1))
@@ -158,6 +160,19 @@ describe('AuctionProgram bids', () => {
       gateProof: extra.gateProof ?? ('0x' as Hex),
       signature: extra.signature ?? ('0x' as Hex),
     })
+    /** Sends the mask of every provider, so that bids are open. Sends nothing for the types 0 and 2. */
+    const openBids = async () => {
+      for (const [seed, signer] of providerSigners.slice(0, providers.length).entries()) {
+        await program.connect(signer).publishInput(E3_ID, encodeBidInput(makeMask(signer.address, seed + 1)))
+      }
+    }
+    /** The verifier and the anchor that a bid of this auction's type must reach. */
+    const route = [
+      { verifier: verifier3, anchor: vkAnchor3 },
+      { verifier: verifier2, anchor: vkAnchor2 },
+      { verifier: verifier4, anchor: vkAnchorQnr },
+    ][type]
+    const anchors = [vkAnchor2, vkAnchor3, vkAnchorMask, vkAnchorQnr]
     /** Whether the input root of the auction is the root of exactly `leaves`: the root is only visible to `verify`. */
     const hasLeaves = async (leaves: readonly bigint[]) => {
       const proof = encodeAbiParameters(parseAbiParameters('bytes, bytes32, bytes32'), [
@@ -196,11 +211,13 @@ describe('AuctionProgram bids', () => {
       maskVerifier,
       vkAnchor2,
       vkAnchor3,
-      vkAnchor4,
       vkAnchorMask,
       vkAnchorQnr,
       gate,
       roles,
+      openBids,
+      route,
+      anchors,
     }
   }
 
@@ -212,30 +229,34 @@ describe('AuctionProgram bids', () => {
     )
   })
 
-  it('takes a direct bid, then updates, and numbers the leaves', async () => {
-    const { program, alice, makeBid, verifier3, vkAnchor3, roles } = await setup()
-    const first = makeBid(alice.address, 1)
-    // The verifier gets the commitments, the bidder, levels, the committee key and the anchor.
-    await verifier3.expect([...first.commitments, word(alice.address), level(4), KEY, vkAnchor3])
-    const tx = await program.connect(alice).publishInput(E3_ID, encodeBidInput(first))
-    await expect(tx).to.emit(program, 'BidSubmitted').withArgs(E3_ID, alice.address, 1n, 1n, first.ciphertexts, first.commitments)
-    expect(await program.bidCount(E3_ID, alice.address)).to.equal(1n)
-    expect(await program.bidderCount(E3_ID)).to.equal(1n)
-    expect((await program.inputs(E3_ID)).numberOfLeaves).to.equal(BigInt(1 + roles))
+  it('takes a direct bid, then updates, and numbers the leaves, for every type', async () => {
+    for (const type of TYPES) {
+      const { program, alice, makeBid, openBids, route, roles, providers } = await setup({ type, providers: 2 })
+      await openBids()
+      // The configuration leaf and the masks come first.
+      const before = BigInt(1 + providers.length)
+      const first = makeBid(alice.address, 1)
+      // The verifier gets the commitments, the bidder, levels, the committee key and the anchor.
+      await route.verifier.expect([...first.commitments, word(alice.address), level(4), KEY, route.anchor])
+      const tx = await program.connect(alice).publishInput(E3_ID, encodeBidInput(first))
+      await expect(tx).to.emit(program, 'BidSubmitted').withArgs(E3_ID, alice.address, 1n, before, first.ciphertexts, first.commitments)
+      expect(await program.bidCount(E3_ID, alice.address)).to.equal(1n)
+      expect(await program.bidderCount(E3_ID)).to.equal(1n)
+      expect((await program.inputs(E3_ID)).numberOfLeaves).to.equal(before + BigInt(roles))
 
-    await verifier3.expect([...first.commitments, word(alice.address), level(4), KEY, vkAnchor3])
-    for (const version of [2n, 3n]) {
-      await expect(program.connect(alice).publishInput(E3_ID, encodeBidInput(first)))
-        .to.emit(program, 'BidSubmitted')
-        .withArgs(E3_ID, alice.address, version, 1n + BigInt(roles) * (version - 1n), first.ciphertexts, first.commitments)
+      for (const version of [2n, 3n]) {
+        await expect(program.connect(alice).publishInput(E3_ID, encodeBidInput(first)))
+          .to.emit(program, 'BidSubmitted')
+          .withArgs(E3_ID, alice.address, version, before + BigInt(roles) * (version - 1n), first.ciphertexts, first.commitments)
+      }
+      // The bidder counts once; a fourth bid is too many.
+      expect(await program.bidderCount(E3_ID)).to.equal(1n)
+      await expect(program.connect(alice).publishInput(E3_ID, encodeBidInput(first))).to.be.revertedWithCustomError(program, 'TooManyBids')
     }
-    // The bidder counts once; a fourth bid is too many.
-    expect(await program.bidderCount(E3_ID)).to.equal(1n)
-    await expect(program.connect(alice).publishInput(E3_ID, encodeBidInput(first))).to.be.revertedWithCustomError(program, 'TooManyBids')
   })
 
-  it('rejects a bad shape, a foreign sender, a bad proof and a fifth bidder', async () => {
-    const { program, alice, bob, carol, dave, relayer, makeBid, ethers } = await setup()
+  it('rejects a bad shape, a foreign sender and a bad proof', async () => {
+    const { program, alice, bob, makeBid, ethers } = await setup()
     const bid = makeBid(alice.address, 1)
     await expect(program.connect(bob).publishInput(E3_ID, encodeBidInput(bid))).to.be.revertedWithCustomError(program, 'SenderNotBidder')
     await expect(
@@ -245,14 +266,43 @@ describe('AuctionProgram bids', () => {
       program.connect(alice).publishInput(E3_ID, encodeBidInput({ ...bid, ciphertexts: ['0x', ...bid.ciphertexts.slice(1)] })),
     ).to.be.revertedWithCustomError(program, 'EmptyInputData')
     await expect(program.connect(alice).publishInput(E3_ID, encodeBidInput({ ...bid, proof: '0x02' }))).to.be.revert(ethers)
-    // Four bidders fit a region auction.
-    for (const [seed, signer] of [alice, bob, carol, dave].entries()) {
-      await program.connect(signer).publishInput(E3_ID, encodeBidInput(makeBid(signer.address, seed + 1)))
+  })
+
+  it('takes only as many ciphertexts as the type has roles', async () => {
+    for (const type of TYPES) {
+      const { program, alice, makeBid, openBids, roles } = await setup({ type, providers: 1 })
+      await openBids()
+      const bid = makeBid(alice.address, 1)
+      for (const length of [0, 1, 2, 3, 4, 5].filter((count) => count !== roles)) {
+        const ciphertexts = Array.from({ length }, (_, i) => bid.ciphertexts[i % roles])
+        const commitments = Array.from({ length }, (_, i) => bid.commitments[i % roles])
+        await expect(
+          program.connect(alice).publishInput(E3_ID, encodeBidInput({ ...bid, ciphertexts, commitments })),
+        ).to.be.revertedWithCustomError(program, 'InvalidBidShape')
+      }
+      // The commitments must match the ciphertexts.
+      await expect(
+        program.connect(alice).publishInput(E3_ID, encodeBidInput({ ...bid, commitments: bid.commitments.slice(1) })),
+      ).to.be.revertedWithCustomError(program, 'InvalidBidShape')
+      expect(await program.bidCount(E3_ID, alice.address)).to.equal(0n)
     }
-    await expect(program.connect(relayer).publishInput(E3_ID, encodeBidInput(makeBid(relayer.address, 9)))).to.be.revertedWithCustomError(
-      program,
-      'TooManyBidders',
-    )
+  })
+
+  it('takes 8 bidders of every type, refuses a ninth, and still takes an update', async () => {
+    for (const type of TYPES) {
+      const { program, alice, bob, carol, dave, relayer, outsider, extraSigners, makeBid, openBids } = await setup({ type, providers: 2 })
+      await openBids()
+      const bidders = [alice, bob, carol, dave, relayer, outsider, extraSigners[0], extraSigners[1], extraSigners[2]]
+      for (const [seed, signer] of bidders.slice(0, 8).entries()) {
+        await program.connect(signer).publishInput(E3_ID, encodeBidInput(makeBid(signer.address, seed + 1)))
+      }
+      expect(await program.bidderCount(E3_ID)).to.equal(8n)
+      await expect(
+        program.connect(bidders[8]).publishInput(E3_ID, encodeBidInput(makeBid(bidders[8].address, 9))),
+      ).to.be.revertedWithCustomError(program, 'TooManyBidders')
+      await expect(program.connect(alice).publishInput(E3_ID, encodeBidInput(makeBid(alice.address, 1)))).to.emit(program, 'BidSubmitted')
+      expect(await program.bidderCount(E3_ID)).to.equal(8n)
+    }
   })
 
   it('takes a relayed bid and checks the signature, the version and the bytes', async () => {
@@ -303,14 +353,29 @@ describe('AuctionProgram bids', () => {
     expect(await program.bidCount(E3_ID, alice.address)).to.equal(1n)
   })
 
-  it('uses the four-role verifier for the second-price ratio type', async () => {
-    const { program, alice, makeBid, verifier3, verifier4, vkAnchor4 } = await setup({ type: AuctionType.RatioSecondPrice })
-    const bid = makeBid(alice.address, 1)
-    // The 3-role verifier would reject any other inputs, so the bid passes only through verifier 4,
-    // with the anchor of the 4-role circuits.
-    await verifier3.expect([filled(1)])
-    await verifier4.expect([...bid.commitments, word(alice.address), level(4), KEY, vkAnchor4])
-    await expect(program.connect(alice).publishInput(E3_ID, encodeBidInput(bid))).to.emit(program, 'BidSubmitted')
+  it('sends each type to its own verifier and its own anchor', async () => {
+    for (const type of TYPES) {
+      const { program, alice, makeBid, openBids, route, anchors, verifier2, verifier3, verifier4 } = await setup({ type, providers: 1 })
+      await openBids()
+      const bid = makeBid(alice.address, 1)
+      const publicInputs = [...bid.commitments, word(alice.address), level(4), KEY]
+      // The verifiers of the other types reject any input but this one, so only the right verifier passes the bid.
+      for (const other of [verifier2, verifier3, verifier4].filter((verifier) => verifier !== route.verifier)) {
+        await other.expect([filled(1)])
+      }
+      // The right verifier takes only the right anchor: the anchor of any other circuit fails the bid.
+      for (const anchor of anchors.filter((candidate) => candidate !== route.anchor)) {
+        await route.verifier.expect([...publicInputs, anchor])
+        await expect(program.connect(alice).publishInput(E3_ID, encodeBidInput(bid))).to.be.revertedWithCustomError(
+          route.verifier,
+          'PublicInputsMismatch',
+        )
+      }
+      expect(await program.bidCount(E3_ID, alice.address)).to.equal(0n)
+      await route.verifier.expect([...publicInputs, route.anchor])
+      await expect(program.connect(alice).publishInput(E3_ID, encodeBidInput(bid))).to.emit(program, 'BidSubmitted')
+      expect(await program.bidCount(E3_ID, alice.address)).to.equal(1n)
+    }
   })
 
   it('lets only allowlisted bidders in', async () => {
@@ -346,7 +411,7 @@ describe('AuctionProgram bids', () => {
 
   it('refuses gate config without a gate and a gate without code', async () => {
     const { program, outsider } = await setup()
-    const params = (gate: Hex, config: Hex) => encodeParams(AuctionType.FirstPrice, [], gate, config)
+    const params = (gate: Hex, config: Hex) => encodeParams(FIRST_PRICE_TYPE, [], gate, config)
     await expect(program.validate(6n, 0n, E3_PROGRAM_PARAMS, '0x', params(zeroAddress, '0x1234'))).to.be.revertedWithCustomError(
       program,
       'GateConfigWithoutGate',
@@ -357,35 +422,86 @@ describe('AuctionProgram bids', () => {
     )
   })
 
-  describe('type 4: second-price, zero failure', () => {
+  describe('the three types', () => {
+    const DOMAIN = '0x696e746572666f6c642d61756374696f6e2d636f6e6669672d7631'
+
+    it('numbers the types 0 to 2, with their roles and the bidder limit', async () => {
+      const { program } = await setup()
+      expect(await program.AUCTION_FIRST_PRICE()).to.equal(BigInt(FIRST_PRICE_TYPE))
+      expect(await program.AUCTION_PROVIDER_SECOND_PRICE()).to.equal(BigInt(PROVIDER_TYPE))
+      expect(await program.AUCTION_QNR_SECOND_PRICE()).to.equal(BigInt(QNR_TYPE))
+      // `ge`, `gt`, `mask`; `ge`, `gt`; `ge`, `gt`, `share`, `share`.
+      expect(await Promise.all(TYPES.map((type) => program.roleCount(type)))).to.deep.equal([3n, 2n, 4n])
+      expect(await Promise.all(TYPES.map((type) => program.maxBidders(type)))).to.deep.equal([8n, 8n, 8n])
+    })
+
+    it('refuses the type 3 and above', async () => {
+      const { program } = await setup()
+      for (const type of [3, 4, 255]) {
+        await expect(program.roleCount(type)).to.be.revertedWithCustomError(program, 'UnknownAuctionType')
+        await expect(program.maxBidders(type)).to.be.revertedWithCustomError(program, 'UnknownAuctionType')
+        await expect(program.validate(40n, 0n, E3_PROGRAM_PARAMS, '0x', encodeParams(type))).to.be.revertedWithCustomError(
+          program,
+          'UnknownAuctionType',
+        )
+      }
+    })
+
+    it('creates each type with the config leaf CONFIG_DOMAIN || id', async () => {
+      const leaves: bigint[] = []
+      for (const type of TYPES) {
+        const { program, created, providers, hasLeaves } = await setup({ type, providers: 2 })
+        await expect(created).to.emit(program, 'AuctionCreated')
+        if (type === PROVIDER_TYPE) await expect(created).to.emit(program, 'MaskProvidersSet').withArgs(E3_ID, providers)
+        else await expect(created).to.not.emit(program, 'MaskProvidersSet')
+        expect((await program.auctions(E3_ID)).auctionType).to.equal(BigInt(type))
+        expect(await program.CONFIG_DOMAIN()).to.equal(DOMAIN)
+
+        // The type byte is the id; the providers follow as 20 raw bytes each.
+        const input = concatHex([DOMAIN, toHex(type, { size: 1 }), ...providers.map((provider) => provider.toLowerCase() as Hex)])
+        expect(await program.configInput(type, providers)).to.equal(input)
+        const leaf = await program.configLeaf(type, providers)
+        expect(leaf).to.equal(BigInt(keccak256(input)) % FIELD)
+        // Leaf 0 is that leaf, and the auction has no other leaf yet.
+        expect((await program.inputs(E3_ID)).numberOfLeaves).to.equal(1n)
+        expect(await hasLeaves([leaf])).to.equal(true)
+        for (const other of TYPES.filter((candidate) => candidate !== type)) {
+          expect(await hasLeaves([await program.configLeaf(other, [])])).to.equal(false)
+        }
+        leaves.push(leaf)
+      }
+      expect(new Set(leaves).size).to.equal(TYPES.length)
+    })
+
+    it('matches the shared config leaf vectors', async () => {
+      const { program } = await setup()
+      // The vectors `program/src/lib.rs` and `sdk/src/layout.ts` test as well.
+      expect(keccak256(concatHex([DOMAIN, '0x00']))).to.equal('0x7cb4b680799f9a657bac884e1e32705f63553405504316f74d41fe7405521933')
+      expect(await program.configLeaf(FIRST_PRICE_TYPE, [])).to.equal(0x1bec199ab73c5a120b0bfce11b2fbfa512ed63745cd035d4c57e134c25521931n)
+      expect(await program.configLeaf(PROVIDER_TYPE, [])).to.equal(0x04584f96228a1ea3762ebf79ae1cc47f032f2dd1103c11e6c57bb0825775a0d4n)
+      expect(await program.configLeaf(QNR_TYPE, [])).to.equal(0x049d6b6876506c830bbd2ac2de0bab04c890d8c97a125c2add0b1e8adef5da65n)
+    })
+  })
+
+  describe('type 1: second-price, mask providers', () => {
     const p1 = '0x1111111111111111111111111111111111111111'
     const p2 = '0x2222222222222222222222222222222222222222'
     const DOMAIN = '0x696e746572666f6c642d61756374696f6e2d636f6e6669672d7631'
 
-    it('reports its roles and its bidder limit', async () => {
-      const { program } = await setup()
-      // Types 0 to 3 are as before; the type 4 sends 2 ciphertexts per bid and takes 8 bidders.
-      expect(await Promise.all([0, 1, 2, 3, 4].map((type) => program.roleCount(type)))).to.deep.equal([3n, 3n, 3n, 4n, 2n])
-      expect(await Promise.all([0, 1, 2, 3, 4].map((type) => program.maxBidders(type)))).to.deep.equal([4n, 4n, 8n, 8n, 8n])
-    })
-
     it('builds the config input with 20 raw bytes per provider', async () => {
       const { program } = await setup()
       // The vector `program/src/lib.rs` and `sdk/src/layout.ts` test as well.
-      const input = concatHex([DOMAIN, '0x04', p1, p2])
+      const input = concatHex([DOMAIN, '0x01', p1, p2])
       expect(input).to.equal(
-        '0x696e746572666f6c642d61756374696f6e2d636f6e6669672d76310411111111111111111111111111111111111111112222222222222222222222222222222222222222',
+        '0x696e746572666f6c642d61756374696f6e2d636f6e6669672d76310111111111111111111111111111111111111111112222222222222222222222222222222222222222',
       )
-      expect(await program.configInput(4, [p1, p2])).to.equal(input)
-      expect(keccak256(input)).to.equal('0xc6399fdb7f3b0e098dc01996306af62f928ed18203a1920ba1a7c96379d6460c')
-      expect(await program.configLeaf(4, [p1, p2])).to.equal(0x04a8660ffa748d62ac7f02bc2a6594baf1bf30601cbbcfc6921ff313b9d64608n)
+      expect(await program.configInput(PROVIDER_TYPE, [p1, p2])).to.equal(input)
+      expect(keccak256(input)).to.equal('0xc35ec886d8a9aa1b8ee8253c137ea4da5393c43cd7a1e2cd1e7adf4e08af0746')
+      expect(await program.configLeaf(PROVIDER_TYPE, [p1, p2])).to.equal(
+        0x01cd8ebb53e32974ada70e620d794365b2c4231af0bc20880ef308fe48af0742n,
+      )
       // The order of the providers is part of the leaf.
-      expect(await program.configLeaf(4, [p2, p1])).to.not.equal(await program.configLeaf(4, [p1, p2]))
-      // The types 0 to 3 have no provider: the input is the domain and the type, as before.
-      for (const type of [0, 1, 2, 3]) {
-        expect(await program.configInput(type, [])).to.equal(concatHex([DOMAIN, toHex(type, { size: 1 })]))
-      }
-      expect(await program.configLeaf(1, [])).to.equal(0x04584f96228a1ea3762ebf79ae1cc47f032f2dd1103c11e6c57bb0825775a0d4n)
+      expect(await program.configLeaf(PROVIDER_TYPE, [p2, p1])).to.not.equal(await program.configLeaf(PROVIDER_TYPE, [p1, p2]))
     })
 
     it('stores the providers and puts the config leaf with them first', async () => {
@@ -401,9 +517,9 @@ describe('AuctionProgram bids', () => {
       expect(await program.maskCount(E3_ID)).to.equal(0n)
       expect((await program.inputs(E3_ID)).numberOfLeaves).to.equal(1n)
       // Leaf 0 is the config leaf of this provider list, not of another.
-      expect(await hasLeaves([await program.configLeaf(4, providers)])).to.equal(true)
-      expect(await hasLeaves([await program.configLeaf(4, [...providers].reverse())])).to.equal(false)
-      expect(await hasLeaves([await program.configLeaf(4, [])])).to.equal(false)
+      expect(await hasLeaves([await program.configLeaf(PROVIDER_TYPE, providers)])).to.equal(true)
+      expect(await hasLeaves([await program.configLeaf(PROVIDER_TYPE, [...providers].reverse())])).to.equal(false)
+      expect(await hasLeaves([await program.configLeaf(PROVIDER_TYPE, [])])).to.equal(false)
     })
 
     it('takes 1 to 4 providers', async () => {
@@ -427,13 +543,14 @@ describe('AuctionProgram bids', () => {
       for (const providers of [[], [a, b, c, d, fifth], [a, zeroAddress], [zeroAddress], [a, a], [a, b, a], [a, b, c, b]]) {
         await expect(create(PROVIDER_TYPE, providers)).to.be.revertedWithCustomError(program, 'InvalidProviders')
       }
-      // The types 0 to 3 and 5 have no providers.
-      for (const type of [0, 1, 2, 3, 5]) {
-        await expect(create(type, [a])).to.be.revertedWithCustomError(program, 'InvalidProviders')
-        await expect(create(type, [a, b, c, d])).to.be.revertedWithCustomError(program, 'InvalidProviders')
+      // The types 0 and 2 have no providers.
+      for (const type of [FIRST_PRICE_TYPE, QNR_TYPE]) {
+        for (const providers of [[a], [a, b], [a, b, c, d], [zeroAddress]]) {
+          await expect(create(type, providers)).to.be.revertedWithCustomError(program, 'InvalidProviders')
+        }
         await expect(create(type, [], 21n + BigInt(type))).to.emit(program, 'AuctionCreated')
       }
-      await expect(create(6, [a])).to.be.revertedWithCustomError(program, 'UnknownAuctionType')
+      await expect(create(3, [a])).to.be.revertedWithCustomError(program, 'UnknownAuctionType')
       // Nothing of a refused request stays.
       expect(await program.auctionProviders(20n)).to.deep.equal([])
       expect(await program.isProvider(20n, a)).to.equal(false)
@@ -455,7 +572,7 @@ describe('AuctionProgram bids', () => {
         hasLeaves,
       } = await setup({ type: PROVIDER_TYPE, providers: 2 })
       const [provider1, provider2] = providerSigners
-      const configLeaf = await program.configLeaf(4, providers)
+      const configLeaf = await program.configLeaf(PROVIDER_TYPE, providers)
       const leaf = (ciphertext: Hex, commitment: Hex, owner: string, version: number) =>
         program.inputLeaf(keccak256(ciphertext), commitment, owner, version)
 
@@ -665,8 +782,8 @@ describe('AuctionProgram bids', () => {
       )
     })
 
-    it('leaves the types 0 to 3 without masks: a bid is a bid', async () => {
-      for (const type of [AuctionType.FirstPrice, AuctionType.SecondPrice, AuctionType.RatioFirstPrice, AuctionType.RatioSecondPrice]) {
+    it('leaves the types 0 and 2 without masks: a bid is a bid', async () => {
+      for (const type of [FIRST_PRICE_TYPE, QNR_TYPE]) {
         const { program, alice, makeBid, roles } = await setup({ type })
         expect(await program.auctionProviders(E3_ID)).to.deep.equal([])
         expect(await program.isProvider(E3_ID, alice.address)).to.equal(false)
@@ -679,51 +796,7 @@ describe('AuctionProgram bids', () => {
     })
   })
 
-  describe('type 5: second-price, no providers', () => {
-    const a = '0x1111111111111111111111111111111111111111'
-    const b = '0x2222222222222222222222222222222222222222'
-    const DOMAIN = '0x696e746572666f6c642d61756374696f6e2d636f6e6669672d7631'
-
-    it('reports 4 roles and 8 bidders, and the type after it is unknown', async () => {
-      const { program } = await setup()
-      expect(await program.roleCount(QNR_TYPE)).to.equal(4n)
-      expect(await program.maxBidders(QNR_TYPE)).to.equal(8n)
-      await expect(program.roleCount(6)).to.be.revertedWithCustomError(program, 'UnknownAuctionType')
-      await expect(program.maxBidders(6)).to.be.revertedWithCustomError(program, 'UnknownAuctionType')
-    })
-
-    it('creates the auction with the config leaf of the type and no provider bytes', async () => {
-      const { program, created, providers, outsider, hasLeaves } = await setup({ type: QNR_TYPE })
-      await expect(created).to.emit(program, 'AuctionCreated')
-      await expect(created).to.not.emit(program, 'MaskProvidersSet')
-      expect((await program.auctions(E3_ID)).auctionType).to.equal(BigInt(QNR_TYPE))
-      expect(providers).to.deep.equal([])
-      expect(await program.auctionProviders(E3_ID)).to.deep.equal([])
-      expect(await program.isProvider(E3_ID, outsider.address)).to.equal(false)
-      // The configuration input is the domain and the type byte: nothing follows.
-      const input = concatHex([DOMAIN, '0x05'])
-      expect(await program.configInput(QNR_TYPE, [])).to.equal(input)
-      expect(await program.configLeaf(QNR_TYPE, [])).to.equal(BigInt(keccak256(input)) % FIELD)
-      expect(await program.configLeaf(QNR_TYPE, [])).to.not.equal(await program.configLeaf(AuctionType.RatioSecondPrice, []))
-      // Leaf 0 is that leaf, and the auction has no other leaf yet.
-      expect((await program.inputs(E3_ID)).numberOfLeaves).to.equal(1n)
-      expect(await hasLeaves([await program.configLeaf(QNR_TYPE, [])])).to.equal(true)
-      expect(await hasLeaves([await program.configLeaf(AuctionType.RatioSecondPrice, [])])).to.equal(false)
-    })
-
-    it('refuses any provider', async () => {
-      const { program } = await setup()
-      const create = (providers: string[], id: bigint) =>
-        program.validate(id, 0n, E3_PROGRAM_PARAMS, '0x', encodeParams(QNR_TYPE, providers))
-      for (const providers of [[a], [a, b], [zeroAddress]]) {
-        await expect(create(providers, 30n)).to.be.revertedWithCustomError(program, 'InvalidProviders')
-      }
-      // Nothing of a refused request stays.
-      expect(await program.auctionProviders(30n)).to.deep.equal([])
-      expect(await program.isProvider(30n, a)).to.equal(false)
-      await expect(create([], 31n)).to.emit(program, 'AuctionCreated')
-    })
-
+  describe('type 2: second-price, no providers', () => {
     it('takes a bid of 4 ciphertexts at once, with no mask and no other leaf', async () => {
       const { program, alice, makeBid, roles } = await setup({ type: QNR_TYPE })
       expect(roles).to.equal(4)
@@ -733,59 +806,6 @@ describe('AuctionProgram bids', () => {
         .withArgs(E3_ID, alice.address, 1n, 1n, bid.ciphertexts, bid.commitments)
       expect((await program.inputs(E3_ID)).numberOfLeaves).to.equal(5n)
       expect(await program.maskCount(E3_ID)).to.equal(0n)
-      // The 2 ciphertexts of a type-4 bid and the 3 of a type-1 bid are the wrong shape.
-      for (const length of [1, 2, 3, 5]) {
-        const ciphertexts = Array.from({ length }, (_, i) => bid.ciphertexts[i % 4])
-        const commitments = Array.from({ length }, (_, i) => bid.commitments[i % 4])
-        await expect(
-          program.connect(alice).publishInput(E3_ID, encodeBidInput({ ...bid, ciphertexts, commitments })),
-        ).to.be.revertedWithCustomError(program, 'InvalidBidShape')
-      }
-    })
-
-    it('needs the anchor vkAnchorQnr, not vkAnchor4', async () => {
-      const { program, alice, makeBid, verifier2, verifier3, verifier4, vkAnchor4, vkAnchorQnr } = await setup({ type: QNR_TYPE })
-      const bid = makeBid(alice.address, 1)
-      const publicInputs = [...bid.commitments, word(alice.address), level(4), KEY]
-      // Only the 4-role verifier takes a type-5 bid; the others would reject any input but this.
-      await verifier2.expect([filled(1)])
-      await verifier3.expect([filled(1)])
-      await verifier4.expect([...publicInputs, vkAnchor4])
-      await expect(program.connect(alice).publishInput(E3_ID, encodeBidInput(bid))).to.be.revertedWithCustomError(
-        verifier4,
-        'PublicInputsMismatch',
-      )
-      expect(await program.bidCount(E3_ID, alice.address)).to.equal(0n)
-      await verifier4.expect([...publicInputs, vkAnchorQnr])
-      await expect(program.connect(alice).publishInput(E3_ID, encodeBidInput(bid))).to.emit(program, 'BidSubmitted')
-      expect(await program.bidCount(E3_ID, alice.address)).to.equal(1n)
-    })
-
-    it('keeps the anchor vkAnchor4 for the type 3, which shares the 4-role verifier', async () => {
-      const { program, alice, makeBid, verifier4, vkAnchor4, vkAnchorQnr } = await setup({ type: AuctionType.RatioSecondPrice })
-      const bid = makeBid(alice.address, 1)
-      const publicInputs = [...bid.commitments, word(alice.address), level(4), KEY]
-      await verifier4.expect([...publicInputs, vkAnchorQnr])
-      await expect(program.connect(alice).publishInput(E3_ID, encodeBidInput(bid))).to.be.revertedWithCustomError(
-        verifier4,
-        'PublicInputsMismatch',
-      )
-      await verifier4.expect([...publicInputs, vkAnchor4])
-      await expect(program.connect(alice).publishInput(E3_ID, encodeBidInput(bid))).to.emit(program, 'BidSubmitted')
-    })
-
-    it('counts bidders: 8 fit, a ninth does not, and a bidder still updates', async () => {
-      const { program, alice, bob, carol, dave, relayer, outsider, extraSigners, makeBid } = await setup({ type: QNR_TYPE })
-      const bidders = [alice, bob, carol, dave, relayer, outsider, extraSigners[0], extraSigners[1], extraSigners[2]]
-      for (const [seed, signer] of bidders.slice(0, 8).entries()) {
-        await program.connect(signer).publishInput(E3_ID, encodeBidInput(makeBid(signer.address, seed + 1)))
-      }
-      expect(await program.bidderCount(E3_ID)).to.equal(8n)
-      await expect(
-        program.connect(bidders[8]).publishInput(E3_ID, encodeBidInput(makeBid(bidders[8].address, 9))),
-      ).to.be.revertedWithCustomError(program, 'TooManyBidders')
-      await expect(program.connect(alice).publishInput(E3_ID, encodeBidInput(makeBid(alice.address, 1)))).to.emit(program, 'BidSubmitted')
-      expect(await program.bidderCount(E3_ID)).to.equal(8n)
     })
   })
 })

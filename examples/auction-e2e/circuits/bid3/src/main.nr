@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! The bid proof for the auction types 0 to 2: 3 roles (`ge`, `gt`, `mask`). It verifies the
+//! The bid proof for the auction type 0: 3 roles (`ge`, `gt`, `mask`). It verifies the
 //! `auction_bid_pair` proof (roles 0 and 1) and the user-data encryption proof of the mask. The
 //! mask has a free `k1`: it is uniform random and the encryption proof range-checks it.
 //!

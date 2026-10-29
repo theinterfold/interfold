@@ -9,7 +9,7 @@
 //! It verifies the user-data encryption proofs of both roles, and proves that their `k1` are the
 //! thermometers of the one private bid `b`, which is below `levels`. Both thermometers use the
 //! same `b` in this circuit, so no commitment to `b` is needed. The proof is a recursive proof
-//! (`noir-recursive-no-zk`): `auction_bid3` and `auction_bid4` verify it.
+//! (`noir-recursive-no-zk`): `auction_bid2`, `auction_bid3` and `auction_bid4` verify it.
 //!
 //! Public inputs, in order: the two ciphertext commitments, `levels`, `pk_row0` (the commitment
 //! of the encryption key), the key hash of the wrapper circuit, and its two VK chains.

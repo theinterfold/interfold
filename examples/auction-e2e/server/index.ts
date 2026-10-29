@@ -185,9 +185,9 @@ async function runProgram(e3Id: bigint, committeeKey: Uint8Array, callbackToken:
 
   // Gather the inputs with one-shot log queries — no long-lived listeners, no in-memory input
   // buffer. `BidSubmitted` holds the bytes of every bid and the leaf of its first ciphertext.
-  // `MaskSubmitted` holds the bytes and the leaf of each mask of a type-4 auction. Every bid and mask
+  // `MaskSubmitted` holds the bytes and the leaf of each mask of a mask-provider auction. Every bid and mask
   // is a published input, counted or not, because the input root covers all leaves. Leaf 0 is
-  // the auction's configuration, which the contract inserted at request time: for a type-4 auction
+  // the auction's configuration, which the contract inserted at request time: for a mask-provider auction
   // it names the mask providers. Every input comes after the auction's creation, so the scans start
   // at its `AuctionCreated` block, in chunks that a public RPC accepts.
   const fromBlock = await auctionCreatedBlock(e3Id)
@@ -261,7 +261,7 @@ async function runProgram(e3Id: bigint, committeeKey: Uint8Array, callbackToken:
 
   // The contract cannot check that published bytes open their commitments; the program does, and
   // leaves a bid that does not open out of the computation. Apply the same rule here, to know
-  // whether there is an auction to run. The program needs every mask of a type-4 auction.
+  // whether there is an auction to run. The program needs every mask of a mask-provider auction.
   const opens = await opensCommitment([...bids.flatMap((bid) => bid.ciphertexts), ...masks.map((mask) => mask.ciphertext)])
   let plan: RunPlan
   try {
@@ -306,7 +306,7 @@ const scheduler = new ComputeScheduler({
 
 /**
  * The mask provider of this server, if `MASK_PROVIDER_PRIVATE_KEY` is set. It sends the mask of its
- * key to each type-4 auction that names it. The key is not the operator key or the relayer key, so
+ * key to each mask-provider auction that names it. The key is not the operator key or the relayer key, so
  * the creator of an auction can name it without trusting the operator with the mask.
  */
 const maskAccount = config.maskProviderPrivateKey ? privateKeyToAccount(config.maskProviderPrivateKey) : undefined
@@ -314,7 +314,7 @@ const maskWallet = maskAccount
   ? createWalletClient({ account: maskAccount, chain: config.chain, transport: http(config.rpcUrl) })
   : undefined
 
-/** The state of a type-4 auction as the mask provider needs it, or `null` for any other E3. */
+/** The state of a mask-provider auction as the mask provider needs it, or `null` for any other E3. */
 async function readProviderAuction(e3Id: bigint, provider: Address): Promise<ProviderAuction | null> {
   const publicClient = sdk.getPublicClient()
   const read = { address: config.program, abi: AuctionProgram__factory.abi } as const
