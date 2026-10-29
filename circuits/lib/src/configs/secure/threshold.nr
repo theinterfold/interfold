@@ -24607,6 +24607,10 @@ pub global CRP: [Polynomial<N>; L] = [
 pub global N: u32 = 8192;
 pub global L: u32 = 3;
 pub global QIS: [Field; L] = [576460752317792257, 576460752317399041, 576460752316776449];
+// Bit length of every modulus above: `2^{59} <= q < 2^{60}`.
+// insecure-64 uses 27. See `circuits/lib/src/README.md` (`Q_BIT`).
+// If a parameter set is added, or these moduli change, update this constant.
+pub global Q_BIT: u32 = 60;
 pub global PLAINTEXT_MODULUS: Field = 17000000;
 pub global Q_MOD_T: Field = 13178113;
 pub global Q_MOD_T_CENTERED: Field = -3821887;

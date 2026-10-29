@@ -16,6 +16,10 @@ use crate::math::polynomial::Polynomial;
 pub global N: u32 = 64;
 pub global L: u32 = 3;
 pub global QIS: [Field; L] = [134217089, 134215681, 134215553];
+// Bit length of every modulus above: `2^{26} <= q < 2^{27}`.
+// secure-8192 uses 60. See `circuits/lib/src/README.md` (`Q_BIT`).
+// If a parameter set is added, or these moduli change, update this constant.
+pub global Q_BIT: u32 = 27;
 pub global PLAINTEXT_MODULUS: Field = 17000000;
 pub global Q_MOD_T: Field = 4787777;
 pub global Q_MOD_T_CENTERED: Field = 4787777;

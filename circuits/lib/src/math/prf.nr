@@ -125,39 +125,19 @@ pub fn prf_context_digest<let N: u32, let L: u32, let H: u32>(
     [squeezed[0], squeezed[1]]
 }
 
-/// Ciphertext moduli are integers in `[2, 2^62)`.
-fn assert_supported_modulus(q: Field) {
-    q.assert_max_bit_size::<62>();
-    assert((q as u128) >= 2, "modulus is below 2");
-}
-
-/// Unique base-`2^128` digits of a canonical field element.
-fn split_u128(value: Field) -> (u128, u128) {
-    let place = 2.pow_32(128);
-    let bytes = value.to_be_bytes::<32>();
-    let mut hi_limb: u128 = 0;
-    let mut lo_limb: u128 = 0;
-    for i in 0..16 {
-        hi_limb = hi_limb * 256 + (bytes[i] as u128);
-        lo_limb = lo_limb * 256 + (bytes[i + 16] as u128);
-    }
-    let hi = hi_limb as Field;
-    let lo = lo_limb as Field;
-    lo.assert_max_bit_size::<128>();
-    // A BN254 scalar is below 2^254, so the high digit is below 2^126.
-    hi.assert_max_bit_size::<126>();
-    assert(lo + hi * place == value);
-    (hi as u128, lo as u128)
-}
-
-/// Integer `left <= right` for the canonical representatives.
-fn assert_le_field(left: Field, right: Field) {
-    let (left_hi, left_lo) = split_u128(left);
-    let (right_hi, right_lo) = split_u128(right);
-    assert(
-        (left_hi < right_hi) | ((left_hi == right_hi) & (left_lo <= right_lo)),
-        "value exceeds its modulus bound",
-    );
+/// `2^{B-1} <= q < 2^B`.
+///
+/// `B` is the preset constant `Q_BIT`: 27 for insecure-64, 60 for secure-8192.
+/// See `circuits/lib/src/README.md`. If a set is added or its moduli change, update `Q_BIT`.
+fn assert_modulus_width<let B: u32>(q: Field) {
+    assert(B >= 2);
+    assert(B <= 62);
+    // `q >= 2^{B-1}` makes the high quotient smaller than `2^{257-3B}`.
+    assert(257 - 3 * B <= 253);
+    let lower = 2.pow_32((B - 1) as Field);
+    let upper = 2.pow_32(B as Field);
+    assert((q as u128) >= (lower as u128), "modulus is below its bit width");
+    assert((q as u128) < (upper as u128), "modulus does not fit its bit width");
 }
 
 /// `H = floor((p-1)/q^3)` and `R = (p-1) mod q^3`, from the checked division chain.
@@ -185,11 +165,11 @@ fn hint_three_residues(x: Field, modulus: u64) -> (Field, Field, Field, Field) {
 
 /// Force `x = h q^3 + r2 q^2 + r1 q + r0` as integers, with `0 <= ri < q`.
 ///
-/// The modulus is whatever limb is being split. `0 <= ri < q` and `0 <= h <= H`,
-/// plus `low <= R` when `h = H`, put the reconstruction in `[0, p-1]`. The field
-/// equation is then the integer equation. `H` and `R` come from the checked
-/// division of `p-1`, so the bounds are not hints.
-fn constrain_three_residues(
+/// `B` is this limb's bit length. Digits use two `B`-bit checks, the low part
+/// uses `3B`, and the high quotient uses `257-3B`. Together with `h <= H` and
+/// `low <= R` when `h = H`, the reconstruction lies in `[0, p-1]`. `H` and `R`
+/// come from the checked division of `p-1`.
+fn constrain_three_residues<let B: u32>(
     q: Field,
     x: Field,
     high: Field,
@@ -199,32 +179,32 @@ fn constrain_three_residues(
     high_bound: Field,
     low_bound: Field,
 ) {
-    assert_supported_modulus(q);
-    assert_canonical_digit(q, residue0);
-    assert_canonical_digit(q, residue1);
-    assert_canonical_digit(q, residue2);
+    assert_modulus_width::<B>(q);
+    residue0.assert_max_bit_size::<B>();
+    (q - 1 - residue0).assert_max_bit_size::<B>();
+    residue1.assert_max_bit_size::<B>();
+    (q - 1 - residue1).assert_max_bit_size::<B>();
+    residue2.assert_max_bit_size::<B>();
+    (q - 1 - residue2).assert_max_bit_size::<B>();
 
     let square = q * q;
     let low = residue0 + residue1 * q + residue2 * square;
-    assert_le_field(high, high_bound);
+    low.assert_max_bit_size::<3 * B>();
+    high.assert_max_bit_size::<257 - 3 * B>();
+    (high_bound - high).assert_max_bit_size::<257 - 3 * B>();
     let at_bound = (high == high_bound) as Field;
-    assert_le_field(at_bound * low, at_bound * low_bound);
+    (at_bound * (low_bound - low)).assert_max_bit_size::<3 * B>();
     assert(high * square * q + low == x);
 }
 
-fn assert_canonical_digit(q: Field, residue: Field) {
-    residue.assert_max_bit_size::<62>();
-    assert((residue as u128) < (q as u128), "residue is not below its modulus");
-}
-
-fn split_full_group(
+fn split_full_group<let B: u32>(
     qmod: ModU64,
     x: Field,
     high_bound: Field,
     low_bound: Field,
 ) -> (Field, Field, Field) {
     let (high, residue0, residue1, residue2) = hint_three_residues(x, qmod.m);
-    constrain_three_residues(
+    constrain_three_residues::<B>(
         qmod.get_mod_field(),
         x,
         high,
@@ -249,20 +229,20 @@ fn squeezed_row<let N: u32, let L: u32>(
     row_squeezed
 }
 
-fn fill_limb<let N: u32>(
+fn fill_limb<let B: u32, let N: u32>(
     q: Field,
     row_squeezed: [Field; (N + 2) / 3],
     high_bound: Field,
     low_bound: Field,
 ) -> Polynomial<N> {
-    assert_supported_modulus(q);
+    assert_modulus_width::<B>(q);
     let qmod = ModU64::new(q as u64);
     let full_groups: u32 = N / 3;
     let tail: u32 = N % 3;
     let mut coeffs: [Field; N] = [0; N];
     for group in 0..full_groups {
         let (residue0, residue1, residue2) =
-            split_full_group(qmod, row_squeezed[group], high_bound, low_bound);
+            split_full_group::<B>(qmod, row_squeezed[group], high_bound, low_bound);
         let start = group * 3;
         coeffs[N - 1 - start] = residue0;
         coeffs[N - 1 - start - 1] = residue1;
@@ -293,28 +273,31 @@ fn limb_bounds<let L: u32>(qis: [Field; L]) -> ([Field; L], [Field; L]) {
     (high_bounds, low_bounds)
 }
 
-/// Evaluate `F_k`. Each squeezed element yields three residues of one limb modulus.
-///
-/// Residue `k` of group `g` is coefficient `3g + k`, low degree first. The last group
-/// of a limb stops at `N`. Every division uses that limb's own `q`. `L` is the
-/// caller's modulus count.
-pub fn prf_evaluate<let N: u32, let L: u32>(
+fn squeeze_key<let N: u32, let L: u32>(
     key: Field,
     digest: [Field; 2],
-    qis: [Field; L],
-    high_bounds: [Field; L],
-    low_bounds: [Field; L],
-) -> [Polynomial<N>; L] {
+) -> [Field; L * ((N + 2) / 3)] {
     let groups: u32 = (N + 2) / 3;
     let squeeze_len: u32 = L * groups;
     let mut sponge = SafeSponge::start([ABSORB_FLAG | 3, squeeze_len], DS_PRF_EVAL);
     sponge.absorb([key, digest[0], digest[1]].as_vector());
     let squeezed = sponge.squeeze_array::<L * ((N + 2) / 3)>();
     sponge.finish();
+    squeezed
+}
 
+/// One width for every limb. `L` is the modulus count.
+pub fn prf_evaluate<let N: u32, let L: u32, let B: u32>(
+    key: Field,
+    digest: [Field; 2],
+    qis: [Field; L],
+    high_bounds: [Field; L],
+    low_bounds: [Field; L],
+) -> [Polynomial<N>; L] {
+    let squeezed = squeeze_key::<N, L>(key, digest);
     let mut polys: [Polynomial<N>; L] = [Polynomial::new([0; N]); L];
     for row in 0..L {
-        polys[row] = fill_limb::<N>(
+        polys[row] = fill_limb::<B, N>(
             qis[row],
             squeezed_row(squeezed, row),
             high_bounds[row],
@@ -322,6 +305,32 @@ pub fn prf_evaluate<let N: u32, let L: u32>(
         );
     }
     polys
+}
+
+/// Two limbs whose bit lengths differ. The supported parameter sets do not need this:
+/// every insecure-64 threshold modulus is 27 bits and every secure-8192 one is 60.
+fn prf_evaluate_two<let N: u32, let B0: u32, let B1: u32>(
+    key: Field,
+    digest: [Field; 2],
+    qis: [Field; 2],
+    high_bounds: [Field; 2],
+    low_bounds: [Field; 2],
+) -> [Polynomial<N>; 2] {
+    let squeezed = squeeze_key::<N, 2>(key, digest);
+    [
+        fill_limb::<B0, N>(
+            qis[0],
+            squeezed_row::<N, 2>(squeezed, 0),
+            high_bounds[0],
+            low_bounds[0],
+        ),
+        fill_limb::<B1, N>(
+            qis[1],
+            squeezed_row::<N, 2>(squeezed, 1),
+            high_bounds[1],
+            low_bounds[1],
+        ),
+    ]
 }
 
 fn assert_canonical_decryptors<let H: u32, let N_PARTIES: u32>(ids: [Field; H]) {
@@ -408,7 +417,7 @@ fn reduce_accumulated_mask<let N: u32, let L: u32>(
 /// Outgoing key `k_ij` is committed under recipient `j`. Incoming key `k_ji` is
 /// committed under recipient `i`. `ct_commitment` must be the checked commitment
 /// of the ciphertext this mask is applied to; C6 checks that opening first.
-pub fn prf_decryption_mask<let N: u32, let L: u32, let N_PARTIES: u32, let H: u32>(
+pub fn prf_decryption_mask<let N: u32, let L: u32, let N_PARTIES: u32, let H: u32, let B: u32>(
     party_idx: u32,
     decryptors: [Field; H],
     outgoing_keys: [Field; N_PARTIES],
@@ -446,9 +455,63 @@ pub fn prf_decryption_mask<let N: u32, let L: u32, let N_PARTIES: u32, let H: u3
             "Incoming PRF key commitment mismatch",
         );
         let outgoing =
-            prf_evaluate::<N, L>(outgoing_keys[other], digest, qis, high_bounds, low_bounds);
+            prf_evaluate::<N, L, B>(outgoing_keys[other], digest, qis, high_bounds, low_bounds);
         let incoming =
-            prf_evaluate::<N, L>(incoming_keys[other], digest, qis, high_bounds, low_bounds);
+            prf_evaluate::<N, L, B>(incoming_keys[other], digest, qis, high_bounds, low_bounds);
+        mask = accumulate_mask_difference(mask, outgoing, incoming, qis);
+    }
+
+    reduce_accumulated_mask(mask, qis)
+}
+
+/// Same mask as `prf_decryption_mask` for two limbs that do not share a bit length.
+fn prf_decryption_mask_two<let N: u32, let N_PARTIES: u32, let H: u32, let B0: u32, let B1: u32>(
+    party_idx: u32,
+    decryptors: [Field; H],
+    outgoing_keys: [Field; N_PARTIES],
+    incoming_keys: [Field; N_PARTIES],
+    outgoing_commitments: [Field; N_PARTIES],
+    incoming_commitments: [Field; N_PARTIES],
+    ct_commitment: Field,
+    qis: [Field; 2],
+) -> [Polynomial<N>; 2] {
+    assert(party_idx < N_PARTIES, "Party index is out of range");
+    assert(H > 0);
+    assert_canonical_decryptors::<H, N_PARTIES>(decryptors);
+    let self_id = (party_idx + 1) as Field;
+    let own_position = decryptor_position(decryptors, self_id);
+
+    let digest = prf_context_digest::<N, 2, H>(decryptors, ct_commitment);
+    let (high_bounds, low_bounds) = limb_bounds(qis);
+    let mut mask: [Polynomial<N>; 2] = [Polynomial::new([0; N]); 2];
+
+    for slot in 0..(H - 1) {
+        let peer_position = if slot < own_position { slot } else { slot + 1 };
+        let other = (decryptors[peer_position] as u32) - 1;
+        assert(
+            compute_packed_prf_key_commitment(other as Field, outgoing_keys[other])
+                == outgoing_commitments[other],
+            "Outgoing PRF key commitment mismatch",
+        );
+        assert(
+            compute_packed_prf_key_commitment(party_idx as Field, incoming_keys[other])
+                == incoming_commitments[other],
+            "Incoming PRF key commitment mismatch",
+        );
+        let outgoing = prf_evaluate_two::<N, B0, B1>(
+            outgoing_keys[other],
+            digest,
+            qis,
+            high_bounds,
+            low_bounds,
+        );
+        let incoming = prf_evaluate_two::<N, B0, B1>(
+            incoming_keys[other],
+            digest,
+            qis,
+            high_bounds,
+            low_bounds,
+        );
         mask = accumulate_mask_difference(mask, outgoing, incoming, qis);
     }
 
@@ -471,7 +534,7 @@ fn mask_fixture(owner: u32, ids: [Field; 3]) -> [Field; 8] {
     let ct1 = [Polynomial::new([15, 14, 13, 12, 11, 10, 9, 8])];
     // Modulus bit of 65537 is 16, so this is the commitment decryption will open.
     let commitment = compute_ciphertext_commitment_checked::<8, 1, 16>(ct0, ct1);
-    prf_decryption_mask::<8, 1, 5, 3>(
+    prf_decryption_mask::<8, 1, 5, 3, 17>(
         owner - 1,
         ids,
         outgoing,
@@ -566,7 +629,7 @@ fn tail_one_mask(owner: u32, ids: [Field; 3]) -> [Field; 4] {
     let ct0 = [Polynomial::new([3, 2, 1, 0])];
     let ct1 = [Polynomial::new([7, 6, 5, 4])];
     let commitment = compute_ciphertext_commitment_checked::<4, 1, 16>(ct0, ct1);
-    prf_decryption_mask::<4, 1, 5, 3>(
+    prf_decryption_mask::<4, 1, 5, 3, 17>(
         owner - 1,
         ids,
         outgoing,
@@ -621,10 +684,10 @@ fn peer_selection_rejects_out_of_range_ids() {
     let _ = mask_fixture(3, [1, 3, 6]);
 }
 
-fn residues_match_division(q: u64, x: Field) {
+fn residues_match_division<let B: u32>(q: u64, x: Field) {
     let qmod = ModU64::new(q);
     let (high_bound, low_bound) = limb_split_bounds(qmod);
-    let (residue0, residue1, residue2) = split_full_group(qmod, x, high_bound, low_bound);
+    let (residue0, residue1, residue2) = split_full_group::<B>(qmod, x, high_bound, low_bound);
     let (quotient0, expected0) = qmod.quot_rem(x);
     let (quotient1, expected1) = qmod.quot_rem(quotient0);
     let expected2 = qmod.reduce_field(quotient1);
@@ -637,7 +700,29 @@ fn residues_match_division(q: u64, x: Field) {
 fn evaluation_follows_the_supplied_limb_count() {
     let qis = [3, 65537, 134217089, 576460752317792257];
     let (high_bounds, low_bounds) = limb_bounds(qis);
-    let polys = prf_evaluate::<4, 4>(1, [2, 3], qis, high_bounds, low_bounds);
+    let squeezed = squeeze_key::<4, 4>(1, [2, 3]);
+    // Bit lengths of the four moduli above: 2, 17, 27 (insecure-64), 60 (secure-8192).
+    let polys = [
+        fill_limb::<2, 4>(qis[0], squeezed_row::<4, 4>(squeezed, 0), high_bounds[0], low_bounds[0]),
+        fill_limb::<17, 4>(
+            qis[1],
+            squeezed_row::<4, 4>(squeezed, 1),
+            high_bounds[1],
+            low_bounds[1],
+        ),
+        fill_limb::<27, 4>(
+            qis[2],
+            squeezed_row::<4, 4>(squeezed, 2),
+            high_bounds[2],
+            low_bounds[2],
+        ),
+        fill_limb::<60, 4>(
+            qis[3],
+            squeezed_row::<4, 4>(squeezed, 3),
+            high_bounds[3],
+            low_bounds[3],
+        ),
+    ];
     for row in 0..4 {
         for coefficient in 0..4 {
             assert((polys[row].coefficients[coefficient] as u128) < (qis[row] as u128));
@@ -650,13 +735,13 @@ fn full_group_matches_successive_division_for_each_width() {
     let narrow: Field = 65537;
     let insecure: Field = 134217089;
     let secure: Field = 576460752317792257;
-    residues_match_division(narrow as u64, 3 + 5 * narrow + 7 * narrow * narrow);
-    residues_match_division(insecure as u64, 3 + 5 * insecure + 7 * insecure * insecure);
-    residues_match_division(secure as u64, 3 + 5 * secure + 7 * secure * secure);
+    residues_match_division::<17>(narrow as u64, 3 + 5 * narrow + 7 * narrow * narrow);
+    residues_match_division::<27>(insecure as u64, 3 + 5 * insecure + 7 * insecure * insecure);
+    residues_match_division::<60>(secure as u64, 3 + 5 * secure + 7 * secure * secure);
     // p-1 is the inclusive end of the high-quotient range.
-    residues_match_division(narrow as u64, -1);
-    residues_match_division(insecure as u64, -1);
-    residues_match_division(secure as u64, -1);
+    residues_match_division::<17>(narrow as u64, -1);
+    residues_match_division::<27>(insecure as u64, -1);
+    residues_match_division::<60>(secure as u64, -1);
 }
 
 #[test(should_fail)]
@@ -664,7 +749,7 @@ fn split_rejects_noncanonical_digit() {
     let q: Field = 65537;
     let qmod = ModU64::new(65537);
     let (high_bound, low_bound) = limb_split_bounds(qmod);
-    constrain_three_residues(q, q, 0, q, 0, 0, high_bound, low_bound);
+    constrain_three_residues::<17>(q, q, 0, q, 0, 0, high_bound, low_bound);
 }
 
 #[test(should_fail)]
@@ -673,7 +758,7 @@ fn split_rejects_carry_alias() {
     let qmod = ModU64::new(65537);
     let (high_bound, low_bound) = limb_split_bounds(qmod);
     let x = 3 + q * q;
-    constrain_three_residues(q, x, 0, 3, q, 0, high_bound, low_bound);
+    constrain_three_residues::<17>(q, x, 0, 3, q, 0, high_bound, low_bound);
 }
 
 #[test(should_fail)]
@@ -682,7 +767,7 @@ fn split_rejects_oversized_quotient() {
     let qmod = ModU64::new(65537);
     let (high_bound, low_bound) = limb_split_bounds(qmod);
     let x = (high_bound + 1) * q * q * q;
-    constrain_three_residues(q, x, high_bound + 1, 0, 0, 0, high_bound, low_bound);
+    constrain_three_residues::<17>(q, x, high_bound + 1, 0, 0, 0, high_bound, low_bound);
 }
 
 #[test(should_fail)]
@@ -694,7 +779,7 @@ fn split_rejects_wrapped_field_opening() {
     let (quotient0, residue0) = qmod.quot_rem(low_bound + 1);
     let (quotient1, residue1) = qmod.quot_rem(quotient0);
     let residue2 = qmod.reduce_field(quotient1);
-    constrain_three_residues(
+    constrain_three_residues::<17>(
         q,
         0,
         high_bound,
@@ -736,7 +821,8 @@ fn mixed_limb_mask<let N: u32>(owner: u32, ids: [Field; 3]) -> [Polynomial<N>; 2
     let ct0 = [Polynomial::new([0; N]); 2];
     let ct1 = [Polynomial::new([0; N]); 2];
     let commitment = compute_ciphertext_commitment_checked::<N, 2, 16>(ct0, ct1);
-    prf_decryption_mask::<N, 2, 5, 3>(
+    // 65537 is 17 bits. 134217089 is an insecure-64 modulus, 27 bits.
+    prf_decryption_mask_two::<N, 5, 3, 17, 27>(
         owner - 1,
         ids,
         outgoing,
@@ -811,7 +897,8 @@ fn zero_ciphertext_mask<let N: u32>(owner: u32, ids: [Field; 3]) -> [Polynomial<
     let ct1 = [Polynomial::new([0; N]); 2];
     // Centered width of max(65537, 134217089) is 26, the width the native commitment uses.
     let commitment = compute_ciphertext_commitment_checked::<N, 2, 26>(ct0, ct1);
-    prf_decryption_mask::<N, 2, 5, 3>(
+    // 65537 is 17 bits. 134217089 is an insecure-64 modulus, 27 bits.
+    prf_decryption_mask_two::<N, 5, 3, 17, 27>(
         owner - 1,
         ids,
         outgoing,

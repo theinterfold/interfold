@@ -52,7 +52,10 @@ Pre-configured BFV parameter sets for PVSS (Public Verifiable Secret Sharing) pr
 - **`BfvPreset::InsecureDkg64`**: Testing-only DKG parameters (degree 64)
 
 The insecure-64 and secure-8192 threshold presets use plaintext modulus 17,000,000, three CRT limbs,
-and `SEARCH_Z = 100,000`. Degree 64 is not secure and is only for development/tests. Reusing the old
+and `SEARCH_Z = 100,000`. C6 hardcodes the bit length of those threshold moduli as `Q_BIT`: 27 for
+insecure-64 and 60 for secure-8192. Adding a preset, or changing these moduli, requires updating
+that Noir constant. See [Q_BIT](../../circuits/lib/src/README.md#q_bit). Degree 64 is not secure and
+is only for development/tests. Reusing the old
 degree-512 persisted discriminants does not migrate stored data. Follow the
 [testnet reset requirement](../../docs/architecture/upgrades.md#insecure-testnet-preset-reset)
 before opening an existing degree-512 testnet store.

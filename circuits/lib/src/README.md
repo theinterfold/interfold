@@ -55,6 +55,34 @@ Switch presets in `configs/default/mod.nr` (`pub use super::secure::dkg` / `thre
 defines `N`, `L`, `QIS`, bounds, `PARITY_MATRIX`, per-circuit `Configs`, and
 `MAX_MSG_NON_ZERO_COEFFS` (C7 plaintext sparsity).
 
+### `Q_BIT`
+
+C6 range-checks each full PRF group with `assert_max_bit_size`. The width is the compile-time
+constant `Q_BIT`, declared next to `QIS` in the threshold preset. Every modulus in a supported
+threshold set has the same bit length, so one constant covers every limb. The circuit checks
+`2^{Q_BIT - 1} <= q < 2^{Q_BIT}` and rejects a modulus outside that range.
+
+| Preset       | Declaration                                      | `Q_BIT` | Every `QIS` entry satisfies |
+| ------------ | ------------------------------------------------ | ------- | --------------------------- |
+| insecure-64  | `configs/insecure/threshold.nr`                  | 27      | `2^26 <= q < 2^27`          |
+| secure-8192  | `configs/secure/threshold.nr`                    | 60      | `2^59 <= q < 2^60`          |
+
+`circuits/bin/threshold/share_decryption` passes that preset's `Q_BIT` into `ShareDecryption`.
+
+`Q_BIT` is the bit length of the modulus `q`. `THRESHOLD_SHARE_DECRYPTION_BIT_CT` is the bit length
+of the centered residue `(q - 1) / 2`: 26 for insecure-64 and 59 for secure-8192.
+
+DKG moduli are a different pair and are not this constant. insecure-64 DKG moduli are 29 bits.
+secure-8192 DKG moduli are 62 bits.
+
+If a parameter set is added, or the current moduli change:
+
+1. Set `Q_BIT` in that preset's `threshold.nr` to the bit length shared by every new `QIS` entry.
+2. When the moduli in one set no longer share a bit length, one `Q_BIT` no longer describes them.
+   Each limb then needs its own width on the PRF call in `math/prf.nr` and on `ShareDecryption`.
+3. Leave `configs/default/mod.nr` on the preset you mean to compile. The C6 binary reads `Q_BIT`
+   from that file's `threshold` module.
+
 ## Related documentation
 
 | Topic                                          | Location                                                                                                                   |

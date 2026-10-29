@@ -33,7 +33,7 @@ impl<let L: u32> Configs<L> {
 
 /// Prove `d = lambda_i*c1*sk_i + e_i + mask_i` in the reduced ring.
 /// c0 is committed here and added once by C7, never by an individual share.
-pub struct ShareDecryption<let N: u32, let K: u32, let L: u32, let BIT_CT: u32, let BIT_SK: u32, let BIT_E: u32, let BIT_R: u32, let BIT_D: u32, let BIT_NATIVE: u32, let PARTIES: u32, let SET: u32> {
+pub struct ShareDecryption<let N: u32, let K: u32, let L: u32, let BIT_CT: u32, let BIT_SK: u32, let BIT_E: u32, let BIT_R: u32, let BIT_D: u32, let BIT_NATIVE: u32, let PARTIES: u32, let SET: u32, let B: u32> {
     configs: Configs<L>,
     expected_sk_commitment: Field,
     ct_commitment: Field,
@@ -55,7 +55,7 @@ pub struct ShareDecryption<let N: u32, let K: u32, let L: u32, let BIT_CT: u32, 
     incoming_key_commitments: [Field; PARTIES],
 }
 
-impl<let N: u32, let K: u32, let L: u32, let BIT_CT: u32, let BIT_SK: u32, let BIT_E: u32, let BIT_R: u32, let BIT_D: u32, let BIT_NATIVE: u32, let PARTIES: u32, let SET: u32> ShareDecryption<N, K, L, BIT_CT, BIT_SK, BIT_E, BIT_R, BIT_D, BIT_NATIVE, PARTIES, SET> {
+impl<let N: u32, let K: u32, let L: u32, let BIT_CT: u32, let BIT_SK: u32, let BIT_E: u32, let BIT_R: u32, let BIT_D: u32, let BIT_NATIVE: u32, let PARTIES: u32, let SET: u32, let B: u32> ShareDecryption<N, K, L, BIT_CT, BIT_SK, BIT_E, BIT_R, BIT_D, BIT_NATIVE, PARTIES, SET, B> {
     pub fn new(
         configs: Configs<L>,
         expected_sk_commitment: Field,
@@ -227,7 +227,7 @@ impl<let N: u32, let K: u32, let L: u32, let BIT_CT: u32, let BIT_SK: u32, let B
         }
         self.verify_d_native_trunc_binding();
         // `verify_ct_commitment` has already bound this value to the opened ciphertext.
-        let mask = prf_decryption_mask::<N, L, PARTIES, SET>(
+        let mask = prf_decryption_mask::<N, L, PARTIES, SET, B>(
             self.party_idx,
             self.decryptors,
             self.outgoing_keys,
@@ -265,7 +265,7 @@ pub fn lagrange_at_zero<let SET: u32>(q: Field, ids: [Field; SET], owner: u32) -
     }
 }
 
-fn zero_witness() -> ShareDecryption<8, 1, 1, 35, 35, 35, 43, 35, 36, 3, 2> {
+fn zero_witness() -> ShareDecryption<8, 1, 1, 35, 35, 35, 43, 35, 36, 3, 2, 36> {
     let z = Polynomial::new([0; 8]);
     let anchor = compute_aggregated_shares_commitment_checked::<8, 1, 35>([z]);
     let ct = compute_ciphertext_commitment_checked::<8, 1, 35>([z], [z]);
@@ -320,8 +320,8 @@ fn forged_d_with_same_transcript_is_rejected() {
 }
 
 fn carry_into_ct0(
-    mut c: ShareDecryption<8, 1, 1, 35, 35, 35, 43, 35, 36, 3, 2>,
-) -> ShareDecryption<8, 1, 1, 35, 35, 35, 43, 35, 36, 3, 2> {
+    mut c: ShareDecryption<8, 1, 1, 35, 35, 35, 43, 35, 36, 3, 2, 36>,
+) -> ShareDecryption<8, 1, 1, 35, 35, 35, 43, 35, 36, 3, 2, 36> {
     c.ct0[0].coefficients[0] += 1;
     c.ct0[0].coefficients[1] -= 1099511627776;
     c
