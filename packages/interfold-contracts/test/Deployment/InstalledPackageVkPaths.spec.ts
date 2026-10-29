@@ -77,8 +77,8 @@ describe("installed-package BFV VK paths", function () {
   });
 
   for (const [config, committee, committeeSize, n, t, h, length] of [
-    [SECURE_16384_MICRO_BFV_CONFIG, "micro", 1, 9, 4, 5, 69],
-    [SECURE_16384_SMALL_BFV_CONFIG, "small", 2, 19, 9, 14, 96],
+    [SECURE_16384_MICRO_BFV_CONFIG, "micro", 1, 9, 4, 5, 72],
+    [SECURE_16384_SMALL_BFV_CONFIG, "small", 2, 19, 9, 14, 99],
   ] as const) {
     it(`resolves secure ${committee} with ZK C2 finalizers and a ${length}-field V2 layout`, function () {
       expect(bfvHonkSource(config, "DkgAggregatorV2Verifier")).to.equal(
@@ -101,7 +101,7 @@ describe("installed-package BFV VK paths", function () {
           `${path.sep}recursive${path.sep}recursive_aggregation${path.sep}`,
         );
       }
-      expect(bfvPkV2PublicInputLayout(config.h, 5).length).to.equal(length);
+      expect(bfvPkV2PublicInputLayout(config.h, 6).length).to.equal(length);
       expect(bfvConfigsForChain(31337)).to.include(config);
       expect(bfvConfigsForChain(11155111)).to.include(config);
       expect(

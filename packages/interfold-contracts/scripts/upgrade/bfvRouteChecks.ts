@@ -129,9 +129,9 @@ export async function validateBfvRoutes(
     );
     equalValue(
       pkRoute[1],
-      // secure-16384 compiles five l-BFV rows.
+      // secure-16384 compiles six l-BFV rows, one per CRT modulus.
       isV2
-        ? bfvPkV2PublicInputLayout(expected.h, 5).length
+        ? bfvPkV2PublicInputLayout(expected.h, 6).length
         : bfvPkExpectedPublicInputsLen(expected.h),
       `PK route ${index} public input count`,
     );

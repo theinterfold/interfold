@@ -50,7 +50,7 @@ export function encodeMockDkgV2ProofForAttestation(
   partyIds: number[],
   skCommits: string[],
   esmCommits: string[],
-  lbfvRows = 5,
+  lbfvRows = 6,
 ): string {
   if (
     partyIds.length !== 2 ||

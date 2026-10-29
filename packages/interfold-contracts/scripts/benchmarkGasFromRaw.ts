@@ -433,7 +433,7 @@ async function main() {
   );
 
   const benchmarkConfig = resolveBenchmarkConfig(foldedDoc);
-  const lbfvRows = benchmarkConfig.preset === "secure-16384" ? 5 : 3;
+  const lbfvRows = benchmarkConfig.preset === "secure-16384" ? 6 : 3;
   const v2Layout = bfvPkV2PublicInputLayout(benchmarkConfig.h, lbfvRows);
   const useV2Dkg = dkgPublicInputs.length === v2Layout.length;
   const expectedNodesFoldKeyHash = readVkRecursiveHash(

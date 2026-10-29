@@ -108,12 +108,12 @@ const readFoldedArtifactsFromFile = (
   return isValidFoldedArtifacts(parsed) ? parsed : null;
 };
 
-const v2DkgLbfvRows = (publicInputs: string[]): 3 | 5 | null => {
+const v2DkgLbfvRows = (publicInputs: string[]): 3 | 6 | null => {
   if (publicInputs.length === bfvPkV2PublicInputLayout(BFV_DKG_H, 3).length) {
     return 3;
   }
-  if (publicInputs.length === bfvPkV2PublicInputLayout(BFV_DKG_H, 5).length) {
-    return 5;
+  if (publicInputs.length === bfvPkV2PublicInputLayout(BFV_DKG_H, 6).length) {
+    return 6;
   }
   return null;
 };
@@ -221,15 +221,15 @@ function plaintextHashFromPublicInputs(publicInputs: string[]): string {
 }
 
 describe("BfvVkBindingIntegration", function () {
-  it("recognizes the five-row secure-16384 folded DKG layout", function () {
+  it("recognizes the six-row secure-16384 folded DKG layout", function () {
     const secure16384DkgPublicInputs = Array.from(
-      { length: 39 + 3 * BFV_DKG_H + 3 * 5 },
+      { length: 39 + 3 * BFV_DKG_H + 3 * 6 },
       () => ethers.ZeroHash,
     );
 
-    expect(v2DkgLbfvRows(secure16384DkgPublicInputs)).to.equal(5);
+    expect(v2DkgLbfvRows(secure16384DkgPublicInputs)).to.equal(6);
     expect(v2DkgLayout(secure16384DkgPublicInputs)?.v2VkBindingStart).to.equal(
-      28 + 3 * BFV_DKG_H + 3 * 5,
+      28 + 3 * BFV_DKG_H + 3 * 6,
     );
   });
 

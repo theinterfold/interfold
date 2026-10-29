@@ -212,9 +212,17 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         view
         returns (uint256 h, uint256 partyIdOffset, uint256 commitmentOffset)
     {
-        (uint256 v2H, ) = _v2CommitteeParams(publicInputs.length);
-        if (v2H > 0 && _isV2Statement(registry, e3Id, publicInputs, v2H)) {
-            return (v2H, 1, 21);
+        (
+            uint256[2] memory v2Hs,
+            uint256[2] memory v2Ns,
+            uint256 candidates
+        ) = _v2Committees(publicInputs.length);
+        for (uint256 c = 0; c < candidates; ++c) {
+            if (
+                _isV2Statement(registry, e3Id, publicInputs, v2Hs[c], v2Ns[c])
+            ) {
+                return (v2Hs[c], 1, 21);
+            }
         }
         // trBFV `dkg_aggregator`: 3*h + 6 public inputs.
         require(
@@ -234,9 +242,9 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         address registry,
         uint256 e3Id,
         bytes32[] memory publicInputs,
-        uint256 v2H
+        uint256 v2H,
+        uint256 v2N
     ) private view returns (bool) {
-        (, uint256 v2N) = _v2CommitteeParams(publicInputs.length);
         uint256 previous;
         for (uint256 i = 0; i < v2H; ++i) {
             uint256 partyId = uint256(publicInputs[1 + i]);
@@ -248,10 +256,8 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
             e3Id
         );
         if (
-            publicInputs[1 + v2H] !=
-                CommitteeHashLib.hi(committeeHash) ||
-            publicInputs[2 + v2H] !=
-                CommitteeHashLib.lo(committeeHash)
+            publicInputs[1 + v2H] != CommitteeHashLib.hi(committeeHash) ||
+            publicInputs[2 + v2H] != CommitteeHashLib.lo(committeeHash)
         ) return false;
 
         bytes memory acceptedSetPreimage = abi.encodePacked(
@@ -264,9 +270,7 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
                 abi.encodePacked(uint32(uint256(publicInputs[1 + i])))
             );
         }
-        bytes32 acceptedSetHash = keccak256(
-            acceptedSetPreimage
-        );
+        bytes32 acceptedSetHash = keccak256(acceptedSetPreimage);
         uint256 acceptedSetHiIdx = 26 + (3 * v2H);
         uint256 acceptedSetLoIdx = 27 + (3 * v2H);
         return
@@ -276,21 +280,29 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
             CommitteeHashLib.lo(acceptedSetHash);
     }
 
-    function _v2CommitteeParams(
+    /// The committees whose `dkg_aggregator_v2` statement has `publicInputLength` inputs:
+    /// `39 + 3h + 3 * rows`, with 3 rows (insecure l-BFV) or 6 rows (secure-16384, one per CRT
+    /// modulus). A length can fit two committees (`h = 2` with six rows and `h = 5` with three are
+    /// both 63), so the caller checks each candidate against the E3's committee hash.
+    function _v2Committees(
         uint256 publicInputLength
-    ) private pure returns (uint256 v2H, uint256 v2N) {
-        // `dkg_aggregator_v2`: 39 + 3h + 3 * rows, with 3 rows (insecure l-BFV) or 5 rows
-        // (secure-16384).
-        if (publicInputLength == 54 || publicInputLength == 60) {
-            return (2, 3);
+    )
+        private
+        pure
+        returns (uint256[2] memory hs, uint256[2] memory ns, uint256 count)
+    {
+        uint256[3] memory h = [uint256(2), 5, 14];
+        uint256[3] memory n = [uint256(3), 9, 19];
+        uint256[2] memory rows = [uint256(3), 6];
+        for (uint256 i = 0; i < 3; ++i) {
+            for (uint256 r = 0; r < 2; ++r) {
+                if (39 + 3 * h[i] + 3 * rows[r] == publicInputLength) {
+                    hs[count] = h[i];
+                    ns[count] = n[i];
+                    ++count;
+                }
+            }
         }
-        if (publicInputLength == 63 || publicInputLength == 69) {
-            return (5, 9);
-        }
-        if (publicInputLength == 90 || publicInputLength == 96) {
-            return (14, 19);
-        }
-        return (0, 0);
     }
 
     function _verifyBinding(

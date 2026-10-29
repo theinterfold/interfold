@@ -98,7 +98,7 @@ function publicInputs(
   pkCommitment: string,
   protocolVersion = LBFV_PROTOCOL_VERSION,
   configId = SECURE_16384_CONFIG_ID,
-  lbfvRows = 5,
+  lbfvRows = 6,
 ): string[] {
   const inputs = Array.from(
     { length: 45 + 3 * lbfvRows },
