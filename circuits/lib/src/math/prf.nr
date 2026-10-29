@@ -9,14 +9,15 @@
 //! The context absorb matches `fhe.rs` `trbfv::prf`: party ids are 1-based,
 //! the ciphertext level is 0, and the ciphertext enters as the checked
 //! commitment of the opened polynomials. Evaluation squeezes `ceil(N/3)`
-//! field elements per limb and splits each one into three residues by
-//! successive division by that limb's modulus. Circuit polynomials store the
-//! highest degree first.
+//! field elements per limb. A full group of three residues is one integer
+//! reconstruction. Partial tails still use successive division. Circuit
+//! polynomials store the highest degree first.
 
 use crate::math::commitments::{
     compute_ciphertext_commitment_checked, compute_packed_prf_key_commitment,
 };
 use crate::math::modulo::U64::ModU64;
+use crate::math::modulo::unconstrained_U64::{__reduce_field_witness_u64, __reduce_witness_u64};
 use crate::math::polynomial::Polynomial;
 use crate::math::safe::SafeSponge;
 
@@ -124,15 +125,185 @@ pub fn prf_context_digest<let N: u32, let L: u32, let H: u32>(
     [squeezed[0], squeezed[1]]
 }
 
+/// Ciphertext moduli are integers in `[2, 2^62)`.
+fn assert_supported_modulus(q: Field) {
+    q.assert_max_bit_size::<62>();
+    assert((q as u128) >= 2, "modulus is below 2");
+}
+
+/// Unique base-`2^128` digits of a canonical field element.
+fn split_u128(value: Field) -> (u128, u128) {
+    let place = 2.pow_32(128);
+    let bytes = value.to_be_bytes::<32>();
+    let mut hi_limb: u128 = 0;
+    let mut lo_limb: u128 = 0;
+    for i in 0..16 {
+        hi_limb = hi_limb * 256 + (bytes[i] as u128);
+        lo_limb = lo_limb * 256 + (bytes[i + 16] as u128);
+    }
+    let hi = hi_limb as Field;
+    let lo = lo_limb as Field;
+    lo.assert_max_bit_size::<128>();
+    // A BN254 scalar is below 2^254, so the high digit is below 2^126.
+    hi.assert_max_bit_size::<126>();
+    assert(lo + hi * place == value);
+    (hi as u128, lo as u128)
+}
+
+/// Integer `left <= right` for the canonical representatives.
+fn assert_le_field(left: Field, right: Field) {
+    let (left_hi, left_lo) = split_u128(left);
+    let (right_hi, right_lo) = split_u128(right);
+    assert(
+        (left_hi < right_hi) | ((left_hi == right_hi) & (left_lo <= right_lo)),
+        "value exceeds its modulus bound",
+    );
+}
+
+/// `H = floor((p-1)/q^3)` and `R = (p-1) mod q^3`, from the checked division chain.
+///
+/// These bounds are not hints. Three `quot_rem` steps on the canonical integer
+/// `p-1` fix them, once per limb.
+fn limb_split_bounds(qmod: ModU64) -> (Field, Field) {
+    let q = qmod.get_mod_field();
+    let (quotient0, residue0) = qmod.quot_rem(-1);
+    let (quotient1, residue1) = qmod.quot_rem(quotient0);
+    let (high, residue2) = qmod.quot_rem(quotient1);
+    (high, residue0 + residue1 * q + residue2 * q * q)
+}
+
+/// Hint the base-`q` digits. `constrain_three_residues` is what makes them unique.
+fn hint_three_residues(x: Field, modulus: u64) -> (Field, Field, Field, Field) {
+    // Safety: constrain_three_residues checks every digit, the high quotient, and reconstruction.
+    let (quotient0, residue0) = unsafe { __reduce_field_witness_u64(x, modulus) };
+    // Safety: constrain_three_residues checks every digit, the high quotient, and reconstruction.
+    let (quotient1, residue1) = unsafe { __reduce_field_witness_u64(quotient0, modulus) };
+    // Safety: constrain_three_residues checks every digit, the high quotient, and reconstruction.
+    let (high, residue2) = unsafe { __reduce_field_witness_u64(quotient1, modulus) };
+    (high, residue0, residue1, residue2)
+}
+
+/// Force `x = h q^3 + r2 q^2 + r1 q + r0` as integers, with `0 <= ri < q`.
+///
+/// The modulus is whatever limb is being split. `0 <= ri < q` and `0 <= h <= H`,
+/// plus `low <= R` when `h = H`, put the reconstruction in `[0, p-1]`. The field
+/// equation is then the integer equation. `H` and `R` come from the checked
+/// division of `p-1`, so the bounds are not hints.
+fn constrain_three_residues(
+    q: Field,
+    x: Field,
+    high: Field,
+    residue0: Field,
+    residue1: Field,
+    residue2: Field,
+    high_bound: Field,
+    low_bound: Field,
+) {
+    assert_supported_modulus(q);
+    assert_canonical_digit(q, residue0);
+    assert_canonical_digit(q, residue1);
+    assert_canonical_digit(q, residue2);
+
+    let square = q * q;
+    let low = residue0 + residue1 * q + residue2 * square;
+    assert_le_field(high, high_bound);
+    let at_bound = (high == high_bound) as Field;
+    assert_le_field(at_bound * low, at_bound * low_bound);
+    assert(high * square * q + low == x);
+}
+
+fn assert_canonical_digit(q: Field, residue: Field) {
+    residue.assert_max_bit_size::<62>();
+    assert((residue as u128) < (q as u128), "residue is not below its modulus");
+}
+
+fn split_full_group(
+    qmod: ModU64,
+    x: Field,
+    high_bound: Field,
+    low_bound: Field,
+) -> (Field, Field, Field) {
+    let (high, residue0, residue1, residue2) = hint_three_residues(x, qmod.m);
+    constrain_three_residues(
+        qmod.get_mod_field(),
+        x,
+        high,
+        residue0,
+        residue1,
+        residue2,
+        high_bound,
+        low_bound,
+    );
+    (residue0, residue1, residue2)
+}
+
+fn squeezed_row<let N: u32, let L: u32>(
+    squeezed: [Field; L * ((N + 2) / 3)],
+    row: u32,
+) -> [Field; (N + 2) / 3] {
+    let groups: u32 = (N + 2) / 3;
+    let mut row_squeezed = [0; (N + 2) / 3];
+    for group in 0..groups {
+        row_squeezed[group] = squeezed[row * groups + group];
+    }
+    row_squeezed
+}
+
+fn fill_limb<let N: u32>(
+    q: Field,
+    row_squeezed: [Field; (N + 2) / 3],
+    high_bound: Field,
+    low_bound: Field,
+) -> Polynomial<N> {
+    assert_supported_modulus(q);
+    let qmod = ModU64::new(q as u64);
+    let full_groups: u32 = N / 3;
+    let tail: u32 = N % 3;
+    let mut coeffs: [Field; N] = [0; N];
+    for group in 0..full_groups {
+        let (residue0, residue1, residue2) =
+            split_full_group(qmod, row_squeezed[group], high_bound, low_bound);
+        let start = group * 3;
+        coeffs[N - 1 - start] = residue0;
+        coeffs[N - 1 - start - 1] = residue1;
+        coeffs[N - 1 - start - 2] = residue2;
+    }
+    // Partial tails keep the checked single-residue division.
+    if tail == 1 {
+        coeffs[N - 1 - full_groups * 3] = qmod.reduce_field(row_squeezed[full_groups]);
+    }
+    if tail == 2 {
+        let (quotient0, residue0) = qmod.quot_rem(row_squeezed[full_groups]);
+        let residue1 = qmod.reduce_field(quotient0);
+        let start = full_groups * 3;
+        coeffs[N - 1 - start] = residue0;
+        coeffs[N - 1 - start - 1] = residue1;
+    }
+    Polynomial::new(coeffs)
+}
+
+fn limb_bounds<let L: u32>(qis: [Field; L]) -> ([Field; L], [Field; L]) {
+    let mut high_bounds = [0; L];
+    let mut low_bounds = [0; L];
+    for row in 0..L {
+        let (high, low) = limb_split_bounds(ModU64::new(qis[row] as u64));
+        high_bounds[row] = high;
+        low_bounds[row] = low;
+    }
+    (high_bounds, low_bounds)
+}
+
 /// Evaluate `F_k`. Each squeezed element yields three residues of one limb modulus.
 ///
 /// Residue `k` of group `g` is coefficient `3g + k`, low degree first. The last group
-/// of a limb stops at `N`. All three divisions use that limb's `q`, never a bit window
-/// and never another CRT limb.
+/// of a limb stops at `N`. Every division uses that limb's own `q`. `L` is the
+/// caller's modulus count.
 pub fn prf_evaluate<let N: u32, let L: u32>(
     key: Field,
     digest: [Field; 2],
     qis: [Field; L],
+    high_bounds: [Field; L],
+    low_bounds: [Field; L],
 ) -> [Polynomial<N>; L] {
     let groups: u32 = (N + 2) / 3;
     let squeeze_len: u32 = L * groups;
@@ -141,34 +312,14 @@ pub fn prf_evaluate<let N: u32, let L: u32>(
     let squeezed = sponge.squeeze_array::<L * ((N + 2) / 3)>();
     sponge.finish();
 
-    let full_groups: u32 = N / 3;
-    let tail: u32 = N % 3;
     let mut polys: [Polynomial<N>; L] = [Polynomial::new([0; N]); L];
     for row in 0..L {
-        let qmod = ModU64::new(qis[row] as u64);
-        let mut coeffs: [Field; N] = [0; N];
-        let row_offset = row * groups;
-        for group in 0..full_groups {
-            let (quotient0, residue0) = qmod.quot_rem(squeezed[row_offset + group]);
-            let (quotient1, residue1) = qmod.quot_rem(quotient0);
-            let residue2 = qmod.reduce_field(quotient1);
-            let start = group * 3;
-            coeffs[N - 1 - start] = residue0;
-            coeffs[N - 1 - start - 1] = residue1;
-            coeffs[N - 1 - start - 2] = residue2;
-        }
-        if tail == 1 {
-            coeffs[N - 1 - full_groups * 3] =
-                qmod.reduce_field(squeezed[row_offset + full_groups]);
-        }
-        if tail == 2 {
-            let (quotient0, residue0) = qmod.quot_rem(squeezed[row_offset + full_groups]);
-            let residue1 = qmod.reduce_field(quotient0);
-            let start = full_groups * 3;
-            coeffs[N - 1 - start] = residue0;
-            coeffs[N - 1 - start - 1] = residue1;
-        }
-        polys[row] = Polynomial::new(coeffs);
+        polys[row] = fill_limb::<N>(
+            qis[row],
+            squeezed_row(squeezed, row),
+            high_bounds[row],
+            low_bounds[row],
+        );
     }
     polys
 }
@@ -198,7 +349,13 @@ fn decryptor_position<let H: u32>(decryptors: [Field; H], party_id_one_based: Fi
     position
 }
 
-fn add_mask_difference<let N: u32, let L: u32>(
+/// Add one peer's `outgoing + q - incoming` without reducing.
+///
+/// Each residue is in `[0, q)`, so one peer contributes a value in `[0, 2q)`.
+/// After `T` peers the accumulator is below `2 T q`. `T` fits in a `u32` and
+/// `q < 2^62`, so the accumulator is below `2^95` and does not wrap the scalar
+/// field. Its quotient by `q` is below `2^33`.
+fn accumulate_mask_difference<let N: u32, let L: u32>(
     mask: [Polynomial<N>; L],
     positive: [Polynomial<N>; L],
     negative: [Polynomial<N>; L],
@@ -207,16 +364,43 @@ fn add_mask_difference<let N: u32, let L: u32>(
     let mut next: [Polynomial<N>; L] = [Polynomial::new([0; N]); L];
     for row in 0..L {
         let q = qis[row];
-        let qmod = ModU64::new(q as u64);
         let mut coeffs: [Field; N] = [0; N];
         for col in 0..N {
-            let combined = mask[row].coefficients[col] + positive[row].coefficients[col] + q
+            coeffs[col] = mask[row].coefficients[col] + positive[row].coefficients[col] + q
                 - negative[row].coefficients[col];
-            coeffs[col] = qmod.reduce_mod(combined);
         }
         next[row] = Polynomial::new(coeffs);
     }
     next
+}
+
+/// Canonical residue of an accumulator whose quotient is below `2^33`.
+fn reduce_accumulated_coefficient(qmod: ModU64, accumulated: Field) -> Field {
+    // Safety: the quotient is range-checked below, and the remainder is checked into `[0, q)`.
+    let quotient = unsafe { __reduce_witness_u64(accumulated, qmod.m) } as Field;
+    quotient.assert_max_bit_size::<33>();
+    let q = qmod.get_mod_field();
+    let remainder = accumulated - quotient * q;
+    remainder.assert_max_bit_size::<62>();
+    (q - 1 - remainder).assert_max_bit_size::<62>();
+    assert(quotient * q + remainder == accumulated);
+    remainder
+}
+
+fn reduce_accumulated_mask<let N: u32, let L: u32>(
+    mask: [Polynomial<N>; L],
+    qis: [Field; L],
+) -> [Polynomial<N>; L] {
+    let mut reduced: [Polynomial<N>; L] = [Polynomial::new([0; N]); L];
+    for row in 0..L {
+        let qmod = ModU64::new(qis[row] as u64);
+        let mut coeffs: [Field; N] = [0; N];
+        for col in 0..N {
+            coeffs[col] = reduce_accumulated_coefficient(qmod, mask[row].coefficients[col]);
+        }
+        reduced[row] = Polynomial::new(coeffs);
+    }
+    reduced
 }
 
 /// Build `r_i = Σ_{j in S, j ≠ i} (F_{k_ij}(H) - F_{k_ji}(H))`.
@@ -242,10 +426,12 @@ pub fn prf_decryption_mask<let N: u32, let L: u32, let N_PARTIES: u32, let H: u3
     let own_position = decryptor_position(decryptors, self_id);
 
     let digest = prf_context_digest::<N, L, H>(decryptors, ct_commitment);
+    let (high_bounds, low_bounds) = limb_bounds(qis);
     let mut mask: [Polynomial<N>; L] = [Polynomial::new([0; N]); L];
 
     // A witness-dependent `if` does not skip circuit work. Select exactly H-1
     // peers first, so only their two PRF streams are expanded by the compiler.
+    // `T = H - 1` is the number of accumulated peers.
     for slot in 0..(H - 1) {
         let peer_position = if slot < own_position { slot } else { slot + 1 };
         let other = (decryptors[peer_position] as u32) - 1;
@@ -259,12 +445,14 @@ pub fn prf_decryption_mask<let N: u32, let L: u32, let N_PARTIES: u32, let H: u3
                 == incoming_commitments[other],
             "Incoming PRF key commitment mismatch",
         );
-        let outgoing = prf_evaluate(outgoing_keys[other], digest, qis);
-        let incoming = prf_evaluate(incoming_keys[other], digest, qis);
-        mask = add_mask_difference(mask, outgoing, incoming, qis);
+        let outgoing =
+            prf_evaluate::<N, L>(outgoing_keys[other], digest, qis, high_bounds, low_bounds);
+        let incoming =
+            prf_evaluate::<N, L>(incoming_keys[other], digest, qis, high_bounds, low_bounds);
+        mask = accumulate_mask_difference(mask, outgoing, incoming, qis);
     }
 
-    mask
+    reduce_accumulated_mask(mask, qis)
 }
 
 fn mask_fixture(owner: u32, ids: [Field; 3]) -> [Field; 8] {
@@ -283,7 +471,7 @@ fn mask_fixture(owner: u32, ids: [Field; 3]) -> [Field; 8] {
     let ct1 = [Polynomial::new([15, 14, 13, 12, 11, 10, 9, 8])];
     // Modulus bit of 65537 is 16, so this is the commitment decryption will open.
     let commitment = compute_ciphertext_commitment_checked::<8, 1, 16>(ct0, ct1);
-    prf_decryption_mask(
+    prf_decryption_mask::<8, 1, 5, 3>(
         owner - 1,
         ids,
         outgoing,
@@ -378,7 +566,7 @@ fn tail_one_mask(owner: u32, ids: [Field; 3]) -> [Field; 4] {
     let ct0 = [Polynomial::new([3, 2, 1, 0])];
     let ct1 = [Polynomial::new([7, 6, 5, 4])];
     let commitment = compute_ciphertext_commitment_checked::<4, 1, 16>(ct0, ct1);
-    prf_decryption_mask(
+    prf_decryption_mask::<4, 1, 5, 3>(
         owner - 1,
         ids,
         outgoing,
@@ -431,6 +619,234 @@ fn peer_selection_rejects_zero_ids() {
 #[test(should_fail_with = "Decryptor id is out of range")]
 fn peer_selection_rejects_out_of_range_ids() {
     let _ = mask_fixture(3, [1, 3, 6]);
+}
+
+fn residues_match_division(q: u64, x: Field) {
+    let qmod = ModU64::new(q);
+    let (high_bound, low_bound) = limb_split_bounds(qmod);
+    let (residue0, residue1, residue2) = split_full_group(qmod, x, high_bound, low_bound);
+    let (quotient0, expected0) = qmod.quot_rem(x);
+    let (quotient1, expected1) = qmod.quot_rem(quotient0);
+    let expected2 = qmod.reduce_field(quotient1);
+    assert(residue0 == expected0);
+    assert(residue1 == expected1);
+    assert(residue2 == expected2);
+}
+
+#[test]
+fn evaluation_follows_the_supplied_limb_count() {
+    let qis = [3, 65537, 134217089, 576460752317792257];
+    let (high_bounds, low_bounds) = limb_bounds(qis);
+    let polys = prf_evaluate::<4, 4>(1, [2, 3], qis, high_bounds, low_bounds);
+    for row in 0..4 {
+        for coefficient in 0..4 {
+            assert((polys[row].coefficients[coefficient] as u128) < (qis[row] as u128));
+        }
+    }
+}
+
+#[test]
+fn full_group_matches_successive_division_for_each_width() {
+    let narrow: Field = 65537;
+    let insecure: Field = 134217089;
+    let secure: Field = 576460752317792257;
+    residues_match_division(narrow as u64, 3 + 5 * narrow + 7 * narrow * narrow);
+    residues_match_division(insecure as u64, 3 + 5 * insecure + 7 * insecure * insecure);
+    residues_match_division(secure as u64, 3 + 5 * secure + 7 * secure * secure);
+    // p-1 is the inclusive end of the high-quotient range.
+    residues_match_division(narrow as u64, -1);
+    residues_match_division(insecure as u64, -1);
+    residues_match_division(secure as u64, -1);
+}
+
+#[test(should_fail)]
+fn split_rejects_noncanonical_digit() {
+    let q: Field = 65537;
+    let qmod = ModU64::new(65537);
+    let (high_bound, low_bound) = limb_split_bounds(qmod);
+    constrain_three_residues(q, q, 0, q, 0, 0, high_bound, low_bound);
+}
+
+#[test(should_fail)]
+fn split_rejects_carry_alias() {
+    let q: Field = 65537;
+    let qmod = ModU64::new(65537);
+    let (high_bound, low_bound) = limb_split_bounds(qmod);
+    let x = 3 + q * q;
+    constrain_three_residues(q, x, 0, 3, q, 0, high_bound, low_bound);
+}
+
+#[test(should_fail)]
+fn split_rejects_oversized_quotient() {
+    let q: Field = 65537;
+    let qmod = ModU64::new(65537);
+    let (high_bound, low_bound) = limb_split_bounds(qmod);
+    let x = (high_bound + 1) * q * q * q;
+    constrain_three_residues(q, x, high_bound + 1, 0, 0, 0, high_bound, low_bound);
+}
+
+#[test(should_fail)]
+fn split_rejects_wrapped_field_opening() {
+    let q: Field = 65537;
+    let qmod = ModU64::new(65537);
+    let (high_bound, low_bound) = limb_split_bounds(qmod);
+    // R+1 with h = H reconstructs p, which is the field element 0.
+    let (quotient0, residue0) = qmod.quot_rem(low_bound + 1);
+    let (quotient1, residue1) = qmod.quot_rem(quotient0);
+    let residue2 = qmod.reduce_field(quotient1);
+    constrain_three_residues(
+        q,
+        0,
+        high_bound,
+        residue0,
+        residue1,
+        residue2,
+        high_bound,
+        low_bound,
+    );
+}
+
+#[test]
+fn deferred_reduction_matches_per_peer_reduction() {
+    let q: Field = 134217089;
+    let qmod = ModU64::new(q as u64);
+    let outgoing = [1, 100, q - 1];
+    let incoming = [2, 7, 0];
+    let mut stepwise = 0;
+    let mut accumulated = 0;
+    for i in 0..3 {
+        stepwise = qmod.reduce_mod(stepwise + outgoing[i] + q - incoming[i]);
+        accumulated = accumulated + outgoing[i] + q - incoming[i];
+    }
+    assert(reduce_accumulated_coefficient(qmod, accumulated) == stepwise);
+}
+
+fn mixed_limb_mask<let N: u32>(owner: u32, ids: [Field; 3]) -> [Polynomial<N>; 2] {
+    let mut outgoing = [0; 5];
+    let mut incoming = [0; 5];
+    let mut outgoing_commits = [0; 5];
+    let mut incoming_commits = [0; 5];
+    for peer in 0..5 {
+        outgoing[peer] = (10 * owner + peer + 1) as Field;
+        incoming[peer] = (10 * (peer + 1) + owner) as Field;
+        outgoing_commits[peer] = compute_packed_prf_key_commitment(peer as Field, outgoing[peer]);
+        incoming_commits[peer] =
+            compute_packed_prf_key_commitment((owner - 1) as Field, incoming[peer]);
+    }
+    let ct0 = [Polynomial::new([0; N]); 2];
+    let ct1 = [Polynomial::new([0; N]); 2];
+    let commitment = compute_ciphertext_commitment_checked::<N, 2, 16>(ct0, ct1);
+    prf_decryption_mask::<N, 2, 5, 3>(
+        owner - 1,
+        ids,
+        outgoing,
+        incoming,
+        outgoing_commits,
+        incoming_commits,
+        commitment,
+        [65537, 134217089],
+    )
+}
+
+#[test]
+fn mixed_limb_tails_are_nonzero_and_cancel() {
+    let ids: [Field; 3] = [1, 3, 5];
+    let narrow: Field = 65537;
+    let wide: Field = 134217089;
+    let tail_two: [[Polynomial<8>; 2]; 3] = [
+        mixed_limb_mask(ids[0] as u32, ids),
+        mixed_limb_mask(ids[1] as u32, ids),
+        mixed_limb_mask(ids[2] as u32, ids),
+    ];
+    let tail_one: [[Polynomial<4>; 2]; 3] = [
+        mixed_limb_mask(ids[0] as u32, ids),
+        mixed_limb_mask(ids[1] as u32, ids),
+        mixed_limb_mask(ids[2] as u32, ids),
+    ];
+    assert(tail_two[0][0].coefficients != tail_two[1][0].coefficients);
+    assert(tail_one[0][0].coefficients != tail_one[1][0].coefficients);
+    let mut narrow_nonzero = false;
+    let mut wide_nonzero = false;
+    for coefficient in 0..8 {
+        if tail_two[0][0].coefficients[coefficient] != 0 {
+            narrow_nonzero = true;
+        }
+        if tail_two[0][1].coefficients[coefficient] != 0 {
+            wide_nonzero = true;
+        }
+        for limb in 0..2 {
+            let q = if limb == 0 { narrow } else { wide };
+            let sum = tail_two[0][limb].coefficients[coefficient]
+                + tail_two[1][limb].coefficients[coefficient]
+                + tail_two[2][limb].coefficients[coefficient];
+            assert((sum == 0) | (sum == q) | (sum == 2 * q));
+        }
+    }
+    assert(narrow_nonzero);
+    assert(wide_nonzero);
+    for coefficient in 0..4 {
+        for limb in 0..2 {
+            let q = if limb == 0 { narrow } else { wide };
+            let sum = tail_one[0][limb].coefficients[coefficient]
+                + tail_one[1][limb].coefficients[coefficient]
+                + tail_one[2][limb].coefficients[coefficient];
+            assert((sum == 0) | (sum == q) | (sum == 2 * q));
+        }
+    }
+}
+
+fn zero_ciphertext_mask<let N: u32>(owner: u32, ids: [Field; 3]) -> [Polynomial<N>; 2] {
+    let mut outgoing = [0; 5];
+    let mut incoming = [0; 5];
+    let mut outgoing_commits = [0; 5];
+    let mut incoming_commits = [0; 5];
+    for peer in 0..5 {
+        outgoing[peer] = (10 * owner + peer + 1) as Field;
+        incoming[peer] = (10 * (peer + 1) + owner) as Field;
+        outgoing_commits[peer] = compute_packed_prf_key_commitment(peer as Field, outgoing[peer]);
+        incoming_commits[peer] =
+            compute_packed_prf_key_commitment((owner - 1) as Field, incoming[peer]);
+    }
+    let ct0 = [Polynomial::new([0; N]); 2];
+    let ct1 = [Polynomial::new([0; N]); 2];
+    // Centered width of max(65537, 134217089) is 26, the width the native commitment uses.
+    let commitment = compute_ciphertext_commitment_checked::<N, 2, 26>(ct0, ct1);
+    prf_decryption_mask::<N, 2, 5, 3>(
+        owner - 1,
+        ids,
+        outgoing,
+        incoming,
+        outgoing_commits,
+        incoming_commits,
+        commitment,
+        [65537, 134217089],
+    )
+}
+
+#[test]
+fn native_masks_match_for_both_tails() {
+    let ids: [Field; 3] = [1, 3, 5];
+    let tail_two = zero_ciphertext_mask::<8>(ids[0] as u32, ids);
+    let tail_one = zero_ciphertext_mask::<16>(ids[0] as u32, ids);
+    assert(tail_two[0].coefficients == [7412, 28446, 17326, 56383, 51908, 9857, 47608, 9856]);
+    assert(
+        tail_two[1].coefficients
+            == [59089007, 10188786, 19792890, 84831172, 83697486, 28164971, 62327969, 44838048],
+    );
+    assert(
+        tail_one[0].coefficients
+            == [
+                48718, 6878, 57133, 17990, 39729, 57523, 29682, 7705, 10869, 14453, 23457, 2980,
+                19081, 56811, 9272, 16409,
+            ],
+    );
+    assert(
+        tail_one[1].coefficients
+            == [
+                115302108, 10993617, 14115167, 119191885, 23150975, 69758970, 60656832, 47568370,
+                90572515, 45489300, 126981637, 110588325, 30204511, 68133202, 124128057, 13397114,
+            ],
+    );
 }
 
 #[test]
