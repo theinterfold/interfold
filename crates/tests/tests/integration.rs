@@ -2306,6 +2306,41 @@ async fn test_trbfv_actor() -> Result<()> {
                 "public-key flow after failover: {event} seen {seen} times on the role holders, expected at least {expected}"
             );
         }
+        // Repeated work is tolerated, a second publication is not: a demoted and a promoted
+        // aggregator both publishing the key is the failure a failover must not produce.
+        let published = observed
+            .iter()
+            .filter(|&&event| event == "PublicKeyAggregated")
+            .count();
+        assert_eq!(
+            published, 1,
+            "public-key flow after failover: PublicKeyAggregated published {published} times across the role holders"
+        );
+        for &node_index in &pubkey_aggregator_nodes {
+            let holder_events = project_history(&nodes.get_history(node_index).await?, |data| {
+                publickey_aggregator_marker(data, &e3_id)
+            });
+            let keyshare_count = holder_events
+                .iter()
+                .filter(|&&event| event == "KeyshareCreated")
+                .count();
+            assert!(
+                (committee_h..=threshold_n).contains(&keyshare_count),
+                "Role holder {node_index} received {keyshare_count} keyshares; expected at least H={committee_h} and at most N={threshold_n}"
+            );
+            assert_eq!(
+                holder_events.first().copied(),
+                Some("CommitteeFinalized"),
+                "Role holder {node_index}: first event must be CommitteeFinalized"
+            );
+            if holder_events.contains(&"PublicKeyAggregated") {
+                assert_eq!(
+                    holder_events.last().copied(),
+                    Some("PublicKeyAggregated"),
+                    "Role holder {node_index}: publishing the key must end its public-key flow"
+                );
+            }
+        }
     }
 
     if let Some(secs) = history_wall_seconds_between(
