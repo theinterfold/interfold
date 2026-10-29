@@ -176,11 +176,15 @@ not be mistaken for runtime work avoidance. Each key absorbs its key and the two
 digest, then squeezes `L * ceil(N/3)` field elements under
 `fhe.rs/trbfv/prf/poseidon2/eval-x3`. Successive integer division by that limb's modulus splits
 each element into three residues in `[0, q)`. The last element of a limb contributes only
-`N mod 3` coefficients when `N` is not a multiple of 3. The third residue is statistically short
-of 128 bits for a modulus near 60 bits; the first two are not. A raw 64-bit window is not a
-substitute. The context digest, under `fhe.rs/trbfv/prf/poseidon2/ctx-cmt`, absorbs the designated
-set, level 0, the two components, `L`, `N`, and the checked ciphertext commitment already verified
-against the opened ciphertext. It does not absorb the raw coefficients again. These domains do
+`N mod 3` coefficients when `N` is not a multiple of 3. For the secure moduli near 2^59, three
+residues of one BN254 scalar are at most about 2^{-76.6} from uniform per squeezed element. A
+union bound over the 8,193 elements of one degree-8192 evaluation, and over 18 evaluations for
+T=9, is about 2^{-59} per share. That advantage is smaller than the deployed smudging parameter
+2^{-45}. The first two residues of an element are about 2^{-135.6} from uniform. A raw 64-bit
+window is not a substitute. The context digest, under `fhe.rs/trbfv/prf/poseidon2/ctx-cmt`, absorbs
+the designated set, level 0, the two components, `L`, `N`, and the checked ciphertext commitment
+already verified against the opened ciphertext. It does not absorb the raw coefficients again. These
+domains do
 not verify masks produced by the previous `ctx` and `eval` labels. The fixed-array squeeze path
 requires the sponge to be at a permutation boundary and validates the declared output count
 against the IO pattern. It performs the same full-rate blocks and final partial block as

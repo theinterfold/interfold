@@ -12,10 +12,10 @@
 use std::sync::Arc;
 
 use e3_committee::CiphernodesCommittee;
-use e3_fhe_params::{create_deterministic_crp_from_default_seed, BfvPreset};
+use e3_fhe_params::{BfvPreset, create_deterministic_crp_from_default_seed};
 use e3_polynomial::CrtPolynomial;
 use e3_polynomial_fhe::FromFhePolynomial as _;
-use e3_zk_witness::{threshold::share_decryption::ShareDecryptionCircuitData, WitnessError};
+use e3_zk_witness::{WitnessError, threshold::share_decryption::ShareDecryptionCircuitData};
 use fhe::{
     bfv::{BfvParameters, Encoding, Plaintext, PublicKey},
     mbfv::{AggregateIter, PublicKeyShare},
@@ -98,7 +98,19 @@ pub fn generate(
     let e_signed = noise.draw(&mut rng)?;
     let e = CrtPolynomial::from_mod_q_polynomial(&e_signed, threshold_params.moduli());
     let decryptors: Vec<u32> = (1..=(threshold as u32 + 1)).collect();
-    let prf_keys: Vec<Vec<u8>> = (0..num_parties).map(|i| vec![i as u8 + 1; 32]).collect();
+    // Outgoing `k_{1,j}` and incoming `k_{j,1}` differ, so this party's mask is nonzero.
+    let directed_key = |from: u8, to: u8, label: u8| {
+        let mut key = vec![label; 32];
+        key[0] = from;
+        key[1] = to;
+        key
+    };
+    let outgoing_prf_keys = (0..num_parties)
+        .map(|peer| directed_key(1, u8::try_from(peer + 1).unwrap_or(0), 1))
+        .collect();
+    let incoming_prf_keys = (0..num_parties)
+        .map(|peer| directed_key(u8::try_from(peer + 1).unwrap_or(0), 1, 2))
+        .collect();
     let mut data = ShareDecryptionCircuitData {
         ciphertext,
         public_key,
@@ -111,8 +123,8 @@ pub fn generate(
         committee,
         party_idx: 0,
         decryptors,
-        outgoing_prf_keys: prf_keys.clone(),
-        incoming_prf_keys: prf_keys,
+        outgoing_prf_keys,
+        incoming_prf_keys,
     };
     data.d_share = synchronized_decryption_share(&data, threshold_params, preset)?;
     Ok(data)
@@ -196,6 +208,28 @@ mod tests {
 
             let degree = config.params.degree();
             let num_moduli = config.params.moduli().len();
+
+            assert_ne!(
+                sample.outgoing_prf_keys, sample.incoming_prf_keys,
+                "identical PRF directions make the mask zero for every implementation"
+            );
+            if preset == BfvPreset::InsecureThreshold64 {
+                let mask = e3_zk_witness::prf::mask(
+                    sample.party_idx,
+                    &sample.decryptors,
+                    &sample.outgoing_prf_keys,
+                    &sample.incoming_prf_keys,
+                    &sample.ciphertext,
+                    sample.committee.n,
+                )
+                .unwrap();
+                assert!(
+                    mask.coefficients()
+                        .iter()
+                        .any(|coefficient| *coefficient != 0),
+                    "the acceptance sample mask is zero"
+                );
+            }
 
             assert_eq!(
                 sample.ciphertext.len(),

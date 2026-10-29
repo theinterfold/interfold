@@ -158,12 +158,12 @@ pub fn prf_evaluate<let N: u32, let L: u32>(
             coeffs[N - 1 - start - 2] = residue2;
         }
         if tail == 1 {
-            let (_, residue0) = qmod.quot_rem(squeezed[row_offset + full_groups]);
-            coeffs[N - 1 - full_groups * 3] = residue0;
+            coeffs[N - 1 - full_groups * 3] =
+                qmod.reduce_field(squeezed[row_offset + full_groups]);
         }
         if tail == 2 {
             let (quotient0, residue0) = qmod.quot_rem(squeezed[row_offset + full_groups]);
-            let (_, residue1) = qmod.quot_rem(quotient0);
+            let residue1 = qmod.reduce_field(quotient0);
             let start = full_groups * 3;
             coeffs[N - 1 - start] = residue0;
             coeffs[N - 1 - start - 1] = residue1;
@@ -331,6 +331,81 @@ fn one_squeezed_element_splits_into_three_residues() {
     assert(low0 == 4);
     assert(low1 == 0);
     assert(qmod.reduce_field(high1) == 0);
+}
+
+#[test]
+fn wide_modulus_quot_rem_matches_the_integer_split() {
+    // This modulus is past the 2^50 hint threshold, so `quot_rem` returns the
+    // witness quotient instead of dividing again.
+    let q: Field = 576460752317792257;
+    let qmod = ModU64::new(q as u64);
+    let x = 3 + 5 * q + 7 * q * q;
+    let (quotient0, residue0) = qmod.quot_rem(x);
+    let (quotient1, residue1) = qmod.quot_rem(quotient0);
+    let residue2 = qmod.reduce_field(quotient1);
+    assert(residue0 == 3);
+    assert(residue1 == 5);
+    assert(residue2 == 7);
+}
+
+#[test]
+fn insecure_sized_modulus_quot_rem_matches_the_integer_split() {
+    // 134217089 is an insecure threshold modulus. It is below 2^50, so this
+    // takes the byte path and still has to return the integer residues.
+    let q: Field = 134217089;
+    let qmod = ModU64::new(134217089);
+    let x = 3 + 5 * q + 7 * q * q;
+    let (quotient0, residue0) = qmod.quot_rem(x);
+    let (quotient1, residue1) = qmod.quot_rem(quotient0);
+    let residue2 = qmod.reduce_field(quotient1);
+    assert(residue0 == 3);
+    assert(residue1 == 5);
+    assert(residue2 == 7);
+}
+
+fn tail_one_mask(owner: u32, ids: [Field; 3]) -> [Field; 4] {
+    let mut outgoing = [0; 5];
+    let mut incoming = [0; 5];
+    let mut outgoing_commits = [0; 5];
+    let mut incoming_commits = [0; 5];
+    for peer in 0..5 {
+        outgoing[peer] = (10 * owner + peer + 1) as Field;
+        incoming[peer] = (10 * (peer + 1) + owner) as Field;
+        outgoing_commits[peer] = compute_packed_prf_key_commitment(peer as Field, outgoing[peer]);
+        incoming_commits[peer] =
+            compute_packed_prf_key_commitment((owner - 1) as Field, incoming[peer]);
+    }
+    let ct0 = [Polynomial::new([3, 2, 1, 0])];
+    let ct1 = [Polynomial::new([7, 6, 5, 4])];
+    let commitment = compute_ciphertext_commitment_checked::<4, 1, 16>(ct0, ct1);
+    prf_decryption_mask(
+        owner - 1,
+        ids,
+        outgoing,
+        incoming,
+        outgoing_commits,
+        incoming_commits,
+        commitment,
+        [65537],
+    )[0]
+        .coefficients
+}
+
+#[test]
+fn tail_one_masks_are_distinct_and_cancel() {
+    // N = 4 leaves a one-coefficient tail. N = 8192 leaves a two-coefficient tail.
+    let ids: [Field; 3] = [1, 3, 5];
+    let masks: [[Field; 4]; 3] = [
+        tail_one_mask(ids[0] as u32, ids),
+        tail_one_mask(ids[1] as u32, ids),
+        tail_one_mask(ids[2] as u32, ids),
+    ];
+    assert(masks[0] != masks[1]);
+    assert(masks[1] != masks[2]);
+    for coefficient in 0..4 {
+        let sum = masks[0][coefficient] + masks[1][coefficient] + masks[2][coefficient];
+        assert((sum == 0) | (sum == 65537) | (sum == 2 * 65537));
+    }
 }
 
 #[test(should_fail_with = "Party is outside the decryptor set")]

@@ -52,15 +52,28 @@ impl ModU64 {
 
     /// Integer quotient and remainder of one canonical field element.
     ///
-    /// `reduce_field` fixes the remainder in `[0, m)`. Field division then
-    /// returns `(n - remainder) / m`. Both pieces sit below the scalar prime,
-    /// so the closing equality is the integer identity
-    /// `quotient * m + remainder = n`, with no scalar wrap.
+    /// For a modulus of at least 2^50 the witness reduction already
+    /// range-checks that quotient, so this returns it. The cutoff is 2^50
+    /// because the secure parameter sets are expected to use moduli above
+    /// that size, so they take this path. Smaller moduli still divide
+    /// `(n - remainder) / m`. In both cases
+    /// `quotient * m + remainder = n` holds as an integer, with no scalar wrap.
     pub fn quot_rem(self, n: Field) -> (Field, Field) {
-        let remainder = self.reduce_field(n);
-        let quotient = (n - remainder) / self.get_mod_field();
-        assert(quotient * self.get_mod_field() + remainder == n);
-        (quotient, remainder)
+        assert(self.m > 0);
+        assert(self.m < (1u64 << 62));
+        if self.m >= (1u64 << 50) {
+            let (bound, max_remainder) = self.field_reduction_bounds();
+            // Safety: verification bounds both outputs and excludes quotient*m+remainder >= p.
+            let (quotient, remainder) = unsafe { __reduce_field_witness_u64(n, self.m) };
+            let remainder =
+                self.verify_field_reduction(n, quotient, remainder, bound, max_remainder);
+            (quotient, remainder)
+        } else {
+            let remainder = self.reduce_field_bytes(n);
+            let quotient = (n - remainder) / self.get_mod_field();
+            assert(quotient * self.get_mod_field() + remainder == n);
+            (quotient, remainder)
+        }
     }
 
     /// Reuse modulus-only bounds across a row instead of rebuilding their SSA for every output.
@@ -68,7 +81,7 @@ impl ModU64 {
         assert(self.m > 0);
         assert(self.m < (1u64 << 62));
         let mut reduced = [0; N];
-        if self.m >= (1u64 << 26) {
+        if self.m >= (1u64 << 50) {
             let (bound, max_remainder) = self.field_reduction_bounds();
             for i in 0..N {
                 // Safety: verification bounds both outputs and excludes quotient*m+remainder >= p.
@@ -106,10 +119,10 @@ impl ModU64 {
         bound: Field,
         max_remainder: Field,
     ) -> Field {
-        // m>=2^26 implies bound<2^228. Both range checks are far below p,
+        // m>=2^50 implies bound<2^204. Both range checks are far below p,
         // so they enforce the integer interval 0<=quotient<=bound.
-        quotient.assert_max_bit_size::<228>();
-        (bound - quotient).assert_max_bit_size::<228>();
+        quotient.assert_max_bit_size::<204>();
+        (bound - quotient).assert_max_bit_size::<204>();
         remainder.assert_max_bit_size::<62>();
         (self.get_mod_field() - 1 - remainder).assert_max_bit_size::<62>();
         // If quotient<bound the largest possible sum is already <p. At the
