@@ -180,7 +180,7 @@ reachable cap is `2**TREE_DEPTH - 1` (1,048,575 at depth 20), matching LazyIMT's
 own request/selection boundaries. Run `pnpm evm:test` and `cargo test -p e3-sortition` for affected
 behavior; cross-layer changes also need `pnpm test:integration` with the relevant scenario.
 
-Chain readers default to one confirmation even through a loopback proxy; only explicit
+Chain readers default to three confirmations even through a loopback proxy; only explicit
 single-process development uses zero and a 250 ms rather than 7 s RPC poll interval. Live
 subscriptions are wake-ups: canonical `eth_getLogs` backfill delivers from watermark to confirmed
 head, including a five-second periodic backfill at every depth. Retry/reconnect rather than silently

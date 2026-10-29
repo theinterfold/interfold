@@ -6,13 +6,15 @@
 
 use crate::error_decoder::decode_error_from_str;
 use alloy::{
-    network::EthereumWallet,
+    contract::{CallBuilder, CallDecoder},
+    network::{Ethereum, EthereumWallet},
     providers::{
         fillers::{
             BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
             SimpleNonceManager, WalletFiller,
         },
-        Identity, Provider, ProviderBuilder, RootProvider, WalletProvider,
+        Identity, PendingTransactionBuilder, Provider, ProviderBuilder, RootProvider,
+        WalletProvider,
     },
     rpc::{client::ClientBuilder, types::TransactionReceipt},
     signers::local::PrivateKeySigner,
@@ -40,18 +42,19 @@ use e3_crypto::Cipher;
 use e3_data::Repository;
 use e3_events::Proof;
 use e3_utils::{
+    nonce::{broadcast_refused, next_free_nonce},
     retry_with_backoff, should_retry_error, RetryError, RPC_RETRY_ATTEMPTS,
     RPC_RETRY_FIRST_DELAY_MS,
 };
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     env,
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex as StdMutex, OnceLock},
-    time::Duration,
+    time::{Duration, Instant},
 };
-use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
+use tokio::sync::Mutex as AsyncMutex;
 use tracing::{info, warn};
 use zeroize::{Zeroize, Zeroizing};
 
@@ -132,30 +135,89 @@ impl<P: Provider + Clone> EthProvider<P> {
 
 type NonceLockKey = (u64, Address);
 
-fn nonce_lock(chain_id: u64, signer: Address) -> Arc<AsyncMutex<()>> {
-    static LOCKS: OnceLock<StdMutex<HashMap<NonceLockKey, Arc<AsyncMutex<()>>>>> = OnceLock::new();
+/// The nonces that this process sent from one signer on one chain, with their send times.
+type SentNonces = BTreeMap<u64, Instant>;
+
+fn nonce_lock(chain_id: u64, signer: Address) -> Arc<AsyncMutex<SentNonces>> {
+    static LOCKS: OnceLock<StdMutex<HashMap<NonceLockKey, Arc<AsyncMutex<SentNonces>>>>> =
+        OnceLock::new();
     let locks = LOCKS.get_or_init(|| StdMutex::new(HashMap::new()));
     let mut locks = locks
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    Arc::clone(
-        locks
-            .entry((chain_id, signer))
-            .or_insert_with(|| Arc::new(AsyncMutex::new(()))),
-    )
+    Arc::clone(locks.entry((chain_id, signer)).or_default())
 }
 
-/// Serialize nonce lookup and submission for one signer on one chain.
+/// Broadcast `call` from the provider's signer with the signer's next free nonce.
 ///
-/// Independent writer actors share a provider signer and previously raced by reading the same
-/// pending nonce. Writers release the guard after the RPC accepts the transaction, before waiting
-/// for a receipt, so a slow confirmation cannot block unrelated submissions indefinitely.
-pub(crate) async fn transaction_nonce_guard<P>(provider: &EthProvider<P>) -> OwnedMutexGuard<()>
+/// Independent writer actors share a provider signer, so the nonce choice and the broadcast are
+/// serialized for one signer on one chain. The pending count of the RPC can miss a transaction
+/// that it accepted a moment ago, for example on another node behind a load balancer, and a second
+/// transaction with that nonce is refused or replaces the first. So the choice also skips the
+/// nonces that this process sent and the chain does not count yet. The lock is released when the
+/// broadcast returns, before the receipt, so a slow confirmation does not block unrelated
+/// submissions.
+///
+/// The gas limit, the EIP-1559 fees and the chain ID are filled before the nonce is reserved, so
+/// that the send under the reservation only signs and broadcasts: a failed estimate reserves
+/// nothing. A gas limit that the caller set stays.
+pub(crate) async fn send_with_next_nonce<P, C, D>(
+    provider: &EthProvider<P>,
+    call: CallBuilder<C, D>,
+) -> Result<PendingTransactionBuilder<Ethereum>, alloy::contract::Error>
 where
     P: Provider + WalletProvider + Clone,
+    C: Provider,
+    D: CallDecoder,
 {
+    let call = match call.as_ref().gas {
+        Some(_) => call,
+        None => {
+            let gas = call.estimate_gas().await?;
+            call.gas(gas)
+        }
+    };
+    let fees = provider.provider().estimate_eip1559_fees().await?;
+    let call = call
+        .max_fee_per_gas(fees.max_fee_per_gas)
+        .max_priority_fee_per_gas(fees.max_priority_fee_per_gas)
+        .chain_id(provider.chain_id());
+
     let signer = provider.provider().default_signer_address();
-    nonce_lock(provider.chain_id(), signer).lock_owned().await
+    let mut sent = nonce_lock(provider.chain_id(), signer).lock_owned().await;
+    let pending = provider
+        .provider()
+        .get_transaction_count(signer)
+        .pending()
+        .await?;
+    send_with_reservation(&mut sent, pending, |nonce| async move {
+        call.nonce(nonce).send().await
+    })
+    .await
+}
+
+/// Reserve the next free nonce at or above `pending`, and broadcast with it.
+///
+/// The reservation is made before the broadcast, because a send that stops during the broadcast
+/// can leave the transaction with the node. It is freed only when the send left no transaction
+/// with the node (`broadcast_refused`); otherwise it stays until the chain counts the nonce or the
+/// reservation expires.
+async fn send_with_reservation<T, F, Fut>(
+    sent: &mut SentNonces,
+    pending: u64,
+    broadcast: F,
+) -> Result<T, alloy::contract::Error>
+where
+    F: FnOnce(u64) -> Fut,
+    Fut: Future<Output = Result<T, alloy::contract::Error>>,
+{
+    let nonce = next_free_nonce(sent, pending, Instant::now());
+    sent.insert(nonce, Instant::now());
+    let result = broadcast(nonce).await;
+    if result.as_ref().is_err_and(broadcast_refused) {
+        sent.remove(&nonce);
+    }
+    result
 }
 
 pub type ProviderFactory<P> =
@@ -481,6 +543,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy::{primitives::U256, transports::mock::Asserter, transports::RpcError};
     use alloy_dyn_abi::DynSolType;
     use e3_config::{chain_config::ChainConfig, Contract, ContractAddresses};
     use e3_events::{CircuitName, Proof};
@@ -686,5 +749,75 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("reverted on chain"), "got: {message}");
         assert!(message.contains("RPC unavailable"), "got: {message}");
+    }
+
+    /// The pending count can come from an RPC node that has not seen the last transaction yet. A
+    /// second send must not take the nonce of the first.
+    #[tokio::test]
+    async fn a_nonce_that_the_rpc_does_not_count_yet_is_not_used_again() {
+        let mut sent = SentNonces::new();
+        let first = send_with_reservation(&mut sent, 5, |nonce| async move { Ok(nonce) }).await;
+        // The RPC still reports a pending count of 5.
+        let second = send_with_reservation(&mut sent, 5, |nonce| async move { Ok(nonce) }).await;
+        assert_eq!((first.unwrap(), second.unwrap()), (5, 6));
+    }
+
+    /// A node that refused a transaction holds nothing at its nonce, so the next send takes it.
+    /// After a broadcast with an unknown result the node can hold the transaction, so its nonce
+    /// stays reserved.
+    #[tokio::test]
+    async fn only_a_refused_broadcast_frees_its_nonce() {
+        let mut sent = SentNonces::new();
+        let mut used = Vec::new();
+        let refused = alloy::contract::Error::TransportError(RpcError::ErrorResp(
+            alloy::rpc::json_rpc::ErrorPayload::internal_error_message("nonce too low".into()),
+        ));
+        let unknown = alloy::contract::Error::TransportError(
+            alloy::transports::TransportErrorKind::custom_str("connection reset"),
+        );
+
+        for error in [refused, unknown] {
+            let result = send_with_reservation(&mut sent, 5, |nonce| {
+                used.push(nonce);
+                async move { Err::<(), _>(error) }
+            })
+            .await;
+            assert!(result.is_err());
+        }
+        send_with_reservation(&mut sent, 5, |nonce| {
+            used.push(nonce);
+            async { Ok(()) }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(used, vec![5, 5, 6]);
+    }
+
+    /// A send that fails before the broadcast, here while it estimates the transaction, holds no
+    /// nonce. A held nonce would leave the next transaction of the signer waiting behind a gap.
+    #[tokio::test]
+    async fn a_send_that_fails_before_the_broadcast_holds_no_nonce() -> anyhow::Result<()> {
+        let asserter = Asserter::new();
+        asserter.push_success(&"0x1"); // eth_chainId
+        asserter.push_success(&"0x5"); // The next request; nothing answers after it.
+        let provider = EthProvider::new(
+            ProviderBuilder::new()
+                .wallet(EthereumWallet::from(PrivateKeySigner::random()))
+                .connect_mocked_client(asserter),
+        )
+        .await?;
+        let contract = crate::contracts::IInterfold::new(Address::ZERO, provider.provider());
+
+        send_with_next_nonce(&provider, contract.markE3Failed(U256::from(1)))
+            .await
+            .expect_err("the provider stops answering before the broadcast");
+
+        let signer = provider.provider().default_signer_address();
+        assert!(nonce_lock(provider.chain_id(), signer)
+            .lock()
+            .await
+            .is_empty());
+        Ok(())
     }
 }

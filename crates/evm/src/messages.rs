@@ -42,6 +42,26 @@ impl EvmLogRejected {
     }
 }
 
+/// The chain reader stopped without a shutdown, so no further log of the chain arrives. The
+/// gateway fails closed on it: a node that kept running would look healthy and miss every duty of
+/// the chain.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EvmReaderStopped {
+    pub id: CorrelationId,
+    pub chain_id: u64,
+    pub reason: String,
+}
+
+impl EvmReaderStopped {
+    pub fn new(chain_id: u64, reason: impl Into<String>) -> Self {
+        Self {
+            id: CorrelationId::new(),
+            chain_id,
+            reason: reason.into(),
+        }
+    }
+}
+
 impl HistoricalSyncComplete {
     pub fn new(chain_id: u64, prev_event: Option<CorrelationId>) -> Self {
         let id = CorrelationId::new();
@@ -155,6 +175,8 @@ pub enum InterfoldEvmEvent {
     /// Dummy event to report that an event was processed. This is required to ensure that the
     /// appropriate events are ordered correctly
     Processed(CorrelationId),
+    /// The chain reader stopped without a shutdown.
+    ReaderStopped(EvmReaderStopped),
 }
 
 impl InterfoldEvmEvent {
@@ -165,6 +187,7 @@ impl InterfoldEvmEvent {
             InterfoldEvmEvent::Rejected(e) => e.id,
             InterfoldEvmEvent::Event(e) => e.get_id(),
             InterfoldEvmEvent::Processed(id) => id.to_owned(),
+            InterfoldEvmEvent::ReaderStopped(e) => e.id,
         }
     }
 }

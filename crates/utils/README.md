@@ -12,7 +12,7 @@ decisions live in their owning crates.
 | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | [`bounded_bincode.rs`](src/bounded_bincode.rs), [`serde_bytes.rs`](src/serde_bytes.rs), [`utility_types.rs`](src/utility_types.rs) | Bounded wire decoding, byte-serde contract, and shared byte/RNG types.            |
 | [`actix/`](src/actix)                                                                                                              | Recipient/channel/one-shot adapters and synchronous handler bridging.             |
-| [`retry.rs`](src/retry.rs), [`transaction.rs`](src/transaction.rs)                                                                 | Retry classification/backoff and receipt-status checks.                           |
+| [`retry.rs`](src/retry.rs), [`transaction.rs`](src/transaction.rs), [`nonce.rs`](src/nonce.rs)                                     | Retry classification/backoff, receipt-status checks, and local nonce choice.      |
 | [`helpers.rs`](src/helpers.rs), [`path.rs`](src/path.rs), [`formatters.rs`](src/formatters.rs)                                     | Ordered extraction, one-time ownership, enumerated paths, and bounded formatting. |
 | [`ordered_set.rs`](src/ordered_set.rs)                                                                                             | Sorted set with order-independent equality and hash, serialized as a sequence.    |
 
