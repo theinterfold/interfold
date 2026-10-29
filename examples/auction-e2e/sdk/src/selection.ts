@@ -30,8 +30,9 @@ export interface SelectedBid extends SubmittedBid {
  * commitment. A bidder with no such bid is dropped whole, and a bid is never taken in part. The
  * result is in leaf order, so `position` is the bidder position of the computation.
  *
- * An entry with the version `MASK_VERSION` is a mask, not a bid, and is skipped: `checkMasks` reads
- * the masks.
+ * This is the rule of every type, with any number of ciphertexts per bid (2, 3 or 4). The no-provider
+ * type (5) has no mask records. An entry with the version `MASK_VERSION` is a mask, not a bid, and is skipped: `checkMasks`
+ * reads the masks.
  *
  * `opens(ciphertext, commitment)` recomputes the SAFE commitment of the ciphertext bytes and compares
  * it with `commitment`.

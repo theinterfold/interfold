@@ -168,4 +168,18 @@ describe('planRun', () => {
     expect(planRun(AuctionType.FirstPrice, first, { providers: [], masks: [] }, opensAll)).toMatchObject({ kind: 'run', counted: 2 })
     expect(planRun(AuctionType.FirstPrice, [first[0]], { providers: [], masks: [] }, opensAll)).toMatchObject({ kind: 'skip', counted: 1 })
   })
+
+  it('runs a type-5 auction with 4 ciphertexts per bid and no masks, and still needs 2 bidders', () => {
+    const shares = [bid(alice, 'a1', 1, 1, 4), bid(bob, 'bb', 1, 5, 4)]
+    const plan = planRun(AuctionType.QnrSecondPrice, shares, { providers: [], masks: [] }, opensAll)
+    expect(plan).toMatchObject({ kind: 'run', counted: 2 })
+    if (plan.kind === 'run') {
+      expect(plan.inputs.ciphertexts.map(([, leaf]) => leaf)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8])
+      expect(plan.inputs.parents).toEqual([0, 1, 1, 1, 1, 1, 1, 1, 1])
+    }
+    expect(planRun(AuctionType.QnrSecondPrice, [shares[0]], { providers: [], masks: [] }, opensAll)).toMatchObject({
+      kind: 'skip',
+      counted: 1,
+    })
+  })
 })

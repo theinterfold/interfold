@@ -6,32 +6,9 @@
 
 import React from 'react'
 import { AuctionType, DEGREE, MAX_BIDDERS_BY_TYPE, MAX_PROVIDERS, PLAINTEXT_MODULUS } from '@interfold/auction'
-
-/**
- * The worked example: 3 bidders with the bids 2, 3 and 1. For each level `l` the table holds the
- * number `C` of bidders that bid at least `l`, the factor `C × (C − 1)`, how many rivals beat each
- * bidder at `l` (`beaten`), and `tests = beaten × C × (C − 1)`. Bidder 1 wins at level 2.
- */
-const EXAMPLE = {
-  bids: [2, 3, 1],
-  levels: [
-    { level: 0, atLeast: 3, beaten: [2, 2, 2] },
-    { level: 1, atLeast: 3, beaten: [1, 1, 2] },
-    { level: 2, atLeast: 2, beaten: [1, 0, 2] },
-    { level: 3, atLeast: 1, beaten: [1, 0, 1] },
-  ],
-} as const
+import { exampleRows } from '@/utils/explainer-example'
 
 const Mono: React.FC<{ children: React.ReactNode }> = ({ children }) => <span className='font-mono'>{children}</span>
-
-/** The cells of one level of the example table: a plain number, or `?` for a random value. */
-function exampleRows() {
-  return EXAMPLE.levels.map(({ level, atLeast, beaten }) => {
-    const factor = atLeast * (atLeast - 1)
-    const tests = beaten.map((count) => count * factor)
-    return { level, atLeast, factor, beaten, tests }
-  })
-}
 
 /** How the "Second-price, zero failure" type works, in plain words, with a worked example of 3 bidders. */
 const ProviderAuctionExplainer: React.FC = () => {
@@ -146,8 +123,9 @@ const ProviderAuctionExplainer: React.FC = () => {
           The numbers are small: every factor of <Mono>tests</Mono> that is not zero is a whole number below {PLAINTEXT_MODULUS}. The number{' '}
           {PLAINTEXT_MODULUS} is prime, so the product of numbers that are not zero is never a multiple of {PLAINTEXT_MODULUS}. The proof of
           each mask shows that none of its numbers is zero. So a number of <Mono>tests</Mono> that is not zero can never become a zero in
-          the output, and the result always reads. The other auction types let each bidder draw its own random mask, and a drawn number is
-          zero with the probability 1 in {PLAINTEXT_MODULUS}, which can hide a loser and make the result unreadable.
+          the output, and the result always reads. In the types without a zero-failure design (first-price, second-price and the ratio
+          types), each bidder draws a random mask, and the sum of the masks is zero in a slot with the probability 1 in {PLAINTEXT_MODULUS},
+          which can hide a loser and make the result unreadable.
         </p>
       </div>
 

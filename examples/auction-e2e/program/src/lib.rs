@@ -4,10 +4,11 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! The FHE program of the auction example: sealed-bid auctions of five types. The region types
+//! The FHE program of the auction example: sealed-bid auctions of six types. The region types
 //! are first-price and second-price (Vickrey). The ratio-lane types are first-price and
 //! second-price with ratio lanes. The mask-provider type is second-price with masks that
-//! independent providers send, which never fails to show the result.
+//! independent providers send, which never fails to show the result. The no-provider type is
+//! second-price with random shares that the bidders send, which also never fails.
 //!
 //! Input 0 of a round is its configuration, [`config_input`]: the domain bytes, the auction type
 //! and, for the mask-provider type, the 20-byte addresses of the mask providers. It is not a
@@ -32,6 +33,7 @@
 //! mask       slot i  uniform in 0..t
 //! pair_mask  slots (2c) * LEVELS + l and (2c + 1) * LEVELS + l hold one uniform value,
 //!            for c in 0..4 and l in 0..LEVELS (second-price ratio lanes only)
+//! share      slot i  uniform in 0..t (the no-provider type only)
 //! ```
 //!
 //! The 128 slots are `GROUPS` groups of `LEVELS` slots. In the output, a lane is the slot of one
@@ -150,6 +152,30 @@
 //! so the output is at depth 3. There are `k + 3` ct*ct products: 3 for `tests`, `k - 1` for `r`
 //! and the last one.
 //!
+//! # No-provider type
+//!
+//! The no-provider type ([`AuctionType::QnrSecondPrice`]) has the result and the layout of the
+//! mask-provider type, with no mask providers. A bidder sends `[ge, gt, s1, s2]`: the two
+//! thermometers and two shares, which are SIMD plaintexts with every slot uniform in `0..t` (the
+//! plaintext of a mask). The configuration names no provider. With `n` bidders (2 to 8) the
+//! processor receives `1 + 4 n` inputs.
+//!
+//! `tests` and `used` are as in the mask-provider type. With `S1 = sum_j s1_j` and
+//! `S2 = sum_j s2_j` over the chosen bids, the output is
+//!
+//! ```text
+//! out = tests * r        r = ((S1 * S1 - 3) * used) * (S2 * S2 - 3)
+//! ```
+//!
+//! 3 is not a square mod `t = 257` (an exhaustive check; also for 65537), so `S^2 - 3` is non-zero
+//! for every `S`, whatever the bidders send. A non-zero test is a product of whole numbers in
+//! `1 ..= n`, so it is non-zero mod `t`, and `out` is zero exactly where `tests` is zero: the
+//! result is read with no failure. `S^2 - 3` is not uniform, because it takes only `(t + 1) / 2`
+//! values. If one bidder is honest, `S1` and `S2` are uniform, `r` is close to uniform in
+//! `1 .. t`, and the non-zero slots of the output show a small statistical hint about the counts
+//! of the tests. The squares are at depth 1, `r` at depth 2, `tests` at depth 2 and the output at
+//! depth 3. There are 7 ct*ct products: 3 for `tests`, 2 squares, one for `r` and the last one.
+//!
 //! See `sdk/src/layout.ts` for the client decoder.
 
 use e3_compute_provider::policy::{InputRecord, leaf_from_digest};
@@ -201,6 +227,9 @@ pub enum AuctionType {
     /// The winner and the second-highest bid, with masks from 1 to [`MAX_PROVIDERS`] providers.
     /// The tied bidder with the lowest position wins.
     ProviderSecondPrice = 4,
+    /// The winner and the second-highest bid, with random shares from the bidders and no
+    /// providers. The tied bidder with the lowest position wins.
+    QnrSecondPrice = 5,
 }
 
 /// The address of a mask provider.
@@ -227,6 +256,7 @@ impl AuctionConfig {
             2 => AuctionType::RatioFirstPrice,
             3 => AuctionType::RatioSecondPrice,
             4 => AuctionType::ProviderSecondPrice,
+            5 => AuctionType::QnrSecondPrice,
             _ => return None,
         };
         let (providers, rest) = providers.as_chunks::<20>();
@@ -250,10 +280,11 @@ impl AuctionType {
 }
 
 /// The number of ciphertexts one bidder sends: `[ge, gt, mask]`, and for the second-price
-/// ratio-lane type also the pair mask. A bidder of the mask-provider type sends `[ge, gt]`.
+/// ratio-lane type also the pair mask. A bidder of the mask-provider type sends `[ge, gt]`, and a
+/// bidder of the no-provider type sends `[ge, gt, s1, s2]`.
 pub fn role_count(auction_type: AuctionType) -> usize {
     match auction_type {
-        AuctionType::RatioSecondPrice => 4,
+        AuctionType::RatioSecondPrice | AuctionType::QnrSecondPrice => 4,
         AuctionType::ProviderSecondPrice => 2,
         _ => 3,
     }
@@ -261,7 +292,7 @@ pub fn role_count(auction_type: AuctionType) -> usize {
 
 /// The most bidders of a type. The smallest number is two. The region types are limited by the
 /// regions that fit the ring, the ratio-lane types by the weights `2^k` that must stay below `t`,
-/// the mask-provider type by its one copy of the regions.
+/// the mask-provider and no-provider types by their one copy of the regions.
 pub fn max_bidders(auction_type: AuctionType) -> usize {
     match auction_type {
         AuctionType::FirstPrice | AuctionType::SecondPrice => 4,
@@ -556,7 +587,9 @@ fn tests_under_mask(
             let wins = &(&(&above + &one) - &own_at_least) + &ties_before;
             mul(&wins, &masks)
         }
-        AuctionType::SecondPrice | AuctionType::ProviderSecondPrice => {
+        AuctionType::SecondPrice
+        | AuctionType::ProviderSecondPrice
+        | AuctionType::QnrSecondPrice => {
             let own_above = sum(own_above);
             let at_least = sum(bids.iter().map(|b| b.0.clone()));
             // [b_k = p] * #{j < k : b_j = p} in region k.
@@ -691,7 +724,7 @@ pub fn fhe_processor(inputs: FHEProcessorInput<'_>) -> Vec<u8> {
         .chunks(roles)
         .map(|bidder| (ciphertext(&bidder[0]), ciphertext(&bidder[1])))
         .collect();
-    // The sum of the bidder masks. The mask-provider type has none.
+    // The sum of the bidder masks. The mask-provider and no-provider types have none.
     let bidder_masks = || sum(raw.chunks(roles).map(|bidder| ciphertext(&bidder[2])));
 
     let result = match auction_type {
@@ -720,6 +753,29 @@ pub fn fhe_processor(inputs: FHEProcessorInput<'_>) -> Vec<u8> {
                 |used| {
                     let factors = std::iter::once(&first * used).chain(masks).collect();
                     product_tree(relinearization_key, factors)
+                },
+            )
+        }
+        AuctionType::QnrSecondPrice => {
+            // r = ((S1 * S1 - 3) * used) * (S2 * S2 - 3). `used` goes on the first factor, which
+            // is at depth 1, and the output is at depth 3.
+            let share_sum = |role: usize| sum(raw.chunks(roles).map(|bidder| ciphertext(&bidder[role])));
+            let (first, second) = (share_sum(2), share_sum(3));
+            let three = constant_slots(params, 3);
+            let square_less_three =
+                |share: &Ciphertext| &multiply(relinearization_key, share, share) - &three;
+            tests_under_mask(
+                auction_type,
+                params,
+                relinearization_key,
+                &bids,
+                1,
+                |used| {
+                    multiply(
+                        relinearization_key,
+                        &(&square_less_three(&first) * used),
+                        &square_less_three(&second),
+                    )
                 },
             )
         }
@@ -814,7 +870,11 @@ mod tests {
                 if role_count(auction_type) >= 3 {
                     roles.push((0..degree).map(|_| rng.random_range(0..t)).collect());
                 }
-                if role_count(auction_type) == 4 {
+                if auction_type == AuctionType::QnrSecondPrice {
+                    // The second share, uniform like the first.
+                    roles.push((0..degree).map(|_| rng.random_range(0..t)).collect());
+                }
+                if auction_type == AuctionType::RatioSecondPrice {
                     // One free value for the slot `l` of the groups `2c` and `2c + 1`.
                     let mut pair_mask = vec![0; degree];
                     for pair in 0..degree / LEVELS / 2 {
@@ -949,7 +1009,9 @@ mod tests {
         order.sort_by_key(|&j| std::cmp::Reverse(bids[j]));
         let paid = match auction_type {
             AuctionType::FirstPrice => order[0],
-            AuctionType::SecondPrice | AuctionType::ProviderSecondPrice => order[1],
+            AuctionType::SecondPrice
+            | AuctionType::ProviderSecondPrice
+            | AuctionType::QnrSecondPrice => order[1],
             _ => unreachable!("a region type"),
         };
         (order[0], bids[paid])
@@ -1450,7 +1512,8 @@ mod tests {
         assert_eq!(from_byte(1), Some(AuctionType::SecondPrice));
         assert_eq!(from_byte(2), Some(AuctionType::RatioFirstPrice));
         assert_eq!(from_byte(3), Some(AuctionType::RatioSecondPrice));
-        assert_eq!(from_byte(5), None);
+        assert_eq!(from_byte(5), Some(AuctionType::QnrSecondPrice));
+        assert_eq!(from_byte(6), None);
         assert_eq!(AuctionConfig::from_input(&CONFIG_DOMAIN[1..]), None);
         assert_eq!(AuctionConfig::from_input(CONFIG_DOMAIN), None);
     }
@@ -1478,6 +1541,7 @@ mod tests {
             AuctionType::SecondPrice,
             AuctionType::RatioFirstPrice,
             AuctionType::RatioSecondPrice,
+            AuctionType::QnrSecondPrice,
         ] {
             assert_eq!(parse(auction_type, 0).map(|c| c.providers.len()), Some(0));
             assert_eq!(parse(auction_type, 1), None);
@@ -1508,6 +1572,10 @@ mod tests {
         assert_eq!(
             leaf_of(&config_input(AuctionType::SecondPrice, &[])),
             leaf_from_digest(&keccak256(b"interfold-auction-config-v1\x01"))
+        );
+        assert_eq!(
+            leaf_of(&config_input(AuctionType::QnrSecondPrice, &[])),
+            leaf_from_digest(&keccak256(b"interfold-auction-config-v1\x05"))
         );
         let providers = [[0x11; 20], [0x22; 20]];
         let config = config_input(AuctionType::ProviderSecondPrice, &providers);
@@ -2032,6 +2100,285 @@ mod tests {
             AuctionType::ProviderSecondPrice,
             &[[0xa0; 20]],
             ciphertexts,
+        );
+    }
+
+    /// The shares of the no-provider type: the plaintext of role `role` of the last bidder is set so
+    /// that the sum of the shares of every bidder is `target` in each slot, mod `t`. Bidders who
+    /// collude can choose their shares so, which is the strongest choice of shares.
+    fn set_share_sum(plaintexts: &mut [Vec<Vec<u64>>], role: usize, target: &[u64], t: u64) {
+        let (last, others) = plaintexts.split_last_mut().expect("a bidder");
+        for (slot, &want) in target.iter().enumerate() {
+            let rest = others.iter().map(|bidder| bidder[role][slot]).sum::<u64>() % t;
+            last[role][slot] = (want + t - rest) % t;
+        }
+    }
+
+    /// The output slots of the no-provider type on the plaintext slots `[bidder][role]`, from the
+    /// formulas of the module documentation, with every operation mod `t`. It does not use the
+    /// ciphertext code, so it checks the formulas, the zero failure and the decoder on their own.
+    fn qnr_model(t: u64, plaintexts: &[Vec<Vec<u64>>]) -> Vec<u64> {
+        let (n, t) = (plaintexts.len(), t as i64);
+        (0..plaintexts[0][0].len())
+            .map(|slot| {
+                let region = slot / LEVELS;
+                let sum = |role: usize| -> i64 {
+                    plaintexts.iter().map(|bidder| bidder[role][slot] as i64).sum()
+                };
+                let (at_least, above, s1, s2) = (sum(0), sum(1), sum(2), sum(3));
+                let (own_at_least, own_above, ties_before) = if region < n {
+                    let own = &plaintexts[region];
+                    let ties_before = plaintexts[..region]
+                        .iter()
+                        .map(|bidder| bidder[0][slot] as i64 - bidder[1][slot] as i64)
+                        .sum();
+                    (own[0][slot] as i64, own[1][slot] as i64, ties_before)
+                } else {
+                    (0, 0, 0)
+                };
+                let ties = (own_at_least - own_above) * ties_before;
+                let beaten = above - own_above + 1 - own_at_least + ties;
+                let tests = (beaten * (at_least * (at_least - 1))).rem_euclid(t);
+                let used = i64::from(region < n);
+                let r = ((s1 * s1 - 3).rem_euclid(t) * used % t) * (s2 * s2 - 3).rem_euclid(t) % t;
+                (tests * r % t) as u64
+            })
+            .collect()
+    }
+
+    /// The output of the no-provider type over the plaintext slots `[bidder][role]`.
+    fn qnr_output(fixture: &Fixture, plaintexts: &[Vec<Vec<u64>>]) -> Result<Vec<u8>> {
+        let mut ciphertexts = Vec::new();
+        for slots in plaintexts.iter().flatten() {
+            let index = ciphertexts.len() as u64 + 1;
+            ciphertexts.push((encrypt_slots(fixture, slots)?, index));
+        }
+        Ok(run(fixture, AuctionType::QnrSecondPrice, ciphertexts))
+    }
+
+    /// The shares that drive `S1` and `S2` through every value of `0..t`: three ramps that move
+    /// by 128 slots each, then constant shares at both ends.
+    fn adversarial_share_sums(degree: usize, t: u64) -> Vec<(String, Vec<u64>, Vec<u64>)> {
+        let mut sums: Vec<(String, Vec<u64>, Vec<u64>)> = (0..3u64)
+            .map(|run| {
+                let ramp = |offset: u64| -> Vec<u64> {
+                    (0..degree as u64).map(|s| (s + offset) % t).collect()
+                };
+                (format!("ramp {run}"), ramp(128 * run), ramp(128 * run + 64))
+            })
+            .collect();
+        sums.push(("S = 0".to_string(), vec![0; degree], vec![0; degree]));
+        sums.push(("S = t - 1".to_string(), vec![t - 1; degree], vec![t - 1; degree]));
+        sums
+    }
+
+    #[test]
+    fn three_is_not_a_square_modulo_the_plaintext_modulus() {
+        // The no-provider type fails nowhere because `S^2 - 3` is never zero. The demo parameters
+        // use t = 257, and 65537 is the other modulus of the preset family.
+        for t in [257u64, 65537] {
+            assert!((0..t).all(|s| (s * s + t - 3) % t != 0), "t = {t}");
+        }
+    }
+
+    #[test]
+    fn the_no_provider_formulas_are_exact_for_every_bid_set_of_two_and_three_bidders() -> Result<()> {
+        let fixture = fixture()?;
+        let t = fixture.params.plaintext();
+        let mut seed = 0;
+        for n in 2..=3u32 {
+            for code in 0..LEVELS.pow(n) {
+                let bids: Vec<usize> =
+                    (0..n).map(|j| code / LEVELS.pow(j) % LEVELS).collect();
+                seed += 1;
+                let inputs = plaintexts(&fixture, AuctionType::QnrSecondPrice, &bids, seed);
+                check_provider(&qnr_model(t, &inputs), &bids, &format!("n = {n}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_no_provider_formulas_are_exact_for_two_to_eight_bidders() -> Result<()> {
+        let fixture = fixture()?;
+        let t = fixture.params.plaintext();
+        let mut rng = StdRng::seed_from_u64(51);
+        let mut seed = 10_000;
+        for n in 2..=8 {
+            let mut sets = provider_bid_sets(n, &mut rng);
+            // Random sets, and sets with few distinct bids, which tie a lot.
+            for _ in 0..200 {
+                sets.push((0..n).map(|_| rng.random_range(0..LEVELS)).collect());
+                sets.push((0..n).map(|_| rng.random_range(LEVELS - 2..LEVELS)).collect());
+            }
+            for bids in sets {
+                seed += 1;
+                let inputs = plaintexts(&fixture, AuctionType::QnrSecondPrice, &bids, seed);
+                check_provider(&qnr_model(t, &inputs), &bids, &format!("n = {n}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_no_provider_formulas_are_exact_for_every_value_of_the_share_sums() -> Result<()> {
+        let fixture = fixture()?;
+        let (degree, t) = (fixture.params.degree(), fixture.params.plaintext());
+        let mut rng = StdRng::seed_from_u64(52);
+        let (mut seen_1, mut seen_2) = (std::collections::BTreeSet::new(), std::collections::BTreeSet::new());
+        for n in 2..=8 {
+            let sets = provider_bid_sets(n, &mut rng);
+            // Every offset moves the sums by one more value, so the offsets cover `0..t` in the
+            // first sum and, with the step of 5, in the second.
+            for offset in 0..t {
+                let first: Vec<u64> = (0..degree as u64).map(|s| (offset + s) % t).collect();
+                let second: Vec<u64> = (0..degree as u64).map(|s| (3 * offset + 5 * s) % t).collect();
+                seen_1.extend(first.iter().copied());
+                seen_2.extend(second.iter().copied());
+                for bids in [&sets[0], &sets[3], &sets[4], &sets[5]] {
+                    let mut inputs = plaintexts(&fixture, AuctionType::QnrSecondPrice, bids, offset);
+                    set_share_sum(&mut inputs, 2, &first, t);
+                    set_share_sum(&mut inputs, 3, &second, t);
+                    check_provider(&qnr_model(t, &inputs), bids, &format!("n = {n}, offset {offset}"));
+                }
+            }
+        }
+        assert_eq!(seen_1.len() as u64, t);
+        assert_eq!(seen_2.len() as u64, t);
+        Ok(())
+    }
+
+    #[test]
+    fn the_no_provider_type_decodes_exactly_for_every_bidder_count() -> Result<()> {
+        let fixture = fixture()?;
+        let t = fixture.params.plaintext();
+        let mut rng = StdRng::seed_from_u64(53);
+        for n in 2..=8 {
+            let sets = provider_bid_sets(n, &mut rng);
+            // Random bids, a top tie, a late top tie and only zero bids.
+            for (seed, bids) in [&sets[0], &sets[3], &sets[4], &sets[5]].into_iter().enumerate() {
+                let inputs = plaintexts(&fixture, AuctionType::QnrSecondPrice, bids, 1100 + seed as u64);
+                let slots = decrypt_slots(&fixture, &qnr_output(&fixture, &inputs)?)?;
+                assert_eq!(slots, qnr_model(t, &inputs), "n = {n}, bids {bids:?}");
+                check_provider(&slots, bids, &format!("n = {n}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_no_provider_type_decodes_exactly_under_adversarial_shares() -> Result<()> {
+        let fixture = fixture()?;
+        let (degree, t) = (fixture.params.degree(), fixture.params.plaintext());
+        let mut rng = StdRng::seed_from_u64(54);
+        let sums = adversarial_share_sums(degree, t);
+        // The three ramps reach every value, in the first sum and in the second.
+        let ramps = &sums[..3];
+        let reached_1: std::collections::BTreeSet<u64> =
+            ramps.iter().flat_map(|sum| sum.1.iter().copied()).collect();
+        let reached_2: std::collections::BTreeSet<u64> =
+            ramps.iter().flat_map(|sum| sum.2.iter().copied()).collect();
+        assert_eq!((reached_1.len() as u64, reached_2.len() as u64), (t, t));
+        for n in [2, 8] {
+            let sets = provider_bid_sets(n, &mut rng);
+            for (name, first, second) in &sums {
+                for bids in [&sets[0], &sets[3]] {
+                    let mut inputs = plaintexts(&fixture, AuctionType::QnrSecondPrice, bids, 1200);
+                    set_share_sum(&mut inputs, 2, first, t);
+                    set_share_sum(&mut inputs, 3, second, t);
+                    let slots = decrypt_slots(&fixture, &qnr_output(&fixture, &inputs)?)?;
+                    assert_eq!(slots, qnr_model(t, &inputs), "n = {n}, {name}");
+                    check_provider(&slots, bids, &format!("n = {n}, shares: {name}"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_no_provider_type_has_the_result_of_the_second_price_type() -> Result<()> {
+        let fixture = fixture()?;
+        for (seed, (bids, winner)) in TIE_ROUNDS.into_iter().enumerate() {
+            let inputs = plaintexts(&fixture, AuctionType::QnrSecondPrice, bids, 1300 + seed as u64);
+            let slots = decrypt_slots(&fixture, &qnr_output(&fixture, &inputs)?)?;
+            let (expected_winner, price) = expected(AuctionType::SecondPrice, bids);
+            assert_eq!(expected_winner, winner, "bids {bids:?}");
+            assert_eq!(decode_provider(&slots, bids.len()), Some((winner, price)), "bids {bids:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_no_provider_output_keeps_a_noise_budget_at_eight_bidders() -> Result<()> {
+        let fixture = fixture()?;
+        let t = fixture.params.plaintext();
+        let bids = [3, 9, 9, 15, 0, 15, 7, 2];
+        let inputs = plaintexts(&fixture, AuctionType::QnrSecondPrice, &bids, 1400);
+        let output = Ciphertext::from_bytes(&qnr_output(&fixture, &inputs)?, &fixture.params)?;
+        // SAFETY: `measure_noise` has a variable-time path that depends on the noise. The test
+        // holds the secret key and only reads the budget.
+        let noise = unsafe { fixture.secret_key.measure_noise(&output) }?;
+        let log2_q: f64 = fixture.params.moduli().iter().map(|&q| (q as f64).log2()).sum();
+        let budget = log2_q - (t as f64).log2() - 1.0 - noise as f64;
+        eprintln!("type 5, n = 8: noise {noise} bits, log2 q = {log2_q:.1}, budget {budget:.1} bits");
+        // The output stops decrypting exactly at 0.
+        assert!(budget > 20.0, "the budget is {budget} bits");
+        let slots = decrypt_slots(&fixture, &output.to_bytes())?;
+        assert_eq!(slots, qnr_model(t, &inputs));
+        check_provider(&slots, &bids, "n = 8");
+        Ok(())
+    }
+
+    #[test]
+    #[should_panic(expected = "multiple of 4")]
+    fn rejects_a_no_provider_bid_with_a_missing_ciphertext() {
+        let fixture = fixture().unwrap();
+        let mut ciphertexts =
+            encrypt_bids(&fixture, AuctionType::QnrSecondPrice, &[1, 2], 2).unwrap();
+        ciphertexts.pop();
+        run(&fixture, AuctionType::QnrSecondPrice, ciphertexts);
+    }
+
+    #[test]
+    #[should_panic(expected = "2 to 8 bidders")]
+    fn rejects_a_no_provider_round_with_one_bidder() {
+        let fixture = fixture().unwrap();
+        let ciphertexts = encrypt_bids(&fixture, AuctionType::QnrSecondPrice, &[4], 1).unwrap();
+        run(&fixture, AuctionType::QnrSecondPrice, ciphertexts);
+    }
+
+    #[test]
+    #[should_panic(expected = "2 to 8 bidders")]
+    fn rejects_a_ninth_bidder_of_the_no_provider_type() {
+        let fixture = fixture().unwrap();
+        let ciphertexts = encrypt_bids(
+            &fixture,
+            AuctionType::QnrSecondPrice,
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9],
+            1,
+        )
+        .unwrap();
+        run(&fixture, AuctionType::QnrSecondPrice, ciphertexts);
+    }
+
+    #[test]
+    fn a_bid_of_four_ciphertexts_is_chosen_whole_or_not_at_all() {
+        let four = |bidder, version, opens: [bool; 4]| run_of(bidder, version, &opens);
+        let all = [true; 4];
+        // Leaves 1-4 are version 1 of bidder 1, leaves 5-8 version 2, leaves 9-12 bidder 2.
+        assert_eq!(
+            selected(&[four(1, 1, all), four(1, 2, all), four(2, 1, all)]),
+            [0, 5, 6, 7, 8, 9, 10, 11, 12]
+        );
+        // A share that does not open drops the update, and version 1 stays.
+        assert_eq!(
+            selected(&[four(1, 1, all), four(1, 2, [true, true, true, false]), four(2, 1, all)]),
+            [0, 1, 2, 3, 4, 9, 10, 11, 12]
+        );
+        // A bidder whose only bid has such a share is dropped whole.
+        assert_eq!(
+            selected(&[four(1, 1, [true, false, true, true]), four(2, 1, all)]),
+            [0, 5, 6, 7, 8]
         );
     }
 }

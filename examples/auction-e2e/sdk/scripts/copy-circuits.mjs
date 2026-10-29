@@ -18,6 +18,7 @@ const out = join(packageRoot, 'circuits')
 const files = [
   ['pair/target/auction_bid_pair.json', 'auction_bid_pair.json'],
   ['masks/target/auction_bid_masks.json', 'auction_bid_masks.json'],
+  ['shares/target/auction_bid_shares.json', 'auction_bid_shares.json'],
   ['bid2/target/auction_bid2.json', 'auction_bid2.json'],
   ['bid3/target/auction_bid3.json', 'auction_bid3.json'],
   ['bid4/target/auction_bid4.json', 'auction_bid4.json'],

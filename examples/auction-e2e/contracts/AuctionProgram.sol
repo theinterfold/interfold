@@ -20,7 +20,8 @@ import { IBidVerifier } from "./interfaces/IBidVerifier.sol";
 import { IBidderGate } from "./interfaces/IBidderGate.sol";
 
 /// @title Sealed-bid auction: first-price or second-price (Vickrey) with regions, second-price
-/// with ratio lanes, or second-price with regions and mask providers.
+/// with ratio lanes, second-price with regions and mask providers, or second-price with regions and
+/// no providers.
 /// @notice Anyone requests an auction through Interfold and chooses its type in `customParams`. A
 /// bidder encrypts SIMD ciphertexts to the E3's committee key and submits them in one call, with one
 /// proof: role 0 `ge` (`[b >= level]`), role 1 `gt` (`[b > level]`) and role 2 `mask` (uniform
@@ -37,9 +38,16 @@ import { IBidderGate } from "./interfaces/IBidderGate.sol";
 /// The contract refuses every bid of a type-4 auction (`MasksPending`) until every provider has sent
 /// its mask. The leaves are: the configuration leaf, the masks in the order they arrive, then the bids.
 ///
+/// The type 5 ("second-price, no providers") gives the same result as the types 1 and 4 and also never
+/// fails, but it has no provider. A bidder sends four ciphertexts: `ge`, `gt` and two shares
+/// (`share`, `share`, each slot uniform random, like a `mask`). The program sums the shares of the
+/// counted bids and squares each sum, so the test factor is never zero: 3 is not a square in the
+/// plaintext field. While one bidder is honest, the sums are uniform. The output slots are close to
+/// uniform, not exactly: they leak a small statistical hint about the losing bids.
+///
 /// Leaf 0 of every auction is its configuration leaf: `keccak256(configInput)`, reduced into the
 /// BN254 scalar field, where `configInput` is `CONFIG_DOMAIN || auctionType || provider_1 || ... ||
-/// provider_k` (no provider for the types 0 to 3). The program reads the type and the providers
+/// provider_k` (no provider for the types 0 to 3 and 5). The program reads the type and the providers
 /// from the configuration input at that leaf, so the compute proof binds them through the input root.
 ///
 /// One proof (`auction_bid2`, `auction_bid3` or `auction_bid4`) covers all ciphertexts of a bid. It
@@ -78,6 +86,9 @@ contract AuctionProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Owna
   uint8 public constant AUCTION_RATIO_SECOND_PRICE = 3;
   /// @notice Second-price auction (regions) whose random mask comes from 1 to `MAX_PROVIDERS` providers.
   uint8 public constant AUCTION_PROVIDER_SECOND_PRICE = 4;
+  /// @notice Second-price auction (regions) with no providers: a bidder sends two random shares
+  /// (`share`, `share`) and the program squares their sums, so a zero never leaks and nothing fails.
+  uint8 public constant AUCTION_QNR_SECOND_PRICE = 5;
   uint256 public constant MAX_TITLE_BYTES = 80;
   /// @notice The price steps of the program's slot layout: a bid is a step in `[0, LEVELS)`. An
   /// auction uses the first `levels` of them.
@@ -134,7 +145,7 @@ contract AuctionProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Owna
   IBidVerifier public immutable bidVerifier2;
   /// @notice Verifies the bid proof of the types with 3 roles (`auction_bid3`).
   IBidVerifier public immutable bidVerifier3;
-  /// @notice Verifies the bid proof of the type with 4 roles (`auction_bid4`).
+  /// @notice Verifies the bid proof of the types with 4 roles (`auction_bid4`): types 3 and 5.
   IBidVerifier public immutable bidVerifier4;
   /// @notice Verifies the mask proof of a provider (`auction_mask`).
   IBidVerifier public immutable maskVerifier;
@@ -142,10 +153,13 @@ contract AuctionProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Owna
   bytes32 public immutable vkAnchor2;
   /// @notice The VK chain of the circuits a 3-role bid proof passes through, as `auction_bid3` returns it.
   bytes32 public immutable vkAnchor3;
-  /// @notice The VK chain of the circuits a 4-role bid proof passes through, as `auction_bid4` returns it.
+  /// @notice The VK chain of the circuits a type-3 bid proof passes through, as `auction_bid4` returns it.
   bytes32 public immutable vkAnchor4;
   /// @notice The VK chain of the circuits a mask proof passes through, as `auction_mask` returns it.
   bytes32 public immutable vkAnchorMask;
+  /// @notice The VK chain of the circuits a type-5 bid proof passes through. `auction_bid4` returns it
+  /// when it takes the key of `auction_bid_shares`, so it differs from `vkAnchor4`.
+  bytes32 public immutable vkAnchorQnr;
   /// @notice Verifies the availability receipt of the ciphertext output: the mock locally, Avail
   /// VectorX on a public network.
   IDataAvailabilityVerifier public immutable dataAvailabilityVerifier;
@@ -234,6 +248,7 @@ contract AuctionProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Owna
   /// @param _vkAnchor3 The anchor `scripts/compile_circuits.sh` computed for `auction_bid3` (`vkAnchor3`)
   /// @param _vkAnchor4 The anchor `scripts/compile_circuits.sh` computed for `auction_bid4` (`vkAnchor4`)
   /// @param _vkAnchorMask The anchor `scripts/compile_circuits.sh` computed for `auction_mask` (`vkAnchorMask`)
+  /// @param _vkAnchorQnr The anchor `scripts/compile_circuits.sh` computed for `auction_bid4` with the key of `auction_bid_shares` (`vkAnchorQnr`)
   /// @param _dataAvailabilityVerifier The verifier of the output's availability receipt
   constructor(
     IInterfold _interfold,
@@ -247,6 +262,7 @@ contract AuctionProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Owna
     bytes32 _vkAnchor3,
     bytes32 _vkAnchor4,
     bytes32 _vkAnchorMask,
+    bytes32 _vkAnchorQnr,
     IDataAvailabilityVerifier _dataAvailabilityVerifier
   ) Ownable(msg.sender) EIP712("AuctionProgram", "1") {
     require(address(_verifier) != address(0), VerifierAddressZero());
@@ -265,6 +281,7 @@ contract AuctionProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Owna
     vkAnchor3 = _vkAnchor3;
     vkAnchor4 = _vkAnchor4;
     vkAnchorMask = _vkAnchorMask;
+    vkAnchorQnr = _vkAnchorQnr;
     dataAvailabilityVerifier = _dataAvailabilityVerifier;
     authorizedContracts[address(_interfold)] = true;
   }
@@ -281,8 +298,8 @@ contract AuctionProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Owna
   /// @dev `customParams` is `abi.encode(uint8 auctionType, uint8 levels, uint256[16] prices, string title,
   /// address gate, bytes gateConfig, address[] providers)`. `prices[levels..16]` must be zero. With
   /// `gate == address(0)` anyone may bid and `gateConfig` must be empty. Otherwise the gate is
-  /// configured with `gateConfig`. `providers` is empty for the types 0 to 3. For the type 4 it names
-  /// 1 to `MAX_PROVIDERS` distinct nonzero mask providers (else `InvalidProviders`).
+  /// configured with `gateConfig`. `providers` is empty for the types 0 to 3 and 5. For the type 4 it
+  /// names 1 to `MAX_PROVIDERS` distinct nonzero mask providers (else `InvalidProviders`).
   function validate(
     uint256 e3Id,
     uint256,
@@ -336,7 +353,7 @@ contract AuctionProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Owna
   }
 
   function _checkParams(Auction memory auction, bytes memory gateConfig) private view {
-    if (auction.auctionType > AUCTION_PROVIDER_SECOND_PRICE) revert UnknownAuctionType(auction.auctionType);
+    if (auction.auctionType > AUCTION_QNR_SECOND_PRICE) revert UnknownAuctionType(auction.auctionType);
     if (auction.levels < MIN_LEVELS || auction.levels > LEVELS) revert InvalidLevels();
     for (uint256 level = 1; level < auction.levels; level++) {
       if (auction.prices[level] <= auction.prices[level - 1]) revert InvalidPrices();
@@ -356,7 +373,7 @@ contract AuctionProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Owna
   }
 
   /// @dev The type 4 needs 1 to `MAX_PROVIDERS` providers, each nonzero and unique. The other types
-  /// have none.
+  /// (0 to 3 and 5) have none.
   function _checkProviders(uint8 auctionType, address[] memory providers) private pure {
     if (auctionType != AUCTION_PROVIDER_SECOND_PRICE) {
       if (providers.length != 0) revert InvalidProviders();
@@ -384,24 +401,25 @@ contract AuctionProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Owna
 
   /// @notice The number of ciphertexts one bidder submits to an auction of `auctionType`: 2 (`ge`,
   /// `gt`) for the type 4, 3 (`ge`, `gt`, `mask`) for the types 0 to 2, or 4 for the second-price
-  /// ratio auction (and the `pairMask`). A provider's mask of a type-4 auction is one ciphertext.
+  /// ratio auction (`ge`, `gt`, `mask`, `pairMask`) and the type 5 (`ge`, `gt`, `share`, `share`).
+  /// A provider's mask of a type-4 auction is one ciphertext.
   function roleCount(uint8 auctionType) public pure returns (uint8) {
-    if (auctionType > AUCTION_PROVIDER_SECOND_PRICE) revert UnknownAuctionType(auctionType);
-    if (auctionType == AUCTION_RATIO_SECOND_PRICE) return 4;
+    if (auctionType > AUCTION_QNR_SECOND_PRICE) revert UnknownAuctionType(auctionType);
+    if (auctionType == AUCTION_RATIO_SECOND_PRICE || auctionType == AUCTION_QNR_SECOND_PRICE) return 4;
     return auctionType == AUCTION_PROVIDER_SECOND_PRICE ? 2 : 3;
   }
 
   /// @notice The most bidders in one E3 of `auctionType`: 4 for the types 0 and 1, 8 for the types
-  /// 2 to 4. It is the most the program's slot layout supports. The providers of a type-4 auction
+  /// 2 to 5. It is the most the program's slot layout supports. The providers of a type-4 auction
   /// are not bidders.
   function maxBidders(uint8 auctionType) public pure returns (uint8) {
-    if (auctionType > AUCTION_PROVIDER_SECOND_PRICE) revert UnknownAuctionType(auctionType);
+    if (auctionType > AUCTION_QNR_SECOND_PRICE) revert UnknownAuctionType(auctionType);
     return auctionType >= AUCTION_RATIO_FIRST_PRICE ? 8 : 4;
   }
 
   /// @notice The configuration input of an auction of `auctionType`: `CONFIG_DOMAIN || uint8 type ||
   /// provider_1 || ... || provider_k`, each provider as its 20 raw bytes (not the 32-byte words of
-  /// `abi.encodePacked(address[])`). The types 0 to 3 have no providers, so their input is the domain
+  /// `abi.encodePacked(address[])`). The types 0 to 3 and 5 have no providers, so their input is the domain
   /// and the type. The program reads the same bytes.
   function configInput(uint8 auctionType, address[] memory providers) public pure returns (bytes memory input) {
     input = abi.encodePacked(CONFIG_DOMAIN, auctionType);
@@ -468,7 +486,7 @@ contract AuctionProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Owna
     if (auction.gate != address(0) && !IBidderGate(auction.gate).isEligible(e3Id, bid.bidder, bid.gateProof)) {
       revert BidderNotEligible(bid.bidder);
     }
-    _verifyBidProof(bid, roles, auction.levels, e3.committeePublicKey);
+    _verifyBidProof(bid, auction.auctionType, auction.levels, e3.committeePublicKey);
 
     uint256 firstIndex = _insertLeaves(e3Id, bid, hashes, version);
     emit BidSubmitted(e3Id, bid.bidder, version, firstIndex, bid.ciphertexts, bid.commitments);
@@ -529,8 +547,11 @@ contract AuctionProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Owna
 
   /// @dev Public inputs: the ciphertext commitments in role order, the bidder, `levels`, the
   /// committee key commitment and the VK anchor. The verifier follows the role count: `auction_bid2`
-  /// for 2 roles, `auction_bid3` for 3 and `auction_bid4` for 4.
-  function _verifyBidProof(BidInput memory bid, uint8 roles, uint8 levels, bytes32 committeePublicKey) private view {
+  /// for 2 roles, `auction_bid3` for 3 and `auction_bid4` for 4. The two types with 4 roles share
+  /// `auction_bid4` but have different anchors: `vkAnchor4` (type 3, with `auction_bid_masks`) and
+  /// `vkAnchorQnr` (type 5, with `auction_bid_shares`). A proof for one type does not verify as the other.
+  function _verifyBidProof(BidInput memory bid, uint8 auctionType, uint8 levels, bytes32 committeePublicKey) private view {
+    uint8 roles = roleCount(auctionType);
     bytes32[] memory publicInputs = new bytes32[](roles + 4);
     for (uint256 r = 0; r < roles; r++) {
       publicInputs[r] = bid.commitments[r];
@@ -543,7 +564,7 @@ contract AuctionProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Owna
     if (roles == 2) {
       (bidVerifier, vkAnchor) = (bidVerifier2, vkAnchor2);
     } else if (roles == MAX_ROLES) {
-      (bidVerifier, vkAnchor) = (bidVerifier4, vkAnchor4);
+      (bidVerifier, vkAnchor) = (bidVerifier4, auctionType == AUCTION_QNR_SECOND_PRICE ? vkAnchorQnr : vkAnchor4);
     } else {
       (bidVerifier, vkAnchor) = (bidVerifier3, vkAnchor3);
     }
