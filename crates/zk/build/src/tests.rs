@@ -594,8 +594,8 @@ fn protocol_generation_preserves_deployed_parameter_hashes() {
         ),
         (
             BfvPreset::SecureThreshold16384,
-            "8afd5dddf1bc0cfb00c70e9a7d0a0fb11bd0617df27574fa7d2ccf9ae3a6bdb8",
-            "9b9181e0304e51388d6edd6eb4d5ae9a8593cbdbf28838734d829d09d0701d86",
+            "2576ec0fc35c64a24a9be57d058609040e4f93dfee51d9df4a831c6c57675a9e",
+            "c5ea726de917fa7f1272eecbbe9f373b3d95a668d102c71c9fb38a2749330ecf",
         ),
     ] {
         let material = PresetMaterial::new(preset).unwrap();

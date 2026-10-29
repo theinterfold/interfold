@@ -29,6 +29,9 @@ pub struct Configs {
     pub preset: BfvPreset,
     pub chunk_size: usize,
     pub bits: Bits,
+    /// The smudging bound split the l-BFV C2b leaves check; `None` on the trBFV path, where C1
+    /// bounds the smudging noise.
+    pub e_sm_split: Option<crate::threshold::pk_generation::ESmSplit>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Bits {
@@ -44,6 +47,14 @@ impl Configs {
     ) -> Result<Self, ConfigError> {
         crate::parameters::require_threshold_preset(preset, threshold_params)?;
         let bits = Bits::new(threshold_params);
+        let e_sm_split = if e3_fhe_params::is_lbfv_path(preset) {
+            Some(
+                crate::threshold::pk_generation::Configs::new(preset, threshold_params, committee)?
+                    .e_sm_split,
+            )
+        } else {
+            None
+        };
 
         Ok(Configs {
             params: threshold_params.clone(),
@@ -55,6 +66,7 @@ impl Configs {
             ),
 
             bits,
+            e_sm_split,
         })
     }
 }

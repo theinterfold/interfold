@@ -191,6 +191,14 @@ mod chunk_tests {
     use e3_committee::CiphernodesCommitteeSize;
     use e3_zk_witness::dkg::share_computation::{prepare_chunk, Inputs};
 
+    const SPLIT_FIELDS: [&str; 5] = [
+        "e_sm_plus_high",
+        "e_sm_plus_low",
+        "e_sm_minus_high",
+        "e_sm_minus_low",
+        "e_sm_carry",
+    ];
+
     #[test]
     fn chunk_leaves_preserve_every_coefficient_and_lift() {
         let preset = BfvPreset::InsecureThresholdLbfv;
@@ -203,19 +211,21 @@ mod chunk_tests {
             let inputs = Inputs::compute(&config, &data).unwrap();
             let whole = inputs.to_json();
             let mut y = Vec::new();
-            let mut lift = Vec::new();
+            let mut lift = vec![Vec::new(); SPLIT_FIELDS.len()];
             for index in 0..2 {
                 let chunk = prepare_chunk(&config, &data, index).unwrap();
                 assert_eq!(chunk["chunk_idx"], index);
                 y.extend(chunk["y_chunk"].as_array().unwrap().iter().cloned());
                 if kind == DkgInputType::SmudgingNoise {
-                    lift.extend(
-                        chunk["e_sm_lifted_chunk"]["coefficients"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .cloned(),
-                    );
+                    for (i, name) in SPLIT_FIELDS.iter().enumerate() {
+                        lift[i].extend(
+                            chunk[format!("{name}_chunk")]["coefficients"]
+                                .as_array()
+                                .unwrap()
+                                .iter()
+                                .cloned(),
+                        );
+                    }
                     for limb in chunk["e_sm_quotients_chunk"].as_array().unwrap() {
                         assert_eq!(limb["coefficients"].as_array().unwrap().len(), 64);
                     }
@@ -231,10 +241,12 @@ mod chunk_tests {
             }
             assert_eq!(serde_json::Value::Array(y), whole["y"]);
             if kind == DkgInputType::SmudgingNoise {
-                assert_eq!(
-                    serde_json::Value::Array(lift),
-                    whole["e_sm_lifted"]["coefficients"]
-                );
+                for (values, name) in lift.into_iter().zip(SPLIT_FIELDS) {
+                    assert_eq!(
+                        serde_json::Value::Array(values),
+                        whole[name]["coefficients"]
+                    );
+                }
             }
             assert!(prepare_chunk(&config, &data, 2).is_err());
         }

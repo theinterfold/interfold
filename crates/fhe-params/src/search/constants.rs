@@ -245,8 +245,11 @@ pub const NTT_PRIMES_BY_BITS: &[(u8, &[&str])] = &[
 
 /// Fixed ring dimension for the first parameter set.
 pub const RING_DIM: u64 = 16384;
-/// Target number of CRT primes for the first parameter set.
+/// Fewest CRT primes the first parameter set tries; the search takes the smallest count that works.
 pub const TARGET_NUM_PRIMES: usize = 5;
+/// Most CRT primes the first parameter set tries. Six 53-bit primes give `Q` about 2^312, which the
+/// l-BFV circuits carry in two field limbs (C2b smudging lift) or in U384 (wide C7).
+pub const MAX_NUM_PRIMES: usize = 6;
 /// Maximum polynomial degree (power of 2) supported.
 pub const D_POW2_MAX: u64 = 16384;
 /// Maximum number of multiplications (total circuit depth) supported.

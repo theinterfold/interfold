@@ -8,15 +8,16 @@
 // Regenerate with `pnpm build:circuits --committee minimum`.
 //
 // Reed-Solomon parity matrix for the minimum committee under the
-// secure-16384 (L_THRESHOLD=5) preset. Dimensions: [L_THRESHOLD][N_PARTIES - T][N_PARTIES + 1].
+// secure-16384 (L_THRESHOLD=6) preset. Dimensions: [L_THRESHOLD][N_PARTIES - T][N_PARTIES + 1].
 
 use crate::configs::committee::minimum::{N_PARTIES, T};
 pub use crate::configs::secure_16384::threshold::L as L_THRESHOLD;
 
 pub global PARITY_MATRIX: [[[Field; N_PARTIES + 1]; N_PARTIES - T]; L_THRESHOLD] = [
-    [[1, 1125899917262847, 1, 0], [2, 1125899917262846, 0, 1]],
-    [[1, 1125899915886591, 1, 0], [2, 1125899915886590, 0, 1]],
-    [[1, 1125899915231231, 1, 0], [2, 1125899915231230, 0, 1]],
-    [[1, 1125899915100159, 1, 0], [2, 1125899915100158, 0, 1]],
-    [[1, 1125899914510335, 1, 0], [2, 1125899914510334, 0, 1]],
+    [[1, 4503599637200895, 1, 0], [2, 4503599637200894, 0, 1]],
+    [[1, 4503599635628031, 1, 0], [2, 4503599635628030, 0, 1]],
+    [[1, 4503599634644991, 1, 0], [2, 4503599634644990, 0, 1]],
+    [[1, 4503599634579455, 1, 0], [2, 4503599634579454, 0, 1]],
+    [[1, 4503599633989631, 1, 0], [2, 4503599633989630, 0, 1]],
+    [[1, 4503599632613375, 1, 0], [2, 4503599632613374, 0, 1]],
 ];

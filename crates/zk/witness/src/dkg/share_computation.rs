@@ -17,10 +17,12 @@ use crate::encoding::poly_coefficients_to_toml_json;
 use crate::WitnessError;
 use e3_polynomial::CrtPolynomial;
 use e3_zk_config::dkg::share_computation::Configs;
+use e3_zk_config::threshold::pk_generation::ESmSplit;
 use e3_zk_config::DkgInputType;
 use ndarray::Array2;
 use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
+use num_traits::{Signed, Zero};
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -50,11 +52,11 @@ pub struct Inputs {
     pub expected_secret_commitment: BigInt,
     /// Which secret type this witness is for (determines which circuit to run).
     pub dkg_input_type: DkgInputType,
-    /// l-BFV smudging noise only: the lifted noise and its CRT quotients (see [`e_sm_crt_lift`]),
-    /// which the C2b chunk leaves range-check. `None` for the secret key and on the trBFV path,
+    /// l-BFV smudging noise only: the split witness the C2b chunk leaves check against the
+    /// smudging bound (see [`ESmSplitLift`]). `None` for the secret key and on the trBFV path,
     /// whose single C2 proof takes no such inputs.
     #[serde(default)]
-    pub e_sm_lift: Option<(Vec<BigInt>, Vec<Vec<BigInt>>)>,
+    pub e_sm_lift: Option<ESmSplitLift>,
 }
 
 /// Center a residue already in `[0, modulus)` around zero.
@@ -66,13 +68,27 @@ fn center(residue: &BigInt, modulus: &BigInt) -> BigInt {
     }
 }
 
-/// The smudging noise lifted to one integer per coefficient, and the CRT quotient that ties it to
-/// each centered residue: `lifted[i] == center(residue_l[i], q_l) + quotients[l][i] * q_l`.
+/// The l-BFV C2b smudging witness, per coefficient in natural order (the order of `y`).
 ///
-/// The l-BFV C2b chunk leaves range-check `lifted` against `e_sm_bound`, the check C1 carries on
-/// the trBFV path. Coefficients are in natural order, the order of `y`. The noise is bounded far
-/// below `Q / 2`, so the centered CRT reconstruction recovers it exactly.
-pub fn e_sm_crt_lift(
+/// For each coefficient `e` of the lifted noise, `B + e = plus_high * 2^K + plus_low` and
+/// `B - e = minus_high * 2^K + minus_low`, `carry` is the carry out of `plus_low + minus_low`, and
+/// `quotients[l]` solves `plus_high * radix_mod_q[l] + plus_low - bound_mod_q[l] - r_l = q_l * t` for
+/// the centered residue `r_l`. The leaf checks these instead of `e`, which can exceed the field.
+/// See [`ESmSplit`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ESmSplitLift {
+    pub plus_high: Vec<BigInt>,
+    pub plus_low: Vec<BigInt>,
+    pub minus_high: Vec<BigInt>,
+    pub minus_low: Vec<BigInt>,
+    pub carry: Vec<BigInt>,
+    pub quotients: Vec<Vec<BigInt>>,
+}
+
+/// The smudging noise lifted to one integer per coefficient, and its centered residue per limb.
+///
+/// The noise is bounded far below `Q / 2`, so the centered CRT reconstruction recovers it exactly.
+fn e_sm_crt_values(
     secret_crt: &CrtPolynomial,
     moduli: &[u64],
 ) -> Result<(Vec<BigInt>, Vec<Vec<BigInt>>), WitnessError> {
@@ -97,30 +113,104 @@ pub fn e_sm_crt_lift(
 
     let degree = secret_crt.limb(0).coefficients().len();
     let mut lifted = Vec::with_capacity(degree);
-    let mut quotients = vec![Vec::with_capacity(degree); moduli.len()];
+    let mut residues = vec![Vec::with_capacity(degree); moduli.len()];
     for coeff_idx in 0..degree {
-        let mut residues = Vec::with_capacity(moduli.len());
         let mut sum = BigInt::from(0);
         for (mod_idx, &q) in moduli.iter().enumerate() {
             let q = BigInt::from(q);
             let residue = secret_crt.limb(mod_idx).coefficients()[coeff_idx].mod_floor(&q);
             sum += &residue * &basis[mod_idx];
-            residues.push(center(&residue, &q));
+            residues[mod_idx].push(center(&residue, &q));
         }
-        let value = center(&sum.mod_floor(&q_product), &q_product);
+        lifted.push(center(&sum.mod_floor(&q_product), &q_product));
+    }
+    Ok((lifted, residues))
+}
+
+/// The C2b leaf witness for the smudging noise (see [`ESmSplitLift`]).
+pub fn e_sm_split_lift(
+    secret_crt: &CrtPolynomial,
+    moduli: &[u64],
+    split: &ESmSplit,
+) -> Result<ESmSplitLift, WitnessError> {
+    let (lifted, residues) = e_sm_crt_values(secret_crt, moduli)?;
+    let bound = BigInt::from(split.bound.clone());
+    let radix = BigInt::from(1) << split.split_bits;
+    let twice_bound_low = BigInt::from(split.twice_bound_low.clone());
+    let degree = lifted.len();
+    let mut lift = ESmSplitLift {
+        plus_high: Vec::with_capacity(degree),
+        plus_low: Vec::with_capacity(degree),
+        minus_high: Vec::with_capacity(degree),
+        minus_low: Vec::with_capacity(degree),
+        carry: Vec::with_capacity(degree),
+        quotients: vec![Vec::with_capacity(degree); moduli.len()],
+    };
+    for (coeff_idx, value) in lifted.iter().enumerate() {
+        let plus = &bound + value;
+        let minus = &bound - value;
+        if plus.is_negative() || minus.is_negative() {
+            return Err(WitnessError::Sample(format!(
+                "e_sm coefficient {coeff_idx} exceeds the smudging bound"
+            )));
+        }
+        let (plus_high, plus_low) = plus.div_mod_floor(&radix);
+        let (minus_high, minus_low) = minus.div_mod_floor(&radix);
+        let carry = (&plus_low + &minus_low - &twice_bound_low) / &radix;
         for (mod_idx, &q) in moduli.iter().enumerate() {
             let q = BigInt::from(q);
-            let difference = &value - &residues[mod_idx];
-            if (&difference % &q) != BigInt::from(0) {
+            let numerator = &plus_high * BigInt::from(split.radix_mod_q[mod_idx].clone())
+                + &plus_low
+                - BigInt::from(split.bound_mod_q[mod_idx].clone())
+                - &residues[mod_idx][coeff_idx];
+            if !(&numerator % &q).is_zero() {
                 return Err(WitnessError::Sample(format!(
-                    "e_sm CRT lift is inconsistent at coefficient {coeff_idx}, limb {mod_idx}"
+                    "e_sm split is inconsistent at coefficient {coeff_idx}, limb {mod_idx}"
                 )));
             }
-            quotients[mod_idx].push(difference / q);
+            lift.quotients[mod_idx].push(numerator / q);
         }
-        lifted.push(value);
+        lift.plus_high.push(plus_high);
+        lift.plus_low.push(plus_low);
+        lift.minus_high.push(minus_high);
+        lift.minus_low.push(minus_low);
+        lift.carry.push(carry);
     }
-    Ok((lifted, quotients))
+    Ok(lift)
+}
+
+impl ESmSplitLift {
+    /// Noir inputs for coefficients `start..end`, with `suffix` appended to each name (`_chunk`
+    /// for a leaf, empty for the whole polynomial).
+    fn insert_json(
+        &self,
+        json: &mut serde_json::Value,
+        suffix: &str,
+        range: std::ops::Range<usize>,
+    ) -> Result<(), WitnessError> {
+        let slice = |values: &[BigInt]| {
+            values
+                .get(range.clone())
+                .map(poly_coefficients_to_toml_json)
+                .ok_or_else(|| {
+                    WitnessError::Other(
+                        "C2b smudging witness does not match the configured degree".into(),
+                    )
+                })
+        };
+        json[format!("e_sm_plus_high{suffix}")] = slice(&self.plus_high)?;
+        json[format!("e_sm_plus_low{suffix}")] = slice(&self.plus_low)?;
+        json[format!("e_sm_minus_high{suffix}")] = slice(&self.minus_high)?;
+        json[format!("e_sm_minus_low{suffix}")] = slice(&self.minus_low)?;
+        json[format!("e_sm_carry{suffix}")] = slice(&self.carry)?;
+        json[format!("e_sm_quotients{suffix}")] = serde_json::Value::Array(
+            self.quotients
+                .iter()
+                .map(|limb| slice(limb))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+        Ok(())
+    }
 }
 
 impl Inputs {
@@ -171,16 +261,10 @@ impl Inputs {
             "y_chunk": bigint_3d_to_json_values(y),
         });
         if self.dkg_input_type == DkgInputType::SmudgingNoise {
-            let (lifted, quotients) = self.e_sm_lift.as_ref().ok_or_else(|| {
-                WitnessError::Other("C2b input is missing the lifted e_sm".into())
+            let lift = self.e_sm_lift.as_ref().ok_or_else(|| {
+                WitnessError::Other("C2b input is missing the smudging split".into())
             })?;
-            json["e_sm_lifted_chunk"] = poly_coefficients_to_toml_json(&slice(lifted)?);
-            json["e_sm_quotients_chunk"] = serde_json::Value::Array(
-                quotients
-                    .iter()
-                    .map(|limb| slice(limb).map(|values| poly_coefficients_to_toml_json(&values)))
-                    .collect::<Result<Vec<_>, _>>()?,
-            );
+            lift.insert_json(&mut json, "_chunk", start..end)?;
         }
         Ok(json)
     }
@@ -307,7 +391,10 @@ impl Inputs {
         };
 
         let e_sm_lift = if lbfv && data.dkg_input_type == DkgInputType::SmudgingNoise {
-            Some(e_sm_crt_lift(&data.secret, moduli)?)
+            let split = config.e_sm_split.as_ref().ok_or_else(|| {
+                WitnessError::Other("the l-BFV C2 configuration has no smudging split".into())
+            })?;
+            Some(e_sm_split_lift(&data.secret, moduli, split)?)
         } else {
             None
         };
@@ -340,14 +427,9 @@ impl Inputs {
         });
 
         json.as_object_mut().unwrap().insert(key.to_string(), value);
-        if let Some((lifted, quotients)) = &self.e_sm_lift {
-            json["e_sm_lifted"] = poly_coefficients_to_toml_json(lifted);
-            json["e_sm_quotients"] = serde_json::Value::Array(
-                quotients
-                    .iter()
-                    .map(|limb| poly_coefficients_to_toml_json(limb))
-                    .collect(),
-            );
+        if let Some(lift) = &self.e_sm_lift {
+            lift.insert_json(&mut json, "", 0..lift.plus_low.len())
+                .expect("the whole range is in bounds");
         }
 
         json

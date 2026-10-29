@@ -446,6 +446,17 @@ pub global PK_GENERATION_E_SM_QUOTIENT_BOUNDS: [Field; L] =
     [15765837261829192303178403, 15765837261829360337695497, 15765837261831040682866433];
 pub global PK_GENERATION_R_BOUNDS: [Field; L] = [64, 64, 64];
 pub global PK_GENERATION_B_ENC: Field = 389120;
+
+// The smudging bound split for the l-BFV C2b leaves: `B + e` and `B - e` are each
+// `high * 2^SPLIT_BITS + low`, and their sum is `2B = TWICE_BOUND_HIGH * 2^SPLIT_BITS + TWICE_BOUND_LOW`.
+pub global PK_GENERATION_E_SM_SPLIT_BITS: u32 = 71;
+pub global PK_GENERATION_BIT_E_SM_HIGH: u32 = 70;
+pub global PK_GENERATION_BIT_E_SM_SPLIT_QUOTIENT: u32 = 71;
+pub global PK_GENERATION_E_SM_TWICE_BOUND_HIGH: Field = 962270340687618643471;
+pub global PK_GENERATION_E_SM_TWICE_BOUND_LOW: Field = 2018852279244572065792;
+pub global PK_GENERATION_E_SM_RADIX_MOD_Q: [Field; L] = [486506496, 511672320, 763330560];
+pub global PK_GENERATION_E_SM_BOUND_MOD_Q: [Field; L] =
+    [27059895367760733, 67846791098971384, 57565740187666688];
 pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfigs::new(
     QIS,
     PK_GENERATION_EEK_BOUND,
@@ -462,7 +473,7 @@ lbfv_pk_generation (l-BFV PUBLIC KEY ROW)
 -------------------------------------
 ************************************/
 
-pub global LBFV_PK_GENERATION_BIT_R: u32 = 8;
+pub global LBFV_PK_GENERATION_BIT_R: u32 = 7;
 pub global LBFV_PK_GENERATION_R_BOUNDS: [Field; L] = [64, 64, 64];
 
 /************************************
@@ -473,7 +484,7 @@ l-BFV relinearization key circuits
 
 pub global GADGET_DIM: u32 = L;
 // C1 uses the repeated CRP path. The dedicated l-BFV public-key circuit selects rows below.
-pub global CRP_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP, CRP, CRP];
+pub global CRP_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP; GADGET_DIM];
 // l-BFV rows are fixed public randomness for the supported preset. Unsupported presets retain
 // placeholder declarations because their RLK path is disabled.
 pub use super::lbfv::{
@@ -505,7 +516,7 @@ pub global RLK_GENERATION_CONFIGS: RlkGenerationConfigs<N, L> = RlkGenerationCon
     RLK_GENERATION_RD2_BOUNDS,
 );
 
-pub global RLK_AGGREGATION_BIT_D: u32 = PK_GENERATION_BIT_PK;
+pub global RLK_AGGREGATION_BIT_D: u32 = 55;
 pub global RLK_AGGREGATION_CONFIGS: RlkAggregationConfigs<L> = RlkAggregationConfigs::new(QIS);
 
 /************************************

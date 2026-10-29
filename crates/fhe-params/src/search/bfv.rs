@@ -15,7 +15,7 @@
 use num_bigint::BigUint;
 use num_traits::{One, ToPrimitive, Zero};
 
-use crate::search::constants::{K_MAX, RING_DIM, TARGET_NUM_PRIMES};
+use crate::search::constants::{K_MAX, MAX_NUM_PRIMES, RING_DIM, TARGET_NUM_PRIMES};
 use crate::search::errors::{BfvParamsResult, SearchError, ValidationError};
 use crate::search::prime::{build_prime_items, build_prime_items_for_second};
 use crate::search::prime::{group_by_bits, has_duplicate_primes, PrimeItem};
@@ -162,7 +162,7 @@ pub fn bfv_search_first(
         }
     }
 
-    for num_primes in TARGET_NUM_PRIMES..=TARGET_NUM_PRIMES {
+    for num_primes in TARGET_NUM_PRIMES..=MAX_NUM_PRIMES {
         if config.verbose {
             println!("\n  === Trying {num_primes} primes ===");
         }

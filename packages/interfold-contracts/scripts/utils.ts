@@ -134,9 +134,9 @@ const SECURE_PARAM_SET_HASH =
 const SECURE_CONFIG_ID =
   "0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa";
 const SECURE_16384_PARAM_SET_HASH =
-  "0x8afd5dddf1bc0cfb00c70e9a7d0a0fb11bd0617df27574fa7d2ccf9ae3a6bdb8";
+  "0x2576ec0fc35c64a24a9be57d058609040e4f93dfee51d9df4a831c6c57675a9e";
 const SECURE_16384_CONFIG_ID =
-  "0x9b9181e0304e51388d6edd6eb4d5ae9a8593cbdbf28838734d829d09d0701d86";
+  "0xc5ea726de917fa7f1272eecbbe9f373b3d95a668d102c71c9fb38a2749330ecf";
 
 /** On-chain index of the insecure parameters on the l-BFV path. */
 export const INSECURE_LBFV_PARAM_SET = 4;

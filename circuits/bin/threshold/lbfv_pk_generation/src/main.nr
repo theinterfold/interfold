@@ -16,7 +16,7 @@ use lib::configs::default::N_PARTIES;
 use lib::configs::default::threshold::{
     GADGET_DIM, L, LBFV_CRS_ROW_COMMITMENTS, LBFV_PK_GENERATION_BIT_R, LBFV_PK_GENERATION_R_BOUNDS,
     N, PK_AGGREGATION_BIT_PK, PK_GENERATION_BIT_EEK, PK_GENERATION_BIT_PK, PK_GENERATION_BIT_SK,
-    PK_GENERATION_CONFIGS,
+    PK_GENERATION_EEK_BOUND, PK_GENERATION_SK_BOUND, QIS,
 };
 use lib::core::threshold::lbfv_pk_generation::LbfvPkGenerationRow;
 use lib::core::threshold::lbfv_proof_domain::{LbfvProofSession, validate_generation_statement};
@@ -40,10 +40,10 @@ fn main(
     );
 
     let circuit: LbfvPkGenerationRow<N, L, PK_GENERATION_BIT_EEK, PK_GENERATION_BIT_SK, LBFV_PK_GENERATION_BIT_R, PK_GENERATION_BIT_PK, PK_AGGREGATION_BIT_PK, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE> = LbfvPkGenerationRow::new(
-        PK_GENERATION_CONFIGS.eek_bound,
-        PK_GENERATION_CONFIGS.sk_bound,
+        PK_GENERATION_EEK_BOUND,
+        PK_GENERATION_SK_BOUND,
         LBFV_PK_GENERATION_R_BOUNDS,
-        PK_GENERATION_CONFIGS.qis,
+        QIS,
         LBFV_CRS_ROW_COMMITMENTS[row_index],
         row_index,
         eek,

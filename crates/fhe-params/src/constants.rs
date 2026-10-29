@@ -57,29 +57,32 @@ pub mod secure_8192 {
 /// Secure preset constants (degree 16384), available for generation but not enabled in the
 /// current deployment matrix. The runtime
 /// `SmudgingBoundCalculator` enforces `2*(B_C + n*B_sm) < Delta = floor(Q/t)`;
-/// these 16384 parameters were regenerated with the multiplicative-depth-aware
-/// search (Prop. 20 recursion) and support `mult_depth` 0-3 at runtime.
+/// these 16384 parameters come from the multiplicative-depth-aware search (Prop. 20 recursion)
+/// for the small committee and support `mult_depth` 0-3 at runtime. `Q` is about 2^312 and the
+/// smudging bound about 2^288.6, both above the BN254 field, so the circuits carry them in two
+/// field limbs (C2b smudging lift) or in U384 (wide C7).
 pub mod secure_16384 {
     pub const DEGREE: usize = 16384;
-    pub const NUM_PARTIES: u128 = 20; // real - used in the search default
+    pub const NUM_PARTIES: u128 = 19; // real - used in the search default
 
     /// Threshold BFV parameters
     pub mod threshold {
-        pub const PLAINTEXT_MODULUS: u64 = 1000;
+        pub const PLAINTEXT_MODULUS: u64 = 65537;
         pub const MODULI: &[u64] = &[
-            0x00040000009f0001,
-            0x00040000008a0001,
-            0x0004000000800001,
-            0x00040000007e0001,
-            0x0004000000750001,
+            0x0010000000960001,
+            0x00100000007e0001,
+            0x00100000006f0001,
+            0x00100000006e0001,
+            0x0010000000650001,
+            0x0010000000500001,
         ];
-        pub const ERROR1_VARIANCE: &str = "264093875047547791978479834453333";
+        pub const ERROR1_VARIANCE: &str = "63980174197113950682436579834827252258133";
     }
 
     /// DKG parameters
     pub mod dkg {
-        pub const PLAINTEXT_MODULUS: u64 = 1125899917262849;
-        pub const MODULI: &[u64] = &[0x0010000000060001, 0x00100000000f0001];
+        pub const PLAINTEXT_MODULUS: u64 = 4503599637200897;
+        pub const MODULI: &[u64] = &[0x0040000000120001, 0x00400000001d0001];
         pub const ERROR1_VARIANCE: &str = "10";
     }
 }
@@ -113,9 +116,9 @@ pub mod insecure_search_defaults {
 pub mod secure_16384_search_defaults {
     pub const B: u128 = 20;
     pub const B_CHI: u128 = 1;
-    pub const SEARCH_N: u128 = 20;
-    pub const SEARCH_K: u128 = 1000;
-    pub const SEARCH_Z: u128 = 3;
+    pub const SEARCH_N: u128 = 19;
+    pub const SEARCH_K: u128 = 65537;
+    pub const SEARCH_Z: u128 = 5000;
 }
 
 /// Default values for BFV parameters
@@ -132,7 +135,7 @@ pub mod defaults {
     /// Default secure security parameter (λ) for the 8192 presets.
     pub const DEFAULT_SECURE_LAMBDA: usize = 45;
     /// Statistical security parameter (λ) for the 16384 presets.
-    pub const DEFAULT_SECURE_16384_LAMBDA: usize = 31;
+    pub const DEFAULT_SECURE_16384_LAMBDA: usize = 45;
 
     /// Multiplicative depth for the insecure preset.
     pub const INSECURE_MULT_DEPTH: u32 = 3;

@@ -16,7 +16,7 @@ describe('crypto configuration IDs', () => {
   it('uses the v2 circuit identity for every BFV parameter set', () => {
     expect(cryptoConfigIdForParamSet(0)).to.equal('0x968e91054be28b2b577ac278284e03274ed46bd5c5064e573290312a2323d495')
     expect(cryptoConfigIdForParamSet(2)).to.equal('0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa')
-    expect(cryptoConfigIdForParamSet(3)).to.equal('0x9b9181e0304e51388d6edd6eb4d5ae9a8593cbdbf28838734d829d09d0701d86')
+    expect(cryptoConfigIdForParamSet(3)).to.equal('0xc5ea726de917fa7f1272eecbbe9f373b3d95a668d102c71c9fb38a2749330ecf')
   })
 })
 

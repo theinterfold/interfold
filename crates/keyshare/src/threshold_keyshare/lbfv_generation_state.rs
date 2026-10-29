@@ -804,7 +804,7 @@ mod tests {
 
         assert_eq!(
             state.context.proof_domain.crypto_config_id,
-            "0x9b9181e0304e51388d6edd6eb4d5ae9a8593cbdbf28838734d829d09d0701d86"
+            "0xc5ea726de917fa7f1272eecbbe9f373b3d95a668d102c71c9fb38a2749330ecf"
                 .parse::<B256>()
                 .unwrap()
         );

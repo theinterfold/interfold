@@ -30,7 +30,7 @@ fn crypto_config_id_for_param_set(param_set: u8) -> Result<B256> {
     match param_set {
         0 => Ok("0x968e91054be28b2b577ac278284e03274ed46bd5c5064e573290312a2323d495".parse()?),
         2 => Ok("0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa".parse()?),
-        3 => Ok("0x9b9181e0304e51388d6edd6eb4d5ae9a8593cbdbf28838734d829d09d0701d86".parse()?),
+        3 => Ok("0xc5ea726de917fa7f1272eecbbe9f373b3d95a668d102c71c9fb38a2749330ecf".parse()?),
         _ => Err(eyre::eyre!("unsupported BFV parameter set: {}", param_set)),
     }
 }

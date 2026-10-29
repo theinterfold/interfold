@@ -24638,6 +24638,18 @@ pub global PK_GENERATION_E_SM_QUOTIENT_BOUNDS: [Field; L] =
     [23058430091563604875314291, 23058430091579333515313518, 23058430091604237195312339];
 pub global PK_GENERATION_R_BOUNDS: [Field; L] = [4096, 4096, 4096];
 pub global PK_GENERATION_B_ENC: Field = 230584300921369395200;
+
+// The smudging bound split for the l-BFV C2b leaves: `B + e` and `B - e` are each
+// `high * 2^SPLIT_BITS + low`, and their sum is `2B = TWICE_BOUND_HIGH * 2^SPLIT_BITS + TWICE_BOUND_LOW`.
+pub global PK_GENERATION_E_SM_SPLIT_BITS: u32 = 73;
+pub global PK_GENERATION_BIT_E_SM_HIGH: u32 = 72;
+pub global PK_GENERATION_BIT_E_SM_SPLIT_QUOTIENT: u32 = 73;
+pub global PK_GENERATION_E_SM_TWICE_BOUND_HIGH: Field = 2814749767106732865637;
+pub global PK_GENERATION_E_SM_TWICE_BOUND_LOW: Field = 1955354871813212471296;
+pub global PK_GENERATION_E_SM_RADIX_MOD_Q: [Field; L] =
+    [576460516899880961, 576460523341938689, 576460533541863425];
+pub global PK_GENERATION_E_SM_BOUND_MOD_Q: [Field; L] =
+    [488918770122947470, 255821976498863762, 204143491732095789];
 pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfigs::new(
     QIS,
     PK_GENERATION_EEK_BOUND,
@@ -24654,7 +24666,7 @@ lbfv_pk_generation (l-BFV PUBLIC KEY ROW)
 -------------------------------------
 ************************************/
 
-pub global LBFV_PK_GENERATION_BIT_R: u32 = 14;
+pub global LBFV_PK_GENERATION_BIT_R: u32 = 13;
 pub global LBFV_PK_GENERATION_R_BOUNDS: [Field; L] = [4096, 4096, 4096];
 
 /************************************
@@ -24665,7 +24677,7 @@ l-BFV relinearization key circuits
 
 pub global GADGET_DIM: u32 = L;
 // C1 uses the repeated CRP path because this preset does not enable l-BFV.
-pub global CRP_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP, CRP, CRP];
+pub global CRP_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP; GADGET_DIM];
 // l-BFV rows are fixed public randomness for the supported preset. Unsupported presets retain
 // placeholder declarations because their RLK path is disabled.
 pub global LBFV_CRS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP, CRP, CRP];

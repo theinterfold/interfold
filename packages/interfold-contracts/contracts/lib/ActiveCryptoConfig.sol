@@ -27,10 +27,10 @@ library ActiveCryptoConfig {
         0x1b2620f6a5919d5ee19a51f34026369816f479efd0404b56585ad37d31c52317;
 
     bytes32 internal constant SECURE_16384_CONFIG_ID =
-        0x9b9181e0304e51388d6edd6eb4d5ae9a8593cbdbf28838734d829d09d0701d86;
+        0xc5ea726de917fa7f1272eecbbe9f373b3d95a668d102c71c9fb38a2749330ecf;
     uint8 internal constant SECURE_16384_PARAM_SET = 3;
     bytes32 internal constant SECURE_16384_PARAM_SET_HASH =
-        0x8afd5dddf1bc0cfb00c70e9a7d0a0fb11bd0617df27574fa7d2ccf9ae3a6bdb8;
+        0x2576ec0fc35c64a24a9be57d058609040e4f93dfee51d9df4a831c6c57675a9e;
     // Same parameters and config identity as insecure, on the l-BFV route.
     uint8 internal constant INSECURE_LBFV_PARAM_SET = 4;
 

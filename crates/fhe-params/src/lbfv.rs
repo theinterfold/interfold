@@ -112,11 +112,11 @@ mod tests {
         assert!(!is_lbfv_path(BfvPreset::SecureDkg8192));
         assert_eq!(lbfv_row_count(BfvPreset::InsecureThresholdLbfv), Some(3));
         assert_eq!(lbfv_row_count(BfvPreset::InsecureThreshold), None);
-        assert_eq!(lbfv_row_count(BfvPreset::SecureThreshold16384), Some(5));
+        assert_eq!(lbfv_row_count(BfvPreset::SecureThreshold16384), Some(6));
         assert_eq!(lbfv_row_count(BfvPreset::SecureThreshold8192), None);
         assert!(is_supported_lbfv_row_count(3));
-        assert!(is_supported_lbfv_row_count(5));
-        assert!(!is_supported_lbfv_row_count(4));
+        assert!(is_supported_lbfv_row_count(6));
+        assert!(!is_supported_lbfv_row_count(5));
     }
 
     #[test]

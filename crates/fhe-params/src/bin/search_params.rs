@@ -10,10 +10,14 @@
 //! CRT primes over the fixed ring dimension N = 16384.
 
 use clap::Parser;
+use e3_fhe_params::constants::defaults::{DEFAULT_SECURE_16384_LAMBDA, SECURE_16384_MULT_DEPTH};
+use e3_fhe_params::constants::secure_16384_search_defaults::{
+    B, B_CHI, SEARCH_K, SEARCH_N, SEARCH_Z,
+};
 use e3_fhe_params::search::bfv::{
     bfv_search, bfv_search_second_param, BfvSearchConfig, BfvSearchResult,
 };
-use e3_fhe_params::search::constants::{K_MAX, RING_DIM, TARGET_NUM_PRIMES};
+use e3_fhe_params::search::constants::{K_MAX, MAX_NUM_PRIMES, RING_DIM, TARGET_NUM_PRIMES};
 use e3_fhe_params::search::prime::{build_prime_items, build_prime_items_for_second};
 use e3_fhe_params::search::utils::{approx_bits_from_log2, fmt_big_summary, log2_big};
 use num_bigint::BigUint;
@@ -25,32 +29,32 @@ use num_bigint::BigUint;
 )]
 struct Args {
     /// Number of ciphernodes n.
-    #[arg(long, default_value_t = 20u128)]
+    #[arg(long, default_value_t = SEARCH_N)]
     n: u128,
 
     /// Number of fresh-ciphertext additions z summed before the multiplicative
     /// circuit (also caps the plaintext space).
-    #[arg(long, default_value_t = 3u128)]
+    #[arg(long, default_value_t = SEARCH_Z)]
     z: u128,
 
     /// Total multiplicative circuit depth (Prop. 20 recursion).
-    #[arg(long, default_value_t = 3u32)]
+    #[arg(long, default_value_t = SECURE_16384_MULT_DEPTH)]
     mult_depth: u32,
 
     /// BFV plaintext modulus k.
-    #[arg(long, default_value_t = 1000u128)]
+    #[arg(long, default_value_t = SEARCH_K)]
     k: u128,
 
     /// Statistical security parameter λ (negl(λ)=2^{-λ}).
-    #[arg(long, default_value_t = 31u32)]
+    #[arg(long, default_value_t = DEFAULT_SECURE_16384_LAMBDA as u32)]
     lambda: u32,
 
     /// Bound B on the error distribution ψ (e.g. 20 for CBD with σ≈3.2).
-    #[arg(long, default_value_t = 20u128)]
+    #[arg(long, default_value_t = B)]
     b: u128,
 
     /// Bound B_χ on the secret-key distribution χ.
-    #[arg(long, default_value_t = 1u128)]
+    #[arg(long, default_value_t = B_CHI)]
     b_chi: u128,
 
     /// Minimum correctness margin in bits (log2(Δ) − log2(LHS)).
@@ -227,8 +231,8 @@ fn main() {
     }
 
     println!(
-        "Fixed ring dimension set: N={}, {} CRT primes.",
-        RING_DIM, TARGET_NUM_PRIMES
+        "Fixed ring dimension set: N={}, {}-{} CRT primes.",
+        RING_DIM, TARGET_NUM_PRIMES, MAX_NUM_PRIMES
     );
 
     let config = BfvSearchConfig {
