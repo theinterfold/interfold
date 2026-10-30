@@ -66,7 +66,7 @@
     },
     {
       "name": "NodeDkgFold/c3a_fold",
-      "avg_seconds": 92.210482180,
+      "avg_seconds": 92.21048218,
       "runs": 3,
       "total_seconds": 276.631446542
     },
@@ -126,7 +126,7 @@
     },
     {
       "name": "ZkLbfvGenerationFold",
-      "avg_seconds": 12.014208620,
+      "avg_seconds": 12.01420862,
       "runs": 9,
       "total_seconds": 108.127877585
     },
@@ -176,7 +176,7 @@
       "name": "ZkPkGeneration",
       "avg_seconds": 31.294054166,
       "runs": 3,
-      "total_seconds": 93.882162500
+      "total_seconds": 93.8821625
     },
     {
       "name": "ZkRlkAggregation",
@@ -200,7 +200,7 @@
       "name": "ZkShareEncryption",
       "avg_seconds": 2.407755351,
       "runs": 36,
-      "total_seconds": 86.679192670
+      "total_seconds": 86.67919267
     },
     {
       "name": "ZkThresholdShareDecryption",
@@ -226,7 +226,7 @@
   "phase_timings": [
     {
       "label": "Starting trbfv actor test",
-      "seconds": 0E-9,
+      "seconds": 0e-9,
       "metric": "wall_clock"
     },
     {
@@ -246,12 +246,12 @@
     },
     {
       "label": "Aggregator P2: PkAggregation pending -> LbfvPublicKeyAggregated (wall)",
-      "seconds": 178.826990000,
+      "seconds": 178.82699,
       "metric": "wall_clock"
     },
     {
       "label": "ThresholdShares -> LbfvPublicKeyAggregated",
-      "seconds": 281.988455000,
+      "seconds": 281.988455,
       "metric": "wall_clock"
     },
     {
@@ -271,7 +271,7 @@
     },
     {
       "label": "Aggregator P4: Aggregation pending -> PlaintextAggregated (wall)",
-      "seconds": 39.926798000,
+      "seconds": 39.926798,
       "metric": "wall_clock"
     },
     {
