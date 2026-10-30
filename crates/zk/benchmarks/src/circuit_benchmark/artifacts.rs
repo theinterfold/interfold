@@ -109,7 +109,7 @@ pub(crate) fn compile_config(root: &Path, pair: &str, noir_pin: &str) -> Result<
 pub(crate) fn bind_config_vk(
     root: &Path,
     compiled: &Path,
-    variant: e3_zk_prover::CircuitVariant,
+    variant: e3_zk_config::CircuitVariant,
     generated: &Path,
     cached: &Path,
 ) -> Result<serde_json::Value> {
@@ -126,7 +126,7 @@ pub(crate) fn bind_config_vk(
 
 fn verify_manifest_file(
     prover: &ZkProver,
-    variant: e3_zk_prover::CircuitVariant,
+    variant: e3_zk_config::CircuitVariant,
     path: &Path,
     bytes: &[u8],
 ) -> Result<()> {
@@ -187,7 +187,7 @@ pub(crate) fn load(
     prover: &ZkProver,
     pair: &str,
     case: Case,
-    variant: e3_zk_prover::CircuitVariant,
+    variant: e3_zk_config::CircuitVariant,
     noir_pin: &str,
     need_vk: bool,
 ) -> Result<(CompiledCircuit, PathBuf, PathBuf, ArtifactIdentity)> {
@@ -232,9 +232,9 @@ pub(crate) fn load(
         package_name,
         if case == Case::Config {
             match variant {
-                e3_zk_prover::CircuitVariant::Default => "vk_recursive",
-                e3_zk_prover::CircuitVariant::Recursive => "vk_noir",
-                e3_zk_prover::CircuitVariant::Evm => "vk",
+                e3_zk_config::CircuitVariant::Default => "vk_recursive",
+                e3_zk_config::CircuitVariant::Recursive => "vk_noir",
+                e3_zk_config::CircuitVariant::Evm => "vk",
             }
         } else {
             "vk"

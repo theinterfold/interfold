@@ -27,7 +27,7 @@ async fn verification_execution_preserves_correlations_and_error_classification(
             e3_id: e3_id.clone(),
             proof_type: ProofType::C3aSkShareEncryption,
             proof: Proof::new(
-                e3_events::CircuitName::ShareEncryption,
+                e3_zk_config::CircuitName::ShareEncryption,
                 ArcBytes::from_bytes(&[1]),
                 ArcBytes::default(),
             ),
@@ -67,7 +67,7 @@ async fn verification_execution_preserves_correlations_and_error_classification(
 
         // A wrong circuit is a completed rejection, unlike an unavailable verifier process.
         let mut wrong = signed.clone();
-        wrong.payload.proof.circuit = e3_events::CircuitName::PkBfv;
+        wrong.payload.proof.circuit = e3_zk_config::CircuitName::PkBfv;
         let request = ComputeRequest::zk(
             kind(bundle(vec![wrong.clone()])),
             CorrelationId::new(),

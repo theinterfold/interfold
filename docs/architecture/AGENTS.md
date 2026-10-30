@@ -34,7 +34,7 @@ public contracts.
 [Project commands](../../README.md) and [package scripts](../../package.json) define executable
 checks; Cargo manifests own dependency edges. Domain evidence sections name representative guards,
 not complete coverage. For client-facing recovery limits see the
-[indexer](../../crates/indexer/README.md) and
+[indexer](../../crates/evm/indexer/README.md) and
 [compute service](../../crates/program-server/README.md).
 
 When maintaining a domain, distinguish its required contract, actual implementation, test evidence,

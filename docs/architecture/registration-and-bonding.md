@@ -241,8 +241,8 @@ routes drain. Default-admin handover uses the two-day `AccessControlDefaultAdmin
   contracts, not against real proofs. [CLI secret tests](../../crates/cli/tests/cli_secrets.rs) own
   process argument exposure. Run `pnpm evm:test` and `cargo test -p e3-cli --test cli_secrets` as
   relevant.
-- [EVM event decoding](../../crates/evm/src/bonding_registry/events.rs) tests typed owner, policy,
-  and activity projection inputs. Those tests do not establish complete restart or migration
+- [EVM event decoding](../../crates/evm/runtime/src/bonding_registry/events.rs) tests typed owner,
+  policy, and activity projection inputs. Those tests do not establish complete restart or migration
   behavior.
 - BondingRegistry is close to EIP-170. Keep linked logic in `BondingAssetLib`,
   `BondingEligibilityLib`, `BondingSlashingLib`, `BondingRegistrationLib`, and

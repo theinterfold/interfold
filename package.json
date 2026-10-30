@@ -97,7 +97,7 @@
     "npm:release": "pnpm build && pnpm config:release && pnpm evm:release && pnpm wasm:release && pnpm sdk:release && pnpm react:release && pnpm mcp:release",
     "openvm": "bash scripts/openvm/run.sh",
     "build": "pnpm compile",
-    "fixtures:build": "cd crates/evm-helpers && ./scripts/build_fixtures.sh && cd ../indexer && ./scripts/build_fixtures.sh",
+    "fixtures:build": "cd crates/evm/client && ./scripts/build_fixtures.sh && cd ../indexer && ./scripts/build_fixtures.sh",
     "wasm:build": "cd ./crates/wasm && pnpm build",
     "build:ts": "pnpm evm:build && pnpm sdk:build && pnpm react:build && pnpm mcp:build",
     "template:build": "cd templates/default && pnpm compile",

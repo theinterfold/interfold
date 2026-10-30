@@ -15,12 +15,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{bail, ensure, Result};
-use e3_events::CircuitName;
 use e3_events::{
     DecryptionAggregationJobRequest, PartyProofsToVerify, Proof, Seed, SignedProofPayload,
 };
 use e3_fhe_params::BfvPreset;
 use e3_utils::utility_types::ArcBytes;
+use e3_zk_config::CircuitName;
 
 #[path = "intents.rs"]
 mod intents;

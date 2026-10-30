@@ -10,6 +10,8 @@
 //! fault-handling, not ZK infrastructure.
 
 mod actors;
+#[path = "commitment_consistency/link.rs"]
+mod commitment_link;
 mod domain;
 mod repo;
 mod workflow;
@@ -27,3 +29,4 @@ pub use accusation_manager::AccusationManager;
 pub use accusation_manager_ext::AccusationManagerExtension;
 pub use commitment_consistency_checker::CommitmentConsistencyChecker;
 pub use commitment_consistency_checker_ext::CommitmentConsistencyCheckerExtension;
+pub use commitment_link::{CommitmentLink, FieldValue, LinkScope};

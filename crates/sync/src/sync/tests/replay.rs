@@ -40,6 +40,44 @@ async fn load_replay_fixture(events: Vec<InterfoldEvent>) -> anyhow::Result<Repl
 }
 
 #[actix::test]
+async fn baseline_signed_proof_replays_through_eventstore_with_original_context(
+) -> anyhow::Result<()> {
+    let encoded: String = include_str!("../../../../events/tests/fixtures/signed-proof-v1.hex")
+        .split_whitespace()
+        .collect();
+    let bytes = hex::decode(encoded)?;
+    let baseline: InterfoldEvent = bincode::deserialize(&bytes)?;
+    let aggregate = baseline.aggregate_id();
+    // Keep its original durable sequence (7), not just the signed payload, in the replay fixture.
+    let mut events: Vec<_> = (1u64..7)
+        .map(|seq| {
+            InterfoldEvent::<Unsequenced>::test_event("prefix")
+                .id(seq)
+                .aggregate_id(aggregate.to_usize() as u64)
+                .ts(seq.into())
+                .build()
+                .into_sequenced(seq)
+        })
+        .collect();
+    events.push(baseline);
+    let spool = load_replay_fixture(events).await?;
+    let destination =
+        EventSystem::new()
+            .with_fresh_bus()
+            .with_aggregate_config(e3_events::AggregateConfig::new(HashMap::from([(
+                aggregate,
+                Duration::ZERO,
+            )])));
+    let bus = destination.handle()?.enable("baseline-proof-replay");
+    let history = bus.history();
+    assert_eq!(spool.replay(&bus).await?, 7);
+    let replayed = history.send(e3_events::GetEvents::new()).await?;
+    assert_eq!(replayed.len(), 7);
+    assert_eq!(bincode::serialize(replayed.last().unwrap())?, bytes);
+    Ok(())
+}
+
+#[actix::test]
 async fn router_checkpoint_advances_without_losing_state() -> anyhow::Result<()> {
     let system =
         EventSystem::new()
