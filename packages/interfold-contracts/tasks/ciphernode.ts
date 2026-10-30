@@ -596,3 +596,79 @@ export const updateSubmissionWindow = task(
     },
   }))
   .build();
+
+export const identityMockGate = task(
+  "identity:mock-gate",
+  "Require a verified bond owner, and verify the given owners with a mock identity verifier (for testing). Requires a local node that supports account impersonation (Anvil or Hardhat).",
+)
+  .addOption({
+    name: "owners",
+    description:
+      "comma-separated bond owners to verify; each must also be a registered operator, as in the integration tests",
+    defaultValue: "",
+  })
+  .setAction(async () => ({
+    default: async ({ owners }, hre) => {
+      const connection = await hre.network.connect();
+      const { ethers } = connection;
+      const provider = ethers.provider;
+      const list = owners
+        .split(",")
+        .map((owner: string) => owner.trim())
+        .filter(Boolean);
+      if (list.length === 0) {
+        throw new Error("Pass the owners to verify with --owners");
+      }
+      const [admin] = await ethers.getSigners();
+      const { deployAndSaveBondingRegistry } = await import(
+        "../scripts/deployAndSave/bondingRegistry"
+      );
+      const { bondingRegistry } = await deployAndSaveBondingRegistry({ hre });
+      const verifier = await ethers.deployContract("MockIdentityVerifier");
+      await verifier.waitForDeployment();
+      const registry = await ethers.deployContract("OwnerIdentityRegistry", [
+        admin.address,
+        await verifier.getAddress(),
+      ]);
+      await registry.waitForDeployment();
+
+      // Past the end of the next 30-day capacity window, so every owner counts.
+      const latest = await provider.getBlock("latest");
+      const expiresAt = latest!.timestamp + 400 * 86_400;
+      const impersonationRpc = await resolveImpersonationRpc(provider, list[0]);
+      for (const owner of list) {
+        await (
+          await verifier.setResult(
+            owner,
+            ethers.zeroPadValue(owner, 32),
+            expiresAt,
+          )
+        ).wait();
+        await provider.send(impersonationRpc.impersonate, [owner]);
+        await provider.send(impersonationRpc.setBalance, [
+          owner,
+          "0x56BC75E2D63100000",
+        ]);
+        const ownerSigner = await ethers.getSigner(owner);
+        await (
+          await registry.connect(ownerSigner).getFunction("register")("0x")
+        ).wait();
+        await provider.send(impersonationRpc.stopImpersonating, [owner]);
+      }
+
+      await (
+        await bondingRegistry
+          .connect(admin)
+          .setIdentityPolicy(await registry.getAddress(), true)
+      ).wait();
+      // The policy change resets owner capacity; a refresh counts the verified owners again.
+      await (
+        await bondingRegistry.connect(admin).refreshOperatorStatuses(list)
+      ).wait();
+      // Requests read the capacity one second before they start, so it shows from the next block.
+      console.log(
+        `Identity required: registry ${await registry.getAddress()}, ${list.length} verified owners`,
+      );
+    },
+  }))
+  .build();
