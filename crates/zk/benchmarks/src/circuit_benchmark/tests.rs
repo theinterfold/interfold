@@ -224,6 +224,13 @@ fn report_only_uses_saved_data_and_does_not_overwrite_its_input() {
 }
 
 #[test]
+fn an_insecure_64_export_replays_on_the_insecure_64_pair() {
+    let doc = serde_json::json!({"benchmark_config":{"mode":"insecure","bfv_preset_subdir":"insecure-64","committee_n":3,"committee_h":2,"committee_t":1}});
+    let cfg = protocol::configuration(&doc, None, None, 1).unwrap();
+    assert_eq!(cfg.preset, "insecure-64");
+}
+
+#[test]
 fn replay_rejects_bad_proofs_and_wrong_configuration_before_evm_execution() {
     let doc = serde_json::json!({"benchmark_config":{"mode":"insecure","bfv_preset_subdir":"insecure","committee_n":3,"committee_h":2,"committee_t":1},"folded_artifacts":{"dkg_aggregator":{"proof_hex":"0x01","public_inputs_hex":"0x00"},"decryption_aggregator":{"proof_hex":"0x01","public_inputs_hex":"0x00"}}});
     assert!(protocol::configuration(&doc, Some("secure"), None, 1).is_err());

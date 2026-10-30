@@ -138,7 +138,7 @@ pub(crate) fn configuration(
     let stored_mode = cfg["mode"]
         .as_str()
         .or_else(|| match cfg["bfv_preset_subdir"].as_str() {
-            Some("insecure") => Some("insecure"),
+            Some("insecure" | "insecure-64") => Some("insecure"),
             Some("secure-8192") => Some("secure"),
             Some("secure-16384") => Some("secure"),
             _ => None,
@@ -152,13 +152,13 @@ pub(crate) fn configuration(
         .or(stored_mode)
         .context("Specify --mode for an export without preset metadata")?;
     let preset = match mode {
-        "insecure" => "insecure",
+        "insecure" => cfg["bfv_preset_subdir"].as_str().unwrap_or("insecure"),
         "secure" => cfg["bfv_preset_subdir"].as_str().unwrap_or("secure-8192"),
         _ => bail!("Mode must be insecure or secure"),
     };
     if !matches!(
         (mode, preset),
-        ("insecure", "insecure") | ("secure", "secure-8192" | "secure-16384")
+        ("insecure", "insecure" | "insecure-64") | ("secure", "secure-8192" | "secure-16384")
     ) {
         bail!("Exported preset disagrees with its benchmark mode");
     }
@@ -311,8 +311,9 @@ pub(crate) fn evm_command(
             "hardhat",
             "run",
             "scripts/benchmarkGasFromRaw.ts",
+            // Chain 1, the chain the integration run binds its V2 DKG proof to.
             "--network",
-            "hardhat",
+            "benchmark",
         ])
         .current_dir(root.join("packages/interfold-contracts"))
         .env("BENCHMARK_RAW_DIR", output.join("raw"))
@@ -398,10 +399,13 @@ pub(crate) fn collect(
             write_json(&output.join("integration_summary.json"), summary(&document))?;
         }
         let folded_path = output.join("folded_artifacts.json");
-        write_json(
-            &folded_path,
-            &serde_json::json!({ "preset": cfg.preset, "committee": cfg.committee.to_string(), "folded_artifacts": artifacts }),
-        )?;
+        let mut folded_document = serde_json::json!({ "preset": cfg.preset, "committee": cfg.committee.to_string(), "folded_artifacts": artifacts });
+        // A V2 DKG proof is bound to the run's chain, E3 and committee; the replay needs them.
+        let replay_context = &summary(&document)["replay_context"];
+        if !replay_context.is_null() {
+            folded_document["replay_context"] = replay_context.clone();
+        }
+        write_json(&folded_path, &folded_document)?;
         if !gas {
             results.complete = true;
             return Ok(());

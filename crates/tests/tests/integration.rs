@@ -74,6 +74,8 @@ fn resolve_benchmark_preset(
         // The insecure parameters on the l-BFV path: same circuit artifacts, l-BFV protocol flow.
         // `insecure` alone runs trBFV, so this is the fast way to exercise the l-BFV path.
         Some("insecure-lbfv") => ("insecure", BfvPreset::InsecureThresholdLbfv),
+        // The trBFV pair the contracts verify (set 0); `insecure` is the degree-128 twin.
+        Some("insecure-64") => ("insecure-64", BfvPreset::InsecureThreshold64),
         Some("secure-8192") => ("secure-8192", BfvPreset::SecureThreshold8192),
         Some("secure-16384") => ("secure-16384", BfvPreset::SecureThreshold16384),
         Some(value) => panic!("BENCHMARK_PRESET has unsupported value {value:?}"),
@@ -87,7 +89,7 @@ fn select_benchmark_params() -> BenchmarkParams {
     let requested_preset = std::env::var("BENCHMARK_PRESET").ok();
     let (preset_subdir, bfv_preset) =
         resolve_benchmark_preset(&benchmark_mode, requested_preset.as_deref());
-    let is_secure_mode = preset_subdir != "insecure";
+    let is_secure_mode = !preset_subdir.starts_with("insecure");
 
     // λ is part of the preset metadata; using a hard-coded value here will mix parameter
     // families and can invalidate noise/security assumptions.
@@ -167,6 +169,13 @@ fn insecure_lbfv_override_runs_the_lbfv_path_on_insecure_artifacts() {
     assert!(!e3_fhe_params::supports_lbfv(
         resolve_benchmark_preset("insecure", Some("insecure")).1
     ));
+}
+
+#[test]
+fn insecure_64_override_runs_the_on_chain_trbfv_pair() {
+    let (preset_subdir, preset) = resolve_benchmark_preset("insecure", Some("insecure-64"));
+    assert_eq!(preset_subdir, "insecure-64");
+    assert!(matches!(preset, BfvPreset::InsecureThreshold64));
 }
 
 #[test]
