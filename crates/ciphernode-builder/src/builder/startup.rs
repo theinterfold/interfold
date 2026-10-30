@@ -16,9 +16,6 @@ use crate::{
 use actix::{Actor, Addr, Recipient};
 use alloy::primitives::Address;
 use anyhow::{ensure, Result};
-use e3_aggregator::{
-    CommitteeFinalizer, CommitteeFinalizerRecoveryState, CommitteeFinalizerRepositoryFactory,
-};
 use e3_data::{DataStore, Repositories, RepositoriesFactory};
 use e3_event_system::{global_eventstore_cache::EventStoreReader, EventSystem};
 use e3_events::{
@@ -27,15 +24,19 @@ use e3_events::{
     SeqAgg,
 };
 use e3_evm::{
-    ensure_node_release, resolve_slashing_managers, Chains, EvmChainGatewayHandle,
-    GatewayFailureReceiver, ProviderCache, ProviderConfig, ReadOnly, WriteEnabled,
+    committee_chain_time_reader, ensure_node_release, resolve_slashing_managers, Chains,
+    EvmChainGatewayHandle, GatewayFailureReceiver, ProviderCache, ProviderConfig, ReadOnly,
+    WriteEnabled,
 };
 use e3_logger::attach_protocol_logger;
 use e3_request::{
     canonical_key::CanonicalPublicKeys, ensure_request_router_checkpoint,
     load_dkg_fold_attestation_contexts, E3LifecycleCoordinator, E3LifecycleRepositoryFactory,
 };
-use e3_sortition::{CiphernodeSelectorState, Sortition};
+use e3_sortition::{
+    CiphernodeSelectorState, CommitteeFinalizer, CommitteeFinalizerRecoveryState,
+    CommitteeFinalizerRepositoryFactory, Sortition,
+};
 use e3_sync::{
     preflight_node_role, preflight_schema_version, reconcile_request_router_checkpoint,
     sync_with_net_ready, NodeRole,
@@ -427,7 +428,7 @@ impl CiphernodeBuilder {
             CommitteeFinalizer::attach_with_recovery(
                 bus,
                 repositories.committee_finalizer_recovery(),
-                finalizer_providers,
+                committee_chain_time_reader(finalizer_providers),
             )
             .await?;
         }

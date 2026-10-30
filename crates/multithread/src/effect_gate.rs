@@ -523,15 +523,15 @@ pub(crate) mod tests {
     use actix::{Addr, Message, ResponseFuture};
     use e3_committee::CiphernodesCommitteeSize;
     use e3_events::{
-        hlc_factory::HlcFactory, CircuitName, ComputeRequest, ComputeRequestErrorKind,
-        ComputeResponseKind, E3RequestComplete, EffectsEnabled, EventBus, EventBusConfig,
-        EventConstructorWithTimestamp, EventSource, HistoryCollector, PartyProofsToVerify,
-        PkBfvProofRequest, Proof, ProofPayload, Sequencer, SignedProofPayload, StoreEventRequested,
-        StoreEventResponse, TakeEvents, Unsequenced, VerifyShareProofsRequest, ZkError, ZkRequest,
-        ZkResponse,
+        hlc_factory::HlcFactory, ComputeRequest, ComputeRequestErrorKind, ComputeResponseKind,
+        E3RequestComplete, EffectsEnabled, EventBus, EventBusConfig, EventConstructorWithTimestamp,
+        EventSource, HistoryCollector, PartyProofsToVerify, PkBfvProofRequest, Proof, ProofPayload,
+        Sequencer, SignedProofPayload, StoreEventRequested, StoreEventResponse, TakeEvents,
+        Unsequenced, VerifyShareProofsRequest, ZkError, ZkRequest, ZkResponse,
     };
     use e3_fhe_params::BfvPreset;
     use e3_utils::ArcBytes;
+    use e3_zk_config::CircuitName;
 
     #[derive(Message)]
     #[rtype(result = "Vec<CorrelationId>")]

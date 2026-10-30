@@ -1,0 +1,24 @@
+[package]
+name = "e3-evm-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Application-facing Interfold EVM clients and listeners"
+repository.workspace = true
+
+[dependencies]
+alloy.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+eyre.workspace = true
+futures.workspace = true
+futures-util.workspace = true
+once_cell.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+e3-utils.workspace = true
+e3-evm-contracts.workspace = true
+e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
+
+[dev-dependencies]
+serde_json.workspace = true

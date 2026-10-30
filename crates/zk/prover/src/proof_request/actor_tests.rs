@@ -11,14 +11,15 @@ use e3_committee::CiphernodesCommitteeSize;
 use e3_crypto::SensitiveBytes;
 use e3_event_system::test_support::EventFixture;
 use e3_events::{
-    CircuitName, ComputeRequestErrorKind, ComputeRequestKind, DkgShareDecryptionProofRequest,
-    E3Failed, E3Stage, EncryptionKey, Event, EventConstructorWithTimestamp, FailureReason,
-    GetEvents, HistoryCollector, PkGenerationProofRequest, ShareComputationProofRequest,
-    ThresholdShare, ThresholdSharePending, Unsequenced, ZkError,
+    ComputeRequestErrorKind, ComputeRequestKind, DkgShareDecryptionProofRequest, E3Failed, E3Stage,
+    EncryptionKey, Event, EventConstructorWithTimestamp, FailureReason, GetEvents,
+    HistoryCollector, PkGenerationProofRequest, ShareComputationProofRequest, ThresholdShare,
+    ThresholdSharePending, Unsequenced, ZkError,
 };
 use e3_fhe_params::BfvPreset;
 use e3_trbfv::{shares::BfvEncryptedShares, TrBFVError, TrBFVFailure};
 use e3_utils::utility_types::ArcBytes;
+use e3_zk_config::CircuitName;
 use e3_zk_config::DkgInputType;
 
 fn test_ctx(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {

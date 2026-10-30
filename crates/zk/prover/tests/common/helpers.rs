@@ -5,9 +5,9 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use e3_config::BBPath;
-use e3_events::CircuitName;
 #[allow(unused_imports)]
 pub use e3_test_support::find_bb;
+use e3_zk_config::CircuitName;
 use e3_zk_prover::{ZkBackend, ZkConfig};
 use std::{env, path::PathBuf};
 use tempfile::TempDir;

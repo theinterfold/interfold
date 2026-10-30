@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { expect } from "chai";
 import type { Signer } from "ethers";
+import { readFileSync } from "node:fs";
 
 import { CiphernodeRegistryOwnable__factory as CiphernodeRegistryFactory } from "../../types";
 import {
@@ -28,6 +29,24 @@ const { loadFixture } = networkHelpers;
 const data = "0xda7a";
 const dataHash = ethers.id(data);
 const SORTITION_SUBMISSION_WINDOW = 60;
+
+// Literal boundary vectors are also checked by the Rust transport owner, independently of its formulas.
+const publicKeyChunkCases: {
+  name: string;
+  total_length: number;
+  chunk_index: number;
+  chunk_count: number;
+  chunk_length: number;
+  valid: boolean;
+}[] = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../../../crates/data-availability/tests/fixtures/public_key_chunks.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+);
 
 describe("CiphernodeRegistryOwnable", function () {
   let firstE3Id: bigint;
@@ -917,51 +936,54 @@ describe("CiphernodeRegistryOwnable", function () {
       );
       const maxLength = await registry.MAX_COMMITTEE_PUBLIC_KEY_BYTES();
       const observedSecure8192PublicKeyLength = 356_384n;
+      expect(maxLength).to.equal(524_288n);
       expect(maxLength).to.be.gte(observedSecure8192PublicKeyLength);
 
       await expect(
-        publishPublicKey(
-          firstE3Id,
-          ethers.keccak256("0xdead"),
-          0,
-          6,
-          maxLength + 1n,
-          "0xdead",
-        ),
-      ).to.be.revertedWithCustomError(registry, "InvalidPublicKeyChunk");
-      await expect(
         publishPublicKey(firstE3Id, ethers.ZeroHash, 0, 1, 2, "0xdead"),
       ).to.be.revertedWithCustomError(registry, "InvalidPublicKeyChunk");
-      await expect(
-        publishPublicKey(
+
+      for (const testCase of publicKeyChunkCases) {
+        const chunk = ethers.hexlify(
+          new Uint8Array(testCase.chunk_length).fill(0x5a),
+        );
+        const transaction = registry
+          .connect(operator1)
+          .getFunction(
+            "publishCommitteePublicKey(uint256,bytes32,uint16,uint16,uint32,bytes)",
+          )(
           firstE3Id,
           ethers.keccak256("0xdead"),
-          1,
-          1,
-          2,
-          "0xdead",
-        ),
-      ).to.be.revertedWithCustomError(registry, "InvalidPublicKeyChunk");
-      await expect(
-        publishPublicKey(
-          firstE3Id,
-          ethers.keccak256("0xdead"),
-          0,
-          2,
-          2,
-          "0xdead",
-        ),
-      ).to.be.revertedWithCustomError(registry, "InvalidPublicKeyChunk");
-      await expect(
-        publishPublicKey(
-          firstE3Id,
-          ethers.keccak256("0xdead"),
-          1,
-          2,
-          90 * 1024 + 1,
-          "0xdead",
-        ),
-      ).to.be.revertedWithCustomError(registry, "InvalidPublicKeyChunk");
+          testCase.chunk_index,
+          testCase.chunk_count,
+          testCase.total_length,
+          chunk,
+        );
+        if (testCase.valid) {
+          await expect(transaction, testCase.name)
+            .to.emit(registry, "CommitteePublicKeyChunkPublished")
+            .withArgs(
+              firstE3Id,
+              await operator1.getAddress(),
+              ethers.keccak256("0xdead"),
+              [
+                await operator3.getAddress(),
+                await operator1.getAddress(),
+                await operator2.getAddress(),
+              ],
+              dataHash,
+              testCase.chunk_index,
+              testCase.chunk_count,
+              testCase.total_length,
+              chunk,
+            );
+        } else {
+          await expect(
+            transaction,
+            testCase.name,
+          ).to.be.revertedWithCustomError(registry, "InvalidPublicKeyChunk");
+        }
+      }
 
       const candidate = "0xdead";
       const candidateHash = ethers.keccak256(candidate);
