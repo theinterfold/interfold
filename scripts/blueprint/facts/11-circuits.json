@@ -510,8 +510,6 @@
       "kind": "circuit",
       "path": "circuits/bin/threshold/user_data_encryption",
       "one_line": "Proves a user's two-leg BFV ciphertext is valid under the aggregated committee key, with one shared randomness u.",
-      "explain": "One circuit proves both legs of a user's BFV encryption under the aggregated key from C5: the ct0 leg ties pk0, its ciphertext, the scaled message k1 and u, and the ct1 leg ties the circuit-constant CRS pk1, its ciphertext and the same u. Both legs read one u witness: ct0 bounds u to {-1, 0, 1} and commits it, and ct1 takes that commitment into its transcript through execute_with_u_commitment. It returns pk_commitment, ct_commitment and k1_commitment as its only public inputs. The data provider generates the proof, and the E3 program checks it when the input is published.",
-      "analogy": "Two sealed halves made at one bench from the same hidden random number, so one inspection covers both seals.",
       "actors": [],
       "consumes": [
         {
