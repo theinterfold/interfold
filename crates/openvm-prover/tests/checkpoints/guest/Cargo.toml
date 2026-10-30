@@ -1,0 +1,10 @@
+[package]
+name = "proof-binding-fixture"
+version = "0.1.0"
+edition = "2021"
+license = "LGPL-3.0-only"
+
+[workspace]
+
+[dependencies]
+openvm = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2", features = ["std", "heap-embedded-alloc"] }

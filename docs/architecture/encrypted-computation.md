@@ -90,6 +90,18 @@ proofs, and benchmarks stay outside Git. See
 [OpenVM operations](../../crates/openvm-prover/README.md) and
 [provenance](../pages/build/e3-program/verify-compute-provider.mdx).
 
+The worker also offers explicit application, aggregate and root checkpoints. Each stage verifies its
+proof before saving, and resumption repeats native verification against the configured executable,
+VM and exact journal. Manifests bind the pinned OpenVM format and artifact/file digests; they are
+corruption/provenance checks, not proof authority. Completion is a manifest published last after
+file synchronization. Only final compression produces the existing EVM-verified seal. This local
+format does not change guest/receipt identities or protocol counters. It does not make HTTP job
+admission durable or automatically resume an interrupted stage; the service still invokes `prove`.
+Proof import limits are an operator policy, independent of saving locally generated verified
+results. Imported files are bounded and must be regular checkpoint members; the CLI is not a
+resource-isolation boundary for untrusted jobs. See the worker guide for limits and file
+permissions.
+
 The CLI's `program_support.rs` owns project-root compile/start and cache purge. Development compile
 uses `cargo build --bin program-runner`; OpenVM compile runs the embedded
 `crates/cli/scripts/openvm-compile.sh` to build guest, keys, receipt identity, worker configuration,

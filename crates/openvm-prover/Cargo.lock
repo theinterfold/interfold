@@ -2401,15 +2401,20 @@ dependencies = [
 name = "interfold-openvm-prover"
 version = "0.1.0"
 dependencies = [
+ "bitcode",
  "eyre",
  "hex",
+ "libc",
  "openvm-circuit",
+ "openvm-continuations",
  "openvm-cuda-common",
  "openvm-sdk",
  "openvm-sdk-config",
+ "openvm-stark-backend",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
 ]
 
 [[package]]
