@@ -19,10 +19,6 @@ pub global PLAINTEXT_MODULUS: Field = 134217089;
 pub global Q_MOD_T: Field = 76240648;
 pub global Q_MOD_T_CENTERED: Field = -57976441;
 
-// Parity matrix is sized for the active committee and the insecure-64 threshold QIS;
-// see `committee/{name}/parity_insecure.nr`. Re-exported via `committee::active`.
-pub use crate::configs::committee::active::PARITY_MATRIX_INSECURE as PARITY_MATRIX;
-
 /************************************
 -------------------------------------
 pk (CIRCUIT 0)

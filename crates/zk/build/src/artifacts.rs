@@ -810,8 +810,6 @@ mod tests {
         selection.publish().unwrap();
         for relative in [
             "circuits/lib/src/configs/committee/active.nr",
-            "circuits/lib/src/configs/committee/minimum/parity_insecure.nr",
-            "circuits/lib/src/configs/committee/minimum/parity_secure.nr",
             "circuits/lib/src/configs/insecure/dkg.nr",
             "circuits/lib/src/configs/insecure/threshold.nr",
         ] {

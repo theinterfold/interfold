@@ -52,8 +52,8 @@ flowchart LR
 ## configs
 
 Switch presets in `configs/default/mod.nr` (`pub use super::secure::dkg` / `threshold`). Each preset
-defines `N`, `L`, `QIS`, bounds, `PARITY_MATRIX`, per-circuit `Configs`, and
-`MAX_MSG_NON_ZERO_COEFFS` (C7 plaintext sparsity).
+defines `N`, `L`, `QIS`, bounds, per-circuit `Configs`, and `MAX_MSG_NON_ZERO_COEFFS` (C7 plaintext
+sparsity).
 
 ## Related documentation
 

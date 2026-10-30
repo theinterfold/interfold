@@ -7,7 +7,7 @@
 
 # Compatibility entry point for BFV source consistency. Numerical facts come from the Rust-owner
 # snapshot, not Rust/TypeScript source parsing. With Nargo installed, typed regeneration checks every
-# preset and committee declaration, selector, and parity matrix in isolation.
+# preset and committee declaration, and selector in isolation.
 #
 # `circuits/bin/.active-preset.json` is only a local hydrated cache. It can point at Sepolia's
 # fast insecure-minimum artifacts while the checked-in production config points at secure-small.
@@ -27,7 +27,7 @@ UTILS_TS="packages/interfold-contracts/scripts/utils.ts"
 CRYPTO_CONFIG_JSON="packages/interfold-contracts/crypto-config.json"
 PROTOCOL_SOL="packages/interfold-contracts/contracts/lib/BfvProtocol.sol"
 RAN_STAMP_CHECK=false
-RAN_PARITY_CHECK=false
+RAN_GENERATED_CHECK=false
 
 fail() {
   echo "❌ check:committee: $*" >&2
@@ -338,9 +338,9 @@ else
 fi
 if command -v nargo >/dev/null 2>&1; then
   pnpm --silent build:circuits check --committee all || fail "generated committee configuration differs from the Rust build owner"
-  RAN_PARITY_CHECK=true
+  RAN_GENERATED_CHECK=true
 else
   echo "  (skipping generated committee check: nargo not found.)" >&2
 fi
 
-echo "✓ check:committee: owner bindings, BFV tuples, configuration IDs, routes, and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) agree (source-only)$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', generated preset/committee/parity files')"
+echo "✓ check:committee: owner bindings, BFV tuples, configuration IDs, routes, and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) agree (source-only)$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_GENERATED_CHECK" = true ] && echo ', generated preset/committee files')"
