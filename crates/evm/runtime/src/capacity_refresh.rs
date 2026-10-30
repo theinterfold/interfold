@@ -16,7 +16,7 @@
 
 use crate::{
     contracts::IBondingRegistry,
-    helpers::{get_current_timestamp_from_provider, transaction_nonce_guard, EthProvider},
+    helpers::{get_current_timestamp_from_provider, send_with_next_nonce, EthProvider},
 };
 use actix::prelude::*;
 use alloy::{
@@ -265,18 +265,13 @@ where
     if !bonding.isRegistered(operator).call().await? {
         return Ok(None);
     }
-    let _nonce_guard = transaction_nonce_guard(provider).await;
-    let nonce = provider
-        .provider()
-        .get_transaction_count(operator)
-        .pending()
-        .await?;
-    let call = bonding.refreshOperatorStatus(operator).nonce(nonce);
+    let call = bonding.refreshOperatorStatus(operator);
     let gas = call.estimate_gas().await?;
-    let pending = call
-        .gas(gas.saturating_mul(REFRESH_GAS_MULTIPLIER))
-        .send()
-        .await?;
+    let pending = send_with_next_nonce(
+        provider,
+        call.gas(gas.saturating_mul(REFRESH_GAS_MULTIPLIER)),
+    )
+    .await?;
     let hash = *pending.tx_hash();
     info!(tx = %hash, "Sent the operator refresh for the owner capacity window");
     Ok(Some(hash))
