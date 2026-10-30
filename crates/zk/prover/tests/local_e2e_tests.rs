@@ -251,7 +251,8 @@ async fn setup_share_computation_e_sm_test() -> Option<(
     &'static str,
 )> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold;
+    // The chunked e_sm circuit is l-BFV's, whose witness carries the smudging split.
+    let preset = BfvPreset::InsecureThresholdLbfv;
     let bb = find_bb().await?;
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
@@ -1053,7 +1054,8 @@ async fn test_c4_c6_sk_commitment_aligned_transcript_e2e() {
             .collect();
         Poly::<PowerBasis>::try_convert_from(coefficients, ctx, false).unwrap()
     };
-    let sk_poly = to_fhe(&agg_sk).into_ntt();
+    // `aggregate_secret_key_shares` reads power-basis coefficients.
+    let sk_poly = to_fhe(&agg_sk);
     let es_poly = to_fhe(&c6_sample.e);
 
     let share_manager =
