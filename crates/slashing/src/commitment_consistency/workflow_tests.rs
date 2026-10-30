@@ -5,7 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
-use e3_events::{CorrelationId, FieldValue, PartyProofData, VerificationKind};
+use crate::FieldValue;
+use e3_events::{CorrelationId, PartyProofData, VerificationKind};
 
 /// A minimal same-party commitment link: extracts the first 32 bytes of the
 /// source public signals and requires them to equal the first 32 bytes of

@@ -2,9 +2,9 @@
 
 ## Purpose
 
-This crate owns static BFV circuit configuration and public-input layouts. Each circuit family
-derives its bounds and widths from existing BFV parameters. `Configs::for_preset` constructs the
-parameters for a supported preset; `Configs::new` uses an existing parameter owner.
+This crate owns circuit identity/variants, static BFV configuration, and public-input layouts. Each
+circuit family derives its bounds and widths from existing BFV parameters. `Configs::for_preset`
+constructs the parameters for a supported preset; `Configs::new` uses an existing parameter owner.
 
 `Configs::render` produces the Noir configuration declarations. This path does not need sample data,
 secret keys, witness preparation, or a prover. C1, C2, C5, and C7 use the canonical committee enum.
@@ -22,13 +22,14 @@ this field does not change an existing compiled ABI.
 
 ## Map and API
 
-| Location                                                                 | Responsibility                                           |
-| ------------------------------------------------------------------------ | -------------------------------------------------------- |
-| [parameters.rs](src/parameters.rs)                                       | Supported parameter, CRT-basis, and sampler validation.  |
-| [metadata.rs](src/metadata.rs), [output_layout.rs](src/output_layout.rs) | Circuit labels and exported public-input layouts.        |
-| [dkg/](src/dkg), [threshold/](src/threshold)                             | Per-circuit Configs, bounds, widths, and Noir rendering. |
-| [parity.rs](src/dkg/share_computation/parity.rs)                         | Canonical committee parity material.                     |
-| [field.rs](src/field.rs)                                                 | Shared BN254 field constants.                            |
+| Location                                                                 | Responsibility                                                     |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| [circuit.rs](src/circuit.rs)                                             | Circuit identities, artifact paths, targets, and layout selection. |
+| [parameters.rs](src/parameters.rs)                                       | Supported parameter, CRT-basis, and sampler validation.            |
+| [metadata.rs](src/metadata.rs), [output_layout.rs](src/output_layout.rs) | Circuit labels and exported public-input layouts.                  |
+| [dkg/](src/dkg), [threshold/](src/threshold)                             | Per-circuit Configs, bounds, widths, and Noir rendering.           |
+| [parity.rs](src/dkg/share_computation/parity.rs)                         | Canonical committee parity material.                               |
+| [field.rs](src/field.rs)                                                 | Shared BN254 field constants.                                      |
 
 Use the circuit family's `Configs::new` with an existing BFV parameter owner, or `for_preset` for a
 named preset. Constructors validate before deriving bounds; `render` produces static declarations.
@@ -44,6 +45,11 @@ different compiled profile. `chunks::c2_chunk_size` is the shared sizing rule.
 `threshold::{lbfv_pk_aggregation,rlk_generation,rlk_aggregation}` own static l-BFV row constants.
 L-BFV public-key generation reuses `threshold::pk_generation::Configs`. These configurations retain
 their supplied parameter `Arc`, validate it before arithmetic, and render without private samples.
+
+Import `CircuitName` and `CircuitVariant` here, including from build/prover consumers. Their serde
+order and names, artifact paths, verifier-target strings, and layout mappings are compatibility
+contracts, not labels to rename during cleanup. Proof payloads and signed `ProofType` remain in
+`e3-events`.
 
 ## Tests
 

@@ -13,7 +13,7 @@
 //! `ShareVerificationComplete` is published by [`ShareVerificationActor`]
 //! when verification finishes, carrying the set of dishonest party IDs.
 
-use crate::{E3id, PartyProofsToVerify, PartyShareDecryptionProofsToVerify, ProofType};
+use crate::{E3id, PartyProofsToVerify, PartyShareDecryptionProofsToVerify};
 use alloy::primitives::B256;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_committee_hash::LbfvProofDomainContext;
@@ -60,13 +60,17 @@ pub struct LbfvAggregationVerificationContextV1 {
     pub accepted_parties: Vec<LbfvAcceptedPartyCommitmentsV1>,
 }
 
+/// Rows in the original V1 context: secure-16384 had five CRT moduli when V1 was written. Kept at
+/// five so stored V1 dispatches stay readable after the six-row change.
+const LBFV_V1_ROWS: usize = 5;
+
 /// Original generation commitments for one accepted party.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LbfvAcceptedPartyCommitmentsV1 {
     pub party_id: u32,
-    pub pk_generation_commitments: [B256; ProofType::LBFV_ROW_INSTANCES as usize],
-    pub rlk_d0_commitments: [B256; ProofType::LBFV_ROW_INSTANCES as usize],
-    pub rlk_d2_commitments: [B256; ProofType::LBFV_ROW_INSTANCES as usize],
+    pub pk_generation_commitments: [B256; LBFV_V1_ROWS],
+    pub rlk_d0_commitments: [B256; LBFV_V1_ROWS],
+    pub rlk_d2_commitments: [B256; LBFV_V1_ROWS],
 }
 
 /// Authoritative l-BFV proof domain and dynamic aggregation binding.

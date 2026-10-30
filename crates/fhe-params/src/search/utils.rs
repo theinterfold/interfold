@@ -52,6 +52,24 @@ pub fn big_shift_pow2(exp: u32) -> BigUint {
     BigUint::one() << exp
 }
 
+/// Variance of the uniform distribution on the 2B+1 integers in [-B, B]: `⌊B(B+1)/3⌋`.
+///
+/// fhe.rs recovers the error bound from this variance, and every preset's `ERROR1_VARIANCE`
+/// uses it. When 3 does not divide B, the form ⌊B²/3⌋ recovers B - 1.
+pub fn variance_uniform_sym(b: &BigUint) -> BigUint {
+    (b * (b + BigUint::one())) / BigUint::from(3u32)
+}
+
+/// Variance of the centered binomial distribution with bound B (η = B): B/2, as an exact
+/// decimal or fraction. The DKG presets' `ERROR1_VARIANCE` is this value for B = 20.
+pub fn variance_cbd_str(b: u128) -> String {
+    if b.is_multiple_of(2) {
+        (b / 2).to_string()
+    } else {
+        format!("{b}/2")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

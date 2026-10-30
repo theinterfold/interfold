@@ -11,8 +11,8 @@
 //! `ProofRequestActor` generates the C5 proof, signs it, and publishes
 //! `PkAggregationProofSigned`.
 
-use crate::{E3id, OrderedSet, PkAggregationProofRequest};
-use e3_utils::ArcBytes;
+use crate::{E3id, PkAggregationProofRequest};
+use e3_utils::{ArcBytes, OrderedSet};
 use serde::{Deserialize, Serialize};
 
 /// PublicKeyAggregator -> ProofRequestActor: generate and sign C5 proof.

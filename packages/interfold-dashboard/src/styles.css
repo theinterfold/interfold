@@ -609,18 +609,6 @@ button {
   color: inherit;
   font: inherit;
 }
-.stage--clickable {
-  cursor: pointer;
-  border-radius: 12px;
-}
-.stage--clickable:hover {
-  background: var(--paper);
-  transform: translateY(-2px);
-}
-.stage--clickable:focus-visible {
-  outline: 2px solid var(--accent-deep);
-  outline-offset: 4px;
-}
 .stage:hover,
 .stage:focus-visible {
   transform: translateY(-1px);
@@ -871,11 +859,6 @@ button {
   background: #fcebea;
   color: #b23a36;
 }
-.hist-row__verdict-pct {
-  font-size: 12px;
-  font-weight: 500;
-  opacity: 0.75;
-}
 .hist-row__ballots {
   font-size: 11.5px;
   color: var(--ink-4);
@@ -886,54 +869,6 @@ button {
 }
 
 /* ── Empty state ─────────────────────────────────────────────────────────── */
-/* Live toggle (Watch lifecycle) ---------------------------------------- */
-.live-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-  padding: 6px 12px 6px 10px;
-  background: var(--paper);
-  border: 1px solid var(--rule);
-  border-radius: 999px;
-  font-size: 12.5px;
-  font-weight: 540;
-  color: var(--ink-2);
-  transition:
-    background 140ms,
-    color 140ms,
-    border-color 140ms,
-    transform 140ms;
-  white-space: nowrap;
-}
-.live-toggle:hover {
-  color: var(--ink);
-  border-color: var(--ink-4);
-}
-.live-toggle__icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--accent-deep);
-  color: var(--paper-2);
-  flex: none;
-}
-.live-toggle--on {
-  background: var(--accent-deep);
-  color: var(--paper-2);
-  border-color: var(--accent-deep);
-}
-.live-toggle--on .live-toggle__icon {
-  background: rgba(255, 255, 255, 0.18);
-  color: var(--paper-2);
-}
-.poll-card__head .stage-badge {
-  margin-left: 0;
-}
-
 /* Ballot grid -- new arrivals animate in ------------------------------- */
 .ballot-grid__count {
   font-family: var(--mono);
@@ -2076,6 +2011,111 @@ button {
 }
 .opposition .opnote {
   margin-top: 18px;
+}
+
+/* Position actions after setup */
+.opmanage__group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--rule);
+}
+.opmanage__title {
+  font-size: 14.5px;
+  font-weight: 560;
+  color: var(--ink);
+  margin: 0;
+}
+.opmanage__text {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink-3);
+  max-width: 700px;
+  margin: 0;
+}
+
+/* E3 rewards: the claimable total first, then the committee history */
+.oprewards__title {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 24px;
+  color: var(--ink);
+  margin: 6px 0 4px;
+}
+.oprewards__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin: 18px 0 14px;
+  padding: 20px 24px;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+.oprewards__amount {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 6px 0 4px;
+  font-size: 30px;
+  color: var(--ink);
+}
+.oprewards__unit {
+  font-size: 14px;
+  color: var(--ink-3);
+}
+.oprewards__recipient {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.oprewards__claim {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.oprewards__history {
+  margin: 22px 0 8px;
+}
+.oprewards__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.oprewards__state {
+  cursor: help;
+  color: var(--ink-3);
+  text-decoration: underline dotted var(--ink-4);
+  text-underline-offset: 3px;
+}
+.oprewards__state--claimable {
+  color: var(--ink);
+  font-weight: 600;
+}
+.oprewards__state--needsProcessing,
+.oprewards__state--onHold {
+  color: #6d4327;
+  font-weight: 560;
+}
+.oprewards__about {
+  margin-top: 16px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-3);
+}
+.oprewards__about summary {
+  cursor: pointer;
+}
+.oprewards__about p {
+  max-width: 700px;
+  margin: 8px 0 0;
 }
 
 /* Step list */

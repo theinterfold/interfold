@@ -3,7 +3,7 @@
 //! Deterministic plaintext formatting and C7 aggregation job planning.
 
 use super::*;
-use e3_zk_config::MAX_MSG_NON_ZERO_COEFFS;
+use e3_zk_config::{constants::MESSAGE_COEFF_BYTE_LEN, MAX_MSG_NON_ZERO_COEFFS};
 use tracing::warn;
 
 /// Match C7's ordered commitments, one-based party IDs, and message to the selected C6 batch.
@@ -58,9 +58,9 @@ pub(crate) fn c7_proofs_match_batch(
         })
 }
 
-/// Pad/truncate each decrypted plaintext limb to the fixed `MAX_MSG_NON_ZERO_COEFFS * 8`.
+/// Pad/truncate each decrypted plaintext limb to the circuit's fixed message width.
 pub(crate) fn format_decrypted_plaintext(plaintext: &[ArcBytes]) -> Vec<ArcBytes> {
-    let len = MAX_MSG_NON_ZERO_COEFFS * 8;
+    let len = MAX_MSG_NON_ZERO_COEFFS * MESSAGE_COEFF_BYTE_LEN;
     plaintext
         .iter()
         .map(|pt| {

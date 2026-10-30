@@ -6,8 +6,7 @@
 
 //! BFV Parameter Search CLI
 //!
-//! Standalone command-line tool for searching BFV parameters using NTT-friendly
-//! CRT primes over the fixed ring dimension N = 16384.
+//! Standalone command-line tool for searching BFV parameters using NTT-friendly primes.
 
 use clap::Parser;
 use e3_fhe_params::constants::defaults::{DEFAULT_SECURE_16384_LAMBDA, SECURE_16384_MULT_DEPTH};
@@ -17,31 +16,26 @@ use e3_fhe_params::constants::secure_16384_search_defaults::{
 use e3_fhe_params::search::bfv::{
     bfv_search, bfv_search_second_param, BfvSearchConfig, BfvSearchResult,
 };
-use e3_fhe_params::search::constants::{K_MAX, MAX_NUM_PRIMES, RING_DIM, TARGET_NUM_PRIMES};
+use e3_fhe_params::search::constants::{DEFAULT_MIN_PRIME_BITS, K_MAX, MIN_MARGIN_BITS};
 use e3_fhe_params::search::prime::{build_prime_items, build_prime_items_for_second};
-use e3_fhe_params::search::utils::{approx_bits_from_log2, fmt_big_summary, log2_big};
+use e3_fhe_params::search::security::{max_log2_q, LimitSource};
+use e3_fhe_params::search::utils::{
+    approx_bits_from_log2, fmt_big_summary, variance_cbd_str, variance_uniform_sym,
+};
 use num_bigint::BigUint;
 
 #[derive(Parser, Debug, Clone)]
-#[command(
-    version,
-    about = "Search BFV params with NTT-friendly CRT primes (ring dimension N=16384)"
-)]
+#[command(version, about = "Search BFV params with NTT-friendly CRT primes")]
 struct Args {
-    /// Number of ciphernodes n.
+    /// Number of parties n (ciphernodes). Every default is a SecureThreshold16384 search input.
     #[arg(long, default_value_t = SEARCH_N)]
     n: u128,
 
-    /// Number of fresh-ciphertext additions z summed before the multiplicative
-    /// circuit (also caps the plaintext space).
+    /// Number of fresh ciphertexts z summed (number of votes).
     #[arg(long, default_value_t = SEARCH_Z)]
     z: u128,
 
-    /// Total multiplicative circuit depth (Prop. 20 recursion).
-    #[arg(long, default_value_t = SECURE_16384_MULT_DEPTH)]
-    mult_depth: u32,
-
-    /// BFV plaintext modulus k.
+    /// Plaintext modulus k (plaintext space). The search uses max(k, z).
     #[arg(long, default_value_t = SEARCH_K)]
     k: u128,
 
@@ -49,41 +43,46 @@ struct Args {
     #[arg(long, default_value_t = DEFAULT_SECURE_16384_LAMBDA as u32)]
     lambda: u32,
 
-    /// Bound B on the error distribution ψ (e.g. 20 for CBD with σ≈3.2).
+    /// Bound B on the error distribution ψ used to generate e1 when encrypting (20 for CBD with σ≈3.2).
     #[arg(long, default_value_t = B)]
     b: u128,
 
-    /// Bound B_χ on the secret-key distribution χ.
+    /// Bound B_χ on the distribution χ used to generate the secret key sk_i of each party i.
     #[arg(long, default_value_t = B_CHI)]
     b_chi: u128,
 
-    /// Minimum correctness margin in bits (log2(Δ) − log2(LHS)).
-    #[arg(long, default_value_t = 2.0f64)]
+    /// Minimum correctness margin in bits, log2(Δ) - log2(LHS).
+    #[arg(long, default_value_t = MIN_MARGIN_BITS)]
     min_margin: f64,
 
-    /// Verbose per-candidate logging.
+    /// Ring dimension d (power of two). Without it, the search tries d = 8192, 16384, 32768.
+    #[arg(long)]
+    d: Option<u64>,
+
+    /// Skip the RLWE security limit. Only for insecure test presets; correctness is still checked.
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
+    insecure: bool,
+
+    /// Smallest prime bit-length for both parameter sets (10..=60). For d >= 8192 the prime
+    /// table starts at 50 bits, so a value below 50 has no effect there.
+    #[arg(long, default_value_t = DEFAULT_MIN_PRIME_BITS)]
+    min_prime_bits: u8,
+
+    /// Levels of multiplication and relinearization after the z additions (0 = summation only).
+    #[arg(long, default_value_t = SECURE_16384_MULT_DEPTH)]
+    mult_depth: u32,
+
+    /// Verbose per-candidate logging
     #[arg(long, default_value_t = false)]
     verbose: bool,
 }
 
-fn variance_cbd_str(b: u128) -> String {
-    if b.is_multiple_of(2) {
-        (b / 2).to_string()
-    } else {
-        format!("{}/2", b)
-    }
-}
-
 fn variance_uniform_str(b: u128) -> String {
-    let b_big = BigUint::from(b);
-    let var = (&b_big * (b + 1)) / 3u32;
-    var.to_str_radix(10)
+    variance_uniform_sym(&BigUint::from(b)).to_str_radix(10)
 }
 
 fn variance_uniform_big_str(b: &BigUint) -> String {
-    // Variance for Uniform(-B..B): Var = B^2 / 3.
-    let var = (b * b) / 3u32;
-    var.to_str_radix(10)
+    variance_uniform_sym(b).to_str_radix(10)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -102,10 +101,7 @@ fn print_param_set(
     println!();
     if show_common {
         println!("  n (ciphernodes)       = {}", config.n);
-        println!("  z (additions)         = {}", config.z);
-        if result.mult_depth > 0 {
-            println!("  mult_depth            = {}", result.mult_depth);
-        }
+        println!("  z (votes)             = {}", config.z);
     }
     println!(
         "  k (plaintext space)   = {} ({} bits)",
@@ -147,18 +143,16 @@ fn print_param_set(
             "  B_fresh               = {}",
             result.b_fresh.to_str_radix(10)
         );
-        println!("  B_C (additions)       = {}", result.b_c.to_str_radix(10));
+        println!("  B_C                   = {}", result.b_c.to_str_radix(10));
         if result.mult_depth > 0 {
-            println!("  mult_depth            = {}", result.mult_depth);
+            println!("  mult depth            = {}", result.mult_depth);
             println!(
-                "  B_relin (Eq. 30)      = {} (log₂ ≈ {:.1})",
-                result.b_relin.to_str_radix(10),
-                log2_big(&result.b_relin)
+                "  B_relin (Eq. 30)      = {}",
+                result.b_relin.to_str_radix(10)
             );
             println!(
-                "  B_C (after mult)      = {} (log₂ ≈ {:.1})",
-                result.b_c_final.to_str_radix(10),
-                log2_big(&result.b_c_final)
+                "  B_C (after mult)      = {}",
+                result.b_c_final.to_str_radix(10)
             );
         }
         println!(
@@ -176,7 +170,7 @@ fn print_param_set(
             "  B_fresh               = {}",
             result.b_fresh.to_str_radix(10)
         );
-        println!("  B_C (= B_fresh)       = {}", result.b_c.to_str_radix(10));
+        println!("  B_C (+ r_k(q))        = {}", result.b_c.to_str_radix(10));
         println!();
         println!("  log₂(2·B_C)           = {:.6}", result.lhs_log2);
     }
@@ -201,22 +195,29 @@ fn main() {
     println!();
     println!("Inputs:");
     println!("  n (ciphernodes)     = {}", args.n);
-    println!("  z (additions)       = {}", args.z);
-    println!("  mult_depth          = {}", args.mult_depth);
+    println!("  z (votes)           = {}", args.z);
+    println!("  mult depth          = {}", args.mult_depth);
     println!("  k (plaintext space) = {}", args.k);
     println!("  λ (statistical sec) = {}", args.lambda);
     println!("  B (error bound)     = {}", args.b);
     println!("  B_χ (secret bound)  = {}", args.b_chi);
+    if let Some(d) = args.d {
+        println!("  d (ring dimension)  = {d}");
+    }
     println!();
+    if args.insecure {
+        println!("WARNING: --insecure skips the RLWE security limit. Use the result for test presets only.");
+        println!();
+    }
 
-    // Enforce constraints on z and k.
+    // Enforce constraints on z and k
     if args.z == 0 {
         eprintln!("ERROR: z must be positive.");
         std::process::exit(1);
     }
     if args.z > K_MAX {
         eprintln!(
-            "ERROR: too many additions — z = {} exceeds {}.",
+            "ERROR: too many votes — z = {} exceeds 2^25 = {}.",
             args.z, K_MAX
         );
         std::process::exit(1);
@@ -225,39 +226,42 @@ fn main() {
         eprintln!("ERROR: user-supplied plaintext space k must be positive.");
         std::process::exit(1);
     }
+
     if !args.min_margin.is_finite() || args.min_margin < 0.0 {
         eprintln!("ERROR: --min-margin must be a finite, non-negative number.");
         std::process::exit(1);
     }
-
-    println!(
-        "Fixed ring dimension set: N={}, {}-{} CRT primes.",
-        RING_DIM, TARGET_NUM_PRIMES, MAX_NUM_PRIMES
-    );
 
     let config = BfvSearchConfig {
         n: args.n,
         z: args.z,
         k: args.k,
         lambda: args.lambda,
-        mult_depth: args.mult_depth,
         b: args.b,
         b_chi: args.b_chi,
         min_margin: args.min_margin,
+        d: args.d,
+        insecure: args.insecure,
+        mult_depth: args.mult_depth,
+        min_prime_bits: args.min_prime_bits,
         verbose: args.verbose,
     };
 
-    println!("Prime pools:");
-    println!(
-        "  First set:  {} primes (49-62 bit, q ≡ 1 mod 32768)",
-        build_prime_items().len()
-    );
-    println!(
-        "  Second set: {} primes (50-62 bit, q ≡ 1 mod 32768)",
-        build_prime_items_for_second().len()
-    );
+    if args.d.is_none_or(|d| d >= 8192) {
+        println!("Prime pools (table, d >= 8192):");
+        println!("  First set:  {} primes", build_prime_items().len());
+        println!(
+            "  Second set: {} primes",
+            build_prime_items_for_second().len()
+        );
+    } else {
+        println!(
+            "Prime pools: generated for d = {} (p ≡ 1 mod 2d)",
+            args.d.unwrap_or_default()
+        );
+    }
 
-    // Search for the first parameter set.
+    // Search for first parameter set
     if args.verbose {
         println!();
         println!(
@@ -270,16 +274,25 @@ fn main() {
     }
 
     let bfv = match bfv_search(&config) {
-        Ok(res) => res,
-        Err(err) => {
-            eprintln!("\nERROR: No feasible first parameter set found.");
-            eprintln!("{err}");
+        Ok(bfv) => bfv,
+        Err(e) => {
+            eprintln!("\nERROR: {e}");
             eprintln!("Try reducing n, z, k, λ, B, B_χ or min_margin.");
             std::process::exit(1);
         }
     };
 
-    // Decide distributions: CBD for B ≤ 32, otherwise Uniform.
+    if !args.insecure && max_log2_q(args.b, args.b_chi, bfv.d).1 == LimitSource::Formula {
+        println!();
+        println!(
+            "WARNING: no lattice-estimator limit for d = {}, B = {}, B_χ = {}.",
+            bfv.d, args.b, args.b_chi
+        );
+        println!("  The security limit is the formula log2(B) + (d-75)/37.5, which can allow");
+        println!("  q with less than 128 bits of security. Estimate this set before you use it.");
+    }
+
+    // Decide distributions: CBD for B ≤ 32, otherwise Uniform
     let (dist_b, var_b) = if args.b <= 32 {
         ("CBD", variance_cbd_str(args.b))
     } else {
@@ -289,7 +302,7 @@ fn main() {
     let var_chi = variance_cbd_str(args.b_chi);
     let var_enc = variance_uniform_big_str(&bfv.benc_min);
 
-    // Search for the second parameter set.
+    // Search for second parameter set
     if args.verbose {
         println!();
         println!(

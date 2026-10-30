@@ -11,8 +11,9 @@ already-filtered set of shares.
   in-flight batch.
 - Hydration validates signed C6 inputs/C7 bindings even in Complete. Missing key authority leaves
   saved state dormant; it does not authorize replacing it or blocking the shared router on RPC.
-- Finalization retains request-time chain context and absolute deadline; each retry uses a fresh
-  read provider. Canonical key publication ends DKG removals even for an incomplete standby.
+- Reuse request's shared canonical-key authority. Removing the keyshare dependency is not permission
+  to introduce an aggregation-specific cache or weaken chain-authority recovery tests. Canonical key
+  publication ends DKG removals even for an incomplete standby.
 
 See [DKG](../../docs/architecture/dkg.md) and
 [decryption](../../docs/architecture/threshold-decryption.md). Use the

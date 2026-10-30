@@ -32,6 +32,34 @@ function pkProofWithAnchor(length: number, nodesFoldKeyHash: string): string {
 }
 
 describe("BFV verifier routers", function () {
+  it("preserves decryption route lengths for all committees and non-preset positive thresholds", async function () {
+    const interfold = await ethers.deployContract("MockBfvV2Interfold", [0]);
+    const registry = await ethers.deployContract("MockCiphernodeRegistry");
+    await registry.setInterfold(await interfold.getAddress());
+    for (const [threshold, expected] of [
+      [1, 64],
+      [4, 73],
+      [9, 88],
+      [2, 67],
+    ]) {
+      const route = await ethers.deployContract(
+        "MockBfvDecryptionVerifierRoute",
+        [threshold, HASH_A, HASH_B, true],
+      );
+      const router = await ethers.deployContract(
+        "BfvDecryptionVerifierRouter",
+        [
+          await registry.getAddress(),
+          [await route.getAddress()],
+          [0],
+          threshold,
+        ],
+      );
+      const [, count] = await router.routeAt(0);
+      expect(count).to.equal(expected);
+    }
+  });
+
   it("routes PK proofs by public-input length and nodes-fold VK anchor", async function () {
     const interfold = await ethers.deployContract("MockBfvV2Interfold", [0]);
     const registry = await ethers.deployContract("MockCiphernodeRegistry");

@@ -21,15 +21,15 @@ use e3_data::{
     ShutdownStore, StoreConnector,
 };
 use e3_events::{
-    hlc_factory::HlcFactory, AggregatorChanged, BusHandle, CircuitName, CommitteeMemberExcluded,
+    hlc_factory::HlcFactory, AggregatorChanged, BusHandle, CommitteeMemberExcluded,
     CommitteeMemberExpelled, CommitteePublished, ComputeRequest, ComputeRequestError,
     ComputeRequestErrorKind, ComputeRequestKind, DecryptionKeyShared, DkgCoordination,
     DkgCoordinationKind, DkgDealer, DkgProofSigned, E3Stage, E3StageChanged, E3id, EffectsEnabled,
     EncryptionKey, EncryptionKeyCreated, Event, EventBus, EventBusConfig, EventSource, EventType,
     FailureReason, Get, GetEvents, HistoryCollector, Insert, InterfoldEvent, InterfoldEventData,
-    OrderedSet, PkGenerationProofSigned, Proof, ProofPayload, ProofType, PublicKeyAggregated,
-    Remove, Seed, Sequencer, SignedProofPayload, StoreEventRequested, StoreEventResponse,
-    TakeEvents, TestEvent, Unsequenced, VerificationKind,
+    PkGenerationProofSigned, Proof, ProofPayload, ProofType, PublicKeyAggregated, Remove, Seed,
+    Sequencer, SignedProofPayload, StoreEventRequested, StoreEventResponse, TakeEvents, TestEvent,
+    Unsequenced, VerificationKind,
 };
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset, DEFAULT_BFV_PRESET};
 use e3_request::{
@@ -43,6 +43,8 @@ use e3_trbfv::{
     lbfv_operation::LbfvOperationId,
     TrBFVConfig, TrBFVError, TrBFVFailure, TrBFVRequest,
 };
+use e3_utils::OrderedSet;
+use e3_zk_config::CircuitName;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -6954,11 +6956,11 @@ async fn restart_repairs_a_torn_lbfv_terminal_failure() -> Result<()> {
         rlk_share_bytes: ArcBytes::from_bytes(b"relinearization-key-share"),
         witness: EncryptedRlkWitness {
             r_bytes: SensitiveBytes::from_encrypted(&[6]),
-            errors_d0_bytes: (0..5)
-                .map(|row| SensitiveBytes::from_encrypted(&[row]))
+            errors_d0_bytes: (0..secure_lbfv_rows())
+                .map(|row| SensitiveBytes::from_encrypted(&[row as u8]))
                 .collect(),
-            errors_d2_bytes: (5..10)
-                .map(|row| SensitiveBytes::from_encrypted(&[row]))
+            errors_d2_bytes: (secure_lbfv_rows()..2 * secure_lbfv_rows())
+                .map(|row| SensitiveBytes::from_encrypted(&[row as u8]))
                 .collect(),
         },
     })?;
@@ -7098,11 +7100,11 @@ async fn restart_redrives_all_missing_lbfv_row_requests() -> Result<()> {
         rlk_share_bytes: ArcBytes::from_bytes(b"relinearization-key-share"),
         witness: EncryptedRlkWitness {
             r_bytes: SensitiveBytes::from_encrypted(&[6]),
-            errors_d0_bytes: (0..5)
-                .map(|row| SensitiveBytes::from_encrypted(&[row]))
+            errors_d0_bytes: (0..secure_lbfv_rows())
+                .map(|row| SensitiveBytes::from_encrypted(&[row as u8]))
                 .collect(),
-            errors_d2_bytes: (5..10)
-                .map(|row| SensitiveBytes::from_encrypted(&[row]))
+            errors_d2_bytes: (secure_lbfv_rows()..2 * secure_lbfv_rows())
+                .map(|row| SensitiveBytes::from_encrypted(&[row as u8]))
                 .collect(),
         },
     })?;
@@ -7132,7 +7134,7 @@ async fn restart_redrives_all_missing_lbfv_row_requests() -> Result<()> {
 
     actor.send(effects_enabled).await?;
 
-    let events = next_events(&history, 10).await?;
+    let events = next_events(&history, 2 * secure_lbfv_rows()).await?;
     let mut pk_rows = BTreeSet::new();
     let mut rlk_rows = BTreeSet::new();
     for event in events {
@@ -7154,9 +7156,14 @@ async fn restart_redrives_all_missing_lbfv_row_requests() -> Result<()> {
             _ => panic!("expected an l-BFV generation proof request"),
         }
     }
-    assert_eq!(pk_rows, BTreeSet::from([0, 1, 2, 3, 4]));
-    assert_eq!(rlk_rows, BTreeSet::from([0, 1, 2, 3, 4]));
+    let all_rows = (0..secure_lbfv_rows() as u32).collect::<BTreeSet<_>>();
+    assert_eq!(pk_rows, all_rows);
+    assert_eq!(rlk_rows, all_rows);
     Ok(())
+}
+
+fn secure_lbfv_rows() -> usize {
+    e3_fhe_params::lbfv_row_count(BfvPreset::SecureThreshold16384).unwrap()
 }
 
 /// Start a ready l-BFV keyshare whose state has no C1 proof, because the l-BFV path proves none,

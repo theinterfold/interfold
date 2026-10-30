@@ -5,8 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 // Main app shell + tweak wiring.
 
-import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
-import { STAGES, type Poll } from './data'
+import { Fragment, type ReactNode, useEffect, useMemo, useState } from 'react'
+import { STAGES } from './data'
 import PollCard from './PollCard'
 import Timeline from './Timeline'
 import History from './History'
@@ -20,7 +20,7 @@ import { adaptHistoryEntries, adaptInspectorDetail, adaptInspectorE3List, adaptP
 import { formatE3Id } from './lib/pollMeta'
 import { LINKS, explorerAddress } from './lib/links'
 import { CONTRACTS, NETWORK_NAME } from './lib/chain'
-import { isE3Active, solidityStageToUiIdx, type E3FullDetails, type E3Summary } from './lib/e3'
+import { isE3Active, solidityStageToUiIdx, type E3Summary } from './lib/e3'
 
 function Header({ density, view, onNav }: { density: string; view: string; onNav: (id: string) => void }) {
   const link = (id: string, label: string) => (
@@ -157,31 +157,11 @@ const pollStateForStage = (uiStageIdx: number, ballotCount: number): string => {
   return 'open'
 }
 
-// Synthetic poll used only for the "Watch the lifecycle" demo when nothing is live.
-const DEMO_POLL: Poll = {
-  id: 'Sample',
-  displayId: 'Sample',
-  question: 'A sample CRISP poll — watch how an encrypted poll moves through its lifecycle.',
-  context: 'This is an interactive demonstration, not a live poll.',
-  opened: '—',
-  closes: '—',
-  closesTs: 0,
-  ballotCount: 0,
-}
-
 export default function App() {
-  // View (tab) + demo poll state. These are the only values that change at
-  // runtime; everything else is fixed (accent comes from the CSS :root mint).
-  // The view is mirrored into the URL hash so each tab is linkable from
-  // outside — the docs site points at `#operator` for the ciphernode guide.
+  // View (tab) state. The view is mirrored into the URL hash so each tab is
+  // linkable from outside — the docs site points at `#operator` for the ciphernode guide.
   const [view, setView] = useState(viewFromHash)
-  const [pollState, setPollState] = useState('open')
-  const [stageIdx, setStageIdx] = useState(3)
-
   const [nowMs, setNowMs] = useState(() => Date.now())
-  const [liveMode, setLiveMode] = useState(false)
-  // Demo autoplay step, persisted so pausing/resuming continues where it left off.
-  const liveStepRef = useRef(0)
 
   // ─── On-chain data (selected network) ──────────────────────────────────────────────
   // CRISP tab: only CRISP-program polls. Inspector tab: every E3 on the network.
@@ -202,13 +182,6 @@ export default function App() {
   }, [allE3s.data, inspectorIdStr])
   const inspectorDetail = useE3Details(selectedInspectorId)
 
-  // Detail cache for history verdicts (the inspector-selected E3, if any).
-  const detailsCache = useMemo(() => {
-    const m = new Map<string, E3FullDetails>()
-    if (inspectorDetail.data) m.set(inspectorDetail.data.id.toString(), inspectorDetail.data)
-    return m
-  }, [inspectorDetail.data])
-
   // CRISP tab state: split into currently-active polls (featured) and the rest
   // (archived). Card data comes straight from the list summary — no per-poll fetch.
   const crispReady = crispPolls.status === 'ready'
@@ -224,20 +197,13 @@ export default function App() {
     () => polls.filter((p) => !isE3Active(p.stage, p.inputWindow[1], { e3Program: p.e3Program, ballotCount: p.ballotCount, nowMs })),
     [polls, nowMs],
   )
-  const liveHistory = useMemo(() => adaptHistoryEntries(pastPolls, detailsCache), [pastPolls, detailsCache])
+  const liveHistory = useMemo(() => adaptHistoryEntries(pastPolls), [pastPolls])
 
   // Inspector tab state.
   const inspectorReady = allE3s.status === 'ready'
   const hasE3s = (allE3s.data?.length ?? 0) > 0
   const inspectorList = useMemo(() => adaptInspectorE3List(allE3s.data ?? []), [allE3s.data])
   const inspectorE3 = useMemo(() => adaptInspectorDetail(inspectorDetail.data), [inspectorDetail.data])
-
-  const setStage = (i: number) => {
-    setStageIdx(i)
-    if (i >= 6) setPollState('published')
-    else if (i >= 4) setPollState('computing')
-    else setPollState('open')
-  }
 
   useEffect(() => {
     const id = setInterval(() => setNowMs(Date.now()), 1000)
@@ -257,48 +223,6 @@ export default function App() {
     // state already matches — it just keeps the URL shareable.
     if (viewFromHash() !== id) window.location.hash = id
   }
-
-  useEffect(() => {
-    if (!liveMode) return undefined
-    const program = [
-      { state: 'open', stage: 0, hold: 2200 },
-      { state: 'open', stage: 1, hold: 2200 },
-      { state: 'open', stage: 2, hold: 2400 },
-      { state: 'open', stage: 3, hold: 4600 },
-      { state: 'computing', stage: 4, hold: 2800 },
-      { state: 'computing', stage: 5, hold: 2400 },
-      { state: 'published', stage: 6, hold: 4000 },
-    ]
-    let cancelled = false
-    let timer: ReturnType<typeof setTimeout> | null = null
-    const advance = () => {
-      if (cancelled) return
-      const i = liveStepRef.current
-      if (i >= program.length) {
-        // Completed one full lifecycle — stop instead of looping.
-        liveStepRef.current = 0
-        setLiveMode(false)
-        return
-      }
-      const step = program[i]
-      setPollState(step.state)
-      setStageIdx(step.stage)
-      liveStepRef.current = i + 1
-      timer = setTimeout(advance, step.hold)
-    }
-    advance()
-    return () => {
-      cancelled = true
-      if (timer) clearTimeout(timer)
-    }
-  }, [liveMode])
-
-  // Demo card's current stage, reconciled from the demo's pollState/stageIdx.
-  const demoStage = (() => {
-    if (pollState === 'published') return 6
-    if (pollState === 'computing') return Math.max(4, Math.min(5, stageIdx))
-    return Math.min(stageIdx, 3)
-  })()
 
   return (
     <div className={`page page--${DENSITY}`}>
@@ -368,26 +292,7 @@ export default function App() {
               })}
             </>
           ) : (
-            // No live polls — offer the lifecycle as an interactive demo.
-            <>
-              <StatusNote>No live CRISP polls right now. Here's how an encrypted poll moves through its lifecycle:</StatusNote>
-              <PollCard
-                poll={DEMO_POLL}
-                pollState={pollState}
-                currentStageIdx={demoStage}
-                liveMode={liveMode}
-                onToggleLive={() => setLiveMode((v) => !v)}
-                ballotCount={0}
-                onNavigate={navigate}
-              />
-              <Timeline
-                stages={STAGES}
-                currentStageIdx={demoStage}
-                pollLabel='demo'
-                density={DENSITY}
-                onStageClick={liveMode ? undefined : setStage}
-              />
-            </>
+            <StatusNote>No live CRISP polls right now.</StatusNote>
           )}
 
           {liveHistory.length > 0 && <History entries={liveHistory} onNavigate={navigate} />}

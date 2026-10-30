@@ -13,7 +13,8 @@
 
 use crate::circuits::utils::bytes_to_field_strings;
 use crate::error::ZkError;
-use e3_events::{CircuitName, DkgFoldAggCommits, Proof};
+use e3_events::{DkgFoldAggCommits, Proof};
+use e3_zk_config::CircuitName;
 
 /// `generation_key_hash`, `node_fold_key_hash`, `party_id`.
 pub const NODE_FOLD_V2_PUBLIC_PREFIX_LEN: usize = 3;

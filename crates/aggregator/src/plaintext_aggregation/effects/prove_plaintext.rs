@@ -110,7 +110,7 @@ impl ThresholdPlaintextAggregator {
                     .as_ref()
                     .and_then(|proofs| proofs.first())
                     .ok_or_else(|| anyhow!("Missing C6 proofs for mock publication"))?;
-                let layout = e3_events::CircuitName::ThresholdShareDecryption.input_layout();
+                let layout = e3_zk_config::CircuitName::ThresholdShareDecryption.input_layout();
                 let proofs = self
                     .pending
                     .c7_proofs_pending
@@ -130,7 +130,7 @@ impl ThresholdPlaintextAggregator {
                             inputs[field * 32..(field + 1) * 32].copy_from_slice(value);
                         }
                         Ok(Proof::new(
-                            e3_events::CircuitName::DecryptionAggregator,
+                            e3_zk_config::CircuitName::DecryptionAggregator,
                             proof.data.clone(),
                             ArcBytes::from_bytes(&inputs),
                         ))

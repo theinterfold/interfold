@@ -41,8 +41,9 @@ use alloy::{
     sol_types::SolValue,
 };
 use common::find_anvil;
-use e3_events::{CircuitName, E3id, Proof, ProofPayload, ProofType};
+use e3_events::{E3id, Proof, ProofPayload, ProofType};
 use e3_utils::utility_types::ArcBytes;
+use e3_zk_config::CircuitName;
 use serde::Deserialize;
 use std::{collections::BTreeMap, sync::OnceLock};
 

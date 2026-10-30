@@ -1,0 +1,8 @@
+{
+  "name": "interfold-ciphernode-sepolia.dnp.dappnode.eth",
+  "shortDescription": "Run an Interfold ciphernode on Sepolia",
+  "links": {
+    "Operator Dashboard": "https://testnet-dashboard.theinterfold.com/#operator",
+    "Node dashboard": "http://interfold-ciphernode-sepolia.dappnode:8081"
+  }
+}

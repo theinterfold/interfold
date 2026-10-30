@@ -106,9 +106,9 @@ check does not stop startup. To build from source, use the Rust toolchain in `ru
 | `50505`          | TCP      | `127.0.0.1`  | Local control port for CLI commands. Set with `node.ctrl_port`. | No                   |
 | Not set          | TCP      | `127.0.0.1`  | Optional node dashboard. Set with `node.dashboard_port`.        | No                   |
 
-The DAppNode package uses UDP port `37173` for QUIC. Cloud firewalls (for example, AWS security
-groups or GCP firewall rules) must allow inbound UDP on the QUIC port. Behind NAT, forward the same
-UDP port to the host.
+The DAppNode Mainnet package uses UDP port `37173` for QUIC, and the Sepolia package uses `37174`.
+Cloud firewalls (for example, AWS security groups or GCP firewall rules) must allow inbound UDP on
+the QUIC port. Behind NAT, forward the same UDP port to the host.
 
 <Callout type='warning'>
   The control port accepts CLI commands for the running node. The node binds it to `127.0.0.1`. Do

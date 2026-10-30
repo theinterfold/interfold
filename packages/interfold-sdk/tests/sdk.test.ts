@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+import { readFileSync } from 'node:fs'
 import { beforeAll, describe, expect, it } from 'vitest'
 
 import { InterfoldSDK } from '../src/interfold-sdk'
@@ -13,10 +14,15 @@ import { hardhat } from 'viem/chains'
 import { generatePublicKey, encryptNumber as standaloneEncryptNumber, encryptVector as standaloneEncryptVector } from '../src/crypto'
 
 describe('crypto configuration IDs', () => {
-  it('uses the v2 circuit identity for every BFV parameter set', () => {
-    expect(cryptoConfigIdForParamSet(0)).to.equal('0x968e91054be28b2b577ac278284e03274ed46bd5c5064e573290312a2323d495')
-    expect(cryptoConfigIdForParamSet(2)).to.equal('0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa')
-    expect(cryptoConfigIdForParamSet(3)).to.equal('0xc5ea726de917fa7f1272eecbbe9f373b3d95a668d102c71c9fb38a2749330ecf')
+  it('uses the current circuit identity for every on-chain BFV parameter set', () => {
+    const fixture = JSON.parse(
+      readFileSync(new URL('../../../crates/fhe-params/tests/fixtures/bfv_protocol.json', import.meta.url), 'utf8'),
+    )
+    const current = fixture.vectors.filter((vector: { name: string }) => vector.name.startsWith('current-'))
+    expect(current.map((vector: { paramSet: number }) => vector.paramSet).sort()).to.deep.equal([0, 2, 3, 4])
+    for (const vector of current) {
+      expect(cryptoConfigIdForParamSet(vector.paramSet)).to.equal(vector.cryptoConfigId)
+    }
   })
 })
 

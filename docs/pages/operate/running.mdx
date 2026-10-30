@@ -35,14 +35,15 @@ Docker tag.
 
 ## Choose a method
 
-| Method   | Best for                                | Configuration                                   | Where the state lives                  |
-| -------- | --------------------------------------- | ----------------------------------------------- | -------------------------------------- |
-| DAppNode | A DAppNode box with a setup form        | The setup wizard renders `/data/config.yaml`.   | The `ciphernode_data` volume (`/data`) |
-| CLI      | A Linux or macOS server that you manage | You write `interfold.config.yaml`.              | `.interfold/` next to the config file  |
-| Docker   | Container hosts (Linux x86-64)          | You write `config.yaml` and mount it read-only. | A named Docker volume                  |
+| Method   | Best for                                | Configuration                                                         | Where the state lives                  |
+| -------- | --------------------------------------- | --------------------------------------------------------------------- | -------------------------------------- |
+| DAppNode | A DAppNode box with a setup form        | The package renders `/data/config.yaml` from its deployment manifest. | The `ciphernode_data` volume (`/data`) |
+| CLI      | A Linux or macOS server that you manage | You write `interfold.config.yaml`.                                    | `.interfold/` next to the config file  |
+| Docker   | Container hosts (Linux x86-64)          | You write `config.yaml` and mount it read-only.                       | A named Docker volume                  |
 
 The CLI and Docker methods use the same configuration file. Write it first, as shown in the next
-section. The DAppNode package writes its own file from the wizard values.
+section. The DAppNode packages write their own file from the deployment manifest and the package
+Config.
 
 ## Write the configuration file
 
@@ -177,15 +178,21 @@ The keys below matter most on an operator node. The
 | `rpc_url`                        | Required | WebSocket URL (`ws://` or `wss://`). The node needs it for log subscriptions.                             |
 | `rpc_auth`                       | No auth  | `Basic` or `Bearer` credentials. See [RPC authentication](/reference/configuration#rpc-authentication).   |
 | `data_availability`              | Required | `mode: avail` and an HTTP `rpc_url`. See [Data availability](/reference/configuration#data-availability). |
-| `ingestion_confirmations`        | `1`      | Confirmations before the node applies a log.                                                              |
+| `ingestion_confirmations`        | `3`      | Confirmations before the node applies a log.                                                              |
 | `rpc_poll_interval_ms`           | `7000`   | Milliseconds between the polls of an HTTP provider for a receipt or a new block.                          |
 | `rpc_log_range_blocks`           | `10000`  | Widest block range of one `eth_getLogs` request. See [RPC endpoints](/operate/rpc-endpoints).             |
 | `enabled`                        | `true`   | `false` makes the node ignore the entry.                                                                  |
 
-The defaults of one confirmation and a 7-second poll interval also apply when `rpc_url` uses
+The defaults of three confirmations and a 7-second poll interval also apply when `rpc_url` uses
 `localhost` or `127.0.0.1`, because that URL can be a proxy to a live chain. Set
 `ingestion_confirmations: 0` and `rpc_poll_interval_ms: 250` only on a single-process development
 chain such as Anvil. Do not set them on mainnet or Sepolia.
+
+The node cannot undo a log that it applied, so a chain reorganization deeper than
+`ingestion_confirmations` can leave the node out of step with the chain. Each confirmation also
+delays every duty by about 12 seconds. The default leaves room for a sortition ticket in the
+10-minute mainnet window and the 3-minute Sepolia window. The node logs the value that it uses for
+each chain at startup.
 
 The `autonetkey` key has no effect in this release. The node derives its libp2p key from the wallet
 key.
@@ -195,16 +202,17 @@ key.
 <Tabs items={['DAppNode', 'CLI', 'Docker']}>
   <Tabs.Tab unmount={false}>
 
-The DAppNode package wraps the released `interfold` binary. Its setup wizard collects the values,
-renders `/data/config.yaml`, stores the credentials, and runs `interfold start`.
+The DAppNode packages use the released ciphernode image. Install the Mainnet or Sepolia package to
+select the network. The package supplies the network settings, stores the credentials, and runs
+`interfold start`.
 
 <Steps>
 
 ### Install the package
 
-Open the DAppNode UI (`http://my.dappnode`) and search the DAppStore for **Interfold Ciphernode**.
-If the package is not listed, open **Installer** and use **Install from IPFS hash** with the hash of
-a published release.
+Open the DAppNode UI (`http://my.dappnode`) and install **Interfold Ciphernode** for Mainnet or
+Sepolia. If the package is not listed in the DAppStore, use **Installer → Install from IPFS hash**
+with the hash for that network.
 
 ### Prepare the credentials file
 
@@ -221,40 +229,38 @@ The file must be 16 KiB or smaller. Keep an encrypted offline backup of it.
 
 ### Fill in the setup wizard
 
-Enter the values from the table below, and upload the credentials file as **Ciphernode Credentials
-JSON**. For contract addresses and deploy blocks, use
-[Contract addresses](/operate#contract-addresses).
+On the first installation, upload the credentials file under **Node credentials (skip on updates)**.
+For updates, leave the upload empty. The package reuses the saved identity. When a release raises
+the storage schema, the package resets the state before the node starts. See
+[Upgrades](/operate/upgrades#install-the-release).
+
+The network package supplies the chain ID, contract addresses, and deployment blocks from the
+deployment manifest. The node address comes from the saved wallet.
 
 ### Check the logs
 
-Open **Packages → interfold-ciphernode.public.dappnode.eth → Logs**. On the first start, the log
-shows `Credential setup completed.` and then `Starting Interfold ciphernode.`
+Open the installed network package under **Packages → Logs**. Startup logs show the node address and
+`Starting Interfold ciphernode.` after the RPC and identity checks pass.
+
+### Open the dashboards
+
+Use **Operator Dashboard** for wallet transactions, registration, bonding, and tickets. Use **Node
+dashboard** to monitor the local node through the DAppNode LAN or VPN.
 
 </Steps>
 
-| Wizard field                          | Variable                       | Required | Default in the package                                 |
-| ------------------------------------- | ------------------------------ | -------- | ------------------------------------------------------ |
-| Network                               | `NETWORK`                      | Yes      | `mainnet` (choices: `mainnet`, `sepolia`, `localhost`) |
-| RPC URL                               | `RPC_URL`                      | Yes      | None. Must start with `ws://` or `wss://`.             |
-| Chain ID                              | `CHAIN_ID`                     | Yes      | `1`                                                    |
-| Node Address                          | `NODE_ADDRESS`                 | Yes      | None. Must match the key in the credentials file.      |
-| Interfold Contract Address            | `INTERFOLD_CONTRACT`           | Yes      | The mainnet address                                    |
-| Ciphernode Registry Contract          | `CIPHERNODE_REGISTRY_CONTRACT` | Yes      | The mainnet address                                    |
-| Bonding Registry Contract             | `BONDING_REGISTRY_CONTRACT`    | Yes      | The mainnet address                                    |
-| Slashing Manager Contract             | `SLASHING_MANAGER_CONTRACT`    | Yes      | The mainnet address                                    |
-| Fee Token Contract                    | `FEE_TOKEN_CONTRACT`           | Yes      | The mainnet address                                    |
-| Deploy blocks (one for each contract) | `*_DEPLOY_BLOCK`               | Yes      | The mainnet values                                     |
-| Bootstrap Peers                       | `PEERS`                        | No       | Empty: use the DNS bootstrap of `NETWORK`              |
-| Log Level                             | `LOG_LEVEL`                    | No       | `info` (choices: `info`, `debug`, `trace`)             |
-| Extra Options                         | `EXTRA_OPTS`                   | No       | Empty. Added to the `interfold start` arguments.       |
+The default RPC uses the execution client selected in DAppNode **Stakers**. Enable its WebSocket RPC
+and wait until the client is synced. Custom RPC URLs and advanced options remain available in
+package **Config**. A custom RPC must support HTTP and WebSocket at the same host, port, and path.
 
-Two more variables are set in the package configuration, not in the wizard. `AVAIL_RPC_URL` defaults
-to `https://avail-rpc.publicnode.com/` for chain ID 1 and `https://turing-rpc.avail.so/rpc` for
-chain ID 11155111. `QUIC_PORT` defaults to `37173`, and the package publishes UDP port 37173.
+`AVAIL_RPC_URL` defaults to `https://avail-rpc.publicnode.com/` for Mainnet and
+`https://turing-rpc.avail.so/rpc` for Sepolia. The packages publish UDP port 37173 for Mainnet and
+37174 for Sepolia. Each network package has its own data volume.
 
-The package keeps its state in `/data`, on the `ciphernode_data` volume. DAppNode lists this volume
-as a backup target. The wallet key and the libp2p key are encrypted there. The password file is also
-there, so backups of `/data` must be encrypted and access-controlled.
+The package keeps its state in `/data`, on the `ciphernode_data` volume. Its backup includes the
+configuration, encryption password, and durable node state, including the encrypted wallet and
+libp2p keys. Downloaded circuits and prover caches are excluded. Keep the backup encrypted and
+access-controlled because it contains the password that unlocks the keys.
 
 After it stores the credentials, the package deletes the uploaded file. A restart uses the stored
 state and does not need a new upload. An upload with a different password stops startup.
@@ -555,6 +561,13 @@ These events show the progress of an E3 in the node log:
 | `PlaintextAggregated`       | The decrypted result is ready to publish.                 |
 | `PlaintextOutputPublished`  | The result is on-chain.                                   |
 | `E3RequestComplete`         | The node started its cleanup for the E3.                  |
+
+The node writes one heartbeat file for each chain after every successful read of the chain head:
+`chain-<chain ID>.heartbeat` in `ingestion/` in the node data directory, for example
+`data/_default/ingestion/chain-1.heartbeat`. The file holds `key=value` lines: `chain_id`, `head`,
+`cursor`, `polled_at`, and `progressed_at` (Unix seconds). A monitoring script can read these files,
+and they need no RPC request. The DAppNode health check fails when `polled_at` is older than 120
+seconds, or when `progressed_at` is older than 10 minutes.
 
 When the node runs, some commands run inside the node through the local control port:
 `ciphernode status`, `wallet get`, `net get-peer-id`, `config get`, `rev`,

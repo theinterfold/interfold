@@ -883,31 +883,27 @@ mod tests {
         let (public_key, rlk, _) = bundle(&fixture, 0);
         let proofs = lbfv_proofs_for_dispatch(&public_key.document, &rlk.document)
             .expect("canonical proof bundle");
-        assert_eq!(proofs.len(), 10);
-        for (row, proof) in proofs[..5].iter().enumerate() {
+        let row_count = e3_fhe_params::lbfv_row_count(BfvPreset::SecureThreshold16384);
+        let rows = row_count.expect("secure-16384 supports l-BFV");
+        assert_eq!(proofs.len(), 2 * rows);
+        for (row, proof) in proofs[..rows].iter().enumerate() {
             assert_eq!(proof.payload.proof_type, ProofType::LbfvPkGeneration);
             assert_eq!(
                 proof
                     .payload
                     .proof_type
-                    .identity(
-                        &proof.payload.proof,
-                        e3_fhe_params::lbfv_row_count(BfvPreset::SecureThreshold16384),
-                    )?
+                    .identity(&proof.payload.proof, row_count)?
                     .instance,
                 row as u32
             );
         }
-        for (row, proof) in proofs[5..].iter().enumerate() {
+        for (row, proof) in proofs[rows..].iter().enumerate() {
             assert_eq!(proof.payload.proof_type, ProofType::RlkGeneration);
             assert_eq!(
                 proof
                     .payload
                     .proof_type
-                    .identity(
-                        &proof.payload.proof,
-                        e3_fhe_params::lbfv_row_count(BfvPreset::SecureThreshold16384),
-                    )?
+                    .identity(&proof.payload.proof, row_count)?
                     .instance,
                 row as u32
             );

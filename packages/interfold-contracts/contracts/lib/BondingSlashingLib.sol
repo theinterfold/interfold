@@ -9,6 +9,9 @@ pragma solidity 0.8.28;
 import {
     IERC165
 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {
+    EnumerableSet
+} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { ISlashingManager } from "../interfaces/ISlashingManager.sol";
@@ -21,6 +24,8 @@ import {
 
 /// @notice Stores manager-owned slash locks and bans in BondingRegistry storage.
 library BondingSlashingLib {
+    using EnumerableSet for EnumerableSet.UintSet;
+
     uint256 private constant API_VERSION = 1;
     uint256 private constant PROBE_GAS = 100_000;
 
@@ -36,6 +41,27 @@ library BondingSlashingLib {
 
     function unresolvedCommitteeCount() external view returns (uint256) {
         return _layout().unresolvedCommitteeCount;
+    }
+
+    function unresolvedCommitteesOf(
+        address operator
+    ) external view returns (uint256) {
+        return _layout().unresolvedCommittees[operator];
+    }
+
+    function committeeObligationAt(
+        address operator,
+        uint256 index
+    ) external view returns (uint256 e3Id, address registry) {
+        BondingSlashingStorage.Layout storage state = _layout();
+        uint256 tracked = state.unresolvedCommitteeIds.length();
+        uint256 seen;
+        for (uint256 i = 0; i < tracked; ++i) {
+            e3Id = state.unresolvedCommitteeIds.at(i);
+            if (!state.committeeObligations[e3Id][operator]) continue;
+            if (seen++ == index) return (e3Id, state.committeeRegistries[e3Id]);
+        }
+        revert IBondingRegistry.CommitteeObligationNotTracked(operator, index);
     }
 
     function validateExitClaim(address operator) external view {
@@ -84,6 +110,7 @@ library BondingSlashingLib {
             }
             state.committeeRegistries[e3Id] = msg.sender;
             state.unresolvedCommitteeCount++;
+            state.unresolvedCommitteeIds.add(e3Id);
         } else if (msg.sender != assignedRegistry) {
             revert IBondingRegistry.Unauthorized();
         }
@@ -112,6 +139,7 @@ library BondingSlashingLib {
             }
             delete state.committeeRegistries[e3Id];
             state.unresolvedCommitteeCount--;
+            state.unresolvedCommitteeIds.remove(e3Id);
         } else if (state.committeeObligations[e3Id][operator]) {
             delete state.committeeObligations[e3Id][operator];
             state.committeeMemberCounts[e3Id]--;

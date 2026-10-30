@@ -1370,13 +1370,20 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn accepted_commitments(party_id: u32) -> LbfvAcceptedPartyCommitments {
-        let commitment =
-            |domain: u8, row: usize| B256::repeat_byte(domain + (party_id as u8 * 16) + row as u8);
+        let rows = e3_fhe_params::lbfv_row_count(BfvPreset::SecureThreshold16384).unwrap();
+        // Distinct bytes per party, family and row.
+        let commitments = |family: usize| {
+            (0..rows)
+                .map(|row| {
+                    B256::repeat_byte((party_id as usize * 32 + family * rows + row + 1) as u8)
+                })
+                .collect()
+        };
         LbfvAcceptedPartyCommitments {
             party_id,
-            pk_generation_commitments: (0..5).map(|row| commitment(1, row)).collect(),
-            rlk_d0_commitments: (0..5).map(|row| commitment(6, row)).collect(),
-            rlk_d2_commitments: (0..5).map(|row| commitment(11, row)).collect(),
+            pk_generation_commitments: commitments(0),
+            rlk_d0_commitments: commitments(1),
+            rlk_d2_commitments: commitments(2),
         }
     }
 
@@ -1803,7 +1810,7 @@ pub(crate) mod tests {
         let encoded = bincode::serialize(&state).unwrap();
         assert_eq!(
             keccak256(&encoded),
-            "0xe5f4daba1176d11b2fa6ffa0faf08318b163558e9e012b934271a15f69fed95d"
+            "0x4f805326702b6d8c47396ef33229edcb400a1dca19b6eaba5e4ae08fc0e8dd64"
                 .parse::<B256>()
                 .unwrap()
         );

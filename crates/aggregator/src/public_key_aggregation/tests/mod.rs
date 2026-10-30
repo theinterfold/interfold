@@ -5,17 +5,18 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
+use crate::test_support::get_common_setup;
 use crate::LBFV_PUBLICATION_SCHEMA_VERSION;
 use crate::{LbfvContributionRepositoryFactory, PublicKeyRepositoryFactory};
 use alloy::primitives::{Address, B256};
 use e3_data::{AutoPersist, DataStore, InMemStore, PersistableData, Repositories, Repository};
 use e3_events::EventConstructorWithTimestamp;
 use e3_events::{
-    CircuitName, CommitteeMemberExpelled, ComputeRequestErrorKind, EffectsEnabled, GetEvents,
-    HistoryCollector, LbfvKeyShareDocumentFetchFailureClass, LbfvKeyShareDocumentRole,
-    ProofPayload, ProofType, Seed, TakeEvents, Unsequenced, ZkError,
+    CommitteeMemberExpelled, ComputeRequestErrorKind, EffectsEnabled, GetEvents, HistoryCollector,
+    LbfvKeyShareDocumentFetchFailureClass, LbfvKeyShareDocumentRole, ProofPayload, ProofType, Seed,
+    TakeEvents, Unsequenced, ZkError,
 };
-use e3_test_helpers::get_common_setup;
+use e3_zk_config::CircuitName;
 use std::collections::{BTreeSet, HashMap};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

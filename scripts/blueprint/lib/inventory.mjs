@@ -49,18 +49,18 @@ export const LAYERS = {
     'program-runner',
     'compute-provider',
     'sdk',
-    'indexer',
-    'evm-helpers',
+    'evm/indexer',
+    'evm/client',
     'wasm',
     'openvm-host',
     'openvm-types',
     'openvm-prover',
   ],
   workflows: ['request', 'sortition', 'keyshare', 'aggregator', 'slashing', 'zk/prover', 'fhe', 'multithread', 'trbfv', 'bfv-client'],
-  adapters: ['evm', 'net', 'sync', 'event-system', 'data', 'data-availability', 'logger'],
-  vocabulary: ['events', 'config', 'fhe-params', 'zk/config', 'zk/witness', 'committee', 'committee-hash'],
-  foundations: ['crypto', 'polynomial', 'polynomial/fhe-adapter', 'parity-matrix', 'safe', 'hamt', 'utils', 'utils-derive'],
-  validation: ['test-helpers', 'tests', 'layout-lock', 'zk/samples'],
+  adapters: ['evm/runtime', 'net', 'sync', 'event-system', 'data', 'data-availability', 'logger'],
+  vocabulary: ['events', 'config', 'fhe-params', 'zk/config', 'zk/witness', 'committee', 'committee-hash', 'evm/contracts'],
+  foundations: ['crypto', 'polynomial', 'polynomial/fhe-adapter', 'parity-matrix', 'safe', 'hamt', 'utils', 'utils-derive', 'task-pool'],
+  validation: ['test-support', 'bfv-test-support', 'tests', 'layout-lock', 'zk/samples'],
 }
 
 function cargoName(dir) {
@@ -316,7 +316,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   )
   for (const c of inv.crates)
     console.log(
-      `${c.layer.padEnd(12)} ${c.id.padEnd(24)} loc ${String(c.loc).padStart(6)} tests ${String(c.tests).padStart(4)} actors ${c.actors.filter((a) => !a.test).length}+${c.actors.filter((a) => a.test).length}t handlers ${c.handlers.length} deps ${c.deps.length}`,
+      `${c.layer.padEnd(12)} ${c.id.padEnd(24)} loc ${String(c.loc).padStart(6)} tests ${String(c.tests).padStart(4)} actors ${
+        c.actors.filter((a) => !a.test).length
+      }+${c.actors.filter((a) => a.test).length}t handlers ${c.handlers.length} deps ${c.deps.length}`,
     )
   for (const c of inv.crates) for (const a of c.actors.filter((a) => a.test)) console.log(`  test actor ${c.id} ${a.name} ${a.ref}`)
 }

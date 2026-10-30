@@ -8,17 +8,22 @@ ciphernode protocol proofs. This is separate from the
 [e3-zk-config](../config/README.md), and production input preparation/encoding belongs in
 [e3-zk-witness](../witness/README.md).
 
+Import circuit identities/variants from `e3-zk-config` and commitment-link interfaces from
+`e3-slashing`. This crate implements the ZK-specific links; its compatibility re-exports do not
+define a second owner.
+
 ## Map
 
-| Location                                                                                                 | Responsibility                                                                                  |
-| -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| [`backend/`](src/backend), [`config.rs`](src/config.rs)                                                  | Version/checksum admission, downloads, transactional artifact installation, and backend status. |
-| [`witness.rs`](src/witness.rs), [`prover.rs`](src/prover.rs)                                             | Noir execution and bounded/deadlined Barretenberg subprocesses.                                 |
-| [`actor_system.rs`](src/actor_system.rs)                                                                 | Node-wide proof actor composition and recovery inputs.                                          |
-| [`proof_request/`](src/proof_request), [`proof_verification/`](src/proof_verification)                   | Local proof planning/signing and authenticated key-proof verification/recovery.                 |
-| [`share_verification/`](src/share_verification), [`node_proof_aggregation/`](src/node_proof_aggregation) | Signed share bundles, per-batch outcomes, and node-fold accumulation/recovery.                  |
-| [`circuits/aggregation/`](src/circuits/aggregation), [`commitment_links/`](src/commitment_links)         | Recursive folds and cross-proof public-value links.                                             |
-| [`tests/`](tests)                                                                                        | Prepared local, recursive-fold, network/download, and proof-to-slash suites.                    |
+| Location                                                                                                 | Responsibility                                                                                            |
+| -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| [`backend/`](src/backend), [`config.rs`](src/config.rs)                                                  | Version/checksum admission, downloads, transactional artifact installation, and backend status.           |
+| [`witness.rs`](src/witness.rs), [`prover.rs`](src/prover.rs)                                             | Noir execution and bounded/deadlined Barretenberg subprocesses.                                           |
+| [`actor_system.rs`](src/actor_system.rs)                                                                 | Node-wide proof actor composition and recovery inputs.                                                    |
+| [`request_execution.rs`](src/request_execution.rs)                                                       | Correlated C0–C7, batch verification and recursive request execution, including local witness decryption. |
+| [`proof_request/`](src/proof_request), [`proof_verification/`](src/proof_verification)                   | Local proof planning/signing and authenticated key-proof verification/recovery.                           |
+| [`share_verification/`](src/share_verification), [`node_proof_aggregation/`](src/node_proof_aggregation) | Signed share bundles, per-batch outcomes, and node-fold accumulation/recovery.                            |
+| [`circuits/aggregation/`](src/circuits/aggregation), [`commitment_links/`](src/commitment_links)         | Recursive folds and cross-proof public-value links.                                                       |
+| [`tests/`](tests)                                                                                        | Prepared local, recursive-fold, network/download, and proof-to-slash suites.                              |
 
 A capability actor records a proof/verification plan and requests compute work. Shared workers
 execute the circuit/prover and return correlated outcomes; actor effects sign/publish complete
@@ -40,11 +45,20 @@ completed invalid verification. `CompiledCircuit`, `WitnessGenerator`, and `inpu
 compiled-circuit loading and witness generation (using `noirc_abi::InputMap`) without defining
 another circuit parameter table.
 
+`execute_zk_request(prover, cipher, request, record_step)` is the synchronous protocol-request
+adapter used by shared workers. It preserves the request's correlation/E3 identity and reports
+completed node-fold step timings through the caller's callback. `zk_operation_name` owns the stable
+diagnostic labels. This API creates no actor, pool, retry loop or publication side effect; call it
+from the node's existing bounded executor. Signature admission remains upstream, and deterministic
+witness computation/encoding remains in `zk/witness`.
+
 Node runtimes use `setup_zk_actors` with `ZkActorRecovery`, canonical committees/keys, signer, and
-repositories. The [builder wiring](../../ciphernode-builder/src/builder/extensions.rs) shows
-hydration before effect-enabled replay. Operators normally use the
-[CLI Noir commands](../../cli/src/noir.rs), not manual actor construction. Slashing implementation
-lives in [e3-slashing](../../slashing/README.md).
+repositories, plus the compute dispatcher's shared `e3_task_pool::TaskPool` and node scope. C0
+verification runs off the actor runtime through that pool, preserving serial response/barrier order.
+These arguments are required: callers must not create an independent production verification pool.
+The [builder wiring](../../ciphernode-builder/src/builder/extensions.rs) shows hydration before
+effect-enabled replay. Operators normally use the [CLI Noir commands](../../cli/src/noir.rs), not
+manual actor construction. Slashing implementation lives in [e3-slashing](../../slashing/README.md).
 
 `Provable::Config` carries each circuit's concrete configuration into preparation. Workers build it
 from their existing BFV parameter owner; C6/C7 reuse it across ciphertext indices. User encryption
@@ -68,7 +82,8 @@ E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 cargo check --locked -p e3-zk-prover --tests
 ```
 
 This skips fixture preparation only. It neither skips proof tests nor supplies valid artifacts. The
-dependency graph can also need [Solidity fixtures](../../test-helpers/README.md).
+dependency graph can also need
+[Solidity fixtures](../../tests/README.md#prerequisites-and-assurance).
 
 ## Tests
 
@@ -77,6 +92,16 @@ above. Backend tests cover local archives/install rollback; prover tests use fak
 timeout/error classification; witness tests execute the dummy compiled circuit; capability tests
 cover plans, signature admission, correlations, and restart inputs. These have different external
 requirements from the explicitly selected real-proof suites below.
+
+`zk_actor` tests use controlled fake verification processes to cover actor-runtime progress, shared
+pool saturation, serial barriers and node-scoped queued cancellation. They test scheduling and error
+classification, not proof correctness.
+
+`cargo test --locked -p e3-zk-prover --lib request_execution::` covers request-kind admission,
+request correlation, unavailable-verifier versus invalid-statement classification, C5/C7 threshold
+guards and C6 key validation. The ignored
+`local_small_c7_request_proves_ten_shares_with_the_canonical_committee` test also lives here; it
+requires `E3_CUSTOM_BB` and `E3_TEST_ARTIFACTS_ROOT` for prepared insecure-64/small artifacts.
 
 ### Real-proof tests
 

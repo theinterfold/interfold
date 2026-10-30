@@ -13,6 +13,7 @@ import { createPublicClient, http, type Address } from 'viem'
 import {
   BondingRegistry__factory,
   CiphernodeRegistryOwnable__factory,
+  E3RefundManager__factory,
   Faucet__factory,
   Interfold__factory,
   InterfoldTicketToken__factory,
@@ -93,6 +94,10 @@ export const CONTRACTS = {
   Faucet: faucetAddress() as Address,
 }
 
+// Every CRISP program on the network: the current one, then the earlier deployments. An E3 of any of
+// them is a CRISP poll.
+export const CRISP_PROGRAMS: readonly Address[] = [CONTRACTS.CRISPProgram, ...(NET.previousCrispPrograms as readonly Address[])]
+
 // The chain the dashboard writes to. Reads use `publicClient`; the operator guide
 // refuses to send a transaction unless the wallet is on this chain.
 export const CHAIN = NET.chain
@@ -127,6 +132,7 @@ export const TIMEOUTS = {
 
 export const interfoldAbi = Interfold__factory.abi
 export const ciphernodeRegistryAbi = CiphernodeRegistryOwnable__factory.abi
+export const e3RefundManagerAbi = E3RefundManager__factory.abi
 export const bondingRegistryAbi = BondingRegistry__factory.abi
 export const ticketTokenAbi = InterfoldTicketToken__factory.abi
 export const ciphernodeBondTokenAbi = InterfoldToken__factory.abi

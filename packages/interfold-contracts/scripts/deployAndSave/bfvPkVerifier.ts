@@ -13,15 +13,16 @@ import {
 } from "../../types";
 import { currentNodeRelease } from "../protocol/nodeRelease";
 import {
-  BFV_DKG_H,
   ACTIVE_BFV_COMMITTEE_N,
   ACTIVE_BFV_PARAM_SET,
+  BFV_DKG_H,
   assertBfvPkVerifierSubCircuitVkHashes,
   assertBfvPkVerifierV2VkHashes,
   getBfvPkSubCircuitVkHashPaths,
   getBfvPkVkBindingHashPaths,
   getBfvV2SubCircuitVkHashPaths,
   getBfvV2VkBindingHashPaths,
+  getBfvVkCommitments,
   readDeploymentArgs,
   readVkRecursiveHash,
   storeDeploymentArgs,
@@ -80,12 +81,8 @@ export const deployAndSaveBfvPkVerifier = async (
     return { bfvPkVerifier };
   }
 
-  const expectedNodesFoldKeyHash = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths().nodesFold,
-  );
-  const expectedC5KeyHash = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths().c5,
-  );
+  const { nodesFold: expectedNodesFoldKeyHash, c5: expectedC5KeyHash } =
+    getBfvVkCommitments();
 
   // The trBFV verifier anchors the nodes-fold VK tree and C5; the tree binds every inner VK.
   const bfvPkVerifierFactory = await ethers.getContractFactory("BfvPkVerifier");

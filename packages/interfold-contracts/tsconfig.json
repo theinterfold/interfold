@@ -6,12 +6,14 @@
     "moduleResolution": "bundler",
     "strict": true,
     "esModuleInterop": true,
+    "resolveJsonModule": true,
     "skipLibCheck": true,
     "outDir": "dist",
     "declaration": true,
     "declarationMap": true
   },
   "include": [
+    "bfv.ts",
     "hardhat.config.ts",
     "scripts/**/*.ts",
     "ignition/modules/**/*.ts",

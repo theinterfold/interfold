@@ -8,12 +8,11 @@ use anyhow::*;
 use async_trait::async_trait;
 use e3_bfv_client::{decode_plaintext_to_vec_u64, encode_vec_u64_to_bytes};
 use e3_data::{FromSnapshotWithParams, Snapshot};
-use e3_events::OrderedSet;
 use e3_fhe_params::{
     build_bfv_params_arc, create_deterministic_crp_from_default_seed, decode_bfv_params_arc,
     BfvParamSet, BfvPreset,
 };
-use e3_utils::{ArcBytes, SharedRng};
+use e3_utils::{ArcBytes, OrderedSet, SharedRng};
 use fhe::{
     bfv::{BfvParameters, Ciphertext, Plaintext, PublicKey, SecretKey},
     mbfv::{AggregateIter, CommonRandomPoly, DecryptionShare, PublicKeyShare},
@@ -254,9 +253,11 @@ impl SecretKeySerializer {
 mod tests {
     use super::*;
 
+    /// Current secure-8192 parameters encoded without field 6 (the error variance), as snapshots
+    /// written before that field existed.
     const LEGACY_SECURE_8192_PARAMS: &[u8] = &[
-        8, 128, 64, 18, 27, 129, 128, 128, 134, 128, 128, 128, 128, 4, 129, 128, 144, 133, 128,
-        128, 128, 128, 4, 129, 128, 228, 132, 128, 128, 128, 128, 4, 24, 192, 132, 61, 32, 10,
+        8, 128, 64, 18, 27, 129, 128, 237, 134, 128, 128, 128, 128, 8, 129, 128, 213, 134, 128,
+        128, 128, 128, 8, 129, 128, 175, 134, 128, 128, 128, 128, 8, 24, 192, 204, 141, 8, 32, 10,
     ];
 
     #[test]

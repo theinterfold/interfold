@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { Barretenberg, UltraHonkBackend } from '@aztec/bb.js'
+import { Barretenberg, UltraHonkBackend } from '@aztec-foundation/bb.js'
 import { CompiledCircuit, Noir } from '@noir-lang/noir_js'
 
 type Field = string

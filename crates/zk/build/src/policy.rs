@@ -53,9 +53,12 @@ const SHARED: &[&str] = &[
 
 pub fn enabled(circuit: &Circuit, preset: BfvPreset) -> bool {
     match preset {
-        // The insecure archive serves both trBFV (paramSet 0) and l-BFV (paramSet 4).
+        // The degree-128 insecure archive serves l-BFV (paramSet 4) and the off-chain trBFV twin.
         BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => true,
-        BfvPreset::SecureThreshold8192 => !LBFV.contains(&circuit.name.as_str()),
+        // Degree 64 has no room for l-BFV multiplication; it serves trBFV (paramSet 0) only.
+        BfvPreset::InsecureThreshold64 | BfvPreset::SecureThreshold8192 => {
+            !LBFV.contains(&circuit.name.as_str())
+        }
         BfvPreset::SecureThreshold16384 => {
             LBFV.contains(&circuit.name.as_str())
                 || SHARED.contains(&format!("{}/{}", circuit.group, circuit.name).as_str())

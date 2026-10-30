@@ -11,7 +11,6 @@ perform the expensive computation and on-chain publication.
 | Location                                                | Responsibility                                                            |
 | ------------------------------------------------------- | ------------------------------------------------------------------------- |
 | [`ext.rs`](src/ext.rs)                                  | Per-request factories and hydration for aggregation recipients and roles. |
-| [`committee_finalization/`](src/committee_finalization) | Node-wide finalization requests and their chain/recovery context.         |
 | [`public_key_aggregation/`](src/public_key_aggregation) | Public-key phase state, validation, pure transitions, and actor effects.  |
 | [`plaintext_aggregation/`](src/plaintext_aggregation)   | C6 share admission, threshold reconstruction, C7 work, and publication.   |
 | [`repo.rs`](src/repo.rs)                                | Typed persistence accessors for phase and recovery state.                 |
@@ -32,9 +31,10 @@ Use the extensions in `e3_aggregator::ext` with an `e3_request::E3RouterBuilder`
 
 The [ciphernode wiring](../ciphernode-builder/src/builder/extensions.rs) shows registration through
 `with_recipient`, including the FHE dependency. Consumers do not construct the private
-public-key/plaintext actor modules directly. `CommitteeFinalizer` is a separate node-wide actor; its
-[startup caller](../ciphernode-builder/src/builder/startup.rs) provides recovery storage and
-fresh-provider factories for the enabled chains.
+public-key/plaintext actor modules directly. Committee formation is owned by
+[sortition](../sortition/Readme.md#runtime-integration), not aggregation. Canonical-key inputs come
+from the shared `e3_request::canonical_key` authority; local aggregation results do not create a
+second authority.
 
 Aggregation follows the canonical roster and active/standby roles, not the fastest arriving shares.
 Plaintext reconstruction needs T+1 valid roster shares. Local aggregation results are publication
@@ -50,11 +50,15 @@ exports typed recovery states and repository factory traits for persistence inte
 ## Tests
 
 Run `cargo test --locked -p e3-aggregator` from the repository root. Prepare the
-[test-helper prerequisites](../test-helpers/README.md) first; the test graph includes chain fixtures
-and the prover. Actor tests with mock proofs do not validate recursive proofs.
+[system prerequisites](../tests/README.md#prerequisites-and-assurance) first; the test graph
+includes chain fixtures and the prover. Actor tests with mock proofs do not validate recursive
+proofs.
 
 Public-key [tests](src/public_key_aggregation/tests) cover attestations and failures; plaintext
 [tests](src/plaintext_aggregation/tests) cover share admission, thresholds, publication, completion,
 and recovery. Neighboring `workflow_tests.rs` files exercise pure phase decisions separately from
 actor delivery. Multi-node flows are in [e3-tests](../tests/README.md). See [AGENTS.md](AGENTS.md)
 for change-specific rules.
+
+The BFV/event setup tuple is private to these aggregation tests. Event-only consumers use
+event-system's opt-in fixture rather than constructing unrelated BFV material.

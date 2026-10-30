@@ -9,14 +9,14 @@ use crate::{
 };
 use e3_data::RepositoriesFactory;
 use e3_events::{
-    CommitteeFinalized, CommitteePublished, E3StageChanged, EventType, OrderedSet,
-    PublicKeyAggregated,
+    CommitteeFinalized, CommitteePublished, E3StageChanged, EventType, PublicKeyAggregated,
 };
 use e3_fhe::{ext::FHE_KEY, Fhe};
 use e3_request::{
     ContextRepositoryFactory, E3Context, E3ContextParams, E3ContextSnapshot, E3Extension,
     E3LifecycleCoordinator, E3LifecycleRepositoryFactory, E3Meta, META_KEY,
 };
+use e3_utils::OrderedSet;
 use std::{sync::Arc, time::Duration};
 
 #[derive(Clone, Copy, Debug)]

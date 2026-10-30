@@ -43,8 +43,7 @@ import {
   loadConfig,
   readExcludedAccounts,
 } from "../../scripts/protocol/values";
-import { requiredActiveOperatorsForSecureCrisp } from "../../scripts/upgrade/resumeSecureCrisp";
-import { requiresTimeoutConfigUpdate } from "../../scripts/upgrade/secureCrisp";
+import { requiredActiveOperators } from "../../scripts/upgrade/v19Cutover";
 import { BondingRegistry__factory as BondingRegistryFactory } from "../../types";
 
 const { ethers } = await network.connect();
@@ -102,26 +101,11 @@ describe("Protocol deployment", function () {
       { size: "2", total: "19" },
     ];
 
-    expect(requiredActiveOperatorsForSecureCrisp(thresholds, 1)).to.equal(19n);
-    expect(
-      requiredActiveOperatorsForSecureCrisp(thresholds, 11155111, "0"),
-    ).to.equal(3n);
-    expect(() =>
-      requiredActiveOperatorsForSecureCrisp(thresholds, 1, "0"),
-    ).to.throw("only for a Sepolia rehearsal");
-  });
-
-  it("updates the timeout configuration only when a configured value differs", function () {
-    const target = {
-      dkgWindow: 21_600n,
-      computeWindow: 3_600n,
-      decryptionWindow: 3_600n,
-    };
-
-    expect(requiresTimeoutConfigUpdate(target, target)).to.equal(false);
-    expect(
-      requiresTimeoutConfigUpdate({ ...target, dkgWindow: 7_200n }, target),
-    ).to.equal(true);
+    expect(requiredActiveOperators(thresholds, 1)).to.equal(19n);
+    expect(requiredActiveOperators(thresholds, 11155111, "0")).to.equal(3n);
+    expect(() => requiredActiveOperators(thresholds, 1, "0")).to.throw(
+      "only for a Sepolia rehearsal",
+    );
   });
 
   it("requires a ciphernode restart acknowledgement before resume", function () {

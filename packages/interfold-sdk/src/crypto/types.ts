@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import type { ProofData } from '@aztec/bb.js'
+import type { ProofData } from '@aztec-foundation/bb.js'
 import type { CircuitInputs } from './user-data-encryption'
 
 export interface BfvParams {

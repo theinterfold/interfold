@@ -338,11 +338,11 @@ mod tests {
     use super::*;
     use alloy::primitives::{Address, Bytes};
     use e3_events::{
-        CircuitName, CommitmentConsistencyViolation, E3Failed, E3id, EvmLogObserved, FailureReason,
-        Proof, ProofPayload, ProofType, ProofVerificationFailed, SignedProofFailed,
-        SignedProofPayload,
+        CommitmentConsistencyViolation, E3Failed, E3id, EvmLogObserved, FailureReason, Proof,
+        ProofPayload, ProofType, ProofVerificationFailed, SignedProofFailed, SignedProofPayload,
     };
     use e3_utils::utility_types::ArcBytes;
+    use e3_zk_config::CircuitName;
 
     /// An unnamed EVM log is an observation, not a fault. Warning on it makes routine admin
     /// traffic — a proxy upgrade, a governance call — look like an incident on every node, which

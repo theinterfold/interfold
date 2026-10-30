@@ -6,8 +6,8 @@
 
 //! Cross-circuit commitment consistency links.
 //!
-//! Concrete implementations of [`CommitmentLink`](e3_events::CommitmentLink)
-//! for each ZK proof pair. The trait and supporting types live in `e3-events`.
+//! Concrete implementations of [`CommitmentLink`](e3_slashing::CommitmentLink)
+//! for each ZK proof pair. The checker owns the interface in `e3-slashing`.
 
 pub mod c0_to_c3;
 pub mod c1_to_c2;
@@ -20,9 +20,8 @@ pub mod c6_to_c7;
 pub mod lbfv_generation_sk;
 pub mod lbfv_share_transport;
 
-// Re-export the canonical trait and types from e3-events.
-pub use e3_events::{CommitmentLink, FieldValue, LinkScope};
 use e3_fhe_params::BfvPreset;
+pub use e3_slashing::{CommitmentLink, FieldValue, LinkScope};
 
 /// Returns the default set of commitment links to register.
 ///

@@ -18,7 +18,8 @@ use crate::circuits::vk;
 use crate::error::ZkError;
 use crate::prover::ZkProver;
 use crate::witness::{CompiledCircuit, WitnessGenerator};
-use e3_events::{CircuitName, CircuitVariant, Proof};
+use e3_events::Proof;
+use e3_zk_config::{CircuitName, CircuitVariant};
 use serde::Serialize;
 
 /// `total_slots` = `T + 1` (one slot per party index in the C6 leaf layout).

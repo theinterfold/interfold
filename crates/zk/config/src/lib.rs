@@ -7,7 +7,9 @@
 //! Static circuit configuration and public-input layout contracts.
 
 pub mod chunks;
+pub mod circuit;
 pub mod committee;
+pub mod constants;
 pub mod dkg;
 pub mod field;
 pub mod metadata;
@@ -15,11 +17,13 @@ pub mod output_layout;
 mod parameters;
 pub mod threshold;
 
+pub use circuit::{CircuitName, CircuitVariant};
+pub use constants::{FIELD_BYTE_LEN, MAX_MSG_NON_ZERO_COEFFS, MESSAGE_COEFF_BYTE_LEN};
 pub use metadata::CircuitMetadata;
 pub use output_layout::{
     CircuitInputLayout, CircuitOutputLayout, OutputField, DKG_SHARE_DECRYPTION_OUTPUTS,
-    FIELD_BYTE_LEN, PK_AGGREGATION_OUTPUTS, PK_BFV_OUTPUTS, PK_GENERATION_OUTPUTS,
-    SHARE_ENCRYPTION_INPUTS, SHARE_ENCRYPTION_OUTPUTS, THRESHOLD_SHARE_DECRYPTION_INPUTS,
+    PK_AGGREGATION_OUTPUTS, PK_BFV_OUTPUTS, PK_GENERATION_OUTPUTS, SHARE_ENCRYPTION_INPUTS,
+    SHARE_ENCRYPTION_OUTPUTS, THRESHOLD_SHARE_DECRYPTION_INPUTS,
     THRESHOLD_SHARE_DECRYPTION_OUTPUTS,
 };
 
@@ -31,8 +35,6 @@ pub enum DkgInputType {
     SecretKey,
     SmudgingNoise,
 }
-
-pub const MAX_MSG_NON_ZERO_COEFFS: usize = 50;
 
 #[derive(Error, Debug)]
 pub enum ConfigError {

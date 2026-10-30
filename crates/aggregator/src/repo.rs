@@ -14,22 +14,11 @@ use e3_events::{
 use e3_fhe_params::BfvPreset;
 
 use crate::{
-    CommitteeFinalizerRecoveryState, LbfvAggregationStateV1, LbfvBundleAdmission,
-    LbfvContributionCollectionStateV1, LbfvDocumentAdmission, LbfvManifestAdmission,
-    LbfvPartyContributionStatusV1, LbfvPublicKeyPublicationStateV1,
-    PublicKeyAggregatorRecoveryState, PublicKeyAggregatorState,
+    LbfvAggregationStateV1, LbfvBundleAdmission, LbfvContributionCollectionStateV1,
+    LbfvDocumentAdmission, LbfvManifestAdmission, LbfvPartyContributionStatusV1,
+    LbfvPublicKeyPublicationStateV1, PublicKeyAggregatorRecoveryState, PublicKeyAggregatorState,
     ThresholdPlaintextAggregatorRecoveryState, ThresholdPlaintextAggregatorState,
 };
-
-pub trait CommitteeFinalizerRepositoryFactory {
-    fn committee_finalizer_recovery(&self) -> Repository<CommitteeFinalizerRecoveryState>;
-}
-
-impl CommitteeFinalizerRepositoryFactory for Repositories {
-    fn committee_finalizer_recovery(&self) -> Repository<CommitteeFinalizerRecoveryState> {
-        Repository::new(self.store.scope(StoreKeys::committee_finalizer_recovery()))
-    }
-}
 
 pub trait TrBfvPlaintextRepositoryFactory {
     fn trbfv_plaintext(&self, e3_id: &E3id) -> Repository<ThresholdPlaintextAggregatorState>;

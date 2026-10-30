@@ -41,7 +41,7 @@ needed for actual circuit/verifier work.
 pnpm build:circuits
 
 # Switch the active committee size (regenerates committee/active.nr,
-# default/mod.nr, and patches BFV_DKG_H / BFV_THRESHOLD_T in utils.ts atomically)
+# default/mod.nr, and selects deployment preset/committee names atomically)
 pnpm build:circuits --committee micro
 
 # Combine preset + committee
@@ -68,6 +68,17 @@ pnpm build:circuits sync-preset --preset insecure --committee minimum
 # Compare generated files in an isolated copy
 pnpm build:circuits check --committee all
 
+# Prepare all pairs explicitly (this switches live selectors)
+pnpm build:circuits --preset all --committee all
+# Normalize unselected preset declarations after the last pair; retain its active selection.
+# This refreshes sources only, not compiled artifacts or their stamps.
+pnpm generate:crypto-config
+pnpm generate:vk-commitments
+pnpm check:crypto-config --full
+
+# Optional independent key/verifier rederivation over the prepared matrix
+pnpm qualify:crypto-config
+
 # Benchmark production preparation and Noir execution with artificial inputs
 pnpm bench:circuits run --mode insecure --committee minimum --circuit dkg/pk --leaf-only
 ```
@@ -87,8 +98,8 @@ Wildcards preserve manifest order; unsupported explicit pairs fail before tools 
 release matrix is a separate required subset. The Rust builder calls `e3-zk-config` to generate
 Reed-Solomon parity matrices; files on disk are derived artifacts, not hand-tuned data.
 
-The currently-active selection is written to `circuits/bin/.active-preset.json` and checked by
-`pnpm check:committee` (pre-push hook) against `active.nr`, `utils.ts`, and the parity files.
+The local artifact cache selection is written to `circuits/bin/.active-preset.json`. Source checks
+compare `active.nr`, `utils.ts`, and the parity files; a different hydrated cache is only a note.
 Switching committee always goes through `pnpm build:circuits --committee` — never edit `active.nr`,
 `utils.ts`, or any `parity_*.nr` by hand; the check will reject pushes where they drift from what
 the generator would produce.
@@ -104,11 +115,11 @@ the generator would produce.
 
 ### Options
 
-- `--preset <name>` - Parameter preset: `insecure` (degree 128, default), `insecure-lbfv` (the same
-  artifact archive), `secure-8192`, `secure-16384`, or `all`. Secure-16384 supports minimum, micro,
-  and small; its build excludes trBFV-only circuits.
+- `--preset <name>` - Parameter preset: `insecure-64` (degree 64, trBFV only), `insecure` (degree
+  128, default), `insecure-lbfv` (the same artifact archive), `secure-8192`, `secure-16384`, or
+  `all`. Secure-16384 supports minimum, micro, and small; its build excludes trBFV-only circuits.
 - `--committee <name>` - Committee size: `minimum` (default), `micro`, `small`
-- `--skip-utils-patch` - Skip rewriting committee values and BFV configuration hashes in
+- `--skip-utils-patch` - Skip selecting deployment preset/committee names in
   `packages/interfold-contracts/scripts/utils.ts`
 - `--group <groups>` - Circuit groups (comma-separated: dkg,threshold)
 - `--circuit <name>` - Build specific circuit(s)
@@ -130,10 +141,28 @@ a failed circuit, removes both anchors from the pair and from `circuits/bin/`. A
 hash a key that no longer matches the compiled circuits. Run a complete build before you deploy the
 BFV verifiers or aggregate proofs.
 
-`sync-config` updates only `scripts/utils.ts` and `ActiveCryptoConfig.sol`, including deployment
-routes and pair admission generated from `build-pairs.json`. Use it when BFV parameter constants
-change and the prebuilt circuit artifacts already exist. It does not compile Noir circuits or
-regenerate verification keys.
+After preparing every build-policy pair, run `pnpm generate:vk-commitments`. Partial or failed
+builds invalidate affected archive metadata, not the committed catalogue. Generation preserves old
+source stamps; it does not qualify them against current sources.
+
+For published archives, `pnpm build:circuits prepare-vk-commitments` fills the archive metadata only
+if its VK commitments match the committed catalogue. It never refreshes those expectations or source
+stamps.
+
+`pnpm check:crypto-config` needs Cargo and pinned Nargo but no compiled artifacts. Add `--full` to
+validate a prepared matrix, or use `pnpm qualify:crypto-config` for backend key/verifier
+rederivation. Neither prepares or repairs artifacts. Use `--artifacts-dir <directory>` for a custom
+output (`--output` during generation). Source checks and default-pair CI are not complete-matrix
+qualification or proof acceptance.
+
+`sync-config` updates only `scripts/utils.ts` and `BfvProtocol.sol`. Use it when BFV parameter
+constants change and the prebuilt circuit artifacts already exist. It does not compile Noir circuits
+or regenerate verification keys.
+
+`pnpm check:decryption-layout` requires compiled EVM decryption aggregators and checks their public
+ABI against the shared layout, separately from Honk's extra pairing-point fields. Add
+`--preset all --committee all` to inspect every build-policy pair. It is read-only and does not
+prepare artifacts or qualify their source identity, verification keys, or proof acceptance.
 
 ### Prerequisites
 

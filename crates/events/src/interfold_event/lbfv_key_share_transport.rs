@@ -826,6 +826,11 @@ mod tests {
         }
     }
 
+    /// Row count of the secure l-BFV preset, which current (V3) documents carry.
+    fn secure_row_count() -> usize {
+        lbfv_row_count(BfvPreset::SecureThreshold16384).unwrap()
+    }
+
     fn committee() -> [Address; 2] {
         [Address::ZERO, signer().address()]
     }
@@ -893,7 +898,7 @@ mod tests {
             signed_row_proofs: row_proofs(
                 &context,
                 ProofType::LbfvPkGeneration,
-                LBFV_ROW_COUNT,
+                secure_row_count(),
                 &signer,
             ),
         });
@@ -904,7 +909,7 @@ mod tests {
                 signed_row_proofs: row_proofs(
                     &context,
                     ProofType::RlkGeneration,
-                    LBFV_ROW_COUNT,
+                    secure_row_count(),
                     &signer,
                 ),
             });
@@ -1061,7 +1066,7 @@ mod tests {
             .validate_for_preset(BfvPreset::SecureThreshold16384)
             .is_err());
 
-        let secure = dynamic_public_key_document(5);
+        let secure = dynamic_public_key_document(secure_row_count());
         secure.validate().unwrap();
         secure
             .validate_for_preset(BfvPreset::SecureThreshold16384)
@@ -1086,7 +1091,7 @@ mod tests {
             signed
                 .payload
                 .proof_type
-                .identity(&signed.payload.proof, Some(5))
+                .identity(&signed.payload.proof, Some(secure_row_count()))
                 .unwrap()
                 .instance,
             3
@@ -1168,26 +1173,27 @@ mod tests {
             failure_class: LbfvKeyShareDocumentFetchFailureClass::Unavailable,
             retry_at: Some(100),
         });
+        // l-BFV variants follow main's last variant (`BondingAssetConfigUpdatedAt` = 98).
         let payloads = [
             (
                 InterfoldEventData::from(LbfvKeyShareDocumentCreated {
                     document: public_key.clone(),
                 }),
-                87u32,
+                99u32,
             ),
             (
                 InterfoldEventData::from(LbfvKeyShareDocumentReceived {
                     document: public_key,
                     content_hash: request.request().content_hash,
                 }),
-                88,
+                100,
             ),
             (
                 InterfoldEventData::from(LbfvKeyShareManifestPublished { manifest }),
-                89,
+                101,
             ),
-            (InterfoldEventData::from(request), 90),
-            (InterfoldEventData::from(failure), 91),
+            (InterfoldEventData::from(request), 102),
+            (InterfoldEventData::from(failure), 103),
         ];
 
         for (payload, expected) in payloads {

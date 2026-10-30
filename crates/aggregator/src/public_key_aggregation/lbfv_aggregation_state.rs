@@ -60,7 +60,8 @@ impl LbfvPublicKeyPublicationStateV1 {
 mod publication_tests {
     use super::*;
     use alloy::primitives::Address;
-    use e3_events::{CircuitName, OrderedSet};
+    use e3_events::CircuitName;
+    use e3_utils::OrderedSet;
 
     fn publication(e3_id: E3id, circuit: CircuitName) -> LbfvPublicKeyAggregated {
         let mut key_envelope = Vec::from(*b"IFLBFVKE");
@@ -768,6 +769,8 @@ mod aggregation_tests {
         include_bytes!("fixtures/lbfv_aggregation_state_v1.bincode");
     const SCHEMA_TWO_AGGREGATION_STATE: &[u8] =
         include_bytes!("fixtures/lbfv_aggregation_state_v2.bincode");
+    /// Secure-16384 had five CRT moduli when the schema-one and schema-two fixtures were recorded.
+    const LEGACY_ROW_COUNT: usize = 5;
 
     #[derive(Serialize)]
     struct LegacyLbfvAggregationStateV1 {
@@ -841,10 +844,10 @@ mod aggregation_tests {
             accepted_party_ids: state.accepted_party_ids,
             public_key_documents: state.public_key_documents,
             rlk_documents: state.rlk_documents,
-            public_key_aggregation_proofs: state.public_key_aggregation_proofs,
-            rlk_aggregation_proofs: vec![None; state.rlk_aggregation_proofs.len()],
-            public_key_aggregation_correlations: state.public_key_aggregation_correlations,
-            rlk_aggregation_correlations: vec![None; state.rlk_aggregation_correlations.len()],
+            public_key_aggregation_proofs: vec![None; LEGACY_ROW_COUNT],
+            rlk_aggregation_proofs: vec![None; LEGACY_ROW_COUNT],
+            public_key_aggregation_correlations: vec![None; LEGACY_ROW_COUNT],
+            rlk_aggregation_correlations: vec![None; LEGACY_ROW_COUNT],
             aggregation_fold_proof: state.aggregation_fold_proof,
             aggregation_fold_correlation: state.aggregation_fold_correlation,
             aggregation_fold_completed_rows: state.aggregation_fold_completed_rows,
@@ -864,10 +867,10 @@ mod aggregation_tests {
             accepted_party_ids: state.accepted_party_ids,
             public_key_documents: state.public_key_documents,
             rlk_documents: state.rlk_documents,
-            public_key_aggregation_proofs: state.public_key_aggregation_proofs,
-            rlk_aggregation_proofs: vec![None; state.rlk_aggregation_proofs.len()],
-            public_key_aggregation_correlations: state.public_key_aggregation_correlations,
-            rlk_aggregation_correlations: vec![None; state.rlk_aggregation_correlations.len()],
+            public_key_aggregation_proofs: vec![None; LEGACY_ROW_COUNT],
+            rlk_aggregation_proofs: vec![None; LEGACY_ROW_COUNT],
+            public_key_aggregation_correlations: vec![None; LEGACY_ROW_COUNT],
+            rlk_aggregation_correlations: vec![None; LEGACY_ROW_COUNT],
             aggregation_fold_proof: state.aggregation_fold_proof,
             aggregation_fold_correlation: state.aggregation_fold_correlation,
             aggregation_fold_completed_rows: state.aggregation_fold_completed_rows,

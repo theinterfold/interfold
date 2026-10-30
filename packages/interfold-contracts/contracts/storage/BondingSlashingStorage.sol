@@ -6,6 +6,10 @@
 
 pragma solidity 0.8.28;
 
+import {
+    EnumerableSet
+} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+
 struct SlashingManagerObligations {
     uint256 e3Assignments;
     uint256 openSlashLocks;
@@ -37,5 +41,9 @@ abstract contract BondingSlashingStorage {
         mapping(uint256 e3Id => uint256 count) committeeMemberCounts;
         mapping(address operator => uint256 count) unresolvedCommittees;
         uint256 unresolvedCommitteeCount;
+        /// @dev E3s whose committee holds collateral, for the obligation views. It omits the
+        ///      committees that were requested before this member existed, so its length is at
+        ///      most `unresolvedCommitteeCount`.
+        EnumerableSet.UintSet unresolvedCommitteeIds;
     }
 }

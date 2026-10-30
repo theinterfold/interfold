@@ -8,6 +8,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import { CIRCUIT_DIMENSIONS } from "../bfv.js";
 import {
   type ActiveBfvConfig,
   type BfvCommittee,
@@ -19,13 +20,12 @@ import {
   bfvDkgCommitteeHashIndices,
   bfvPkV2PublicInputLayout,
   committeeHashFromLimbs,
-  getBfvDecryptionSubCircuitVkHashPaths,
   getBfvPkSubCircuitVkHashPaths,
   getBfvPkVkBindingHashPaths,
   getBfvV2SubCircuitVkHashPaths,
   getBfvV2VkBindingHashPaths,
+  getBfvVkCommitments,
   getRepoRoot,
-  localBfvParamSet,
   readVkRecursiveHash,
 } from "./utils";
 
@@ -167,16 +167,11 @@ function readBenchmarkCommittee(foldedArtifact?: unknown): BfvCommittee {
 function resolveBenchmarkConfig(foldedArtifact?: unknown): ActiveBfvConfig {
   const preset = readBenchmarkPreset(foldedArtifact);
   const committee = readBenchmarkCommittee(foldedArtifact);
-  // The insecure artifacts serve parameter sets 0 (trBFV) and 4 (l-BFV); `BFV_PARAM_SET`
-  // chooses between them. Without it, the first match is the trBFV entry.
-  const paramSet = process.env.BFV_PARAM_SET?.trim()
-    ? localBfvParamSet()
-    : undefined;
+  // Each artifact pair has one on-chain parameter set: insecure-64 is trBFV (0), insecure is
+  // l-BFV (4).
   const config = TESTNET_BFV_CONFIGS.find(
     (candidate) =>
-      candidate.preset === preset &&
-      candidate.committee === committee &&
-      (paramSet === undefined || candidate.paramSet === paramSet),
+      candidate.preset === preset && candidate.committee === committee,
   );
   if (!config) {
     throw new Error(
@@ -338,16 +333,18 @@ function plaintextHashFromPublicInputs(
   publicInputs: string[],
   ethersLib: any,
 ): string {
-  const messageCoeffsCount = 50;
+  const messageCoeffsCount = CIRCUIT_DIMENSIONS.messageCoeffsCount;
   if (publicInputs.length < messageCoeffsCount) {
     throw new Error(`Not enough public inputs: ${publicInputs.length}`);
   }
   const offset = publicInputs.length - messageCoeffsCount;
-  const plaintext = new Uint8Array(messageCoeffsCount * 8);
+  const plaintext = new Uint8Array(CIRCUIT_DIMENSIONS.plaintextByteLen);
   for (let i = 0; i < messageCoeffsCount; i++) {
     const coeff = BigInt(publicInputs[offset + i]);
-    for (let j = 0; j < 8; j++) {
-      plaintext[i * 8 + j] = Number((coeff >> BigInt(j * 8)) & 0xffn);
+    for (let j = 0; j < CIRCUIT_DIMENSIONS.messageCoeffByteLen; j++) {
+      plaintext[i * CIRCUIT_DIMENSIONS.messageCoeffByteLen + j] = Number(
+        (coeff >> BigInt(j * 8)) & 0xffn,
+      );
     }
   }
   return ethersLib.keccak256(plaintext);
@@ -436,17 +433,16 @@ async function main() {
   const lbfvRows = benchmarkConfig.preset === "secure-16384" ? 6 : 3;
   const v2Layout = bfvPkV2PublicInputLayout(benchmarkConfig.h, lbfvRows);
   const useV2Dkg = dkgPublicInputs.length === v2Layout.length;
-  const expectedNodesFoldKeyHash = readVkRecursiveHash(
-    useV2Dkg
-      ? getBfvV2SubCircuitVkHashPaths(benchmarkConfig).nodesFold
-      : getBfvPkSubCircuitVkHashPaths(benchmarkConfig).nodesFold,
-    benchmarkConfig,
-  );
+  const commitments = getBfvVkCommitments(benchmarkConfig);
+  const expectedNodesFoldKeyHash = useV2Dkg
+    ? readVkRecursiveHash(
+        getBfvV2SubCircuitVkHashPaths(benchmarkConfig).nodesFold,
+        benchmarkConfig,
+      )
+    : commitments.nodesFold!;
   const pkPaths = getBfvPkSubCircuitVkHashPaths(benchmarkConfig);
   // C5 exists only on the trBFV path; the l-BFV route pins the C2 chunks and VK bindings.
-  const expectedC5KeyHash = useV2Dkg
-    ? undefined
-    : readVkRecursiveHash(pkPaths.c5, benchmarkConfig);
+  const expectedC5KeyHash = useV2Dkg ? undefined : commitments.c5;
   const expectedSkC2ChunkKeyHash = useV2Dkg
     ? readVkRecursiveHash(pkPaths.skC2Chunk, benchmarkConfig)
     : undefined;
@@ -463,14 +459,7 @@ async function main() {
         readVkRecursiveHash(filePath, benchmarkConfig),
       )
     : [];
-  const expectedC6FoldKeyHash = readVkRecursiveHash(
-    getBfvDecryptionSubCircuitVkHashPaths(benchmarkConfig).c6Fold,
-    benchmarkConfig,
-  );
-  const expectedC7KeyHash = readVkRecursiveHash(
-    getBfvDecryptionSubCircuitVkHashPaths(benchmarkConfig).c7,
-    benchmarkConfig,
-  );
+  const { c6Fold: expectedC6FoldKeyHash, c7: expectedC7KeyHash } = commitments;
 
   if (
     dkgPublicInputs[0] !== expectedNodesFoldKeyHash ||

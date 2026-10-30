@@ -138,6 +138,22 @@
       "inputs": [
         {
           "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "index",
+          "type": "uint256"
+        }
+      ],
+      "name": "CommitteeObligationNotTracked",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
           "name": "manager",
           "type": "address"
         },
@@ -1338,6 +1354,35 @@
           "internalType": "address",
           "name": "operator",
           "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "index",
+          "type": "uint256"
+        }
+      ],
+      "name": "committeeObligationAt",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "registry",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
         }
       ],
       "name": "deregisterOperatorFor",
@@ -2405,6 +2450,25 @@
     {
       "inputs": [
         {
+          "internalType": "address",
+          "name": "operator",
+          "type": "address"
+        }
+      ],
+      "name": "unresolvedCommitteesOf",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "uint256",
           "name": "ticketAmount",
           "type": "uint256"
@@ -2427,5 +2491,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IBondingRegistry.sol",
-  "buildInfoId": "solc-0_8_28-7ef26390c6b1213fab9fa8d70c2a71040c84b192"
+  "buildInfoId": "solc-0_8_28-6a708d97fe6512dcabaf521d0e1df4c26b6796ff"
 }

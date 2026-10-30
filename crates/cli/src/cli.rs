@@ -450,6 +450,12 @@ pub enum RemoteCommand {
         chain: ChainArgs,
         operator: Option<String>,
     },
+    /// `ciphernode status --no-committees`. A separate command, so that a node of an older version,
+    /// which would read the committees anyway, refuses it.
+    CiphernodeStatusWithoutCommittees {
+        chain: ChainArgs,
+        operator: Option<String>,
+    },
     NoirStatus,
     WalletGet,
     EventsQuery {
@@ -485,8 +491,17 @@ impl TryFrom<Commands> for RemoteCommand {
                 command: NoirCommands::Status,
             } => Ok(RemoteCommand::NoirStatus),
             Commands::Ciphernode {
-                command: CiphernodeCommands::Status { chain, operator },
-            } => Ok(RemoteCommand::CiphernodeStatus { chain, operator }),
+                command:
+                    CiphernodeCommands::Status {
+                        chain,
+                        operator,
+                        no_committees,
+                    },
+            } => Ok(if no_committees {
+                RemoteCommand::CiphernodeStatusWithoutCommittees { chain, operator }
+            } else {
+                RemoteCommand::CiphernodeStatus { chain, operator }
+            }),
             Commands::PrintEnv { chain, vite } => Ok(RemoteCommand::PrintEnv { vite, chain }),
             Commands::Events {
                 command: EventsCommands::Query { agg, since, limit },
@@ -537,8 +552,21 @@ impl TryFrom<RemoteCommand> for Commands {
             },
             RemoteCommand::PrintEnv { vite, chain } => Commands::PrintEnv { vite, chain },
             RemoteCommand::CiphernodeStatus { chain, operator } => Commands::Ciphernode {
-                command: CiphernodeCommands::Status { chain, operator },
+                command: CiphernodeCommands::Status {
+                    chain,
+                    operator,
+                    no_committees: false,
+                },
             },
+            RemoteCommand::CiphernodeStatusWithoutCommittees { chain, operator } => {
+                Commands::Ciphernode {
+                    command: CiphernodeCommands::Status {
+                        chain,
+                        operator,
+                        no_committees: true,
+                    },
+                }
+            }
             RemoteCommand::NoirStatus => Commands::Noir {
                 command: NoirCommands::Status,
             },
@@ -648,6 +676,41 @@ mod tests {
                 command: ConfigCommands::Get { param: Some(param) },
             } if param == "key_file"
         ));
+        Ok(())
+    }
+
+    /// A running node executes `ciphernode status` for clients of each version. A node of v0.19.0
+    /// knows no `--no-committees`, and it refuses the command instead of reading the committees.
+    #[test]
+    fn status_without_committees_is_refused_by_older_nodes() -> Result<()> {
+        /// The status command of v0.19.0 nodes.
+        #[derive(Deserialize)]
+        #[allow(dead_code)]
+        enum ReleasedCommand {
+            CiphernodeStatus {
+                chain: ChainArgs,
+                operator: Option<String>,
+            },
+        }
+        let request = |args: &[&str]| -> Result<serde_json::Value> {
+            let cli = Cli::parse_from([&["interfold", "ciphernode", "status"], args].concat());
+            Ok(serde_json::to_value(RemoteCli::try_from(cli)?)?["command"].take())
+        };
+
+        let listing = request(&[])?;
+        assert!(serde_json::from_value::<ReleasedCommand>(listing.clone()).is_ok());
+        let skipping = request(&["--no-committees"])?;
+        assert!(serde_json::from_value::<ReleasedCommand>(skipping.clone()).is_err());
+
+        for (command, expected) in [(listing, false), (skipping, true)] {
+            let command = Commands::try_from(serde_json::from_value::<RemoteCommand>(command)?)?;
+            assert!(matches!(
+                command,
+                Commands::Ciphernode {
+                    command: CiphernodeCommands::Status { no_committees, .. },
+                } if no_committees == expected
+            ));
+        }
         Ok(())
     }
 

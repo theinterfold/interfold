@@ -1,7 +1,8 @@
 # e3-multithread
 
-TaskPool and ComputeEffectGate own resource admission and replay-safe worker dispatch, not protocol
-validity. Preserve shared capacity for ZK/TrBFV work rather than spawning around its semaphore.
+`e3-task-pool` owns resource admission; ComputeEffectGate owns replay-safe worker dispatch, not
+protocol validity. Preserve shared capacity for ZK/TrBFV work rather than spawning around its
+semaphore.
 
 - Correlate a result with its exact E3/request. Replayed success may satisfy regenerated
   correlations; replayed errors must not suppress recovery. Successful random TrBFV output is

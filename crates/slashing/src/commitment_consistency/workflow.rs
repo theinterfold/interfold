@@ -21,13 +21,14 @@
 //! [`crate::actors::commitment_consistency_checker`] drives it and publishes
 //! whatever it returns.
 
+use crate::{CommitmentLink, LinkScope};
 use alloy::primitives::Address;
 use alloy::sol_types::SolValue;
 use anyhow::ensure;
 use e3_events::{
     CommitmentConsistencyCheckComplete, CommitmentConsistencyCheckRequested,
-    CommitmentConsistencyViolation, CommitmentLink, CommitmentRosterSelected, E3id, LinkScope,
-    ProofIdentity, ProofType, ProofVerificationPassed,
+    CommitmentConsistencyViolation, CommitmentRosterSelected, E3id, ProofIdentity, ProofType,
+    ProofVerificationPassed,
 };
 use e3_utils::utility_types::ArcBytes;
 use serde::{Deserialize, Serialize};

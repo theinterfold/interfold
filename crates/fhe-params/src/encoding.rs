@@ -17,7 +17,9 @@ use thiserror::Error as ThisError;
 #[cfg(feature = "abi-encoding")]
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 #[cfg(feature = "abi-encoding")]
-use alloy_primitives::U256;
+use alloy_primitives::{keccak256, B256, U256};
+
+use crate::constants::{BFV_ENCRYPTION_SCHEME, INTERFOLD_BFV_VERSION};
 
 #[derive(ThisError, Debug)]
 pub enum EncodingError {
@@ -58,6 +60,34 @@ pub fn encode_bfv_params(params: &BfvParameters) -> Vec<u8> {
         DynSolValue::String(params.get_error1_variance().to_string()),
     ]);
     value.abi_encode()
+}
+
+/// Hash the exact ABI parameter bytes, including their tuple framing.
+pub fn bfv_parameter_hash(encoded_params: &[u8]) -> B256 {
+    keccak256(encoded_params)
+}
+
+/// Return the on-chain BFV encryption scheme identifier.
+pub fn bfv_encryption_scheme_id() -> B256 {
+    keccak256(BFV_ENCRYPTION_SCHEME.as_bytes())
+}
+
+/// Derive a configuration identity without decoding or normalizing registry bytes.
+///
+/// The version is explicit so historical indexers can verify their frozen domain.
+/// This function does not decide whether a configuration is supported.
+pub fn bfv_crypto_config_id(encoded_params: &[u8], circuit_version: &str) -> B256 {
+    let value = DynSolValue::Tuple(vec![
+        DynSolValue::FixedBytes(bfv_encryption_scheme_id(), 32),
+        DynSolValue::FixedBytes(bfv_parameter_hash(encoded_params), 32),
+        DynSolValue::FixedBytes(keccak256(circuit_version.as_bytes()), 32),
+    ]);
+    keccak256(value.abi_encode())
+}
+
+/// Derive a configuration identity using the current circuit statement domain.
+pub fn current_bfv_crypto_config_id(encoded_params: &[u8]) -> B256 {
+    bfv_crypto_config_id(encoded_params, INTERFOLD_BFV_VERSION)
 }
 
 /// Decodes BFV parameters from ABI-encoded bytes.
@@ -157,11 +187,10 @@ pub fn decode_bfv_params_arc(bytes: &[u8]) -> Result<Arc<BfvParameters>, Encodin
 
 /// The circuit identity in every current BFV configuration ID.
 ///
-/// It must equal `CIRCUIT_VERSION` in `ActiveCryptoConfig.sol` and `scripts/build-circuits.ts`.
-/// Every crate derives configuration IDs through [`crypto_config_id`], so a version bump changes
-/// one place.
+/// It is [`INTERFOLD_BFV_VERSION`], which `BfvProtocol.sol` and the TypeScript bindings are
+/// generated from.
 #[cfg(feature = "abi-encoding")]
-pub const CIRCUIT_VERSION_LABEL: &[u8] = b"interfold-bfv-v5";
+pub const CIRCUIT_VERSION_LABEL: &[u8] = INTERFOLD_BFV_VERSION.as_bytes();
 
 /// The on-chain configuration ID for ABI-encoded BFV parameters under the current circuit identity.
 ///
@@ -184,7 +213,7 @@ pub fn crypto_config_id_with_label(
     use alloy_primitives::keccak256;
     // `abi.encode` of three `bytes32` values is their 96-byte concatenation.
     let mut preimage = [0u8; 96];
-    preimage[..32].copy_from_slice(keccak256(b"fhe.rs:BFV").as_slice());
+    preimage[..32].copy_from_slice(bfv_encryption_scheme_id().as_slice());
     preimage[32..64].copy_from_slice(keccak256(encoded_params).as_slice());
     preimage[64..].copy_from_slice(keccak256(circuit_version_label).as_slice());
     keccak256(preimage)
@@ -193,40 +222,31 @@ pub fn crypto_config_id_with_label(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::{insecure, secure_8192};
+    use crate::constants::insecure;
     use crate::presets::BfvPreset;
     use std::str::FromStr;
 
-    /// The configuration IDs pinned in `ActiveCryptoConfig.sol`.
+    /// Each on-chain index selects the preset whose configuration ID the independent protocol
+    /// fixture pins for that index.
     #[cfg(feature = "abi-encoding")]
     #[test]
-    fn crypto_config_ids_match_active_crypto_config() {
+    fn on_chain_parameter_sets_match_the_protocol_fixture() {
         use crate::presets::BfvParamSet;
-        use alloy_primitives::B256;
 
-        for (param_set, expected) in [
-            (
-                0,
-                "0x968e91054be28b2b577ac278284e03274ed46bd5c5064e573290312a2323d495",
-            ),
-            (
-                2,
-                "0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa",
-            ),
-            (
-                3,
-                "0xc5ea726de917fa7f1272eecbbe9f373b3d95a668d102c71c9fb38a2749330ecf",
-            ),
-            (
-                4,
-                "0x968e91054be28b2b577ac278284e03274ed46bd5c5064e573290312a2323d495",
-            ),
-        ] {
-            let preset = BfvPreset::from_on_chain_param_set(param_set).unwrap();
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/bfv_protocol.json")).unwrap();
+        for (param_set, preset) in BfvPreset::ON_CHAIN_PARAMETER_SETS {
+            let vector = fixture["vectors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|vector| vector["paramSet"] == param_set && vector["preset"].is_string())
+                .unwrap_or_else(|| panic!("no current vector for parameter set {param_set}"));
+            assert_eq!(vector["preset"], preset.name());
             let params = encode_bfv_params(&BfvParamSet::from(preset).build_arc());
             assert_eq!(
-                crypto_config_id(&params),
-                expected.parse::<B256>().unwrap(),
+                crypto_config_id(&params).to_string(),
+                vector["cryptoConfigId"].as_str().unwrap(),
                 "parameter set {param_set}"
             );
         }

@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::constants::{insecure, secure_16384, secure_8192};
+use crate::constants::{insecure, insecure_64, secure_16384, secure_8192};
 use crate::presets::{BfvParamSet, BfvPreset, PresetError};
 use fhe::bfv::{BfvParameters, BfvParametersBuilder};
 use std::sync::Arc;
@@ -13,6 +13,26 @@ pub fn build_pair_for_preset(
     preset: BfvPreset,
 ) -> Result<(Arc<BfvParameters>, Arc<BfvParameters>), PresetError> {
     match preset {
+        BfvPreset::InsecureThreshold64 => {
+            let params_threshold = BfvParametersBuilder::new()
+                .set_degree(insecure_64::DEGREE)
+                .set_plaintext_modulus(insecure_64::threshold::PLAINTEXT_MODULUS)
+                .set_moduli(insecure_64::threshold::MODULI)
+                .set_error1_variance_str(insecure_64::threshold::ERROR1_VARIANCE)
+                .unwrap()
+                .build_arc()
+                .unwrap();
+
+            let params_dkg = BfvParametersBuilder::new()
+                .set_degree(insecure_64::DEGREE)
+                .set_plaintext_modulus(insecure_64::dkg::PLAINTEXT_MODULUS)
+                .set_moduli(insecure_64::dkg::MODULI)
+                .set_variance(insecure_64::dkg::VARIANCE as usize)
+                .build_arc()
+                .unwrap();
+
+            Ok((params_threshold, params_dkg))
+        }
         BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => {
             let params_threshold = BfvParametersBuilder::new()
                 .set_degree(insecure::DEGREE)

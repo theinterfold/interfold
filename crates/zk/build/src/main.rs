@@ -9,7 +9,7 @@ use e3_zk_build::{CommitteeSelection, Group, GroupSelection, Operation, PresetSe
 #[derive(Parser)]
 #[command(about = "Build circuit artifacts or check generated configuration.")]
 struct Cli {
-    /// Operation: build, hash, sync-config, sync-preset, or check.
+    /// Build, check, or synchronize circuit configuration and artifacts.
     #[arg(default_value = "build")]
     command: Operation,
     /// BFV artifact preset, or all.
@@ -105,6 +105,30 @@ mod tests {
         let request = parse(&["sync-preset", "--preset", "all"]).unwrap();
         assert_eq!(request.operation, Operation::SyncPreset);
         assert_eq!(request.preset, PresetSelection::All);
+        assert_eq!(
+            parse(&["export-config"]).unwrap().operation,
+            Operation::ExportConfig
+        );
+        assert_eq!(
+            parse(&["sync-bindings"]).unwrap().operation,
+            Operation::SyncBindings
+        );
+        assert_eq!(
+            parse(&["check-bindings"]).unwrap().operation,
+            Operation::CheckBindings
+        );
+        assert_eq!(
+            parse(&["check-layouts"]).unwrap().operation,
+            Operation::CheckLayouts
+        );
+        for (command, operation) in [
+            ("sync-vk-commitments", Operation::SyncVkCommitments),
+            ("prepare-vk-commitments", Operation::PrepareVkCommitments),
+            ("check-vk-commitments", Operation::CheckVkCommitments),
+            ("qualify-vk-commitments", Operation::QualifyVkCommitments),
+        ] {
+            assert_eq!(parse(&[command]).unwrap().operation, operation);
+        }
         let request = parse(&[
             "build",
             "--committee",

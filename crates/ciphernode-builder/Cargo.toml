@@ -11,12 +11,14 @@ test-helpers = []
 test-only-skip-proof-aggregation = []
 
 [dependencies]
+e3-task-pool.workspace = true
 actix.workspace = true
 alloy.workspace = true
 anyhow.workspace = true
 derivative.workspace = true
 futures.workspace = true
 e3-aggregator.workspace = true
+e3-committee.workspace = true
 e3-crypto.workspace = true
 e3-config.workspace = true
 e3-data.workspace = true
@@ -42,5 +44,5 @@ tracing.workspace = true
 async-trait.workspace = true
 bincode.workspace = true
 e3-fhe-params.workspace = true
-e3-test-helpers.workspace = true
+e3-test-support.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

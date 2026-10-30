@@ -43,6 +43,8 @@ function copyArtifactsInto(target: string): void {
       cpSync(localPair, remotePair, { recursive: true })
     }
   }
+  const commitments = join(DIST, 'vk-commitments.json')
+  if (existsSync(commitments)) cpSync(commitments, join(target, 'vk-commitments.json'))
 }
 
 function artifactFiles(dir: string, base = dir): string[] {

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-use super::{configuration, github_output, identity, preset, run, vk_tree, write_json, Request};
+use super::{
+    configuration, github_output, identity, preset, run, vk_commitments, vk_tree, write_json,
+    Request,
+};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -329,16 +332,53 @@ fn compiled_path(root: &Path, circuit: &Circuit) -> Result<PathBuf> {
 }
 
 fn sanitize_paths(path: &Path) -> Result<()> {
-    let text = fs::read_to_string(path)?;
-    let text = regex::Regex::new(r#""path"\s*:\s*"[^"]*[/\\](interfold[/\\]circuits[/\\][^"]+)""#)?
-        .replace_all(&text, "\"path\":\"$1\"")
-        .into_owned();
-    let text = regex::Regex::new(
-        r#""path"\s*:\s*"(?:/[^"]*|[A-Za-z]:\\[^"]*)[/\\](circuits[/\\][^"]+)""#,
-    )?
-    .replace_all(&text, "\"path\":\"interfold/$1\"")
-    .into_owned();
-    fs::write(path, text)?;
+    #[derive(Deserialize)]
+    struct Compiled<'a> {
+        #[serde(borrow)]
+        file_map: BTreeMap<String, SourceFile<'a>>,
+    }
+    #[derive(Deserialize)]
+    struct SourceFile<'a> {
+        #[serde(borrow)]
+        path: &'a serde_json::value::RawValue,
+    }
+    let original = fs::read_to_string(path)?;
+    let compiled: Compiled<'_> = serde_json::from_str(&original)?;
+    let mut replacements = Vec::new();
+    for file in compiled.file_map.values() {
+        let decoded: String = serde_json::from_str(file.path.get())?;
+        let source = decoded.replace('\\', "/");
+        // Repository paths can themselves live under ghq/Go's github.com hierarchy.
+        let canonical = if let Some((_, suffix)) = source.rsplit_once("/circuits/") {
+            format!("interfold/circuits/{suffix}")
+        } else if let Some((_, suffix)) = source.split_once("/github.com/") {
+            format!("nargo/github.com/{suffix}")
+        } else {
+            anyhow::ensure!(
+                !source.starts_with('/') && source.as_bytes().get(1) != Some(&b':'),
+                "Unrecognized absolute compiler source path: {source}"
+            );
+            source
+        };
+        if canonical != decoded {
+            // RawValue borrows the original token, so replace only that range, not compiler JSON
+            // key order, whitespace, ABI, bytecode, or source text containing similar paths.
+            let start = file.path.get().as_ptr() as usize - original.as_ptr() as usize;
+            replacements.push((
+                start,
+                file.path.get().len(),
+                serde_json::to_string(&canonical)?,
+            ));
+        }
+    }
+    if !replacements.is_empty() {
+        replacements.sort_unstable_by_key(|(start, _, _)| std::cmp::Reverse(*start));
+        let mut normalized = original.clone();
+        for (start, length, replacement) in replacements {
+            normalized.replace_range(start..start + length, &replacement);
+        }
+        fs::write(path, normalized)?;
+    }
     Ok(())
 }
 
@@ -446,6 +486,7 @@ fn recursive_vk_json(target: &Path, package: &str) -> Result<()> {
 }
 
 pub fn refresh_anchors(root: &Path, pair: &Path, complete: bool) -> Result<()> {
+    vk_commitments::invalidate(pair)?;
     for name in ["nodes_fold", "c6_fold"] {
         for path in [
             pair.join("default/recursive_aggregation")
@@ -569,6 +610,7 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
         let preset_name = selected[0].as_str();
         let committee = selected[1].as_str();
         let pair = output.join(preset_name).join(committee);
+        let mut started = false;
         let result = (|| -> Result<()> {
             let circuits: Vec<_> = circuits
                 .iter()
@@ -617,6 +659,8 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
             // The compilation ahead runs nargo, and bb unless VK generation is skipped. Probe the
             // pinned versions before any destructive build step.
             identity::check_tools(root, true, !request.skip_vk)?;
+            started = true;
+            vk_commitments::invalidate(&pair)?;
             selection.publish()?;
             if !request.no_clean {
                 remove_dir(&pair)?;
@@ -649,13 +693,25 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
                 source_hash: hash.clone(),
                 built_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             };
+            // Partial builds leave the pair unstamped, so a later complete build cannot be skipped.
             if request.groups.is_complete() && request.circuits.is_empty() {
                 write_json(&pair.join(".build-stamp.json"), &stamp)?;
+                if complete {
+                    let manifest = vk_commitments::collect_pair(&output, preset_name, committee)?;
+                    vk_commitments::write_pair(&pair, &manifest)?;
+                }
                 active_stamp(root, preset_name, committee, &hash)?;
             }
             Ok(())
         })();
         if let Err(error) = result {
+            if started {
+                if let Err(cleanup) = refresh_anchors(root, &pair, false)
+                    .and_then(|_| vk_commitments::invalidate(&pair))
+                {
+                    errors.push(format!("{preset_name}/{committee}: failed to invalidate incomplete outputs: {cleanup:#}"));
+                }
+            }
             errors.push(format!("{preset_name}/{committee}: {error:#}"));
         }
     }
@@ -678,6 +734,73 @@ pub fn build(root: &Path, request: &Request) -> Result<()> {
 mod tests {
     use super::*;
     use e3_fhe_params::BfvPreset;
+
+    #[test]
+    fn compiled_artifact_paths_are_portable_idempotent_and_fail_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("compiled.json");
+        let artifact = |checkout: &str, cache: &str| {
+            serde_json::json!({
+                "bytecode": "unchanged", "abi": {"parameters": []},
+                "file_map": {
+                    "1": {"path": format!("{checkout}/circuits/bin/example/src/main.nr"), "source": "fn main() {}"},
+                    "2": {"path": format!("{cache}/github.com/AztecProtocol/aztec-packages/v5.2.0/barretenberg/noir/bb_proof_verification/src/lib.nr")},
+                    "3": {"path": "std/field/mod.nr"},
+                }
+            })
+        };
+        let mut outputs = Vec::new();
+        for (checkout, cache) in [
+            ("/Users/alice/worktree", "/Users/alice/nargo"),
+            ("/home/runner/work/project", "/home/runner/.nargo"),
+            ("C:\\worktree", "C:\\Users\\bob\\nargo"),
+            (
+                "/home/alice/ghq/github.com/theinterfold/interfold",
+                "/home/alice/.nargo",
+            ),
+            (
+                "/home/bob/go/src/github.com/theinterfold/interfold",
+                "/home/bob/.nargo",
+            ),
+        ] {
+            fs::write(
+                &path,
+                serde_json::to_vec(&artifact(checkout, cache)).unwrap(),
+            )
+            .unwrap();
+            sanitize_paths(&path).unwrap();
+            let bytes = fs::read(&path).unwrap();
+            sanitize_paths(&path).unwrap();
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+            outputs.push(bytes);
+        }
+        assert!(outputs.windows(2).all(|pair| pair[0] == pair[1]));
+        let mut unknown = artifact("/worktree", "/cache");
+        unknown["file_map"]["3"]["path"] = "/unknown/private/library.nr".into();
+        let original = serde_json::to_vec(&unknown).unwrap();
+        fs::write(&path, &original).unwrap();
+        assert!(sanitize_paths(&path)
+            .unwrap_err()
+            .to_string()
+            .contains("Unrecognized absolute"));
+        assert_eq!(fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn path_sanitization_preserves_compiler_json_bytes_except_source_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("compiled.json");
+        let original = "{\n  \"z\": 1, \"file_map\": {\"1\": {\"source\": \"fn main() {}\", \"path\": \"/checkout/circuits/lib/src/lib.nr\"}},\n  \"abi\": {\"z\": 2, \"a\": 1}\n}\n";
+        fs::write(&path, original).unwrap();
+        sanitize_paths(&path).unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            original.replace("/checkout/circuits/", "interfold/circuits/")
+        );
+        let modified = fs::metadata(&path).unwrap().modified().unwrap();
+        sanitize_paths(&path).unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
+    }
 
     fn request() -> Request {
         Request {
@@ -843,6 +966,17 @@ mod tests {
             2,
             "duplicate groups compiled twice"
         );
+        let before = crate::tests::snapshot(root);
+        vk_commitments::qualify(root, &partial).unwrap();
+        assert_eq!(crate::tests::snapshot(root), before);
+        let key = pair.join("evm/dkg/pk/pk.vk");
+        let original_key = fs::read(&key).unwrap();
+        fs::write(&key, "stale key").unwrap();
+        assert!(vk_commitments::qualify(root, &partial)
+            .unwrap_err()
+            .to_string()
+            .contains("VK bytes differ"));
+        fs::write(&key, original_key).unwrap();
         for circuit in discover(root, &request()).unwrap() {
             let target = target_dir(root, &circuit).unwrap();
             for (variant, _, extension) in variants(&circuit) {

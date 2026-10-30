@@ -6,7 +6,7 @@
 //
 // It calls the SDK's provers directly, so it does not depend on the SDK's default preset or on the
 // published package entry points. Proving uses the same circuits, prover code and bb.js as the SDK.
-import { Barretenberg, UltraHonkBackend } from '@aztec/bb.js'
+import { Barretenberg, UltraHonkBackend } from '@aztec-foundation/bb.js'
 import { Noir } from '@noir-lang/noir_js'
 import { describe, it } from 'vitest'
 import { createPublicClient, http, zeroAddress } from 'viem'

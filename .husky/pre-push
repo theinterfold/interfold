@@ -7,16 +7,15 @@
 pnpm lint
 pnpm check:pnpm
 pnpm check:license
-pnpm check:committee
+pnpm check:crypto-config
 pnpm check:addresses
 pnpm check:repository
 pnpm check:links
 
-# The verifier check compares the generated insecure/minimum on-chain verifiers with the built
-# circuits. Run it only when a pushed branch changes a path in .github/filters/circuits.yml. CI reads
-# the same file to start its verifier check. The check reads the checked-out tree, so the helper
-# stops the push (exit 2) of a branch that differs from HEAD in those paths. husky runs this hook
-# with `sh -e`, so `||` keeps the helper's exit status.
+# The existing verifier check recompiles the selected aggregators. Exhaustive matrix qualification
+# is explicit release/review work, not a pre-push prerequisite. The check reads
+# the checked-out tree, so the helper stops the push (exit 2) of a branch that differs from HEAD in
+# those paths. husky runs this hook with `sh -e`, so `||` keeps the helper's exit status.
 status=0
 printf '%s\n' "${pushed_refs:-}" | scripts/hooks/pushed-paths-match.sh .github/filters/circuits.yml || status=$?
 case "$status" in

@@ -8,10 +8,10 @@ repository.workspace = true
 
 [dependencies]
 e3-committee = { workspace = true }
+e3-evm-contracts.workspace = true
 actix = { workspace = true }
 alloy = { workspace = true }
 alloy-primitives = { workspace = true }
-alloy-sol-types = { workspace = true }
 anyhow = { workspace = true }
 bincode = { workspace = true }
 bs58 = { workspace = true }
@@ -19,7 +19,6 @@ chrono = { workspace = true }
 derivative = { workspace = true }
 futures-util = { workspace = true }
 hex = { workspace = true }
-once_cell = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
 sha2 = { workspace = true }
@@ -36,12 +35,11 @@ e3-zk-config = { workspace = true }
 e3-zk-witness = { workspace = true }
 
 [features]
-test-helpers = [] # ensure test-helpers is available for integration tests
+test-helpers = [] # opt-in event constructors for consumer tests
 
 [dev-dependencies]
 e3-zk-samples = { workspace = true }
+serde_json.workspace = true
 proptest = { workspace = true }
 e3-events = { workspace = true, features = ["test-helpers"] }
-e3-data = { workspace = true }
-e3-test-helpers = { workspace = true }
-e3-event-system = { workspace = true }
+e3-test-support = { workspace = true }

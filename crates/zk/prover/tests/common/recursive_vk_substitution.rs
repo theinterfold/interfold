@@ -8,11 +8,12 @@ use std::{fs, path::Path, process::Command};
 
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
-use e3_events::{CircuitName, Proof};
+use e3_events::Proof;
+use e3_zk_config::{CircuitName, CircuitVariant};
 use e3_zk_prover::test_utils::{
     fold_witness_field_strings, fold_witness_input_map, get_tempdir, load_vk_artifacts,
 };
-use e3_zk_prover::{CircuitVariant, CompiledCircuit, WitnessGenerator, ZkError, ZkProver};
+use e3_zk_prover::{CompiledCircuit, WitnessGenerator, ZkError, ZkProver};
 use serde_json::{json, Value};
 
 pub struct SubstituteProof {
@@ -44,6 +45,7 @@ pub fn witness(path: &Path, input: &Value) -> Result<Vec<u8>, ZkError> {
 }
 
 /// Recursive opcodes defer verification to Barretenberg, so witness success is not proof acceptance.
+/// bb rejects an unsatisfied recursive statement while proving or, failing that, in `verify`.
 pub fn assert_fold_rejected(
     prover: &ZkProver,
     circuit: CircuitName,
@@ -57,9 +59,16 @@ pub fn assert_fold_rejected(
         Err(ZkError::WitnessGenerationFailed(_)) => return,
         Err(error) => panic!("{case}: unexpected witness error: {error}"),
     };
-    let proof = prover
-        .generate_recursive_aggregation_bin_proof(circuit, &witness, case, artifacts_dir)
-        .unwrap_or_else(|error| panic!("{case}: proof process failed: {error}"));
+    let proof = match prover.generate_recursive_aggregation_bin_proof(
+        circuit,
+        &witness,
+        case,
+        artifacts_dir,
+    ) {
+        Ok(proof) => proof,
+        Err(ZkError::ProofRejected(_)) => return,
+        Err(error) => panic!("{case}: proof process failed: {error}"),
+    };
     assert!(
         !prover
             .verify_fold_proof(&proof, case, 0, artifacts_dir)

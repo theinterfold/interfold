@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { ethers as ethersLib } from "ethers";
 
+import { BFV_PRESETS } from "../../bfv.js";
+
 export const ZERO = ethersLib.ZeroAddress;
 export const ADDRESS_ONE = "0x0000000000000000000000000000000000000001";
-export const LEGACY_MAINNET_SECURE_PARAM_SET_HASH =
-  "0xd7068fdcc1910f5e49c8b05530cf74f876cadee2a1caf797a40b1ae53ae143ec";
 
 export const abi = ethersLib.AbiCoder.defaultAbiCoder();
 
@@ -14,29 +14,10 @@ export const proxyAdminInterface = new ethersLib.Interface([
 ]);
 
 export const BFV_PARAMS = {
-  insecure: {
-    degree: 128n,
-    plaintextModulus: 100n,
-    moduli: [0x00ffffffffffc601n, 0x00ffffffffffc301n, 0x00ffffffffffa501n],
-    error1Variance: "50471587840",
-  },
-  secure8192: {
-    degree: 8192n,
-    plaintextModulus: 17000000n,
-    moduli: [0x0800000000db4001n, 0x0800000000d54001n, 0x0800000000cbc001n],
-    error1Variance: "17723039943798878305460955570711717478400",
-  },
-  secure16384: {
-    degree: 16384n,
-    plaintextModulus: 65537n,
-    moduli: [
-      0x0010000000960001n,
-      0x00100000007e0001n,
-      0x00100000006f0001n,
-      0x00100000006e0001n,
-      0x0010000000650001n,
-      0x0010000000500001n,
-    ],
-    error1Variance: "63980174197113950682436579834827252258133",
-  },
+  // Parameter set 0: insecure trBFV at degree 64.
+  insecure64: BFV_PRESETS["insecure-64"].threshold,
+  // Parameter set 4: insecure l-BFV at degree 128.
+  insecure: BFV_PRESETS["insecure"].threshold,
+  secure8192: BFV_PRESETS["secure-8192"].threshold,
+  secure16384: BFV_PRESETS["secure-16384"].threshold,
 } as const;

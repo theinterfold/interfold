@@ -78,7 +78,7 @@ pub trait EventFactory<E: Event> {
 }
 
 /// An ErrorFactory creates errors.
-pub trait ErrorFactory<E: ErrorEvent> {
+pub(crate) trait ErrorFactory<E: ErrorEvent> {
     /// Create an error event from the given error.
     fn event_from_error(
         &self,
@@ -165,10 +165,6 @@ pub trait EventConstructorWithTimestamp: Event + Sized {
         source: EventSource,
     ) -> Self;
 }
-
-pub trait CompositeEvent: EventConstructorWithTimestamp {}
-
-impl<E> CompositeEvent for E where E: Sized + Event + EventConstructorWithTimestamp {}
 
 /// SequenceIndex is the index for each sequence which we can lookup based on HLC timestamp
 pub trait SequenceIndex: Unpin + 'static {

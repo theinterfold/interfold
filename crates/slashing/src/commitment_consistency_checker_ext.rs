@@ -14,12 +14,13 @@
 use crate::actors::commitment_consistency_checker::CommitmentConsistencyChecker;
 use crate::domain::commitment_consistency::CommitmentConsistencySnapshot;
 use crate::repo::CommitmentConsistencyRepositoryFactory;
+use crate::CommitmentLink;
 use actix::Actor;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use e3_committee::CiphernodesCommitteeSize;
 use e3_data::{DataStore, RepositoriesFactory};
-use e3_events::{BusHandle, CommitmentLink, Event, InterfoldEvent, InterfoldEventData};
+use e3_events::{BusHandle, Event, InterfoldEvent, InterfoldEventData};
 use e3_fhe_params::BfvPreset;
 use e3_request::{E3Context, E3ContextSnapshot, E3Extension, META_KEY};
 use tracing::{error, info};

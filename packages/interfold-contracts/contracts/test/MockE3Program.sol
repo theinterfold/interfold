@@ -6,6 +6,7 @@
 pragma solidity 0.8.28;
 
 import { IE3Program } from "../interfaces/IE3Program.sol";
+import { BfvProtocol } from "../lib/BfvProtocol.sol";
 import {
     IDataAvailabilityVerifier,
     IE3ProgramDataAvailability
@@ -22,7 +23,8 @@ import {
 contract MockE3Program is IE3Program, IE3ProgramDataAvailability, IERC165 {
     error InvalidDataAvailabilityProof();
 
-    bytes32 public constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
+    bytes32 public constant ENCRYPTION_SCHEME_ID =
+        BfvProtocol.ENCRYPTION_SCHEME_ID;
 
     /// @notice Emitted when a caller publishes test input data.
     event InputPublished(

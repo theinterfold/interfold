@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import hre from "hardhat";
 
+import { BFV_ENCRYPTION_SCHEME_ID, BFV_PRESETS } from "../bfv.js";
 import { autoCleanForLocalhost } from "./cleanIgnitionState";
 import { configureLocalSlashingPolicies } from "./configureLocalSlashingPolicies";
 import { deployAndSaveBfvDecryptionVerifier } from "./deployAndSave/bfvDecryptionVerifier";
@@ -29,14 +30,13 @@ import { deployAndSavePoseidonT3 } from "./deployAndSave/poseidonT3";
 import { deployAndSaveSlashingManager } from "./deployAndSave/slashingManager";
 import { deployAndSaveAllVerifiers } from "./deployAndSave/verifiers";
 import { deployMocks } from "./deployMocks";
-import { BFV_PARAMS } from "./protocol/constants";
 import { currentNodeRelease } from "./protocol/nodeRelease";
 import { encodeBfvParams } from "./protocol/values";
 import {
   ACTIVE_BFV_COMMITTEE_N,
   ACTIVE_BFV_COMMITTEE_SIZE,
+  ACTIVE_BFV_PRESET,
   BFV_DKG_H,
-  INSECURE_LBFV_PARAM_SET,
   committeeThresholdsForChain,
   isLbfvParamSet,
   isLocalDeploymentChain,
@@ -89,10 +89,6 @@ export const deployInterfold = async (
   if (!latestBlock) {
     throw new Error("Could not read latest block for local TGE timestamp");
   }
-
-  const encodedInsecure = encodeBfvParams(BFV_PARAMS.insecure);
-  const encodedSecure = encodeBfvParams(BFV_PARAMS.secure8192);
-  const encodedSecure16384 = encodeBfvParams(BFV_PARAMS.secure16384);
 
   const THIRTY_DAYS_IN_SECONDS = 60 * 60 * 24 * 30;
   const SEVEN_DAYS_IN_SECONDS = 60 * 60 * 24 * 7;
@@ -579,20 +575,16 @@ export const deployInterfold = async (
   // Register BFV param sets
   console.log("Registering BFV param sets...");
   const activeParamSet = localBfvParamSet();
-  // Parameter sets 0 and 4 share the insecure parameters; 4 runs the l-BFV path.
-  const activeParams =
-    activeParamSet === 0 || activeParamSet === INSECURE_LBFV_PARAM_SET
-      ? encodedInsecure
-      : activeParamSet === 2
-        ? encodedSecure
-        : encodedSecure16384;
+  const activeParams = encodeBfvParams(
+    BFV_PRESETS[ACTIVE_BFV_PRESET].threshold,
+  );
   await send(
     interfold.setParamSet(activeParamSet, activeParams),
     "interfold.setParamSet",
   );
   console.log(`Active BFV parameter set ${activeParamSet} registered`);
 
-  const encryptionSchemeId = ethers.keccak256(ethers.toUtf8Bytes("fhe.rs:BFV"));
+  const encryptionSchemeId = BFV_ENCRYPTION_SCHEME_ID;
 
   // Set pricing config with protocol treasury
   const protocolTreasury = process.env.PROTOCOL_TREASURY || ownerAddress;

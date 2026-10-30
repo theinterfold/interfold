@@ -8,9 +8,9 @@ import {
   bfvDecExpectedPublicInputsLen,
   bfvPkExpectedPublicInputsLen,
   bfvPkV2PublicInputLayout,
-  getBfvDecryptionSubCircuitVkHashPaths,
-  getBfvPkSubCircuitVkHashPaths,
   getBfvV2SubCircuitVkHashPaths,
+  getBfvVkCommitments,
+  isLbfvParamSet,
   readVkRecursiveHash,
 } from "../utils";
 
@@ -113,8 +113,8 @@ export async function validateBfvRoutes(
 
     const pkRoute = await pkRouter.routeAt(index);
     const decryptionRoute = await decryptionRouter.routeAt(index);
-    // Secure-16384 runs the l-BFV path, which the V2 PK verifier and aggregator serve.
-    const isV2 = expected.preset === "secure-16384";
+    // Parameter sets 3 and 4 run the l-BFV path, which the V2 PK verifier and aggregator serve.
+    const isV2 = isLbfvParamSet(expected.paramSet);
     const expectedPkVerifier = isV2
       ? recorded.pkVerifierV2
       : recorded.pkVerifier;
@@ -129,9 +129,12 @@ export async function validateBfvRoutes(
     );
     equalValue(
       pkRoute[1],
-      // secure-16384 compiles six l-BFV rows, one per CRT modulus.
+      // secure-16384 compiles six l-BFV rows, one per CRT modulus; insecure compiles three.
       isV2
-        ? bfvPkV2PublicInputLayout(expected.h, 6).length
+        ? bfvPkV2PublicInputLayout(
+            expected.h,
+            expected.preset === "secure-16384" ? 6 : 3,
+          ).length
         : bfvPkExpectedPublicInputsLen(expected.h),
       `PK route ${index} public input count`,
     );
@@ -190,31 +193,32 @@ export async function validateBfvRoutes(
       installed.registry,
       `decryption route ${index} registry`,
     );
-    const pkPaths = getBfvPkSubCircuitVkHashPaths(expected);
-    const nodesFoldPath = isV2
-      ? getBfvV2SubCircuitVkHashPaths(expected).nodesFold
-      : pkPaths.nodesFold;
-    const decryptionPaths = getBfvDecryptionSubCircuitVkHashPaths(expected);
+    const commitments = getBfvVkCommitments(expected);
     equalValue(
       pkRoute[2],
-      readVkRecursiveHash(nodesFoldPath, expected),
+      isV2
+        ? readVkRecursiveHash(
+            getBfvV2SubCircuitVkHashPaths(expected).nodesFold,
+            expected,
+          )
+        : commitments.nodesFold,
       `PK route ${index} nodes-fold VK`,
     );
     if (!isV2) {
       equalValue(
         await pkVerifier.expectedC5KeyHash(),
-        readVkRecursiveHash(pkPaths.c5, expected),
+        commitments.c5,
         `PK route ${index} C5 VK`,
       );
     }
     equalValue(
       decryptionRoute[2],
-      readVkRecursiveHash(decryptionPaths.c6Fold, expected),
+      commitments.c6Fold,
       `decryption route ${index} C6-fold VK`,
     );
     equalValue(
       decryptionRoute[3],
-      readVkRecursiveHash(decryptionPaths.c7, expected),
+      commitments.c7,
       `decryption route ${index} C7 VK`,
     );
   }

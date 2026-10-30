@@ -63,7 +63,7 @@ fork). This compensates estimation timing, not a substitute for receipt validati
 
 ## v0.19 protocol/crypto cutover
 
-The current source declares protocol **8**, generation **2**, circuit domain `interfold-bfv-v5`. The
+The v0.19 source declared protocol **8**, generation **2**, circuit domain `interfold-bfv-v5`. The
 signed DKG layouts require storage schema 8, threshold-keyshare recovery schema 8, gossip major 5,
 sync major 4. ThresholdShareCreated/DecryptionKeyShared bundle signatures change log/recovery/DHT
 bytes; there is no unsigned-layout migration. Drain-and-resync, rebuild all six artifact pairs, and
@@ -109,6 +109,16 @@ During an ordered legacy CRISP server cutover, missing `earliestVotingStart()` c
 back to live protocol windows. Install/register new program and update server/DAO addresses before
 resume; old servers do not schedule the required separate voting start and cannot make valid new
 rounds.
+
+## Aztec v6 toolchain cutover
+
+The current source declares protocol **9**, generation **2**. `bb` 6.0.0 and Noir `v1.0.0-rc.3`
+change every verification key, VK tree anchor, and Honk verifier; proofs do not verify across
+toolchains, so a mixed fleet attests honest peers' proofs as invalid. Use the contract/protocol
+rollout: pause/drain, publish every build-policy artifact pair, replace PK/decryption wrappers and
+routers in the governance batch that raises the required protocol version, and upgrade every node
+before resume. Persisted peer proofs from in-flight E3s are not foldable under bb 6; drain them
+first. Storage schema and gossip/sync wire majors are unchanged.
 
 ## Historical secure CRISP activation and dependency replacement
 
@@ -208,9 +218,10 @@ Reset clears schema/role markers and leaves identity-only store as the explicit 
 exception; next start stamps new role/schema and resyncs from deploy_block. Clearing only store or
 logs is invalid. This is also the supported full↔bootstrap role change. DAppNode's historical
 v0.2.3 bridge atomically renames `.enclave` to `.interfold`, preserves identities, and stamps schema
-1 for shipped v0.1.8 data; ambiguous dual roots fail closed. Container state must stay in configured
-persistent volume; entrypoint refuses competing state locations rather than initializing another
-identity.
+1 for shipped v0.1.8 data; ambiguous dual roots fail closed. The current Mainnet and Sepolia
+packages migrate no `.enclave` root; each keeps its own `/data` volume and refuses a saved
+configuration for another network. Container state must stay in configured persistent volume;
+entrypoint refuses competing state locations rather than initializing another identity.
 
 The image entrypoint, not baked image metadata, supplies E3_CONFIG_DIR/E3_DATA_DIR for the
 persistent `/home/ciphernode/.local/share/interfold` volume. Explicit `--entrypoint interfold` keeps

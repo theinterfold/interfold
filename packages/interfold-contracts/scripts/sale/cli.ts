@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import hre from "hardhat";
 
+import { recordDeployments } from "../sourceVerification";
+
 const scriptArgs = process.argv.slice(2);
 
 export function arg(name: string): string | undefined {
@@ -33,5 +35,7 @@ export async function connect() {
     arg("network") ??
     (hre.globalOptions as unknown as { network?: string }).network ??
     process.env.HARDHAT_NETWORK;
-  return requested ? hre.network.connect(requested) : hre.network.connect();
+  return recordDeployments(
+    await (requested ? hre.network.connect(requested) : hre.network.connect()),
+  );
 }

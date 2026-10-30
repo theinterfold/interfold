@@ -42,7 +42,12 @@ impl VerificationHarness {
     async fn new(backend: &ZkBackend, e3_id: &E3id, signer: &PrivateKeySigner) -> Self {
         let bus = test_bus();
         let history = bus.history();
-        let verifier = ZkActor::new(backend).start();
+        let verifier = ZkActor::new(
+            backend,
+            e3_task_pool::TaskPool::new(1, 1),
+            "recovery-test".to_owned(),
+        )
+        .start();
         let observer = PrivateKeySigner::random();
         let mut committee = vec![
             signer.address(),
@@ -172,7 +177,7 @@ fn assert_no_blame(events: &[InterfoldEventData]) {
 #[actix::test]
 async fn c0_local_verifier_failures_retry_without_peer_blame() {
     let artifacts = crate::test_utils::workspace_root().join("circuits/bin/dkg/target");
-    let Some(bb) = e3_test_helpers::find_bb().await else {
+    let Some(bb) = e3_test_support::find_bb().await else {
         eprintln!("skipping C0 recovery test: bb is not installed");
         return;
     };

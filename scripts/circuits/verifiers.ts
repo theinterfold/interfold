@@ -36,7 +36,7 @@
 import { execFileSync, execSync } from 'child_process'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
-import { basename, join, relative, resolve } from 'path'
+import { basename, dirname, join, relative, resolve } from 'path'
 import {
   ALL_COMMITTEES,
   ALL_GROUPS,
@@ -464,52 +464,49 @@ class VerifierGenerator {
     const targetDir = this.findTargetDir(circuit, packageName)
     const vkPath = this.ensureVk(jsonFile, targetDir, packageName)
 
-    // 3. Generate Solidity verifier
-    const temporaryDir = mkdtempSync(join(tmpdir(), 'interfold-verifier-'))
-    const rawSolPath = join(temporaryDir, `${packageName}_verifier.sol`)
-    let solidity: string
-    try {
-      execFileSync('bb', ['write_solidity_verifier', '-k', vkPath, '-o', rawSolPath], { stdio: 'pipe' })
-      if (!existsSync(rawSolPath)) {
-        throw new Error('bb write_solidity_verifier did not produce output')
-      }
-      solidity = readFileSync(rawSolPath, 'utf-8')
-    } finally {
-      rmSync(temporaryDir, { recursive: true, force: true })
-    }
-
-    // 4. Post-process: rename contract, add license header
     const contractName = this.toContractName(name)
     const outputFileName = `${contractName}.sol`
     const outputPath = join(this.verifierDir, outputFileName)
+    const solidity = this.renderFromKey(vkPath, name, outputPath)
 
-    // Replace the default contract name (HonkVerifier) with our descriptive name
-    solidity = solidity.replace(/contract\s+HonkVerifier/g, `contract ${contractName}`)
-
-    // Replace license header – bb produces Apache-2.0 by default
-    solidity = solidity.replace(/\/\/\s*SPDX-License-Identifier:[^\n]*\n(\/\/[^\n]*\n)*/, LICENSE_HEADER)
-
-    // Correct the hardcoded `ModExpFailed()` selector emitted by bb.
-    solidity = this.fixModExpFailedSelector(solidity)
-
-    // Bind the verifier's immutable parameters to the VK emitted by bb.
-    solidity = this.addVerificationKeyValidation(solidity, contractName)
-
-    // Normalize with prettier so the on-disk format matches what the rest of
-    // the repo's `pnpm prettier:write` produces. Without this, --check would
-    // always fail because bb emits a different whitespace style than
-    // prettier-plugin-solidity.
-    solidity = this.formatSolidity(solidity, outputPath)
-
-    // In check mode, do not touch the committed file.
     if (!this.options.check) {
       writeFileSync(outputPath, solidity)
       console.log(`   ✓ ${group}/${name} → ${outputFileName}`)
     } else {
       console.log(`   • ${group}/${name} → ${outputFileName} (checking)`)
     }
-
     return { content: solidity, outputPath }
+  }
+
+  renderFromKey(vkPath: string, name: string, outputPath: string): string {
+    const job = mkdtempSync(join(tmpdir(), 'interfold-solidity-verifier-'))
+    try {
+      const rawSolPath = join(job, 'verifier.sol')
+      execFileSync('bb', ['write_solidity_verifier', '-k', vkPath, '-o', rawSolPath], { stdio: 'pipe' })
+      if (!existsSync(rawSolPath)) throw new Error('bb write_solidity_verifier did not produce output')
+      const contractName = this.toContractName(name)
+      let solidity = readFileSync(rawSolPath, 'utf-8')
+
+      // Replace the default contract name (HonkVerifier) with our descriptive name
+      solidity = solidity.replace(/contract\s+HonkVerifier/g, `contract ${contractName}`)
+
+      // Replace license header – bb produces Apache-2.0 by default
+      solidity = solidity.replace(/\/\/\s*SPDX-License-Identifier:[^\n]*\n(\/\/[^\n]*\n)*/, LICENSE_HEADER)
+
+      // Correct the hardcoded `ModExpFailed()` selector emitted by bb.
+      solidity = this.fixModExpFailedSelector(solidity)
+
+      // Bind the verifier's immutable parameters to the VK emitted by bb.
+      solidity = this.addVerificationKeyValidation(solidity, contractName)
+
+      // Normalize with prettier so the on-disk format matches what the rest of
+      // the repo's `pnpm prettier:write` produces. Without this, --check would
+      // always fail because bb emits a different whitespace style than
+      // prettier-plugin-solidity.
+      return this.formatSolidity(solidity, outputPath)
+    } finally {
+      rmSync(job, { recursive: true, force: true })
+    }
   }
 
   /**
@@ -873,7 +870,7 @@ async function main() {
     } else if (arg === '--preset') {
       const value = args[++i]
       if (!value || value.startsWith('--')) {
-        console.error('Error: --preset requires a value (insecure | secure-8192 | secure-16384)')
+        console.error('Error: --preset requires a value (insecure-64 | insecure | secure-8192 | secure-16384)')
         process.exit(1)
       }
       if (!ALL_PRESETS.includes(value as (typeof ALL_PRESETS)[number])) {
@@ -995,7 +992,7 @@ Options:
                          exact generated-contract inventory. Reads artifacts directly from dist.
   --on-chain             Generate the on-chain verifier circuits for one supported pair.
   --prune-unsupported    Remove generated directories for unsupported pairs, then exit.
-  --preset <name>        BFV preset for circuits/bin (insecure | secure-8192 | secure-16384).
+  --preset <name>        BFV preset for circuits/bin (insecure-64 | insecure | secure-8192 | secure-16384).
                          Selecting a preset processes one pair. Check mode compares the committed
                          verifier for that pair.
   --committee <name>     Committee size (minimum | micro | small). In one-pair mode, an omitted
@@ -1028,6 +1025,14 @@ if (require.main === module) {
     console.error(`\n❌ ${msg}\n`)
     process.exit(1)
   })
+}
+
+export function renderSolidityVerifier(root: string, key: string, circuit: string, outputPath: string): string {
+  return new VerifierGenerator(root, { outputDir: dirname(outputPath), check: true, compile: false }).renderFromKey(
+    key,
+    circuit,
+    outputPath,
+  )
 }
 
 export {

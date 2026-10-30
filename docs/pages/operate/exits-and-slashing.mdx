@@ -39,7 +39,10 @@ Rewards are pull payments. The recipient must claim them:
 | Claim a failed-E3 reward | `E3RefundManager`  | `claimHonestNodeReward(e3Id, operator)` | The reward recipient     |
 | Claim slashed funds      | `E3RefundManager`  | `claimSlashedFunds(e3Id, token)`        | The account with a share |
 
-The CLI has no reward command. Use a wallet or `cast`, for example:
+The CLI has no reward command. Use **E3 rewards** in the
+[hosted operator guide](https://dashboard.theinterfold.com/#operator), a wallet, or `cast`. The
+guide shows what the recipient can claim and why any other payment cannot be claimed yet. It claims
+completed-E3 rewards and failed-E3 compensation. For example:
 
 ```bash
 cast call <Interfold> "pendingReward(uint256,address)(uint256)" <e3Id> 0xBOND_OWNER \
@@ -203,8 +206,12 @@ A claim reverts in these conditions:
 A deregistered operator stays a member of each committee that was already final. The collateral
 stays in the queue until each of these E3s completes or fails and its committee is released. After
 the E3 is terminal and its accusation window ends, any account can call `releaseCommittee(e3Id)` on
-`CiphernodeRegistry`. `interfold ciphernode status` lists these committees under `Committees`. It
-reads them from the `CommitteeObligationUpdated` events of `BondingRegistry`.
+`CiphernodeRegistry`. `interfold ciphernode status` lists these committees under `Committees`. A
+`BondingRegistry` with the obligation views returns their number in
+`unresolvedCommitteesOf(operator)` and each committee that it tracks in
+`committeeObligationAt(operator, index)`. It does not track the committees requested before the
+upgrade that added these views. For those, and for an older registry, the command reads the
+`CommitteeObligationUpdated` events of `BondingRegistry`.
 
 ## Leave the network
 
@@ -343,6 +350,10 @@ cannot register (`CiphernodeBanned`).
 | Claim a reward         | None                                 | `claimReward(e3Id)` on the Interfold contract           | Reward recipient       |
 | Appeal a slash         | None                                 | `SlashingManager.fileAppeal(proposalId, evidence)`      | Operator or bond owner |
 
+The **Manage the position** section of the
+[hosted operator guide](https://dashboard.theinterfold.com/#operator) sends each action that has a
+CLI command from a browser wallet.
+
 ## Exit checklist
 
 - [ ] No slash proposal against the operator is open.
@@ -362,7 +373,8 @@ cannot register (`CiphernodeBanned`).
   The commands `interfold purge-all` and `interfold nodes purge` delete `.interfold/data` and
   `.interfold/config` in the current directory. These directories contain the operator key. When the
   operator is its own bond owner, only this key can claim the FOLD and the rewards. When the node
-  generated its own key, the local data is the only copy of this key.
+  generated its own key, the local data is the only copy of this key. A DAppNode package keeps the
+  key on its volume. Removing the package volume deletes it without these checks.
 </Callout>
 
 ## Next steps

@@ -178,8 +178,7 @@ journal: the proof's only public value is the journal digest, which the contract
 The receipt identity binds the Halo2 verifier address, the executable commitment and the VM
 commitment. The protocol BFV verifier and the program's verifier must use the same identity, and
 both verification calls stay mandatory. Rounds keep their request-time verifier snapshot and must
-drain before a live migration. The historical RISC Zero activation scripts do not activate OpenVM.
-The compute path is unaudited.
+drain before a live migration. The compute path is unaudited.
 
 ## Tests
 

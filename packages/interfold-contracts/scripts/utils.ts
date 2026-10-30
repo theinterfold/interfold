@@ -13,7 +13,15 @@ import {
 import fs from "fs";
 import type { HardhatRuntimeEnvironment } from "hardhat/types/hre";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import path from "path";
+
+import {
+  BFV_PRESETS,
+  COMMITTEES,
+  DECRYPTION_INPUT_INDICES,
+  decryptionAggregatorLayout,
+} from "../bfv.js";
 
 /**
  * Reconstruct `keccak256(abi.encodePacked(topNodes))` from aggregator public-input
@@ -97,21 +105,12 @@ export function getRepoRoot(): string {
   return _repoRoot;
 }
 
-/**
- * <generated-committee-doc>
- * Active insecure / minimum committee layout for BFV aggregator verifiers.
- * Must match `lib::configs::default::{H, T}` in compiled circuits.
- * Minimum committee: N=3, T=1, H=2.
- * </generated-committee-doc>
- */
-export const BFV_DKG_H = 2;
-export const BFV_THRESHOLD_T = 1;
-export const ACTIVE_BFV_PARAM_SET = 0;
-export const ACTIVE_BFV_COMMITTEE_SIZE = 0;
-export const ACTIVE_BFV_COMMITTEE_N = 3;
+// The circuit builder switches these names; all numerical values come from the shared binding.
+export const ACTIVE_BFV_PRESET: BfvArtifactPreset = "insecure-64";
+export const ACTIVE_BFV_COMMITTEE: BfvCommittee = "minimum";
 
-export type BfvArtifactPreset = "insecure" | "secure-8192" | "secure-16384";
-export type BfvCommittee = "minimum" | "micro" | "small";
+export type BfvArtifactPreset = keyof typeof BFV_PRESETS;
+export type BfvCommittee = keyof typeof COMMITTEES;
 
 export interface ActiveBfvConfig {
   preset: BfvArtifactPreset;
@@ -125,153 +124,108 @@ export interface ActiveBfvConfig {
   n: number;
 }
 
-const INSECURE_PARAM_SET_HASH =
-  "0x0619925361a4d022377f93ccd0022c0164257ffb889b979eb382aa06d401e258";
-const INSECURE_CONFIG_ID =
-  "0x968e91054be28b2b577ac278284e03274ed46bd5c5064e573290312a2323d495";
-const SECURE_PARAM_SET_HASH =
-  "0x1b2620f6a5919d5ee19a51f34026369816f479efd0404b56585ad37d31c52317";
-const SECURE_CONFIG_ID =
-  "0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa";
-const SECURE_16384_PARAM_SET_HASH =
-  "0x2576ec0fc35c64a24a9be57d058609040e4f93dfee51d9df4a831c6c57675a9e";
-const SECURE_16384_CONFIG_ID =
-  "0xc5ea726de917fa7f1272eecbbe9f373b3d95a668d102c71c9fb38a2749330ecf";
-
-/** On-chain index of the insecure parameters on the l-BFV path. */
-export const INSECURE_LBFV_PARAM_SET = 4;
+/** On-chain index of the degree-128 insecure parameters on the l-BFV path. */
+export const INSECURE_LBFV_PARAM_SET = BFV_PRESETS["insecure"].paramSet;
 
 /** Parameter sets on the l-BFV path: secure-16384 (3) and insecure l-BFV (4). */
 export function isLbfvParamSet(paramSet: number): boolean {
-  return paramSet === 3 || paramSet === INSECURE_LBFV_PARAM_SET;
+  return (
+    paramSet === BFV_PRESETS["secure-16384"].paramSet ||
+    paramSet === INSECURE_LBFV_PARAM_SET
+  );
 }
 
 /**
- * The parameter set a local deployment registers. `BFV_PARAM_SET=4` selects the l-BFV path on the
- * insecure artifacts; otherwise the generated active parameter set applies.
+ * The parameter set a local deployment registers: the active artifact pair's. `BFV_PARAM_SET`
+ * may restate it but cannot select parameters the active artifacts were not built for.
  */
 export function localBfvParamSet(): number {
   const override = process.env.BFV_PARAM_SET;
   if (override === undefined || override === "") return ACTIVE_BFV_PARAM_SET;
-  const paramSet = Number(override);
-  const insecureArtifacts = ACTIVE_BFV_CONFIG.preset === "insecure";
-  if (paramSet === ACTIVE_BFV_PARAM_SET) return paramSet;
-  if (paramSet === INSECURE_LBFV_PARAM_SET && insecureArtifacts)
-    return paramSet;
+  if (Number(override) === ACTIVE_BFV_PARAM_SET) return ACTIVE_BFV_PARAM_SET;
   throw new Error(
-    `BFV_PARAM_SET=${override} does not match the active circuit artifacts (parameter set ${ACTIVE_BFV_PARAM_SET})`,
+    `BFV_PARAM_SET=${override} does not match the active circuit artifacts (parameter set ${ACTIVE_BFV_PARAM_SET}); select the matching preset with pnpm build:circuits`,
   );
 }
 
 function bfvConfig(
   preset: BfvArtifactPreset,
   committee: BfvCommittee,
-  params: Pick<ActiveBfvConfig, "committeeSize" | "h" | "t" | "n">,
-  lbfv = false,
 ): ActiveBfvConfig {
-  // The insecure artifacts serve both paths; `lbfv` selects parameter set 4 instead of 0.
-  const insecure = preset === "insecure";
-  const paramSet = insecure
-    ? lbfv
-      ? INSECURE_LBFV_PARAM_SET
-      : 0
-    : preset === "secure-8192"
-      ? 2
-      : 3;
-  const paramSetHash = insecure
-    ? INSECURE_PARAM_SET_HASH
-    : paramSet === 2
-      ? SECURE_PARAM_SET_HASH
-      : SECURE_16384_PARAM_SET_HASH;
-  const configId = insecure
-    ? INSECURE_CONFIG_ID
-    : paramSet === 2
-      ? SECURE_CONFIG_ID
-      : SECURE_16384_CONFIG_ID;
+  const parameters = BFV_PRESETS[preset];
+  const members = COMMITTEES[committee];
   return {
     preset,
     committee,
-    paramSet,
-    paramSetHash,
-    configId,
-    ...params,
+    paramSet: parameters.paramSet,
+    paramSetHash: parameters.paramSetHash,
+    configId: parameters.configId,
+    committeeSize: members.committeeSize,
+    h: members.h,
+    t: members.t,
+    n: members.n,
   };
 }
 
 // Generated from scripts/circuits/build-pairs.json and canonical committee values.
 export const INSECURE_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
-  "insecure",
+  "insecure-64",
   "minimum",
-  { committeeSize: 0, h: 2, t: 1, n: 3 },
 );
 
 export const INSECURE_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
-  "insecure",
+  "insecure-64",
   "micro",
-  { committeeSize: 1, h: 5, t: 4, n: 9 },
 );
 
 export const INSECURE_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
-  "insecure",
+  "insecure-64",
   "small",
-  { committeeSize: 2, h: 14, t: 9, n: 19 },
 );
 
 export const INSECURE_LBFV_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "insecure",
   "minimum",
-  { committeeSize: 0, h: 2, t: 1, n: 3 },
-  true,
 );
 
 export const INSECURE_LBFV_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "insecure",
   "micro",
-  { committeeSize: 1, h: 5, t: 4, n: 9 },
-  true,
 );
 
 export const INSECURE_LBFV_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "insecure",
   "small",
-  { committeeSize: 2, h: 14, t: 9, n: 19 },
-  true,
 );
 
 export const SECURE_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "secure-8192",
   "minimum",
-  { committeeSize: 0, h: 2, t: 1, n: 3 },
 );
 
 export const SECURE_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "secure-8192",
   "micro",
-  { committeeSize: 1, h: 5, t: 4, n: 9 },
 );
 
 export const SECURE_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "secure-8192",
   "small",
-  { committeeSize: 2, h: 14, t: 9, n: 19 },
 );
 
 export const SECURE_16384_MINIMUM_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "secure-16384",
   "minimum",
-  { committeeSize: 0, h: 2, t: 1, n: 3 },
 );
 
 export const SECURE_16384_MICRO_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "secure-16384",
   "micro",
-  { committeeSize: 1, h: 5, t: 4, n: 9 },
 );
 
 export const SECURE_16384_SMALL_BFV_CONFIG: ActiveBfvConfig = bfvConfig(
   "secure-16384",
   "small",
-  { committeeSize: 2, h: 14, t: 9, n: 19 },
 );
 
 export const PRODUCTION_BFV_CONFIG: ActiveBfvConfig = SECURE_SMALL_BFV_CONFIG;
@@ -299,12 +253,33 @@ export const TESTNET_BFV_CONFIGS: readonly ActiveBfvConfig[] = [
   SECURE_16384_SMALL_BFV_CONFIG,
 ] as const;
 
-/** The pair of the generated `ACTIVE_BFV_*` constants, which `ActiveCryptoConfig.sol` matches. */
+/** Local artifact selection, independent of the production/testnet admission defaults. */
 export const ACTIVE_BFV_CONFIG = TESTNET_BFV_CONFIGS.find(
   (config) =>
-    config.paramSet === ACTIVE_BFV_PARAM_SET &&
-    config.committeeSize === ACTIVE_BFV_COMMITTEE_SIZE,
+    config.preset === ACTIVE_BFV_PRESET &&
+    config.committee === ACTIVE_BFV_COMMITTEE,
 )!;
+
+/**
+ * The l-BFV pair for local V2 artifacts: the active pair when it is l-BFV, otherwise the insecure
+ * l-BFV pair of the same committee (trBFV pairs have no V2 aggregator).
+ */
+export const ACTIVE_LBFV_CONFIG: ActiveBfvConfig = isLbfvParamSet(
+  ACTIVE_BFV_CONFIG.paramSet,
+)
+  ? ACTIVE_BFV_CONFIG
+  : TESTNET_BFV_CONFIGS.find(
+      (config) =>
+        isLbfvParamSet(config.paramSet) &&
+        config.preset === "insecure" &&
+        config.committee === ACTIVE_BFV_COMMITTEE,
+    )!;
+
+export const BFV_DKG_H = ACTIVE_BFV_CONFIG.h;
+export const BFV_THRESHOLD_T = ACTIVE_BFV_CONFIG.t;
+export const ACTIVE_BFV_PARAM_SET = ACTIVE_BFV_CONFIG.paramSet;
+export const ACTIVE_BFV_COMMITTEE_SIZE = ACTIVE_BFV_CONFIG.committeeSize;
+export const ACTIVE_BFV_COMMITTEE_N = ACTIVE_BFV_CONFIG.n;
 
 /** Source namespace shared by protocol deployment and local Ignition modules. */
 export function bfvHonkSource(
@@ -325,7 +300,7 @@ export function bfvHonkSource(
  * Names a circuit directory in the release-archive layout (`<preset>/<committee>/default/...`):
  * the `circuits/` directory of `circuits-<version>.tar.gz`, or the directory that
  * `interfold noir setup` installs, from the release of this package. Only a package installed
- * outside the monorepo reads it; the monorepo reads its own release-verified circuit build.
+ * outside the monorepo reads it; the monorepo reads its own selected circuit build.
  */
 const CIRCUITS_DIR_ENV = "INTERFOLD_CIRCUITS_DIR";
 
@@ -430,12 +405,15 @@ export function bfvPkV2PublicInputLayout(
 
 /** `decryption_aggregator` EVM public-input count for BFV threshold `t`. */
 export function bfvDecExpectedPublicInputsLen(threshold: number): number {
-  return 61 + 3 * threshold;
+  return decryptionAggregatorLayout(threshold).publicInputsLength;
 }
 
 /** `publicInputs` indices for decryption-aggregator committee hash limbs. */
 export function bfvDecCommitteeHashIndices(): { hi: number; lo: number } {
-  return { hi: 2, lo: 3 };
+  return {
+    hi: DECRYPTION_INPUT_INDICES.committee_hash_hi,
+    lo: DECRYPTION_INPUT_INDICES.committee_hash_lo,
+  };
 }
 
 /**
@@ -448,20 +426,25 @@ export function bfvDecPartyColOffsets(threshold: number): {
   sk: number;
   esm: number;
 } {
-  const partyId = 8; // 7 domain/VK/committee/commitment inputs + DEC_RETURN_PREFIX_LEN
-  const sk = partyId + (threshold + 1);
-  const esm = sk + (threshold + 1);
-  return { partyId, sk, esm };
+  const layout = decryptionAggregatorLayout(threshold);
+  return {
+    partyId: layout.partyIdOffset,
+    sk: layout.skOffset,
+    esm: layout.esmOffset,
+  };
 }
 
 /** `publicInputs` indices for decryption-aggregator E3 domain limbs. */
 export function bfvDecDomainIndices(): { hi: number; lo: number } {
-  return { hi: 4, lo: 5 };
+  return {
+    hi: DECRYPTION_INPUT_INDICES.domain_hi,
+    lo: DECRYPTION_INPUT_INDICES.domain_lo,
+  };
 }
 
 /** `publicInputs` index for the final circuit-compatible ciphertext commitment. */
 export function bfvDecCiphertextCommitmentIndex(): number {
-  return 6;
+  return DECRYPTION_INPUT_INDICES.ciphertext_commitment;
 }
 
 /**
@@ -722,15 +705,15 @@ export function getBfvDecryptionSubCircuitVkHashPaths(
   const c7Circuit = isLbfvParamSet(config?.paramSet ?? localBfvParamSet())
     ? "decrypted_shares_aggregation_wide"
     : "decrypted_shares_aggregation";
-  const root = releaseCircuitRoot(config);
-  if (root) {
+  const releaseRoot = releaseCircuitRoot(config);
+  if (releaseRoot) {
     return {
       c6Fold: path.join(
-        root,
+        releaseRoot,
         "default/recursive_aggregation/c6_fold/c6_fold.vk_tree_hash",
       ),
       c7: path.join(
-        root,
+        releaseRoot,
         `default/threshold/${c7Circuit}/${c7Circuit}.vk_hash`,
       ),
     } as const;
@@ -769,6 +752,168 @@ export function readVkRecursiveHash(
   return `0x${raw.toString("hex")}`;
 }
 
+interface VkCommitmentKey {
+  circuit: string;
+  proofVariant: "default" | "recursive" | "evm";
+  hashKind: "bb-vk-hash" | "recursive-tree-commitment";
+}
+
+interface VkCommitmentPair {
+  preset: string;
+  committee: string;
+  commitments: Record<string, string>;
+}
+
+function readVkCommitmentValues(
+  requested: VkCommitmentKey[],
+  selected: ActiveBfvConfig = ACTIVE_BFV_CONFIG,
+): string[] {
+  const repo = findMonorepoRoot();
+  const artifacts = repo
+    ? path.join(repo, "dist/circuits")
+    : process.env[CIRCUITS_DIR_ENV];
+  if (!artifacts)
+    throw new Error(`Set ${CIRCUITS_DIR_ENV} to the release circuit directory`);
+  const pairDirectory = path.join(
+    artifacts,
+    selected.preset,
+    selected.committee,
+  );
+  // A complete local build writes its own pair metadata; local edits must not require rebuilding
+  // the release matrix. Installed packages still require their immutable catalogue to match.
+  const pair = JSON.parse(
+    fs.readFileSync(path.join(pairDirectory, "vk-commitments.json"), "utf8"),
+  ) as VkCommitmentPair;
+  if (pair.preset !== selected.preset || pair.committee !== selected.committee)
+    throw new Error(
+      "VK commitment pair differs from the selected configuration",
+    );
+  if (!repo) {
+    const manifestPath = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../vk-commitments.json",
+    );
+    if (!fs.existsSync(manifestPath))
+      throw new Error(
+        `Missing VK commitment manifest: ${manifestPath}; use matching release assets`,
+      );
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
+      formatVersion: number;
+      pairs: VkCommitmentPair[];
+    };
+    if (manifest.formatVersion !== 1 || !Array.isArray(manifest.pairs))
+      throw new Error("Unsupported VK commitment manifest");
+    const pairs = manifest.pairs.filter(
+      (entry) =>
+        entry.preset === selected.preset &&
+        entry.committee === selected.committee,
+    );
+    if (pairs.length !== 1)
+      throw new Error(
+        `Expected one VK commitment pair for ${selected.preset}/${selected.committee}`,
+      );
+    if (!isDeepStrictEqual(pair, pairs[0]))
+      throw new Error(
+        "Circuit archive VK commitment slice differs from the package manifest",
+      );
+  }
+  const stamp = JSON.parse(
+    fs.readFileSync(path.join(pairDirectory, ".build-stamp.json"), "utf8"),
+  );
+  if (
+    stamp.preset !== selected.preset ||
+    stamp.committee !== selected.committee ||
+    typeof stamp.sourceHash !== "string" ||
+    !stamp.sourceHash
+  )
+    throw new Error(
+      "VK commitment pair stamp differs from the selected configuration",
+    );
+  return requested.map((request) => {
+    if (
+      !/^(threshold|recursive_aggregation)\/[a-z][a-z0-9_]*$/.test(
+        request.circuit,
+      )
+    )
+      throw new Error("Invalid VK commitment name");
+    const key = `${request.hashKind}/${request.proofVariant}/${request.circuit}`;
+    const value = pair.commitments?.[key];
+    if (!value) throw new Error(`Missing named VK commitment ${key}`);
+    if (!/^0x[0-9a-f]{64}$/.test(value))
+      throw new Error("Invalid VK commitment value");
+    const name = request.circuit.split("/").pop()!;
+    const extension =
+      request.hashKind === "bb-vk-hash" ? "vk_hash" : "vk_tree_hash";
+    const filename = path.join(
+      pairDirectory,
+      request.proofVariant,
+      request.circuit,
+      `${name}.${extension}`,
+    );
+    if (readVkRecursiveHash(filename, selected) !== value)
+      throw new Error("Circuit VK hash differs from the named VK commitment");
+    return value;
+  });
+}
+
+export function readBfvVkCommitment(
+  circuit: string,
+  proofVariant: VkCommitmentKey["proofVariant"],
+  hashKind: VkCommitmentKey["hashKind"],
+  config?: ActiveBfvConfig,
+): string {
+  return readVkCommitmentValues(
+    [{ circuit, proofVariant, hashKind }],
+    config,
+  )[0];
+}
+
+export function getBfvVkCommitments(config?: ActiveBfvConfig) {
+  const c6Fold: VkCommitmentKey = {
+    circuit: "recursive_aggregation/c6_fold",
+    proofVariant: "default",
+    hashKind: "recursive-tree-commitment",
+  };
+  // The l-BFV path has no `BfvPkVerifier` (no nodes-fold or C5 pins) and proves C7 with the wide
+  // circuit; the trBFV path with the bounded one.
+  if (isLbfvParamSet(config?.paramSet ?? localBfvParamSet())) {
+    const [c6FoldValue, c7] = readVkCommitmentValues(
+      [
+        c6Fold,
+        {
+          circuit: "threshold/decrypted_shares_aggregation_wide",
+          proofVariant: "default",
+          hashKind: "bb-vk-hash",
+        },
+      ],
+      config,
+    );
+    return { nodesFold: undefined, c5: undefined, c6Fold: c6FoldValue, c7 };
+  }
+  const [nodesFold, c5, c6FoldValue, c7] = readVkCommitmentValues(
+    [
+      {
+        circuit: "recursive_aggregation/nodes_fold",
+        proofVariant: "default",
+        hashKind: "recursive-tree-commitment",
+      },
+      {
+        circuit: "threshold/pk_aggregation",
+        proofVariant: "default",
+        hashKind: "bb-vk-hash",
+      },
+      c6Fold,
+      {
+        circuit: "threshold/decrypted_shares_aggregation",
+        proofVariant: "default",
+        hashKind: "bb-vk-hash",
+      },
+    ],
+    config,
+  );
+  return { nodesFold, c5, c6Fold: c6FoldValue, c7 };
+}
+
 /** On-chain `BfvPkVerifier` sub-circuit VK immutables (for deploy-time staleness checks). */
 export interface BfvPkVerifierVkReader {
   expectedNodesFoldKeyHash(): Promise<string>;
@@ -799,14 +944,8 @@ export async function assertBfvPkVerifierSubCircuitVkHashes(
   address: string,
   config?: ActiveBfvConfig,
 ): Promise<void> {
-  const expectedNodesFold = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths(config).nodesFold,
-    config,
-  );
-  const expectedC5 = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths(config).c5,
-    config,
-  );
+  const { nodesFold: expectedNodesFold, c5: expectedC5 } =
+    getBfvVkCommitments(config);
   const [onChainNodesFold, onChainC5] = await Promise.all([
     verifier.expectedNodesFoldKeyHash(),
     verifier.expectedC5KeyHash(),
@@ -897,14 +1036,8 @@ export async function assertBfvDecryptionVerifierSubCircuitVkHashes(
   address: string,
   config?: ActiveBfvConfig,
 ): Promise<void> {
-  const expectedC6Fold = readVkRecursiveHash(
-    getBfvDecryptionSubCircuitVkHashPaths(config).c6Fold,
-    config,
-  );
-  const expectedC7 = readVkRecursiveHash(
-    getBfvDecryptionSubCircuitVkHashPaths(config).c7,
-    config,
-  );
+  const { c6Fold: expectedC6Fold, c7: expectedC7 } =
+    getBfvVkCommitments(config);
   const [onChainC6Fold, onChainC7] = await Promise.all([
     verifier.expectedC6FoldKeyHash(),
     verifier.expectedC7KeyHash(),

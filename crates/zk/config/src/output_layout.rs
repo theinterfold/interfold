@@ -15,14 +15,67 @@
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
-/// Size of a single Noir `Field` element in bytes (BN254 scalar).
-pub const FIELD_BYTE_LEN: usize = 32;
+pub use crate::constants::FIELD_BYTE_LEN;
 
 /// A named output field of a circuit proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct OutputField {
     /// Human-readable name (e.g. `"pk_commitment"`).
     pub name: &'static str,
+}
+
+/// Application fields of the final decryption aggregator, excluding Honk's pairing-point fields.
+/// The public return tuple is `(key_hash, party_ids, expected_sk, expected_esm, message)`.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecryptionAggregatorLayout {
+    pub public_inputs: &'static [OutputField],
+    pub return_prefix: &'static [OutputField],
+    pub columns: &'static [OutputField],
+}
+
+impl DecryptionAggregatorLayout {
+    const CURRENT: Self = Self {
+        public_inputs: &[
+            f("c6_fold_key_hash"),
+            f("c7_key_hash"),
+            f("committee_hash_hi"),
+            f("committee_hash_lo"),
+            f("domain_hi"),
+            f("domain_lo"),
+            f("ciphertext_commitment"),
+        ],
+        return_prefix: &[f("key_hash")],
+        columns: &[f("party_ids"), f("expected_sk"), f("expected_esm")],
+    };
+
+    pub const fn current() -> Self {
+        Self::CURRENT
+    }
+
+    pub const fn share_count(threshold: usize) -> usize {
+        threshold + 1
+    }
+
+    pub const fn party_id_offset(&self) -> usize {
+        self.public_inputs.len() + self.return_prefix.len()
+    }
+
+    pub const fn sk_offset(&self, threshold: usize) -> usize {
+        self.party_id_offset() + Self::share_count(threshold)
+    }
+
+    pub const fn esm_offset(&self, threshold: usize) -> usize {
+        self.sk_offset(threshold) + Self::share_count(threshold)
+    }
+
+    pub const fn message_offset(&self, threshold: usize) -> usize {
+        self.party_id_offset() + self.columns.len() * Self::share_count(threshold)
+    }
+
+    pub const fn public_inputs_length(&self, threshold: usize) -> usize {
+        self.message_offset(threshold) + crate::constants::MAX_MSG_NON_ZERO_COEFFS
+    }
 }
 
 /// Describes the public return values of a circuit.
@@ -429,6 +482,28 @@ impl CircuitInputLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decryption_aggregator_layout_preserves_application_offsets() {
+        let layout = DecryptionAggregatorLayout::current();
+        for (threshold, expected) in [
+            (1, [8, 10, 12, 14, 64]),
+            (4, [8, 13, 18, 23, 73]),
+            (9, [8, 18, 28, 38, 88]),
+            (2, [8, 11, 14, 17, 67]),
+        ] {
+            assert_eq!(
+                [
+                    layout.party_id_offset(),
+                    layout.sk_offset(threshold),
+                    layout.esm_offset(threshold),
+                    layout.message_offset(threshold),
+                    layout.public_inputs_length(threshold),
+                ],
+                expected
+            );
+        }
+    }
 
     #[test]
     fn extract_single_output_field() {

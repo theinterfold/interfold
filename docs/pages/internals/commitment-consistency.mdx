@@ -106,8 +106,8 @@ accusation for each `(accused, proof_type)` pair.
 
 ## Link model
 
-Each link implements the `CommitmentLink` trait in `crates/events/src/commitment_link.rs`. A
-`FieldValue` is a 32-byte field element.
+Each link implements the `CommitmentLink` trait in
+`crates/slashing/src/commitment_consistency/link.rs`. A `FieldValue` is a 32-byte field element.
 
 ```rust
 pub trait CommitmentLink: Send + Sync {

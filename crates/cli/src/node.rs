@@ -52,6 +52,12 @@ pub enum NodeCommands {
         /// deadline.
         #[arg(long)]
         allow_active_e3s: bool,
+
+        /// Reset only when the stored state uses an older storage schema than
+        /// this binary. Otherwise change nothing and exit with success. A
+        /// package can run this before every start.
+        #[arg(long)]
+        if_schema_older: bool,
     },
 }
 
@@ -72,8 +78,9 @@ pub async fn execute(out: Console, command: NodeCommands, config: &AppConfig) ->
         NodeCommands::ResetData {
             yes,
             allow_active_e3s,
+            if_schema_older,
         } => {
-            reset_data(out, config, yes, allow_active_e3s).await?;
+            reset_data(out, config, yes, allow_active_e3s, if_schema_older).await?;
         }
     }
     Ok(())
@@ -85,6 +92,7 @@ async fn reset_data(
     config: &AppConfig,
     yes: bool,
     allow_active_e3s: bool,
+    if_schema_older: bool,
 ) -> Result<()> {
     if !yes {
         bail!(
@@ -94,6 +102,14 @@ async fn reset_data(
             config.name(),
             config.db_file().display()
         );
+    }
+
+    if if_schema_older && !e3_entrypoint::nodes::reset_data::stored_schema_is_older(config)? {
+        log!(
+            out,
+            "The stored state does not use an older storage schema. Nothing to reset."
+        );
+        return Ok(());
     }
 
     // The fence is taken inside the entrypoint, which holds it across the whole

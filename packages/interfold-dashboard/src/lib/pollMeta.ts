@@ -8,12 +8,11 @@
 // encrypted votes. This map gives each E3 a friendly question/options/context.
 // For unknown E3s we synthesize a generic record from the id.
 
-import { CONTRACTS } from './chain'
+import { isCrispE3 } from './e3'
 
 export type PollMeta = {
   question: string
   context: string
-  options: Array<{ id: string; label: string }>
   programLabel?: string
 }
 
@@ -28,11 +27,6 @@ export function pollMetaFor(e3Id: bigint): PollMeta {
   return {
     question: `Encrypted poll ${compactE3Id(e3Id)}`,
     context: "On-chain encrypted execution. Ballots are sealed on each voter's device; only the aggregate result is decrypted.",
-    options: [
-      { id: '0', label: 'Option 0' },
-      { id: '1', label: 'Option 1' },
-      { id: '2', label: 'Option 2' },
-    ],
     programLabel: 'CRISP',
   }
 }
@@ -68,16 +62,8 @@ export function shortHash(hex: string): string {
   return `${hex.slice(0, 10)}…${hex.slice(-6)}`
 }
 
-// Friendly name for an E3 program contract. Known programs get a label;
-// everything else falls back to a shortened address.
-const KNOWN_PROGRAMS: Record<string, string> = {
-  [CONTRACTS.CRISPProgram.toLowerCase()]: 'CRISP',
-}
-
+// Friendly name for an E3 program contract. A CRISP program gets a label;
+// every other program falls back to a shortened address.
 export function programName(addr: string): string {
-  return KNOWN_PROGRAMS[addr?.toLowerCase()] ?? shortAddr(addr)
-}
-
-export function isCrispProgram(addr: string): boolean {
-  return addr?.toLowerCase() === CONTRACTS.CRISPProgram.toLowerCase()
+  return isCrispE3(addr) ? 'CRISP' : shortAddr(addr)
 }

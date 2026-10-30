@@ -802,11 +802,17 @@ mod tests {
         )
         .unwrap();
 
+        // The generated metadata is what `BfvProtocol.sol` pins for each parameter set.
+        let pinned = e3_fhe_params::metadata::BfvMetadata::current()
+            .unwrap()
+            .presets
+            .into_iter()
+            .find(|record| record.param_set == 3)
+            .unwrap()
+            .crypto_config_id;
         assert_eq!(
             state.context.proof_domain.crypto_config_id,
-            "0xc5ea726de917fa7f1272eecbbe9f373b3d95a668d102c71c9fb38a2749330ecf"
-                .parse::<B256>()
-                .unwrap()
+            pinned.parse::<B256>().unwrap()
         );
     }
 
@@ -1041,7 +1047,7 @@ mod tests {
         let encoded = bincode::serialize(&state).unwrap();
         assert_eq!(
             keccak256(&encoded),
-            "0x8970283fa05b9ee9de5f37586cb8172a3a2a26bef5f71525ec8243e46f3b88b9"
+            "0x1966e419a16e22a63c88975bda660978b753db2bf0cf27ed11c2cd097f2336f8"
                 .parse::<B256>()
                 .unwrap()
         );

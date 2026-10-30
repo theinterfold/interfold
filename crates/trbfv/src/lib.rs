@@ -13,6 +13,7 @@ pub mod gen_lbfv_key_shares;
 pub mod gen_pk_share_and_sk_sss;
 pub mod helpers;
 pub mod lbfv_operation;
+mod request_execution;
 pub mod shares;
 pub mod trbfv_config;
 pub mod trbfv_request;

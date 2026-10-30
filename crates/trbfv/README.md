@@ -8,13 +8,14 @@ threshold decryption. Actors, authenticated dealer admission, and timing belong 
 
 ## Map
 
-| Location                                                                                                                                                               | Responsibility                                                        |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| [`gen_pk_share_and_sk_sss.rs`](src/gen_pk_share_and_sk_sss.rs), [`gen_esi_sss.rs`](src/gen_esi_sss.rs)                                                                 | Randomized key/error contributions and encrypted Shamir payloads.     |
-| [`key assembly`](src/calculate_decryption_key.rs), [`share calculation`](src/calculate_decryption_share.rs), [`reconstruction`](src/calculate_threshold_decryption.rs) | Local decryption key, ciphertext shares, and final plaintext.         |
-| [`shares/`](src/shares)                                                                                                                                                | Typed encrypted share containers and BFV transport encoding.          |
-| [`trbfv_config.rs`](src/trbfv_config.rs), [`trbfv_request.rs`](src/trbfv_request.rs)                                                                                   | Parameter/dimension inputs and worker request/result/error envelopes. |
-| [`tests/integration.rs`](tests/integration.rs)                                                                                                                         | Isolated threshold calculation flow using generated fixtures.         |
+| Location                                                                                                                                                               | Responsibility                                                                                   |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| [`gen_pk_share_and_sk_sss.rs`](src/gen_pk_share_and_sk_sss.rs), [`gen_esi_sss.rs`](src/gen_esi_sss.rs)                                                                 | Randomized key/error contributions and encrypted Shamir payloads.                                |
+| [`key assembly`](src/calculate_decryption_key.rs), [`share calculation`](src/calculate_decryption_share.rs), [`reconstruction`](src/calculate_threshold_decryption.rs) | Local decryption key, ciphertext shares, and final plaintext.                                    |
+| [`shares/`](src/shares)                                                                                                                                                | Typed encrypted share containers and BFV transport encoding.                                     |
+| [`trbfv_config.rs`](src/trbfv_config.rs), [`trbfv_request.rs`](src/trbfv_request.rs)                                                                                   | Parameter/dimension inputs and worker request/result/error envelopes.                            |
+| [`request_execution.rs`](src/request_execution.rs)                                                                                                                     | Synchronous typed dispatch, RNG access, operation labels and calculation/worker failure mapping. |
+| [`tests/integration.rs`](tests/integration.rs)                                                                                                                         | Isolated threshold calculation flow using generated fixtures.                                    |
 
 Workers generate contributions from caller RNG/cipher inputs, recipients assemble their local
 decryption keys, and the final calculation reconstructs from party-indexed ciphertext shares. These
@@ -37,6 +38,15 @@ Each public module exposes a typed request/response and its calculation function
 human-readable message. The [multithread dispatcher](../multithread/src/multithread.rs) is the
 production caller showing RNG/cipher/request handling.
 
+`TrBFVRequest::execute(&rng, &cipher)` is the synchronous native execution boundary. It dispatches
+to the existing calculations, locks caller-owned randomness only for randomized operations, and
+recovers the same RNG state after a poisoned-lock worker panic. It creates no pool, actor, event
+envelope, retry loop or persisted state. Call it from a bounded executor and reuse
+already-successful randomized outputs during recovery. `operation_name()` owns the stable diagnostic
+labels; `failure(payload)` preserves typed operation and structured threshold/party attribution for
+both calculation and local worker errors. Event correlation/publication and resource-failure retry
+policy stay with the compute runtime.
+
 `TrBFVConfig::new(encoded_params, num_parties, threshold)` receives T, not T+1. Runtime `PartyId` is
 zero-based; Shamir reconstruction coordinates are one-based at the mathematical boundary. Share
 ordering must retain the corresponding party IDs. Use paired threshold/DKG metadata from
@@ -51,9 +61,10 @@ different shares.
 
 ## Tests
 
-Run `cargo test --locked -p e3-trbfv` with [test-helper prerequisites](../test-helpers/README.md).
-Inline cases cover encrypted share serialization/indices and structured error extraction;
-[`tests/integration.rs`](tests/integration.rs) exercises threshold computation in isolation. See
+Run `cargo test --locked -p e3-trbfv`; no EVM/prover fixture setup is required. Inline cases cover
+encrypted share serialization/indices and structured error extraction;
+[`tests/integration.rs`](tests/integration.rs) exercises threshold computation in isolation, using
+private share fixtures under `tests/common` and shared [ballots](../bfv-test-support/README.md). See
 [DKG](../../docs/architecture/dkg.md) and
 [threshold decryption](../../docs/architecture/threshold-decryption.md) for dimensions and proofs.
 See [AGENTS.md](AGENTS.md) for mathematical/indexing change rules.

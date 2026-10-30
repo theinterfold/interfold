@@ -39,8 +39,8 @@ including readiness and the transport task. Normal node users use
 [CiphernodeBuilder](../ciphernode-builder/README.md).
 
 For an in-process harness, `create_channel_bridge()` returns a `NetInterfaceHandle` and inverted
-`NetChannelBridge`; [test helpers](../test-helpers/README.md) provide a mock network. These model
-transport, not proof validity or membership authorization.
+`NetChannelBridge`; the [system harness](../tests/tests/ciphernode_system) keeps its mock network
+local. These model transport, not proof validity or membership authorization.
 
 ## Other consumers
 
@@ -80,7 +80,8 @@ deployment recommendations. The Linux container runner does not run natively on 
 ## Tests
 
 Run `cargo test --locked -p e3-net` from the root with
-[test-helper prerequisites](../test-helpers/README.md) prepared for its test dependency graph.
+[system prerequisites](../tests/README.md#prerequisites-and-assurance) prepared for its test
+dependency graph.
 
 Capability-local tests cover document admission/recovery, bounded buffering, and history paging.
 [`net_interface_swarm_tests.rs`](src/net_interface_swarm_tests.rs) exercises swarm behavior;

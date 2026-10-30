@@ -20,7 +20,7 @@ library SlashingEvidenceLib {
     uint256 internal constant CLOCK_SKEW = 30 seconds;
     uint256 internal constant FIRST_MULTIROW_PROOF_TYPE = 11;
     uint256 internal constant RLK_AGGREGATION_PROOF_TYPE = 14;
-    uint256 internal constant LBFV_ROW_INSTANCES = 5;
+    uint256 internal constant LBFV_ROW_INSTANCES = 6;
 
     struct AttestationEvidence {
         uint256 proofType;

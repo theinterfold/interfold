@@ -13,8 +13,9 @@ Owners: [keyshare](../../crates/keyshare/src/threshold_keyshare/),
 
 ## Identities and dimensions
 
-There are two proof paths. `secure-8192` and parameter set 0 use trBFV; `secure-16384` and the
-explicit insecure l-BFV parameter set 4 use l-BFV. Both insecure labels have degree 128, but their
+There are two proof paths. `secure-8192` and parameter set 0 (`insecure-64`, degree 64) use trBFV;
+`secure-16384` and the insecure l-BFV parameter set 4 (degree 128) use l-BFV. The degree-128
+`insecure` trBFV preset shares set 4's parameters but has no on-chain parameter set; the two
 protocol paths are not interchangeable. The C1/C5 and singleton C2 descriptions below describe trBFV
 unless stated otherwise.
 
@@ -161,14 +162,15 @@ Committee hash is Keccak over ordered raw **20-byte** addresses, not padded
 agree. The wrapper checks its 128-bit limbs; other contextual PK-verifier arguments are not
 additional circuit bindings merely because the interface accepts them.
 
-The proven commitment is authority; serialized bytes are transport. Request-time members, including
-retained expelled members, can publish canonical 90 KiB chunks of a candidate up to 16 MiB while
-`KeyPublished`. Each consumer admits at most the first candidate per publisher and groups chunks by
-E3, publisher, and candidate hash. Require a complete sequence, Keccak candidate hash, valid BFV
-decode with request-time parameters, and recomputed C5 commitment equality before producing runtime
-`CommitteePublished` or storing a client key. An invalid candidate cannot consume another member's
-candidate. Terminal stages reject chunks and cannot recreate cleaned-up assemblies. `KeyPublished`
-alone does not mean clients have usable key bytes.
+The proven commitment is authority; shared
+[chunk mechanics](../../crates/data-availability/README.md) only validate transport. Request-time
+members, including retained expelled members, can publish canonical 90 KiB chunks of a candidate up
+to 16 MiB while `KeyPublished`. Each consumer admits at most the first candidate per publisher and
+groups chunks by E3, publisher, and candidate hash. Require a complete sequence, Keccak candidate
+hash, valid BFV decode with request-time parameters, and recomputed C5 commitment equality before
+producing runtime `CommitteePublished` or storing a client key. An invalid candidate cannot consume
+another member's candidate. Terminal stages reject chunks and cannot recreate cleaned-up assemblies.
+`KeyPublished` alone does not mean clients have usable key bytes.
 
 **Accepted processing cost (ZEN2-17):** publication accepts dynamic proof/data without wrapper-level
 caps. Canonical chunk shape/16 MiB candidate limits bound retained assembly, not total emitted logs:
@@ -268,6 +270,10 @@ with the triggering event's context, in the same snapshot batch as that event. T
 do not make snapshot enqueue a durable-flush acknowledgment. **Gap:** failed checker snapshot writes
 are logged and retried on the next mutation while processing and publication continue. See
 [persistence](persistence-and-replay.md) for the wider snapshot limit.
+
+The checker owns the `CommitmentLink` interface in `e3-slashing`; `e3-zk-prover` supplies concrete
+public-signal extraction/comparison. `ProofType` and signed proof payloads stay in events. Static
+circuit identity and layout selection belong to `e3-zk-config`, not to the transport pipeline.
 
 Representative guards (not a complete protocol proof):
 

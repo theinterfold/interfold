@@ -12,7 +12,7 @@
 //! that bus stops with the actix system that started it. A second test in this binary could stop
 //! that system while this test still uses the bus.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use e3_config::{AppConfig, UnscopedAppConfig};
 use e3_data::{DataStore, RepositoriesFactory, SledDb};
 use e3_entrypoint::fence::ProcessFence;
@@ -24,6 +24,7 @@ use e3_keyshare::ThresholdKeyshareRepositoryFactory;
 use e3_request::E3LifecycleRepositoryFactory;
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
 
 fn e3_id() -> E3id {
     E3id::new("42", 1)
@@ -72,6 +73,7 @@ async fn write_state(config: &AppConfig, stage: E3Stage) -> Result<()> {
         .await?;
     repositories.store.shutdown().await?;
     SledDb::close_all_connections();
+    wait_for_store_unlock(config).await?;
     write_key_file(config)
 }
 
@@ -81,6 +83,33 @@ async fn write_empty_store(config: &AppConfig) -> Result<()> {
     let repositories = setup_datastore(config, &bus)?.repositories();
     repositories.store.shutdown().await?;
     SledDb::close_all_connections();
+    wait_for_store_unlock(config).await?;
+    Ok(())
+}
+
+async fn wait_for_store_unlock(config: &AppConfig) -> Result<()> {
+    // sled can retain its file lock briefly after shutdown while background I/O finishes.
+    // Probe the existing file, not sled::open: reopening sled would start more background work.
+    let path = config.db_file().join("db");
+    let file = std::fs::File::open(&path)?;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match file.try_lock() {
+                Ok(()) => return file.unlock(),
+                Err(std::fs::TryLockError::WouldBlock) => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                Err(std::fs::TryLockError::Error(error)) => return Err(error),
+            }
+        }
+    })
+    .await
+    .with_context(|| {
+        format!(
+            "fixture store did not release its lock at {}",
+            path.display()
+        )
+    })??;
     Ok(())
 }
 
@@ -552,6 +581,7 @@ async fn store_without_identity_lists_slash_reports() -> Result<()> {
         .await?;
     repositories.store.shutdown().await?;
     SledDb::close_all_connections();
+    wait_for_store_unlock(&nodes[0]).await?;
     write_key_file(&nodes[0])?;
 
     assert_refused(

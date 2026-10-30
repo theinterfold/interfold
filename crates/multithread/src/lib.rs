@@ -7,10 +7,9 @@
 mod effect_gate;
 mod memory;
 mod multithread;
-mod pool;
 mod report;
 
+pub use e3_task_pool::{TaskPool, TaskPoolError, TaskTimeouts, TimedLog};
 pub use memory::*;
 pub use multithread::*;
-pub use pool::*;
 pub use report::*;

@@ -203,7 +203,7 @@ async fn unauthenticated_share_proofs_do_not_emit_accusations() {
         let make = |proof_type| {
             let mut proof = signed_c6(&dealer, &e3_id, 1).payload;
             proof.proof_type = proof_type;
-            proof.proof.circuit = e3_events::CircuitName::DkgShareDecryption;
+            proof.proof.circuit = e3_zk_config::CircuitName::DkgShareDecryption;
             SignedProofPayload::sign(proof, &dealer).unwrap()
         };
         let good = e3_events::PartyShareDecryptionProofsToVerify {
@@ -231,7 +231,8 @@ async fn unauthenticated_share_proofs_do_not_emit_accusations() {
                         .unwrap();
             }
             "circuit" => {
-                bad.signed_sk_decryption_proof.payload.proof.circuit = e3_events::CircuitName::PkBfv
+                bad.signed_sk_decryption_proof.payload.proof.circuit =
+                    e3_zk_config::CircuitName::PkBfv
             }
             _ => unreachable!(),
         }

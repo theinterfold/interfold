@@ -33,6 +33,7 @@ use crate::helpers::datastore::setup_datastore;
 use crate::nodes::state_guard::{
     active_e3s_with_key_shares, check_deletion, pending_slash_reports, Deletion,
 };
+use crate::validate::{store_presence, StorePresence};
 
 /// The encrypted identity pair, held while the store is rebuilt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -205,6 +206,25 @@ async fn remove_if_present(path: &Path) -> Result<()> {
         fs::remove_file(path).await
     }
     .with_context(|| format!("failed to remove {}", path.display()))
+}
+
+/// Whether the node store holds a schema marker older than this binary's schema.
+///
+/// Only such a store needs a reset. A missing or damaged store, a store without a marker, and a
+/// newer marker are not older, so the command leaves them for startup to handle. The check creates
+/// no store where none exists.
+pub fn stored_schema_is_older(config: &AppConfig) -> Result<bool> {
+    let db_file = config.db_file();
+    if !matches!(store_presence(&db_file), StorePresence::Present) {
+        return Ok(false);
+    }
+    let _fence = ProcessFence::acquire(&db_file, &config.name()).context(
+        "could not acquire the node fence. The node is probably still running: stop it first, \
+         then re-run this command",
+    )?;
+    // The store stays in the process cache: the reset reuses it and closes it before it deletes.
+    let persisted = e3_sync::read_persisted_schema_version(&db_file)?;
+    Ok(persisted.is_some_and(|version| version < e3_sync::SCHEMA_VERSION))
 }
 
 /// Clear durable state for one node and put the identity back.

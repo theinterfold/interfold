@@ -10,14 +10,20 @@ use crate::constants::{
     defaults::DEFAULT_INSECURE_LAMBDA,
     defaults::DEFAULT_SECURE_16384_LAMBDA,
     defaults::DEFAULT_SECURE_LAMBDA,
+    defaults::INSECURE_64_MULT_DEPTH,
     defaults::INSECURE_MULT_DEPTH,
     defaults::MIN_SECURE_LAMBDA,
     defaults::SECURE_16384_MULT_DEPTH,
     defaults::SECURE_8192_MULT_DEPTH,
     insecure,
-    insecure_search_defaults::{
+    insecure_128_search_defaults::{
         B as INSECURE_B, B_CHI as INSECURE_B_CHI, SEARCH_K as INSECURE_SEARCH_K,
         SEARCH_N as INSECURE_SEARCH_N, SEARCH_Z as INSECURE_SEARCH_Z,
+    },
+    insecure_64,
+    insecure_search_defaults::{
+        B as INSECURE_64_B, B_CHI as INSECURE_64_B_CHI, SEARCH_K as INSECURE_64_SEARCH_K,
+        SEARCH_N as INSECURE_64_SEARCH_N, SEARCH_Z as INSECURE_64_SEARCH_Z,
     },
     search_defaults::{B, B_CHI, SEARCH_K, SEARCH_N, SEARCH_Z},
     secure_16384,
@@ -47,17 +53,17 @@ use fhe::bfv::BfvParameters;
 /// doesn't exist yet. After DKG completes, these keys are no longer needed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum BfvPreset {
-    /// Insecure threshold BFV parameters (degree 128) - DO NOT USE IN PRODUCTION
+    /// Insecure threshold BFV parameters (degree 64) - DO NOT USE IN PRODUCTION
     ///
-    /// Used for threshold encryption (GRECO) and threshold decryption operations.
-    /// These parameters define the threshold public key that data providers use to encrypt inputs.
-    InsecureThreshold,
-    /// Insecure DKG parameters (degree 128) - DO NOT USE IN PRODUCTION
+    /// Used for threshold encryption (GRECO) and threshold decryption operations on the trBFV
+    /// path. The parameters only have room for summation, not multiplication.
+    InsecureThreshold64,
+    /// Insecure DKG parameters (degree 64) - DO NOT USE IN PRODUCTION
     ///
     /// Used during Phase 0-1 (BFV Key Setup and DKG) where each ciphernode generates
     /// a standard BFV key-pair to encrypt secret shares. These are temporary keys used
     /// only during the key generation process.
-    InsecureDkg,
+    InsecureDkg64,
     /// Secure threshold BFV parameters (degree 8192) - PRODUCTION READY
     ///
     /// Used for threshold encryption (GRECO) and threshold decryption operations.
@@ -87,11 +93,11 @@ pub enum BfvPreset {
     /// l-BFV protocol path instead of trBFV - DO NOT USE IN PRODUCTION
     ///
     /// The two presets share every parameter and so every circuit config (`configs/insecure`);
-    /// they differ only in which DKG protocol an E3 runs (on-chain parameter sets 0 and 4), so the
-    /// one insecure set can test both paths. Only this one carries the l-BFV CRS/URS seeds, which
-    /// is what [`crate::supports_lbfv`] keys off.
+    /// they differ only in which DKG protocol an E3 runs, so the one insecure set can test both
+    /// paths. Only this one carries the l-BFV CRS/URS seeds, which is what
+    /// [`crate::supports_lbfv`] keys off.
     ///
-    /// Declared last so the serialized indices of the earlier variants do not change.
+    /// Declared after the earlier variants so their serialized indices do not change.
     InsecureThresholdLbfv,
     /// The DKG counterpart of [`BfvPreset::InsecureThresholdLbfv`], with the same parameters as
     /// [`BfvPreset::InsecureDkg`] - DO NOT USE IN PRODUCTION
@@ -99,19 +105,42 @@ pub enum BfvPreset {
     /// Nodes keep the DKG preset and recover the threshold preset from it, so each insecure
     /// threshold label needs its own DKG label for that round trip to keep the protocol path.
     InsecureDkgLbfv,
+    /// Insecure threshold BFV parameters (degree 128) on the trBFV path - DO NOT USE IN PRODUCTION
+    ///
+    /// Shares its parameters with [`BfvPreset::InsecureThresholdLbfv`], so one insecure set can
+    /// test both protocol paths. It has no on-chain parameter set; `InsecureThreshold64` holds the
+    /// insecure trBFV registry slot.
+    InsecureThreshold,
+    /// Insecure DKG parameters (degree 128) - DO NOT USE IN PRODUCTION
+    ///
+    /// Used during Phase 0-1 (BFV Key Setup and DKG) where each ciphernode generates
+    /// a standard BFV key-pair to encrypt secret shares. These are temporary keys used
+    /// only during the key generation process.
+    InsecureDkg,
 }
 
 impl BfvPreset {
+    /// Current registry entries. Historical indices do not identify current presets.
+    pub const ON_CHAIN_PARAMETER_SETS: [(u8, Self); 4] = [
+        (0, Self::InsecureThreshold64),
+        (2, Self::SecureThreshold8192),
+        (3, Self::SecureThreshold16384),
+        (4, Self::InsecureThresholdLbfv),
+    ];
+
     /// Map a supported on-chain parameter-set index to a threshold `BfvPreset`.
     /// Return `None` for the historical secure index 1 and other unsupported indices.
     pub fn from_on_chain_param_set(value: u8) -> Option<Self> {
-        match value {
-            0 => Some(BfvPreset::InsecureThreshold),
-            2 => Some(BfvPreset::SecureThreshold8192),
-            3 => Some(BfvPreset::SecureThreshold16384),
-            4 => Some(BfvPreset::InsecureThresholdLbfv),
-            _ => None,
-        }
+        Self::ON_CHAIN_PARAMETER_SETS
+            .iter()
+            .find_map(|&(index, preset)| (index == value).then_some(preset))
+    }
+
+    /// Return the current registry index of a threshold preset, not its DKG counterpart.
+    pub fn on_chain_param_set(self) -> Option<u8> {
+        Self::ON_CHAIN_PARAMETER_SETS
+            .iter()
+            .find_map(|&(index, preset)| (preset == self).then_some(index))
     }
 }
 
@@ -242,8 +271,8 @@ pub struct PresetSearchDefaults {
     pub b_chi: u128,
     /// Multiplicative depth for l-BFV smudging noise computation.
     ///
-    /// Set to 0 for presets without l-BFV support (insecure, secure-8192).
-    /// Set to 3 for secure-16384.
+    /// Set to 0 for presets without l-BFV support (insecure-64, secure-8192).
+    /// Set to 3 for the degree-128 insecure presets and secure-16384.
     pub mult_depth: u32,
 }
 
@@ -253,6 +282,8 @@ pub enum PresetError {
     UnknownPreset(String),
     #[error("Preset does not define a Threshold (trBFV) / DKG (BFV) pair: {0}")]
     MissingPair(&'static str),
+    #[error("Preset does not define a BFV search configuration: {0}")]
+    MissingSearchConfig(&'static str),
     #[error("Preset lambda is not secure: {0}")]
     InsecureLambda(String),
 }
@@ -326,7 +357,9 @@ impl BfvParamSet {
 }
 
 impl BfvPreset {
-    pub const ALL: [BfvPreset; 8] = [
+    pub const ALL: [BfvPreset; 10] = [
+        BfvPreset::InsecureThreshold64,
+        BfvPreset::InsecureDkg64,
         BfvPreset::InsecureThreshold,
         BfvPreset::InsecureThresholdLbfv,
         BfvPreset::InsecureDkg,
@@ -339,7 +372,8 @@ impl BfvPreset {
 
     // `InsecureThreshold` stays ahead of `InsecureThresholdLbfv`: lookups by parameters
     // (`from_threshold_parameters`) cannot tell them apart and resolve to the trBFV one.
-    pub const PAIR_PRESETS: [BfvPreset; 4] = [
+    pub const PAIR_PRESETS: [BfvPreset; 5] = [
+        BfvPreset::InsecureThreshold64,
         BfvPreset::InsecureThreshold,
         BfvPreset::InsecureThresholdLbfv,
         BfvPreset::SecureThreshold8192,
@@ -349,6 +383,8 @@ impl BfvPreset {
     pub fn from_name(name: &str) -> Result<Self, PresetError> {
         let normalized = name.trim().to_ascii_uppercase();
         match normalized.as_str() {
+            "INSECURE_THRESHOLD_64" => Ok(Self::InsecureThreshold64),
+            "INSECURE_DKG_64" => Ok(Self::InsecureDkg64),
             "INSECURE_THRESHOLD" => Ok(Self::InsecureThreshold),
             "INSECURE_THRESHOLD_LBFV" => Ok(Self::InsecureThresholdLbfv),
             "INSECURE_DKG" => Ok(Self::InsecureDkg),
@@ -363,6 +399,8 @@ impl BfvPreset {
 
     pub fn name(&self) -> &'static str {
         match self {
+            BfvPreset::InsecureThreshold64 => "INSECURE_THRESHOLD_64",
+            BfvPreset::InsecureDkg64 => "INSECURE_DKG_64",
             BfvPreset::InsecureThreshold => "INSECURE_THRESHOLD",
             BfvPreset::InsecureThresholdLbfv => "INSECURE_THRESHOLD_LBFV",
             BfvPreset::InsecureDkg => "INSECURE_DKG",
@@ -374,7 +412,8 @@ impl BfvPreset {
         }
     }
 
-    /// Parses `insecure`, `secure-8192`, `secure-16384`, or a preset λ into the threshold preset.
+    /// Parses `insecure`, `insecure-lbfv`, `insecure-64`, `secure-8192`, `secure-16384`, or a
+    /// preset λ into the threshold preset.
     pub fn from_security_config_name(name: &str) -> Result<Self, PresetError> {
         let s = name.trim();
         if let Ok(lambda) = s.parse::<usize>() {
@@ -387,6 +426,7 @@ impl BfvPreset {
         match s.to_ascii_lowercase().as_str() {
             "insecure" => Ok(Self::InsecureThreshold),
             "insecure-lbfv" => Ok(Self::InsecureThresholdLbfv),
+            "insecure-64" => Ok(Self::InsecureThreshold64),
             "secure-8192" => Ok(Self::SecureThreshold8192),
             "secure-16384" => Ok(Self::SecureThreshold16384),
             _ => Err(PresetError::UnknownPreset(name.to_string())),
@@ -442,11 +482,13 @@ impl BfvPreset {
     /// Returns `None` when called on a DKG preset.
     pub fn dkg_counterpart(self) -> Option<BfvPreset> {
         match self {
+            BfvPreset::InsecureThreshold64 => Some(BfvPreset::InsecureDkg64),
             BfvPreset::InsecureThreshold => Some(BfvPreset::InsecureDkg),
             BfvPreset::InsecureThresholdLbfv => Some(BfvPreset::InsecureDkgLbfv),
             BfvPreset::SecureThreshold8192 => Some(BfvPreset::SecureDkg8192),
             BfvPreset::SecureThreshold16384 => Some(BfvPreset::SecureDkg16384),
-            BfvPreset::InsecureDkg
+            BfvPreset::InsecureDkg64
+            | BfvPreset::InsecureDkg
             | BfvPreset::InsecureDkgLbfv
             | BfvPreset::SecureDkg8192
             | BfvPreset::SecureDkg16384 => None,
@@ -460,11 +502,13 @@ impl BfvPreset {
     /// Returns `None` when called on a threshold preset.
     pub fn threshold_counterpart(self) -> Option<BfvPreset> {
         match self {
+            BfvPreset::InsecureDkg64 => Some(BfvPreset::InsecureThreshold64),
             BfvPreset::InsecureDkg => Some(BfvPreset::InsecureThreshold),
             BfvPreset::InsecureDkgLbfv => Some(BfvPreset::InsecureThresholdLbfv),
             BfvPreset::SecureDkg8192 => Some(BfvPreset::SecureThreshold8192),
             BfvPreset::SecureDkg16384 => Some(BfvPreset::SecureThreshold16384),
-            BfvPreset::InsecureThreshold
+            BfvPreset::InsecureThreshold64
+            | BfvPreset::InsecureThreshold
             | BfvPreset::InsecureThresholdLbfv
             | BfvPreset::SecureThreshold8192
             | BfvPreset::SecureThreshold16384 => None,
@@ -473,6 +517,24 @@ impl BfvPreset {
 
     pub fn metadata(&self) -> PresetMetadata {
         match self {
+            BfvPreset::InsecureThreshold64 => PresetMetadata {
+                name: self.name(),
+                degree: insecure_64::DEGREE,
+                num_moduli: insecure_64::threshold::MODULI.len(),
+                num_parties: insecure_64::NUM_PARTIES,
+                lambda: DEFAULT_INSECURE_LAMBDA,
+                parameter_type: ParameterType::THRESHOLD,
+                security: SecurityTier::INSECURE,
+            },
+            BfvPreset::InsecureDkg64 => PresetMetadata {
+                name: self.name(),
+                degree: insecure_64::DEGREE,
+                num_moduli: insecure_64::dkg::MODULI.len(),
+                num_parties: insecure_64::NUM_PARTIES,
+                lambda: DEFAULT_INSECURE_LAMBDA,
+                parameter_type: ParameterType::DKG,
+                security: SecurityTier::INSECURE,
+            },
             BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => PresetMetadata {
                 name: self.name(),
                 degree: insecure::DEGREE,
@@ -557,7 +619,8 @@ impl BfvPreset {
         self.lambda_config().into_lambda()
     }
 
-    /// Returns the base directory name for circuit artifacts (e.g. `"insecure"`, `"secure-8192"`).
+    /// Returns the base directory name for circuit artifacts (e.g. `"insecure"`, `"insecure-64"`,
+    /// `"secure-8192"`).
     /// Threshold and DKG presets at the same degree share the same compiled circuits.
     pub fn artifacts_dir(&self) -> String {
         let meta = self.metadata();
@@ -588,6 +651,7 @@ impl BfvPreset {
             | BfvPreset::InsecureThresholdLbfv
             | BfvPreset::InsecureDkg
             | BfvPreset::InsecureDkgLbfv => "insecure",
+            BfvPreset::InsecureThreshold64 | BfvPreset::InsecureDkg64 => "insecure_64",
             BfvPreset::SecureThreshold8192 | BfvPreset::SecureDkg8192 => "secure_8192",
             BfvPreset::SecureThreshold16384 | BfvPreset::SecureDkg16384 => "secure_16384",
         }
@@ -603,6 +667,15 @@ impl BfvPreset {
 
     pub fn search_defaults(&self) -> Option<PresetSearchDefaults> {
         match self {
+            BfvPreset::InsecureThreshold64 => Some(PresetSearchDefaults {
+                n: INSECURE_64_SEARCH_N,
+                k: INSECURE_64_SEARCH_K,
+                z: INSECURE_64_SEARCH_Z,
+                lambda: DEFAULT_INSECURE_LAMBDA as u32,
+                b: INSECURE_64_B,
+                b_chi: INSECURE_64_B_CHI,
+                mult_depth: INSECURE_64_MULT_DEPTH,
+            }),
             BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => {
                 Some(PresetSearchDefaults {
                     n: INSECURE_SEARCH_N,
@@ -639,11 +712,49 @@ impl BfvPreset {
     pub fn build_pair(&self) -> Result<(Arc<BfvParameters>, Arc<BfvParameters>), PresetError> {
         build_pair_for_preset(*self)
     }
+
+    /// Complete search recipe that reproduces this preset's selected threshold/DKG pair.
+    ///
+    /// This supplies inputs only; it does not run search or authorize a new parameter set.
+    pub fn search_config(&self) -> Option<crate::search::bfv::BfvSearchConfig> {
+        let defaults = self.search_defaults()?;
+        let insecure = self.security_tier() == SecurityTier::INSECURE;
+        Some(crate::search::bfv::BfvSearchConfig {
+            n: defaults.n,
+            z: defaults.z,
+            k: defaults.k,
+            lambda: defaults.lambda,
+            b: defaults.b,
+            b_chi: defaults.b_chi,
+            min_margin: crate::search::constants::MIN_MARGIN_BITS,
+            d: insecure.then_some(self.metadata().degree as u64),
+            insecure,
+            mult_depth: defaults.mult_depth,
+            min_prime_bits: if insecure {
+                crate::constants::insecure_search_defaults::MIN_PRIME_BITS
+            } else {
+                crate::search::constants::DEFAULT_MIN_PRIME_BITS
+            },
+            verbose: false,
+        })
+    }
 }
 
 impl From<BfvPreset> for BfvParamSet {
     fn from(value: BfvPreset) -> Self {
         match value {
+            BfvPreset::InsecureThreshold64 => BfvParamSet {
+                degree: insecure_64::DEGREE,
+                moduli: insecure_64::threshold::MODULI,
+                plaintext_modulus: insecure_64::threshold::PLAINTEXT_MODULUS,
+                error1_variance: Some(insecure_64::threshold::ERROR1_VARIANCE),
+            },
+            BfvPreset::InsecureDkg64 => BfvParamSet {
+                degree: insecure_64::DEGREE,
+                moduli: insecure_64::dkg::MODULI,
+                plaintext_modulus: insecure_64::dkg::PLAINTEXT_MODULUS,
+                error1_variance: Some(insecure_64::dkg::ERROR1_VARIANCE),
+            },
             BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => BfvParamSet {
                 degree: insecure::DEGREE,
                 moduli: insecure::threshold::MODULI,
@@ -687,15 +798,21 @@ impl From<BfvPreset> for BfvParamSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::{insecure, secure_16384, secure_16384_search_defaults, secure_8192};
+    use crate::constants::{
+        insecure, insecure_64, secure_16384, secure_16384_search_defaults, secure_8192,
+    };
 
-    /// The insecure presets keep the bincode indices of `InsecureThreshold512` and
-    /// `InsecureDkg512`, so stored values still decode to them.
+    /// The insecure-64 presets keep the bincode indices of `InsecureThreshold512` and
+    /// `InsecureDkg512`, and the l-BFV presets keep theirs, so stored values still decode to them.
     #[test]
     fn insecure_preset_rename_keeps_bincode_stable() {
         for (preset, index) in [
-            (BfvPreset::InsecureThreshold, 0u32),
-            (BfvPreset::InsecureDkg, 1u32),
+            (BfvPreset::InsecureThreshold64, 0u32),
+            (BfvPreset::InsecureDkg64, 1u32),
+            (BfvPreset::SecureThreshold16384, 4u32),
+            (BfvPreset::SecureDkg16384, 5u32),
+            (BfvPreset::InsecureThresholdLbfv, 6u32),
+            (BfvPreset::InsecureDkgLbfv, 7u32),
         ] {
             assert_eq!(bincode::serialize(&preset).unwrap(), index.to_le_bytes());
             assert_eq!(
@@ -801,6 +918,17 @@ mod tests {
 
     #[test]
     fn build_pair_matches_expected_params() {
+        let (threshold, dkg) = BfvPreset::InsecureThreshold64.build_pair().unwrap();
+        assert_eq!(threshold.degree(), insecure_64::DEGREE);
+        assert_eq!(
+            threshold.plaintext(),
+            insecure_64::threshold::PLAINTEXT_MODULUS
+        );
+        assert_eq!(threshold.moduli(), insecure_64::threshold::MODULI);
+        assert_eq!(dkg.degree(), insecure_64::DEGREE);
+        assert_eq!(dkg.plaintext(), insecure_64::dkg::PLAINTEXT_MODULUS);
+        assert_eq!(dkg.moduli(), insecure_64::dkg::MODULI);
+
         let (threshold, dkg) = BfvPreset::InsecureThreshold.build_pair().unwrap();
         assert_eq!(threshold.degree(), insecure::DEGREE);
         assert_eq!(
@@ -871,7 +999,7 @@ mod tests {
     fn old_secure_parameter_slot_has_no_preset() {
         assert_eq!(
             BfvPreset::from_on_chain_param_set(0),
-            Some(BfvPreset::InsecureThreshold)
+            Some(BfvPreset::InsecureThreshold64)
         );
         assert_eq!(BfvPreset::from_on_chain_param_set(1), None);
         assert_eq!(
@@ -887,10 +1015,31 @@ mod tests {
             Some(BfvPreset::InsecureThresholdLbfv)
         );
         assert_eq!(BfvPreset::from_on_chain_param_set(5), None);
+        for (index, preset) in BfvPreset::ON_CHAIN_PARAMETER_SETS {
+            assert_eq!(preset.on_chain_param_set(), Some(index));
+        }
+        assert_eq!(BfvPreset::InsecureDkg64.on_chain_param_set(), None);
+        assert_eq!(BfvPreset::SecureDkg8192.on_chain_param_set(), None);
+        assert_eq!(BfvPreset::InsecureThreshold.on_chain_param_set(), None);
+    }
+
+    #[test]
+    fn dkg_presets_do_not_define_threshold_search_recipes() {
+        assert!(BfvPreset::InsecureDkg64.search_config().is_none());
+        assert!(BfvPreset::InsecureDkgLbfv.search_config().is_none());
+        assert!(BfvPreset::SecureDkg8192.search_config().is_none());
+        assert!(BfvPreset::SecureDkg16384.search_config().is_none());
     }
 
     #[test]
     fn test_search_defaults() {
+        let preset = BfvPreset::InsecureThreshold64;
+        let defaults = preset.search_defaults().unwrap();
+        assert_eq!(defaults.n, INSECURE_64_SEARCH_N);
+        assert_eq!(defaults.k, INSECURE_64_SEARCH_K);
+        assert_eq!(defaults.z, INSECURE_64_SEARCH_Z);
+        assert_eq!(defaults.lambda, DEFAULT_INSECURE_LAMBDA as u32);
+
         let preset = BfvPreset::InsecureThreshold;
         let defaults = preset.search_defaults().unwrap();
         assert_eq!(defaults.n, INSECURE_SEARCH_N);
@@ -913,6 +1062,7 @@ mod tests {
         assert_eq!(defaults.lambda, DEFAULT_SECURE_16384_LAMBDA as u32);
 
         // DKG presets don't have search defaults
+        assert!(BfvPreset::InsecureDkg64.search_defaults().is_none());
         assert!(BfvPreset::InsecureDkg.search_defaults().is_none());
         assert!(BfvPreset::SecureDkg8192.search_defaults().is_none());
         assert!(BfvPreset::SecureDkg16384.search_defaults().is_none());
@@ -920,6 +1070,11 @@ mod tests {
 
     #[test]
     fn test_artifacts_dir() {
+        assert_eq!(
+            BfvPreset::InsecureThreshold64.artifacts_dir(),
+            "insecure-64"
+        );
+        assert_eq!(BfvPreset::InsecureDkg64.artifacts_dir(), "insecure-64");
         assert_eq!(BfvPreset::InsecureThreshold.artifacts_dir(), "insecure");
         assert_eq!(BfvPreset::InsecureDkg.artifacts_dir(), "insecure");
         assert_eq!(

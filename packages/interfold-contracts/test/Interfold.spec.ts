@@ -560,7 +560,7 @@ describe("Interfold", function () {
     const secure16384MinDkgWindow = 21_600;
 
     for (const [name, paramSet, params, cryptoConfigId] of [
-      ["insecure", 0, BFV_PARAMS_DEFAULT, ACTIVE_CRYPTO_CONFIG_ID],
+      ["insecure-64", 0, BFV_PARAMS_DEFAULT, ACTIVE_CRYPTO_CONFIG_ID],
       ["secure-8192", 2, BFV_PARAMS_SECURE, PRODUCTION_CRYPTO_CONFIG_ID],
     ] as const) {
       it(`accepts the ${name} parameter set with a 7,200-second DKG window`, async function () {

@@ -96,9 +96,9 @@ All binary packages depend on one shared library. The Nargo package name of the 
 | `bin/config`                | Package `validate_secure_configs`. It checks the secure preset constants (CRT moduli, bounds, and parity matrices).                                                                                                                                                                                                                                                                     |
 | `benchmarks`                | Timing scripts and reports.                                                                                                                                                                                                                                                                                                                                                             |
 
-The package directory names match the `CircuitName` enum in
-`crates/events/src/interfold_event/proof.rs`. For example, `CircuitName::PkBfv` is `pk`, and
-`CircuitName::DkgAggregator` is `dkg_aggregator`. The full package index is in
+The package directory names match the `CircuitName` enum in `crates/zk/config/src/circuit.rs`. For
+example, `CircuitName::PkBfv` is `pk`, and `CircuitName::DkgAggregator` is `dkg_aggregator`. The
+full package index is in
 [`circuits/README.md`](https://github.com/theinterfold/interfold/blob/main/circuits/README.md).
 
 ## How the proofs combine
@@ -136,13 +136,13 @@ match the prover or the committed verifiers.
 This table describes repository source builds. Released binaries keep the versions pinned at their
 release.
 
-| Component                            | Version                  | Pinned in                                                                                                          |
-| ------------------------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| `nargo`                              | `1.0.0-beta.26`          | `NOIR_TOOLCHAIN` in `.github/workflows/ci.yml`. The Noir crates in `crates/zk/prover/Cargo.toml` use the same tag. |
-| `bb`                                 | `5.2.0`                  | `required_bb_version` in `crates/zk/prover/versions.json`, and `BB_VERSION` in `ci.yml`                            |
-| Circuit artifacts for source builds  | Build from this checkout | `pnpm build:circuits`                                                                                              |
-| `bb_proof_verification` (Noir)       | `v5.2.0`                 | The `Nargo.toml` of each package that verifies a proof                                                             |
-| `@aztec/bb.js`, `@noir-lang/noir_js` | `5.2.0`, `1.0.0-beta.26` | `packages/interfold-sdk/package.json`                                                                              |
+| Component                                       | Version                  | Pinned in                                                                                                          |
+| ----------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `nargo`                                         | `1.0.0-rc.3`             | `NOIR_TOOLCHAIN` in `.github/workflows/ci.yml`. The Noir crates in `crates/zk/prover/Cargo.toml` use the same tag. |
+| `bb`                                            | `6.0.0`                  | `required_bb_version` in `crates/zk/prover/versions.json`, and `BB_VERSION` in `ci.yml`                            |
+| Circuit artifacts for source builds             | Build from this checkout | `pnpm build:circuits`                                                                                              |
+| `bb_proof_verification` (Noir)                  | `v6.0.0`                 | The `Nargo.toml` of each package that verifies a proof                                                             |
+| `@aztec-foundation/bb.js`, `@noir-lang/noir_js` | `6.0.0`, `1.0.0-rc.3`    | `packages/interfold-sdk/package.json`                                                                              |
 
 For a source build, compile the circuits from the same checkout. `interfold noir setup` installs the
 CLI's release archive; it does not compile the checkout. Do not reuse an archive built with a
@@ -157,7 +157,7 @@ Install `noirup`, then use it to install the pinned compiler:
 ```bash
 curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
 export PATH="$PATH:$HOME/.nargo/bin"
-noirup -v v1.0.0-beta.26
+noirup -v v1.0.0-rc.3
 ```
 
 The installer adds `~/.nargo/bin` to your shell profile. The `export` line makes it available in the
@@ -166,7 +166,7 @@ current shell.
 ### Install bb
 
 For this checkout, install the binary for your platform from the
-[Barretenberg 5.2.0 release](https://github.com/AztecProtocol/aztec-packages/releases/tag/v5.2.0).
+[Barretenberg 6.0.0 release](https://github.com/AztecProtocol/aztec-packages/releases/tag/v6.0.0).
 
 For a released node, run `interfold noir setup`. It downloads the CLI's pinned `bb`, checks it
 against the checksum in `versions.json`, and installs that release's circuit archive:
@@ -181,7 +181,7 @@ and `version.json`. With a config file, it uses `.interfold/noir` next to that f
 ### Put bb on your PATH
 
 The repository scripts call `bb` from your `PATH`. For a source build, add the directory with the
-5.2.0 binary. To use the copy installed by a matching released CLI, add its directory:
+6.0.0 binary. To use the copy installed by a matching released CLI, add its directory:
 
 ```bash
 export PATH="$HOME/.interfold/noir/bin:$PATH"
@@ -194,7 +194,7 @@ nargo --version
 bb --version
 ```
 
-For source builds, `nargo` reports `1.0.0-beta.26` and `bb` reports `5.2.0`.
+For source builds, `nargo` reports `1.0.0-rc.3` and `bb` reports `6.0.0`.
 
 </Steps>
 
@@ -247,7 +247,7 @@ For each pair, the Rust build owner does these steps (`crates/zk/build`):
 1. It writes `configs/default/mod.nr` and `configs/committee/active.nr` for the pair.
 2. It regenerates the parity matrices and the C1 and C2 bounds with the Rust generators.
 3. It updates `packages/interfold-contracts/scripts/utils.ts` and
-   `packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol`.
+   `packages/interfold-contracts/contracts/lib/BfvProtocol.sol`.
 4. It compiles the packages in `bin/dkg`, `bin/threshold`, and `bin/recursive_aggregation` with
    `nargo compile`. `insecure` serves both protocol paths and compiles every package. `secure-8192`
    serves only the trBFV path and skips the l-BFV circuits. `secure-16384` serves only the l-BFV
@@ -308,7 +308,7 @@ Other circuit commands:
 | `pnpm build:circuits --dry-run`                                | Lists the circuits that a build compiles, and stops.                                                                                                                                         |
 | `pnpm build:circuits --group dkg --skip-vk`                    | Compiles one group and skips the verification keys.                                                                                                                                          |
 | `pnpm build:circuits hash`                                     | Prints the source hash that identifies a build.                                                                                                                                              |
-| `pnpm build:circuits sync-config --preset <p> --committee <c>` | Updates `utils.ts` and `ActiveCryptoConfig.sol` only. It does not compile.                                                                                                                   |
+| `pnpm build:circuits sync-config --preset <p> --committee <c>` | Updates `utils.ts` and `BfvProtocol.sol` only. It does not compile.                                                                                                                          |
 | `pnpm check:committee`                                         | Checks that the committee and BFV values agree across Noir, Rust, TypeScript, and Solidity.                                                                                                  |
 | `pnpm noir:lint` (`scripts/circuits/lint.sh`)                  | Runs `nargo fmt --check` and `nargo check` on the library and each package. It exits with success if `nargo` is missing.                                                                     |
 | `pnpm noir:test` (`scripts/circuits/test.sh`)                  | Runs `nargo test` on `circuits/lib` and `decryption_aggregator`, then `nargo execute` on `bin/config`, then the `dkg_aggregator` and `node_fold` tests for three preset and committee pairs. |
@@ -422,11 +422,11 @@ The crate `e3-zk-prover` (`crates/zk/prover`) runs the circuits for the cipherno
 | `ZkBackend`                                                             | Finds `bb` and the circuit directory. `check_status`, `ensure_installed`, `download_bb`, and `download_circuits` implement `interfold noir`. |
 | `ZkProver`                                                              | Runs `bb prove` and `bb verify` as a subprocess. It reads artifacts from `<circuits>/<preset>/<committee>/<variant>/`.                       |
 | `Provable`                                                              | The trait for one circuit. It names the `CircuitName` and builds the witness inputs.                                                         |
-| `CircuitVariant` (`e3-events`)                                          | `Default` (`noir-recursive-no-zk`), `Recursive` (`noir-recursive`), and `Evm` (`evm`). These are the directory names in the archive.         |
+| `CircuitVariant` (`e3-zk-config`)                                       | `Default` (`noir-recursive-no-zk`), `Recursive` (`noir-recursive`), and `Evm` (`evm`). These are the directory names in the archive.         |
 | `ProofRequestActor`, `ProofVerificationActor`, `ShareVerificationActor` | The actors that request proofs and check the proofs of other ciphernodes.                                                                    |
 
-The event types (`CircuitName`, `ProofType`) are in `crates/events`. The protocol flow that uses
-them is in
+Circuit identity/variants belong to `crates/zk/config`; `ProofType` and proof payloads remain in
+`crates/events`. The protocol flow that uses them is in
 [proof statements](https://github.com/theinterfold/interfold/blob/main/docs/architecture/proof-statements.md)
 and [DKG](https://github.com/theinterfold/interfold/blob/main/docs/architecture/dkg.md).
 
@@ -437,7 +437,7 @@ and [DKG](https://github.com/theinterfold/interfold/blob/main/docs/architecture/
 2. Add the package to the `members` list of the group workspace, for `bin/dkg` and `bin/threshold`.
 3. Add the directory to `DIRS` in `scripts/circuits/lint.sh`, for a package in
    `bin/recursive_aggregation`.
-4. Add a `CircuitName` variant in `crates/events` if the Rust prover must run the circuit.
+4. Add a `CircuitName` variant in `crates/zk/config` if the Rust prover must run the circuit.
 5. Rebuild each pair that you ship, and regenerate the verifiers if the circuit goes on-chain.
 
 ## Next steps

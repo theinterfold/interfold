@@ -21,9 +21,9 @@ use alloy::primitives::Address;
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::Result;
 use async_trait::async_trait;
-use e3_committee::CiphernodesCommitteeSize;
+use e3_committee::{CiphernodesCommitteeSize, Committee};
 use e3_data::{DataStore, RepositoriesFactory};
-use e3_events::{BusHandle, Committee, E3id, Event, InterfoldEvent, InterfoldEventData};
+use e3_events::{BusHandle, E3id, Event, InterfoldEvent, InterfoldEventData};
 use e3_request::{E3Context, E3ContextSnapshot, E3Extension, META_KEY};
 use tracing::{error, info, warn};
 

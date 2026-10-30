@@ -6,9 +6,9 @@ Interfold / CRISP public observation dashboard. Three tabs:
   Observational only (no vote CTA).
 - **E3 inspector** — deep technical record of one E3: request, committee, keygen rounds, input
   window, compute, decryption, publication, failure, fees, and on-chain event log.
-- **Run a ciphernode** — interactive operator guide. The only writing page: it connects a wallet and
+- **Run a ciphernode** — interactive operator guide. The only writing page: it connects a wallet,
   walks the on-chain setup (authorize bond owner → bond the ciphernode bond → register → buy
-  tickets).
+  tickets), and claims E3 rewards.
 
 ## Run
 
@@ -31,8 +31,8 @@ Addresses are **not** repeated here — they go stale. The live values are the n
 them against `deployments/manifest.json` for the target network.
 
 - `Interfold` proxy — `E3Requested`, `E3Failed`, `PlaintextOutputPublished`, and
-  `RewardsDistributed`, plus the `getE3`, `getE3Stage`, `getFailureReason`, and `e3Payments` view
-  functions.
+  `RewardsDistributed`, plus the `getE3`, `getE3Stage`, `getFailureReason`, `e3Payments`, and
+  `pendingReward` view functions. The operator guide sends `claimReward`.
 - `CiphernodeRegistryOwnable` — `CommitteeRequested` (threshold + seed), `CommitteeFinalized`
   (members), `CommitteePublished` (joint PK).
 - `BondingRegistry` — operator collateral and the write path behind the operator guide (see below).
@@ -41,13 +41,17 @@ them against `deployments/manifest.json` for the target network.
 - `CRISPProgram` — emits `InputPublished` for every ballot. (Interfold's own `InputPublished` is
   declared but never emitted; inputs live on the program.) A re-vote reuses its Merkle-leaf `index`,
   so the true ballot count is the number of **distinct** indexes. Inputs are only observable for
-  CRISP; other programs report `inputsTracked: false`.
+  CRISP; other programs report `inputsTracked: false`. The CRISP tab lists the E3s of the current
+  CRISP program (`CRISP_PROGRAM_ADDRESS`) and of the earlier deployments in the profile's
+  `previousCrispPrograms`. The dashboard reads the inputs of each E3 from its own program. It has no
+  option labels, so a past poll shows its on-chain outcome (Completed, Failed, Expired), not a
+  winner.
 
 ### Operator guide (write path)
 
-`src/Operator.tsx` is the only page that sends transactions. It talks to `BondingRegistry` through a
-minimal injected-wallet connector (`src/lib/wallet.ts`) — no wagmi/rainbowkit dependency, since the
-guide needs one provider, one chain, and five writes.
+`src/Operator.tsx` is the only page that sends transactions. It talks to `BondingRegistry` and the
+Interfold contract through a minimal injected-wallet connector (`src/lib/wallet.ts`) — no
+wagmi/rainbowkit dependency, since the guide needs one provider, one chain, and a few writes.
 
 The operator key and the bond owner are separate addresses. The operator key is the hot key the node
 signs with; the bond owner is the wallet that funds and controls the collateral. They may be the
@@ -63,6 +67,29 @@ same wallet. The sequence the guide enforces is:
 Steps 2–4 must come from the bond owner; the page detects the connected wallet and disables actions
 it cannot send. Every write is simulated first (`simulateAndWrite`) so the registry's typed reverts
 (for example `NotBondOwner`) surface before the wallet prompt.
+
+**E3 rewards** (`src/lib/rewards.ts`) leads the page. It shows the total that the operator's
+recipient can claim, a **Claim rewards** action, and the history of the E3 committees that selected
+the operator. It filters the `RewardRecipientSnapshotted(e3Id, operator, recipient)` events of the
+refund manager that `Interfold.e3RefundManager()` returns by the operator topic. That event gives
+each seat and the wallet that receives its payments. Each seat gets one claim state:
+
+| State            | Source                                                                                                    |
+| ---------------- | --------------------------------------------------------------------------------------------------------- |
+| In progress      | `getE3Stage(e3Id)` is neither `Complete` nor `Failed`.                                                    |
+| Forfeited        | `rewardStatus(e3Id, operator)` reports an executed expulsion.                                             |
+| On hold          | `rewardStatus` reports an open expulsion proposal. The amount is `operatorHeldRewards(e3Id, operator)`.   |
+| Needs processing | Failed E3, and `getRefundDistribution(e3Id).calculated` is false. Any wallet sends `processE3Failure`.    |
+| Claimable        | Completed E3: `pendingReward(e3Id, recipient)`. Failed E3: a simulated `claimHonestNodeReward`.           |
+| Not eligible     | The simulated `claimHonestNodeReward` reverts with `NotHonestNode`.                                       |
+| Claimed          | `RewardClaimed` (Interfold) or `RefundClaimed` with claim type `HONEST_NODE` (refund manager) records it. |
+| No reward        | None of the above.                                                                                        |
+
+The contract has no view for the compensation of a failed E3, so the read simulates
+`claimHonestNodeReward(e3Id, operator)` from the recipient: the result is the amount. **Claim
+rewards** sends `claimRewards(e3Ids)` for the completed E3s of the connected recipient, then one
+`claimHonestNodeReward` for each failed E3. Each transaction waits for the previous one. E3s that an
+earlier refund manager recorded are not listed. The amounts use the `FEE_TOKEN_*` display settings.
 
 Only `VITE_BONDING_REGISTRY_ADDRESS` is configured. The ciphernode bond token, ticket wrapper,
 ticket underlying, bond size, ticket price, minimum tickets, and exit delay are all read back from

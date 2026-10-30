@@ -210,6 +210,12 @@ work; executing Rayon jobs may finish, but cannot revive the E3. The key include
 identity so one node cannot cancel another in a shared pool. Accusation re-verification has its own
 group, survives local failure, and ends with request teardown.
 
+The composition root shares one `e3-task-pool` budget and node scope between ordinary compute and
+the C0 verification adapter. C0 waits asynchronously for admission but preserves serial completion
+and mailbox barriers. Pool failures return infrastructure outcomes; queued cancellation retires the
+pending C0 verification plan without retry or peer blame. Existing verification admission/terminal
+filtering still decides whether a late result can progress.
+
 Local resource/prover/verifier failure retries exact requests, never labels peer data invalid.
 Production begins at two compute jobs/two reserved CPUs, reduces against CPU and host/cgroup memory
 (4 GiB node reserve plus 13 GiB per prover), and refuses participation if one prover cannot fit.

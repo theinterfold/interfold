@@ -1,0 +1,666 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+
+//! Idempotency preflights and CiphernodeRegistry contract effects.
+
+use super::*;
+use crate::adapters::log_fetcher::fetch_logs_adapting;
+use crate::contracts::IInterfold;
+use e3_data_availability::public_key::ChunkLayout;
+
+const TICKET_GAS_SAFETY_MULTIPLIER: u64 = 2;
+
+fn ticket_gas_limit(estimate: u64) -> u64 {
+    estimate.saturating_mul(TICKET_GAS_SAFETY_MULTIPLIER)
+}
+
+/// Report whether a contract call contains this custom-error selector.
+fn reverts_with(error: &anyhow::Error, selector: [u8; 4]) -> bool {
+    contains_error_selector(&format!("{error:?}"), selector)
+}
+
+pub async fn submit_ticket_to_registry<P: Provider + WalletProvider + Clone + 'static>(
+    provider: EthProvider<P>,
+    contract_address: Address,
+    e3_id: E3id,
+    ticket_number: u64,
+) -> Result<TxOutcome> {
+    let e3_id_u256: U256 = e3_id.try_into()?;
+    let ticket_number_u256 = U256::from(ticket_number);
+
+    let settled_provider = provider.clone();
+    let settled = || async move {
+        ticket_submission_settled(
+            settled_provider,
+            contract_address,
+            e3_id_u256,
+            ticket_number_u256,
+        )
+        .await
+    };
+
+    send_tx_idempotent("submitTicket", &["CommitteeNotRequested"], settled, || {
+        let provider = provider.clone();
+        async move {
+            info!("Calling: contract.submitTicket(..)");
+            let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
+            let builder = contract.submitTicket(e3_id_u256, ticket_number_u256);
+            // Nodes estimate concurrently before any ticket is mined. Earlier
+            // insertions can make a later top-N update more expensive than its
+            // estimate, so leave room for the request state to change.
+            let estimated_gas = builder.estimate_gas().await?;
+            let gas_limit = ticket_gas_limit(estimated_gas);
+            debug!(
+                estimated_gas,
+                gas_limit, "Applying submitTicket gas safety margin"
+            );
+            let pending = send_with_next_nonce(&provider, builder.gas(gas_limit)).await?;
+            let receipt = pending.get_receipt().await?;
+            require_successful_receipt("submit ticket", &receipt)?;
+            Ok(receipt)
+        }
+    })
+    .await
+}
+
+/// Return true when retrying the same ticket can no longer change chain state.
+pub(in crate::actors::ciphernode_registry_sol) fn ticket_submission_error_is_terminal(
+    error: &anyhow::Error,
+) -> bool {
+    [
+        ICiphernodeRegistry::CommitteeAlreadyFinalized::SELECTOR,
+        ICiphernodeRegistry::CommitteeDeadlineReached::SELECTOR,
+        ICiphernodeRegistry::InvalidTicketNumber::SELECTOR,
+        ICiphernodeRegistry::NodeNotEligible::SELECTOR,
+    ]
+    .into_iter()
+    .any(|selector| reverts_with(error, selector))
+}
+
+/// Return true when another committee-publication attempt cannot succeed unchanged.
+pub(in crate::actors::ciphernode_registry_sol) fn committee_publication_error_is_terminal(
+    error: &anyhow::Error,
+) -> bool {
+    let encoded = format!("{error:?}");
+    let message = encoded.to_ascii_lowercase();
+    let permanent_rpc_rejection = message.contains("oversized data")
+        || (message.contains("transaction size") && message.contains("limit"))
+        || message.contains("request entity too large")
+        || message.contains("content length too large")
+        || message.contains("function selector was not recognized");
+    let permanent_local_rejection = message
+        .contains("mandatory dkg aggregator proof payload missing")
+        || message.contains("mandatory dkg attestation bundle missing")
+        || (message.contains("on-chain committee commitment")
+            && message.contains("does not match local commitment"));
+    let permanent_contract_rejection = [
+        ICiphernodeRegistry::InvalidPublicKeyLength::SELECTOR,
+        ICiphernodeRegistry::PkCommitmentRequired::SELECTOR,
+        ICiphernodeRegistry::DkgProofRequired::SELECTOR,
+        ICiphernodeRegistry::InvalidDkgProof::SELECTOR,
+        ICiphernodeRegistry::FoldAttestationsRequired::SELECTOR,
+        ICiphernodeRegistry::FoldAttestationVerifierNotSet::SELECTOR,
+        ICiphernodeRegistry::InvalidFoldAttestation::SELECTOR,
+        ICiphernodeRegistry::PartyIdNotInProof::SELECTOR,
+        ICiphernodeRegistry::AttestationBindingCountMismatch::SELECTOR,
+        ICiphernodeRegistry::PartyIdOutOfBounds::SELECTOR,
+        ICiphernodeRegistry::InvalidProof::SELECTOR,
+        ICiphernodeRegistry::InvalidPublicInputsLength::SELECTOR,
+        ICiphernodeRegistry::VkHashMismatch::SELECTOR,
+        ICiphernodeRegistry::PkCommitmentMismatch::SELECTOR,
+        ICiphernodeRegistry::DomainBindingMismatch::SELECTOR,
+        IInterfold::DKGDeadlinePassed::SELECTOR,
+        IInterfold::InvalidStage::SELECTOR,
+        ICiphernodeRegistry::InvalidPublicKeyChunk::SELECTOR,
+        ICiphernodeRegistry::PublicKeyPublisherNotCommitteeMember::SELECTOR,
+    ]
+    .into_iter()
+    .any(|selector| contains_error_selector(&encoded, selector));
+
+    permanent_rpc_rejection || permanent_local_rejection || permanent_contract_rejection
+}
+
+/// Report whether this node's ticket is already recorded on chain.
+///
+/// `submitTicket` reverts with `NodeAlreadySubmitted` for a sender that is
+/// already in the submission set, so a retry that duplicates a mined
+/// submission needs no further attempt.
+async fn ticket_submission_settled<P: Provider + WalletProvider + Clone + 'static>(
+    provider: EthProvider<P>,
+    contract_address: Address,
+    e3_id_u256: U256,
+    ticket_number_u256: U256,
+) -> Result<bool> {
+    let from_address = provider.provider().default_signer_address();
+    let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
+    match contract
+        .submitTicket(e3_id_u256, ticket_number_u256)
+        .from(from_address)
+        .call()
+        .await
+    {
+        Ok(_) => Ok(false),
+        Err(err) => Ok(reverts_with(
+            &anyhow::Error::from(err),
+            ICiphernodeRegistry::NodeAlreadySubmitted::SELECTOR,
+        )),
+    }
+}
+
+/// Report whether committee finalization reached a terminal chain state.
+///
+/// Both `Finalized` and `Failed` reject another attempt with
+/// `CommitteeAlreadyFinalized`. Neither state permits useful retry work.
+async fn committee_finalization_terminal<P: Provider + WalletProvider + Clone + 'static>(
+    provider: EthProvider<P>,
+    contract_address: Address,
+    e3_id_u256: U256,
+) -> Result<bool> {
+    let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
+    let Err(err) = contract.finalizeCommittee(e3_id_u256).call().await else {
+        return Ok(false);
+    };
+
+    Ok(reverts_with(
+        &anyhow::Error::from(err),
+        ICiphernodeRegistry::CommitteeAlreadyFinalized::SELECTOR,
+    ))
+}
+
+pub async fn finalize_committee_on_registry<P: Provider + WalletProvider + Clone + 'static>(
+    provider: EthProvider<P>,
+    contract_address: Address,
+    e3_id: E3id,
+) -> Result<TxOutcome> {
+    let e3_id_u256: U256 = e3_id.clone().try_into()?;
+
+    // Members finalize on a stagger. Another member can finalize between the
+    // stagger tick and this call, so read the chain first. Without this check
+    // the transaction is mined with a failed receipt and burns gas.
+    if committee_finalization_terminal(provider.clone(), contract_address, e3_id_u256).await? {
+        info!(e3_id = %e3_id, "Committee already finalized on chain; skipping finalizeCommittee");
+        return Ok(TxOutcome::AlreadySettled);
+    }
+
+    let settled_provider = provider.clone();
+    let settled = || async move {
+        committee_finalization_terminal(settled_provider, contract_address, e3_id_u256).await
+    };
+
+    send_tx_idempotent(
+        "finalizeCommittee",
+        &[
+            "SubmissionWindowNotClosed",
+            "CommitteeNotRequested",
+            "ThresholdNotMet",
+        ],
+        settled,
+        || {
+            let provider = provider.clone();
+            async move {
+                info!("Calling: contract.finalizeCommittee(..)");
+                let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
+                let pending =
+                    send_with_next_nonce(&provider, contract.finalizeCommittee(e3_id_u256)).await?;
+                let receipt = pending.get_receipt().await?;
+                require_successful_receipt("finalize committee", &receipt)?;
+                Ok(receipt)
+            }
+        },
+    )
+    .await
+}
+
+pub(in crate::actors::ciphernode_registry_sol) async fn should_publish_committee<
+    P: Provider + WalletProvider + Clone + 'static,
+>(
+    provider: EthProvider<P>,
+    contract_address: Address,
+    e3_id: E3id,
+    expected_commitment: [u8; 32],
+) -> Result<bool> {
+    let e3_id_u256: U256 = e3_id.try_into()?;
+    let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
+    match contract.committeePublicKey(e3_id_u256).call().await {
+        Ok(commitment) => {
+            let expected = B256::from(expected_commitment);
+            if commitment != expected {
+                anyhow::bail!(
+                    "on-chain committee commitment {commitment} does not match local commitment {expected}"
+                );
+            }
+            Ok(false)
+        }
+        Err(err) => {
+            let err = anyhow::Error::from(err);
+            let decoded = decode_error_from_str(&format!("{err:?}"));
+
+            if decoded
+                .as_deref()
+                .is_some_and(|message| message.contains("CommitteeNotPublished"))
+            {
+                return Ok(true);
+            }
+
+            Err(err)
+        }
+    }
+}
+
+pub async fn publish_committee_to_registry<P: Provider + WalletProvider + Clone + 'static>(
+    provider: EthProvider<P>,
+    contract_address: Address,
+    e3_id: E3id,
+    pk_commitment: [u8; 32],
+    dkg_aggregator_proof: Option<&Proof>,
+    dkg_attestation_bundle: Option<&[u8]>,
+) -> Result<TxOutcome> {
+    let e3_id_u256: U256 = e3_id.clone().try_into()?;
+    let pk_commitment_b256 = B256::from(pk_commitment);
+
+    // Skip mode creates non-empty mock-only placeholders before this boundary. An absent payload
+    // is therefore always an internal error, while production verifiers still reject placeholders.
+    let proof = encode_zk_proof(
+        dkg_aggregator_proof
+            .ok_or_else(|| anyhow::anyhow!("mandatory DKG aggregator proof payload missing"))?,
+    )?;
+    let attestation_bundle = Bytes::copy_from_slice(
+        dkg_attestation_bundle
+            .filter(|bundle| !bundle.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("mandatory DKG attestation bundle missing"))?,
+    );
+
+    // The published commitment must equal ours, which `should_publish_committee`
+    // enforces. A different commitment stays an error.
+    let settled_provider = provider.clone();
+    let settled = || async move {
+        should_publish_committee(settled_provider, contract_address, e3_id, pk_commitment)
+            .await
+            .map(|should_publish| !should_publish)
+    };
+
+    // RPC may not have synced finalization yet
+    send_tx_idempotent(
+        "publishCommittee",
+        &["CommitteeNotFinalized"],
+        settled,
+        || {
+            let provider = provider.clone();
+            let proof = proof.clone();
+            let attestation_bundle = attestation_bundle.clone();
+            async move {
+                info!("Calling: contract.publishCommittee(..)");
+                let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
+                let pending = send_with_next_nonce(
+                    &provider,
+                    contract.publishCommittee(
+                        e3_id_u256,
+                        pk_commitment_b256,
+                        proof,
+                        attestation_bundle,
+                    ),
+                )
+                .await?;
+                let receipt = pending.get_receipt().await?;
+                require_successful_receipt("publish committee", &receipt)?;
+                Ok(receipt)
+            }
+        },
+    )
+    .await
+}
+
+pub async fn publish_committee_public_key_to_registry<
+    P: Provider + WalletProvider + Clone + 'static,
+>(
+    provider: EthProvider<P>,
+    contract_address: Address,
+    e3_id: E3id,
+    public_key: ArcBytes,
+) -> Result<TransactionReceipt> {
+    let e3_id_u256: U256 = e3_id.try_into()?;
+    let public_key_bytes = Bytes::from(public_key.extract_bytes());
+    let layout = ChunkLayout::new(public_key_bytes.len())?;
+    let total_length = layout.total_length();
+    let chunk_count = layout.chunk_count();
+    let candidate_hash = alloy::primitives::keccak256(&public_key_bytes);
+    let mut last_receipt = None;
+
+    for chunk_index in 0..chunk_count {
+        let range = layout
+            .range(chunk_index)
+            .context("public-key chunk index outside layout")?;
+        let chunk = Bytes::copy_from_slice(&public_key_bytes[range]);
+        let receipt = send_tx_with_retry(
+            "publishCommitteePublicKey chunk",
+            &["CommitteeNotPublished"],
+            || {
+                let provider = provider.clone();
+                let chunk = chunk.clone();
+                async move {
+                    info!(
+                        chunk = chunk_index + 1,
+                        total = chunk_count,
+                        "Calling: contract.publishCommitteePublicKey(chunk)"
+                    );
+                    let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
+                    let pending = send_with_next_nonce(
+                        &provider,
+                        contract.publishCommitteePublicKey(
+                            e3_id_u256,
+                            candidate_hash,
+                            chunk_index,
+                            chunk_count,
+                            total_length,
+                            chunk,
+                        ),
+                    )
+                    .await?;
+                    let receipt = pending.get_receipt().await?;
+                    require_successful_receipt("publish committee public-key chunk", &receipt)?;
+                    Ok(receipt)
+                }
+            },
+        )
+        .await?;
+        last_receipt = Some(receipt);
+    }
+
+    last_receipt.ok_or_else(|| anyhow::anyhow!("committee public key is empty"))
+}
+
+/// Read `CiphernodeRegistry.dkgFoldAttestationVerifier()` (EIP-712 verifying contract for fold attestations).
+pub async fn fetch_dkg_fold_attestation_verifier<P: Provider + Clone>(
+    provider: &P,
+    registry_address: Address,
+) -> Result<Option<Address>> {
+    let contract = ICiphernodeRegistry::new(registry_address, provider);
+    let verifier = contract.dkgFoldAttestationVerifier().call().await?;
+    if verifier == Address::ZERO {
+        Ok(None)
+    } else {
+        Ok(Some(verifier))
+    }
+}
+
+/// Read `CiphernodeRegistry.accusationVoteValidity()` — registry-wide off-chain
+/// freshness window (seconds) accusers stamp on `AccusationVote.deadline`.
+/// Returns the raw `uint256` as `U256`; callers decide how to clamp it to
+/// their own arithmetic type. `Ok(None)` is reserved for the case where the
+/// registry has been governance-disabled (`accusationVoteValidity = 0`) so
+/// the caller can short-circuit without producing votes that will never
+/// verify on chain.
+pub async fn fetch_accusation_vote_validity<P: Provider + Clone>(
+    provider: &P,
+    registry_address: Address,
+) -> Result<Option<U256>> {
+    let contract = ICiphernodeRegistry::new(registry_address, provider);
+    let validity = contract.accusationVoteValidity().call().await?;
+    if validity.is_zero() {
+        Ok(None)
+    } else {
+        Ok(Some(validity))
+    }
+}
+
+/// Reads the provider used for future committee randomness requests.
+pub async fn fetch_randomness_provider<P: Provider + Clone>(
+    provider: &P,
+    registry_address: Address,
+) -> Result<Option<Address>> {
+    let contract = ICiphernodeRegistry::new(registry_address, provider);
+    let randomness_provider = contract.randomnessProvider().call().await?;
+    if randomness_provider == Address::ZERO {
+        Ok(None)
+    } else {
+        Ok(Some(randomness_provider))
+    }
+}
+
+/// Reads every provider needed to replay committee randomness history.
+///
+/// Read through the shared adaptive fetcher rather than a fixed-width loop. This runs during
+/// startup, before the event pager exists, and a fixed 10,000-block request is refused outright by
+/// any provider whose `eth_getLogs` cap is lower — so the node failed to start against endpoints the
+/// pager already knew how to use, and nothing in the log said the sync itself would have coped.
+/// See [`fetch_logs_adapting`].
+pub async fn fetch_randomness_providers<P: Provider + Clone>(
+    provider: &P,
+    registry_address: Address,
+    from_block: u64,
+    max_log_window: u64,
+) -> Result<Vec<Address>> {
+    let chain_id = provider.get_chain_id().await?;
+    let base_filter = Filter::new()
+        .address(registry_address)
+        .event_signature(ICiphernodeRegistry::RandomnessProviderSet::SIGNATURE_HASH);
+    let head = provider.get_block_number().await?;
+
+    let logs = fetch_logs_adapting(
+        provider,
+        &base_filter,
+        from_block,
+        head,
+        chain_id,
+        max_log_window,
+    )
+    .await?;
+
+    let mut providers = Vec::new();
+    let mut seen = HashSet::new();
+
+    for log in logs {
+        let event = ICiphernodeRegistry::RandomnessProviderSet::decode_log_data(log.data())
+            .context("invalid RandomnessProviderSet event")?;
+        if event.randomnessProvider != Address::ZERO && seen.insert(event.randomnessProvider) {
+            providers.push(event.randomnessProvider);
+        }
+    }
+
+    if let Some(current) = fetch_randomness_provider(provider, registry_address).await? {
+        if seen.insert(current) {
+            providers.push(current);
+        }
+    }
+    Ok(providers)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        committee_publication_error_is_terminal, reverts_with, ticket_gas_limit,
+        ticket_submission_error_is_terminal,
+    };
+    use crate::contracts::{ICiphernodeRegistry, IInterfold};
+    use alloy::sol_types::{Revert, SolError};
+
+    fn selector_error(selector: [u8; 4]) -> anyhow::Error {
+        anyhow::anyhow!(
+            "RPC request failed with revert data 0x{}",
+            hex::encode(selector)
+        )
+    }
+
+    #[test]
+    fn ticket_retry_stops_only_for_permanent_contract_outcomes() {
+        for selector in [
+            ICiphernodeRegistry::CommitteeAlreadyFinalized::SELECTOR,
+            ICiphernodeRegistry::CommitteeDeadlineReached::SELECTOR,
+            ICiphernodeRegistry::InvalidTicketNumber::SELECTOR,
+            ICiphernodeRegistry::NodeNotEligible::SELECTOR,
+        ] {
+            assert!(ticket_submission_error_is_terminal(&selector_error(
+                selector
+            )));
+        }
+
+        assert!(!ticket_submission_error_is_terminal(&anyhow::anyhow!(
+            "RPC connection reset while decoding CommitteeDeadlineReached"
+        )));
+
+        let string_revert = Revert::from("CommitteeDeadlineReached").abi_encode();
+        assert!(!ticket_submission_error_is_terminal(&anyhow::anyhow!(
+            "revert data 0x{}",
+            hex::encode(string_revert)
+        )));
+    }
+
+    #[test]
+    fn committee_finalization_terminal_requires_the_exact_custom_error() {
+        let selector = ICiphernodeRegistry::CommitteeAlreadyFinalized::SELECTOR;
+        assert!(reverts_with(&selector_error(selector), selector));
+        assert!(!reverts_with(
+            &anyhow::anyhow!("CommitteeAlreadyFinalized"),
+            selector
+        ));
+    }
+
+    #[test]
+    fn doubles_ticket_gas_estimate_without_overflow() {
+        assert_eq!(ticket_gas_limit(250_000), 500_000);
+        assert_eq!(ticket_gas_limit(u64::MAX), u64::MAX);
+    }
+
+    #[test]
+    fn oversized_rpc_rejection_is_terminal() {
+        let error = anyhow::anyhow!(
+            "server returned error code -32000: oversized data: transaction size 356602, limit 131072"
+        );
+        assert!(committee_publication_error_is_terminal(&error));
+        assert!(!committee_publication_error_is_terminal(&anyhow::anyhow!(
+            "RPC connection reset"
+        )));
+        assert!(!committee_publication_error_is_terminal(&selector_error(
+            ICiphernodeRegistry::CommitteeNotPublished::SELECTOR
+        )));
+    }
+
+    #[test]
+    fn invalid_public_key_length_is_terminal() {
+        assert!(committee_publication_error_is_terminal(&selector_error(
+            ICiphernodeRegistry::InvalidPublicKeyLength::SELECTOR
+        )));
+        assert!(committee_publication_error_is_terminal(&selector_error(
+            ICiphernodeRegistry::InvalidProof::SELECTOR
+        )));
+        assert!(committee_publication_error_is_terminal(&selector_error(
+            IInterfold::DKGDeadlinePassed::SELECTOR
+        )));
+        assert!(committee_publication_error_is_terminal(&selector_error(
+            IInterfold::InvalidStage::SELECTOR
+        )));
+        assert!(committee_publication_error_is_terminal(&selector_error(
+            ICiphernodeRegistry::InvalidPublicKeyChunk::SELECTOR
+        )));
+        assert!(committee_publication_error_is_terminal(&selector_error(
+            ICiphernodeRegistry::PublicKeyPublisherNotCommitteeMember::SELECTOR
+        )));
+    }
+
+    #[tokio::test]
+    async fn public_key_publication_preserves_bytes_metadata_and_repeated_sends(
+    ) -> anyhow::Result<()> {
+        use super::publish_committee_public_key_to_registry;
+        use crate::helpers::EthProvider;
+        use alloy::{
+            node_bindings::Anvil,
+            primitives::{keccak256, U256},
+            providers::{Provider, ProviderBuilder},
+            rpc::types::Filter,
+            signers::local::PrivateKeySigner,
+            sol,
+            sol_types::SolEvent,
+        };
+        use e3_events::E3id;
+        use e3_utils::ArcBytes;
+
+        sol!(
+            #[sol(rpc)]
+            EmitLogs,
+            "tests/fixtures/emit_logs.json"
+        );
+
+        let anvil = Anvil::new().try_spawn()?;
+        let signer = PrivateKeySigner::from_slice(&anvil.keys()[0].to_bytes())?;
+        let sender = signer.address();
+        let provider = EthProvider::new(
+            ProviderBuilder::new()
+                .wallet(signer)
+                .connect(&anvil.endpoint())
+                .await?,
+        )
+        .await?;
+        let registry = EmitLogs::deploy(provider.provider()).await?;
+        let address = *registry.address();
+        let e3_id = E3id::new("7", provider.chain_id());
+        let bytes = (0..184_337)
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+
+        // A restart may resend unfinished chunks. The transport bytes and identity must not change.
+        for _ in 0..2 {
+            let receipt = publish_committee_public_key_to_registry(
+                provider.clone(),
+                address,
+                e3_id.clone(),
+                ArcBytes::from_bytes(&bytes),
+            )
+            .await?;
+            assert!(receipt.status());
+            let last = receipt.logs()[0]
+                .log_decode::<ICiphernodeRegistry::CommitteePublicKeyChunkPublished>()?
+                .inner
+                .data;
+            assert_eq!(last.chunkIndex, 2);
+        }
+
+        let nonce = provider.provider().get_transaction_count(sender).await?;
+        let oversized = vec![0; e3_data_availability::public_key::MAX_PUBLIC_KEY_BYTES + 1];
+        for invalid in [Vec::new(), oversized] {
+            assert!(publish_committee_public_key_to_registry(
+                provider.clone(),
+                address,
+                e3_id.clone(),
+                ArcBytes::from_bytes(&invalid),
+            )
+            .await
+            .is_err());
+        }
+        assert_eq!(
+            provider.provider().get_transaction_count(sender).await?,
+            nonce
+        );
+
+        let logs = provider
+            .provider()
+            .get_logs(
+                &Filter::new()
+                    .address(address)
+                    .from_block(0)
+                    .event_signature(
+                        ICiphernodeRegistry::CommitteePublicKeyChunkPublished::SIGNATURE_HASH,
+                    ),
+            )
+            .await?;
+        assert_eq!(logs.len(), 6);
+        for (log, (index, range)) in logs.iter().zip(
+            [(0, 0..92_160), (1, 92_160..184_320), (2, 184_320..184_337)]
+                .into_iter()
+                .cycle(),
+        ) {
+            let event = log
+                .log_decode::<ICiphernodeRegistry::CommitteePublicKeyChunkPublished>()?
+                .inner
+                .data;
+            assert_eq!(event.e3Id, U256::from(7));
+            assert_eq!(event.publisher, sender);
+            assert_eq!(event.candidateHash, keccak256(&bytes));
+            assert_eq!(event.nodes, vec![sender]);
+            assert_eq!(event.pkCommitment.0, U256::from(9).to_be_bytes::<32>());
+            assert_eq!(event.chunkIndex, index);
+            assert_eq!(event.chunkCount, 3);
+            assert_eq!(event.totalLength, 184_337);
+            assert_eq!(event.chunk.as_ref(), &bytes[range]);
+        }
+        Ok(())
+    }
+}

@@ -9,6 +9,8 @@ import { test } from 'node:test'
 import { VersionBumper, main } from './bump'
 import { CARGO_WORKSPACES, PACKAGE_FILES, releaseChannel, validateReleaseVersion } from './version.mjs'
 
+const DAPPNODE_NETWORKS = ['mainnet', 'sepolia']
+
 function fixture(t: { after: (fn: () => void) => void }) {
   const rootDir = mkdtempSync(join(tmpdir(), 'interfold-bump-'))
   t.after(() => rmSync(rootDir, { recursive: true, force: true }))
@@ -25,8 +27,13 @@ function fixture(t: { after: (fn: () => void) => void }) {
   write('dappnode/dappnode_package.json', '{"version":"0.4.5","upstreamVersion":"1.2.3"}\n')
   write('dappnode/package.json', '{"version":"0.4.5"}\n')
   write('dappnode/package-lock.json', '{"version":"0.4.5","packages":{"":{"version":"0.4.5"}}}\n')
-  write('dappnode/docker-compose.yml', "UPSTREAM_VERSION: 1.2.3\nimage: 'ciphernode.interfold-ciphernode.public.dappnode.eth:0.4.5'\n")
+  write('dappnode/docker-compose.yml', 'UPSTREAM_VERSION: 1.2.3\n')
   write('dappnode/Dockerfile', 'ARG UPSTREAM_VERSION=1.2.3\n')
+  for (const network of DAPPNODE_NETWORKS) {
+    const name = `interfold-ciphernode-${network}.dnp.dappnode.eth`
+    write(`dappnode/package_variants/${network}/dappnode_package.json`, JSON.stringify({ name }) + '\n')
+    write(`dappnode/package_variants/${network}/docker-compose.yml`, `services:\n  ciphernode:\n    image: '${name}:0.4.5'\n`)
+  }
   for (const workspace of CARGO_WORKSPACES) write(join(workspace, 'Cargo.lock'), 'old lock\n')
   write('pnpm-lock.yaml', 'old lock\n')
   write('CHANGELOG.md', 'old changelog\n')
@@ -52,6 +59,9 @@ test('default preparation updates all manifests, local Cargo pins and required l
   new VersionBumper('v1.3.0', {}, f).bumpAll()
   assert.equal(validateReleaseVersion('1.3.0', f.rootDir), '1.3.0')
   assert.equal(JSON.parse(f.read('dappnode/dappnode_package.json')).version, '0.5.0')
+  for (const network of DAPPNODE_NETWORKS) {
+    assert.ok(f.read(`dappnode/package_variants/${network}/docker-compose.yml`).includes(`${network}.dnp.dappnode.eth:0.5.0'`))
+  }
   assert.match(f.read('Cargo.toml'), /a = \{ version = "1.3.0", path/)
   assert.match(f.read('Cargo.toml'), /b = \{ path = "crates\/b", version = "1.3.0"/)
   assert.match(f.read('Cargo.toml'), /external = \{ version = "=7.8.9"/)
@@ -118,6 +128,7 @@ test('explicit commit stages only release outputs and pushes only with the addit
   assert.equal(staged[1], '--')
   assert.ok(staged.includes('Cargo.toml'))
   assert.ok(staged.includes('pnpm-lock.yaml'))
+  for (const network of DAPPNODE_NETWORKS) assert.ok(staged.includes(`dappnode/package_variants/${network}/docker-compose.yml`))
   assert.equal(staged.includes('.'), false)
   assert.equal(staged.includes('unrelated.txt'), false)
   assert.deepEqual(git.at(-1), ['push', 'origin', 'release/1.3.0'])

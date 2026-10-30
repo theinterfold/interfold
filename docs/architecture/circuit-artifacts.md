@@ -15,35 +15,35 @@ constants, verifier output, local `.active-preset.json`, or prepared OpenVM iden
 Canonical committees `(N,T,H)` are minimum `(3,1,2)`, micro `(9,4,5)`, small `(19,9,14)`. Every
 preset/committee pair has its own H-shaped PK and T-shaped decryption public-input layout.
 
-`pnpm check:committee` compares committee Noir/Rust/ActiveCryptoConfig/deployment utils, complete
-threshold BFV tuples across deployment constants/Rust/preset Noir, and configuration IDs across
-contracts, tasks, SDK, and EVM helpers. Drift can register a tuple nodes/circuits do not implement.
-The committed default is insecure/minimum (degree 128); CI rebuilds that selection and rejects
-diffs. Local active-preset cache mismatch is only a note. **Limits:** the gate does not compare
-`scripts/circuits/constants.ts` committee values; manually review those. With Nargo available, the
-gate runs `pnpm build:circuits check --committee all`. The Rust owner renders/formats an isolated
-library copy and compares generated files without swapping live files. Circuit CI also rejects
-committed-selection drift after rebuilding.
+`pnpm check:committee` compares owner metadata with Noir/BfvProtocol, complete threshold BFV tuples,
+and deployment selections/routes. Binding, SDK, contract, and EVM-helper tests compare consumer
+behavior against frozen protocol IDs instead of requiring particular imports or implementation text.
+Drift can register a tuple nodes/circuits do not implement. The committed default is
+insecure/minimum (degree 128); CI checks its selectors without switching the live tree. Local
+active-preset cache mismatch is only a note. **Limits:** these source checks do not establish
+verification-key or proof compatibility. With Nargo available, the gate runs
+`pnpm build:circuits check --committee all`. The Rust owner renders/formats an isolated library copy
+and compares complete preset/committee declarations without swapping live files.
 
 C1/C2 `PK_GENERATION_*`/`SHARE_COMPUTATION_*` bounds are derived from preset+committee. Generator
 replaces whole declarations including array dimensions and rejects unknown prefixed globals, because
 pair source hash ignores generated values. Smudging quotient bounds grow with committee: retaining a
 minimum array in another pair can reject honest proofs. A renamed global must first have
 declarations seeded in both preset files, removing the old name, then run generation. `sync-config`
-updates deployment utils and ActiveCryptoConfig only; it neither switches Noir selectors nor
-regenerates bounds. General generated-file policy does not permit guessing new generated values by
-hand.
+updates deployment utils and the shared Solidity binding only; it neither switches Noir selectors
+nor regenerates bounds. General generated-file policy does not permit guessing new generated values
+by hand.
 
 Generated provenance headers retain their original spelling across tooling moves. Changing those
 bytes requires a coordinated generated-source refresh; renaming a script alone must not make CI's
 source-regeneration comparison fail. Maintained documentation links identify the current owner.
 
-Toolchain is one compatibility unit: Nargo/Rust Noir beta.26, witness serialization, bb 5.2.0,
-archive, VKs, SDK noir_js/bb.js, and generated verifiers. **Gap:** no script compares every version
-pin across CI, release, `versions.json`, Cargo, and SDK. Rust witness stacks use
-`WitnessStack::serialize()` (beta.26 MessagePack), never bincode. A valid archive checksum cannot
-make older ACIR/serialization compatible. Rebuild/publish matching archives and regenerate
-keys/verifiers before changing required circuit version.
+Toolchain is one compatibility unit: Nargo/Rust Noir rc.3, witness serialization, bb 6.0.0, archive,
+VKs, SDK noir_js/bb.js, and generated verifiers. **Gap:** no script compares every version pin
+across CI, release, `versions.json`, Cargo, and SDK. Rust witness stacks use
+`WitnessStack::serialize()` (rc.3 MessagePack), never bincode. A valid archive checksum cannot make
+older ACIR/serialization compatible. Rebuild/publish matching archives and regenerate keys/verifiers
+before changing required circuit version.
 
 Build and benchmark share exact-version parsing in `crates/zk/build/src/toolchain.rs`. Pair
 SOURCE_HASH covers compiling Noir, library entry/dependency manifests, shared constants, pinned
@@ -57,6 +57,11 @@ repository-relative UTF-8 name, content, and explicit name/content lengths. Movi
 roots changes its identity. Required files, directories, and tool pins must exist unless the build
 supplies that generated file's staged contents. A missing relocated owner fails instead of silently
 reducing provenance. Circuit-group order cannot change the same source set's hash.
+
+Committee and ZK-config sources are hashed inputs. Moving ordered membership or circuit identity
+into them changes pair provenance even when serialized bytes, paths, targets, and layouts stay
+identical. That is not a reason to restamp existing artifacts or regenerate deployed verifiers;
+retain published identity for development reuse and require source-bound release qualification.
 
 Normalize active-preset selection and generated bound values; exclude cfg(test) modules and the
 build crate's separate tests. Switching pair or editing a test must not stale another pair.
@@ -105,8 +110,9 @@ The expected archive digest ships **with the binary**, never fetched from the ar
 0.18.0's pin is the published GitHub asset digest; other version pins live in versions.json. Release
 packaging hashes and retains exact bytes, passes `E3_CIRCUITS_ARCHIVE_SHA256` to binary/image
 compilation, and build.rs validates it. ZkConfig binds it to crate version. `noir status` checks
-binary and ciphernode image against that digest before candidate publication. DAppNode copies the
-checked ciphernode image. Unpinned builds compile, but downloads fail before network access.
+binary and ciphernode image against that digest before candidate publication. Both DAppNode packages
+extend the checked ciphernode image. Unpinned builds compile, but downloads fail before network
+access.
 
 Both download and local install require nonempty SHA-256 checksums.json, verify every entry, reject
 uncovered artifacts, and require every path in
@@ -135,11 +141,10 @@ Each supported pair has concrete BfvPkVerifier/BfvDecryptionVerifier; immutable 
 public-input length and VK anchors. Selecting an already installed matching pair needs no
 replacement; missing routes or changed VKs require matching wrappers and replacement routers before
 mapping updates. Constructor code checks/nonzero VK anchors are mandatory. Deployment compares
-immutables with built artifacts. Generated verifiers must match built VKs: pre-push reads circuit
-filter paths and checked-out insecure pair (local committee/default minimum), refusing dirty
-relevant files; CI source builds compile/check the selected default pair using the same filter.
-Releases require the complete supported matrix. A wrapper name alone does not identify its accepted
-statement.
+immutables with built artifacts. Generated verifiers must match built VKs: relevant pre-push changes
+retain the selected-pair verifier check, and ordinary circuit CI builds/checks the default pair.
+Release validation still requires every release-required source-matched pair. A wrapper name alone
+does not identify its accepted statement.
 
 Published `@interfold/contracts` deploys do not require a checkout. Outside the monorepo,
 node-release metadata comes from `dist/node-release.json`, written by `compile:ts`, and BFV VK paths

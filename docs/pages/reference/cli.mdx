@@ -720,10 +720,11 @@ the storage schema and the binary refuses to load the old data folder.
 interfold node reset-data --yes
 ```
 
-| Flag                 | Value | Default | Description                                                                                                                     |
-| -------------------- | ----- | ------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `--yes`              | None  | Off     | Confirms the deletion. Without it, the command stops with a message that lists what it deletes.                                 |
-| `--allow-active-e3s` | None  | Off     | Deletes the state even when this node holds a key share for an E3 that it has not seen complete. The node loses that key share. |
+| Flag                 | Value | Default | Description                                                                                                                                                                             |
+| -------------------- | ----- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--yes`              | None  | Off     | Confirms the deletion. Without it, the command stops with a message that lists what it deletes.                                                                                         |
+| `--allow-active-e3s` | None  | Off     | Deletes the state even when this node holds a key share for an E3 that it has not seen complete. The node loses that key share.                                                         |
+| `--if-schema-older`  | None  | Off     | Resets only when the stored state uses an older storage schema than this binary. Otherwise the command changes nothing and exits with success. A package can run it before every start. |
 
 The command first writes an encrypted backup of the wallet key and libp2p key to
 `identity-backup-<name>-<timestamp>.json` next to the database. Then it deletes the key/value store

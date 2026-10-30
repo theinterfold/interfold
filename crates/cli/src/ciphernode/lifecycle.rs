@@ -164,7 +164,12 @@ pub(crate) async fn deactivate(
     Ok(())
 }
 
-pub(crate) async fn status(out: Console, ctx: &ChainContext, operator: Address) -> Result<()> {
+pub(crate) async fn status(
+    out: Console,
+    ctx: &ChainContext,
+    operator: Address,
+    committees: bool,
+) -> Result<()> {
     let contract = ctx.bonding();
     let bond_owner = contract.bondOwnerOf(operator).call().await?;
     let pending_owner = contract.pendingBondOwnerOf(operator).call().await?;
@@ -233,9 +238,13 @@ pub(crate) async fn status(out: Console, ctx: &ChainContext, operator: Address) 
         format_amount(ticket_price, ticket_decimals),
         format_amount(required_ciphernode_bond, ciphernode_bond_decimals)
     );
-    // The committee scan reads the whole obligation history, so it has more ways to fail than the
-    // reads above. A failed command on the daemon returns no output, so a failure here keeps the
-    // lines above.
+    if !committees {
+        log!(out, "  Committees: not read (--no-committees)");
+        return Ok(());
+    }
+    // The committee scan reads the obligation history, so it has more ways to fail than the reads
+    // above. A failed command on the daemon returns no output, so a failure here keeps the lines
+    // above.
     match ctx.operator_committees(operator).await {
         Ok(committees) if committees.is_empty() => log!(out, "  Committees: none"),
         Ok(committees) => {

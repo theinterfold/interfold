@@ -146,7 +146,8 @@ fn select_from(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use e3_events::{CircuitName, Proof, ProofPayload};
+    use e3_events::{Proof, ProofPayload};
+    use e3_zk_config::CircuitName;
 
     fn dealers(ids: &[u64]) -> Vec<DkgDealer> {
         ids.iter()

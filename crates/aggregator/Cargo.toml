@@ -15,7 +15,6 @@ async-trait = { workspace = true }
 e3-config = { workspace = true }
 e3-data = { workspace = true }
 e3-events = { workspace = true }
-e3-evm = { workspace = true }
 e3-fhe = { workspace = true }
 e3-fhe-params = { workspace = true }
 e3-keyshare = { workspace = true }
@@ -36,8 +35,10 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 bincode = { workspace = true }
+e3-evm = { workspace = true }
 e3-sync = { workspace = true }
-e3-test-helpers = { workspace = true }
+e3-test-support = { workspace = true }
+e3-event-system = { workspace = true, features = ["test-support"] }
 fhe-math = { workspace = true }
 fhe-traits = { workspace = true }
 futures = { workspace = true }

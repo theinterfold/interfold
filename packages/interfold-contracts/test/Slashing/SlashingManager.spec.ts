@@ -491,17 +491,18 @@ describe("SlashingManager", function () {
       expect(proposal.proposer).to.equal(await proposer.getAddress());
     });
 
+    // Six l-BFV rows (secure-16384 has six CRT moduli); RLK aggregation has two instances per row.
     for (const [proofType, proofInstance, accepted] of [
-      [11, 4, true],
-      [12, 4, true],
-      [13, 4, true],
-      [14, 4, true],
+      [11, 5, true],
+      [12, 5, true],
+      [13, 5, true],
       [14, 5, true],
-      [14, 9, true],
-      [11, 5, false],
-      [12, 5, false],
-      [13, 5, false],
-      [14, 10, false],
+      [14, 6, true],
+      [14, 11, true],
+      [11, 6, false],
+      [12, 6, false],
+      [13, 6, false],
+      [14, 12, false],
     ] as const) {
       it(`${accepted ? "accepts" : "rejects"} proof family ${proofType} instance ${proofInstance}`, async function () {
         const {
@@ -516,7 +517,7 @@ describe("SlashingManager", function () {
           ethers.solidityPacked(["uint256"], [proofType]),
         );
         await slashingManager.setSlashPolicy(reason, buildProofPolicy());
-        const smallD2 = proofType === 14 && proofInstance === 9;
+        const smallD2 = proofType === 14 && proofInstance === 11;
         const candidates = smallD2
           ? (await ethers.getSigners()).filter(
               (signer) => signer.address !== operatorAddress,
@@ -558,7 +559,7 @@ describe("SlashingManager", function () {
             "InvalidProof",
           );
         }
-        if (proofType === 14 && proofInstance === 9) {
+        if (proofType === 14 && proofInstance === 11) {
           const anotherRow = await signAndEncodeAttestation(
             voters,
             0,

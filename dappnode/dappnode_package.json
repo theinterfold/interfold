@@ -1,11 +1,10 @@
 {
-  "name": "interfold-ciphernode.public.dappnode.eth",
   "version": "0.10.0",
   "upstreamVersion": "0.19.0",
   "upstreamArg": "UPSTREAM_VERSION",
   "upstreamRepo": "theinterfold/interfold",
-  "shortDescription": "Interfold Ciphernode - Run a node for confidential computing",
-  "description": "Run an Interfold ciphernode to participate in the E3 (Encrypted Execution Environments) network.",
+  "shortDescription": "Interfold ciphernode with setup and monitoring",
+  "description": "Run an Interfold ciphernode. Use the remote Operator Dashboard to register your operator, bond FOLD, and buy tickets. Open the local Node dashboard to check its status.",
   "type": "service",
   "mainService": "ciphernode",
   "author": "Gnosis Guild <https://github.com/gnosisguild>",
@@ -30,9 +29,20 @@
   },
   "backup": [
     {
-      "name": "ciphernode-data",
-      "path": "/data",
+      "name": "configuration",
+      "path": "/data/config.yaml",
+      "service": "ciphernode"
+    },
+    {
+      "name": "credentials",
+      "path": "/data/.interfold/config",
+      "service": "ciphernode"
+    },
+    {
+      "name": "node-state",
+      "path": "/data/.interfold/data",
       "service": "ciphernode"
     }
-  ]
+  ],
+  "dockerTimeout": "90s"
 }

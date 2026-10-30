@@ -13,9 +13,11 @@ deployment, and address operations.
   TypeChain bindings, Honk verifiers, and deployment manifests as needed; do not
   hand-patch outputs. ABI changes need root `pnpm check:bindings` after
   `pnpm evm:build` for Rust consumers.
-- Keep operator docs, dashboard, and DAppNode consumers in step with a redeploy.
-  Follow [address generation](README.md#contract-addresses); a clean address
-  scan does not validate wiring.
+- Keep operator docs and the dashboard in step with a redeploy. The DAppNode
+  packages copy `deployments/manifest.json` when their image builds, so a
+  redeploy needs a DAppNode package release. Follow
+  [address generation](README.md#contract-addresses); a clean address scan does
+  not validate wiring.
 - BFV fixture refresh has
   [automatic benchmark inputs and a manual override](test/fixtures/bfv_vk_binding/README.md).
   Mock lifecycle tests and a refreshed fixture are not evidence of real verifier

@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-use super::{preset_name, run, tier, Request, COMMITTEES};
-use alloy_primitives::{keccak256, B256};
+use super::{bindings, preset_name, run, tier, Request};
+use alloy_primitives::B256;
 use anyhow::{bail, Context, Result};
 use e3_committee::CiphernodesCommitteeSize;
-use e3_fhe_params::{crypto_config_id, encode_bfv_params, BfvPreset, CIRCUIT_VERSION_LABEL};
+use e3_fhe_params::{
+    bfv_parameter_hash, current_bfv_crypto_config_id, encode_bfv_params, BfvPreset,
+};
 use e3_zk_config::{dkg, threshold};
 use fhe::bfv::BfvParameters;
 use regex::Regex;
@@ -27,8 +29,9 @@ pub struct PresetMaterial {
 impl PresetMaterial {
     pub fn new(preset: BfvPreset) -> Result<Self> {
         let (threshold, dkg) = preset.build_pair()?;
-        let parameter_hash = keccak256(encode_bfv_params(&threshold));
-        let config_id = crypto_config_id(&encode_bfv_params(&threshold));
+        let encoded_params = encode_bfv_params(&threshold);
+        let parameter_hash = bfv_parameter_hash(&encoded_params);
+        let config_id = current_bfv_crypto_config_id(&encoded_params);
         Ok(Self {
             threshold,
             dkg,
@@ -41,6 +44,7 @@ impl PresetMaterial {
 /// The parameter material for supported presets of one operation. Every renderer reuses it;
 /// nothing rebuilds a preset pair inside an operation.
 pub struct OperationParams {
+    insecure64: PresetMaterial,
     insecure: PresetMaterial,
     secure: PresetMaterial,
     secure16384: PresetMaterial,
@@ -49,6 +53,7 @@ pub struct OperationParams {
 impl OperationParams {
     pub fn both() -> Result<Self> {
         Ok(Self {
+            insecure64: PresetMaterial::new(BfvPreset::InsecureThreshold64)?,
             insecure: PresetMaterial::new(BfvPreset::InsecureThreshold)?,
             secure: PresetMaterial::new(BfvPreset::SecureThreshold8192)?,
             secure16384: PresetMaterial::new(BfvPreset::SecureThreshold16384)?,
@@ -56,6 +61,7 @@ impl OperationParams {
     }
     pub fn get(&self, preset: BfvPreset) -> &PresetMaterial {
         match preset {
+            BfvPreset::InsecureThreshold64 => &self.insecure64,
             BfvPreset::InsecureThreshold | BfvPreset::InsecureThresholdLbfv => &self.insecure,
             BfvPreset::SecureThreshold8192 => &self.secure,
             BfvPreset::SecureThreshold16384 => &self.secure16384,
@@ -123,7 +129,7 @@ fn formatted_noir_changes(
         .collect()
 }
 
-fn publish_changes(updates: Vec<(PathBuf, String)>) -> Result<()> {
+pub(crate) fn publish_changes(updates: Vec<(PathBuf, String)>) -> Result<()> {
     for (path, contents) in updates {
         if fs::read_to_string(&path).ok().as_deref() == Some(contents.as_str()) {
             continue;
@@ -137,7 +143,7 @@ fn publish_changes(updates: Vec<(PathBuf, String)>) -> Result<()> {
     Ok(())
 }
 
-const HEADER: &str = "// SPDX-License-Identifier: LGPL-3.0-only\n//\n// This file is provided WITHOUT ANY WARRANTY;\n// without even the implied warranty of MERCHANTABILITY\n// or FITNESS FOR A PARTICULAR PURPOSE.\n";
+pub(crate) const HEADER: &str = "// SPDX-License-Identifier: LGPL-3.0-only\n//\n// This file is provided WITHOUT ANY WARRANTY;\n// without even the implied warranty of MERCHANTABILITY\n// or FITNESS FOR A PARTICULAR PURPOSE.\n";
 pub const BOUND_SOURCES: &[(&str, &str)] = &[
     ("threshold.nr", "PK_GENERATION_"),
     ("dkg.nr", "SHARE_COMPUTATION_"),
@@ -200,7 +206,11 @@ pub fn replace_declarations(
         }
         count += 1;
         match old.get(name) {
-            Some(current) if compact(current) != compact(declaration) => {
+            Some(current)
+                if compact(current) != compact(declaration)
+                    && !declaration_tokens(current)
+                        .is_some_and(|old| Some(old) == declaration_tokens(declaration)) =>
+            {
                 updated = updated.replacen(current, declaration, 1)
             }
             None if strict => bail!("Missing {name} in committed circuit configuration"),
@@ -220,6 +230,7 @@ pub fn replace_declarations(
     Ok(updated)
 }
 
+#[cfg(test)]
 pub fn bound_updates(
     root: &Path,
     preset: BfvPreset,
@@ -262,7 +273,27 @@ pub fn sync_preset(
     committee: CiphernodesCommitteeSize,
 ) -> Result<()> {
     let material = PresetMaterial::new(preset)?;
+    publish_changes(formatted_noir_changes(
+        root,
+        &root.join("circuits/lib"),
+        preset_updates(root, preset, committee, &material)?,
+    )?)
+}
+
+pub fn preset_updates(
+    root: &Path,
+    preset: BfvPreset,
+    committee: CiphernodesCommitteeSize,
+    material: &PresetMaterial,
+) -> Result<Vec<(PathBuf, String)>> {
+    let search = preset.search_config().context("Preset search recipe")?;
     let sources = [
+        (
+            "threshold.nr",
+            "PARAMS_SEARCH_",
+            vec![],
+            format!("pub global PARAMS_SEARCH_N: Field = {};\npub global PARAMS_SEARCH_Z: Field = {};\n", search.n, search.z),
+        ),
         (
             "dkg.nr",
             "PK_",
@@ -297,9 +328,12 @@ pub fn sync_preset(
         ),
         (
             "threshold.nr",
+            // The chunked globals share this prefix, so one strict pass owns both families.
             "USER_DATA_ENCRYPTION_",
             vec![],
-            threshold::user_data_encryption::Configs::new(&material.threshold)?.render()?,
+            threshold::user_data_encryption::Configs::new(&material.threshold)?.render()?
+                + &threshold::user_data_encryption_chunked::Configs::new(&material.threshold)?
+                    .render()?,
         ),
         (
             "threshold.nr",
@@ -307,12 +341,6 @@ pub fn sync_preset(
             vec!["N", "L", "QIS", "CRP"],
             threshold::pk_generation::Configs::new(preset, &material.threshold, committee)?
                 .render()?,
-        ),
-        (
-            "threshold.nr",
-            "USER_DATA_ENCRYPTION_CHUNKED_",
-            vec![],
-            threshold::user_data_encryption_chunked::Configs::new(&material.threshold)?.render()?,
         ),
         (
             "threshold.nr",
@@ -339,8 +367,21 @@ pub fn sync_preset(
                 .render()?,
         ),
     ];
+    let threshold_source = sources
+        .iter()
+        .find(|(file, prefix, _, _)| {
+            *file == "threshold.nr" && *prefix == "THRESHOLD_SHARE_DECRYPTION_"
+        })
+        .context("Threshold share-decryption declarations")?;
+    let aggregate_alias_target =
+        declarations(&threshold_source.3)["THRESHOLD_SHARE_DECRYPTION_BIT_SK"].clone();
     let mut pending = BTreeMap::new();
-    for (file, prefix, common, generated) in sources {
+    for (file, prefix, common, mut generated) in sources {
+        // Only secure-8192 derives these legacy public search globals from its search recipe; the
+        // insecure and secure-16384 values are reviewed declarations, not recipe outputs.
+        if prefix == "PARAMS_SEARCH_" && preset != BfvPreset::SecureThreshold8192 {
+            continue;
+        }
         let path = root
             .join("circuits/lib/src/configs")
             .join(tier(preset))
@@ -350,9 +391,32 @@ pub fn sync_preset(
             Some(text) => text,
             None => fs::read_to_string(&path)?,
         };
+        if file == "dkg.nr" && prefix == "SHARE_DECRYPTION_" {
+            // C4 re-exports C6's aggregate width rather than defining another scalar. Verify the
+            // real import and the freshly derived values, then leave that alias intact.
+            let import = Regex::new(&format!(
+                r"(?s)pub\s+use\s+crate::configs::{}::threshold::\{{([^}}]+)\}};",
+                tier(preset)
+            ))?;
+            let exports = import.captures(&text).context("DKG threshold re-exports")?;
+            if !compact(&exports[1])
+                .contains("THRESHOLD_SHARE_DECRYPTION_BIT_SKasSHARE_DECRYPTION_BIT_AGG")
+            {
+                bail!("DKG aggregate width must re-export THRESHOLD_SHARE_DECRYPTION_BIT_SK");
+            }
+            let alias = declarations(&generated)["SHARE_DECRYPTION_BIT_AGG"].clone();
+            if compact(&alias.replace(
+                "SHARE_DECRYPTION_BIT_AGG",
+                "THRESHOLD_SHARE_DECRYPTION_BIT_SK",
+            )) != compact(&aggregate_alias_target)
+            {
+                bail!("C4 and C6 aggregate widths disagree");
+            }
+            generated = generated.replacen(&alias, "", 1);
+        }
         pending.insert(
             path,
-            replace_declarations(&text, &generated, prefix, &common, false)?,
+            replace_declarations(&text, &generated, prefix, &common, true)?,
         );
     }
     let threshold_path = root
@@ -387,11 +451,7 @@ pub fn sync_preset(
         preset,
         &material.threshold,
     )?);
-    publish_changes(formatted_noir_changes(
-        root,
-        &root.join("circuits/lib"),
-        pending.into_iter().collect(),
-    )?)
+    Ok(pending.into_iter().collect())
 }
 
 pub fn parity_files(
@@ -418,11 +478,8 @@ pub fn parity_files(
     // Only the residue width: the smudging bound itself exceeds the field at secure-16384, and the
     // circuits read it from the preset configuration (C1's bound or the C2b split).
     let mut smudging = format!("{HEADER}//\n// AUTO-GENERATED by `generate_parity_matrices`. DO NOT EDIT BY HAND.\n// Regenerate with `pnpm build:circuits --committee {committee}`.\n//\n// C1 and C2b must use the same smudging-noise width as Rust witness generation.\n\n");
-    for (label, preset) in [
-        ("INSECURE", BfvPreset::InsecureThreshold),
-        ("SECURE_8192", BfvPreset::SecureThreshold8192),
-        ("SECURE_16384", BfvPreset::SecureThreshold16384),
-    ] {
+    for preset in super::ARTIFACT_PRESETS {
+        let label = tier(preset).to_uppercase();
         let config = threshold::pk_generation::Configs::new(
             preset,
             &params.get(preset).threshold,
@@ -459,31 +516,32 @@ impl Selection {
     }
 }
 
-/// Keep formatter layout only for the generated numeric parity declaration. Comments, strings,
-/// imports, and headers must match exactly; they never participate in whitespace normalization.
+/// Ignore optional trailing commas only in generated numeric declarations. Comments, strings,
+/// imports, and headers never participate in normalization.
+fn declaration_tokens(declaration: &str) -> Option<Vec<String>> {
+    if !declaration.chars().all(|c| {
+        c.is_ascii_alphanumeric() || c.is_ascii_whitespace() || "_:;=+-*[],()<>".contains(c)
+    }) {
+        return None;
+    }
+    let regex = Regex::new(r"[A-Za-z0-9_]+|[^\s]").unwrap();
+    let mut tokens: Vec<_> = regex
+        .find_iter(declaration)
+        .map(|m| m.as_str().to_owned())
+        .collect();
+    for i in (0..tokens.len().saturating_sub(1)).rev() {
+        if tokens[i] == "," && matches!(tokens[i + 1].as_str(), "]" | ")") {
+            tokens.remove(i);
+        }
+    }
+    Some(tokens)
+}
+
 fn preserve_parity_layout(original: &str, generated: String) -> String {
     let old = declarations(original);
     let fresh = declarations(&generated);
-    let tokens = |declaration: &str| -> Option<Vec<String>> {
-        if !declaration.chars().all(|c| {
-            c.is_ascii_alphanumeric() || c.is_ascii_whitespace() || "_:;=+-*[],()".contains(c)
-        }) {
-            return None;
-        }
-        let regex = Regex::new(r"[A-Za-z0-9_]+|[^\s]").unwrap();
-        let mut tokens: Vec<_> = regex
-            .find_iter(declaration)
-            .map(|m| m.as_str().to_owned())
-            .collect();
-        for i in (0..tokens.len().saturating_sub(1)).rev() {
-            if tokens[i] == "," && tokens[i + 1] == "]" {
-                tokens.remove(i);
-            }
-        }
-        Some(tokens)
-    };
     if let (Some(old), Some(fresh)) = (old.get("PARITY_MATRIX"), fresh.get("PARITY_MATRIX")) {
-        if tokens(old).is_some_and(|old| Some(old) == tokens(fresh)) {
+        if declaration_tokens(old).is_some_and(|old| Some(old) == declaration_tokens(fresh)) {
             return generated.replacen(fresh, old, 1);
         }
     }
@@ -499,8 +557,7 @@ pub fn prepare_selection(
     let params = OperationParams::both()?;
     let name = preset_name(preset);
     let tier = tier(preset);
-    let message_width = e3_zk_config::MAX_MSG_NON_ZERO_COEFFS;
-    let default = format!("{HEADER}//\n// Auto-generated by the Rust circuit builder (`pnpm build:circuits`) for preset: {name}\n\n// Committee size (N_PARTIES / T / H) is routed through `committee::active`,\n// which the Rust circuit builder regenerates atomically with this file.\npub use super::committee::active::{{H, N_PARTIES, T}};\npub use super::{tier}::dkg;\npub use super::{tier}::threshold;\n\n/// Max number of non-zero coefficients in the message polynomial.\n/// This is a conservative estimate that should be okay for most use cases.\npub global MAX_MSG_NON_ZERO_COEFFS: u32 = {message_width};\n");
+    let default = format!("{HEADER}//\n// Auto-generated by the Rust circuit builder (`pnpm build:circuits`) for preset: {name}\n\n// Committee size (N_PARTIES / T / H) is routed through `committee::active`,\n// which the Rust circuit builder regenerates atomically with this file.\npub use super::committee::active::{{H, N_PARTIES, T}};\npub use super::{tier}::dkg;\npub use super::{tier}::threshold;\npub use super::protocol::MAX_MSG_NON_ZERO_COEFFS;\n");
     let mut updates = vec![
         (
             root.join("circuits/lib/src/configs/default/mod.nr"),
@@ -512,6 +569,7 @@ pub fn prepare_selection(
                 .replace("@committee@", &committee.to_string()),
         ),
     ];
+    updates.extend(bindings::noir_sources(root));
     for (relative, content) in parity_files(committee, &params)? {
         let path = root
             .join("circuits/lib/src/configs/committee")
@@ -523,79 +581,11 @@ pub fn prepare_selection(
         };
         updates.push((path, content));
     }
-    updates.extend(bound_updates(root, preset, committee, params.get(preset))?);
+    updates.extend(preset_updates(root, preset, committee, params.get(preset))?);
     Ok(Selection {
         noir: updates,
         protocol: protocol_updates(root, preset, committee, skip_utils, &params)?,
     })
-}
-
-pub fn protocol_contract(
-    preset: BfvPreset,
-    committee: CiphernodesCommitteeSize,
-    params: &OperationParams,
-    pairs: &[[String; 2]],
-) -> Result<String> {
-    let mut text = include_str!("../templates/active_crypto_config.sol.in")
-        .replace(
-            "@selection@",
-            &format!("{}/{}", preset_name(preset), committee),
-        )
-        .replace(
-            "@CIRCUIT_VERSION@",
-            std::str::from_utf8(CIRCUIT_VERSION_LABEL)?,
-        );
-    for (label, preset, param_set) in [
-        ("INSECURE", BfvPreset::InsecureThreshold, 0),
-        ("SECURE", BfvPreset::SecureThreshold8192, 2),
-        ("SECURE_16384", BfvPreset::SecureThreshold16384, 3),
-    ] {
-        let material = params.get(preset);
-        text = text
-            .replace(&format!("@{label}_PARAM_SET@"), &param_set.to_string())
-            .replace(
-                &format!("@{label}_HASH@"),
-                &format!("{:#x}", material.parameter_hash),
-            )
-            .replace(
-                &format!("@{label}_ID@"),
-                &format!("{:#x}", material.config_id),
-            );
-    }
-    for (index, name) in COMMITTEES.iter().enumerate() {
-        let values = name.parse::<CiphernodesCommitteeSize>()?.values();
-        let label = name.to_uppercase();
-        for (suffix, value) in [
-            ("SIZE", index),
-            ("N", values.n),
-            ("T", values.threshold),
-            ("H", values.h),
-        ] {
-            text = text.replace(&format!("@{label}_{suffix}@"), &value.to_string());
-        }
-    }
-    let mut admission = String::new();
-    for (name, param_sets) in [
-        (
-            "insecure",
-            "paramSet == INSECURE_PARAM_SET || paramSet == INSECURE_LBFV_PARAM_SET",
-        ),
-        ("secure-8192", "paramSet == SECURE_PARAM_SET"),
-        ("secure-16384", "paramSet == SECURE_16384_PARAM_SET"),
-    ] {
-        let committees = pairs
-            .iter()
-            .filter(|pair| pair[0] == name)
-            .map(|pair| format!("committeeSize == {}_COMMITTEE_SIZE", pair[1].to_uppercase()))
-            .collect::<Vec<_>>();
-        if !committees.is_empty() {
-            admission.push_str(&format!(
-                "        if ({param_sets}) {{\n            if (\n                {}\n            ) return;\n        }}\n",
-                committees.join(" ||\n                ")
-            ));
-        }
-    }
-    Ok(text.replace("@PAIR_ADMISSION@", admission.trim_end()))
 }
 
 fn replace_required(text: &str, pattern: &str, replacement: &str) -> Result<String> {
@@ -612,116 +602,27 @@ pub fn protocol_utils(
     before: &str,
     preset: BfvPreset,
     committee: CiphernodesCommitteeSize,
-    params: &OperationParams,
-    pairs: &[[String; 2]],
 ) -> Result<String> {
-    let values = committee.values();
-    let size = COMMITTEES
-        .iter()
-        .position(|name| *name == committee.to_string())
-        .context("committee index")?;
-    let param_set = match preset {
-        BfvPreset::InsecureThreshold => 0,
-        BfvPreset::InsecureThresholdLbfv => 4,
-        BfvPreset::SecureThreshold8192 => 2,
-        BfvPreset::SecureThreshold16384 => 3,
-        _ => unreachable!("build selects threshold presets"),
-    };
     let mut after = before.to_string();
-    for (name, value) in [
-        ("BFV_DKG_H", values.h),
-        ("BFV_THRESHOLD_T", values.threshold),
-        ("ACTIVE_BFV_PARAM_SET", param_set),
-        ("ACTIVE_BFV_COMMITTEE_SIZE", size),
-        ("ACTIVE_BFV_COMMITTEE_N", values.n),
+    for (name, ty, value) in [
+        (
+            "ACTIVE_BFV_PRESET",
+            "BfvArtifactPreset",
+            preset_name(preset).to_string(),
+        ),
+        (
+            "ACTIVE_BFV_COMMITTEE",
+            "BfvCommittee",
+            committee.to_string(),
+        ),
     ] {
         after = replace_required(
             &after,
-            &format!(r"export const {name} = \d+"),
-            &format!("export const {name} = {value}"),
+            &format!(r#"export const {name}: {ty} = "[^"]+""#),
+            &format!("export const {name}: {ty} = \"{value}\""),
         )?;
     }
-    for (prefix, preset) in [
-        ("INSECURE", BfvPreset::InsecureThreshold),
-        ("SECURE", BfvPreset::SecureThreshold8192),
-        ("SECURE_16384", BfvPreset::SecureThreshold16384),
-    ] {
-        let material = params.get(preset);
-        for (suffix, value) in [
-            ("PARAM_SET_HASH", material.parameter_hash),
-            ("CONFIG_ID", material.config_id),
-        ] {
-            let name = format!("{prefix}_{suffix}");
-            after = replace_required(
-                &after,
-                &format!(r#"const {name} =\s*\n\s*"0x[0-9a-fA-F]+""#),
-                &format!("const {name} =\n  \"{value:#x}\""),
-            )?;
-        }
-    }
-    // Keep installed-package deployment self-contained: render the shared policy rather than
-    // importing a repository-relative JSON file from the published package.
-    let mut configs = String::from(
-        "// Generated from scripts/circuits/build-pairs.json and canonical committee values.\n",
-    );
-    let mut names = Vec::new();
-    let deployment_pairs = pairs
-        .iter()
-        .filter(|pair| pair[0] == "insecure")
-        .map(|pair| (pair, false))
-        .chain(
-            pairs
-                .iter()
-                .filter(|pair| pair[0] == "insecure")
-                .map(|pair| (pair, true)),
-        )
-        .chain(
-            pairs
-                .iter()
-                .filter(|pair| pair[0] != "insecure")
-                .map(|pair| (pair, false)),
-        );
-    for (pair, lbfv) in deployment_pairs {
-        let prefix = match (pair[0].as_str(), lbfv) {
-            ("insecure", false) => "INSECURE",
-            ("insecure", true) => "INSECURE_LBFV",
-            ("secure-8192", _) => "SECURE",
-            ("secure-16384", _) => "SECURE_16384",
-            _ => bail!("Unsupported deployment preset: {}", pair[0]),
-        };
-        let name = format!("{prefix}_{}_BFV_CONFIG", pair[1].to_uppercase());
-        let values = pair[1].parse::<CiphernodesCommitteeSize>()?.values();
-        let size = COMMITTEES
-            .iter()
-            .position(|name| *name == pair[1])
-            .context("committee index")?;
-        configs.push_str(&format!("export const {name}: ActiveBfvConfig = bfvConfig(\n  \"{}\",\n  \"{}\",\n  {{ committeeSize: {size}, h: {}, t: {}, n: {} }},\n{});\n\n", pair[0], pair[1], values.h, values.threshold, values.n, if lbfv { "  true,\n" } else { "" }));
-        names.push(name);
-    }
-    after = replace_required(
-        &after,
-        r"(?:// Generated from scripts/circuits/build-pairs.json and canonical committee values.\n)?export const INSECURE_MINIMUM_BFV_CONFIG:[\s\S]*?\nexport const PRODUCTION_BFV_CONFIG:",
-        &format!("{configs}export const PRODUCTION_BFV_CONFIG:"),
-    )?;
-    let mut routes =
-        String::from("export const TESTNET_BFV_CONFIGS: readonly ActiveBfvConfig[] = [\n");
-    for name in names {
-        routes.push_str(&format!("  {name},\n"));
-    }
-    routes.push_str("] as const;");
-    after = replace_required(
-        &after,
-        r"export const TESTNET_BFV_CONFIGS:[\s\S]*?\] as const;",
-        &routes,
-    )?;
-    let name = committee.to_string();
-    let capitalized = format!("{}{}", name[..1].to_uppercase(), &name[1..]);
-    let doc = format!("/**\n * <generated-committee-doc>\n * Active {} / {committee} committee layout for BFV aggregator verifiers.\n * Must match `lib::configs::default::{{H, T}}` in compiled circuits.\n * {capitalized} committee: N={}, T={}, H={}.\n * </generated-committee-doc>\n */", preset_name(preset), values.n, values.threshold, values.h);
-    replace_required(
-        &after,
-        r"/\*\*\s*\n \* <generated-committee-doc>[\s\S]*?</generated-committee-doc>\s*\n \*/",
-        &doc,
-    )
+    Ok(after)
 }
 
 pub fn sync_protocol(
@@ -743,23 +644,76 @@ fn protocol_updates(
     skip_utils: bool,
     params: &OperationParams,
 ) -> Result<Vec<(PathBuf, String)>> {
-    let pairs = crate::build_pairs(root)?;
     let mut updates = Vec::new();
     let path = root.join("packages/interfold-contracts/scripts/utils.ts");
     if !skip_utils && path.exists() {
         let before = fs::read_to_string(&path)?;
-        let updated = protocol_utils(&before, preset, committee, params, &pairs)?;
+        let updated = protocol_utils(&before, preset, committee)?;
         updates.push((path, updated));
     }
-    let path = root.join("packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol");
-    let contract = protocol_contract(preset, committee, params, &pairs)?;
+    let path = root.join(bindings::SOLIDITY_PATH);
+    let contract = bindings::solidity(params)?;
     updates.push((path, contract));
     Ok(updates)
 }
 
-/// Format only an isolated library copy. A check never swaps live generated files.
-pub fn check(root: &Path, options: &Request) -> Result<()> {
+fn all_sources(root: &Path) -> Result<Selection> {
     let params = OperationParams::both()?;
+    let selection_source =
+        fs::read_to_string(root.join("packages/interfold-contracts/scripts/utils.ts"))?;
+    let selection_name = |name: &str| -> Result<String> {
+        let pattern = Regex::new(&format!(r#"export const {name}: [A-Za-z]+ = "([^"]+)";"#))?;
+        Ok(pattern
+            .captures(&selection_source)
+            .with_context(|| format!("Missing deployment selection {name}"))?[1]
+            .to_string())
+    };
+    let active_preset = super::preset(&selection_name("ACTIVE_BFV_PRESET")?)?;
+    let active_committee: CiphernodesCommitteeSize =
+        selection_name("ACTIVE_BFV_COMMITTEE")?.parse()?;
+    let mut selection = prepare_selection(root, active_preset, active_committee, false)?;
+    let mut sources: BTreeMap<_, _> = selection.noir.into_iter().collect();
+    // An unselected preset retains its canonical development declarations. Pair-specific checks
+    // stage the requested committee instead of comparing all pairs with this one live library.
+    // One preset per configuration directory: both insecure labels share `insecure`.
+    for preset in super::ARTIFACT_PRESETS {
+        let committee = if tier(preset) == tier(active_preset) {
+            active_committee
+        } else {
+            CiphernodesCommitteeSize::Minimum
+        };
+        for (path, contents) in preset_updates(root, preset, committee, params.get(preset))? {
+            sources.insert(path, contents);
+        }
+    }
+    for committee in CiphernodesCommitteeSize::ALL {
+        for (relative, contents) in parity_files(committee, &params)? {
+            let path = root
+                .join("circuits/lib/src/configs/committee")
+                .join(relative);
+            let contents = match fs::read_to_string(&path) {
+                Ok(old) => preserve_parity_layout(&old, contents),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => contents,
+                Err(error) => return Err(error.into()),
+            };
+            sources.insert(path, contents);
+        }
+    }
+    selection.noir = sources.into_iter().collect();
+    Ok(selection)
+}
+
+pub fn sync_sources(root: &Path) -> Result<()> {
+    let mut sources = all_sources(root)?;
+    sources.format(root)?;
+    sources.publish()
+}
+
+/// Format only an isolated library copy. A check never swaps live generated files.
+pub fn check(root: &Path, _options: &Request) -> Result<()> {
+    bindings::sync(root, true)?;
+    check_ownership(root)?;
+    let expected = all_sources(root)?;
     let temp = tempfile::tempdir()?;
     let lib = root.join("circuits/lib");
     super::artifacts::copy_tree(
@@ -768,12 +722,10 @@ pub fn check(root: &Path, options: &Request) -> Result<()> {
         &["target", "Prover.toml", "Witness.toml"],
     )?;
     let mut paths = Vec::new();
-    for committee in options.committees() {
-        for (relative, contents) in parity_files(committee, &params)? {
-            let path = PathBuf::from("src/configs/committee").join(relative);
-            fs::write(temp.path().join(&path), contents)?;
-            paths.push(path);
-        }
+    for (path, contents) in expected.noir {
+        let path = path.strip_prefix(&lib)?.to_path_buf();
+        fs::write(temp.path().join(&path), contents)?;
+        paths.push(path);
     }
     format_noir(root, temp.path())?;
     for path in paths {
@@ -784,6 +736,115 @@ pub fn check(root: &Path, options: &Request) -> Result<()> {
             );
         }
     }
-    println!("Generated committee configuration matches the Rust owner.");
+    for (path, contents) in expected.protocol {
+        if fs::read_to_string(&path)? != contents {
+            bail!("{} differs from its generated source", path.display());
+        }
+    }
+    println!("Generated preset and committee configuration matches the Rust owners (source-only; no artifact qualification).");
+    Ok(())
+}
+
+pub fn check_ownership(root: &Path) -> Result<()> {
+    let metadata = e3_fhe_params::metadata::BfvMetadata::current()?;
+    let mut forbidden = vec![
+        metadata.encryption_scheme.to_string(),
+        metadata.encryption_scheme_id,
+        metadata.circuit_version.to_string(),
+    ];
+    for preset in metadata.presets {
+        forbidden.extend([preset.parameter_hash, preset.crypto_config_id]);
+    }
+    let width = Regex::new(&format!(
+        r"(?i)(?:const|global|let|static)\s+(?:MAX_MSG_NON_ZERO_COEFFS|MESSAGE_COEFFS_COUNT|messageCoeffsCount|message_coeffs_count|plaintextByteLength|plaintextByteLen)(?:\s*:\s*[A-Za-z0-9_<>]+)?\s*=\s*(?:{}|{})\b",
+        e3_zk_config::MAX_MSG_NON_ZERO_COEFFS,
+        e3_zk_config::metadata::CircuitDimensions::current().plaintext_byte_len
+    ))?;
+    let reviewed = [
+        "crates/fhe-params/src/constants.rs",
+        "crates/zk/config/src/constants.rs",
+        "packages/interfold-contracts/contracts/lib/BfvProtocol.sol",
+        "circuits/lib/src/configs/protocol.nr",
+        "crates/evm/indexer/tests/fixtures/fake_interfold.sol",
+        "crates/zk/build/src/tests.rs",
+        "packages/interfold-contracts/scripts/upgrade/v19Cutover.ts",
+        "packages/interfold-contracts/test/Risc0BfvCiphertextVerifier.spec.ts",
+        "packages/interfold-contracts/test/MockE3Program.spec.ts",
+        "packages/interfold-contracts/test/Deployment/ProtocolDeployment.spec.ts",
+    ];
+    let comments = Regex::new(r"(?s)/\*.*?\*/|(?m)//[^\n]*")?;
+    fn walk(root: &Path, directory: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.')
+                || ["node_modules", "target", "dist", "cache", "deployments"]
+                    .contains(&name.as_str())
+            {
+                continue;
+            }
+            // TypeChain/Hardhat output is owned by the contracts build, not every directory named
+            // `types`, `artifacts`, or `build` in a new consumer's maintained source tree.
+            if [
+                "packages/interfold-contracts/types",
+                "packages/interfold-contracts/artifacts",
+                "templates/default/types",
+                "templates/default/artifacts",
+            ]
+            .iter()
+            .any(|generated| entry.path() == root.join(generated))
+            {
+                continue;
+            }
+            if entry.file_type()?.is_symlink() {
+                if matches!(
+                    entry.path().extension().and_then(|value| value.to_str()),
+                    Some("rs" | "ts" | "tsx" | "js" | "mjs" | "cjs" | "sol" | "nr")
+                ) {
+                    bail!("Unregistered symlinked consumer {}", entry.path().display());
+                }
+                continue;
+            }
+            if entry.file_type()?.is_dir() {
+                walk(root, &entry.path(), files)?;
+            } else if matches!(
+                entry.path().extension().and_then(|value| value.to_str()),
+                Some("rs" | "ts" | "tsx" | "js" | "mjs" | "cjs" | "sol" | "nr")
+            ) {
+                files.push(entry.path().strip_prefix(root)?.to_path_buf());
+            }
+        }
+        Ok(())
+    }
+    let mut files = Vec::new();
+    for directory in ["crates", "packages", "scripts", "templates", "circuits"] {
+        let path = root.join(directory);
+        if path.is_dir() {
+            walk(root, &path, &mut files)?;
+        }
+    }
+    for path in files {
+        let relative = path
+            .to_str()
+            .context("UTF-8 consumer path")?
+            .replace('\\', "/");
+        if reviewed.contains(&relative.as_str()) {
+            continue;
+        }
+        let source = fs::read_to_string(root.join(&path))?;
+        let code = comments.replace_all(&source, "");
+        if forbidden.iter().any(|value| {
+            if value.starts_with("0x") {
+                code.to_ascii_lowercase().contains(value)
+            } else {
+                ['"', '\'', '`']
+                    .into_iter()
+                    .any(|quote| code.contains(&format!("{quote}{value}{quote}")))
+            }
+        }) || width.is_match(&code)
+        {
+            bail!("Independent current protocol definition in {relative}; import its owning binding (generated headers do not exempt consumers)");
+        }
+    }
     Ok(())
 }

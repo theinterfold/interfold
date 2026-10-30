@@ -227,10 +227,6 @@
         "ciphernodeRegistry": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853"
       }
     },
-    "ImageID": {
-      "address": "0x36b58F5C1969B7b6591D752ea6F5486D069010AB",
-      "blockNumber": 76
-    },
     "MyProgram": {
       "address": "0x202CCe504e04bEd6fC0521238dDf04Bc9E8E15aB",
       "blockNumber": 80

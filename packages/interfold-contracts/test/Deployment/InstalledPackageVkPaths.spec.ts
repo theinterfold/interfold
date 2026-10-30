@@ -42,7 +42,7 @@ describe("installed-package BFV VK paths", function () {
     expect(getBfvPkSubCircuitVkHashPaths().nodesFold).to.equal(
       path.join(
         release,
-        "insecure/minimum/default/recursive_aggregation/nodes_fold/nodes_fold.vk_tree_hash",
+        "insecure-64/minimum/default/recursive_aggregation/nodes_fold/nodes_fold.vk_tree_hash",
       ),
     );
   });

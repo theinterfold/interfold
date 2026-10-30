@@ -139,17 +139,17 @@ pnpm test:integration --no-prebuild
 				</a>
 			</td>
 			<td align="center">
-				<a href="https://github.com/ryardley">
-					<img src="https://avatars.githubusercontent.com/u/1256409?v=4" width="100;" alt="ryardley"/>
-					<br />
-					<sub><b>гλ</b></sub>
-				</a>
-			</td>
-			<td align="center">
 				<a href="https://github.com/ctrlc03">
 					<img src="https://avatars.githubusercontent.com/u/93448202?v=4" width="100;" alt="ctrlc03"/>
 					<br />
 					<sub><b>ctrlc03</b></sub>
+				</a>
+			</td>
+			<td align="center">
+				<a href="https://github.com/ryardley">
+					<img src="https://avatars.githubusercontent.com/u/1256409?v=4" width="100;" alt="ryardley"/>
+					<br />
+					<sub><b>гλ</b></sub>
 				</a>
 			</td>
 			<td align="center">
@@ -183,6 +183,13 @@ pnpm test:integration --no-prebuild
 				</a>
 			</td>
 			<td align="center">
+				<a href="https://github.com/neogiacomo">
+					<img src="https://avatars.githubusercontent.com/u/20580910?v=4" width="100;" alt="neogiacomo"/>
+					<br />
+					<sub><b>Giacomo Corrias</b></sub>
+				</a>
+			</td>
+			<td align="center">
 				<a href="https://github.com/cristovaoth">
 					<img src="https://avatars.githubusercontent.com/u/12870300?v=4" width="100;" alt="cristovaoth"/>
 					<br />
@@ -194,13 +201,6 @@ pnpm test:integration --no-prebuild
 					<img src="https://avatars.githubusercontent.com/u/7103153?v=4" width="100;" alt="nginnever"/>
 					<br />
 					<sub><b>Nathan Ginnever</b></sub>
-				</a>
-			</td>
-			<td align="center">
-				<a href="https://github.com/neogiacomo">
-					<img src="https://avatars.githubusercontent.com/u/20580910?v=4" width="100;" alt="neogiacomo"/>
-					<br />
-					<sub><b>Giacomo Corrias</b></sub>
 				</a>
 			</td>
 			<td align="center">
@@ -220,17 +220,17 @@ pnpm test:integration --no-prebuild
 		</tr>
 		<tr>
 			<td align="center">
-				<a href="https://github.com/0xkeygen">
-					<img src="https://avatars.githubusercontent.com/u/211014662?v=4" width="100;" alt="0xkeygen"/>
-					<br />
-					<sub><b>Bryant</b></sub>
-				</a>
-			</td>
-			<td align="center">
 				<a href="https://github.com/zahrajavar">
 					<img src="https://avatars.githubusercontent.com/u/81833289?v=4" width="100;" alt="zahrajavar"/>
 					<br />
 					<sub><b>Zara</b></sub>
+				</a>
+			</td>
+			<td align="center">
+				<a href="https://github.com/0xkeygen">
+					<img src="https://avatars.githubusercontent.com/u/211014662?v=4" width="100;" alt="0xkeygen"/>
+					<br />
+					<sub><b>Bryant</b></sub>
 				</a>
 			</td>
 			<td align="center">
@@ -255,14 +255,21 @@ pnpm test:integration --no-prebuild
 				</a>
 			</td>
 			<td align="center">
+				<a href="https://github.com/hcastc00">
+					<img src="https://avatars.githubusercontent.com/u/47385090?v=4" width="100;" alt="hcastc00"/>
+					<br />
+					<sub><b>Héctor</b></sub>
+				</a>
+			</td>
+		</tr>
+		<tr>
+			<td align="center">
 				<a href="https://github.com/jfschwarz">
 					<img src="https://avatars.githubusercontent.com/u/524089?v=4" width="100;" alt="jfschwarz"/>
 					<br />
 					<sub><b>Jan-Felix</b></sub>
 				</a>
 			</td>
-		</tr>
-		<tr>
 			<td align="center">
 				<a href="https://github.com/callumweb3">
 					<img src="https://avatars.githubusercontent.com/u/314530502?v=4" width="100;" alt="callumweb3"/>

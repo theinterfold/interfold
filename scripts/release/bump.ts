@@ -9,7 +9,8 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
-import { CARGO_WORKSPACES, PACKAGE_FILES, normalizeVersion, releaseChannel } from './version.mjs'
+import { bumpDappnodeVersions, dappnodeVersionFiles } from './dappnode.mjs'
+import { CARGO_WORKSPACES, PACKAGE_FILES, bumpCargoManifest, normalizeVersion, releaseChannel } from './version.mjs'
 
 export interface BumpOptions {
   commit?: boolean
@@ -20,27 +21,6 @@ export interface BumpOptions {
 type Execute = (command: string, args: string[], cwd: string) => string
 const executeCommand: Execute = (command, args, cwd) =>
   execFileSync(command, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] })
-
-/** Change only the workspace package and local path dependencies, never registry pins. */
-export function bumpCargoManifest(content: string, version: string): string {
-  let section = ''
-  let foundVersion = false
-  const result = content
-    .split('\n')
-    .map((line) => {
-      if (/^\s*\[/.test(line)) section = line.trim()
-      if (section === '[workspace.package]' && /^version\s*=/.test(line)) {
-        foundVersion = true
-        return line.replace(/"[^"]*"/, `"${version}"`)
-      }
-      if (section === '[workspace.dependencies]' && /\bpath\s*=\s*"/.test(line))
-        return line.replace(/\bversion\s*=\s*"[^"]*"/, `version = "${version}"`)
-      return line
-    })
-    .join('\n')
-  if (!foundVersion) throw new Error('Cargo.toml does not contain workspace.package.version')
-  return result
-}
 
 function core(version: string): number[] {
   return normalizeVersion(version).split(/[+-]/)[0].split('.').map(Number)
@@ -104,15 +84,7 @@ export class VersionBumper {
       ...CARGO_WORKSPACES.map((workspace: string) => join(workspace, 'Cargo.lock')),
       'pnpm-lock.yaml',
       'CHANGELOG.md',
-      ...(stable
-        ? [
-            'dappnode/dappnode_package.json',
-            'dappnode/package.json',
-            'dappnode/package-lock.json',
-            'dappnode/docker-compose.yml',
-            'dappnode/Dockerfile',
-          ]
-        : []),
+      ...(stable ? dappnodeVersionFiles(this.rootDir) : []),
     ]
     if (this.options.dryRun) {
       console.log(
@@ -136,7 +108,7 @@ export class VersionBumper {
     for (const path of PACKAGE_FILES) this.writeJson(path, { ...this.json(path), version: this.newVersion })
     const versions = this.json('crates/zk/prover/versions.json')
     this.writeJson('crates/zk/prover/versions.json', { ...versions, required_circuits_version: this.newVersion })
-    if (stable) this.bumpDappnode(dappnode, wrapperVersion!)
+    if (stable) bumpDappnodeVersions(this.rootDir, this.newVersion, wrapperVersion!)
 
     // Each required command must succeed before any stage/commit/push. Failures leave reviewable
     // preparation files, not a published partial release. Do not silently restore user files.
@@ -163,32 +135,6 @@ export class VersionBumper {
     console.log(
       'Review release files and CHANGELOG.md. After release-PR CI and merge, update main before pnpm release:tag. See RELEASING.md.',
     )
-  }
-
-  private replace(path: string, replacements: [RegExp, string][]): void {
-    let content = this.read(path)
-    for (const [pattern, replacement] of replacements) {
-      if (!pattern.test(content)) throw new Error(`Could not find ${pattern} in ${path}`)
-      content = content.replace(pattern, replacement)
-    }
-    this.write(path, content)
-  }
-
-  private bumpDappnode(pkg: any, version: string): void {
-    this.writeJson('dappnode/dappnode_package.json', { ...pkg, version, upstreamVersion: this.newVersion })
-    this.writeJson('dappnode/package.json', { ...this.json('dappnode/package.json'), version })
-    const lock = this.json('dappnode/package-lock.json')
-    lock.version = version
-    if (lock.packages?.['']) lock.packages[''].version = version
-    this.writeJson('dappnode/package-lock.json', lock)
-    this.replace('dappnode/docker-compose.yml', [
-      [/UPSTREAM_VERSION: [^\n]+/, `UPSTREAM_VERSION: ${this.newVersion}`],
-      [
-        /image: 'ciphernode\.interfold-ciphernode\.public\.dappnode\.eth:[^']+'/,
-        `image: 'ciphernode.interfold-ciphernode.public.dappnode.eth:${version}'`,
-      ],
-    ])
-    this.replace('dappnode/Dockerfile', [[/ARG UPSTREAM_VERSION=[^\n]+/, `ARG UPSTREAM_VERSION=${this.newVersion}`]])
   }
 }
 

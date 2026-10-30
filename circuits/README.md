@@ -32,8 +32,9 @@ The shared library is the Nargo package **`lib`** (`lib/Nargo.toml`). All packag
 depend on it; module structure is documented in [`lib/src/README.md`](lib/src/README.md).
 
 Packages under `bin/` with a `Nargo.toml` are build targets. Directory names align with the
-**`CircuitName`** enum in `crates/events` via `CircuitName::group()` and `CircuitName::dir_path()`.
-Workspace manifests also exist at `dkg/` and `threshold/` for grouped builds.
+**`CircuitName`** enum in `crates/zk/config` via `CircuitName::group()` and
+`CircuitName::dir_path()`. Workspace manifests also exist at `dkg/` and `threshold/` for grouped
+builds.
 
 ## Circuit package index
 
@@ -107,9 +108,9 @@ produces. Install options and CLI flags are on the
 
 ## Related documentation
 
-| Topic                                                                  | Location                                                                                                                                |
-| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Cryptographic model (PV-TBFV, phases P1–P4, circuit identifiers C0–C7) | [Cryptography](https://docs.theinterfold.com/learn/cryptography) · [source](../docs/pages/learn/cryptography.mdx)                       |
-| Toolchain, repository layout, `interfold noir`, compilation            | [Noir Circuits](https://docs.theinterfold.com/build/noir-circuits) · [source](../docs/pages/build/noir-circuits.mdx)                    |
-| Rust types (`ProofType`, `CircuitName`)                                | [`signed_proof.rs`](../crates/events/src/interfold_event/signed_proof.rs) · [`proof.rs`](../crates/events/src/interfold_event/proof.rs) |
-| Protocol execution (actors, events, proof ordering)                    | [DKG](../docs/architecture/dkg.md) and [threshold decryption](../docs/architecture/threshold-decryption.md)                             |
+| Topic                                                                  | Location                                                                                                                       |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Cryptographic model (PV-TBFV, phases P1–P4, circuit identifiers C0–C7) | [Cryptography](https://docs.theinterfold.com/learn/cryptography) · [source](../docs/pages/learn/cryptography.mdx)              |
+| Toolchain, repository layout, `interfold noir`, compilation            | [Noir Circuits](https://docs.theinterfold.com/build/noir-circuits) · [source](../docs/pages/build/noir-circuits.mdx)           |
+| Rust types (`ProofType`, `CircuitName`)                                | [`signed_proof.rs`](../crates/events/src/interfold_event/signed_proof.rs) · [`circuit.rs`](../crates/zk/config/src/circuit.rs) |
+| Protocol execution (actors, events, proof ordering)                    | [DKG](../docs/architecture/dkg.md) and [threshold decryption](../docs/architecture/threshold-decryption.md)                    |

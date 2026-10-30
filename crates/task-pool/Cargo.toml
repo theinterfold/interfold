@@ -1,0 +1,16 @@
+[package]
+name = "e3-task-pool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Bounded CPU task admission and cancellation"
+repository.workspace = true
+
+[dependencies]
+rayon.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "rt"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

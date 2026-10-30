@@ -1178,6 +1178,11 @@ mod serialization_tests {
         LbfvOperationId([value; 32])
     }
 
+    /// Row count of the secure l-BFV preset used by these requests.
+    fn secure_row_count() -> usize {
+        e3_fhe_params::lbfv_row_count(BfvPreset::SecureThreshold16384).unwrap()
+    }
+
     fn proof(circuit: CircuitName) -> Proof {
         Proof::new(circuit, bytes(&[1]), bytes(&[2]))
     }
@@ -1320,12 +1325,12 @@ mod serialization_tests {
             rlk_share_bytes: bytes(&[3]),
             witness: EncryptedRlkWitness {
                 r_bytes: sensitive(&[4]),
-                errors_d0_bytes: vec![sensitive(&[5]); 5],
-                errors_d2_bytes: vec![sensitive(&[6]); 5],
+                errors_d0_bytes: vec![sensitive(&[5]); secure_row_count()],
+                errors_d2_bytes: vec![sensitive(&[6]); secure_row_count()],
             },
         };
 
-        for row_index in 0..5 {
+        for row_index in 0..secure_row_count() as u32 {
             let pk = LbfvPkGenerationProofRequest::from_lbfv_key_shares(
                 &source,
                 &response,
@@ -1344,15 +1349,15 @@ mod serialization_tests {
             .unwrap();
             assert_eq!(pk.row_index, row_index);
             assert_eq!(rlk.row_index, row_index);
-            assert_eq!(rlk.errors_d0_bytes.len(), 5);
-            assert_eq!(rlk.errors_d2_bytes.len(), 5);
+            assert_eq!(rlk.errors_d0_bytes.len(), secure_row_count());
+            assert_eq!(rlk.errors_d2_bytes.len(), secure_row_count());
         }
 
         assert!(LbfvPkGenerationProofRequest::from_lbfv_key_shares(
             &source,
             &response,
             proof_domain,
-            5,
+            secure_row_count() as u32,
             CiphernodesCommitteeSize::Minimum,
         )
         .is_err());
@@ -1392,8 +1397,8 @@ mod serialization_tests {
             rlk_share_bytes: bytes(&[4]),
             witness: EncryptedRlkWitness {
                 r_bytes: sensitive(&[5]),
-                errors_d0_bytes: vec![sensitive(&[6]); 5],
-                errors_d2_bytes: vec![sensitive(&[7]); 5],
+                errors_d0_bytes: vec![sensitive(&[6]); secure_row_count()],
+                errors_d2_bytes: vec![sensitive(&[7]); secure_row_count()],
             },
         };
         let mut generation = LbfvPkGenerationProofRequest::from_lbfv_key_shares(
@@ -1473,8 +1478,8 @@ mod serialization_tests {
             rlk_share_bytes: bytes(&[]),
             witness: EncryptedRlkWitness {
                 r_bytes: sensitive(b"r-secret"),
-                errors_d0_bytes: vec![sensitive(b"d0-secret"); 5],
-                errors_d2_bytes: vec![sensitive(b"d2-secret"); 5],
+                errors_d0_bytes: vec![sensitive(b"d0-secret"); secure_row_count()],
+                errors_d2_bytes: vec![sensitive(b"d2-secret"); secure_row_count()],
             },
         };
         let request = crate::ComputeRequest::trbfv(

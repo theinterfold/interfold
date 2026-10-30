@@ -123,7 +123,7 @@ pub(super) async fn check_c0_restart(
             );
             recovery.hydrate(&repositories, &HashMap::new(), &reader, &aggregates).await.unwrap();
             let history = bus.history();
-            let actors = setup_zk_actors(&bus, &backend, observer.clone(), HashMap::new(), recovery, false, repositories.clone());
+            let actors = setup_zk_actors(&bus, &backend, observer.clone(), HashMap::new(), recovery, false, repositories.clone(), e3_task_pool::TaskPool::new(1, 1), "restart-test".to_owned());
             let accusations = AccusationManager::setup(&bus, e3_id.clone(), observer,
                 Address::repeat_byte(9), members, 1, 300, 30, BfvPreset::InsecureThreshold);
             EventConverter::setup(&bus);

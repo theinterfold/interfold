@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 use super::*;
-use e3_committee::CiphernodesCommitteeSize;
+use e3_committee::{CiphernodesCommitteeSize, Committee};
 use e3_events::{
-    CommitmentConsistencyCheckComplete, Committee, Die, EventBusBarrier, PartyVerificationResult,
+    CommitmentConsistencyCheckComplete, Die, EventBusBarrier, PartyVerificationResult,
     ResetHistory, VerifyShareDecryptionProofsResponse, VerifyShareProofsResponse, ZkRequest,
     ZkResponse,
 };

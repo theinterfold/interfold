@@ -26,8 +26,9 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use actix::{Actor, Addr, Context, Handler};
 use alloy::primitives::{keccak256, Address, Bytes, B256};
 use alloy::sol_types::SolValue;
+use e3_committee::Committee;
 use e3_events::{
-    BusHandle, CommitmentConsistencyCheckComplete, CommitmentConsistencyCheckRequested, Committee,
+    BusHandle, CommitmentConsistencyCheckComplete, CommitmentConsistencyCheckRequested,
     ComputeRequest, ComputeRequestError, ComputeResponse, ComputeResponseKind, CorrelationId, E3id,
     EventContext, EventPublisher, EventSubscriber, EventType, InterfoldEvent, InterfoldEventData,
     PartyVerificationResult, ProofVerificationFailed, ProofVerificationPassed, Sequenced,

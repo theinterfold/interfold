@@ -11,6 +11,104 @@ use ark_ff::{BigInteger, PrimeField};
 use e3_zk_witness::compute_vk_hash;
 use std::time::{Duration, SystemTime};
 
+#[test]
+fn source_hash_matches_the_formatted_build_projection_for_every_pair() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    for preset in crate::BUILD_PRESETS {
+        for committee in CiphernodesCommitteeSize::ALL {
+            let mut request = request();
+            request.preset = PresetSelection::Single(preset);
+            request.committee = CommitteeSelection::Single(committee);
+            let mut selection =
+                configuration::prepare_selection(&root, preset, committee, true).unwrap();
+            selection.format(&root).unwrap();
+            let name = preset_name(preset);
+            let committee = committee.to_string();
+            assert_eq!(
+                identity::source_hash(&root, &request, Some(name), Some(&committee)).unwrap(),
+                identity::source_hash_with_updates(
+                    &root,
+                    &request,
+                    Some(name),
+                    Some(&committee),
+                    &selection.noir
+                )
+                .unwrap(),
+                "{name}/{committee}: hash CLI and staged build disagree; projected selector: {}",
+                selection
+                    .noir
+                    .iter()
+                    .find(|(path, _)| path.ends_with("configs/default/mod.nr"))
+                    .unwrap()
+                    .1,
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires pinned nargo; exercises source selection only, with no circuit compilation"]
+fn source_refresh_normalizes_matrix_selections_without_touching_artifacts() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    artifacts::copy_tree(
+        &repo.join("circuits/lib"),
+        &root.join("circuits/lib"),
+        &["target", "Prover.toml", "Witness.toml"],
+    )
+    .unwrap();
+    for file in [
+        "scripts/circuits/build-pairs.json",
+        "packages/interfold-contracts/scripts/utils.ts",
+        "packages/interfold-contracts/contracts/lib/BfvProtocol.sol",
+    ] {
+        write(root, file, fs::read(repo.join(file)).unwrap());
+    }
+    write_pins(root);
+    write(
+        root,
+        "dist/circuits/saved/.build-stamp.json",
+        "original artifact stamp",
+    );
+    write(
+        root,
+        "dist/circuits/saved/compiled.json",
+        "original compiled bytes",
+    );
+    let archived = snapshot(&root.join("dist"));
+    for [preset, committee] in build_pairs(root).unwrap() {
+        let mut selection = configuration::prepare_selection(
+            root,
+            super::preset(&preset).unwrap(),
+            committee.parse().unwrap(),
+            false,
+        )
+        .unwrap();
+        selection.format(root).unwrap();
+        selection.publish().unwrap();
+    }
+    let selected_utils =
+        fs::read(root.join("packages/interfold-contracts/scripts/utils.ts")).unwrap();
+    let error = configuration::check(root, &request())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("differs from generated configuration"),
+        "{error}"
+    );
+    configuration::sync_sources(root).unwrap();
+    configuration::check(root, &request()).unwrap();
+    assert_eq!(
+        fs::read(root.join("packages/interfold-contracts/scripts/utils.ts")).unwrap(),
+        selected_utils
+    );
+    assert_eq!(snapshot(&root.join("dist")), archived);
+    let normalized = snapshot(root);
+    configuration::sync_sources(root).unwrap();
+    assert_eq!(snapshot(root), normalized);
+}
+
 pub(crate) fn request() -> Request {
     Request {
         operation: Operation::Build,
@@ -27,6 +125,14 @@ pub(crate) fn request() -> Request {
         skip_if_built: false,
         hydrate_bin_only: false,
         dry_run: false,
+    }
+}
+
+/// The default request for one preset's minimum pair.
+pub(crate) fn request_for(preset: BfvPreset) -> Request {
+    Request {
+        preset: PresetSelection::Single(preset),
+        ..request()
     }
 }
 
@@ -146,25 +252,31 @@ fn build_policy_rejects_disabled_pairs_before_tools_and_filters_all_selectors() 
         .unwrap_err()
         .to_string()
         .contains("Select at least one circuit group"));
-    for options in [
-        {
-            let mut r = request();
-            r.preset = PresetSelection::Single(BfvPreset::SecureThreshold8192);
-            r.committee = CommitteeSelection::All;
-            r
-        },
-        {
-            let mut r = request();
-            r.preset = PresetSelection::All;
-            r.committee = CommitteeSelection::Single(CiphernodesCommitteeSize::Micro);
-            r
-        },
+    for (options, expected) in [
+        (
+            {
+                let mut r = request();
+                r.preset = PresetSelection::Single(BfvPreset::SecureThreshold8192);
+                r.committee = CommitteeSelection::All;
+                r
+            },
+            2,
+        ),
+        (
+            {
+                let mut r = request();
+                r.preset = PresetSelection::All;
+                r.committee = CommitteeSelection::Single(CiphernodesCommitteeSize::Micro);
+                r
+            },
+            crate::ARTIFACT_PRESETS.len() - 1,
+        ),
     ] {
         let selected = options.selected_pairs(temp.path()).unwrap();
         for pair in &selected {
             assert!(pairs.contains(pair));
         }
-        assert_eq!(selected.len(), 2);
+        assert_eq!(selected.len(), expected);
         options.validate(temp.path()).unwrap();
     }
 }
@@ -253,7 +365,7 @@ fn current_selection_sync_preserves_bytes_and_mtimes_without_tools() {
     for relative in [
         "scripts/circuits/build-pairs.json",
         "packages/interfold-contracts/scripts/utils.ts",
-        "packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol",
+        "packages/interfold-contracts/contracts/lib/BfvProtocol.sol",
     ] {
         write(root, relative, fs::read(repo.join(relative)).unwrap());
     }
@@ -380,7 +492,6 @@ fn source_identity_tracks_inputs_not_generated_selections_or_tests() {
         "circuits/lib/Nargo.toml",
         "circuits/lib/src/configs/committee/micro/mod.nr",
         "scripts/circuits/build-pairs.json",
-        "crates/zk/build/templates/active_crypto_config.sol.in",
         "crates/zk/build/templates/committee_active.nr.in",
     ] {
         write(root, path, "original");
@@ -583,6 +694,11 @@ fn checksum_streams_files_of_any_size_to_the_same_digest() {
 fn protocol_generation_preserves_deployed_parameter_hashes() {
     for (preset, expected_hash, expected_id) in [
         (
+            BfvPreset::InsecureThreshold64,
+            "aff065a7d6e3d8c830dfcd37c2af8a25b3dcc6cd74ba458894075e8264f1ab1e",
+            "92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9",
+        ),
+        (
             BfvPreset::InsecureThreshold,
             "0619925361a4d022377f93ccd0022c0164257ffb889b979eb382aa06d401e258",
             "968e91054be28b2b577ac278284e03274ed46bd5c5064e573290312a2323d495",
@@ -594,8 +710,8 @@ fn protocol_generation_preserves_deployed_parameter_hashes() {
         ),
         (
             BfvPreset::SecureThreshold16384,
-            "2576ec0fc35c64a24a9be57d058609040e4f93dfee51d9df4a831c6c57675a9e",
-            "c5ea726de917fa7f1272eecbbe9f373b3d95a668d102c71c9fb38a2749330ecf",
+            "1e4103227986f7801110cccd39f6a353f888bd5f2583a5347a67bf814402cad3",
+            "9318179273216fd60351e8cdf0380dab2143b53f34f4962f60348c556b5b29d5",
         ),
     ] {
         let material = PresetMaterial::new(preset).unwrap();
@@ -606,87 +722,6 @@ fn protocol_generation_preserves_deployed_parameter_hashes() {
         assert_eq!(hex::encode(material.parameter_hash), expected_hash);
         assert_eq!(hex::encode(material.config_id), expected_id);
     }
-}
-
-#[test]
-fn generated_protocol_preserves_network_admission_and_pure_pair_validation() {
-    let params = configuration::OperationParams::both().unwrap();
-    let contract = compact(
-        &configuration::protocol_contract(
-            BfvPreset::InsecureThreshold,
-            CiphernodesCommitteeSize::Minimum,
-            &params,
-            &build_pairs(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")).unwrap(),
-        )
-        .unwrap(),
-    );
-    let admission = contract
-        .split("functionisParamSetSupported")
-        .nth(1)
-        .unwrap()
-        .split("functionisCommitteeSupported")
-        .next()
-        .unwrap();
-    assert!(admission.ends_with("returnparamSet==SECURE_PARAM_SET;}"));
-    let pair_validation = contract
-        .split("functionvalidateParamSetCommittee")
-        .nth(1)
-        .unwrap();
-    assert!(pair_validation.starts_with("(uint8paramSet,uint8committeeSize)internalpure{"));
-}
-
-#[test]
-fn deployment_rendering_follows_the_build_policy() {
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let mut pairs = build_pairs(&repo).unwrap();
-    let params = configuration::OperationParams::both().unwrap();
-    let before =
-        fs::read_to_string(repo.join("packages/interfold-contracts/scripts/utils.ts")).unwrap();
-    let render = |pairs: &[[String; 2]]| {
-        configuration::protocol_utils(
-            &before,
-            BfvPreset::InsecureThreshold,
-            CiphernodesCommitteeSize::Minimum,
-            &params,
-            pairs,
-        )
-        .unwrap()
-    };
-    let complete = render(&pairs);
-    assert!(complete.contains("export const SECURE_16384_MICRO_BFV_CONFIG:"));
-    pairs.retain(|pair| pair != &["secure-16384".to_string(), "micro".to_string()]);
-    let restricted = render(&pairs);
-    assert!(!restricted.contains("SECURE_16384_MICRO_BFV_CONFIG"));
-    assert_eq!(
-        configuration::protocol_utils(
-            &restricted,
-            BfvPreset::InsecureThreshold,
-            CiphernodesCommitteeSize::Minimum,
-            &params,
-            &pairs,
-        )
-        .unwrap(),
-        restricted
-    );
-    let contract = compact(
-        &configuration::protocol_contract(
-            BfvPreset::InsecureThreshold,
-            CiphernodesCommitteeSize::Minimum,
-            &params,
-            &pairs,
-        )
-        .unwrap(),
-    );
-    let secure = contract
-        .split("if(paramSet==SECURE_16384_PARAM_SET){")
-        .nth(1)
-        .unwrap()
-        .split('}')
-        .next()
-        .unwrap();
-    assert!(secure.contains("MINIMUM_COMMITTEE_SIZE"));
-    assert!(secure.contains("SMALL_COMMITTEE_SIZE"));
-    assert!(!secure.contains("MICRO_COMMITTEE_SIZE"));
 }
 
 #[test]
@@ -775,15 +810,15 @@ fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
     )
     .unwrap();
     let params = configuration::OperationParams::both().unwrap();
-    // The same material renders parity files, bound updates, the TypeScript constants, and the
-    // Solidity contract with the deployed hashes.
+    // The same material renders parity files, bound updates, and Solidity's deployed hashes.
     for committee in [
         CiphernodesCommitteeSize::Minimum,
         CiphernodesCommitteeSize::Micro,
         CiphernodesCommitteeSize::Small,
     ] {
         let parity = configuration::parity_files(committee, &params).unwrap();
-        assert_eq!(parity.len(), 4);
+        // One parity matrix per artifact preset plus the shared smudging widths.
+        assert_eq!(parity.len(), crate::ARTIFACT_PRESETS.len() + 1);
     }
     let material = params.get(BfvPreset::InsecureThreshold);
     let bounds = configuration::bound_updates(
@@ -794,13 +829,7 @@ fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
     )
     .unwrap();
     assert_eq!(bounds.len(), 2);
-    let contract = configuration::protocol_contract(
-        BfvPreset::InsecureThreshold,
-        CiphernodesCommitteeSize::Minimum,
-        &params,
-        &build_pairs(&repo).unwrap(),
-    )
-    .unwrap();
+    let contract = crate::bindings::solidity(&params).unwrap();
     assert!(contract.contains(&format!(
         "{:#x}",
         params.get(BfvPreset::SecureThreshold8192).config_id
@@ -812,13 +841,13 @@ fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
         true,
     )
     .unwrap();
-    let selector = &selection
+    let protocol = &selection
         .noir
         .iter()
-        .find(|(path, _)| path.ends_with("configs/default/mod.nr"))
+        .find(|(path, _)| path.ends_with("configs/protocol.nr"))
         .unwrap()
         .1;
-    let declarations = configuration::declarations(selector);
+    let declarations = configuration::declarations(protocol);
     let width = declarations["MAX_MSG_NON_ZERO_COEFFS"]
         .split('=')
         .nth(1)
@@ -828,13 +857,9 @@ fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
         .parse::<usize>()
         .unwrap();
     assert_eq!(width, e3_zk_config::MAX_MSG_NON_ZERO_COEFFS);
-    let verifier = fs::read_to_string(
-        repo.join("packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol"),
-    )
-    .unwrap();
     let width = regex::Regex::new(r"\bMESSAGE_COEFFS_COUNT\s*=\s*(\d+)\s*;")
         .unwrap()
-        .captures(&verifier)
+        .captures(&contract)
         .unwrap()[1]
         .parse::<usize>()
         .unwrap();
@@ -842,10 +867,218 @@ fn shared_operation_material_serves_parity_bounds_and_protocol_renderers() {
 }
 
 #[test]
+fn deployment_selection_switches_only_names_and_is_idempotent_for_every_pair() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let before =
+        fs::read_to_string(repo.join("packages/interfold-contracts/scripts/utils.ts")).unwrap();
+    for preset in crate::BUILD_PRESETS {
+        for committee in CiphernodesCommitteeSize::ALL {
+            let selected = configuration::protocol_utils(&before, preset, committee).unwrap();
+            assert!(selected.contains(&format!(
+                "export const ACTIVE_BFV_PRESET: BfvArtifactPreset = \"{}\";",
+                preset_name(preset)
+            )));
+            assert!(selected.contains(&format!(
+                "export const ACTIVE_BFV_COMMITTEE: BfvCommittee = \"{committee}\";"
+            )));
+            assert_eq!(
+                configuration::protocol_utils(&selected, preset, committee).unwrap(),
+                selected
+            );
+        }
+    }
+}
+
+#[test]
+fn complete_preset_generation_preserves_each_existing_pair_statement() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let params = configuration::OperationParams::both().unwrap();
+    for preset in crate::BUILD_PRESETS {
+        for committee in CiphernodesCommitteeSize::ALL {
+            let original =
+                configuration::bound_updates(&root, preset, committee, params.get(preset)).unwrap();
+            for (path, full) in
+                configuration::preset_updates(&root, preset, committee, params.get(preset)).unwrap()
+            {
+                // l-BFV public-randomness modules have no narrow owner; compare them with the
+                // committed sources.
+                let previous = &original
+                    .iter()
+                    .find(|(old, _)| *old == path)
+                    .map(|(_, text)| text.clone())
+                    .unwrap_or_else(|| fs::read_to_string(&path).unwrap());
+                let normalized = |source: &str| {
+                    configuration::declarations(source)
+                        .into_iter()
+                        .map(|(k, v)| (k, compact(&v).replace(",]", "]").replace(",)", ")")))
+                        .collect::<std::collections::BTreeMap<_, _>>()
+                };
+                assert_eq!(
+                    normalized(&full),
+                    normalized(previous),
+                    "{preset:?}/{committee}: full generation changed a circuit statement"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn ownership_checks_reject_new_consumer_copies_even_with_a_generated_header() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    write(
+        root,
+        "packages/new-consumer/value.ts",
+        "export const width = CIRCUIT_DIMENSIONS.messageCoeffsCount;\n",
+    );
+    configuration::check_ownership(root).unwrap();
+    for copy in [
+        format!(
+            "// Generated. Do not edit.\nexport const MESSAGE_COEFFS_COUNT = {};\n",
+            e3_zk_config::MAX_MSG_NON_ZERO_COEFFS
+        ),
+        format!(
+            "export const DOMAIN = {:?};\n",
+            e3_fhe_params::INTERFOLD_BFV_VERSION
+        ),
+        format!(
+            "export const SCHEME = {:?};\n",
+            e3_fhe_params::BFV_ENCRYPTION_SCHEME
+        ),
+    ] {
+        write(root, "packages/new-consumer/value.ts", copy);
+        assert!(configuration::check_ownership(root)
+            .unwrap_err()
+            .to_string()
+            .contains("new-consumer"));
+    }
+    write(
+        root,
+        "packages/new-consumer/value.ts",
+        "export const width = CIRCUIT_DIMENSIONS.messageCoeffsCount;\n",
+    );
+    write(
+        root,
+        "packages/new-consumer/types/config.ts",
+        format!(
+            "export const MESSAGE_COEFFS_COUNT = {};\n",
+            e3_zk_config::MAX_MSG_NON_ZERO_COEFFS
+        ),
+    );
+    assert!(configuration::check_ownership(root)
+        .unwrap_err()
+        .to_string()
+        .contains("types/config.ts"));
+}
+
+#[test]
+fn full_source_checks_detect_stale_missing_and_wrong_alias_declarations_without_repair() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    artifacts::copy_tree(
+        &repo.join("circuits/lib"),
+        &root.join("circuits/lib"),
+        &["target", "Prover.toml", "Witness.toml"],
+    )
+    .unwrap();
+    for path in [
+        "packages/interfold-contracts/scripts/utils.ts",
+        "packages/interfold-contracts/contracts/lib/BfvProtocol.sol",
+    ] {
+        write(root, path, fs::read(repo.join(path)).unwrap());
+    }
+    write_pins(root);
+    configuration::check(root, &request()).expect("unmodified sources must pass");
+    let threshold = root.join("circuits/lib/src/configs/insecure/threshold.nr");
+    let original = fs::read_to_string(&threshold).unwrap();
+    let declaration = configuration::declarations(&original)["USER_DATA_ENCRYPTION_BIT_U"].clone();
+    for (replacement, expected) in [
+        (
+            "pub global USER_DATA_ENCRYPTION_BIT_U: u32 = 99;",
+            "differs from generated configuration",
+        ),
+        ("", "Missing USER_DATA_ENCRYPTION_BIT_U"),
+    ] {
+        fs::write(&threshold, original.replace(&declaration, replacement)).unwrap();
+        let before = snapshot(root);
+        let error = configuration::check(root, &request())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(expected), "{error}");
+        assert_eq!(snapshot(root), before);
+        fs::write(&threshold, &original).unwrap();
+    }
+    configuration::check(root, &request()).expect("restored sources must pass");
+    let dkg = root.join("circuits/lib/src/configs/insecure/dkg.nr");
+    let original = fs::read_to_string(&dkg).unwrap();
+    fs::write(
+        &dkg,
+        original.replace(
+            "THRESHOLD_SHARE_DECRYPTION_BIT_SK as SHARE_DECRYPTION_BIT_AGG",
+            "PK_AGGREGATION_BIT_PK as SHARE_DECRYPTION_BIT_AGG",
+        ),
+    )
+    .unwrap();
+    let before = snapshot(root);
+    let error = configuration::check(root, &request())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("DKG aggregate width must re-export THRESHOLD_SHARE_DECRYPTION_BIT_SK"),
+        "{error}"
+    );
+    assert_eq!(snapshot(root), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn successful_compiler_process_with_bug_diagnostic_is_not_accepted() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let compiler = temp.path().join("nargo");
+    for stream in ["", ">&2"] {
+        for message in ["bug: unconstrained output", "  bug: unconstrained output"] {
+            fs::write(
+                &compiler,
+                format!("#!/bin/sh\nprintf '%s\\n' '{message}' {stream}\nexit 0\n"),
+            )
+            .unwrap();
+            fs::set_permissions(&compiler, fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(run(Command::new(&compiler).arg("compile"))
+                .unwrap_err()
+                .to_string()
+                .contains("bug diagnostic"));
+        }
+        for message in [
+            "debug: compiled successfully",
+            "warning: unused variable\n  12 | let label = \"bug: a string\";",
+            "warning: unused variable\n  12 | // debug: trace input",
+        ] {
+            fs::write(
+                &compiler,
+                format!("#!/bin/sh\nprintf '%s\\n' '{message}' {stream}\nexit 0\n"),
+            )
+            .unwrap();
+            assert!(
+                run(Command::new(&compiler).arg("compile")).is_ok(),
+                "{message}"
+            );
+        }
+    }
+    fs::write(&compiler, "#!/bin/sh\nprintf 'compiled'\n").unwrap();
+    assert_eq!(
+        run(Command::new(&compiler).arg("compile")).unwrap(),
+        "compiled"
+    );
+}
+
+#[test]
 fn every_pair_replaces_whole_scalar_and_array_bound_declarations() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let params = configuration::OperationParams::both().unwrap();
-    for preset in BfvPreset::PAIR_PRESETS {
+    for preset in crate::BUILD_PRESETS {
         for name in COMMITTEES {
             let committee = name.parse().unwrap();
             let material = params.get(preset);
@@ -877,8 +1110,9 @@ fn every_pair_replaces_whole_scalar_and_array_bound_declarations() {
                         || name.starts_with("SHARE_COMPUTATION_"))
                         && !configuration::CHUNK_GLOBALS.contains(&name.as_str())
                     {
+                        // Replacement keeps the formatter's optional trailing commas.
                         assert_eq!(
-                            compact(declarations.get(&name).unwrap()),
+                            compact(declarations.get(&name).unwrap()).replace(",]", "]"),
                             compact(&declaration),
                             "{name}"
                         );

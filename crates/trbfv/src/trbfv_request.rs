@@ -182,17 +182,22 @@ pub struct ThresholdFailure {
 }
 
 /// Mirror of fhe.rs `ThresholdError` variants, kept matchable across the wire.
+///
+/// Persisted in the event log: keep main's variant order and append new variants at the end.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ThresholdFailureKind {
     InvalidPartyId,
-    InvalidPartyCount,
     DuplicatePartyId,
     InvalidThreshold,
     ShareCountMismatch,
     MalformedShares,
     NonInvertibleShares,
+    /// Kept for replay of logs written by main's fhe.rs; the fhe.rs version used here no longer
+    /// reports it, so nothing produces this variant.
+    InsecureLambda,
     SmudgingBoundInfeasible,
     PartyCountExceedsModulus,
+    InvalidPartyCount,
 }
 
 impl ThresholdFailure {
@@ -315,8 +320,8 @@ mod tests {
             rlk_share_bytes: ArcBytes::from_bytes(&[3]),
             witness: EncryptedRlkWitness {
                 r_bytes: SensitiveBytes::from_encrypted(&[4]),
-                errors_d0_bytes: vec![SensitiveBytes::from_encrypted(&[5]); 5],
-                errors_d2_bytes: vec![SensitiveBytes::from_encrypted(&[6]); 5],
+                errors_d0_bytes: vec![SensitiveBytes::from_encrypted(&[5]); 6],
+                errors_d2_bytes: vec![SensitiveBytes::from_encrypted(&[6]); 6],
             },
         });
         let error = TrBFVError::GenLbfvKeyShares(TrBFVFailure::from("failure"));

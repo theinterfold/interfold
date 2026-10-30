@@ -27,7 +27,7 @@ test('secure-16384 micro has the l-BFV verifier route', () => {
 
 test('retains the exact l-BFV and trBFV on-chain verifier matrix', () => {
   const paths = expectedVerifierRelativePaths()
-  assert.equal(paths.length, 24)
+  assert.equal(paths.length, 30)
   assert.equal(paths.filter((path) => path.endsWith('DkgAggregatorV2Verifier.sol')).length, 6)
   assert.ok(paths.some((path) => path.startsWith('secure-16384/small/')))
   assert.ok(paths.some((path) => path.startsWith('secure-16384/micro/')))
@@ -38,6 +38,10 @@ test('retains the exact l-BFV and trBFV on-chain verifier matrix', () => {
       'dkg_aggregator_v2',
     ])
   }
+  assert.deepEqual(onChainVerifierCircuits(CIRCUIT_PRESETS.INSECURE_64, CIRCUIT_COMMITTEES.MINIMUM), [
+    'dkg_aggregator',
+    'decryption_aggregator',
+  ])
   assert.throws(() => onChainVerifierCircuits('unsupported' as never, CIRCUIT_COMMITTEES.MICRO), /Unsupported preset\/committee pair/)
 })
 
@@ -66,10 +70,17 @@ test('verifier inventory is exact and unknown directories are not pruned', (t) =
 test('disabled known pairs are pruned only outside dry-run mode', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'interfold-disabled-verifier-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
-  for (const name of ['constants.ts', 'verifiers.ts']) copyFileSync(join(__dirname, name), join(root, name))
+  // Keep the repository layout: the policy reads the generated binding beside the contracts.
+  const scripts = join(root, 'scripts/circuits')
+  const contracts = join(root, 'packages/interfold-contracts')
+  mkdirSync(scripts, { recursive: true })
+  mkdirSync(contracts, { recursive: true })
+  for (const name of ['constants.ts', 'verifiers.ts']) copyFileSync(join(__dirname, name), join(scripts, name))
+  for (const name of ['bfv.ts', 'crypto-config.json'])
+    copyFileSync(join(__dirname, '../../packages/interfold-contracts', name), join(contracts, name))
   const pairs: string[][] = JSON.parse(readFileSync(join(__dirname, 'build-pairs.json'), 'utf8'))
   writeFileSync(
-    join(root, 'build-pairs.json'),
+    join(scripts, 'build-pairs.json'),
     JSON.stringify(pairs.filter(([preset, committee]) => preset !== 'secure-16384' || committee !== 'micro')),
   )
   const removed = JSON.parse(
@@ -91,7 +102,7 @@ test('disabled known pairs are pruned only outside dry-run mode', (t) => {
     if (fs.existsSync(dir)) throw new Error('disabled pair was retained');
     console.log(JSON.stringify(removed));
   `,
-        join(root, 'verifiers.ts'),
+        join(scripts, 'verifiers.ts'),
         root,
       ],
       { encoding: 'utf8' },

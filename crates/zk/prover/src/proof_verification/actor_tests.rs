@@ -8,7 +8,7 @@ use super::*;
 use actix::{Actor, Context, Handler};
 use alloy::signers::local::PrivateKeySigner;
 use e3_events::{
-    hlc_factory::HlcFactory, E3RequestComplete, EffectsEnabled, EventBus, EventBusBarrier,
+    hlc_factory::HlcFactory, E3RequestComplete, EffectsEnabled, Event, EventBus, EventBusBarrier,
     EventBusConfig, EventPublisher, FlushEventStores, GetEvents, ProofPayload, Seed, Sequencer,
     StoreEventRequested, StoreEventResponse, Unsequenced,
 };
@@ -289,6 +289,123 @@ impl Handler<recovery::VerificationBarrier> for VerificationRecorder {
     type Result = ();
 
     fn handle(&mut self, _: recovery::VerificationBarrier, _: &mut Self::Context) {}
+}
+
+struct ForwardingVerifier {
+    target: Recipient<TypedEvent<ZkVerificationRequest>>,
+    calls: mpsc::UnboundedSender<()>,
+}
+
+impl Actor for ForwardingVerifier {
+    type Context = Context<Self>;
+}
+
+impl Handler<TypedEvent<ZkVerificationRequest>> for ForwardingVerifier {
+    type Result = ();
+
+    fn handle(&mut self, request: TypedEvent<ZkVerificationRequest>, _: &mut Self::Context) {
+        self.target.try_send(request).unwrap();
+        self.calls.send(()).unwrap();
+    }
+}
+
+impl Handler<recovery::VerificationBarrier> for ForwardingVerifier {
+    type Result = ();
+
+    fn handle(&mut self, _: recovery::VerificationBarrier, _: &mut Self::Context) {}
+}
+
+#[actix::test]
+async fn cancelled_c0_verification_does_not_retry_accept_or_accuse() {
+    let bus = test_bus();
+    let history = bus.history();
+    let e3_id = E3id::new("9", 31_337);
+    let signer = PrivateKeySigner::random();
+    let preset = BfvPreset::InsecureThreshold64;
+    let temp = tempfile::tempdir().unwrap();
+    let backend = crate::ZkBackend::new(
+        e3_config::BBPath::Default(temp.path().join("absent-bb")),
+        temp.path().join("circuits"),
+        temp.path().join("work"),
+    );
+    let pool = e3_task_pool::TaskPool::new(1, 1);
+    pool.cancel_group(&e3_task_pool::scoped_task_group("cancel-test", &e3_id));
+    let verifier = crate::actors::ZkActor::new(&backend, pool, "cancel-test".to_owned()).start();
+    let (calls, mut observed) = mpsc::unbounded_channel();
+    let forwarder = ForwardingVerifier {
+        target: verifier.clone().recipient(),
+        calls,
+    }
+    .start();
+    let actor = ProofVerificationActor::setup(
+        &bus,
+        forwarder.clone().recipient(),
+        HashMap::from([(
+            e3_id.clone(),
+            Committee::new(vec![signer.address().to_string()]),
+        )]),
+        HashMap::from([(
+            e3_id.clone(),
+            E3Meta {
+                threshold_m: 1,
+                threshold_n: 3,
+                seed: Seed([0; 32]),
+                params_preset: preset,
+                params: ArcBytes::default(),
+                error_size: ArcBytes::default(),
+            },
+        )]),
+    );
+    bus.event_bus().send(EventBusBarrier).await.unwrap();
+    bus.publish_without_context(EffectsEnabled::new()).unwrap();
+    let input = EncryptionKeyReceived {
+        e3_id: e3_id.clone(),
+        key: signed_c0_key(&signer, 0, &e3_id, preset),
+    };
+    bus.publish_without_context(input.clone()).unwrap();
+    bus.flush_event_pipeline().await.unwrap();
+    observed.recv().await.unwrap();
+    verifier.send(recovery::VerificationBarrier).await.unwrap();
+    actor.send(recovery::VerificationBarrier).await.unwrap();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(120)).await;
+    actor.send(recovery::VerificationBarrier).await.unwrap();
+    forwarder.send(recovery::VerificationBarrier).await.unwrap();
+    assert!(
+        observed.try_recv().is_err(),
+        "a permanently cancelled C0 task was retried"
+    );
+
+    // Late verdicts must not authorize acceptance or evidence after cancellation removed the plan.
+    let ec = EventContext::<Unsequenced>::from(InterfoldEventData::from(input.clone())).sequence(0);
+    for outcome in [ZkVerificationOutcome::Valid, ZkVerificationOutcome::Invalid] {
+        actor
+            .send(TypedEvent::new(
+                ZkVerificationResponse {
+                    outcome,
+                    e3_id: e3_id.clone(),
+                    key: input.key.clone(),
+                },
+                ec.clone(),
+            ))
+            .await
+            .unwrap();
+    }
+    bus.flush_event_pipeline().await.unwrap();
+    let events = history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await
+        .unwrap();
+    assert!(
+        events.iter().all(|event| !matches!(
+            event.get_data(),
+            InterfoldEventData::EncryptionKeyCreated(_)
+                | InterfoldEventData::ProofVerificationPassed(_)
+                | InterfoldEventData::ProofVerificationFailed(_)
+                | InterfoldEventData::SignedProofFailed(_)
+        )),
+        "cancellation or a late result accepted or blamed a peer"
+    );
 }
 
 /// The replay after a restart can bring back the C0 input of an E3 that failed before startup,

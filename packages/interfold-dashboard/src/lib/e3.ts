@@ -5,7 +5,17 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 // On-chain E3 fetchers — read events + view functions and assemble dashboard records.
 
-import { CONTRACTS, DEPLOY_BLOCK, E3Stage, FailureReason, TIMEOUTS, ciphernodeRegistryAbi, interfoldAbi, publicClient } from './chain'
+import {
+  CRISP_PROGRAMS,
+  CONTRACTS,
+  DEPLOY_BLOCK,
+  E3Stage,
+  FailureReason,
+  TIMEOUTS,
+  ciphernodeRegistryAbi,
+  interfoldAbi,
+  publicClient,
+} from './chain'
 
 // Helper: pull a single named event ABI item out of the typechain bundle.
 function eventAbi(abi: readonly any[], name: string): any {
@@ -46,16 +56,6 @@ const CRISP_INPUT_PUBLISHED = {
   ],
 } as const
 
-// Minimal CRISPProgram view. The program decodes the tallies of its own rounds, so the
-// dashboard holds no copy of the ballot layout.
-const CRISP_DECODE_TALLY = {
-  type: 'function',
-  name: 'decodeTally',
-  stateMutability: 'view',
-  inputs: [{ name: 'e3Id', type: 'uint256' }],
-  outputs: [{ name: 'votes', type: 'uint256[]' }],
-} as const
-
 // Public RPCs cap getLogs range. 9_500 keeps us safely under common 10k limits.
 const LOG_CHUNK = 9_500n
 
@@ -70,11 +70,11 @@ function committeeDecryptionThreshold([h, n]: [number, number]): number | undefi
   return COMMITTEE_DECRYPTION_THRESHOLDS[`${h}:${n}`]
 }
 
-// An E3 is a CRISP poll only if its program contract is the CRISPProgram.
+// An E3 is a CRISP poll only if its program contract is a CRISP program of this network.
 // Other E3s on the same Interfold deployment run different programs and must not
 // be presented as polls.
 export function isCrispE3(e3Program: string): boolean {
-  return e3Program.toLowerCase() === CONTRACTS.CRISPProgram.toLowerCase()
+  return CRISP_PROGRAMS.some((program) => program.toLowerCase() === e3Program.toLowerCase())
 }
 
 // Solidity E3Stage → 7-stage UI index used by STAGES in data.ts.
@@ -210,9 +210,6 @@ export type E3FullDetails = E3Summary & {
   committeePublicKey: `0x${string}`
   ciphertextOutput: `0x${string}`
   plaintextOutput: `0x${string}`
-  // Per-option totals of a CRISP round, decoded by CRISPProgram. Undefined or empty
-  // when the round has no decodable output.
-  tally?: readonly bigint[]
   requestedAt?: number // unix seconds (block.timestamp of the request)
   // Block number of the E3Requested log (distinct from `requestBlock` which on
   // this contract version is actually a Unix timestamp, not a block number).
@@ -279,7 +276,7 @@ async function blockTimestamps(blocks: bigint[]): Promise<Map<string, number>> {
   return new Map(entries)
 }
 
-async function getLogsChunked<T>(
+export async function getLogsChunked<T>(
   args: Omit<Parameters<typeof publicClient.getLogs>[0], 'fromBlock' | 'toBlock'>,
   from: bigint,
   to: bigint,
@@ -304,12 +301,12 @@ const BLOCKS_PER_DAY = 7200n
 export async function fetchRecentBallotCount(): Promise<number> {
   const head = await fetchLatestBlock()
   const from = head > BLOCKS_PER_DAY + DEPLOY_BLOCK ? head - BLOCKS_PER_DAY : DEPLOY_BLOCK
-  const logs = await getLogsChunked<any>({ address: CONTRACTS.CRISPProgram, event: CRISP_INPUT_PUBLISHED }, from, head)
+  const logs = await getLogsChunked<any>({ address: [...CRISP_PROGRAMS], event: CRISP_INPUT_PUBLISHED }, from, head)
   return logs.length
 }
 
 export type FetchE3Opts = {
-  // CRISP poll view: only E3s whose program is the CRISPProgram.
+  // CRISP poll view: only E3s whose program is a CRISP program.
   crispOnly?: boolean
   toBlock?: bigint
 }
@@ -369,7 +366,7 @@ export async function fetchE3List(opts: FetchE3Opts = {}): Promise<E3Summary[]> 
 // Distinct ballot count per CRISP E3, from a single scan of all InputPublished
 // events grouped by e3Id (re-votes reuse a voteIndex, so we count unique ones).
 async function fetchCrispBallotCounts(head: bigint): Promise<Map<string, number>> {
-  const inputs = await getLogsChunked<any>({ address: CONTRACTS.CRISPProgram, event: CRISP_INPUT_PUBLISHED }, DEPLOY_BLOCK, head)
+  const inputs = await getLogsChunked<any>({ address: [...CRISP_PROGRAMS], event: CRISP_INPUT_PUBLISHED }, DEPLOY_BLOCK, head)
   const byE3 = new Map<string, Set<string>>()
   for (const l of inputs) {
     const id = l.args.e3Id.toString()
@@ -410,17 +407,6 @@ export async function fetchE3Details(e3Id: bigint, toBlock?: bigint): Promise<E3
       args: [e3Id],
     }).catch(() => FailureReason.None) as Promise<number>,
   ])
-
-  // A round that the program cannot decode reverts, so its tally stays undefined.
-  const tally: readonly bigint[] | undefined =
-    isCrispE3(e3.e3Program) && e3.plaintextOutput !== '0x'
-      ? await (publicClient.readContract as any)({
-          address: CONTRACTS.CRISPProgram,
-          abi: [CRISP_DECODE_TALLY],
-          functionName: 'decodeTally',
-          args: [e3Id],
-        }).catch(() => undefined)
-      : undefined
 
   // `e3.requestBlock` is misnamed: on this contract version it stores
   // `block.timestamp` (EIP-6372 timestamp clock), not a block number. Using it
@@ -515,7 +501,7 @@ export async function fetchE3Details(e3Id: bigint, toBlock?: bigint): Promise<E3
     inputsTracked
       ? getLogsChunked<any>(
           {
-            address: CONTRACTS.CRISPProgram,
+            address: e3.e3Program,
             event: CRISP_INPUT_PUBLISHED,
             args: { e3Id },
           } as any,
@@ -586,7 +572,6 @@ export async function fetchE3Details(e3Id: bigint, toBlock?: bigint): Promise<E3
     committeePublicKey: e3.committeePublicKey,
     ciphertextOutput: e3.ciphertextOutput,
     plaintextOutput: e3.plaintextOutput,
-    tally,
     committeeThreshold: threshold,
     committeeDecryptionThreshold: committeeDecryptionThreshold(threshold),
     committeeMembers: members,

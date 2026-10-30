@@ -158,11 +158,12 @@ mod tests {
     use alloy::primitives::Address;
     use anyhow::Result;
     use e3_committee::CiphernodesCommitteeSize;
+    use e3_event_system::test_support::EventFixture;
     use e3_events::{
-        CircuitName, ComputeRequestErrorKind, ComputeRequestKind, Event, GetEvents,
-        HistoryCollector, NodeDkgFoldRequest, TakeEvents, Unsequenced, ZkError,
+        ComputeRequestErrorKind, ComputeRequestKind, Event, GetEvents, HistoryCollector,
+        NodeDkgFoldRequest, TakeEvents, Unsequenced, ZkError,
     };
-    use e3_test_helpers::get_common_setup;
+    use e3_zk_config::CircuitName;
     use std::collections::HashSet;
 
     fn test_ctx(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {
@@ -207,7 +208,7 @@ mod tests {
 
     #[actix::test]
     async fn request_context_events_survive_rotation_and_restart() -> Result<()> {
-        let (bus, _rng, _seed, _params, _crp, _errors, _history) = get_common_setup(None)?;
+        let EventFixture { bus, .. } = EventFixture::new()?;
         let old_e3 = E3id::new("41", 1);
         let new_e3 = E3id::new("42", 1);
         let old_context = DkgFoldAttestationContext {
@@ -262,7 +263,7 @@ mod tests {
 
     #[actix::test]
     async fn node_dkg_fold_compute_error_preserves_recovery_state() -> Result<()> {
-        let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+        let EventFixture { bus, history, .. } = EventFixture::new()?;
         let mut aggregator =
             NodeProofAggregator::new(&bus, test_signer(), HashMap::new(), HashMap::new(), true);
         let e3_id = E3id::new("42", 1);
@@ -349,7 +350,7 @@ mod tests {
     #[actix::test]
     async fn completed_fold_waits_for_attestation_context_without_failing_the_round() -> Result<()>
     {
-        let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+        let EventFixture { bus, history, .. } = EventFixture::new()?;
         let mut aggregator =
             NodeProofAggregator::new(&bus, test_signer(), HashMap::new(), HashMap::new(), true);
         let e3_id = E3id::new("42", 1);
@@ -430,7 +431,7 @@ mod tests {
 
     #[actix::test]
     async fn early_inner_proof_is_prebuffered_until_collection_starts() -> Result<()> {
-        let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+        let EventFixture { bus, history, .. } = EventFixture::new()?;
         let mut aggregator =
             NodeProofAggregator::new(&bus, test_signer(), HashMap::new(), HashMap::new(), true);
         let e3_id = E3id::new("43", 1);
@@ -534,7 +535,7 @@ mod tests {
 
     #[actix::test]
     async fn restart_loads_proofs_before_and_after_fold_metadata() -> Result<()> {
-        let (bus, _rng, _seed, _params, _crp, _errors, _history) = get_common_setup(None)?;
+        let EventFixture { bus, .. } = EventFixture::new()?;
         let repositories = Repositories::in_mem();
         let e3_id = E3id::new("45", 1);
         let proof = dummy_proof(10);
@@ -579,7 +580,7 @@ mod tests {
 
     #[actix::test]
     async fn restart_dispatches_a_complete_unfinished_fold() -> Result<()> {
-        let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+        let EventFixture { bus, history, .. } = EventFixture::new()?;
         let repositories = Repositories::in_mem();
         let e3_id = E3id::new("47", 1);
         let ec = test_ctx(DKGRecursiveAggregationComplete {
@@ -630,7 +631,7 @@ mod tests {
 
     #[actix::test]
     async fn restart_republishes_a_persisted_fold_output() -> Result<()> {
-        let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+        let EventFixture { bus, history, .. } = EventFixture::new()?;
         let repositories = Repositories::in_mem();
         let e3_id = E3id::new("46", 1);
         let output = DKGRecursiveAggregationComplete {
@@ -660,7 +661,7 @@ mod tests {
 
     #[actix::test]
     async fn startup_removes_recovery_payloads_for_terminal_e3s() -> Result<()> {
-        let (bus, _rng, _seed, _params, _crp, _errors, _history) = get_common_setup(None)?;
+        let EventFixture { bus, .. } = EventFixture::new()?;
         let repositories = Repositories::in_mem();
         let e3_id = E3id::new("48", 1);
         let proof = dummy_proof(10);

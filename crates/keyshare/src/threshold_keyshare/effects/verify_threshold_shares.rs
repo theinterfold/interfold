@@ -3,7 +3,7 @@
 //! C2/C3 collection, verification dispatch, and result application.
 
 use super::*;
-use e3_events::CircuitName;
+use e3_zk_config::CircuitName;
 
 /// Bound on C2/C3 results that wait for their share batch. A node sends at most one dispatch per
 /// batch, and a batch grows at most once per dealer.

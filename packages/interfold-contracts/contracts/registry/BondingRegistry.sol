@@ -559,6 +559,21 @@ contract BondingRegistry is
         return BondingSlashingLib.unresolvedCommitteeCount();
     }
 
+    /// @inheritdoc IBondingRegistry
+    function unresolvedCommitteesOf(
+        address operator
+    ) external view returns (uint256) {
+        return BondingSlashingLib.unresolvedCommitteesOf(operator);
+    }
+
+    /// @inheritdoc IBondingRegistry
+    function committeeObligationAt(
+        address operator,
+        uint256 index
+    ) external view returns (uint256, address) {
+        return BondingSlashingLib.committeeObligationAt(operator, index);
+    }
+
     // ======================
     // Operator Functions
     // ======================

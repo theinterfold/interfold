@@ -277,6 +277,89 @@ describe("One committee seat per request-time bond owner", function () {
     );
   });
 
+  it("lists the unreleased committees that hold an operator's collateral", async function () {
+    const ctx = await loadFixture(setup);
+    const bonding = ctx.bondingRegistry;
+    const registry = await ctx.ciphernodeRegistry.getAddress();
+    const first = await request(ctx);
+    const second = await request(ctx);
+    const nodes = [ctx.candidates[0], ctx.candidates[6], ctx.candidates[7]];
+    for (const node of nodes) {
+      await ctx.ciphernodeRegistry.connect(node).submitTicket(first, 1);
+      await ctx.ciphernodeRegistry.connect(node).submitTicket(second, 1);
+    }
+    await finalize(ctx, first);
+    // The second deadline is at most a few seconds later, and it can already have passed.
+    const secondDeadline =
+      await ctx.ciphernodeRegistry.getCommitteeDeadline(second);
+    if (BigInt(await time.latest()) <= secondDeadline) {
+      await time.increaseTo(secondDeadline + 1n);
+    }
+    await ctx.ciphernodeRegistry.finalizeCommittee(second);
+    const listed = async (node: Signer) => {
+      const operator = await node.getAddress();
+      const count = await bonding.unresolvedCommitteesOf(operator);
+      const entries: string[] = [];
+      for (let index = 0n; index < count; index++) {
+        const [e3Id, owner] = await bonding.committeeObligationAt(
+          operator,
+          index,
+        );
+        entries.push(`${e3Id}@${owner}`);
+      }
+      return entries.sort();
+    };
+
+    for (const node of nodes) {
+      expect(await bonding.unresolvedCommitteesOf(node.address)).to.equal(2);
+      expect(await listed(node)).to.deep.equal(
+        [`${first}@${registry}`, `${second}@${registry}`].sort(),
+      );
+    }
+    const idle = ctx.candidates[3];
+    expect(await listed(idle)).to.deep.equal([]);
+    await expect(bonding.committeeObligationAt(idle.address, 0))
+      .to.be.revertedWithCustomError(bonding, "CommitteeObligationNotTracked")
+      .withArgs(idle.address, 0);
+
+    const timeouts = await ctx.interfold.getE3TimeoutConfig(second);
+    await time.increase(timeouts.dkgWindow + 1n);
+    await ctx.interfold.markE3Failed(first);
+    await ctx.interfold.markE3Failed(second);
+    const deadlines = await Promise.all(
+      [first, second].map((e3Id) =>
+        ctx.slashingManager.accusationSubmissionDeadline(e3Id),
+      ),
+    );
+    await time.increaseTo(
+      (deadlines[0] > deadlines[1] ? deadlines[0] : deadlines[1]) + 1n,
+    );
+    await ctx.ciphernodeRegistry.releaseCommittee(first);
+    expect(await bonding.unresolvedCommitteesOf(nodes[0].address)).to.equal(1);
+    expect(await listed(nodes[0])).to.deep.equal([`${second}@${registry}`]);
+
+    // Reproduce a committee requested before the upgrade: the appended set is empty.
+    // No production method removes an unreleased committee from it.
+    const slashing = namespace("interfold.storage.BondingSlashing");
+    const address = await bonding.getAddress();
+    await setStorageAt(address, slashing + 13n, 0n);
+    await setStorageAt(
+      address,
+      ethers.keccak256(
+        coder.encode(["uint256", "uint256"], [second, slashing + 14n]),
+      ),
+      0n,
+    );
+    // The count still covers it, and its index reverts, so a reader falls back to the events.
+    expect(await bonding.unresolvedCommitteesOf(nodes[0].address)).to.equal(1);
+    await expect(bonding.committeeObligationAt(nodes[0].address, 0))
+      .to.be.revertedWithCustomError(bonding, "CommitteeObligationNotTracked")
+      .withArgs(nodes[0].address, 0);
+    await ctx.ciphernodeRegistry.releaseCommittee(second);
+    expect(await bonding.unresolvedCommitteesOf(nodes[0].address)).to.equal(0);
+    expect(await bonding.unresolvedCommitteeCount()).to.equal(0);
+  });
+
   it("does not let an owner transfer after the request create another seat", async function () {
     const ctx = await loadFixture(setup);
     const e3Id = await request(ctx);

@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { verifyRecordedDeployments } from "../sourceVerification";
 import { proposeProxyUpgrade } from "./safeProxyUpgrade";
 
-proposeProxyUpgrade("interfold").catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+proposeProxyUpgrade("interfold")
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  })
+  .finally(verifyRecordedDeployments);

@@ -27,9 +27,13 @@ fn lbfv_aggregation_context(e3_id: &E3id) -> LbfvVerificationContext {
         .into_iter()
         .map(|party_id| LbfvAcceptedPartyCommitments {
             party_id,
-            pk_generation_commitments: [commitment(30 + party_id); 5].to_vec(),
-            rlk_d0_commitments: [commitment(50 + party_id); 5].to_vec(),
-            rlk_d2_commitments: [commitment(60 + party_id); 5].to_vec(),
+            pk_generation_commitments: [commitment(30 + party_id);
+                ProofType::LBFV_ROW_INSTANCES as usize]
+                .to_vec(),
+            rlk_d0_commitments: [commitment(50 + party_id); ProofType::LBFV_ROW_INSTANCES as usize]
+                .to_vec(),
+            rlk_d2_commitments: [commitment(60 + party_id); ProofType::LBFV_ROW_INSTANCES as usize]
+                .to_vec(),
         })
         .collect();
     LbfvVerificationContext::V2(LbfvVerificationContextV2 {

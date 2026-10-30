@@ -25,7 +25,7 @@ test('documentation accepts existing docs without treating them as code evidence
 test('documentation rejects missing targets, non-docs paths and noncanonical paths', () => {
   for (const path of [
     'docs/missing-owner.md',
-    'crates/indexer/README.md',
+    'crates/evm/indexer/README.md',
     'AGENTS.md',
     '/docs/architecture/dkg.md',
     'docs/../AGENTS.md',

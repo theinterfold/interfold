@@ -5,7 +5,7 @@ import { existsSync, unlinkSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 import { ROOT_DIR, fail, readJson } from './core.mjs'
-import { releaseChannel } from './version.mjs'
+import { releaseChannel, testReleaseLabel } from './version.mjs'
 
 function defaultExecute(command, args, cwd) {
   return spawnSync(command, args, { cwd, encoding: 'utf8', stdio: 'pipe' })
@@ -46,7 +46,8 @@ export function publishNpmPackage(packageDirectory, distTag, options = {}) {
   const packageDir = resolve(rootDir, packageDirectory)
   const packageJson = readJson(packageDir, 'package.json')
   const packageSpec = `${packageJson.name}@${packageJson.version}`
-  const channel = releaseChannel(packageJson.version)
+  // A branch test release has its label as its only distribution tag.
+  const channel = testReleaseLabel(packageJson.version) ?? releaseChannel(packageJson.version)
   if (distTag !== channel) {
     fail(`refusing npm distribution tag ${distTag} for ${packageSpec}, which belongs to the ${channel} channel`)
   }

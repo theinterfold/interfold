@@ -114,6 +114,10 @@ impl Handler<TypedEvent<ZkVerificationResponse>> for ProofVerificationActor {
     ) -> Self::Result {
         let (msg, ec) = msg.into_components();
         let pending_key = (msg.e3_id.clone(), msg.key.party_id);
+        if matches!(msg.outcome, ZkVerificationOutcome::Cancelled) {
+            self.clear_e3(&msg.e3_id, ctx);
+            return;
+        }
         if let ZkVerificationOutcome::InfrastructureError(error) = &msg.outcome {
             self.retry_verification(pending_key, error.clone(), ctx);
             return;

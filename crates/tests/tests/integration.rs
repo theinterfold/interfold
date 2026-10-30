@@ -5,12 +5,14 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 mod ciphernode_system;
+mod common;
 
 use actix::Actor;
 use alloy::primitives::{Address, FixedBytes, I256, U256};
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::{bail, Context, Result};
 use ciphernode_system::{CiphernodeHistory, CiphernodeSystem, CiphernodeSystemBuilder};
+use common::AddToCommittee;
 use e3_bfv_client::decode_bytes_to_vec_u64;
 use e3_ciphernode_builder::CiphernodeBuilder;
 use e3_config::BBPath;
@@ -30,9 +32,7 @@ use e3_multithread::{Multithread, MultithreadReport, ToReport};
 use e3_net::events::{GossipData, NetEvent};
 use e3_net::NetEventTranslator;
 use e3_sortition::{calculate_buffer_size, RegisteredNode, ScoreSortition, Ticket};
-use e3_test_helpers::{
-    create_seed_from_u64, derive_shared_rng, find_bb, with_tracing, AddToCommittee,
-};
+use e3_test_support::{create_seed_from_u64, derive_shared_rng, find_bb, with_tracing};
 use e3_trbfv::helpers::calculate_error_size;
 use e3_trbfv::{TrBFVRequest, TrBFVResponse};
 use e3_utils::utility_types::ArcBytes;
@@ -1790,7 +1790,7 @@ async fn test_trbfv_actor() -> Result<()> {
                                                // Lambda is secure or insecure depending on the selected preset's security tier.
     let lambda = benchmark_params.bfv_preset.lambda()?;
 
-    let seed = create_seed_from_u64(123);
+    let seed = Seed(create_seed_from_u64(123));
     let mult_depth = benchmark_params
         .bfv_preset
         .search_defaults()
@@ -2949,12 +2949,12 @@ async fn test_trbfv_actor() -> Result<()> {
         (vec![Arc::new(ct)], vec![expected])
     } else {
         let (inputs, numbers) =
-            e3_test_helpers::application::generate_ciphertexts(&pubkey, num_voters, num_outputs);
+            e3_bfv_test_support::generate_ciphertexts(&pubkey, num_voters, num_outputs);
         report.push(("Application CT Gen", app_gen_timer.elapsed()));
 
         let running_app_timer = Instant::now();
         println!("Running application to generate outputs...");
-        let outputs = e3_test_helpers::application::run_application(&inputs, &pubkey, num_outputs);
+        let outputs = e3_bfv_test_support::run_application(&inputs, &pubkey, num_outputs);
         report.push(("Running FHE Application", running_app_timer.elapsed()));
         let expected = numbers.iter().map(|vals| vals[0]).sum::<u64>() % plaintext_modulus;
         (outputs, vec![expected])

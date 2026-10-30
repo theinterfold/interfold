@@ -27,7 +27,7 @@ fn configured_leaf_selection_rejects_unknown_or_restricted_cases() {
 
 #[test]
 fn unmeasured_and_failed_stages_are_distinct_and_calldata_uses_actual_bytes() {
-    let mut record = Record::new(Case::Ct1, "secure", e3_zk_prover::CircuitVariant::Recursive);
+    let mut record = Record::new(Case::Ct1, "secure", e3_zk_config::CircuitVariant::Recursive);
     let before = serde_json::to_value(&record).unwrap();
     assert!(before["execution"]["time_seconds"].is_null());
     assert!(before["proof_size_bytes"].is_null());
@@ -116,7 +116,7 @@ fn report_reads_both_schemas_without_relabeling_metrics_or_confusing_ude_wrapper
     let mut current = Record::new(
         Case::Ct0,
         "insecure",
-        e3_zk_prover::CircuitVariant::Recursive,
+        e3_zk_config::CircuitVariant::Recursive,
     );
     current.proof_generation.time_seconds = Some(0.0);
     current.proof_generation.success = Some(true);
@@ -150,7 +150,7 @@ fn report_excludes_failed_schema_two_phase_durations() {
     let mut failed = Record::new(
         Case::Ct0,
         "insecure",
-        e3_zk_prover::CircuitVariant::Recursive,
+        e3_zk_config::CircuitVariant::Recursive,
     );
     let failure: anyhow::Result<()> = Err(anyhow::anyhow!("phase failed"));
     for stage in [
@@ -167,7 +167,7 @@ fn report_excludes_failed_schema_two_phase_durations() {
     let mut successful = Record::new(
         Case::Ct1,
         "insecure",
-        e3_zk_prover::CircuitVariant::Recursive,
+        e3_zk_config::CircuitVariant::Recursive,
     );
     successful.proof_generation.success = Some(true);
     successful.proof_generation.time_seconds = Some(0.0);
@@ -197,7 +197,7 @@ fn report_only_uses_saved_data_and_does_not_overwrite_its_input() {
     let record = Record::new(
         Case::Ct1,
         "insecure",
-        e3_zk_prover::CircuitVariant::Recursive,
+        e3_zk_config::CircuitVariant::Recursive,
     );
     write_json(&saved.join("raw/ct1.json"), &record).unwrap();
     let output = temp.path().join("report.md");
@@ -384,6 +384,13 @@ fn config_loader_binds_the_compiled_digest_and_pair_not_the_active_stamp() {
         "../../../../../crates/zk/prover/tests/fixtures/dummy.json"
     ))
     .unwrap();
+    let compiler_version = document["noir_version"]
+        .as_str()
+        .unwrap()
+        .split('+')
+        .next()
+        .unwrap();
+    let fixture_hash = document["hash"].as_str().unwrap();
     let stamp = serde_json::json!({"schema_version":1,"preset":"secure-8192","committee":"minimum","compiled_sha256":artifacts::digest(&compiled).unwrap(),"compiler_version":document["noir_version"],"sourceHash":"original-config-sources","source_origin":"fresh_local_noir_compile","vk_sha256":{}});
     write_json(&directory.join(".config-benchmark.json"), &stamp).unwrap();
     write_json(&root.join("circuits/bin/.active-preset.json"), &serde_json::json!({"preset":"secure-8192","committee":"micro","sourceHash":"different-hydrated-build"})).unwrap();
@@ -399,8 +406,8 @@ fn config_loader_binds_the_compiled_digest_and_pair_not_the_active_stamp() {
             &prover,
             pair,
             Case::Config,
-            e3_zk_prover::CircuitVariant::Recursive,
-            "1.0.0-beta.26",
+            e3_zk_config::CircuitVariant::Recursive,
+            compiler_version,
             need_vk,
         )
     };
@@ -429,18 +436,15 @@ fn config_loader_binds_the_compiled_digest_and_pair_not_the_active_stamp() {
     artifacts::bind_config_vk(
         root,
         &compiled,
-        e3_zk_prover::CircuitVariant::Recursive,
+        e3_zk_config::CircuitVariant::Recursive,
         &generated,
         &vk,
     )
     .unwrap();
     assert!(load("secure-8192/minimum", true).is_ok());
-    fs::write(
-        &compiled,
-        include_str!("../../../../../crates/zk/prover/tests/fixtures/dummy.json")
-            .replace("2159294962516643373", "2159294962516643374"),
-    )
-    .unwrap();
+    let altered = include_str!("../../../../../crates/zk/prover/tests/fixtures/dummy.json")
+        .replace(fixture_hash, &format!("{fixture_hash}0"));
+    fs::write(&compiled, altered).unwrap();
     assert!(load("secure-8192/minimum", false)
         .unwrap_err()
         .to_string()
@@ -470,7 +474,8 @@ fn fresh_config_compilation_records_local_sources_not_hydrated_source_identity()
     let stale = package.join("target/config.json");
     fs::write(&stale, b"unrelated stale config artifact").unwrap();
     write_json(&root.join("circuits/bin/.active-preset.json"), &serde_json::json!({"preset":"secure-8192","committee":"minimum","sourceHash":"old-archived-source"})).unwrap();
-    artifacts::compile_config(root, "secure-8192/minimum", "1.0.0-beta.26").unwrap();
+    let noir_pin = noir_pin(&super::root()).unwrap();
+    artifacts::compile_config(root, "secure-8192/minimum", &noir_pin).unwrap();
     let stamp = protocol::read_json(&package.join("target/.config-benchmark.json")).unwrap();
     assert_eq!(stamp["source_origin"], "fresh_local_noir_compile");
     assert_ne!(stamp["sourceHash"], "old-archived-source");
@@ -490,8 +495,8 @@ fn fresh_config_compilation_records_local_sources_not_hydrated_source_identity()
         &prover,
         "secure-8192/minimum",
         Case::Config,
-        e3_zk_prover::CircuitVariant::Recursive,
-        "1.0.0-beta.26",
+        e3_zk_config::CircuitVariant::Recursive,
+        &noir_pin,
         false,
     )
     .unwrap();

@@ -86,7 +86,7 @@ pub struct ProofIdentity {
 
 impl ProofType {
     /// Number of row instances required for each l-BFV proof family.
-    pub const LBFV_ROW_INSTANCES: u32 = 5;
+    pub const LBFV_ROW_INSTANCES: u32 = 6;
 
     /// Complete list of externally signed proof types in durable order.
     pub const ALL: [Self; <Self as strum::EnumCount>::COUNT] = [
@@ -163,27 +163,6 @@ impl ProofType {
             ProofType::RlkGeneration => vec![CircuitName::RlkGeneration],
             ProofType::LbfvPkAggregation => vec![CircuitName::LbfvPkAggregation],
             ProofType::RlkAggregation => vec![CircuitName::RlkAggregation],
-        }
-    }
-
-    /// Return the stable slash category for this proof type.
-    pub fn slash_reason(&self) -> &'static str {
-        match self {
-            ProofType::C0PkBfv
-            | ProofType::C1PkGeneration
-            | ProofType::C2aSkShareComputation
-            | ProofType::C2bESmShareComputation
-            | ProofType::C3aSkShareEncryption
-            | ProofType::C3bESmShareEncryption
-            | ProofType::C4aSkShareDecryption
-            | ProofType::C4bESmShareDecryption => "E3_BAD_DKG_PROOF",
-            ProofType::C6ThresholdShareDecryption => "E3_BAD_DECRYPTION_PROOF",
-            ProofType::C7DecryptedSharesAggregation => "E3_BAD_AGGREGATION_PROOF",
-            ProofType::C5PkAggregation | ProofType::LbfvPkAggregation => {
-                "E3_BAD_PK_AGGREGATION_PROOF"
-            }
-            ProofType::LbfvPkGeneration | ProofType::RlkGeneration => "E3_BAD_DKG_GENERATION_PROOF",
-            ProofType::RlkAggregation => "E3_BAD_RLK_AGGREGATION_PROOF",
         }
     }
 
@@ -718,38 +697,6 @@ mod tests {
         assert_eq!(instance(3, 1).unwrap(), 8);
         assert!(instance(3, 2).is_err());
         assert!(instance(5, 0).is_err());
-    }
-
-    #[test]
-    fn proof_type_slash_categories_are_stable() {
-        let expected = [
-            (ProofType::C0PkBfv, "E3_BAD_DKG_PROOF"),
-            (ProofType::C1PkGeneration, "E3_BAD_DKG_PROOF"),
-            (ProofType::C2aSkShareComputation, "E3_BAD_DKG_PROOF"),
-            (ProofType::C2bESmShareComputation, "E3_BAD_DKG_PROOF"),
-            (ProofType::C3aSkShareEncryption, "E3_BAD_DKG_PROOF"),
-            (ProofType::C3bESmShareEncryption, "E3_BAD_DKG_PROOF"),
-            (ProofType::C4aSkShareDecryption, "E3_BAD_DKG_PROOF"),
-            (ProofType::C4bESmShareDecryption, "E3_BAD_DKG_PROOF"),
-            (ProofType::C5PkAggregation, "E3_BAD_PK_AGGREGATION_PROOF"),
-            (
-                ProofType::C6ThresholdShareDecryption,
-                "E3_BAD_DECRYPTION_PROOF",
-            ),
-            (
-                ProofType::C7DecryptedSharesAggregation,
-                "E3_BAD_AGGREGATION_PROOF",
-            ),
-            (ProofType::LbfvPkGeneration, "E3_BAD_DKG_GENERATION_PROOF"),
-            (ProofType::RlkGeneration, "E3_BAD_DKG_GENERATION_PROOF"),
-            (ProofType::LbfvPkAggregation, "E3_BAD_PK_AGGREGATION_PROOF"),
-            (ProofType::RlkAggregation, "E3_BAD_RLK_AGGREGATION_PROOF"),
-        ];
-
-        assert_eq!(ProofType::ALL, expected.map(|(proof_type, _)| proof_type));
-        for (proof_type, slash_category) in expected {
-            assert_eq!(proof_type.slash_reason(), slash_category, "{proof_type:?}");
-        }
     }
 
     #[test]

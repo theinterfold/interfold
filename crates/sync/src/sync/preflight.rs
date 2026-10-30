@@ -7,6 +7,19 @@ use e3_data::{CommitLogEventLog, DataStore, SledDb};
 use e3_events::Get;
 use std::path::PathBuf;
 
+fn persisted_schema_version(db: &SledDb) -> Result<Option<u32>> {
+    db.get(Get::new(StoreKeys::schema_version()))?
+        .map(|bytes| e3_utils::deserialize_exact::<u32>(&bytes))
+        .transpose()
+        .context("failed to decode the storage schema marker")
+}
+
+/// Read the schema marker through the raw key/value store. Opening a store path creates a store,
+/// so call this only for a store that exists.
+pub fn read_persisted_schema_version(db_path: &PathBuf) -> Result<Option<u32>> {
+    persisted_schema_version(&SledDb::new(db_path, "datastore")?)
+}
+
 /// Inspect the schema through the raw key/value store before logs or snapshots are opened.
 /// This does not stamp a fresh store; startup stamps it after creating the storage actors.
 pub fn inspect_persisted_schema_version(
@@ -14,11 +27,7 @@ pub fn inspect_persisted_schema_version(
     log_paths: impl IntoIterator<Item = PathBuf>,
 ) -> Result<SchemaVersionDecision> {
     let db = SledDb::new(db_path, "datastore")?;
-    let persisted = db
-        .get(Get::new(StoreKeys::schema_version()))?
-        .map(|bytes| e3_utils::deserialize_exact::<u32>(&bytes))
-        .transpose()
-        .context("failed to decode the storage schema marker")?;
+    let persisted = persisted_schema_version(&db)?;
     let mut has_existing_state = false;
     if persisted.is_none() {
         let identity_keys = bootstrap_identity_keys().map(String::into_bytes);

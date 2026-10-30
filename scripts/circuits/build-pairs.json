@@ -1,4 +1,7 @@
 [
+  ["insecure-64", "minimum"],
+  ["insecure-64", "micro"],
+  ["insecure-64", "small"],
   ["insecure", "minimum"],
   ["insecure", "micro"],
   ["insecure", "small"],

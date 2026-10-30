@@ -6,7 +6,7 @@
 
 use std::str::FromStr;
 
-use alloy::{primitives::Address, providers::WalletProvider, sol};
+use alloy::{primitives::Address, providers::WalletProvider};
 use anyhow::{Context, Result};
 use e3_config::{AppConfig, ContractAddresses};
 use e3_crypto::Cipher;
@@ -14,51 +14,15 @@ use e3_entrypoint::helpers::datastore::get_repositories;
 use e3_evm::{
     fetch_operator_committees,
     helpers::{load_signer_from_repository, ConcreteWriteProvider, EthProvider, ProviderConfig},
-    EthPrivateKeyRepositoryFactory, OperatorCommittee,
+    CommitteeScan, EthPrivateKeyRepositoryFactory, OperatorCommittee,
 };
 
-mod bonding_registry_contract {
-    use super::sol;
-
-    sol!(
-        #[sol(rpc)]
-        BondingRegistryContract,
-        "../../packages/interfold-contracts/artifacts/contracts/interfaces/IBondingRegistry.sol/IBondingRegistry.json"
-    );
-}
-
-#[allow(clippy::too_many_arguments)]
-mod interfold_ticket_token_contract {
-    use super::sol;
-
-    sol!(
-        #[sol(rpc)]
-        InterfoldTicketTokenContract,
-        "../../packages/interfold-contracts/artifacts/contracts/token/InterfoldTicketToken.sol/InterfoldTicketToken.json"
-    );
-}
-
-mod erc20_metadata_interface {
-    use super::sol;
-
-    sol!(
-        #[sol(rpc)]
-        interface IERC20Metadata {
-            function balanceOf(address account) external view returns (uint256);
-            function allowance(address owner, address spender) external view returns (uint256);
-            function approve(address spender, uint256 amount) external returns (bool);
-            function decimals() external view returns (uint8);
-            function symbol() external view returns (string memory);
-            function name() external view returns (string memory);
-        }
-    );
-}
-
-use bonding_registry_contract::BondingRegistryContract;
-use erc20_metadata_interface::IERC20Metadata;
-use interfold_ticket_token_contract::InterfoldTicketTokenContract;
+use e3_evm_contracts::{IBondingRegistry, IERC20Metadata, IInterfoldTicketToken};
 
 use crate::helpers::chain::select_chain;
+
+/// Directory under the node data directory for the saved committee obligation scans.
+const COMMITTEE_SCAN_DIR: &str = "committee-scans";
 
 pub(crate) struct ChainContext {
     chain_label: String,
@@ -66,8 +30,8 @@ pub(crate) struct ChainContext {
     contracts: ContractAddresses,
     provider: EthProvider<ConcreteWriteProvider>,
     signer_address: Address,
-    /// The chain's widest `eth_getLogs` block range, for the history reads.
-    max_log_window: u64,
+    /// How `ciphernode status` reads the committee obligation history.
+    committee_scan: CommitteeScan,
 }
 
 impl ChainContext {
@@ -91,7 +55,11 @@ impl ChainContext {
             contracts: chain.contracts.clone(),
             provider,
             signer_address,
-            max_log_window: chain.rpc_log_range_blocks()?,
+            committee_scan: CommitteeScan {
+                max_log_window: chain.rpc_log_range_blocks()?,
+                confirmations: chain.ingestion_confirmations()?,
+                cache_dir: Some(config.node_data_dir().join(COMMITTEE_SCAN_DIR)),
+            },
         })
     }
 
@@ -101,8 +69,8 @@ impl ChainContext {
 
     pub(crate) fn bonding(
         &self,
-    ) -> BondingRegistryContract::BondingRegistryContractInstance<ConcreteWriteProvider> {
-        BondingRegistryContract::new(self.bonding_registry, self.provider_client())
+    ) -> IBondingRegistry::IBondingRegistryInstance<ConcreteWriteProvider> {
+        IBondingRegistry::new(self.bonding_registry, self.provider_client())
     }
 
     pub(crate) fn operator(&self) -> Address {
@@ -136,13 +104,12 @@ impl ChainContext {
     }
 
     pub(crate) async fn ticket_underlying_address(&self) -> Result<Address> {
-        Ok(InterfoldTicketTokenContract::new(
-            self.ticket_token_address().await?,
-            self.provider_client(),
+        Ok(
+            IInterfoldTicketToken::new(self.ticket_token_address().await?, self.provider_client())
+                .underlying()
+                .call()
+                .await?,
         )
-        .underlying()
-        .call()
-        .await?)
     }
 
     pub(crate) fn erc20(
@@ -160,7 +127,7 @@ impl ChainContext {
             &self.provider_client(),
             &self.contracts,
             operator,
-            self.max_log_window,
+            &self.committee_scan,
         )
         .await
     }

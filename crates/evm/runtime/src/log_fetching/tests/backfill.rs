@@ -1,0 +1,473 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE.
+
+use super::*;
+
+#[actix::test]
+async fn test_backfill_no_gap() {
+    let mock = MockLogProvider::new(100);
+    let (next, _rx) = setup_collector();
+    let mut ts = TimestampTracker::new();
+    let mut window = LogWindow::new();
+    let filter = Filter::new();
+    let mut last_block = 100u64;
+
+    let result = backfill_to_head(
+        &mock,
+        &filter,
+        1,
+        &next,
+        &mut ts,
+        &mut last_block,
+        0,
+        &mut window,
+        None,
+    )
+    .await;
+
+    assert!(result.is_ok());
+    assert_eq!(last_block, 100);
+    assert_eq!(mock.get_logs_call_count(), 0);
+}
+
+#[actix::test]
+async fn test_backfill_with_gap() {
+    let mock = MockLogProvider::new(200);
+    mock.push_logs(vec![make_test_log(150), make_test_log(180)]);
+    let (next, mut rx) = setup_collector();
+    let mut ts = TimestampTracker::new();
+    let mut window = LogWindow::new();
+    let filter = Filter::new();
+    let mut last_block = 100u64;
+
+    let result = backfill_to_head(
+        &mock,
+        &filter,
+        1,
+        &next,
+        &mut ts,
+        &mut last_block,
+        0,
+        &mut window,
+        None,
+    )
+    .await;
+
+    assert!(result.is_ok());
+    assert_eq!(last_block, 200);
+    assert_eq!(mock.get_logs_call_count(), 1);
+
+    tokio::task::yield_now().await;
+    let mut count = 0;
+    while rx.try_recv().is_ok() {
+        count += 1;
+    }
+    assert_eq!(count, 2);
+}
+
+/// A provider can return the logs of a range out of order, and event consumers depend on chain
+/// order.
+#[actix::test]
+async fn a_backfill_delivers_logs_in_chain_order() {
+    let log_at = |block_number, log_index| Log {
+        block_number: Some(block_number),
+        log_index: Some(log_index),
+        ..Default::default()
+    };
+    let mock = MockLogProvider::new(200);
+    mock.push_logs(vec![log_at(180, 0), log_at(150, 1), log_at(150, 0)]);
+    let (next, mut rx) = setup_collector();
+    let mut ts = TimestampTracker::new();
+    let mut window = LogWindow::new();
+    let mut last_block = 100u64;
+
+    backfill_to_head(
+        &mock,
+        &Filter::new(),
+        1,
+        &next,
+        &mut ts,
+        &mut last_block,
+        0,
+        &mut window,
+        None,
+    )
+    .await
+    .expect("the provider serves the gap");
+
+    tokio::task::yield_now().await;
+    let mut delivered = Vec::new();
+    while let Ok(InterfoldEvmEvent::Log(log)) = rx.try_recv() {
+        delivered.push((log.log.block_number, log.log.log_index));
+    }
+    assert_eq!(
+        delivered,
+        vec![
+            (Some(150), Some(0)),
+            (Some(150), Some(1)),
+            (Some(180), Some(0))
+        ]
+    );
+}
+
+#[actix::test]
+async fn test_backfill_partial_failure_preserves_progress() {
+    tokio::time::pause();
+
+    // Head at 25000, last_block at 100
+    // Gap: blocks 101..=25000 → 3 chunks:
+    //   chunk 1: [101, 10100]
+    //   chunk 2: [10101, 20100]
+    //   chunk 3: [20101, 25000]
+    let mock = MockLogProvider::new(25000);
+    // Chunk 1 succeeds
+    mock.push_logs(vec![make_test_log(500)]);
+    // Chunk 2 succeeds
+    mock.push_logs(vec![make_test_log(15000)]);
+    // Chunk 3: all retries fail
+    for _ in 0..GET_LOGS_MAX_RETRIES {
+        mock.push_error("RPC error");
+    }
+
+    let (next, _rx) = setup_collector();
+    let mut ts = TimestampTracker::new();
+    let mut window = LogWindow::new();
+    let filter = Filter::new();
+    let mut last_block = 100u64;
+
+    let result = backfill_to_head(
+        &mock,
+        &filter,
+        1,
+        &next,
+        &mut ts,
+        &mut last_block,
+        0,
+        &mut window,
+        None,
+    )
+    .await;
+
+    // Should fail because chunk 3 exhausted retries
+    assert!(result.is_err());
+    // But last_block must have advanced past the two successful chunks
+    assert_eq!(last_block, 20100);
+
+    // On retry: gap_start = 20101, head still 25000 → single chunk succeeds
+    mock.push_logs(vec![make_test_log(22000)]);
+
+    let result = backfill_to_head(
+        &mock,
+        &filter,
+        1,
+        &next,
+        &mut ts,
+        &mut last_block,
+        0,
+        &mut window,
+        None,
+    )
+    .await;
+    assert!(result.is_ok());
+    assert_eq!(last_block, 25000);
+}
+
+#[actix::test]
+async fn a_failure_after_narrowing_keeps_the_chunks_already_delivered() {
+    tokio::time::pause();
+
+    // Gap 101..=10100 is one 10,000 block range. The provider rejects it, the window narrows to
+    // 5,000, the first half is delivered, and the second half then exhausts its retries.
+    let mock = MockLogProvider::new(10_100);
+    mock.push_error("error code -32062: range too large");
+    mock.push_logs(vec![make_test_log(500)]);
+    for _ in 0..GET_LOGS_MAX_RETRIES {
+        mock.push_error("RPC error");
+    }
+
+    let (next, mut rx) = setup_collector();
+    let mut ts = TimestampTracker::new();
+    let mut window = LogWindow::new();
+    let filter = Filter::new();
+    let mut last_block = 100u64;
+
+    let result = backfill_to_head(
+        &mock,
+        &filter,
+        1,
+        &next,
+        &mut ts,
+        &mut last_block,
+        0,
+        &mut window,
+        None,
+    )
+    .await;
+
+    assert!(result.is_err());
+    // The delivered half counts as progress. Resuming from 100 would deliver block 500 twice.
+    assert_eq!(last_block, 5_100);
+
+    mock.push_logs(vec![make_test_log(7_000)]);
+    backfill_to_head(
+        &mock,
+        &filter,
+        1,
+        &next,
+        &mut ts,
+        &mut last_block,
+        0,
+        &mut window,
+        None,
+    )
+    .await
+    .expect("the retry covers only the undelivered half");
+    assert_eq!(last_block, 10_100);
+
+    tokio::task::yield_now().await;
+    let mut delivered = Vec::new();
+    while let Ok(InterfoldEvmEvent::Log(log)) = rx.try_recv() {
+        delivered.push(log.log.block_number);
+    }
+    assert_eq!(delivered, vec![Some(500), Some(7_000)]);
+}
+
+#[actix::test]
+async fn test_backfill_clamps_to_confirmed_head() {
+    // Head at 200, but require 12 confirmations => only ingest up to 188.
+    let mock = MockLogProvider::new(200);
+    mock.push_logs(vec![make_test_log(150)]);
+    let (next, _rx) = setup_collector();
+    let mut ts = TimestampTracker::new();
+    let mut window = LogWindow::new();
+    let filter = Filter::new();
+    let mut last_block = 100u64;
+
+    let result = backfill_to_head(
+        &mock,
+        &filter,
+        1,
+        &next,
+        &mut ts,
+        &mut last_block,
+        12,
+        &mut window,
+        None,
+    )
+    .await;
+
+    assert!(result.is_ok());
+    // Advanced only to the confirmed head, not the raw head of 200.
+    assert_eq!(last_block, 188);
+}
+
+#[actix::test]
+async fn backfill_narrows_the_window_and_keeps_progress() {
+    // The gap is 101..=25000. The provider rejects the 10k range, so the window narrows and the
+    // backfill must still reach the head with last_block landing exactly on it.
+    let mock = MockLogProvider::new(25_000);
+    mock.push_error("error code -32062: range too large");
+    for _ in 0..10 {
+        mock.push_logs(vec![]);
+    }
+    let (next, _rx) = setup_collector();
+    let mut ts = TimestampTracker::new();
+    let mut window = LogWindow::new();
+    let filter = Filter::new();
+    let mut last_block = 100u64;
+
+    let result = backfill_to_head(
+        &mock,
+        &filter,
+        1,
+        &next,
+        &mut ts,
+        &mut last_block,
+        0,
+        &mut window,
+        None,
+    )
+    .await;
+
+    assert!(result.is_ok(), "backfill should adapt: {result:?}");
+    assert_eq!(last_block, 25_000, "backfill must reach the head");
+    assert_eq!(window.width(), 5_000);
+}
+
+#[actix::test]
+async fn the_window_learned_during_backfill_is_reused_by_the_next_call() {
+    // The narrowed window is owned by the caller, so a later backfill starts at the discovered
+    // width instead of rediscovering the provider's cap.
+    let mock = MockLogProvider::new(10_100);
+    mock.push_error("range too large");
+    for _ in 0..3 {
+        mock.push_logs(vec![]);
+    }
+    let (next, _rx) = setup_collector();
+    let mut ts = TimestampTracker::new();
+    let mut window = LogWindow::new();
+    let filter = Filter::new();
+    let mut last_block = 100u64;
+
+    backfill_to_head(
+        &mock,
+        &filter,
+        1,
+        &next,
+        &mut ts,
+        &mut last_block,
+        0,
+        &mut window,
+        None,
+    )
+    .await
+    .expect("first backfill should adapt");
+
+    let calls_after_first = mock.get_logs_call_count();
+    assert_eq!(window.width(), 5_000);
+
+    // Second backfill over a fresh gap: no rejection, because the window is already correct.
+    mock.set_block_number(12_600);
+    mock.push_logs(vec![]);
+
+    backfill_to_head(
+        &mock,
+        &filter,
+        1,
+        &next,
+        &mut ts,
+        &mut last_block,
+        0,
+        &mut window,
+        None,
+    )
+    .await
+    .expect("second backfill should reuse the learned width");
+
+    assert_eq!(
+        mock.get_logs_call_count() - calls_after_first,
+        1,
+        "the learned width must not be rediscovered"
+    );
+    assert_eq!(last_block, 12_600);
+}
+
+/// A sink that keeps every report, for the health-check progress tests.
+fn recording_sink() -> (IngestionProgressSink, Arc<Mutex<Vec<IngestionProgress>>>) {
+    let reports = Arc::new(Mutex::new(Vec::new()));
+    let sink: IngestionProgressSink = {
+        let reports = reports.clone();
+        Arc::new(move |progress| reports.lock().unwrap().push(progress))
+    };
+    (sink, reports)
+}
+
+#[actix::test]
+async fn a_backfill_reports_its_head_and_cursor_only_when_it_succeeds() {
+    tokio::time::pause();
+    let (sink, reports) = recording_sink();
+    let mock = MockLogProvider::new(200);
+    mock.push_logs(vec![make_test_log(150)]);
+    let (next, _rx) = setup_collector();
+    let mut ts = TimestampTracker::new();
+    let mut window = LogWindow::new();
+    let filter = Filter::new();
+    let mut last_block = 100u64;
+
+    backfill_to_head(
+        &mock,
+        &filter,
+        1,
+        &next,
+        &mut ts,
+        &mut last_block,
+        0,
+        &mut window,
+        Some(&sink),
+    )
+    .await
+    .unwrap();
+    // No new block: the poll still succeeded, so the health check must see it.
+    backfill_to_head(
+        &mock,
+        &filter,
+        1,
+        &next,
+        &mut ts,
+        &mut last_block,
+        0,
+        &mut window,
+        Some(&sink),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        *reports.lock().unwrap(),
+        vec![
+            IngestionProgress {
+                chain_id: 1,
+                head: 200,
+                cursor: 200
+            },
+            IngestionProgress {
+                chain_id: 1,
+                head: 200,
+                cursor: 200
+            },
+        ]
+    );
+
+    // A provider that answers eth_blockNumber and refuses eth_getLogs must look stalled.
+    mock.set_block_number(300);
+    for _ in 0..GET_LOGS_MAX_RETRIES {
+        mock.push_error("RPC error");
+    }
+    backfill_to_head(
+        &mock,
+        &filter,
+        1,
+        &next,
+        &mut ts,
+        &mut last_block,
+        0,
+        &mut window,
+        Some(&sink),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(reports.lock().unwrap().len(), 2);
+}
+
+#[actix::test]
+async fn the_historical_sync_reports_each_chunk() {
+    let (sink, reports) = recording_sink();
+    let mock = MockLogProvider::new(25_000);
+    for _ in 0..3 {
+        mock.push_logs(vec![]);
+    }
+    let (next, _rx) = setup_collector();
+    let mut ts = TimestampTracker::new();
+    let mut window = LogWindow::new();
+    let filter = Filter::new();
+
+    sync_range(
+        &mock,
+        &filter,
+        0,
+        24_999,
+        1,
+        &next,
+        &mut ts,
+        &mut window,
+        Some(&sink),
+    )
+    .await
+    .unwrap();
+
+    let cursors: Vec<u64> = reports.lock().unwrap().iter().map(|r| r.cursor).collect();
+    assert_eq!(cursors, vec![9_999, 19_999, 24_999]);
+    assert!(reports.lock().unwrap().iter().all(|r| r.head == 24_999));
+}

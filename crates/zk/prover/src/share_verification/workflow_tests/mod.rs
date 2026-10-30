@@ -73,7 +73,7 @@ fn signed_share_bundle(
 /// Build a signed C1 (PkGeneration) proof for `party_id` under `e3_id`,
 /// optionally with a deliberately wrong circuit name.
 fn signed_pk(s: &PrivateKeySigner, e3_id: &E3id, wrong_circuit: bool) -> SignedProofPayload {
-    use e3_events::CircuitName;
+    use e3_zk_config::CircuitName;
     let proof_type = ProofType::C1PkGeneration;
     if !wrong_circuit {
         return signed_proof(s, e3_id, proof_type, 1);

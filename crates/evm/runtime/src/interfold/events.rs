@@ -1,0 +1,820 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE.
+
+//! Pure translation of `Interfold.sol` logs into `InterfoldEventData`.
+
+use crate::contracts::IInterfold;
+use alloy::primitives::{LogData, B256};
+use alloy::sol_types::SolEvent;
+use anyhow::{anyhow, Context as _, Result};
+use e3_committee::CiphernodesCommitteeSize;
+use e3_events::E3id;
+use e3_events::InterfoldEventData;
+use e3_events::{
+    CiphertextOutputReferencePublished, E3Failed, E3Stage, E3StageChanged, FailureReason,
+    InputPublished, PlaintextOutputPublished, RewardClaimed, RewardCredited, RewardsDistributed,
+};
+use e3_fhe_params::{current_bfv_crypto_config_id, encode_bfv_params, BfvParamSet, BfvPreset};
+use e3_trbfv::helpers::calculate_error_size;
+use e3_utils::ArcBytes;
+use tracing::{info, trace, warn};
+
+struct E3RequestedWithChainId(pub IInterfold::E3Requested, pub u64);
+
+impl E3RequestedWithChainId {
+    fn try_into_e3_requested(self) -> anyhow::Result<e3_events::E3Requested> {
+        // Derive threshold values from committee size enum
+        let committee_size = match self.0.e3.committeeSize {
+            0 => CiphernodesCommitteeSize::Minimum,
+            1 => CiphernodesCommitteeSize::Micro,
+            2 => CiphernodesCommitteeSize::Small,
+            other => anyhow::bail!(
+                "Unsupported committee size enum value {} — this node's binary does not recognize \
+                 it (likely a version skew with the on-chain contracts). Upgrade the ciphernode to \
+                 a version that supports this committee size.",
+                other
+            ),
+        };
+        let committee = committee_size.values();
+        let threshold_m = committee.threshold;
+        let threshold_n = committee.n;
+
+        // Map on-chain ParamSet enum to BfvPreset
+        let param_set_value = self.0.e3.paramSet;
+        let params_preset = BfvPreset::from_on_chain_param_set(param_set_value).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Unknown ParamSet enum value {} — this node's binary does not recognize this BFV \
+                 preset (likely a version skew with the on-chain contracts). Upgrade the ciphernode \
+                 to a version that supports this preset.",
+                param_set_value
+            )
+        })?;
+
+        // Build BFV parameters from the preset
+        let params_arc = BfvParamSet::from(params_preset).build_arc();
+        let params_bytes = encode_bfv_params(&params_arc);
+        let expected_config_id = current_bfv_crypto_config_id(&params_bytes);
+        if self.0.cryptoConfigId != expected_config_id {
+            anyhow::bail!(
+                "Unsupported crypto configuration {} for E3 {}; this ciphernode was built for {}",
+                self.0.cryptoConfigId,
+                self.0.e3Id,
+                expected_config_id
+            );
+        }
+
+        // Lambda is secure or insecure depending on the preset's security tier.
+        let lambda = params_preset
+            .lambda()
+            .map_err(|e| anyhow::anyhow!("Failed to build lambda for preset: {}", e))?;
+        let lambda_value = lambda;
+
+        let mult_depth = params_preset
+            .search_defaults()
+            .map(|sd| sd.mult_depth)
+            .ok_or_else(|| anyhow::anyhow!("Failed to get search defaults for preset"))?;
+
+        let error_size = calculate_error_size(
+            params_arc,
+            threshold_n,
+            threshold_m,
+            mult_depth,
+            lambda,
+        )
+        .context("failed to calculate the E3 error size")
+        .map(|size| {
+            let size_bytes = size.to_bytes_be();
+            info!(
+                "Calculated error_size for E3 (threshold_n={}, threshold_m={}, lambda={}): {} bytes",
+                threshold_n,
+                threshold_m,
+                lambda_value,
+                size_bytes.len()
+            );
+            ArcBytes::from_bytes(&size_bytes)
+        })?;
+
+        Ok(e3_events::E3Requested {
+            params_preset,
+            params: ArcBytes::from_bytes(&params_bytes),
+            threshold_m,
+            threshold_n,
+            seed: self.0.e3.seed.into(),
+            request_block: self.0.e3.requestBlock.to(),
+            error_size,
+            e3_id: E3id::new(self.0.e3Id.to_string(), self.1),
+        })
+    }
+}
+
+struct CiphertextOutputPublishedWithChainId(pub IInterfold::CiphertextOutputPublished, pub u64);
+
+impl From<CiphertextOutputPublishedWithChainId> for e3_events::CiphertextOutputPublished {
+    fn from(value: CiphertextOutputPublishedWithChainId) -> Self {
+        e3_events::CiphertextOutputPublished {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            // XXX: Ciphertext is an array of bytes this needs to be coordinated with interfold
+            // contract
+            ciphertext_output: vec![ArcBytes::from_bytes(value.0.ciphertextOutput.as_ref())],
+            ciphertext_commitment: value.0.ciphertextCommitment.into(),
+        }
+    }
+}
+
+impl From<CiphertextOutputPublishedWithChainId> for InterfoldEventData {
+    fn from(value: CiphertextOutputPublishedWithChainId) -> Self {
+        let payload: e3_events::CiphertextOutputPublished = value.into();
+        payload.into()
+    }
+}
+
+struct CiphertextOutputReferenceWithChainId(
+    pub IInterfold::CiphertextOutputReferencePublished,
+    pub u64,
+);
+
+impl From<CiphertextOutputReferenceWithChainId> for CiphertextOutputReferencePublished {
+    fn from(value: CiphertextOutputReferenceWithChainId) -> Self {
+        Self {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            content_hash: value.0.contentHash.into(),
+            ciphertext_commitment: value.0.ciphertextCommitment.into(),
+            availability_block: value.0.availabilityBlock,
+            availability_leaf_index: value.0.availabilityLeafIndex,
+        }
+    }
+}
+
+impl From<CiphertextOutputReferenceWithChainId> for InterfoldEventData {
+    fn from(value: CiphertextOutputReferenceWithChainId) -> Self {
+        CiphertextOutputReferencePublished::from(value).into()
+    }
+}
+
+struct E3FailedWithChainId(pub IInterfold::E3Failed, pub u64);
+
+/// A stage or failure reason that this node does not know rejects the log. Mapping it to a known
+/// variant would change what the node does with the E3, and the value means that the contract is
+/// newer than the node.
+impl TryFrom<E3FailedWithChainId> for E3Failed {
+    type Error = anyhow::Error;
+
+    fn try_from(value: E3FailedWithChainId) -> Result<Self> {
+        Ok(E3Failed {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            failed_at_stage: E3Stage::try_from(value.0.failedAtStage)?,
+            reason: FailureReason::try_from(value.0.reason)?,
+        })
+    }
+}
+
+struct E3StageChangedWithChainId(pub IInterfold::E3StageChanged, pub u64);
+
+impl TryFrom<E3StageChangedWithChainId> for E3StageChanged {
+    type Error = anyhow::Error;
+
+    fn try_from(value: E3StageChangedWithChainId) -> Result<Self> {
+        Ok(E3StageChanged {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            previous_stage: E3Stage::try_from(value.0.previousStage)?,
+            new_stage: E3Stage::try_from(value.0.newStage)?,
+        })
+    }
+}
+
+struct PlaintextOutputPublishedWithChainId(pub IInterfold::PlaintextOutputPublished, pub u64);
+
+impl From<PlaintextOutputPublishedWithChainId> for PlaintextOutputPublished {
+    fn from(value: PlaintextOutputPublishedWithChainId) -> Self {
+        PlaintextOutputPublished {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            plaintext_output: ArcBytes::from_bytes(value.0.plaintextOutput.as_ref()),
+            proof: ArcBytes::from_bytes(value.0.proof.as_ref()),
+        }
+    }
+}
+
+impl From<PlaintextOutputPublishedWithChainId> for InterfoldEventData {
+    fn from(value: PlaintextOutputPublishedWithChainId) -> Self {
+        let payload: PlaintextOutputPublished = value.into();
+        payload.into()
+    }
+}
+
+struct InputPublishedWithChainId(pub IInterfold::InputPublished, pub u64);
+
+impl From<InputPublishedWithChainId> for InputPublished {
+    fn from(value: InputPublishedWithChainId) -> Self {
+        Self {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            data: ArcBytes::from_bytes(value.0.data.as_ref()),
+            input_hash: value.0.inputHash.to_string(),
+            index: value.0.index.to_string(),
+        }
+    }
+}
+
+impl From<InputPublishedWithChainId> for InterfoldEventData {
+    fn from(value: InputPublishedWithChainId) -> Self {
+        InputPublished::from(value).into()
+    }
+}
+
+struct RewardsDistributedWithChainId(pub IInterfold::RewardsDistributed, pub u64);
+
+impl From<RewardsDistributedWithChainId> for RewardsDistributed {
+    fn from(value: RewardsDistributedWithChainId) -> Self {
+        Self {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            nodes: value
+                .0
+                .nodes
+                .into_iter()
+                .map(|node| node.to_string())
+                .collect(),
+            amounts: value
+                .0
+                .amounts
+                .into_iter()
+                .map(|amount| amount.to_string())
+                .collect(),
+        }
+    }
+}
+
+impl From<RewardsDistributedWithChainId> for InterfoldEventData {
+    fn from(value: RewardsDistributedWithChainId) -> Self {
+        RewardsDistributed::from(value).into()
+    }
+}
+
+struct RewardCreditedWithChainId(pub IInterfold::RewardCredited, pub u64);
+
+impl From<RewardCreditedWithChainId> for RewardCredited {
+    fn from(value: RewardCreditedWithChainId) -> Self {
+        Self {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            account: value.0.account.to_string(),
+            token: value.0.token.to_string(),
+            amount: value.0.amount.to_string(),
+        }
+    }
+}
+
+impl From<RewardCreditedWithChainId> for InterfoldEventData {
+    fn from(value: RewardCreditedWithChainId) -> Self {
+        RewardCredited::from(value).into()
+    }
+}
+
+struct RewardClaimedWithChainId(pub IInterfold::RewardClaimed, pub u64);
+
+impl From<RewardClaimedWithChainId> for RewardClaimed {
+    fn from(value: RewardClaimedWithChainId) -> Self {
+        Self {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            account: value.0.account.to_string(),
+            token: value.0.token.to_string(),
+            amount: value.0.amount.to_string(),
+        }
+    }
+}
+
+impl From<RewardClaimedWithChainId> for InterfoldEventData {
+    fn from(value: RewardClaimedWithChainId) -> Self {
+        RewardClaimed::from(value).into()
+    }
+}
+
+fn indexed_u256(
+    topics: &[B256],
+    index: usize,
+    event_type: &str,
+) -> Result<alloy::primitives::U256> {
+    topics
+        .get(index)
+        .map(|topic| alloy::primitives::U256::from_be_bytes(topic.0))
+        .ok_or_else(|| anyhow!("{event_type} missing indexed topic {index}"))
+}
+
+pub(crate) fn extractor(
+    data: &LogData,
+    topics: &[B256],
+    chain_id: u64,
+) -> Result<Option<InterfoldEventData>> {
+    let topic0 = topics.first();
+    match topic0 {
+        Some(&IInterfold::E3Requested::SIGNATURE_HASH) => {
+            let event = IInterfold::E3Requested::decode_log_data(data)
+                .context("failed to decode E3Requested after its topic matched")?;
+            match E3RequestedWithChainId(event, chain_id).try_into_e3_requested() {
+                Ok(payload) => Ok(Some(payload.into())),
+                Err(e) => {
+                    warn!(
+                        chain_id = chain_id,
+                        "Skipping E3Requested: this node cannot process it and will NOT participate \
+                         in this E3. This usually indicates a version skew between the ciphernode \
+                         binary and the on-chain contracts (unrecognized BFV preset or committee \
+                         size). Cause: {}",
+                        e
+                    );
+                    Ok(None)
+                }
+            }
+        }
+        Some(&IInterfold::CiphertextOutputPublished::SIGNATURE_HASH) => {
+            let mut event = IInterfold::CiphertextOutputPublished::decode_log_data(data)
+                .context("failed to decode CiphertextOutputPublished after its topic matched")?;
+            // e3Id is indexed → extract from topics[1], not log data
+            if let Some(e3_id_topic) = topics.get(1) {
+                event.e3Id = alloy::primitives::U256::from_be_bytes(e3_id_topic.0);
+            } else {
+                return Err(anyhow!(
+                    "CiphertextOutputPublished missing indexed e3Id in topics"
+                ));
+            }
+            Ok(Some(InterfoldEventData::from(
+                CiphertextOutputPublishedWithChainId(event, chain_id),
+            )))
+        }
+        Some(&IInterfold::CiphertextOutputReferencePublished::SIGNATURE_HASH) => {
+            let mut event = IInterfold::CiphertextOutputReferencePublished::decode_log_data(data)
+                .context(
+                "failed to decode CiphertextOutputReferencePublished after its topic matched",
+            )?;
+            event.e3Id = indexed_u256(topics, 1, "CiphertextOutputReferencePublished")?;
+            Ok(Some(
+                CiphertextOutputReferenceWithChainId(event, chain_id).into(),
+            ))
+        }
+        Some(&IInterfold::InputPublished::SIGNATURE_HASH) => {
+            let mut event = IInterfold::InputPublished::decode_log_data(data)
+                .context("failed to decode InputPublished after its topic matched")?;
+            event.e3Id = indexed_u256(topics, 1, "InputPublished")?;
+            Ok(Some(InputPublishedWithChainId(event, chain_id).into()))
+        }
+        Some(&IInterfold::E3Failed::SIGNATURE_HASH) => {
+            let mut event = IInterfold::E3Failed::decode_log_data(data)
+                .context("failed to decode E3Failed after its topic matched")?;
+            event.e3Id = indexed_u256(topics, 1, "E3Failed")?;
+            info!(
+                "E3Failed event received: e3_id={}, stage={:?}, reason={:?}",
+                event.e3Id, event.failedAtStage, event.reason
+            );
+            let payload = E3Failed::try_from(E3FailedWithChainId(event, chain_id))
+                .context("E3Failed carries a value this node does not know")?;
+            Ok(Some(payload.into()))
+        }
+        Some(&IInterfold::E3StageChanged::SIGNATURE_HASH) => {
+            let mut event = IInterfold::E3StageChanged::decode_log_data(data)
+                .context("failed to decode E3StageChanged after its topic matched")?;
+            // e3Id is indexed → extract from topics[1], not log data
+            if let Some(e3_id_topic) = topics.get(1) {
+                event.e3Id = alloy::primitives::U256::from_be_bytes(e3_id_topic.0);
+            } else {
+                return Err(anyhow!("E3StageChanged missing indexed e3Id in topics"));
+            }
+            trace!(
+                "E3StageChanged event received: e3_id={}, {:?} -> {:?}",
+                event.e3Id,
+                event.previousStage,
+                event.newStage
+            );
+            let payload = E3StageChanged::try_from(E3StageChangedWithChainId(event, chain_id))
+                .context("E3StageChanged carries a value this node does not know")?;
+            Ok(Some(payload.into()))
+        }
+        Some(&IInterfold::PlaintextOutputPublished::SIGNATURE_HASH) => {
+            let mut event = IInterfold::PlaintextOutputPublished::decode_log_data(data)
+                .context("failed to decode PlaintextOutputPublished after its topic matched")?;
+            // e3Id is indexed → extract from topics[1], not log data
+            if let Some(e3_id_topic) = topics.get(1) {
+                event.e3Id = alloy::primitives::U256::from_be_bytes(e3_id_topic.0);
+            } else {
+                return Err(anyhow!(
+                    "PlaintextOutputPublished missing indexed e3Id in topics"
+                ));
+            }
+            info!(
+                "PlaintextOutputPublished event received: e3_id={}",
+                event.e3Id
+            );
+            Ok(Some(InterfoldEventData::from(
+                PlaintextOutputPublishedWithChainId(event, chain_id),
+            )))
+        }
+        Some(&IInterfold::RewardsDistributed::SIGNATURE_HASH) => {
+            let mut event = IInterfold::RewardsDistributed::decode_log_data(data)
+                .context("failed to decode RewardsDistributed after its topic matched")?;
+            if event.nodes.len() != event.amounts.len() {
+                anyhow::bail!(
+                    "RewardsDistributed array lengths differ: nodes={}, amounts={}",
+                    event.nodes.len(),
+                    event.amounts.len()
+                );
+            }
+            event.e3Id = indexed_u256(topics, 1, "RewardsDistributed")?;
+            Ok(Some(RewardsDistributedWithChainId(event, chain_id).into()))
+        }
+        Some(&IInterfold::RewardCredited::SIGNATURE_HASH) => {
+            let mut event = IInterfold::RewardCredited::decode_log_data(data)
+                .context("failed to decode RewardCredited after its topic matched")?;
+            event.e3Id = indexed_u256(topics, 1, "RewardCredited")?;
+            Ok(Some(RewardCreditedWithChainId(event, chain_id).into()))
+        }
+        Some(&IInterfold::RewardClaimed::SIGNATURE_HASH) => {
+            let mut event = IInterfold::RewardClaimed::decode_log_data(data)
+                .context("failed to decode RewardClaimed after its topic matched")?;
+            event.e3Id = indexed_u256(topics, 1, "RewardClaimed")?;
+            Ok(Some(RewardClaimedWithChainId(event, chain_id).into()))
+        }
+        _ => {
+            trace!(
+                topic=?topic0,
+                "Preserving event without a typed Interfold.sol decoder"
+            );
+            Ok(Some(crate::domain::evm_log_observation::observe(
+                "Interfold",
+                data,
+                topics,
+                chain_id,
+            )))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::{Address, Bytes, U256};
+
+    #[test]
+    fn contract_stage_and_reason_values_decode_in_declaration_order() {
+        assert_eq!(E3Stage::try_from(1), Ok(E3Stage::Requested));
+        assert_eq!(E3Stage::try_from(6), Ok(E3Stage::Failed));
+        assert_eq!(FailureReason::try_from(3), Ok(FailureReason::DKGTimeout));
+        assert_eq!(
+            FailureReason::try_from(12),
+            Ok(FailureReason::VerificationFailed)
+        );
+    }
+
+    #[test]
+    fn unknown_stage_and_reason_values_are_refused() {
+        // 7 is the first stage the contract does not declare; 13 is the reason bound
+        // `_MAX_FAILURE_REASON`, which the contract never emits.
+        assert!(E3Stage::try_from(7).is_err());
+        assert!(FailureReason::try_from(13).is_err());
+        assert!(E3Stage::try_from(200).is_err());
+    }
+
+    fn e3_failed_log(stage: u8, reason: u8) -> (LogData, [B256; 2]) {
+        let event = IInterfold::E3Failed {
+            e3Id: U256::from(7u64),
+            failedAtStage: stage,
+            reason,
+        };
+        // e3Id is indexed, so the extractor reads it from topics[1].
+        let e3_id_topic = B256::from(U256::from(7u64).to_be_bytes::<32>());
+        (
+            event.encode_log_data(),
+            [IInterfold::E3Failed::SIGNATURE_HASH, e3_id_topic],
+        )
+    }
+
+    #[test]
+    fn an_e3_failed_log_with_a_known_reason_decodes() {
+        let (data, topics) = e3_failed_log(3, 3);
+        match extractor(&data, &topics, 1).unwrap() {
+            Some(InterfoldEventData::E3Failed(payload)) => {
+                assert_eq!(payload.failed_at_stage, E3Stage::KeyPublished);
+                assert_eq!(payload.reason, FailureReason::DKGTimeout);
+            }
+            other => panic!("expected E3Failed, got {other:?}"),
+        }
+    }
+
+    fn e3_stage_changed_log(previous: u8, new: u8) -> (LogData, [B256; 2]) {
+        let event = IInterfold::E3StageChanged {
+            e3Id: U256::from(7u64),
+            previousStage: previous,
+            newStage: new,
+        };
+        let e3_id_topic = B256::from(U256::from(7u64).to_be_bytes::<32>());
+        (
+            event.encode_log_data(),
+            [IInterfold::E3StageChanged::SIGNATURE_HASH, e3_id_topic],
+        )
+    }
+
+    #[test]
+    fn an_e3_stage_changed_log_with_an_unknown_stage_is_rejected() {
+        // Either field can carry the unknown value.
+        for (previous, new) in [(7, 1), (1, 7)] {
+            let (data, topics) = e3_stage_changed_log(previous, new);
+            let error = extractor(&data, &topics, 1).unwrap_err();
+            assert!(
+                format!("{error:#}").contains("unknown E3Stage value 7"),
+                "unexpected error: {error:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_e3_failed_log_with_an_unknown_reason_is_rejected() {
+        // The parser turns the error into a rejected log, which stops the chain's ingestion
+        // instead of recording a failure reason the node invented.
+        let (data, topics) = e3_failed_log(3, 13);
+        let error = extractor(&data, &topics, 1).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("unknown FailureReason value 13"),
+            "unexpected error: {error:#}"
+        );
+
+        let (data, topics) = e3_failed_log(7, 3);
+        let error = extractor(&data, &topics, 1).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("unknown E3Stage value 7"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn preset_config_ids_are_accepted() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../fhe-params/tests/fixtures/bfv_protocol.json"
+        ))
+        .unwrap();
+        for vector in fixture["vectors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|vector| vector["preset"].is_string())
+        {
+            let param_set = vector["paramSet"].as_u64().unwrap() as u8;
+            let expected_id = vector["cryptoConfigId"].as_str().unwrap();
+            let preset = BfvPreset::from_on_chain_param_set(param_set).unwrap();
+            let event = IInterfold::E3Requested {
+                e3Id: U256::from(param_set),
+                e3: IInterfold::E3 {
+                    seed: U256::ZERO,
+                    committeeSize: 0,
+                    requestBlock: U256::ZERO,
+                    inputWindow: [U256::ZERO; 2],
+                    encryptionSchemeId: B256::ZERO,
+                    e3Program: Address::ZERO,
+                    paramSet: param_set,
+                    customParams: Bytes::new(),
+                    decryptionVerifier: Address::ZERO,
+                    pkVerifier: Address::ZERO,
+                    committeePublicKey: B256::ZERO,
+                    ciphertextOutput: B256::ZERO,
+                    plaintextOutput: Bytes::new(),
+                    requester: Address::ZERO,
+                    ciphertextCommitment: B256::ZERO,
+                },
+                cryptoConfigId: expected_id.parse::<B256>().unwrap(),
+            };
+
+            let converted = E3RequestedWithChainId(event.clone(), 1)
+                .try_into_e3_requested()
+                .unwrap();
+            assert_eq!(converted.params_preset, preset);
+
+            let params = encode_bfv_params(&BfvParamSet::from(preset).build_arc());
+            for version in [
+                "interfold-bfv-v1",
+                "interfold-bfv-v2",
+                "interfold-bfv-v3",
+                "interfold-bfv-v4",
+            ] {
+                let mut legacy_event = event.clone();
+                legacy_event.cryptoConfigId = e3_fhe_params::bfv_crypto_config_id(&params, version);
+                let error = E3RequestedWithChainId(legacy_event, 1)
+                    .try_into_e3_requested()
+                    .unwrap_err();
+                assert!(error
+                    .to_string()
+                    .contains("Unsupported crypto configuration"));
+            }
+        }
+    }
+
+    #[test]
+    fn test_extractor_decodes_e3_stage_changed() {
+        let event = IInterfold::E3StageChanged {
+            e3Id: U256::from(42u64),
+            previousStage: 1, // Requested
+            newStage: 6,      // Failed
+        };
+        let log_data = event.encode_log_data();
+        // e3Id is indexed → it must be in topics[1] (not in log data)
+        let e3_id_bytes: [u8; 32] = U256::from(42u64).to_be_bytes();
+        let e3_id_topic = B256::from(e3_id_bytes);
+        let out = extractor(
+            &log_data,
+            &[IInterfold::E3StageChanged::SIGNATURE_HASH, e3_id_topic],
+            7,
+        )
+        .unwrap();
+        match out {
+            Some(InterfoldEventData::E3StageChanged(data)) => {
+                assert_eq!(data.previous_stage, E3Stage::Requested);
+                assert_eq!(data.new_stage, E3Stage::Failed);
+                assert_eq!(data.e3_id, E3id::new("42".to_string(), 7));
+            }
+            other => panic!("expected E3StageChanged, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_extractor_preserves_unknown_topic() {
+        let log_data = LogData::default();
+        assert!(matches!(
+            extractor(&log_data, &[B256::ZERO], 1).unwrap(),
+            Some(InterfoldEventData::EvmLogObserved(_))
+        ));
+        assert!(matches!(
+            extractor(&log_data, &[], 1).unwrap(),
+            Some(InterfoldEventData::EvmLogObserved(_))
+        ));
+    }
+
+    #[test]
+    fn test_extractor_decodes_input_and_reward_events() {
+        let input = IInterfold::InputPublished {
+            e3Id: U256::from(8),
+            data: Bytes::from_static(b"ciphertext"),
+            inputHash: U256::from(99),
+            index: U256::from(3),
+        };
+        let input_log = input.encode_log_data();
+        let out = extractor(&input_log, input_log.topics(), 10).unwrap();
+        match out {
+            Some(InterfoldEventData::InputPublished(event)) => {
+                assert_eq!(event.e3_id, E3id::new("8", 10));
+                assert_eq!(event.index, "3");
+                assert_eq!(event.data.extract_bytes(), b"ciphertext");
+            }
+            other => panic!("expected InputPublished, got {other:?}"),
+        }
+
+        let reward = IInterfold::RewardCredited {
+            e3Id: U256::from(8),
+            account: Address::repeat_byte(0x11),
+            token: Address::repeat_byte(0x22),
+            amount: U256::from(500),
+        };
+        let reward_log = reward.encode_log_data();
+        let out = extractor(&reward_log, reward_log.topics(), 10).unwrap();
+        match out {
+            Some(InterfoldEventData::RewardCredited(event)) => {
+                assert_eq!(event.e3_id, E3id::new("8", 10));
+                assert_eq!(event.amount, "500");
+                assert_eq!(event.account, Address::repeat_byte(0x11).to_string());
+            }
+            other => panic!("expected RewardCredited, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_extractor_rejects_mismatched_reward_arrays() {
+        let event = IInterfold::RewardsDistributed {
+            e3Id: U256::from(8),
+            nodes: vec![Address::repeat_byte(0x11), Address::repeat_byte(0x22)],
+            amounts: vec![U256::from(500)],
+        };
+        let log = event.encode_log_data();
+
+        let error = extractor(&log, log.topics(), 10).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("RewardsDistributed array lengths differ"));
+    }
+
+    #[test]
+    fn test_extractor_decodes_plaintext_publication() {
+        let event = IInterfold::PlaintextOutputPublished {
+            e3Id: U256::from(18),
+            plaintextOutput: Bytes::from_static(b"plain"),
+            proof: Bytes::from_static(b"c7"),
+        };
+        let log = event.encode_log_data();
+        let out = extractor(&log, log.topics(), 100).unwrap();
+        match out {
+            Some(InterfoldEventData::PlaintextOutputPublished(event)) => {
+                assert_eq!(event.e3_id, E3id::new("18", 100));
+                assert_eq!(event.plaintext_output.extract_bytes(), b"plain");
+                assert_eq!(event.proof.extract_bytes(), b"c7");
+            }
+            other => panic!("expected PlaintextOutputPublished, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn e3_request_keeps_the_contract_sortition_timepoint() {
+        let event = IInterfold::E3Requested {
+            e3Id: U256::from(19),
+            e3: IInterfold::E3 {
+                seed: U256::ZERO,
+                committeeSize: 0,
+                requestBlock: U256::from(77),
+                inputWindow: [U256::ZERO; 2],
+                encryptionSchemeId: B256::ZERO,
+                e3Program: Address::ZERO,
+                paramSet: 0,
+                customParams: Bytes::new(),
+                decryptionVerifier: Address::ZERO,
+                pkVerifier: Address::ZERO,
+                committeePublicKey: B256::ZERO,
+                ciphertextOutput: B256::ZERO,
+                plaintextOutput: Bytes::new(),
+                requester: Address::ZERO,
+                ciphertextCommitment: B256::ZERO,
+            },
+            cryptoConfigId: current_bfv_crypto_config_id(&encode_bfv_params(
+                &BfvParamSet::from(BfvPreset::from_on_chain_param_set(0).unwrap()).build_arc(),
+            )),
+        };
+
+        let converted = E3RequestedWithChainId(event, 100)
+            .try_into_e3_requested()
+            .unwrap();
+
+        assert_eq!(converted.request_block, 77);
+    }
+
+    #[test]
+    fn unsupported_e3_requested_is_a_benign_skip() {
+        let event = IInterfold::E3Requested {
+            e3Id: U256::from(19),
+            e3: IInterfold::E3 {
+                seed: U256::ZERO,
+                committeeSize: u8::MAX,
+                requestBlock: U256::ZERO,
+                inputWindow: [U256::ZERO; 2],
+                encryptionSchemeId: B256::ZERO,
+                e3Program: Address::ZERO,
+                paramSet: 0,
+                customParams: Bytes::new(),
+                decryptionVerifier: Address::ZERO,
+                pkVerifier: Address::ZERO,
+                committeePublicKey: B256::ZERO,
+                ciphertextOutput: B256::ZERO,
+                plaintextOutput: Bytes::new(),
+                requester: Address::ZERO,
+                ciphertextCommitment: B256::ZERO,
+            },
+            cryptoConfigId: current_bfv_crypto_config_id(&encode_bfv_params(
+                &BfvParamSet::from(BfvPreset::from_on_chain_param_set(0).unwrap()).build_arc(),
+            )),
+        };
+        let log = event.encode_log_data();
+
+        assert!(extractor(&log, log.topics(), 100).unwrap().is_none());
+    }
+
+    #[test]
+    fn historical_secure_slot_is_not_decoded_with_new_secure_parameters() {
+        let event = IInterfold::E3Requested {
+            e3Id: U256::from(20),
+            e3: IInterfold::E3 {
+                seed: U256::ZERO,
+                committeeSize: 0,
+                requestBlock: U256::ZERO,
+                inputWindow: [U256::ZERO; 2],
+                encryptionSchemeId: B256::ZERO,
+                e3Program: Address::ZERO,
+                paramSet: 1,
+                customParams: Bytes::new(),
+                decryptionVerifier: Address::ZERO,
+                pkVerifier: Address::ZERO,
+                committeePublicKey: B256::ZERO,
+                ciphertextOutput: B256::ZERO,
+                plaintextOutput: Bytes::new(),
+                requester: Address::ZERO,
+                ciphertextCommitment: B256::ZERO,
+            },
+            cryptoConfigId: "0xd9c86e581f8291ffb5b63595600e8d096ed30b16e2e0a6634a76c22b1f58fb4e"
+                .parse()
+                .unwrap(),
+        };
+        let log = event.encode_log_data();
+
+        assert!(extractor(&log, log.topics(), 1).unwrap().is_none());
+    }
+
+    #[test]
+    fn malformed_e3_requested_is_rejected() {
+        let malformed = LogData::new_unchecked(
+            vec![IInterfold::E3Requested::SIGNATURE_HASH],
+            Default::default(),
+        );
+
+        assert!(extractor(&malformed, malformed.topics(), 100).is_err());
+    }
+}

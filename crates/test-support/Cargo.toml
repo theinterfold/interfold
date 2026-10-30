@@ -1,0 +1,15 @@
+[package]
+name = "e3-test-support"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Mechanical test support: seeded RNGs, scoped tracing and tool discovery"
+repository.workspace = true
+publish = false
+
+[dependencies]
+rand.workspace = true
+rand_chacha.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

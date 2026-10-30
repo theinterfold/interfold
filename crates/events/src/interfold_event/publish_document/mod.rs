@@ -20,11 +20,22 @@ pub type PartyId = u64;
 const DEFAULT_KADEMLIA_EXPIRY_DAYS: i64 = 30;
 
 /// Diambiguates the kind of document we are looking for
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DocumentKind {
     TrBFV,
     /// Versioned l-BFV public-key or relinearization-key share.
     LbfvKeyShare,
+}
+
+/// `TrBFV` hashes nothing, as the derived hash did while it was the only variant, so the event ids
+/// of TrBFV document events are unchanged by the l-BFV variant.
+impl std::hash::Hash for DocumentKind {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            DocumentKind::TrBFV => {}
+            DocumentKind::LbfvKeyShare => state.write_u8(1),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -5,7 +5,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { Barretenberg } from '@aztec/bb.js'
+import { Barretenberg } from '@aztec-foundation/bb.js'
 import type { CompiledCircuit } from '@noir-lang/noir_js'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'

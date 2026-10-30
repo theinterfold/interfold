@@ -4,7 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-pub use crate::configs::secure_8192::threshold::{L as L_THRESHOLD, QIS as QIS_THRESHOLD};
+pub use crate::configs::secure_8192::threshold::{
+    L as L_THRESHOLD, QIS as QIS_THRESHOLD,
+    THRESHOLD_SHARE_DECRYPTION_BIT_SK as SHARE_DECRYPTION_BIT_AGG,
+};
 use crate::core::dkg::share_computation::Configs as ShareComputationConfigs;
 use crate::core::dkg::share_encryption::Configs as ShareEncryptionConfigs;
 
@@ -128,4 +131,4 @@ share_decryption_e_sm (CIRCUIT 4b - BFV DECRYPTION E_SM)
 ************************************/
 
 pub global SHARE_DECRYPTION_BIT_MSG: u32 = 60;
-pub global SHARE_DECRYPTION_BIT_AGG: u32 = 59;
+// SHARE_DECRYPTION_BIT_AGG: see `pub use` of `THRESHOLD_SHARE_DECRYPTION_BIT_SK` (C6 `BIT_SK`).

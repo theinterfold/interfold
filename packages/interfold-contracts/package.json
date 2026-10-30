@@ -14,6 +14,16 @@
     "directory": "packages/interfold-contracts"
   },
   "exports": {
+    "./bfv": {
+      "import": {
+        "types": "./dist/bfv.d.ts",
+        "default": "./dist/bfv.js"
+      },
+      "require": {
+        "types": "./dist/bfv.d.cts",
+        "default": "./dist/bfv.cjs"
+      }
+    },
     "./tasks/ciphernode": {
       "import": {
         "types": "./dist/tasks/ciphernode.d.ts",
@@ -64,6 +74,10 @@
         "default": "./dist/scripts/index.js"
       }
     },
+    "./scripts/utils": {
+      "types": "./dist/scripts/utils.d.ts",
+      "default": "./dist/scripts/utils.js"
+    },
     "./contracts/*": "./contracts/*",
     "./artifacts/*": "./artifacts/*",
     "./types": {
@@ -97,7 +111,7 @@
     "@nomicfoundation/hardhat-network-helpers": "3",
     "@nomicfoundation/hardhat-toolbox-mocha-ethers": "3.0.0",
     "@nomicfoundation/hardhat-typechain": "3",
-    "@nomicfoundation/hardhat-verify": "^3.0.1",
+    "@nomicfoundation/hardhat-verify": "3.0.8",
     "@trivago/prettier-plugin-sort-imports": "^4.3.0",
     "@typechain/hardhat": "^9.1.0",
     "@types/chai": "^4.3.20",
@@ -155,7 +169,8 @@
     "build": "pnpm compile",
     "compile": "pnpm compile:contracts && pnpm compile:ts",
     "compile:contracts": "cross-env TS_NODE_TRANSPILE_ONLY=true hardhat compile",
-    "compile:ts": "tsc && tsx scripts/writeNodeRelease.ts",
+    "compile:ts": "tsc && pnpm build:bfv && tsx scripts/writeNodeRelease.ts",
+    "build:bfv": "tsup bfv.ts --format esm,cjs --dts --platform browser --target es2022 --out-dir dist",
     "coverage": "pnpm test --coverage",
     "deploy": "hardhat run scripts/run.ts",
     "deploy:mocks": "export DEPLOY_MOCKS=true && pnpm clean:deployments && hardhat run scripts/run.ts --network localhost",

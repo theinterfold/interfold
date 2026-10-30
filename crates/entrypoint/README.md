@@ -57,10 +57,11 @@ automatically.
 ## Tests
 
 Use `cargo test --locked -p e3-entrypoint` with the
-[shared prerequisites](../test-helpers/README.md); schema/startup tests may need Foundry/Anvil.
-Inline tests cover fencing, child cleanup, validation, and identity setup. The [`tests/`](tests)
-targets exercise purge/reset guards and old/corrupt snapshot/schema cases. The integration suite
-owns multi-process restart/shutdown scenarios. Supervisor cleanup tests do not prove all detached
-application tasks have drained. [`actor_panic_stop.rs`](tests/actor_panic_stop.rs) checks the
-actor-thread filter and panic signal, not the CLI's full shutdown/exit path. The CLI owns production
-monitoring. See [AGENTS.md](AGENTS.md) for safety-boundary change rules.
+[system prerequisites](../tests/README.md#prerequisites-and-assurance); schema/startup tests may
+need Foundry/Anvil. Inline tests cover fencing, child cleanup, validation, and identity setup. The
+[`tests/`](tests) targets exercise purge/reset guards and old/corrupt snapshot/schema cases. The
+integration suite owns multi-process restart/shutdown scenarios. Supervisor cleanup tests do not
+prove all detached application tasks have drained.
+[`actor_panic_stop.rs`](tests/actor_panic_stop.rs) checks the actor-thread filter and panic signal,
+not the CLI's full shutdown/exit path. The CLI owns production monitoring. See
+[AGENTS.md](AGENTS.md) for safety-boundary change rules.

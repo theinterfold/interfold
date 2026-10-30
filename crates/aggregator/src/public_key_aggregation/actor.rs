@@ -24,7 +24,7 @@ use e3_events::{
     DKGRecursiveAggregationComplete, Die, DkgAggregationRequest, E3Failed, E3Stage, E3id,
     EventContext, FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
     LbfvKeyShareDocumentFetchFailed, LbfvKeyShareDocumentReceived, LbfvKeyShareManifestPublished,
-    LbfvPublicKeyAggregated, NodesFoldStepRequest, OrderedSet, PkAggregationProofPending,
+    LbfvPublicKeyAggregated, NodesFoldStepRequest, PkAggregationProofPending,
     PkAggregationProofRequest, PkAggregationProofSigned, Proof, ProofType, PublicKeyAggregated,
     Sequenced, ShareVerificationComplete, ShareVerificationDispatched, SignedProofFailed,
     SignedProofPayload, TypedEvent, VerificationKind, ZkRequest, ZkResponse,
@@ -33,7 +33,7 @@ use e3_events::{trap, EType};
 use e3_fhe::{Fhe, GetAggregatePublicKey};
 use e3_fhe_params::BfvPreset;
 use e3_utils::NotifySync;
-use e3_utils::{ArcBytes, MAILBOX_LIMIT};
+use e3_utils::{ArcBytes, OrderedSet, MAILBOX_LIMIT};
 use std::{
     collections::{BTreeSet, HashMap},
     sync::Arc,

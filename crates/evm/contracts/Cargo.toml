@@ -1,0 +1,17 @@
+[package]
+name = "e3-evm-contracts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared Interfold Solidity ABI bindings"
+repository.workspace = true
+
+[dependencies]
+alloy-contract.workspace = true
+alloy-json-abi.workspace = true
+alloy-sol-types = { workspace = true, features = ["json"] }
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+bincode.workspace = true

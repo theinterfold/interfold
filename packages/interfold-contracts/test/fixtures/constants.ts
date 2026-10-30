@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 // Shared test constants. Importable by every spec file.
+import { BFV_ENCRYPTION_SCHEME_ID, INTERFOLD_BFV_VERSION } from "../../bfv.js";
 import { BFV_PARAMS } from "../../scripts/protocol/constants";
 import { ethers } from "./connection";
 
@@ -22,10 +23,8 @@ export const THIRTY_DAYS = 30 * ONE_DAY;
 export const SORTITION_SUBMISSION_WINDOW = 60;
 
 // ── Encryption scheme ───────────────────────────────────────────────────────
-// Derived from the same string the BFV verifier wrappers and
-// `MockE3Program` use (`keccak256("fhe.rs:BFV")`) so the test constant
-// stays aligned with the contracts if either side ever changes.
-export const ENCRYPTION_SCHEME_ID = ethers.id("fhe.rs:BFV");
+// Fixture inputs follow the binding; independent expected hashes live in the protocol vectors.
+export const ENCRYPTION_SCHEME_ID: string = BFV_ENCRYPTION_SCHEME_ID;
 
 // ── Fake ciphertext / proof payloads used across spec files ──────────────────
 export const DATA = "0xda7a";
@@ -33,7 +32,7 @@ export const PROOF = "0x1337";
 
 // ── Active BFV parameter set ────────────────────────────────────────────────
 const abiCoder = ethers.AbiCoder.defaultAbiCoder();
-export const CIRCUIT_VERSION = ethers.id("interfold-bfv-v5");
+export const CIRCUIT_VERSION = ethers.id(INTERFOLD_BFV_VERSION);
 
 function encodeBfvParams(params: {
   degree: bigint;
@@ -56,8 +55,8 @@ function encodeBfvParams(params: {
   );
 }
 
-/** The insecure parameter set compiled into the active test circuits. */
-export const BFV_PARAMS_DEFAULT = encodeBfvParams(BFV_PARAMS.insecure);
+/** The insecure trBFV parameter set (index 0) that the test fixtures register. */
+export const BFV_PARAMS_DEFAULT = encodeBfvParams(BFV_PARAMS.insecure64);
 
 /** The secure-8192 parameter set that Sepolia/local deployments can also register. */
 export const BFV_PARAMS_SECURE = encodeBfvParams(BFV_PARAMS.secure8192);

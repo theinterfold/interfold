@@ -13,8 +13,7 @@ use crate::circuits::utils::inputs_json_to_input_map;
 use crate::error::ZkError;
 use crate::prover::ZkProver;
 use crate::traits::Provable;
-use e3_events::CircuitName;
-
+use e3_zk_config::CircuitName;
 use e3_zk_config::DkgInputType;
 use e3_zk_witness::dkg::share_computation::{Inputs, ShareComputationCircuitData};
 

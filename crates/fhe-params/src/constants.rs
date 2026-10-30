@@ -9,7 +9,39 @@
 //! This module contains all hardcoded values used in preset definitions.
 //! Centralizing these values makes it easier to maintain and update presets.
 
+/// Encryption scheme name used in the on-chain configuration identity.
+pub const BFV_ENCRYPTION_SCHEME: &str = "fhe.rs:BFV";
+
+/// Circuit statement domain used in current BFV configuration identities.
+pub const INTERFOLD_BFV_VERSION: &str = "interfold-bfv-v5";
+
+/// Insecure trBFV preset constants (degree 64) - DO NOT USE IN PRODUCTION
+pub mod insecure_64 {
+    pub const DEGREE: usize = 64;
+    pub const NUM_PARTIES: u128 = 19; // fake - not used in the search default
+
+    /// Threshold BFV parameters
+    pub mod threshold {
+        pub const PLAINTEXT_MODULUS: u64 = 17000000;
+        pub const MODULI: &[u64] = &[0x0000000007fffd81, 0x0000000007fff801, 0x0000000007fff781];
+        /// ⌊B_Enc(B_Enc+1)/3⌋ for B_Enc = 194560 (uniform e_1).
+        pub const ERROR1_VARIANCE: &str = "12617929386";
+        pub const ERROR1_VARIANCE_BIGUINT: u64 = 12617929386;
+    }
+
+    /// DKG parameters
+    pub mod dkg {
+        pub const PLAINTEXT_MODULUS: u64 = 134217089;
+        pub const MODULI: &[u64] = &[0x000000001fffba01, 0x000000001fffc081];
+        pub const ERROR1_VARIANCE: &str = "10";
+        pub const VARIANCE: u32 = 10;
+    }
+}
+
 /// Insecure preset constants (degree 128) - DO NOT USE IN PRODUCTION
+///
+/// Unlike `insecure_64`, which only has room for summation, these parameters support the
+/// multiplication and relinearization that the l-BFV path needs.
 pub mod insecure {
     pub const DEGREE: usize = 128;
     pub const NUM_PARTIES: u128 = 19;
@@ -76,7 +108,7 @@ pub mod secure_16384 {
             0x0010000000650001,
             0x0010000000500001,
         ];
-        pub const ERROR1_VARIANCE: &str = "63980174197113950682436579834827252258133";
+        pub const ERROR1_VARIANCE: &str = "63980174197113950682582616558744119541760";
     }
 
     /// DKG parameters
@@ -89,8 +121,9 @@ pub mod secure_16384 {
 
 /// Common search defaults shared across presets
 /// Search defaults for the SecureThreshold8192 preset (production scale).
-/// The insecure preset uses its own smaller values (see `insecure_search_defaults`)
-/// so that the smudging bounds baked into the insecure circuit configs remain valid.
+/// The insecure presets use their own smaller values (see `insecure_search_defaults` and
+/// `insecure_128_search_defaults`) so that the smudging bounds baked into the insecure circuit
+/// configs remain valid.
 pub mod search_defaults {
     pub const B: u128 = 20;
     pub const B_CHI: u128 = 1;
@@ -99,10 +132,21 @@ pub mod search_defaults {
     pub const SEARCH_Z: u128 = 100000;
 }
 
-/// Search defaults for the insecure preset (test-only, small scale).
+/// Search defaults for the InsecureThreshold64 preset (test-only, small scale).
+pub mod insecure_search_defaults {
+    /// Smallest prime bit-length for the insecure (toy ring) searches.
+    pub const MIN_PRIME_BITS: u8 = 12;
+    pub const B: u128 = 20;
+    pub const B_CHI: u128 = 1;
+    pub const SEARCH_N: u128 = 19;
+    pub const SEARCH_K: u128 = 17000000;
+    pub const SEARCH_Z: u128 = 100000;
+}
+
+/// Search defaults for the degree-128 insecure presets (`insecure`; test-only, small scale).
 /// These match the parameters used when `circuits/lib/src/configs/insecure/` was generated,
 /// so the compiled `E_SM_BIT_SECRET` / `SHARE_ENCRYPTION_*` bounds remain consistent at runtime.
-pub mod insecure_search_defaults {
+pub mod insecure_128_search_defaults {
     pub const B: u128 = 20;
     pub const B_CHI: u128 = 1;
     pub const SEARCH_N: u128 = 19;
@@ -137,7 +181,9 @@ pub mod defaults {
     /// Statistical security parameter (λ) for the 16384 presets.
     pub const DEFAULT_SECURE_16384_LAMBDA: usize = 45;
 
-    /// Multiplicative depth for the insecure preset.
+    /// Multiplicative depth for the insecure-64 preset (summation only, no l-BFV support).
+    pub const INSECURE_64_MULT_DEPTH: u32 = 0;
+    /// Multiplicative depth for the degree-128 insecure presets.
     pub const INSECURE_MULT_DEPTH: u32 = 3;
     /// Multiplicative depth for secure-8192 preset (no l-BFV support).
     pub const SECURE_8192_MULT_DEPTH: u32 = 0;

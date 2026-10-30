@@ -4,15 +4,161 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-/// NTT-friendly primes by bit-length (49..62), the working pool for the search.
-///
-/// Every entry is a proven prime satisfying `p ≡ 1 (mod 32768)`, i.e.
-/// `p ≡ 1 (mod 2·N)` with ring dimension `N = 16384` (the fixed ring dimension of
-/// the first parameter set). Valid primes end in `...0001` or `...8001` in hex;
-/// posts ending `...4001`/`...c001` satisfy `mod 16384` only and are excluded.
-/// Buckets below 49 bits are deliberately absent: an earlier auto-generated pool
-/// contained composite entries, so the search only consumes bit-lengths 49..62.
+/// NTT-friendly primes by bit-length (40..63), 6 per size
 pub const NTT_PRIMES_BY_BITS: &[(u8, &[&str])] = &[
+    (
+        40u8,
+        &[
+            "0x0000008000034001",
+            "0x00000080004a0001",
+            "0x0000008000fa0001",
+            "0x0000008001ae0001",
+            "0x0000008001b20001",
+            "0x0000008001ee0001",
+            "0x0000008001f60001",
+            "0x0000008002228001",
+            "0x0000008002438001",
+            "0x00000080028a8001",
+            "0x00000080029c0001",
+            "0x000000800320c001",
+        ],
+    ),
+    (
+        41u8,
+        &[
+            "0x00000100003e0001",
+            "0x0000010000960001",
+            "0x0000010000b60001",
+            "0x0000010000ce0001",
+            "0x0000010000de0001",
+            "0x00000100010a0001",
+            "0x0000010001128001",
+            "0x0000010001680001",
+            "0x00000100019b0001",
+            "0x0000010002238001",
+            "0x0000010002520001",
+            "0x000001000266c001",
+        ],
+    ),
+    (
+        42u8,
+        &[
+            "0x0000020000560001",
+            "0x0000020000820001",
+            "0x0000020000920001",
+            "0x0000020000aa0001",
+            "0x0000020001360001",
+            "0x00000200015a0001",
+            "0x00000200017c0001",
+            "0x0000020001e74001",
+            "0x000002000227c001",
+            "0x0000020002a68001",
+            "0x0000020002c54001",
+            "0x00000200031ac001",
+        ],
+    ),
+    (
+        43u8,
+        &[
+            "0x0000040000560001",
+            "0x00000400007a0001",
+            "0x00000400008a0001",
+            "0x0000040000fe0001",
+            "0x0000040001760001",
+            "0x00000400017a0001",
+            "0x00000400019bc001",
+            "0x0000040001b60001",
+            "0x0000040001e24001",
+            "0x000004000236c001",
+            "0x0000040002a8c001",
+            "0x0000040003038001",
+        ],
+    ),
+    (
+        44u8,
+        &[
+            "0x00000800009a0001",
+            "0x0000080000ee0001",
+            "0x0000080001060001",
+            "0x0000080001160001",
+            "0x00000800012e0001",
+            "0x0000080001420001",
+            "0x000008000173c001",
+            "0x0000080001a6c001",
+            "0x0000080001c40001",
+            "0x00000800020ec001",
+            "0x000008000236c001",
+            "0x000008000265c001",
+        ],
+    ),
+    (
+        45u8,
+        &[
+            "0x0000100000020001",
+            "0x00001000001a0001",
+            "0x00001000003e0001",
+            "0x00001000006e0001",
+            "0x0000100000ba0001",
+            "0x0000100000ce0001",
+            "0x0000100000eac001",
+            "0x000010000122c001",
+            "0x0000100001560001",
+            "0x0000100001860001",
+            "0x0000100001a58001",
+            "0x0000100001f10001",
+        ],
+    ),
+    (
+        46u8,
+        &[
+            "0x00002000000a0001",
+            "0x00002000000e0001",
+            "0x0000200000620001",
+            "0x00002000006a0001",
+            "0x0000200000860001",
+            "0x0000200000a60001",
+            "0x0000200000c80001",
+            "0x0000200000f14001",
+            "0x0000200001328001",
+            "0x00002000018ac001",
+            "0x0000200001ab4001",
+            "0x0000200001c94001",
+        ],
+    ),
+    (
+        47u8,
+        &[
+            "0x0000400000060001",
+            "0x0000400000420001",
+            "0x0000400000660001",
+            "0x0000400000920001",
+            "0x00004000009e0001",
+            "0x0000400000b60001",
+            "0x0000400000d58001",
+            "0x0000400000f5c001",
+            "0x0000400001290001",
+            "0x000040000164c001",
+            "0x0000400001938001",
+            "0x0000400001c4c001",
+        ],
+    ),
+    (
+        48u8,
+        &[
+            "0x0000800000020001",
+            "0x0000800000520001",
+            "0x0000800000aa0001",
+            "0x0000800001360001",
+            "0x0000800001420001",
+            "0x0000800002060001",
+            "0x000080000214c001",
+            "0x00008000023f8001",
+            "0x0000800002624001",
+            "0x0000800002af8001",
+            "0x0000800002d70001",
+            "0x000080000307c001",
+        ],
+    ),
     (
         49u8,
         &[
@@ -201,59 +347,135 @@ pub const NTT_PRIMES_BY_BITS: &[(u8, &[&str])] = &[
         ],
     ),
     (
+        60u8,
+        &[
+            "0x0800000000004001",
+            "0x0800000000044001",
+            "0x0800000000124001",
+            "0x080000000019c001",
+            "0x080000000020c001",
+            "0x0800000000244001",
+            "0x08000000002d4001",
+            "0x08000000003dc001",
+            "0x0800000000404001",
+            "0x0800000000514001",
+            "0x080000000061c001",
+            "0x0800000000634001",
+            "0x08000000006c4001",
+            "0x080000000082c001",
+            "0x080000000083c001",
+            "0x0800000000854001",
+            "0x080000000092c001",
+            "0x08000000009bc001",
+            "0x0800000000a7c001",
+            "0x0800000000bcc001",
+            "0x0800000000c94001",
+            "0x0800000000cbc001",
+            "0x0800000000d54001",
+            "0x0800000000db4001",
+        ],
+    ),
+    (
         61u8,
         &[
-            // Valid negacyclic primes near top of 61-bit range (q ≡ 1 mod 32768).
-            "0x1fffffffffe10001", // log2 ≈ 60.9999, ends 0001
-            "0x1fffffffffe00001", // log2 ≈ 60.9999, ends 0001
-            "0x1fffffffffdd0001", // log2 ≈ 60.9999, ends 0001
-            "0x1fffffffffd08001", // log2 ≈ 60.9998, ends 8001
+            "0x1000000000024001",
+            "0x1000000000054001",
+            "0x100000000005c001",
+            "0x10000000000a4001",
+            "0x100000000014c001",
+            "0x10000000002dc001",
+            "0x1000000000344001",
+            "0x100000000035c001",
+            "0x1000000000414001",
+            "0x10000000004bc001",
+            "0x10000000005cc001",
+            "0x10000000006ec001",
+            "0x1000000000794001",
+            "0x10000000007bc001",
+            "0x100000000090c001",
+            "0x100000000096c001",
+            "0x1000000000a14001",
+            "0x1000000000aec001",
+            "0x1000000000c2c001",
+            "0x1000000000c6c001",
+            "0x1000000000ccc001",
+            "0x1000000000d74001",
+            "0x1000000000dac001",
+            "0x10000000010dc001",
         ],
     ),
     (
         62u8,
         &[
-            // Mid range — entries ending 0001 / 8001 only.
-            "0x260dfc1463740001", // log2 = 61.25, ends 0001
-            "0x28c9335e63610001", // log2 = 61.35, ends 0001
-            "0x2a3968a772a88001", // log2 = 61.40, ends 8001
-            "0x2ed9ca3ed4188001", // log2 = 61.55, ends 8001
-            "0x3080c00765628001", // log2 = 61.60, ends 8001
-            "0x3460000000000001", // ends 0001
-            "0x3630000000000001", // ends 0001
-            "0x37f0000000000001", // ends 0001
-            "0x3810000000000001", // ends 0001
-            "0x3820000000000001", // ends 0001
-            "0x3960000000000001", // ends 0001
-            "0x39ae166b9acc8001", // log2 = 61.85, ends 8001
-            "0x3a00000000000001", // ends 0001
-            "0x3a90000000000001", // ends 0001
-            "0x3ae0000000000001", // ends 0001
-            "0x3c8c355f344d0001", // log2 = 61.92, ends 0001
-            "0x3d6495552e9c0001", // log2 = 61.94, ends 0001
-            "0x3e10000000000001", // ends 0001
-            "0x3ea0000000000001", // ends 0001
-            "0x3f18000000000001", // ends 0001
-            "0x3f1e6fc702dc8001", // log2 = 61.98, ends 8001
-            "0x3fffffffffff0001", // ends 0001
-            "0x3ffffffffffe8001", // ends 8001
-            "0x3fffffffffe80001", // ends 0001
-            "0x3fffffffffd78001", // ends 8001
+            // Lower range (log2 ≈ 61.0)
+            "0x2000000000104001",
+            "0x200000000013c001",
+            "0x20000000001f4001",
+            "0x20000000002e4001",
+            "0x2000000000454001",
+            "0x20000000004c4001",
+            "0x2000000000524001",
+            "0x200000000052c001",
+            "0x200000000071c001",
+            "0x200000000080c001",
+            "0x200000000089c001",
+            "0x20000000008b4001",
+            // Mid range (log2 ≈ 61.2-61.65) - verified NTT-friendly primes
+            "0x24c2230d75cdc001", // log2 = 61.20
+            "0x260dfc1463740001", // log2 = 61.25
+            "0x276588f7ff08c001", // log2 = 61.30
+            "0x28c9335e63610001", // log2 = 61.35
+            "0x2a3968a772a88001", // log2 = 61.40
+            "0x2bb69a0e78f64001", // log2 = 61.45
+            "0x2d413cccfe794001", // log2 = 61.50
+            "0x2ed9ca3ed4188001", // log2 = 61.55
+            "0x3080c00765628001", // log2 = 61.60
+            "0x3236a0385b67c001", // log2 = 61.65
+            // Upper range (log2 ≈ 61.7-62.0) - for second set
+            "0x3460000000000001",
+            "0x3630000000000001",
+            "0x37f0000000000001",
+            "0x3810000000000001",
+            "0x3820000000000001",
+            "0x3960000000000001",
+            "0x39ae166b9acc8001", // log2 = 61.85
+            "0x3a00000000000001",
+            "0x3a90000000000001",
+            "0x3ae0000000000001",
+            "0x3ae45abe677d4001", // log2 = 61.88
+            "0x3bb6d0022f594001", // log2 = 61.90
+            "0x3c8c355f344d0001", // log2 = 61.92
+            "0x3d6495552e9c0001", // log2 = 61.94
+            "0x3e10000000000001",
+            "0x3e3ffa895b7d4001", // log2 = 61.96
+            "0x3ea0000000000001",
+            "0x3f18000000000001",
+            "0x3f1e6fc702dc8001", // log2 = 61.98
+            // Near-top range (log2 ≈ 61.9999) - generated for second parameter set
+            "0x3fffffffffff0001",
+            "0x3ffffffffffe8001",
+            "0x3ffffffffff1c001",
+            "0x3fffffffffeec001",
+            "0x3fffffffffe80001",
+            "0x3fffffffffd9c001",
+            "0x3fffffffffd78001",
+            "0x3fffffffffd2c001",
         ],
     ),
 ];
 
-/// Fixed ring dimension for the first parameter set.
-pub const RING_DIM: u64 = 16384;
-/// Fewest CRT primes the first parameter set tries; the search takes the smallest count that works.
-pub const TARGET_NUM_PRIMES: usize = 5;
-/// Most CRT primes the first parameter set tries. Six 53-bit primes give `Q` about 2^312, which the
-/// l-BFV circuits carry in two field limbs (C2b smudging lift) or in U384 (wide C7).
-pub const MAX_NUM_PRIMES: usize = 6;
-/// Maximum polynomial degree (power of 2) supported.
-pub const D_POW2_MAX: u64 = 16384;
-/// Maximum number of multiplications (total circuit depth) supported.
-pub const K_MAX: u128 = 1_000_000; // 1M multiplications
+/// Starting polynomial degree (power of 2) for parameter search
+pub const D_POW2_START: u64 = 256;
+/// Maximum polynomial degree (power of 2) to search up to
+pub const D_POW2_MAX: u64 = 32768;
+/// Maximum number of votes/plaintext additions (k_plain_eff)
+pub const K_MAX: u128 = 1u128 << 25; // 33,554,432
+/// Smallest prime bit-length that the search uses by default. 49-bit primes leave less than
+/// 0.2 bits of correctness margin for worst-case secure inputs at d = 8192.
+pub const DEFAULT_MIN_PRIME_BITS: u8 = 50;
+/// Minimum correctness margin in bits, `log2(Δ) - log2(LHS)`. The secure and insecure
+/// presets were searched with this margin.
+pub const MIN_MARGIN_BITS: f64 = 2.0;
 
 #[cfg(test)]
 mod tests {
@@ -261,8 +483,8 @@ mod tests {
     use std::collections::HashSet;
 
     /// NTT compatibility modulus: primes must satisfy p ≡ 1 (mod 2*RING_DIM),
-    /// i.e. p % 32768 == 1 for the 16384-degree ring used by the search.
-    const NTT_MODULUS: u64 = 32768;
+    /// i.e. p % 16384 == 1 for the 8192-degree ring used by the search.
+    const NTT_MODULUS: u64 = 16384;
 
     /// Deterministic Miller-Rabin primality test, exact for all u64.
     fn is_prime(n: u64) -> bool {
@@ -323,7 +545,7 @@ mod tests {
                 assert_eq!(
                     v % NTT_MODULUS,
                     1,
-                    "{hex} is not NTT-compatible (p % 32768 != 1)"
+                    "{hex} is not NTT-compatible (p % 16384 != 1)"
                 );
                 assert_eq!(
                     v.checked_ilog2().unwrap() + 1,

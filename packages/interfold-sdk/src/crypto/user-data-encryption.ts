@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import type { ProofData } from '@aztec/bb.js'
+import type { ProofData } from '@aztec-foundation/bb.js'
 import { assertSdkMinimumCircuits } from '../circuits/assert-minimum-circuits'
 import type { UserDataEncryptionProofBundle } from './presets/types'
 import type { ThresholdBfvParamsPresetName } from './types'
@@ -106,7 +106,7 @@ export const generateProof = async (circuitInputs: CircuitInputs, presetName?: T
     throw new Error(`No user-data encryption circuit bundle supports polynomial degree ${degree}.`)
   }
 
-  const { Barretenberg, UltraHonkBackend } = await import('@aztec/bb.js')
+  const { Barretenberg, UltraHonkBackend } = await import('@aztec-foundation/bb.js')
   const { Noir } = await import('@noir-lang/noir_js')
   const { proveUserDataEncryptionTree } = await import('@interfold/user-data-encryption-prover')
   const { proofToFields } = await import('../utils')
