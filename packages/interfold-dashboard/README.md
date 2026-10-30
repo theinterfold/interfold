@@ -113,6 +113,11 @@ current 30-day capacity window. Before a deployment (no policy log), it makes a 
 planned settings (`PREVIEW_SERVICE`) and offers only the download. The download holds the proofs,
 the verifier parameters, and the evidence, so a fork test can replay it.
 
+The policy scan needs an RPC that serves logs from `IDENTITY_DEPLOY_BLOCK` on. Public RPCs such as
+publicnode keep only about a day of logs. After the upgrade, set `IDENTITY_DEPLOY_BLOCK` to the
+upgrade block and use an RPC with that history. For a preview before the upgrade, a recent block is
+enough, for example `VITE_MAINNET_IDENTITY_DEPLOY_BLOCK=<a block from today>`.
+
 Only `VITE_BONDING_REGISTRY_ADDRESS` is configured. The ciphernode bond token, ticket wrapper,
 ticket underlying, bond size, ticket price, minimum tickets, and exit delay are all read back from
 the registry, so the guide follows the deployment instead of a hardcoded token list.
